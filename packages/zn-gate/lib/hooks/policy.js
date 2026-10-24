@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-23.4';
+const POLICY_RULES_VERSION = '2026-10-24.17';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -104,7 +104,56 @@ const AGENT_CONFIG_RES = [
 function caseInsensitive() {
   return process.platform === 'win32' || process.platform === 'darwin';
 }
-const keyOf = (s) => (caseInsensitive() ? s.toLowerCase() : s);
+// macOS reports names like "José" decomposed (NFD) while a typed path is usually composed (NFC),
+// and its file systems treat both as the same folder, so every comparison uses NFC.
+const keyOf = (s) => {
+  const n = s.normalize('NFC');
+  return caseInsensitive() ? n.toLowerCase() : n;
+};
+// NTFS alternate data streams: `.env::$DATA`, `credentials:stream` and `dir::$INDEX_ALLOCATION` all name the file
+// or folder itself. A colon cannot be part of a Windows name, so on win32 everything after the first colon of a
+// path segment is a stream (a drive letter stays). Elsewhere a colon is a valid name character, so only the
+// explicit `::$DATA` style suffix is dropped.
+const ADS_TYPE_RE = /(?::[^\\/:*?"<>|]*)?:\$(?:DATA|INDEX_ALLOCATION|BITMAP)$/i;
+function stripStreams(text) {
+  if (typeof text !== 'string') return text;
+  const win = process.platform === 'win32';
+  if (!win && text.indexOf(':') < 0) return text;
+  return text.split(/([\\/]+)/).map((seg, i) => {
+    if (win) {
+      if (/^[A-Za-z]:$/.test(seg)) return seg;
+      if (i === 0 && /^[A-Za-z]:/.test(seg)) return seg.slice(0, 2) + dropTrailingDotsSpaces(seg.slice(2).replace(/:.*$/, ''));
+      return dropTrailingDotsSpaces(seg.replace(/:.*$/, ''));
+    }
+    return seg.replace(ADS_TYPE_RE, '');
+  }).join('');
+}
+// Windows drops trailing dots and spaces from a name, so `settings.json.` and `settings.json ` open `settings.json`.
+// A name made only of dots (`.`, `..`) is left alone. Scanned from the end, so a long run cannot cost more than its length.
+function dropTrailingDotsSpaces(seg) {
+  let end = seg.length;
+  while (end > 0 && (seg.charCodeAt(end - 1) === 46 || seg.charCodeAt(end - 1) === 32)) end--;
+  if (end === seg.length) return seg;
+  if (/^\.*$/.test(seg)) return seg;
+  return seg.slice(0, end);
+}
+// An 8.3 short name: up to six characters, `~`, digits, and an optional extension of up to three (`SETTIN~1.JSO`,
+// `CLAUDE~1`). The long name it stands for cannot be read from the text, so on win32 it is checked as a pattern
+// (`{,.}settin*.jso*`) against the protected names, like a typed glob.
+const SHORT_NAME_RE = /^([^~\s.:*?"<>|\\/]{1,6})~[0-9]{1,6}(?:\.([^.\s:*?"<>|\\/]{1,3}))?$/;
+function shortNameGlob(text) {
+  if (process.platform !== 'win32' || typeof text !== 'string' || text.indexOf('~') < 0) return null;
+  let found = false;
+  let lastShort = false;
+  const out = text.split(/([\\/]+)/).map((seg) => {
+    const m = SHORT_NAME_RE.exec(seg);
+    if (!/^[\\/]*$/.test(seg)) lastShort = !!m;
+    if (!m) return seg;
+    found = true;
+    return '{,.}' + m[1] + '*' + (m[2] ? '.' + m[2] + '*' : '');
+  }).join('');
+  return found ? { glob: out, lastShort } : null;
+}
 /** The pattern, ignoring case where the platform does. */
 const ci = (re) => (caseInsensitive() && !re.flags.includes('i') ? new RegExp(re.source, re.flags + 'i') : re);
 
@@ -226,7 +275,7 @@ function classifyResolved(abs, ctx) {
 function resolvedOf(p, opts = {}) {
   const home = opts.home || os.homedir();
   const cwd = opts.cwd || process.cwd();
-  return path.resolve(cwd, expandEnv(expandHome(p, home), opts.env || process.env).text);
+  return path.resolve(cwd, stripStreams(expandEnv(expandHome(p, home), opts.env || process.env).text));
 }
 
 /**
@@ -268,6 +317,7 @@ function classifyPath(p, opts = {}) {
   if (expanded.agentVar) {
     return { kind: 'agent_config', reason: 'the path comes from $' + expanded.agentVar + ', the agent configuration location' };
   }
+  expanded.text = stripStreams(expanded.text);
   const abs = path.resolve(ctx.cwd, expanded.text);
   const candidates = new Set([abs, realTargetOf(abs)]);
   // ag/../hooks.json, with ag a link to .agents/skills, names .agents/hooks.json: ".." is applied to where the link leads.
@@ -277,6 +327,11 @@ function classifyPath(p, opts = {}) {
     const c = classifyResolved(candidate, ctx);
     if (c) return c;
   }
+  // A short name hides the long one: it counts as protected when it could stand for a protected file or folder.
+  const short = shortNameGlob(expanded.text);
+  // When the last name is written out, a .env there is judged by its own content (readDenial), not by the pattern.
+  // A last name that is itself a glob (`*`, `.e*`) names whatever it matches, a plain .env included: no skipping then.
+  if (short) return globClass(short.glob, short.lastShort || GLOB_RE.test(expanded.text) ? opts : { ...opts, skipDotenv: true });
   return null;
 }
 
@@ -506,12 +561,12 @@ function globClass(word, opts = {}) {
     if (e.agentVar) return { kind: 'agent_config', reason: 'a pattern built from $' + e.agentVar };
     const abs = slash(path.resolve(ctx.cwd, e.text));
     // Any pattern whose last name starts with .env names a .env file.
-    if (keyOf(path.posix.basename(abs)).startsWith('.env')) return { kind: 'credential', reason: 'a pattern that matches a .env file' };
+    if (!opts.skipDotenv && keyOf(path.posix.basename(abs)).startsWith('.env')) return { kind: 'credential', reason: 'a pattern that matches a .env file' };
     const re = globRegExp(keyOf(abs));
     if (re.impossible) continue;
     for (const ex of examples) {
       const c = classifyResolved(ex, ctx);
-      if (c && re.test(keyOf(slash(ex)))) {
+      if (c && !(opts.skipDotenv && c.kind === 'dotenv') && re.test(keyOf(slash(ex)))) {
         return c.kind === 'dotenv' ? { kind: 'credential', reason: 'a pattern that matches a .env file' } : c;
       }
     }
@@ -523,6 +578,7 @@ function globClass(word, opts = {}) {
         const c = classifyResolved(cand, ctx);
         // A key file match is judged by its content (keyFileGlobDenial); a protected file found later still wins.
         if (c && c.kind === 'keyfile') { keyHit = keyHit || c; continue; }
+        if (c && opts.skipDotenv && c.kind === 'dotenv') continue;
         if (c) return c.kind === 'dotenv' ? { kind: 'credential', reason: 'a pattern that matches a .env file' } : c;
       }
     }
@@ -688,6 +744,244 @@ function writeDenial(p, opts = {}) {
   return null;
 }
 
+/* ------------------- agent memory and instruction files ------------------- */
+
+/*
+ * The files where a coding agent keeps persistent memory and standing instructions. The agent reads them at the
+ * start of later sessions, so text written there keeps working after the session, the skill or the tool that wrote it
+ * is gone. This is the one list: change it here only. Reads are always allowed; writes ask the user (or are refused
+ * in strict mode, see instructionWritesOf in runner.js).
+ *
+ *   by file name, in any folder: MEMORY.md, SOUL.md, AGENTS.md, CLAUDE.md (also ~/.claude/CLAUDE.md),
+ *     CLAUDE.local.md, GEMINI.md, .cursorrules, .windsurfrules
+ *   by place: .cursor/rules/* (any depth), .github/copilot-instructions.md,
+ *     and the Claude Code memory folders <claude dir>/projects/<project>/memory/*
+ */
+const INSTRUCTION_FILE_NAMES = ['MEMORY.md', 'SOUL.md', 'AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md', 'GEMINI.md', '.cursorrules', '.windsurfrules'];
+const INSTRUCTION_FILE_RES = [
+  /(^|\/)\.cursor\/rules\/[^/]/,
+  /(^|\/)\.github\/copilot-instructions\.md$/,
+];
+
+/** Whether a resolved absolute path is one of the instruction files above. `ctx` comes from contextOf. */
+function isInstructionFile(abs, ctx) {
+  const s = keyOf(slash(abs));
+  const base = path.basename(s);
+  if (INSTRUCTION_FILE_NAMES.some((n) => keyOf(n) === base)) return true;
+  if (INSTRUCTION_FILE_RES.some((re) => ci(re).test(s))) return true;
+  // <claude dir>/projects/<project>/memory/<file>, for ~/.claude, the project's .claude and CLAUDE_CONFIG_DIR.
+  return ctx.agent.dirs.some((d) => s.startsWith(d + '/projects/') && /^[^/]+\/memory\/[^/]/.test(s.slice(d.length + 10)));
+}
+
+/** Whether a typed path names an instruction file, as typed or where it really leads (links followed). */
+function isInstructionPath(p, opts = {}) {
+  if (typeof p !== 'string' || !p) return false;
+  const ctx = contextOf(opts);
+  const expanded = expandEnv(expandHome(p, ctx.home), ctx.env);
+  const abs = path.resolve(ctx.cwd, expanded.text);
+  const candidates = new Set([abs, realTargetOf(abs)]);
+  const physical = physicalDotDot(expanded.text, ctx.cwd);
+  if (physical) { candidates.add(physical); candidates.add(realTargetOf(physical)); }
+  for (const candidate of candidates) if (isInstructionFile(candidate, ctx)) return true;
+  return false;
+}
+
+/**
+ * null when `p` is not an instruction file, else {file, ask, deny}: the messages for a write to it
+ * (ask: the user decides; deny: strict mode).
+ */
+function instructionWriteNotice(p, opts = {}) {
+  if (!isInstructionPath(p, opts)) return null;
+  // The name comes from the agent: no control characters, and short, in a message the user reads.
+  const shown = String(p).replace(/[\u0000-\u001f\u007f-\u009f]/g, '?');
+  const file = shown.length > 80 ? shown.slice(0, 79) + '…' : shown;
+  return {
+    file,
+    ask: 'zn: this writes to ' + file + ', which your agent reads as standing instructions in later sessions. Approve only if you asked for this change.',
+    deny: 'zn: this writes to ' + file + ', which your agent reads as standing instructions in later sessions, and zn is set to block that. Ask the user to make this change.',
+  };
+}
+
+// Programs that write the files they are given. cp, mv and the like write only their last argument; sed and perl
+// only with an in-place flag; the others any file argument. A redirect target counts for every command.
+const INSTRUCTION_WRITERS = new Set(['tee', 'cp', 'mv', 'install', 'rsync', 'ln', 'dd', 'truncate', 'touch', 'sed', 'perl', 'ex', 'ed', 'patch',
+  'set-content', 'add-content', 'out-file', 'sc', 'ac', 'ni', 'new-item', 'copy-item', 'move-item', 'copy', 'move', 'ren', 'rename-item']);
+const INSTRUCTION_DEST_LAST = new Set(['cp', 'mv', 'install', 'rsync', 'ln', 'copy', 'move', 'copy-item', 'move-item', 'ren', 'rename-item']);
+const IN_PLACE_RE = /^(?:-[A-Za-z]*i|--in-place)/;
+const INSTRUCTION_CHECKS_MAX = 64;
+
+// Words that run the next command: the command word is the first one after them (and their options).
+// Each maps to the options that take a value.
+const INSTRUCTION_WRAPPERS = new Map([
+  ['sudo', new Set(['-u', '-g', '-h', '-p', '-C', '-U', '-D', '-R', '-T', '--user', '--group', '--host'])],
+  ['doas', new Set(['-u', '-C'])],
+  ['env', new Set(['-u', '-C', '-S'])],
+  ['xargs', new Set(['-n', '-I', '-L', '-P', '-d', '-E', '-s', '-a'])],
+  ['nice', new Set(['-n'])],
+  ['time', new Set(['-f', '-o'])],
+  ['command', new Set()], ['builtin', new Set()], ['exec', new Set()], ['nohup', new Set()], ['chronic', new Set()],
+  ['timeout', new Set(['-k', '-s', '--kill-after', '--signal'])],
+  ['stdbuf', new Set(['-i', '-o', '-e', '--input', '--output', '--error'])],
+  ['ionice', new Set(['-c', '-n', '-p', '-P', '-u', '--class', '--classdata'])],
+  ['then', new Set()], ['do', new Set()], ['else', new Set()], ['if', new Set()], ['while', new Set()], ['until', new Set()],
+  ['!', new Set()], ['{', new Set()],
+]);
+
+/** Index in `seg` of the command word of a simple command (after VAR=value, sudo, env, nohup, time, xargs...); -1 if none. */
+function commandWordAt(seg, progs) {
+  let i = 0;
+  while (i < progs.length) {
+    if (seg[i].redirectTarget || /^[A-Za-z_][A-Za-z0-9_]*=/.test(seg[i].text)) { i++; continue; }
+    const takesValue = INSTRUCTION_WRAPPERS.get(progs[i]);
+    if (!takesValue) return i;
+    const wrapper = progs[i];
+    i++;
+    while (i < progs.length && seg[i].text.length > 1 && seg[i].text.startsWith('-')) i += takesValue.has(seg[i].text) ? 2 : 1;
+    if (wrapper === 'timeout') i++; // its first argument is the duration
+  }
+  return -1;
+}
+
+// Downloaders that write the file named by an output option. The value-taking short options (other than the
+// output one) end a cluster such as `-sSo`: what follows them is their value.
+const INSTRUCTION_DOWNLOADERS = {
+  curl: { long: '--output', short: 'o', valued: 'AbcCdDeEFHKmPQrtTuUwxXyYz' },
+  wget: { long: '--output-document', short: 'O', valued: 'abBeFHiIlnoPQtTUwX' },
+};
+
+/** The files a `curl` or `wget` command writes with -o/--output or -O/--output-document. */
+function downloadTargets(name, rest) {
+  const spec = INSTRUCTION_DOWNLOADERS[name];
+  const out = [];
+  for (let i = 0; i < rest.length; i++) {
+    const x = rest[i];
+    if (x === spec.long) {
+      if (i + 1 < rest.length) out.push(rest[i + 1]);
+      i++;
+    } else if (x.startsWith(spec.long + '=')) {
+      out.push(x.slice(spec.long.length + 1));
+    } else if (/^-[A-Za-z]/.test(x)) {
+      for (let k = 1; k < x.length; k++) {
+        if (x[k] === spec.short) {
+          const attached = x.slice(k + 1);
+          if (attached) out.push(attached);
+          else if (i + 1 < rest.length) { out.push(rest[i + 1]); i++; }
+          break;
+        }
+        if (spec.valued.includes(x[k])) break;
+      }
+    }
+  }
+  return out;
+}
+
+const PS_COPY_MOVE = new Set(['copy', 'move', 'copy-item', 'move-item']);
+
+/** The value of PowerShell's -Destination (any unambiguous prefix, also -Destination:value), or null. */
+function psDestinationOf(rest) {
+  for (let i = 0; i < rest.length; i++) {
+    const m = /^-des(?:t(?:i(?:n(?:a(?:t(?:i(?:o(?:n)?)?)?)?)?)?)?)?(?::(.*))?$/i.exec(rest[i]);
+    if (m) return m[1] ? m[1] : (i + 1 < rest.length ? rest[i + 1] : null);
+  }
+  return null;
+}
+
+/** The target directory named with -t DIR or --target-directory[=]DIR, or null. */
+function targetDirectoryOf(rest) {
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '-t' || rest[i] === '--target-directory') return i + 1 < rest.length ? rest[i + 1] : null;
+    if (rest[i].startsWith('--target-directory=')) return rest[i].slice('--target-directory='.length);
+  }
+  return null;
+}
+
+/** When `dest` is a directory (named with a trailing separator, forced by -t, or existing now), where each source lands in it. */
+function intoDirectory(dest, sources, forced, opts) {
+  let isDir = forced || /[\\/]$/.test(dest);
+  if (!isDir) {
+    try {
+      const ctx = contextOf(opts);
+      isDir = fs.statSync(path.resolve(ctx.cwd, expandEnv(expandHome(dest, ctx.home), ctx.env).text)).isDirectory();
+    } catch (_) { isDir = false; }
+  }
+  if (!isDir) return [];
+  const base = dest.replace(/[\\/]+$/, '');
+  const landed = [];
+  for (const src of sources) {
+    const name = src.replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+    if (name && name !== '.' && name !== '..') landed.push(base + '/' + name);
+  }
+  return landed;
+}
+
+/** The first notice for a word of a shell command that writes an instruction file; null when none does. */
+function instructionWriteInWords(readings, opts) {
+  const seen = new Set();
+  for (const reading of readings) {
+    const segments = new Map();
+    for (const w of reading) {
+      if (!segments.has(w.seq)) segments.set(w.seq, []);
+      segments.get(w.seq).push(w);
+    }
+    for (const seg of segments.values()) {
+      const progs = seg.map((x) => x.text.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, ''));
+      const at = commandWordAt(seg, progs);
+      const candidates = [];
+      for (const w of seg) if (w.redirectTarget) candidates.push(w.text);
+      if (at >= 0 && INSTRUCTION_DOWNLOADERS[progs[at]] && Object.prototype.hasOwnProperty.call(INSTRUCTION_DOWNLOADERS, progs[at])) {
+        candidates.push(...downloadTargets(progs[at], seg.slice(at + 1).map((x) => x.text)));
+      } else if (at >= 0 && INSTRUCTION_WRITERS.has(progs[at])) {
+        const name = progs[at];
+        const rest = seg.slice(at + 1).map((x) => x.text);
+        const args = rest.filter((x) => x && !x.startsWith('-') && !/^[0-9]*[<>]/.test(x));
+        if (name === 'dd') {
+          for (const x of rest) if (x.startsWith('of=')) candidates.push(x.slice(3));
+        } else if ((name === 'sed' || name === 'perl') && !rest.some((x) => IN_PLACE_RE.test(x))) {
+          // These only read their files without an in-place flag.
+        } else if (INSTRUCTION_DEST_LAST.has(name)) {
+          // Copy-Item -Path a -Destination b: the destination is named, whatever its place.
+          const psDest = PS_COPY_MOVE.has(name) ? psDestinationOf(rest) : null;
+          const dir = psDest !== null ? null : targetDirectoryOf(rest);
+          if (psDest !== null) {
+            candidates.push(psDest, ...intoDirectory(psDest, args.filter((x) => x !== psDest), false, opts));
+          } else if (dir !== null) {
+            // -t DIR: every other argument is a source, written into DIR.
+            const at = args.indexOf(dir);
+            const sources = args.filter((_, j) => j !== at);
+            candidates.push(...intoDirectory(dir, sources, true, opts));
+          } else if (args.length > 1) {
+            const dest = args[args.length - 1];
+            candidates.push(dest, ...intoDirectory(dest, args.slice(0, -1), false, opts));
+          }
+        } else {
+          candidates.push(...args);
+        }
+      }
+      for (const text of candidates) {
+        if (!text || seen.has(text)) continue;
+        seen.add(text);
+        if (seen.size > INSTRUCTION_CHECKS_MAX || overBudget(opts.budget, 1)) return null;
+        const n = instructionWriteNotice(text, opts);
+        if (n) return n;
+      }
+    }
+  }
+  return null;
+}
+
+// The files an `apply_patch` sent as a shell command adds or updates (or moves to).
+const SHELL_PATCH_WRITES_RE = /^\*\*\* (?:(?:Add|Update) File|Move to): (.+)$/gm;
+function instructionWriteInPatch(cmd, opts) {
+  if (!/^\s*apply_patch\b/.test(String(cmd))) return null;
+  let seen = 0;
+  for (const m of String(cmd).matchAll(SHELL_PATCH_WRITES_RE)) {
+    if (++seen > SHELL_PATCH_FILES_NAMED) break;
+    const n = instructionWriteNotice(m[1].trim(), opts);
+    if (n) return n;
+  }
+  return null;
+}
+
 /* ------------------------------ shell ------------------------------ */
 
 // Characters a backslash escapes in bash, outside and inside double quotes.
@@ -752,6 +1046,8 @@ function scanFirstCommand(cmd, posix = false) {
       continue;
     }
     if (ch === '`' || (ch === '$' && s[i + 1] === '(')) { substitution = true; pushChar(ch, i); continue; }
+    // `>|` is one redirection (it overrides noclobber), not a `>` followed by a pipe.
+    if (ch === '|' && s[i - 1] === '>' && cur && cur.end === i && !cur.text.endsWith('>>')) { pushChar(ch, i); continue; }
     if (ch === ';' || ch === '&' || ch === '|' || ch === '\n' || ch === '(' || ch === ')') {
       endWord();
       return { end: i, words, substitution, operator: ch, unterminated: false };
@@ -761,6 +1057,41 @@ function scanFirstCommand(cmd, posix = false) {
   }
   endWord();
   return { end: s.length, words, substitution, operator: null, unterminated: quote !== null };
+}
+
+// `>` or `>>` as a word of its own, with an optional fd or `*` (PowerShell: all streams) in front.
+const REDIRECT_OP_WORD_RE = /^(?:[0-9]*|\*)(?:>\||>>?)$/;
+// The same operator glued to the end of a word (`x>` in `echo x> file`), read on the raw source so a quoted ">" is not one.
+const GLUED_END_RE = /(?<![\\<>&])(?:>\||>>?)$/;
+// What can stand in front of a redirect operator without being a word of its own: a file descriptor, `*` (PowerShell:
+// all streams) or a bash `{name}` descriptor.
+const REDIRECT_FD_PREFIX_RE = /^(?:[0-9]*|\*|\{[A-Za-z_][A-Za-z0-9_]*\})$/;
+/**
+ * `x>file`, `x>>file`, `"x">file`: find the first `>` of a raw word that is neither quoted nor escaped, in one pass
+ * over the word. Returns {at, len} (the operator) or null when the word holds no such operator, has `<` before it,
+ * or the operator is a descriptor copy (`>&2`) or the end of the word (a redirect whose target is the next word).
+ */
+function gluedRedirect(raw) {
+  let quote = null;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (quote === "'") { if (ch === "'") quote = null; continue; }
+    if (ch === '\\') { i++; continue; }
+    if (quote === '"') { if (ch === '"') quote = null; continue; }
+    if (ch === "'" || ch === '"') { quote = ch; continue; }
+    if (ch === '<') return null;
+    if (ch !== '>') continue;
+    const len = raw[i + 1] === '>' || raw[i + 1] === '|' ? 2 : 1; // `>|` overrides noclobber
+    const next = raw[i + len];
+    if (i === 0 || next === undefined || next === '&' || next === '>') return null;
+    return { at: i, len };
+  }
+  return null;
+}
+// The text of a piece of a raw word, quotes removed the way the scanner removes them.
+function dequoteFragment(frag, posix) {
+  const w = scanFirstCommand(frag, posix).words;
+  return w.length ? w[0].text : '';
 }
 
 /** Every word of the whole command (rough), with a flag for > / >> targets and the command name of its segment. */
@@ -780,9 +1111,33 @@ function allWords(cmd, posix = false) {
     for (let k = 0; k < scan.words.length; k++) {
       const w = scan.words[k];
       const prev = k > 0 ? scan.words[k - 1].text : '';
-      const isRedirTarget = /^[0-9]*>>?$/.test(prev) || /^[0-9]*>>?./.test(w.text);
+      const prevRaw = k > 0 ? rest.slice(scan.words[k - 1].start, scan.words[k - 1].end) : '';
+      const raw = rest.slice(w.start, w.end);
+      // The operator can sit at the end of the word before (`echo x> file`, `echo x>> file`) or inside the word
+      // (`echo x>file`): a redirect whatever the program, bash, cmd.exe or PowerShell.
+      const glued = gluedRedirect(raw);
+      const prefixRaw = glued ? raw.slice(0, glued.at) : '';
+      // A descriptor in front (`2>x`, `{fd}>x`) belongs to the operator; any other prefix is an argument of its own.
+      const gluedOp = glued !== null && !REDIRECT_FD_PREFIX_RE.test(prefixRaw);
+      const afterOp = REDIRECT_OP_WORD_RE.test(prev) || GLUED_END_RE.test(prevRaw);
+      const isRedirTarget = afterOp || /^(?:[0-9]*|\*)(?:>\||>>?)./.test(w.text) || glued !== null;
+      let t = w.text;
+      let targetRaw = raw;
+      if (glued) {
+        targetRaw = raw.slice(glued.at + glued.len);
+        t = dequoteFragment(targetRaw, posix);
+        // `cat ~/.ssh/id_rsa>x` reads the file before it writes x: the part before the operator is checked as a word.
+        if (gluedOp) out.push({ text: dequoteFragment(prefixRaw, posix), redirectTarget: afterOp, head, seq: guard, sub, gitArgs, git: gi >= 0 });
+      }
       // Input redirections: <file, 0<file, <>file (read and write), {fd}<file.
-      out.push({ text: w.text.replace(/^[0-9]*>>?/, '').replace(/^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?/, ''), redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0 });
+      t = t.replace(/^(?:[0-9]*|\*)(?:>\||>>?)/, '').replace(/^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?/, '');
+      // A drive path after a redirect (cmd.exe and PowerShell write them with "\"): the backslashes are separators,
+      // not shell escapes, so the target is read as typed (C:\Users\me\.claude\*.json keeps its "\*").
+      if (isRedirTarget) {
+        const typed = targetRaw.replace(/^(?:[0-9]*|\*)(?:>\||>>?)/, '');
+        if (/^[A-Za-z]:\\/.test(typed) && !/['"]/.test(typed)) t = typed;
+      }
+      out.push({ text: t, redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0 });
     }
     rest = rest.slice(scan.end + 1);
   }
@@ -1720,8 +2075,15 @@ function keychainQuery(cmd, env) {
   return false;
 }
 
+/**
+ * A deny message, or null. With `opts.instructionNotice` (an object the caller owns), a command that is allowed but writes
+ * an agent memory or instruction file leaves the notice from instructionWriteNotice in `opts.instructionNotice.hit`.
+ */
 function bashDenial(cmd, opts = {}) {
-  return shellPatchMessage(cmd, bashDenialOf(cmd, opts), opts);
+  const deny = shellPatchMessage(cmd, bashDenialOf(cmd, opts), opts);
+  const note = opts.instructionNotice;
+  if (!deny && note && !note.hit) note.hit = instructionWriteInPatch(cmd, opts);
+  return deny;
 }
 
 function bashDenialOf(cmd, opts = {}) {
@@ -1851,6 +2213,7 @@ function bashDenialOf(cmd, opts = {}) {
     if (deny && /[*?[]/.test(text)) { globDeny = globDeny || deny; continue; }
     if (deny) return deny;
   }
+  if (!globDeny && opts.instructionNotice && !opts.instructionNotice.hit) opts.instructionNotice.hit = instructionWriteInWords(readings, opts);
   return globDeny;
 }
 
@@ -2174,6 +2537,343 @@ function denialOf(c, text, opts) {
   return credentialDenial(text, c);
 }
 
+/* ------------------------------ egress ------------------------------ */
+
+/*
+ * Network requests written in a command (curl, wget, Invoke-WebRequest and its aliases, inline python or node code that
+ * opens a URL), in a WebFetch URL or in the arguments of an MCP call. egressParts() returns the places where data leaves
+ * the computer (headers, credentials, query string, body, inline code) as plain text; the hook runner scans that text with
+ * the scrubber engine for personal data and literal secrets. Values read from the environment ($TOKEN, ${API_KEY},
+ * $env:TOKEN, %TOKEN%) and command substitutions are removed first: that is the safe way to pass a secret, and only
+ * literal values are reported. A request whose hosts are all local (localhost, 127.0.0.1, ::1) or on the user's
+ * allow-list (hooks.egressAllowHosts) is not checked.
+ */
+const EGRESS_URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+const EGRESS_URL_LIKE_RE = /^(?:localhost|\$|\[|[\w${}-]+(?:\.[\w${}-]+)+|[\w.${}-]+:\d+)(?:[:/?#]|$)/i;
+const EGRESS_URLS_IN_TEXT_RE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s'"`)}\]>]+/gi;
+const EGRESS_PROGRAMS = new Set(['curl', 'wget']);
+const EGRESS_WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'exec', 'nohup', 'time', 'nice', 'timeout', 'stdbuf', 'xargs', 'builtin',
+  'ionice', 'setsid', 'then', 'do', 'else', '!', '{']);
+const EGRESS_INTERPRETER_RE = /^(?:python[0-9.]*|py|node|nodejs|deno|bun)$/;
+const EGRESS_CODE_NET_RE = /\b(?:requests|httpx|urllib[0-9]?|urlopen|aiohttp|pycurl|http\.client|https?\.(?:get|request)|axios|undici|node-fetch|XMLHttpRequest|WebClient|socket)\b|\bfetch\s*\(|\bhttps?:\/\//i;
+// Options that take a value, by tool. The kind says where the value goes; skip lists the others, so their value is not read as a URL.
+const CURL_OPTIONS = {
+  long: { header: 'header', user: 'credentials', cookie: 'header', 'proxy-header': 'header', 'proxy-user': 'credentials', 'oauth2-bearer': 'credentials', 'user-agent': 'header',
+    referer: 'header', pass: 'credentials', data: 'body', 'data-raw': 'body', 'data-binary': 'body', 'data-ascii': 'body', 'data-urlencode': 'body', json: 'body',
+    form: 'body', 'form-string': 'body', 'url-query': 'query', url: 'host', proxy: 'url', preproxy: 'url' },
+  short: { H: 'header', u: 'credentials', b: 'header', A: 'header', e: 'header', d: 'body', F: 'body', x: 'url' },
+  skip: new Set(['output', 'request', 'max-time', 'connect-timeout', 'retry', 'retry-delay', 'retry-max-time', 'write-out', 'cacert', 'cert', 'key', 'resolve', 'limit-rate',
+    'max-redirs', 'range', 'time-cond', 'upload-file', 'config', 'dump-header', 'trace', 'trace-ascii', 'output-dir', 'connect-to', 'interface', 'local-port',
+    'dns-servers', 'pinnedpubkey', 'capath', 'cert-type', 'key-type', 'unix-socket', 'cookie-jar', 'continue-at', 'max-filesize', 'speed-limit', 'speed-time',
+    'stderr', 'variable', 'ciphers', 'curves', 'doh-url', 'hsts', 'alt-svc', 'noproxy', 'proxy-cacert', 'proxy-cert', 'proxy-key']),
+  shortSkip: new Set('cCDEKmoPQrTwXyYzt'.split('')),
+};
+const WGET_OPTIONS = {
+  long: { header: 'header', user: 'credentials', password: 'credentials', 'http-user': 'credentials', 'http-password': 'credentials', 'ftp-user': 'credentials', 'ftp-password': 'credentials',
+    'proxy-user': 'credentials', 'proxy-password': 'credentials', 'user-agent': 'header', referer: 'header', 'post-data': 'body', 'body-data': 'body' },
+  short: { U: 'header' },
+  skip: new Set(['output-document', 'output-file', 'append-output', 'directory-prefix', 'tries', 'timeout', 'wait', 'waitretry', 'read-timeout', 'dns-timeout',
+    'connect-timeout', 'limit-rate', 'quota', 'post-file', 'body-file', 'load-cookies', 'save-cookies', 'input-file', 'base', 'execute', 'bind-address',
+    'ca-certificate', 'certificate', 'private-key', 'level', 'accept', 'reject', 'domains', 'exclude-domains', 'include-directories', 'exclude-directories',
+    'default-page', 'method', 'config']),
+  shortSkip: new Set('OPoaiBtTwQlARDIXe'.split('')),
+};
+
+/** Text with the values read from the environment, and command substitutions, removed. */
+function egressStripEnv(text) {
+  return String(text).replace(ENV_REF_RE, '').replace(/\$\([^()]*\)/g, '');
+}
+
+/** Lower-case host of a URL (scheme, user information, port and path removed); '' when there is none. */
+function egressHostOf(raw) {
+  let s = String(raw).trim().replace(EGRESS_URL_SCHEME_RE, '');
+  s = s.split(/[/?#\\]/, 1)[0];
+  s = s.slice(s.lastIndexOf('@') + 1);
+  if (s[0] === '[') {
+    const end = s.indexOf(']');
+    return (end > 0 ? s.slice(1, end) : s).toLowerCase();
+  }
+  if (s.split(':').length === 2) s = s.slice(0, s.indexOf(':'));
+  return s.toLowerCase();
+}
+
+/** True for a host that stays on this computer, or one the user listed ("example.com" or "*.example.com"). */
+function egressHostAllowed(host, allow) {
+  if (!host) return false;
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.localhost')) return true;
+  for (const a of Array.isArray(allow) ? allow : []) {
+    const h = String(a).toLowerCase();
+    if (h === host || (h.startsWith('*.') && host.endsWith(h.slice(1)))) return true;
+  }
+  return false;
+}
+
+/** Splits the options of curl or wget. Returns {parts, urls}: the places data goes, and the URLs named. */
+function egressOptions(words, spec) {
+  const parts = [];
+  const urls = [];
+  const put = (kind, value) => {
+    if (typeof value !== 'string' || value === '') return;
+    if (kind === 'host') { urls.push(value); parts.push({ where: 'url', text: value }); }
+    else if (kind === 'url') parts.push({ where: 'url', text: value });
+    else if (value.startsWith('@')) return; // @file is a file read, not a literal value
+    else {
+      parts.push({ where: kind, text: value });
+      // user:password is read like the credentials of a URL, so the detector of passwords in URLs applies to it.
+      if (kind === 'credentials' && value.includes(':')) parts.push({ where: 'url', text: 'https://' + value + '@host.invalid/' });
+    }
+  };
+  let restUrls = false;
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (restUrls || w === '-' || w[0] !== '-') {
+      if (restUrls || EGRESS_URL_SCHEME_RE.test(w) || EGRESS_URL_LIKE_RE.test(w)) put('host', w);
+      continue;
+    }
+    if (w === '--') { restUrls = true; continue; }
+    if (w.startsWith('--')) {
+      const eq = w.indexOf('=');
+      const name = (eq > 0 ? w.slice(2, eq) : w.slice(2)).toLowerCase();
+      const known = Object.prototype.hasOwnProperty.call(spec.long, name);
+      if (!known && !spec.skip.has(name)) continue;
+      const value = eq > 0 ? w.slice(eq + 1) : words[++i];
+      if (known) put(spec.long[name], value);
+      continue;
+    }
+    for (let j = 1; j < w.length; j++) {
+      const c = w[j];
+      const known = Object.prototype.hasOwnProperty.call(spec.short, c);
+      if (!known && !spec.shortSkip.has(c)) continue;
+      let value = w.slice(j + 1);
+      if (!value) value = words[++i];
+      if (known) put(spec.short[c], value);
+      break;
+    }
+  }
+  return { parts, urls };
+}
+
+// PowerShell: the cmdlet's arguments are read as one text, up to the end of its line or pipeline.
+function egressPowerShell(text, powershell, found) {
+  const re = powershell
+    ? /(?:^|[\s;|&(])(invoke-webrequest|invoke-restmethod|iwr|irm|curl|wget)(?=\s)/gi
+    : /(?:^|[\s;|&(])(invoke-webrequest|invoke-restmethod|iwr|irm)(?=\s)/gi;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    // A backtick at the end of a line continues the command on the next one: join those lines before the cut.
+    let rest = text.slice(m.index + m[0].length).replace(/`[ \t]*\r?\n/g, ' ');
+    const cut = rest.search(/\r?\n|\s\|\s|&&/);
+    if (cut >= 0) rest = rest.slice(0, cut);
+    found.push({ urls: rest.match(EGRESS_URLS_IN_TEXT_RE) || [], parts: [{ where: 'ps', text: rest }] });
+  }
+}
+
+// python -c, node -e, deno eval and python - <<EOF: the code is read as one text when it opens a URL.
+function egressInterpreter(words, k, text, found) {
+  const rest = words.slice(k + 1);
+  let code = null;
+  for (let i = 0; i < rest.length; i++) {
+    const t = rest[i].text;
+    if (/^-[A-Za-z]*[cep]$/.test(t) || t === '--eval' || t === '--print' || (i === 0 && t === 'eval')) { code = rest[i + 1] ? rest[i + 1].text : null; break; }
+  }
+  if (code === null) {
+    const h = /<<-?\s*['"]?[A-Za-z_]\w*/.exec(text);
+    if (h && !rest.some((r) => /\.(?:py|js|mjs|cjs|ts)$/i.test(r.text))) code = text.slice(h.index);
+  }
+  if (!code || !EGRESS_CODE_NET_RE.test(code)) return;
+  found.push({ urls: code.match(EGRESS_URLS_IN_TEXT_RE) || [], parts: [{ where: 'code', text: code }] });
+}
+
+function egressCollect(raw, opts, depth) {
+  const found = [];
+  const text = stripHeredocs(raw, { until: Date.now() + CHECK_BUDGET_MS, disk: 0 });
+  egressPowerShell(text, opts.powershell === true, found);
+  let rest = text;
+  let guard = 0;
+  while (rest.length && guard++ < SIMPLE_COMMANDS_MAX) {
+    const scan = scanFirstCommand(rest, false);
+    const words = scan.words;
+    let k = -1;
+    for (let i = 0; i < words.length; i++) {
+      const t = words[i].text;
+      const name = programName(t);
+      if (EGRESS_PROGRAMS.has(name) || EGRESS_INTERPRETER_RE.test(name)) { k = i; break; }
+      if (ASSIGNMENT_RE.test(t) || EGRESS_WRAPPERS.has(name) || t.startsWith('-') || /^\d+[smhd]?$/.test(t)) continue;
+      break;
+    }
+    if (k >= 0) {
+      const name = programName(words[k].text);
+      if (EGRESS_INTERPRETER_RE.test(name)) egressInterpreter(words, k, raw, found);
+      // In the PowerShell tool, curl and wget are Invoke-WebRequest, read above; curl.exe is the real program.
+      else if (!(opts.powershell === true && !/\.exe$/i.test(words[k].text))) {
+        const r = egressOptions(words.slice(k + 1).map((w) => w.text), name === 'curl' ? CURL_OPTIONS : WGET_OPTIONS);
+        if (r.parts.length) found.push(r);
+      }
+    }
+    rest = rest.slice(scan.end + 1);
+  }
+  // sh -c "curl ...": the code of a shell inside the command is a command of its own.
+  if (depth < SHELL_CODE_DEPTH && /\b(?:sh|bash|zsh|dash|ksh|ash|eval|su|pwsh|powershell|cmd|watch|flock|xargs|busybox)\b/.test(text)) {
+    for (const code of shellCodesOf(allWords(text, false))) found.push(...egressCollect(code, opts, depth + 1));
+  }
+  return found;
+}
+
+function egressResult(found, allowOrFn) {
+  const out = [];
+  if (!found.length) return out;
+  // The allow-list may be a function, read from the settings only when a request was found.
+  const allow = typeof allowOrFn === 'function' ? allowOrFn() : allowOrFn;
+  for (const r of found) {
+    const hosts = r.urls.map(egressHostOf);
+    if (hosts.length && hosts.every((h) => egressHostAllowed(h, allow))) continue;
+    out.push({ hosts: [...new Set(hosts.filter(Boolean))], parts: r.parts.map((p) => ({ where: p.where, text: egressStripEnv(p.text) })) });
+  }
+  return out;
+}
+
+/*
+ * The places in a shell command where data leaves the computer through a network request that is not local or
+ * allow-listed. Returns [{hosts: [string], parts: [{where, text}]}], one entry per request. where: 'header',
+ * 'body', 'query', 'url' (a URL as written), 'ps' (PowerShell arguments) or 'code' (inline code);
+ * egressLabel() turns a detection inside a part into what a person reads.
+ * opts: powershell (the PowerShell tool), allow (host allow-list, or a function that returns it).
+ */
+function egressParts(cmd, opts = {}) {
+  const raw = String(cmd || '');
+  if (!raw || raw.length > SHELL_SCAN_CAP) return [];
+  if (!/curl|wget|invoke-|iwr|irm|python|py\b|node|deno|bun|https?:\/\//i.test(raw)) return [];
+  return egressResult(egressCollect(raw, opts, 0), opts.allow);
+}
+
+/*
+ * Percent-decoded copies of a text, for the scan: "%40" is how an email address is written in a URL or a form body, and
+ * "+" is a space in a query or form. Returns [] when the text has no "%", else up to three distinct copies (decoded,
+ * decoded with "+" as a space, and the first decoded once more for double encoding). Invalid sequences are left as
+ * they are, nothing throws, and the work is linear in the text.
+ */
+function egressDecode(text) {
+  return text.replace(/(?:%[0-9a-f]{2})+/gi, (seq) => {
+    try { return decodeURIComponent(seq); } catch (e) { return seq; }
+  });
+}
+function egressDecodedCopies(text) {
+  if (typeof text !== 'string' || text.indexOf('%') < 0) return [];
+  const out = new Set();
+  const once = egressDecode(text);
+  out.add(once);
+  if (text.indexOf('+') >= 0) out.add(egressDecode(text.replace(/\+/g, ' ')));
+  if (once.indexOf('%') >= 0) out.add(egressDecode(once));
+  out.delete(text);
+  return [...out];
+}
+
+/** The URL of a WebFetch call, in the shape egressParts returns ([] when its host is local or allow-listed). */
+function egressUrlParts(url, opts = {}) {
+  const u = String(url || '');
+  if (!u) return [];
+  return egressResult([{ urls: [u], parts: [{ where: 'url', text: u }] }], opts.allow);
+}
+
+const EGRESS_HEADER_KEY_RE = /(?:^|[_.-])(?:headers?|cookies?|authorization|auth|credentials?|bearer|token)(?:$|[_.-])/i;
+const EGRESS_BODY_KEY_RE = /^(?:body|data|json|payload|form|params|query|variables)$/i;
+const EGRESS_URL_KEY_RE = /^(?:url|uri|endpoint|href|webhook(?:_?url)?|base_?url)$/i;
+
+/** The same for the arguments of an MCP call: only a call that has a URL or headers is a request. */
+function egressMcpCollect(args) {
+  const urls = [];
+  const parts = [];
+  let request = false;
+  let leaves = 0;
+  // complete: the walk reached every text in the arguments (depth and leaf limits not hit), so the parts cover all of it.
+  let complete = true;
+  const walk = (value, key, where, depth) => {
+    if (depth > 6 || leaves > 2000) { complete = false; return; }
+    if (typeof value === 'string') {
+      leaves++;
+      if (/^https?:\/\//i.test(value.trim()) || EGRESS_URL_KEY_RE.test(key)) { request = true; urls.push(value); parts.push({ where: 'url', text: value }); }
+      else parts.push({ where: where || 'arguments', text: value });
+      return;
+    }
+    if (Array.isArray(value)) { for (const v of value) walk(v, key, where, depth + 1); return; }
+    if (value && typeof value === 'object') {
+      for (const [k, v] of Object.entries(value)) {
+        leaves++;
+        parts.push({ where: 'arguments', text: k });
+        let w = where;
+        if (!w && EGRESS_HEADER_KEY_RE.test(k)) w = 'header';
+        else if (!w && EGRESS_BODY_KEY_RE.test(k)) w = 'body';
+        if (/^headers?$/i.test(k)) request = true;
+        walk(v, k, w, depth + 1);
+      }
+    }
+  };
+  walk(args, '', null, 0);
+  return { request, urls, parts, complete };
+}
+
+/*
+ * True when the egress check of an MCP call covers every text in its arguments: the call is a network request (a URL or
+ * headers) and the walk was not cut short by the depth or leaf limits. Only then may the egress check answer the
+ * personal-data question of the MCP check on its own; otherwise that question stays.
+ */
+function egressMcpCovers(args) {
+  if (!args || typeof args !== 'object') return false;
+  const c = egressMcpCollect(args);
+  return c.request && c.complete;
+}
+
+/*
+ * The places of an MCP call that the egress check scans. Only a call with a URL or headers is a request.
+ * Host rule: the host allow-list (and the local hosts) governs only what goes to the network host, that is the URL,
+ * headers and body parts. The MCP server receives all the arguments, whatever the host, so personal data in the other
+ * texts of the call (where 'arguments') is still scanned for a local or allow-listed host: it is the question the MCP
+ * check asks for a call that is not a request.
+ */
+function egressMcpParts(args, opts = {}) {
+  if (!args || typeof args !== 'object') return [];
+  const { request, urls, parts } = egressMcpCollect(args);
+  if (!request) return [];
+  const out = egressResult([{ urls, parts }], opts.allow);
+  if (out.length) return out;
+  const rest = parts.filter((p) => p.where === 'arguments');
+  return rest.length ? [{ hosts: [], parts: rest.map((p) => ({ where: p.where, text: egressStripEnv(p.text) })) }] : [];
+}
+
+const EGRESS_PS_PARAMS = { headers: 'header', body: 'body', uri: 'URL', credential: 'credentials', authentication: 'credentials', token: 'credentials', useragent: 'header' };
+const EGRESS_CODE_KEYS = { header: 'header', headers: 'header', cookie: 'header', cookies: 'header', auth: 'credentials', params: 'query string', data: 'body',
+  json: 'body', body: 'body', payload: 'body', url: 'URL' };
+
+/** What a person reads for a detection at index `start` of a part: 'header', 'body', 'query string', 'URL', 'credentials', 'code' or 'arguments'. */
+function egressLabel(part, start) {
+  const text = part.text;
+  const before = text.slice(Math.max(0, start - 300), start);
+  if (part.where === 'ps' || part.where === 'code') {
+    // A detection inside a URL written in the text is named by its place in that URL.
+    for (const m of text.matchAll(EGRESS_URLS_IN_TEXT_RE)) {
+      if (start >= m.index && start < m.index + m[0].length) return egressLabel({ where: 'url', text: m[0] }, start - m.index);
+    }
+  }
+  if (part.where === 'url') {
+    const schemeEnd = (EGRESS_URL_SCHEME_RE.exec(text) || [''])[0].length;
+    const slash = text.indexOf('/', schemeEnd);
+    const q = text.indexOf('?');
+    if (q >= 0 && start > q) return 'query string';
+    return start >= schemeEnd && (slash < 0 || start < slash) && text.slice(0, start).length >= schemeEnd && /@/.test(text.slice(schemeEnd, slash < 0 ? undefined : slash)) ? 'credentials' : 'URL';
+  }
+  if (part.where === 'ps') {
+    let last = null;
+    for (const m of before.matchAll(/(?:^|\s)-(headers|body|uri|credential|authentication|token|useragent)\b/gi)) last = m[1].toLowerCase();
+    return last ? EGRESS_PS_PARAMS[last] : 'arguments';
+  }
+  if (part.where === 'code') {
+    let last = null;
+    for (const m of before.matchAll(/\b(headers?|cookies?|auth|params|data|json|body|payload|url)\b['"]?\s*(?:=|:|\()/gi)) last = m[1].toLowerCase();
+    return (last && EGRESS_CODE_KEYS[last]) || 'code';
+  }
+  return part.where === 'query' ? 'query string' : part.where;
+}
+
 module.exports = {
   POLICY_RULES_VERSION,
   classifyPath,
@@ -2186,6 +2886,8 @@ module.exports = {
   expandBraces,
   readDenial,
   writeDenial,
+  instructionWriteNotice,
+  INSTRUCTION_FILE_NAMES,
   scanFirstCommand,
   wrapWithZnRun,
   scanPowerShell,
@@ -2194,4 +2896,10 @@ module.exports = {
   adminCommand,
   bashDenial,
   SHELL_SCAN_CAP,
+  egressParts,
+  egressUrlParts,
+  egressMcpParts,
+  egressMcpCovers,
+  egressDecodedCopies,
+  egressLabel,
 };

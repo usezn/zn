@@ -68,7 +68,8 @@ const { writeFileAtomic } = require('../broker/files');
 const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
 const { claudeCodePolicyWarnings } = require('./managed-policy');
-const { hooksOf } = require('./config-file');
+const cfg = require('./config-file');
+const { hooksOf } = cfg;
 const launcher = require('./launcher');
 
 const id = 'claude-code';
@@ -215,6 +216,8 @@ function respondInner(d, ev) {
       return out;
     }
     if (d.decision === 'deny') return { decision: 'block', reason: d.message || 'Blocked by zn' };
+    // A note for the agent with the output unchanged (for example, text in it that reads like instructions).
+    if (d.message) return { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: d.message } };
     return null;
   }
   if (ev.event === 'user_prompt') {
@@ -273,7 +276,7 @@ function readJson(file) {
   let data;
   try {
     const text = fs.readFileSync(file, 'utf8');
-    data = text.trim() ? JSON.parse(text) : {};
+    data = text.replace(/^\uFEFF/, '').trim() ? cfg.parseJson(text) : {};
   } catch (err) {
     if (err.code === 'ENOENT') return {};
     throw new Error('cannot parse ' + file + ': ' + err.message);
@@ -370,7 +373,7 @@ function installMcp(opts, report) {
     report.mcpBackup = backup(file);
     data.mcpServers[MCP_SERVER_NAME] = conf;
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n', 0o644);
+    writeFileAtomic(file, cfg.stringifyJson(data), 0o644);
     report.mcp = file;
     return;
   }
@@ -418,7 +421,7 @@ function install(opts = {}) {
     data.hooks[event].push(group);
   }
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n', 0o644);
+  writeFileAtomic(file, cfg.stringifyJson(data), 0o644);
   if (opts.mcp !== false) installMcp(opts, report);
   if (!opts.command && (opts.scope || 'user') === 'project' && !znOnPath(opts)) {
     report.warnings.push('`zn` is not on your PATH, and this project install runs `zn hook claude-code`' +
@@ -454,9 +457,11 @@ function uninstall(opts = {}) {
     if (JSON.stringify(hooks) !== before) {
       report.backup = backup(file);
       report.removed = 1;
-      writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n', 0o644);
-      // The launcher of a user install (see commandFor) is no longer referenced.
-      if ((opts.scope || 'user') !== 'project') {
+      writeFileAtomic(file, cfg.stringifyJson(data), 0o644);
+      // The launcher (see commandFor) is shared by every Claude Code profile of this machine (every CLAUDE_CONFIG_DIR),
+      // so uninstalling one profile leaves it in place: deleting it would make the other profiles' hooks exit 127,
+      // which Claude Code runs through as a non-blocking error. Only the machine-wide uninstall removes it.
+      if ((opts.scope || 'user') !== 'project' && opts.removeLauncher === true) {
         try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
       }
     }
@@ -470,7 +475,7 @@ function uninstall(opts = {}) {
         if (s && isZnSecretsServer(s)) {
           backup(mcpFile);
           delete data.mcpServers[MCP_SERVER_NAME];
-          writeFileAtomic(mcpFile, JSON.stringify(data, null, 2) + '\n', 0o644);
+          writeFileAtomic(mcpFile, cfg.stringifyJson(data), 0o644);
         }
       }
     } else {

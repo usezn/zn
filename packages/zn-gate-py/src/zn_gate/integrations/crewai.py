@@ -32,8 +32,11 @@ def guarded_tool(
                     the scan off for a tool). A blocked output raises
                     GuardBlockError (target "<framework>:<tool>:result") or returns
                     `fallback` / the block message.
-    - block_truncated: With check_result, block an output too large to scan in
-                       full (rule size:truncated) (default False).
+    - block_truncated: Force a block for an output too large to scan in full
+                       (rule size:truncated). With check_result, an output over
+                       4 MB is blocked by default; ZN_ALLOW_TRUNCATED=1 lets it
+                       through, and block_truncated=True keeps it blocked
+                       even then (default False).
     - framework: Prefix of the block target, "<framework>:<tool>" (default
                  "tool"). Pass "crewai" to label blocks as CrewAI tools.
 

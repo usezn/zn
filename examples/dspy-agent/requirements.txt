@@ -1,2 +1,4 @@
 zn-gate==1.13.1
 dspy==3.4.1
+# pinned below 1.107.0, a compromised release
+litellm<1.107

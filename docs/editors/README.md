@@ -21,3 +21,5 @@ zn-gate protects most where an agent lets it hook into its own tools: there it c
 "Only servers you wrap" means that the results of the MCP servers you start through `zn-gate shield` are checked; each page shows how. The hooks need zn-gate 1.5 or later from npm (`npm install -g zn-gate`). Per-agent details for the hooks: [compat.md](../compat.md).
 
 VS Code and Windsurf have their own agent hooks, but zn-gate does not install hooks for them yet. Antigravity's hooks are experimental: see [its page](antigravity.md) for what they cover and what they do not.
+
+To remove zn-gate from an editor by hand, see [the files zn-gate writes in each editor](remove-by-hand.md).

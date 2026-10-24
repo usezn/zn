@@ -79,6 +79,14 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   A Codex CLI or Claude Code hook calls a small script that `zn hooks install <agent>` writes under `~/.zn/hooks`. If the script was deleted or edited, run `zn hooks install <agent>` again.
 
+- **Antigravity runs the hook command without a shell, and the launcher path is in quotes.**
+
+  ```text
+  its hook cannot start: Antigravity runs the command without a shell, so the quotes around the launcher path (<path>) become part of the file name and the hook never runs
+  ```
+
+  An older zn-gate wrote the Antigravity launcher path in quotes. Antigravity does not read quotes, so the hook never starts. Run `zn hooks install antigravity` again: it writes the path without quotes.
+
 - **The hook calls `zn`, and `zn` is not installed.**
 
   ```text

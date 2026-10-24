@@ -6,17 +6,25 @@
  * the network.
  */
 
-const { evaluate, scanWindows, sanitizeToolResult, tooInvisible, invisibleBlock } = require('./rules');
+const { evaluate, scanWindows, sanitizeToolResult, tooInvisible, invisibleBlock, truncatedBlocks } = require('./rules');
 
 const MAX_DEPTH = 10;
 const ON_BLOCK_VALUES = ['throw', 'return'];
 
 /** Plain text for a blocked call or tool result: what was blocked, why, and the next step. */
 function blockMessage(assessment, target) {
-  const reason = String((assessment && assessment.reason) || '').replace(/\.+$/, '');
+  const raw = String((assessment && assessment.reason) || '');
+  let end = raw.length;
+  while (end > 0 && raw.charCodeAt(end - 1) === 46) end--; // drop trailing dots in linear time
+  const reason = raw.slice(0, end);
   const rule = assessment && assessment.rule;
   const why = reason ? `Reason: ${reason} (rule: ${rule}).` : `Reason: the input matched rule ${rule}.`;
-  const step = /:(result|tool_output)$/.test(target)
+  const isResult = /:(result|tool_output)$/.test(target);
+  if (isResult && rule === 'size:truncated') {
+    return `zn-gate blocked '${target}'. zn could not check this whole result (over 4 MB), so it was blocked. ` +
+      'If you trust this tool, set ZN_ALLOW_TRUNCATED=1 (or pass allowTruncated: true) to let large results through without a full check.';
+  }
+  const step = isResult
     ? 'Next step: do not use this result; ask the person who runs this agent where the data came from.'
     : 'Next step: do not retry with reworded text; tell the person who runs this agent.';
   return `zn-gate blocked '${target}'. ${why} ${step}`;
@@ -113,8 +121,8 @@ function checkToolCall(toolName, args, opts = {}) {
 /**
  * Decide whether data returned by a tool may enter the model context. Large
  * strings are scanned in overlapping windows; `truncated` is true when some
- * string was not scanned in full, and such output is blocked (rule
- * size:truncated) with opts.blockTruncated or ZN_BLOCK_TRUNCATED=1.
+ * string was not scanned in full, and such output is blocked by default (rule
+ * size:truncated); opts.allowTruncated or ZN_ALLOW_TRUNCATED=1 allows it.
  * Internal helper of guardTool; the public async variant is checkToolResult in lib/client.js.
  */
 function scanToolResult(result, opts = {}) {
@@ -129,7 +137,7 @@ function scanToolResult(result, opts = {}) {
     truncated = truncated || res.truncated === true;
     advisory = advisory || res.advisory;
   }
-  if (truncated && (opts.blockTruncated === true || process.env.ZN_BLOCK_TRUNCATED === '1')) {
+  if (truncated && truncatedBlocks(opts)) {
     return {
       allowed: false, verdict: 'block', confidence: 1.0, rule: 'size:truncated',
       reason: 'Output too large to scan in full', truncated: true,
@@ -147,7 +155,7 @@ function validateOptions(opts) {
     const allowed = ON_BLOCK_VALUES.map((v) => "'" + v + "'").join(', ');
     throw new TypeError('guardTool: onBlock must be one of ' + allowed + ' (got ' + JSON.stringify(onBlock) + ')');
   }
-  for (const key of ['checkArgs', 'checkResult', 'maskSecrets', 'blockTruncated']) {
+  for (const key of ['checkArgs', 'checkResult', 'maskSecrets', 'blockTruncated', 'allowTruncated']) {
     if (opts[key] !== undefined && typeof opts[key] !== 'boolean') {
       throw new TypeError('guardTool: ' + key + ' must be a boolean');
     }
@@ -170,7 +178,8 @@ function validateOptions(opts) {
  *   checkArgs       check the arguments (default true)
  *   checkResult     check the return value (default false)
  *   maskSecrets     redact credentials in the returned value (default false)
- *   blockTruncated  with checkResult, block a result too large to scan in full
+ *   blockTruncated  with checkResult, block a result too large to scan in full (now the default)
+ *   allowTruncated  with checkResult, allow such a result (it is marked truncated)
  *   onBlockCallback called as (assessment, name, payload) before the block is applied
  *   strict          passed to the rules engine
  * An unknown onBlock (or a wrongly typed option) throws a TypeError at wrap time.
@@ -197,7 +206,7 @@ function guardTool(fn, opts = {}) {
 
   const after = (res) => {
     if (opts.checkResult) {
-      const assessment = scanToolResult(res, { ...engineOpts, blockTruncated: opts.blockTruncated === true });
+      const assessment = scanToolResult(res, { ...engineOpts, blockTruncated: opts.blockTruncated === true, allowTruncated: opts.allowTruncated === true });
       if (!assessment.allowed) return blocked(assessment, name + ':result', res).value;
     }
     return opts.maskSecrets ? sanitizeToolResult(res).sanitized : res;
