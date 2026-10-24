@@ -82,7 +82,7 @@ pub const MAX_LIMIT_FROM_ENV: usize = 100_000_000;
 pub const DEFAULT_MAX_TOTAL_ROWS: usize = 100_000;
 
 /// Version of the on-disk schema, stored in `PRAGMA user_version`.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// Namespace given to rows written before rows had one (schema 0 and 1).
 /// Those rows came from every client of the gateway, so they go to the
@@ -227,6 +227,9 @@ impl VectorMemory {
         }
         let mut conn = Connection::open(path)?;
         conn.busy_timeout(busy_timeout)?;
+        // Overwrite deleted and replaced content with zeros, so text that
+        // an upgrade replaces does not stay in free pages.
+        conn.execute_batch("PRAGMA secure_delete = ON;")?;
         // Switching to WAL needs an exclusive lock: only ask when the file is
         // not in WAL mode yet.
         let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0))?;
@@ -243,11 +246,59 @@ impl VectorMemory {
                 SCHEMA_VERSION
             ));
         }
+        let mut cleaned = false;
         if version < SCHEMA_VERSION {
             Self::upgrade(&tx)?;
+            cleaned = version < 3;
         }
         tx.commit()?;
+        if cleaned {
+            // Files before schema 3 kept the text of each call. The rows now
+            // hold references; compact the file so the old text does not stay
+            // in free pages or in the log, and only then record schema 3. If
+            // this fails the file is not used, and the next start retries.
+            conn.execute_batch("VACUUM;")?;
+            conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+                r.get::<_, i64>(0)
+            })?;
+            conn.execute_batch("PRAGMA user_version = 3;")?;
+        }
         Ok(conn)
+    }
+
+    /// Replaces the text of every row that is not a reference yet with its
+    /// `content_ref`. Files written before schema 3 stored the arguments of
+    /// calls as text.
+    fn scrub_text(tx: &Transaction<'_>) -> Result<()> {
+        let rows: Vec<(i64, String)> = {
+            let mut stmt = tx.prepare("SELECT id, text FROM memory")?;
+            let mapped = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            let mut out = Vec::new();
+            for row in mapped {
+                let (id, text): (i64, String) = row?;
+                if !crate::ai::is_content_ref(&text) {
+                    out.push((id, text));
+                }
+            }
+            out
+        };
+        for (id, text) in rows {
+            tx.execute(
+                "UPDATE memory SET text = ?1 WHERE id = ?2",
+                params![crate::ai::content_ref(&text), id],
+            )?;
+        }
+        let left: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM memory WHERE NOT (text GLOB 'h:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')",
+            [],
+            |r| r.get(0),
+        )?;
+        if left != 0 {
+            return Err(anyhow!(
+                "{left} vector rows still hold text after the cleanup"
+            ));
+        }
+        Ok(())
     }
 
     /// Brings a schema 0 (new file, or written before versioning) or schema 1
@@ -301,6 +352,7 @@ impl VectorMemory {
              END;
              PRAGMA user_version = 2;",
         )?;
+        Self::scrub_text(tx)?;
         Ok(())
     }
 
@@ -989,6 +1041,64 @@ mod tests {
         raw
     }
 
+    fn zn_ref(text: &str) -> String {
+        crate::ai::content_ref(text)
+    }
+
+    #[tokio::test]
+    async fn old_text_rows_become_references_and_leave_no_text_in_the_files() {
+        let dir = temp_dir("scrubtext");
+        let m = VectorMemory::new(dir.to_str().unwrap(), 1, "m");
+        let raw = write_old_file(&m, &dir, 2);
+        raw.execute(
+            "INSERT INTO memory (agent_id, text, vector) VALUES ('a', 'PIN is 4821 recovery_code', ?1)",
+            params![1.0f32.to_le_bytes().to_vec()],
+        )
+        .unwrap();
+        drop(raw);
+
+        let found = m.search(LEGACY_NAMESPACE, "a", &[0.0], 5).await.unwrap();
+        assert_eq!(found.len(), 2);
+        assert!(found.iter().all(|(t, _)| crate::ai::is_content_ref(t)));
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let bytes = std::fs::read(entry.unwrap().path()).unwrap();
+            let hay = String::from_utf8_lossy(&bytes);
+            assert!(!hay.contains("4821") && !hay.contains("recovery_code"));
+        }
+        let raw = Connection::open(m.db_path()).unwrap();
+        let v: i64 = raw
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, SCHEMA_VERSION);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_file_whose_cleanup_fails_is_not_used() {
+        let dir = temp_dir("scrubfail");
+        let m = VectorMemory::new(dir.to_str().unwrap(), 1, "m");
+        let raw = write_old_file(&m, &dir, 2);
+        raw.execute_batch(
+            "CREATE TABLE memory_counts (namespace TEXT PRIMARY KEY, row_count INTEGER NOT NULL) WITHOUT ROWID;
+             CREATE TRIGGER block_update BEFORE UPDATE ON memory
+             BEGIN SELECT RAISE(ABORT, 'blocked'); END;",
+        )
+        .unwrap();
+        raw.execute_batch(
+            "ALTER TABLE memory ADD COLUMN namespace TEXT NOT NULL DEFAULT '__legacy__';",
+        )
+        .ok();
+        drop(raw);
+        assert!(m.search(LEGACY_NAMESPACE, "a", &[0.0], 5).await.is_err());
+        assert!(m.store(NS, "a", "x", &[1.0]).await.is_err());
+        let raw = Connection::open(m.db_path()).unwrap();
+        let text: String = raw
+            .query_row("SELECT text FROM memory", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(text, "old", "a failed cleanup must change nothing");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[tokio::test]
     async fn older_files_are_upgraded_in_place() {
         for version in [0, 1] {
@@ -1000,7 +1110,7 @@ mod tests {
             assert!(m.search(NS, "a", &[0.0], 5).await.unwrap().is_empty());
             assert_eq!(
                 m.search(LEGACY_NAMESPACE, "a", &[0.0], 5).await.unwrap(),
-                vec![("old".to_string(), 4.0)]
+                vec![(zn_ref("old"), 4.0)]
             );
             let v: i64 = raw
                 .query_row("PRAGMA user_version", [], |r| r.get(0))

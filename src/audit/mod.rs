@@ -911,52 +911,63 @@ fn scrub_legacy_neighbours(conn: &mut Connection) -> Result<usize> {
     let hex16 = "[0-9a-f]".repeat(16);
     let bare = format!("h:{hex16}");
     let with_dist = format!("h:{hex16}:*");
-    let rows: Vec<(String, String, String)> = {
-        let mut stmt = conn.prepare(
-            "SELECT id, event, nearest_neighbor FROM audit_logs WHERE nearest_neighbor IS NOT NULL \
+    // Select and update in one transaction, so no other writer can slip a row
+    // in between and nothing is left half converted.
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let rows: Vec<(String, String)> = {
+        let mut stmt = tx.prepare(
+            "SELECT id, nearest_neighbor FROM audit_logs WHERE nearest_neighbor IS NOT NULL \
              AND NOT (nearest_neighbor GLOB ?1 OR nearest_neighbor GLOB ?2)",
         )?;
-        let mapped = stmt.query_map(params![bare, with_dist], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        })?;
+        let mapped = stmt.query_map(params![bare, with_dist], |r| Ok((r.get(0)?, r.get(1)?)))?;
         let mut out = Vec::new();
         for row in mapped {
-            let (id, event, nn): (String, String, String) = row?;
+            let (id, nn): (String, String) = row?;
             let already = crate::ai::is_content_ref(&nn)
                 || nn
                     .rsplit_once(':')
                     .is_some_and(|(head, _)| crate::ai::is_content_ref(head));
             if !already {
-                out.push((id, event, nn));
+                out.push((id, nn));
             }
         }
         out
     };
-    if rows.is_empty() {
-        return Ok(0);
-    }
-    let tx = conn.transaction()?;
-    for (id, event, nn) in &rows {
+    let mut changed = rows.len();
+    for (id, nn) in &rows {
         let new_nn = match nn.rsplit_once(':') {
             Some((text, dist)) if dist.parse::<f64>().is_ok() => {
                 format!("{}:{}", crate::ai::content_ref(text), dist)
             }
             _ => crate::ai::content_ref(nn),
         };
-        if event == "NEAREST_NEIGHBOR" {
-            tx.execute(
-                "UPDATE audit_logs SET nearest_neighbor = ?1, payload = NULL WHERE id = ?2",
-                params![new_nn, id],
-            )?;
-        } else {
-            tx.execute(
-                "UPDATE audit_logs SET nearest_neighbor = ?1 WHERE id = ?2",
-                params![new_nn, id],
-            )?;
-        }
+        tx.execute(
+            "UPDATE audit_logs SET nearest_neighbor = ?1 WHERE id = ?2",
+            params![new_nn, id],
+        )?;
+    }
+    // A NEAREST_NEIGHBOR row never keeps a payload: the reference is in
+    // `nearest_neighbor`, and an old payload held the text of the neighbour
+    // (also when that column is empty or already a reference).
+    changed += tx.execute(
+        "UPDATE audit_logs SET payload = NULL WHERE event = 'NEAREST_NEIGHBOR' AND payload IS NOT NULL",
+        [],
+    )?;
+    // Nothing in clear may remain; otherwise the whole cleanup is undone.
+    let left: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM audit_logs WHERE (nearest_neighbor IS NOT NULL \
+         AND NOT (nearest_neighbor GLOB ?1 OR nearest_neighbor GLOB ?2)) \
+         OR (event = 'NEAREST_NEIGHBOR' AND payload IS NOT NULL)",
+        params![bare, with_dist],
+        |r| r.get(0),
+    )?;
+    if left != 0 {
+        return Err(anyhow!(
+            "{left} audit rows still hold neighbour text after the cleanup"
+        ));
     }
     tx.commit()?;
-    Ok(rows.len())
+    Ok(changed)
 }
 
 #[cfg(test)]
@@ -2005,7 +2016,7 @@ mod tests {
         assert!(crate::ai::is_content_ref(&c), "{c}");
         let d = get("d");
         assert_eq!(d.0.as_deref(), Some("h:0123456789abcdef:0.5000"));
-        assert_eq!(d.1.as_deref(), Some("keep"), "ref rows stay untouched");
+        assert_eq!(d.1, None, "a neighbour row keeps no payload");
         let all = format!("{:?}", vault.get_recent(10).unwrap());
         assert!(!all.contains("4821") && !all.contains("no distance"));
         drop(vault);
@@ -2013,6 +2024,37 @@ mod tests {
         // A second opening changes nothing.
         let vault = AuditVault::new(&path, None).expect("third open");
         assert_eq!(get_nn(&vault, "a"), want);
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn old_neighbour_payloads_are_cleared_even_when_the_column_is_empty_or_a_reference() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            let ins = "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload, nearest_neighbor) VALUES (?1, 't', 'NEAREST_NEIGHBOR', 'tool', 'AUDIT', ?2, ?3)";
+            conn.execute(
+                ins,
+                params!["x", "login: {\"pin\":\"4821\"}", None::<String>],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params![
+                    "y",
+                    "login: {\"pin\":\"4821\"}",
+                    "h:0123456789abcdef:0.5000"
+                ],
+            )
+            .unwrap();
+        }
+        drop(vault);
+        let vault = AuditVault::new(&path, None).expect("reopen");
+        let all = format!("{:?}", vault.get_recent(10).unwrap());
+        assert!(!all.contains("4821"), "old neighbour text survived: {all}");
         drop(vault);
         fs::remove_file(&path).ok();
     }
@@ -2032,12 +2074,7 @@ mod tests {
             .unwrap();
             conn.execute(
                 ins,
-                params![
-                    "b",
-                    "NEAREST_NEIGHBOR",
-                    "keep",
-                    "h:0123456789abcdef:0.5000"
-                ],
+                params!["b", "NEAREST_NEIGHBOR", "keep", "h:0123456789abcdef:0.5000"],
             )
             .unwrap();
             conn.execute(
