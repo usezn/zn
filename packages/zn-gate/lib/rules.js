@@ -1,14 +1,15 @@
 'use strict';
 
 const fs = require('fs');
+const linearRegex = require('./linear-regex');
 const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-25.9
+ * RULES_VERSION: 2026-10-25.10
  */
 
-const RULES_VERSION = '2026-10-25.9';
+const RULES_VERSION = '2026-10-25.10';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -341,13 +342,42 @@ function strictMode(options, cfg) {
 let customConfig = null;
 let lastConfigCheck = 0;
 
+class RulesFileError extends Error {}
+
+// Where a JSON file stops being valid, as "line L, column C" and nothing from the file itself.
+function jsonPlace(text, err) {
+  const m = /position (\d+)/.exec(err && err.message ? err.message : '');
+  if (!m) return 'the file is not valid JSON';
+  const pos = Math.min(Number(m[1]), text.length);
+  let line = 1;
+  let col = 1;
+  for (let k = 0; k < pos; k++) {
+    if (text.charCodeAt(k) === 10) { line++; col = 1; } else col++;
+  }
+  return `the file is not valid JSON at line ${line}, column ${col}`;
+}
+
+// Reads the project's rules into a new object. Nothing is applied until the whole
+// file has been read and every pattern has been checked: a file that cannot be read,
+// is not valid JSON, or holds a pattern that is not accepted (see lib/linear-regex.js)
+// gives a config with `errors`, and the rules then block until the file is fixed.
 function loadCustomConfig(forceReload = false) {
   const now = Date.now();
   if (!forceReload && customConfig !== null && now - lastConfigCheck < 5000) {
     return customConfig;
   }
   lastConfigCheck = now;
-  customConfig = { bannedPatterns: [], forbiddenPaths: [], strict: false };
+  const next = { bannedPatterns: [], forbiddenPaths: [], strict: false, errors: [], file: null };
+  const budget = { left: linearRegex.MAX_TOTAL_PROGRAM };
+  const addPattern = (src, where) => {
+    if (next.bannedPatterns.length >= linearRegex.MAX_PATTERNS) {
+      next.errors.push(`${where}: more than ${linearRegex.MAX_PATTERNS} custom patterns`);
+      return;
+    }
+    const res = linearRegex.compileCustomPattern(src, budget);
+    if (res.ok) next.bannedPatterns.push(res.rule);
+    else next.errors.push(`${where}: ${res.error}`);
+  };
 
   const candidates = [
     path.join(process.cwd(), '.znrules'),
@@ -355,40 +385,68 @@ function loadCustomConfig(forceReload = false) {
   ];
 
   for (const file of candidates) {
-    if (fs.existsSync(file)) {
+    if (!fs.existsSync(file)) continue;
+    next.file = path.basename(file);
+    try {
+      let text;
       try {
-        if (file.endsWith('.json')) {
-          const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-          if (Array.isArray(parsed.bannedPatterns)) {
-            customConfig.bannedPatterns = parsed.bannedPatterns.map((p) => new RegExp(p, 'i'));
-          }
-          if (Array.isArray(parsed.forbiddenPaths)) {
-            customConfig.forbiddenPaths = parsed.forbiddenPaths;
-          }
-          if (parsed.strict === true) customConfig.strict = true;
-        } else {
-          const lines = fs.readFileSync(file, 'utf8').split('\n');
-          for (let line of lines) {
-            line = line.trim();
-            if (!line || line.startsWith('#')) continue;
-            // `secret:` lines feed the scrubber's exact-value layer; they are
-            // values, not patterns, and must never be compiled as regexes.
-            if (line.startsWith('secret:')) continue;
-            if (line === 'strict') { customConfig.strict = true; continue; }
-            if (line.startsWith('path:')) {
-              customConfig.forbiddenPaths.push(line.slice(5).trim());
-            } else {
-              customConfig.bannedPatterns.push(new RegExp(line, 'i'));
-            }
-          }
-        }
+        text = fs.readFileSync(file, 'utf8');
       } catch (err) {
-        // Silently ignore malformed custom configs in production
+        throw new RulesFileError(`the file cannot be read (${err && err.code ? err.code : 'error'})`);
       }
-      break;
+      if (file.endsWith('.json')) {
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch (err) {
+          throw new RulesFileError(jsonPlace(text, err));
+        }
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new RulesFileError('the top level must be an object');
+        }
+        if (parsed.bannedPatterns !== undefined) {
+          if (!Array.isArray(parsed.bannedPatterns)) throw new RulesFileError('bannedPatterns must be a list');
+          parsed.bannedPatterns.forEach((p, k) => addPattern(p, `bannedPatterns[${k}]`));
+        }
+        if (parsed.forbiddenPaths !== undefined) {
+          if (!Array.isArray(parsed.forbiddenPaths) || !parsed.forbiddenPaths.every((p) => typeof p === 'string')) {
+            throw new RulesFileError('forbiddenPaths must be a list of strings');
+          }
+          next.forbiddenPaths = parsed.forbiddenPaths;
+        }
+        if (parsed.strict === true) next.strict = true;
+      } else {
+        text.split('\n').forEach((raw, k) => {
+          const line = raw.trim();
+          if (!line || line.startsWith('#')) return;
+          // `secret:` lines feed the scrubber's exact-value layer; they are
+          // values, not patterns, and must never be compiled as regexes.
+          if (line.startsWith('secret:')) return;
+          if (line === 'strict') { next.strict = true; return; }
+          if (line.startsWith('path:')) next.forbiddenPaths.push(line.slice(5).trim());
+          else addPattern(line, `line ${k + 1}`);
+        });
+      }
+    } catch (err) {
+      // The reason never repeats the text of the file: it goes to the agent and to the audit log.
+      next.errors.push(err instanceof RulesFileError ? err.message : 'the file could not be processed');
     }
+    break;
   }
+  customConfig = next;
   return customConfig;
+}
+
+// The block that holds while the project's rules file has errors.
+function invalidRulesResult(cfg) {
+  const shown = cfg.errors.slice(0, 3).join('; ') + (cfg.errors.length > 3 ? `; and ${cfg.errors.length - 3} more` : '');
+  const at = /^(line \d+|bannedPatterns\[\d+\]):/.exec(cfg.errors[0]);
+  const fix = at ? `edit ${cfg.file} at ${at[1]} or delete that ${at[1].startsWith('line') ? 'line' : 'entry'}` : `edit ${cfg.file} or delete the file`;
+  return {
+    verdict: 'block', confidence: 1.0,
+    reason: `The project rules in ${cfg.file} are not valid, so zn-gate blocks until they are fixed (${shown}). To fix it, ${fix}. Custom patterns support literals, classes, groups, alternation and the quantifiers ? * + {n,m} only; see the custom rules section of the README. \`zn-gate check\` lists these errors.`,
+    rule: 'custom:invalid_rules', engine: 'oss-local', rules_version: RULES_VERSION,
+  };
 }
 
 const HOMOGLYPH_MAP = {
@@ -727,6 +785,7 @@ function evaluateUncached(input, options = {}) {
 
   // 6. Project-specific Custom Rules (.znrules / zn.config.json)
   const cfg = loadCustomConfig();
+  if (cfg.errors.length > 0) return invalidRulesResult(cfg);
   for (const pat of cfg.bannedPatterns) {
     if (pat.test(input)) {
       return { verdict: 'block', confidence: 1.0, reason: `Matches custom repository rule: ${pat.source}`, rule: 'custom:banned_pattern', engine: 'oss-local', rules_version: RULES_VERSION };
