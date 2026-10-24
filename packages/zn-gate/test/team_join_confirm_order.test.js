@@ -22,7 +22,7 @@ function ops(answers) {
     if (String(url).endsWith('/v1/org/join-preview')) return new Response(JSON.stringify(org), { status: 200, headers: { 'content-type': 'application/json' } });
     return new Response('{}', { status: 500, headers: { 'content-type': 'application/json' } });
   };
-  const state = { opts: { home: process.env.ZN_HOME }, loadSecrets: async () => secrets, saveSecrets: async () => {}, serial: (fn) => fn() };
+  const state = { opts: { home: process.env.ZN_HOME }, paths: { auditFile: path.join(process.env.ZN_HOME, "audit.jsonl") }, loadSecrets: async () => secrets, saveSecrets: async () => {}, serial: (fn) => fn() };
   let i = 0;
   const o = makeTeamOps({
     state, fetchImpl, writeAudit: () => {},
