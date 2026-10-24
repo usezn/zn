@@ -141,6 +141,53 @@ function checkHead(file, head) {
 }
 
 /**
+ * checkTail(file, key, head, windowBytes) -> {ok, found?, reason?}
+ * The cheap check an append runs (cost does not grow with the log): the tail
+ * must be the record the vault remembers (checkHead), and the last records in a
+ * window of the file must have valid MACs, links and sequence numbers. It does
+ * NOT prove the rest of the file: verify() does that, and every read, export,
+ * upload and unlock runs it.
+ */
+function checkTail(file, key, head, windowBytes) {
+  const h = checkHead(file, head);
+  if (!h.ok || !head) return h;
+  const k = Buffer.isBuffer(key) ? key : Buffer.from(String(key || ''), 'hex');
+  let text;
+  let partial;
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      const len = Math.min(size, windowBytes > 0 ? windowBytes : 16384);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, size - len);
+      text = buf.toString('utf8');
+      partial = len < size;
+    } finally { fs.closeSync(fd); }
+  } catch (err) {
+    return { ok: false, found: null, reason: 'the last records of the log cannot be read' };
+  }
+  const lines = text.split('\n').filter((l) => l.length > 0);
+  if (partial) lines.shift(); // the window may start in the middle of a record
+  let prev = null;
+  let seq = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const bad = (why) => ({ ok: false, found: { seq: seq + 1, mac: null }, reason: why + ' (in the last records of the log)' });
+    let rec;
+    try { rec = JSON.parse(lines[i]); } catch (err) { return bad('unparseable record'); }
+    const mac = rec.mac;
+    delete rec.mac;
+    const expected = macOf(k, rec);
+    if (typeof mac !== 'string' || mac.length !== expected.length ||
+        !crypto.timingSafeEqual(Buffer.from(mac, 'hex'), Buffer.from(expected, 'hex'))) return bad('bad mac');
+    if (prev !== null && (rec.prev !== prev || rec.seq !== seq + 1)) return bad('broken chain');
+    prev = mac;
+    seq = rec.seq;
+  }
+  return { ok: true };
+}
+
+/**
  * verify({file, key, checkpoint}) -> {ok, records, error?, line?}
  * Checks every MAC, the prev links and the sequence numbers.
  * checkpoint: {seq, mac}, the last record the vault remembers. The log must
@@ -226,4 +273,4 @@ function read(opts) {
   return limit ? out.slice(-limit) : out;
 }
 
-module.exports = { append, verify, checkHead, lastRecord, read, sanitize, FIELDS, GENESIS };
+module.exports = { append, verify, checkHead, checkTail, lastRecord, read, sanitize, FIELDS, GENESIS };

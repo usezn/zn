@@ -362,6 +362,7 @@ function chainStatus(state, opts) {
   const c = state.chainCache;
   if (!(opts && opts.force) && c && c.sig === sig && c.head === headKey(secrets)) return c.result;
   state.chainCache = null;
+  state.chainVerifiedAt = Date.now();
   let r;
   try {
     r = audit.verify({ file, key: Buffer.from(secrets.auditKey, 'hex'), checkpoint: secrets.auditHead });
@@ -380,19 +381,26 @@ function chainStatus(state, opts) {
   return r;
 }
 
-/* Every audit write goes through here: the in-memory head must be the last
- * record in the file before the daemon appends, and the whole chain must
- * verify (a change in the middle of the log is not seen by the head alone);
- * if not, the checkpoint stays and the tamper mark is stored. */
+/* Every audit write goes through here. The cost of an append does not grow with
+ * the log: the in-memory head must be the last record in the file, and the last
+ * records (a window at the end) must verify; if not, the checkpoint stays and
+ * the tamper mark is stored. A change in the middle of the log is not seen by
+ * that, but it stays in the file as a bad MAC: unlock, read, export, upload and
+ * `zn vault verify` check the whole chain, and so does an append once the last
+ * full check is older than FULL_VERIFY_MS. See docs/threat-model.md. */
+const FULL_VERIFY_MS = 60000;
+const TAIL_WINDOW = 16384;
+
 function appendChecked(state, event, extra) {
   const secrets = state.secrets;
   if (!secrets) throw znError(CODES.LOCKED, 'vault locked');
   const file = state.paths.auditFile;
   if (!secrets.auditTamper) {
-    const h = audit.checkHead(file, secrets.auditHead);
+    const h = audit.checkTail(file, Buffer.from(secrets.auditKey, 'hex'), secrets.auditHead, TAIL_WINDOW);
     if (!h.ok) recordTamper(state, h.reason, h.found);
     else {
-      chainStatus(state);
+      const every = state.opts && Number.isFinite(state.opts.fullVerifyMs) ? state.opts.fullVerifyMs : FULL_VERIFY_MS;
+      if (Date.now() - (state.chainVerifiedAt || 0) >= every) chainStatus(state, { force: true });
     }
   }
   if (state.opts && typeof state.opts._afterChainCheck === 'function') state.opts._afterChainCheck(); // test seam
