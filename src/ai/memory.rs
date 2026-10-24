@@ -248,8 +248,19 @@ impl VectorMemory {
         }
         let mut cleaned = false;
         if version < SCHEMA_VERSION {
+            // Only a file that already held rows of an older schema can hold
+            // old text; a new file needs no compaction (and must not wait for
+            // other instances that open it at the same time).
+            let had_table: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'memory'",
+                [],
+                |r| r.get(0),
+            )?;
             Self::upgrade(&tx)?;
-            cleaned = version < 3;
+            cleaned = version < 3 && had_table > 0;
+            if !cleaned {
+                tx.execute_batch("PRAGMA user_version = 3;")?;
+            }
         }
         tx.commit()?;
         if cleaned {
