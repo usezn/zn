@@ -307,7 +307,7 @@ function handlerFor(opts = {}) {
   const runner = opts.runnerPath || cfg.runnerPath();
   if (platform === 'win32') {
     return (event) => {
-      const script = launcher.windowsScript(id, event, node, runner);
+      const script = launcher.windowsScript(id, event, node, runner, { deadlineS: opts.deadlineS || LAUNCHER_DEADLINE_S });
       if (!script) return { type: 'command', command: cfg.hookCommandWindows(id, opts), ...base };
       const [file, ...args] = launcher.windowsScriptCommand(script).split(' ');
       return { type: 'process', command: file, args, ...base };
@@ -414,7 +414,7 @@ function install(opts = {}) {
   const data = cfg.readJson(file);
   const { hooks, events } = hooksTree(data, file);
   const servers = mcpServers(data, file, false);
-  const report = { settings: file, backup: cfg.backup(file), warnings: [] };
+  const report = { settings: file, backup: null, warnings: [] };
   const ours = hookGroups(handlerFor(opts));
   const wasOff = hooks.enabled !== true;
   const previousEnabled = hooks.enabled;
@@ -441,10 +441,13 @@ function install(opts = {}) {
   // While "enabled" is not true no state of zn's can be current (its switch is off), so the first value is recorded again.
   const stateBefore = snapshotEnabledState(opts);
   if (wasOff) writeEnabledState(opts, file, previousEnabled === false ? false : 'absent');
+  // The backup is taken right before the write and removed again if the write fails: a failed install leaves no file behind.
+  report.backup = cfg.backup(file);
   try {
     cfg.writeJson(file, data);
   } catch (err) {
     restoreEnabledState(opts, stateBefore);
+    if (report.backup) { try { fs.unlinkSync(report.backup); } catch (_) { /* none */ } }
     throw err;
   }
   if (userHooks.length) {
@@ -503,7 +506,12 @@ function uninstall(opts = {}) {
   }
   report.backup = cfg.backup(file);
   report.removed = 1;
-  cfg.writeJson(file, data);
+  try {
+    cfg.writeJson(file, data);
+  } catch (err) {
+    if (report.backup) { try { fs.unlinkSync(report.backup); } catch (_) { /* none */ } }
+    throw err;
+  }
   if (state) clearEnabledState(opts);
   // The launcher (see handlerFor) is shared by every config of this machine: one uninstall leaves it in place,
   // only the machine-wide uninstall (opts.removeLauncher) deletes it.
