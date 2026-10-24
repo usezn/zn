@@ -203,13 +203,11 @@ async fn main() -> Result<()> {
             }
         },
         Some(Commands::Init) => {
-            let config = ZnConfig::default();
-            let json = serde_json::to_string_pretty(&config)?;
-            std::fs::write("zn.json", json)?;
+            ZnConfig::write_init_file(std::path::Path::new("zn.json"))?;
             log::success("Initialized zn.json with default secure configuration.")?;
             note(
                 "Next Steps",
-                "Review zn.json and run `zn start` to engage the firewall.",
+                "Review zn.json and run `zn start` to engage the firewall.\nKeys and tokens (ZN_API_KEY, ZN_JWT_SECRET, ZN_MCP_WS_TOKEN, ZN_DB_KEY) are not written to zn.json: keep them in the environment.",
             )?;
             return Ok(());
         }

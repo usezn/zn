@@ -680,6 +680,61 @@ fn default_fpr_margin() -> f64 {
 }
 
 impl ZnConfig {
+    /// A copy without the values `ZnConfig::default()` takes from the
+    /// environment, so they are not written to a file. Keys and tokens
+    /// (`ZN_API_KEY`, `ZN_JWT_SECRET`, `ZN_MCP_WS_TOKEN`, `ZN_DB_KEY`) are
+    /// always cleared. The namespace and the KMS key id and region are cleared
+    /// when they equal the current environment value (a value set in the
+    /// config itself is kept). Cleared values are read from the environment
+    /// again at start.
+    pub fn without_env_values(&self) -> Self {
+        fn same_as_env(value: &mut Option<String>, var: &str) {
+            if let (Some(v), Ok(env)) = (value.as_ref(), std::env::var(var)) {
+                if *v == env {
+                    *value = None;
+                }
+            }
+        }
+        let mut config = self.clone();
+        config.security.api_key = None;
+        config.security.jwt_secret = None;
+        config.security.mcp_ws_token = None;
+        config.audit.encryption_key = None;
+        same_as_env(&mut config.security.namespace, "ZN_NAMESPACE");
+        same_as_env(&mut config.kms.key_id, "ZN_KMS_KEY_ID");
+        same_as_env(&mut config.kms.region, "ZN_KMS_REGION");
+        config
+    }
+
+    /// The configuration `zn init` writes: the defaults, without any value
+    /// read from the environment.
+    pub fn init_template() -> Self {
+        Self::default().without_env_values()
+    }
+
+    /// Write `init_template()` to `path` as JSON, owner-only on Unix.
+    pub fn write_init_file(path: &Path) -> Result<()> {
+        Self::write_private_json(path, &Self::init_template())
+    }
+
+    /// Write `config` to `path` as pretty JSON through `write_private_file`.
+    pub fn write_private_json(path: &Path, config: &Self) -> Result<()> {
+        let json = serde_json::to_string_pretty(config)?;
+        Self::write_private_file(path, json.as_bytes())
+    }
+
+    /// The one protected writer for files that hold configuration (zn.json
+    /// and the locally saved synced config). It delegates to the shared
+    /// private-file module: a new 0600 temporary file in the same directory is
+    /// renamed over `path`, so a reader never sees a partial file and an
+    /// existing regular file is replaced atomically and ends up owner-only. A
+    /// `path` that is a symbolic link or is not a regular file (a directory, a
+    /// FIFO, a device) is refused and left untouched.
+    pub fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+        crate::private_file::create_private_file(path, bytes)
+            .map_err(|e| anyhow!("cannot write {}: {e}", path.display()))
+    }
+
     /// Load configuration from file with environment variable overrides
     pub fn load(path: Option<&Path>) -> Result<Self> {
         let mut config = if let Some(p) = path {
