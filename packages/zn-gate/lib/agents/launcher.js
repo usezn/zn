@@ -220,6 +220,12 @@ function launcherCommand(file, event, platform = process.platform, opts = {}) {
  * code 0 (an answer) or 2 (its own refusal, deny JSON already printed) ends it; anything else, or no zn or node, prints
  * the deny JSON and exits 0, the way the user launcher does.
  */
+// The hook scripts below use no cmdlet (Test-Path, Get-Command, New-Object...): a cmdlet belongs to a module, and Windows PowerShell 5.1
+// searches the user's own Documents\WindowsPowerShell\Modules first, so a module planted there by the same account could answer in
+// its place (and make the hook look done). Only .NET types, operators and keywords: zf finds a program on the PATH the way
+// Get-Command did, with [System.IO.File]::Exists.
+const ZF = "function zf($x) { foreach ($d in ($env:PATH -split ';')) { try { if ($d) { $c = [System.IO.Path]::Combine($d, $x); if ([System.IO.File]::Exists($c)) { return $c } } } catch {} }; return $null }; ";
+
 const IFS = '${IFS}';
 const SH_SAFE_TEXT = /^[^'"\\%$\n\r]+$/;
 
@@ -261,8 +267,8 @@ function projectWindowsScript(agentId) {
   const t = projectTexts(agentId);
   const say = (r) => "[Console]::Out.WriteLine('" + JSON.stringify(DENY_STDOUT[agentId](r)) + "')";
   const leave = 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit 0 }';
-  return "$ProgressPreference='SilentlyContinue'; $zt=0; " +
-    "if ((Get-Command zn.cmd -CommandType Application -ErrorAction SilentlyContinue) -and (Get-Command node -ErrorAction SilentlyContinue)) { $zt=1; & zn.cmd hook " + agentId + '; ' + leave + ' }; ' +
+  return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF +
+    "if ((zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { $zt=1; & (zf 'zn.cmd') hook " + agentId + '; ' + leave + ' }; ' +
     'if ($zt -eq 1) { ' + say(t.crash) + ' } else { ' + say(t.missing) + ' }; exit 0 # zn hook ' + agentId;
 }
 
@@ -281,7 +287,7 @@ function isProjectWindowsScript(script, agentId) {
   try {
     if (typeof script !== 'string') return false;
     if (script === projectWindowsScript(agentId)) return true;
-    return script.startsWith("$ProgressPreference='SilentlyContinue'; $zt=0; ") && script.includes('& zn.cmd hook ' + agentId + ';') && script.endsWith('# zn hook ' + agentId);
+    return script.startsWith("$ProgressPreference='SilentlyContinue'; $zt=0; ") && (script.includes('& zn.cmd hook ' + agentId + ';') || script.includes("& (zf 'zn.cmd') hook " + agentId + ';')) && script.endsWith('# zn hook ' + agentId);
   } catch (_) { return false; }
 }
 
@@ -419,7 +425,7 @@ function windowsScript(agentId, event, nodePath, runnerPath, opts = {}) {
   if (deadlineS) {
     // zr runs the command as a child with the hook input passed on (stdin) and its output left alone; after the deadline the
     // child and everything it started are killed (taskkill /T) and zr gives -1, which falls through to the block below.
-    const zr = 'function zr($f, $a) { $rc = -1; try { $i = New-Object System.Diagnostics.ProcessStartInfo; $i.FileName = $f; $i.Arguments = $a; $i.UseShellExecute = $false; ' +
+    const zr = 'function zr($f, $a) { $rc = -1; try { $i = [System.Diagnostics.ProcessStartInfo]::new(); $i.FileName = $f; $i.Arguments = $a; $i.UseShellExecute = $false; ' +
       '$i.RedirectStandardInput = $true; $sw = [System.Diagnostics.Stopwatch]::StartNew(); $p = [System.Diagnostics.Process]::Start($i); ' +
       'try { $c = [Console]::OpenStandardInput().CopyToAsync($p.StandardInput.BaseStream); [void]$c.Wait(' + deadlineS * 1000 + ') } catch {}; ' +
       'try { $p.StandardInput.Close() } catch {}; ' +
@@ -428,14 +434,14 @@ function windowsScript(agentId, event, nodePath, runnerPath, opts = {}) {
     const zleave = jsonDeny
       ? 'if ($rc -eq 0 -or $rc -eq 2) { exit 0 }'
       : 'if ($rc -eq 0 -or $rc -eq 2) { exit $rc }';
-    return "$ProgressPreference='SilentlyContinue'; $zt=0; " + zr +
-      "if ((Test-Path -LiteralPath '" + n + "') -and (Test-Path -LiteralPath '" + r + "')) { $zt=1; $rc = zr '\"" + n + "\"' '\"" + r + "\" " + agentId + "'; " + zleave + ' }; ' +
-      "if (($zt -eq 0) -and (Get-Command zn.cmd -CommandType Application -ErrorAction SilentlyContinue) -and (Get-Command node -ErrorAction SilentlyContinue)) { $zt=1; $rc = zr (Get-Command zn.cmd -CommandType Application).Source 'hook " + agentId + "'; " + zleave + ' }; ' +
+    return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF + zr +
+      "if ([System.IO.File]::Exists('" + n + "') -and [System.IO.File]::Exists('" + r + "')) { $zt=1; $rc = zr '\"" + n + "\"' '\"" + r + "\" " + agentId + "'; " + zleave + ' }; ' +
+      "if (($zt -eq 0) -and (zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { $zt=1; $rc = zr (zf 'zn.cmd') 'hook " + agentId + "'; " + zleave + ' }; ' +
       'if ($zt -eq 1) { ' + tailOf(crashText(agentId), crashWarnText()) + ' }; ' + tail + ' # zn hook ' + agentId;
   }
-  return "$ProgressPreference='SilentlyContinue'; $zt=0; " +
-    "if ((Test-Path -LiteralPath '" + n + "') -and (Test-Path -LiteralPath '" + r + "')) { $zt=1; & '" + n + "' '" + r + "' " + agentId + '; ' + leave + ' }; ' +
-    "if (($zt -eq 0) -and (Get-Command zn.cmd -CommandType Application -ErrorAction SilentlyContinue) -and (Get-Command node -ErrorAction SilentlyContinue)) { & zn.cmd hook " + agentId + '; ' + leave + ' }; ' +
+  return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF +
+    "if ([System.IO.File]::Exists('" + n + "') -and [System.IO.File]::Exists('" + r + "')) { $zt=1; & '" + n + "' '" + r + "' " + agentId + '; ' + leave + ' }; ' +
+    "if (($zt -eq 0) -and (zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { & (zf 'zn.cmd') hook " + agentId + '; ' + leave + ' }; ' +
     tail + ' # zn hook ' + agentId;
 }
 

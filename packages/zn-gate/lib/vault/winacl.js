@@ -53,7 +53,7 @@ function defaultRun(file, args, env) {
     encoding: 'utf8',
     windowsHide: true,
     timeout: TIMEOUT_MS,
-    env: Object.assign({ SystemRoot: process.env.SystemRoot || process.env.windir || 'C:\\Windows' }, env || {}),
+    env: Object.assign({ SystemRoot: process.env.SystemRoot || process.env.windir || 'C:\\Windows' }, /powershell\.exe$/i.test(String(file)) ? { PSModulePath: require('../exe').systemPsModulePath(file) } : {}, env || {}),
   });
   return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '', error: r.error || null };
 }
@@ -132,9 +132,14 @@ function problems(sddl, userSid, opts) {
   return out;
 }
 
+// PowerShell text without a cmdlet (Get-Acl, New-Object... belong to modules, and Windows PowerShell 5.1 searches the user's own
+// Documents\WindowsPowerShell\Modules first, where a module planted by the same account would answer in their place): only .NET.
+// Sections 14 = Access, Owner, Group: the same SDDL that Get-Acl(...).Sddl gave.
+const SDDL_FN = "function sd($p) { if (([int][System.IO.File]::GetAttributes($p) -band 16) -ne 0) { $a = [System.IO.DirectoryInfo]::new($p).GetAccessControl() } else { $a = [System.IO.FileInfo]::new($p).GetAccessControl() }; return $a.GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]14) }; ";
+
 function readSddl(target, tools) {
   if (!tools.powershell) throw fail(target, 'the system PowerShell was not found');
-  const script = "$ErrorActionPreference='Stop'; [Console]::Out.Write((Get-Acl -LiteralPath $env:ZN_ACL_PATH).Sddl)";
+  const script = "$ErrorActionPreference='Stop'; " + SDDL_FN + '[Console]::Out.Write((sd $env:ZN_ACL_PATH))';
   const r = tools.run(tools.powershell, ['-NoProfile', '-NonInteractive', '-Command', script], { ZN_ACL_PATH: target });
   const text = String(r.stdout || '').trim();
   if (r.status !== 0 || !/D:/.test(text)) throw fail(target, 'could not read its permissions' + why(r));
@@ -197,7 +202,7 @@ function ensurePipe(address, opts) {
     "$ErrorActionPreference='Stop'",
     "$p = $env:ZN_ACL_PATH; $n = $p.Substring($p.LastIndexOf('\\') + 1)",
     '$rights = [System.IO.Pipes.PipeAccessRights]::ReadWrite -bor [System.IO.Pipes.PipeAccessRights]::ChangePermissions -bor [System.IO.Pipes.PipeAccessRights]::ReadPermissions',
-    "$c = New-Object System.IO.Pipes.NamedPipeClientStream('.', $n, $rights, [System.IO.Pipes.PipeOptions]::None, [System.Security.Principal.TokenImpersonationLevel]::Identification, [System.IO.HandleInheritability]::None)",
+    "$c = [System.IO.Pipes.NamedPipeClientStream]::new('.', $n, $rights, [System.IO.Pipes.PipeOptions]::None, [System.Security.Principal.TokenImpersonationLevel]::Identification, [System.IO.HandleInheritability]::None)",
     'try {',
     '  $c.Connect(10000)',
     '  $s = $c.GetAccessControl()',
@@ -287,9 +292,10 @@ function scriptWriteRisk(target, opts) {
   if (!tools.powershell) return { deny: target + ' (the system PowerShell was not found)', warn: null };
   const script = [
     "$ErrorActionPreference='Stop'",
+    SDDL_FN,
     '$p = $env:ZN_ACL_PATH; $k = "F"',
     'while ($p) {',
-    "  [Console]::Out.WriteLine($k + '|' + $p + '|' + (Get-Acl -LiteralPath $p).Sddl)",
+    "  [Console]::Out.WriteLine($k + '|' + $p + '|' + (sd $p))",
     '  $n = [System.IO.Path]::GetDirectoryName($p)',
     '  if (-not $n -or $n -eq $p) { break }',
     '  $p = $n; $k = "D"',
