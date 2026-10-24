@@ -1037,24 +1037,68 @@ mod tests {
         assert!(!Scrubber::scrub("A123-45-6789").contains("[SSN_REDACTED]"));
     }
 
+    /// Best of three runs of `work(size)`, so a scheduling hiccup on a busy
+    /// machine cannot inflate the measurement.
+    fn best_of_three(work: &dyn Fn(usize), size: usize) -> std::time::Duration {
+        (0..3)
+            .map(|_| {
+                let start = std::time::Instant::now();
+                work(size);
+                start.elapsed()
+            })
+            .min()
+            .expect("three runs")
+    }
+
+    /// Time must grow about linearly: quadrupling the input may cost at most
+    /// 8x (a quadratic algorithm costs 16x), plus a small allowance for
+    /// noise. Relative, so the machine's speed does not matter.
+    fn assert_scales_linearly(work: &dyn Fn(usize), size: usize) {
+        let small = best_of_three(work, size / 4);
+        let large = best_of_three(work, size);
+        assert!(
+            large < small * 8 + std::time::Duration::from_millis(50),
+            "4x the input took {large:?} against {small:?}"
+        );
+        // Only a hang guard; the ratio above is the real check.
+        assert!(large < std::time::Duration::from_secs(30), "{large:?}");
+    }
+
     #[test]
     fn test_failed_boundary_retry_stays_fast() {
         // Long runs where every candidate fails: time must stay linear.
-        let digits = "1234567890".repeat(104_858);
-        let mixed = "ab12 ".repeat(209_716);
-        let dashed = "x1-1-1-".repeat(150_000);
-        let spaced = "1111 ".repeat(209_716);
-        let hyphens = "1111-111-".repeat(116_508);
-        let plus = "+1234567".repeat(131_072);
-        let start = std::time::Instant::now();
-        for input in [&digits, &mixed, &dashed, &spaced, &hyphens, &plus] {
-            let _ = Scrubber::scrub(input);
-        }
-        assert!(
-            start.elapsed() < std::time::Duration::from_secs(5),
-            "{:?}",
-            start.elapsed()
-        );
+        let patterns: [&str; 6] = [
+            "1234567890",
+            "ab12 ",
+            "x1-1-1-",
+            "1111 ",
+            "1111-111-",
+            "+1234567",
+        ];
+        let work = |bytes: usize| {
+            for pattern in patterns {
+                let input = pattern.repeat(bytes / pattern.len());
+                let _ = Scrubber::scrub(&input);
+            }
+        };
+        assert_scales_linearly(&work, 1 << 19);
+    }
+
+    #[test]
+    #[should_panic(expected = "4x the input took")]
+    fn test_scaling_check_rejects_quadratic_time() {
+        // Proves the check above can fail: a deliberately quadratic loop.
+        let quadratic = |n: usize| {
+            let n = n / 32;
+            let mut acc = 0usize;
+            for i in 0..n {
+                for j in 0..n {
+                    acc = std::hint::black_box(acc.wrapping_add(i ^ j));
+                }
+            }
+            std::hint::black_box(acc);
+        };
+        assert_scales_linearly(&quadratic, 1 << 19);
     }
 
     #[test]
