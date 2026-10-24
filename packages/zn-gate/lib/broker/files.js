@@ -62,7 +62,10 @@ function realTargetOf(file) {
     i++;
   }
   try {
-    return path.join(fs.realpathSync(cur), ...parts.slice(i));
+    // On Windows the native call also turns 8.3 short names (JOSPRE~1\AWS~1\CREDEN~1) into the long names the
+    // protected-path rules read; a short name of a folder with spaces or accents is not a prefix of its long name.
+    const real = process.platform === 'win32' ? fs.realpathSync.native(cur) : fs.realpathSync(cur);
+    return path.join(real, ...parts.slice(i));
   } catch (_) {
     return abs;
   }
