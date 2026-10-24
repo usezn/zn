@@ -21,7 +21,7 @@ that fixes it.
 
 ## Run `zn hooks install <agent>` again when a release changes the hook
 
-The hooks of `zn hooks install` (Claude Code, Codex CLI, Cursor) are written into
+The hooks of `zn hooks install` (Claude Code, Codex CLI, Cursor, Zcode) are written into
 the agent's own settings, so a new zn-gate does not rewrite them by itself. When
 a release adds or changes a hook, the release notes in the
 [changelog](../CHANGELOG.md) say so and name the agent. Run the install again

@@ -350,6 +350,47 @@ function mcpServerConfig(opts = {}) {
   return { type: 'stdio', command: opts.nodePath || process.execPath, args: [opts.cliPath || cli, 'secrets-mcp', '--agent', id], enabled: true };
 }
 
+/*
+ * Zcode's config schema is strict (an unknown key makes it drop the whole file), so the value "hooks.enabled" had
+ * before zn turned it on is kept in zn's own state, never in config.json: ~/.zn/state/zcode-hooks-enabled.json.
+ */
+function enabledStateFile(opts = {}) {
+  const env = opts.env || process.env;
+  const base = env.ZN_HOME ? path.resolve(env.ZN_HOME) : path.join(opts.home || os.homedir(), '.zn');
+  return path.join(base, 'state', 'zcode-hooks-enabled.json');
+}
+
+function readEnabledState(opts, file) {
+  try {
+    const st = JSON.parse(fs.readFileSync(enabledStateFile(opts), 'utf8'));
+    if (isObj(st) && st.file === file && (st.previous === false || st.previous === 'absent')) return st;
+  } catch (_) { /* none */ }
+  return null;
+}
+
+function writeEnabledState(opts, file, previous) {
+  const f = enabledStateFile(opts);
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  fs.writeFileSync(f, JSON.stringify({ file, previous }) + '\n', { mode: 0o600 });
+}
+
+function clearEnabledState(opts) {
+  try { fs.unlinkSync(enabledStateFile(opts)); } catch (_) { /* none */ }
+}
+
+/* "Event: command" for each hook in events that is not zn's. */
+function userHookNames(events) {
+  const out = [];
+  for (const [event, groups] of Object.entries(events)) {
+    for (const g of groups) {
+      for (const h of isObj(g) && Array.isArray(g.hooks) ? g.hooks : []) {
+        if (isObj(h) && !isOursEntry(h)) out.push(event + ': ' + (commandText(h) || '(no command)'));
+      }
+    }
+  }
+  return out;
+}
+
 function install(opts = {}) {
   if ((opts.scope || 'user') === 'project') {
     throw new Error('Zcode ignores the hooks of a project (it only runs the ones in ~/.zcode/cli/config.json), so there is no project install. Run `zn hooks install zcode` without --project.');
@@ -360,11 +401,13 @@ function install(opts = {}) {
   const servers = mcpServers(data, file, false);
   const report = { settings: file, backup: cfg.backup(file), warnings: [] };
   const ours = hookGroups(handlerFor(opts));
+  const wasOff = hooks.enabled !== true;
+  const previousEnabled = hooks.enabled;
+  const userHooks = wasOff ? userHookNames(events) : [];
   for (const [event, group] of Object.entries(ours)) {
     events[event] = [...stripOurs(events[event] || []), group];
   }
   hooks.events = events;
-  const wasOff = hooks.enabled !== true;
   hooks.enabled = true;
   data.hooks = hooks;
   if (opts.mcp !== false) {
@@ -377,6 +420,11 @@ function install(opts = {}) {
     }
   }
   cfg.writeJson(file, data);
+  // Keep the value "enabled" had, so uninstall can give it back (a re-install over zn's own switch keeps the first one).
+  if (wasOff && !readEnabledState(opts, file)) writeEnabledState(opts, file, previousEnabled === false ? false : 'absent');
+  if (userHooks.length) {
+    report.warnings.push('"hooks.enabled" was ' + (previousEnabled === false ? 'false' : 'not set') + ' in ' + file + ', so these hooks of yours did not run until now and will run from the next Zcode session: ' + userHooks.join('; ') + '. `zn hooks uninstall zcode` puts the switch back.');
+  }
   report.warnings.push('zn checks tool calls (PreToolUse, PermissionRequest) and prompts before they run: it blocks reads and writes of secret files, shell commands that handle secrets, MCP calls that would send a secret and prompts that contain one.');
   report.warnings.push('Zcode cannot rewrite what a tool returns: a value printed by a command or read from a file reaches the model. zn adds a notice to the output when it holds a secret. Keep secrets in the vault.');
   report.warnings.push('Zcode runs hooks only from ' + file + ' (hooks of a project are ignored) and only when "hooks.enabled" is true' + (wasOff ? ': zn turned it on' : '') + '. Start a new Zcode session: a running one keeps the hooks it started with.');
@@ -397,13 +445,19 @@ function uninstall(opts = {}) {
   const { hooks, events } = hooksTree(data, file);
   const servers = mcpServers(data, file, false);
   const before = JSON.stringify(data);
+  // Give "enabled" back the value it had before zn turned it on, unless the user changed it since.
+  const state = readEnabledState(opts, file);
+  const restored = state && hooks.enabled === true;
   for (const event of Object.keys(events)) {
     const kept = stripOurs(events[event]);
     if (kept.length) events[event] = kept; else delete events[event];
   }
   if (Object.keys(events).length) hooks.events = events; else delete hooks.events;
   // With nothing of the user's left, "enabled" alone is just the switch zn turned on: Zcode's default is off.
-  if (Object.keys(hooks).length === 0 || (Object.keys(hooks).length === 1 && hooks.enabled === true && !hooks.events)) delete data.hooks;
+  if (restored) {
+    if (state.previous === false) hooks.enabled = false; else delete hooks.enabled;
+    if (Object.keys(hooks).length === 0) delete data.hooks;
+  } else if (Object.keys(hooks).length === 0 || (Object.keys(hooks).length === 1 && hooks.enabled === true && !hooks.events)) delete data.hooks;
   if (opts.mcp !== false && servers[MCP_SERVER_NAME] !== undefined) {
     // Only zn's own server: a user MCP server that happens to be called "secrets" is left alone.
     if (require('./claude-code').isZnSecretsServer(servers[MCP_SERVER_NAME])) {
@@ -416,6 +470,7 @@ function uninstall(opts = {}) {
       report.warnings.push('left the MCP server named "' + MCP_SERVER_NAME + '" in place: it is not zn\'s');
     }
   }
+  if (state) clearEnabledState(opts);
   if (JSON.stringify(data) === before) return report;
   report.backup = cfg.backup(file);
   report.removed = 1;

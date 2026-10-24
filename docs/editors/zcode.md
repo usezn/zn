@@ -18,7 +18,7 @@ zn hooks install zcode
 
 This writes zn's hooks to `~/.zcode/cli/config.json` for your user, next to anything already there. It also:
 
-- turns on `hooks.enabled`, because Zcode runs no hook while it is off (it is off by default);
+- turns on `hooks.enabled`, because Zcode runs no hook while it is off (it is off by default). If it was off and you already had hooks of your own in the file, the install lists them: they run from the next Zcode session. `zn hooks uninstall zcode` puts the switch back to what it was (off or not set), unless you changed it yourself in between;
 - registers the zn-gate `secrets` MCP server in the same file;
 - keeps a backup of the file before it changes it.
 
@@ -43,13 +43,13 @@ Then run `npx -y zn-gate check` to see that the hook works on your machine.
 
 Things to know:
 
-- **Tested version.** The behaviour of Zcode's hooks was measured on zcode-cli 0.17.0 (built from the ZCode source of 20 October 2026) on Linux x64, headless (`zcode --prompt`) and in the terminal UI, with a stand-in model provider. Hooks run in every permission mode, `yolo` included. **Not tested:** Windows, macOS and the Zcode desktop app (we have not confirmed that the app reads the same config file). zn's hook is covered by automated tests built from those measurements; there is no automated end-to-end run with zn installed in Zcode yet. Zcode is a young product and can change this behaviour in a new version, so `zn-gate check` shows whether the hook works on your machine.
+- **Tested version.** The behaviour of Zcode's hooks was measured on zcode-cli 0.17.0 (built from the ZCode source of 20 October 2026) on Linux x64, headless (`zcode --prompt`) and in the terminal UI, with a stand-in model provider. Hooks run in every permission mode, `yolo` included. **Not tested:** Windows, macOS and the Zcode desktop app (we have not confirmed that the app reads the same config file). zn's hook is covered by automated tests built from those measurements; an end-to-end run with zn installed in Zcode (zcode-cli 0.17.0, Linux) passed 15 of 15 checks, node missing and uninstall included. Zcode is a young product and can change this behaviour in a new version, so `zn-gate check` shows whether the hook works on your machine.
 - **If the zn hook itself crashes, Zcode runs the call.** Zcode blocks a call only when a hook exits with code 2 or answers deny. A hook that cannot start, crashes, times out or prints something Zcode cannot read is only logged. zn covers the cases it can: its own checks answer deny and exit with code 2 if they fail or run too long, and the launcher script zn writes (`~/.zn/hooks/zn-hook-zcode.sh`) blocks the call with a message when the Node.js zn-gate was installed with is gone. A hook Zcode cannot start at all (for example the launcher file was deleted) lets the call run; `zn-gate check` reports it.
 - **Questions need someone to answer.** When zn would ask you first (personal data in an MCP call), Zcode needs a permission prompt to show the question. In a run with nobody to ask, such as `zcode --prompt`, the question ends as a block and the call does not run (measured). How the question looks in the terminal UI was not tested.
 - **Hooks switched off.** With `"hooks.enabled": false` in `~/.zcode/cli/config.json`, Zcode runs none of the hooks in that file, zn's included (the hooks of a Zcode plugin keep running). A single entry can also be switched off with `"enabled": false`, or made to run in the background with `async`, and a background hook cannot block anything. `zn-gate check` reports all three as not protected, and `zn hooks install zcode` repairs them.
 - **Values can still reach the model.** A value printed by a command, or found in a file the agent is allowed to read, is not removed. Keep secrets in the vault.
 - **Subagents.** Zcode also runs the hooks inside its subagents, so zn's checks apply to them too.
-- **Which file the agent cannot edit through its tools:** `~/.zcode/cli/config.json`. The files of a Zcode plugin and a project's `.zcode` folder are not protected.
+- **Which file the agent cannot edit through its tools:** `~/.zcode/cli/config.json`. zn's policy also protects a project's `<project>/.zcode/config.json` the same way. The files of a Zcode plugin are not protected.
 
 More detail is in the [threat model](../threat-model.md) and in [agent compatibility](../compat.md).
 

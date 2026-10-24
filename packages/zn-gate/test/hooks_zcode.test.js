@@ -647,3 +647,50 @@ test('measured: the hooks.enabled warning says the hooks of that file do not run
   assert.match(w.problems[0], /"hooks\.enabled" is false/);
   assert.match(w.problems[0], /none of the hooks in that file/);
 });
+
+test('uninstall gives "hooks.enabled" back the value it had before zn turned it on (false or not set), the file byte for byte', { skip: !posix }, (t) => {
+  const hook = { type: 'process', command: 'node', args: ['/mine/check.mjs'] };
+  const cases = {
+    'enabled false with hooks of the user': { ui: { locale: 'en' }, hooks: { enabled: false, events: { Stop: [{ hooks: [hook] }] } } },
+    'enabled not set with hooks of the user': { hooks: { events: { Stop: [{ hooks: [hook] }] } }, ui: { locale: 'en' } },
+    'enabled false and nothing else': { hooks: { enabled: false }, ui: { locale: 'en' } },
+    'enabled true already': { hooks: { enabled: true, events: { Stop: [{ hooks: [hook] }] } } },
+  };
+  for (const [name, mine] of Object.entries(cases)) {
+    const home = tempDir(t, 'zn-zc-home-');
+    write(home, mine);
+    const text = fs.readFileSync(cliFile(home), 'utf8');
+    const rep = zc.install({ home, nodePath: '/usr/bin/node' });
+    assert.equal(readCfg(home).hooks.enabled, true, name);
+    const userHooks = mine.hooks.events !== undefined && mine.hooks.enabled !== true;
+    assert.equal(rep.warnings.some((w) => /these hooks of yours did not run until now/.test(w) && w.includes('Stop: ')), userHooks, name);
+    zc.uninstall({ home });
+    assert.equal(fs.readFileSync(cliFile(home), 'utf8'), text, name);
+    assert.ok(!fs.existsSync(path.join(home, '.zn', 'state', 'zcode-hooks-enabled.json')), name);
+  }
+});
+
+test('uninstall keeps what the user set after zn turned hooks on, and a re-install keeps the first previous value', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-home-');
+  write(home, { hooks: { enabled: false } });
+  zc.install({ home, nodePath: '/usr/bin/node' });
+  zc.install({ home, nodePath: '/usr/bin/node' });
+  zc.uninstall({ home });
+  assert.deepEqual(readCfg(home), { hooks: { enabled: false } });
+  // The user flips the switch off themselves after the install: uninstall does not turn anything on or off.
+  const home2 = tempDir(t, 'zn-zc-home-');
+  write(home2, { hooks: { events: { Stop: [{ hooks: [{ type: 'process', command: 'x' }] }] } } });
+  zc.install({ home: home2, nodePath: '/usr/bin/node' });
+  const d = readCfg(home2);
+  d.hooks.enabled = false;
+  write(home2, d);
+  zc.uninstall({ home: home2 });
+  assert.equal(readCfg(home2).hooks.enabled, false);
+});
+
+test('install and uninstall on a missing config leave an empty one', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-home-');
+  zc.install({ home, nodePath: '/usr/bin/node' });
+  zc.uninstall({ home });
+  assert.deepEqual(readCfg(home), {});
+});
