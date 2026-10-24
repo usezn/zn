@@ -423,7 +423,7 @@ test('install on Windows writes a powershell.exe process hook that exits 2 itsel
   assert.equal(h.type, 'process');
   assert.deepEqual(h.args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-EncodedCommand']);
   const script = require('../lib/shell-quote').windowsCommandScript(zc.commandText(h));
-  assert.match(script, /runner\.js.* zcode; if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit \$LASTEXITCODE \}/);
+  assert.match(script, /\$rc = zr .*runner\.js" zcode'; if \(\$rc -eq 0 -or \$rc -eq 2\) \{ exit \$rc \}/);
   assert.match(script, /Console\]::Error\.WriteLine\('zn: its hook cannot start.*exit 2 # zn hook zcode$/);
   assert.ok(cfg.isOurs(zc.commandText(h), 'zcode'));
   // PostToolUse only warns when the Node.js is gone (exit 0 with a systemMessage).
@@ -814,4 +814,83 @@ test('install writes the zcode launcher with a deadline 2 s under the hook timeo
   assert.equal(zc.LAUNCHER_DEADLINE_S, zc.HOOK_TIMEOUT_S - 2);
   assert.match(text, new RegExp('sleep ' + zc.LAUNCHER_DEADLINE_S + ' &'));
   assert.doesNotMatch(launcher.unixScript('codex', '/usr/bin/node', RUNNER), /zn_run/);
+});
+
+test('Windows launcher: Zcode only, the hook runs as a child with a deadline, a timeout kills the tree and takes the block path', () => {
+  const N = 'C:/Program Files/nodejs/node.exe';
+  const R = 'C:/zn/zn-gate/lib/hooks/runner.js';
+  const zcodeScript = (event) => launcher.windowsScript('zcode', event, N, R, { deadlineS: zc.LAUNCHER_DEADLINE_S });
+  const pre = zcodeScript('PreToolUse');
+  assert.match(pre, /function zr\(\$f, \$a\)/);
+  assert.ok(pre.includes('.Wait(' + zc.LAUNCHER_DEADLINE_S * 1000 + ')'));
+  assert.match(pre, /RedirectStandardInput = \$true/);
+  assert.match(pre, /OpenStandardInput\(\)\.CopyToAsync/);
+  assert.match(pre, /taskkill\.exe \/PID \$p\.Id \/T \/F/);
+  assert.match(pre, /\$rc = -1/);
+  // timeout (-1) and crashes fall through to the same block text as before: exit 2 with "hook failed" for the blocking events
+  assert.match(pre, /Console\]::Error\.WriteLine\('zn: its hook cannot start.*exit 2 # zn hook zcode$/);
+  assert.match(zcodeScript('PermissionRequest'), /exit 2 # zn hook zcode$/);
+  assert.match(zcodeScript('UserPromptSubmit'), /exit 2 # zn hook zcode$/);
+  assert.match(zcodeScript('PostToolUse'), /systemMessage.*exit 0 # zn hook zcode$/);
+  assert.doesNotMatch(zcodeScript('PostToolUse'), /exit 2 # zn hook/);
+  assert.ok(cfg.isOurs(pre, 'zcode'));
+  // install uses the 28 s constant
+});
+
+test('Windows launcher: install gives Zcode the deadline; other agents\' Windows launchers are unchanged', (t) => {
+  const home = tempDir(t, 'zn-zc-win-deadline-');
+  zc.install({ home, platform: 'win32', nodePath: 'C:/Program Files/nodejs/node.exe', runnerPath: 'C:/zn/zn-gate/lib/hooks/runner.js' });
+  const h = readCfg(home).hooks.events.PreToolUse.find((x) => x.hooks.some((y) => y.command === 'powershell.exe')).hooks[0];
+  const script = require('../lib/shell-quote').windowsCommandScript(zc.commandText(h));
+  assert.ok(script.includes('.Wait(' + zc.LAUNCHER_DEADLINE_S * 1000 + ')'));
+  for (const id of ['codex', 'cursor', 'gemini', 'antigravity']) {
+    const s = launcher.windowsScript(id, 'PreToolUse', 'C:/node/node.exe', 'C:/z/runner.js');
+    assert.doesNotMatch(s, /function zr|taskkill|Stopwatch/, id);
+    assert.match(s, /& 'C:\/node\/node\.exe' 'C:\/z\/runner\.js' /, id);
+  }
+  assert.equal(launcher.windowsScript('codex', 'PreToolUse', 'C:/node/node.exe', 'C:/z/runner.js', {}), launcher.windowsScript('codex', 'PreToolUse', 'C:/node/node.exe', 'C:/z/runner.js'));
+});
+
+test('launcher deadline: a hook that ignores TERM is killed (KILL) one second after the deadline', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-deadline-kill-');
+  const stubborn = fakeNode(t, "trap '' TERM; cat >/dev/null; while :; do /bin/sleep 1; done");
+  const file = launcher.writeLauncher('zcode', stubborn, RUNNER, { home, env: process.env, deadlineS: 2 });
+  const t0 = Date.now();
+  const r = spawnSync(file, ['PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /its hook failed, so this was blocked/);
+  const ms = Date.now() - t0;
+  assert.ok(ms >= 2900 && ms < 9000, 'killed at deadline + 1 s, not left running (' + ms + ' ms)');
+});
+
+test('launcher deadline: a timer that cannot start blocks without running the hook', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-deadline-notimer-');
+  const marker = path.join(home, 'ran');
+  const hook = fakeNode(t, 'touch ' + marker + '; cat; exit 0');
+  const file = launcher.writeLauncher('zcode', hook, RUNNER, { home, env: process.env, deadlineS: 5 });
+  const text = fs.readFileSync(file, 'utf8');
+  assert.ok(text.includes('/bin/sleep 5 &'), 'the timer is /bin/sleep with an absolute path');
+  fs.writeFileSync(file, text.split('/bin/sleep').join('/nonexistent/sleep'), { mode: 0o755 });
+  const r = spawnSync(file, ['PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
+  assert.equal(r.status, 2, r.stderr);
+  assert.equal(fs.existsSync(marker), false, 'the hook did not run without a deadline');
+});
+
+test('failed install and failed uninstall leave no .bak-zn file behind', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-nobak-');
+  write(home, { hooks: { enabled: false } });
+  const realWrite = cfg.writeJson;
+  cfg.writeJson = () => { throw new Error('disk full'); };
+  try {
+    assert.throws(() => zc.install({ home, nodePath: '/usr/bin/node' }), /disk full/);
+  } finally { cfg.writeJson = realWrite; }
+  const baks = () => fs.readdirSync(path.dirname(cliFile(home))).filter((f) => f.includes('.bak-zn-'));
+  assert.deepEqual(baks(), []);
+  zc.install({ home, nodePath: '/usr/bin/node' });
+  for (const f of baks()) fs.unlinkSync(path.join(path.dirname(cliFile(home)), f));
+  cfg.writeJson = () => { throw new Error('disk full'); };
+  try {
+    assert.throws(() => zc.uninstall({ home }), /disk full/);
+  } finally { cfg.writeJson = realWrite; }
+  assert.deepEqual(baks(), []);
 });
