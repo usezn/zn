@@ -14,7 +14,8 @@
 #
 # Start deadline: ZCode stops a hook after 30 seconds, and what it does with a call whose hook timed out is not
 # documented. So a Node.js that hangs while the hook starts (the version probe or the launch) must not run into that
-# timeout: DEADLINE seconds after the script starts, the hook answers like it does when the check fails (block, or only
+# timeout: DEADLINE seconds (28, the same deadline as the launcher of `zn hooks install zcode`, which leaves the hook its
+# own 25-second answer deadline) after the script starts, the hook answers like it does when the check fails (block, or only
 # a warning on PostToolUse) and stops the Node.js it started. A watchdog sends this shell a signal; Node.js runs in the
 # background and the shell waits for it, because a shell only handles a signal once its foreground command is done.
 # Without a `sleep` program there is no watchdog, and the other refusals still apply.
@@ -40,13 +41,15 @@ refuse() {
 
 [ -n "$HERE" ] && [ -f "$LAUNCH" ] || refuse "the plugin's launcher (scripts/zn-launch.js) is missing."
 
-DEADLINE=25
+DEADLINE=28
 exec 3<&0
 CUR=""
 WD=""
+# shellcheck disable=SC2329 # called by trap
 stop_watchdog() {
   [ -z "$WD" ] || kill "$WD" 2>/dev/null
 }
+# shellcheck disable=SC2329 # called by trap
 on_deadline() {
   trap '' USR1
   [ -z "$CUR" ] || kill "$CUR" 2>/dev/null
