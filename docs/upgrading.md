@@ -96,12 +96,14 @@ an older zn-gate and the plugins keep a plain command. Agent by agent:
   prompts and `preToolUse` calls are blocked (its hooks are `failClosed`). With
   a project install or older hooks, only file reads and prompts are blocked; the
   other calls go ahead.
-- **Gemini CLI**: with a user install, tool calls are blocked. With a project
-  install or older hooks, Gemini CLI shows a warning and the tool call runs.
+- **Gemini CLI**: with a user or a project install, tool calls are blocked. With
+  hooks written before zn-gate 1.14.0, Gemini CLI shows a warning and the tool
+  call runs.
 - **GitHub Copilot CLI**: a hook command that cannot start fails closed for
   `preToolUse`, so the tool call is blocked; the hook that runs after a tool
   fails open, so that output is not scrubbed. Copilot has no launcher, and it
-  lets a call through when a hook times out.
+  lets a call through when a hook times out, so zn sets a 15-second timeout on
+  its hooks and blocks the call itself at 11 seconds.
 - **OpenCode**: the plugin starts the hook itself. When the hook cannot start,
   times out or gives no valid answer, the tool call is blocked, the message is
   not sent and the tool output is withheld, for user and project installs alike.

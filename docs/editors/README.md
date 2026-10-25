@@ -29,8 +29,8 @@ Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts
 
 | Agent | Setup | What it does not do |
 | - | - | - |
-| Gemini CLI | `zn hooks install gemini` | Does not change what a tool returns. Its hooks cannot ask for confirmation, so zn blocks what it would ask about and says why. Gemini CLI lets a call run when a hook crashes or times out, so zn blocks it instead (a hook that fails is answered with a block, and a check still running after 11 seconds is blocked, 4 seconds before Gemini CLI's 15-second timeout). Checked end to end with Gemini CLI 0.64.0. |
-| GitHub Copilot CLI | `zn hooks install copilot` | Also replaces secret values in the results of read and shell tools. Cannot block a typed prompt; Copilot lets a call through when a hook times out, so zn blocks the call itself 4 seconds before Copilot's 15-second limit. Not tested on Windows. Checked end to end with Copilot CLI 1.0.98. |
+| Gemini CLI | `zn hooks install gemini` | Does not change what a tool returns. Its hooks cannot ask for confirmation, so zn blocks what it would ask about and says why. Gemini CLI lets a call run when a hook crashes or times out, so zn blocks it instead (a hook that fails is answered with a block, and zn sets a 15-second timeout on its hook and answers a check still running after 11 seconds with a block). Checked end to end with Gemini CLI 0.64.0. |
+| GitHub Copilot CLI | `zn hooks install copilot` | Also replaces secret values in the results of read and shell tools. Cannot block a typed prompt; Copilot lets a call through when a hook times out, so zn, which sets a 15-second timeout on its hooks, blocks the call itself at 11 seconds. Not tested on Windows. Checked end to end with Copilot CLI 1.0.98. |
 
 Details: [compat.md](../compat.md) (Gemini CLI and Copilot CLI) and [threat-model.md](../threat-model.md) (these two and Antigravity).
 

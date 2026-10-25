@@ -236,8 +236,8 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     explicit refusal (exit code 2) blocks. zn blocks instead: a user install goes
     through a small launcher script, and a project install through a start guard,
     that answer a hook that fails (including when the Node.js zn was installed
-    with is gone) with a block, and a check that has not finished after 11
-    seconds is blocked, 4 seconds before Gemini CLI's 15-second timeout (see
+    with is gone) with a block, and zn sets a 15-second timeout on its hook and
+    blocks a check that has not finished after 11 seconds (see
     "If your agent blocks every prompt"). Hooks written before zn-gate 1.14.0
     do not have these answers.
   - A project hook stays untrusted until you approve it in Gemini CLI, and it
@@ -375,7 +375,7 @@ Install zn on every machine that runs the agent.
 ## If your agent blocks every prompt
 
 A hook that does not finish is answered by zn too, for every agent. As the hook starts, before it reads
-its input, a timer is armed 4 seconds before the agent's own hook timeout (Claude Code, Copilot CLI,
+its input, a timer is armed 4 seconds before the hook timeout zn sets for that agent (Claude Code, Copilot CLI,
 Gemini CLI and Antigravity: 15 seconds, so 11; OpenCode: 20, so 16; Codex CLI, Cursor and ZCode: 30, so
 26). If the check has not finished by then, including when the input never ends, zn answers the event with
 the block of its own agent (exit code 2, or the agent's deny answer) and exits: a tool call or prompt is
@@ -420,8 +420,8 @@ an older zn-gate and the plugins keep a plain command. Agent by agent:
 - **GitHub Copilot CLI**: a hook command that cannot start fails closed for
   `preToolUse`, so the tool call is blocked; the hook that runs after a tool
   fails open, so that output is not scrubbed. Copilot has no launcher; zn
-  blocks the call itself 4 seconds before Copilot's 15-second limit (Copilot
-  lets a call through when a hook times out).
+  sets a 15-second timeout on its hooks and blocks the call itself at 11 seconds
+  (Copilot lets a call through when a hook times out).
 - **OpenCode**: the plugin starts the hook itself. When the hook cannot start,
   times out or gives no valid answer, the tool call is blocked, the message is
   not sent and the tool output is withheld, for user and project installs alike.
