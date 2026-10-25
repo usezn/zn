@@ -305,10 +305,16 @@ function launcherCommand(file, event, platform = process.platform, opts = {}) {
  * The command is `sh -c <script>` with a script that holds no space, quote-free of anything the split could break:
  * each space is the expansion ${IFS} (field splitting turns it back into spaces) and each space inside the JSON text
  * is the printf escape \040. Only simple commands joined by ; && || are used, because a compound command
- * (if, case) is told apart by real whitespace. Steps: the first `zn` and `node` found on the PATH (`zn` must be an
- * absolute path: a relative PATH entry depends on the folder the agent runs in); run `zn hook <agent>`; its exit
- * code 0 (an answer) or 2 (its own refusal, deny JSON already printed) ends it; anything else, or no zn or node, prints
- * the deny JSON and exits 0, the way the user launcher does.
+ * (if, case) is told apart by real whitespace. Steps: the first `zn` and `node` found on the PATH, each of which must come
+ * from an absolute PATH entry (a relative or empty entry depends on the folder the agent runs in, which may be the
+ * repository itself); run `zn hook <agent>`; its exit code 0 (an answer) or 2 (its own refusal, deny JSON already printed)
+ * ends it; anything else, or no zn or node, prints the deny JSON and exits 0, the way the user launcher does.
+ *
+ * `command -v` alone cannot tell where a program was found: dash prints the relative path, but bash as sh (the sh of
+ * macOS, and of Linux systems where sh is bash) turns a program found through `.`, `bin` or an empty entry into an
+ * absolute path. So the folder of each program found must also be an entry of ":$PATH:" as written. Every operand of a
+ * test starts with x: bash 3.2 drops an empty quoted word next to an unquoted ${IFS} expansion, so `[ -n "" ]` would
+ * become `[ -n ]`, which is true.
  */
 // The hook scripts below use no cmdlet (Test-Path, Get-Command, New-Object...): a cmdlet belongs to a module, and Windows PowerShell 5.1
 // searches the user's own Documents\WindowsPowerShell\Modules first, so a module planted there by the same account could answer in
@@ -363,6 +369,15 @@ function projectAnswer(agentId, event, why, win) {
   return { stdout: JSON.stringify({ systemMessage: w }), stderr: null, exit: 0 };
 }
 
+// The project guard trusts the zn and node it found only when the folder of each one is an entry of the PATH as written:
+// P is ":$PATH:"; T is set when the folder of $Z (with or without a final slash) is in it, U the same for $N.
+const PROJECT_TRUST = [
+  'P=:$PATH:',
+  'ZD=${P#*":${Z%/*}:"}', 'ZS=${P#*":${Z%/*}/:"}', 'ND=${P#*":${N%/*}:"}', 'NS=${P#*":${N%/*}/:"}',
+  'T=', '[ "$ZD" != "$P" ] && T=z', '[ "$ZS" != "$P" ] && T=z',
+  'U=', '[ "$ND" != "$P" ] && U=n', '[ "$NS" != "$P" ] && U=n',
+];
+
 /**
  * The POSIX project hook command (see above) for one event (omit it for Antigravity). Every agent that runs project hooks
  * through a shell gets the same guard, so a `zn` or Node.js that is gone ends in that agent's own blocking answer instead of
@@ -381,8 +396,8 @@ function projectShCommand(agentId, event) {
       ...(a.stderr ? ["echo '" + a.stderr + "' >&2"] : []),
       'exit ' + a.exit,
     ].join('; ');
-    const script = 'Z=$(command -v zn); N=$(command -v node); R=missing; ' +
-      'if [ -n "$N" ] && [ "${Z#/}" != "$Z" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
+    const script = 'Z=$(command -v zn); N=$(command -v node); ' + PROJECT_TRUST.join('; ') + '; R=missing; ' +
+      'if [ -n "$N" ] && [ "${Z#/}" != "$Z" ] && [ "${N#/}" != "$N" ] && [ -n "$T" ] && [ -n "$U" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
       'if [ "$R" = ran ]; then ' + say(crash) + '; fi; ' + say(missing);
     return 'sh -c ' + shQuote(script);
   }
@@ -399,12 +414,14 @@ function projectShCommand(agentId, event) {
     ':',
     'Z=$(' + sp('command', '-v', 'zn') + ')',
     'N=$(' + sp('command', '-v', 'node') + ')',
+    ...PROJECT_TRUST.map((x) => x.replace(/^\[ (.*) \] && /, (_, w) => test(...w.split(' ').map((o) => (o === '!=' ? o : o.replace(/^"/, '"x')))) + '&&')),
     'R=missing',
-    test('-n', '"$N"') + '&&' + test('"${Z#/}"', '!=', '"$Z"') + '&&R=ran&&"$Z"' + IFS + 'hook' + IFS + agentId,
+    [test('"x$N"', '!=', 'x'), test('"x${Z#/}"', '!=', '"x$Z"'), test('"x${N#/}"', '!=', '"x$N"'), test('"x$T"', '!=', 'x'), test('"x$U"', '!=', 'x')].join('&&') +
+      '&&R=ran&&"$Z"' + IFS + 'hook' + IFS + agentId,
     'C=$?',
-    test('"$R"', '=', 'ran') + '&&' + test('"$C"', '=', '0') + '&&' + sp('exit', '0'),
-    test('"$R"', '=', 'ran') + '&&' + test('"$C"', '=', '2') + '&&' + sp('exit', '2'),
-    [test('"$R"', '=', 'ran'), ...say(crash), sp('exit', String(crash.exit))].join('&&'),
+    test('"x$R"', '=', 'xran') + '&&' + test('"x$C"', '=', 'x0') + '&&' + sp('exit', '0'),
+    test('"x$R"', '=', 'xran') + '&&' + test('"x$C"', '=', 'x2') + '&&' + sp('exit', '2'),
+    [test('"x$R"', '=', 'xran'), ...say(crash), sp('exit', String(crash.exit))].join('&&'),
     ...say(missing),
     sp('exit', String(missing.exit)),
   ].join(';');
@@ -435,7 +452,7 @@ function isProjectGuard(command, agentId) {
     if (typeof command !== 'string') return false;
     if (command === projectShCommand(agentId)) return true;
     // A later zn-gate may word the deny differently: recognize the guard by its structure (start and the hook call).
-    if (command.startsWith("sh -c 'Z=$(command -v zn); N=$(command -v node); R=missing; if ") && command.includes('"$Z" hook ' + agentId + '; C=$?;')) return true;
+    if (command.startsWith("sh -c 'Z=$(command -v zn); N=$(command -v node); ") && command.includes('"$Z" hook ' + agentId + '; C=$?;')) return true;
     return command.startsWith('sh -c :;Z=$(' + ['command', '-v', 'zn'].join(IFS) + ')') && command.includes(IFS + 'hook' + IFS + agentId + ';');
   } catch (_) { return false; }
 }
