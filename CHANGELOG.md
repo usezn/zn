@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.14.0] - 2026-10-25
+## [1.14.0] - 2026-10-26
 
 **Breaking:** `zn run` and the agent hooks no longer accept a secret marker in a command's arguments, because arguments are visible to other processes and to command-line logs. Before: `psql "postgres://user:__ZN_DB_PASSWORD__@db/app"`. After: `zn secret set PGPASSWORD --command psql`, then `zn run --secrets PGPASSWORD -- psql "postgres://user@db/app"`, where psql reads the variable itself. A marker in an environment file that your shell loads (a shadowed `.env`) is still filled in, and a secret kept for a program or a file (`env` or `file` mode) is no longer sent by `secrets_http_request`: change its mode with `zn secret allow NAME --mode proxy` if an API needs it.
 
