@@ -422,7 +422,7 @@ test('install on Windows writes a powershell.exe process hook that exits 2 itsel
   assert.equal(h.type, 'process');
   assert.deepEqual(h.args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-EncodedCommand']);
   const script = require('../lib/shell-quote').windowsCommandScript(zc.commandText(h));
-  assert.match(script, /\$rc = zr .*runner\.js" zcode'; if \(\$rc -eq 0 -or \$rc -eq 2\) \{ exit \$rc \}/);
+  assert.match(script, /\$rc = zr .*runner\.js" zcode'; if \(\(\$rc -eq 0 -and \(zk\)\) -or \$rc -eq 2\) \{ zx \$rc \}/);
   assert.match(script, /Console\]::Error\.WriteLine\('zn: its hook cannot start.*exit 2 # zn hook zcode$/);
   assert.ok(cfg.isOurs(zc.commandText(h), 'zcode'));
   // PostToolUse only warns when the Node.js is gone (exit 0 with a systemMessage).
@@ -814,7 +814,7 @@ test('launcher deadline: a hook stuck on start-up is answered before ZCode would
 
 test('launcher deadline: a hook that answers in time gets the input and its exit code and output pass through; nothing lingers', { skip: !posix }, (t) => {
   const home = tempDir(t, 'zn-zc-deadline-ok-');
-  const echo = fakeNode(t, 'cat; exit 0');
+  const echo = fakeNode(t, 'cat; printf ok > "$ZN_HOOK_ACK"; exit 0');
   const file = launcher.writeLauncher('zcode', echo, RUNNER, { home, env: process.env, deadlineS: 30 });
   const t0 = Date.now();
   const r = spawnSync(file, ['PreToolUse'], { input: '{"a":1}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
@@ -878,7 +878,7 @@ test('launcher deadline: a grandchild that holds the output open neither keeps t
   const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (_) { return false; } };
   const cases = [
     ['hook stuck after starting a grandchild', 2, 'cat >/dev/null; sleep 60 & echo $! > PIDFILE; wait'],
-    ['hook that answers and leaves a grandchild behind', 0, 'cat >/dev/null; sleep 60 & echo $! > PIDFILE; echo answer; exit 0'],
+    ['hook that answers and leaves a grandchild behind', 0, 'cat >/dev/null; sleep 60 & echo $! > PIDFILE; echo answer; printf ok > "$ZN_HOOK_ACK"; exit 0'],
   ];
   for (const [name, status, body] of cases) {
     const pidFile = path.join(home, 'pid-' + status);

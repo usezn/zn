@@ -219,7 +219,7 @@ test('launcher: a non-blocking event (PostToolUse) is not blocked on SIGTERM, on
 
 test('launcher: a hook that finishes in time passes its answer through unchanged (soft mode)', async (t) => {
   if (WIN) return t.skip('POSIX launcher');
-  const { child, done } = launcherRun(t, 'gemini', 'BeforeTool', 'process.stdin.resume(); process.stdin.on("end", () => { process.stdout.write("{\\"decision\\":\\"allow\\"}"); });', { deadlineS: 5, deadlineSoft: true });
+  const { child, done } = launcherRun(t, 'gemini', 'BeforeTool', 'process.stdin.resume(); process.stdin.on("end", () => { require("fs").writeFileSync(process.env.ZN_HOOK_ACK, "ok"); process.stdout.write("{\\"decision\\":\\"allow\\"}"); });', { deadlineS: 5, deadlineSoft: true });
   child.stdin.end('{}');
   const r = await done;
   assert.equal(r.status, 0);

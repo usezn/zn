@@ -1785,6 +1785,48 @@ function armAntigravityFailClosed(agentId, raw) {
 }
 
 /*
+ * A hook whose answer never reached the agent must not count as done. Any error on stdout (EPIPE when the agent closed its
+ * end, a destroyed stream) marks the run as failed: the exit status becomes non-zero, never 0. Under a launcher
+ * (ZN_HOOK_ACK is set) it is 1, which the launcher treats as a failure and answers with its own block for that agent; when the
+ * hook is called directly it is 2 (the documented block) for the events that block by exit code, and 1 otherwise. On a clean
+ * run the launcher is told so through the ack file (see ackDone): a status 0 with no ack is not accepted by the launcher.
+ */
+function failedWriteCode(state) {
+  if (process.env.ZN_HOOK_ACK) return 1;
+  try {
+    const agentId = state.agentId;
+    if (agentId && agentId !== 'antigravity' && require('../agents/launcher').blockExit(agentId).has(state.event)) return 2;
+  } catch (_) { /* fall through */ }
+  return 1;
+}
+
+function watchStdout(state) {
+  state.stdoutFailed = false;
+  process.stdout.on('error', () => { state.stdoutFailed = true; });
+  // A late error (after main returned, before the process ends) still turns the status non-zero.
+  process.on('exit', () => { if (state.stdoutFailed && !(process.exitCode >= 1)) process.exitCode = failedWriteCode(state); });
+}
+
+// Waits until everything written to stdout was handed over, then reports whether it all got through.
+function flushStdout(state) {
+  return new Promise((resolve) => {
+    try {
+      // A replaced write (tests capture the output that way) has no stream behind it to wait for.
+      if (Object.prototype.hasOwnProperty.call(process.stdout, 'write')) return resolve();
+      process.stdout.write('', (err) => { if (err) state.stdoutFailed = true; resolve(); });
+    } catch (_) { state.stdoutFailed = true; resolve(); }
+  });
+}
+
+// Tells the launcher that the answer was written in full (ZN_HOOK_ACK names a private file it created for this run).
+function ackDone(state) {
+  const file = process.env.ZN_HOOK_ACK;
+  if (!file || state.stdoutFailed || (process.exitCode !== undefined && process.exitCode !== 0)) return;
+  try { fs.writeFileSync(file, 'ok'); } catch (_) { /* no ack: the launcher treats the run as failed */ }
+}
+
+
+/*
  * The supervisor of the whole hook, for every agent. Most agents let the call run when a hook runs past its timeout
  * (Gemini CLI, Copilot CLI, Claude Code, Cursor, Codex and ZCode do; Antigravity does not say), and a hook whose stdin
  * never ends, or whose check never finishes, would get there with no answer from zn. So a timer is armed as the hook
@@ -1818,12 +1860,14 @@ function supervisorDeadlineMs(agentId) {
   return ms;
 }
 
+// True when every byte was written (a closed pipe, or 1000 tries on a full one, is a failure the caller must not hide).
 function writeAllSync(fd, text) {
   const buf = Buffer.from(String(text));
   let off = 0;
   for (let tries = 0; off < buf.length && tries < 1000; tries++) {
-    try { off += fs.writeSync(fd, buf, off); } catch (e) { if (!e || e.code !== 'EAGAIN') return; }
+    try { off += fs.writeSync(fd, buf, off); } catch (e) { if (!e || e.code !== 'EAGAIN') return false; }
   }
+  return off >= buf.length;
 }
 
 // The answer of the supervisor: what the event gets when it cannot be checked in time.
@@ -1840,7 +1884,7 @@ function supervisorAnswer(agentId, adapter, text) {
 }
 
 // Returns a function that disarms the supervisor.
-function armSupervisor(agentId) {
+function armSupervisor(agentId, state) {
   let adapter;
   try { adapter = require('../agents').getAdapter(agentId); } catch (_) { return () => {}; }
   const ms = supervisorDeadlineMs(agentId);
@@ -1851,9 +1895,11 @@ function armSupervisor(agentId) {
     if (done) return;
     done = true;
     // The answer must be out before the process ends: plain synchronous writes, whatever the stream.
-    process.stdout.write = (chunk, enc, cb) => { writeAllSync(1, chunk); (typeof enc === 'function' ? enc : cb || (() => {}))(); return true; };
+    process.stdout.write = (chunk, enc, cb) => { if (!writeAllSync(1, chunk)) state.stdoutFailed = true; (typeof enc === 'function' ? enc : cb || (() => {}))(); return true; };
     process.stderr.write = (chunk, enc, cb) => { writeAllSync(2, chunk); (typeof enc === 'function' ? enc : cb || (() => {}))(); return true; };
     try { supervisorAnswer(agentId, adapter, stdinText); } catch (_) { writeAllSync(2, 'zn hook: ' + SUPERVISOR_REASON + ', so this was blocked.' + String.fromCharCode(10)); process.exitCode = 2; }
+    // Under a launcher the answer counts only with the ack, and a failed write is never a status 0.
+    if (state.stdoutFailed) process.exitCode = failedWriteCode(state); else ackDone(state);
     process.exit(process.exitCode || 0);
   };
   const timer = setTimeout(fire, ms);
@@ -1868,18 +1914,22 @@ function armSupervisor(agentId) {
 }
 
 async function main(args, readText = readStdin) {
-  const state = { stopEvent: false };
+  const state = { stopEvent: false, agentId: args[0] };
+  watchStdout(state);
   stdinText = '';
-  const disarmSupervisor = armSupervisor(args[0]);
+  const disarmSupervisor = armSupervisor(args[0], state);
   try {
     await handleEvent(args, state, readText);
   } catch (err) {
-    if (state.stopEvent) return stopFailSafe(err);
+    if (state.stopEvent) stopFailSafe(err);
     // Anything unexpected fails closed: the call is refused, not passed through.
-    refuseInput(args[0], 'the hook failed (' + ((err && err.message) || String(err)) + ')');
+    else refuseInput(args[0], 'the hook failed (' + ((err && err.message) || String(err)) + ')');
   } finally {
     disarmSupervisor();
   }
+  await flushStdout(state);
+  if (state.stdoutFailed) process.exitCode = failedWriteCode(state);
+  else ackDone(state);
 }
 
 /*
@@ -1927,6 +1977,7 @@ async function handleEvent(args, state, readText) {
     return refuseInput(agentId, 'the event on stdin is not a JSON object');
   }
   state.stopEvent = raw.hook_event_name === 'Stop';
+  state.event = raw.hook_event_name;
   const disarm = armCodexFailClosed(agentId, raw.hook_event_name) || armAntigravityFailClosed(agentId, raw);
   try {
     const res = await handle(adapter, raw);
@@ -1934,7 +1985,7 @@ async function handleEvent(args, state, readText) {
     try { require('../vault/client').close(); } catch (_) { /* not loaded */ }
     if (res.output !== null && res.output !== undefined) {
       // After the deadline the engine or the vault may still be working: leave as soon as the answer is written.
-      if (res.decision && res.decision.abandoned) process.stdout.write(JSON.stringify(res.output), () => process.exit(process.exitCode || 0));
+      if (res.decision && res.decision.abandoned) process.stdout.write(JSON.stringify(res.output), (err) => { if (err) state.stdoutFailed = true; else ackDone(state); process.exit(state.stdoutFailed ? failedWriteCode(state) : (process.exitCode || 0)); });
       else process.stdout.write(JSON.stringify(res.output));
     }
     // zn itself failed: Codex and ZCode also get their documented block code (2), with the reason on stderr.
