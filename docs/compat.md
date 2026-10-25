@@ -238,8 +238,8 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     that answer a hook that fails (including when the Node.js zn was installed
     with is gone) with a block, and a check that has not finished after 11
     seconds is blocked, 4 seconds before Gemini CLI's 15-second timeout (see
-    "If your agent blocks every prompt"). Hooks written by zn-gate 1.13.1 or
-    earlier do not have these answers.
+    "If your agent blocks every prompt"). Hooks written before zn-gate 1.14.0
+    do not have these answers.
   - A project hook stays untrusted until you approve it in Gemini CLI, and it
     runs `zn` from your PATH, so every teammate needs zn-gate installed.
   - `hooksConfig.enabled: false`, a name in `hooksConfig.disabled` or
@@ -415,8 +415,8 @@ an older zn-gate and the plugins keep a plain command. Agent by agent:
   a project install or older hooks, only file reads and prompts are blocked; the
   other calls go ahead.
 - **Gemini CLI**: with a user or a project install, tool calls are blocked. With
-  hooks written by zn-gate 1.13.1 or earlier, Gemini CLI shows a warning and the
-  tool call runs.
+  hooks written before zn-gate 1.14.0, Gemini CLI shows a warning and the tool
+  call runs.
 - **GitHub Copilot CLI**: a hook command that cannot start fails closed for
   `preToolUse`, so the tool call is blocked; the hook that runs after a tool
   fails open, so that output is not scrubbed. Copilot has no launcher; zn
