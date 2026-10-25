@@ -248,7 +248,7 @@ function parseCommand(command, agentId) {
       .replace(/if \(\(\$LASTEXITCODE -eq 0 -and \(zk\)\) -or \$LASTEXITCODE -eq 2\) \{ zx (0|\$LASTEXITCODE) \}/g, 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit $1 }')
       .replace(/if \(\(\$rc -eq 0 -and \(zk\)\) -or \$rc -eq 2\) \{ zx (0|\$rc) \}/g, 'if ($rc -eq 0 -or $rc -eq 2) { exit $1 }')
       .replace(/zd; /g, '')
-      .replace(/function zf\(\$x\) \{[^\n]*?return \$null \}; /, '')
+      .replace(/(?:\$env:NoDefaultCurrentDirectoryInExePath = '1'; \$env:PATH = [^\n]*?-join ';'; )?function zf\(\$x\) \{[^\n]*?return \$null \}; /, '')
       // ZCode's launcher runs the hook as a child with a deadline (zr, launcher.windowsScript with deadlineS): read it as the plain `& node runner agent; if (...) { exit ... }` step.
       .replace(/function zr\(\$f, \$a\) \{[^\n]*?return \$rc \}; /, '')
       .replace(/\$rc = zr '"([^'"]+)"' '"([^'"]+)" ([a-z-]+)'; if \(\$rc -eq 0 -or \$rc -eq 2\) \{ exit \$rc \}/, (m0, n, r, a) => "& '" + n + "' '" + r + "' " + a + '; if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit $LASTEXITCODE }')
