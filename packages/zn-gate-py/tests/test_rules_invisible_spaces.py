@@ -1,4 +1,5 @@
 """An invisible character used as a space does not hide a phrase; the table equals the shared fixture."""
+import sys
 import json
 import pathlib
 
@@ -64,11 +65,44 @@ def test_spaced_view_is_thread_safe():
         for i in range(400)
     ]
     expected = [rules.redact_secrets(t) for t in texts]
-    with ThreadPoolExecutor(max_workers=16) as pool:
-        for _ in range(3):
-            got = list(pool.map(rules.redact_secrets, texts))
-            assert got == expected
+    # Switch threads as often as possible, so a race between reading and writing the cache shows up.
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            for _ in range(3):
+                got = list(pool.map(rules.redact_secrets, texts))
+                assert got == expected
+    finally:
+        sys.setswitchinterval(interval)
 
+
+
+def test_spaced_view_of_a_text_is_never_the_view_another_thread_finished_later(monkeypatch):
+    """Thread A starts building the view of its text, thread B caches the view of another text, then A finishes:
+    the next read for B's text must still give B's view, not the one A wrote last."""
+    import threading
+
+    zw = _chr("200B")
+    text_a = "first" + zw + "text"
+    text_b = "second" + zw + "text, longer"
+    build = rules._space_invisible
+    entered, release = threading.Event(), threading.Event()
+
+    def slow_for_a(text):
+        if text is text_a:
+            entered.set()
+            release.wait(5)
+        return build(text)
+
+    monkeypatch.setattr(rules, "_space_invisible", slow_for_a)
+    worker = threading.Thread(target=rules._spaced_view, args=(text_a,))
+    worker.start()
+    assert entered.wait(5)
+    assert rules._spaced_view(text_b) == build(text_b)
+    release.set()
+    worker.join(5)
+    assert rules._spaced_view(text_b) == build(text_b)
 
 @pytest.mark.parametrize("case", FIXTURE["benign_cases"], ids=lambda c: c["cp"] + "-" + c["template"])
 def test_benign_text_with_invisible_character_is_allowed(case):
