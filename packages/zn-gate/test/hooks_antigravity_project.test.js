@@ -260,3 +260,15 @@ test('the project guard is recognized by its structure when its wording changes'
   assert.equal(launcher.isProjectWindowsScript(ps.replace('exit 0 #', 'exit 0 ; # note #').replace('; # note #', ' #'), 'antigravity'), true);
   assert.equal(launcher.isProjectWindowsScript('Write-Output hi # zn hook antigravity', 'antigravity'), false);
 });
+
+test('self-check: a hook that answers before reading its input is read, not reported as not started (EPIPE)', skip, (t) => {
+  const file = path.join(tempDir(t, 'zn-agy-epipe-'), 'hook.js');
+  fs.writeFileSync(file, 'process.stdout.write(JSON.stringify({ decision: "deny", reason: "zn is missing" }));');
+  const command = process.execPath + ' ' + file;
+  const big = 'x'.repeat(8 * 1024 * 1024);
+  for (let i = 0; i < 5; i++) {
+    const r = agy.selfCheck(command, { input: big });
+    assert.equal(r.ok, false);
+    assert.match(r.detail, /answered "deny" to a harmless event: zn is missing/, r.detail);
+  }
+});
