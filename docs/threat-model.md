@@ -473,8 +473,10 @@ stop malware running as the same user (see above).
   upgrade and the hook command points to the old path): what happens depends on
   the agent and on how the hooks were installed. A user install blocks tool
   calls in Claude Code, Codex CLI, Cursor, Gemini CLI, Antigravity and ZCode desktop app through its
-  launcher script; a project install, older hooks and the plugins differ per
-  agent, and Codex CLI and Gemini CLI let the call go ahead there. See
+  launcher script, and a project install for Claude Code, Codex CLI, Cursor,
+  Gemini CLI and Copilot CLI through its start guard; with the plugins or
+  hooks written before zn-gate 1.14.0 it differs per agent, and Codex CLI and
+  Gemini CLI let the call go ahead there. See
   [If your agent blocks every prompt](compat.md#if-your-agent-blocks-every-prompt),
   which has one statement per agent. A hook that times out is described in each
   agent's own section of that page. Run `zn hooks install` again after moving or
