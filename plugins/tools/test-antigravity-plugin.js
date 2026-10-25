@@ -112,6 +112,21 @@ try {
       return answer;
     };
 
+    test('zn-hook.sh never starts a node from a relative or empty PATH entry', () => {
+      const d = fixture('relpath', { launcher: '// stub' });
+      const marker = path.join(d, 'planted-ran');
+      fs.mkdirSync(path.join(d, 'sub'));
+      for (const dir of [d, path.join(d, 'sub')]) {
+        for (const n of ['node', 'sleep', 'ps']) fs.writeFileSync(path.join(dir, n), '#!/bin/sh\n: > ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+      }
+      const real = path.join(d, 'bin');
+      for (const PATH of ['.:' + real + ':/usr/bin:/bin', real + ':.:/usr/bin:/bin', real + ':/usr/bin:/bin:.', 'sub:' + real + ':/usr/bin:/bin', ':' + real + ':/usr/bin:/bin']) {
+        const { r } = run(d, { PATH, ZN_STUB_OUT: '{"decision":"allow"}' });
+        assert.strictEqual(fs.existsSync(marker), false, PATH + ': a planted program ran');
+        assert.strictEqual(JSON.parse(r.stdout).decision, 'allow', PATH + ': ' + r.stderr);
+      }
+    });
+
     test('zn-hook.sh passes the launcher answer through and returns at once', () => {
       const d = fixture('pass', { launcher: '// stub' });
       const { r, ms } = run(d, { ZN_STUB_OUT: '{"decision":"allow"}', ZN_STUB_RC: '0' });
