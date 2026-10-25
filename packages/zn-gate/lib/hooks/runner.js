@@ -888,7 +888,7 @@ async function decideMcp(ev, d, agentId) {
 
 // The characters lib/rules.js counts as invisible (ZERO_WIDTH_RE and INVISIBLE_ASTRAL_RE). A test keeps
 // this list equal to the rules' own. lib/rules.js is not edited for this: its files carry a rules version.
-const INVISIBLE_CHARS_RE = /[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+const INVISIBLE_CHARS_RE = /[\u200B-\u200F\u2060\uFEFF\u00AD\uFE00-\uFE0F\u061C\u180E\u115F\u1160\u3164\uFFA0\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
 
 // Limits on the check of one tool output. The tool has already run, so a hook that is killed by its
 // agent's timeout lets the whole output through unchecked (PostToolUse has no way to fail closed), and a
@@ -1357,9 +1357,10 @@ function failDecision(ev, err, mode, agentId) {
   const missing = err.code === 'ZN_UNAVAILABLE';
   const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
   const vaultDown = err.vaultFailed === true;
+  // The vault errors of the engine may already say how to fix it (zn unlock): say it once.
+  const unlockHint = /zn unlock/.test(String(err.message || '')) ? '' : ' Check that the vault is running and unlocked (zn unlock; zn lock stops it).';
   const msg = vaultDown
-    ? 'zn: zn could not check this action against your secret vault, so it was blocked to keep your secrets safe. ' +
-      'Check that the vault is running and unlocked (zn unlock; zn lock stops it)' + detail
+    ? 'zn: could not check this action against your secret vault, so it was blocked to keep your secrets safe.' + unlockHint + detail
     : 'zn: ' + (missing ? REINSTALL : HOOK_FAILED + fixHint(agentId)) + detail;
   // Fail open only when the engine itself is missing and the user chose so.
   if (mode === 'open' && missing) return { decision: 'allow', failOpen: true, warning: 'zn: ' + REINSTALL_USER };

@@ -140,7 +140,8 @@ pub fn fold_system1(input: &str) -> String {
         match ch {
             '\u{0000}' | '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{FEFF}' | '\u{202A}'
             | '\u{202B}' | '\u{202C}' | '\u{202D}' | '\u{202E}' | '\u{2066}' | '\u{2067}'
-            | '\u{2068}' | '\u{2069}' => {}
+            | '\u{2068}' | '\u{2069}' | '\u{200E}' | '\u{200F}' | '\u{061C}' | '\u{180E}'
+            | '\u{115F}' | '\u{1160}' | '\u{3164}' | '\u{FFA0}' => {}
             'Ａ'..='Ｚ' => out.push(char::from_u32(ch as u32 - 0xFF21 + b'A' as u32).unwrap()),
             'ａ'..='ｚ' => out.push(char::from_u32(ch as u32 - 0xFF41 + b'a' as u32).unwrap()),
             '０'..='９' => out.push(char::from_u32(ch as u32 - 0xFF10 + b'0' as u32).unwrap()),
@@ -268,6 +269,9 @@ mod tests {
     fn fold_strips_null_and_rtl_marks() {
         assert_eq!(fold_system1("rm\u{0000} -rf"), "rm -rf");
         assert_eq!(fold_system1("rm\u{202E} -rf"), "rm -rf");
+        for mark in ["\u{200E}", "\u{200F}", "\u{061C}", "\u{180E}", "\u{115F}", "\u{1160}", "\u{3164}", "\u{FFA0}"] {
+            assert_eq!(fold_system1(&format!("r{mark}m -rf")), "rm -rf");
+        }
     }
 
     #[test]
