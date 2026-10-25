@@ -891,6 +891,8 @@ test('launcher deadline: a grandchild that holds the output open neither keeps t
     if (status === 0) assert.equal(r.stdout.trim(), 'answer', name);
     const pid = Number(fs.readFileSync(pidFile, 'utf8'));
     assert.ok(pid > 0);
+    // Under load the KILL or the reaping of the reparented sleep can lag: wait up to 2 s; one that never dies still fails.
+    for (let i = 0; i < 40 && alive(pid); i++) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
     assert.equal(alive(pid), false, name + ': the grandchild is gone');
   }
 });

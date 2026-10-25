@@ -21,13 +21,15 @@ const { generateAll } = require('./fixtures/fake_secrets');
 
 // Time budget checks: one warm-up call (JIT and regex compilation), then the fastest of a few runs, so a slow
 // shared CI runner does not fail a check that a real regression would fail on every run.
-function fastestMs(fn, runs = 5) {
+function fastestMs(fn, runs = 9) {
   let result = fn();
   let best = Infinity;
   for (let i = 0; i < runs; i++) {
-    const t0 = process.hrtime.bigint();
+    // CPU time of this process, not wall time: a runner that is busy with other work does not make the code slower.
+    const c0 = process.cpuUsage();
     result = fn();
-    best = Math.min(best, Number(process.hrtime.bigint() - t0) / 1e6);
+    const c = process.cpuUsage(c0);
+    best = Math.min(best, (c.user + c.system) / 1000);
   }
   return { ms: best, result };
 }
@@ -308,7 +310,7 @@ test('a shell command over 100 KB is refused at once; one just under the limit g
   assert.equal(tooLong.length, cap + 1);
   const { ms, result: deny } = fastestMs(() => policy.bashDenial(tooLong));
   assert.equal(deny, 'zn: this command is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.');
-  assert.ok(ms < 50, 'took ' + ms + ' ms');
+  assert.ok(ms < 10, 'took ' + ms + ' ms');
   // Exactly at the limit and just under it: the normal check runs.
   assert.equal(policy.bashDenial('echo ' + 'a'.repeat(cap - 5)), null);
   const head = 'cat ~/.aws/credentials ';
@@ -742,7 +744,7 @@ test('a 100 KB here-document read as data is checked in milliseconds', (t) => {
   const cmd = "cat > generated.js <<'EOF'\n" + body + 'EOF';
   const { ms, result: deny } = fastestMs(() => policy.bashDenial(cmd, o));
   assert.equal(deny, null, 'the body is data, so the command is allowed');
-  assert.ok(ms < 25, 'checked in ' + ms + ' ms');
+  assert.ok(ms < 6, 'checked in ' + ms + ' ms');
 });
 
 test('10 000 here-document operators on one line are checked within the time budget', (t) => {

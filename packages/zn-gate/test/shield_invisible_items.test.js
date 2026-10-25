@@ -11,6 +11,7 @@ const readline = require('readline');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { tooInvisible } = require('../lib/rules');
 
 const SERVER = `
 const Z = String.fromCharCode(0x200b);
@@ -69,6 +70,33 @@ function run(toolName) {
   });
 }
 
+// The cost that is real work, measured in process: the invisible-character count over the same strings the shield
+// collects from the result (it stops at the cap, so this is about a millisecond). Process startup is not part of it.
+const Z = '\u200b';
+const MANY = (text) => Array.from({ length: 60 }, () => text);
+const STRINGS = {
+  split: MANY(Z.repeat(65535)),
+  split_mixed: MANY('ok '.repeat(10) + Z.repeat(65000)),
+  resources: MANY(Z.repeat(65535)),
+  structured: MANY(Z.repeat(65535)),
+  sc_only: MANY(Z.repeat(65535)),
+  sc_after_100k: MANY(Z.repeat(65535)),
+};
+
+// One warm-up call, then the fastest of a few runs (CPU time): a real regression slows every run.
+function fastestMs(fn, runs = 9) {
+  let result = fn();
+  let best = Infinity;
+  for (let i = 0; i < runs; i++) {
+    // CPU time of this process, not wall time: a runner that is busy with other work does not make the code slower.
+    const c0 = process.cpuUsage();
+    result = fn();
+    const c = process.cpuUsage(c0);
+    best = Math.min(best, (c.user + c.system) / 1000);
+  }
+  return { ms: best, result };
+}
+
 for (const name of ['split', 'split_mixed', 'resources', 'structured', 'sc_only', 'sc_after_100k', 'sc_huge']) {
   test(`many items under the cap but over it in total are blocked (${name})`, async () => {
     const { msg, ms } = await run(name);
@@ -77,9 +105,14 @@ for (const name of ['split', 'split_mixed', 'resources', 'structured', 'sc_only'
     assert.ok(text.includes('[zn-gate SECURITY BLOCKED]'));
     assert.ok(!text.includes('\u200b'), 'invisible characters must be removed');
     assert.ok(text.length < 100000);
-    // A bound on the work, not a benchmark: a loaded CI runner with the whole suite in parallel needs several seconds,
-    // while a quadratic scan of the payload would take far longer.
-    assert.ok(ms < 4000, `took ${ms} ms`);
+    // Only a hang guard: the spawned process starts slowly on a loaded runner, so no tight bound here.
+    assert.ok(ms < 20000, `took ${ms} ms`);
+    // The tight bound is on the scan itself, in process, fastest of several runs.
+    if (STRINGS[name]) {
+      const { ms: scanMs, result } = fastestMs(() => tooInvisible(STRINGS[name]));
+      assert.equal(result, true);
+      assert.ok(scanMs < 1.5, `the invisible-character scan took ${scanMs} ms`);
+    }
   });
 }
 
