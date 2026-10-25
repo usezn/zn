@@ -1,3 +1,5 @@
+# shellcheck shell=bash
+# Sourced fragment of the GUI drive (no shebang: it is not run on its own).
 cp -r "$KIT/market" /work/market
 # ---- GUI drive under Xvfb with the fake provider (fictitious values only); ZCode plugin installed FROM the GUI
 export HOME=/work/guihome; rm -rf $HOME; mkdir -p $HOME/.zcode/cli $HOME/.zcode/v2 /work/proj /work/gui
@@ -19,11 +21,12 @@ python3 /work/seed.py
 export DISPLAY=:99 ELECTRON_ENABLE_LOGGING=1
 Xvfb :99 -screen 0 1440x900x24 >/work/gui/xvfb.log 2>&1 &
 sleep 3
-(cd /work/proj; /opt/ZCode/zcode --no-sandbox --disable-gpu --user-data-dir=/work/gui/ud > "$OUT/app.log" 2>&1 &)
+(cd /work/proj || exit 1; /opt/ZCode/zcode --no-sandbox --disable-gpu --user-data-dir=/work/gui/ud > "$OUT/app.log" 2>&1 &)
 sleep 25
 n=0
 shot() { n=$((n+1)); import -window root "$OUT/s$(printf %02d $n)_$1.png" 2>/dev/null; }
 shot start
+# shellcheck source=/dev/null
 [ -f "$KIT/actions.sh" ] && source "$KIT/actions.sh"
 cp -r $HOME/.zcode "$OUT/zcode_home_after" 2>/dev/null; rm -f "$OUT"/zcode_home_after/cli/db/*.sqlite* "$OUT"/zcode_home_after/v2/certs/*.key
 pkill -f /opt/ZCode; pkill Xvfb; pkill -f fake_provider

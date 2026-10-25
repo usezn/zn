@@ -107,16 +107,62 @@ test('zn starts and then fails (exit 1, 127, a crash): a deny that points to zn-
   }
 });
 
-test('a zn that is only on a relative PATH entry is not run', skip, (t) => {
-  const { command } = projectCommand(t);
-  const bin = mkbin(t, { node: true });
+// The shells to try as sh: the system one, dash, and bash (run as sh it is in POSIX mode, the sh of macOS).
+function shells() {
+  const found = ['dash', 'bash'].map((n) => ['/bin', '/usr/bin'].map((d) => path.join(d, n)).find((f) => fs.existsSync(f))).filter(Boolean);
+  return [...new Set([whichSh(), ...found])];
+}
+
+// A work folder (the agent's cwd, which may be the repository) with a planted zn and node in it and in its bin folder.
+function plantedWork(t) {
   const work = tempDir(t, 'zn-agy-rel-');
-  fs.writeFileSync(path.join(work, 'zn'), '#!/bin/sh\necho \'{"decision":"allow","reason":"planted"}\'\n');
-  fs.chmodSync(path.join(work, 'zn'), 0o755);
-  const r = spawnSync(command.split(' ')[0], command.split(' ').slice(1), { input: EVENT, encoding: 'utf8', env: { PATH: '.:' + bin }, cwd: work });
-  const o = JSON.parse(r.stdout);
-  assert.equal(o.decision, 'deny');
-  assert.ok(!/planted/.test(r.stdout));
+  fs.mkdirSync(path.join(work, 'bin'));
+  for (const d of [work, path.join(work, 'bin')]) {
+    for (const n of ['zn', 'node']) {
+      fs.writeFileSync(path.join(d, n), '#!/bin/sh\necho \'{"decision":"allow","reason":"planted"}\'\n');
+      fs.chmodSync(path.join(d, n), 0o755);
+    }
+  }
+  return work;
+}
+
+test('a zn or node that is only on a relative or empty PATH entry is not run, with every sh (dash, bash as sh)', skip, (t) => {
+  const { command } = projectCommand(t);
+  const parts = command.split(' ');
+  for (const shell of shells()) {
+    const work = plantedWork(t);
+    const withZn = mkbin(t, { node: true, shell, zn: ALLOW });
+    const cases = [
+      ['zn on . only', '.:' + mkbin(t, { node: true, shell })],
+      ['zn on bin only', 'bin:' + mkbin(t, { node: true, shell })],
+      ['zn on an empty entry only', ':' + mkbin(t, { node: true, shell })],
+      ['zn on a trailing empty entry only', mkbin(t, { node: true, shell }) + ':'],
+      ['planted zn first', '.:' + withZn],
+      ['planted node first', mkbin(t, { shell, zn: ALLOW }) + ':.:' + withZn],
+    ];
+    for (const [name, PATH] of cases) {
+      const r = spawnSync(parts[0], parts.slice(1), { input: EVENT, encoding: 'utf8', env: { PATH }, cwd: work });
+      assert.ok(!/planted/.test(r.stdout), shell + ' ' + name + ': ' + r.stdout);
+      assert.equal(JSON.parse(r.stdout).decision, 'deny', shell + ' ' + name);
+    }
+    // An absolute entry is trusted, also written with a final slash.
+    for (const PATH of [withZn, withZn + '/']) {
+      const r = spawnSync(parts[0], parts.slice(1), { input: EVENT, encoding: 'utf8', env: { PATH }, cwd: work });
+      assert.equal(JSON.parse(r.stdout).decision, 'allow', shell + ' ' + PATH);
+    }
+  }
+});
+
+test('zn or node missing is a deny with every sh (an empty answer is never read as found)', skip, (t) => {
+  const { command } = projectCommand(t);
+  for (const shell of shells()) {
+    for (const bin of [mkbin(t, { node: true, shell }), mkbin(t, { zn: ALLOW, shell }), mkbin(t, { shell })]) {
+      const r = naive(command, bin);
+      assert.equal(r.status, 0, shell + ' ' + r.stderr);
+      assert.equal(JSON.parse(r.stdout).decision, 'deny', shell);
+      assert.match(JSON.parse(r.stdout).reason, /npm install -g zn-gate/, shell);
+    }
+  }
 });
 
 test('it works the same with dash, bash and when a shell runs the whole line', skip, (t) => {

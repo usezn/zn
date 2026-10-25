@@ -1,3 +1,5 @@
+# shellcheck shell=bash
+# Sourced fragment of the GUI drive (no shebang: it is not run on its own).
 xdotool mousemove 720 607 click 1; sleep 3
 xdotool mousemove 720 674 click 1; sleep 4
 xdotool mousemove 413 802 click 1; sleep 2

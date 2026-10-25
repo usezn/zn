@@ -470,8 +470,6 @@ async function verifiedRead(since) {
     try { unlocked = await client.isUnlocked(); } catch (err) { unlocked = false; }
     if (!unlocked) return null;
     return await client.auditRead({ since });
-  } catch (err) {
-    throw err;
   } finally {
     if (client) client.close();
   }

@@ -307,10 +307,16 @@ function launcherCommand(file, event, platform = process.platform, opts = {}) {
  * The command is `sh -c <script>` with a script that holds no space, quote-free of anything the split could break:
  * each space is the expansion ${IFS} (field splitting turns it back into spaces) and each space inside the JSON text
  * is the printf escape \040. Only simple commands joined by ; && || are used, because a compound command
- * (if, case) is told apart by real whitespace. Steps: the first `zn` and `node` found on the PATH (`zn` must be an
- * absolute path: a relative PATH entry depends on the folder the agent runs in); run `zn hook <agent>`; its exit
- * code 0 (an answer) or 2 (its own refusal, deny JSON already printed) ends it; anything else, or no zn or node, prints
- * the deny JSON and exits 0, the way the user launcher does.
+ * (if, case) is told apart by real whitespace. Steps: the first `zn` and `node` found on the PATH, each of which must come
+ * from an absolute PATH entry (a relative or empty entry depends on the folder the agent runs in, which may be the
+ * repository itself); run `zn hook <agent>`; its exit code 0 (an answer) or 2 (its own refusal, deny JSON already printed)
+ * ends it; anything else, or no zn or node, prints the deny JSON and exits 0, the way the user launcher does.
+ *
+ * `command -v` alone cannot tell where a program was found: dash prints the relative path, but bash as sh (the sh of
+ * macOS, and of Linux systems where sh is bash) turns a program found through `.`, `bin` or an empty entry into an
+ * absolute path. So the folder of each program found must also be an entry of ":$PATH:" as written. Every operand of a
+ * test starts with x: bash 3.2 drops an empty quoted word next to an unquoted ${IFS} expansion, so `[ -n "" ]` would
+ * become `[ -n ]`, which is true.
  */
 // The hook scripts below use no cmdlet (Test-Path, Get-Command, New-Object...): a cmdlet belongs to a module, and Windows PowerShell 5.1
 // searches the user's own Documents\WindowsPowerShell\Modules first, so a module planted there by the same account could answer in
@@ -365,6 +371,15 @@ function projectAnswer(agentId, event, why, win) {
   return { stdout: JSON.stringify({ systemMessage: w }), stderr: null, exit: 0 };
 }
 
+// The project guard trusts the zn and node it found only when the folder of each one is an entry of the PATH as written:
+// P is ":$PATH:"; T is set when the folder of $Z (with or without a final slash) is in it, U the same for $N.
+const PROJECT_TRUST = [
+  'P=:$PATH:',
+  'ZD=${P#*":${Z%/*}:"}', 'ZS=${P#*":${Z%/*}/:"}', 'ND=${P#*":${N%/*}:"}', 'NS=${P#*":${N%/*}/:"}',
+  'T=', '[ "$ZD" != "$P" ] && T=z', '[ "$ZS" != "$P" ] && T=z',
+  'U=', '[ "$ND" != "$P" ] && U=n', '[ "$NS" != "$P" ] && U=n',
+];
+
 /**
  * The POSIX project hook command (see above) for one event (omit it for Antigravity). Every agent that runs project hooks
  * through a shell gets the same guard, so a `zn` or Node.js that is gone ends in that agent's own blocking answer instead of
@@ -383,8 +398,8 @@ function projectShCommand(agentId, event) {
       ...(a.stderr ? ["echo '" + a.stderr + "' >&2"] : []),
       'exit ' + a.exit,
     ].join('; ');
-    const script = 'Z=$(command -v zn); N=$(command -v node); R=missing; ' +
-      'if [ -n "$N" ] && [ "${Z#/}" != "$Z" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
+    const script = 'Z=$(command -v zn); N=$(command -v node); ' + PROJECT_TRUST.join('; ') + '; R=missing; ' +
+      'if [ -n "$N" ] && [ "${Z#/}" != "$Z" ] && [ "${N#/}" != "$N" ] && [ -n "$T" ] && [ -n "$U" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
       'if [ "$R" = ran ]; then ' + say(crash) + '; fi; ' + say(missing);
     return 'sh -c ' + shQuote(script);
   }
@@ -401,12 +416,14 @@ function projectShCommand(agentId, event) {
     ':',
     'Z=$(' + sp('command', '-v', 'zn') + ')',
     'N=$(' + sp('command', '-v', 'node') + ')',
+    ...PROJECT_TRUST.map((x) => x.replace(/^\[ (.*) \] && /, (_, w) => test(...w.split(' ').map((o) => (o === '!=' ? o : o.replace(/^"/, '"x')))) + '&&')),
     'R=missing',
-    test('-n', '"$N"') + '&&' + test('"${Z#/}"', '!=', '"$Z"') + '&&R=ran&&"$Z"' + IFS + 'hook' + IFS + agentId,
+    [test('"x$N"', '!=', 'x'), test('"x${Z#/}"', '!=', '"x$Z"'), test('"x${N#/}"', '!=', '"x$N"'), test('"x$T"', '!=', 'x'), test('"x$U"', '!=', 'x')].join('&&') +
+      '&&R=ran&&"$Z"' + IFS + 'hook' + IFS + agentId,
     'C=$?',
-    test('"$R"', '=', 'ran') + '&&' + test('"$C"', '=', '0') + '&&' + sp('exit', '0'),
-    test('"$R"', '=', 'ran') + '&&' + test('"$C"', '=', '2') + '&&' + sp('exit', '2'),
-    [test('"$R"', '=', 'ran'), ...say(crash), sp('exit', String(crash.exit))].join('&&'),
+    test('"x$R"', '=', 'xran') + '&&' + test('"x$C"', '=', 'x0') + '&&' + sp('exit', '0'),
+    test('"x$R"', '=', 'xran') + '&&' + test('"x$C"', '=', 'x2') + '&&' + sp('exit', '2'),
+    [test('"x$R"', '=', 'xran'), ...say(crash), sp('exit', String(crash.exit))].join('&&'),
     ...say(missing),
     sp('exit', String(missing.exit)),
   ].join(';');
@@ -437,7 +454,7 @@ function isProjectGuard(command, agentId) {
     if (typeof command !== 'string') return false;
     if (command === projectShCommand(agentId)) return true;
     // A later zn-gate may word the deny differently: recognize the guard by its structure (start and the hook call).
-    if (command.startsWith("sh -c 'Z=$(command -v zn); N=$(command -v node); R=missing; if ") && command.includes('"$Z" hook ' + agentId + '; C=$?;')) return true;
+    if (command.startsWith("sh -c 'Z=$(command -v zn); N=$(command -v node); ") && command.includes('"$Z" hook ' + agentId + '; C=$?;')) return true;
     return command.startsWith('sh -c :;Z=$(' + ['command', '-v', 'zn'].join(IFS) + ')') && command.includes(IFS + 'hook' + IFS + agentId + ';');
   } catch (_) { return false; }
 }
@@ -474,29 +491,124 @@ function plainPathOk(file) {
   return /^[A-Za-z0-9_\/.@+=,:~-]+$/.test(String(file));
 }
 
-/** Why zn will not use a folder for the launchers (ZN_HOOK_DIR), and the way out. */
-function unsafeDirMessage(dir, why) {
-  return 'zn will not keep its hook launcher in ' + dir + ': ' + why + '. The launcher runs on every tool call, so anyone who can replace it could run commands as you. ' +
-    'Use a folder that you own, whose path has no link, and where every folder above it belongs to you or to root and cannot be written by anyone else ' +
-    '(/tmp and shared folders do not qualify, even with the sticky bit). For example `sudo mkdir -m 700 /opt/<you>-zn-hooks && sudo chown <you> /opt/<you>-zn-hooks`, ' +
-    'or unset ZN_HOOK_DIR to use ~/.zn/hooks.';
+/** A path as one shell word: as is when it is plain, else in single quotes. */
+function shWord(p) {
+  return plainPathOk(p) ? p : "'" + String(p).replace(/'/g, "'\\''") + "'";
+}
+
+/** Plain words for a file system error on one folder of the ZN_HOOK_DIR path (never a raw code on its own). */
+function describeFsError(e, p) {
+  const code = e && e.code;
+  if (code === 'ENOENT') return 'the folder ' + p + ' does not exist (or it was removed while zn was checking it)';
+  if (code === 'ENOTDIR') return p + ' is a file, not a folder, so nothing can be created in or below it';
+  if (code === 'EACCES' || code === 'EPERM') return 'you are not allowed to read or create ' + p;
+  if (code === 'EROFS') return p + ' is on a read-only disk';
+  if (code === 'ELOOP') return 'the links at ' + p + ' lead in a circle';
+  return 'the system refused to use ' + p + ' (' + (code || 'unknown error') + ')';
 }
 
 /**
- * Checks one folder of the chain that leads to the launcher folder: a folder that exists, owned by root or the current
- * user, with no write for group or others (no exception for the sticky bit: /tmp itself fails). Throws a plain error otherwise.
+ * Folders where a private launcher folder would pass the same rules as the check, tested on this machine: a link anywhere
+ * in the path fails the rule, and /opt is one on some systems (Fedora Silverblue and other rpm-ostree systems: /opt -> /var/opt),
+ * so each candidate is checked, not assumed. $XDG_DATA_HOME comes first when it is set, absolute and has no space.
+ * `opts` (tests only): env, user, fs. Returns up to two { dir, command }.
  */
-function checkAncestor(dir, leaf) {
-  const st = fs.lstatSync(dir);
+function hookDirSuggestions(opts = {}) {
+  const env = opts.env || process.env;
+  const fsx = opts.fs || fs;
+  let user = opts.user;
+  if (user === undefined) { try { user = os.userInfo().username; } catch (_) { user = ''; } }
+  const who = /^[A-Za-z0-9_.-]{1,32}$/.test(String(user)) ? String(user) : '<you>';
+  // The nearest existing folder of the path must be a real folder reached with no link; returns it, or null.
+  const existingReal = (d) => {
+    let e = d;
+    for (;;) {
+      let found = true;
+      try { fsx.lstatSync(e); } catch (_) { found = false; }
+      if (found) break;
+      const up = path.dirname(e);
+      if (up === e) return null;
+      e = up;
+    }
+    try { return fsx.realpathSync(e) === e && fsx.statSync(e).isDirectory() ? e : null; } catch (_) { return null; }
+  };
+  const canWrite = (e) => { try { fsx.accessSync(e, fs.constants.W_OK); return true; } catch (_) { return false; } };
+  const out = [];
+  const xdg = env.XDG_DATA_HOME;
+  if (xdg && path.isAbsolute(xdg)) {
+    const d = path.join(xdg, 'zn-hooks');
+    const e = plainPathOk(d) ? existingReal(d) : null;
+    if (e) out.push({ dir: d, command: (canWrite(e) ? '' : 'sudo ') + 'mkdir -p -m 700 ' + d });
+  }
+  for (const base of ['/opt', '/var/opt', '/usr/local']) {
+    if (out.length >= 2) break;
+    const d = base + '/' + who + '-zn-hooks';
+    const e = plainPathOk(base + '/' + (who === '<you>' ? 'you' : who) + '-zn-hooks') ? existingReal(base) : null;
+    if (e) out.push({ dir: d, command: canWrite(e) ? 'mkdir -m 700 ' + d : 'sudo mkdir -m 700 ' + d + ' && sudo chown ' + who + ' ' + d });
+  }
+  return out;
+}
+
+/** The "for example" sentence of the messages, built from hookDirSuggestions (and a note when /opt is a link here). */
+function suggestionText(opts = {}) {
+  const fsx = opts.fs || fs;
+  const list = hookDirSuggestions(opts);
+  let note = '';
+  try {
+    if (fsx.lstatSync('/opt').isSymbolicLink()) note = ' (/opt is a link on this machine, to ' + fsx.realpathSync('/opt') + ', so it does not qualify)';
+  } catch (_) { /* no /opt, or not readable: no note */ }
+  if (!list.length) return 'Choose any folder that meets these rules' + note + '.';
+  return 'For example `' + list.map((x) => x.command).join('` or `') + '`' + note + ', and use that folder as ZN_HOOK_DIR.';
+}
+
+/** Why zn will not use a folder for the launchers (ZN_HOOK_DIR), and the way out. `fix` (optional) is the step for this exact problem. */
+function unsafeDirMessage(dir, why, fix, opts) {
+  return 'zn will not keep its hook launcher in ' + dir + ': ' + why + '. The launcher runs on every tool call, so anyone who can replace it could run commands as you. ' +
+    (fix ? fix + ' ' : '') +
+    'Use a folder that you own, whose path has no link, and where every folder above it belongs to you or to root and cannot be written by anyone else ' +
+    '(/tmp and shared folders do not qualify, even with the sticky bit). ' + suggestionText(opts) +
+    ' Or unset ZN_HOOK_DIR to use ~/.zn/hooks.';
+}
+
+/** The step that closes a folder others can write: no sudo for your own folder, sudo only for root's, nothing for a shared one. */
+function writableFix(p, st, me) {
+  if (me !== null && st.uid === me) return 'To close it, run `chmod g-w,o-w ' + shWord(p) + '`.';
+  if ((st.mode & 0o1000) !== 0) return p + ' is a shared folder (sticky bit), so do not change it; choose a folder somewhere else.';
+  if (st.uid === 0) return p + ' belongs to root, so closing it takes administrator rights (`sudo chmod g-w,o-w ' + shWord(p) + '`), and other users of this machine may rely on it being shared; the safer way is to choose another folder.';
+  return p + ' belongs to another user: ask them (or the administrator) to close it, or choose another folder.';
+}
+
+/**
+ * Checks one folder of the chain that leads to the launcher folder (`leafPath`): a folder that exists, owned by root or the
+ * current user, with no write for group or others (no exception for the sticky bit: /tmp itself fails). Throws a plain error
+ * that names the folder that fails and why.
+ */
+function checkAncestor(dir, leafPath) {
+  const leaf = dir === leafPath;
+  let st;
+  try { st = fs.lstatSync(dir); } catch (e) { throw new Error(unsafeDirMessage(leafPath, describeFsError(e, dir), 'Create the folder or choose another one.')); }
   if (leaf) {
-    if (st.isSymbolicLink()) throw new Error(unsafeDirMessage(dir, 'it is a link'));
-    if (!st.isDirectory()) throw new Error(unsafeDirMessage(dir, 'it is not a folder'));
+    if (st.isSymbolicLink()) throw new Error(unsafeDirMessage(dir, 'it is a link', 'Use the folder it leads to instead, if that one meets these rules.'));
+    if (!st.isDirectory()) throw new Error(unsafeDirMessage(dir, 'it is not a folder', 'Move or remove that file, or choose another folder.'));
   }
   const me = typeof process.getuid === 'function' ? process.getuid() : null;
-  if (me !== null && st.uid !== me && !(!leaf && st.uid === 0)) throw new Error(unsafeDirMessage(dir, leaf ? 'it belongs to another user' : 'a folder above it (' + dir + ') belongs to another user'));
-  if ((st.mode & 0o022) !== 0) {
-    throw new Error(unsafeDirMessage(dir, leaf ? 'other users can write to it (mode ' + (st.mode & 0o777).toString(8) + ')' : 'a folder above it (' + dir + ') can be written by other users (mode ' + (st.mode & 0o777).toString(8) + ')'));
+  if (me !== null && st.uid !== me && !(!leaf && st.uid === 0)) {
+    throw new Error(unsafeDirMessage(leafPath, leaf ? 'it belongs to another user' : 'the folder above it, ' + dir + ', belongs to another user (it must belong to you or to root)', 'Choose a folder under one you own.'));
   }
+  if ((st.mode & 0o022) !== 0) {
+    const mode = (st.mode & 0o777).toString(8);
+    throw new Error(unsafeDirMessage(leafPath, leaf ? 'other users can write to it (mode ' + mode + ')' : 'the folder above it, ' + dir + ', can be written by other users (mode ' + mode + ')', writableFix(dir, st, me)));
+  }
+}
+
+/** The first link in a path, from the top: { link, target }, or null. */
+function firstLinkIn(start) {
+  const parts = [];
+  for (let p = start; ; p = path.dirname(p)) { parts.unshift(p); if (path.dirname(p) === p) break; }
+  for (const p of parts) {
+    try { if (fs.lstatSync(p).isSymbolicLink()) return { link: p, target: fs.realpathSync(p) }; } catch (_) { return null; }
+  }
+  return null;
 }
 
 /**
@@ -506,12 +618,17 @@ function checkAncestor(dir, leaf) {
  * never passes it.
  */
 function checkChain(start, trustedRoot, leafPath) {
-  const real = fs.realpathSync(start);
-  if (real !== start) throw new Error(unsafeDirMessage(start, 'a link is in its path (it leads to ' + real + ')'));
+  let real;
+  try { real = fs.realpathSync(start); } catch (e) { throw new Error(unsafeDirMessage(leafPath, describeFsError(e, e.path || start), 'Create the folder or choose another one.')); }
+  if (real !== start) {
+    const l = firstLinkIn(start);
+    throw new Error(unsafeDirMessage(start, l ? 'the path goes through a link: ' + l.link + ' leads to ' + l.target : 'a link is in its path (it leads to ' + real + ')',
+      'Use ' + real + ' (the folder it really is) instead, if that folder meets these rules.'));
+  }
   let p = start;
   for (;;) {
     if (trustedRoot && p === trustedRoot) return;
-    checkAncestor(p, p === leafPath);
+    checkAncestor(p, leafPath);
     const up = path.dirname(p);
     if (up === p) return;
     p = up;
@@ -687,7 +804,7 @@ function checkWinChain(start, trustedRoot, leafPath, readAcls, file) {
   for (;;) {
     if (trustedRoot && p === trustedRoot) break;
     let st;
-    try { st = fs.lstatSync(p); } catch (e) { throw new Error(winUnsafeMessage(p, 'it cannot be read (' + e.code + ')')); }
+    try { st = fs.lstatSync(p); } catch (e) { throw new Error(winUnsafeMessage(p, describeFsError(e, p))); }
     if (st.isSymbolicLink()) throw new Error(winUnsafeMessage(start, p === leafPath ? 'it is a link' : 'a link or junction is in its path (' + p + ')'));
     if (!st.isDirectory()) throw new Error(winUnsafeMessage(p, 'it is not a folder'));
     folders.push(p);
@@ -698,7 +815,7 @@ function checkWinChain(start, trustedRoot, leafPath, readAcls, file) {
   const targets = folders.slice();
   if (file) {
     let st;
-    try { st = fs.lstatSync(file); } catch (e) { throw new Error(winUnsafeMessage(leafPath, 'the launcher cannot be read (' + e.code + ')')); }
+    try { st = fs.lstatSync(file); } catch (e) { throw new Error(winUnsafeMessage(leafPath, 'the launcher file ' + file + ' cannot be read (' + describeFsError(e, file) + ')')); }
     if (st.isSymbolicLink() || !st.isFile()) throw new Error(winUnsafeMessage(leafPath, 'the launcher is not a plain file'));
     targets.push(file);
   }
@@ -775,7 +892,7 @@ function ensureSafeHookDir(dir, platform = process.platform, opts = {}) {
   while (!fs.existsSync(existing) && !isLink(existing)) existing = path.dirname(existing);
   if (isLink(abs)) throw new Error(unsafeDirMessage(dir, 'it is a link'));
   checkChain(existing, trusted, abs);
-  fs.mkdirSync(abs, { recursive: true, mode: 0o700 });
+  try { fs.mkdirSync(abs, { recursive: true, mode: 0o700 }); } catch (e) { throw new Error(unsafeDirMessage(dir, describeFsError(e, abs), 'Choose a folder you can create.')); }
   checkChain(abs, trusted, abs);
 }
 
@@ -783,12 +900,12 @@ function isLink(p) {
   try { return fs.lstatSync(p).isSymbolicLink(); } catch (_) { return false; }
 }
 
-/** Why zn will not install the Antigravity hook at this launcher path, and the way out. */
-function spaceMessage(file) {
+/** Why zn will not install the Antigravity hook at this launcher path, and the way out. `opts` (tests only): env, user, fs. */
+function spaceMessage(file, opts) {
   return 'zn cannot install the Antigravity hook: the launcher would be at ' + file + ', and Antigravity starts a hook by splitting the command on spaces, ' +
     'without a shell or quotes, so a path with a space or another special character never starts, so the hook would protect nothing. ' +
-    'Choose a folder outside the home folder whose path has only letters, digits and - _ . / (for example `sudo mkdir -m 700 /opt/<you>-zn-hooks && sudo chown <you> /opt/<you>-zn-hooks`, ' +
-    'or a folder under $XDG_DATA_HOME if that path has no space), run `ZN_HOOK_DIR=<that folder> zn hooks install antigravity`, and nothing else changes. ' +
+    'Choose a folder outside the home folder whose path has only letters, digits and - _ . / (nothing else). ' + suggestionText(opts) +
+    ' Then run `ZN_HOOK_DIR=<that folder> zn hooks install antigravity`, and nothing else changes. ' +
     'The folder must be one you own, with no link in its path, and every folder above it must belong to you or to root and not be writable by others: zn-gate refuses anything else, because the launcher in it runs on every tool call.';
 }
 
@@ -881,4 +998,4 @@ function windowsScriptCommand(script) {
   return 'powershell.exe -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { launcherDeadlineS, parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, isProjectGuardExact, isProjectWindowsScriptExact, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { launcherDeadlineS, parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, isProjectGuardExact, isProjectWindowsScriptExact, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, hookDirSuggestions, describeFsError, writableFix, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON };
