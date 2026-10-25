@@ -84,3 +84,15 @@ test('a late close of an old vault socket does not drop the newer connection', a
     assert.strictEqual(c._connect(), second);
   } finally { net.createConnection = orig; fs.rmSync(home, { recursive: true, force: true }); }
 });
+
+test('the deny message for a vault failure has one "zn:" and says zn unlock once', async () => {
+  const cases = { ...failures, 'answer of the wrong shape': null };
+  for (const [name, mk] of Object.entries(cases)) {
+    const vault = mk ? { maskInfo: async () => { throw mk(); } } : { maskInfo: async () => null };
+    const r = await run(pre, vault);
+    const m = String(r.decision.message);
+    assert.strictEqual(r.decision.decision, 'deny', name);
+    assert.ok(m.startsWith('zn: ') && !m.startsWith('zn: zn '), name + ': ' + m);
+    assert.strictEqual((m.match(/zn unlock/g) || []).length, 1, name + ': ' + m);
+  }
+});
