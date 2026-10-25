@@ -4,7 +4,7 @@
 /**
  * Tests for the Antigravity CLI plugin source (plugins/antigravity): the hooks file against the adapter's own hook entry,
  * the manifest, and scripts/zn-hook.sh (the one place that decides what happens when zn cannot run) with a stub Node.js
- * and launcher. The Antigravity CLI itself is not needed here; bench/e2e/antigravity-plugin/ holds the run against it.
+ * and launcher. The Antigravity CLI itself is not needed here.
  *
  *   node plugins/tools/test-antigravity-plugin.js
  */

@@ -55,6 +55,7 @@ What the plugin is, so you know what to expect when it is published:
 - Use the plugin or `zn hooks install antigravity`, not both: with both, every call is checked twice (the answers are the same, so nothing breaks).
 - You can turn the plugin off with `agy plugin disable zn-gate` and remove it with `agy plugin uninstall zn-gate`. With it off and no user hook installed, nothing of zn runs in Antigravity.
 - If the plugin's hook cannot run zn (no Node.js, a missing file, a failure, or no answer within 12 seconds), it answers `deny` with the reason instead of leaving the decision to Antigravity.
+- `agy plugin uninstall zn-gate` removes the plugin folder. Antigravity keeps its own empty data folder for the plugin (`~/.gemini/antigravity-cli/plugin_data/zn-gate`) and the records of the conversations in which it ran; zn-gate does not touch them.
 - Tested on the Antigravity CLI 1.4.7 on Linux only. macOS and Windows are not tested, and the plugin's hook is a shell script, so on Windows use `zn hooks install antigravity`.
 
 ## What zn-gate protects in Antigravity, and what it does not
