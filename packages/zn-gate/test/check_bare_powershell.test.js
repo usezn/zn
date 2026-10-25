@@ -30,3 +30,23 @@ test('check reads the powershell command of Copilot CLI on Windows, bash elsewhe
   const got = hookEntries(tree, 'copilot').map((e) => e.command);
   assert.deepEqual(got, [process.platform === 'win32' ? tree.hooks.preToolUse[0].powershell : 'zn hook copilot']);
 });
+
+test('check finds Git Bash the way Claude Code is set up on Windows: the setting, then bin/bash next to git on the PATH', { skip: process.platform === 'win32' }, (t) => {
+  const { gitBash } = require('../lib/check')._internal;
+  const fs = require('fs');
+  const path = require('path');
+  const { tempDir } = require('./helpers/tmp');
+  const git = tempDir(t, 'zn-gitbash-');
+  fs.mkdirSync(path.join(git, 'cmd'));
+  fs.mkdirSync(path.join(git, 'bin'));
+  fs.writeFileSync(path.join(git, 'cmd', 'git'), '#!/bin/sh\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(git, 'bin', 'bash'), '#!/bin/sh\n', { mode: 0o755 });
+  // Only Git/cmd on the PATH (a default Git for Windows install): bin/bash next to it.
+  assert.equal(gitBash({ PATH: path.join(git, 'cmd') }), path.join(git, 'bin', 'bash'));
+  // The documented setting wins when it names a file.
+  const other = path.join(tempDir(t, 'zn-gitbash2-'), 'bash');
+  fs.writeFileSync(other, '#!/bin/sh\n', { mode: 0o755 });
+  assert.equal(gitBash({ PATH: path.join(git, 'cmd'), CLAUDE_CODE_GIT_BASH_PATH: other }), other);
+  // A relative setting or a git only on a relative PATH entry is not used.
+  assert.equal(gitBash({ PATH: '.:bin', CLAUDE_CODE_GIT_BASH_PATH: 'bash' }), null);
+});
