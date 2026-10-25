@@ -80,7 +80,8 @@ const UNSAFE_IN_DOUBLE_QUOTES = /[%!"$`“”„\u0000-\u001F\u007F]/;
 // own. On Windows it is the system PowerShell (lib/exe.js systemPowerShell); when that cannot be found nothing is written
 // (an error), never the bare name. A command written for Windows on another system names the default install folder.
 const DEFAULT_POWERSHELL = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
-const PLAIN_POWERSHELL = /^[A-Za-z]:\/[A-Za-z0-9_.\/-]+\/powershell\.exe$/i;
+// The Windows folder (one folder under a drive) and System32\WindowsPowerShell\v1.0 below it: nothing else is the system PowerShell.
+const PLAIN_POWERSHELL = /^[A-Za-z]:\/[A-Za-z0-9_.-]+\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe$/i;
 function powershellExe(platform = process.platform) {
   if (platform !== 'win32') return DEFAULT_POWERSHELL;
   const ps = require('./exe').systemPowerShell();
@@ -92,7 +93,8 @@ function powershellExe(platform = process.platform) {
 // %SystemRoot% to the Windows folder of the machine that runs it.
 const CMD_POWERSHELL = '%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 // The powershell.exe at the start of a hook command: one of the two forms above, or the bare name (earlier versions).
-const POWERSHELL_EXE = '(?:[A-Za-z]:/[A-Za-z0-9_./-]*/|%SystemRoot%\\\\System32\\\\WindowsPowerShell\\\\v1\\.0\\\\)?powershell\\.exe';
+// The folder names are matched in any case (Windows writes C:\WINDOWS\system32 as often as C:\Windows\System32).
+const POWERSHELL_EXE = '(?:[A-Za-z]:/[A-Za-z0-9_.-]+/[Ss][Yy][Ss][Tt][Ee][Mm]32/[Ww][Ii][Nn][Dd][Oo][Ww][Ss][Pp][Oo][Ww][Ee][Rr][Ss][Hh][Ee][Ll][Ll]/[Vv]1\\.0/|%SystemRoot%\\\\System32\\\\WindowsPowerShell\\\\v1\\.0\\\\)?powershell\\.exe';
 
 /**
  * A command that runs `& <program> <args...>` in powershell.exe and reads the

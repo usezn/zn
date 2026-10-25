@@ -173,7 +173,9 @@ function hookEntries(tree, agentId, opts = {}) {
         const extra = agentId === 'antigravity' ? { name, disabled } : {};
         if (typeof g.command === 'string') out.push({ event, matcher: g.matcher, command: g.command, onFailure: g.onFailure, async: g.async, ...extra });
         // GitHub Copilot CLI keeps the shell command in "bash" (and "powershell"), next to an optional matcher.
-        if (agentId === 'copilot' && typeof g.bash === 'string') out.push({ event, matcher: g.matcher, command: g.bash });
+        // On Windows Copilot CLI runs "powershell" instead, so that is the command to read there.
+        const copilotCmd = agentId !== 'copilot' ? null : process.platform === 'win32' && typeof g.powershell === 'string' ? g.powershell : g.bash;
+        if (typeof copilotCmd === 'string') out.push({ event, matcher: g.matcher, command: copilotCmd });
         for (const h of Array.isArray(g.hooks) ? g.hooks : []) {
           // Codex on Windows runs commandWindows (command_windows in TOML), not command.
           const win = agentId === 'codex' && process.platform === 'win32' && h ? (typeof h.commandWindows === 'string' ? h.commandWindows : h.command_windows) : null;

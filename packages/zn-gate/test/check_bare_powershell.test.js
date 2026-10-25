@@ -24,3 +24,9 @@ test('the reinstall reason is in lib/check.js with the reinstall fix', () => {
   assert.match(block, /\/\^powershell\\\.exe \/i\.test\(String\(read\.command\)\.trim\(\)\)/);
   assert.match(block, /out\.fix = REINSTALL\(spec\.id\)/);
 });
+
+test('check reads the powershell command of Copilot CLI on Windows, bash elsewhere', () => {
+  const tree = { hooks: { preToolUse: [{ type: 'command', bash: 'zn hook copilot', powershell: 'powershell.exe -NoProfile -NonInteractive -Command "zn hook copilot"' }] } };
+  const got = hookEntries(tree, 'copilot').map((e) => e.command);
+  assert.deepEqual(got, [process.platform === 'win32' ? tree.hooks.preToolUse[0].powershell : 'zn hook copilot']);
+});
