@@ -346,3 +346,65 @@ test('posix launcher: a status 0 without the confirmation (an older zn on the PA
   const post = await runLauncher(file, 'PostToolUse', '{}');
   assert.match(JSON.parse(post.stdout).systemMessage, /zn hooks install claude-code/);
 });
+
+// ---- private files: every call removes what it made, whatever the PATH of the hook (it can be empty) ----
+
+const zfiles = (dir) => fs.readdirSync(dir).filter((f) => f.startsWith('zn-'));
+
+const HOOKS = [
+  ['answer + ack', GOOD, (r) => assert.equal(r.status, 0)],
+  ['allow + ack', ALLOW, (r) => assert.equal(r.status, 0)],
+  ['block (exit 2)', "process.stdout.write('x'); process.exit(2);\n", (r) => assert.equal(r.status, 2)],
+  ['status 0 without ack', PARTIAL, (r) => assert.equal(r.status, 2)],
+  ['crash (exit 1)', 'process.exit(1);\n', (r) => assert.equal(r.status, 2)],
+];
+const MODES = [
+  ['no deadline', {}, null],
+  ['deadline', { deadlineS: 5 }, null],
+  ['soft deadline, no timer', { deadlineS: 5, deadlineSoft: true }, (s) => s.split('[ -x /bin/sleep ]').join('[ -x /nonexistent/sleep ]')],
+];
+
+for (const [mode, opts, edit] of MODES) {
+  for (const [pathName, PATHV] of [['the usual PATH', process.env.PATH], ['an empty PATH', '']]) {
+    test('posix launcher, ' + mode + ', ' + pathName + ': no private file is left behind after any answer', { skip: !posix }, (t) => {
+      for (const [name, body, check] of HOOKS) {
+        const tmp = tempDir(t, 'zn-ov-clean-');
+        const file = writeScript(t, 'claude-code', body, opts);
+        if (edit) fs.writeFileSync(file, edit(fs.readFileSync(file, 'utf8')), { mode: 0o755 });
+        for (let i = 0; i < 5; i++) {
+          const r = spawnSync('/bin/sh', [file, 'PreToolUse'], { input: '{}', encoding: 'utf8', timeout: 20000, env: { PATH: PATHV, HOME: '/nonexistent', TMPDIR: tmp } });
+          check(r);
+        }
+        assert.deepEqual(zfiles(tmp), [], name + ': files left in TMPDIR');
+      }
+      const tmp = tempDir(t, 'zn-ov-clean-gone-');
+      const gone = path.join(tempDir(t, 'zn-ov-clean-dir-'), 'launcher.sh');
+      fs.writeFileSync(gone, launcher.unixScript('claude-code', '/nonexistent/node', '/nonexistent/runner.js', opts), { mode: 0o755 });
+      const r = spawnSync('/bin/sh', [gone, 'PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: PATHV, HOME: '/nonexistent', TMPDIR: tmp } });
+      assert.equal(r.status, 2, r.stderr);
+      assert.deepEqual(zfiles(tmp), [], 'zn gone: files left in TMPDIR');
+    });
+  }
+}
+
+test('posix launcher, no deadline: a TERM while the hook runs answers with the block and removes the private files', { skip: !posix }, async (t) => {
+  const tmp = tempDir(t, 'zn-ov-clean-term-');
+  const file = writeScript(t, 'claude-code', "setTimeout(() => { require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); }, 800);\n");
+  const child = spawn('/bin/sh', [file, 'PreToolUse'], { env: { PATH: '', HOME: '/nonexistent', TMPDIR: tmp }, stdio: ['pipe', 'pipe', 'pipe'] });
+  child.stdin.end('{}');
+  const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(zfiles(tmp).length >= 2, 'the launcher made its private files');
+  child.kill('SIGTERM');
+  assert.equal(await exited, 2);
+  assert.deepEqual(zfiles(tmp), []);
+});
+
+test('posix launcher with a deadline and an empty PATH still runs the hook (its private files do not depend on the PATH)', { skip: !posix }, (t) => {
+  const tmp = tempDir(t, 'zn-ov-clean-strict-');
+  const file = writeScript(t, 'zcode', GOOD, { deadlineS: 5 });
+  const r = spawnSync('/bin/sh', [file, 'PreToolUse'], { input: '{}', encoding: 'utf8', timeout: 20000, env: { PATH: '', HOME: '/nonexistent', TMPDIR: tmp } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), { hookSpecificOutput: { permissionDecision: 'deny' } });
+  assert.deepEqual(zfiles(tmp), []);
+});
