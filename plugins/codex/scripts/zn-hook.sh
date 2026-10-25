@@ -22,7 +22,7 @@
 
 EVENT="${1:-}"
 case "$0" in */*) HERE_DIR=${0%/*} ;; *) HERE_DIR=. ;; esac
-HERE=$(CDPATH= cd -- "$HERE_DIR" 2>/dev/null && pwd -P) || HERE=""
+HERE=$(CDPATH='' cd -- "$HERE_DIR" 2>/dev/null && pwd -P) || HERE=""
 LAUNCH="$HERE/zn-launch.js"
 
 # Refusal. PreToolUse and UserPromptSubmit: exit 2 and the reason on stderr. PermissionRequest: the documented deny
@@ -106,6 +106,7 @@ if [ -z "$NODE" ]; then
   done
 fi
 if [ -z "$NODE" ] && [ -n "${HOME:-}" ] && [ -d "$HOME/.nvm/versions/node" ]; then
+  # shellcheck disable=SC2012 # a plain list of folders sorted by name
   for c in $(ls -1d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | sort -r); do
     try_node "$c" && break
   done
