@@ -176,9 +176,15 @@ try {
 
   if (posix) {
     const HOOK = path.join(ZC, 'scripts', 'zn-hook.sh');
+    // Small fixed parent scripts (written once, no command string built at run time); the values arrive as arguments.
+    const fixedScript = (name, body) => {
+      const f = path.join(tmp, 'fixed-' + name + '.sh');
+      if (!fs.existsSync(f)) fs.writeFileSync(f, '#!/bin/sh\n' + body + '\n', { mode: 0o755 });
+      return f;
+    };
     const timed = (d, event, env) => {
       const t0 = Date.now();
-      const r = spawnSync('/bin/sh', ['-c', 'sh "$0" "$1"; exit $?', path.join(d, 'scripts', 'zn-hook.sh'), event], {
+      const r = spawnSync('/bin/sh', [fixedScript('run-sh', 'sh "$1" "$2"; exit $?'), path.join(d, 'scripts', 'zn-hook.sh'), event], {
         input: '{"hook_event_name":"' + event + '"}', encoding: 'utf8', timeout: 60000,
         env: { PATH: path.join(d, 'bin') + ':/usr/bin:/bin', HOME: path.join(d, 'home'), ...env },
       });
@@ -208,7 +214,7 @@ try {
       }
       const real = path.join(d, 'bin');
       for (const PATH of ['.:' + real + ':/usr/bin:/bin', real + ':.:/usr/bin:/bin', real + ':/usr/bin:/bin:.', 'bin:' + real + ':/usr/bin:/bin', ':' + real + ':/usr/bin:/bin']) {
-        const r = spawnSync('/bin/sh', ['-c', 'cd "$1" && sh "$0" PreToolUse', path.join(d, 'scripts', 'zn-hook.sh'), work], {
+        const r = spawnSync('/bin/sh', [fixedScript('cd-sh', 'cd "$2" && sh "$1" PreToolUse'), path.join(d, 'scripts', 'zn-hook.sh'), work], {
           input: '{"hook_event_name":"PreToolUse"}', encoding: 'utf8', timeout: 30000,
           env: { PATH, HOME: path.join(d, 'home'), ZN_STUB_OUT: '{"decision":"allow"}' },
         });
@@ -217,7 +223,7 @@ try {
       }
       // With only relative or empty entries the hook still runs (it falls back to the system folders), and nothing planted runs.
       for (const PATH of ['.:bin:', '', ':']) {
-        const r = spawnSync('/bin/sh', ['-c', 'cd "$1" && /bin/sh "$0" PreToolUse', path.join(d, 'scripts', 'zn-hook.sh'), work], {
+        const r = spawnSync('/bin/sh', [fixedScript('cd-bin-sh', 'cd "$2" && /bin/sh "$1" PreToolUse'), path.join(d, 'scripts', 'zn-hook.sh'), work], {
           input: '{}', encoding: 'utf8', timeout: 30000, env: { PATH, HOME: '/nonexistent' },
         });
         assert.ok(r.status === 0 || r.status === 2, JSON.stringify(PATH) + ': the hook did not run (' + r.status + '): ' + r.stderr);
@@ -225,7 +231,7 @@ try {
         assert.strictEqual(fs.existsSync(marker), false, JSON.stringify(PATH) + ': a planted program ran');
       }
       // Started by a relative path, the script does not trust the folder it was started from.
-      const rel = spawnSync('/bin/sh', ['-c', 'cd "$1" && sh scripts/zn-hook.sh PreToolUse', '_', d], { input: '{}', encoding: 'utf8', timeout: 30000, env: { PATH: '/usr/bin:/bin' } });
+      const rel = spawnSync('/bin/sh', [fixedScript('cd-rel', 'cd "$1" && sh scripts/zn-hook.sh PreToolUse'), d], { input: '{}', encoding: 'utf8', timeout: 30000, env: { PATH: '/usr/bin:/bin' } });
       assert.strictEqual(rel.status, 2, rel.stderr);
       assert.ok(/launcher \(scripts\/zn-launch\.js\) is missing/.test(rel.stderr), rel.stderr);
     });
