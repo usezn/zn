@@ -11,6 +11,13 @@
 # Node.js, in this order: `node` on the PATH of the hook, the usual install folders, and the program that runs
 # ZCode's agent (the app's own Node.js: it is started as `ELECTRON_RUN_AS_NODE=1 <app> zcode.cjs ...`, and is this
 # script's parent). A candidate is used only if it is Node.js 20.19 or later (21.7 or later on 21).
+#
+# Start deadline: ZCode stops a hook after 30 seconds, and what it does with a call whose hook timed out is not
+# documented. So a Node.js that hangs while the hook starts (the version probe or the launch) must not run into that
+# timeout: DEADLINE seconds after the script starts, the hook answers like it does when the check fails (block, or only
+# a warning on PostToolUse) and stops the Node.js it started. A watchdog sends this shell a signal; Node.js runs in the
+# background and the shell waits for it, because a shell only handles a signal once its foreground command is done.
+# Without a `sleep` program there is no watchdog, and the other refusals still apply.
 
 EVENT="${1:-}"
 case "$0" in */*) HERE_DIR=${0%/*} ;; *) HERE_DIR=. ;; esac
@@ -33,9 +40,40 @@ refuse() {
 
 [ -n "$HERE" ] && [ -f "$LAUNCH" ] || refuse "the plugin's launcher (scripts/zn-launch.js) is missing."
 
+DEADLINE=25
+exec 3<&0
+CUR=""
+WD=""
+stop_watchdog() {
+  [ -z "$WD" ] || kill "$WD" 2>/dev/null
+}
+on_deadline() {
+  trap '' USR1
+  [ -z "$CUR" ] || kill "$CUR" 2>/dev/null
+  refuse "the hook did not finish starting within $DEADLINE seconds."
+}
+if command -v sleep >/dev/null 2>&1; then
+  MAIN=$$
+  trap on_deadline USR1
+  trap stop_watchdog EXIT
+  (
+    exec >/dev/null 2>&1 </dev/null
+    sleep "$DEADLINE" &
+    s=$!
+    trap 'kill "$s" 2>/dev/null; exit 0' TERM
+    wait "$s" && kill -USR1 "$MAIN"
+  ) &
+  WD=$!
+fi
+
 # Node.js 20.19+ with the module loader the launcher needs.
 node_ok() {
-  ELECTRON_RUN_AS_NODE=1 "$1" -e 'const v=process.versions.node.split(".").map(Number);const vm=require("vm");process.exit(((v[0]>21||(v[0]===21&&v[1]>=7)||(v[0]===20&&v[1]>=19))&&vm.constants&&vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER)?0:1)' >/dev/null 2>&1
+  ELECTRON_RUN_AS_NODE=1 "$1" -e 'const v=process.versions.node.split(".").map(Number);const vm=require("vm");process.exit(((v[0]>21||(v[0]===21&&v[1]>=7)||(v[0]===20&&v[1]>=19))&&vm.constants&&vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER)?0:1)' >/dev/null 2>&1 </dev/null &
+  CUR=$!
+  wait "$CUR"
+  _rc=$?
+  CUR=""
+  return "$_rc"
 }
 
 NODE=""
@@ -77,11 +115,14 @@ fi
 # The launcher exits 0 (done) or 2 (blocked) by itself; anything else is a failure and is refused here.
 # (ELECTRON_RUN_AS_NODE is set only when the Node.js is the app's own program.)
 if [ -n "$APP_NODE" ]; then
-  ELECTRON_RUN_AS_NODE=1 "$NODE" "$LAUNCH" hook zcode
+  ELECTRON_RUN_AS_NODE=1 "$NODE" "$LAUNCH" hook zcode <&3 &
 else
-  "$NODE" "$LAUNCH" hook zcode
+  "$NODE" "$LAUNCH" hook zcode <&3 &
 fi
+CUR=$!
+wait "$CUR"
 rc=$?
+CUR=""
 case "$rc" in
   0 | 2) exit "$rc" ;;
   *) refuse "the hook ended with exit code $rc." ;;
