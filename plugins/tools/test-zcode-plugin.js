@@ -198,6 +198,38 @@ try {
       return dir;
     };
 
+    test('zn-hook.sh never starts a node from a relative or empty PATH entry (start, middle, end), and passes only absolute entries on', () => {
+      const d = fixture2('relpath', 28);
+      const work = path.join(tmp, 'relpath-work');
+      const marker = path.join(work, 'planted-ran');
+      fs.mkdirSync(path.join(work, 'bin'), { recursive: true });
+      for (const dir of [work, path.join(work, 'bin')]) {
+        for (const n of ['node', 'zn', 'sleep', 'ps']) fs.writeFileSync(path.join(dir, n), '#!/bin/sh\n: > ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+      }
+      const real = path.join(d, 'bin');
+      for (const PATH of ['.:' + real + ':/usr/bin:/bin', real + ':.:/usr/bin:/bin', real + ':/usr/bin:/bin:.', 'bin:' + real + ':/usr/bin:/bin', ':' + real + ':/usr/bin:/bin']) {
+        const r = spawnSync('/bin/sh', ['-c', 'cd "$1" && sh "$0" PreToolUse', path.join(d, 'scripts', 'zn-hook.sh'), work], {
+          input: '{"hook_event_name":"PreToolUse"}', encoding: 'utf8', timeout: 30000,
+          env: { PATH, HOME: path.join(d, 'home'), ZN_STUB_OUT: '{"decision":"allow"}' },
+        });
+        assert.strictEqual(fs.existsSync(marker), false, PATH + ': a planted program ran');
+        assert.strictEqual(r.status, 0, PATH + ': ' + r.stderr);
+      }
+      // With only relative or empty entries the hook still runs (it falls back to the system folders), and nothing planted runs.
+      for (const PATH of ['.:bin:', '', ':']) {
+        const r = spawnSync('/bin/sh', ['-c', 'cd "$1" && /bin/sh "$0" PreToolUse', path.join(d, 'scripts', 'zn-hook.sh'), work], {
+          input: '{}', encoding: 'utf8', timeout: 30000, env: { PATH, HOME: '/nonexistent' },
+        });
+        assert.ok(r.status === 0 || r.status === 2, JSON.stringify(PATH) + ': the hook did not run (' + r.status + '): ' + r.stderr);
+        assert.ok(r.status === 0 || /^zn: /.test(r.stderr), JSON.stringify(PATH) + ': ' + r.stderr);
+        assert.strictEqual(fs.existsSync(marker), false, JSON.stringify(PATH) + ': a planted program ran');
+      }
+      // Started by a relative path, the script does not trust the folder it was started from.
+      const rel = spawnSync('/bin/sh', ['-c', 'cd "$1" && sh scripts/zn-hook.sh PreToolUse', '_', d], { input: '{}', encoding: 'utf8', timeout: 30000, env: { PATH: '/usr/bin:/bin' } });
+      assert.strictEqual(rel.status, 2, rel.stderr);
+      assert.ok(/launcher \(scripts\/zn-launch\.js\) is missing/.test(rel.stderr), rel.stderr);
+    });
+
     test('zn-hook.sh has a start deadline under ZCode\'s 30 second hook timeout', () => {
       const m = /^DEADLINE=(\d+)$/m.exec(fs.readFileSync(HOOK, 'utf8'));
       assert.ok(m, 'DEADLINE is set');

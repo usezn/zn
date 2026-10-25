@@ -22,8 +22,26 @@
 # Without a `sleep` program there is no watchdog, and the other refusals still apply.
 
 EVENT="${1:-}"
-case "$0" in */*) HERE_DIR=${0%/*} ;; *) HERE_DIR=. ;; esac
-HERE=$(CDPATH='' cd -- "$HERE_DIR" 2>/dev/null && pwd -P) || HERE=""
+# ZCode starts this script by its absolute path (hooks.json: sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh); any other
+# form would depend on the folder the session runs in, so the launcher is then treated as missing.
+case "$0" in /*) HERE_DIR=${0%/*} ;; *) HERE_DIR= ;; esac
+HERE=$([ -n "$HERE_DIR" ] && CDPATH='' cd -- "$HERE_DIR" 2>/dev/null && pwd -P) || HERE=""
+
+# Only absolute PATH entries, for this script and everything it starts: a relative or empty entry points into the
+# folder the session runs in (the project), where a node, sleep or ps of its own could have been placed.
+OLDIFS=$IFS
+IFS=:
+set -f
+SAFE_PATH=
+for d in $PATH; do
+  case "$d" in /*) SAFE_PATH="${SAFE_PATH:+$SAFE_PATH:}$d" ;; esac
+done
+set +f
+IFS=$OLDIFS
+# With no absolute entry at all, an empty PATH would make the shell look in the current folder: use the system folders.
+[ -n "$SAFE_PATH" ] || SAFE_PATH=/usr/bin:/bin
+PATH=$SAFE_PATH
+export PATH
 LAUNCH="$HERE/zn-launch.js"
 
 # Refusal: exit 2 and the reason on stderr for the events where that blocks (the others only warn).
@@ -86,13 +104,15 @@ try_node() {
   [ -n "$1" ] && [ -x "$1" ] && node_ok "$1" && NODE="$1"
 }
 
-# 1. PATH
+# 1. PATH (absolute entries only, see above)
 OLDIFS=$IFS
 IFS=:
+set -f
 for d in $PATH; do
-  [ -n "$d" ] || continue
+  case "$d" in /*) ;; *) continue ;; esac
   try_node "$d/node" && break
 done
+set +f
 IFS=$OLDIFS
 
 # 2. usual install folders (a desktop app often starts with a short PATH)
