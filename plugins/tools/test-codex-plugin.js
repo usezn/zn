@@ -151,6 +151,13 @@ try {
         assert.strictEqual(fs.existsSync(marker), false, PATH + ': a planted program ran');
         assert.strictEqual(r.status, 0, PATH + ': ' + r.stderr);
       }
+      for (const PATH of ['.:bin:', '', ':']) {
+        const r = spawnSync('/bin/sh', ['-c', 'cd "$1" && /bin/sh "$0" PreToolUse', path.join(d, 'scripts', 'zn-hook.sh'), work], {
+          input: '{}', encoding: 'utf8', timeout: 30000, env: { PATH, HOME: '/nonexistent', ZN_STUB_STDIN: path.join(d, 'stdin.txt') },
+        });
+        assert.ok(r.status === 0 || r.status === 2, JSON.stringify(PATH) + ': the hook did not run (' + r.status + '): ' + r.stderr);
+        assert.strictEqual(fs.existsSync(marker), false, JSON.stringify(PATH) + ': a planted program ran');
+      }
       const rel = spawnSync('/bin/sh', ['-c', 'cd "$1" && sh scripts/zn-hook.sh PreToolUse', '_', d], { input: '{}', encoding: 'utf8', timeout: 30000, env: { PATH: '/usr/bin:/bin' } });
       assert.strictEqual(rel.status, 2, rel.stderr);
       assert.ok(/launcher \(scripts\/zn-launch\.js\) is missing/.test(rel.stderr), rel.stderr);

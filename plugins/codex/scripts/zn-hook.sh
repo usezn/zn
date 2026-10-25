@@ -37,6 +37,8 @@ for d in $PATH; do
 done
 set +f
 IFS=$OLDIFS
+# With no absolute entry at all, an empty PATH would make the shell look in the current folder: use the system folders.
+[ -n "$SAFE_PATH" ] || SAFE_PATH=/usr/bin:/bin
 PATH=$SAFE_PATH
 export PATH
 LAUNCH="$HERE/zn-launch.js"
