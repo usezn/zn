@@ -457,7 +457,7 @@ function hookDirSuggestions(opts = {}) {
   if (xdg && path.isAbsolute(xdg)) {
     const d = path.join(xdg, 'zn-hooks');
     const e = plainPathOk(d) ? existingReal(d) : null;
-    if (e) out.push({ dir: d, command: (canWrite(e) ? '' : 'sudo ') + 'mkdir -p -m 700 ' + d });
+    if (e) out.push({ dir: d, command: canWrite(e) ? 'mkdir -p -m 700 ' + d : 'sudo mkdir -p -m 700 ' + d + ' && sudo chown ' + who + ' ' + d });
   }
   for (const base of ['/opt', '/var/opt', '/usr/local']) {
     if (out.length >= 2) break;
@@ -489,10 +489,10 @@ function unsafeDirMessage(dir, why, fix, opts) {
     ' Or unset ZN_HOOK_DIR to use ~/.zn/hooks.';
 }
 
-/** The step that closes a folder others can write: no sudo for your own folder, sudo only for root's, nothing for a shared one. */
+/** The step that closes a folder others can write: nothing for a shared (sticky) one, no sudo for your own folder, sudo only for root's. */
 function writableFix(p, st, me) {
-  if (me !== null && st.uid === me) return 'To close it, run `chmod g-w,o-w ' + shWord(p) + '`.';
   if ((st.mode & 0o1000) !== 0) return p + ' is a shared folder (sticky bit), so do not change it; choose a folder somewhere else.';
+  if (me !== null && st.uid === me) return 'To close it, run `chmod g-w,o-w ' + shWord(p) + '`.';
   if (st.uid === 0) return p + ' belongs to root, so closing it takes administrator rights (`sudo chmod g-w,o-w ' + shWord(p) + '`), and other users of this machine may rely on it being shared; the safer way is to choose another folder.';
   return p + ' belongs to another user: ask them (or the administrator) to close it, or choose another folder.';
 }
