@@ -56,6 +56,17 @@ test('suggestions: XDG_DATA_HOME comes first when it is set and has no space, an
   assert.equal(list[1].dir, '/opt/ana-zn-hooks');
 });
 
+test('suggestions: XDG_DATA_HOME that needs sudo also gives the folder to you, so the check accepts it', () => {
+  const fsx = fakeFs({ dirs: ['/', '/srv', '/srv/data'] });
+  const list = launcher.hookDirSuggestions({ fs: fsx, env: { XDG_DATA_HOME: '/srv/data' }, user: 'ana' });
+  assert.equal(list[0].command, 'sudo mkdir -p -m 700 /srv/data/zn-hooks && sudo chown ana /srv/data/zn-hooks');
+});
+
+test('suggestions: the state the sudo command leaves (leaf yours, mode 700) passes the check', skip, (t) => {
+  const dir = mkdirMode(path.join(tempDir(t, 'zn-hdm-'), 'zn-hooks'), 0o700);
+  assert.doesNotThrow(() => launcher.ensureSafeHookDir(dir, 'linux', { trustedRoot: TMP_ROOT }));
+});
+
 test('suggestions: XDG_DATA_HOME with a space, or a relative one, is ignored', () => {
   const fsx = fakeFs({ dirs: ['/', '/home', '/home/a b', '/home/a b/data', '/opt'] });
   for (const xdg of ['/home/a b/data', 'data/rel']) {
@@ -86,6 +97,13 @@ test('refusal: the folder itself open to others gets the same sudo-free chmod', 
   assert.ok(msg.includes('`chmod g-w,o-w ' + dir + '`'), msg);
 });
 
+test('refusal: a shared (sticky) folder you own gets the shared-folder notice, not a chmod', skip, (t) => {
+  const shared = mkdirMode(path.join(tempDir(t, 'zn-hdm-'), 'shared'), 0o1777);
+  const msg = refusal(() => launcher.ensureSafeHookDir(path.join(shared, 'hooks'), 'linux', { trustedRoot: TMP_ROOT }));
+  assert.match(msg, /shared folder \(sticky bit\)/);
+  assert.doesNotMatch(msg, /`chmod g-w,o-w/);
+});
+
 test('refusal: a path with a space is quoted in the chmod advice', skip, (t) => {
   const open = mkdirMode(path.join(tempDir(t, 'zn-hdm-'), 'my open'), 0o775);
   const msg = refusal(() => launcher.ensureSafeHookDir(path.join(open, 'h'), 'linux', { trustedRoot: TMP_ROOT }));
@@ -96,6 +114,8 @@ test('writableFix: sudo only for a root-owned folder, never for a shared (sticky
   const fix = launcher.writableFix;
   assert.equal(fix('/home/ana', { uid: 1000, mode: 0o40775 }, 1000), 'To close it, run `chmod g-w,o-w /home/ana`.');
   assert.match(fix('/srv/data', { uid: 0, mode: 0o40775 }, 1000), /belongs to root.*`sudo chmod g-w,o-w \/srv\/data`/);
+  assert.match(fix('/tmp', { uid: 1000, mode: 0o41777 }, 1000), /shared folder/);
+  assert.doesNotMatch(fix('/tmp', { uid: 1000, mode: 0o41777 }, 1000), /chmod/);
   assert.doesNotMatch(fix('/tmp', { uid: 0, mode: 0o41777 }, 1000), /chmod/);
   assert.match(fix('/tmp', { uid: 0, mode: 0o41777 }, 1000), /shared folder/);
   assert.doesNotMatch(fix('/srv/x', { uid: 2000, mode: 0o40777 }, 1000), /sudo/);
