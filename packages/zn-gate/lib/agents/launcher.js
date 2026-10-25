@@ -215,6 +215,8 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
       '  ( trap \'kill $ZN_SP 2>/dev/null; exit 0\' TERM; /bin/sleep ' + deadlineS + ' & ZN_SP=$!; wait $ZN_SP; kill -TERM -$ZN_P 2>/dev/null; kill -TERM $ZN_P 2>/dev/null; /bin/sleep 1 & ZN_SP=$!; wait $ZN_SP; kill -KILL -$ZN_P 2>/dev/null; kill -KILL $ZN_P 2>/dev/null ) >/dev/null 2>&1 </dev/null &',
       '  ZN_T=$!',
       '  wait $ZN_P; ZN_RC=$?',
+      '  # The hook is done: a TERM, HUP or INT now must not cut the answer being passed on or add a second one after it.',
+      '  trap \'\' HUP INT TERM',
       '  # A status 0 counts only when the hook confirmed that its whole answer was written.',
       '  if [ "$ZN_RC" = 0 ]; then zn_acked || { ZN_RC=1; ZN_NOACK=1; }; fi',
       '  kill -TERM $ZN_T 2>/dev/null',
