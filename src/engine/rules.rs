@@ -269,7 +269,10 @@ mod tests {
     fn fold_strips_null_and_rtl_marks() {
         assert_eq!(fold_system1("rm\u{0000} -rf"), "rm -rf");
         assert_eq!(fold_system1("rm\u{202E} -rf"), "rm -rf");
-        for mark in ["\u{200E}", "\u{200F}", "\u{061C}", "\u{180E}", "\u{115F}", "\u{1160}", "\u{3164}", "\u{FFA0}"] {
+        for mark in [
+            "\u{200E}", "\u{200F}", "\u{061C}", "\u{180E}", "\u{115F}", "\u{1160}", "\u{3164}",
+            "\u{FFA0}",
+        ] {
             assert_eq!(fold_system1(&format!("r{mark}m -rf")), "rm -rf");
         }
     }
