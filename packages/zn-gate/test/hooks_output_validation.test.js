@@ -506,3 +506,28 @@ test('windows (real PowerShell): the fallback runs the real zn.cmd, and the node
   assert.equal(fs.existsSync(mark), false, 'a program planted in the project ran');
 });
 
+// ---- no rm, mktemp or cat in the usual system folders (NixOS, Guix): the private files are still removed ----
+
+test('posix launcher without /bin/rm, mktemp or cat in the system folders: no private file is left, and nothing is taken from the PATH', { skip: !posix }, (t) => {
+  const strip = (text) => text
+    .replace('/bin/rm /usr/bin/rm /run/current-system/sw/bin/rm /run/current-system/profile/bin/rm', '/nonexistent/rm')
+    .replace('/usr/bin/mktemp /bin/mktemp /run/current-system/sw/bin/mktemp /run/current-system/profile/bin/mktemp', '/nonexistent/mktemp')
+    .replace('/bin/cat /usr/bin/cat /run/current-system/sw/bin/cat /run/current-system/profile/bin/cat', '/nonexistent/cat');
+  const { proj, mark } = plantProject(t);
+  for (const [mode, opts, edit] of MODES) {
+    for (const [name, body, check] of HOOKS) {
+      const file = writeScript(t, 'claude-code', body, opts);
+      const text = strip(fs.readFileSync(file, 'utf8'));
+      assert.ok(text.includes('/nonexistent/rm') && text.includes('/nonexistent/mktemp') && text.includes('/nonexistent/cat'), 'the system folders were replaced');
+      fs.writeFileSync(file, edit ? edit(text) : text, { mode: 0o755 });
+      const tmp = tempDir(t, 'zn-ov-nix-');
+      for (let i = 0; i < 3; i++) {
+        // The tools are on the PATH (as on NixOS), and planted ones in the project come first: none of them may run.
+        const r = spawnSync('/bin/sh', [file, 'PreToolUse'], { cwd: proj, input: '{}', encoding: 'utf8', timeout: 20000, env: { PATH: '.:/usr/bin:/bin', HOME: '/nonexistent', TMPDIR: tmp } });
+        check(r);
+      }
+      assert.deepEqual(zfiles(tmp), [], mode + ', ' + name + ': files left in TMPDIR');
+      assert.equal(fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8') : '', '', mode + ', ' + name + ': a planted command ran');
+    }
+  }
+});
