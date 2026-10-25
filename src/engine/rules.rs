@@ -97,7 +97,7 @@ impl ManagedRuleset {
             }
         }
 
-        // 5. Credentials request ("please send me the api keys"), same rule as the Node.js and Python engines
+        // 6. Credentials request ("please send me the api keys"), same rule as the Node.js and Python engines
         if config.prompt_injection && credentials_request::is_credentials_request(&folded) {
             return Err(format!(
                 "Credentials request blocked: {} ({})",

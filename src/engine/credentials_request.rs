@@ -29,7 +29,8 @@ struct Patterns {
     clause: Regex,
     /// A verb followed by "me" or "us"; group 1 is the verb.
     verb_me: Regex,
-    /// The rest of the clause after such a verb, up to a credential.
+    /// The rest of the clause after such a verb, up to a credential. Anchored at the
+    /// start of the slice it is run on, so a failed attempt stops after the clause limit.
     tail: Regex,
 }
 
@@ -40,7 +41,7 @@ fn patterns() -> &'static Patterns {
         Patterns {
             clause: Regex::new(&format!("(?:{PREFIX}){VERB}{tail}")).expect("clause pattern"),
             verb_me: Regex::new(&format!(r"({VERB})\s+(?:me|us)(?-u:\b)")).expect("verb pattern"),
-            tail: Regex::new(&tail).expect("tail pattern"),
+            tail: Regex::new(&format!(r"\A{tail}")).expect("tail pattern"),
         }
     })
 }
@@ -55,7 +56,9 @@ pub fn is_credentials_request(text: &str) -> bool {
     }
     p.verb_me.captures_iter(&text).any(|caps| {
         let end = caps.get(1).map_or(0, |m| m.end());
-        p.tail.find_at(&text, end).is_some_and(|m| m.start() == end)
+        // The slice starts at the whitespace after the verb, so the start-of-text and
+        // word-boundary context the credential pattern needs is the same as in the full text.
+        p.tail.is_match(&text[end..])
     })
 }
 
@@ -96,6 +99,31 @@ mod tests {
         assert!(!is_credentials_request(
             "send me a coffee. The token expires."
         ));
+    }
+
+    #[test]
+    fn repeated_me_us_verbs_scan_in_linear_time() {
+        use std::time::Instant;
+        let run = |n: usize, end: &str| {
+            let text = format!("{}{end}", "send me ".repeat(n));
+            let start = Instant::now();
+            let hit = is_credentials_request(&text);
+            (hit, start.elapsed())
+        };
+        // About 1 MiB: a search that rescans the rest of the text for every verb takes minutes here.
+        let (hit, took) = run(131_072, "");
+        assert!(!hit);
+        assert!(took.as_secs_f64() < 10.0, "no credential: {took:?}");
+        let (hit, took) = run(131_072, "send me the token");
+        assert!(hit);
+        assert!(took.as_secs_f64() < 10.0, "credential at the end: {took:?}");
+        // Doubling the input must not much more than double the time.
+        let (_, small) = run(32_768, "");
+        let (_, big) = run(131_072, "");
+        assert!(
+            big.as_secs_f64() < small.as_secs_f64().max(0.01) * 12.0,
+            "{small:?} -> {big:?}"
+        );
     }
 
     fn cfg() -> crate::config::ManagedRulesConfig {
