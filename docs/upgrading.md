@@ -77,27 +77,31 @@ depends on the agent and on how the hooks were installed. A user install
 (`~/.zn/hooks/zn-hook-<agent>.sh`; on Windows, for Codex CLI, Cursor, Gemini CLI
 and Antigravity, the same steps written inline in PowerShell). It runs the
 Node.js it was installed with, else `zn` from the PATH, else it answers the
-block itself, without Node.js. A project install (`--project`), hooks written by
-an older zn-gate and the plugins keep a plain command. Agent by agent:
+block itself, without Node.js. A project install (`--project`) names `zn` on
+the PATH inside a short start guard (`sh -c`, PowerShell on Windows) that gives
+the same block when `zn` or Node.js is missing or fails, so it behaves like a
+user install. Hooks written by zn-gate 1.13.1 or earlier, including project
+installs, and the plugins keep a plain command. Agent by agent:
 
 - **Claude Code**: with a user install, tool calls, prompts and typed-command
   expansions are blocked in every Claude Code version; after a tool has run, zn
-  only warns in the session, so that output reaches the model unscrubbed. With
-  the plugin, a project install or older hooks, Claude Code 2.1.295 or later
+  only warns in the session, so that output reaches the model unscrubbed. A
+  project install does the same. With the plugin or older hooks, Claude Code
+  2.1.295 or later
   blocks tool calls, prompts and typed-command expansions (the hooks carry
   `onFailure: "block"`), and earlier versions let them go ahead.
 - **Codex CLI**: with a user install, tool calls, prompts and permission
-  requests are blocked, and after a tool has run zn only warns. With the plugin,
-  a project install or older hooks, Codex reports a hook failure and carries on:
-  tool calls and prompts go ahead unchecked.
+  requests are blocked, and after a tool has run zn only warns. A project
+  install does the same. With the plugin or older hooks, Codex reports a hook
+  failure and carries on: tool calls and prompts go ahead unchecked.
 - **Cursor**: with a user install, shell commands, MCP calls, file reads,
   prompts and `preToolUse` calls (Write, Delete, Grep) are blocked, and after a
-  tool has run zn only warns. With the plugin, shell commands, file reads,
-  prompts and `preToolUse` calls are blocked (its hooks are `failClosed`). With
-  a project install or older hooks, only file reads and prompts are blocked; the
-  other calls go ahead.
-- **Gemini CLI**: with a user install, tool calls are blocked. With a project
-  install or older hooks, Gemini CLI shows a warning and the tool call runs.
+  tool has run zn only warns. A project install does the same. With the
+  plugin, shell commands, file reads, prompts and `preToolUse` calls are blocked
+  (its hooks are `failClosed`). With older hooks, only file reads and prompts
+  are blocked; the other calls go ahead.
+- **Gemini CLI**: with a user install or a project install, tool calls are
+  blocked. With older hooks, Gemini CLI shows a warning and the tool call runs.
 - **GitHub Copilot CLI**: a hook command that cannot start fails closed for
   `preToolUse`, so the tool call is blocked; the hook that runs after a tool
   fails open, so that output is not scrubbed. Copilot has no launcher, and it
