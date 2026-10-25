@@ -262,7 +262,8 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     'IFS=$ZN_OLDIFS',
     'ZN_CMD=; [ -z "$ZN_SAFE" ] || ZN_CMD=$(PATH="$ZN_SAFE" command -v zn 2>/dev/null)',
     'case "$ZN_CMD" in /*) ;; *) ZN_CMD= ;; esac',
-    'if [ -z "$ZN_RAN" ] && [ -n "$ZN_CMD" ] && PATH="$ZN_SAFE" command -v node >/dev/null 2>&1; then ZN_RAN=1; : >"$ZN_AF" 2>/dev/null; ' + run('"$ZN_CMD" hook ' + agentId) + '; ' + 'zn_leave $ZN_RC; fi',
+    '# zn runs with that PATH too: its `#!/usr/bin/env node` line would otherwise find a node in a relative entry first.',
+    'if [ -z "$ZN_RAN" ] && [ -n "$ZN_CMD" ] && PATH="$ZN_SAFE" command -v node >/dev/null 2>&1; then ZN_RAN=1; PATH=$ZN_SAFE; export PATH; : >"$ZN_AF" 2>/dev/null; ' + run('"$ZN_CMD" hook ' + agentId) + '; ' + 'zn_leave $ZN_RC; fi',
     'zn_block',
     '',
   ].join('\n');

@@ -116,6 +116,26 @@ test('codex launcher: a zn found through a relative PATH entry is not run (it bl
   assert.doesNotMatch(r.stdout, /PLANTED/);
 });
 
+test('codex launcher: the zn it falls back to runs with only the absolute PATH entries, so its env node never finds a planted node', { skip: !posix }, (t) => {
+  const { file } = setup(t, GONE);
+  const safe = tempDir(t, 'zn-fb-safe-');
+  fs.symlinkSync(process.execPath, path.join(safe, 'node'));
+  fs.writeFileSync(path.join(safe, 'zn'), '#!/usr/bin/env node\nprocess.stdout.write(process.env.PATH);\nprocess.exit(2);\n', { mode: 0o755 });
+  const work = tempDir(t, 'zn-fb-work-');
+  const marker = path.join(work, 'planted-node-ran');
+  fs.mkdirSync(path.join(work, 'bin'));
+  for (const d of [work, path.join(work, 'bin')]) fs.writeFileSync(path.join(d, 'node'), '#!/bin/sh\n: > ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+  const shells = ['/bin/sh', ...['dash', 'bash'].map((n) => ['/bin', '/usr/bin'].map((d) => path.join(d, n)).find((f) => fs.existsSync(f))).filter(Boolean)];
+  for (const shell of new Set(shells)) {
+    for (const PATH of ['.:' + safe, 'bin:' + safe, ':' + safe]) {
+      const r = spawnSync(shell, [file, 'PreToolUse'], { input: '{}', encoding: 'utf8', cwd: work, env: { PATH, HOME: '/nonexistent' } });
+      assert.equal(fs.existsSync(marker), false, shell + ' ' + PATH + ': the planted node ran');
+      assert.equal(r.status, 2, shell + ' ' + PATH + ' ' + r.stderr);
+      assert.equal(r.stdout, safe, shell + ' ' + PATH);
+    }
+  }
+});
+
 test('codex uninstall removes the launcher; a project install writes none', { skip: !posix }, (t) => {
   const { env, home, file } = setup(t, process.execPath);
   assert.ok(fs.existsSync(file));
