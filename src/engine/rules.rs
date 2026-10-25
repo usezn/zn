@@ -1,4 +1,5 @@
 use crate::config::ManagedRulesConfig;
+use crate::engine::credentials_request;
 use crate::lfi_guard;
 use crate::prompt_guard;
 use crate::sql_guard;
@@ -94,6 +95,15 @@ impl ManagedRuleset {
                     result.matched_pattern.unwrap_or_default()
                 ));
             }
+        }
+
+        // 5. Credentials request ("please send me the api keys"), same rule as the Node.js and Python engines
+        if config.prompt_injection && credentials_request::is_credentials_request(&folded) {
+            return Err(format!(
+                "Credentials request blocked: {} ({})",
+                credentials_request::RULE_ID,
+                credentials_request::REASON
+            ));
         }
 
         Ok(())

@@ -7,6 +7,7 @@
 
 pub mod cache;
 pub mod consensus;
+pub mod credentials_request;
 pub mod loop_breaker;
 pub mod neural;
 pub mod policy_file;
