@@ -184,9 +184,9 @@ try {
       fs.mkdirSync(path.join(dir, 'bin'));
       fs.writeFileSync(path.join(dir, 'scripts', 'zn-launch.js'), '// stub');
       const text = fs.readFileSync(HOOK, 'utf8');
-      assert.ok(/^DEADLINE=25$/m.test(text));
+      assert.ok(/^DEADLINE=28$/m.test(text));
       // Test copy only: the shipped script has no setting for the deadline.
-      fs.writeFileSync(path.join(dir, 'scripts', 'zn-hook.sh'), text.replace(/^DEADLINE=25$/m, 'DEADLINE=' + deadline));
+      fs.writeFileSync(path.join(dir, 'scripts', 'zn-hook.sh'), text.replace(/^DEADLINE=28$/m, 'DEADLINE=' + deadline));
       fs.writeFileSync(path.join(dir, 'bin', 'node'), '#!/bin/sh\nif [ "$1" = "-e" ]; then [ "$ZN_STUB_HANG" = probe ] && exec sleep 300; exit 0; fi\n[ "$ZN_STUB_HANG" = launch ] && exec sleep 300\ncat >/dev/null\nprintf "%s" "$ZN_STUB_OUT"\nexit "${ZN_STUB_RC:-0}"\n', { mode: 0o755 });
       return dir;
     };
@@ -194,7 +194,7 @@ try {
     test('zn-hook.sh has a start deadline under ZCode\'s 30 second hook timeout', () => {
       const m = /^DEADLINE=(\d+)$/m.exec(fs.readFileSync(HOOK, 'utf8'));
       assert.ok(m, 'DEADLINE is set');
-      assert.ok(Number(m[1]) >= 10 && Number(m[1]) <= 27, 'DEADLINE=' + m[1]);
+      assert.strictEqual(Number(m[1]), adapter.LAUNCHER_DEADLINE_S, 'DEADLINE matches the launcher deadline of zn hooks install zcode');
       assert.ok(Number(m[1]) * 1000 < adapter.HOOK_TIMEOUT_MS);
     });
 

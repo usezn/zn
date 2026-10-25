@@ -378,9 +378,9 @@ jobs:
         id: dest
         run: |
           set -euo pipefail
-          # Only a repository of the usezn organisation.
-          if [[ ! "$ZCODE_REPO" =~ ^usezn/[A-Za-z0-9._-]+$ ]]; then
-            echo "::error::zcode_repo must be a repository of usezn: $ZCODE_REPO"
+          # Only the ZCode plugin repository (never the agent plugin repository, where the App is installed too).
+          if [[ "$ZCODE_REPO" != "usezn/zn-gate-zcode-plugin" ]]; then
+            echo "::error::zcode_repo must be usezn/zn-gate-zcode-plugin: $ZCODE_REPO"
             exit 1
           fi
           echo "name=${ZCODE_REPO#usezn/}" >> "$GITHUB_OUTPUT"
