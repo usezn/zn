@@ -5,7 +5,7 @@ zn-gate 1.13.1 as a Codex plugin: it checks every shell command, patch, MCP call
 - Blocks reads and writes of secret files (`.env` with values, `~/.aws/credentials`, `~/.zn`), shell commands that read them or handle the vault, patches that touch them, MCP calls that would send a secret to a server, and prompts that contain a secret. When a tool result holds a secret, Codex gets the text with `__ZN_` tokens instead of the value.
 - No account and no API key. Nothing is sent over the network.
 - Ships its own copy of zn-gate (`vendor/zn-gate`). `scripts/zn-launch.js` checks it against `scripts/zn-gate.lock.json` (SHA-256 of every file of the published release) on every call and fails closed. Codex does not install npm packages for a plugin, so there is no `node_modules` to go missing.
-- Needs Node.js 20.19 or later on the machine: `scripts/zn-hook.sh` looks for `node` in the PATH of the hook and in the usual install folders. When it finds none, or when anything else stops zn from running, or when Node.js does not answer within 25 seconds, it blocks instead of letting the call run. (Codex lets a call run when a hook cannot start, crashes or times out; only exit code 2 or a deny decision blocks.)
+- Needs Node.js 20.19 or later on the machine: `scripts/zn-hook.sh` looks for `node` in the PATH of the hook and in the usual install folders. When it finds none, or when anything else stops zn from running, or when Node.js does not answer within 28 seconds, it blocks instead of letting the call run. (Codex lets a call run when a hook cannot start, crashes or times out; only exit code 2 or a deny decision blocks.)
 
 ## Review the hooks first
 

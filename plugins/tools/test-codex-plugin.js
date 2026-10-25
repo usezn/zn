@@ -90,7 +90,7 @@ try {
   test('zn-hook.sh refuses on the events the launcher blocks for Codex, and its deadline is below the hook timeout', () => {
     const script = text('scripts/zn-hook.sh');
     const deadline = Number(/^DEADLINE=(\d+)$/m.exec(script)[1]);
-    assert.ok(deadline >= 10 && deadline <= launcher.launcherDeadlineS(adapter.HOOK_TIMEOUT_S), 'DEADLINE=' + deadline);
+    assert.strictEqual(deadline, launcher.launcherDeadlineS(adapter.HOOK_TIMEOUT_S), 'DEADLINE matches the launcher deadline of zn hooks install codex');
     assert.ok(deadline < adapter.HOOK_TIMEOUT_S);
     // The case labels of refuse(): exit-2 events, then the deny-JSON event.
     const labels = (re) => (re.exec(script)[1].match(/[A-Za-z]+/g) || []).filter((w) => w !== '');

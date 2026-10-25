@@ -660,8 +660,8 @@ jobs:
         run: |
           set -euo pipefail
           # Only a repository of the usezn organisation.
-          if [[ ! "$CODEX_REPO" =~ ^usezn/[A-Za-z0-9._-]+$ ]]; then
-            echo "::error::codex_repo must be a repository of usezn: $CODEX_REPO"
+          if [[ "$CODEX_REPO" != "usezn/zn-gate-codex-plugin" ]]; then
+            echo "::error::codex_repo must be usezn/zn-gate-codex-plugin: $CODEX_REPO"
             exit 1
           fi
           echo "name=${CODEX_REPO#usezn/}" >> "$GITHUB_OUTPUT"

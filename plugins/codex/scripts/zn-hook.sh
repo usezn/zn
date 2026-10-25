@@ -47,13 +47,15 @@ refuse() {
 
 [ -n "$HERE" ] && [ -f "$LAUNCH" ] || refuse "the plugin's launcher (scripts/zn-launch.js) is missing."
 
-DEADLINE=25
+DEADLINE=28
 exec 3<&0
 CUR=""
 WD=""
+# shellcheck disable=SC2329 # called by trap
 stop_watchdog() {
   [ -z "$WD" ] || kill "$WD" 2>/dev/null
 }
+# shellcheck disable=SC2329 # called by trap
 on_deadline() {
   trap '' USR1
   [ -z "$CUR" ] || kill "$CUR" 2>/dev/null
