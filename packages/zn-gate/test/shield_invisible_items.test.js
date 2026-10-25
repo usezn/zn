@@ -83,6 +83,19 @@ const STRINGS = {
   sc_after_100k: MANY(Z.repeat(65535)),
 };
 
+// A reference with the same kind of work as the scan (a charCodeAt loop over invisible characters, as many as the scan's
+// cap), measured the same way in the same process: a loaded runner slows both alike, so the bound is a ratio, not a number.
+const REF_TEXT = Z.repeat(200001);
+function referenceScan() {
+  let n = 0;
+  for (let i = 0; i < REF_TEXT.length; i++) {
+    const c = REF_TEXT.charCodeAt(i);
+    if (c < 0xAD) continue;
+    if (c >= 0x200B && c <= 0x200F) n++;
+  }
+  return n;
+}
+
 // One warm-up call, then the fastest of a few runs (CPU time): a real regression slows every run.
 function fastestMs(fn, runs = 9) {
   let result = fn();
@@ -111,7 +124,9 @@ for (const name of ['split', 'split_mixed', 'resources', 'structured', 'sc_only'
     if (STRINGS[name]) {
       const { ms: scanMs, result } = fastestMs(() => tooInvisible(STRINGS[name]));
       assert.equal(result, true);
-      assert.ok(scanMs < 1.5, `the invisible-character scan took ${scanMs} ms`);
+      const { ms: refMs } = fastestMs(referenceScan);
+      // Normal is about 1.1 to 1.6 times the reference, loaded or not; a scan three times slower is 2.5 times or more.
+      assert.ok(scanMs < 2.2 * refMs, `the invisible-character scan took ${scanMs} ms, ${(scanMs / refMs).toFixed(2)} times the reference (${refMs} ms)`);
     }
   });
 }
