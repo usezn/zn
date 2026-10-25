@@ -88,7 +88,7 @@ try {
         // "-e" is the version probe; anything else is a run of the launcher: print what the stub says and exit as told.
         fs.writeFileSync(path.join(dir, 'bin', 'node'),
           '#!/bin/sh\nif [ "$1" = "-e" ]; then [ "$ZN_STUB_HANG" = probe ] && exec sleep 300; exit ' + probe + '; fi\n' +
-          '[ "$ZN_STUB_HANG" = launch ] && exec sleep 300\ncat >/dev/null\nprintf "%s" "$ZN_STUB_OUT"\nexit "${ZN_STUB_RC:-0}"\n', { mode: 0o755 });
+          '[ "$ZN_STUB_HANG" = grandchild ] && { sleep 300 & echo $! > "$ZN_STUB_GC"; exec sleep 300; }\n[ "$ZN_STUB_HANG" = launch ] && exec sleep 300\ncat >/dev/null\nprintf "%s" "$ZN_STUB_OUT"\nexit "${ZN_STUB_RC:-0}"\n', { mode: 0o755 });
       }
       return dir;
     }
@@ -111,6 +111,18 @@ try {
       assert.match(answer.reason, re);
       return answer;
     };
+
+    test('at the deadline zn-hook.sh stops what the Node.js it started has started too', () => {
+      if (!['/usr/bin/setsid', '/bin/setsid'].some((f) => fs.existsSync(f))) return;
+      const d = fixture('grandchild', { launcher: '// stub', deadline: 2 });
+      const gc = path.join(d, 'gc.pid');
+      const { r } = run(d, { ZN_STUB_HANG: 'grandchild', ZN_STUB_GC: gc });
+      assert.strictEqual(JSON.parse(r.stdout).decision, 'deny', r.stdout + r.stderr);
+      const pid = Number(fs.readFileSync(gc, 'utf8'));
+      let alive = true;
+      for (let i = 0; i < 20 && alive; i++) { try { process.kill(pid, 0); spawnSync('/bin/sleep', ['0.1']); } catch (_) { alive = false; } }
+      assert.strictEqual(alive, false, 'the process the launcher started is still running');
+    });
 
     test('zn-hook.sh never starts a node from a relative or empty PATH entry', () => {
       const d = fixture('relpath', { launcher: '// stub' });

@@ -54,10 +54,16 @@ WD=""
 stop_watchdog() {
   [ -z "$WD" ] || kill "$WD" 2>/dev/null
 }
+# Node.js runs in a process group of its own where setsid exists, so the deadline stops what it started too.
+GROUP=""
+for g in /usr/bin/setsid /bin/setsid; do [ -x "$g" ] && { GROUP=$g; break; }; done
 # shellcheck disable=SC2329 # called by trap
 on_deadline() {
   trap '' USR1
-  [ -z "$CUR" ] || kill "$CUR" 2>/dev/null
+  if [ -n "$CUR" ]; then
+    [ -z "$GROUP" ] || kill -TERM -"$CUR" 2>/dev/null
+    kill "$CUR" 2>/dev/null
+  fi
   refuse "the hook did not finish starting within $DEADLINE seconds."
 }
 if command -v sleep >/dev/null 2>&1; then
@@ -76,7 +82,9 @@ fi
 
 # Node.js 20.19+ with the module loader the launcher needs.
 node_ok() {
-  "$1" -e 'const v=process.versions.node.split(".").map(Number);const vm=require("vm");process.exit(((v[0]>21||(v[0]===21&&v[1]>=7)||(v[0]===20&&v[1]>=19))&&vm.constants&&vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER)?0:1)' >/dev/null 2>&1 </dev/null &
+  if [ -n "$GROUP" ]; then "$GROUP" "$1" -e 'const v=process.versions.node.split(".").map(Number);const vm=require("vm");process.exit(((v[0]>21||(v[0]===21&&v[1]>=7)||(v[0]===20&&v[1]>=19))&&vm.constants&&vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER)?0:1)' >/dev/null 2>&1 </dev/null &
+  else "$1" -e 'const v=process.versions.node.split(".").map(Number);const vm=require("vm");process.exit(((v[0]>21||(v[0]===21&&v[1]>=7)||(v[0]===20&&v[1]>=19))&&vm.constants&&vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER)?0:1)' >/dev/null 2>&1 </dev/null &
+  fi
   CUR=$!
   wait "$CUR"
   _rc=$?
@@ -116,7 +124,9 @@ fi
 [ -n "$NODE" ] || refuse "no Node.js 20.19 or later was found for the hook (looked in the PATH and the usual install folders)."
 
 # The launcher prints a decision and exits 0 by itself; anything else is a failure and is refused here.
-"$NODE" "$LAUNCH" hook antigravity <&3 &
+if [ -n "$GROUP" ]; then "$GROUP" "$NODE" "$LAUNCH" hook antigravity <&3 &
+else "$NODE" "$LAUNCH" hook antigravity <&3 &
+fi
 CUR=$!
 wait "$CUR"
 rc=$?
