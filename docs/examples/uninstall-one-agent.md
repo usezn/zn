@@ -26,7 +26,7 @@ For Claude Code, use `claude-code` instead. If you installed it as a plugin, rem
 npx -y zn-gate check
 ```
 
-The other agents should still be reported as protected. See [what the output means](../check.md).
+It shows the state of zn-gate on this machine. See [what the output means](../check.md).
 
 ## More
 
