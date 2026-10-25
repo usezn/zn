@@ -215,11 +215,15 @@ try {
         assert.strictEqual(fs.existsSync(marker), false, PATH + ': a planted program ran');
         assert.strictEqual(r.status, 0, PATH + ': ' + r.stderr);
       }
-      // With only relative entries, the planted node is never tried (the hook may still find a node in the usual install folders).
-      spawnSync('/bin/sh', ['-c', 'cd "$1" && sh "$0" PreToolUse', path.join(d, 'scripts', 'zn-hook.sh'), work], {
-        input: '{}', encoding: 'utf8', timeout: 30000, env: { PATH: '.:bin:', HOME: '/nonexistent' },
-      });
-      assert.strictEqual(fs.existsSync(marker), false, 'a planted program ran');
+      // With only relative or empty entries the hook still runs (it falls back to the system folders), and nothing planted runs.
+      for (const PATH of ['.:bin:', '', ':']) {
+        const r = spawnSync('/bin/sh', ['-c', 'cd "$1" && /bin/sh "$0" PreToolUse', path.join(d, 'scripts', 'zn-hook.sh'), work], {
+          input: '{}', encoding: 'utf8', timeout: 30000, env: { PATH, HOME: '/nonexistent' },
+        });
+        assert.ok(r.status === 0 || r.status === 2, JSON.stringify(PATH) + ': the hook did not run (' + r.status + '): ' + r.stderr);
+        assert.ok(r.status === 0 || /^zn: /.test(r.stderr), JSON.stringify(PATH) + ': ' + r.stderr);
+        assert.strictEqual(fs.existsSync(marker), false, JSON.stringify(PATH) + ': a planted program ran');
+      }
       // Started by a relative path, the script does not trust the folder it was started from.
       const rel = spawnSync('/bin/sh', ['-c', 'cd "$1" && sh scripts/zn-hook.sh PreToolUse', '_', d], { input: '{}', encoding: 'utf8', timeout: 30000, env: { PATH: '/usr/bin:/bin' } });
       assert.strictEqual(rel.status, 2, rel.stderr);
