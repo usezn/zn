@@ -9,7 +9,12 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { spawnSync } = require('child_process');
+// child_process is loaded on the first git call: most hook calls never ask git, and loading it costs a few milliseconds.
+let spawnSyncLazy = null;
+function spawnSync(...args) {
+  if (!spawnSyncLazy) spawnSyncLazy = require('child_process').spawnSync;
+  return spawnSyncLazy(...args);
+}
 
 function existingDir(p) {
   let cur = path.resolve(p);

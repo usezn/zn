@@ -6,10 +6,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-25.20
+ * RULES_VERSION: 2026-10-25.21
  */
 
-const RULES_VERSION = '2026-10-25.20';
+const RULES_VERSION = '2026-10-25.21';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -594,6 +594,11 @@ function stripInvisible(str) {
   return str.replace(ZERO_WIDTH_RE, '').replace(INVISIBLE_ASTRAL_RE, '');
 }
 
+// A character of the class WRAP_BREAK_RE reads before and after a line break ([A-Za-z0-9_\-+/=]).
+function isWrapChar(c) {
+  return (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c === 95 || c === 45 || c === 43 || c === 47 || c === 61;
+}
+
 // Index map for a text with invisible characters removed: `clean` is the text
 // without them and `map[i]` is the index in `text` of clean[i] (map[clean.length]
 // is text.length). Returns null when the text has no invisible character. A
@@ -608,6 +613,8 @@ function invisibleView(text) {
       let start = i;
       if (start > 0 && text[start - 1] === '\r') start--;
       while (start > 0 && (text[start - 1] === ' ' || text[start - 1] === '\t')) start--;
+      // WRAP_BREAK_RE starts with a look-behind for ten wrap characters: without one right here it cannot match.
+      if (start === 0 || !isWrapChar(text.charCodeAt(start - 1))) continue;
       WRAP_BREAK_AT_RE.lastIndex = start;
       const m = WRAP_BREAK_AT_RE.exec(text);
       if (m) runs.push(start, start + m[0].length);
@@ -1570,8 +1577,13 @@ const MIN_INVISIBLE_CHECK_CHARS = 64 * 1024;
 const MAX_INVISIBLE_CHARS = 200000;
 const INVISIBLE_BLOCK_REASON = 'Output is mostly invisible characters';
 
+// The characters invisibleStats counts or pairs up: the invisible ones and any high surrogate (the start of a
+// pair). A text with none of them has nothing to count, and one native scan says so far faster than the loop.
+const INVISIBLE_STATS_CANDIDATE_RE = /[\u00AD\u200B-\u200D\u2060\uFEFF\uFE00-\uFE0F\uD800-\uDBFF]/;
+
 function invisibleStats(text, budget) {
   const n = text.length;
+  if (!INVISIBLE_STATS_CANDIDATE_RE.test(text)) return { count: 0, length: n };
   let count = 0;
   let pairs = 0;
   for (let i = 0; i < n; i++) {

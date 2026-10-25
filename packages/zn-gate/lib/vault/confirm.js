@@ -30,7 +30,6 @@
  */
 
 const fs = require('fs');
-const { spawn } = require('child_process');
 
 const DEFAULT_TIMEOUT_MS = 120000;
 const MAX_TEXT = 1500;
@@ -209,7 +208,9 @@ function guiAvailable(opts = {}) {
 function guiChannel(opts = {}) {
   const env = opts.env || process.env;
   const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
-  const spawnFn = opts.spawn || spawn;
+  // child_process is loaded here, not at the top: team/effective.js and others only need INVISIBLE from this file,
+  // and loading it costs a few milliseconds in every hook process.
+  const spawnFn = opts.spawn || require('child_process').spawn;
   let queue = Promise.resolve();
 
   function askOnce(req) {
