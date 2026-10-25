@@ -3,12 +3,20 @@
 
 /**
  * Check a checkout of the Claude Code plugin repository (usezn/zn-gate-plugin)
- * against this repository and the published zn-gate tarball. The plugin
- * repository's Verify workflow runs it from this repository at the commit
- * the plugin was generated from (the "source" in its lock file), on every
- * pull request into its main branch and on main itself.
+ * or of the ZCode plugin repository against this repository and the published
+ * zn-gate tarball. The plugin repository's Verify workflow runs it from this
+ * repository at the commit the plugin was generated from (the "source" in its
+ * lock file), on every pull request into its main branch and on main itself.
  *
- *   node plugins/tools/verify-plugin-repo.js --repo <plugin checkout> --tarball <zn-gate-X.Y.Z.tgz>
+ *   node plugins/tools/verify-plugin-repo.js --repo <plugin checkout> --tarball <zn-gate-X.Y.Z.tgz> [--target claude|zcode]
+ *
+ * The target is the one the repository was built with (build-plugin-repo.js
+ * --target): claude by default. The ZCode tree keeps the plugin in zn-gate/
+ * (so vendor/, the lock and the manifest are under that folder) and has its own
+ * marketplace.json at the root; the same checks apply to it, with the files of
+ * plugins/zcode in place of the Claude Code ones, plus: the manifest names
+ * zn-gate, every hook runs scripts/zn-hook.sh with its own event name, the
+ * script is a shell script, and the marketplace lists exactly that plugin.
  *
  * Each check compares the checkout with a source directly; only the plugin
  * file list, the size limits and the tar reader are shared with the build.
@@ -82,11 +90,73 @@ async function registryIntegrity(version) {
   return integrity;
 }
 
+const ZCODE_EVENTS = ['UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse'];
+
+function readJson(files, rel, problems) {
+  if (!files.has(rel)) return null; // reported as missing by the file comparison
+  try {
+    return JSON.parse(files.get(rel).toString('utf8'));
+  } catch (_) {
+    problems.push(rel + ' is not valid JSON');
+    return null;
+  }
+}
+
+/**
+ * What only the ZCode plugin has to be: the checks of its own files that the byte-for-byte comparison with
+ * plugins/zcode does not give by itself, so that a tree that is the same as a wrong source still fails.
+ */
+function zcodeProblems(files, dir) {
+  const problems = [];
+  const manifest = readJson(files, dir + '.zcode-plugin/plugin.json', problems);
+  if (manifest && manifest.name !== 'zn-gate') problems.push(dir + '.zcode-plugin/plugin.json names the plugin ' + JSON.stringify(manifest.name) + ', not zn-gate');
+
+  const hooks = readJson(files, dir + 'hooks/hooks.json', problems);
+  if (hooks) {
+    const events = Object.keys(hooks.hooks || {});
+    for (const event of ZCODE_EVENTS) if (!events.includes(event)) problems.push(dir + 'hooks/hooks.json has no ' + event + ' hook');
+    for (const event of events) {
+      if (!ZCODE_EVENTS.includes(event)) problems.push(dir + 'hooks/hooks.json has a hook for ' + event + ', which the plugin does not use');
+      for (const group of hooks.hooks[event] || []) {
+        for (const h of (group && group.hooks) || []) {
+          const ok = h && h.type === 'process' && h.command === 'sh' && Array.isArray(h.args) && h.args.length === 2 &&
+            h.args[0] === '${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh' && h.args[1] === event;
+          if (!ok) problems.push(dir + 'hooks/hooks.json: a ' + event + ' hook does not run `sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh ' + event + '`');
+        }
+      }
+    }
+  }
+
+  // The hook is started as `sh <script>`, so it needs no executable bit (the plugin repository's Verify workflow
+  // accepts only mode 100644); it has to be a POSIX shell script.
+  const script = files.get(dir + 'scripts/zn-hook.sh');
+  if (script && !/^#!\/bin\/sh\n/.test(script.toString('utf8'))) problems.push(dir + 'scripts/zn-hook.sh is not a /bin/sh script');
+
+  const market = readJson(files, 'marketplace.json', problems);
+  if (market) {
+    const list = Array.isArray(market.plugins) ? market.plugins : [];
+    if (list.length !== 1) problems.push('marketplace.json lists ' + list.length + ' plugins, not one');
+    else {
+      const entry = list[0];
+      if (!manifest || entry.name !== manifest.name) problems.push('marketplace.json lists ' + JSON.stringify(entry.name) + ', the plugin manifest says ' + JSON.stringify(manifest && manifest.name));
+      if (entry.source !== './' + dir.slice(0, -1)) problems.push('marketplace.json source is ' + JSON.stringify(entry.source) + ', the plugin is in ./' + dir.slice(0, -1));
+    }
+  }
+  return problems;
+}
+
 /**
  * opts.integrity replaces the registry lookup and opts.source the commit of
  * this repository; only the tests use them.
  */
-async function verify({ repo, tarball, integrity, source }) {
+async function verify({ repo, tarball, integrity, source, target }) {
+  if (target !== undefined && target !== 'claude' && target !== 'zcode') throw new Error('unknown target ' + target + ' (claude or zcode)');
+  const zcode = target === 'zcode';
+  // Where the files are in each kind of repository.
+  const dir = zcode ? builder.ZCODE_DIR + '/' : '';
+  const VENDOR = dir + builder.BUNDLED_DIR + '/';
+  const LOCK = dir + 'scripts/zn-gate.lock.json';
+  const MANIFEST = dir + (zcode ? '.zcode-plugin/plugin.json' : '.claude-plugin/plugin.json');
   const problems = [];
   const tgz = fs.readFileSync(tarball);
   const actual = 'sha512-' + crypto.createHash('sha512').update(tgz).digest('base64');
@@ -113,18 +183,18 @@ async function verify({ repo, tarball, integrity, source }) {
 
   // 2. vendor/zn-gate is the tarball minus pruned files.
   const vendor = new Map();
-  for (const [rel, body] of files) if (rel.startsWith('vendor/zn-gate/')) vendor.set(rel.slice('vendor/zn-gate/'.length), body);
+  for (const [rel, body] of files) if (rel.startsWith(VENDOR)) vendor.set(rel.slice(VENDOR.length), body);
   const shippedPkg = [...pkgFiles.keys()].filter((rel) => !PRUNE.test(rel)).sort();
   for (const rel of pkgFiles.keys()) {
     if (PRUNE.test(rel)) {
-      if (vendor.has(rel)) problems.push('vendor/zn-gate/' + rel + ' should have been left out');
+      if (vendor.has(rel)) problems.push(VENDOR + rel + ' should have been left out');
     } else if (!vendor.has(rel)) {
-      problems.push('vendor/zn-gate/' + rel + ' is missing');
+      problems.push(VENDOR + rel + ' is missing');
     } else if (!vendor.get(rel).equals(pkgFiles.get(rel))) {
-      problems.push('vendor/zn-gate/' + rel + ' differs from the npm package');
+      problems.push(VENDOR + rel + ' differs from the npm package');
     }
   }
-  for (const rel of vendor.keys()) if (!pkgFiles.has(rel)) problems.push('vendor/zn-gate/' + rel + ' is not in the npm package');
+  for (const rel of vendor.keys()) if (!pkgFiles.has(rel)) problems.push(VENDOR + rel + ' is not in the npm package');
 
   // 3. The lock file, byte for byte.
   const commit = source || sourceCommit();
@@ -138,14 +208,18 @@ async function verify({ repo, tarball, integrity, source }) {
     files: Object.fromEntries(shippedPkg.map((rel) => [rel, sha256(pkgFiles.get(rel))])),
   };
   const lockBytes = Buffer.from(JSON.stringify(lock, null, 2) + '\n');
-  if (!files.has('scripts/zn-gate.lock.json')) problems.push('scripts/zn-gate.lock.json is missing');
-  else if (!files.get('scripts/zn-gate.lock.json').equals(lockBytes)) {
-    problems.push('scripts/zn-gate.lock.json is not the lock of zn-gate ' + version + ' generated from usezn/zn at ' + commit);
+  if (!files.has(LOCK)) problems.push(LOCK + ' is missing');
+  else if (!files.get(LOCK).equals(lockBytes)) {
+    problems.push(LOCK + ' is not the lock of zn-gate ' + version + ' generated from usezn/zn at ' + commit);
   }
 
   // 4. Every other file comes from this repository, unchanged.
   const expected = new Map();
-  for (const [rel, from] of builder.PLUGIN_FILES) expected.set(rel, fs.readFileSync(path.join(from, ...rel.split('/'))));
+  if (zcode) {
+    for (const [rel, from, dest] of builder.ZCODE_FILES) expected.set(dest, fs.readFileSync(path.join(from, ...rel.split('/'))));
+  } else {
+    for (const [rel, from] of builder.PLUGIN_FILES) expected.set(rel, fs.readFileSync(path.join(from, ...rel.split('/'))));
+  }
   expected.set('.gitattributes', Buffer.from('* -text\n'));
   for (const [rel, body] of expected) {
     if (!files.has(rel)) problems.push(rel + ' is missing');
@@ -153,29 +227,32 @@ async function verify({ repo, tarball, integrity, source }) {
   }
   if (!files.has(WORKFLOW)) problems.push(WORKFLOW + ' is missing');
   for (const rel of files.keys()) {
-    if (rel.startsWith('vendor/zn-gate/') || rel === 'scripts/zn-gate.lock.json' || rel === WORKFLOW || expected.has(rel)) continue;
+    if (rel.startsWith(VENDOR) || rel === LOCK || rel === WORKFLOW || expected.has(rel)) continue;
     problems.push(rel + ' is not expected');
   }
 
   // 5. Version and limits.
   let manifestVersion = null;
   try {
-    manifestVersion = JSON.parse(files.get('.claude-plugin/plugin.json').toString('utf8')).version;
+    manifestVersion = JSON.parse(files.get(MANIFEST).toString('utf8')).version;
   } catch (_) { /* reported as missing or different above */ }
-  if (manifestVersion !== version) problems.push('.claude-plugin/plugin.json has version ' + manifestVersion + ', the package is ' + version);
+  if (manifestVersion !== version) problems.push(MANIFEST + ' has version ' + manifestVersion + ', the package is ' + version);
+  if (zcode) problems.push(...zcodeProblems(files, dir));
   const shipped = new Map([...files].filter(([rel]) => !rel.startsWith('.github/')));
   problems.push(...builder.checkLimits(shipped));
 
   return { version, source: commit, files: files.size, problems };
 }
 
+const USAGE = 'usage: verify-plugin-repo.js --repo <dir> --tarball <tgz> [--target claude|zcode]';
+
 function parseArgs(argv) {
   const opts = {};
   for (let i = 0; i < argv.length; i += 2) {
-    if (!['--repo', '--tarball'].includes(argv[i]) || argv[i + 1] === undefined) throw new Error('usage: verify-plugin-repo.js --repo <dir> --tarball <tgz>');
+    if (!['--repo', '--tarball', '--target'].includes(argv[i]) || argv[i + 1] === undefined) throw new Error(USAGE);
     opts[argv[i].slice(2)] = argv[i + 1];
   }
-  if (!opts.repo || !opts.tarball) throw new Error('usage: verify-plugin-repo.js --repo <dir> --tarball <tgz>');
+  if (!opts.repo || !opts.tarball) throw new Error(USAGE);
   return opts;
 }
 
