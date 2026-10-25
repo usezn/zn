@@ -417,7 +417,7 @@ test('there is no project install: ZCode ignores project hooks', (t) => {
 test('install on Windows writes a powershell.exe process hook that exits 2 itself; a command given by the caller is a shell command', (t) => {
   const home = tempDir(t, 'zn-zc-win-');
   zc.install({ home, platform: 'win32', nodePath: 'C:/Program Files/nodejs/node.exe', runnerPath: 'C:/zn/zn-gate/lib/hooks/runner.js' });
-  const g = readCfg(home).hooks.events.PreToolUse.find((x) => x.hooks.some((h) => h.command === 'powershell.exe'));
+  const g = readCfg(home).hooks.events.PreToolUse.find((x) => x.hooks.some((h) => h.command === 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'));
   const h = g.hooks[0];
   assert.equal(h.type, 'process');
   assert.deepEqual(h.args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-EncodedCommand']);
@@ -862,7 +862,7 @@ test('Windows launcher: ZCode only, the hook runs as a child with a deadline, a 
 test('Windows launcher: install gives ZCode the deadline; other agents\' Windows launchers are unchanged', (t) => {
   const home = tempDir(t, 'zn-zc-win-deadline-');
   zc.install({ home, platform: 'win32', nodePath: 'C:/Program Files/nodejs/node.exe', runnerPath: 'C:/zn/zn-gate/lib/hooks/runner.js' });
-  const h = readCfg(home).hooks.events.PreToolUse.find((x) => x.hooks.some((y) => y.command === 'powershell.exe')).hooks[0];
+  const h = readCfg(home).hooks.events.PreToolUse.find((x) => x.hooks.some((y) => y.command === 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe')).hooks[0];
   const script = require('../lib/shell-quote').windowsCommandScript(zc.commandText(h));
   assert.ok(script.includes('.Wait(' + zc.LAUNCHER_DEADLINE_S * 1000 + ')'));
   for (const id of ['codex', 'cursor', 'gemini', 'antigravity']) {

@@ -304,7 +304,7 @@ const SAFE_ABS = '(?:/|[A-Za-z]:/)[^;&|$`<>(){}!*?"\'\\r\\n\\\\]{1,4096}';
 const OUR_HOOKS = [
   new RegExp('^zn(?:-gate)?(?:\\.cmd|\\.exe)? hook ' + HOOK_AGENTS + '$'),
   new RegExp('^"(' + SAFE_ABS + ')" "(' + SAFE_ABS + '/zn-gate/lib/hooks/runner\\.js)" ' + HOOK_AGENTS + '$'),
-  new RegExp('^powershell\\.exe -NoProfile -NonInteractive -Command "& \'(' + SAFE_ABS + ')\' \'(' + SAFE_ABS + '/zn-gate/lib/hooks/runner\\.js)\' ' + HOOK_AGENTS + '"$'),
+  new RegExp('^' + require('../shell-quote').POWERSHELL_EXE + ' -NoProfile -NonInteractive -Command "& \'(' + SAFE_ABS + ')\' \'(' + SAFE_ABS + '/zn-gate/lib/hooks/runner\\.js)\' ' + HOOK_AGENTS + '"$'),
 ];
 
 function insideDir(dir, p) {

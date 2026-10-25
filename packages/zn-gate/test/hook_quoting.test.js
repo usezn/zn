@@ -119,10 +119,10 @@ test('hook commands: single quotes for sh, older double-quoted commands still re
 
 test('Windows hook command: readable when plain, encoded when cmd.exe, PowerShell or bash would act on a character', () => {
   const plain = cfg.hookCommandWindows('codex', { nodePath: 'C:\\Program Files\\nodejs\\node.exe', runnerPath: "C:\\it's é\\runner.js" });
-  assert.equal(plain, 'powershell.exe -NoProfile -NonInteractive -Command "& \'C:/Program Files/nodejs/node.exe\' \'C:/it\'\'s é/runner.js\' codex"');
+  assert.equal(plain, 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -NonInteractive -Command "& \'C:/Program Files/nodejs/node.exe\' \'C:/it\'\'s é/runner.js\' codex"');
   for (const bad of ['%USERPROFILE%', '!x!', '$(calc)', '`calc`', '\u201Cq\u201D', 'a\nb']) {
     const cmd = cfg.hookCommandWindows('codex', { nodePath: 'C:\\' + bad + '\\node.exe', runnerPath: 'C:\\r\\runner.js' });
-    assert.match(cmd, /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/, bad);
+    assert.match(cmd, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/, bad);
     assert.equal(sq.windowsCommandScript(cmd), "& 'C:/" + bad + "/node.exe' 'C:/r/runner.js' codex");
   }
 });
@@ -167,7 +167,7 @@ test('install replaces, and uninstall removes, hooks written with double quotes 
   const win = JSON.parse(fs.readFileSync(cuFile, 'utf8')).hooks.beforeReadFile;
   assert.equal(win.length, 1);
   // Cursor on Windows now runs the fail-closed launcher as an encoded PowerShell command.
-  const m = /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand ([A-Za-z0-9+/=]+)$/.exec(win[0].command);
+  const m = /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe -NoProfile -NonInteractive -EncodedCommand ([A-Za-z0-9+/=]+)$/.exec(win[0].command);
   assert.ok(m, 'an encoded PowerShell launcher');
   const script = Buffer.from(m[1], 'base64').toString('utf16le');
   assert.match(script, /'\/usr\/bin\/node' '\/new\/lib\/hooks\/runner\.js' cursor/);
@@ -220,8 +220,10 @@ test('the Windows hook command reaches powershell.exe intact through sh and bash
     fs.copyFileSync(f.node, path.join(bin, 'powershell.exe'));
     fs.chmodSync(path.join(bin, 'powershell.exe'), 0o755);
     const cmd = cfg.hookCommandWindows('codex', { nodePath: f.node, runnerPath: f.runnerJs });
+    assert.ok(cmd.startsWith(sq.powershellExe() + ' '));
+    const viaPath = 'powershell.exe' + cmd.slice(sq.powershellExe().length);
     for (const shell of ['sh', 'bash']) {
-      const r = runScript(t, shell, cmd, { cwd: f.root, env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH, ZN_ARGV_OUT: f.out } });
+      const r = runScript(t, shell, viaPath, { cwd: f.root, env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH, ZN_ARGV_OUT: f.out } });
       assert.equal(r.status, 0, r.stderr);
       assert.ok(!fs.existsSync(path.join(f.root, CANARY)));
       const { argv } = readArgv(f.out);

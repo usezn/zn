@@ -254,7 +254,7 @@ test('install on Windows writes a separate powershell command', (t) => {
   const home = tempDir(t, 'zn-cop-win-');
   cop.install({ scope: 'user', home, env: E, platform: 'win32', nodePath: 'C:/Program Files/nodejs/node.exe', runnerPath: 'C:/zn/zn-gate/lib/hooks/runner.js' });
   const h = readJson(cop.hooksFile({ home, env: E })).hooks.preToolUse[0];
-  assert.match(h.powershell, /^powershell\.exe /);
+  assert.match(h.powershell, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe /);
   assert.ok(h.bash && h.bash !== h.powershell);
 });
 

@@ -243,16 +243,17 @@ test('Windows: codex and copilot write a PowerShell command next to the sh one; 
   const cx = install(t, 'codex', { platform: 'win32' });
   const h = JSON.parse(fs.readFileSync(path.join(cx.dir, '.codex', 'hooks.json'), 'utf8')).hooks.PreToolUse[0].hooks[0];
   assert.ok(h.command.startsWith('sh -c '));
-  assert.match(h.commandWindows, /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand /);
+  // Codex runs commandWindows through cmd.exe: the PowerShell of each machine, through %SystemRoot%, never one in the project folder.
+  assert.match(h.commandWindows, /^%SystemRoot%\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe -NoProfile -NonInteractive -EncodedCommand /);
   assert.ok(launcher.isProjectWindowsScript(windowsCommandScript(h.commandWindows), 'codex'));
   const cp = install(t, 'copilot', { platform: 'win32' });
   const ph = JSON.parse(fs.readFileSync(path.join(cp.dir, '.github', 'hooks', 'zn-gate.json'), 'utf8')).hooks.preToolUse[0];
-  assert.match(ph.powershell, /^powershell\.exe /);
+  assert.match(ph.powershell, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe /);
   assert.ok(launcher.isProjectWindowsScript(windowsCommandScript(ph.powershell), 'copilot'));
   for (const [agent, file] of [['cursor', ['.cursor', 'hooks.json']], ['gemini', ['.gemini', 'settings.json']]]) {
     const r = install(t, agent, { platform: 'win32' });
     const text = fs.readFileSync(path.join(r.dir, ...file), 'utf8');
-    const cmds = [...text.matchAll(/"command": "(powershell\.exe [^"]+)"/g)].map((m) => m[1]);
+    const cmds = [...text.matchAll(/"command": "(C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe [^"]+)"/g)].map((m) => m[1]);
     assert.ok(cmds.length >= 1, agent);
     for (const c of cmds) assert.ok(launcher.isProjectWindowsScript(windowsCommandScript(c), agent), agent);
   }

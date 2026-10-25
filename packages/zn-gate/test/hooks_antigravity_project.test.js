@@ -229,7 +229,7 @@ test('Windows: the project hook is an encoded PowerShell script with the same st
   agy.install({ scope: 'project', projectDir: dir, platform: 'win32' });
   const file = path.join(dir, '.agents', 'hooks.json');
   const command = JSON.parse(fs.readFileSync(file, 'utf8'))['zn-gate'].PreToolUse[0].hooks[0].command;
-  assert.match(command, /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
+  assert.match(command, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
   assert.equal(command.split(' ').length, 5, 'no space inside the argument');
   const script = windowsCommandScript(command);
   assert.ok(launcher.isProjectWindowsScript(script, 'antigravity'));

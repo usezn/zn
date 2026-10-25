@@ -254,12 +254,12 @@ test('install on Windows (user scope) writes the powershell form; project scope 
   const home = tempDir(t, 'zn-gem-win-');
   gem.install({ scope: 'user', home, platform: 'win32', nodePath: 'C:/Program Files/nodejs/node.exe', runnerPath: 'C:/zn/zn-gate/lib/hooks/runner.js' });
   const winCommand = readSettings(settingsOf(home)).hooks.BeforeTool[0].hooks[0].command;
-  assert.match(winCommand, /^powershell\.exe /);
+  assert.match(winCommand, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe /);
   assert.match(require('../lib/shell-quote').windowsCommandScript(winCommand), /runner\.js.* gemini; if \(\(\$LASTEXITCODE -eq 0 -and \(zk\)\) -or \$LASTEXITCODE -eq 2\) \{ zx/);
   const dir = tempDir(t, 'zn-gem-win-p-');
   gem.install({ scope: 'project', projectDir: dir, platform: 'win32' });
   const projWin = readSettings(path.join(dir, '.gemini', 'settings.json')).hooks.BeforeTool[0].hooks[0].command;
-  assert.match(projWin, /^powershell\.exe /);
+  assert.match(projWin, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe /);
   assert.ok(require('../lib/agents/launcher').isProjectWindowsScript(require('../lib/shell-quote').windowsCommandScript(projWin), 'gemini'));
 });
 

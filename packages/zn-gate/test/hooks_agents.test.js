@@ -167,7 +167,7 @@ test('cursor: install on Windows wraps the hook command in powershell.exe', (t) 
   const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
   for (const ev of ['beforeReadFile', 'beforeMCPExecution']) {
     const command = data.hooks[ev][0].command;
-    assert.match(command, /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand /);
+    assert.match(command, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe -NoProfile -NonInteractive -EncodedCommand /);
     const script = require('../lib/shell-quote').windowsCommandScript(command);
     assert.ok(script.includes("& '/usr/bin/node' '/x/lib/hooks/runner.js' cursor"), script);
   }
@@ -418,10 +418,11 @@ test('opencode plugin: sends only the name of the shell, not its path', () => {
   assert.doesNotThrow(() => new (require('vm').Script)(src.replace(/^import .*$/m, '').replace(/^export const/m, 'const')));
 });
 
-test('opencode project plugin: cmd.exe does not look for zn in the project directory first', () => {
+test('opencode project plugin: zn runs with only the absolute PATH entries, and cmd.exe does not look in the project directory first', () => {
   const src = require('../lib/agents/opencode').pluginSource({ scope: 'project' });
   const call = src.match(/spawn\(NODE,[^\n]*\)/)[0];
-  assert.match(call, /NoDefaultCurrentDirectoryInExePath: "1"/);
+  assert.match(call, /env: projectEnv\(\)/);
+  assert.match(src, /if \(win\) env\.NoDefaultCurrentDirectoryInExePath = "1";/);
   const user = require('../lib/agents/opencode').pluginSource({ scope: 'user', nodePath: '/usr/bin/node', runnerPath: '/opt/zn/lib/hooks/runner.js' });
   assert.match(user.match(/spawn\(NODE,[^\n]*\)/)[0], /shell: false/);
 });

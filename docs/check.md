@@ -87,6 +87,14 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   The hook in the project file looks like zn's start guard but is not exactly the command zn writes (someone edited it). `zn-gate check` never runs a project file, so it cannot tell what the edit does. Run `zn hooks install <agent> --project` again: it replaces the command with the exact guard. It is a note under **OK** when the agent is set up for your user, and **NOT protected** otherwise.
 
+- **The hook starts PowerShell by name (Windows, written by an older zn-gate).**
+
+  ```text
+  its hook command starts powershell.exe by name (written by an older zn-gate), so a powershell.exe in the project folder could run in its place
+  ```
+
+  zn-gate 1.13 and earlier wrote Windows hook commands that start `powershell.exe` without its full path. Codex runs them through `cmd.exe`, and several agents start them directly; both look in the current folder first, which is usually the project. Run `zn hooks install <agent>` again: the new command names the system PowerShell by its full path.
+
 - **The launcher script of the hook is gone.**
 
   ```text

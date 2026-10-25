@@ -175,7 +175,9 @@ function hookEntries(tree, agentId, opts = {}) {
         // GitHub Copilot CLI keeps the shell command in "bash" (and "powershell"), next to an optional matcher.
         if (agentId === 'copilot' && typeof g.bash === 'string') out.push({ event, matcher: g.matcher, command: g.bash });
         for (const h of Array.isArray(g.hooks) ? g.hooks : []) {
-          const text = agentId === 'zcode' ? require('./agents/zcode').commandText(h) : h && typeof h.command === 'string' ? h.command : '';
+          // Codex on Windows runs commandWindows (command_windows in TOML), not command.
+          const win = agentId === 'codex' && process.platform === 'win32' && h ? (typeof h.commandWindows === 'string' ? h.commandWindows : h.command_windows) : null;
+          const text = agentId === 'zcode' ? require('./agents/zcode').commandText(h) : typeof win === 'string' ? win : h && typeof h.command === 'string' ? h.command : '';
           if (text) out.push({ event, matcher: g.matcher, command: text, onFailure: h.onFailure, async: h.async, ...extra });
         }
       }
@@ -435,6 +437,13 @@ function cliHooks(spec, ctx, userFile, given) {
     return out;
   }
   const cmd = parseCommand(read.command, spec.id);
+  // zn-gate 1.13 and earlier started powershell.exe by name: cmd.exe (Codex) and the process start of several agents look in
+  // the current folder first, so a powershell.exe in the project could run instead. Only a reinstall writes the full path.
+  if (/^powershell\.exe /i.test(String(read.command).trim())) {
+    out.problem = 'its hook command starts powershell.exe by name (written by an older zn-gate), so a powershell.exe in the project folder could run in its place';
+    out.fix = REINSTALL(spec.id);
+    return out;
+  }
   if (spec.id === 'antigravity' && process.platform !== 'win32') {
     // Antigravity splits the command on spaces and runs it with no shell: any quote stays in a name, and a path with a
     // space is cut in two. Run the same split instead of trusting how zn would read the command.
@@ -465,10 +474,12 @@ function cliHooks(spec, ctx, userFile, given) {
       if (viaPath) out.notes.push('the Node.js zn was installed with is gone; the hook now runs `zn` from your PATH. Run `zn hooks install ' + spec.id + '` to set it up again');
       // Run it with the PATH check was given, which is what decides whether `zn` and `node` are found.
       // Windows cannot run a .sh file directly; Claude Code runs it with sh (Git Bash) there.
-      const run = cmd.winScript ? { file: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(cmd.winScript, 'utf16le').toString('base64')] }
+      // The system PowerShell by its path: check may run in a project folder, which could hold a powershell.exe of its own.
+      const run = cmd.winScript ? { file: require('./exe').systemPowerShell(), args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(cmd.winScript, 'utf16le').toString('base64')] }
         : spec.id === 'antigravity' && process.platform !== 'win32' ? { file: cmd.raw.split(' ')[0], args: cmd.raw.split(' ').slice(1) } // as Antigravity runs it: split on spaces, no shell
           : process.platform === 'win32' ? { file: 'sh', args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
-      out.live = { ...run, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
+      if (run.file) out.live = { ...run, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
+      else out.notes.push('the program that runs the hook was not found, so the hook was not run here; zn\'s rules were checked directly');
     }
   } else if (cmd.missing) {
     out.problem = 'its hook cannot start: ' + (fs.existsSync(cmd.node) ? 'its zn-gate files (' + cmd.runner + ')' : 'its Node.js (' + cmd.node + ')') + ' is no longer there';
