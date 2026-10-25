@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-10-25.20",
+      "version": "2026-10-25.21",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -47,7 +47,7 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "7eee1ccc8cab07880b86f6167fbcb4162f71943e083cf6c5ee391fa45a10bb58",
+        "lib/rules.js": "971edba8669242ac743c7734a8e27365c54280fd502d939dda9b09f2d97829a3",
         "lib/mcp-secrets.js": "1a051cdb7ac9cd04b46494a2efe0aa90ab136a5e866d2dbf42d4431888ab7487"
       }
     },
@@ -211,7 +211,7 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-24.28",
+      "version": "2026-10-24.29",
       "ids": [
         "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
@@ -241,8 +241,8 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "56f9b88389aed5d12b3d1533a0ab7d3f8f3abe89f2d6a0d1e7cc0f78f39504ad",
-        "lib/broker/files.js": "452ed2197c4a145f0b1988f5fd749d5abdd7e1320d89e38103fbd877be785a5d",
+        "lib/hooks/policy.js": "9133a2aaa17b2b530d4e864389b72b0070834d5bf40daa33a3e663c334934512",
+        "lib/broker/files.js": "6a7025929c5a8b65e60d0ed58dc41c2866ef6bfa6f6330006c58579b3122afeb",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
         "lib/shell-quote.js": "7624e8bfde93f671d0ef9ae8dd0fcc1002344d1556c30ceb0e14daa41fd5a122",
