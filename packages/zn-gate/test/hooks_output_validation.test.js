@@ -461,26 +461,48 @@ test('posix launcher with a deadline: a TERM with `.` first on the PATH runs no 
 
 // ---- Windows: zn and node are looked up only in fully qualified PATH entries ----
 
-test('windows launcher: zf skips relative and empty PATH entries (only drive or network folders)', () => {
-  const script = launcher.windowsScript('claude-code', 'PreToolUse', 'C:/no-such/node.exe', 'C:/no-such/runner.js');
-  assert.ok(script.includes(String.raw`function zf($x) { foreach ($d in ($env:PATH -split ';')) { try { if ($d -match '^([A-Za-z]:[\\/]|\\\\)') {`), script.slice(0, 400));
+test('windows launchers: every zn.cmd call runs after the PATH keeps only absolute entries and cmd.exe stops looking in the current folder', () => {
+  const PREFIX = "$env:NoDefaultCurrentDirectoryInExePath = '1'; $env:PATH = (($env:PATH -split ';') -match ";
+  const scripts = [];
+  for (const [agent, event] of [['claude-code', 'PreToolUse'], ['cursor', 'preToolUse'], ['gemini', 'BeforeTool'], ['codex', 'PreToolUse'], ['zcode', 'PreToolUse'], ['zcode', 'PostToolUse']]) {
+    for (const opts of [{}, { deadlineS: 26 }]) {
+      const s = launcher.windowsScript(agent, event, 'C:/no-such/node.exe', 'C:/no-such/runner.js', opts);
+      if (s) scripts.push([agent + ' ' + event + ' ' + JSON.stringify(opts), s]);
+    }
+  }
+  for (const agent of ['claude-code', 'codex', 'cursor', 'gemini', 'copilot']) {
+    try { const s = launcher.projectWindowsScript(agent); if (s) scripts.push(['project ' + agent, s]); } catch (_) { /* no Windows project form for this agent */ }
+  }
+  assert.ok(scripts.length >= 6, 'scripts generated: ' + scripts.length);
+  for (const [name, s] of scripts) {
+    const p = s.indexOf(PREFIX);
+    assert.ok(p >= 0, name + ': no PATH guard');
+    let k = s.indexOf('zn.cmd');
+    assert.ok(k >= 0, name + ': no zn.cmd call');
+    for (; k >= 0; k = s.indexOf('zn.cmd', k + 1)) assert.ok(k > p, name + ': zn.cmd before the PATH guard');
+  }
 });
 
-test('windows (real PowerShell): a zn.cmd and node.cmd planted in the project with `.` first on the PATH are never run', { skip: process.platform !== 'win32' }, (t) => {
+test('windows (real PowerShell): the fallback runs the real zn.cmd, and the node it starts is never one planted in the project', { skip: process.platform !== 'win32' }, (t) => {
   const { getAdapter } = require('../lib/agents');
   const home = tempDir(t, 'zn-ov-winplant-');
   const proj = tempDir(t, 'zn-ov-winplant-proj-');
+  const bin = tempDir(t, 'zn-ov-winplant-bin-');
   const mark = path.join(proj, 'RAN');
-  for (const name of ['zn.cmd', 'node.cmd']) fs.writeFileSync(path.join(proj, name), '@echo ran>>"' + mark + '"\r\n@exit /b 0\r\n');
+  // In the project (the folder the agent runs in): programs that must never run.
+  for (const name of ['zn.cmd', 'node.cmd', 'node.bat']) fs.writeFileSync(path.join(proj, name), '@echo ran>>"' + mark + '"\r\n@exit /b 0\r\n');
+  // A real zn.cmd in an absolute folder, which starts `node` through cmd.exe like the npm shim does when no node.exe sits next to it.
+  fs.writeFileSync(path.join(bin, 'zn.cmd'), '@node "' + RUNNER + '" %2\r\n');
   const adapter = getAdapter('cursor');
   adapter.install({ home, env: { HOME: home, ZN_HOME: path.join(home, '.zn') }, platform: 'win32', nodePath: String.raw`C:\no-such\node.exe`, runnerPath: String.raw`C:\no-such\runner.js`, mcp: false });
   const data = JSON.parse(fs.readFileSync(adapter.hooksFile({ home, env: { HOME: home } }), 'utf8'));
   const g = data.hooks.beforeShellExecution[0];
   const cmd = (g.hooks ? g.hooks[0] : g).command;
-  const ps = path.join(process.env.SystemRoot || String.raw`C:\Windows`, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const winPath = ['.', '', path.join(process.env.SystemRoot || String.raw`C:\Windows`, 'System32'), path.dirname(ps)].join(';');
-  const r = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', cmd], { cwd: proj, input: '{}', encoding: 'utf8', env: { ...process.env, PATH: winPath } });
+  const sys32 = path.join(process.env.SystemRoot || String.raw`C:\Windows`, 'System32');
+  const ps = path.join(sys32, 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const winPath = ['.', '', bin, path.dirname(process.execPath), sys32, path.dirname(ps)].join(';');
+  const r = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', cmd], { cwd: proj, input: '{}', encoding: 'utf8', env: { ...process.env, PATH: winPath, HOME: home, USERPROFILE: home, ZN_STATS: 'off' } });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(JSON.parse(r.stdout.trim().split(/\r?\n/).pop()).permission, 'deny');
   assert.equal(fs.existsSync(mark), false, 'a program planted in the project ran');
 });
+
