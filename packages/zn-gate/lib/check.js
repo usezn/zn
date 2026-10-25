@@ -243,7 +243,12 @@ function parseCommand(command, agentId) {
   if (ws) {
     // Both the current script and the one written by earlier versions (no progress line, unconditional exit).
     // the current script (no cmdlet: zf and [System.IO.File]::Exists) is read as the older Test-Path form below
-    const wsOld = ws.replace(/function zf\(\$x\) \{[^\n]*?return \$null \}; /, '')
+    // The ack file of the current script (zk, zx, zd) is read as the plain exit of the older one.
+    const wsOld = ws.replace(/\$za = \$null;.*?(?=function zf\()/s, '')
+      .replace(/if \(\(\$LASTEXITCODE -eq 0 -and \(zk\)\) -or \$LASTEXITCODE -eq 2\) \{ zx (0|\$LASTEXITCODE) \}/g, 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit $1 }')
+      .replace(/if \(\(\$rc -eq 0 -and \(zk\)\) -or \$rc -eq 2\) \{ zx (0|\$rc) \}/g, 'if ($rc -eq 0 -or $rc -eq 2) { exit $1 }')
+      .replace(/zd; /g, '')
+      .replace(/function zf\(\$x\) \{[^\n]*?return \$null \}; /, '')
       // ZCode's launcher runs the hook as a child with a deadline (zr, launcher.windowsScript with deadlineS): read it as the plain `& node runner agent; if (...) { exit ... }` step.
       .replace(/function zr\(\$f, \$a\) \{[^\n]*?return \$rc \}; /, '')
       .replace(/\$rc = zr '"([^'"]+)"' '"([^'"]+)" ([a-z-]+)'; if \(\$rc -eq 0 -or \$rc -eq 2\) \{ exit \$rc \}/, (m0, n, r, a) => "& '" + n + "' '" + r + "' " + a + '; if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit $LASTEXITCODE }')

@@ -76,6 +76,16 @@ function crashWarnText() {
   return 'zn is NOT protecting this session: its hook failed. Please run `zn-gate check` in your own terminal to see why.';
 }
 
+// The hook ran and ended with status 0 but did not confirm its answer: an older zn-gate answered (the zn on the PATH does not match the
+// launcher), or the hook stopped half way.
+function noAckText(agentId) {
+  return 'zn: its hook ended without confirming its answer (the zn-gate that answered is older than this hook, or it stopped half way), so this was blocked. Ask the user to run `npm install -g zn-gate` and then `zn hooks install ' + agentId + '` in their terminal, or `zn-gate check` to see why.';
+}
+
+function noAckWarnText(agentId) {
+  return 'zn is NOT protecting this session: its hook ended without confirming its answer (the zn-gate that answered is older than this hook, or it stopped half way). Please run `npm install -g zn-gate` and then `zn hooks install ' + agentId + '` in your own terminal.';
+}
+
 function warnText(agentId) {
   return 'zn is NOT protecting this session: its hook cannot start because the Node.js or the zn-gate files it was installed with are gone. Please ' +
     FIX.replace('codex', agentId) + '.';
@@ -112,17 +122,19 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
   // deadlineS (whole seconds, only for agents that fail open on a timeout): the launcher answers by itself when the hook has
   // not finished by then, so a hook stuck while it starts (before the runner arms its own watchdog) still blocks.
   const deadlineS = Number.isInteger(opts.deadlineS) && opts.deadlineS > 0 ? opts.deadlineS : 0;
-  const run = (...w) => (deadlineS ? 'zn_run ' : '') + w.join(' ');
+  const run = (...w) => (deadlineS ? 'zn_run ' : 'zn_cap ') + w.join(' ');
   // Without a timer or private output a strict launcher (ZCode) does not run the hook and blocks; the others (the runner
-  // has its own deadline too) run it directly.
-  const noTimer = opts.deadlineSoft ? '"$@"; ZN_RC=$?' : 'ZN_RC=127';
+  // has its own deadline too) run it directly, still through zn_cap (private output and the confirmation check).
+  const noTimer = opts.deadlineSoft ? 'zn_cap "$@"' : 'ZN_RC=127';
   const reason = reasonText(agentId);
   const warn = warnText(agentId);
   const exitEvents = [...blockExit(agentId)];
   const jsonEvents = [...blockJson(agentId)];
   const crash = crashText(agentId);
   const crashWarn = crashWarnText();
-  const pick = (ifRan, ifGone) => 'if [ -n "$ZN_RAN" ]; then ' + ifRan + '; else ' + ifGone + '; fi';
+  const pick = (ifRan, ifGone, ifNoAck) => (ifNoAck ? 'if [ -n "$ZN_NOACK" ]; then ' + ifNoAck + '; elif [ -n "$ZN_RAN" ]; then ' : 'if [ -n "$ZN_RAN" ]; then ') + ifRan + '; else ' + ifGone + '; fi';
+  const noAck = noAckText(agentId);
+  const noAckWarn = noAckWarnText(agentId);
   const deny = (r) => 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: r } } }));
   return [
     '#!/bin/sh',
@@ -136,18 +148,18 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     'case "$ZN_EVENT" in',
     '  ' + exitEvents.join('|') + ')',
     DENY_STDOUT[agentId]
-      ? '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify(DENY_STDOUT[agentId](crash))), 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify(DENY_STDOUT[agentId](reason))))
-      : '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(crash) + ' >&2', 'printf ' + shQuote('%s\\n') + ' ' + shQuote(reason) + ' >&2'),
+      ? '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify(DENY_STDOUT[agentId](crash))), 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify(DENY_STDOUT[agentId](reason))), 'printf ' + shQuote('%s\n') + ' ' + shQuote(JSON.stringify(DENY_STDOUT[agentId](noAck))))
+      : '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(crash) + ' >&2', 'printf ' + shQuote('%s\\n') + ' ' + shQuote(reason) + ' >&2', 'printf ' + shQuote('%s\n') + ' ' + shQuote(noAck) + ' >&2'),
     DENY_STDOUT[agentId] ? '    exit 0 ;;' : '    exit 2 ;;',
     ...(jsonEvents.length ? [
       '  ' + jsonEvents.join('|') + ')',
-      '    ' + pick(deny(crash), deny(reason)),
+      '    ' + pick(deny(crash), deny(reason), deny(noAck)),
       '    exit 0 ;;',
     ] : []),
     '  *)',
     WARN_STDERR.has(agentId)
-      ? '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(crashWarn) + ' >&2', 'printf ' + shQuote('%s\\n') + ' ' + shQuote(warn) + ' >&2')
-      : '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: crashWarn })), 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: warn }))),
+      ? '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(crashWarn) + ' >&2', 'printf ' + shQuote('%s\\n') + ' ' + shQuote(warn) + ' >&2', 'printf ' + shQuote('%s\n') + ' ' + shQuote(noAckWarn) + ' >&2')
+      : '    ' + pick('printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: crashWarn })), 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ systemMessage: warn })), 'printf ' + shQuote('%s\n') + ' ' + shQuote(JSON.stringify({ systemMessage: noAckWarn }))),
     '    exit 0 ;;',
     'esac',
     '}',
@@ -155,11 +167,27 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
       'zn_term() {',
       '  [ -z "$ZN_P" ] || { kill -TERM -$ZN_P 2>/dev/null; kill -TERM $ZN_P 2>/dev/null; kill -KILL -$ZN_P 2>/dev/null; }',
       '  [ -z "$ZN_T" ] || kill -TERM $ZN_T 2>/dev/null',
-      '  rm -f "$ZN_OF" "$ZN_EF"',
+      '  rm -f "$ZN_OF" "$ZN_EF" "$ZN_AF"',
       '  ZN_RAN=1; zn_block',
       '}',
     ] : []),
     '# Exit codes other than 0 (done) and 2 (blocked) are failures: they fall through to the block below.',
+    ...[
+      '# Runs a command with its output in a private file: the answer reaches the agent only when the run is accepted (status 0 with the confirmation, or 2),',
+      '# so a half answer is never passed on; when the answer cannot be passed on either, the run counts as failed.',
+      'zn_cap() {',
+      '  zn_mk out; ZN_OF=$ZN_MK',
+      '  [ -n "$ZN_OF" ] || { ZN_RC=127; return 0; }',
+      '  # TERM, HUP or INT (the agent gives up on the hook): the answer is the block of this event, like a hook that ran past its deadline.',
+      '  trap \'rm -f "$ZN_OF" "$ZN_AF"; ZN_RAN=1; zn_block\' HUP INT TERM',
+      '  "$@" >"$ZN_OF"; ZN_RC=$?',
+      '  trap - HUP INT TERM',
+      '  if [ "$ZN_RC" = 0 ]; then zn_acked || { ZN_RC=1; ZN_NOACK=1; }; fi',
+      '  case $ZN_RC in 0|2) zn_relay "$ZN_OF" || ZN_RC=127 ;; esac',
+      '  rm -f "$ZN_OF"',
+      '  return 0',
+      '}',
+    ],
     ...(deadlineS ? [
       '# Runs a command with a deadline of ' + deadlineS + ' s: after that the command is killed (TERM, then KILL one second later; exit 143 or 137), which falls through to the block below.',
       '# The hook input (stdin) is passed on through fd 3 (a background command would otherwise get /dev/null).',
@@ -169,7 +197,7 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
       '  [ -x /bin/sleep ] || { ' + noTimer + '; return 0; }',
       '  ZN_OF=$(umask 077; mktemp "${TMPDIR:-/tmp}/zn-hook.XXXXXX" 2>/dev/null) || { ' + noTimer + '; return 0; }',
       '  ZN_EF=$(umask 077; mktemp "${TMPDIR:-/tmp}/zn-hook.XXXXXX" 2>/dev/null) || { rm -f "$ZN_OF"; ' + noTimer + '; return 0; }',
-      '  trap \'rm -f "$ZN_OF" "$ZN_EF"\' EXIT',
+      '  trap \'rm -f "$ZN_OF" "$ZN_EF" "$ZN_AF"\' EXIT',
       '  # TERM, HUP or INT (the agent gives up on the hook): stop the hook and answer with the block of this event, not with silence.',
       '  trap zn_term HUP INT TERM',
       '  # Own process group: setsid (Linux) or perl (macOS); with neither, only the hook itself is stopped at the deadline (its output is still private).',
@@ -187,21 +215,54 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
       '  ( trap \'kill $ZN_SP 2>/dev/null; exit 0\' TERM; /bin/sleep ' + deadlineS + ' & ZN_SP=$!; wait $ZN_SP; kill -TERM -$ZN_P 2>/dev/null; kill -TERM $ZN_P 2>/dev/null; /bin/sleep 1 & ZN_SP=$!; wait $ZN_SP; kill -KILL -$ZN_P 2>/dev/null; kill -KILL $ZN_P 2>/dev/null ) >/dev/null 2>&1 </dev/null &',
       '  ZN_T=$!',
       '  wait $ZN_P; ZN_RC=$?',
+      '  # The hook is done: a TERM, HUP or INT now must not cut the answer being passed on or add a second one after it.',
+      '  trap \'\' HUP INT TERM',
+      '  # A status 0 counts only when the hook confirmed that its whole answer was written.',
+      '  if [ "$ZN_RC" = 0 ]; then zn_acked || { ZN_RC=1; ZN_NOACK=1; }; fi',
       '  kill -TERM $ZN_T 2>/dev/null',
       '  kill -KILL -$ZN_P 2>/dev/null',
-      '  case $ZN_RC in 0|2) cat "$ZN_OF" ;; esac',
+      '  case $ZN_RC in 0|2) zn_relay "$ZN_OF" || ZN_RC=127 ;; esac',
       '  cat "$ZN_EF" >&2',
       '  return 0',
       '}',
     ] : []),
-    'if [ -x "$ZN_NODE" ] && [ -f "$ZN_RUNNER" ]; then ZN_RAN=1; ' + (deadlineS ? run('"$ZN_NODE" "$ZN_RUNNER" ' + agentId) + '; ' : '"$ZN_NODE" "$ZN_RUNNER" ' + agentId + '; ZN_RC=$?; ') + 'case $ZN_RC in 0|2) exit $ZN_RC ;; esac; fi',
+    '# The hook confirms through a private file (ZN_HOOK_ACK) that it wrote its whole answer: a status 0 without that confirmation (a hook that',
+    '# could not write its answer, a runner that stopped half way) is a failure, not an answer. With no private file no run is accepted as done.',
+    '# Private files: mktemp by absolute path (random name, exclusive creation). Without mktemp the name is predictable, so the file is opened read-write (that',
+    '# never blocks on a FIFO) and used only when it is a new, empty, regular file of ours and not a link: a FIFO, link or foreign file planted there is skipped.',
+    'zn_mk() {',
+    '  ZN_MK=',
+    '  for ZN_M in /usr/bin/mktemp /bin/mktemp; do [ -x "$ZN_M" ] && { ZN_MK=$(umask 077; "$ZN_M" "${TMPDIR:-/tmp}/zn-$1.XXXXXX" 2>/dev/null) && break; ZN_MK=; }; done',
+    '  [ -z "$ZN_MK" ] || return 0',
+    '  for ZN_I in 1 2 3 4 5 6; do',
+    '    ZN_MK="${TMPDIR:-/tmp}/zn-$1.$$.$ZN_I"; (umask 077; : <>"$ZN_MK") 2>/dev/null',
+    '    if [ -f "$ZN_MK" ] && [ ! -h "$ZN_MK" ] && [ -O "$ZN_MK" ] && [ ! -s "$ZN_MK" ]; then return 0; fi',
+    '  done',
+    '  ZN_MK=',
+    '}',
+    'zn_mk ack; ZN_AF=$ZN_MK',
+    'export ZN_HOOK_ACK="$ZN_AF"',
+    'trap \'rm -f "$ZN_AF"\' EXIT',
+    'zn_acked() { [ -n "$ZN_AF" ] || return 1; ZN_X=; read -r ZN_X <"$ZN_AF" 2>/dev/null; [ "$ZN_X" = ok ]; }',
+    '# Passes a private output file on to the agent: cat by absolute path, else the shell alone (the PATH of a hook can be empty). A failed write is a failure.',
+    'zn_relay() {',
+    '  for ZN_X in /bin/cat /usr/bin/cat; do [ -x "$ZN_X" ] && { "$ZN_X" "$1"; return $?; }; done',
+    '  while IFS= read -r ZN_L || [ -n "$ZN_L" ]; do printf \'%s\\n\' "$ZN_L" || return 1; done <"$1"',
+    '}',
+    'zn_leave() {',
+    '  if [ "$1" = 0 ]; then zn_acked || { ZN_NOACK=1; return 0; }; fi',
+    '  case $1 in 0|2) exit $1 ;; esac',
+    '  return 0',
+    '}',
+    'ZN_RAN=',
+    'if [ -x "$ZN_NODE" ] && [ -f "$ZN_RUNNER" ]; then ZN_RAN=1; ' + run('"$ZN_NODE" "$ZN_RUNNER" ' + agentId) + '; ' + 'zn_leave $ZN_RC; fi',
     '# Look up zn and node only in absolute PATH entries: a relative one depends on the folder the agent runs in.',
     'ZN_OLDIFS=$IFS; IFS=:; ZN_SAFE=',
     'for ZN_D in $PATH; do case "$ZN_D" in /*) ZN_SAFE="${ZN_SAFE:+$ZN_SAFE:}$ZN_D" ;; esac; done',
     'IFS=$ZN_OLDIFS',
     'ZN_CMD=; [ -z "$ZN_SAFE" ] || ZN_CMD=$(PATH="$ZN_SAFE" command -v zn 2>/dev/null)',
     'case "$ZN_CMD" in /*) ;; *) ZN_CMD= ;; esac',
-    'if [ -z "$ZN_RAN" ] && [ -n "$ZN_CMD" ] && PATH="$ZN_SAFE" command -v node >/dev/null 2>&1; then ZN_RAN=1; ' + (deadlineS ? run('"$ZN_CMD" hook ' + agentId) + '; ' : '"$ZN_CMD" hook ' + agentId + '; ZN_RC=$?; ') + 'case $ZN_RC in 0|2) exit $ZN_RC ;; esac; fi',
+    'if [ -z "$ZN_RAN" ] && [ -n "$ZN_CMD" ] && PATH="$ZN_SAFE" command -v node >/dev/null 2>&1; then ZN_RAN=1; : >"$ZN_AF" 2>/dev/null; ' + run('"$ZN_CMD" hook ' + agentId) + '; ' + 'zn_leave $ZN_RC; fi',
     'zn_block',
     '',
   ].join('\n');
@@ -243,10 +304,16 @@ function launcherCommand(file, event, platform = process.platform, opts = {}) {
  * The command is `sh -c <script>` with a script that holds no space, quote-free of anything the split could break:
  * each space is the expansion ${IFS} (field splitting turns it back into spaces) and each space inside the JSON text
  * is the printf escape \040. Only simple commands joined by ; && || are used, because a compound command
- * (if, case) is told apart by real whitespace. Steps: the first `zn` and `node` found on the PATH (`zn` must be an
- * absolute path: a relative PATH entry depends on the folder the agent runs in); run `zn hook <agent>`; its exit
- * code 0 (an answer) or 2 (its own refusal, deny JSON already printed) ends it; anything else, or no zn or node, prints
- * the deny JSON and exits 0, the way the user launcher does.
+ * (if, case) is told apart by real whitespace. Steps: the first `zn` and `node` found on the PATH, each of which must come
+ * from an absolute PATH entry (a relative or empty entry depends on the folder the agent runs in, which may be the
+ * repository itself); run `zn hook <agent>`; its exit code 0 (an answer) or 2 (its own refusal, deny JSON already printed)
+ * ends it; anything else, or no zn or node, prints the deny JSON and exits 0, the way the user launcher does.
+ *
+ * `command -v` alone cannot tell where a program was found: dash prints the relative path, but bash as sh (the sh of
+ * macOS, and of Linux systems where sh is bash) turns a program found through `.`, `bin` or an empty entry into an
+ * absolute path. So the folder of each program found must also be an entry of ":$PATH:" as written. Every operand of a
+ * test starts with x: bash 3.2 drops an empty quoted word next to an unquoted ${IFS} expansion, so `[ -n "" ]` would
+ * become `[ -n ]`, which is true.
  */
 // The hook scripts below use no cmdlet (Test-Path, Get-Command, New-Object...): a cmdlet belongs to a module, and Windows PowerShell 5.1
 // searches the user's own Documents\WindowsPowerShell\Modules first, so a module planted there by the same account could answer in
@@ -301,6 +368,15 @@ function projectAnswer(agentId, event, why, win) {
   return { stdout: JSON.stringify({ systemMessage: w }), stderr: null, exit: 0 };
 }
 
+// The project guard trusts the zn and node it found only when the folder of each one is an entry of the PATH as written:
+// P is ":$PATH:"; T is set when the folder of $Z (with or without a final slash) is in it, U the same for $N.
+const PROJECT_TRUST = [
+  'P=:$PATH:',
+  'ZD=${P#*":${Z%/*}:"}', 'ZS=${P#*":${Z%/*}/:"}', 'ND=${P#*":${N%/*}:"}', 'NS=${P#*":${N%/*}/:"}',
+  'T=', '[ "$ZD" != "$P" ] && T=z', '[ "$ZS" != "$P" ] && T=z',
+  'U=', '[ "$ND" != "$P" ] && U=n', '[ "$NS" != "$P" ] && U=n',
+];
+
 /**
  * The POSIX project hook command (see above) for one event (omit it for Antigravity). Every agent that runs project hooks
  * through a shell gets the same guard, so a `zn` or Node.js that is gone ends in that agent's own blocking answer instead of
@@ -319,8 +395,8 @@ function projectShCommand(agentId, event) {
       ...(a.stderr ? ["echo '" + a.stderr + "' >&2"] : []),
       'exit ' + a.exit,
     ].join('; ');
-    const script = 'Z=$(command -v zn); N=$(command -v node); R=missing; ' +
-      'if [ -n "$N" ] && [ "${Z#/}" != "$Z" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
+    const script = 'Z=$(command -v zn); N=$(command -v node); ' + PROJECT_TRUST.join('; ') + '; R=missing; ' +
+      'if [ -n "$N" ] && [ "${Z#/}" != "$Z" ] && [ "${N#/}" != "$N" ] && [ -n "$T" ] && [ -n "$U" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
       'if [ "$R" = ran ]; then ' + say(crash) + '; fi; ' + say(missing);
     return 'sh -c ' + shQuote(script);
   }
@@ -337,12 +413,14 @@ function projectShCommand(agentId, event) {
     ':',
     'Z=$(' + sp('command', '-v', 'zn') + ')',
     'N=$(' + sp('command', '-v', 'node') + ')',
+    ...PROJECT_TRUST.map((x) => x.replace(/^\[ (.*) \] && /, (_, w) => test(...w.split(' ').map((o) => (o === '!=' ? o : o.replace(/^"/, '"x')))) + '&&')),
     'R=missing',
-    test('-n', '"$N"') + '&&' + test('"${Z#/}"', '!=', '"$Z"') + '&&R=ran&&"$Z"' + IFS + 'hook' + IFS + agentId,
+    [test('"x$N"', '!=', 'x'), test('"x${Z#/}"', '!=', '"x$Z"'), test('"x${N#/}"', '!=', '"x$N"'), test('"x$T"', '!=', 'x'), test('"x$U"', '!=', 'x')].join('&&') +
+      '&&R=ran&&"$Z"' + IFS + 'hook' + IFS + agentId,
     'C=$?',
-    test('"$R"', '=', 'ran') + '&&' + test('"$C"', '=', '0') + '&&' + sp('exit', '0'),
-    test('"$R"', '=', 'ran') + '&&' + test('"$C"', '=', '2') + '&&' + sp('exit', '2'),
-    [test('"$R"', '=', 'ran'), ...say(crash), sp('exit', String(crash.exit))].join('&&'),
+    test('"x$R"', '=', 'xran') + '&&' + test('"x$C"', '=', 'x0') + '&&' + sp('exit', '0'),
+    test('"x$R"', '=', 'xran') + '&&' + test('"x$C"', '=', 'x2') + '&&' + sp('exit', '2'),
+    [test('"x$R"', '=', 'xran'), ...say(crash), sp('exit', String(crash.exit))].join('&&'),
     ...say(missing),
     sp('exit', String(missing.exit)),
   ].join(';');
@@ -373,7 +451,7 @@ function isProjectGuard(command, agentId) {
     if (typeof command !== 'string') return false;
     if (command === projectShCommand(agentId)) return true;
     // A later zn-gate may word the deny differently: recognize the guard by its structure (start and the hook call).
-    if (command.startsWith("sh -c 'Z=$(command -v zn); N=$(command -v node); R=missing; if ") && command.includes('"$Z" hook ' + agentId + '; C=$?;')) return true;
+    if (command.startsWith("sh -c 'Z=$(command -v zn); N=$(command -v node); ") && command.includes('"$Z" hook ' + agentId + '; C=$?;')) return true;
     return command.startsWith('sh -c :;Z=$(' + ['command', '-v', 'zn'].join(IFS) + ')') && command.includes(IFS + 'hook' + IFS + agentId + ';');
   } catch (_) { return false; }
 }
@@ -834,7 +912,7 @@ function spaceMessage(file, opts) {
  * isOurs() recognizes it. Null when a path holds a character that would need
  * escaping inside the script: the caller then keeps the plain command.
  */
-function windowsScript(agentId, event, nodePath, runnerPath, opts = {}) {
+function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
   checkAgentId(agentId);
   // deadlineS (whole seconds, only for agents that fail open on a timeout, as in unixScript): the hook runs as a child with a deadline.
   const deadlineS = Number.isInteger(opts.deadlineS) && opts.deadlineS > 0 ? opts.deadlineS : 0;
@@ -862,14 +940,15 @@ function windowsScript(agentId, event, nodePath, runnerPath, opts = {}) {
   else if (blockJson(agentId).has(event)) tail = "[Console]::Out.WriteLine('" + JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } }) + "'); exit 0";
   else if (WARN_STDERR.has(agentId)) tail = "[Console]::Error.WriteLine('" + warn + "'); exit 0";
   else tail = "[Console]::Out.WriteLine('" + JSON.stringify({ systemMessage: warn }) + "'); exit 0";
-  return tail;
+  return 'zd; ' + tail;
   };
   const tail = tailOf(reason, warnText(agentId));
   // Only 0 (done) and 2 (blocked) leave early: a crash, an empty $LASTEXITCODE (a script the execution policy
   // refused) or any other code falls through to the block. zn.cmd, not zn.ps1, which Restricted refuses to run.
+  // A 0 counts only when the hook confirmed (zk: the ack file holds ok) that its whole answer was written.
   const leave = jsonDeny
-    ? 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit 0 }'
-    : 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit $LASTEXITCODE }';
+    ? 'if (($LASTEXITCODE -eq 0 -and (zk)) -or $LASTEXITCODE -eq 2) { zx 0 }'
+    : 'if (($LASTEXITCODE -eq 0 -and (zk)) -or $LASTEXITCODE -eq 2) { zx $LASTEXITCODE }';
   if (deadlineS) {
     // zr runs the command as a child with the hook input passed on (stdin) and its output left alone; after the deadline the
     // child and everything it started are killed (taskkill /T) and zr gives -1, which falls through to the block below.
@@ -880,8 +959,8 @@ function windowsScript(agentId, event, nodePath, runnerPath, opts = {}) {
       '$left = [Math]::Max(0, ' + deadlineS * 1000 + ' - $sw.ElapsedMilliseconds); ' +
       'if ($p.WaitForExit([int]$left)) { $rc = $p.ExitCode } else { try { & "$env:SystemRoot\\System32\\taskkill.exe" /PID $p.Id /T /F *> $null } catch {}; try { $p.Kill() } catch {} } } catch {}; return $rc }; ';
     const zleave = jsonDeny
-      ? 'if ($rc -eq 0 -or $rc -eq 2) { exit 0 }'
-      : 'if ($rc -eq 0 -or $rc -eq 2) { exit $rc }';
+      ? 'if (($rc -eq 0 -and (zk)) -or $rc -eq 2) { zx 0 }'
+      : 'if (($rc -eq 0 -and (zk)) -or $rc -eq 2) { zx $rc }';
     return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF + zr +
       "if ([System.IO.File]::Exists('" + n + "') -and [System.IO.File]::Exists('" + r + "')) { $zt=1; $rc = zr '\"" + n + "\"' '\"" + r + "\" " + agentId + "'; " + zleave + ' }; ' +
       "if (($zt -eq 0) -and (zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { $zt=1; $rc = zr (zf 'zn.cmd') 'hook " + agentId + "'; " + zleave + ' }; ' +
@@ -891,6 +970,21 @@ function windowsScript(agentId, event, nodePath, runnerPath, opts = {}) {
     "if ([System.IO.File]::Exists('" + n + "') -and [System.IO.File]::Exists('" + r + "')) { $zt=1; & '" + n + "' '" + r + "' " + agentId + '; ' + leave + ' }; ' +
     "if (($zt -eq 0) -and (zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { & (zf 'zn.cmd') hook " + agentId + '; ' + leave + ' }; ' +
     tail + ' # zn hook ' + agentId;
+}
+
+// The private file through which the hook confirms that it wrote its whole answer (ZN_HOOK_ACK). zk reads it and clears it: true
+// only when it held ok. zx removes it and leaves. When the file cannot be made nothing is accepted as done (zk is always false).
+const ZK = "$za = $null; try { $za = [System.IO.Path]::GetTempFileName(); $env:ZN_HOOK_ACK = $za } catch {}; " +
+  "function zk { $ok = $false; try { if ($za) { $ok = ([System.IO.File]::ReadAllText($za) -eq 'ok'); [System.IO.File]::WriteAllText($za, '') } } catch {}; return $ok }; " +
+  "function zx($c) { try { if ($za) { [System.IO.File]::Delete($za) } } catch {}; exit $c }; function zd { try { if ($za) { [System.IO.File]::Delete($za) } } catch {} }; ";
+
+/** windowsScriptRaw plus the ack file: every exit of the script removes it (zx), a 0 is accepted only with the ack (zk). */
+function windowsScript(agentId, event, nodePath, runnerPath, opts = {}) {
+  const t = windowsScriptRaw(agentId, event, nodePath, runnerPath, opts);
+  if (t === null) return null;
+  const head = "$ProgressPreference='SilentlyContinue'; $zt=0; ";
+  if (!t.startsWith(head)) throw new Error('zn: unexpected launcher script');
+  return head + ZK + t.slice(head.length);
 }
 
 /**

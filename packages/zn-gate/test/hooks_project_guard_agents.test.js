@@ -29,12 +29,18 @@ function whichSh() {
 }
 
 /* A folder that is the whole PATH: sh, and optionally a fake zn and a node. */
-function mkbin(t, { zn, node } = {}) {
+function mkbin(t, { zn, node, shell } = {}) {
   const bin = tempDir(t, 'zn-pg-bin-');
-  fs.symlinkSync(whichSh(), path.join(bin, 'sh'));
-  if (zn !== undefined && zn !== null) { fs.writeFileSync(path.join(bin, 'zn'), '#!' + whichSh() + '\n' + zn + '\n'); fs.chmodSync(path.join(bin, 'zn'), 0o755); }
+  fs.symlinkSync(shell || whichSh(), path.join(bin, 'sh'));
+  if (zn !== undefined && zn !== null) { fs.writeFileSync(path.join(bin, 'zn'), '#!' + (shell || whichSh()) + '\n' + zn + '\n'); fs.chmodSync(path.join(bin, 'zn'), 0o755); }
   if (node) fs.symlinkSync(process.execPath, path.join(bin, 'node'));
   return bin;
+}
+
+// The shells to try as sh: the system one, dash, and bash (run as sh it is in POSIX mode, the sh of macOS).
+function shells() {
+  const found = ['dash', 'bash'].map((n) => ['/bin', '/usr/bin'].map((d) => path.join(d, n)).find((f) => fs.existsSync(f))).filter(Boolean);
+  return [...new Set([whichSh(), ...found])];
 }
 
 // The agent runs the command through a shell.
@@ -132,16 +138,35 @@ for (const agent of Object.keys(AGENTS)) {
     }
   });
 
-  test(agent + ': a zn that is only on a relative PATH entry is not run', skip, (t) => {
+  test(agent + ': a zn or node that is only on a relative or empty PATH entry is not run, with every sh (dash, bash as sh)', skip, (t) => {
     const { commands } = install(t, agent);
     const command = commands.find(([e]) => e === spec.block)[1];
-    const bin = mkbin(t, { node: true });
-    const work = tempDir(t, 'zn-pg-rel-');
-    fs.writeFileSync(path.join(work, 'zn'), '#!/bin/sh\necho planted\n');
-    fs.chmodSync(path.join(work, 'zn'), 0o755);
-    const r = spawnSync(whichSh(), ['-c', command], { input: '{}', encoding: 'utf8', env: { PATH: '.:' + bin }, cwd: work });
-    assert.ok(!/planted/.test(r.stdout));
-    assert.ok(r.status === 2 || /"permissionDecision":"deny"/.test(r.stdout), r.stdout + r.stderr);
+    const blocked = (r) => r.status === 2 || /"permissionDecision":"deny"/.test(r.stdout);
+    for (const shell of shells()) {
+      const work = tempDir(t, 'zn-pg-rel-');
+      fs.mkdirSync(path.join(work, 'bin'));
+      for (const d of [work, path.join(work, 'bin')]) {
+        for (const n of ['zn', 'node']) { fs.writeFileSync(path.join(d, n), '#!/bin/sh\necho planted\n'); fs.chmodSync(path.join(d, n), 0o755); }
+      }
+      const withZn = mkbin(t, { node: true, shell, zn: 'echo ok' });
+      const cases = [
+        ['zn on . only', '.:' + mkbin(t, { node: true, shell })],
+        ['zn on bin only', 'bin:' + mkbin(t, { node: true, shell })],
+        ['zn on an empty entry only', ':' + mkbin(t, { node: true, shell })],
+        ['planted zn first', '.:' + withZn],
+        ['planted node first', mkbin(t, { shell, zn: 'echo ok' }) + ':.:' + withZn],
+      ];
+      for (const [name, PATH] of cases) {
+        const r = spawnSync(shell, ['-c', command], { input: '{}', encoding: 'utf8', env: { PATH }, cwd: work });
+        assert.ok(!/planted|^ok$/m.test(r.stdout), shell + ' ' + name + ': ' + r.stdout);
+        assert.ok(blocked(r), shell + ' ' + name + ': ' + r.stdout + r.stderr);
+      }
+      for (const PATH of [withZn, withZn + '/']) {
+        const r = spawnSync(shell, ['-c', command], { input: '{}', encoding: 'utf8', env: { PATH }, cwd: work });
+        assert.equal(r.status, 0, shell + ' ' + PATH + ' ' + r.stderr);
+        assert.match(r.stdout, /^ok$/m, shell + ' ' + PATH);
+      }
+    }
   });
 
   test(agent + ': the written project command is recognized by check, and a bare one is not', skip, (t) => {

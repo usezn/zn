@@ -95,7 +95,7 @@ test('claude-code launcher: recorded Node.js gone but zn and node on an absolute
   const { file } = setup(t, GONE);
   const bin = tempDir(t, 'zn-b95-bin-');
   fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\necho "VIA_ZN $*"\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\necho "VIA_ZN $*"\nprintf ok > "$ZN_HOOK_ACK"\n', { mode: 0o755 });
   const r = runLauncher(file, 'PreToolUse', '{}', bin);
   assert.equal(r.status, 0);
   assert.equal(r.stdout.trim(), 'VIA_ZN hook claude-code');
