@@ -643,7 +643,13 @@ async function checkAgent(spec, ctx) {
         if (userHooksOn) {
           res.notes.push('zn is also set up with `zn hooks install zcode`, so every call is checked twice (ZCode does not remove duplicate hooks); keep one: run `zn hooks uninstall zcode` in your own terminal to keep the plugin, or turn the plugin off in ZCode (Settings, Plugins) to keep the hooks');
         }
-        live = { file: 'sh', args: [script, 'PreToolUse'], env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}, plugin: true };
+        // ZCode runs the plugin's hook with sh; check takes sh from the absolute PATH entries only (never the folder it runs in).
+        const sh = require('./exe').findProgram('sh', ctx.env || process.env);
+        if (sh) live = { file: sh, args: [script, 'PreToolUse'], env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}, plugin: true };
+        else {
+          res.problem = 'the zn-gate plugin runs its hook with sh, and no sh was found in the absolute entries of your PATH, so the hook cannot start';
+          res.fix = 'put the folder that holds sh (usually /bin) on your PATH, then run `zn-gate check` again';
+        }
       } else if (!userHooksOn) {
         // Turned off, and nothing else of zn's runs: ZCode is not protected.
         installed = true;

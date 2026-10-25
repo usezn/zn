@@ -88,6 +88,15 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   The hook in the project file looks like zn's start guard but is not exactly the command zn writes (someone edited it). `zn-gate check` never runs a project file, so it cannot tell what the edit does. Run `zn hooks install <agent> --project` again: it replaces the command with the exact guard. It is a note under **OK** when the agent is set up for your user, and **NOT protected** otherwise.
 
+- **The ZCode plugin's hook has no sh to run with.**
+
+  ```text
+  the zn-gate plugin runs its hook with sh, and no sh was found in the absolute entries of your PATH, so the hook cannot start
+  put the folder that holds sh (usually /bin) on your PATH, then run `zn-gate check` again
+  ```
+
+  ZCode starts the plugin's hook with `sh`. `zn-gate check` looks for it only in the absolute entries of your PATH (never in the folder it runs in). Put the folder that holds `sh`, usually `/bin`, on your PATH.
+
 - **The hook starts PowerShell by name (Windows, written by an older zn-gate).**
 
   ```text
