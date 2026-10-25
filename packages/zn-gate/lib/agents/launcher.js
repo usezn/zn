@@ -320,7 +320,11 @@ function launcherCommand(file, event, platform = process.platform, opts = {}) {
 // searches the user's own Documents\WindowsPowerShell\Modules first, so a module planted there by the same account could answer in
 // its place (and make the hook look done). Only .NET types, operators and keywords: zf finds a program on the PATH the way
 // Get-Command did, with [System.IO.File]::Exists.
-const ZF = "function zf($x) { foreach ($d in ($env:PATH -split ';')) { try { if ($d) { $c = [System.IO.Path]::Combine($d, $x); if ([System.IO.File]::Exists($c)) { return $c } } } catch {} }; return $null }; ";
+// Before that, the PATH keeps only its absolute entries (C:\... or \\server\...) and cmd.exe no longer looks in the current folder
+// first: zn.cmd starts `node` through cmd.exe when no node.exe sits next to it (a standard Node.js install), and a relative entry,
+// or the folder the agent runs in (possibly the repository), could otherwise give a planted zn.cmd, node.exe or node.bat.
+const ZF = "$env:NoDefaultCurrentDirectoryInExePath = '1'; $env:PATH = (($env:PATH -split ';') -match '^([A-Za-z]:\\\\|\\\\\\\\)') -join ';'; " +
+  "function zf($x) { foreach ($d in ($env:PATH -split ';')) { try { if ($d) { $c = [System.IO.Path]::Combine($d, $x); if ([System.IO.File]::Exists($c)) { return $c } } } catch {} }; return $null }; ";
 
 const IFS = '${IFS}';
 const SH_SAFE_TEXT = /^[^'"\\%$\n\r]+$/;
