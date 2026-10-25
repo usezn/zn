@@ -100,6 +100,12 @@ Short meanings of words used in the zn-gate docs.
 
 **Managed configuration** (`team managed-config`): settings files that an administrator deploys to all machines, for example with MDM (mobile device management), so the hooks run for every developer.
 
+**Launcher script**: the small script under `~/.zn/hooks` that an agent's hook goes through. It is shared by every profile of the same agent on your machine, so `hooks uninstall` leaves it in place. See [the command list](cli.md#hooks-uninstall) and [Check that it works](check.md).
+
+**Fail on** (`--fail-on`): the lowest severity of a finding that makes `audit` or `reach` exit with `1`. For `audit` it is `low`, `medium`, `high` (default), `critical` or `none`; for `reach` the default is `none`, so it is a report. See the [command list](cli.md).
+
+**Evidence** (`evidence`): the local hash-chained log of what zn-gate decided. `--verify` checks the chain. See the [command list](cli.md).
+
 **Stats**: local counts of what zn-gate did on your machine (`stats`). They are not sent unless you turn on `stats share`.
 
 For setup steps, start with the [README](../README.md#install).
