@@ -17,6 +17,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Remove zn-gate](uninstall.md) | Uninstall in one step or piece by piece, run from your own terminal | Everyone |
 | [First project walkthrough](examples/first-project-walkthrough.md) | One example project from install to uninstall, with fake values | Newcomers |
 | [Command line reference](cli.md) | Every command, option and exit code | Everyone |
+| [Exit codes](exit-codes.md) | The exit code of every command, on one page | Everyone |
 | [Command cheat sheet](commands-cheatsheet.md) | Every command, its main flags and one example, on one page | Everyone |
 
 ## Everyday use
