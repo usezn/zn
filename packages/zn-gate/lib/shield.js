@@ -236,7 +236,16 @@ function startMcpShield(command, args, options = {}) {
 
   log(`Spawning wrapped MCP server: ${command} ${args.join(' ')}`);
 
-  const child = spawn(command, args, {
+  // A command given by name is taken from the absolute PATH entries only: the agent starts this wrapper in the project
+  // folder, where a program of the same name could have been placed. A path is used as written.
+  const exe = require('./exe');
+  const file = exe.hasPathSeparator(command) ? command : exe.findProgram(command);
+  if (!file) {
+    process.stderr.write(startFailureMessage(command, { code: 'ENOENT' }) + '\n');
+    process.exit(1);
+    return;
+  }
+  const child = spawn(file, args, {
     stdio: ['pipe', 'pipe', 'inherit'],
     env: process.env,
   });

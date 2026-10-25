@@ -462,9 +462,11 @@ function cliHooks(spec, ctx, userFile, given) {
       // Windows cannot run a .sh file directly; Claude Code runs it with sh (Git Bash) there.
       // The system PowerShell by its path: check may run in a project folder, which could hold a powershell.exe of its own.
       const run = cmd.winScript ? { file: require('./exe').systemPowerShell() || 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(cmd.winScript, 'utf16le').toString('base64')] }
-        : spec.id === 'antigravity' && process.platform !== 'win32' ? { file: cmd.raw.split(' ')[0], args: cmd.raw.split(' ').slice(1) } // as Antigravity runs it: split on spaces, no shell
-          : process.platform === 'win32' ? { file: 'sh', args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
-      out.live = { ...run, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
+        : spec.id === 'antigravity' && process.platform !== 'win32' ? { file: require('./exe').findProgram(cmd.raw.split(' ')[0], ctx.env || process.env), args: cmd.raw.split(' ').slice(1) } // as Antigravity runs it: split on spaces, no shell
+          : process.platform === 'win32' ? { file: require('./exe').findProgram('sh', ctx.env || process.env), args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
+      // sh (Git Bash) is taken from the absolute PATH entries only; without one the live test is skipped.
+      if (run.file) out.live = { ...run, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
+      else out.notes.push('sh was not found on the PATH, so the hook was not run here; zn\'s rules were checked directly');
     }
   } else if (cmd.missing) {
     out.problem = 'its hook cannot start: ' + (fs.existsSync(cmd.node) ? 'its zn-gate files (' + cmd.runner + ')' : 'its Node.js (' + cmd.node + ')') + ' is no longer there';

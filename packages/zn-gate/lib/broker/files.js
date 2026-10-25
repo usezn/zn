@@ -33,10 +33,15 @@ function existingDir(p) {
 function gitStatusOf(file) {
   const abs = path.resolve(file);
   const dir = existingDir(path.dirname(abs));
-  const top = spawnSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', windowsHide: true });
+  // git from the absolute PATH entries only: this runs inside hooks, whose current folder is the project.
+  const exe = require('../exe');
+  const git = exe.findProgram('git');
+  if (!git) return 'unknown';
+  const env = exe.programEnv();
+  const top = spawnSync(git, ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', windowsHide: true, env });
   if (top.error) return 'unknown';
   if (top.status !== 0) return 'outside';
-  const ign = spawnSync('git', ['-C', dir, 'check-ignore', '-q', '--', abs], { encoding: 'utf8', windowsHide: true });
+  const ign = spawnSync(git, ['-C', dir, 'check-ignore', '-q', '--', abs], { encoding: 'utf8', windowsHide: true, env });
   if (ign.error) return 'unknown';
   if (ign.status === 0) return 'ignored';
   if (ign.status === 1) return 'tracked';

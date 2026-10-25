@@ -211,7 +211,7 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-25.2",
+      "version": "2026-10-25.3",
       "ids": [
         "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
@@ -241,8 +241,8 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "d9b8fd5ecdeb36b955fe7ebb5b629ee344a7b3052076bbdfa28a3a4621ccce89",
-        "lib/broker/files.js": "452ed2197c4a145f0b1988f5fd749d5abdd7e1320d89e38103fbd877be785a5d",
+        "lib/hooks/policy.js": "e7609938ff4c4615352831f69d1713eb6d1c340b401472f0ffa5a5e7042e5b72",
+        "lib/broker/files.js": "53e89b2607a1aed2afdd5ca1bf2fbb45958ee696fdca78004ccc750b606d9346",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
         "lib/shell-quote.js": "5624278b810e0bd8a2d4f3c37bf9d5c7e2e4474b0d96d30682c94d8ffc399d68",

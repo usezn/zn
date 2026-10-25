@@ -397,7 +397,10 @@ function selfCheck(command, opts = {}) {
   const spawnOpts = { input: JSON.stringify(SELF_CHECK_EVENT), encoding: 'utf8', timeout: opts.timeoutMs || 20000, env, windowsHide: true };
   // A command zn wrote is run the way Antigravity runs it: split on spaces, no shell (not where cmd.exe is needed).
   const parts = opts.splitOnSpaces && process.platform !== 'win32' ? String(command).split(' ') : null;
-  const r = parts ? spawnSync(parts[0], parts.slice(1), spawnOpts) : spawnSync(command, { shell: true, ...spawnOpts });
+  // The first word (sh) from the absolute PATH entries only: install --project runs in the project folder.
+  const first = parts ? require('../exe').findProgram(parts[0], env) : null;
+  if (parts && !first) return { ok: false, detail: 'it could not be started (' + parts[0] + ' was not found on the PATH)' };
+  const r = parts ? spawnSync(first, parts.slice(1), spawnOpts) : spawnSync(command, { shell: true, ...spawnOpts });
   if (r.error) return { ok: false, detail: r.error.code === 'ETIMEDOUT' ? 'it did not answer within 20 seconds' : 'it could not be started (' + (r.error.code || 'error') + ')' };
   const text = String(r.stdout || '').trim();
   let parsed;
