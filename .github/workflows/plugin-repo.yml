@@ -573,6 +573,11 @@ jobs:
             echo "::error::the plugin is not pinned to a final release"
             exit 1
           fi
+          # The Codex plugin relies on PermissionRequest and the deny answers that came with zn-gate 1.14.0.
+          if ! node -e 'const [a, b] = process.argv[1].split(".").map(Number); process.exit(a > 1 || (a === 1 && b >= 14) ? 0 : 1)' "$v"; then
+            echo "::error::the Codex plugin needs zn-gate 1.14.0 or later, and the plugin is pinned to $v"
+            exit 1
+          fi
           m="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('src/plugins/codex/.codex-plugin/plugin.json','utf8')).version))")"
           if [ "$m" != "$v" ]; then
             echo "::error::the Codex plugin manifest says $m but the plugin is pinned to $v at $source: pin the release again with plugins/tools/pin-release.js, which moves both in one commit"
@@ -686,6 +691,11 @@ jobs:
           v="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('src/plugins/zn-gate/scripts/zn-gate.lock.json','utf8')).version))")"
           if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::the plugin is not pinned to a final release"
+            exit 1
+          fi
+          # The Codex plugin relies on PermissionRequest and the deny answers that came with zn-gate 1.14.0.
+          if ! node -e 'const [a, b] = process.argv[1].split(".").map(Number); process.exit(a > 1 || (a === 1 && b >= 14) ? 0 : 1)' "$v"; then
+            echo "::error::the Codex plugin needs zn-gate 1.14.0 or later, and the plugin is pinned to $v"
             exit 1
           fi
           m="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('src/plugins/codex/.codex-plugin/plugin.json','utf8')).version))")"

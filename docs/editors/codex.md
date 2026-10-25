@@ -28,6 +28,7 @@ What the plugin is, so you know what to expect when it is published:
 
 - It has the same hooks as `zn hooks install codex`. It carries its own copy of zn-gate, pinned to one release and checked against the SHA-256 of every file of the published release on each call, so there is nothing to download and nothing to go missing. It needs no account and no API key, and sends nothing over the network.
 - **Its hooks need your approval too.** Codex skips the hooks of a plugin until you review and trust them in `/hooks`, and asks again after every update of the plugin. Installing the plugin is not enough: until you trust the hooks, nothing is checked.
+- **Hooks can be turned off.** Hooks stop running, the plugin's and those of `zn hooks install codex` alike, when they are turned off in `/hooks`, with `[features] hooks = false` in `~/.codex/config.toml`, or by an administrator in `requirements.toml`. Codex shows nothing when that happens.
 - Its hook is a POSIX shell script. Tested on Linux with the Codex CLI 0.164.0; macOS is not tested. Not Windows: use `zn hooks install codex` there. It needs Node.js 20.19 or later, and blocks the call when it finds none, when anything fails, or when Node.js does not answer within 28 seconds (Codex lets a call run when a hook cannot start or times out).
 - Use the plugin or `zn hooks install codex`, not both: Codex does not remove duplicate hooks, so every call would be checked twice. `zn-gate check` does not look at the plugin yet.
 - It carries the hooks only, not zn's secrets MCP server.
