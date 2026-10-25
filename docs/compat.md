@@ -393,7 +393,7 @@ Node.js it was installed with, else `zn` from the PATH, else it answers the
 block itself, without Node.js. A project install (`--project`) names `zn` on
 the PATH inside a short start guard (`sh -c`, PowerShell on Windows) that gives
 the same block when `zn` or Node.js is missing or fails, so it behaves like a
-user install. Hooks written by zn-gate 1.13.1 or earlier, including project
+user install. Hooks written by an older zn-gate (up to 1.13.1), including project
 installs, and the plugins keep a plain command. Agent by agent:
 
 - **Claude Code**: with a user install, tool calls, prompts and typed-command
