@@ -19,7 +19,7 @@
 # `sleep` program there is no watchdog, and the other refusals still apply.
 
 case "$0" in */*) HERE_DIR=${0%/*} ;; *) HERE_DIR=. ;; esac
-HERE=$(CDPATH= cd -- "$HERE_DIR" 2>/dev/null && pwd -P) || HERE=""
+HERE=$(CDPATH='' cd -- "$HERE_DIR" 2>/dev/null && pwd -P) || HERE=""
 LAUNCH="$HERE/zn-launch.js"
 
 # Refusal: a deny decision on stdout (exit 0). The messages given to it hold no quote or backslash.
@@ -34,9 +34,11 @@ DEADLINE=12
 exec 3<&0
 CUR=""
 WD=""
+# shellcheck disable=SC2329 # called by trap
 stop_watchdog() {
   [ -z "$WD" ] || kill "$WD" 2>/dev/null
 }
+# shellcheck disable=SC2329 # called by trap
 on_deadline() {
   trap '' USR1
   [ -z "$CUR" ] || kill "$CUR" 2>/dev/null
@@ -87,6 +89,7 @@ if [ -z "$NODE" ]; then
   done
 fi
 if [ -z "$NODE" ] && [ -n "${HOME:-}" ] && [ -d "$HOME/.nvm/versions/node" ]; then
+  # shellcheck disable=SC2012 # a plain list of folders sorted by name
   for c in $(ls -1d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | sort -r); do
     try_node "$c" && break
   done
