@@ -99,9 +99,16 @@ try {
       }
       return dir;
     }
+    // The hook script runs under a small parent shell script (a fixed file, no command string built at run time), so its
+    // parent program is a shell, not a Node.js program.
+    function parentShell(inner) {
+      const f = path.join(tmp, 'parent-' + inner.replace(/\W/g, '_') + '.sh');
+      if (!fs.existsSync(f)) fs.writeFileSync(f, '#!/bin/sh\n' + inner + ' "$1" "$2"\nexit $?\n', { mode: 0o755 });
+      return f;
+    }
     function run(dir, event, env) {
       // The script's parent is a shell, not a Node.js program: the "parent program" fallback finds nothing usable.
-      return spawnSync('/bin/sh', ['-c', 'sh "$0" "$1"; exit $?', path.join(dir, 'scripts', 'zn-hook.sh'), event], {
+      return spawnSync('/bin/sh', [parentShell('sh'), path.join(dir, 'scripts', 'zn-hook.sh'), event], {
         input: '{"hook_event_name":"' + event + '"}', encoding: 'utf8',
         env: { PATH: path.join(dir, 'bin') + ':/usr/bin:/bin', HOME: path.join(dir, 'home'), ...env },
       });
@@ -159,7 +166,7 @@ try {
     test('zn-hook.sh needs no external program to refuse (empty PATH)', () => {
       const d = fixture('nopath', { launcher: '// stub', withNode: false });
       if (['/usr/local/bin/node', '/opt/homebrew/bin/node', '/usr/bin/node'].some((f) => fs.existsSync(f))) return; // found in a usual folder
-      const r = spawnSync('/bin/sh', ['-c', '/bin/sh "$0" "$1"; exit $?', path.join(d, 'scripts', 'zn-hook.sh'), 'PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: '/nonexistent', HOME: '/nonexistent' } });
+      const r = spawnSync('/bin/sh', [parentShell('/bin/sh'), path.join(d, 'scripts', 'zn-hook.sh'), 'PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: '/nonexistent', HOME: '/nonexistent' } });
       assert.strictEqual(r.status, 2);
     });
   }

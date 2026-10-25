@@ -110,7 +110,8 @@ def reset_project():
     open(PROJ + '/a.txt', 'w').write('hello world\n')
     open(PROJ + '/.env', 'w').write('API_KEY=FAKE_sk_live_0123456789abcdef0123456789abcdef\nDB_PASSWORD=FAKE_hunter2_not_real\n')
     os.makedirs(HOME + '/.aws', exist_ok=True)
-    open(HOME + '/.aws/credentials', 'w').write('[default]\naws_access_key_id = %s\naws_secret_access_key = %s\n' % (AWS_KEY, AWS_SECRET))
+    # Copied from a fixture that holds only the public AWS documentation example values.
+    shutil.copyfile(KIT + '/fixtures/aws_credentials', HOME + '/.aws/credentials')
 
 
 def v(**o):

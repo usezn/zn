@@ -408,7 +408,7 @@ function makeTeamOps(ctx) {
       const t = await team();
       if (!t) {
         const stuck = removeLocalCopies();
-        const sum = await retrySafe();
+        await retrySafe();
         const s = await state.loadSecrets();
         return pendingList(s).length ? { left: null, pending_files: stuck, revocations: revocationsView(s) } : { left: null, pending_files: stuck };
       }
