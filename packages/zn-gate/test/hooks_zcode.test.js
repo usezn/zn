@@ -916,13 +916,13 @@ test('launcher deadline: a TERM sent to the launcher removes its private tempora
   const child = spawn(file, ['PreToolUse'], { env: { PATH: process.env.PATH, HOME: home, TMPDIR: tmp }, stdio: ['pipe', 'ignore', 'ignore'] });
   const closed = new Promise((resolve) => child.on('close', (code, sig) => resolve({ code, sig })));
   child.stdin.end('{}');
-  const files = () => fs.readdirSync(tmp).filter((f) => f.startsWith('zn-hook.'));
+  const files = () => fs.readdirSync(tmp).filter((f) => /^zn-(out|err)\./.test(f));
   for (let i = 0; i < 100 && files().length < 2; i++) await new Promise((r) => setTimeout(r, 50));
   assert.equal(files().length, 2, 'the launcher made its two private files');
   child.kill('SIGTERM');
   const r = await closed;
   assert.ok(r.code === 2, 'the launcher ended on TERM with the block of the event (exit 2): ' + JSON.stringify(r));
-  assert.deepEqual(files(), [], 'the temporary files are gone');
+  assert.deepEqual(fs.readdirSync(tmp).filter((f) => f.startsWith('zn-')), [], 'the temporary files (output and confirmation) are gone');
 });
 
 test('launcher deadline: a timer that cannot start blocks without running the hook', { skip: !posix }, (t) => {
