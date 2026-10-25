@@ -398,6 +398,10 @@ function install(opts = {}) {
     data.hooks[event].push(group);
   }
   cfg.writeJson(file, data);
+  const plugin = pluginState(opts);
+  if (plugin.root && plugin.enabled) {
+    report.warnings.push('the zn-gate plugin (' + plugin.id + ') is also installed and turned on in Codex, so a call can be checked twice: once by the plugin (when its hooks are trusted in /hooks) and once by these hooks. Keep one of them: to keep the plugin, run `zn hooks uninstall codex`; to keep these hooks, run `codex plugin remove ' + plugin.id + '`.');
+  }
   report.warnings.push('Codex runs new or changed hooks only after you trust them: open Codex and review them with /hooks.');
   if (opts.mcp !== false) {
     report.warnings.push('optional: to let Codex use the secrets kept in zn\'s vault, add the "secrets" MCP server by putting this in ' + path.join(codexHome(opts), 'config.toml') + ':\n' + mcpSnippet(opts));

@@ -310,3 +310,25 @@ test('zn-gate check: Antigravity hooks alone are unchanged by a plugin that is n
   assert.equal(r.via, 'hooks');
   assert.equal(r.notes.filter((n) => /plugin/.test(n)).length, 0);
 });
+
+test('install warns when the zn-gate plugin is also on (Codex, Antigravity), and not when it is off or absent', (t) => {
+  const twice = (r) => r.warnings.some((w) => /zn-gate plugin .*also installed and turned on/.test(w));
+  const cx = tempDir(t, 'zn-cxp-install-');
+  assert.equal(twice(codex.install({ home: cx, env: {}, nodePath: process.execPath, mcp: false })), false);
+  cxPlugin(cx);
+  cxConfigWrite(cx);
+  const on = codex.install({ home: cx, env: {}, nodePath: process.execPath, mcp: false });
+  assert.ok(twice(on), on.warnings.join('\n'));
+  assert.ok(on.warnings.some((w) => /codex plugin remove zn-gate@usezn/.test(w)));
+  cxConfigWrite(cx, { enabled: false });
+  assert.equal(twice(codex.install({ home: cx, env: {}, nodePath: process.execPath, mcp: false })), false);
+
+  const ag = tempDir(t, 'zn-agyp-install-');
+  assert.equal(twice(agy.install({ scope: 'user', home: ag, env: { HOME: ag } })), false);
+  agyPlugin(ag);
+  const aon = agy.install({ scope: 'user', home: ag, env: { HOME: ag } });
+  assert.ok(twice(aon), aon.warnings.join('\n'));
+  assert.ok(aon.warnings.some((w) => /agy plugin disable zn-gate/.test(w)));
+  fs.writeFileSync(path.join(ag, '.gemini', 'config', 'config.json'), JSON.stringify({ plugins: { 'zn-gate': { enabled: false } } }));
+  assert.equal(twice(agy.install({ scope: 'user', home: ag, env: { HOME: ag } })), false);
+});

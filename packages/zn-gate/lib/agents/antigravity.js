@@ -456,6 +456,10 @@ function install(opts = {}) {
   while (data[name] !== undefined) name += '-zn';
   data[name] = { enabled: true, PreToolUse: [{ matcher: MATCHER, hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT_S }] }] };
   cfg.writeJson(file, data);
+  const plugin = pluginState(opts);
+  if (plugin.root && plugin.enabled) {
+    report.warnings.push('the zn-gate plugin is also installed and turned on in Antigravity, so a call can be checked twice: once by the plugin and once by these hooks. Keep one of them: to keep the plugin, run `zn hooks uninstall antigravity`' + ((opts.scope || 'user') === 'project' ? ' --project' : '') + '; to keep these hooks, run `agy plugin disable zn-gate`.');
+  }
   report.warnings.push('zn checks tool calls before they run (PreToolUse): it blocks reads and writes of secret files and shell commands that handle secrets.');
   if ((opts.scope || 'user') === 'project' && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook antigravity): every teammate who opens this project in Antigravity needs zn-gate installed. Without it the hook answers a deny that says how to install it, so Antigravity blocks the call instead of running it unchecked. The command is written for this kind of machine (' + ((opts.platform || process.platform) === 'win32' ? 'Windows' : 'macOS and Linux') + '): a teammate on the other kind runs `zn hooks install antigravity --project` in their own copy of the project.');
   report.warnings.push('Antigravity hooks cannot rewrite or redact what a tool returns, so a value printed by a command or a file the agent is allowed to read reaches the model. Keep secrets in the vault.');
