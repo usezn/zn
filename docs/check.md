@@ -39,6 +39,20 @@ Your agent cannot read secret files such as .env through these tools. Nothing wa
 - When an agent is found but not set up, the summary points to `npx -y zn-gate init`, which shows each step and asks before it runs one.
 - **X ... NOT protected**: zn is set up but would not protect the agent. The line says why and what to run to fix it. Every reason is explained in [What each NOT protected line means](#what-each-not-protected-line-means). When a hook cannot start because the Node.js it was installed with is gone (for example after `nvm uninstall`), the fix is a fresh `npm install -g zn-gate` and then `zn hooks install <agent>`, since the old Node.js took its `zn` with it.
 
+### Reading the symbols
+
+| You see | What it means |
+| --- | --- |
+| `OK` | zn is protecting that agent: it blocked the `.env` file and allowed the ordinary file. |
+| `"zn: ..."` | The text your agent is told when it tries to read the file. |
+| `-` | zn is not set up for that agent, or only for one project. The line gives the command that sets it up for your user. |
+| `not found on this machine` | That agent is not on this machine. |
+| `X ... NOT protected` | zn is set up but would not protect the agent. The line says why and what to run. See [What each NOT protected line means](#what-each-not-protected-line-means). |
+| `...` | More agents, one line each. |
+| `Nothing was sent anywhere.` | Nothing is sent over the network. |
+
+For the full explanation of each line, read the list above and the rest of this page.
+
 `zn-gate check` exits with 0 only when every agent that is set up for your user is protected.
 
 ## What each NOT protected line means
