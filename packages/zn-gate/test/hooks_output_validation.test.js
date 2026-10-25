@@ -408,3 +408,79 @@ test('posix launcher with a deadline and an empty PATH still runs the hook (its 
   assert.deepEqual(JSON.parse(r.stdout), { hookSpecificOutput: { permissionDecision: 'deny' } });
   assert.deepEqual(zfiles(tmp), []);
 });
+
+// ---- commands planted in the project: with `.`, an empty entry or a relative folder on the PATH, the launcher runs none of them ----
+
+const PLANTED = ['rm', 'mktemp', 'cat', 'sleep', 'kill', 'wait', 'setsid', 'perl', 'printf', 'read', 'test', '[', 'echo', 'umask', 'trap', 'env', 'sh',
+  'true', 'false', 'id', 'chmod', 'mkdir', 'ls', 'tee', 'timeout', 'head', 'tail', 'tr', 'sed', 'awk', 'grep', 'node', 'zn', 'touch', 'date', 'stat',
+  'xargs', 'basename', 'dirname', 'readlink', 'mv', 'cp', 'ln', 'expr', 'uname', 'which', 'nohup', 'pkill', 'ps', 'taskkill'];
+
+function plantProject(t) {
+  const proj = tempDir(t, 'zn-ov-planted-');
+  const mark = path.join(proj, 'RAN');
+  for (const dir of [proj, path.join(proj, 'bin')]) {
+    fs.mkdirSync(dir, { recursive: true });
+    for (const name of PLANTED) fs.writeFileSync(path.join(dir, name), '#!/bin/sh\necho "$0 $*" >>' + JSON.stringify(mark) + '\nexit 0\n', { mode: 0o755 });
+  }
+  return { proj, mark };
+}
+
+for (const [mode, opts, edit] of MODES) {
+  test('posix launcher, ' + mode + ': rm, mktemp, cat and other commands planted in the project are never run, whatever relative entry the PATH has', { skip: !posix }, (t) => {
+    const { proj, mark } = plantProject(t);
+    const gone = path.join(tempDir(t, 'zn-ov-planted-gone-'), 'launcher.sh');
+    fs.writeFileSync(gone, launcher.unixScript('claude-code', '/nonexistent/node', '/nonexistent/runner.js', opts), { mode: 0o755 });
+    const cases = [...HOOKS.map(([name, body, check]) => [name, writeScript(t, 'claude-code', body, opts), check]), ['zn gone', gone, (r) => assert.equal(r.status, 2)]];
+    for (const [name, file, check] of cases) {
+      if (edit) fs.writeFileSync(file, edit(fs.readFileSync(file, 'utf8')), { mode: 0o755 });
+      for (const PATHV of ['.', '.:/usr/bin:/bin', ':/usr/bin:/bin', 'bin:/usr/bin:/bin', '/usr/bin:/bin:.']) {
+        const tmp = tempDir(t, 'zn-ov-planted-tmp-');
+        const r = spawnSync('/bin/sh', [file, 'PreToolUse'], { cwd: proj, input: '{}', encoding: 'utf8', timeout: 20000, env: { PATH: PATHV, HOME: '/nonexistent', TMPDIR: tmp } });
+        check(r);
+        if (name === 'answer + ack') assert.deepEqual(JSON.parse(r.stdout), { hookSpecificOutput: { permissionDecision: 'deny' } }, name + ' PATH=' + PATHV);
+        assert.equal(fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8') : '', '', name + ' PATH=' + PATHV + ': a planted command ran');
+        assert.deepEqual(zfiles(tmp), [], name + ' PATH=' + PATHV + ': files left in TMPDIR');
+      }
+    }
+  });
+}
+
+test('posix launcher with a deadline: a TERM with `.` first on the PATH runs no planted command', { skip: !posix }, async (t) => {
+  const { proj, mark } = plantProject(t);
+  const tmp = tempDir(t, 'zn-ov-planted-term-');
+  const file = writeScript(t, 'claude-code', 'process.stdin.resume(); setInterval(() => {}, 1000);\n', { deadlineS: 30 });
+  const child = spawn('/bin/sh', [file, 'PreToolUse'], { cwd: proj, env: { PATH: '.:/usr/bin:/bin', HOME: '/nonexistent', TMPDIR: tmp }, stdio: ['pipe', 'pipe', 'pipe'] });
+  child.stdin.write('{');
+  const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
+  await new Promise((r) => setTimeout(r, 400));
+  child.kill('SIGTERM');
+  assert.equal(await exited, 2);
+  assert.equal(fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8') : '', '');
+  assert.deepEqual(zfiles(tmp), []);
+});
+
+// ---- Windows: zn and node are looked up only in fully qualified PATH entries ----
+
+test('windows launcher: zf skips relative and empty PATH entries (only drive or network folders)', () => {
+  const script = launcher.windowsScript('claude-code', 'PreToolUse', 'C:/no-such/node.exe', 'C:/no-such/runner.js');
+  assert.ok(script.includes(String.raw`function zf($x) { foreach ($d in ($env:PATH -split ';')) { try { if ($d -match '^([A-Za-z]:[\\/]|\\\\)') {`), script.slice(0, 400));
+});
+
+test('windows (real PowerShell): a zn.cmd and node.cmd planted in the project with `.` first on the PATH are never run', { skip: process.platform !== 'win32' }, (t) => {
+  const { getAdapter } = require('../lib/agents');
+  const home = tempDir(t, 'zn-ov-winplant-');
+  const proj = tempDir(t, 'zn-ov-winplant-proj-');
+  const mark = path.join(proj, 'RAN');
+  for (const name of ['zn.cmd', 'node.cmd']) fs.writeFileSync(path.join(proj, name), '@echo ran>>"' + mark + '"\r\n@exit /b 0\r\n');
+  const adapter = getAdapter('cursor');
+  adapter.install({ home, env: { HOME: home, ZN_HOME: path.join(home, '.zn') }, platform: 'win32', nodePath: String.raw`C:\no-such\node.exe`, runnerPath: String.raw`C:\no-such\runner.js`, mcp: false });
+  const data = JSON.parse(fs.readFileSync(adapter.hooksFile({ home, env: { HOME: home } }), 'utf8'));
+  const g = data.hooks.beforeShellExecution[0];
+  const cmd = (g.hooks ? g.hooks[0] : g).command;
+  const ps = path.join(process.env.SystemRoot || String.raw`C:\Windows`, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const winPath = ['.', '', path.join(process.env.SystemRoot || String.raw`C:\Windows`, 'System32'), path.dirname(ps)].join(';');
+  const r = spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', cmd], { cwd: proj, input: '{}', encoding: 'utf8', env: { ...process.env, PATH: winPath } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout.trim().split(/\r?\n/).pop()).permission, 'deny');
+  assert.equal(fs.existsSync(mark), false, 'a program planted in the project ran');
+});

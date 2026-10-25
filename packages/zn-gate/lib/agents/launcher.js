@@ -321,9 +321,10 @@ function launcherCommand(file, event, platform = process.platform, opts = {}) {
  */
 // The hook scripts below use no cmdlet (Test-Path, Get-Command, New-Object...): a cmdlet belongs to a module, and Windows PowerShell 5.1
 // searches the user's own Documents\WindowsPowerShell\Modules first, so a module planted there by the same account could answer in
-// its place (and make the hook look done). Only .NET types, operators and keywords: zf finds a program on the PATH the way
-// Get-Command did, with [System.IO.File]::Exists.
-const ZF = "function zf($x) { foreach ($d in ($env:PATH -split ';')) { try { if ($d) { $c = [System.IO.Path]::Combine($d, $x); if ([System.IO.File]::Exists($c)) { return $c } } } catch {} }; return $null }; ";
+// its place (and make the hook look done). Only .NET types, operators and keywords: zf finds a program on the PATH with
+// [System.IO.File]::Exists, and only in fully qualified entries (C:\... or \\server\...): a relative entry such as `.`
+// depends on the folder the agent runs in, which may be the repository itself.
+const ZF = "function zf($x) { foreach ($d in ($env:PATH -split ';')) { try { if ($d -match '^([A-Za-z]:[\\\\/]|\\\\\\\\)') { $c = [System.IO.Path]::Combine($d, $x); if ([System.IO.File]::Exists($c)) { return $c } } } catch {} }; return $null }; ";
 
 const IFS = '${IFS}';
 const SH_SAFE_TEXT = /^[^'"\\%$\n\r]+$/;
