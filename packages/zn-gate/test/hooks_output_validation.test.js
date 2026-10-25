@@ -531,3 +531,26 @@ test('posix launcher without /bin/rm, mktemp or cat in the system folders: no pr
     }
   }
 });
+
+// ---- a TMPDIR whose path starts with "-": rm, cat and node never read a private file name as an option ----
+
+test('posix launcher with a TMPDIR that starts with "-": the answer passes and no private file is left, with or without rm', { skip: !posix }, (t) => {
+  const strip = (text) => text.replace('/bin/rm /usr/bin/rm /run/current-system/sw/bin/rm /run/current-system/profile/bin/rm', '/nonexistent/rm');
+  for (const [mode, opts, edit] of MODES) {
+    for (const noRm of [false, true]) {
+      const file = writeScript(t, 'claude-code', GOOD, opts);
+      let text = fs.readFileSync(file, 'utf8');
+      if (noRm) text = strip(text);
+      if (edit) text = edit(text);
+      fs.writeFileSync(file, text, { mode: 0o755 });
+      const base = tempDir(t, 'zn-ov-dash-');
+      fs.mkdirSync(path.join(base, '-tmp'));
+      for (let i = 0; i < 3; i++) {
+        const r = spawnSync('/bin/sh', [file, 'PreToolUse'], { cwd: base, input: '{}', encoding: 'utf8', timeout: 20000, env: { PATH: '/usr/bin:/bin', HOME: '/nonexistent', TMPDIR: '-tmp' } });
+        assert.equal(r.status, 0, mode + (noRm ? ', no rm' : '') + ': ' + r.stderr);
+        assert.deepEqual(JSON.parse(r.stdout), { hookSpecificOutput: { permissionDecision: 'deny' } });
+      }
+      assert.deepEqual(zfiles(path.join(base, '-tmp')), [], mode + (noRm ? ', no rm' : '') + ': files left');
+    }
+  }
+});
