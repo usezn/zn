@@ -40,12 +40,14 @@ function rewrite(dir, rel, fn) {
 // The version in the repository and the previous release in its changelog.
 const pkgVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'packages/zn-gate/package.json'), 'utf8')).version;
 const lockVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'plugins/zn-gate/scripts/zn-gate.lock.json'), 'utf8')).version;
+// The cases describe a release pull request before the tag (the lock file on the previous release). Once the plugin is
+// pinned to this version they do not apply.
 const previous = lockVersion;
 // Release tags of the repository: rc tags and the tag of this version are not the previous release.
 let TAGS = 'v1.12.0 v1.13.0 v' + previous + ' v' + pkgVersion + '-rc.1 v' + pkgVersion;
 
 try {
-  if (/^\d+\.\d+\.\d+$/.test(pkgVersion) && lockVersion === previous) {
+  if (/^\d+\.\d+\.\d+$/.test(pkgVersion) && lockVersion !== pkgVersion) {
     // The state of a release pull request before the tag.
     const a = copyTree();
     assert.ok(check(a, '--release', '--pre-tag').ok, 'pre-tag: the lock on the previous release passes');
