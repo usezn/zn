@@ -25,7 +25,7 @@ zn-gate protects most where an agent lets it hook into its own tools: there it c
 
 Gemini CLI and GitHub Copilot CLI have experimental hook adapters in zn-gate 1.14.0. They are listed apart from the six supported agents above and are less tested. Each one blocks reads and writes of secret files by path and shell commands that handle secrets, and stops the agent from editing its own hook or settings files.
 
-Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts on June 18, 2026. Gemini CLI stays supported in zn-gate.
+Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts on June 18, 2026. Gemini CLI keeps working with zn-gate as an experimental adapter.
 
 | Agent | Setup | What it does not do |
 | - | - | - |

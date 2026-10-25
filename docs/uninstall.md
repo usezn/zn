@@ -41,13 +41,13 @@ claude plugin uninstall zn-gate@usezn
 
 Or, inside Claude Code, type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
 
-### Hooks (Codex CLI, Cursor, OpenCode, Antigravity, or Claude Code without the plugin)
+### Hooks (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, or Claude Code without the plugin)
 
 ```bash
 npx -y zn-gate hooks uninstall claude-code
 ```
 
-Use `codex`, `cursor`, `opencode` or `antigravity` instead of `claude-code` for the others. Add `--project` if you installed the hooks for one project only; run it from that project's folder. A backup of the settings file is written first. For Claude Code it also removes zn's own `secrets` MCP server. Add `--no-mcp` to leave MCP servers alone.
+Use `codex`, `cursor`, `opencode`, `antigravity` or `zcode` instead of `claude-code` for the others (ZCode has no project hooks, so `--project` does not apply to it). Add `--project` if you installed the hooks for one project only; run it from that project's folder. A backup of the settings file is written first. For Claude Code it also removes zn's own `secrets` MCP server. Add `--no-mcp` to leave MCP servers alone.
 
 ### MCP servers wrapped by `init --wrap-mcp`
 
