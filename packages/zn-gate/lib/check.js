@@ -173,7 +173,9 @@ function hookEntries(tree, agentId, opts = {}) {
         const extra = agentId === 'antigravity' ? { name, disabled } : {};
         if (typeof g.command === 'string') out.push({ event, matcher: g.matcher, command: g.command, onFailure: g.onFailure, async: g.async, ...extra });
         // GitHub Copilot CLI keeps the shell command in "bash" (and "powershell"), next to an optional matcher.
-        if (agentId === 'copilot' && typeof g.bash === 'string') out.push({ event, matcher: g.matcher, command: g.bash });
+        // On Windows Copilot CLI runs "powershell" instead, so that is the command to read there.
+        const copilotCmd = agentId !== 'copilot' ? null : process.platform === 'win32' && typeof g.powershell === 'string' ? g.powershell : g.bash;
+        if (typeof copilotCmd === 'string') out.push({ event, matcher: g.matcher, command: copilotCmd });
         for (const h of Array.isArray(g.hooks) ? g.hooks : []) {
           // Codex on Windows runs commandWindows (command_windows in TOML), not command.
           const win = agentId === 'codex' && process.platform === 'win32' && h ? (typeof h.commandWindows === 'string' ? h.commandWindows : h.command_windows) : null;
@@ -475,9 +477,11 @@ function cliHooks(spec, ctx, userFile, given) {
       // Run it with the PATH check was given, which is what decides whether `zn` and `node` are found.
       // Windows cannot run a .sh file directly; Claude Code runs it with sh (Git Bash) there.
       // The system PowerShell by its path: check may run in a project folder, which could hold a powershell.exe of its own.
-      const run = cmd.winScript ? { file: require('./exe').systemPowerShell(), args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(cmd.winScript, 'utf16le').toString('base64')] }
-        : spec.id === 'antigravity' && process.platform !== 'win32' ? { file: cmd.raw.split(' ')[0], args: cmd.raw.split(' ').slice(1) } // as Antigravity runs it: split on spaces, no shell
-          : process.platform === 'win32' ? { file: 'sh', args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
+      const exe = require('./exe');
+      const run = cmd.winScript ? { file: exe.systemPowerShell(), args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(cmd.winScript, 'utf16le').toString('base64')] }
+        : spec.id === 'antigravity' && process.platform !== 'win32' ? { file: exe.findProgram(cmd.raw.split(' ')[0], ctx.env || process.env), args: cmd.raw.split(' ').slice(1) } // as Antigravity runs it: split on spaces, no shell
+          : process.platform === 'win32' ? { file: exe.findProgram('sh', ctx.env || process.env), args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
+      // The system PowerShell, and sh (Git Bash) from the absolute PATH entries only; without one the live test is skipped.
       if (run.file) out.live = { ...run, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
       else out.notes.push('the program that runs the hook was not found, so the hook was not run here; zn\'s rules were checked directly');
     }
