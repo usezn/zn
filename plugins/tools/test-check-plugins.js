@@ -27,8 +27,10 @@ function copyTree() {
   }
   return dir;
 }
+// The previous release comes from the repository's git tags; the tests give the tag list instead of asking the remote.
 function check(dir, ...args) {
-  const r = spawnSync(process.execPath, [path.join(ROOT, 'plugins', 'tools', 'check-plugins.js'), ...args], { cwd: dir, encoding: 'utf8' });
+  const tags = process.env.TEST_TAGS || TAGS;
+  const r = spawnSync(process.execPath, [path.join(ROOT, 'plugins', 'tools', 'check-plugins.js'), ...args], { cwd: dir, encoding: 'utf8', env: { ...process.env, ZN_CHECK_PLUGINS_TAGS: tags } });
   return { ok: r.status === 0, out: r.stdout + r.stderr };
 }
 function rewrite(dir, rel, fn) {
@@ -38,8 +40,9 @@ function rewrite(dir, rel, fn) {
 // The version in the repository and the previous release in its changelog.
 const pkgVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'packages/zn-gate/package.json'), 'utf8')).version;
 const lockVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'plugins/zn-gate/scripts/zn-gate.lock.json'), 'utf8')).version;
-const finals = [...fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8').matchAll(/^## \[(\d+\.\d+\.\d+)\]/gm)].map((m) => m[1]);
-const previous = finals[finals.indexOf(pkgVersion) + 1];
+const previous = lockVersion;
+// Release tags of the repository: rc tags and the tag of this version are not the previous release.
+let TAGS = 'v1.12.0 v1.13.0 v' + previous + ' v' + pkgVersion + '-rc.1 v' + pkgVersion;
 
 try {
   if (/^\d+\.\d+\.\d+$/.test(pkgVersion) && lockVersion === previous) {
@@ -48,11 +51,13 @@ try {
     assert.ok(check(a, '--release', '--pre-tag').ok, 'pre-tag: the lock on the previous release passes');
     const b = check(a, '--release');
     assert.ok(!b.ok && /differs from the lock file version/.test(b.out), 'tag: the lock on the previous release fails');
-    // Nothing older than the previous release.
+    // Nothing older than the previous release (the tags say it is 1.13.0), and the changelog cannot change that.
     const c = copyTree();
-    rewrite(c, 'CHANGELOG.md', (s) => s.replace('## [' + previous + ']', '## [0.0.1]'));
+    rewrite(c, 'CHANGELOG.md', (s) => s.replace('## [' + pkgVersion + ']', '## [' + pkgVersion + ']\n\n## [' + previous + ']\n\n## [0.0.1]'));
+    process.env.TEST_TAGS = 'v1.12.0 v1.13.0 v' + pkgVersion + '-rc.1';
     const d = check(c, '--release', '--pre-tag');
-    assert.ok(!d.ok && /must be the previous release/.test(d.out), 'pre-tag: a lock that is not the previous release fails');
+    assert.ok(!d.ok && /must be the previous release 1\.13\.0/.test(d.out), 'pre-tag: a lock that is not the previous release fails: ' + d.out);
+    delete process.env.TEST_TAGS;
     // After the pin: every place that names the old release names the new one.
     const e = copyTree();
     for (const rel of execFileSync('git', ['ls-files', 'plugins'], { cwd: ROOT, encoding: 'utf8' }).split('\n').filter(Boolean)) {

@@ -79,7 +79,7 @@ for (const name of ['split', 'split_mixed', 'resources', 'structured', 'sc_only'
     assert.ok(text.length < 100000);
     // A bound on the work, not a benchmark: a loaded CI runner with the whole suite in parallel needs several seconds,
     // while a quadratic scan of the payload would take far longer.
-    assert.ok(ms < 8000, `took ${ms} ms`);
+    assert.ok(ms < 4000, `took ${ms} ms`);
   });
 }
 

@@ -147,10 +147,16 @@ jobs:
           check-latest: true
           package-manager-cache: false
       - name: Release checks
-        # On the tag the lock file must pin this release. On the release pull request and on main before the tag it may
-        # still be on the previous release: the plugin is pinned only after npm publishes (see --pre-tag).
+        # The plugin is pinned to a release only after npm publishes it, so on the release pull request and on the release
+        # tag the lock file may still be on the previous release (--pre-tag). On main (push or schedule) the strict check
+        # runs once npm has the version, so a forgotten pin turns red there.
         run: |
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
+          version=$(node -p "require('./packages/zn-gate/package.json').version")
+          strict=no
+          if [ "$GITHUB_REF_TYPE" != tag ] && { [ "$GITHUB_EVENT_NAME" = push ] || [ "$GITHUB_EVENT_NAME" = schedule ]; }; then
+            if [ "$(npm view "zn-gate@$version" version 2>/dev/null)" = "$version" ]; then strict=yes; fi
+          fi
+          if [ "$strict" = yes ]; then
             node plugins/tools/check-plugins.js --release
           else
             node plugins/tools/check-plugins.js --release --pre-tag
