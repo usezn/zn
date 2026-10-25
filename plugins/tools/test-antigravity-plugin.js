@@ -125,6 +125,14 @@ try {
         assert.strictEqual(fs.existsSync(marker), false, PATH + ': a planted program ran');
         assert.strictEqual(JSON.parse(r.stdout).decision, 'allow', PATH + ': ' + r.stderr);
       }
+      // Only relative or empty entries: the hook still runs (system folders) and answers a decision; nothing planted runs.
+      for (const PATH of ['.:sub:', '', ':']) {
+        const r = spawnSync('/bin/sh', ['-c', '/bin/sh scripts/zn-hook.sh'], { cwd: d, input: '{"toolCall":{"name":"run_command","args":{"CommandLine":"ls"}}}', encoding: 'utf8', timeout: 30000, env: { PATH, HOME: '/nonexistent' } });
+        assert.strictEqual(r.status, 0, JSON.stringify(PATH) + ': ' + r.stderr);
+        // The system node runs the stub launcher here, which prints nothing; a refusal would be a deny decision.
+        assert.ok(r.stdout === '' || ['allow', 'deny'].includes(JSON.parse(r.stdout).decision), JSON.stringify(PATH) + ': ' + r.stdout);
+        assert.strictEqual(fs.existsSync(marker), false, JSON.stringify(PATH) + ': a planted program ran');
+      }
     });
 
     test('zn-hook.sh passes the launcher answer through and returns at once', () => {
