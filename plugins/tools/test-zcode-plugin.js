@@ -116,7 +116,10 @@ try {
 
     test('zn-hook.sh passes the launcher answer and exit code 0 or 2 through', () => {
       const d = fixture('pass', { launcher: '// stub' });
+      const t0 = Date.now();
       const a = run(d, 'PreToolUse', { ZN_STUB_OUT: '{"x":1}', ZN_STUB_RC: '0' });
+      // The deadline watchdog must not outlive the hook or keep its output open (it would last the whole deadline).
+      assert.ok(Date.now() - t0 < 15000, 'the hook returned at once, not after the deadline');
       assert.strictEqual(a.status, 0);
       assert.strictEqual(a.stdout, '{"x":1}');
       const b = run(d, 'PreToolUse', { ZN_STUB_OUT: '', ZN_STUB_RC: '2' });
@@ -168,6 +171,62 @@ try {
       if (['/usr/local/bin/node', '/opt/homebrew/bin/node', '/usr/bin/node'].some((f) => fs.existsSync(f))) return; // found in a usual folder
       const r = spawnSync('/bin/sh', [parentShell('/bin/sh'), path.join(d, 'scripts', 'zn-hook.sh'), 'PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: '/nonexistent', HOME: '/nonexistent' } });
       assert.strictEqual(r.status, 2);
+    });
+  }
+
+  if (posix) {
+    const HOOK = path.join(ZC, 'scripts', 'zn-hook.sh');
+    const timed = (d, event, env) => {
+      const t0 = Date.now();
+      const r = spawnSync('/bin/sh', ['-c', 'sh "$0" "$1"; exit $?', path.join(d, 'scripts', 'zn-hook.sh'), event], {
+        input: '{"hook_event_name":"' + event + '"}', encoding: 'utf8', timeout: 60000,
+        env: { PATH: path.join(d, 'bin') + ':/usr/bin:/bin', HOME: path.join(d, 'home'), ...env },
+      });
+      return { r, ms: Date.now() - t0 };
+    };
+    // Same stub folder as above, rebuilt here because the helpers above live in the previous block.
+    const fixture2 = (name, deadline) => {
+      const dir = path.join(tmp, name);
+      fs.mkdirSync(path.join(dir, 'scripts'), { recursive: true });
+      fs.mkdirSync(path.join(dir, 'bin'));
+      fs.writeFileSync(path.join(dir, 'scripts', 'zn-launch.js'), '// stub');
+      const text = fs.readFileSync(HOOK, 'utf8');
+      assert.ok(/^DEADLINE=28$/m.test(text));
+      // Test copy only: the shipped script has no setting for the deadline.
+      fs.writeFileSync(path.join(dir, 'scripts', 'zn-hook.sh'), text.replace(/^DEADLINE=28$/m, 'DEADLINE=' + deadline));
+      fs.writeFileSync(path.join(dir, 'bin', 'node'), '#!/bin/sh\nif [ "$1" = "-e" ]; then [ "$ZN_STUB_HANG" = probe ] && exec sleep 300; exit 0; fi\n[ "$ZN_STUB_HANG" = launch ] && exec sleep 300\ncat >/dev/null\nprintf "%s" "$ZN_STUB_OUT"\nexit "${ZN_STUB_RC:-0}"\n', { mode: 0o755 });
+      return dir;
+    };
+
+    test('zn-hook.sh has a start deadline under ZCode\'s 30 second hook timeout', () => {
+      const m = /^DEADLINE=(\d+)$/m.exec(fs.readFileSync(HOOK, 'utf8'));
+      assert.ok(m, 'DEADLINE is set');
+      assert.strictEqual(Number(m[1]), adapter.LAUNCHER_DEADLINE_S, 'DEADLINE matches the launcher deadline of zn hooks install zcode');
+      assert.ok(Number(m[1]) * 1000 < adapter.HOOK_TIMEOUT_MS);
+    });
+
+    for (const hang of ['probe', 'launch']) {
+      test('zn-hook.sh blocks at the deadline when Node.js hangs in the ' + hang + ' (and only warns on PostToolUse)', () => {
+        const d = fixture2('hang-' + hang, 2);
+        const { r, ms } = timed(d, 'PreToolUse', { ZN_STUB_HANG: hang });
+        assert.strictEqual(r.status, 2, r.stderr);
+        assert.ok(/^zn: the hook did not finish starting within 2 seconds/.test(r.stderr), r.stderr);
+        assert.ok(ms >= 1500 && ms < 15000, 'answered at the deadline, not before and not long after: ' + ms + ' ms');
+        for (const event of ['PermissionRequest', 'UserPromptSubmit']) {
+          assert.strictEqual(timed(d, event, { ZN_STUB_HANG: hang }).r.status, 2, event);
+        }
+        const p = timed(d, 'PostToolUse', { ZN_STUB_HANG: hang });
+        assert.strictEqual(p.r.status, 0);
+        assert.ok(/NOT protecting this session/.test(p.r.stderr), p.r.stderr);
+      });
+    }
+
+    test('zn-hook.sh with a deadline still lets a fast launcher finish (the deadline is only a cap)', () => {
+      const d = fixture2('fast-deadline', 2);
+      const { r, ms } = timed(d, 'PreToolUse', { ZN_STUB_OUT: '{"ok":true}', ZN_STUB_RC: '0' });
+      assert.strictEqual(r.status, 0);
+      assert.strictEqual(r.stdout, '{"ok":true}');
+      assert.ok(ms < 1900, 'the watchdog does not delay a finished hook: ' + ms + ' ms');
     });
   }
 
