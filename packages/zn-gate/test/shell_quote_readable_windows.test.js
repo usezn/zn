@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 
 const sq = require('../lib/shell-quote');
 
-const HEAD = 'powershell.exe -NoProfile -NonInteractive ';
+const HEAD = sq.powershellExe() + ' -NoProfile -NonInteractive ';
 
 test('an encoded windowsCommand() result comes back in the readable form', () => {
   const encoded = sq.windowsCommand('C:/example/zn.exe', ['run', 'a b'], [], { encoded: true });

@@ -271,5 +271,5 @@ test('hook commands: a project install names zn on PATH, and paths are single-qu
   const user = cfg.hookCommand('codex', { scope: 'user', nodePath: '/n/node', runnerPath: '/r/runner.js', platform: 'linux' });
   assert.equal(user, "'/n/node' '/r/runner.js' codex");
   const win = cfg.hookCommandWindows('codex', { scope: 'user', nodePath: 'C:\\Program Files\\nodejs\\node.exe', runnerPath: "C:\\it's\\runner.js" });
-  assert.match(win, /^powershell\.exe -NoProfile -NonInteractive -Command "& 'C:\/Program Files\/nodejs\/node\.exe' 'C:\/it''s\/runner\.js' codex"$/);
+  assert.match(win, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe -NoProfile -NonInteractive -Command "& 'C:\/Program Files\/nodejs\/node\.exe' 'C:\/it''s\/runner\.js' codex"$/);
 });

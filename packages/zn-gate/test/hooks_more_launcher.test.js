@@ -190,7 +190,7 @@ test('antigravity: the Windows launcher is an encoded PowerShell script that pri
   const home = tempDir(t, 'zn-b96-win-');
   getAdapter('antigravity').install({ home, platform: 'win32', nodePath: 'C:\\Program Files\\nodejs\\node.exe', runnerPath: 'C:\\zn\\lib\\hooks\\runner.js', env: { ZN_HOME: path.join(home, '.zn') } });
   const written = JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'config', 'hooks.json'), 'utf8'))['zn-gate'].PreToolUse[0].hooks[0].command;
-  assert.match(written, /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
+  assert.match(written, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
   assert.equal(windowsCommandScript(written), script);
   assert.ok(cfg.isOurs(written, 'antigravity'));
 });

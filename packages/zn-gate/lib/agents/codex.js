@@ -372,7 +372,7 @@ function handlerFor(opts = {}) {
   if (opts.command) return plain;
   // A project install runs `zn` from the PATH inside zn's start guard (launcher.projectShCommand): a missing zn or Node.js blocks.
   if ((opts.scope || 'user') === 'project') {
-    return (event) => ({ ...plain(), command: launcher.projectShCommand(id, event), commandWindows: launcher.windowsScriptCommand(launcher.projectWindowsScript(id, event)) });
+    return (event) => ({ ...plain(), command: launcher.projectShCommand(id, event), commandWindows: launcher.windowsScriptCommand(launcher.projectWindowsScript(id, event), { cmd: true }) });
   }
   const platform = opts.platform || process.platform;
   const node = opts.nodePath || process.execPath;
