@@ -22,4 +22,11 @@ function spaceInvisible(str) {
   return str.replace(ZERO_WIDTH_RE, ' ').replace(INVISIBLE_ASTRAL_RE, '  ');
 }
 
-module.exports = { BMP_CLASS, ASTRAL_CLASS, ZERO_WIDTH_RE, INVISIBLE_ASTRAL_RE, spaceInvisible };
+// The same view with one space per code point (an astral character becomes one space), the way the Python and
+// Rust rules read it. The rules that run on the whole text need single spaces between words ("send me the api
+// keys"), so they use this one; only the secret rules, which need the original indexes, use spaceInvisible.
+function spaceInvisibleForMatch(str) {
+  return str.replace(ZERO_WIDTH_RE, ' ').replace(INVISIBLE_ASTRAL_RE, ' ');
+}
+
+module.exports = { BMP_CLASS, ASTRAL_CLASS, ZERO_WIDTH_RE, INVISIBLE_ASTRAL_RE, spaceInvisible, spaceInvisibleForMatch };

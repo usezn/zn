@@ -2,15 +2,15 @@
 
 const fs = require('fs');
 const linearRegex = require('./linear-regex');
-const { ZERO_WIDTH_RE, INVISIBLE_ASTRAL_RE, spaceInvisible } = require('./invisible');
+const { ZERO_WIDTH_RE, INVISIBLE_ASTRAL_RE, spaceInvisible, spaceInvisibleForMatch } = require('./invisible');
 const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-25.24
+ * RULES_VERSION: 2026-10-25.25
  */
 
-const RULES_VERSION = '2026-10-25.24';
+const RULES_VERSION = '2026-10-25.25';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -794,7 +794,7 @@ function evaluateUncached(input, options = {}) {
   const targetList = [normalized, stripped, input];
   // An invisible character used as a space ("ignore<U+3164>all previous instructions") joins the words in the
   // stripped views, so the same passes also run with each invisible character replaced by a space.
-  const spacedInput = spaceInvisible(input);
+  const spacedInput = spaceInvisibleForMatch(input);
   if (spacedInput !== input) {
     const spaced = normalizeInput(spacedInput);
     targetList.push(spaced.normalized, spaced.stripped, spacedInput);

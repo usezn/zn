@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-25.24
+RULES_VERSION: 2026-10-25.25
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-10-25.24"
+RULES_VERSION = "2026-10-25.25"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -489,15 +489,20 @@ def _space_invisible(text: str) -> str:
     return INVISIBLE_ASTRAL_RE.sub(' ', ZERO_WIDTH_RE.sub(' ', text))
 
 
-_SPACED_MEMO: List[Optional[str]] = [None, None]
+# (text, its spaced view) as ONE tuple, replaced in a single assignment: a thread that reads it always gets a
+# text together with its own view, whatever other threads are doing.
+_SPACED_MEMO: Tuple[Optional[str], str] = (None, '')
 
 
 def _spaced_view(text: str) -> str:
     """_space_invisible of the last text a rule was run on, so the many rules of one text build it once."""
-    if _SPACED_MEMO[0] is not text:
-        _SPACED_MEMO[0] = text
-        _SPACED_MEMO[1] = _space_invisible(text)
-    return _SPACED_MEMO[1] or ''
+    global _SPACED_MEMO
+    memo = _SPACED_MEMO
+    if memo[0] is text:
+        return memo[1]
+    view = _space_invisible(text)
+    _SPACED_MEMO = (text, view)
+    return view
 
 
 def _strip_invisible(text: str) -> str:

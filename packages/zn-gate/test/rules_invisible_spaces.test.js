@@ -48,6 +48,16 @@ for (const h of fixture.block_cases) {
   });
 }
 
+for (const h of fixture.credential_block_cases) {
+  test(hex(cpOf(h)) + ' used as a space does not hide the credentials phrase', () => {
+    const base = rules.evaluate(fixture.credential_phrase);
+    assert.equal(base.verdict, 'block');
+    const res = rules.evaluate(fixture.credential_phrase.replace(/ /g, chr(h)));
+    assert.equal(res.verdict, 'block');
+    assert.equal(res.rule, base.rule);
+  });
+}
+
 for (const b of fixture.benign_cases) {
   test('benign text with ' + hex(cpOf(b.cp)) + ' is allowed: ' + b.template, () => {
     const text = b.template.replace('{X}', chr(b.cp));

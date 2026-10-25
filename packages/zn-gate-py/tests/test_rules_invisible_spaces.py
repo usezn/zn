@@ -45,6 +45,31 @@ def test_invisible_used_as_space_does_not_hide_trigger_phrase(h):
     assert one.rule == base.rule
 
 
+@pytest.mark.parametrize("h", FIXTURE["credential_block_cases"])
+def test_invisible_used_as_space_does_not_hide_credentials_phrase(h):
+    base = rules.evaluate(FIXTURE["credential_phrase"])
+    assert base.verdict == "block"
+    res = rules.evaluate(FIXTURE["credential_phrase"].replace(" ", _chr(h)))
+    assert res.verdict == "block"
+    assert res.rule == base.rule
+
+
+def test_spaced_view_is_thread_safe():
+    """Many different texts with invisible characters redacted concurrently give the single-threaded result."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    zw = _chr("200B")
+    texts = [
+        "note %d key%s=%s%s token %s" % (i, zw, "sk-ant-", ("a1B2c3D4e5" * 4) + str(i), zw * (i % 5 + 1))
+        for i in range(400)
+    ]
+    expected = [rules.redact_secrets(t) for t in texts]
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        for _ in range(3):
+            got = list(pool.map(rules.redact_secrets, texts))
+            assert got == expected
+
+
 @pytest.mark.parametrize("case", FIXTURE["benign_cases"], ids=lambda c: c["cp"] + "-" + c["template"])
 def test_benign_text_with_invisible_character_is_allowed(case):
     assert rules.evaluate(case["template"].replace("{X}", _chr(case["cp"]))).verdict == "allow"
