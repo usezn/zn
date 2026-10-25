@@ -232,9 +232,14 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     about is blocked, and the reason says what was held back and how to approve
     it (run it yourself outside the agent). A call zn has no objection to gets
     no answer (Gemini CLI's own approval applies). A pasted secret in a typed prompt is not checked.
-  - A hook that crashes or times out does not block the call: only an explicit
-    refusal (exit code 2) does. A user install goes through a small launcher
-    script that blocks the call if the Node.js zn was installed with is gone.
+  - Gemini CLI lets a call run when a hook crashes or times out: only an
+    explicit refusal (exit code 2) blocks. zn blocks instead: a user install goes
+    through a small launcher script, and a project install through a start guard,
+    that answer a hook that fails (including when the Node.js zn was installed
+    with is gone) with a block, and a check that has not finished after 11
+    seconds is blocked, 4 seconds before Gemini CLI's 15-second timeout (see
+    "If your agent blocks every prompt"). Hooks written by zn-gate 1.13.1 or
+    earlier do not have these answers.
   - A project hook stays untrusted until you approve it in Gemini CLI, and it
     runs `zn` from your PATH, so every teammate needs zn-gate installed.
   - `hooksConfig.enabled: false`, a name in `hooksConfig.disabled` or
@@ -409,8 +414,9 @@ an older zn-gate and the plugins keep a plain command. Agent by agent:
   prompts and `preToolUse` calls are blocked (its hooks are `failClosed`). With
   a project install or older hooks, only file reads and prompts are blocked; the
   other calls go ahead.
-- **Gemini CLI**: with a user install, tool calls are blocked. With a project
-  install or older hooks, Gemini CLI shows a warning and the tool call runs.
+- **Gemini CLI**: with a user or a project install, tool calls are blocked. With
+  hooks written by zn-gate 1.13.1 or earlier, Gemini CLI shows a warning and the
+  tool call runs.
 - **GitHub Copilot CLI**: a hook command that cannot start fails closed for
   `preToolUse`, so the tool call is blocked; the hook that runs after a tool
   fails open, so that output is not scrubbed. Copilot has no launcher; zn
