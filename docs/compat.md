@@ -4,6 +4,13 @@ What the secrets scrubber and broker can do in each agent. zn-gate is not a sand
 depends on what each agent's hooks can see and block; formats were checked against each agent's official
 documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is in [`bench/e2e/`](../bench/e2e/).
 
+**What has been tested.**
+
+- **ZCode desktop app 3.16.3:** tested end to end in the app on Linux. On Linux and Windows it was also tested through the agent runtime that ships with the app (details: [ZCode page](editors/zcode.md)).
+- **Antigravity:** tested with the official `agy` CLI 1.4.7 on Linux.
+- **Claude Code, Codex CLI, Cursor, OpenCode, Gemini CLI and GitHub Copilot CLI:** the hook commands zn installs were run with the events each agent sends, after a clean install on Linux, and in a smoke test on Windows as an administrator and as a standard user.
+- **Desktop apps:** the Claude desktop app, the Cursor app, the Antigravity IDE and the OpenCode desktop app have not been tested end to end yet. Anthropic's documentation says Claude Code runs the same hooks in the desktop app as in the terminal, and that the desktop app reads the same settings files as the CLI, so the hooks zn installs for Claude Code apply there too.
+
 ZCode desktop app: its hooks live in the user file the app documents (`~/.zcode/cli/config.json`, Settings -> Hooks). zn follows the hook behaviour described in the official ZCode documentation. Tested end to end on the official ZCode desktop app 3.16.3 on Linux x64 (October 2026): with zn installed, Settings -> Hooks lists zn's hooks, and in a real task zn blocked reading `.env` and `~/.aws/credentials` while ordinary commands and reads ran; the same checks also passed headless with the agent the app ships. The same checks also passed on Windows x64 (Windows Server 2022, same app version, October 2026), for an administrator and for a standard user: they ran through the agent the app ships, with zn's hooks set in the app's user config file as on Linux; the Windows app window itself was not driven. macOS was not tested.
 
 | | Claude Code | Codex CLI | Cursor (IDE) | OpenCode | Antigravity | ZCode desktop app |
