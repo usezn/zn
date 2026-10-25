@@ -2,14 +2,15 @@
 
 const fs = require('fs');
 const linearRegex = require('./linear-regex');
+const { ZERO_WIDTH_RE, INVISIBLE_ASTRAL_RE, spaceInvisible, spaceInvisibleForMatch } = require('./invisible');
 const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-25.23
+ * RULES_VERSION: 2026-10-25.25
  */
 
-const RULES_VERSION = '2026-10-25.23';
+const RULES_VERSION = '2026-10-25.25';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -509,9 +510,7 @@ const HOMOGLYPH_MAP = {
 // embeddings, overrides and isolates (U+202A-202E, U+2066-2069) are not removed here: the
 // evasion:bidi_override rule blocks them wherever they appear. The Unicode tag
 // characters (U+E0000-E007F) and the supplementary variation selectors
-// (U+E0100-E01EF) are astral and live in INVISIBLE_ASTRAL_RE.
-const ZERO_WIDTH_RE = /[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F\u061C\u180E\u200E\u200F\u115F\u1160\u3164\uFFA0]/g;
-const INVISIBLE_ASTRAL_RE = /[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+// (U+E0100-E01EF) are astral. The table is lib/invisible.js (ZERO_WIDTH_RE and INVISIBLE_ASTRAL_RE).
 // A line break inside a wrapped token (a key or a base64 blob printed 20 or 40 characters per line):
 // at least 10 token characters before and after it, and the next line does not
 // start a new NAME= or NAME: assignment. The secret rules also run on the text without these breaks.
@@ -792,7 +791,15 @@ function evaluateUncached(input, options = {}) {
   const b64Advisory = b64.advisory;
 
   // Check against normalized, stripped, and raw input
-  const targets = Array.from(new Set([normalized, stripped, input]));
+  const targetList = [normalized, stripped, input];
+  // An invisible character used as a space ("ignore<U+3164>all previous instructions") joins the words in the
+  // stripped views, so the same passes also run with each invisible character replaced by a space.
+  const spacedInput = spaceInvisibleForMatch(input);
+  if (spacedInput !== input) {
+    const spaced = normalizeInput(spacedInput);
+    targetList.push(spaced.normalized, spaced.stripped, spacedInput);
+  }
+  const targets = Array.from(new Set(targetList));
 
   for (const text of targets) {
     // 0. Evasion Rules (BiDi Trojan Source)
@@ -1199,8 +1206,21 @@ function startsSecretAt(text, from, limit, patterns) {
   return false;
 }
 
+// The spaced view of the last text a rule was run on (see spaceInvisible), so the many rules of one text
+// build it once.
+let spacedMemo = { text: null, spaced: null };
+function spacedView(text) {
+  if (spacedMemo.text !== text) spacedMemo = { text, spaced: spaceInvisible(text) };
+  return spacedMemo.spaced;
+}
+
 function ruleCandidates(item, text, view, budget, out, patterns = null) {
   const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
+  // A third pass reads each invisible character as a space; its indexes are the original ones.
+  if (view) {
+    const spaced = spacedView(text);
+    if (spaced !== text) passes.push([spaced, null, true]);
+  }
   // Spans this rule found on the original text. A match on the view that overlaps two or more of them is
   // dropped, so two secrets on consecutive lines are not merged into one match across the break. A view
   // match that extends a single original match (the first line of a wrapped key) is kept, unless the next
@@ -1210,7 +1230,7 @@ function ruleCandidates(item, text, view, budget, out, patterns = null) {
   const foundEnds = [];
   const flags = item.pattern.flags.includes('d') ? item.pattern.flags : item.pattern.flags + 'd';
   const regex = new RegExp(item.pattern.source, flags);
-  for (const [hay, map] of passes) {
+  for (const [hay, map, spaced] of passes) {
     if (item.requires && !hay.includes(item.requires)) continue;
     if (item.prefilter && !item.prefilter.test(hay)) continue;
     regex.lastIndex = 0;
@@ -1235,7 +1255,9 @@ function ruleCandidates(item, text, view, budget, out, patterns = null) {
         }
       }
       const [start, end] = spanIn(map, m.index, m.index + m[0].length);
-      if (!map) {
+      if (spaced) {
+        // Same indexes as the original: the span cannot join two matches, and it is not in order.
+      } else if (!map) {
         foundStarts.push(start);
         foundEnds.push(end);
       } else {
