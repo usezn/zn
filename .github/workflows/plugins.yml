@@ -111,6 +111,9 @@ jobs:
       - name: Pin commit lookup tests
         if: steps.scope.outputs.run == 'true'
         run: node plugins/tools/test-pin-commit.js
+      - name: Release pin check tests
+        if: steps.scope.outputs.run == 'true'
+        run: node plugins/tools/test-check-plugins.js
       - name: Install zn-gate dependencies for the benchmark
         if: steps.scope.outputs.run == 'true' && (hashFiles('plugins/tools/bench-launch.js') != '')
         working-directory: packages/zn-gate
@@ -144,4 +147,11 @@ jobs:
           check-latest: true
           package-manager-cache: false
       - name: Release checks
-        run: node plugins/tools/check-plugins.js --release
+        # On the tag the lock file must pin this release. On the release pull request and on main before the tag it may
+        # still be on the previous release: the plugin is pinned only after npm publishes (see --pre-tag).
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            node plugins/tools/check-plugins.js --release
+          else
+            node plugins/tools/check-plugins.js --release --pre-tag
+          fi

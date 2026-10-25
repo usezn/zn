@@ -6,7 +6,8 @@
  * entry. Run from the repository root:
  *
  *   node plugins/tools/check-plugins.js            # every commit (CI)
- *   node plugins/tools/check-plugins.js --release  # before tagging a release
+ *   node plugins/tools/check-plugins.js --release  # on the release tag: the lock file pins this very release
+ *   node plugins/tools/check-plugins.js --release --pre-tag  # release pull request, before the tag (see below)
  *
  * Checks:
  *  - every JSON file parses;
@@ -25,6 +26,10 @@
  *  - --release: the lock file has the npm integrity, a provenance attestation
  *    and the file digests, the npm files exist, and no placeholder is left in
  *    the plugin docs.
+ * --pre-tag (with --release): the plugin can only be pinned to a release after npm publishes it, so before the tag
+ * the lock file may stay on the PREVIOUS published release (the one listed right below this version in CHANGELOG.md,
+ * nothing older), or already be on this version. Every other release check, including the integrity, the attestation
+ * and the file digests of the lock file as it is, stays strict. On the tag the lock file must equal the version.
  * No dependencies; Node.js 18 or later.
  */
 
@@ -34,6 +39,7 @@ const path = require('path');
 const ROOT = process.cwd();
 const PLUGIN = 'plugins/zn-gate';
 const release = process.argv.includes('--release');
+const preTag = release && process.argv.includes('--pre-tag');
 const errors = [];
 
 function fail(msg) { errors.push(msg); }
@@ -92,10 +98,24 @@ const olderFinal = (a, b) => {
 };
 for (const [where, got] of Object.entries(serverVersions)) {
   if (got !== pkg.version) fail(where + ': version ' + got + ' differs from packages/zn-gate/package.json version ' + pkg.version);
-  if (release && !pre && got !== v) fail(where + ': version ' + got + ' differs from the lock file version ' + v);
+  if (release && !pre && !preTag && got !== v) fail(where + ': version ' + got + ' differs from the lock file version ' + v);
 }
 if (release && pre && !olderFinal(v || '0.0.0', pre[1])) {
   fail('lock file: for the prerelease ' + pkg.version + ' the plugin pin must stay on the last final release (older than ' + pre[1] + '), got ' + v);
+}
+// Before the tag the pin may lag by exactly one release: the previous published one (CHANGELOG.md lists releases newest first).
+function previousRelease(version) {
+  const found = [];
+  const re = /^## \[(\d+\.\d+\.\d+)\]/gm;
+  const text = read('CHANGELOG.md');
+  for (let m = re.exec(text); m; m = re.exec(text)) found.push(m[1]);
+  const i = found.indexOf(version);
+  return i >= 0 ? found[i + 1] || null : null;
+}
+if (preTag && !pre && v !== pkg.version) {
+  const prev = previousRelease(pkg.version);
+  if (!prev) fail('CHANGELOG.md: no release listed below ' + pkg.version + ', cannot tell the previous release for --pre-tag');
+  else if (v !== prev) fail('lock file: before the tag the plugin pin must be the previous release ' + prev + ' or ' + pkg.version + ', got ' + v);
 }
 if (serverPkgs.length !== 1) fail(SERVER_JSON + ': expected exactly one npm package entry for zn-gate, found ' + serverPkgs.length);
 const npmPkg = serverPkgs[0] || {};
@@ -363,5 +383,5 @@ if (errors.length) {
   process.stderr.write(errors.map((e) => 'check-plugins: ' + e).join('\n') + '\n');
   process.exitCode = 1;
 } else {
-  process.stdout.write('check-plugins: OK (zn-gate ' + v + (release ? ', release mode' : '') + ')\n');
+  process.stdout.write('check-plugins: OK (zn-gate ' + v + (release ? (preTag ? ', release mode before the tag' : ', release mode') : '') + ')\n');
 }
