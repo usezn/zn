@@ -44,6 +44,19 @@ zn hooks install antigravity
 
 This writes the hook to `~/.gemini/config/hooks.json` for your user. Add `--project` to write `.agents/hooks.json` in the current project instead; a project hook runs `zn` from your `PATH`, so everyone who opens the project in Antigravity needs zn-gate installed (without it the hook blocks the call with a message that says how to install it). The command is written for the kind of machine you ran it on (macOS and Linux, or Windows): a teammate on the other kind runs the same command in their own copy. zn-gate keeps a backup of a file it changes, and `zn hooks uninstall antigravity` removes the hook. `zn hooks install antigravity` also starts the hook once with a harmless test event and tells you if it does not answer with a valid decision. If it says `SELF-CHECK FAILED`, follow the next step it prints (usually `npm install -g zn-gate`, then install again) before you use Antigravity. Then run `npx -y zn-gate check`, which reports whether the Antigravity hook works.
 
+## The Antigravity plugin
+
+An Antigravity CLI plugin build of zn-gate is ready. The install steps will be published with its plugin repository. Until then the supported way to use zn-gate in Antigravity is `zn hooks install antigravity`, above.
+
+What the plugin is, so you know what to expect when it is published:
+
+- It has the same hook as `zn hooks install antigravity`: one `PreToolUse` hook on every tool, with the same checks and the same answers. It ships its own pinned, verified copy of zn-gate, so it needs no `npm install` and no account. It still needs Node.js 20.19 or later on your machine.
+- Antigravity documents plugin hooks for the CLI only. The plugin is not tested in the Antigravity app or the IDE.
+- Use the plugin or `zn hooks install antigravity`, not both: with both, every call is checked twice (the answers are the same, so nothing breaks).
+- You can turn the plugin off with `agy plugin disable zn-gate` and remove it with `agy plugin uninstall zn-gate`. With it off and no user hook installed, nothing of zn runs in Antigravity.
+- If the plugin's hook cannot run zn (no Node.js, a missing file, a failure, or no answer within 12 seconds), it answers `deny` with the reason instead of leaving the decision to Antigravity.
+- Tested on the Antigravity CLI 1.4.7 on Linux only. macOS and Windows are not tested, and the plugin's hook is a shell script, so on Windows use `zn hooks install antigravity`.
+
 ## What zn-gate protects in Antigravity, and what it does not
 
 | | In Antigravity |

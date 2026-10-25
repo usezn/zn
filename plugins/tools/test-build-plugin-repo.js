@@ -481,6 +481,118 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       assert.ok(asZcode.problems.length > 0);
     });
 
+    await test('--target antigravity builds the Antigravity CLI plugin tree: plugin at the root, bundled zn-gate, shared launcher', async () => {
+      builds++;
+      const file = path.join(tmp, 'zn-gate-antigravity.tgz');
+      const archive = tgz(BASE);
+      fs.writeFileSync(file, archive);
+      const out = path.join(tmp, 'out-antigravity');
+      const res = await builder.build({ tarball: file, out, integrity: sri(archive), source: 'a'.repeat(40), target: 'antigravity' });
+      assert.strictEqual(res.target, 'antigravity');
+      for (const [rel, from, dest] of builder.ANTIGRAVITY_FILES) {
+        assert.ok(fs.readFileSync(path.join(out, dest)).equals(fs.readFileSync(path.join(from, rel))), dest + ' is copied unchanged');
+      }
+      const lock = JSON.parse(fs.readFileSync(path.join(out, 'scripts', 'zn-gate.lock.json'), 'utf8'));
+      assert.strictEqual(lock.bundled, 'vendor/zn-gate');
+      assert.strictEqual(lock.version, VERSION);
+      assert.strictEqual(lock.source, 'a'.repeat(40));
+      for (const rel of Object.keys(lock.files)) {
+        const buf = fs.readFileSync(path.join(out, 'vendor', 'zn-gate', ...rel.split('/')));
+        assert.strictEqual(crypto.createHash('sha256').update(buf).digest('hex'), lock.files[rel], rel);
+      }
+      assert.strictEqual(fs.readFileSync(path.join(out, '.gitattributes'), 'utf8'), '* -text\n');
+      // Antigravity reads plugin.json and hooks.json from the root, and refuses a manifest with a version key.
+      assert.deepStrictEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(out, 'plugin.json'), 'utf8'))).sort(), ['description', 'name']);
+      assert.deepStrictEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(out, 'hooks.json'), 'utf8'))), ['zn-gate']);
+      // None of the files of the other plugins.
+      for (const absent of ['.claude-plugin', '.zcode-plugin', '.mcp.json', 'cursor', 'com.openai', 'package.json', 'package-lock.json', 'marketplace.json', 'zn-gate', 'hooks', 'icon.png']) {
+        assert.ok(!fs.existsSync(path.join(out, absent)), absent + ' is not shipped');
+      }
+      assert.ok(!fs.readFileSync(path.join(out, 'hooks.json'), 'utf8').includes('claude-code'));
+    });
+
+    await test('verify-plugin-repo --target antigravity accepts a built Antigravity tree and finds each kind of change', async () => {
+      const { verify } = require('./verify-plugin-repo');
+      const file = path.join(tmp, 'verify-antigravity.tgz');
+      const archive = tgz(BASE);
+      fs.writeFileSync(file, archive);
+      const out = path.join(tmp, 'verify-antigravity-out');
+      const source = 'a'.repeat(40);
+      write(path.join(out, '.github', 'workflows', 'verify.yml'), fs.readFileSync(path.join(CLAUDE_DIR, 'verify.yml')));
+      await builder.build({ tarball: file, out, integrity: sri(archive), source, target: 'antigravity' });
+      const check = (target = 'antigravity') => verify({ repo: out, tarball: file, integrity: sri(archive), source, target });
+      assert.deepStrictEqual((await check()).problems, []);
+      const at = (rel) => path.join(out, ...rel.split('/'));
+      const keep = (rel) => fs.readFileSync(at(rel));
+      const expectProblem = async (change, undo, re) => {
+        change();
+        try {
+          const { problems } = await check();
+          assert.ok(problems.some((p) => re.test(p)), re + ' in ' + JSON.stringify(problems));
+        } finally {
+          undo();
+        }
+      };
+      const edit = (rel, fn) => {
+        const before = keep(rel);
+        return [() => fs.writeFileSync(at(rel), fn(before.toString('utf8'))), () => fs.writeFileSync(at(rel), before)];
+      };
+      const gone = (rel) => () => fs.rmSync(at(rel), { recursive: true, force: true });
+
+      for (const [rel, re] of [
+        ['vendor/zn-gate/lib/index.js', /vendor\/zn-gate\/lib\/index\.js differs from the npm package/],
+        ['scripts/zn-launch.js', /scripts\/zn-launch\.js differs from usezn\/zn/],
+        ['scripts/zn-hook.sh', /scripts\/zn-hook\.sh differs from usezn\/zn/],
+        ['scripts/zn-gate.lock.json', /zn-gate\.lock\.json is not the lock/],
+        ['README.md', /README\.md differs from usezn\/zn/],
+        ['plugin.json', /plugin\.json differs from usezn\/zn/],
+        ['hooks.json', /hooks\.json differs from usezn\/zn/],
+        ['.gitattributes', /\.gitattributes differs from usezn\/zn/],
+      ]) {
+        const before = keep(rel);
+        await expectProblem(() => fs.appendFileSync(at(rel), '\n// changed\n'), () => fs.writeFileSync(at(rel), before), re);
+      }
+      await expectProblem(() => write(at('stray.txt'), 'x'), gone('stray.txt'), /stray\.txt is not expected/);
+      await expectProblem(() => write(at('marketplace.json'), '{}'), gone('marketplace.json'), /^marketplace\.json is not expected/);
+      await expectProblem(() => write(at('.claude-plugin/plugin.json'), '{}'), gone('.claude-plugin'), /\.claude-plugin\/plugin\.json is not expected/);
+      await expectProblem(() => write(at('vendor/zn-gate/lib/extra.js'), ''), gone('vendor/zn-gate/lib/extra.js'), /lib\/extra\.js is not in the npm package/);
+      { const sh = 'scripts/zn-hook.sh'; const b = keep(sh); await expectProblem(gone(sh), () => fs.writeFileSync(at(sh), b), /zn-hook\.sh is missing/); }
+      // plugin.json: the name, and no key Antigravity does not accept (a version above all).
+      {
+        const [c, u] = edit('plugin.json', (t) => JSON.stringify({ ...JSON.parse(t), version: VERSION }));
+        await expectProblem(c, u, /plugin\.json has the key "version", which Antigravity does not accept/);
+        const [c2, u2] = edit('plugin.json', (t) => JSON.stringify({ ...JSON.parse(t), name: 'other' }));
+        await expectProblem(c2, u2, /names the plugin "other", not zn-gate/);
+        const [c3, u3] = edit('plugin.json', () => 'not json');
+        await expectProblem(c3, u3, /plugin\.json is not valid JSON/);
+      }
+      // hooks.json: one named hook, one PreToolUse group running the script, a timeout under the default.
+      {
+        const [c, u] = edit('hooks.json', (t) => t.replace('sh scripts/zn-hook.sh', 'bash scripts/zn-hook.sh'));
+        await expectProblem(c, u, /does not run `sh scripts\/zn-hook\.sh`/);
+        const [c2, u2] = edit('hooks.json', (t) => t.replace('"timeout": 15', '"timeout": 30'));
+        await expectProblem(c2, u2, /needs a timeout below the 30 seconds default/);
+        const [c3, u3] = edit('hooks.json', (t) => JSON.stringify({ ...JSON.parse(t), extra: {} }));
+        await expectProblem(c3, u3, /exactly one named hook, zn-gate/);
+        const [c4, u4] = edit('hooks.json', (t) => t.replace('"enabled": true', '"enabled": false'));
+        await expectProblem(c4, u4, /must be enabled and have exactly one PreToolUse group/);
+        const [c5, u5] = edit('hooks.json', () => '{');
+        await expectProblem(c5, u5, /hooks\.json is not valid JSON/);
+      }
+      {
+        const [c, u] = edit('scripts/zn-hook.sh', (t) => t.replace('#!/bin/sh', '#!/usr/bin/env bash'));
+        await expectProblem(c, u, /zn-hook\.sh is not a \/bin\/sh script/);
+      }
+      { const wf = keep('.github/workflows/verify.yml'); await expectProblem(gone('.github/workflows/verify.yml'), () => write(at('.github/workflows/verify.yml'), wf), /verify\.yml is missing/); }
+      if (process.platform !== 'win32') {
+        await expectProblem(() => fs.symlinkSync('index.js', at('vendor/zn-gate/lib/link.js')), gone('vendor/zn-gate/lib/link.js'), /link\.js is a symbolic link/);
+      }
+      // A tree is only valid for the target it was built with.
+      assert.ok((await check('claude')).problems.length > 0, 'an Antigravity tree is not a Claude Code plugin repository');
+      assert.ok((await check('zcode')).problems.length > 0, 'an Antigravity tree is not a ZCode plugin repository');
+      assert.deepStrictEqual((await check()).problems, [], 'every change was undone');
+    });
+
     await test('PROVENANCE.md lists exactly the files that are copied', async () => {
       const text = fs.readFileSync(path.join(CLAUDE_DIR, 'PROVENANCE.md'), 'utf8');
       const start = text.indexOf('\n4. ');

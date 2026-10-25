@@ -8,7 +8,7 @@
  * repository at the commit the plugin was generated from (the "source" in its
  * lock file), on every pull request into its main branch and on main itself.
  *
- *   node plugins/tools/verify-plugin-repo.js --repo <plugin checkout> --tarball <zn-gate-X.Y.Z.tgz> [--target claude|zcode]
+ *   node plugins/tools/verify-plugin-repo.js --repo <plugin checkout> --tarball <zn-gate-X.Y.Z.tgz> [--target claude|zcode|antigravity]
  *
  * The target is the one the repository was built with (build-plugin-repo.js
  * --target): claude by default. The ZCode tree keeps the plugin in zn-gate/
@@ -146,17 +146,49 @@ function zcodeProblems(files, dir) {
 }
 
 /**
+ * What only the Antigravity CLI plugin has to be. plugin.json takes no version key, so the version of the build is the
+ * one in the lock file, which the comparison with the tarball already fixed.
+ */
+function antigravityProblems(files) {
+  const problems = [];
+  const manifest = readJson(files, 'plugin.json', problems);
+  if (manifest) {
+    if (manifest.name !== 'zn-gate') problems.push('plugin.json names the plugin ' + JSON.stringify(manifest.name) + ', not zn-gate');
+    for (const k of Object.keys(manifest)) {
+      if (!['name', 'description', '$schema'].includes(k)) problems.push('plugin.json has the key ' + JSON.stringify(k) + ', which Antigravity does not accept');
+    }
+  }
+  const hooks = readJson(files, 'hooks.json', problems);
+  if (hooks) {
+    const entry = hooks['zn-gate'];
+    const groups = entry && entry.PreToolUse;
+    const keys = entry ? Object.keys(entry).filter((k) => k !== 'enabled') : [];
+    if (Object.keys(hooks).length !== 1 || !entry) problems.push('hooks.json must hold exactly one named hook, zn-gate');
+    else if (entry.enabled !== true || keys.length !== 1 || !Array.isArray(groups) || groups.length !== 1) problems.push('hooks.json: zn-gate must be enabled and have exactly one PreToolUse group');
+    else {
+      const hs = Array.isArray(groups[0].hooks) ? groups[0].hooks : [];
+      if (hs.length !== 1 || hs[0].type !== 'command' || hs[0].command !== 'sh scripts/zn-hook.sh') problems.push('hooks.json: the PreToolUse hook does not run `sh scripts/zn-hook.sh`');
+      if (hs.length === 1 && !(Number.isInteger(hs[0].timeout) && hs[0].timeout > 0 && hs[0].timeout < 30)) problems.push('hooks.json: the hook needs a timeout below the 30 seconds default');
+    }
+  }
+  const script = files.get('scripts/zn-hook.sh');
+  if (script && !/^#!\/bin\/sh\n/.test(script.toString('utf8'))) problems.push('scripts/zn-hook.sh is not a /bin/sh script');
+  return problems;
+}
+
+/**
  * opts.integrity replaces the registry lookup and opts.source the commit of
  * this repository; only the tests use them.
  */
 async function verify({ repo, tarball, integrity, source, target }) {
-  if (target !== undefined && target !== 'claude' && target !== 'zcode') throw new Error('unknown target ' + target + ' (claude or zcode)');
+  if (target !== undefined && !builder.TARGETS.includes(target)) throw new Error('unknown target ' + target + ' (' + builder.TARGETS.join(', ') + ')');
   const zcode = target === 'zcode';
+  const agy = target === 'antigravity';
   // Where the files are in each kind of repository.
   const dir = zcode ? builder.ZCODE_DIR + '/' : '';
   const VENDOR = dir + builder.BUNDLED_DIR + '/';
   const LOCK = dir + 'scripts/zn-gate.lock.json';
-  const MANIFEST = dir + (zcode ? '.zcode-plugin/plugin.json' : '.claude-plugin/plugin.json');
+  const MANIFEST = dir + (zcode ? '.zcode-plugin/plugin.json' : agy ? 'plugin.json' : '.claude-plugin/plugin.json');
   const problems = [];
   const tgz = fs.readFileSync(tarball);
   const actual = 'sha512-' + crypto.createHash('sha512').update(tgz).digest('base64');
@@ -215,8 +247,8 @@ async function verify({ repo, tarball, integrity, source, target }) {
 
   // 4. Every other file comes from this repository, unchanged.
   const expected = new Map();
-  if (zcode) {
-    for (const [rel, from, dest] of builder.ZCODE_FILES) expected.set(dest, fs.readFileSync(path.join(from, ...rel.split('/'))));
+  if (zcode || agy) {
+    for (const [rel, from, dest] of zcode ? builder.ZCODE_FILES : builder.ANTIGRAVITY_FILES) expected.set(dest, fs.readFileSync(path.join(from, ...rel.split('/'))));
   } else {
     for (const [rel, from] of builder.PLUGIN_FILES) expected.set(rel, fs.readFileSync(path.join(from, ...rel.split('/'))));
   }
@@ -232,11 +264,15 @@ async function verify({ repo, tarball, integrity, source, target }) {
   }
 
   // 5. Version and limits.
-  let manifestVersion = null;
-  try {
-    manifestVersion = JSON.parse(files.get(MANIFEST).toString('utf8')).version;
-  } catch (_) { /* reported as missing or different above */ }
-  if (manifestVersion !== version) problems.push(MANIFEST + ' has version ' + manifestVersion + ', the package is ' + version);
+  if (agy) {
+    problems.push(...antigravityProblems(files));
+  } else {
+    let manifestVersion = null;
+    try {
+      manifestVersion = JSON.parse(files.get(MANIFEST).toString('utf8')).version;
+    } catch (_) { /* reported as missing or different above */ }
+    if (manifestVersion !== version) problems.push(MANIFEST + ' has version ' + manifestVersion + ', the package is ' + version);
+  }
   if (zcode) problems.push(...zcodeProblems(files, dir));
   const shipped = new Map([...files].filter(([rel]) => !rel.startsWith('.github/')));
   problems.push(...builder.checkLimits(shipped));
@@ -244,7 +280,7 @@ async function verify({ repo, tarball, integrity, source, target }) {
   return { version, source: commit, files: files.size, problems };
 }
 
-const USAGE = 'usage: verify-plugin-repo.js --repo <dir> --tarball <tgz> [--target claude|zcode]';
+const USAGE = 'usage: verify-plugin-repo.js --repo <dir> --tarball <tgz> [--target claude|zcode|antigravity]';
 
 function parseArgs(argv) {
   const opts = {};

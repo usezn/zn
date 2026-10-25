@@ -1,0 +1,4 @@
+{
+  "name": "zn-gate",
+  "description": "Local security layer for the Antigravity CLI: blocks reads and writes of secret files and shell commands that would handle a secret before they run. Runs a pinned, verified copy of zn-gate that ships inside the plugin; no account and no API key."
+}

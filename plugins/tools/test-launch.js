@@ -149,11 +149,51 @@ try {
     assert.strictEqual(JSON.parse(r.stdout).permission, 'deny');
   });
 
+  test('antigravity gets a deny decision on stdout, with the reason and exit 0, when zn-gate is missing', () => {
+    const r = run(['hook', 'antigravity'], '{"toolCall":{"name":"run_command","args":{}}}', { path: path.join(tmp, 'empty-bin') });
+    assert.strictEqual(r.status, 0, r.stderr);
+    const answer = JSON.parse(r.stdout);
+    assert.strictEqual(answer.decision, 'deny');
+    assert.match(answer.reason, /not installed/);
+  });
+
+  test('antigravity: an answer of zn-gate that is not a decision becomes a deny, and a decision passes through', () => {
+    const runnerFile = path.join(pkgDir, 'lib', 'hooks', 'runner.js');
+    const lockWith = () => setLock({ package: 'zn-gate', version: '9.9.9', files: { ...files, 'lib/hooks/runner.js': sha(runnerFile) } });
+    for (const body of ["process.stdout.write('not json');", "process.stdout.write('{}');", 'process.stdout.write(JSON.stringify({ decision: "maybe" }));', '']) {
+      write(runnerFile, 'exports.main = async () => { ' + body + ' };\n');
+      lockWith();
+      const r = run(['hook', 'antigravity'], '{"toolCall":{"name":"x","args":{}}}');
+      assert.strictEqual(r.status, 0, r.stderr);
+      assert.strictEqual(JSON.parse(r.stdout).decision, 'deny', body);
+      assert.match(JSON.parse(r.stdout).reason, /gave no decision/);
+    }
+    for (const [body, rc] of [['process.stdout.write(JSON.stringify({ decision: "allow" }));', 0], ['process.stdout.write(JSON.stringify({ decision: "deny", reason: "r" })); process.exitCode = 2;', 2]]) {
+      write(runnerFile, 'exports.main = async () => { ' + body + ' };\n');
+      lockWith();
+      const r = run(['hook', 'antigravity'], '{"toolCall":{"name":"x","args":{}}}');
+      assert.strictEqual(r.status, 0, 'exit ' + rc + ' of zn-gate: ' + r.stderr);
+      assert.strictEqual(JSON.parse(r.stdout).decision, body.includes('deny') ? 'deny' : 'allow');
+    }
+    // An exit code that is neither 0 nor 2 is a failure, whatever was printed first.
+    write(runnerFile, 'exports.main = async () => { process.stdout.write(JSON.stringify({ decision: "allow" })); process.exit(1); };\n');
+    lockWith();
+    const r = run(['hook', 'antigravity'], '{"toolCall":{"name":"x","args":{}}}');
+    assert.strictEqual(r.status, 0);
+    assert.strictEqual(JSON.parse(r.stdout).decision, 'deny');
+    setLock({ package: 'zn-gate', version: '9.9.9', files });
+    installPackage();
+  });
+
   test('whenUnavailable allow in ~/.zn/config.json lets the event pass', () => {
     setConfig({ hooks: { whenUnavailable: 'allow' } });
     const r = run(['hook', 'claude-code'], undefined, { path: path.join(tmp, 'empty-bin') });
     assert.strictEqual(r.status, 0);
     assert.match(r.stderr, /passed through/);
+    // Antigravity denies a call whose hook prints nothing, so a pass-through answers with an explicit allow.
+    const a = run(['hook', 'antigravity'], '{"toolCall":{"name":"x","args":{}}}', { path: path.join(tmp, 'empty-bin') });
+    assert.strictEqual(a.status, 0);
+    assert.deepStrictEqual(JSON.parse(a.stdout), { decision: 'allow' });
     setConfig({});
   });
 

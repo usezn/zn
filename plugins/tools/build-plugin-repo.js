@@ -91,6 +91,20 @@ const ZCODE_FILES = [
   ['icon.png', PLUGIN, ZCODE_DIR + '/icon.png'],
   ['LICENSE', PLUGIN, ZCODE_DIR + '/LICENSE'],
 ];
+// The Antigravity CLI plugin: a repository whose root is the plugin (agy plugin install <repository URL> reads plugin.json
+// and hooks.json from the root), with the same bundled zn-gate and the same launcher and lock as the other plugins.
+// plugin.json takes no version key (Antigravity refuses anything but name, description and $schema), so the version of
+// the build is the one in the lock file, which the tarball fixes.
+const ANTIGRAVITY = path.resolve(__dirname, '..', 'antigravity');
+const ANTIGRAVITY_FILES = [
+  ['plugin.json', ANTIGRAVITY, 'plugin.json'],
+  ['hooks.json', ANTIGRAVITY, 'hooks.json'],
+  ['scripts/zn-hook.sh', ANTIGRAVITY, 'scripts/zn-hook.sh'],
+  ['README.md', ANTIGRAVITY, 'README.md'],
+  ['scripts/zn-launch.js', PLUGIN, 'scripts/zn-launch.js'],
+  ['LICENSE', PLUGIN, 'LICENSE'],
+];
+const TARGETS = ['claude', 'zcode', 'antigravity'];
 const GITATTRIBUTES = '* -text\n';
 const PRUNE = /\.(?:d\.[mc]?ts|[mc]?ts|map)$/;
 const MAX_FILES = 512;
@@ -425,6 +439,23 @@ function zcodeTree(bundle, version, integrity, source) {
   return out;
 }
 
+/** The tree of the Antigravity CLI plugin repository (see ANTIGRAVITY_FILES). */
+function antigravityTree(bundle, version, integrity, source) {
+  const out = new Map();
+  for (const [rel, from, dest] of ANTIGRAVITY_FILES) {
+    const abs = path.join(from, ...rel.split('/'));
+    if (fs.lstatSync(abs).isSymbolicLink()) throw new Error(path.relative(path.resolve(__dirname, '..', '..'), abs) + ' is a symbolic link');
+    out.set(dest, fs.readFileSync(abs));
+  }
+  const files = {};
+  for (const rel of [...bundle.keys()].sort()) files[rel] = sha256(bundle.get(rel));
+  const lock = { package: 'zn-gate', version, registry: REGISTRY, integrity, bundled: BUNDLED_DIR, source, files };
+  out.set('scripts/zn-gate.lock.json', Buffer.from(JSON.stringify(lock, null, 2) + '\n'));
+  out.set('.gitattributes', Buffer.from(GITATTRIBUTES));
+  for (const [rel, body] of bundle) out.set(BUNDLED_DIR + '/' + rel, body);
+  return out;
+}
+
 function checkLimits(tree) {
   const problems = [];
   if (tree.size > MAX_FILES) problems.push(tree.size + ' files (the limit is ' + MAX_FILES + ')');
@@ -448,7 +479,7 @@ async function registryIntegrity(version) {
  * the tests use it (the command line has no such option).
  */
 async function build({ tarball, out, integrity, source, target }) {
-  if (target !== undefined && target !== 'claude' && target !== 'zcode') throw new Error('unknown target ' + target + ' (claude or zcode)');
+  if (target !== undefined && !TARGETS.includes(target)) throw new Error('unknown target ' + target + ' (' + TARGETS.join(', ') + ')');
   const commit = source || execFileSync('git', ['-C', path.resolve(__dirname, '..', '..'), 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('the source must be a full commit hash: ' + commit);
   const tgz = fs.readFileSync(tarball);
@@ -467,7 +498,9 @@ async function build({ tarball, out, integrity, source, target }) {
 
   const importProblems = checkImports(bundle);
   if (importProblems.length) throw new Error('imports that are not checked or do not resolve inside the bundle:\n  ' + importProblems.join('\n  '));
-  const tree = target === 'zcode' ? zcodeTree(bundle, pkg.version, expected, commit) : pluginTree(bundle, pkg.version, expected, commit);
+  const tree = target === 'zcode' ? zcodeTree(bundle, pkg.version, expected, commit)
+    : target === 'antigravity' ? antigravityTree(bundle, pkg.version, expected, commit)
+      : pluginTree(bundle, pkg.version, expected, commit);
   const limitProblems = checkLimits(tree);
   if (limitProblems.length) throw new Error('over the plugin directory limits:\n  ' + limitProblems.join('\n  '));
 
@@ -483,7 +516,7 @@ async function build({ tarball, out, integrity, source, target }) {
   return { version: pkg.version, files: tree.size, bundled: bundle.size, target };
 }
 
-const USAGE = 'usage: build-plugin-repo.js --tarball <zn-gate-X.Y.Z.tgz> --out <dir> [--source <commit>] [--target claude|zcode]';
+const USAGE = 'usage: build-plugin-repo.js --tarball <zn-gate-X.Y.Z.tgz> --out <dir> [--source <commit>] [--target claude|zcode|antigravity]';
 
 function parseArgs(argv) {
   const opts = {};
@@ -497,11 +530,11 @@ function parseArgs(argv) {
   return opts;
 }
 
-module.exports = { build, bundleFiles, checkImports, checkLimits, PLUGIN_FILES, ZCODE_FILES, ZCODE_DIR, BUNDLED_DIR, PRUNE };
+module.exports = { build, bundleFiles, checkImports, checkLimits, PLUGIN_FILES, ZCODE_FILES, ZCODE_DIR, ANTIGRAVITY_FILES, TARGETS, BUNDLED_DIR, PRUNE };
 
 if (require.main === module) {
   build(parseArgs(process.argv.slice(2))).then((r) => {
-    process.stdout.write('Built the ' + (r.target === 'zcode' ? 'ZCode ' : '') + 'plugin repository for zn-gate ' + r.version + ': ' + r.files + ' files (' + r.bundled + ' bundled)\n');
+    process.stdout.write('Built the ' + (r.target === 'zcode' ? 'ZCode ' : r.target === 'antigravity' ? 'Antigravity ' : '') + 'plugin repository for zn-gate ' + r.version + ': ' + r.files + ' files (' + r.bundled + ' bundled)\n');
   }).catch((err) => {
     process.stderr.write('build-plugin-repo: ' + err.message + '\n');
     process.exitCode = 1;

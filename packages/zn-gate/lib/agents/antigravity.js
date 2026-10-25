@@ -51,6 +51,9 @@ const id = 'antigravity';
 const HOOK_NAME = 'zn-gate';
 const HOOK_TIMEOUT_S = 15;
 const MATCHER = '*';
+// The command of the hook in the plugin build (plugins/antigravity): Antigravity runs it from the folder the plugin
+// is installed in, so the path is relative to that folder.
+const PLUGIN_COMMAND = 'sh scripts/zn-hook.sh';
 
 const SHELL_TOOLS = new Set(['run_command']);
 // Real names seen in the IDE (read_file, write_file, edit_file, run_command) and in the CLI (view_file, write_to_file, ...).
@@ -437,6 +440,11 @@ function commandFor(opts = {}) {
   return launcher.launcherCommand(launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true }), 'PreToolUse', platform, { plain: true });
 }
 
+/** The named hook zn writes (user and project files) and ships in the plugin's hooks.json, with the given command. */
+function hookEntry(command) {
+  return { enabled: true, PreToolUse: [{ matcher: MATCHER, hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT_S }] }] };
+}
+
 function install(opts = {}) {
   const file = hooksFile(opts);
   const command = commandFor(opts); // may refuse (a launcher path Antigravity cannot start): before anything is written
@@ -451,7 +459,7 @@ function install(opts = {}) {
   // After the strip, a hook still called zn-gate is someone else's: zn never touches it (not even its enabled flag).
   let name = HOOK_NAME;
   while (data[name] !== undefined) name += '-zn';
-  data[name] = { enabled: true, PreToolUse: [{ matcher: MATCHER, hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT_S }] }] };
+  data[name] = hookEntry(command);
   cfg.writeJson(file, data);
   report.warnings.push('zn checks tool calls before they run (PreToolUse): it blocks reads and writes of secret files and shell commands that handle secrets.');
   if ((opts.scope || 'user') === 'project' && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook antigravity): every teammate who opens this project in Antigravity needs zn-gate installed. Without it the hook answers a deny that says how to install it, so Antigravity blocks the call instead of running it unchecked. The command is written for this kind of machine (' + ((opts.platform || process.platform) === 'win32' ? 'Windows' : 'macOS and Linux') + '): a teammate on the other kind runs `zn hooks install antigravity --project` in their own copy of the project.');
@@ -500,6 +508,9 @@ function detect(opts = {}) {
 module.exports = {
   id,
   HOOK_TIMEOUT_S,
+  MATCHER,
+  PLUGIN_COMMAND,
+  hookEntry,
   detect,
   install,
   uninstall,

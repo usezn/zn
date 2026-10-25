@@ -509,3 +509,97 @@ jobs:
           gh pr create --repo "$ZCODE_REPO" --base main --head "release/$VERSION" \
             --title "zn-gate $VERSION" \
             --body "The zn-gate $VERSION plugin for ZCode, generated from usezn/zn at $SOURCE. Before merging: the Verify check is green on a branch that is up to date with main."
+
+  # The Antigravity CLI plugin repository (plugins/antigravity, built with build-plugin-repo.js --target antigravity):
+  # a check that needs no credential. There is no release pull request job yet: the plugin repository does not exist.
+  # The check builds the tree from the published release the plugin is pinned to and verifies it
+  # (verify-plugin-repo.js --target antigravity), on every change of the pin and on demand, so a build that would be
+  # refused is found before anyone publishes. It writes nothing anywhere. plugin.json takes no version key, so the version
+  # of the build is the one in the lock file.
+  antigravity-check:
+    name: Build and check the Antigravity plugin tree
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - name: Harden the runner (egress block)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: block
+          allowed-endpoints: >-
+            github.com:443
+            api.github.com:443
+            registry.npmjs.org:443
+            tuf-repo.github.com:443
+            tuf-repo-cdn.sigstore.dev:443
+            tmaproduction.blob.core.windows.net:443
+            results-receiver.actions.githubusercontent.com:443
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: zn
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          package-manager-cache: false
+
+      - name: Find the commit that pinned the plugin
+        id: version
+        run: |
+          set -euo pipefail
+          # Same lookup as the Claude Code plugin job above (see the comments there).
+          source="$(git -C zn log -1 --first-parent --format=%H HEAD -- plugins/zn-gate/scripts/zn-gate.lock.json)"
+          git -C zn worktree add --quiet --detach ../src "$source"
+          v="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('src/plugins/zn-gate/scripts/zn-gate.lock.json','utf8')).version))")"
+          if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::the plugin is not pinned to a final release"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+
+      - name: Download the published package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if npm pack "zn-gate@$VERSION" --silent --ignore-scripts; then exit 0; fi
+            sleep 30
+          done
+          echo "::error::the pinned zn-gate release is not on npm"
+          exit 1
+
+      - name: Check the package's provenance attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE: ${{ steps.version.outputs.source }}
+        run: |
+          set -euo pipefail
+          git -C zn merge-base --is-ancestor "refs/tags/v$VERSION" "$SOURCE" || { echo "::error::the pin commit does not contain the release tag"; exit 1; }
+          signer=release.yml
+          if git -C zn cat-file -e "refs/tags/v$VERSION:.github/workflows/build-release.yml" 2>/dev/null; then signer=build-release.yml; fi
+          gh attestation verify "zn-gate-$VERSION.tgz" --repo usezn/zn \
+            --signer-workflow "usezn/zn/.github/workflows/$signer" \
+            --source-ref "refs/tags/v$VERSION" --format json > attestation.json
+          built="$(node -e "const a=JSON.parse(require('fs').readFileSync('attestation.json','utf8'));process.stdout.write(String(a[0].verificationResult.signature.certificate.sourceRepositoryDigest))")"
+          if [[ ! "$built" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the attestation names no source commit"; exit 1; fi
+          git -C zn merge-base --is-ancestor "$built" "$SOURCE" || { echo "::error::the package was not built from a commit in the pin's history"; exit 1; }
+
+      - name: Build and check the Antigravity plugin tree
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE: ${{ steps.version.outputs.source }}
+        run: |
+          set -euo pipefail
+          mkdir -p tree/.github/workflows
+          cp zn/plugins/claude-dir/verify.yml tree/.github/workflows/verify.yml
+          node src/plugins/tools/build-plugin-repo.js --target antigravity --tarball "zn-gate-$VERSION.tgz" --out tree --source "$SOURCE"
+          node src/plugins/tools/verify-plugin-repo.js --target antigravity --repo tree --tarball "zn-gate-$VERSION.tgz"

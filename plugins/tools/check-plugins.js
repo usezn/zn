@@ -249,6 +249,32 @@ for (const [event, entries] of Object.entries(json(PLUGIN + '/cursor/hooks.json'
   if (!fs.readFileSync(path.join(ROOT, ZC, 'scripts', 'zn-hook.sh'), 'utf8').includes('hook zcode')) fail(ZC + '/scripts/zn-hook.sh: must run the launcher in "hook zcode" mode');
 }
 
+/* -------------------------- Antigravity CLI plugin -------------------------- */
+
+// The Antigravity plugin has its own tree: plugin.json and hooks.json at its root (plugin.json takes no version key, so the
+// pin is the lock file of the build). One PreToolUse hook runs scripts/zn-hook.sh, which runs the launcher in "hook antigravity" mode.
+{
+  const AG = 'plugins/antigravity';
+  const am = json(AG + '/plugin.json');
+  if (am.name !== 'zn-gate') fail(AG + '/plugin.json: name must be zn-gate');
+  for (const k of Object.keys(am)) {
+    if (!['name', 'description', '$schema'].includes(k)) fail(AG + '/plugin.json: no "' + k + '" key (Antigravity accepts only name, description and $schema)');
+  }
+  const ah = json(AG + '/hooks.json');
+  const named = Object.keys(ah);
+  if (named.length !== 1 || named[0] !== 'zn-gate') fail(AG + '/hooks.json: exactly one named hook, zn-gate');
+  const entry = ah['zn-gate'] || {};
+  const events = Object.keys(entry).filter((k) => k !== 'enabled');
+  if (JSON.stringify(events) !== JSON.stringify(['PreToolUse'])) fail(AG + '/hooks.json: the only event is PreToolUse');
+  for (const g of entry.PreToolUse || []) {
+    for (const h of g.hooks || []) {
+      if (h.type !== 'command' || h.command !== 'sh scripts/zn-hook.sh') fail(AG + '/hooks.json: the PreToolUse hook must be a command hook: sh scripts/zn-hook.sh');
+      if (!(Number.isInteger(h.timeout) && h.timeout > 0 && h.timeout < 30)) fail(AG + '/hooks.json: the hook needs a timeout below the 30 seconds default');
+    }
+  }
+  if (!fs.readFileSync(path.join(ROOT, AG, 'scripts', 'zn-hook.sh'), 'utf8').includes('hook antigravity')) fail(AG + '/scripts/zn-hook.sh: must run the launcher in "hook antigravity" mode');
+}
+
 /* ------------------------------- links ------------------------------- */
 
 // Links into this repository name the release tag and a path that exists.

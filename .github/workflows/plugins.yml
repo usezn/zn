@@ -108,6 +108,9 @@ jobs:
       - name: ZCode plugin tests
         if: steps.scope.outputs.run == 'true'
         run: node plugins/tools/test-zcode-plugin.js
+      - name: Antigravity plugin tests
+        if: steps.scope.outputs.run == 'true'
+        run: node plugins/tools/test-antigravity-plugin.js
       - name: Pin commit lookup tests
         if: steps.scope.outputs.run == 'true'
         run: node plugins/tools/test-pin-commit.js

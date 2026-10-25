@@ -1,0 +1,17 @@
+{
+  "zn-gate": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh scripts/zn-hook.sh",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -76,7 +76,7 @@ const NODE_HINT = 'the zn-gate plugin needs Node.js 20.19 or later with vm.const
 // Not derived from the package's adapter list on purpose: this launcher runs the pinned, verified zn-gate
 // build, which can be older than the adapters in the repo, and the plugin ships hook files only for these
 // agents. plugins/tools/test-launch.js fails when an id here is not an adapter of the package.
-const SUPPORTED_AGENTS = new Set(['claude-code', 'codex', 'cursor', 'zcode']);
+const SUPPORTED_AGENTS = new Set(['claude-code', 'codex', 'cursor', 'zcode', 'antigravity']);
 
 // zn-gate starts child processes with this process's environment; a preload
 // set through NODE_OPTIONS or a module path in NODE_PATH must not reach them.
@@ -606,6 +606,9 @@ function refusalFor(msg) {
   if (hook.agent === 'cursor') {
     return { code: 2, stdout: JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }) };
   }
+  // Antigravity reads a block from a decision on stdout (exit 0); a hook that prints nothing or anything else is
+  // denied by the app itself, with an empty reason, so the reason goes here.
+  if (hook.agent === 'antigravity') return { code: 0, stdout: JSON.stringify({ decision: 'deny', reason: msg }) };
   return { code: 2, stdout: '' };
 }
 
@@ -632,19 +635,36 @@ function writeAll(fd, data) {
   }
 }
 
+const ANTIGRAVITY_DECISIONS = new Set(['allow', 'auto_approve', 'deny', 'ask', 'force_ask', 'deny_unless_prior_grant']);
+function validDecision(text) {
+  try {
+    const o = JSON.parse(text);
+    return !!o && typeof o === 'object' && ANTIGRAVITY_DECISIONS.has(o.decision);
+  } catch (_) {
+    return false;
+  }
+}
+
 /* Decide, once, what the agent gets: zn-gate's answer or the refusal. */
 function finishHook(code) {
   if (!hook.refusal && code !== 0 && code !== 2) {
     refuseHook('zn-gate ended with exit code ' + code + '.');
   }
+  // Antigravity needs an explicit decision on stdout for every call: an answer that is not one is a refusal.
+  if (!hook.refusal && hook.agent === 'antigravity' && !validDecision(Buffer.concat(hook.captured).toString('utf8'))) {
+    refuseHook('zn-gate gave no decision (exit code ' + code + ').');
+  }
   const r = hook.refusal;
   try {
     if (!r) {
       if (hook.captured.length) writeAll(1, Buffer.concat(hook.captured));
-      return code;
+      return hook.agent === 'antigravity' ? 0 : code;
     }
     writeAll(2, r.msg + '\n');
-    if (r.pass) return 0;
+    if (r.pass) {
+      if (hook.agent === 'antigravity') writeAll(1, JSON.stringify({ decision: 'allow' }));
+      return 0;
+    }
     if (r.stdout) writeAll(1, r.stdout);
     return r.code;
   } catch (_) {
