@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-25.23
+RULES_VERSION: 2026-10-25.24
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-10-25.23"
+RULES_VERSION = "2026-10-25.24"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -482,6 +482,24 @@ def _join_line_break(m: 're.Match[str]') -> str:
     return run
 
 
+def _space_invisible(text: str) -> str:
+    """The text with every invisible character replaced by one space (one per code point, so an index in the
+    result is the same index in `text`). The view that catches an invisible character used as a space between
+    two words (see spaceInvisible in lib/invisible.js)."""
+    return INVISIBLE_ASTRAL_RE.sub(' ', ZERO_WIDTH_RE.sub(' ', text))
+
+
+_SPACED_MEMO: List[Optional[str]] = [None, None]
+
+
+def _spaced_view(text: str) -> str:
+    """_space_invisible of the last text a rule was run on, so the many rules of one text build it once."""
+    if _SPACED_MEMO[0] is not text:
+        _SPACED_MEMO[0] = text
+        _SPACED_MEMO[1] = _space_invisible(text)
+    return _SPACED_MEMO[1] or ''
+
+
 def _strip_invisible(text: str) -> str:
     """Removes invisible characters (zero-width, variation selectors, tag characters)."""
     return INVISIBLE_ASTRAL_RE.sub('', ZERO_WIDTH_RE.sub('', text))
@@ -689,7 +707,14 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
     if b64_block is not None:
         return b64_block
 
-    targets = list(dict.fromkeys([normalized, stripped, raw]))
+    target_list = [normalized, stripped, raw]
+    # An invisible character used as a space joins the words in the stripped views, so the same passes also
+    # run with each invisible character replaced by a space (see evaluateUncached in rules.js).
+    spaced_input = _space_invisible(input_text)
+    if spaced_input != input_text:
+        spaced_normalized, spaced_stripped = normalize_input(spaced_input)
+        target_list += [spaced_normalized, spaced_stripped, spaced_input.translate(_CASE_FOLD_GUARD)]
+    targets = list(dict.fromkeys(target_list))
 
     for text in targets:
         # 0. Evasion Rules (BiDi Trojan Source)
@@ -1564,15 +1589,19 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
     original coordinates. The rule runs on the original text and on the text
     without invisible characters (see ruleCandidates in rules.js). match_check,
     when given, receives the whole match and returns False to skip it."""
-    passes: List[Tuple[str, Optional['array[int]']]] = [(text, None)]
+    passes: List[Tuple[str, Optional['array[int]'], bool]] = [(text, None, False)]
     # Spans this rule found on the original text; a view match overlapping two or more is dropped
     # (see ruleCandidates in rules.js). They come in order and without overlaps, so the ones a
     # view match overlaps are counted with two binary searches.
     found_starts: List[int] = []
     found_ends: List[int] = []
     if view is not None:
-        passes.append(view)
-    for hay, mapping in passes:
+        passes.append((view[0], view[1], False))
+        # A third pass reads each invisible character as a space; its indexes are the original ones.
+        spaced = _spaced_view(text)
+        if spaced != text:
+            passes.append((spaced, None, True))
+    for hay, mapping, is_spaced in passes:
         required = SECRET_PATTERN_REQUIRES.get(rule_id)
         if required and required not in hay:
             continue
@@ -1608,7 +1637,9 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                     if value_filter(value, prefix):
                         continue
             start, end = _span_in(mapping, m.start(), m.end())
-            if mapping is None:
+            if is_spaced:
+                pass  # same indexes as the original: it cannot join two matches, and it is not in order
+            elif mapping is None:
                 found_starts.append(start)
                 found_ends.append(end)
             else:

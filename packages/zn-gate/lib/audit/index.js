@@ -21,6 +21,7 @@ const P = require('./patterns');
 const { BY_ID, RANK } = require('./rules');
 const mcpSecrets = require('../mcp-secrets');
 const { pruneInfo } = require('../prune');
+const { BMP_CLASS } = require('../invisible');
 
 const AGENTS = ['claude', 'codex', 'cursor', 'opencode', 'amazonq', 'copilot', 'gemini'];
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -759,7 +760,7 @@ function insideQuotedExample(text) {
 const STRONG_IN_DOCS =/^(?:pi:(?:ignore_previous|disregard|system_tag|system_bracket|template_boundary|multi_\w+)|indirect:|evasion:|exfil:markdown_image)/;
 
 // A line the reader sees as empty: whitespace, or only zero-width characters.
-const BLANK_LINE_RE = /^[\s\u0085\u00ad\u200b-\u200d\u2060\ufeff]*$/;
+const BLANK_LINE_RE = new RegExp('^[\\s\\u0085' + BMP_CLASS + ']*$');
 const BLANK_PADDING_MIN = 40;
 const BLANK_PADDING_MAX_REPORTS = 10;
 
@@ -833,7 +834,7 @@ function stripBadges(text) {
 
 const SYSTEM_PLACEHOLDER_DOC = /<(?:\s*\/)?\s*system-(?:or-(?:project|user|global|local|workspace|repo)|(?:name|path|dir|directory|id|type|version|wide))\s*>/gi;
 const SYSTEM_IDENTITY_DOC = /\bsystem:(?:anonymous|authenticated|unauthenticated|masters|nodes?|serviceaccounts?(?::[\w-]+)*|kube-[\w-]+|node-[\w-]+|basic-user|discovery|public-info-viewer)(?![\w-])/gi;
-const CHAT_TOKEN_DOC = /<\|im_start\|>(?:[ \t]*(?:user|assistant|tool)\b|(?![\s\u200b-\u200d\u2060\ufeff\u00ad]*(?:system\b|$)))|<\|im_end\|>|\[\/?INST\]/gim;
+const CHAT_TOKEN_DOC = new RegExp('<\\|im_start\\|>(?:[ \\t]*(?:user|assistant|tool)\\b|(?![\\s' + BMP_CLASS + ']*(?:system\\b|$)))|<\\|im_end\\|>|\\[\\/?INST\\]', 'gim');
 
 // What may follow an opening placeholder for it to count as a name: nothing,
 // punctuation, or a file name or path glued to the tag. Checked in two steps
