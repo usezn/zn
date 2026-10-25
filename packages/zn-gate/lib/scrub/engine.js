@@ -289,7 +289,7 @@ async function vaultEntries(ctx) {
     // Not available on purpose (the daemon is not running, or it says it is locked): the vault adds nothing and the
     // built-in layers still run. Anything else (no answer, bad reply, a refusal) is a failure to read what the vault
     // protects: propagate it, so the hook denies instead of scanning without the vault's values.
-    if (!vaultUnavailableOnPurpose(err)) throw vaultInfoFailure(err);
+    if (!vaultUnavailableOnPurpose(err)) throw (err && err.vaultFailed ? err : vaultInfoFailure(err));
     res = Object.assign({}, none, { at: now, locked: true, error: err });
   }
   perVault.set(project, res);
