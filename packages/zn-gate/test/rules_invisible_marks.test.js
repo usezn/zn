@@ -55,3 +55,12 @@ test('output that is mostly marks is still blocked as invisible', () => {
   const text = '\u200F'.repeat(200001);
   assert.equal(rules.tooInvisible([text]), true);
 });
+
+test('invisibleStats (with its prefilter) counts exactly what the matching view strips (astral planes)', () => {
+  for (let cp = 0x10000; cp <= 0x10FFFF; cp++) {
+    const c = String.fromCodePoint(cp);
+    const stats = rules.invisibleStats('a' + c + 'b', 1e9);
+    const stripped = rules.invisibleView('a' + c + 'b') !== null ? 1 : 0;
+    assert.equal(stats.count, stripped, hex(cp));
+  }
+});

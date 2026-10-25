@@ -262,7 +262,8 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     'IFS=$ZN_OLDIFS',
     'ZN_CMD=; [ -z "$ZN_SAFE" ] || ZN_CMD=$(PATH="$ZN_SAFE" command -v zn 2>/dev/null)',
     'case "$ZN_CMD" in /*) ;; *) ZN_CMD= ;; esac',
-    'if [ -z "$ZN_RAN" ] && [ -n "$ZN_CMD" ] && PATH="$ZN_SAFE" command -v node >/dev/null 2>&1; then ZN_RAN=1; : >"$ZN_AF" 2>/dev/null; ' + run('"$ZN_CMD" hook ' + agentId) + '; ' + 'zn_leave $ZN_RC; fi',
+    '# zn runs with that PATH too: its `#!/usr/bin/env node` line would otherwise find a node in a relative entry first.',
+    'if [ -z "$ZN_RAN" ] && [ -n "$ZN_CMD" ] && PATH="$ZN_SAFE" command -v node >/dev/null 2>&1; then ZN_RAN=1; PATH=$ZN_SAFE; export PATH; : >"$ZN_AF" 2>/dev/null; ' + run('"$ZN_CMD" hook ' + agentId) + '; ' + 'zn_leave $ZN_RC; fi',
     'zn_block',
     '',
   ].join('\n');
@@ -319,7 +320,11 @@ function launcherCommand(file, event, platform = process.platform, opts = {}) {
 // searches the user's own Documents\WindowsPowerShell\Modules first, so a module planted there by the same account could answer in
 // its place (and make the hook look done). Only .NET types, operators and keywords: zf finds a program on the PATH the way
 // Get-Command did, with [System.IO.File]::Exists.
-const ZF = "function zf($x) { foreach ($d in ($env:PATH -split ';')) { try { if ($d) { $c = [System.IO.Path]::Combine($d, $x); if ([System.IO.File]::Exists($c)) { return $c } } } catch {} }; return $null }; ";
+// Before that, the PATH keeps only its absolute entries (C:\... or \\server\...) and cmd.exe no longer looks in the current folder
+// first: zn.cmd starts `node` through cmd.exe when no node.exe sits next to it (a standard Node.js install), and a relative entry,
+// or the folder the agent runs in (possibly the repository), could otherwise give a planted zn.cmd, node.exe or node.bat.
+const ZF = "$env:NoDefaultCurrentDirectoryInExePath = '1'; $env:PATH = (($env:PATH -split ';') -match '^([A-Za-z]:\\\\|\\\\\\\\)') -join ';'; " +
+  "function zf($x) { foreach ($d in ($env:PATH -split ';')) { try { if ($d) { $c = [System.IO.Path]::Combine($d, $x); if ([System.IO.File]::Exists($c)) { return $c } } } catch {} }; return $null }; ";
 
 const IFS = '${IFS}';
 const SH_SAFE_TEXT = /^[^'"\\%$\n\r]+$/;
@@ -535,7 +540,7 @@ function hookDirSuggestions(opts = {}) {
   if (xdg && path.isAbsolute(xdg)) {
     const d = path.join(xdg, 'zn-hooks');
     const e = plainPathOk(d) ? existingReal(d) : null;
-    if (e) out.push({ dir: d, command: (canWrite(e) ? '' : 'sudo ') + 'mkdir -p -m 700 ' + d });
+    if (e) out.push({ dir: d, command: canWrite(e) ? 'mkdir -p -m 700 ' + d : 'sudo mkdir -p -m 700 ' + d + ' && sudo chown ' + who + ' ' + d });
   }
   for (const base of ['/opt', '/var/opt', '/usr/local']) {
     if (out.length >= 2) break;
@@ -567,10 +572,10 @@ function unsafeDirMessage(dir, why, fix, opts) {
     ' Or unset ZN_HOOK_DIR to use ~/.zn/hooks.';
 }
 
-/** The step that closes a folder others can write: no sudo for your own folder, sudo only for root's, nothing for a shared one. */
+/** The step that closes a folder others can write: nothing for a shared (sticky) one, no sudo for your own folder, sudo only for root's. */
 function writableFix(p, st, me) {
-  if (me !== null && st.uid === me) return 'To close it, run `chmod g-w,o-w ' + shWord(p) + '`.';
   if ((st.mode & 0o1000) !== 0) return p + ' is a shared folder (sticky bit), so do not change it; choose a folder somewhere else.';
+  if (me !== null && st.uid === me) return 'To close it, run `chmod g-w,o-w ' + shWord(p) + '`.';
   if (st.uid === 0) return p + ' belongs to root, so closing it takes administrator rights (`sudo chmod g-w,o-w ' + shWord(p) + '`), and other users of this machine may rely on it being shared; the safer way is to choose another folder.';
   return p + ' belongs to another user: ask them (or the administrator) to close it, or choose another folder.';
 }

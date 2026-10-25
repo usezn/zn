@@ -273,7 +273,7 @@ function rightsMask(r) {
  */
 function scriptEntriesRisk(entries, userSid) {
   const me = norm(userSid);
-  const fix = (id) => { const n = norm(id, me); return n === 'CO' ? 'S-1-3-0' : n === 'OW' ? 'S-1-3-4' : n; };
+  const fix = (id) => norm(id, me); // norm already maps the CO and OW aliases to their SIDs
   const trusted = (id) => { const n = fix(id); return n === me || n === SYSTEM_SID || n === ADMINS_SID || TRUSTED_EXTRA.has(n); };
   let warn = null;
   for (const e of entries) {

@@ -370,6 +370,117 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       await assert.rejects(builder.build({ tarball: file, out: path.join(tmp, 'out-bad'), integrity: sri(archive), target: 'nope' }), /unknown target/);
     });
 
+    await test('verify-plugin-repo --target zcode accepts a built ZCode tree and finds each kind of change', async () => {
+      const { verify } = require('./verify-plugin-repo');
+      const file = path.join(tmp, 'verify-zcode.tgz');
+      const archive = tgz(BASE);
+      fs.writeFileSync(file, archive);
+      const out = path.join(tmp, 'verify-zcode-out');
+      const source = 'a'.repeat(40);
+      write(path.join(out, '.github', 'workflows', 'verify.yml'), fs.readFileSync(path.join(CLAUDE_DIR, 'verify.yml')));
+      await builder.build({ tarball: file, out, integrity: sri(archive), source, target: 'zcode' });
+      const check = (target = 'zcode') => verify({ repo: out, tarball: file, integrity: sri(archive), source, target });
+      assert.deepStrictEqual((await check()).problems, []);
+      const Z = builder.ZCODE_DIR + '/';
+      const at = (rel) => path.join(out, ...rel.split('/'));
+      const keep = (rel) => fs.readFileSync(at(rel));
+      const expectProblem = async (change, undo, re) => {
+        change();
+        try {
+          const { problems } = await check();
+          assert.ok(problems.some((p) => re.test(p)), re + ' in ' + JSON.stringify(problems));
+        } finally {
+          undo();
+        }
+      };
+      const edit = (rel, fn) => {
+        const before = keep(rel);
+        return [() => fs.writeFileSync(at(rel), fn(before.toString('utf8'))), () => fs.writeFileSync(at(rel), before)];
+      };
+      const gone = (rel) => () => fs.rmSync(at(rel), { recursive: true, force: true });
+
+      // The same checks as for the Claude Code tree, under zn-gate/.
+      for (const [rel, re] of [
+        [Z + 'vendor/zn-gate/lib/index.js', /zn-gate\/vendor\/zn-gate\/lib\/index\.js differs from the npm package/],
+        [Z + 'scripts/zn-launch.js', /zn-gate\/scripts\/zn-launch\.js differs from usezn\/zn/],
+        [Z + 'scripts/zn-gate.lock.json', /zn-gate\.lock\.json is not the lock/],
+        [Z + 'README.md', /zn-gate\/README\.md differs from usezn\/zn/],
+        ['marketplace.json', /marketplace\.json differs from usezn\/zn/],
+        ['.gitattributes', /\.gitattributes differs from usezn\/zn/],
+      ]) {
+        const before = keep(rel);
+        await expectProblem(() => fs.appendFileSync(at(rel), '\n// changed\n'), () => fs.writeFileSync(at(rel), before), re);
+      }
+      await expectProblem(() => write(at(Z + 'hooks/extra.json'), '{}'), gone(Z + 'hooks/extra.json'), /hooks\/extra\.json is not expected/);
+      await expectProblem(() => write(at('stray.txt'), 'x'), gone('stray.txt'), /stray\.txt is not expected/);
+      await expectProblem(() => write(at(Z + 'vendor/zn-gate/lib/extra.js'), ''), gone(Z + 'vendor/zn-gate/lib/extra.js'), /lib\/extra\.js is not in the npm package/);
+      // Files of the Claude Code plugin do not belong here.
+      await expectProblem(() => write(at(Z + '.claude-plugin/plugin.json'), '{}'), gone(Z + '.claude-plugin'), /\.claude-plugin\/plugin\.json is not expected/);
+      await expectProblem(() => write(at('hooks/hooks.json'), '{}'), gone('hooks'), /^hooks\/hooks\.json is not expected/);
+      const sh = Z + 'scripts/zn-hook.sh';
+      { const [c, u] = [gone(sh), (b => () => fs.writeFileSync(at(sh), b))(keep(sh))]; await expectProblem(c, u, /zn-hook\.sh is missing/); }
+      // The version: the manifest has to carry the package's version.
+      {
+        const m = Z + '.zcode-plugin/plugin.json';
+        const [c, u] = edit(m, (t) => JSON.stringify({ ...JSON.parse(t), version: '0.0.1' }));
+        await expectProblem(c, u, /has version 0\.0\.1, the package is/);
+        const [c2, u2] = edit(m, () => 'not json');
+        await expectProblem(c2, u2, /has version null, the package is/);
+        const [c3, u3] = edit(m, (t) => JSON.stringify({ ...JSON.parse(t), name: 'other' }));
+        await expectProblem(c3, u3, /names the plugin "other", not zn-gate/);
+      }
+      // The hooks must run the script with their own event name, and no other event.
+      {
+        const h = Z + 'hooks/hooks.json';
+        const [c, u] = edit(h, (t) => t.replace('zn-hook.sh", "PreToolUse"', 'zn-hook.sh", "PostToolUse"'));
+        await expectProblem(c, u, /a PreToolUse hook does not run `sh \$\{ZCODE_PLUGIN_ROOT\}\/scripts\/zn-hook\.sh PreToolUse`/);
+        const [c2, u2] = edit(h, (t) => t.replace('"command": "sh"', '"command": "bash"'));
+        await expectProblem(c2, u2, /does not run `sh/);
+        const [c3, u3] = edit(h, (t) => t.replace('${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "UserPromptSubmit"', '${ZCODE_PLUGIN_ROOT}/scripts/other.sh", "UserPromptSubmit"'));
+        await expectProblem(c3, u3, /a UserPromptSubmit hook does not run/);
+        const [c4, u4] = edit(h, (t) => JSON.stringify({ hooks: { PreToolUse: JSON.parse(t).hooks.PreToolUse } }));
+        await expectProblem(c4, u4, /has no UserPromptSubmit hook/);
+        const [c5, u5] = edit(h, () => '{');
+        await expectProblem(c5, u5, /hooks\/hooks\.json is not valid JSON/);
+      }
+      {
+        const [c, u] = edit(sh, (t) => t.replace('#!/bin/sh', '#!/usr/bin/env bash'));
+        await expectProblem(c, u, /zn-hook\.sh is not a \/bin\/sh script/);
+      }
+      // The marketplace must list the plugin the tree holds.
+      {
+        const [c, u] = edit('marketplace.json', (t) => t.replace('"./zn-gate"', '"./elsewhere"'));
+        await expectProblem(c, u, /marketplace\.json source is "\.\/elsewhere", the plugin is in \.\/zn-gate/);
+        const [c2, u2] = edit('marketplace.json', (t) => t.replace('"name": "zn-gate"', '"name": "other"'));
+        await expectProblem(c2, u2, /marketplace\.json lists "other", the plugin manifest says "zn-gate"/);
+        const [c3, u3] = edit('marketplace.json', (t) => JSON.stringify({ ...JSON.parse(t), plugins: [] }));
+        await expectProblem(c3, u3, /marketplace\.json lists 0 plugins, not one/);
+      }
+      { const wf = keep('.github/workflows/verify.yml'); await expectProblem(gone('.github/workflows/verify.yml'), () => write(at('.github/workflows/verify.yml'), wf), /verify\.yml is missing/); }
+      if (process.platform !== 'win32') {
+        await expectProblem(() => fs.symlinkSync('index.js', at(Z + 'vendor/zn-gate/lib/link.js')), gone(Z + 'vendor/zn-gate/lib/link.js'), /link\.js is a symbolic link/);
+      }
+      // A tree is only valid for the target it was built with.
+      assert.ok((await check('claude')).problems.length > 0, 'a ZCode tree is not a Claude Code plugin repository');
+      assert.deepStrictEqual((await check()).problems, [], 'every change was undone');
+      await assert.rejects(check('nope'), /unknown target/);
+    });
+
+    await test('verify-plugin-repo checks a Claude Code tree as a Claude Code tree, not as a ZCode one', async () => {
+      const { verify } = require('./verify-plugin-repo');
+      const file = path.join(tmp, 'verify-claude-as-zcode.tgz');
+      const archive = tgz(BASE);
+      fs.writeFileSync(file, archive);
+      const out = path.join(tmp, 'verify-claude-as-zcode-out');
+      const source = 'a'.repeat(40);
+      write(path.join(out, '.github', 'workflows', 'verify.yml'), fs.readFileSync(path.join(CLAUDE_DIR, 'verify.yml')));
+      await builder.build({ tarball: file, out, integrity: sri(archive), source });
+      const claude = await verify({ repo: out, tarball: file, integrity: sri(archive), source, target: 'claude' });
+      assert.deepStrictEqual(claude.problems, []);
+      const asZcode = await verify({ repo: out, tarball: file, integrity: sri(archive), source, target: 'zcode' });
+      assert.ok(asZcode.problems.length > 0);
+    });
+
     await test('PROVENANCE.md lists exactly the files that are copied', async () => {
       const text = fs.readFileSync(path.join(CLAUDE_DIR, 'PROVENANCE.md'), 'utf8');
       const start = text.indexOf('\n4. ');
