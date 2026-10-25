@@ -288,8 +288,10 @@ function noMktempScript(t, runnerBody) {
 
 function runPlanted(file, tmp, plant) {
   // `exec` keeps the PID, so the names the launcher would try first are known before it runs.
-  const wrapper = 'for n in ack out; do ' + plant + '; done; exec /bin/sh "$0" PreToolUse';
-  return spawnSync('/bin/sh', ['-c', wrapper, file], { input: '{}', encoding: 'utf8', timeout: 15000, env: { PATH: process.env.PATH, HOME: '/nonexistent', TMPDIR: tmp } });
+  // A fixed wrapper script; the planting commands (a constant of each test) arrive in the environment.
+  const wrapper = path.join(tmp, 'plant-wrapper.sh');
+  fs.writeFileSync(wrapper, '#!/bin/sh\nfor n in ack out; do eval "$ZN_PLANT"; done\nexec /bin/sh "$1" PreToolUse\n', { mode: 0o755 });
+  return spawnSync('/bin/sh', [wrapper, file], { input: '{}', encoding: 'utf8', timeout: 15000, env: { PATH: process.env.PATH, HOME: '/nonexistent', TMPDIR: tmp, ZN_PLANT: plant } });
 }
 
 test('posix launcher (no mktemp): a FIFO and a link planted at the predictable names are skipped; the answer is the runner\'s', { skip: !posix }, (t) => {
