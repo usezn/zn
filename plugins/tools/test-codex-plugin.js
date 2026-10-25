@@ -116,7 +116,7 @@ try {
       if (withNode) {
         // "-e" is the version probe; anything else is a run of the launcher: keep stdin, print what the stub says, exit as told.
         // ZN_STUB_HANG=probe or launch makes that step hang.
-        fs.writeFileSync(path.join(dir, 'bin', 'node'), '#!/bin/sh\nif [ "$1" = "-e" ]; then [ "$ZN_STUB_HANG" = probe ] && exec sleep 300; exit ' + probe + '; fi\n[ "$ZN_STUB_HANG" = launch ] && exec sleep 300\ncat > "$ZN_STUB_STDIN"\nprintf "%s" "$ZN_STUB_OUT"\nexit "${ZN_STUB_RC:-0}"\n', { mode: 0o755 });
+        fs.writeFileSync(path.join(dir, 'bin', 'node'), '#!/bin/sh\nif [ "$1" = "-e" ]; then [ "$ZN_STUB_HANG" = probe ] && exec sleep 300; exit ' + probe + '; fi\n[ "$ZN_STUB_HANG" = grandchild ] && { sleep 300 & echo $! > "$ZN_STUB_GC"; exec sleep 300; }\n[ "$ZN_STUB_HANG" = launch ] && exec sleep 300\ncat > "$ZN_STUB_STDIN"\nprintf "%s" "$ZN_STUB_OUT"\nexit "${ZN_STUB_RC:-0}"\n', { mode: 0o755 });
       }
       return dir;
     }
@@ -161,6 +161,18 @@ try {
       const rel = spawnSync('/bin/sh', ['-c', 'cd "$1" && sh scripts/zn-hook.sh PreToolUse', '_', d], { input: '{}', encoding: 'utf8', timeout: 30000, env: { PATH: '/usr/bin:/bin' } });
       assert.strictEqual(rel.status, 2, rel.stderr);
       assert.ok(/launcher \(scripts\/zn-launch\.js\) is missing/.test(rel.stderr), rel.stderr);
+    });
+
+    test('at the deadline zn-hook.sh stops what the Node.js it started has started too', () => {
+      if (!['/usr/bin/setsid', '/bin/setsid'].some((f) => fs.existsSync(f))) return;
+      const d = fixture('grandchild', { launcher: '// stub', deadline: 2 });
+      const gc = path.join(d, 'gc.pid');
+      const r = run(d, 'PreToolUse', { ZN_STUB_HANG: 'grandchild', ZN_STUB_GC: gc });
+      assert.strictEqual(r.status, 2, r.stderr);
+      const pid = Number(fs.readFileSync(gc, 'utf8'));
+      let alive = true;
+      for (let i = 0; i < 20 && alive; i++) { try { process.kill(pid, 0); spawnSync('/bin/sleep', ['0.1']); } catch (_) { alive = false; } }
+      assert.strictEqual(alive, false, 'the process the launcher started is still running');
     });
 
     test('zn-hook.sh passes the event JSON to the launcher and its answer and exit code 0 or 2 through', () => {
