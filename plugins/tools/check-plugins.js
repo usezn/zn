@@ -162,7 +162,10 @@ for (const k of Object.keys(apMcp)) if (!['$schema', 'mcpServers'].includes(k)) 
 
 /* ------------------------ what the plugin runs ------------------------ */
 
-const LAUNCHER = /^node "?(\$\{CLAUDE_PLUGIN_ROOT\}\/|\$PLUGIN_ROOT\/|\.\/)scripts\/zn-launch\.js"? (hook (claude-code|codex|cursor)|check claude-code)$/;
+const LAUNCHER = /^node "?(\$PLUGIN_ROOT\/|\.\/)scripts\/zn-launch\.js"? hook (codex|cursor)$/;
+// The Claude Code hooks start the launcher through scripts/zn-node.sh, which finds Node.js only in absolute PATH entries
+// (a `node` found by name could be one placed in a relative PATH entry or in the project folder). Each command names its own event.
+const CLAUDE_LAUNCHER = /^\/bin\/sh "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/zn-node\.sh" (SessionStart|PreToolUse|PostToolUse|UserPromptSubmit|UserPromptExpansion) (hook claude-code|check claude-code)$/;
 function hookCommands(data) {
   const out = [];
   for (const groups of Object.values((data && data.hooks) || {})) {
@@ -173,10 +176,27 @@ function hookCommands(data) {
   }
   return out;
 }
-for (const f of ['hooks/hooks.json', 'com.openai/hooks.json', 'cursor/hooks.json']) {
+for (const f of ['com.openai/hooks.json', 'cursor/hooks.json']) {
   const cmds = hookCommands(json(PLUGIN + '/' + f));
   if (cmds.length === 0) fail(f + ': no hooks');
   for (const c of cmds) if (!LAUNCHER.test(String(c))) fail(f + ': hook command does not run the launcher: ' + c);
+}
+{
+  const f = 'hooks/hooks.json';
+  const data = json(PLUGIN + '/' + f);
+  let count = 0;
+  for (const [event, groups] of Object.entries((data && data.hooks) || {})) {
+    for (const g of groups) {
+      for (const h of g.hooks || []) {
+        count++;
+        const m = CLAUDE_LAUNCHER.exec(String(h.command));
+        if (!m || m[1] !== event || (m[2] === 'check claude-code') !== (event === 'SessionStart')) fail(f + ': ' + event + ' hook must run scripts/zn-node.sh with its own event name: ' + h.command);
+      }
+    }
+  }
+  if (count === 0) fail(f + ': no hooks');
+  const sh = fs.readFileSync(path.join(PLUGIN, 'scripts', 'zn-node.sh'), 'utf8');
+  if (!sh.startsWith('#!/bin/sh' + String.fromCharCode(10)) || !sh.includes('zn-launch.js')) fail('scripts/zn-node.sh: must be a /bin/sh script that runs zn-launch.js');
 }
 // Each MCP server and the launcher mode that starts it (zn-gate-mcp uses local
 // rules unless the Claude Code plugin's optional api_key option is set).

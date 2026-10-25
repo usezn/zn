@@ -71,6 +71,7 @@ const PLUGIN_FILES = [
   ['icon.png', PLUGIN],
   ['LICENSE', PLUGIN],
   ['scripts/zn-launch.js', PLUGIN],
+  ['scripts/zn-node.sh', PLUGIN],
   ['skills/zn-secrets/SKILL.md', PLUGIN],
   ['README.md', CLAUDE_DIR],
   ['SECURITY.md', CLAUDE_DIR],
