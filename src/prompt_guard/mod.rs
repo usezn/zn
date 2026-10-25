@@ -209,15 +209,27 @@ fn tolerant_regexes() -> &'static [(&'static str, String)] {
 }
 
 /// Static Regex Set of the tolerant patterns, built the first time a text with an invisible character needs it.
-static TOLERANT_REGEX_SET: OnceLock<RegexSet> = OnceLock::new();
+static TOLERANT_REGEX_SET: OnceLock<Option<RegexSet>> = OnceLock::new();
 
-fn get_tolerant_regex_set() -> &'static RegexSet {
-    TOLERANT_REGEX_SET.get_or_init(|| {
-        RegexSetBuilder::new(tolerant_regexes().iter().map(|(_, re)| re))
-            .size_limit(64 << 20)
-            .build()
-            .expect("Failed to build tolerant prompt injection regex set")
-    })
+/// The tolerant set, or `None` when it does not build: that is logged once and the tolerant check is skipped,
+/// so the checks that already exist still run and the gateway never panics on an input.
+fn get_tolerant_regex_set() -> Option<&'static RegexSet> {
+    TOLERANT_REGEX_SET
+        .get_or_init(|| {
+            match RegexSetBuilder::new(tolerant_regexes().iter().map(|(_, re)| re))
+                .size_limit(64 << 20)
+                .build()
+            {
+                Ok(set) => Some(set),
+                Err(e) => {
+                    tracing::error!(
+                        "Tolerant prompt injection patterns did not build, skipping them: {e}"
+                    );
+                    None
+                }
+            }
+        })
+        .as_ref()
 }
 
 /// Like `detect_prompt_injection`, for a text folded with `fold_system1_keep_invisible`: every run of
@@ -225,7 +237,13 @@ fn get_tolerant_regex_set() -> &'static RegexSet {
 /// phrase that uses an invisible character as a space and others inside words, which neither the stripped nor
 /// the spaced fold reads.
 pub fn detect_prompt_injection_tolerant(input: &str) -> PromptDetectionResult {
-    match get_tolerant_regex_set().matches(input).iter().next() {
+    let Some(set) = get_tolerant_regex_set() else {
+        return PromptDetectionResult {
+            is_attack: false,
+            matched_pattern: None,
+        };
+    };
+    match set.matches(input).iter().next() {
         Some(idx) => PromptDetectionResult {
             is_attack: true,
             matched_pattern: Some(tolerant_regexes()[idx].0.to_string()),
@@ -481,6 +499,11 @@ mod tests {
                 "{text:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_tolerant_regex_set_builds() {
+        assert!(get_tolerant_regex_set().is_some());
     }
 
     #[test]

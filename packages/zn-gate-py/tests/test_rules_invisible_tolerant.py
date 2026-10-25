@@ -74,7 +74,7 @@ def test_tolerant_variants_match_like_the_originals_on_text_without_invisible_ch
     injection, exfil = rules._tolerant_rules()
     originals = {r: p for r, p, _ in rules.INJECTION_RULES}
     pairs = [(r, originals[r], t) for r, t, _ in injection]
-    pairs += [("exfil#%d" % i, o, t) for i, (o, t) in enumerate(zip((rules.EXFIL_VERBS, rules.CRED_OBJECTS, rules.EXFIL_CLAUSE_RE), exfil))]
+    pairs += [("exfil#%d" % i, o, t) for i, (o, t) in enumerate(zip((rules.EXFIL_VERBS, rules.CRED_OBJECTS, rules.EXFIL_CLAUSE_RE), exfil, strict=True))]
     positives = 0
     for rule_id, original, tolerant in pairs:
         for text in texts:
