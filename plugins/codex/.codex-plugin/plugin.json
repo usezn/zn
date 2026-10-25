@@ -1,0 +1,32 @@
+{
+  "name": "zn-gate",
+  "version": "1.13.1",
+  "description": "Local security layer for OpenAI Codex: blocks reads and writes of secret files, shell commands and MCP calls that would handle a secret, and prompts that contain one. Runs a pinned, verified copy of zn-gate that ships inside the plugin; no account and no API key.",
+  "author": {
+    "name": "usezn",
+    "email": "support@usezn.com",
+    "url": "https://usezn.com"
+  },
+  "homepage": "https://usezn.com",
+  "repository": "https://github.com/usezn/zn",
+  "license": "MIT",
+  "keywords": [
+    "security",
+    "secrets",
+    "hooks"
+  ],
+  "interface": {
+    "displayName": "zn-gate",
+    "shortDescription": "Keeps secret values out of what Codex runs and sends to its model",
+    "longDescription": "Checks every shell command, patch, MCP call and prompt for secrets before Codex runs it. Its hooks must be reviewed and trusted once with /hooks. No account, no API key, nothing is sent over the network.",
+    "developerName": "usezn",
+    "category": "Security",
+    "capabilities": [
+      "Read"
+    ],
+    "websiteURL": "https://usezn.com",
+    "brandColor": "#0B7A5E",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/icon.png"
+  }
+}

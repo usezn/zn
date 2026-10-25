@@ -91,7 +91,23 @@ const ZCODE_FILES = [
   ['icon.png', PLUGIN, ZCODE_DIR + '/icon.png'],
   ['LICENSE', PLUGIN, ZCODE_DIR + '/LICENSE'],
 ];
+// The Codex plugin (a repository marketplace, .agents/plugins/marketplace.json, and the plugin in plugins/zn-gate/): Codex
+// finds the hooks of a plugin in hooks/hooks.json by default, so its manifest names none. Same bundled zn-gate, launcher
+// and lock as the other plugins; the hook script is the one place that decides what happens when zn cannot run.
+const CODEX = path.resolve(__dirname, '..', 'codex');
+const CODEX_DIR = 'plugins/zn-gate';
+const CODEX_FILES = [
+  ['marketplace.json', CODEX, '.agents/plugins/marketplace.json'],
+  ['.codex-plugin/plugin.json', CODEX, CODEX_DIR + '/.codex-plugin/plugin.json'],
+  ['hooks/hooks.json', CODEX, CODEX_DIR + '/hooks/hooks.json'],
+  ['scripts/zn-hook.sh', CODEX, CODEX_DIR + '/scripts/zn-hook.sh'],
+  ['README.md', CODEX, CODEX_DIR + '/README.md'],
+  ['scripts/zn-launch.js', PLUGIN, CODEX_DIR + '/scripts/zn-launch.js'],
+  ['icon.png', PLUGIN, CODEX_DIR + '/assets/icon.png'],
+  ['LICENSE', PLUGIN, CODEX_DIR + '/LICENSE'],
+];
 const GITATTRIBUTES = '* -text\n';
+const TARGETS = ['claude', 'zcode', 'codex'];
 const PRUNE = /\.(?:d\.[mc]?ts|[mc]?ts|map)$/;
 const MAX_FILES = 512;
 const MAX_TEXT_BYTES = 256 * 1024;
@@ -425,6 +441,27 @@ function zcodeTree(bundle, version, integrity, source) {
   return out;
 }
 
+/** The tree of the Codex plugin repository (see CODEX_FILES). */
+function codexTree(bundle, version, integrity, source) {
+  const out = new Map();
+  for (const [rel, from, dest] of CODEX_FILES) {
+    const abs = path.join(from, ...rel.split('/'));
+    if (fs.lstatSync(abs).isSymbolicLink()) throw new Error(path.relative(path.resolve(__dirname, '..', '..'), abs) + ' is a symbolic link');
+    out.set(dest, fs.readFileSync(abs));
+  }
+  const manifest = JSON.parse(out.get(CODEX_DIR + '/.codex-plugin/plugin.json').toString('utf8'));
+  if (manifest.version !== version) {
+    throw new Error('plugins/codex is pinned to ' + manifest.version + ', the tarball is zn-gate ' + version + ': run pin-release.js first');
+  }
+  const files = {};
+  for (const rel of [...bundle.keys()].sort()) files[rel] = sha256(bundle.get(rel));
+  const lock = { package: 'zn-gate', version, registry: REGISTRY, integrity, bundled: BUNDLED_DIR, source, files };
+  out.set(CODEX_DIR + '/scripts/zn-gate.lock.json', Buffer.from(JSON.stringify(lock, null, 2) + '\n'));
+  out.set('.gitattributes', Buffer.from(GITATTRIBUTES));
+  for (const [rel, body] of bundle) out.set(CODEX_DIR + '/' + BUNDLED_DIR + '/' + rel, body);
+  return out;
+}
+
 function checkLimits(tree) {
   const problems = [];
   if (tree.size > MAX_FILES) problems.push(tree.size + ' files (the limit is ' + MAX_FILES + ')');
@@ -448,7 +485,7 @@ async function registryIntegrity(version) {
  * the tests use it (the command line has no such option).
  */
 async function build({ tarball, out, integrity, source, target }) {
-  if (target !== undefined && target !== 'claude' && target !== 'zcode') throw new Error('unknown target ' + target + ' (claude or zcode)');
+  if (target !== undefined && !TARGETS.includes(target)) throw new Error('unknown target ' + target + ' (' + TARGETS.join(', ') + ')');
   const commit = source || execFileSync('git', ['-C', path.resolve(__dirname, '..', '..'), 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('the source must be a full commit hash: ' + commit);
   const tgz = fs.readFileSync(tarball);
@@ -467,7 +504,8 @@ async function build({ tarball, out, integrity, source, target }) {
 
   const importProblems = checkImports(bundle);
   if (importProblems.length) throw new Error('imports that are not checked or do not resolve inside the bundle:\n  ' + importProblems.join('\n  '));
-  const tree = target === 'zcode' ? zcodeTree(bundle, pkg.version, expected, commit) : pluginTree(bundle, pkg.version, expected, commit);
+  const treeOf = target === 'zcode' ? zcodeTree : target === 'codex' ? codexTree : pluginTree;
+  const tree = treeOf(bundle, pkg.version, expected, commit);
   const limitProblems = checkLimits(tree);
   if (limitProblems.length) throw new Error('over the plugin directory limits:\n  ' + limitProblems.join('\n  '));
 
@@ -483,7 +521,7 @@ async function build({ tarball, out, integrity, source, target }) {
   return { version: pkg.version, files: tree.size, bundled: bundle.size, target };
 }
 
-const USAGE = 'usage: build-plugin-repo.js --tarball <zn-gate-X.Y.Z.tgz> --out <dir> [--source <commit>] [--target claude|zcode]';
+const USAGE = 'usage: build-plugin-repo.js --tarball <zn-gate-X.Y.Z.tgz> --out <dir> [--source <commit>] [--target ' + TARGETS.join('|') + ']';
 
 function parseArgs(argv) {
   const opts = {};
@@ -497,11 +535,11 @@ function parseArgs(argv) {
   return opts;
 }
 
-module.exports = { build, bundleFiles, checkImports, checkLimits, PLUGIN_FILES, ZCODE_FILES, ZCODE_DIR, BUNDLED_DIR, PRUNE };
+module.exports = { build, bundleFiles, checkImports, checkLimits, PLUGIN_FILES, ZCODE_FILES, ZCODE_DIR, CODEX_FILES, CODEX_DIR, TARGETS, BUNDLED_DIR, PRUNE };
 
 if (require.main === module) {
   build(parseArgs(process.argv.slice(2))).then((r) => {
-    process.stdout.write('Built the ' + (r.target === 'zcode' ? 'ZCode ' : '') + 'plugin repository for zn-gate ' + r.version + ': ' + r.files + ' files (' + r.bundled + ' bundled)\n');
+    process.stdout.write('Built the ' + (r.target === 'zcode' ? 'ZCode ' : r.target === 'codex' ? 'Codex ' : '') + 'plugin repository for zn-gate ' + r.version + ': ' + r.files + ' files (' + r.bundled + ' bundled)\n');
   }).catch((err) => {
     process.stderr.write('build-plugin-repo: ' + err.message + '\n');
     process.exitCode = 1;

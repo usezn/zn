@@ -71,6 +71,7 @@ const versions = {
   '.claude-plugin/plugin.json': json(PLUGIN + '/.claude-plugin/plugin.json').version,
   '.cursor-plugin/plugin.json': json(PLUGIN + '/.cursor-plugin/plugin.json').version,
   'plugins/zcode/.zcode-plugin/plugin.json': json('plugins/zcode/.zcode-plugin/plugin.json').version,
+  'plugins/codex/.codex-plugin/plugin.json': json('plugins/codex/.codex-plugin/plugin.json').version,
 };
 for (const [where, got] of Object.entries(versions)) {
   if (got !== v) fail(where + ': version ' + got + ' differs from the lock file version ' + v);
@@ -247,6 +248,38 @@ for (const [event, entries] of Object.entries(json(PLUGIN + '/cursor/hooks.json'
   const entry = (mk.plugins || [])[0] || {};
   if ((mk.plugins || []).length !== 1 || entry.name !== 'zn-gate' || entry.source !== './zn-gate') fail(ZC + '/marketplace.json: one plugin, zn-gate, with source ./zn-gate');
   if (!fs.readFileSync(path.join(ROOT, ZC, 'scripts', 'zn-hook.sh'), 'utf8').includes('hook zcode')) fail(ZC + '/scripts/zn-hook.sh: must run the launcher in "hook zcode" mode');
+}
+
+/* ----------------------------- Codex plugin ----------------------------- */
+
+// The Codex plugin has its own tree: Codex finds its hooks in hooks/hooks.json of the plugin root (the manifest names none) and
+// runs them only after the user reviews them in /hooks. Every hook runs scripts/zn-hook.sh with its own event name; the script
+// runs the launcher in "hook codex" mode. test-codex-plugin.js compares the entries with the ones `zn hooks install codex` writes.
+{
+  const CX = 'plugins/codex';
+  const chooks = (json(CX + '/hooks/hooks.json').hooks) || {};
+  for (const [event, groups] of Object.entries(chooks)) {
+    for (const g of groups) {
+      for (const h of g.hooks || []) {
+        if (h.type !== 'command' || h.command !== 'sh "$PLUGIN_ROOT/scripts/zn-hook.sh" ' + event) {
+          fail(CX + '/hooks/hooks.json: ' + event + ' hook must be: sh "$PLUGIN_ROOT/scripts/zn-hook.sh" ' + event);
+        }
+        if (h.async !== undefined || h.enabled !== undefined) fail(CX + '/hooks/hooks.json: ' + event + ' hook must not set async or enabled');
+      }
+    }
+  }
+  for (const need of ['PreToolUse', 'PermissionRequest', 'PostToolUse', 'UserPromptSubmit']) {
+    if (!(chooks[need] || []).length) fail(CX + '/hooks/hooks.json: no ' + need + ' hook');
+  }
+  const cm = json(CX + '/.codex-plugin/plugin.json');
+  if (cm.name !== 'zn-gate') fail(CX + '/.codex-plugin/plugin.json: name must be zn-gate');
+  for (const k of ['hooks', 'mcpServers', 'apps']) {
+    if (cm[k] !== undefined) fail(CX + '/.codex-plugin/plugin.json: no "' + k + '" key (hooks/hooks.json is found by default; a manifest entry would replace it)');
+  }
+  const cmk = json(CX + '/marketplace.json');
+  const centry = (cmk.plugins || [])[0] || {};
+  if ((cmk.plugins || []).length !== 1 || centry.name !== 'zn-gate' || !centry.source || centry.source.path !== './plugins/zn-gate') fail(CX + '/marketplace.json: one plugin, zn-gate, with source.path ./plugins/zn-gate');
+  if (!fs.readFileSync(path.join(ROOT, CX, 'scripts', 'zn-hook.sh'), 'utf8').includes('hook codex')) fail(CX + '/scripts/zn-hook.sh: must run the launcher in "hook codex" mode');
 }
 
 /* ------------------------------- links ------------------------------- */

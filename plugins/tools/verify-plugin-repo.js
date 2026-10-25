@@ -8,7 +8,7 @@
  * repository at the commit the plugin was generated from (the "source" in its
  * lock file), on every pull request into its main branch and on main itself.
  *
- *   node plugins/tools/verify-plugin-repo.js --repo <plugin checkout> --tarball <zn-gate-X.Y.Z.tgz> [--target claude|zcode]
+ *   node plugins/tools/verify-plugin-repo.js --repo <plugin checkout> --tarball <zn-gate-X.Y.Z.tgz> [--target claude|zcode|codex]
  *
  * The target is the one the repository was built with (build-plugin-repo.js
  * --target): claude by default. The ZCode tree keeps the plugin in zn-gate/
@@ -90,6 +90,8 @@ async function registryIntegrity(version) {
   return integrity;
 }
 
+// The Codex plugin: the same checks, under plugins/zn-gate/ (the folder the repository marketplace names).
+const CODEX_EVENTS = ['UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'SessionStart', 'SubagentStart', 'Stop'];
 const ZCODE_EVENTS = ['UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse'];
 
 function readJson(files, rel, problems) {
@@ -146,17 +148,66 @@ function zcodeProblems(files, dir) {
 }
 
 /**
+ * What only the Codex plugin has to be (see zcodeProblems): the manifest names zn-gate and no hooks (a manifest entry would
+ * replace the default hooks/hooks.json), every hook runs scripts/zn-hook.sh with its own event name, the script is a shell
+ * script, and the repository marketplace lists exactly the plugin the tree holds.
+ */
+function codexProblems(files, dir) {
+  const problems = [];
+  const MANIFEST = dir + '.codex-plugin/plugin.json';
+  const manifest = readJson(files, MANIFEST, problems);
+  if (manifest && manifest.name !== 'zn-gate') problems.push(MANIFEST + ' names the plugin ' + JSON.stringify(manifest.name) + ', not zn-gate');
+  if (manifest && manifest.hooks !== undefined) problems.push(MANIFEST + ' names hooks, which would replace the default hooks/hooks.json');
+
+  const hooks = readJson(files, dir + 'hooks/hooks.json', problems);
+  if (hooks) {
+    const events = Object.keys(hooks.hooks || {});
+    for (const event of CODEX_EVENTS) if (!events.includes(event)) problems.push(dir + 'hooks/hooks.json has no ' + event + ' hook');
+    for (const event of events) {
+      if (!CODEX_EVENTS.includes(event)) problems.push(dir + 'hooks/hooks.json has a hook for ' + event + ', which the plugin does not use');
+      for (const group of hooks.hooks[event] || []) {
+        for (const h of (group && group.hooks) || []) {
+          const ok = h && h.type === 'command' && h.command === 'sh "$PLUGIN_ROOT/scripts/zn-hook.sh" ' + event && h.async === undefined && h.enabled === undefined;
+          if (!ok) problems.push(dir + 'hooks/hooks.json: a ' + event + ' hook does not run `sh "$PLUGIN_ROOT/scripts/zn-hook.sh" ' + event + '` as a plain command hook');
+        }
+      }
+    }
+  }
+
+  // The hook is started as `sh <script>`, so it needs no executable bit (the plugin repository's Verify workflow accepts only
+  // mode 100644); it has to be a POSIX shell script.
+  const script = files.get(dir + 'scripts/zn-hook.sh');
+  if (script && !/^#!\/bin\/sh\n/.test(script.toString('utf8'))) problems.push(dir + 'scripts/zn-hook.sh is not a /bin/sh script');
+
+  const market = readJson(files, '.agents/plugins/marketplace.json', problems);
+  if (market) {
+    const list = Array.isArray(market.plugins) ? market.plugins : [];
+    if (list.length !== 1) problems.push('.agents/plugins/marketplace.json lists ' + list.length + ' plugins, not one');
+    else {
+      const entry = list[0];
+      const where = entry.source && entry.source.path;
+      if (!manifest || entry.name !== manifest.name) problems.push('.agents/plugins/marketplace.json lists ' + JSON.stringify(entry.name) + ', the plugin manifest says ' + JSON.stringify(manifest && manifest.name));
+      if (!entry.source || entry.source.source !== 'local' || where !== './' + dir.slice(0, -1)) {
+        problems.push('.agents/plugins/marketplace.json source is ' + JSON.stringify(entry.source) + ', the plugin is in ./' + dir.slice(0, -1));
+      }
+    }
+  }
+  return problems;
+}
+
+/**
  * opts.integrity replaces the registry lookup and opts.source the commit of
  * this repository; only the tests use them.
  */
 async function verify({ repo, tarball, integrity, source, target }) {
-  if (target !== undefined && target !== 'claude' && target !== 'zcode') throw new Error('unknown target ' + target + ' (claude or zcode)');
+  if (target !== undefined && !builder.TARGETS.includes(target)) throw new Error('unknown target ' + target + ' (' + builder.TARGETS.join(', ') + ')');
   const zcode = target === 'zcode';
+  const codex = target === 'codex';
   // Where the files are in each kind of repository.
-  const dir = zcode ? builder.ZCODE_DIR + '/' : '';
+  const dir = zcode ? builder.ZCODE_DIR + '/' : codex ? builder.CODEX_DIR + '/' : '';
   const VENDOR = dir + builder.BUNDLED_DIR + '/';
   const LOCK = dir + 'scripts/zn-gate.lock.json';
-  const MANIFEST = dir + (zcode ? '.zcode-plugin/plugin.json' : '.claude-plugin/plugin.json');
+  const MANIFEST = dir + (zcode ? '.zcode-plugin/plugin.json' : codex ? '.codex-plugin/plugin.json' : '.claude-plugin/plugin.json');
   const problems = [];
   const tgz = fs.readFileSync(tarball);
   const actual = 'sha512-' + crypto.createHash('sha512').update(tgz).digest('base64');
@@ -215,8 +266,8 @@ async function verify({ repo, tarball, integrity, source, target }) {
 
   // 4. Every other file comes from this repository, unchanged.
   const expected = new Map();
-  if (zcode) {
-    for (const [rel, from, dest] of builder.ZCODE_FILES) expected.set(dest, fs.readFileSync(path.join(from, ...rel.split('/'))));
+  if (zcode || codex) {
+    for (const [rel, from, dest] of (zcode ? builder.ZCODE_FILES : builder.CODEX_FILES)) expected.set(dest, fs.readFileSync(path.join(from, ...rel.split('/'))));
   } else {
     for (const [rel, from] of builder.PLUGIN_FILES) expected.set(rel, fs.readFileSync(path.join(from, ...rel.split('/'))));
   }
@@ -238,13 +289,14 @@ async function verify({ repo, tarball, integrity, source, target }) {
   } catch (_) { /* reported as missing or different above */ }
   if (manifestVersion !== version) problems.push(MANIFEST + ' has version ' + manifestVersion + ', the package is ' + version);
   if (zcode) problems.push(...zcodeProblems(files, dir));
+  if (codex) problems.push(...codexProblems(files, dir));
   const shipped = new Map([...files].filter(([rel]) => !rel.startsWith('.github/')));
   problems.push(...builder.checkLimits(shipped));
 
   return { version, source: commit, files: files.size, problems };
 }
 
-const USAGE = 'usage: verify-plugin-repo.js --repo <dir> --tarball <tgz> [--target claude|zcode]';
+const USAGE = 'usage: verify-plugin-repo.js --repo <dir> --tarball <tgz> [--target claude|zcode|codex]';
 
 function parseArgs(argv) {
   const opts = {};

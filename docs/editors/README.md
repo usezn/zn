@@ -7,7 +7,7 @@ zn-gate protects most where an agent lets it hook into its own tools: there it c
 | Editor or agent | Setup | Blocks reads of `.env` and credential files | Removes secrets from shell output and files | Removes secrets from MCP results | Blocks a secret pasted into the chat | Tested by us |
 | - | - | - | - | - | - | - |
 | Claude Code | `zn hooks install claude-code` | Yes | Yes | Yes | Yes | Yes, end to end |
-| Codex CLI | `zn hooks install codex`, then trust it in `/hooks` | Yes | Yes (replaces the result) | Yes | Yes | Yes, end to end |
+| [Codex CLI](codex.md) | `zn hooks install codex`, then trust it in `/hooks` | Yes | Yes (replaces the result) | Yes | Yes | Yes, end to end |
 | OpenCode | `zn hooks install opencode` | Yes | Yes | Yes | Yes | Yes, end to end |
 | [Cursor](cursor.md) | `zn hooks install cursor` | Yes | **No** (Cursor does not allow it) | Yes | Yes | Formats checked; no end-to-end run |
 | [VS Code (GitHub Copilot)](vscode.md) | MCP server | No | No | Only servers you wrap | No | Not yet verified |
@@ -21,4 +21,4 @@ zn-gate protects most where an agent lets it hook into its own tools: there it c
 
 "Only servers you wrap" means that the results of the MCP servers you start through `zn-gate shield` are checked; each page shows how. The hooks need zn-gate 1.5 or later from npm (`npm install -g zn-gate`). Per-agent details for the hooks: [compat.md](../compat.md).
 
-VS Code and Windsurf have their own agent hooks, but zn-gate does not install hooks for them yet. For what Antigravity's hooks cover and what they do not, see [its page](antigravity.md); for ZCode, see [its page](zcode.md).
+VS Code and Windsurf have their own agent hooks, but zn-gate does not install hooks for them yet. For what Antigravity's hooks cover and what they do not, see [its page](antigravity.md); for ZCode, see [its page](zcode.md); for the Codex hooks and the Codex plugin build, see [its page](codex.md).

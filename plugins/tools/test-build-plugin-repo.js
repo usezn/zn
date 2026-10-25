@@ -481,6 +481,157 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       assert.ok(asZcode.problems.length > 0);
     });
 
+    await test('--target codex builds the Codex plugin tree: repository marketplace, bundled zn-gate, shared launcher', async () => {
+      builds++;
+      const file = path.join(tmp, 'zn-gate-codex.tgz');
+      const archive = tgz(BASE);
+      fs.writeFileSync(file, archive);
+      const out = path.join(tmp, 'out-codex');
+      const res = await builder.build({ tarball: file, out, integrity: sri(archive), source: 'a'.repeat(40), target: 'codex' });
+      assert.strictEqual(res.target, 'codex');
+      for (const [rel, from, dest] of builder.CODEX_FILES) {
+        assert.ok(fs.readFileSync(path.join(out, dest)).equals(fs.readFileSync(path.join(from, rel))), dest + ' is copied unchanged');
+      }
+      const plug = path.join(out, builder.CODEX_DIR);
+      const lock = JSON.parse(fs.readFileSync(path.join(plug, 'scripts', 'zn-gate.lock.json'), 'utf8'));
+      assert.strictEqual(lock.bundled, 'vendor/zn-gate');
+      assert.strictEqual(lock.version, VERSION);
+      assert.strictEqual(lock.source, 'a'.repeat(40));
+      for (const rel of Object.keys(lock.files)) {
+        const buf = fs.readFileSync(path.join(plug, 'vendor', 'zn-gate', ...rel.split('/')));
+        assert.strictEqual(crypto.createHash('sha256').update(buf).digest('hex'), lock.files[rel], rel);
+      }
+      assert.strictEqual(fs.readFileSync(path.join(out, '.gitattributes'), 'utf8'), '* -text\n');
+      // The marketplace names the folder the plugin was written to.
+      const market = JSON.parse(fs.readFileSync(path.join(out, '.agents', 'plugins', 'marketplace.json'), 'utf8'));
+      assert.strictEqual(path.resolve(out, market.plugins[0].source.path), plug);
+      // None of the files of the other plugins: Codex finds hooks/hooks.json of the plugin folder on its own.
+      for (const absent of ['.claude-plugin', '.mcp.json', 'cursor', 'com.openai', 'package.json', 'package-lock.json', '.zcode-plugin', 'marketplace.json']) {
+        assert.ok(!fs.existsSync(path.join(plug, absent)) && !fs.existsSync(path.join(out, absent)), absent + ' is not shipped');
+      }
+      assert.ok(!fs.existsSync(path.join(out, 'zn-gate')) && !fs.existsSync(path.join(out, 'hooks')), 'nothing outside plugins/zn-gate and .agents');
+      const hooks = JSON.parse(fs.readFileSync(path.join(plug, 'hooks', 'hooks.json'), 'utf8'));
+      assert.ok(!JSON.stringify(hooks).includes('claude-code'), 'the Codex hooks never name the claude-code adapter');
+    });
+
+    await test('verify-plugin-repo --target codex accepts a built Codex tree and finds each kind of change', async () => {
+      const { verify } = require('./verify-plugin-repo');
+      const file = path.join(tmp, 'verify-codex.tgz');
+      const archive = tgz(BASE);
+      fs.writeFileSync(file, archive);
+      const out = path.join(tmp, 'verify-codex-out');
+      const source = 'a'.repeat(40);
+      write(path.join(out, '.github', 'workflows', 'verify.yml'), fs.readFileSync(path.join(CLAUDE_DIR, 'verify.yml')));
+      await builder.build({ tarball: file, out, integrity: sri(archive), source, target: 'codex' });
+      const check = (target = 'codex') => verify({ repo: out, tarball: file, integrity: sri(archive), source, target });
+      assert.deepStrictEqual((await check()).problems, []);
+      const C = builder.CODEX_DIR + '/';
+      const at = (rel) => path.join(out, ...rel.split('/'));
+      const keep = (rel) => fs.readFileSync(at(rel));
+      const expectProblem = async (change, undo, re) => {
+        change();
+        try {
+          const { problems } = await check();
+          assert.ok(problems.some((p) => re.test(p)), re + ' in ' + JSON.stringify(problems));
+        } finally {
+          undo();
+        }
+      };
+      const edit = (rel, fn) => {
+        const before = keep(rel);
+        return [() => fs.writeFileSync(at(rel), fn(before.toString('utf8'))), () => fs.writeFileSync(at(rel), before)];
+      };
+      const gone = (rel) => () => fs.rmSync(at(rel), { recursive: true, force: true });
+
+      // The same checks as for the Claude Code tree, under plugins/zn-gate/.
+      for (const [rel, re] of [
+        [C + 'vendor/zn-gate/lib/index.js', /vendor\/zn-gate\/lib\/index\.js differs from the npm package/],
+        [C + 'scripts/zn-launch.js', /scripts\/zn-launch\.js differs from usezn\/zn/],
+        [C + 'scripts/zn-gate.lock.json', /zn-gate\.lock\.json is not the lock/],
+        [C + 'scripts/zn-hook.sh', /scripts\/zn-hook\.sh differs from usezn\/zn/],
+        [C + 'README.md', /zn-gate\/README\.md differs from usezn\/zn/],
+        ['.agents/plugins/marketplace.json', /marketplace\.json differs from usezn\/zn/],
+        ['.gitattributes', /\.gitattributes differs from usezn\/zn/],
+      ]) {
+        const before = keep(rel);
+        await expectProblem(() => fs.appendFileSync(at(rel), '\n// changed\n'), () => fs.writeFileSync(at(rel), before), re);
+      }
+      await expectProblem(() => write(at(C + 'hooks/extra.json'), '{}'), gone(C + 'hooks/extra.json'), /hooks\/extra\.json is not expected/);
+      await expectProblem(() => write(at('stray.txt'), 'x'), gone('stray.txt'), /stray\.txt is not expected/);
+      await expectProblem(() => write(at(C + 'vendor/zn-gate/lib/extra.js'), ''), gone(C + 'vendor/zn-gate/lib/extra.js'), /lib\/extra\.js is not in the npm package/);
+      // Files of the other plugins do not belong here.
+      await expectProblem(() => write(at(C + '.claude-plugin/plugin.json'), '{}'), gone(C + '.claude-plugin'), /\.claude-plugin\/plugin\.json is not expected/);
+      await expectProblem(() => write(at('hooks/hooks.json'), '{}'), gone('hooks'), /^hooks\/hooks\.json is not expected/);
+      const sh = C + 'scripts/zn-hook.sh';
+      { const [c, u] = [gone(sh), (b => () => fs.writeFileSync(at(sh), b))(keep(sh))]; await expectProblem(c, u, /zn-hook\.sh is missing/); }
+      // The version and the name: the manifest has to carry the package's version and name zn-gate.
+      {
+        const m = C + '.codex-plugin/plugin.json';
+        const [c, u] = edit(m, (t) => JSON.stringify({ ...JSON.parse(t), version: '0.0.1' }));
+        await expectProblem(c, u, /has version 0\.0\.1, the package is/);
+        const [c2, u2] = edit(m, () => 'not json');
+        await expectProblem(c2, u2, /has version null, the package is/);
+        const [c3, u3] = edit(m, (t) => JSON.stringify({ ...JSON.parse(t), name: 'other' }));
+        await expectProblem(c3, u3, /names the plugin "other", not zn-gate/);
+        // A manifest entry for hooks would replace the default hooks/hooks.json.
+        const [c4, u4] = edit(m, (t) => JSON.stringify({ ...JSON.parse(t), hooks: './elsewhere.json' }));
+        await expectProblem(c4, u4, /names hooks, which would replace the default hooks\/hooks\.json/);
+      }
+      // The hooks must run the script with their own event name, as plain command hooks, and no other event.
+      {
+        const h = C + 'hooks/hooks.json';
+        const [c, u] = edit(h, (t) => t.replace('zn-hook.sh\\" PreToolUse', 'zn-hook.sh\\" PostToolUse'));
+        await expectProblem(c, u, /a PreToolUse hook does not run `sh "\$PLUGIN_ROOT\/scripts\/zn-hook\.sh" PreToolUse`/);
+        const [c2, u2] = edit(h, (t) => t.replace(/"command": "sh /g, '"command": "bash '));
+        await expectProblem(c2, u2, /a PreToolUse hook does not run/);
+        const [c3, u3] = edit(h, (t) => t.replace('/scripts/zn-hook.sh\\" UserPromptSubmit', '/scripts/other.sh\\" UserPromptSubmit'));
+        await expectProblem(c3, u3, /a UserPromptSubmit hook does not run/);
+        const [c4, u4] = edit(h, (t) => JSON.stringify({ hooks: { PreToolUse: JSON.parse(t).hooks.PreToolUse } }));
+        await expectProblem(c4, u4, /has no UserPromptSubmit hook/);
+        // A hook that runs in the background cannot block.
+        const [c5, u5] = edit(h, (t) => { const j = JSON.parse(t); j.hooks.PreToolUse[0].hooks[0].async = true; return JSON.stringify(j); });
+        await expectProblem(c5, u5, /a PreToolUse hook does not run/);
+        const [c6, u6] = edit(h, () => '{');
+        await expectProblem(c6, u6, /hooks\/hooks\.json is not valid JSON/);
+      }
+      {
+        const [c, u] = edit(sh, (t) => t.replace('#!/bin/sh', '#!/usr/bin/env bash'));
+        await expectProblem(c, u, /zn-hook\.sh is not a \/bin\/sh script/);
+      }
+      // The marketplace must list the plugin the tree holds.
+      {
+        const mk = '.agents/plugins/marketplace.json';
+        const [c, u] = edit(mk, (t) => t.replace('"./plugins/zn-gate"', '"./elsewhere"'));
+        await expectProblem(c, u, /marketplace\.json source is .*, the plugin is in \.\/plugins\/zn-gate/);
+        const [c2, u2] = edit(mk, (t) => t.replace('"name": "zn-gate"', '"name": "other"'));
+        await expectProblem(c2, u2, /marketplace\.json lists "other", the plugin manifest says "zn-gate"/);
+        const [c3, u3] = edit(mk, (t) => JSON.stringify({ ...JSON.parse(t), plugins: [] }));
+        await expectProblem(c3, u3, /marketplace\.json lists 0 plugins, not one/);
+      }
+      { const wf = keep('.github/workflows/verify.yml'); await expectProblem(gone('.github/workflows/verify.yml'), () => write(at('.github/workflows/verify.yml'), wf), /verify\.yml is missing/); }
+      if (process.platform !== 'win32') {
+        await expectProblem(() => fs.symlinkSync('index.js', at(C + 'vendor/zn-gate/lib/link.js')), gone(C + 'vendor/zn-gate/lib/link.js'), /link\.js is a symbolic link/);
+      }
+      // A tree is only valid for the target it was built with.
+      assert.ok((await check('claude')).problems.length > 0, 'a Codex tree is not a Claude Code plugin repository');
+      assert.ok((await check('zcode')).problems.length > 0, 'a Codex tree is not a ZCode plugin repository');
+      assert.deepStrictEqual((await check()).problems, [], 'every change was undone');
+      await assert.rejects(check('nope'), /unknown target/);
+    });
+
+    await test('verify-plugin-repo checks a Claude Code tree as a Claude Code tree, not as a Codex one', async () => {
+      const { verify } = require('./verify-plugin-repo');
+      const file = path.join(tmp, 'verify-claude-as-codex.tgz');
+      const archive = tgz(BASE);
+      fs.writeFileSync(file, archive);
+      const out = path.join(tmp, 'verify-claude-as-codex-out');
+      const source = 'a'.repeat(40);
+      write(path.join(out, '.github', 'workflows', 'verify.yml'), fs.readFileSync(path.join(CLAUDE_DIR, 'verify.yml')));
+      await builder.build({ tarball: file, out, integrity: sri(archive), source });
+      const asCodex = await verify({ repo: out, tarball: file, integrity: sri(archive), source, target: 'codex' });
+      assert.ok(asCodex.problems.length > 0);
+    });
+
     await test('PROVENANCE.md lists exactly the files that are copied', async () => {
       const text = fs.readFileSync(path.join(CLAUDE_DIR, 'PROVENANCE.md'), 'utf8');
       const start = text.indexOf('\n4. ');

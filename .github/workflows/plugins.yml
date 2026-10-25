@@ -108,6 +108,9 @@ jobs:
       - name: ZCode plugin tests
         if: steps.scope.outputs.run == 'true'
         run: node plugins/tools/test-zcode-plugin.js
+      - name: Codex plugin tests
+        if: steps.scope.outputs.run == 'true'
+        run: node plugins/tools/test-codex-plugin.js
       - name: Pin commit lookup tests
         if: steps.scope.outputs.run == 'true'
         run: node plugins/tools/test-pin-commit.js

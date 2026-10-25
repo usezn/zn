@@ -1,0 +1,2 @@
+### Added
+- A Codex plugin build of zn-gate: `build-plugin-repo.js --target codex` produces a plugin repository (a Codex marketplace and the plugin, with its own pinned copy of zn-gate and a hook script that blocks when zn cannot run), `verify-plugin-repo.js --target codex` checks it, and the plugin repository workflow can build, check and release it (only when a maintainer starts it by hand). Codex runs the plugin's hooks only after you review them in `/hooks`; the install steps will be published with the plugin repository.
