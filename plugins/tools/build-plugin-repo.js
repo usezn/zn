@@ -404,13 +404,22 @@ function pluginTree(bundle, version, integrity, source) {
   return out;
 }
 
+/**
+ * A source file of this repository. A shell script is shipped with LF line ends whatever the checkout did to it
+ * (Git for Windows turns LF into CRLF unless a .gitattributes rule says otherwise, and `sh` rejects a CRLF script).
+ */
+function readSource(abs) {
+  const body = fs.readFileSync(abs);
+  return abs.endsWith('.sh') ? Buffer.from(body.toString('utf8').replace(/\r\n/g, '\n'), 'utf8') : body;
+}
+
 /** The tree of the ZCode plugin repository (see ZCODE_FILES). */
 function zcodeTree(bundle, version, integrity, source) {
   const out = new Map();
   for (const [rel, from, dest] of ZCODE_FILES) {
     const abs = path.join(from, ...rel.split('/'));
     if (fs.lstatSync(abs).isSymbolicLink()) throw new Error(path.relative(path.resolve(__dirname, '..', '..'), abs) + ' is a symbolic link');
-    out.set(dest, fs.readFileSync(abs));
+    out.set(dest, readSource(abs));
   }
   const manifest = JSON.parse(out.get(ZCODE_DIR + '/.zcode-plugin/plugin.json').toString('utf8'));
   if (manifest.version !== version) {
@@ -497,7 +506,7 @@ function parseArgs(argv) {
   return opts;
 }
 
-module.exports = { build, bundleFiles, checkImports, checkLimits, PLUGIN_FILES, ZCODE_FILES, ZCODE_DIR, BUNDLED_DIR, PRUNE };
+module.exports = { build, readSource, bundleFiles, checkImports, checkLimits, PLUGIN_FILES, ZCODE_FILES, ZCODE_DIR, BUNDLED_DIR, PRUNE };
 
 if (require.main === module) {
   build(parseArgs(process.argv.slice(2))).then((r) => {

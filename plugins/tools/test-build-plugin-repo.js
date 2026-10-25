@@ -370,6 +370,26 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       await assert.rejects(builder.build({ tarball: file, out: path.join(tmp, 'out-bad'), integrity: sri(archive), target: 'nope' }), /unknown target/);
     });
 
+    await test('a CRLF checkout of a shell script still builds an LF script that verify accepts', async () => {
+      const { verify } = require('./verify-plugin-repo');
+      const hook = path.join(builder.ZCODE_FILES.find((f) => f[0] === 'scripts/zn-hook.sh')[1], 'scripts', 'zn-hook.sh');
+      const lf = fs.readFileSync(hook);
+      const crlf = Buffer.from(lf.toString('utf8').replace(/\r?\n/g, '\r\n'), 'utf8');
+      assert.ok(crlf.includes('\r\n'), 'the simulated checkout has CRLF line ends');
+      const copy = path.join(tmp, 'crlf-hook.sh');
+      fs.writeFileSync(copy, crlf);
+      assert.deepStrictEqual(builder.readSource(copy), lf, 'readSource turns a CRLF shell script back into the committed LF bytes');
+      const file = path.join(tmp, 'verify-crlf.tgz');
+      const archive = tgz(BASE);
+      fs.writeFileSync(file, archive);
+      const out = path.join(tmp, 'verify-crlf-out');
+      write(path.join(out, '.github', 'workflows', 'verify.yml'), fs.readFileSync(path.join(CLAUDE_DIR, 'verify.yml')));
+      await builder.build({ tarball: file, out, integrity: sri(archive), source: 'a'.repeat(40), target: 'zcode' });
+      fs.writeFileSync(path.join(out, builder.ZCODE_DIR, 'scripts', 'zn-hook.sh'), crlf);
+      const { problems } = await verify({ repo: out, tarball: file, integrity: sri(archive), source: 'a'.repeat(40), target: 'zcode' });
+      assert.ok(problems.some((p) => /is not a \/bin\/sh script/.test(p)), 'a CRLF script in the built tree is still refused: ' + JSON.stringify(problems));
+    });
+
     await test('verify-plugin-repo --target zcode accepts a built ZCode tree and finds each kind of change', async () => {
       const { verify } = require('./verify-plugin-repo');
       const file = path.join(tmp, 'verify-zcode.tgz');

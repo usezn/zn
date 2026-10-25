@@ -216,7 +216,7 @@ async function verify({ repo, tarball, integrity, source, target }) {
   // 4. Every other file comes from this repository, unchanged.
   const expected = new Map();
   if (zcode) {
-    for (const [rel, from, dest] of builder.ZCODE_FILES) expected.set(dest, fs.readFileSync(path.join(from, ...rel.split('/'))));
+    for (const [rel, from, dest] of builder.ZCODE_FILES) expected.set(dest, builder.readSource(path.join(from, ...rel.split('/'))));
   } else {
     for (const [rel, from] of builder.PLUGIN_FILES) expected.set(rel, fs.readFileSync(path.join(from, ...rel.split('/'))));
   }
