@@ -111,6 +111,9 @@ jobs:
       - name: Pin commit lookup tests
         if: steps.scope.outputs.run == 'true'
         run: node plugins/tools/test-pin-commit.js
+      - name: Release pin check tests
+        if: steps.scope.outputs.run == 'true'
+        run: node plugins/tools/test-check-plugins.js
       - name: Install zn-gate dependencies for the benchmark
         if: steps.scope.outputs.run == 'true' && (hashFiles('plugins/tools/bench-launch.js') != '')
         working-directory: packages/zn-gate
@@ -126,7 +129,7 @@ jobs:
     # Prerelease tags (vX.Y.Z-beta.N) are skipped: the plugin is pinned only to
     # final releases.
     name: Release pin checks
-    if: (github.event_name == 'push' && ((startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')) || github.ref == 'refs/heads/main')) || (github.event_name == 'pull_request' && github.base_ref == 'main')
+    if: github.event_name == 'schedule' || (github.event_name == 'push' && ((startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')) || github.ref == 'refs/heads/main')) || (github.event_name == 'pull_request' && github.base_ref == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -144,4 +147,17 @@ jobs:
           check-latest: true
           package-manager-cache: false
       - name: Release checks
-        run: node plugins/tools/check-plugins.js --release
+        # The plugin is pinned to a release only after npm publishes it, so on the release pull request and on the release
+        # tag the lock file may still be on the previous release (--pre-tag). On main (push or schedule) the strict check
+        # runs once npm has the version, so a forgotten pin turns red there.
+        run: |
+          version=$(node -p "require('./packages/zn-gate/package.json').version")
+          strict=no
+          if [ "$GITHUB_REF_TYPE" != tag ] && { [ "$GITHUB_EVENT_NAME" = push ] || [ "$GITHUB_EVENT_NAME" = schedule ]; }; then
+            if [ "$(npm view "zn-gate@$version" version 2>/dev/null)" = "$version" ]; then strict=yes; fi
+          fi
+          if [ "$strict" = yes ]; then
+            node plugins/tools/check-plugins.js --release
+          else
+            node plugins/tools/check-plugins.js --release --pre-tag
+          fi
