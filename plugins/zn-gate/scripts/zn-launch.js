@@ -151,7 +151,9 @@ function candidates(lock) {
   const cfg = znConfig();
   if (cfg.plugin && typeof cfg.plugin.packageDir === 'string') return [path.resolve(cfg.plugin.packageDir)];
   const out = [path.resolve(__dirname, '..', 'node_modules', 'zn-gate')];
-  const dirs = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  // Absolute PATH entries only: a relative one points into the folder the agent runs in (every candidate is still
+  // checked against the lock file, so this only keeps the search out of the project).
+  const dirs = String(process.env.PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d));
   for (const dir of dirs) {
     const bin = path.join(dir, 'zn-gate');
     try {
