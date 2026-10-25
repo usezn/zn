@@ -57,7 +57,10 @@ test('normalize: mcp names, unknown tools, non-PreToolUse and junk', () => {
   assert.deepEqual(m.mcp, { server: 'sql', tool: 'query' });
   assert.equal(agy.normalize(pre('invoke_subagent', { Task: 'x' })).tool, 'invoke_subagent');
   assert.equal(agy.normalize(pre('SomeNewShell', { CommandLine: 'ls' })).tool, 'bash');
-  assert.equal(agy.normalize({ conversationId: 'c', workspacePaths: [] }).event, null);
+  // A payload without a tool call is a malformed PreToolUse (zn installs only that event): it is refused, not ignored.
+  const empty = agy.normalize({ conversationId: 'c', workspacePaths: [] });
+  assert.equal(empty.event, 'pre_tool');
+  assert.match(empty.unreadable, /could not read the tool call/);
   assert.equal(agy.normalize(pre('run_command', { CommandLine: 'ls' }, { hookEventName: 'PostToolUse' })).event, null);
   assert.equal(agy.normalize(null), null);
 });

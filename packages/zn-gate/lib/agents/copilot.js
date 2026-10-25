@@ -108,7 +108,7 @@ function eventName(raw) {
   if (typeof named === 'string' && named) return named.charAt(0).toLowerCase() + named.slice(1);
   const has = (k) => raw[k] !== undefined && raw[k] !== null;
   if (has('toolResult') || has('tool_result')) return 'postToolUse';
-  if (has('toolName') || has('tool_name')) return has('error') ? 'postToolUseFailure' : 'preToolUse';
+  if (has('toolName') || has('tool_name') || has('toolArgs') || has('tool_input')) return has('error') ? 'postToolUseFailure' : 'preToolUse';
   if (typeof raw.prompt === 'string') return 'userPromptSubmitted';
   if (has('source')) return 'sessionStart';
   return null;
@@ -144,6 +144,7 @@ function normalize(raw) {
   const args = argsOf(raw);
   const event = name === 'preToolUse' ? 'pre_tool' : 'post_tool';
   const ev = { ...base, event, toolName, rawArgs: args || {} };
+  if (event === 'pre_tool' && !rawName) return { ...ev, tool: 'unreadable', input: { texts: [] }, unreadable: 'zn: could not read the tool name of this call, so zn cannot check it.' };
   if (event === 'post_tool') ev.output = resultText(raw);
   const unreadable = (what) => 'zn: could not read the ' + what + ' of this call, so zn cannot check it.';
 

@@ -70,6 +70,7 @@ const versions = {
   'plugin.json': json(PLUGIN + '/plugin.json').version,
   '.claude-plugin/plugin.json': json(PLUGIN + '/.claude-plugin/plugin.json').version,
   '.cursor-plugin/plugin.json': json(PLUGIN + '/.cursor-plugin/plugin.json').version,
+  'plugins/zcode/.zcode-plugin/plugin.json': json('plugins/zcode/.zcode-plugin/plugin.json').version,
 };
 for (const [where, got] of Object.entries(versions)) {
   if (got !== v) fail(where + ': version ' + got + ' differs from the lock file version ' + v);
@@ -215,6 +216,37 @@ for (const [event, entries] of Object.entries(json(PLUGIN + '/cursor/hooks.json'
     if (!hooks.length) fail('hooks/hooks.json: no ' + event + ' hook');
     for (const h of hooks) if (h.onFailure !== 'block') fail('hooks/hooks.json: ' + event + ' hook is not onFailure "block"');
   }
+}
+
+/* ----------------------------- ZCode plugin ----------------------------- */
+
+// The ZCode plugin has its own tree (ZCode always loads hooks/hooks.json of the plugin root, so the Claude Code hooks cannot be
+// shared). Every hook runs scripts/zn-hook.sh with its own event name; the script runs the launcher in "hook zcode" mode.
+{
+  const ZC = 'plugins/zcode';
+  const zhooks = (json(ZC + '/hooks/hooks.json').hooks) || {};
+  const EVENTS = ['PermissionRequest', 'PostToolUse', 'PreToolUse', 'UserPromptSubmit'];
+  if (JSON.stringify(Object.keys(zhooks).sort()) !== JSON.stringify(EVENTS)) fail(ZC + '/hooks/hooks.json: events must be exactly ' + EVENTS.join(', '));
+  for (const [event, groups] of Object.entries(zhooks)) {
+    for (const g of groups) {
+      for (const h of g.hooks || []) {
+        const args = JSON.stringify(h.args);
+        if (h.type !== 'process' || h.command !== 'sh' || args !== JSON.stringify(['${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh', event])) {
+          fail(ZC + '/hooks/hooks.json: ' + event + ' hook must be a process hook: sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh ' + event);
+        }
+        if (h.onFailure !== undefined || h.async !== undefined) fail(ZC + '/hooks/hooks.json: ' + event + ' hook must not set onFailure or async');
+      }
+    }
+  }
+  const zm = json(ZC + '/.zcode-plugin/plugin.json');
+  if (zm.name !== 'zn-gate') fail(ZC + '/.zcode-plugin/plugin.json: name must be zn-gate');
+  for (const k of ['hooks', 'mcpServers', 'userConfig']) {
+    if (zm[k] !== undefined) fail(ZC + '/.zcode-plugin/plugin.json: no "' + k + '" key (the hooks file is found by name; there is nothing to configure)');
+  }
+  const mk = json(ZC + '/marketplace.json');
+  const entry = (mk.plugins || [])[0] || {};
+  if ((mk.plugins || []).length !== 1 || entry.name !== 'zn-gate' || entry.source !== './zn-gate') fail(ZC + '/marketplace.json: one plugin, zn-gate, with source ./zn-gate');
+  if (!fs.readFileSync(path.join(ROOT, ZC, 'scripts', 'zn-hook.sh'), 'utf8').includes('hook zcode')) fail(ZC + '/scripts/zn-hook.sh: must run the launcher in "hook zcode" mode');
 }
 
 /* ------------------------------- links ------------------------------- */

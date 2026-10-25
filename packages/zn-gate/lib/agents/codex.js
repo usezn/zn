@@ -75,6 +75,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
+const { askAsDeny, isPlainAsk } = require('./ask-deny');
 const { whichSync } = require('../broker/markers');
 const launcher = require('./launcher');
 
@@ -273,8 +274,10 @@ function respond(d) {
       out = deny('zn: this command uses a stored secret. Run it through zn instead, exactly like this: zn run -- ' + ev.input.command +
         '  (zn puts the value only into that process, if the user allowed this command for the secret).');
     }
-    // Restoring detected tokens or asking would need "allow" (skips the
-    // user's approval policy) or "ask" (unsupported): stay silent.
+    else if (isPlainAsk(d)) out = deny(askAsDeny('Codex CLI', d));
+    // Restoring detected tokens would need "allow" (skips the user's approval
+    // policy) or "ask" (unsupported): stay silent. A question zn wanted to
+    // ask is a deny, because Codex hooks cannot ask.
     if (!ev.permissionRequest) return out;
     // PermissionRequest: the same deny and reason, in its own shape. Never "allow".
     return out && { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: out.hookSpecificOutput.permissionDecisionReason } } };

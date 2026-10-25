@@ -267,6 +267,24 @@ test('an unreadable audit log stops the join before anything is sent', async () 
   assert.ok(!cloud.requests.slice(seen).some((q) => q.path === '/v1/org/join'), 'no join request');
 });
 
+test('any read error of the audit log stops the join before anything is sent, whatever the platform reports', async () => {
+  for (const code of ['EPERM', 'EACCES', 'EBUSY', 'ENOTDIR']) {
+    const m = machine();
+    fs.writeFileSync(m.auditFile, '');
+    const real = fs.openSync;
+    fs.openSync = function (f, ...rest) {
+      if (String(f) === String(m.auditFile)) { const e = new Error(code + ': injected'); e.code = code; throw e; }
+      return real.call(this, f, ...rest);
+    };
+    const seen = cloud.requests.length;
+    try {
+      await assert.rejects(m.o.teamJoin({ join_token: cloud.createJoinToken(), api_base: cloud.base }), /could not read the local audit log.*not connected/, code);
+    } finally { fs.openSync = real; }
+    assert.strictEqual(m.secrets.team, undefined);
+    assert.ok(!cloud.requests.slice(seen).some((q) => q.path === '/v1/org/join'), 'no join request (' + code + ')');
+  }
+});
+
 test('leave deletes every local copy and the upload lock; one that cannot be deleted is reported by name', async () => {
   const m = await joined();
   cloud.publishPolicy({ rules: [] });

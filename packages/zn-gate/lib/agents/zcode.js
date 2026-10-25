@@ -123,7 +123,12 @@ function znMcpServerIsOurs(server, opts = {}) {
 
 function normalize(raw) {
   if (!isObj(raw)) return null;
-  const name = raw.hook_event_name || raw.hookEventName;
+  // A payload that names no event but carries a tool call is a malformed tool hook: a call without a result is
+  // checked as PreToolUse (and denied when unreadable), not ignored.
+  const has = (k) => raw[k] !== undefined && raw[k] !== null;
+  const inferred = has('tool_name') || has('toolName') || has('tool_input') || has('toolInput')
+    ? (has('tool_response') || has('toolResponse') ? 'PostToolUse' : 'PreToolUse') : undefined;
+  const name = raw.hook_event_name || raw.hookEventName || inferred;
   const event = name === 'PreToolUse' || name === 'PermissionRequest' ? 'pre_tool'
     : name === 'PostToolUse' ? 'post_tool' : name === 'UserPromptSubmit' ? 'user_prompt' : null;
   const cwd = typeof raw.cwd === 'string' && raw.cwd ? raw.cwd : process.cwd();
@@ -230,7 +235,7 @@ function respond(d) {
     else if (d.updatedInput && d.kind === 'wrap' && typeof ev.input.command === 'string') {
       reason = 'zn: this command uses a stored secret. Run it through zn instead, exactly like this: zn run -- ' + ev.input.command +
         '  (zn puts the value only into that process, if the user allowed this command for the secret).';
-    } else if (d.decision === 'ask' && !d.updatedInput) ask = d.message || 'zn asks for confirmation';
+    } else if (d.decision === 'ask' && (d.confirm === true || !d.updatedInput)) ask = d.message || 'zn asks for confirmation';
     if (ev.permissionRequest) {
       return reason === null ? null : { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } };
     }
@@ -451,6 +456,10 @@ function install(opts = {}) {
   if (userHooks.length) {
     report.warnings.push('"hooks.enabled" was ' + (previousEnabled === false ? 'false' : 'not set') + ' in ' + file + ', so these hooks of yours did not run until now and will run from the next ZCode session: ' + userHooks.join('; ') + '. `zn hooks uninstall zcode` puts the switch back.');
   }
+  const plugin = pluginState(opts);
+  if (plugin.root && plugin.enabled) {
+    report.warnings.push('the zn-gate plugin (' + plugin.id + ') is also installed and turned on in ZCode, so every call is checked twice (ZCode does not remove duplicate hooks): once by the plugin and once by these hooks. Keep one of them: to keep the plugin, run `zn hooks uninstall zcode`; to keep these hooks, turn the plugin off in ZCode (Settings, Plugins).');
+  }
   report.warnings.push('zn checks tool calls (PreToolUse, PermissionRequest) and prompts before they run: it blocks reads and writes of secret files, shell commands that handle secrets, MCP calls that would send a secret and prompts that contain one.');
   report.warnings.push('ZCode cannot rewrite what a tool returns: a value printed by a command or read from a file reaches the model. zn adds a notice to the output when it holds a secret. Keep secrets in the vault.');
   report.warnings.push('ZCode runs hooks only from ' + file + ' (hooks of a project are ignored) and only when "hooks.enabled" is true' + (wasOff ? ': zn turned it on' : '') + '. Start a new ZCode session: a running one keeps the hooks it started with.');
@@ -563,6 +572,42 @@ function configWarnings(opts = {}) {
   return out;
 }
 
+/**
+ * The zn-gate plugin as ZCode records it (read-only, never throws):
+ *   {root, id, version, enabled, pluginsOff, listed}
+ * ZCode keeps the installed plugins in ~/.zcode/cli/plugins/installed_plugins.json ({plugins: [{id, installPath, version}]})
+ * and each plugin's switch in ~/.zcode/cli/config.json under plugins.enabledPlugins["<name>@<marketplace>"]; plugins.enabled
+ * false turns every plugin off. A plugin with no entry in enabledPlugins is taken as on (the install writes true).
+ * root is set only for a plugin of ours: its folder holds .zcode-plugin/plugin.json and scripts/zn-hook.sh.
+ */
+function pluginState(opts = {}) {
+  const base = path.join(opts.home || os.homedir(), '.zcode', 'cli');
+  const out = { root: null, id: null, version: null, enabled: false, pluginsOff: false, listed: false };
+  let list;
+  try {
+    list = JSON.parse(fs.readFileSync(path.join(base, 'plugins', 'installed_plugins.json'), 'utf8').replace(/^﻿/, ''));
+  } catch (_) {
+    return out;
+  }
+  const entries = list && Array.isArray(list.plugins) ? list.plugins : [];
+  const mine = entries.find((p) => isObj(p) && typeof p.id === 'string' && /^zn-gate@/.test(p.id) && typeof p.installPath === 'string' &&
+    fs.existsSync(path.join(p.installPath, '.zcode-plugin', 'plugin.json')) && fs.existsSync(path.join(p.installPath, 'scripts', 'zn-hook.sh')));
+  if (!mine) return out;
+  out.listed = true;
+  out.root = mine.installPath;
+  out.id = mine.id;
+  out.version = typeof mine.version === 'string' ? mine.version : null;
+  let conf = {};
+  try {
+    conf = JSON.parse(fs.readFileSync(path.join(base, 'config.json'), 'utf8').replace(/^﻿/, ''));
+  } catch (_) { conf = {}; }
+  const plugins = isObj(conf) && isObj(conf.plugins) ? conf.plugins : {};
+  out.pluginsOff = plugins.enabled === false;
+  const flags = isObj(plugins.enabledPlugins) ? plugins.enabledPlugins : {};
+  out.enabled = !out.pluginsOff && flags[mine.id] !== false;
+  return out;
+}
+
 function detect(opts = {}) {
   if (whichSync('zcode', (opts.env || process.env).PATH || '')) return true;
   return fs.existsSync(path.join(opts.home || os.homedir(), '.zcode'));
@@ -588,4 +633,5 @@ module.exports = {
   hookGroups,
   commandText,
   configWarnings,
+  pluginState,
 };

@@ -161,7 +161,7 @@ test('a search over a folder that holds a plain-text .env is blocked (Gemini hoo
   const r = await run(bt('grep_search', { pattern: 'x', dir_path: dir }));
   assert.equal(r.output.decision, 'deny');
   assert.match(r.output.reason, /\.env/);
-  assert.match(r.output.reason, /cannot ask the user/);
+  assert.match(r.output.reason, /cannot show that question/);
   assert.match(r.output.reason, /narrower path/);
 });
 

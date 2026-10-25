@@ -72,8 +72,8 @@ an in-place edit asks you first, with the file name; in strict mode it is
 refused. Reading these files is never blocked. This is a question, not a wall:
 a write the hooks cannot read as a word of the command (inline code, a path
 built at run time) is not seen, and an agent that cannot ask (see
-[compat.md](compat.md#agent-memory-and-instruction-files)) keeps its own approval
-rules for these files. You can turn it off with `hooks.agentInstructionWrites`.
+[compat.md](compat.md#agent-memory-and-instruction-files)) gets a block with the
+reason instead of a question. You can turn it off with `hooks.agentInstructionWrites`.
 
 ## Experimental adapters
 
@@ -155,8 +155,8 @@ with Gemini CLI 0.64.0 against a scripted model provider.
 - **What it does not cover:** zn does not use `AfterTool`, so what a tool
   returns is not hidden: a value printed by a command or a file the agent may
   read reaches the model. Gemini CLI hooks cannot ask you for confirmation, so
-  zn blocks only what it would refuse and says nothing otherwise; Gemini CLI's
-  own approval applies. A pasted secret in a typed prompt is not checked.
+  zn blocks what it would refuse, and what it would ask about, with the reason
+  and how to approve it; for everything else Gemini CLI's own approval applies. A pasted secret in a typed prompt is not checked.
 - **When a hook fails:** Gemini CLI runs the tool when a hook crashes or times
   out; only an explicit refusal (exit code 2) blocks. A user install goes
   through a launcher script that blocks the call if the Node.js zn was
