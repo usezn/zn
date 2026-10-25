@@ -285,6 +285,25 @@ function parseCommand(command, agentId) {
   return null;
 }
 
+/*
+ * The Git Bash that Claude Code runs hooks with on Windows: CLAUDE_CODE_GIT_BASH_PATH when it names a file (the setting
+ * Claude Code documents), else bin\bash.exe of the Git for Windows whose git is on an absolute PATH entry (a default
+ * install puts only Git\cmd on the PATH), else bash or sh from the absolute PATH entries. Null when there is none.
+ */
+function gitBash(env) {
+  const exe = require('./exe');
+  const given = (env || {}).CLAUDE_CODE_GIT_BASH_PATH;
+  if (typeof given === 'string' && path.isAbsolute(given)) {
+    try { if (fs.statSync(given).isFile()) return given; } catch (err) { /* not there */ }
+  }
+  const git = exe.findProgram('git', env);
+  if (git) {
+    const bash = path.resolve(path.dirname(git), '..', 'bin', process.platform === 'win32' ? 'bash.exe' : 'bash');
+    try { if (fs.statSync(bash).isFile()) return bash; } catch (err) { /* not a Git for Windows layout */ }
+  }
+  return exe.findProgram('bash', env) || exe.findProgram('sh', env);
+}
+
 function decisionOf(stdout, status) {
   if (status === 2) return 'deny';
   const o = String(stdout || '');
@@ -480,7 +499,7 @@ function cliHooks(spec, ctx, userFile, given) {
       const exe = require('./exe');
       const run = cmd.winScript ? { file: exe.systemPowerShell(), args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(cmd.winScript, 'utf16le').toString('base64')] }
         : spec.id === 'antigravity' && process.platform !== 'win32' ? { file: exe.findProgram(cmd.raw.split(' ')[0], ctx.env || process.env), args: cmd.raw.split(' ').slice(1) } // as Antigravity runs it: split on spaces, no shell
-          : process.platform === 'win32' ? { file: exe.findProgram('sh', ctx.env || process.env), args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
+          : process.platform === 'win32' ? { file: gitBash(ctx.env || process.env), args: [cmd.launcher, cmd.event] } : { file: cmd.launcher, args: [cmd.event] };
       // The system PowerShell, and sh (Git Bash) from the absolute PATH entries only; without one the live test is skipped.
       if (run.file) out.live = { ...run, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {} };
       else out.notes.push('the program that runs the hook was not found, so the hook was not run here; zn\'s rules were checked directly');
@@ -981,4 +1000,4 @@ function report({ results, removed, warnings }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin } };
+module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin } };
