@@ -427,9 +427,7 @@ an older zn-gate and the plugins keep a plain command. Agent by agent:
   by an older zn-gate keep the plain command: for those, zn-gate cannot promise
   anything (the call may be blocked with no message from zn, or run). Not tested:
   a hook that times out.
-- **ZCode**: ZCode's documentation says exit code 2 or a deny answer blocks and any
-  other non-zero exit code fails the hook recoverably; it does not say what happens
-  when a hook cannot start or times out (not tested). With the user install (the only one
+- **ZCode**: ZCode's documentation does not say what happens when a hook fails; in our tests with the ZCode desktop app 3.16.3 on Linux, a hook that failed (an exit code other than 2, a crash or a timeout) let the call run, and only exit code 2 or a deny answer blocked it. With the user install (the only one
   ZCode has), the launcher exits 2 with the repair step on tool calls, permission
   requests and prompts, and after a tool has run zn only warns. The launcher also
   stops a hook that has not finished after 28 seconds (2 seconds under the 30-second

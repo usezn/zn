@@ -47,8 +47,8 @@ way to read a file. The point is that the agent's normal tools do not hand
 values to the model. The hooks also block the agent's file tools and shell
 commands from writing `~/.zn` and the agents' own hook and plugin settings:
 the files (`.claude/settings*.json`, `.codex/` files, `.cursor/hooks.json`, the
-OpenCode plugin and `opencode.json`, Antigravity's hook and settings files, ZCode's `config.json` and Gemini CLI's settings files,
-listed under "Experimental adapters" below) and the directories that hold them
+OpenCode plugin and `opencode.json`, Antigravity's hook and settings files, ZCode's `config.json` and Gemini CLI's settings files;
+see "Google Antigravity" and "Experimental adapters" below) and the directories that hold them
 (`~/.claude`, `~/.codex`, `~/.cursor`, `~/.config/opencode`, the same in the
 project, and the locations `CODEX_HOME`, `OPENCODE_CONFIG`,
 `OPENCODE_CONFIG_DIR`, `CLAUDE_CONFIG_DIR` and `XDG_CONFIG_HOME` name). A command that moves,
@@ -75,14 +75,9 @@ built at run time) is not seen, and an agent that cannot ask (see
 [compat.md](compat.md#agent-memory-and-instruction-files)) gets a block with the
 reason instead of a question. You can turn it off with `hooks.agentInstructionWrites`.
 
-## Experimental adapters
+## Google Antigravity
 
-Some agents are supported through an adapter that is still experimental. It
-is built from the agent's public documentation and has not had the same
-end-to-end testing as the agents above, so read this section before relying on
-it. Each adapter lists its limits when you install it.
-
-### Google Antigravity
+Antigravity is a supported agent. Its hooks have limits the other agents do not have, listed below.
 
 Install it with `zn hooks install antigravity` (add `--project` for one
 project). It adds a hook that runs before each tool call.
@@ -115,6 +110,13 @@ project). It adds a hook that runs before each tool call.
   `hooks.json` and changes to the folder's path are treated as protected.
   The directories `~/.gemini` and `~/.gemini/antigravity-cli` are not
   protected either, only the files named above.
+
+## Experimental adapters
+
+Some agents are supported through an adapter that is still experimental. It
+is built from the agent's public documentation and has not had the same
+end-to-end testing as the agents above, so read this section before relying on
+it. Each adapter lists its limits when you install it.
 
 ### GitHub Copilot CLI
 

@@ -1,7 +1,8 @@
 #!/bin/sh
 # zn-gate hook for the ZCode desktop app (plugin copy).
 #
-# ZCode lets a tool call run when a hook cannot start or crashes: only exit code 2 blocks. So this script
+# ZCode does not document what happens when a hook fails; in our tests with the desktop app 3.16.3 on Linux a
+# failed hook let the call run and only exit code 2 blocked it. So this script
 # does one job: it runs zn-launch.js, which checks the zn-gate copy shipped inside this plugin byte for
 # byte and runs it, and when anything stops that from happening (no usable Node.js, a missing file, an
 # unexpected exit code) it blocks instead of letting the call run.
@@ -12,8 +13,8 @@
 # ZCode's agent (the app's own Node.js: it is started as `ELECTRON_RUN_AS_NODE=1 <app> zcode.cjs ...`, and is this
 # script's parent). A candidate is used only if it is Node.js 20.19 or later (21.7 or later on 21).
 #
-# Start deadline: ZCode stops a hook after 30 seconds, and what it does with a call whose hook timed out is not
-# documented. So a Node.js that hangs while the hook starts (the version probe or the launch) must not run into that
+# Start deadline: this plugin sets a 30-second timeout on its hooks (hooks.json, timeoutMs), and in our tests a
+# call whose hook timed out ran. So a Node.js that hangs while the hook starts (the version probe or the launch) must not run into that
 # timeout: DEADLINE seconds (28, the same deadline as the launcher of `zn hooks install zcode`, which leaves the hook its
 # own 25-second answer deadline) after the script starts, the hook answers like it does when the check fails (block, or only
 # a warning on PostToolUse) and stops the Node.js it started. A watchdog sends this shell a signal; Node.js runs in the
