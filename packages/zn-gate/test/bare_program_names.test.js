@@ -63,3 +63,31 @@ test('zn-gate shield starts a wrapped server named without a path from the absol
   assert.match(r.stderr, /could not start 'zn-bare-mcp': it is not installed or not on your PATH/);
   assert.equal(fs.existsSync(marker), false, 'the planted server ran');
 });
+
+test('programEnv for Windows keeps drive and UNC entries and turns off the current-folder search', () => {
+  const env = exe.programEnv({ Path: '.;C:\\Program Files\\nodejs;bin;;\\\\srv\\tools;C:rel', OTHER: '1' }, 'win32');
+  assert.deepEqual(env, { OTHER: '1', PATH: 'C:\\Program Files\\nodejs;\\\\srv\\tools', NoDefaultCurrentDirectoryInExePath: '1' });
+});
+
+test('zn-gate shield gives the server the absolute PATH: `sh -c <name>` cannot start a program from the project', posix, (t) => {
+  const { work, marker } = planted(t, 'zn-bare-mcp');
+  const sh = exe.findProgram('sh');
+  const script = 'require(' + JSON.stringify(path.join(LIB, 'shield.js')) + ').startMcpShield(' + JSON.stringify(sh) + ', ["-c", "zn-bare-mcp"], { localOnly: true })';
+  for (const PATH of ['.:' + path.dirname(sh), 'bin:' + path.dirname(sh), ':' + path.dirname(sh)]) {
+    spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', cwd: work, input: '', timeout: 15000, env: { PATH, HOME: work } });
+    assert.equal(fs.existsSync(marker), false, PATH + ': the planted server ran through sh -c');
+  }
+});
+
+test('git status: a failure other than "not a git repository" is unknown, and fsmonitor is off', posix, (t) => {
+  const bin = tempDir(t, 'zn-bare-git-');
+  const log = path.join(bin, 'args');
+  const fake = (stderr) => fs.writeFileSync(path.join(bin, 'git'), '#!/bin/sh\necho "$@" >> ' + JSON.stringify(log) + '\necho ' + JSON.stringify(stderr) + ' >&2\nexit 128\n', { mode: 0o755 });
+  const script = 'console.log(require(' + JSON.stringify(path.join(LIB, 'broker', 'files.js')) + ').gitStatusOf(' + JSON.stringify(path.join(bin, 'a.txt')) + '))';
+  const run = () => spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', env: { PATH: bin + ':/usr/bin:/bin' } }).stdout.trim();
+  fake("fatal: detected dubious ownership in repository at '/x'");
+  assert.equal(run(), 'unknown');
+  fake('fatal: not a git repository (or any of the parent directories): .git');
+  assert.equal(run(), 'outside');
+  assert.match(fs.readFileSync(log, 'utf8'), /^-c core\.fsmonitor=false -C /m);
+});

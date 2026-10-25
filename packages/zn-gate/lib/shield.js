@@ -245,9 +245,11 @@ function startMcpShield(command, args, options = {}) {
     process.exit(1);
     return;
   }
+  // The server gets the same PATH (absolute entries only, and on Windows no current-folder search), so a wrapper such as
+  // `cmd /c npx ...` or `sh -c ...` cannot start a program from the project folder either.
   const child = spawn(file, args, {
     stdio: ['pipe', 'pipe', 'inherit'],
-    env: process.env,
+    env: exe.programEnv(process.env),
   });
 
   child.on('error', (err) => {

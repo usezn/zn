@@ -115,9 +115,11 @@ function whichSync(cmd, pathValue) {
  * gives the program's absolute path or null (a name with a path in it is used as written); on Windows only an .exe or
  * .com, which starts without a shell.
  */
-function absolutePath(pathValue) {
-  const keep = (d) => (isWin ? /^(?:[A-Za-z]:[\\/]|\\\\)/.test(d) : d.startsWith('/'));
-  return String(pathValue || '').split(path.delimiter).filter(keep).join(path.delimiter);
+function absolutePath(pathValue, platform = process.platform) {
+  const win = platform === 'win32';
+  const sep = win ? ';' : ':';
+  const keep = (d) => (win ? /^(?:[A-Za-z]:[\\/]|\\\\)/.test(d) : d.startsWith('/'));
+  return String(pathValue || '').split(sep).filter(keep).join(sep);
 }
 
 function pathOf(env) {
@@ -125,11 +127,11 @@ function pathOf(env) {
   return e ? String(e[1] || '') : '';
 }
 
-function programEnv(env = process.env) {
+function programEnv(env = process.env, platform = process.platform) {
   const out = {};
   for (const [k, v] of Object.entries(env || {})) if (k.toUpperCase() !== 'PATH') out[k] = v;
-  out.PATH = absolutePath(pathOf(env));
-  if (isWin) out.NoDefaultCurrentDirectoryInExePath = '1';
+  out.PATH = absolutePath(pathOf(env), platform);
+  if (platform === 'win32') out.NoDefaultCurrentDirectoryInExePath = '1';
   return out;
 }
 
