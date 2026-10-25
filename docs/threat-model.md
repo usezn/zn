@@ -137,7 +137,8 @@ provider: 0 secret values sent.
   is not scrubbed. The docs do not list the argument names of each tool, so zn
   refuses a known tool whose arguments it cannot read.
 - **When a hook fails:** a hook that takes longer than its timeout lets the
-  call through, because Copilot fails open there. Machine policy hooks in
+  call through, because Copilot fails open there, so zn sets a 15-second
+  timeout on its hooks and blocks the call itself at 11 seconds. Machine policy hooks in
   `/etc/github-copilot/policy.d` run in addition and are not seen by zn.
 - **Other limits:** it has not been tested on Windows. Copilot's own session
   log (`events.jsonl`) keeps the original tool output on your machine.
@@ -160,9 +161,11 @@ with Gemini CLI 0.64.0 against a scripted model provider.
   zn blocks what it would refuse, and what it would ask about, with the reason
   and how to approve it; for everything else Gemini CLI's own approval applies. A pasted secret in a typed prompt is not checked.
 - **When a hook fails:** Gemini CLI runs the tool when a hook crashes or times
-  out; only an explicit refusal (exit code 2) blocks. A user install goes
-  through a launcher script that blocks the call if the Node.js zn was
-  installed with is gone.
+  out; only an explicit refusal (exit code 2) blocks. zn blocks instead: a user
+  install goes through a launcher script, and a project install through a start
+  guard, that answer a hook that fails (including when the Node.js zn was
+  installed with is gone) with a block, and zn sets a 15-second timeout on its
+  hook and blocks a check still running after 11 seconds.
 - **Other limits:** a project hook stays untrusted until you approve it in
   Gemini CLI, and it runs `zn` from your PATH, so every teammate needs zn-gate
   installed. `hooksConfig.enabled: false`, a name in `hooksConfig.disabled` or
@@ -470,8 +473,10 @@ stop malware running as the same user (see above).
   upgrade and the hook command points to the old path): what happens depends on
   the agent and on how the hooks were installed. A user install blocks tool
   calls in Claude Code, Codex CLI, Cursor, Gemini CLI, Antigravity and ZCode desktop app through its
-  launcher script; a project install, older hooks and the plugins differ per
-  agent, and Codex CLI and Gemini CLI let the call go ahead there. See
+  launcher script, and a project install for Claude Code, Codex CLI, Cursor,
+  Gemini CLI and Copilot CLI through its start guard; with the plugins or
+  hooks written before zn-gate 1.14.0 it differs per agent, and Codex CLI and
+  Gemini CLI let the call go ahead there. See
   [If your agent blocks every prompt](compat.md#if-your-agent-blocks-every-prompt),
   which has one statement per agent. A hook that times out is described in each
   agent's own section of that page. Run `zn hooks install` again after moving or
