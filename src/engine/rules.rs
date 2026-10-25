@@ -417,16 +417,14 @@ mod tests {
     #[test]
     fn invisible_character_used_as_a_space_does_not_hide_the_credentials_phrase() {
         let fixture = invisible_fixture();
-        // The gateway has no credentials-request rule, so the plain phrase is allowed here; the view with the
-        // invisible character as a space must give the same answer as the plain phrase.
+        // The gateway blocks the credentials request (exfil:credentials), also with an invisible character as a space.
         let phrase = fixture["credential_phrase"].as_str().unwrap();
-        let plain = ManagedRuleset::evaluate(&cfg(), "exec_command", phrase).is_err();
+        assert!(ManagedRuleset::evaluate(&cfg(), "exec_command", phrase).is_err());
         for h in fixture["credential_block_cases"].as_array().unwrap() {
             let c = fixture_char(h.as_str().unwrap());
             let spaced = phrase.replace(' ', &c.to_string());
-            assert_eq!(
+            assert!(
                 ManagedRuleset::evaluate(&cfg(), "exec_command", &spaced).is_err(),
-                plain,
                 "{h}"
             );
         }
