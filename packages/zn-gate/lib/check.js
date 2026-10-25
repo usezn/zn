@@ -684,7 +684,13 @@ async function checkAgent(spec, ctx) {
         }
         const rest = plugin.untrusted.filter((e) => e !== 'PreToolUse');
         if (rest.length) res.notes.push('some hooks of the zn-gate plugin are not trusted yet in Codex (' + rest.join(', ') + '); open `/hooks` in Codex to trust them');
-        live = { file: 'sh', args: [script, 'PreToolUse'], env: { ...(ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}), PLUGIN_ROOT: plugin.root }, plugin: true };
+        // Codex runs the plugin's hook with sh; check takes sh from the absolute PATH entries only.
+        const sh = require('./exe').findProgram('sh', ctx.env || process.env);
+        if (sh) live = { file: sh, args: [script, 'PreToolUse'], env: { ...(ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}), PLUGIN_ROOT: plugin.root }, plugin: true };
+        else {
+          res.problem = 'the zn-gate plugin runs its hook with sh, and no sh was found in the absolute entries of your PATH, so the hook cannot start';
+          res.fix = 'put the folder that holds sh (usually /bin) on your PATH, then run `zn-gate check` again';
+        }
       } else if (!userHooks) {
         // Turned off, not trusted, or without its PreToolUse hook, and nothing else of zn runs: Codex is not protected.
         installed = true;
@@ -722,7 +728,13 @@ async function checkAgent(spec, ctx) {
         if (userHooks) {
           res.notes.push('zn is also set up with `zn hooks install antigravity`, so a call can be checked twice (Antigravity runs the hook of the plugin and those in hooks.json); keep one: run `zn hooks uninstall antigravity` in your own terminal to keep the plugin, or run `agy plugin disable zn-gate` to keep the hooks');
         }
-        live = { file: 'sh', args: [script], env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}, plugin: true };
+        // Antigravity runs the plugin's hook with sh; check takes sh from the absolute PATH entries only.
+        const sh = require('./exe').findProgram('sh', ctx.env || process.env);
+        if (sh) live = { file: sh, args: [script], env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}, plugin: true };
+        else {
+          res.problem = 'the zn-gate plugin runs its hook with sh, and no sh was found in the absolute entries of your PATH, so the hook cannot start';
+          res.fix = 'put the folder that holds sh (usually /bin) on your PATH, then run `zn-gate check` again';
+        }
       } else if (!userHooks) {
         // Turned off, and nothing else of zn runs: Antigravity is not protected.
         installed = true;

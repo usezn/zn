@@ -445,8 +445,8 @@ function uninstall(opts = {}) {
  * The zn-gate plugin as Codex records it (read-only, never throws):
  *   {root, id, version, enabled, listed, hooks, untrusted, off}
  * `codex plugin add zn-gate@<marketplace>` copies the plugin to <codex home>/plugins/cache/<marketplace>/zn-gate/<version>/
- * and writes [plugins."zn-gate@<marketplace>"] enabled = true in config.toml (measured on Codex CLI 0.164.0, see
- * bench/e2e/codex-plugin). Codex skips a plugin's hooks until the user trusts them in `/hooks`; a trusted hook has
+ * and writes [plugins."zn-gate@<marketplace>"] enabled = true in config.toml (measured on Codex CLI 0.164.0; plugins:
+ * https://developers.openai.com/plugins/build/plugins, hooks: https://learn.chatgpt.com/docs/hooks). Codex skips a plugin's hooks until the user trusts them in `/hooks`; a trusted hook has
  * [hooks.state."<id>:hooks/hooks.json:<event>:<group>:<handler>"] trusted_hash in config.toml, and `enabled = false`
  * there switches one hook off. The hash itself cannot be recomputed here, so a hook counts as trusted when the entry
  * exists: trust that went stale after a plugin update is not seen.

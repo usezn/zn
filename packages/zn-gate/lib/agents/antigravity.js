@@ -502,7 +502,7 @@ function uninstall(opts = {}) {
  *   {root, id, version, enabled, listed, file}
  * `agy plugin install <folder>` copies the plugin to ~/.gemini/config/plugins/<name>/, and `agy plugin disable <name>`
  * writes {"plugins": {"<name>": {"enabled": false}}} to ~/.gemini/config/config.json (`enable` writes true, `uninstall`
- * removes the entry; measured on agy 1.4.7, see bench/e2e/antigravity-plugin). No entry means on.
+ * removes the entry; measured on agy 1.4.7; plugins: https://antigravity.google/docs/plugins/). No entry means on.
  * root is set only for a plugin of ours: the folder is named zn-gate and holds plugin.json with that name,
  * scripts/zn-hook.sh and a hooks.json whose "zn-gate" hook runs that script.
  */

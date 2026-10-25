@@ -332,3 +332,30 @@ test('install warns when the zn-gate plugin is also on (Codex, Antigravity), and
   fs.writeFileSync(path.join(ag, '.gemini', 'config', 'config.json'), JSON.stringify({ plugins: { 'zn-gate': { enabled: false } } }));
   assert.equal(twice(agy.install({ scope: 'user', home: ag, env: { HOME: ag } })), false);
 });
+
+test('zn-gate check runs the Codex and Antigravity plugin hooks with sh from an absolute PATH entry, never a planted one', { skip: !posix }, async (t) => {
+  const cwd = tempDir(t, 'zn-plug-sh-cwd-');
+  const marker = path.join(cwd, 'planted-sh-ran');
+  for (const d of [cwd, path.join(cwd, 'zbin')]) {
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'sh'), '#!/bin/sh\n: > ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+  }
+  const cx = tempDir(t, 'zn-plug-sh-cx-');
+  cxPlugin(cx); cxConfigWrite(cx);
+  const ag = tempDir(t, 'zn-plug-sh-ag-');
+  agyPlugin(ag);
+  const find = async (home, id, PATH) => (await check.check({ home, cwd, env: { ...process.env, HOME: home, CODEX_HOME: '', PATH }, live: true })).results.find((r) => r.id === id);
+  const old = process.cwd();
+  t.after(() => process.chdir(old));
+  process.chdir(cwd);
+  for (const [home, id] of [[cx, 'codex'], [ag, 'antigravity']]) {
+    for (const PATH of ['.:/usr/bin:/bin', 'zbin:/usr/bin:/bin', ':/usr/bin:/bin']) {
+      const r = await find(home, id, PATH);
+      assert.equal(fs.existsSync(marker), false, id + ' ' + PATH + ': the planted sh ran');
+      assert.equal(r.state, 'protected', id + ' ' + PATH + ' ' + r.problem);
+    }
+    const none = await find(home, id, '.:zbin');
+    assert.equal(fs.existsSync(marker), false, id + ': the planted sh ran');
+    assert.match(none.problem, /no sh was found in the absolute entries of your PATH/, id);
+  }
+});
