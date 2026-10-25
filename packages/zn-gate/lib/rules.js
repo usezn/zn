@@ -6,10 +6,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-25.20
+ * RULES_VERSION: 2026-10-25.22
  */
 
-const RULES_VERSION = '2026-10-25.20';
+const RULES_VERSION = '2026-10-25.22';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -502,10 +502,15 @@ const HOMOGLYPH_MAP = {
   '\u0131': 'i', '\u0130': 'I',
 };
 // Invisible characters removed before matching: zero-width spaces and joiners,
-// word joiner, BOM, soft hyphen, and variation selectors. The Unicode tag
+// word joiner, BOM, soft hyphen, variation selectors, the Mongolian vowel separator, the Hangul
+// fillers (U+115F, U+1160, U+3164, U+FFA0) and the left-to-right, right-to-left and Arabic letter
+// marks (U+200E, U+200F, U+061C). The marks occur in normal Arabic and Hebrew text, so they are only
+// removed for matching and counted by the mostly-invisible check, never blocked on their own. The
+// embeddings, overrides and isolates (U+202A-202E, U+2066-2069) are not removed here: the
+// evasion:bidi_override rule blocks them wherever they appear. The Unicode tag
 // characters (U+E0000-E007F) and the supplementary variation selectors
 // (U+E0100-E01EF) are astral and live in INVISIBLE_ASTRAL_RE.
-const ZERO_WIDTH_RE = /[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F]/g;
+const ZERO_WIDTH_RE = /[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F\u061C\u180E\u200E\u200F\u115F\u1160\u3164\uFFA0]/g;
 const INVISIBLE_ASTRAL_RE = /[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
 // A line break inside a wrapped token (a key or a base64 blob printed 20 or 40 characters per line):
 // at least 10 token characters before and after it, and the next line does not
@@ -1577,7 +1582,7 @@ function invisibleStats(text, budget) {
   for (let i = 0; i < n; i++) {
     const c = text.charCodeAt(i);
     if (c < 0xAD) continue;
-    if ((c >= 0x200B && c <= 0x200D) || c === 0x2060 || c === 0xFEFF || c === 0xAD || (c >= 0xFE00 && c <= 0xFE0F)) {
+    if ((c >= 0x200B && c <= 0x200F) || c === 0x2060 || c === 0xFEFF || c === 0xAD || (c >= 0xFE00 && c <= 0xFE0F) || c === 0x61C || c === 0x180E || c === 0x115F || c === 0x1160 || c === 0x3164 || c === 0xFFA0) {
       count++;
     } else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < n) {
       const d = text.charCodeAt(i + 1);
@@ -1775,6 +1780,7 @@ module.exports = {
   isNonSecretValue,
   sanitizeToolResult,
   tooInvisible,
+  invisibleStats,
   invisibleBlock,
   MAX_INVISIBLE_CHARS,
   MIN_INVISIBLE_CHECK_CHARS,

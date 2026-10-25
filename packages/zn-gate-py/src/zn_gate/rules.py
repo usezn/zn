@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-25.20
+RULES_VERSION: 2026-10-25.22
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-10-25.20"
+RULES_VERSION = "2026-10-25.22"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -56,7 +56,7 @@ _HOMOGLYPH_TABLE = {ord(k): v for k, v in HOMOGLYPH_MAP.items()}
 # identical (tests/test_rules_parity.py compares them) and the JavaScript "i"
 # flag maps to re.IGNORECASE. Every pattern runs in linear time: no unbounded
 # lazy wildcards, and repeated character classes are bounded.
-ZERO_WIDTH_RE = re.compile(r'[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F]')
+ZERO_WIDTH_RE = re.compile(r'[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F\u061C\u180E\u200E\u200F\u115F\u1160\u3164\uFFA0]')
 INVISIBLE_ASTRAL_RE = re.compile(r'[\U000E0000-\U000E007F\U000E0100-\U000E01EF]')
 # Line breaks are joined only in texts up to this size (see MAX_WRAP_VIEW_CHARS in rules.js).
 MAX_WRAP_VIEW_CHARS = 1 << 20
