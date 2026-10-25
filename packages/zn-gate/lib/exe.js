@@ -107,6 +107,39 @@ function whichSync(cmd, pathValue) {
   return null;
 }
 
+/*
+ * Programs zn itself starts by name (git, sh, an MCP server's command, claude) come from the absolute PATH entries only:
+ * a relative or empty entry depends on the folder zn runs in, which is often a project, and so does the current folder,
+ * which Windows (cmd.exe, and Node's own lookup) searches first. absolutePath keeps those entries (C:\ or \\server on
+ * Windows), programEnv is an environment with that PATH (and no current-folder search on Windows), and findProgram
+ * gives the program's absolute path or null (a name with a path in it is used as written); on Windows only an .exe or
+ * .com, which starts without a shell.
+ */
+function absolutePath(pathValue) {
+  const keep = (d) => (isWin ? /^(?:[A-Za-z]:[\\/]|\\\\)/.test(d) : d.startsWith('/'));
+  return String(pathValue || '').split(path.delimiter).filter(keep).join(path.delimiter);
+}
+
+function pathOf(env) {
+  const e = Object.entries(env || {}).find(([k]) => k.toUpperCase() === 'PATH');
+  return e ? String(e[1] || '') : '';
+}
+
+function programEnv(env = process.env) {
+  const out = {};
+  for (const [k, v] of Object.entries(env || {})) if (k.toUpperCase() !== 'PATH') out[k] = v;
+  out.PATH = absolutePath(pathOf(env));
+  if (isWin) out.NoDefaultCurrentDirectoryInExePath = '1';
+  return out;
+}
+
+function findProgram(name, env = process.env) {
+  if (hasPathSeparator(name)) return name;
+  const file = isWin && !/\.(?:exe|com)$/i.test(name) ? name + '.exe' : name;
+  const found = whichSync(file, absolutePath(pathOf(env)));
+  return found && (!isWin || /\.(?:exe|com)$/i.test(found)) ? path.resolve(found) : null;
+}
+
 /* The form approvals are stored under: case-insensitive on Windows. */
 function approvalPath(real) {
   return isWin ? String(real).toLowerCase() : String(real);
@@ -359,6 +392,9 @@ function psEnv(ps, base, extra) {
 }
 
 module.exports = {
+  absolutePath,
+  programEnv,
+  findProgram,
   systemPowerShell,
   systemPsModulePath,
   psEnv,

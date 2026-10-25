@@ -385,7 +385,8 @@ function installMcp(opts, report) {
     report.mcp = file;
     return;
   }
-  const claude = opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || '');
+  // Absolute PATH entries only: install often runs in a project folder, which a relative entry would point into.
+  const claude = opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', require('../exe').absolutePath(process.env.PATH || ''));
   // No JSON: this form works the same in cmd.exe, PowerShell and POSIX shells.
   const manual = 'claude mcp add --scope user ' + MCP_SERVER_NAME + ' -- ' + [conf.command, ...conf.args].map((a) => '"' + a + '"').join(' ');
   if (!claude) {
