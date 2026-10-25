@@ -21,8 +21,24 @@
 # Without a `sleep` program there is no watchdog, and the other refusals still apply.
 
 EVENT="${1:-}"
-case "$0" in */*) HERE_DIR=${0%/*} ;; *) HERE_DIR=. ;; esac
-HERE=$(CDPATH='' cd -- "$HERE_DIR" 2>/dev/null && pwd -P) || HERE=""
+# Codex starts this script by its absolute path (hooks.json); any other form would depend on the folder the
+# session runs in, so the launcher is then treated as missing.
+case "$0" in /*) HERE_DIR=${0%/*} ;; *) HERE_DIR= ;; esac
+HERE=$([ -n "$HERE_DIR" ] && CDPATH='' cd -- "$HERE_DIR" 2>/dev/null && pwd -P) || HERE=""
+
+# Only absolute PATH entries, for this script and everything it starts: a relative or empty entry points into a
+# folder the agent chose, where a node, sleep or ps of its own could have been placed.
+OLDIFS=$IFS
+IFS=:
+set -f
+SAFE_PATH=
+for d in $PATH; do
+  case "$d" in /*) SAFE_PATH="${SAFE_PATH:+$SAFE_PATH:}$d" ;; esac
+done
+set +f
+IFS=$OLDIFS
+PATH=$SAFE_PATH
+export PATH
 LAUNCH="$HERE/zn-launch.js"
 
 # Refusal. PreToolUse and UserPromptSubmit: exit 2 and the reason on stderr. PermissionRequest: the documented deny
@@ -93,10 +109,12 @@ try_node() {
 # 1. PATH
 OLDIFS=$IFS
 IFS=:
+set -f
 for d in $PATH; do
-  [ -n "$d" ] || continue
+  case "$d" in /*) ;; *) continue ;; esac
   try_node "$d/node" && break
 done
+set +f
 IFS=$OLDIFS
 
 # 2. usual install folders (an app often starts with a short PATH)

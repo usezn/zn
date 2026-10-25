@@ -134,6 +134,28 @@ try {
     const hasSystemNode = ['/usr/local/bin/node', '/opt/homebrew/bin/node', '/usr/bin/node'].some((f) => fs.existsSync(f));
     const denyJson = (out) => JSON.parse(out).hookSpecificOutput;
 
+    test('zn-hook.sh never starts a node from a relative or empty PATH entry, and refuses a start by a relative path', () => {
+      const d = fixture('relpath', { launcher: '// stub' });
+      const work = path.join(tmp, 'relpath-work');
+      const marker = path.join(work, 'planted-ran');
+      fs.mkdirSync(path.join(work, 'bin'), { recursive: true });
+      for (const dir of [work, path.join(work, 'bin')]) {
+        for (const n of ['node', 'sleep', 'ps']) fs.writeFileSync(path.join(dir, n), '#!/bin/sh\n: > ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+      }
+      const real = path.join(d, 'bin');
+      for (const PATH of ['.:' + real + ':/usr/bin:/bin', real + ':.:/usr/bin:/bin', real + ':/usr/bin:/bin:.', 'bin:' + real + ':/usr/bin:/bin', ':' + real + ':/usr/bin:/bin']) {
+        const r = spawnSync('/bin/sh', ['-c', 'cd "$1" && sh "$0" PreToolUse', path.join(d, 'scripts', 'zn-hook.sh'), work], {
+          input: '{"hook_event_name":"PreToolUse"}', encoding: 'utf8', timeout: 30000,
+          env: { PATH, HOME: path.join(d, 'home'), ZN_STUB_STDIN: path.join(d, 'stdin.txt'), ZN_STUB_OUT: '{}' },
+        });
+        assert.strictEqual(fs.existsSync(marker), false, PATH + ': a planted program ran');
+        assert.strictEqual(r.status, 0, PATH + ': ' + r.stderr);
+      }
+      const rel = spawnSync('/bin/sh', ['-c', 'cd "$1" && sh scripts/zn-hook.sh PreToolUse', '_', d], { input: '{}', encoding: 'utf8', timeout: 30000, env: { PATH: '/usr/bin:/bin' } });
+      assert.strictEqual(rel.status, 2, rel.stderr);
+      assert.ok(/launcher \(scripts\/zn-launch\.js\) is missing/.test(rel.stderr), rel.stderr);
+    });
+
     test('zn-hook.sh passes the event JSON to the launcher and its answer and exit code 0 or 2 through', () => {
       const d = fixture('pass', { launcher: '// stub' });
       const a = run(d, 'PreToolUse', { ZN_STUB_OUT: '{"x":1}', ZN_STUB_RC: '0' });
