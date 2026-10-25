@@ -437,6 +437,68 @@ function uninstall(opts = {}) {
   return report;
 }
 
+/**
+ * The zn-gate plugin as Codex records it (read-only, never throws):
+ *   {root, id, version, enabled, listed, hooks, untrusted, off}
+ * `codex plugin add zn-gate@<marketplace>` copies the plugin to <codex home>/plugins/cache/<marketplace>/zn-gate/<version>/
+ * and writes [plugins."zn-gate@<marketplace>"] enabled = true in config.toml (measured on Codex CLI 0.164.0, see
+ * bench/e2e/codex-plugin). Codex skips a plugin's hooks until the user trusts them in `/hooks`; a trusted hook has
+ * [hooks.state."<id>:hooks/hooks.json:<event>:<group>:<handler>"] trusted_hash in config.toml, and `enabled = false`
+ * there switches one hook off. The hash itself cannot be recomputed here, so a hook counts as trusted when the entry
+ * exists: trust that went stale after a plugin update is not seen.
+ * `hooks` lists the plugin's hooks as [{event, key}]; `untrusted` and `off` hold the events of the ones with no
+ * trust entry and with enabled = false. root is set only for a plugin of ours: its folder holds
+ * .codex-plugin/plugin.json named zn-gate, hooks/hooks.json and scripts/zn-hook.sh.
+ */
+function pluginState(opts = {}) {
+  const home = codexHome(opts);
+  const out = { root: null, id: null, version: null, enabled: false, listed: false, hooks: [], untrusted: [], off: [], file: path.join(home, 'config.toml') };
+  const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+  let conf;
+  try {
+    conf = require('../audit/parse').parseToml(fs.readFileSync(out.file, 'utf8')).data;
+  } catch (_) {
+    return out;
+  }
+  const plugins = isObj(conf) && isObj(conf.plugins) ? conf.plugins : {};
+  const id = Object.keys(plugins).find((k) => /^zn-gate@[A-Za-z0-9._-]+$/.test(k));
+  if (!id) return out;
+  const market = id.slice('zn-gate@'.length);
+  const dir = path.join(home, 'plugins', 'cache', market, 'zn-gate');
+  let versions = [];
+  try { versions = fs.readdirSync(dir).sort((a, b) => a.localeCompare(b, 'en', { numeric: true })); } catch (_) { return out; }
+  const readJ = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8').replace(/^﻿/, '')); } catch (_) { return null; } };
+  let root = null;
+  let hooksTree = null;
+  for (const v of versions.reverse()) {
+    const r = path.join(dir, v);
+    const manifest = readJ(path.join(r, '.codex-plugin', 'plugin.json'));
+    const tree = readJ(path.join(r, 'hooks', 'hooks.json'));
+    if (manifest && manifest.name === 'zn-gate' && tree && fs.existsSync(path.join(r, 'scripts', 'zn-hook.sh'))) { root = r; hooksTree = tree; break; }
+  }
+  if (!root) return out;
+  out.listed = true;
+  out.root = root;
+  out.id = id;
+  out.version = path.basename(root);
+  out.enabled = !(isObj(plugins[id]) && plugins[id].enabled === false);
+  const state = isObj(conf.hooks) && isObj(conf.hooks.state) ? conf.hooks.state : {};
+  const events = isObj(hooksTree.hooks) ? hooksTree.hooks : {};
+  for (const [event, groups] of Object.entries(events)) {
+    const snake = event.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+    (Array.isArray(groups) ? groups : []).forEach((g, gi) => {
+      (isObj(g) && Array.isArray(g.hooks) ? g.hooks : []).forEach((h, hi) => {
+        const key = id + ':hooks/hooks.json:' + snake + ':' + gi + ':' + hi;
+        out.hooks.push({ event, key });
+        const s = isObj(state[key]) ? state[key] : {};
+        if (typeof s.trusted_hash !== 'string') out.untrusted.push(event);
+        if (s.enabled === false) out.off.push(event);
+      });
+    });
+  }
+  return out;
+}
+
 function detect(opts = {}) {
   if (whichSync('codex', (opts.env || process.env).PATH || '')) return true;
   return fs.existsSync(codexHome(opts));
@@ -457,6 +519,7 @@ module.exports = {
   hookGroups,
   hooksFile,
   patchFiles,
+  pluginState,
   patchScan,
   PATCH_SCAN_CAP,
 };

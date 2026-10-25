@@ -493,6 +493,35 @@ function uninstall(opts = {}) {
   return report;
 }
 
+/**
+ * The zn-gate plugin as the Antigravity CLI records it (read-only, never throws):
+ *   {root, id, version, enabled, listed, file}
+ * `agy plugin install <folder>` copies the plugin to ~/.gemini/config/plugins/<name>/, and `agy plugin disable <name>`
+ * writes {"plugins": {"<name>": {"enabled": false}}} to ~/.gemini/config/config.json (`enable` writes true, `uninstall`
+ * removes the entry; measured on agy 1.4.7, see bench/e2e/antigravity-plugin). No entry means on.
+ * root is set only for a plugin of ours: the folder is named zn-gate and holds plugin.json with that name,
+ * scripts/zn-hook.sh and a hooks.json whose "zn-gate" hook runs that script.
+ */
+function pluginState(opts = {}) {
+  const config = path.join(opts.home || os.homedir(), '.gemini', 'config');
+  const out = { root: null, id: null, version: null, enabled: false, listed: false, file: path.join(config, 'config.json') };
+  const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+  const readJ = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8').replace(/^﻿/, '')); } catch (_) { return null; } };
+  const root = path.join(config, 'plugins', 'zn-gate');
+  const manifest = readJ(path.join(root, 'plugin.json'));
+  const hooks = readJ(path.join(root, 'hooks.json'));
+  if (!isObj(manifest) || manifest.name !== 'zn-gate' || !isObj(hooks) || !fs.existsSync(path.join(root, 'scripts', 'zn-hook.sh'))) return out;
+  if (!JSON.stringify(hooks['zn-gate'] || null).includes('zn-hook.sh')) return out;
+  out.listed = true;
+  out.root = root;
+  out.id = 'zn-gate';
+  out.version = typeof manifest.version === 'string' ? manifest.version : null;
+  const conf = readJ(out.file);
+  const entry = isObj(conf) && isObj(conf.plugins) && isObj(conf.plugins['zn-gate']) ? conf.plugins['zn-gate'] : {};
+  out.enabled = entry.enabled !== false;
+  return out;
+}
+
 function detect(opts = {}) {
   const home = opts.home || os.homedir();
   return fs.existsSync(path.join(home, '.gemini', 'antigravity')) ||
@@ -512,4 +541,5 @@ module.exports = {
   capabilities: { ask: 'all', rewriteInput: false, rewriteOutput: false },
   HOOK_NAME,
   hooksFile,
+  pluginState,
 };

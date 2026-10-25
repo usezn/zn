@@ -1,0 +1,2 @@
+### Added
+- `zn-gate check` reads the zn-gate plugin installed in Codex CLI and in the Antigravity CLI. A plugin alone counts as protection; a Codex plugin whose hooks are not trusted yet in `/hooks`, or a plugin that is turned off while nothing else of zn runs, is reported as not protected; and a plugin next to the hooks of `zn hooks install codex` or `zn hooks install antigravity` is reported as a note about the double install.

@@ -659,6 +659,77 @@ async function checkAgent(spec, ctx) {
       }
     }
   }
+  if (spec.id === 'codex') {
+    // The zn-gate plugin: Codex skips a plugin's hooks until they are trusted in `/hooks`, so a plugin that is
+    // installed but not trusted protects nothing.
+    const plugin = adapter.pluginState({ home: ctx.home, env: ctx.env });
+    if (plugin.root) {
+      const userHooks = hookEntries(readJson(userFile), spec.id).some((e) => parseCommand(e.command, spec.id));
+      const pre = plugin.hooks.some((h) => h.event === 'PreToolUse');
+      const untrusted = plugin.untrusted.includes('PreToolUse');
+      const off = plugin.off.includes('PreToolUse');
+      const script = path.join(plugin.root, 'scripts', 'zn-hook.sh');
+      if (plugin.enabled && pre && !untrusted && !off) {
+        installed = true;
+        res.where = 'the zn-gate plugin';
+        res.via = 'plugin';
+        if (userHooks) {
+          res.notes.push('zn is also set up with `zn hooks install codex`, so a call can be checked twice (Codex runs the hooks of the plugin and those in hooks.json); keep one: run `zn hooks uninstall codex` in your own terminal to keep the plugin, or run `codex plugin remove ' + plugin.id + '` to keep the hooks');
+        }
+        const rest = plugin.untrusted.filter((e) => e !== 'PreToolUse');
+        if (rest.length) res.notes.push('some hooks of the zn-gate plugin are not trusted yet in Codex (' + rest.join(', ') + '); open `/hooks` in Codex to trust them');
+        live = { file: 'sh', args: [script, 'PreToolUse'], env: { ...(ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}), PLUGIN_ROOT: plugin.root }, plugin: true };
+      } else if (!userHooks) {
+        // Turned off, not trusted, or without its PreToolUse hook, and nothing else of zn runs: Codex is not protected.
+        installed = true;
+        res.where = 'the zn-gate plugin';
+        res.via = 'plugin';
+        if (!plugin.enabled) {
+          res.problem = 'the zn-gate plugin is turned off in Codex ("enabled" is false for "' + plugin.id + '" in ' + plugin.file + '), and the hooks of `zn hooks install codex` are not installed, so nothing of zn protects Codex';
+          res.fix = 'turn the plugin on again: run `codex plugin add ' + plugin.id + '` in your own terminal, or run `zn hooks install codex`, then run `zn-gate check` again';
+        } else if (off) {
+          res.problem = 'the PreToolUse hook of the zn-gate plugin is switched off in ' + plugin.file + ' ([hooks.state] enabled = false), so Codex skips it and nothing of zn protects Codex';
+          res.fix = 'turn it back on in `/hooks` in Codex, or run `zn hooks install codex` in your own terminal, then run `zn-gate check` again';
+        } else if (!pre) {
+          res.problem = 'the zn-gate plugin installed in Codex has no PreToolUse hook, so it checks nothing before a call and nothing of zn protects Codex';
+          res.fix = 'install the current plugin: run `codex plugin add ' + plugin.id + '` in your own terminal, or run `zn hooks install codex`, then run `zn-gate check` again';
+        } else {
+          res.problem = 'the zn-gate plugin is installed in Codex, but its hooks are not trusted yet, so Codex skips them and nothing of zn protects Codex';
+          res.fix = 'open `/hooks` in Codex and trust the zn-gate hooks, or run `zn hooks install codex` in your own terminal, then run `zn-gate check` again';
+        }
+        res.pluginOff = true;
+      } else {
+        res.notes.push('the zn-gate plugin is installed in Codex, but ' + (!plugin.enabled ? 'turned off' : off ? 'its PreToolUse hook is switched off' : !pre ? 'it has no PreToolUse hook' : 'its hooks are not trusted yet') + '; the hooks of `zn hooks install codex` are what protect Codex');
+      }
+    }
+  }
+  if (spec.id === 'antigravity') {
+    // The zn-gate plugin: its hook runs on its own, whatever ~/.gemini/config/hooks.json holds.
+    const plugin = adapter.pluginState({ home: ctx.home });
+    if (plugin.root) {
+      const userHooks = hookEntries(readJson(userFile), spec.id).some((e) => parseCommand(e.command, spec.id));
+      const script = path.join(plugin.root, 'scripts', 'zn-hook.sh');
+      if (plugin.enabled) {
+        installed = true;
+        res.where = 'the zn-gate plugin';
+        res.via = 'plugin';
+        if (userHooks) {
+          res.notes.push('zn is also set up with `zn hooks install antigravity`, so a call can be checked twice (Antigravity runs the hook of the plugin and those in hooks.json); keep one: run `zn hooks uninstall antigravity` in your own terminal to keep the plugin, or run `agy plugin disable zn-gate` to keep the hooks');
+        }
+        live = { file: 'sh', args: [script], env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}, plugin: true };
+      } else if (!userHooks) {
+        // Turned off, and nothing else of zn runs: Antigravity is not protected.
+        installed = true;
+        res.where = 'the zn-gate plugin';
+        res.via = 'plugin';
+        res.problem = 'the zn-gate plugin is turned off in Antigravity ("enabled" is false for "zn-gate" in ' + plugin.file + '), and the hooks of `zn hooks install antigravity` are not installed, so nothing of zn protects Antigravity';
+        res.fix = 'turn the plugin on: run `agy plugin enable zn-gate` in your own terminal, or run `zn hooks install antigravity`, then run `zn-gate check` again';
+        res.pluginOff = true;
+      } else {
+        res.notes.push('the zn-gate plugin is installed in Antigravity but turned off; the hooks of `zn hooks install antigravity` are what protect Antigravity');
+      }
+    }
+  }
   if (!installed && spec.id === 'opencode') {
     let src = '';
     try { src = fs.readFileSync(userFile, 'utf8'); } catch (err) { src = ''; }

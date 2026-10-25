@@ -13,7 +13,8 @@ npx -y zn-gate check
 zn-gate makes a temporary folder with two files: a `.env` file that holds a fake key (`ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key`) and an ordinary `README.txt`. For each agent set up for your user, it asks zn's hook to let the agent read each file, the same way your agent asks. An agent counts as protected only when the `.env` file is blocked and the ordinary file is allowed.
 
 - **Claude Code**: zn-gate checks the zn-gate plugin, or the hooks of `zn hooks install claude-code`. It also notices when the plugin is turned off and when a Claude Code setting turns hooks off. If your hooks were installed by an older zn-gate and lack the check for typed skills and commands, it suggests running `zn hooks install claude-code` again.
-- **Codex CLI and Cursor**: zn-gate checks the hooks of `zn hooks install`.
+- **Codex CLI and Cursor**: zn-gate checks the hooks of `zn hooks install`. For Codex it also checks the zn-gate plugin (`codex plugin add zn-gate@usezn`): the plugin counts only once its hooks are trusted in `/hooks`.
+- **Antigravity**: zn-gate checks the hooks of `zn hooks install antigravity`, or the zn-gate plugin (`agy plugin install`) when it is installed and turned on.
 - **What it runs**: for Claude Code, Codex CLI and Cursor it runs the hook that is installed, exactly as your agent would. On Windows, a hook installed as `zn hook <agent>` is not started; zn-gate checks zn's rules for it instead and says so in the output. A hook that cannot start, or that blocks every file because part of zn is missing, is reported as **NOT protected**.
 - **OpenCode**: zn-gate checks zn's rules. The zn plugin runs inside OpenCode, so it is not started here.
 - **Managed setups**: when your organization deploys zn through managed configuration (Claude Code managed settings, Cursor's enterprise `hooks.json`, Codex's `requirements.toml`), `zn-gate check` counts the agent as set up and names the file ("zn is installed through your organization's managed configuration"). `zn-gate status` lists it too. If zn is also set up for your user, both run, and the check says so. Policy sent only through MDM profiles, the Windows registry or an agent's cloud is not seen. If the managed hooks are broken, the line ends with: ask your administrator to repair the managed configuration (<file>). Nothing is written.
@@ -316,6 +317,41 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
   A hook marked `async` runs beside the tool call and cannot stop it. Remove `"async": true` from zn's entry, or run `zn hooks install zcode` again.
 
 - **ZCode's MCP support is off.** This is a note under an **OK** line, not a NOT protected line: `"features.mcp"` is false in <file>. We read that setting as "ZCode does not start zn's `secrets` MCP server", but we did not test what it does in the ZCode desktop app. The hooks still work.
+
+### Codex and Antigravity plugins
+
+- **The zn-gate Codex plugin is installed, but Codex does not run its hooks yet.**
+
+  ```text
+  the zn-gate plugin is installed in Codex, but its hooks are not trusted yet, so Codex skips them and nothing of zn protects Codex
+  the PreToolUse hook of the zn-gate plugin is switched off in <file> ([hooks.state] enabled = false), so Codex skips it and nothing of zn protects Codex
+  the zn-gate plugin installed in Codex has no PreToolUse hook, so it checks nothing before a call and nothing of zn protects Codex
+  open `/hooks` in Codex and trust the zn-gate hooks, or run `zn hooks install codex` in your own terminal, then run `zn-gate check` again
+  turn it back on in `/hooks` in Codex, or run `zn hooks install codex` in your own terminal, then run `zn-gate check` again
+  install the current plugin: run `codex plugin add zn-gate@usezn` in your own terminal, or run `zn hooks install codex`, then run `zn-gate check` again
+  ```
+
+  Codex skips the hooks of a plugin until you review and trust them in `/hooks`; installing or enabling the plugin does not trust them. Codex records an installed plugin in `config.toml` (`[plugins."zn-gate@usezn"]`) and a trusted hook as `[hooks.state."zn-gate@usezn:hooks/hooks.json:<event>:0:0"]` with a `trusted_hash`. zn-gate reads those entries and counts a hook as trusted when its entry exists. It cannot recompute the hash, so trust that went stale after a plugin update is not seen: after updating the plugin, open `/hooks` again. Only the `PreToolUse` hook decides the verdict; when the other hooks of the plugin are not trusted yet, the line says so as a note.
+
+- **The zn-gate plugin is turned off, and nothing else of zn runs.**
+
+  ```text
+  the zn-gate plugin is turned off in Codex ("enabled" is false for "zn-gate@usezn" in <file>), and the hooks of `zn hooks install codex` are not installed, so nothing of zn protects Codex
+  turn the plugin on again: run `codex plugin add zn-gate@usezn` in your own terminal, or run `zn hooks install codex`, then run `zn-gate check` again
+  the zn-gate plugin is turned off in Antigravity ("enabled" is false for "zn-gate" in <file>), and the hooks of `zn hooks install antigravity` are not installed, so nothing of zn protects Antigravity
+  turn the plugin on: run `agy plugin enable zn-gate` in your own terminal, or run `zn hooks install antigravity`, then run `zn-gate check` again
+  ```
+
+  Antigravity records a turned-off plugin in `~/.gemini/config/config.json` (`plugins.zn-gate.enabled` is `false`); with no entry the plugin is on.
+
+- **Both the plugin and the hooks of `zn hooks install` are set up.** This is a note, not a problem, when the plugin is on (and, for Codex, trusted):
+
+  ```text
+  zn is also set up with `zn hooks install codex`, so a call can be checked twice (Codex runs the hooks of the plugin and those in hooks.json); keep one: run `zn hooks uninstall codex` in your own terminal to keep the plugin, or run `codex plugin remove zn-gate@usezn` to keep the hooks
+  zn is also set up with `zn hooks install antigravity`, so a call can be checked twice (Antigravity runs the hook of the plugin and those in hooks.json); keep one: run `zn hooks uninstall antigravity` in your own terminal to keep the plugin, or run `agy plugin disable zn-gate` to keep the hooks
+  ```
+
+  When the plugin is turned off, or not trusted yet, while the hooks of `zn hooks install` are on, the hooks protect the agent and the check says so as a note.
 
 ### Gemini CLI settings switch the hook off
 
