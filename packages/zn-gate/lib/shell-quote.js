@@ -77,15 +77,16 @@ const UNSAFE_IN_DOUBLE_QUOTES = /[%!"$`“”„\u0000-\u001F\u007F]/;
 
 // The Windows PowerShell a hook command names, by its absolute path: cmd.exe (Codex runs hook commands through it) and the
 // process start of several agents look in the current folder first, where a repository could hold a powershell.exe of its
-// own. On Windows it is the system PowerShell (lib/exe.js systemPowerShell), or the bare name when that cannot be found;
-// a command written for Windows on another system names the default install folder.
+// own. On Windows it is the system PowerShell (lib/exe.js systemPowerShell); when that cannot be found nothing is written
+// (an error), never the bare name. A command written for Windows on another system names the default install folder.
 const DEFAULT_POWERSHELL = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
 const PLAIN_POWERSHELL = /^[A-Za-z]:\/[A-Za-z0-9_.\/-]+\/powershell\.exe$/i;
 function powershellExe(platform = process.platform) {
   if (platform !== 'win32') return DEFAULT_POWERSHELL;
   const ps = require('./exe').systemPowerShell();
   const p = ps ? portablePath(ps, 'win32') : null;
-  return p && PLAIN_POWERSHELL.test(p) ? p : 'powershell.exe';
+  if (p && PLAIN_POWERSHELL.test(p)) return p;
+  throw new Error('zn: the Windows PowerShell (System32\\WindowsPowerShell\\v1.0\\powershell.exe) was not found under the Windows folder, so no hook was written. Next step: run the command again in a normal Windows session; if it keeps failing, report it.');
 }
 // For a command that only cmd.exe reads and that is shared between machines (the project hook of Codex): cmd.exe expands
 // %SystemRoot% to the Windows folder of the machine that runs it.
