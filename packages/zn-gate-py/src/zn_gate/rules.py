@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-25.25
+RULES_VERSION: 2026-10-25.26
 Zero external dependencies. Pure Python stdlib.
 """
 
@@ -19,8 +19,10 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, cast, overload
 
+from .invisible_tolerant import collapse_invisible_runs, has_invisible, tolerant_regex
 
-RULES_VERSION = "2026-10-25.25"
+
+RULES_VERSION = "2026-10-25.26"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -692,6 +694,26 @@ def _evaluate_oversize(input_text: str, strict: bool) -> Assessment:
     return scan_windows(input_text, strict=strict)
 
 
+# The phrase rules in a form that tolerates invisible characters anywhere (see invisible_tolerant.py): every
+# prompt-injection rule that is a pattern, and the three patterns of the credentials request. The two
+# identity-request rules are left out: they are long, run behind prefilters, and are not trigger phrases.
+# Built the first time a text with an invisible character needs it, so a run that never sees one does not pay for
+# it. The tuple is assigned once, fully built, so a thread never sees half of it.
+_TOLERANT_SKIP = frozenset(('pi:identity_request', 'pi:identity_request_multi'))
+_TOLERANT_RULES: Optional[Tuple[List[Tuple[str, 're.Pattern[str]', str]], List['re.Pattern[str]']]] = None
+
+
+def _tolerant_rules() -> Tuple[List[Tuple[str, 're.Pattern[str]', str]], List['re.Pattern[str]']]:
+    global _TOLERANT_RULES
+    built = _TOLERANT_RULES
+    if built is None:
+        injection = [(rule_id, tolerant_regex(pat), desc) for rule_id, pat, desc in INJECTION_RULES
+                     if rule_id not in _TOLERANT_SKIP]
+        exfil = [tolerant_regex(pat) for pat in (EXFIL_VERBS, CRED_OBJECTS, EXFIL_CLAUSE_RE)]
+        built = _TOLERANT_RULES = (injection, exfil)
+    return built
+
+
 def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
     if not isinstance(input_text, str) or not input_text.strip():
         return Assessment(verdict='allow', confidence=1.0, rule='none', reason=None)
@@ -762,6 +784,30 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
                 rule='exfil:credentials',
                 reason='Imperative verb requesting credentials/secrets'
             )
+
+    # A text that uses an invisible character as a space AND others inside words ("ig<U+200B>nore<U+200B>all ...")
+    # fits neither the stripped nor the spaced view, so the tolerant phrase rules run on the original text.
+    if has_invisible(input_text):
+        tolerant_injection, tolerant_exfil = _tolerant_rules()
+        collapsed = collapse_invisible_runs(input_text)
+        folded = collapsed.translate(_CASE_FOLD_GUARD)
+        # The same text with the homoglyphs mapped (a Cyrillic letter in "ignore"), as in the normalized view.
+        mapped = collapsed.translate(_HOMOGLYPH_TABLE)
+        for view in ((folded,) if mapped == folded else (folded, mapped)):
+            for rule_id, pat, desc in tolerant_injection:
+                if pat.search(view):
+                    if not strict and rule_id in ADVISORY_BY_DEFAULT:
+                        if tier_advisory is None:
+                            tier_advisory = {'rule': rule_id, 'reason': desc}
+                        continue
+                    return Assessment(verdict='block', confidence=0.95, rule=rule_id, reason=desc)
+            if all(pat.search(view) for pat in tolerant_exfil):
+                return Assessment(
+                    verdict='block',
+                    confidence=0.90,
+                    rule='exfil:credentials',
+                    reason='Imperative verb requesting credentials/secrets'
+                )
 
     if tier_advisory:
         return Assessment(verdict='allow', confidence=0.99, rule='none', reason=None, advisory=tier_advisory)

@@ -1,0 +1,2 @@
+### Security
+- The rules now also catch a trigger phrase that uses an invisible character as a space and other invisible characters inside its words (for example `ig<U+200B>nore<U+200B>all previous instructions`), which the earlier checks read one way at a time and missed. The prompt-injection and credentials-request rules run a variant that accepts invisible characters after every part of the pattern, in the Node.js, Python and Rust engines, only on text that contains one. Normal Arabic, Hebrew, Korean and emoji text with invisible characters is not blocked.

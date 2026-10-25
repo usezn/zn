@@ -3,14 +3,15 @@
 const fs = require('fs');
 const linearRegex = require('./linear-regex');
 const { ZERO_WIDTH_RE, INVISIBLE_ASTRAL_RE, spaceInvisible, spaceInvisibleForMatch } = require('./invisible');
+const { tolerantRegex, hasInvisible, collapseInvisibleRuns } = require('./invisible_tolerant');
 const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-25.25
+ * RULES_VERSION: 2026-10-25.26
  */
 
-const RULES_VERSION = '2026-10-25.25';
+const RULES_VERSION = '2026-10-25.26';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -770,6 +771,23 @@ function collapseBlankRuns(text) {
   return out.join('');
 }
 
+// The phrase rules in a form that tolerates invisible characters anywhere (see lib/invisible_tolerant.js): every
+// prompt-injection rule that is a pattern, and the three patterns of the credentials request. The two
+// identity-request rules are left out: they are long, run behind prefilters, and are not trigger phrases.
+// Built the first time a text with an invisible character needs it, so a hook run that never sees one does not
+// pay for it.
+const TOLERANT_SKIP = new Set(['pi:identity_request', 'pi:identity_request_multi']);
+let tolerantRules = null;
+function getTolerantRules() {
+  if (!tolerantRules) {
+    tolerantRules = {
+      injection: INJECTION_RULES.filter((r) => r.pattern && !TOLERANT_SKIP.has(r.id)).map((r) => ({ rule: r, re: tolerantRegex(r.pattern) })),
+      exfil: EXFIL_RULES.map((r) => ({ rule: r, res: r.compound.map(tolerantRegex) })),
+    };
+  }
+  return tolerantRules;
+}
+
 function evaluateUncached(input, options = {}) {
   if (typeof input !== 'string') {
     return { verdict: 'allow', confidence: 1.0, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION };
@@ -845,6 +863,31 @@ function evaluateUncached(input, options = {}) {
     for (const rule of EXFIL_RULES) {
       if (rule.compound.every((re) => re.test(text))) {
         return { verdict: 'block', confidence: 0.9, reason: rule.description, rule: rule.id, engine: 'oss-local', rules_version: RULES_VERSION };
+      }
+    }
+  }
+
+  // A text that uses an invisible character as a space AND others inside words ("ig<U+200B>nore<U+200B>all ...")
+  // fits neither the stripped nor the spaced view, so the tolerant phrase rules run on the original text.
+  if (hasInvisible(input)) {
+    const tolerant = getTolerantRules();
+    const folded = collapseInvisibleRuns(input);
+    // The same text with the homoglyphs mapped (a Cyrillic letter in "ignore"), as in the normalized view.
+    const mapped = folded.replace(/[\u0130\u0131\u0410-\u0456]/g, (m) => HOMOGLYPH_MAP[m] || m);
+    for (const view of mapped === folded ? [folded] : [folded, mapped]) {
+      for (const { rule, re } of tolerant.injection) {
+        if (re.test(view)) {
+          if (!strict && ADVISORY_BY_DEFAULT.has(rule.id)) {
+            if (!tierAdvisory) tierAdvisory = { rule: rule.id, reason: rule.description };
+            continue;
+          }
+          return { verdict: 'block', confidence: 0.95, reason: rule.description, rule: rule.id, engine: 'oss-local', rules_version: RULES_VERSION };
+        }
+      }
+      for (const { rule, res } of tolerant.exfil) {
+        if (res.every((re) => re.test(view))) {
+          return { verdict: 'block', confidence: 0.9, reason: rule.description, rule: rule.id, engine: 'oss-local', rules_version: RULES_VERSION };
+        }
       }
     }
   }
@@ -1847,4 +1890,5 @@ module.exports = {
   EXFIL_RULES,
   SENSITIVE_PATH_RULES,
   MARKDOWN_EXFIL_RULES,
+  getTolerantRules,
 };

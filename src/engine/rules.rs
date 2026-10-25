@@ -1,6 +1,7 @@
 use crate::config::ManagedRulesConfig;
 use crate::lfi_guard;
 use crate::prompt_guard;
+use crate::prompt_guard::tolerant::MARK;
 use crate::sql_guard;
 
 /// Managed Ruleset Engine
@@ -18,6 +19,19 @@ impl ManagedRuleset {
         // in the folded text above, so the same checks run again with each one read as a space.
         if arguments.chars().any(is_invisible) || tool_name.chars().any(is_invisible) {
             Self::evaluate_folded(config, tool_name, arguments, fold_system1_spaced)?;
+        }
+        // A text that uses an invisible character as a space AND others inside words ("ig<U+200B>nore<U+200B>all
+        // ...") fits neither fold, so the tolerant prompt-injection patterns also run on the text with its
+        // invisible characters kept (each run as one mark).
+        if config.prompt_injection && arguments.chars().any(is_invisible) {
+            let kept = fold_system1_keep_invisible(arguments);
+            let result = prompt_guard::detect_prompt_injection_tolerant(&kept);
+            if result.is_attack {
+                return Err(format!(
+                    "Prompt Injection blocked: {}",
+                    result.matched_pattern.unwrap_or_default()
+                ));
+            }
         }
 
         // 5. Multimodal Vision Guard (Base64 Detection)
@@ -152,7 +166,7 @@ fn tool_name_words(name: &str) -> Vec<String> {
 /// Fold untrusted text before System 1 matching.
 /// No unicode_normalization crate dependency — strip null/RTL + map common fullwidth/homoglyphs.
 pub fn fold_system1(input: &str) -> String {
-    fold_with(input, false)
+    fold_with(input, Invisible::Remove)
 }
 
 /// The invisible characters, the same table as ZERO_WIDTH_RE and INVISIBLE_ASTRAL_RE in the Node.js and
@@ -182,21 +196,45 @@ pub fn is_invisible(ch: char) -> bool {
 /// `fold_system1` with each invisible character of INVISIBLE_RANGES replaced by a space instead of removed:
 /// the view that catches an invisible character used as a space between two words.
 pub fn fold_system1_spaced(input: &str) -> String {
-    fold_with(input, true)
+    fold_with(input, Invisible::Space)
 }
 
-fn fold_with(input: &str, space_invisible: bool) -> String {
+/// `fold_system1` with each run of invisible characters replaced by one `prompt_guard::tolerant::MARK`: the view
+/// the tolerant prompt-injection patterns read.
+pub fn fold_system1_keep_invisible(input: &str) -> String {
+    fold_with(input, Invisible::Keep)
+}
+
+/// What the fold does with an invisible character.
+#[derive(Clone, Copy)]
+enum Invisible {
+    Remove,
+    Space,
+    Keep,
+}
+
+fn fold_with(input: &str, invisible: Invisible) -> String {
     let mut out = String::with_capacity(input.len());
+    let mut in_run = false;
     for ch in input.chars() {
         if is_invisible(ch) {
-            if space_invisible {
-                out.push(' ');
+            match invisible {
+                Invisible::Remove => {}
+                Invisible::Space => out.push(' '),
+                Invisible::Keep => {
+                    if !in_run {
+                        out.push(MARK);
+                    }
+                }
             }
+            in_run = true;
             continue;
         }
+        let was_in_run = in_run;
+        in_run = false;
         match ch {
             '\u{0000}' | '\u{202A}' | '\u{202B}' | '\u{202C}' | '\u{202D}' | '\u{202E}'
-            | '\u{2066}' | '\u{2067}' | '\u{2068}' | '\u{2069}' => {}
+            | '\u{2066}' | '\u{2067}' | '\u{2068}' | '\u{2069}' => in_run = was_in_run,
             'Ａ'..='Ｚ' => out.push(char::from_u32(ch as u32 - 0xFF21 + b'A' as u32).unwrap()),
             'ａ'..='ｚ' => out.push(char::from_u32(ch as u32 - 0xFF41 + b'a' as u32).unwrap()),
             '０'..='９' => out.push(char::from_u32(ch as u32 - 0xFF10 + b'0' as u32).unwrap()),
@@ -436,5 +474,42 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    #[test]
+    fn invisible_inside_a_word_and_as_a_space_does_not_hide_a_phrase() {
+        let fixture = invisible_fixture();
+        for case in fixture["mixed_cases"].as_array().unwrap() {
+            let phrase = case["phrase"].as_str().unwrap();
+            // Same verdict as the plain phrase (the gateway has no credentials-request rule).
+            let plain = ManagedRuleset::evaluate(&cfg(), "exec_command", phrase).is_err();
+            for h in fixture["block_cases"].as_array().unwrap() {
+                let c = fixture_char(h.as_str().unwrap());
+                let text = case["template"]
+                    .as_str()
+                    .unwrap()
+                    .replace("{X}", &c.to_string());
+                assert_eq!(
+                    ManagedRuleset::evaluate(&cfg(), "exec_command", &text).is_err(),
+                    plain,
+                    "{h}: {text:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fold_keep_invisible_marks_each_run_once() {
+        let m = MARK;
+        assert_eq!(
+            fold_system1_keep_invisible("a\u{200B}\u{200C}\u{E0041}b"),
+            format!("a{m}b")
+        );
+        assert_eq!(
+            fold_system1_keep_invisible("a\u{200B}\u{202E}\u{200C}b"),
+            format!("a{m}b")
+        );
+        assert_eq!(fold_system1_keep_invisible("ab"), "ab");
+        assert_eq!(fold_system1_keep_invisible("ａ"), "a");
     }
 }
