@@ -361,7 +361,7 @@ const HOOKS = [
 const MODES = [
   ['no deadline', {}, null],
   ['deadline', { deadlineS: 5 }, null],
-  ['soft deadline, no timer', { deadlineS: 5, deadlineSoft: true }, (s) => s.split('[ -x /bin/sleep ]').join('[ -x /nonexistent/sleep ]')],
+  ['soft deadline, no timer', { deadlineS: 5, deadlineSoft: true }, (s) => s.split('/bin/sleep').join('/nonexistent/sleep')],
 ];
 
 for (const [mode, opts, edit] of MODES) {
@@ -553,4 +553,44 @@ test('posix launcher with a TMPDIR that starts with "-": the answer passes and n
       assert.deepEqual(zfiles(path.join(base, '-tmp')), [], mode + (noRm ? ', no rm' : '') + ': files left');
     }
   }
+});
+
+// NixOS and Guix have no /bin/sleep: the launcher finds sleep in the system profile folders (absolute paths only).
+function noBinSleep(text, folder) {
+  let out = text;
+  if (folder) out = out.split('/run/current-system/sw/bin').join(folder);
+  return out.split('/bin/sleep').join('/nonexistent/sleep');
+}
+
+function runZcode(t, body, folder, deadlineS) {
+  const tmp = tempDir(t, 'zn-ov-nix-');
+  const file = writeScript(t, 'zcode', body, { deadlineS });
+  fs.writeFileSync(file, noBinSleep(fs.readFileSync(file, 'utf8'), folder), { mode: 0o755 });
+  const t0 = Date.now();
+  const r = spawnSync('/bin/sh', [file, 'PreToolUse'], { input: '{}', encoding: 'utf8', timeout: 20000, env: { PATH: process.env.PATH, HOME: '/nonexistent', TMPDIR: tmp } });
+  r.ms = Date.now() - t0;
+  return r;
+}
+
+function fakeProfile(t) {
+  const dir = tempDir(t, 'zn-ov-nixbin-');
+  const real = ['/bin/sleep', '/usr/bin/sleep'].find((f) => fs.existsSync(f));
+  fs.symlinkSync(fs.realpathSync(real), path.join(dir, 'sleep'));
+  return dir;
+}
+
+test('posix launcher: sleep from the system profile folder starts the deadline', { skip: !posix }, (t) => {
+  const dir = fakeProfile(t);
+  const hang = runZcode(t, 'setInterval(() => {}, 1000);\n', dir, 1);
+  assert.equal(hang.status, 2, hang.stderr);
+  assert.ok(hang.ms < 8000, 'blocked at the deadline, not at the test timeout: ' + hang.ms);
+  const ok = runZcode(t, ALLOW, dir, 5);
+  assert.equal(ok.status, 0, ok.stderr);
+});
+
+test('posix launcher: with no sleep anywhere the strict launcher blocks without running the hook', { skip: !posix }, (t) => {
+  const marker = path.join(tempDir(t, 'zn-ov-nixno-'), 'ran');
+  const r = runZcode(t, "require('fs').writeFileSync(" + JSON.stringify(marker) + ", 'x');\n" + ALLOW, null, 5);
+  assert.equal(r.status, 2, r.stderr);
+  assert.equal(fs.existsSync(marker), false, 'the hook did not run without a deadline');
 });

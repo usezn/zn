@@ -833,7 +833,7 @@ test('install writes the zcode launcher with a deadline 2 s under the hook timeo
   zc.install({ home, nodePath: '/usr/bin/node' });
   const text = fs.readFileSync(launcher.launcherFile('zcode', { home, env: process.env }), 'utf8');
   assert.equal(zc.LAUNCHER_DEADLINE_S, zc.HOOK_TIMEOUT_S - 2);
-  assert.match(text, new RegExp('sleep ' + zc.LAUNCHER_DEADLINE_S + ' &'));
+  assert.ok(text.includes('"$ZN_SL" ' + zc.LAUNCHER_DEADLINE_S + ' &'), 'the timer runs the sleep found by absolute path');
   assert.doesNotMatch(launcher.unixScript('codex', '/usr/bin/node', RUNNER), /zn_run/);
 });
 
@@ -931,7 +931,7 @@ test('launcher deadline: a timer that cannot start blocks without running the ho
   const hook = fakeNode(t, 'touch ' + marker + '; cat; exit 0');
   const file = launcher.writeLauncher('zcode', hook, RUNNER, { home, env: process.env, deadlineS: 5 });
   const text = fs.readFileSync(file, 'utf8');
-  assert.ok(text.includes('/bin/sleep 5 &'), 'the timer is /bin/sleep with an absolute path');
+  assert.ok(text.includes('"$ZN_SL" 5 &') && text.includes('/bin/sleep '), 'the timer is a sleep found by absolute path');
   fs.writeFileSync(file, text.split('/bin/sleep').join('/nonexistent/sleep'), { mode: 0o755 });
   const r = spawnSync(file, ['PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
   assert.equal(r.status, 2, r.stderr);
