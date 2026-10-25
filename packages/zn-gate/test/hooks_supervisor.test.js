@@ -225,3 +225,11 @@ test('launcher: a hook that finishes in time passes its answer through unchanged
   assert.equal(r.status, 0);
   assert.equal(r.stdout, '{"decision":"allow"}');
 });
+
+test('launcher: the signal trap is disarmed once the hook has finished, before its answer is relayed', () => {
+  const script = launcher.unixScript('gemini', process.execPath, '/x/hook.js', { deadlineS: 5, deadlineSoft: true });
+  const wait = script.indexOf('wait $ZN_P');
+  const disarm = script.indexOf('trap - HUP INT TERM');
+  const relay = script.indexOf('cat "$ZN_OF"');
+  assert.ok(wait > 0 && disarm > wait && relay > disarm, 'wait ' + wait + ', disarm ' + disarm + ', relay ' + relay);
+});

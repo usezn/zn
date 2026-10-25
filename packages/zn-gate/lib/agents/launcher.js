@@ -188,6 +188,8 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
       '  ZN_T=$!',
       '  wait $ZN_P; ZN_RC=$?',
       '  kill -TERM $ZN_T 2>/dev/null',
+      '  # The hook has finished: a signal from now on no longer turns into a block (the answer is already complete).',
+      '  trap - HUP INT TERM',
       '  kill -KILL -$ZN_P 2>/dev/null',
       '  case $ZN_RC in 0|2) cat "$ZN_OF" ;; esac',
       '  cat "$ZN_EF" >&2',
