@@ -226,7 +226,7 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   the zn-gate plugin could not be checked: zn-gate could not find or run the `node` that Claude Code will start the hooks of the plugin with (the first one on your PATH)
   ```
 
-  Node.js 18 and 19, 20 before 20.19 and 21 before 21.7 are too old for the plugin, which then refuses to start. Claude Code starts the plugin's hooks with the first `node` on its `PATH`, which can be a different Node.js from the one that runs zn-gate. The repair is one of two things:
+  Node.js 18 and 19, 20 before 20.19 and 21 before 21.7 are too old for the plugin, which then refuses to start. Claude Code starts the plugin's hooks with the first `node` on its `PATH` that the plugin trusts, which can be a different Node.js from the one that runs zn-gate. zn-gate check asks that `node` for its version with the plugin's own rule: a `node` in the folder you run the check in, its project (git repository) or a `node_modules` folder, or one that links there, is never started; with no other `node`, the version is reported as unknown. The repair is one of two things:
 
   ```text
   update Node.js to 20.19 or later (the current LTS from nodejs.org), and make it the first `node` on your PATH, or use zn's hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, and after that turn the plugin off with `claude plugin disable zn-gate@usezn`, all in your own terminal
