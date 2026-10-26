@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-26.3';
+const POLICY_RULES_VERSION = '2026-10-26.7';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -108,6 +108,11 @@ const AGENT_CONFIG_RES = [
 // pattern is Antigravity's plugin switches and the folders that hold the ZCode and Antigravity configuration and
 // plugins, which cannot be removed, moved or created as such (the other files in them stay writable). Two patterns
 // keep the check as fast as before (it runs on every path of every call).
+// The agents' plugin folders and plugin state under the home folder, for their real places (a linked ~/.claude or
+// ~/.claude/plugins): the folders whose contents are protected, and the entries protected themselves.
+const HOME_PLUGIN_TREES = ['.claude/plugins', '.codex/plugins', '.cursor/plugins', '.zcode/cli/plugins', '.gemini/config/plugins',
+  '.gemini/antigravity-cli/plugins'];
+const HOME_PLUGIN_STATE = ['.gemini/config/config.json', '.zcode', '.zcode/cli', '.gemini', '.gemini/config', '.gemini/antigravity-cli'];
 const HOME_PLUGIN_RES = [
   [/^(\.claude|\.codex|\.cursor|\.zcode\/cli|\.gemini\/config|\.gemini\/antigravity-cli)\/plugins(\/|$)/, 'the agent plugins'],
   [/^(\.gemini\/config\/config\.json|\.zcode(\/cli)?|\.gemini(\/config|\/antigravity-cli)?)$/, 'the agent configuration and plugin state'],
@@ -220,6 +225,20 @@ function keysOf(p) {
   return [...new Set([keyOf(slash(p)), keyOf(slash(realTargetOf(p)))])];
 }
 
+// The home folder and the project root are resolved once per process: a hook process checks one call, and the
+// other users of the policy (tests, the broker) pass the same few folders again and again.
+const ROOT_KEYS = new Map();
+function rootKeysOf(p) {
+  const k = String(p);
+  let v = ROOT_KEYS.get(k);
+  if (!v) {
+    if (ROOT_KEYS.size > 256) ROOT_KEYS.clear();
+    v = keysOf(p);
+    ROOT_KEYS.set(k, v);
+  }
+  return v;
+}
+
 /**
  * Agent configuration: the directories that hold hook and plugin settings
  * (in the home directory, the project and the locations the environment
@@ -237,21 +256,38 @@ function agentContext(home, cwd, env) {
   // Plugin folders under a moved configuration folder (the folder names there do not match the patterns): built from
   // the keys already resolved for that folder, so no other file system call.
   const plugins = new Set();
-  if (env.CODEX_HOME) for (const k of keysOf(at(env.CODEX_HOME))) { dirs.add(k); plugins.add(k + '/plugins'); }
+  // The home folder as typed and where it really leads (a linked home), for ~/.zn and the home plugin folders. A
+  // relative HOME names no real place: the user's own home folder from the system is used as well.
+  const homes = new Set(rootKeysOf(path.resolve(home)));
+  if (!path.isAbsolute(String(home))) {
+    try { for (const k of rootKeysOf(os.userInfo().homedir)) homes.add(k); } catch (_) { /* no user record */ }
+  }
+  // Where each plugin folder and plugin state entry under the home folder really is: a linked configuration folder
+  // (dotfiles) or plugin folder puts them outside the home folder, where the home-relative patterns do not see them.
+  const state = new Set();
+  for (const r of HOME_PLUGIN_TREES) for (const k of keysOf(path.join(home, r))) plugins.add(k);
+  for (const r of HOME_PLUGIN_STATE) for (const k of keysOf(path.join(home, r))) state.add(k);
+  if (env.CODEX_HOME) {
+    for (const k of keysOf(at(env.CODEX_HOME))) { dirs.add(k); plugins.add(k + '/plugins'); }
+    for (const k of keysOf(path.join(at(env.CODEX_HOME), 'plugins'))) plugins.add(k);
+  }
   // Claude Code keeps its settings here when the variable is set, and zn installs its hooks there.
-  if (env.CLAUDE_CONFIG_DIR) for (const k of keysOf(at(env.CLAUDE_CONFIG_DIR))) { dirs.add(k); plugins.add(k + '/plugins'); }
+  if (env.CLAUDE_CONFIG_DIR) {
+    for (const k of keysOf(at(env.CLAUDE_CONFIG_DIR))) { dirs.add(k); plugins.add(k + '/plugins'); }
+    for (const k of keysOf(path.join(at(env.CLAUDE_CONFIG_DIR), 'plugins'))) plugins.add(k);
+  }
   if (env.OPENCODE_CONFIG_DIR) for (const k of keysOf(at(env.OPENCODE_CONFIG_DIR))) dirs.add(k);
   if (env.XDG_CONFIG_HOME) for (const k of keysOf(path.join(at(env.XDG_CONFIG_HOME), 'opencode'))) dirs.add(k);
   if (env.OPENCODE_CONFIG) for (const k of keysOf(at(env.OPENCODE_CONFIG))) files.add(k);
   // Claude Code keeps every plugin file and its plugin state under this folder when the variable is set.
   if (env.CLAUDE_CODE_PLUGIN_CACHE_DIR) for (const k of keysOf(at(env.CLAUDE_CODE_PLUGIN_CACHE_DIR))) plugins.add(k);
-  // Antigravity's workspace plugins: only at the root of the project (no other file system call).
-  plugins.add(keyOf(slash(path.join(projectRoot, '.agents', 'plugins'))));
+  // Antigravity's workspace plugins: only at the root of the project, as typed and where it really leads.
+  for (const k of rootKeysOf(projectRoot)) plugins.add(k + '/.agents/plugins');
   // Roots that hold agent configuration: removing or moving them removes it.
   // Only the directory itself is protected (listing it or reading it is fine).
   const roots = new Set(keysOf(path.join(home, '.config')));
   if (env.XDG_CONFIG_HOME) for (const k of keysOf(at(env.XDG_CONFIG_HOME))) roots.add(k);
-  return { dirs: [...dirs], files, roots: [...roots], plugins: [...plugins] };
+  return { dirs: [...dirs], files, roots: [...roots], plugins: [...plugins], homes: [...homes], state };
 }
 
 /** Everything a classification needs, from the options of one call. */
@@ -267,15 +303,65 @@ function contextOf(opts = {}) {
 /**
  * Classify a resolved absolute path. `ctx` comes from contextOf.
  */
+/* The protected class of a path relative to a home folder (.zn, the plugin folders and the plugin state), or null. */
+function homeRelClass(rel) {
+  const r = String(rel).replace(/^(?:\.\/)+/, '').replace(/\/+$/, '');
+  if (ci(/^\.zn(\/|$)/).test(r)) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ~/.zn' };
+  for (const [re, reason] of HOME_PLUGIN_RES) if (ci(re).test(r)) return { kind: 'agent_config', reason };
+  return null;
+}
+
+/* A write target zn cannot place on disk that may still name ~/.zn or an agent's plugins: a prefix that is a variable
+   the environment does not set, a command substitution or another user's ~name (each may be a home folder), or a
+   relative path after a cd (into the home folder, or to a place zn cannot follow). Returns the class or null. */
+function protectedElsewhere(text, opts) {
+  const t = slash(text);
+  const m = /^(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|\$\([^)]*\)|`[^`]*`|~[A-Za-z0-9._-]+)\/(.*)$/.exec(t)
+    // ${H}.zn: the variable's value may end with a slash.
+    || /^\$\{[A-Za-z_][A-Za-z0-9_]*\}(.+)$/.exec(t)
+    // The end of a substitution the shell split off ($(echo ~)/x reads as "$(echo" and "~)/x").
+    || /^[^/]*[)`]\/(.*)$/.exec(t);
+  // A variable the environment (or the command itself) sets was already expanded by the classification.
+  const v = /^\$\{?([A-Za-z_][A-Za-z0-9_]*)/.exec(t);
+  const known = v && (opts.env || process.env)[v[1]] && !(opts.unknownVars && opts.unknownVars.has(v[1]));
+  if (m && !known) {
+    const c = homeRelClass(m[1]);
+    if (c) return c;
+  }
+  // The word right after a substitution's closing bracket ($(echo ~)/.zn leaves /.zn): its start is the output of
+  // another command, which may be the home folder.
+  const cmdText = opts.cmdText || '';
+  if (t.startsWith('/') && (cmdText.includes(')' + text) || cmdText.includes('`' + text))) {
+    const c = homeRelClass(t.slice(1));
+    if (c) return c;
+  }
+  const bases = opts.cdBases;
+  if (!bases || !bases.moved || path.isAbsolute(t) || /^[~$`%]/.test(t)) return null;
+  const cwd = path.resolve(opts.cwd || process.cwd());
+  for (const b of bases.dirs) {
+    if (b === cwd) continue;
+    const c = classifyPath(path.join(b, text), opts);
+    if (c && (c.kind === 'zn_state' || c.kind === 'agent_config')) return c;
+  }
+  // A cd zn cannot follow (cd $DIR, cd -) may lead to the home folder.
+  return bases.unknown ? homeRelClass(t) : null;
+}
+
 function classifyResolved(abs, ctx) {
   const { home, creds, agent } = ctx;
   const s = keyOf(slash(abs));
   const h = keyOf(slash(path.resolve(home)));
-  if (s === h + '/.zn' || s.startsWith(h + '/.zn/')) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ~/.zn' };
+  const homes = agent.homes || [h];
+  for (const h of homes) {
+    const prefix = h.endsWith('/') ? h : h + '/';          // a home of "/" is its own prefix
+    if (s === prefix + '.zn' || s.startsWith(prefix + '.zn/')) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ~/.zn' };
+  }
   for (const [re, reason] of AGENT_CONFIG_RES) if (ci(re).test(s)) return { kind: 'agent_config', reason };
-  if (s.startsWith(h + '/')) {
-    const rel = s.slice(h.length + 1);
-    for (const [re, reason] of HOME_PLUGIN_RES) if (ci(re).test(rel)) return { kind: 'agent_config', reason };
+  for (const h of homes) {
+    const prefix = h.endsWith('/') ? h : h + '/';
+    if (!s.startsWith(prefix)) continue;
+    const c = homeRelClass(s.slice(prefix.length));
+    if (c) return c;
   }
   // The directory itself (`cd ~/.claude`, `mv ~/.codex`, `rm -r ~/.cursor`) and the files directly in it.
   if (agent.dirs.includes(s) || agent.roots.includes(s)) return { kind: 'agent_config', reason: 'an agent configuration directory' };
@@ -284,6 +370,7 @@ function classifyResolved(abs, ctx) {
   }
   if (agent.files.has(s)) return { kind: 'agent_config', reason: 'the agent configuration file the environment names' };
   if ((agent.plugins || []).some((d) => s === d || s.startsWith(d + '/'))) return { kind: 'agent_config', reason: 'the agent plugins' };
+  if (agent.state && agent.state.has(s)) return { kind: 'agent_config', reason: 'the agent configuration and plugin state' };
   if (s.endsWith('.pub')) return null;
   if (creds.files.has(s)) return { kind: 'credential', reason: 'a file named by a credential environment variable' };
   for (const d of creds.dirs) if (s === d || s.startsWith(d + '/')) return { kind: 'credential', reason: 'a directory named by a credential environment variable' };
@@ -2189,11 +2276,79 @@ function bashDenial(cmd, opts = {}) {
   return deny;
 }
 
+/* find ROOT ... -delete / -exec ...: a find that deletes, started at the home folder or above it, whose expression names
+   zn's vault or an agent's plugin folders or state. The deny message, or null. */
+const FIND_PROTECTED_NAME_RE = /^\.?(?:zn|gemini|zcode|claude|codex|cursor|agents)$|^(?:plugins|antigravity-cli|cli|config|installed_plugins\.json|known_marketplaces\.json|config\.json)$/i;
+function findDeleteDenial(words, opts) {
+  const ctx = opts.ctx || contextOf(opts);
+  const home = opts.home || os.homedir();
+  const env = opts.env || process.env;
+  const cwd = path.resolve(opts.cwd || process.cwd());
+  const homes = (ctx.agent && ctx.agent.homes) || [keyOf(slash(path.resolve(home)))];
+  const bySeq = new Map();
+  for (const w of words) {
+    if (!bySeq.has(w.seq)) bySeq.set(w.seq, []);
+    bySeq.get(w.seq).push(w);
+  }
+  for (const ws of bySeq.values()) {
+    const texts = ws.map((w) => w.text.replace(/^["']|["']$/g, ''));
+    const at = texts.findIndex((x) => /^find(?:\.exe)?$/i.test(path.basename(x)));
+    if (at < 0) continue;
+    const rest = texts.slice(at + 1);
+    if (!rest.some((x) => /^-(?:delete|exec|execdir|ok|okdir)$/.test(x))) continue;
+    const named = rest.some((x) => FIND_PROTECTED_NAME_RE.test(x.replace(/[*?[\]]/g, '').replace(/^\//, '')));
+    if (!named) continue;
+    for (const r of rest) {
+      if (r.startsWith('-') || r === '(' || r === '!') break;
+      const root = keyOf(slash(path.resolve(cwd, expandEnv(expandHome(r, home), env).text)));
+      const rootPrefix = root.endsWith('/') ? root : root + '/';
+      if (/[$`]/.test(r) || homes.some((h) => h === root || h.startsWith(rootPrefix))) {
+        return 'zn: this find deletes files under ' + r + ', which holds zn\'s vault (~/.zn) or an agent\'s plugins, and the ' +
+          'names it matches include them, so it was blocked: an agent may not change how zn and its hooks run. Ask the user to make this change.';
+      }
+    }
+  }
+  return null;
+}
+
+/* NAME=value words of the command (also after export, set or declare), with ~ and the variables already known
+   expanded, as an environment overlay: {NAME: value} or null. A name set twice keeps its first value; the cases a
+   later value would matter are covered by the targets check (protectedElsewhere). */
+const ASSIGN_WORD_RE = /(?:^|[\s;&|(){}])(?:(?:export|declare|typeset|local|readonly)\s+(?:-\w+\s+)*)?([A-Za-z_][A-Za-z0-9_]{0,63})=("[^"]*"|'[^']*'|(?:\$\([^)]*\)|`[^`]*`|[^\s;&|()<>`])*)/g;
+function shellAssignments(cmd, opts) {
+  const home = opts.home || os.homedir();
+  const env = opts.env || process.env;
+  const out = {};
+  const unknown = new Set();
+  let n = 0;
+  for (const m of String(cmd).matchAll(ASSIGN_WORD_RE)) {
+    if (++n > 64) break;
+    const name = m[1];
+    // A name set twice may hold either value when it is used: zn does not know which.
+    if (name in out || unknown.has(name)) { delete out[name]; unknown.add(name); continue; }
+    let v = m[2];
+    if (/^(["']).*\1$/s.test(v)) v = v.slice(1, -1);
+    // The output of a command, or a variable zn cannot resolve, may be the home folder.
+    if (/\$\(|`/.test(v)) { unknown.add(name); continue; }
+    v = expandEnv(expandHome(v, home), { ...env, ...out }).text;
+    if (/\$\{?[A-Za-z_]|%[A-Za-z_][A-Za-z0-9_]*%/.test(v)) { unknown.add(name); continue; }
+    out[name] = v;
+  }
+  return { env: Object.keys(out).length ? out : null, unknown };
+}
+
 function bashDenialOf(cmd, opts = {}) {
   if (String(cmd || '').length > SHELL_SCAN_CAP) return TOO_LONG_MESSAGE;
   const admin = adminCommand(cmd);
   if (admin) return adminDenial(admin, opts, cmd);
   if (keychainQuery(cmd, opts.env || process.env)) return KEYCHAIN_MESSAGE;
+  // Variables the command sets itself (X=$HOME; rm -rf $X/.zn, export D=~/.zn) are expanded like the environment's.
+  const assigned = shellAssignments(cmd, opts);
+  if (assigned.env || assigned.unknown.size) {
+    const env = { ...(opts.env || process.env), ...(assigned.env || {}) };
+    for (const name of assigned.unknown) delete env[name];
+    opts = { ...opts, env, unknownVars: assigned.unknown };
+  }
   // The context (home, project, agent directories) is built once per command.
   opts = { ...opts, ctx: contextOf(opts) };
   // The code of a shell inside the command (sh -c "...") is checked as a command of its own, with the same budget.
@@ -2240,6 +2395,10 @@ function bashDenialOf(cmd, opts = {}) {
     words.push(...split);
     readings.push(split);
   }
+  {
+    const findDeny = findDeleteDenial(readings[0], opts);
+    if (findDeny) return findDeny;
+  }
   // Where a relative .env path may be read from once the command has changed directory (cd app && cat .env).
   // Each reading is followed on its own, so a cd counts once.
   opts.cdBases = cdBasesOf(readings, opts);
@@ -2254,6 +2413,8 @@ function bashDenialOf(cmd, opts = {}) {
   const classified = new Map();
   // And so is its verdict, which may read the file (a .env, a .pem).
   const denied = new Map();
+  // And whether a write target may still name ~/.zn or a plugin folder (protectedElsewhere).
+  const elsewhereProt = new Map();
   // A word with * ? or [ can match a secret file; the message names a literal file when the command has one too.
   // The command is refused either way, so after a glob only a few more words are resolved on disk to find that file.
   const GLOB_NAME_LOOKAHEAD = 32;
@@ -2286,7 +2447,17 @@ function bashDenialOf(cmd, opts = {}) {
       if (overBudget(opts.budget, 1)) return TOO_SLOW_MESSAGE;
       classified.set(text, classifyWord(text, opts));
     }
-    const c = classified.get(text);
+    let c = classified.get(text);
+    // A cd's own target is not written to (where the cd leads is followed by cdBasesOf).
+    if ((writing || w.redirectTarget) && !CD_CMDS.has(bareHead(w.head).toLowerCase()) &&
+        (!c || (c.kind !== 'zn_state' && c.kind !== 'agent_config'))) {
+      if (!elsewhereProt.has(text)) {
+        if (overBudget(opts.budget, (opts.cdBases && opts.cdBases.dirs.length) || 1)) return TOO_SLOW_MESSAGE;
+        elsewhereProt.set(text, protectedElsewhere(text, opts));
+      }
+      const e = elsewhereProt.get(text);
+      if (e) c = e;
+    }
     if ((!c || c.kind === 'dotenv' || c.kind === 'keyfile') && (w.git || anyGit)) {
       // git show HEAD:.env, git cat-file -p :app/.env: a secret file read from the repository, not from disk.
       const deny = gitObjectDenial(text, opts) ||
@@ -2496,13 +2667,21 @@ function cdBasesOf(readings, opts) {
     let bases = [cwd];
     for (let k = 0; k < words.length && !unknown; k++) {
       // Found by its text, not by the command's head, so { cd x; ... } and if cd x; then ... count too.
-      if (!CD_CMDS.has(words[k].text.replace(/^[({]+/, '').toLowerCase())) continue;
+      // env -C DIR, env --chdir=DIR and git -C DIR run the rest of the command in DIR, like a cd.
+      let chdir = null;
+      if (!CD_CMDS.has(words[k].text.replace(/^[({]+/, '').toLowerCase())) {
+        const opt = words[k].text;
+        if (!/^(?:env|git)$/i.test(bareHead(words[k].head)) || !/^(?:-C|--chdir(?:=.*)?)$/.test(opt)) continue;
+        if (opt.startsWith('--chdir=')) chdir = opt.slice(8);
+        else if (words[k + 1] && words[k + 1].seq === words[k].seq) chdir = words[k + 1].text;
+        if (chdir === null || chdir === '') continue;
+      }
       moved = true;
       // Each cd followed costs its new places; past the budget, the rest cannot be followed.
       if (overBudget(opts.budget, bases.length)) { unknown = true; break; }
       // The target: the next word of the same simple command that is not an option (cd -P dir, Set-Location -Path dir).
-      let t = '~';
-      for (let j = k + 1; j < words.length && words[j].seq === words[k].seq; j++) {
+      let t = chdir !== null ? chdir.replace(/^["']|["']$/g, '') : '~';
+      for (let j = k + 1; chdir === null && j < words.length && words[j].seq === words[k].seq; j++) {
         const x = words[j].text.replace(/^["']|["']$/g, '').replace(/[;)}]+$/, '');
         if (!x || (x.startsWith('-') && x !== '-')) continue;
         t = x;

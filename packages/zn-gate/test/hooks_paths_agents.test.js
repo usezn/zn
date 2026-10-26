@@ -246,6 +246,172 @@ test('a project folder named like an agent folder is not the agent plugin folder
   assert.match(policy.writeDenial(path.join(proj, '.agents', 'plugins', 'p', 'hooks.json'), opts), /protected/);
 });
 
+test('~/.zn and the plugin folders through a linked home or project: the real path is protected too', { skip: WIN }, (t) => {
+  const base = tempDir(t, 'zn-linkhome-');
+  const realHome = path.join(base, 'data', 'u');
+  fs.mkdirSync(realHome, { recursive: true });
+  const home = path.join(base, 'home-u');
+  fs.symlinkSync(realHome, home);
+  const realProj = path.join(base, 'data', 'proj');
+  fs.mkdirSync(realProj, { recursive: true });
+  const proj = path.join(base, 'proj-link');
+  fs.symlinkSync(realProj, proj);
+  const opts = { home, cwd: proj, env: {} };
+  for (const f of [path.join(realHome, '.claude', 'plugins', 'installed_plugins.json'), path.join(realHome, '.zn', 'vault.age'),
+    path.join(realHome, '.gemini', 'antigravity-cli'), path.join(realProj, '.agents', 'plugins', 'p', 'hooks.json')]) {
+    assert.match(policy.writeDenial(f, opts) || '', /protected|\.zn/, f);
+  }
+  assert.match(policy.bashDenial('rm -rf ' + realHome + '/.gemini/antigravity-cli', opts) || '', /protected/);
+  assert.ok(policy.bashDenial('rm -rf ' + realHome + '/.zn', opts), 'rm -rf of the real ~/.zn');
+  assert.equal(policy.writeDenial(path.join(realHome, 'notes.md'), opts), null);
+});
+
+test('variables, command substitution and ~user in a write target that may be the home folder', (t) => {
+  const { home, proj } = tmpHome(t);
+  const opts = { home, cwd: proj, env: { HOME: home } };
+  for (const cmd of [
+    'X=$HOME; rm -rf $X/.claude/plugins',
+    'X=' + home + '; rm -rf $X/.zn',
+    'export D=~/.zn && rm -rf $D',
+    'rm -rf $UNSET_DIR/.zn',
+    'rm -rf ${SOMEWHERE}/.gemini/antigravity-cli',
+    'rm -rf `echo ~`/.gemini/antigravity-cli',
+    'rm -rf ~other/.gemini/antigravity-cli',
+    'echo {} > $H/.claude/plugins/installed_plugins.json',
+  ]) {
+    assert.ok(policy.bashDenial(cmd, opts), cmd);
+  }
+  // A substitution whose output may be the home folder.
+  assert.ok(policy.bashDenial('rm -rf $(echo ~)/.claude/plugins', opts));
+  assert.ok(policy.bashDenial('rm -rf $(echo ~)/.zn', opts));
+  assert.ok(policy.bashDenial('rm -rf "$(dirname $PWD)"/.gemini/antigravity-cli', opts));
+  // Ordinary variables and paths stay allowed.
+  for (const cmd of ['X=build; rm -rf $X/out', 'rm -rf $TMPDIR/foo', 'OUT=dist; mkdir -p $OUT/.gemini', 'cat $UNSET/.zn/x']) {
+    assert.equal(policy.bashDenial(cmd, opts), null, cmd);
+  }
+});
+
+test('a relative write after a cd into the home folder, or to a place zn cannot follow', (t) => {
+  const { home, proj } = tmpHome(t);
+  const opts = { home, cwd: proj, env: { HOME: home } };
+  for (const cmd of ['cd ~ && rm -rf .gemini/antigravity-cli', 'cd && rm -rf .zn', 'cd $HOME && rm -rf .claude/plugins',
+    'cd ~/.gemini && rm -rf antigravity-cli', 'cd $SOMEWHERE && rm -rf .zn', 'cd ~ ; echo {} > .claude/plugins/installed_plugins.json']) {
+    assert.ok(policy.bashDenial(cmd, opts), cmd);
+  }
+  for (const cmd of ['cd src && rm -rf .gemini', 'cd ~ && rm -rf tmp', 'cd ~ && cat .zn/x', 'cd build && rm -rf .zn-cache']) {
+    assert.equal(policy.bashDenial(cmd, opts), null, cmd);
+  }
+});
+
+test('a home of "/" or a relative home still protects .zn and the plugin folders', (t) => {
+  const opts = { home: '/', cwd: '/tmp', env: {} };
+  assert.ok(policy.writeDenial('/.zn/vault.age', opts));
+  assert.match(policy.writeDenial('/.claude/plugins/installed_plugins.json', opts) || '', /protected/);
+  assert.equal(policy.writeDenial('/srv/app/.zn-cache', opts), null);
+});
+
+test('a variable set from a command, set twice, or used without a slash counts as unknown, so it may be the home folder', (t) => {
+  const { home, proj } = tmpHome(t);
+  const opts = { home, cwd: proj, env: { HOME: home } };
+  for (const cmd of [
+    'X=$(echo ~); rm -rf $X/.zn',
+    'X="$(echo ~)"; rm -rf "$X"/.zn',
+    'X=`echo ~`; rm -rf $X/.claude/plugins',
+    'H=$(echo ~/); rm -rf ${H}.zn',
+    'X=/tmp; X=$HOME; rm -rf $X/.zn',
+    'X=$HOME; X=/tmp; rm -rf $X/.gemini/antigravity-cli',
+    'rm -rf ${H}.zn',
+    'Y=$UNSET; rm -rf $Y/.zn',
+  ]) {
+    assert.ok(policy.bashDenial(cmd, opts), cmd);
+  }
+  for (const cmd of ['X=$(pwd); rm -rf $X/build', 'X=/tmp; X=/var/tmp; rm -rf $X/cache', 'rm -rf ${OUT}dist']) {
+    assert.equal(policy.bashDenial(cmd, opts), null, cmd);
+  }
+});
+
+test('env -C, git -C and find -delete or -exec rm under the home folder are followed', (t) => {
+  const { home, proj } = tmpHome(t);
+  const opts = { home, cwd: proj, env: { HOME: home } };
+  for (const cmd of [
+    'env -C ~ rm -rf .zn',
+    'env --chdir=' + home + ' rm -rf .claude/plugins',
+    'git -C ~ rm -rf --cached .gemini/antigravity-cli',
+    'find ~ -name .zn -exec rm -rf {} +',
+    'find ' + home + ' -name plugins -delete',
+    'find / -path "*antigravity-cli*" -delete',
+    'find $HOME -name installed_plugins.json -exec rm {} \\;',
+  ]) {
+    assert.ok(policy.bashDenial(cmd, opts), cmd);
+  }
+  for (const cmd of ['env -C build rm -rf out', 'git -C src clean -fdx', 'find . -name "*.pyc" -delete', 'find ~ -name .zn',
+    'find ~/proj -name node_modules -exec rm -rf {} +']) {
+    assert.equal(policy.bashDenial(cmd, opts), null, cmd);
+  }
+});
+
+test('a linked agent configuration or plugin folder (dotfiles) is protected at its real place too', { skip: WIN }, (t) => {
+  // For each agent: the configuration folder linked elsewhere, and (separately) only its plugin folder linked elsewhere.
+  for (const [conf, sub] of [['.claude', 'plugins'], ['.codex', 'plugins'], ['.cursor', 'plugins'], ['.zcode/cli', 'plugins'],
+    ['.gemini/config', 'plugins'], ['.gemini/antigravity-cli', 'plugins']]) {
+    for (const linkWhat of ['config', 'plugins']) {
+      const { home, proj } = tmpHome(t);
+      const elsewhere = tempDir(t, 'zn-dotfiles-');
+      const opts = { home, cwd: proj, env: { HOME: home } };
+      let realPlugins;
+      if (linkWhat === 'config') {
+        const realConf = path.join(elsewhere, 'conf');
+        fs.mkdirSync(path.join(realConf, sub, 'cache', 'zn', 'scripts'), { recursive: true });
+        fs.mkdirSync(path.dirname(path.join(home, conf)), { recursive: true });
+        fs.symlinkSync(realConf, path.join(home, conf));
+        realPlugins = path.join(realConf, sub);
+      } else {
+        realPlugins = path.join(elsewhere, 'plugins');
+        fs.mkdirSync(path.join(realPlugins, 'cache', 'zn', 'scripts'), { recursive: true });
+        fs.mkdirSync(path.join(home, conf), { recursive: true });
+        fs.symlinkSync(realPlugins, path.join(home, conf, sub));
+      }
+      const launcher = path.join(realPlugins, 'cache', 'zn', 'scripts', 'zn-launch.js');
+      fs.writeFileSync(launcher, '');
+      const label = conf + ' linked ' + linkWhat;
+      assert.ok(policy.writeDenial(path.join(home, conf, sub, 'cache', 'zn', 'scripts', 'zn-launch.js'), opts), label + ': logical path');
+      assert.ok(policy.writeDenial(launcher, opts), label + ': real path');
+      assert.ok(policy.bashDenial('printf x > ' + launcher, opts), label + ': redirect to the real path');
+      assert.ok(policy.bashDenial('rm -rf ' + realPlugins, opts), label + ': remove the real plugin folder');
+      assert.equal(policy.writeDenial(path.join(elsewhere, 'notes.txt'), opts), null, label + ': a file beside it is not protected');
+    }
+  }
+});
+
+test('a linked Gemini or ZCode configuration folder keeps its plugin state protected at its real place', { skip: WIN }, (t) => {
+  const { home, proj } = tmpHome(t);
+  const elsewhere = tempDir(t, 'zn-dotfiles-');
+  const opts = { home, cwd: proj, env: { HOME: home } };
+  fs.mkdirSync(path.join(elsewhere, 'gemini', 'config'), { recursive: true });
+  fs.writeFileSync(path.join(elsewhere, 'gemini', 'config', 'config.json'), '{}');
+  fs.symlinkSync(path.join(elsewhere, 'gemini'), path.join(home, '.gemini'));
+  fs.mkdirSync(path.join(elsewhere, 'zcode', 'cli'), { recursive: true });
+  fs.symlinkSync(path.join(elsewhere, 'zcode'), path.join(home, '.zcode'));
+  assert.ok(policy.writeDenial(path.join(elsewhere, 'gemini', 'config', 'config.json'), opts));
+  assert.ok(policy.bashDenial('rm -rf ' + path.join(elsewhere, 'gemini'), opts));
+  assert.ok(policy.bashDenial('rm -rf ' + path.join(elsewhere, 'zcode', 'cli'), opts));
+  assert.equal(policy.writeDenial(path.join(elsewhere, 'gemini', 'notes.md'), opts), null);
+});
+
+test('a linked plugin folder named by CLAUDE_CONFIG_DIR or CODEX_HOME is protected at its real place', { skip: WIN }, (t) => {
+  for (const name of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME']) {
+    const { home, proj } = tmpHome(t);
+    const elsewhere = tempDir(t, 'zn-dotfiles-');
+    const conf = path.join(home, 'agent-conf');
+    const realPlugins = path.join(elsewhere, 'plugins');
+    fs.mkdirSync(realPlugins, { recursive: true });
+    fs.mkdirSync(conf);
+    fs.symlinkSync(realPlugins, path.join(conf, 'plugins'));
+    const opts = { home, cwd: proj, env: { HOME: home, [name]: conf } };
+    assert.ok(policy.writeDenial(path.join(realPlugins, 'zn-launch.js'), opts), name);
+  }
+});
+
 test('a Codex patch is refused when any file in it is protected, and an unreadable patch too', async (t) => {
   const { home, proj } = tmpHome(t);
   const settings = path.join(home, '.claude', 'settings.json');
