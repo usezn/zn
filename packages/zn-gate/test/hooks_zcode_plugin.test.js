@@ -291,18 +291,29 @@ test('the ZCode plugin hook, started as ZCode starts it, runs no planted sh or n
   assert.match(fs.readFileSync(marker, 'utf8'), /^sh$/m, 'the lookup by name did not pick the planted sh');
 });
 
-test('zn-gate check: a ZCode process hook that starts env or a shell given -c is NOT protected', { skip: !posix }, async (t) => {
-  const cwd = tempDir(t, 'zn-zcp-env-cwd-');
+test('zn-gate check: a ZCode process hook counts only as an absolute sh or node on a script inside the plugin folder', { skip: !posix }, async (t) => {
+  const cwd = tempDir(t, 'zn-zcp-wl-cwd-');
+  const swap = (cmd, args) => (h) => {
+    const j = JSON.parse(h);
+    for (const groups of Object.values(j.hooks)) for (const g of groups) for (const x of g.hooks) { x.command = cmd; x.args = args(x.args); }
+    return JSON.stringify(j);
+  };
   const cases = [
-    [(h) => h.split('"command": "/bin/sh", "args": ["').join('"command": "/usr/bin/env", "args": ["sh", "'), /`sh` by name \(through `env`\)/],
-    [(h) => h.split('"command": "/bin/sh", "args": ["').join('"command": "/bin/sh", "args": ["-c", "sh '), /run by `sh -c`/],
+    [swap('/usr/bin/env', (a) => ['sh', ...a]), /`env`, which looks the program/],
+    [swap('/bin/sh', (a) => ['-c', 'sh ' + a.join(' ')]), /code given inline \(`sh -c`\)/],
+    [swap('/bin/sh', (a) => ['-o', 'errexit', '-c', 'sh ' + a.join(' ')]), /code given inline \(`sh -c`\)/],
+    [swap('/usr/bin/nohup', (a) => ['sh', ...a]), /not an absolute sh or node running a script inside the plugin folder/],
+    [swap('/bin/sh', (a) => ['scripts/zn-hook.sh', a[1]]), /not an absolute sh or node running a script inside the plugin folder/],
+    [swap('/bin/sh', (a) => ['./scripts/zn-hook.sh', a[1]]), /not an absolute sh or node running a script inside the plugin folder/],
+    [swap('/bin/sh', () => ['-s']), /not an absolute sh or node running a script inside the plugin folder/],
+    [swap('/bin/sh', () => []), /not an absolute sh or node running a script inside the plugin folder/],
   ];
   for (const [hooks, re] of cases) {
-    const home = tempDir(t, 'zn-zcp-env-');
+    const home = tempDir(t, 'zn-zcp-wl-');
     installPlugin(home, { hooks });
     writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } } });
     const r = await zcodeCheck(home, cwd, '/usr/bin:/bin');
-    assert.equal(r.state, 'not-protected');
+    assert.equal(r.state, 'not-protected', String(re));
     assert.match(r.problem, re);
   }
 });

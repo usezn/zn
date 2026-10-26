@@ -90,12 +90,12 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 - **A plugin starts its hook with a program by name (ZCode, Claude Code).**
 
   ```text
-  the zn-gate plugin starts its PreToolUse hook with `sh` by name, so a program of that name in a relative or empty PATH entry, or in the folder the agent runs in, could run in its place and skip zn
-  update the plugin once the release that comes with zn-gate 1.14.0 is out: run `claude plugin update zn-gate@usezn` in your own terminal; until then, use zn's hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again
+  the zn-gate plugin starts its PreToolUse hook with `sh` by name, so a program or script in a relative or empty PATH entry, or in the folder the agent runs in, could run in its place and skip zn
+  update the plugin: run `claude plugin update zn-gate@usezn` in your own terminal; if `zn-gate check` still reports this, use zn's hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again
   update the plugin: install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again
   ```
 
-  The agent looks a bare program name up on its own PATH before zn's hook runs, so zn cannot clean that lookup. `zn-gate check` reads the plugin's `hooks/hooks.json` and reports a hook that starts `sh`, `node` or any other program without its full path, and also one that hands the lookup to another program: `env`, a shell given `-c`, or a shell command line with `;`, `&`, `|`, `<`, `>` or a command substitution. For ZCode, install the plugin again (Settings, Plugins). For Claude Code, the plugin released with zn-gate 1.14.0 starts its hooks with `/bin/sh`: update to it with `claude plugin update zn-gate@usezn` once it is out, and use zn's hooks until then.
+  The agent looks a bare program name up on its own PATH before zn's hook runs, so zn cannot clean that lookup. `zn-gate check` reads the plugin's `hooks/hooks.json` and accepts only the form zn's plugins use: `sh`, `bash`, `dash` or `node` by its full path, with no option and nothing in front, running a script inside the plugin folder. Anything else is reported: a program by name, `env` or another program that starts the next one, code given inline (`sh -c`, `node -e`), a script outside the plugin folder or a relative one, a `NAME=value` in front, or a shell command line with `;`, `&`, `|`, `<`, `>` or a command substitution. On Windows, a Claude Code hook must also say `"shell": "bash"`. For ZCode, install the plugin again (Settings, Plugins). For Claude Code, update the plugin with `claude plugin update zn-gate@usezn` (since zn-gate 1.14.0 it starts its hooks with `/bin/sh`), or use zn's hooks.
 
 - **The ZCode plugin's hook program is not on this computer.**
 

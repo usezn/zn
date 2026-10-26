@@ -335,14 +335,16 @@ function claudePlugin(home, env) {
   return { root: roots[0] || null, off };
 }
 
-/* The first program each hook of a plugin's manifest (hooks/hooks.json under `root`) starts, as the host starts it:
-   ZCode runs a "process" hook's command directly, and Claude Code runs a "command" hook through a shell, so there the
-   first word is the program. The host looks a bare name up on its PATH before zn's own code runs, so a relative or
-   empty PATH entry, or the folder the agent runs in, could hold a program of that name that skips zn. The same goes
-   for a program that looks the next one up itself: `env`, a shell given `-c`, and a shell command line with an
-   unquoted ; & | < > or a command substitution. Returns {hooks: [{event, file, args, byName}], bare: <first hook
-   with byName set> | null}, or null when the manifest cannot be read. byName says how the lookup happens. */
-function pluginManifest(root, rootVar) {
+/* What each hook of a plugin's manifest (hooks/hooks.json under `root`) starts, as the host starts it: ZCode runs a
+   "process" hook's command directly with its args, and Claude Code runs a "command" hook through a shell. Only the form
+   zn's plugins use counts as safe: an absolute sh, bash, dash or node, with no option, no NAME=value in front and
+   nothing else on the shell line, whose first operand is a script inside the plugin folder (`${<rootVar>}/...`).
+   Anything else may look a program up by name or read a script from the folder the agent runs in, the project, before
+   zn's own code can clean the PATH, so a relative or empty PATH entry or a planted file could skip zn. On Windows,
+   Claude Code runs a command hook with bash only when the hook says "shell": "bash"; otherwise /bin/sh is no full path.
+   Returns {hooks: [{event, file, args, byName}], bare: <first hook with byName set> | null}, or null when the manifest
+   cannot be read. byName says what makes the hook unsafe. */
+function pluginManifest(root, rootVar, platform = process.platform) {
   const data = readJson(path.join(root, 'hooks', 'hooks.json'));
   if (!data || typeof data.hooks !== 'object' || data.hooks === null) return null;
   const fill = (v) => String(v).split('${' + rootVar + '}').join(root);
@@ -351,17 +353,20 @@ function pluginManifest(root, rootVar) {
     for (const g of Array.isArray(groups) ? groups : []) {
       for (const h of (g && Array.isArray(g.hooks)) ? g.hooks : []) {
         if (!h || typeof h.command !== 'string') continue;
-        let hook = null;
+        let words;
+        let byName = null;
         if (h.type === 'process') {
-          hook = { event, file: fill(h.command), args: (Array.isArray(h.args) ? h.args : []).map(fill) };
+          words = [h.command, ...(Array.isArray(h.args) ? h.args.map(String) : [])];
         } else {
-          const words = shellWords(h.command).filter((w, i, all) => !(ASSIGN.test(w) && all.slice(0, i).every((x) => ASSIGN.test(x))));
-          if (!words.length) continue;
-          hook = { event, file: fill(words[0]), args: words.slice(1).map(fill) };
-          if (shellCompound(h.command)) hook.byName = 'a shell command line (with ; & | < > or a command substitution), which looks its programs up by name';
+          byName = shellLineProblem(h.command);
+          words = shellWords(h.command);
+          if (!byName && platform === 'win32' && h.shell !== 'bash') {
+            byName = 'the default Windows shell of Claude Code (no "shell": "bash"), where /bin/sh is not a full path';
+          }
         }
-        if (!hook.byName) hook.byName = lookupByName(hook.file, hook.args);
-        hooks.push(hook);
+        if (!words.length) continue;
+        if (!byName) byName = unsafeStart(words, rootVar, h.type !== 'process');
+        hooks.push({ event, file: fill(words[0]), args: words.slice(1).map(fill), byName });
       }
     }
   }
@@ -369,43 +374,42 @@ function pluginManifest(root, rootVar) {
 }
 
 const ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
-const SHELL_PROGRAMS = new Set(['sh', 'bash', 'dash', 'zsh', 'ksh', 'ash', 'mksh']);
+const SAFE_PROGRAMS = new Set(['sh', 'bash', 'dash', 'node']);
 
-/* How `file args` ends up looking a program up by name, or null when it runs the absolute program it names. */
-function lookupByName(file, args) {
-  if (!path.isAbsolute(file)) return '`' + file + '` by name';
-  const name = path.basename(file).toLowerCase().replace(/\.exe$/, '');
-  if (name === 'env') {
-    // env runs the first word that is not an option or a NAME=value through its own PATH lookup.
-    const next = args.find((a) => !a.startsWith('-') && !ASSIGN.test(a));
-    if (next === undefined) return '`env` with no program';
-    const inner = lookupByName(next, args.slice(args.indexOf(next) + 1));
-    return inner && !path.isAbsolute(next) ? '`' + next + '` by name (through `env`)' : inner;
-  }
-  // A shell given -c runs a new command line, whose programs it looks up by name.
-  if (SHELL_PROGRAMS.has(name)) {
-    for (const a of args) {
-      if (!a.startsWith('-') || a === '-' || a === '--') break;
-      if (/^-[A-Za-z]*c/.test(a)) return 'a command line run by `' + name + ' -c`, which looks its programs up by name';
-    }
+/* Why the words of a hook (before the plugin root is filled in) are not the safe form, or null when they are. The
+   specific reasons (a name, env, a shell given -c) come first because they tell the user what is wrong. */
+function unsafeStart(words, rootVar, shell) {
+  const [prog, first] = words;
+  if (shell && ASSIGN.test(prog)) return 'a NAME=value in front of the program (' + prog.split('=')[0] + '), which can make the shell read other code';
+  if (!prog.startsWith('/') || /[$`~]/.test(prog)) return '`' + prog + '` by name';
+  const name = prog.slice(prog.lastIndexOf('/') + 1);
+  if (name === 'env') return '`env`, which looks the program it starts up by name';
+  // Code given inline (sh -c, bash -o pipefail -c, node -e, python3 -c): a new command line or program, not a script.
+  const inline = words.slice(1).find((w) => /^[-+][A-Za-z]*c[A-Za-z]*$/.test(w) || (/^(node|perl|ruby)/.test(name) && /^-[A-Za-z]*e$/.test(w)));
+  if (inline) return 'code given inline (`' + name + ' ' + inline + '`), which looks its programs up by name';
+  const prefix = '${' + rootVar + '}/';
+  const script = typeof first === 'string' && first.startsWith(prefix) && !/[$`]/.test(first.slice(prefix.length)) &&
+    !first.slice(prefix.length).split('/').some((seg) => seg === '..' || seg === '.' || seg === '');
+  if (!SAFE_PROGRAMS.has(name) || !script) {
+    return '`' + words.slice(0, 2).join(' ') + '`, which is not an absolute sh or node running a script inside the plugin folder';
   }
   return null;
 }
 
-/* Whether a shell command line does more than start one program: an unquoted ; & | < > or newline, or a command
-   substitution ($( or a backquote, also inside double quotes). */
-function shellCompound(line) {
+/* Why a shell command line does more than start one program, or null: an unquoted ; & | < > or newline, a command
+   substitution ($( or a backquote, also inside double quotes), or a quote that is never closed. */
+function shellLineProblem(line) {
   let q = '';
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
     if (q === "'") { if (c === "'") q = ''; continue; }
     if (c === '\\') { i++; continue; }
-    if (c === '`' || (c === '$' && line[i + 1] === '(')) return true;
+    if (c === '`' || (c === '$' && line[i + 1] === '(')) return 'a shell command line (with a command substitution), which looks its programs up by name';
     if (q === '"') { if (c === '"') q = ''; continue; }
     if (c === '"' || c === "'") { q = c; continue; }
-    if (';&|<>\n'.includes(c)) return true;
+    if (';&|<>\n'.includes(c)) return 'a shell command line (with ; & | < > or a line break), which looks its programs up by name';
   }
-  return false;
+  return q ? 'a shell command line with a quote that is never closed, so the hook does not start' : null;
 }
 
 /* The words of a simple shell command line: spaces split them, and single or double quotes keep a word together. */
@@ -427,8 +431,9 @@ function shellWords(line) {
 
 /* The problem of a manifest hook that starts its program by name. */
 function bareProgramProblem(hook) {
+  if (/does not start$/.test(hook.byName)) return 'the zn-gate plugin starts its ' + hook.event + ' hook with ' + hook.byName;
   return 'the zn-gate plugin starts its ' + hook.event + ' hook with ' + hook.byName +
-    ', so a program of that name in a relative or empty PATH entry, or in the folder the agent runs in, could run in its place and skip zn';
+    ', so a program or script in a relative or empty PATH entry, or in the folder the agent runs in, could run in its place and skip zn';
 }
 
 /* zn's hooks in the agent's managed configuration: {files, entries} | null. Never throws. */
@@ -727,7 +732,7 @@ async function checkAgent(spec, ctx) {
       const manifest = plugin.off ? null : pluginManifest(plugin.root, 'CLAUDE_PLUGIN_ROOT');
       if (manifest && manifest.bare) {
         res.problem = bareProgramProblem(manifest.bare);
-        res.fix = 'update the plugin once the release that comes with zn-gate 1.14.0 is out: run `claude plugin update zn-gate@usezn` in your own terminal; until then, use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again';
+        res.fix = 'update the plugin: run `claude plugin update zn-gate@usezn` in your own terminal; if `zn-gate check` still reports this, use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again';
         res.pluginFault = true;
       }
     }
@@ -1118,4 +1123,4 @@ function report({ results, removed, warnings }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin } };
+module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin } };
