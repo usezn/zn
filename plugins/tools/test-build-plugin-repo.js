@@ -453,9 +453,9 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       {
         const h = Z + 'hooks/hooks.json';
         const [c, u] = edit(h, (t) => t.replace('zn-hook.sh", "PreToolUse"', 'zn-hook.sh", "PostToolUse"'));
-        await expectProblem(c, u, /a PreToolUse hook does not run `sh \$\{ZCODE_PLUGIN_ROOT\}\/scripts\/zn-hook\.sh PreToolUse`/);
-        const [c2, u2] = edit(h, (t) => t.replace('"command": "sh"', '"command": "bash"'));
-        await expectProblem(c2, u2, /does not run `sh/);
+        await expectProblem(c, u, /a PreToolUse hook does not run `\/bin\/sh \$\{ZCODE_PLUGIN_ROOT\}\/scripts\/zn-hook\.sh PreToolUse`/);
+        const [c2, u2] = edit(h, (t) => t.replace('"command": "/bin/sh"', '"command": "sh"'));
+        await expectProblem(c2, u2, /does not run `\/bin\/sh/);
         const [c3, u3] = edit(h, (t) => t.replace('${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "UserPromptSubmit"', '${ZCODE_PLUGIN_ROOT}/scripts/other.sh", "UserPromptSubmit"'));
         await expectProblem(c3, u3, /a UserPromptSubmit hook does not run/);
         const [c4, u4] = edit(h, (t) => JSON.stringify({ hooks: { PreToolUse: JSON.parse(t).hooks.PreToolUse } }));

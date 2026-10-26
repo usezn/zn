@@ -119,9 +119,9 @@ function zcodeProblems(files, dir) {
       if (!ZCODE_EVENTS.includes(event)) problems.push(dir + 'hooks/hooks.json has a hook for ' + event + ', which the plugin does not use');
       for (const group of hooks.hooks[event] || []) {
         for (const h of (group && group.hooks) || []) {
-          const ok = h && h.type === 'process' && h.command === 'sh' && Array.isArray(h.args) && h.args.length === 2 &&
+          const ok = h && h.type === 'process' && h.command === '/bin/sh' && Array.isArray(h.args) && h.args.length === 2 &&
             h.args[0] === '${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh' && h.args[1] === event;
-          if (!ok) problems.push(dir + 'hooks/hooks.json: a ' + event + ' hook does not run `sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh ' + event + '`');
+          if (!ok) problems.push(dir + 'hooks/hooks.json: a ' + event + ' hook does not run `/bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh ' + event + '`');
         }
       }
     }

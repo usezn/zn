@@ -335,6 +335,56 @@ function claudePlugin(home, env) {
   return { root: roots[0] || null, off };
 }
 
+/* The first program each hook of a plugin's manifest (hooks/hooks.json under `root`) starts, as the host starts it:
+   ZCode runs a "process" hook's command directly, and Claude Code runs a "command" hook through a shell, so there the
+   first word is the program. The host looks a bare name up on its PATH before zn's own code runs, so a relative or
+   empty PATH entry, or the folder the agent runs in, could hold a program of that name that skips zn. Returns
+   {hooks: [{event, file, args}], bare: <first hook whose program has no path> | null}, or null when the manifest
+   cannot be read. */
+function pluginManifest(root, rootVar) {
+  const data = readJson(path.join(root, 'hooks', 'hooks.json'));
+  if (!data || typeof data.hooks !== 'object' || data.hooks === null) return null;
+  const fill = (v) => String(v).split('${' + rootVar + '}').join(root);
+  const hooks = [];
+  for (const [event, groups] of Object.entries(data.hooks)) {
+    for (const g of Array.isArray(groups) ? groups : []) {
+      for (const h of (g && Array.isArray(g.hooks)) ? g.hooks : []) {
+        if (!h || typeof h.command !== 'string') continue;
+        if (h.type === 'process') {
+          hooks.push({ event, file: fill(h.command), args: (Array.isArray(h.args) ? h.args : []).map(fill) });
+        } else {
+          const words = shellWords(h.command).filter((w, i, all) => !(/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) && all.slice(0, i).every((x) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(x))));
+          if (words.length) hooks.push({ event, file: fill(words[0]), args: words.slice(1).map(fill) });
+        }
+      }
+    }
+  }
+  return { hooks, bare: hooks.find((h) => !path.isAbsolute(h.file)) || null };
+}
+
+/* The words of a simple shell command line: spaces split them, and single or double quotes keep a word together. */
+function shellWords(line) {
+  const out = [];
+  const re = /\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|([^\s"']+))/gy;
+  let m;
+  let cur = null;
+  let last = 0;
+  while ((m = re.exec(line)) !== null && m[0].length) {
+    const glued = cur !== null && m.index === last && !/^\s/.test(m[0]);
+    const part = m[1] !== undefined ? m[1].replace(/\\(.)/g, '$1') : m[2] !== undefined ? m[2] : m[3];
+    if (glued) cur += part; else { if (cur !== null) out.push(cur); cur = part; }
+    last = re.lastIndex;
+  }
+  if (cur !== null) out.push(cur);
+  return out;
+}
+
+/* The problem of a manifest hook that starts its program by name. */
+function bareProgramProblem(hook) {
+  return 'the zn-gate plugin starts its ' + hook.event + ' hook with `' + hook.file + '` by name, so a program called ' + hook.file +
+    ' in a relative or empty PATH entry, or in the folder the agent runs in, could run in its place and skip zn';
+}
+
 /* zn's hooks in the agent's managed configuration: {files, entries} | null. Never throws. */
 function managedFor(agentId, ctx) {
   try {
@@ -628,6 +678,12 @@ async function checkAgent(spec, ctx) {
       // The launcher's own check message is about the plugin itself (for example a Node.js it does not support).
       if (!res.problem && sys) { res.problem = bare(oneLine(JSON.parse('"' + sys[1] + '"'), 300)); res.pluginFault = true; }
       live = { file: process.execPath, args: [path.join(plugin.root, 'scripts', 'zn-launch.js'), 'hook', 'claude-code'], env: { CLAUDE_PLUGIN_ROOT: plugin.root }, plugin: true };
+      const manifest = plugin.off ? null : pluginManifest(plugin.root, 'CLAUDE_PLUGIN_ROOT');
+      if (manifest && manifest.bare) {
+        res.problem = bareProgramProblem(manifest.bare);
+        res.fix = 'update the plugin: run `claude plugin update zn-gate@usezn` in your own terminal, then run `zn-gate check` again';
+        res.pluginFault = true;
+      }
     }
   }
   if (spec.id === 'zcode') {
@@ -637,7 +693,6 @@ async function checkAgent(spec, ctx) {
       const conf = readJson(userFile) || {};
       const userHooks = hookEntries(conf, spec.id).some((e) => parseCommand(e.command, spec.id));
       const userHooksOn = userHooks && conf.hooks && conf.hooks.enabled === true;
-      const script = path.join(plugin.root, 'scripts', 'zn-hook.sh');
       if (plugin.enabled) {
         installed = true;
         res.where = 'the zn-gate plugin';
@@ -645,12 +700,21 @@ async function checkAgent(spec, ctx) {
         if (userHooksOn) {
           res.notes.push('zn is also set up with `zn hooks install zcode`, so every call is checked twice (ZCode does not remove duplicate hooks); keep one: run `zn hooks uninstall zcode` in your own terminal to keep the plugin, or turn the plugin off in ZCode (Settings, Plugins) to keep the hooks');
         }
-        // ZCode runs the plugin's hook with sh; check takes sh from the absolute PATH entries only (never the folder it runs in).
-        const sh = require('./exe').findProgram('sh', ctx.env || process.env);
-        if (sh) live = { file: sh, args: [script, 'PreToolUse'], env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}, plugin: true };
-        else {
-          res.problem = 'the zn-gate plugin runs its hook with sh, and no sh was found in the absolute entries of your PATH, so the hook cannot start';
-          res.fix = 'put the folder that holds sh (usually /bin) on your PATH, then run `zn-gate check` again';
+        // The hook runs exactly as ZCode starts it: the program named in the plugin's hooks.json, never one looked up here.
+        const manifest = pluginManifest(plugin.root, 'ZCODE_PLUGIN_ROOT');
+        const pre = manifest && manifest.hooks.find((h) => h.event === 'PreToolUse');
+        const REINSTALL = 'install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again';
+        if (!pre) {
+          res.problem = 'the zn-gate plugin has no PreToolUse hook in ' + path.join(plugin.root, 'hooks', 'hooks.json') + ', so ZCode runs no zn check before tool calls';
+          res.fix = REINSTALL;
+        } else if (manifest.bare) {
+          res.problem = bareProgramProblem(manifest.bare);
+          res.fix = 'update the plugin: ' + REINSTALL;
+        } else if (!fs.existsSync(pre.file)) {
+          res.problem = 'the zn-gate plugin starts its hook with ' + pre.file + ', which is not on this computer, so the hook cannot start';
+          res.fix = 'the ZCode plugin needs a system with ' + pre.file + ' (Linux); elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again';
+        } else {
+          live = { file: pre.file, args: pre.args, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}, plugin: true };
         }
       } else if (!userHooksOn) {
         // Turned off, and nothing else of zn's runs: ZCode is not protected.

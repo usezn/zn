@@ -87,14 +87,33 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   The hook in the project file looks like zn's start guard but is not exactly the command zn writes (someone edited it). `zn-gate check` never runs a project file, so it cannot tell what the edit does. Run `zn hooks install <agent> --project` again: it replaces the command with the exact guard. It is a note under **OK** when the agent is set up for your user, and **NOT protected** otherwise.
 
-- **The ZCode plugin's hook has no sh to run with.**
+- **A plugin starts its hook with a program by name (ZCode, Claude Code).**
 
   ```text
-  the zn-gate plugin runs its hook with sh, and no sh was found in the absolute entries of your PATH, so the hook cannot start
-  put the folder that holds sh (usually /bin) on your PATH, then run `zn-gate check` again
+  the zn-gate plugin starts its PreToolUse hook with `sh` by name, so a program called sh in a relative or empty PATH entry, or in the folder the agent runs in, could run in its place and skip zn
+  update the plugin: run `claude plugin update zn-gate@usezn` in your own terminal, then run `zn-gate check` again
+  update the plugin: install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again
   ```
 
-  ZCode starts the plugin's hook with `sh`. `zn-gate check` looks for it only in the absolute entries of your PATH (never in the folder it runs in). Put the folder that holds `sh`, usually `/bin`, on your PATH.
+  The agent looks a bare program name up on its own PATH before zn's hook runs, so zn cannot clean that lookup. `zn-gate check` reads the plugin's `hooks/hooks.json` and reports a hook that starts `sh`, `node` or any other program without its full path. Update the plugin: `claude plugin update zn-gate@usezn` for Claude Code, or install the plugin again in ZCode (Settings, Plugins).
+
+- **The ZCode plugin's hook program is not on this computer.**
+
+  ```text
+  the zn-gate plugin starts its hook with /bin/sh, which is not on this computer, so the hook cannot start
+  the ZCode plugin needs a system with /bin/sh (Linux); elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again
+  ```
+
+  The ZCode plugin starts its hooks with `/bin/sh`, so it works on Linux. On other systems, use `zn hooks install zcode` instead.
+
+- **The ZCode plugin has no PreToolUse hook.**
+
+  ```text
+  the zn-gate plugin has no PreToolUse hook in <plugin folder>/hooks/hooks.json, so ZCode runs no zn check before tool calls
+  install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again
+  ```
+
+  The plugin's hooks file is missing, unreadable or was edited. Installing the plugin again restores it.
 
 - **The hook starts PowerShell by name (Windows, written by an older zn-gate).**
 

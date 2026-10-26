@@ -475,3 +475,33 @@ test('check: a plugin turned off next to broken zn hooks: the hooks are repaired
   assert.match(r.fix, /npm install -g zn-gate`, then `zn hooks install claude-code`/);
   assert.doesNotMatch(r.fix, /plugin/);
 });
+
+test('check: a Claude Code plugin whose hooks.json starts a hook with a program by name is not protected', async (t) => {
+  const hooksJson = (cmd) => JSON.stringify({ hooks: {
+    SessionStart: [{ hooks: [{ type: 'command', command: '/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" SessionStart check claude-code' }] }],
+    PreToolUse: [{ matcher: '^(Bash|Read)$', hooks: [{ type: 'command', command: cmd, onFailure: 'block' }] }],
+  } });
+  const cases = [
+    ['node "${CLAUDE_PLUGIN_ROOT}/scripts/zn-launch.js" hook claude-code', 'node'],
+    ['"node" "${CLAUDE_PLUGIN_ROOT}/scripts/zn-launch.js" hook claude-code', 'node'],
+    ['ZN_X=1 node "${CLAUDE_PLUGIN_ROOT}/scripts/zn-launch.js" hook claude-code', 'node'],
+    ['sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code', 'sh'],
+  ];
+  for (const [cmd, prog] of cases) {
+    const home = tempDir(t, 'zn-check-ccbare-');
+    const root = fakePlugin(home, launcher());
+    fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooksJson(cmd));
+    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+    assert.equal(r.state, 'not-protected', cmd);
+    assert.match(r.problem, new RegExp('starts its PreToolUse hook with `' + prog + '` by name'), cmd);
+    assert.match(r.fix, /claude plugin update zn-gate@usezn/, cmd);
+  }
+  // The shell by its full path, with the plugin root in quotes: the plugin is checked as before.
+  const home = tempDir(t, 'zn-check-ccabs-');
+  const root = fakePlugin(home, launcher());
+  fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooksJson('/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code'));
+  const ok = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+  assert.equal(ok.state, 'protected', ok.problem);
+});

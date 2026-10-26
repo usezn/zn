@@ -4,7 +4,7 @@
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "process", "command": "sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "UserPromptSubmit"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
+          { "type": "process", "command": "/bin/sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "UserPromptSubmit"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
         ]
       }
     ],
@@ -12,7 +12,7 @@
       {
         "matcher": "*",
         "hooks": [
-          { "type": "process", "command": "sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PreToolUse"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
+          { "type": "process", "command": "/bin/sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PreToolUse"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
         ]
       }
     ],
@@ -20,7 +20,7 @@
       {
         "matcher": "*",
         "hooks": [
-          { "type": "process", "command": "sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PermissionRequest"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
+          { "type": "process", "command": "/bin/sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PermissionRequest"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
         ]
       }
     ],
@@ -28,7 +28,7 @@
       {
         "matcher": "^(Bash|Read|Grep|WebFetch)$|^mcp__.*",
         "hooks": [
-          { "type": "process", "command": "sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PostToolUse"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
+          { "type": "process", "command": "/bin/sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PostToolUse"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
         ]
       }
     ]

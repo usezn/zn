@@ -44,7 +44,8 @@ try {
       assert.strictEqual(mine[event][0].hooks.length, 1);
       const h = mine[event][0].hooks[0];
       assert.strictEqual(h.type, 'process', event + ': no shell between ZCode and sh');
-      assert.strictEqual(h.command, 'sh');
+      // By its full path: ZCode looks a bare name up on its PATH, where a relative or empty entry finds the project's files.
+      assert.strictEqual(h.command, '/bin/sh');
       assert.deepStrictEqual(h.args, ['${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh', event]);
       assert.strictEqual(h.timeoutMs, adapter.HOOK_TIMEOUT_MS, event + ' timeout');
       assert.strictEqual(h.statusMessage, adapter.HOOK_STATUS);
