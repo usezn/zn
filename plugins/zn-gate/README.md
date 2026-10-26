@@ -70,7 +70,7 @@ Hook scripts run on your machine: installing the plugin on the web does not inst
 ## Where it protects you
 
 - **Claude Code** in the terminal, the IDE extensions and local sessions in
-  the Code tab of the Claude desktop app: hooks and both MCP servers.
+  the Code tab of the Claude desktop app: the hooks.
   The Code tab uses the plugins installed with `claude plugin install`.
   Claude Code sessions that run in the cloud (Claude Code on the web, cloud
   sessions in the Code tab) do not load plugins installed on your machine, so
@@ -86,7 +86,7 @@ Hook scripts run on your machine: installing the plugin on the web does not inst
 
 ## What the plugin runs
 
-Every hook and both MCP servers run `node scripts/zn-launch.js`, a single
+Every hook runs `node scripts/zn-launch.js`, a single
 file with no dependencies that you can read in full. Claude Code and Codex run
 hooks in your project folder, so there the hooks start it through
 `/bin/sh scripts/zn-node.sh`, which uses a Node.js found only in an absolute
@@ -105,7 +105,7 @@ the other events show a warning. On every call the launcher:
    listed in `scripts/zn-gate.lock.json`, each with the SHA-256 digest of the
    published release: no extra file or directory, no symbolic link, nothing
    missing;
-4. loads zn-gate's hook runner or MCP server from the bytes it just checked,
+4. loads zn-gate's hook runner from the bytes it just checked,
    held in memory, with a module loader that only resolves to those files.
 
 The lock file is generated from the published npm tarball after checking the
@@ -114,8 +114,7 @@ check runs on every call; `plugins/tools/bench-launch.js` in the repository
 measures what that adds per hook call.
 
 If anything fails, including an error inside zn-gate, the hooks refuse the
-call or prompt and say how to fix it (exit code 2), and the MCP servers do
-not start. To let events pass while zn-gate is unavailable instead, set
+call or prompt and say how to fix it (exit code 2). To let events pass while zn-gate is unavailable instead, set
 `{"hooks": {"whenUnavailable": "allow"}}` in `~/.zn/config.json` (the file in
 your account's home directory; `$HOME` does not change which file is read).
 
@@ -136,7 +135,7 @@ It is not a sandbox:
 - **Node.js API.** The launcher loads ES modules through
   `vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER`, which Node's documentation
   marks as experimental. If a Node.js version lacks it or changes it, the
-  launcher refuses to run (hooks exit 2, the MCP servers do not start).
+  launcher refuses to run (hooks exit 2).
 - **Timeouts pass in Claude Code.** A hook that does not answer in 15 s is
   treated as a non-blocking error, and the call goes ahead.
 - **Refused output.** When the launcher refuses a tool-output event (the
@@ -167,47 +166,15 @@ It is not a sandbox:
 
 ## What leaves your machine
 
-Nothing, by default. The hooks, the scrubber and the `zn-gate` MCP server run
-locally and make no network requests: the plugin starts the `zn-gate` MCP
-server with local rules only, even when `ZN_CLOUD` and `ZN_API_KEY` are set
-in your environment. The only way to change that is the optional API key
-below.
-The `secrets` MCP server makes the HTTP requests the agent
-asks for with `secrets_http_request`, only to hosts you allowed for each
-secret (`zn secret allow NAME --host api.example.com`). zn-gate also has an
-optional cloud prompt analysis (`zn analyze`, enabled only with `ZN_CLOUD=1`
-and an API key, sending prompt text with secrets redacted first); the
-plugin's hooks never use it, and its `zn-gate` MCP server uses it only for
-`analyze_prompt` when you set the API key below.
-
-## Optional: the zn cloud classifier (Claude Code)
-
-With a zn Pro or Team API key (from https://usezn.com/dashboard), the
-`analyze_prompt` tool of the `zn-gate` MCP server also asks the zn cloud
-classifier, which catches more than the local rules. Only then is text sent:
-the text Claude passes to `analyze_prompt`, with secrets redacted first, goes
-to `api.usezn.com` and counts against your plan's quota. `check_tool_call`,
-`check_tool_result`, the `secrets` server and the hooks never send anything,
-with or without a key.
-
-This setting is optional, and the plugin works fully without it. After
-`claude plugin install zn-gate@usezn`, Claude Code prints "1 userConfig option
-not yet set, run /plugin configure". That line comes from Claude Code, which
-prints it for every plugin option that has no value yet; it adds "(1 required)"
-only for a required option, and this one is not. You can ignore it. To add the
-key later, run `/plugin configure zn-gate@usezn` in Claude Code, or pass
-`--config api_key=YOUR_KEY` when you install. You can also change or remove it
-with `/plugin` (Installed, zn-gate, Configure options); it does not appear in
-`/config`. The key is marked sensitive, so Claude Code
-stores it with its own credentials (in the macOS Keychain, or in Claude Code's
-credentials file on other systems), not in `settings.json`. Leave it empty to
-keep everything on your machine.
-
-The key is used only with the default zn endpoint, with certificate checks
-on: `ZN_API_URL`, `ZN_STAGE` and `NODE_TLS_REJECT_UNAUTHORIZED` from your
-environment are ignored by the plugin, and the key is not passed to the hooks.
-Other agents run the plugin with local rules only. What is sent
-and kept: https://usezn.com/privacy
+Nothing. The hooks and the scrubber run locally and make no network
+requests. zn-gate also has an optional cloud prompt analysis (`zn analyze`,
+enabled only with `ZN_CLOUD=1` and an API key, sending prompt text with
+secrets redacted first); the plugin's hooks never use it. Before version
+1.14.0 the plugin also started a `zn-gate` MCP server, which used an optional
+API key setting for that analysis; that server and the setting are gone, and
+Claude Code may keep a key you entered with its own credentials: remove it
+with `/plugin` (Installed, zn-gate, Configure options) before you update, or
+leave it, since nothing reads it.
 
 ## Updates
 

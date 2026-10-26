@@ -98,9 +98,7 @@ claude plugin install zn-gate@usezn
 
 Already ran `zn hooks install claude-code` before? Run `zn hooks uninstall claude-code` first, otherwise both sets of hooks run.
 
-Claude Code may then print "1 userConfig option not yet set". That option is an optional cloud API key and the plugin works fully without it, so you can ignore the line; to add a key later, run `/plugin configure zn-gate@usezn` in Claude Code.
-
-Start a new Claude Code session. Claude Code is then blocked from reading `.env` files with real values and credential files, secrets in what its tools return are replaced with markers or redacted before the model sees them, a secret pasted into a prompt is blocked, and Claude can check untrusted text for prompt injection. Not covered: Claude Code sessions in the cloud, Cowork and chat. Details: [plugins/zn-gate](plugins/zn-gate/README.md).
+Start a new Claude Code session. Claude Code is then blocked from reading `.env` files with real values and credential files, secrets in what its tools return are replaced with markers or redacted before the model sees them, a secret pasted into a prompt is blocked. The plugin adds no MCP server since version 1.14.0: for the `secrets` server, run `zn hooks install claude-code` instead of the plugin. Not covered: Claude Code sessions in the cloud, Cowork and chat. Details: [plugins/zn-gate](plugins/zn-gate/README.md).
 
 **Codex CLI, Cursor or OpenCode: the hooks.**
 

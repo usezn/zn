@@ -22,7 +22,7 @@ Short meanings of words used in the zn-gate docs.
 
 **Hook**: a small check that your agent runs before or after it reads a file, runs a command or gets your prompt. zn-gate uses hooks to block or redact.
 
-**Plugin**: the zn-gate add-on for Claude Code. It sets up zn-gate's hooks and its MCP servers in one step.
+**Plugin**: the zn-gate add-on for Claude Code. It sets up zn-gate's hooks in one step; since version 1.14.0 it adds no MCP server.
 
 **MCP server**: a tool your agent can call. MCP is the standard way agents connect to tools. zn-gate can also run as one.
 
