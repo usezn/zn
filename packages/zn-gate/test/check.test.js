@@ -855,6 +855,25 @@ test('check: the published plugin manifest with the real zn-node.sh is protected
   assert.equal(r.verified, true);
 });
 
+test('check: run from a subfolder of a project with its bin/ on the PATH, the plugin hook does not start the project node', { skip: process.platform === 'win32' }, async (t) => {
+  const home = tempDir(t, 'zn-check-subdir-');
+  const project = tempDir(t, 'zn-check-subdir-repo-');
+  fs.mkdirSync(path.join(project, '.git'));
+  fs.mkdirSync(path.join(project, 'bin'));
+  fs.mkdirSync(path.join(project, 'src', 'deep'), { recursive: true });
+  const marker = path.join(tempDir(t, 'zn-check-subdir-mark-'), 'ran.txt');
+  // A fake node in the project's bin/: it would answer nothing (exit 0) and leave a marker.
+  fs.writeFileSync(path.join(project, 'bin', 'node'), '#!/bin/sh\necho ran > ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+  const published = JSON.parse(fs.readFileSync(path.join(REPO_PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
+  fakePlugin(home, launcher(), null, { manifest: published });
+  const PATH = path.join(project, 'bin') + path.delimiter + path.dirname(process.execPath) + path.delimiter + (process.env.PATH || '');
+  for (const cwd of [project, path.join(project, 'src'), path.join(project, 'src', 'deep')]) {
+    const r = byId(await check({ home, env: { HOME: home, PATH }, cwd }), 'claude-code');
+    assert.equal(fs.existsSync(marker), false, cwd + ': the plugin hook started the project node');
+    assert.equal(r.state, 'protected', cwd + ': ' + r.problem);
+  }
+});
+
 test('check: the plugin hook runs as Claude Code starts it: /bin/sh on zn-node.sh, or Git Bash given the line on Windows', (t) => {
   const root = tempDir(t, 'zn-check-run-root-');
   const ctx = { cwd: tempDir(t, 'zn-check-run-cwd-'), env: { PATH: '/usr/bin:/bin' } };

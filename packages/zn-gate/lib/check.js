@@ -476,11 +476,12 @@ function claudePreToolProblem(manifest, file, tool) {
    CLAUDE_CHECK_COMMAND), for the plugin folder `root` that was checked: bash runs the line, which starts /bin/sh on the
    plugin's scripts/zn-node.sh with the rest of the line as its arguments. Elsewhere than Windows that is /bin/sh itself,
    started here by that full path with the same arguments (no bash is looked up); on Windows it is Git Bash given the
-   line, as Claude Code does ("shell": "bash"). CLAUDE_PLUGIN_ROOT is the plugin folder, CLAUDE_PROJECT_DIR the folder
-   check runs in (zn-node.sh skips PATH entries in it), and PATH the one check was given. The timeout is the hook's
+   line, as Claude Code does ("shell": "bash"). CLAUDE_PLUGIN_ROOT is the plugin folder, CLAUDE_PROJECT_DIR the project
+   check runs in, its repository root when there is one (zn-node.sh skips PATH entries in it, so a project bin/ on the
+   PATH is skipped also when check runs from a subfolder), and PATH the one check was given. The timeout is the hook's
    (`timeoutS`, at most 15 seconds). Null when there is no Git Bash on Windows. */
 function claudePluginRun(command, root, ctx, timeoutS, platform = process.platform) {
-  const env = { CLAUDE_PLUGIN_ROOT: root, CLAUDE_PROJECT_DIR: ctx.cwd };
+  const env = { CLAUDE_PLUGIN_ROOT: root, CLAUDE_PROJECT_DIR: projectRootOf(ctx.cwd) };
   if (ctx.env && typeof ctx.env.PATH === 'string') env.PATH = ctx.env.PATH;
   const timeout = typeof timeoutS === 'number' && timeoutS > 0 ? Math.min(HOOK_TIMEOUT_MS, timeoutS * 1000) : HOOK_TIMEOUT_MS;
   if (platform === 'win32') {
