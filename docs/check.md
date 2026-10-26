@@ -116,6 +116,17 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   The plugin's hooks file is missing, unreadable or was edited. Installing the plugin again restores it.
 
+- **The hook script of a plugin is not one zn-gate ships.**
+
+  ```text
+  the hook script of the zn-gate plugin (<plugin folder>/scripts/zn-node.sh) is not one zn-gate ships (sha256 <first 12 characters>), so nothing shows that it runs zn's checks
+  install the zn-gate plugin again ...
+  the hook script of the zn-gate plugin (...) is not one zn-gate ships (...), so nothing shows that it runs zn's checks; the plugin (<plugin version>) is newer than this zn-gate (<zn-gate version>)
+  update zn-gate: run `npm install -g zn-gate` in your own terminal, then run `zn-gate check` again
+  ```
+
+  Before it runs anything of the Claude Code plugin (`scripts/zn-node.sh`) or the ZCode plugin (`scripts/zn-hook.sh`), zn-gate check compares the script's sha256 with the versions zn has shipped. A script that was edited, replaced or damaged is not run, and the fix is to install the plugin again. When the plugin says it is newer than the zn-gate you run, zn-gate does not know its script yet: the line adds that the plugin is newer, and the fix is to update zn-gate (`npm install -g zn-gate`).
+
 - **The hook starts PowerShell by name (Windows, written by an older zn-gate).**
 
   ```text
@@ -265,7 +276,7 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   run `zn hooks install cursor` in your own terminal, then remove the zn-gate plugin in Cursor (Customize, in the sidebar), then run `zn-gate check` again
   ```
 
-  zn-gate looks for the plugin under `~/.cursor/plugins` (Cursor keeps plugins you add by hand in `~/.cursor/plugins/local`): a folder counts when its `.cursor-plugin/plugin.json` is named `zn-gate` and points to github.com/usezn/zn. Other plugins there are ignored. Only that file is read; nothing of the plugin is run. The plugin is reported even when the hooks of `zn hooks install cursor` are installed too, because Cursor still runs its hooks:
+  zn-gate looks for the plugin under `~/.cursor/plugins`, up to 8 folders deep and through links (Cursor keeps plugins you add by hand in `~/.cursor/plugins/local`): a folder counts when its `.cursor-plugin/plugin.json` is named `zn-gate` and points to github.com/usezn/zn. Other plugins there are ignored. Only that file is read; nothing of the plugin is run. The plugin is reported even when the hooks of `zn hooks install cursor` are installed too, because Cursor still runs its hooks:
 
   ```text
   the zn-gate plugin for Cursor is installed (<plugin folder>), and zn-gate no longer supports it: ..., while the zn hooks next to it (<hooks file>) work

@@ -30,6 +30,13 @@ const writeCfg = (home, obj) => {
 const readCfg = (home) => JSON.parse(fs.readFileSync(cfgFile(home), 'utf8'));
 
 // A plugin folder as ZCode leaves it in its cache. The stub hook denies a request that names ".env" and allows any other.
+function shipped(file, text, opts) {
+  fs.writeFileSync(file, text, opts);
+  const sha = require('crypto').createHash('sha256').update(text).digest('hex');
+  const list = require('../lib/check')._internal.PUBLISHED_PLUGIN_SCRIPTS[path.basename(file)];
+  if (!list.includes(sha)) list.push(sha);
+}
+
 function installPlugin(home, { script = true, manifest = true, id = ID, hooks = (h) => h } = {}) {
   const root = path.join(base(home), 'plugins', 'cache', 'usezn', 'zn-gate', '1.14.0');
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
@@ -40,7 +47,8 @@ function installPlugin(home, { script = true, manifest = true, id = ID, hooks = 
     fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooks(fs.readFileSync(REPO_HOOKS, 'utf8')));
   }
   if (script) {
-    fs.writeFileSync(path.join(root, 'scripts', 'zn-hook.sh'),
+    // A stand-in for the shipped zn-hook.sh: registered as shipped so check reaches the live run it is about.
+    shipped(path.join(root, 'scripts', 'zn-hook.sh'),
       '#!/bin/sh\ninput=$(cat)\ncase "$input" in *.env*) printf \'%s\' \'{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: .env holds plain-text secrets."}}\' ;; esac\nexit 0\n',
       { mode: 0o755 });
   }
