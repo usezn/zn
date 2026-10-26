@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-26.7';
+const POLICY_RULES_VERSION = '2026-10-26.8';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -81,10 +81,22 @@ const CRED_ENV = ['AWS_SHARED_CREDENTIALS_FILE', 'AWS_CONFIG_FILE', 'GOOGLE_APPL
 const CRED_ENV_DIRS = new Set(['AZURE_CONFIG_DIR', 'DOCKER_CONFIG']);
 const ENV_REF_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$env:([A-Za-z_][A-Za-z0-9_]*)|\$([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%/gi;
 
+// The programs the hooks and their launchers start by name (node, sh, bash, zn, zn-gate), in the folders of your own
+// programs that are usually on the PATH (relative to the home folder): a node written there runs in place of the real
+// one at the next call, without zn's checks. Only these names: other programs in these folders stay writable.
+const USER_BIN_DIRS = ['bin', '\\.local/bin', '\\.volta/bin', '\\.bun/bin', '\\.cargo/bin', '\\.deno/bin', 'go/bin',
+  '\\.npm-global/bin', '\\.yarn/bin', '\\.asdf/shims', '\\.local/share/mise/shims', 'AppData/Roaming/npm',
+  '\\.nvm/versions/node/[^/]+/bin', '(?:\\.local/share/fnm|\\.fnm)/(?:aliases|node-versions)/[^/]+(?:/installation)?/bin'];
+const USER_BIN_NAMES = '(?:node|nodejs|sh|bash|zn|zn-gate)(?:\\.exe|\\.cmd|\\.bat|\\.ps1)?';
+const USER_BIN_REASON = 'a program the hooks start by name, in a folder of your own programs';
+const USER_BIN_RE = new RegExp('^(?:' + USER_BIN_DIRS.join('|') + ')/' + USER_BIN_NAMES + '$');
+
 // Hook and plugin configuration of the agents. An agent that could change it
 // could switch off the hooks that check it, so writes are refused like ~/.zn.
 const AGENT_CONFIG_RES = [
   [/(^|\/)\.claude\/settings[^/]*\.json$/, 'Claude Code settings'],
+  // The same programs in the shared install folders the plugin hooks also search (Homebrew's are yours to write).
+  [/^\/(usr\/local|opt\/homebrew)\/bin\/(node|nodejs|sh|bash|zn|zn-gate)$/, USER_BIN_REASON],
   [/(^|\/)\.codex\/[^/]*$/, 'Codex hooks and configuration'],
   [/(^|\/)\.cursor\/hooks\.json$/, 'Cursor hooks'],
   [/(^|\/)\.agents\/hooks\.json$/, 'Antigravity hooks'],
@@ -116,6 +128,7 @@ const HOME_PLUGIN_STATE = ['.gemini/config/config.json', '.zcode', '.zcode/cli',
 const HOME_PLUGIN_RES = [
   [/^(\.claude|\.codex|\.cursor|\.zcode\/cli|\.gemini\/config|\.gemini\/antigravity-cli)\/plugins(\/|$)/, 'the agent plugins'],
   [/^(\.gemini\/config\/config\.json|\.zcode(\/cli)?|\.gemini(\/config|\/antigravity-cli)?)$/, 'the agent configuration and plugin state'],
+  [USER_BIN_RE, USER_BIN_REASON],
 ];
 
 // Windows and macOS file systems are case-insensitive by default. Read on each
@@ -1276,6 +1289,8 @@ function allWords(cmd, posix = false) {
   while (rest.length && guard++ < SIMPLE_COMMANDS_MAX) {
     const scan = scanFirstCommand(rest, posix);
     const head = commandName(scan.words);
+    // The word that is the command itself (after any NAME=value assignments).
+    const headAt = scan.words.findIndex((x) => !ASSIGNMENT_RE.test(x.text));
     // git also runs behind sudo, env, command, xargs and the like.
     const gi = gitStart(scan.words);
     const sub = gi >= 0 ? gitSubcommand(scan.words.slice(gi)) : '';
@@ -1309,7 +1324,7 @@ function allWords(cmd, posix = false) {
         const typed = targetRaw.replace(/^(?:[0-9]*|\*)(?:>\||>>?)/, '');
         if (/^[A-Za-z]:\\/.test(typed) && !/['"]/.test(typed)) t = typed;
       }
-      out.push({ text: t, redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0 });
+      out.push({ text: t, redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0, isHead: k === headAt && !glued });
     }
     rest = rest.slice(scan.end + 1);
   }
@@ -2391,7 +2406,12 @@ function bashDenialOf(cmd, opts = {}) {
   // The same for the code an interpreter runs (python -c "open('.env')"), where a path sits inside quotes and brackets.
   if (/\$\(|`/.test(text) || words.some((w) => CODE_CMDS_RE.test(bareHead(w.head)))) {
     const split = [];
-    for (const t of text.split(/[\s'"`$(){};|&<>=,]+/)) if (t) split.push({ text: t, redirectTarget: false, head: '', seq: 0 });
+    const parts = text.split(/[\s'"`$(){};|&<>=,]+/).filter(Boolean);
+    // The command's own program path keeps its mark here only when the command names it once (not again in its code).
+    const heads = new Set(words.filter((w) => w.isHead).map((w) => w.text));
+    const seen = new Map();
+    for (const t of parts) seen.set(t, (seen.get(t) || 0) + 1);
+    for (const t of parts) split.push({ text: t, redirectTarget: false, head: '', seq: 0, isHead: heads.has(t) && seen.get(t) === 1 });
     words.push(...split);
     readings.push(split);
   }
@@ -2476,6 +2496,8 @@ function bashDenialOf(cmd, opts = {}) {
     }
     if (c.kind === 'zn_state') return denialOf(c, text, opts);
     if (c.kind === 'agent_config') {
+      // Running one of those programs by its path (the command itself) does not change it.
+      if (c.reason === USER_BIN_REASON && w.isHead && !w.redirectTarget) continue;
       if (w.redirectTarget || writing) return agentConfigDenial(text, c);
       continue; // reading the settings is allowed
     }
