@@ -65,24 +65,9 @@ function resolveHookNode(env, cwd) {
   try {
     const isWin = process.platform === 'win32';
     const norm = (f) => { let r = path.resolve(f); try { r = fs.realpathSync(r); } catch (err) { /* keep it */ } return isWin ? r.toLowerCase() : r; };
-    const here = norm(cwd || process.cwd());
-    // The home folder and the folders above it (/) are never the project, as in zn-node.sh: a Node.js from nvm or volta
-    // there counts, also when check runs from the home folder or the home folder is a dotfiles repository.
-    const home = norm((env || process.env).HOME || require('os').homedir());
-    const fenced = [here, norm(projectRootOf(cwd || process.cwd()))].filter((d) => !isInside(home, d, true));
-    const untrusted = (p) => fenced.some((d) => isInside(p, d, true)) || /(^|[\\/])node_modules([\\/]|$)/.test(p);
-    let file = null;
-    for (const dir of String((env || process.env).PATH || '').split(path.delimiter)) {
-      if (!dir || !path.isAbsolute(dir) || untrusted(norm(dir))) continue;
-      const cand = path.join(dir, isWin ? 'node.exe' : 'node');
-      let st;
-      try { st = fs.statSync(cand); } catch (_) { continue; }
-      if (!st.isFile()) continue;
-      if (!isWin) { try { fs.accessSync(cand, fs.constants.X_OK); } catch (_) { continue; } }
-      if (untrusted(norm(cand))) continue;
-      file = path.resolve(cand);
-      break;
-    }
+    // The shared rule (exe.findProgram): never a node in the project, its git work tree or node_modules, nor one that
+    // links there; the home folder is never the project, so a Node.js from nvm or volta counts.
+    const file = require('./exe').findProgram('node', env || process.env, cwd || process.cwd());
     if (!file) return null;
     if (norm(file) === norm(process.execPath)) return { version: process.versions.node, path: file };
     const r = spawnSync(file, ['--version'], { encoding: 'utf8', timeout: 3000, windowsHide: true, shell: false });
@@ -705,7 +690,7 @@ const REINSTALL = (id) => 'install zn-gate again for the Node.js you use now: ru
 
 /* Absolute path of `name`, searched only in absolute PATH entries; null when there is none. */
 function onAbsPath(name, env) {
-  const absPath = String((env || process.env).PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
+  const absPath = require('./exe').absolutePath((env || process.env).PATH || '', process.platform, { env: env || process.env });
   const found = require('./exe').whichSync(process.platform === 'win32' ? name + (name === 'zn' ? '.cmd' : '.exe') : name, absPath);
   return found ? path.resolve(found) : null;
 }
@@ -713,7 +698,7 @@ function onAbsPath(name, env) {
 /* Absolute path of the `zn` command, searched only in absolute PATH entries; null when there is none. */
 function znOnPath(env) {
   // Only absolute PATH entries: a relative one (node_modules/.bin, .) depends on the folder check runs from.
-  const absPath = String((env || process.env).PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
+  const absPath = require('./exe').absolutePath((env || process.env).PATH || '', process.platform, { env: env || process.env });
   const found = require('./exe').whichSync(process.platform === 'win32' ? 'zn.cmd' : 'zn', absPath);
   return found ? path.resolve(found) : null;
 }
