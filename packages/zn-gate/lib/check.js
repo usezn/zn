@@ -342,7 +342,7 @@ function claudePlugin(home, env) {
    Anything else may look a program up by name or read a script from the folder the agent runs in, the project, before
    zn's own code can clean the PATH, so a relative or empty PATH entry or a planted file could skip zn. On Windows,
    Claude Code runs a command hook with bash only when the hook says "shell": "bash"; otherwise /bin/sh is no full path.
-   Returns {hooks: [{event, file, args, byName}], bare: <first hook with byName set> | null}, or null when the manifest
+   Returns {hooks: [{event, file, args, byName, raw, shell}], bare: <first hook with byName set> | null}, or null when the manifest
    cannot be read. byName says what makes the hook unsafe. */
 function pluginManifest(root, rootVar, platform = process.platform) {
   const data = readJson(path.join(root, 'hooks', 'hooks.json'));
@@ -366,7 +366,8 @@ function pluginManifest(root, rootVar, platform = process.platform) {
         if (!byName && h.type !== 'process' && platform === 'win32' && h.shell !== 'bash') {
           byName = 'the default Windows shell of Claude Code (no "shell": "bash"), where /bin/sh is not a full path';
         }
-        hooks.push({ event, file: fill(words[0]), args: words.slice(1).map(fill), byName });
+        hooks.push({ event, file: fill(words[0]), args: words.slice(1).map(fill), byName,
+          ...(h.type === 'process' ? {} : { raw: h.command, shell: h.shell }) });
       }
     }
   }
@@ -737,6 +738,25 @@ async function checkAgent(spec, ctx) {
         res.problem = bareProgramProblem(manifest.bare);
         res.fix = 'update the plugin: run `claude plugin update zn-gate@usezn` in your own terminal; if `zn-gate check` still reports this, use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again';
         res.pluginFault = true;
+      }
+      // Claude Code runs a command hook through a shell (bash when the hook says "shell": "bash", which is Git Bash on
+      // Windows; sh otherwise), with CLAUDE_PLUGIN_ROOT set and the project as working folder. The hook is run here
+      // the same way, so what the manifest starts (zn-node.sh, which finds Node.js and runs the launcher) is checked
+      // too, not only the launcher behind it.
+      const hostPre = manifest && !manifest.bare ? manifest.hooks.find((h) => h.event === 'PreToolUse' && h.raw) : null;
+      if (hostPre) {
+        const want = hostPre.shell === 'bash' ? 'bash' : 'sh';
+        const env = ctx.env || process.env;
+        const shell = want === 'bash' ? (process.platform === 'win32' ? gitBash(env) : require('./exe').findProgram('bash', env))
+          : (process.platform === 'win32' ? null : '/bin/sh');
+        if (shell && fs.existsSync(shell)) {
+          live = { file: shell, args: ['-c', hostPre.raw], env: { CLAUDE_PLUGIN_ROOT: plugin.root, ...(ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}) }, plugin: true };
+        } else if (!res.problem) {
+          res.problem = 'Claude Code runs the hooks of the zn-gate plugin with ' + want + ', and no ' + want + ' was found on this computer, so the hooks cannot start';
+          res.fix = (process.platform === 'win32' ? 'install Git for Windows (it brings Git Bash, which Claude Code uses for hooks)' : 'make sure ' + want + ' is installed')
+            + ', or use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal';
+          res.pluginFault = true;
+        }
       }
     }
   }

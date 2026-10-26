@@ -496,9 +496,12 @@ test('check: a Claude Code plugin whose hooks.json starts a hook with a program 
     assert.match(r.problem, new RegExp('starts its PreToolUse hook with `' + prog + '` by name'), cmd);
     assert.match(r.fix, /claude plugin update zn-gate@usezn/, cmd);
   }
-  // The shell by its full path, with the plugin root in quotes: the plugin is checked as before.
+  // The shell by its full path, with the plugin root in quotes: the plugin is checked as before (POSIX: on Windows
+  // the hook also needs "shell": "bash").
+  if (process.platform === 'win32') return;
   const home = tempDir(t, 'zn-check-ccabs-');
   const root = fakePlugin(home, launcher());
+  nodeSh(root);
   fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
   fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooksJson('/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code'));
   const ok = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
@@ -578,11 +581,13 @@ test('check: only an absolute sh or node running a script inside the plugin fold
     assert.match(r.problem, re, cmd);
   }
   // The forms zn's plugins use (also with shell syntax inside quotes) are checked as before.
-  const safe = ['/bin/sh ' + S, '/bin/bash ' + S, '/usr/bin/node ' + L, '/bin/sh "${CLAUDE_PLUGIN_ROOT}/a;b|c.sh" "x && y"'];
+  const safe = ['/bin/sh ' + S, '/bin/bash ' + S, process.execPath + ' ' + L, '/bin/sh "${CLAUDE_PLUGIN_ROOT}/a;b|c.sh" PreToolUse hook claude-code "x && y"'];
   if (process.platform !== 'win32') {
     for (const cmd of safe) {
       const home = tempDir(t, 'zn-check-ccb3ok-');
       const root = fakePlugin(home, launcher());
+      nodeSh(root);
+      fs.writeFileSync(path.join(root, 'a;b|c.sh'), fs.readFileSync(path.join(root, 'scripts', 'zn-node.sh')), { mode: 0o755 });
       fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
       fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooksJson(cmd));
       const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
@@ -608,4 +613,54 @@ test('check: on Windows a Claude Code plugin hook counts only when it runs with 
   assert.match(pluginManifest(root, 'CLAUDE_PLUGIN_ROOT', 'win32').bare.byName, /`node` by name/);
   write({ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/x.js"' });
   assert.match(pluginManifest(root, 'CLAUDE_PLUGIN_ROOT', 'win32').bare.byName, /`node` by name/);
+});
+
+// A stand-in for the plugin's scripts/zn-node.sh: runs the launcher with this Node.js by its full path, as the real
+// wrapper does once it found Node.js. `mark` (a file) records that it ran, with the shell and the folder it ran in.
+function nodeSh(root, { mark = null, body = null } = {}) {
+  const run = body !== null ? body
+    : 'exec ' + JSON.stringify(process.execPath) + ' "$CLAUDE_PLUGIN_ROOT/scripts/zn-launch.js" "$2" "$3"\n';
+  const rec = mark ? 'printf "%s|%s|%s\\n" "${BASH_VERSION:-sh}" "$PWD" "$CLAUDE_PLUGIN_ROOT" >> ' + JSON.stringify(mark) + '\n' : '';
+  fs.writeFileSync(path.join(root, 'scripts', 'zn-node.sh'), '#!/bin/sh\n' + rec + run, { mode: 0o755 });
+}
+
+test('check runs the Claude Code plugin hook as Claude Code starts it: the manifest line through the shell, the project as folder', { skip: process.platform === 'win32' }, async (t) => {
+  const line = (ev) => '/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" ' + ev + ' hook claude-code';
+  const manifest = (shell) => JSON.stringify({ hooks: { PreToolUse: [{ matcher: '^(Read|Bash)$', hooks: [Object.assign({ type: 'command', command: line('PreToolUse'), onFailure: 'block' }, shell ? { shell } : {})] }] } });
+  for (const shell of [null, 'bash']) {
+    const home = tempDir(t, 'zn-check-host-');
+    const root = fakePlugin(home, launcher());
+    const mark = path.join(tempDir(t, 'zn-check-host-mark-'), 'ran.txt');
+    nodeSh(root, { mark });
+    fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), manifest(shell));
+    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+    assert.equal(r.state, 'protected', String(shell) + ': ' + r.problem);
+    const runs = fs.readFileSync(mark, 'utf8').trim().split('\n').map((l) => l.split('|'));
+    assert.ok(runs.length >= 2, 'the wrapper ran for the .env read and the ordinary file');
+    for (const [, pwd, pr] of runs) {
+      assert.equal(pr, root, 'CLAUDE_PLUGIN_ROOT is the plugin folder');
+      assert.ok(pwd && pwd !== root && !pwd.startsWith(root + path.sep), 'run from the project, not from the plugin folder: ' + pwd);
+    }
+  }
+});
+
+test('check: a plugin whose zn-node.sh does not reach zn is not protected, although its launcher works (the wrapper is checked too)', { skip: process.platform === 'win32' }, async (t) => {
+  for (const body of ['exit 0\n', 'exit 2\n', 'echo "{}"\n']) {
+    const home = tempDir(t, 'zn-check-wrap-');
+    const root = fakePlugin(home, launcher());
+    nodeSh(root, { body });
+    fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: '/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code', onFailure: 'block' }] }] } }));
+    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+    assert.equal(r.state, 'not-protected', JSON.stringify(body));
+    assert.match(r.problem, body === 'exit 2\n' ? /blocks everything/ : /did not block the read of \.env/, JSON.stringify(body));
+  }
+});
+
+test('check: a plugin without hooks/hooks.json keeps the launcher check (no manifest line to run)', async (t) => {
+  const home = tempDir(t, 'zn-check-nomanifest-');
+  fakePlugin(home, launcher());
+  const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+  assert.equal(r.state, 'protected', r.problem);
 });

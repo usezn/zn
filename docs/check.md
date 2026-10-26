@@ -97,6 +97,15 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   The agent looks a bare program name up on its own PATH before zn's hook runs, so zn cannot clean that lookup. `zn-gate check` reads the plugin's `hooks/hooks.json` and accepts only the form zn's plugins use: `sh`, `bash`, `dash` or `node` by its full path, with no option and nothing in front, running a script inside the plugin folder. Anything else is reported: a program by name, `env` or another program that starts the next one, code given inline (`sh -c`, `node -e`), a script outside the plugin folder or a relative one, a `NAME=value` in front, or a shell command line with `;`, `&`, `|`, `<`, `>` or a command substitution. On Windows, a Claude Code hook must also say `"shell": "bash"`. For ZCode, install the plugin again (Settings, Plugins). For Claude Code, update the plugin with `claude plugin update zn-gate@usezn` (since zn-gate 1.14.0 it starts its hooks with `/bin/sh`), or use zn's hooks.
 
+- **No shell to start the Claude Code plugin's hooks.**
+
+  ```text
+  Claude Code runs the hooks of the zn-gate plugin with bash, and no bash was found on this computer, so the hooks cannot start
+  install Git for Windows (it brings Git Bash, which Claude Code uses for hooks), or use zn's hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal
+  ```
+
+  `zn-gate check` runs the plugin's hook the way Claude Code does: the command line from the plugin's `hooks/hooks.json`, through bash when the hook says `"shell": "bash"` (Git Bash on Windows) and through `sh` otherwise, with the project as the working folder. When that shell is missing, the hook cannot run; on other systems the fix says to make sure the shell is installed.
+
 - **The ZCode plugin's hook program is not on this computer.**
 
   ```text
