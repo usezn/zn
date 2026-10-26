@@ -1,6 +1,6 @@
 # Troubleshooting
 
-The eleven messages people most often meet when they first use zn-gate: what each one means and what to do. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
+The twelve messages people most often meet when they first use zn-gate: what each one means and what to do. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
@@ -201,6 +201,32 @@ The version number in the second message is yours and will differ.
 - **Or use zn's hooks instead of the plugin:** run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal. Then run `npx -y zn-gate check` again.
 
 Running `npx -y zn-gate init` on a Node.js older than 20.19 does the second option for you: it skips the plugin and sets up zn's hooks for Claude Code instead, and if the plugin is already installed it offers to turn it off once the hooks work. Node.js 22 LTS is recommended; 18 or later is enough for the hooks and the CLI. See the [README](../README.md#install).
+
+## 12. "no Node.js was found for the hook" (direnv, `node_modules/.bin`)
+
+You may see this when the agent tries a tool call:
+
+```text
+zn: no Node.js was found for the hook (looked in the absolute PATH entries outside the project and the usual install folders). This call was blocked because zn could not check it.
+```
+
+Or `npx -y zn-gate check` says, for Claude Code:
+
+```text
+X  Claude Code   NOT protected: the zn-gate plugin could not be checked: zn-gate could not find or run the `node` that Claude Code will start the hooks of the plugin with (the first one on your PATH).
+```
+
+**What it means:** since version 1.14.0, zn and the hooks of the zn-gate plugin never start a program from a folder of your project. A `PATH` entry whose real path is in the folder the agent runs in, the git repository around it or a `node_modules` folder is skipped, and so is a `node` outside the project that is a link into one. This keeps a `node` (or `git`, or `sh`) that a repository ships, or that the agent wrote, from running in place of the real one. If the only `node` on your `PATH` is one of these, for example the `node_modules/.bin` or `bin` folder that direnv or a project script adds, zn finds no Node.js and blocks the call instead of running it unchecked. Your files are fine. Only the plugin hooks look for `node` this way: `zn hooks install <agent>` writes the full path of the Node.js it was installed with into the hook.
+
+**How to check:**
+
+1. In the terminal you start the agent from, inside the project, run `command -v node` (`where node` in the Windows command prompt). If the path is inside the project, or `ls -l` shows a link into it, this is the cause.
+2. Run `npx -y zn-gate check` from the same folder. When the plugin hooks would use a different Node.js from the one zn-gate runs on, the check names it, for example `Claude Code will run the hooks of the plugin with Node.js 22.11.0 (from /home/you/.nvm/versions/node/v22.11.0/bin/node)`. If it says it could not find or run that `node`, no Node.js outside the project is on your `PATH`.
+
+**What to do, either one:**
+
+- **Keep a Node.js outside the project on your `PATH`:** install one from [nodejs.org](https://nodejs.org/), nvm, fnm or Volta, and let direnv add the project folder in front of it (`PATH_add node_modules/.bin` keeps the rest of your `PATH`). zn skips the project folder and uses the next `node`. It also looks in `/usr/local/bin`, `/opt/homebrew/bin`, `/usr/bin`, `C:\Program Files\nodejs`, Volta, fnm's default and nvm's folders.
+- **Or use zn's hooks instead of the plugin:** run `npm install -g zn-gate`, then `zn hooks install claude-code` (or your agent), then `claude plugin disable zn-gate@usezn`, all in your own terminal, with a Node.js outside the project.
 
 ## Also useful
 
