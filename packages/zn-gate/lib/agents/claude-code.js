@@ -490,7 +490,9 @@ function uninstall(opts = {}) {
     } else {
       // Only zn's own server: a user MCP server that happens to be called "secrets" is left alone.
       const ours = userMcpServerIsOurs(opts);
-      const claude = ours !== true ? null : opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || '');
+      // Absolute PATH entries only, as for install: a relative entry points into the folder uninstall runs in.
+      const claude = ours !== true ? null : opts.claudeBin !== undefined ? opts.claudeBin
+        : whichSync('claude', require('../exe').programEnv(opts.env || process.env).PATH);
       if (ours === false) {
         report.warnings.push('left the MCP server named "' + MCP_SERVER_NAME + '" in place: it is not zn\'s');
       } else if (ours === null) {
