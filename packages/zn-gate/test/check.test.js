@@ -996,3 +996,23 @@ test('check never starts a node from the project, node_modules or a link into th
   await check({ home, env: { HOME: home, PATH }, cwd: project });
   assert.equal(fs.existsSync(marker), false, 'zn-gate check started a node from the project, node_modules or a link into them');
 });
+
+test('check: from the home folder, or a dotfiles home with git, a Node.js only in nvm or volta counts', { skip: process.platform === 'win32' }, (t) => {
+  const { resolveHookNode } = require('../lib/check')._internal;
+  for (const [tool, dir] of [['nvm', path.join('.nvm', 'versions', 'node', 'v22.0.0', 'bin')], ['volta', path.join('.volta', 'bin')]]) {
+    for (const dotfiles of [false, true]) {
+      const home = tempDir(t, 'zn-check-homenode-');
+      if (dotfiles) fs.mkdirSync(path.join(home, '.git'));
+      const bin = path.join(home, dir);
+      fs.mkdirSync(bin, { recursive: true });
+      fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+      const env = { HOME: home, PATH: bin + path.delimiter + '/usr/bin' + path.delimiter + '/bin' };
+      const proj = path.join(home, 'notes');
+      fs.mkdirSync(proj);
+      for (const cwd of [home, proj]) {
+        const hook = resolveHookNode(env, cwd);
+        assert.ok(hook && hook.version === process.versions.node, tool + (dotfiles ? ' dotfiles' : '') + ' from ' + cwd + ': ' + JSON.stringify(hook));
+      }
+    }
+  }
+});
