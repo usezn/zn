@@ -13,6 +13,7 @@ const { getAdapter } = require('../lib/agents');
 const { guide, plan } = require('../lib/init-guide');
 const { check, _internal } = require('../lib/check');
 const { tempDir } = require('./helpers/tmp');
+const { writePluginManifest } = require('./helpers/claude_plugin');
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const CLAUDE = path.resolve('/opt/bin/claude');
@@ -33,6 +34,7 @@ function pluginIn(home) {
     "process.stdout.write(r.stdout || ''); process.exit(r.status || 0);\n");
   fs.writeFileSync(path.join(home, '.claude', 'plugins', 'installed_plugins.json'),
     JSON.stringify({ version: 2, plugins: { 'zn-gate@usezn': [{ scope: 'user', installPath: root }] } }));
+  writePluginManifest(root);
 }
 
 const ccOf = (items) => items.find((i) => i.id === 'claude-code');

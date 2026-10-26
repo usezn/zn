@@ -191,6 +191,19 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   turn it on: run `claude plugin enable zn-gate@usezn` in your own terminal
   ```
 
+- **The plugin is not where Claude Code installs plugins, or its hooks file does not check tool calls.**
+
+  ```text
+  the zn-gate plugin listed in installed_plugins.json is in <folder>, which is not inside the folder where Claude Code installs plugins (<config folder>/plugins), so zn-gate check does not run it
+  the zn-gate plugin listed in installed_plugins.json is in <folder>, inside this project (<project>), so zn-gate check does not run it
+  the zn-gate plugin has no hook manifest zn-gate check can read (<plugin folder>/hooks/hooks.json), so nothing shows that Claude Code runs a zn check before tool calls
+  the zn-gate plugin has no PreToolUse hook in <plugin folder>/hooks/hooks.json, so Claude Code runs no zn check before tool calls
+  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json runs in the background (async), where Claude Code does not wait for its answer, so Claude Code runs no zn check before tool calls
+  install the plugin again: run `claude plugin uninstall zn-gate@usezn`, then `claude plugin install zn-gate@usezn`, in your own terminal, then run `zn-gate check` again
+  ```
+
+  `installed_plugins.json` can name any folder, so `zn-gate check` starts nothing from the plugin until it knows the plugin is real: its folder must be inside `plugins` under your Claude Code configuration folder (`~/.claude`, or `CLAUDE_CONFIG_DIR`), or inside `CLAUDE_CODE_PLUGIN_CACHE_DIR` when that is set, and not inside the project you run the check in. Its `hooks/hooks.json` must have a PreToolUse "command" hook that is not turned off, does not run in the background, and whose matcher covers reading files. The other forms of the PreToolUse line say that the hook is turned off, is not a "command" hook, or has a matcher that does not cover Read.
+
 - **The plugin needs a newer Node.js.**
 
   ```text
