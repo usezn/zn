@@ -2,6 +2,8 @@
 
 Set up zn-gate in Cursor in two minutes, then the technical details: the MCP server, the hooks that block secret reads and scrub MCP output, and what Cursor does not let zn-gate cover.
 
+There is no zn-gate plugin for Cursor since zn-gate 1.14.0: use `zn hooks install cursor` below. The plugin's hooks started `node` by name, so an absolute `PATH` entry that points into the project (its `node_modules/.bin`, a folder added by direnv) could run a `node` of the project's own in place of the real one, and Cursor has no hook setting that names the program by its full path on macOS and Linux and still works on Windows. If you added the zn-gate plugin in Cursor, remove it there (Customize) and run `zn hooks install cursor`: Cursor's documentation does not say what happens to an installed plugin that is no longer in its repository.
+
 ## Quick start (no coding needed)
 
 1. **Check that Node.js is installed.** In Cursor, open **Terminal → New Terminal**, paste `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/), then close and reopen Cursor.

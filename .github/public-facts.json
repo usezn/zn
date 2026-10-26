@@ -227,10 +227,6 @@
           "json": "license"
         },
         {
-          "file": "plugins/zn-gate/.cursor-plugin/plugin.json",
-          "json": "license"
-        },
-        {
           "file": "packages/zn-gate-py/pyproject.toml",
           "regex": "^license = \\{ text = \"([^\"]+)\" \\}"
         },
@@ -251,10 +247,6 @@
       },
       {
         "file": "plugins/zn-gate/.claude-plugin/plugin.json",
-        "json": "version"
-      },
-      {
-        "file": "plugins/zn-gate/.cursor-plugin/plugin.json",
         "json": "version"
       },
       {

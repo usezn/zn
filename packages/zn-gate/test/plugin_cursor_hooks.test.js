@@ -1,6 +1,6 @@
 'use strict';
 
-// The Cursor plugin and `zn hooks install cursor` must agree on which hooks fail closed, and a hook may only
+// The Cursor hooks `zn hooks install cursor` writes (there is no Cursor plugin any more): a hook may only
 // fail closed when zn always writes an answer on that event. Cursor's documentation (cursor.com/docs/agent/hooks)
 // says failClosed blocks the action on "no output", and its permission hooks accept no neutral answer: "allow"
 // would skip Cursor's own approval, and an empty object is not a valid permission answer. So an event where zn
@@ -13,8 +13,8 @@ const path = require('path');
 const { getAdapter } = require('../lib/agents');
 
 const cursor = getAdapter('cursor');
-const hooksFile = path.join(__dirname, '..', '..', '..', 'plugins', 'zn-gate', 'cursor', 'hooks.json');
-const plugin = () => JSON.parse(fs.readFileSync(hooksFile, 'utf8')).hooks;
+// The installed hooks, one list of entries per event (the shape of a Cursor hooks file).
+const plugin = () => Object.fromEntries(Object.entries(cursor.hookEntries('zn hook cursor')).map(([e, h]) => [e, [h]]));
 
 // One ordinary, harmless call for each event, and the decision zn reaches for it: no objection.
 const RAW = {
@@ -30,11 +30,11 @@ const answer = (event) => {
   return cursor.respond({ decision: 'allow', event: ev });
 };
 
-test('the plugin only hooks events the CLI install knows', () => {
+test('the install only hooks events the adapter knows', () => {
   for (const event of Object.keys(plugin())) assert.ok(cursor.EVENTS.includes(event), event);
 });
 
-test('the plugin sets failClosed on the same events as the CLI install', () => {
+test('the install sets failClosed on file reads and prompts only', () => {
   const closed = Object.entries(plugin()).filter(([, list]) => list.some((h) => h.failClosed === true)).map(([e]) => e).sort();
   const installed = Object.entries(cursor.hookEntries('zn hook cursor')).filter(([, h]) => h.failClosed === true).map(([e]) => e).sort();
   assert.deepEqual(closed, installed);
@@ -94,7 +94,7 @@ test('the simulation: a failClosed hook that writes nothing blocks, a silent hoo
   assert.equal(cursorBlocks({ failClosed: true }, 'beforeReadFile', { status: 0, stdout: '{"permission":"allow"}' }), false);
 });
 
-test('with the real hook on an ordinary call, no event of the plugin is blocked', (t) => {
+test('with the real hook on an ordinary call, no installed event is blocked', (t) => {
   const { spawnSync } = require('child_process');
   const os = require('os');
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-cu-plugin-'));
@@ -106,6 +106,7 @@ test('with the real hook on an ordinary call, no event of the plugin is blocked'
     beforeReadFile: { file_path: path.join(proj, 'src', 'index.js'), content: 'x' },
     beforeShellExecution: { command: 'echo hello', cwd: proj },
     beforeSubmitPrompt: { prompt: 'rename this function' },
+    beforeMCPExecution: { tool_name: 'query', mcp_server_name: 'db', tool_input: '{"sql":"select 1"}' },
     preToolUse: { tool_name: 'Write', tool_input: { file_path: path.join(proj, 'src', 'a.js'), content: 'x' } },
     postToolUse: { tool_name: 'Shell', tool_input: { command: 'echo hello' }, tool_output: '{"exitCode":0,"stdout":"hello"}' },
   };

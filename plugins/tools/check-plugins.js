@@ -61,7 +61,12 @@ function walk(rel) {
   return fs.readdirSync(abs).flatMap((n) => walk(path.posix.join(rel, n)));
 }
 
-const files = [...walk('plugins'), '.claude-plugin/marketplace.json', '.cursor-plugin/marketplace.json', '.agents/plugins/marketplace.json'];
+const files = [...walk('plugins'), '.claude-plugin/marketplace.json', '.agents/plugins/marketplace.json'];
+// The Cursor plugin is no longer offered (1.14.0): its hooks started node by name, so an absolute PATH entry inside the
+// project could run a program of the project in its place. Cursor users run `zn hooks install cursor` instead.
+for (const f of ['.cursor-plugin', PLUGIN + '/.cursor-plugin', PLUGIN + '/cursor']) {
+  if (fs.existsSync(path.join(ROOT, f))) fail(f + ': the Cursor plugin is no longer offered (use zn hooks install cursor)');
+}
 for (const f of files) {
   if (!fs.existsSync(path.join(ROOT, f))) fail(f + ': missing');
   else if (f.endsWith('.json')) json(f);
@@ -77,7 +82,6 @@ const serverPkgs = (server.packages || []).filter((p) => p && p.identifier === '
 const versions = {
   'plugin.json': json(PLUGIN + '/plugin.json').version,
   '.claude-plugin/plugin.json': json(PLUGIN + '/.claude-plugin/plugin.json').version,
-  '.cursor-plugin/plugin.json': json(PLUGIN + '/.cursor-plugin/plugin.json').version,
   'plugins/zcode/.zcode-plugin/plugin.json': json('plugins/zcode/.zcode-plugin/plugin.json').version,
 };
 for (const [where, got] of Object.entries(versions)) {
@@ -165,12 +169,8 @@ for (const k of Object.keys(apMcp)) if (!['$schema', 'mcpServers'].includes(k)) 
 // The Claude Code and Codex hooks start the launcher through scripts/zn-node.sh, which finds Node.js only in absolute PATH
 // entries (they run in the session's folder, the project, so a `node` found by name could be one placed there or reached
 // through a relative PATH entry). Each command names its own event.
-// Cursor runs plugin hooks "from the plugin's install directory" (cursor.com/docs/agent/hooks), so a relative PATH entry
-// points into the plugin, not the project, and its hooks keep `node ./scripts/zn-launch.js`. On Windows Cursor runs hook
-// commands through PowerShell, where /bin/sh would be a path on the current drive, not Git Bash.
 const LAUNCHERS = {
   'com.openai/hooks.json': /^\/bin\/sh "\$PLUGIN_ROOT\/scripts\/zn-node\.sh" (\w+) hook codex$/,
-  'cursor/hooks.json': /^node \.\/scripts\/zn-launch\.js hook (cursor)$/,
 };
 // Codex on Windows runs commandWindows through cmd.exe, where /bin/sh does not exist: the plugin's Windows commands use only
 // cmd built-ins and block (exit 2) the events that can stop a call, and warn after a tool has run.
@@ -192,9 +192,7 @@ for (const [f, re] of Object.entries(LAUNCHERS)) {
   for (const [event, groups] of Object.entries((data && data.hooks) || {})) {
     for (const c of hookCommands({ hooks: { [event]: groups } })) {
       const m = re.exec(String(c));
-      if (f === 'cursor/hooks.json') {
-        if (!m) fail(f + ': ' + event + ' hook must run node ./scripts/zn-launch.js hook cursor: ' + c);
-      } else if (!m || m[1] !== event) {
+      if (!m || m[1] !== event) {
         fail(f + ': ' + event + ' hook must run scripts/zn-node.sh with its own event name: ' + c);
       }
     }
@@ -232,7 +230,7 @@ for (const [event, groups] of Object.entries(json(PLUGIN + '/com.openai/hooks.js
 const MCP_MODES = { 'zn-gate': 'zn-gate-mcp', secrets: 'secrets-mcp' };
 // The only environment a server may get: the Claude Code key option, for zn-gate.
 const MCP_ENV = { '.mcp.json': { 'zn-gate': { ZN_PLUGIN_API_KEY: '${user_config.api_key}' } } };
-for (const [f, root] of [['mcp.json', '${PLUGIN_ROOT}'], ['.mcp.json', '${CLAUDE_PLUGIN_ROOT}'], ['cursor/mcp.json', '${CURSOR_PLUGIN_ROOT}']]) {
+for (const [f, root] of [['mcp.json', '${PLUGIN_ROOT}'], ['.mcp.json', '${CLAUDE_PLUGIN_ROOT}']]) {
   const servers = json(PLUGIN + '/' + f).mcpServers || {};
   if (JSON.stringify(Object.keys(servers).sort()) !== JSON.stringify(Object.keys(MCP_MODES).sort())) {
     fail(f + ': MCP servers must be exactly ' + Object.keys(MCP_MODES).join(', '));
@@ -268,24 +266,10 @@ if (JSON.stringify(json(PLUGIN + '/.mcp.json')).includes('${user_config.api_key}
   fail('.mcp.json: uses ${user_config.api_key} but .claude-plugin/plugin.json has no api_key option');
 }
 // Plugin options never go to hooks (Claude Code exports them to hook processes anyway; the launcher drops them).
-for (const f of ['hooks/hooks.json', 'com.openai/hooks.json', 'cursor/hooks.json']) {
+for (const f of ['hooks/hooks.json', 'com.openai/hooks.json']) {
   if (fs.readFileSync(PLUGIN + '/' + f, 'utf8').includes('${user_config')) fail(f + ': hooks must not use plugin options');
 }
 
-const cursorManifest = json(PLUGIN + '/.cursor-plugin/plugin.json');
-if (cursorManifest.hooks !== './cursor/hooks.json' || cursorManifest.mcpServers !== './cursor/mcp.json') {
-  fail('.cursor-plugin/plugin.json: hooks and mcpServers must point to the Cursor files in cursor/');
-}
-// Cursor blocks a failClosed hook that writes no output, and zn writes no output on shell, MCP and tool-use
-// events when it has no objection (an "allow" there could skip Cursor's own approval). So only the events
-// where zn always answers may fail closed: the same two as `zn hooks install cursor`.
-for (const [event, entries] of Object.entries(json(PLUGIN + '/cursor/hooks.json').hooks || {})) {
-  const mustClose = event === 'beforeReadFile' || event === 'beforeSubmitPrompt';
-  for (const e of entries) {
-    if (mustClose && e.failClosed !== true) fail('cursor/hooks.json: ' + event + ' hook is not failClosed');
-    if (!mustClose && e.failClosed === true) fail('cursor/hooks.json: ' + event + ' hook is failClosed, but zn answers nothing there when it has no objection (Cursor would block every call)');
-  }
-}
 // A hook on a blocking event that cannot run must block, not let the call or prompt through.
 {
   const events = (json(PLUGIN + '/hooks/hooks.json').hooks || {});
