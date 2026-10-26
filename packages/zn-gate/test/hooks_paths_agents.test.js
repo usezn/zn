@@ -217,6 +217,35 @@ test('shell commands cannot change or remove the agents plugins, and can read th
   assert.equal(policy.bashDenial('ls ~/.zcode/cli/plugins', opts), null, 'listing is allowed');
 });
 
+test('Antigravity CLI folder: removing or moving it is refused, like the other plugin folders', (t) => {
+  const { home, proj } = tmpHome(t);
+  const opts = { home, cwd: proj, env: {} };
+  for (const cmd of ['rm -rf ~/.gemini/antigravity-cli', 'mv ~/.gemini/antigravity-cli ~/.gemini/x', 'rm -r ~/.gemini/antigravity-cli/plugins']) {
+    assert.match(policy.bashDenial(cmd, opts) || '', /protected/, cmd);
+  }
+  assert.match(policy.writeDenial(path.join(home, '.gemini', 'antigravity-cli'), opts), /protected/);
+});
+
+test('a project folder named like an agent folder is not the agent plugin folder: only the home (and the moved folders) count', (t) => {
+  const { home, proj } = tmpHome(t);
+  const opts = { home, cwd: proj, env: {} };
+  // In the project: allowed (Gemini CLI keeps its project settings in .gemini/, monorepos have nested .claude/ folders).
+  for (const cmd of ['mkdir -p .gemini', 'rm -rf .gemini', 'rm -rf .zcode', 'mv .gemini/config .gemini/old',
+    'echo {} > packages/x/.claude/plugins/foo.json', 'rm -rf packages/x/.agents/plugins']) {
+    assert.equal(policy.bashDenial(cmd, opts), null, cmd);
+  }
+  for (const f of [path.join(proj, '.gemini'), path.join(proj, '.gemini', 'config', 'config.json'),
+    path.join(proj, 'packages', 'x', '.claude', 'plugins', 'foo.json'), path.join(proj, 'packages', 'x', '.codex', 'plugins', 'a', 'b.json'),
+    path.join(proj, 'sub', '.agents', 'plugins', 'p', 'hooks.json')]) {
+    assert.equal(policy.writeDenial(f, opts), null, f);
+  }
+  // The same names in the home folder, and .agents/plugins at the project root: refused.
+  for (const cmd of ['rm -rf ~/.gemini', 'mkdir -p ~/.gemini/config', 'echo {} > ~/.claude/plugins/foo.json', 'rm -rf .agents/plugins']) {
+    assert.match(policy.bashDenial(cmd, opts) || '', /protected/, cmd);
+  }
+  assert.match(policy.writeDenial(path.join(proj, '.agents', 'plugins', 'p', 'hooks.json'), opts), /protected/);
+});
+
 test('a Codex patch is refused when any file in it is protected, and an unreadable patch too', async (t) => {
   const { home, proj } = tmpHome(t);
   const settings = path.join(home, '.claude', 'settings.json');
