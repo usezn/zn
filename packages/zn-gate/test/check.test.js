@@ -622,14 +622,22 @@ test('check: a Claude Code plugin whose hooks.json starts a hook with a program 
     assert.match(r.problem, new RegExp('starts its PreToolUse hook with `' + prog + '` by name'), cmd);
     assert.match(r.fix, /claude plugin update zn-gate@usezn/, cmd);
   }
-  // The shell by its full path, with the plugin root in quotes: the plugin is checked as before.
+  // The shell by its full path, with the plugin root in quotes: no program by name. Without "shell": "bash" it is still
+  // not the hook the plugin ships; with it (and the plugin's real zn-node.sh), the plugin is protected.
   const home = tempDir(t, 'zn-check-ccabs-');
   const root = fakePlugin(home, launcher());
-  fs.writeFileSync(path.join(root, 'scripts', 'zn-node.sh'), '#!/bin/sh\n', { mode: 0o755 });
   fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
   fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooksJson('/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code'));
+  const noShell = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+  assert.equal(noShell.state, 'not-protected');
+  assert.match(noShell.problem, /does not ask for bash \("shell": "bash"\)/);
+  assert.doesNotMatch(noShell.problem, /by name/);
+  const withShell = JSON.parse(hooksJson('/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code'));
+  withShell.hooks.PreToolUse[0].hooks[0].shell = 'bash';
+  fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), JSON.stringify(withShell));
   const ok = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
   assert.equal(ok.state, 'protected', ok.problem);
+  assert.equal(ok.verified, true);
 });
 
 test('check: only an absolute sh or node running a script inside the plugin folder counts; every other plugin hook is not protected', async (t) => {
@@ -705,18 +713,24 @@ test('check: only an absolute sh or node running a script inside the plugin fold
     assert.equal(r.state, 'not-protected', cmd);
     assert.match(r.problem, re, cmd);
   }
-  // The forms zn's plugins use (also with shell syntax inside quotes) are checked as before.
-  const safe = ['/bin/sh ' + S, '/bin/bash ' + S, '/bin/sh "${CLAUDE_PLUGIN_ROOT}/a;b|c.sh" "x && y"'];
+  // The safe program forms (also with shell syntax inside quotes) start no program by name, but only the exact hook the
+  // plugin ships counts (with "shell": "bash"), so these are reported for that, not for a program by name.
+  const safe = [
+    ['/bin/sh ' + S, /does not ask for bash \("shell": "bash"\)/],
+    ['/bin/bash ' + S, /which is not the hook the zn-gate plugin ships/],
+    ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/a;b|c.sh" "x && y"', /which is not the hook the zn-gate plugin ships/],
+  ];
   if (process.platform !== 'win32') {
-    for (const cmd of safe) {
+    for (const [cmd, re] of safe) {
       const home = tempDir(t, 'zn-check-ccb3ok-');
       const root = fakePlugin(home, launcher());
-      fs.writeFileSync(path.join(root, 'scripts', 'zn-node.sh'), '#!/bin/sh\n', { mode: 0o755 });
       fs.writeFileSync(path.join(root, 'a;b|c.sh'), '#!/bin/sh\n', { mode: 0o755 });
       fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
       fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooksJson(cmd));
       const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
-      assert.equal(r.state, 'protected', cmd + ': ' + r.problem);
+      assert.equal(r.state, 'not-protected', cmd);
+      assert.match(r.problem, re, cmd);
+      assert.doesNotMatch(r.problem, /by name|not a system shell/, cmd);
     }
   }
 });
@@ -773,4 +787,179 @@ test('check: a plugin hook is NOT protected, and nothing it names runs, when its
     assert.match(r.problem, re, cmd);
   }
   assert.equal(fs.existsSync(marker), false, 'a program or script named by a refused manifest ran');
+});
+
+// The plugin's real hooks file and launcher script in this repository.
+const REPO_PLUGIN = path.join(__dirname, '..', '..', '..', 'plugins', 'zn-gate');
+const { CLAUDE_PRE_COMMAND, claudePluginRun } = require('../lib/check')._internal;
+
+test('check: only the PreToolUse hook the plugin ships counts; a decoy script in the plugin is not run and is not protected', { skip: process.platform === 'win32' }, async (t) => {
+  const marker = path.join(tempDir(t, 'zn-check-decoy-mark-'), 'ran.txt');
+  const noop = (root) => fs.writeFileSync(path.join(root, 'scripts', 'noop.sh'), '#!/bin/sh\necho noop >> ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+  const cmd = (c) => pluginHooks({ command: c });
+  const cases = [
+    // A script of the plugin's own folder that answers nothing (exit 0): Claude Code would run the call unchecked.
+    [cmd('/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/noop.sh" PreToolUse hook claude-code'), /runs `\/bin\/sh "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/noop\.sh" PreToolUse hook claude-code`, which is not the hook the zn-gate plugin ships/],
+    [cmd(CLAUDE_PRE_COMMAND + ' --extra'), /which is not the hook the zn-gate plugin ships/],
+    [cmd('/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse check claude-code'), /which is not the hook the zn-gate plugin ships/],
+    [cmd('/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PostToolUse hook claude-code'), /which is not the hook the zn-gate plugin ships/],
+    [cmd('/bin/bash "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code'), /which is not the hook the zn-gate plugin ships/],
+    [pluginHooks({ onFailure: undefined }), /does not have "onFailure": "block", so Claude Code runs a call unchecked when the hook cannot run$/],
+    [pluginHooks({ onFailure: 'warn' }), /does not have "onFailure": "block"/],
+    [pluginHooks({ shell: undefined }), /does not ask for bash \("shell": "bash"\)/],
+  ];
+  for (const [manifest, re] of cases) {
+    for (const live of [true, false]) {
+      const home = tempDir(t, 'zn-check-decoy-');
+      const root = fakePlugin(home, launcher({ marker }), null, { manifest });
+      noop(root);
+      const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live }), 'claude-code');
+      assert.equal(r.state, 'not-protected', JSON.stringify(manifest));
+      assert.ok(!r.verified);
+      assert.match(r.problem, re, JSON.stringify(manifest));
+      assert.match(r.fix, /claude plugin install zn-gate@usezn/);
+    }
+  }
+  assert.equal(fs.existsSync(marker), false, 'zn-gate check ran the decoy script or the launcher of a refused manifest');
+});
+
+test('check: the plugin\'s exact PreToolUse command is what runs; a zn-node.sh that answers nothing is not protected', { skip: process.platform === 'win32' }, async (t) => {
+  const home = tempDir(t, 'zn-check-inert-');
+  const marker = path.join(tempDir(t, 'zn-check-inert-mark-'), 'ran.txt');
+  const root = fakePlugin(home, launcher({ marker }));
+  // The manifest is the shipped one, but its script exits 0 without asking zn.
+  fs.writeFileSync(path.join(root, 'scripts', 'zn-node.sh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  let r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-') }), 'claude-code');
+  assert.equal(r.state, 'not-protected');
+  assert.ok(!r.verified);
+  assert.match(r.problem, /did not block the read of \.env/);
+  assert.equal(fs.existsSync(marker), false, 'zn-gate check ran zn-launch.js itself instead of the manifest command');
+  // With the real zn-node.sh back, the same manifest command starts the launcher, and the plugin is protected.
+  fs.copyFileSync(path.join(REPO_PLUGIN, 'scripts', 'zn-node.sh'), path.join(root, 'scripts', 'zn-node.sh'));
+  r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-') }), 'claude-code');
+  assert.equal(r.state, 'protected', r.problem);
+  assert.equal(r.verified, true);
+  assert.ok(fs.existsSync(marker), 'the manifest command did not start the plugin launcher');
+});
+
+test('check: the published plugin manifest with the real zn-node.sh is protected and verified', { skip: process.platform === 'win32' }, async (t) => {
+  const home = tempDir(t, 'zn-check-published-');
+  const published = JSON.parse(fs.readFileSync(path.join(REPO_PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
+  const root = fakePlugin(home, launcher(), null, { manifest: published });
+  assert.equal(fs.readFileSync(path.join(root, 'scripts', 'zn-node.sh'), 'utf8'), fs.readFileSync(path.join(REPO_PLUGIN, 'scripts', 'zn-node.sh'), 'utf8'));
+  assert.equal(published.hooks.PreToolUse[0].hooks[0].command, CLAUDE_PRE_COMMAND);
+  // The absolute folder of this Node.js on the PATH, as zn-node.sh only takes node from absolute entries.
+  const PATH = path.dirname(process.execPath) + path.delimiter + (process.env.PATH || '');
+  const r = byId(await check({ home, env: { HOME: home, PATH }, cwd: tempDir(t, 'zn-check-cwd-') }), 'claude-code');
+  assert.equal(r.state, 'protected', r.problem);
+  assert.equal(r.verified, true);
+});
+
+test('check: run from a subfolder of a project with its bin/ on the PATH, the plugin hook does not start the project node', { skip: process.platform === 'win32' }, async (t) => {
+  const home = tempDir(t, 'zn-check-subdir-');
+  const project = tempDir(t, 'zn-check-subdir-repo-');
+  fs.mkdirSync(path.join(project, '.git'));
+  fs.mkdirSync(path.join(project, 'bin'));
+  fs.mkdirSync(path.join(project, 'src', 'deep'), { recursive: true });
+  const marker = path.join(tempDir(t, 'zn-check-subdir-mark-'), 'ran.txt');
+  // A fake node in the project's bin/: it would answer nothing (exit 0) and leave a marker.
+  fs.writeFileSync(path.join(project, 'bin', 'node'), '#!/bin/sh\necho ran > ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+  const published = JSON.parse(fs.readFileSync(path.join(REPO_PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
+  fakePlugin(home, launcher(), null, { manifest: published });
+  const PATH = path.join(project, 'bin') + path.delimiter + path.dirname(process.execPath) + path.delimiter + (process.env.PATH || '');
+  for (const cwd of [project, path.join(project, 'src'), path.join(project, 'src', 'deep')]) {
+    const r = byId(await check({ home, env: { HOME: home, PATH }, cwd }), 'claude-code');
+    assert.equal(fs.existsSync(marker), false, cwd + ': the plugin hook started the project node');
+    assert.equal(r.state, 'protected', cwd + ': ' + r.problem);
+  }
+});
+
+test('check: the plugin hook runs as Claude Code starts it: /bin/sh on zn-node.sh, or Git Bash given the line on Windows', (t) => {
+  const root = tempDir(t, 'zn-check-run-root-');
+  const ctx = { cwd: tempDir(t, 'zn-check-run-cwd-'), env: { PATH: '/usr/bin:/bin' } };
+  const run = claudePluginRun(CLAUDE_PRE_COMMAND, root, ctx, 15, 'linux');
+  assert.equal(run.file, '/bin/sh');
+  assert.deepEqual(run.args, [root + '/scripts/zn-node.sh', 'PreToolUse', 'hook', 'claude-code']);
+  assert.deepEqual(run.env, { CLAUDE_PLUGIN_ROOT: root, CLAUDE_PROJECT_DIR: ctx.cwd, PATH: '/usr/bin:/bin' });
+  assert.equal(run.timeout, 15000);
+  assert.equal(claudePluginRun(CLAUDE_PRE_COMMAND, root, ctx, 5, 'linux').timeout, 5000);
+  assert.equal(claudePluginRun(CLAUDE_PRE_COMMAND, root, ctx, 600, 'linux').timeout, 15000);
+  // Windows: Git Bash runs the line itself (CLAUDE_CODE_GIT_BASH_PATH, else next to git); none found, nothing runs.
+  const bash = path.join(root, 'bash.exe');
+  fs.writeFileSync(bash, '');
+  const win = claudePluginRun(CLAUDE_PRE_COMMAND, root, { cwd: ctx.cwd, env: { PATH: '', CLAUDE_CODE_GIT_BASH_PATH: bash } }, 15, 'win32');
+  assert.equal(win.file, bash);
+  assert.deepEqual(win.args, ['-c', CLAUDE_PRE_COMMAND]);
+  assert.equal(win.env.CLAUDE_PLUGIN_ROOT, root);
+  assert.equal(claudePluginRun(CLAUDE_PRE_COMMAND, root, { cwd: ctx.cwd, env: { PATH: '' } }, 15, 'win32'), null);
+});
+
+// A zn-gate plugin for Cursor where Cursor keeps plugins added by hand (~/.cursor/plugins/local/<plugin>). Its hook
+// files only leave a marker: zn-gate check must not run any of them.
+function cursorPluginAt(home, { manifest, folder = 'zn-gate' } = {}) {
+  const root = path.join(home, '.cursor', 'plugins', 'local', folder);
+  const marker = path.join(home, 'cursor-plugin-ran.txt');
+  fs.mkdirSync(path.join(root, '.cursor-plugin'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'cursor'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  const real = JSON.parse(fs.readFileSync(path.join(REPO_PLUGIN, '.cursor-plugin', 'plugin.json'), 'utf8'));
+  fs.writeFileSync(path.join(root, '.cursor-plugin', 'plugin.json'), JSON.stringify(manifest || real));
+  fs.writeFileSync(path.join(root, 'scripts', 'zn-launch.js'), "require('fs').appendFileSync(" + JSON.stringify(marker) + ", 'ran\\n');\n");
+  fs.writeFileSync(path.join(root, 'cursor', 'hooks.json'), JSON.stringify({ version: 1, hooks: { beforeReadFile: [{ command: 'node ./scripts/zn-launch.js hook cursor' }] } }));
+  return { root, marker };
+}
+
+test('check: a zn-gate plugin for Cursor is NOT protected, also next to zn\'s Cursor hooks, and nothing of it runs', async (t) => {
+  // The plugin alone.
+  const home = tempDir(t, 'zn-check-cursorplug-');
+  const { root, marker } = cursorPluginAt(home);
+  for (const live of [true, false]) {
+    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live }), 'cursor');
+    assert.equal(r.state, 'not-protected');
+    assert.ok(!r.verified);
+    assert.equal(r.where, root);
+    assert.match(r.problem, /the zn-gate plugin for Cursor is installed \(.*\), and zn-gate no longer supports it: its hooks start `node` by name/);
+    assert.match(r.fix, /`zn hooks install cursor` in your own terminal, then remove the zn-gate plugin in Cursor/);
+  }
+  // Next to zn's own Cursor hooks, which work: still not protected; the fix is to remove the plugin.
+  const ctx = homeWithHooks(t, ['cursor']);
+  const both = cursorPluginAt(ctx.home);
+  let r = byId(await check(ctx), 'cursor');
+  assert.equal(r.state, 'not-protected');
+  assert.ok(!r.verified);
+  assert.match(r.problem, /no longer supports it.*, while the zn hooks next to it \(.*hooks\.json\) work$/);
+  assert.match(r.fix, /^remove the zn-gate plugin in Cursor/);
+  // Next to hooks that do not work: repair the hooks first, then remove the plugin.
+  const file = getAdapter('cursor').hooksFile(ctx);
+  const tree = JSON.parse(fs.readFileSync(file, 'utf8'));
+  delete tree.hooks.beforeReadFile;
+  fs.writeFileSync(file, JSON.stringify(tree));
+  r = byId(await check(ctx), 'cursor');
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /and the zn hooks next to it do not work either \(/);
+  assert.match(r.fix, /^first repair the hooks: run `zn hooks install cursor`.*; after that, remove the zn-gate plugin in Cursor/);
+  assert.equal(fs.existsSync(marker), false, 'zn-gate check ran the Cursor plugin');
+  assert.equal(fs.existsSync(both.marker), false, 'zn-gate check ran the Cursor plugin');
+});
+
+test('check: no Cursor plugin, or another plugin in Cursor\'s plugin folder, leaves the Cursor result as it was', async (t) => {
+  const ctx = homeWithHooks(t, ['cursor']);
+  let r = byId(await check(ctx), 'cursor');
+  assert.equal(r.state, 'protected', r.problem);
+  assert.equal(r.verified, true);
+  const others = [
+    { name: 'other-plugin', repository: 'https://github.com/usezn/zn' },
+    { name: 'zn-gate', repository: 'https://github.com/example/zn-gate', homepage: 'https://example.com/usezn/zn' },
+  ];
+  for (const manifest of others) {
+    const { marker } = cursorPluginAt(ctx.home, { manifest, folder: manifest.name + '-x' });
+    r = byId(await check(ctx), 'cursor');
+    assert.equal(r.state, 'protected', JSON.stringify(manifest) + ': ' + r.problem);
+    assert.equal(fs.existsSync(marker), false);
+  }
+  // Nothing set up and only another plugin there: still not set up.
+  const home = tempDir(t, 'zn-check-cursorother-');
+  cursorPluginAt(home, { manifest: others[0] });
+  r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-') }), 'cursor');
+  assert.equal(r.state, 'not-set-up');
 });

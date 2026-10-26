@@ -9,8 +9,9 @@
  *   - finds zn's user-level setup: the hook for the agent's read event, with
  *     a matcher that covers the read, or, for Claude Code, the zn-gate plugin
  *     listed in installed_plugins.json, not turned off, in the folder where
- *     Claude Code installs plugins, with a manifest whose PreToolUse hook
- *     covers the read (nothing of the plugin runs before that is known);
+ *     Claude Code installs plugins, with a manifest that holds the exact
+ *     PreToolUse hook the plugin ships, covering the read (nothing of the
+ *     plugin runs before that is known);
  *   - asks zn what it decides for a read of .env (must block) and of
  *     README.txt (must be allowed);
  *   - runs the installed hook the same way the agent does, with the same two
@@ -18,7 +19,8 @@
  *     part of zn is missing, is reported instead of passing.
  * An installed command is run only when it has the exact shape zn writes,
  * with Node.js and a real zn-gate runner, as node + runner without a shell,
- * in the temporary folder. Nothing leaves the machine, no agent is started,
+ * in the temporary folder. A plugin's PreToolUse hook is run as the agent
+ * runs that exact command. A zn-gate plugin for Cursor is only reported. Nothing leaves the machine, no agent is started,
  * no setting changes, and the folder is deleted at the end. Project-level
  * setups are reported but not run.
  */
@@ -32,6 +34,12 @@ const { nodeAdvice } = require('./node-support');
 const FAKE_LINE = 'ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key\n';
 const HOOK_TIMEOUT_MS = 15000;
 const PLUGIN_ID = 'zn-gate@usezn';
+// The PreToolUse hooks the zn-gate plugins ship (plugins/zn-gate/hooks/hooks.json, plugins/zcode/hooks/hooks.json).
+// A plugin counts only when its manifest holds this exact hook, and zn-gate check runs that command as the agent does.
+const CLAUDE_PRE_COMMAND = '/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code';
+// The plugin's SessionStart command: run only to show the launcher's own message (for example a Node.js it refuses).
+const CLAUDE_CHECK_COMMAND = '/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" SessionStart check claude-code';
+const ZCODE_PRE_WORDS = ['/bin/sh', '${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh', 'PreToolUse'];
 
 /* The zn-gate Claude Code plugin needs Node.js 20.19 or later; zn-gate itself runs on 18 and later.
    This is the one place that says which version; the messages below and in init are built from it. */
@@ -313,9 +321,9 @@ function decisionOf(stdout, status) {
   return 'allow';
 }
 
-function spawnHook(file, args, input, env, cwd) {
+function spawnHook(file, args, input, env, cwd, timeout = HOOK_TIMEOUT_MS) {
   const r = spawnSync(file, args, {
-    input: JSON.stringify(input), encoding: 'utf8', timeout: HOOK_TIMEOUT_MS, cwd,
+    input: JSON.stringify(input), encoding: 'utf8', timeout, cwd,
     env: { ...process.env, ZN_STATS: 'off', ...env }, windowsHide: true,
   });
   // A hook that answers and exits before reading all its input makes the write fail with EPIPE although it ran: its status and output are the answer.
@@ -346,8 +354,9 @@ function claudePlugin(home, env) {
    Anything else may look a program up by name or read a script from the folder the agent runs in, the project, before
    zn's own code can clean the PATH, so a relative or empty PATH entry or a planted file could skip zn. On Windows,
    Claude Code runs a command hook with bash only when the hook says "shell": "bash"; otherwise /bin/sh is no full path.
-   Returns {hooks: [{event, file, args, byName}], bare: <first hook with byName set> | null}, or null when the manifest
-   cannot be read. byName says what makes the hook unsafe. */
+   Returns {hooks: [{event, file, args, byName, ...}], bare: <first hook with byName set> | null}, or null when the
+   manifest cannot be read. byName says what makes the hook unsafe. `command`, `words` (before the plugin root is filled
+   in), `shell`, `onFailure` and `timeout` are kept as written, for the exact-hook rules below. */
 function pluginManifest(root, rootVar, platform = process.platform) {
   const data = readJson(path.join(root, 'hooks', 'hooks.json'));
   if (!data || typeof data.hooks !== 'object' || data.hooks === null) return null;
@@ -373,7 +382,8 @@ function pluginManifest(root, rootVar, platform = process.platform) {
         }
         // What decides whether the host runs the hook at all, and waits for its answer, for the PreToolUse check below.
         const off = h.enabled === false || h.disabled === true || g.enabled === false || g.disabled === true;
-        hooks.push({ event, file: fill(words[0]), args: words.slice(1).map(fill), byName, type: h.type, matcher: g.matcher, async: h.async === true || h.async === 'true' || Boolean(h.asyncRewake), off });
+        hooks.push({ event, file: fill(words[0]), args: words.slice(1).map(fill), byName, type: h.type, matcher: g.matcher, async: h.async === true || h.async === 'true' || Boolean(h.asyncRewake), off,
+          command: h.command, words, shell: h.shell, onFailure: h.onFailure, timeout: h.timeout });
       }
     }
   }
@@ -433,18 +443,78 @@ function claudePluginRootProblem(root, ctx) {
   return '';
 }
 
-/* Why no hook of the plugin's manifest checks a call of `tool` before Claude Code runs it, or ''. One hook must be a
-   "command" hook for PreToolUse in the safe form (pluginManifest), not turned off, not run in the background (Claude
-   Code does not wait for the answer of an async hook, so it cannot block), with a matcher that covers `tool`. */
-function claudePreToolProblem(manifest, file, tool) {
+const NO_ON_FAILURE = 'does not have "onFailure": "block"';
+
+/* The PreToolUse hook of the plugin's manifest that checks a call of `tool` before Claude Code runs it: {hook} when
+   there is one, else {problem}. Only the hook the plugin ships counts: a "command" hook whose command is exactly
+   CLAUDE_PRE_COMMAND, with "shell": "bash" and "onFailure": "block" (a hook that cannot run then blocks the call),
+   not turned off, not run in the background (Claude Code does not wait for the answer of an async hook, so it cannot
+   block), with a matcher that covers `tool`. Any other command, even one that runs another script of the plugin,
+   may answer nothing, and Claude Code would then run the call unchecked. */
+function claudePreHook(manifest, file, tool) {
   const pre = manifest.hooks.filter((h) => h.event === 'PreToolUse');
   const why = (h) => (h.byName ? null : h.type !== 'command' ? 'is not a "command" hook' : h.off ? 'is turned off'
     : h.async ? 'runs in the background (async), where Claude Code does not wait for its answer'
-      : !matcherCovers(h.matcher, tool) ? 'has a matcher that does not cover ' + tool : null);
-  if (pre.some((h) => !h.byName && !why(h))) return '';
+      : !matcherCovers(h.matcher, tool) ? 'has a matcher that does not cover ' + tool
+        : h.command !== CLAUDE_PRE_COMMAND ? 'runs `' + oneLine(h.command, 200) + '`, which is not the hook the zn-gate plugin ships (`' + CLAUDE_PRE_COMMAND + '`)'
+          : h.shell !== 'bash' ? 'does not ask for bash ("shell": "bash"), unlike the hook the zn-gate plugin ships'
+            : h.onFailure !== 'block' ? NO_ON_FAILURE : null);
+  const hook = pre.find((h) => !h.byName && !why(h));
+  if (hook) return { hook, problem: '' };
   const first = pre.map(why).find(Boolean);
-  if (!first) return 'the zn-gate plugin has no PreToolUse hook in ' + file + ', so Claude Code runs no zn check before tool calls';
-  return 'the PreToolUse hook of the zn-gate plugin in ' + file + ' ' + first + ', so Claude Code runs no zn check before tool calls';
+  if (!first) return { hook: null, problem: 'the zn-gate plugin has no PreToolUse hook in ' + file + ', so Claude Code runs no zn check before tool calls' };
+  return { hook: null, problem: 'the PreToolUse hook of the zn-gate plugin in ' + file + ' ' + first +
+    (first === NO_ON_FAILURE ? ', so Claude Code runs a call unchecked when the hook cannot run' : ', so Claude Code runs no zn check before tool calls') };
+}
+
+/* Why no hook of the plugin's manifest checks a call of `tool` before Claude Code runs it, or '' (claudePreHook). */
+function claudePreToolProblem(manifest, file, tool) {
+  return claudePreHook(manifest, file, tool).problem;
+}
+
+/* How Claude Code starts one of the plugin's published hook commands (`command`, CLAUDE_PRE_COMMAND or
+   CLAUDE_CHECK_COMMAND), for the plugin folder `root` that was checked: bash runs the line, which starts /bin/sh on the
+   plugin's scripts/zn-node.sh with the rest of the line as its arguments. Elsewhere than Windows that is /bin/sh itself,
+   started here by that full path with the same arguments (no bash is looked up); on Windows it is Git Bash given the
+   line, as Claude Code does ("shell": "bash"). CLAUDE_PLUGIN_ROOT is the plugin folder, CLAUDE_PROJECT_DIR the project
+   check runs in, its repository root when there is one (zn-node.sh skips PATH entries in it, so a project bin/ on the
+   PATH is skipped also when check runs from a subfolder), and PATH the one check was given. The timeout is the hook's
+   (`timeoutS`, at most 15 seconds). Null when there is no Git Bash on Windows. */
+function claudePluginRun(command, root, ctx, timeoutS, platform = process.platform) {
+  const env = { CLAUDE_PLUGIN_ROOT: root, CLAUDE_PROJECT_DIR: projectRootOf(ctx.cwd) };
+  if (ctx.env && typeof ctx.env.PATH === 'string') env.PATH = ctx.env.PATH;
+  const timeout = typeof timeoutS === 'number' && timeoutS > 0 ? Math.min(HOOK_TIMEOUT_MS, timeoutS * 1000) : HOOK_TIMEOUT_MS;
+  if (platform === 'win32') {
+    const bash = gitBash(ctx.env || process.env);
+    return bash ? { file: bash, args: ['-c', command], env, timeout } : null;
+  }
+  const words = shellWords(command).map((w) => w.split('${CLAUDE_PLUGIN_ROOT}').join(root));
+  return { file: words[0], args: words.slice(1), env, timeout };
+}
+
+/* The folder of a zn-gate plugin for Cursor, or null. Cursor documents ~/.cursor/plugins/local/<plugin> for plugins
+   added by hand and does not say where it keeps the ones it installs, so every folder under ~/.cursor/plugins (a few
+   levels deep, links not followed) is looked at. A folder counts when its .cursor-plugin/plugin.json is named
+   "zn-gate" and points to usezn's repository. Only that file is read (a regular file, with a size limit); nothing of
+   the plugin is run. */
+function cursorZnPlugin(home) {
+  const audit = require('./audit');
+  const queue = [[path.join(home, '.cursor', 'plugins'), 0]];
+  let seen = 0;
+  while (queue.length && seen < 2000) {
+    const [dir, depth] = queue.shift();
+    seen++;
+    const text = audit._internal.readBounded(path.join(dir, '.cursor-plugin', 'plugin.json'), 64 * 1024, false).text;
+    let m = null;
+    try { m = text ? JSON.parse(text.replace(/^\uFEFF/, '')) : null; } catch (_) { m = null; }
+    const ours = (u) => typeof u === 'string' && /^https:\/\/github\.com\/usezn\/zn(?:[/#?]|$)/.test(u);
+    if (m && m.name === 'zn-gate' && (ours(m.repository) || ours(m.homepage))) return dir;
+    if (depth >= 5) continue;
+    let ents = [];
+    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { continue; }
+    for (const e of ents) if (e.isDirectory() && e.name !== 'node_modules' && e.name !== '.git') queue.push([path.join(dir, e.name), depth + 1]);
+  }
+  return null;
 }
 
 const ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -740,8 +810,8 @@ function modifiedProjectGuard(spec, text) {
 
 /* Runs an installed hook with the two requests: '' when it blocks .env and allows the ordinary file, else the problem. */
 function runLive(spec, ctx, live) {
-  const a = spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.envFile), live.env, ctx.dir);
-  const b = a.ran ? spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.readme), live.env, ctx.dir) : a;
+  const a = spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.envFile), live.env, ctx.dir, live.timeout);
+  const b = a.ran ? spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.readme), live.env, ctx.dir, live.timeout) : a;
   if (!a.ran) return 'its hook cannot start (' + a.why + ')';
   if (a.decision !== 'deny') return 'the installed hook did not block the read of .env';
   if (b.decision === 'deny') return 'the installed hook blocks everything, ordinary files too, so part of zn is missing or broken';
@@ -793,6 +863,11 @@ async function checkAgent(spec, ctx) {
   // What is installed for this user.
   let live = null;      // {file, args, env} to run, or {why} when it cannot start
   let installed = false;
+  // zn-gate no longer supports its Cursor plugin: its hooks start `node` by name, so an absolute PATH entry that points
+  // into a project (its node_modules/.bin, a folder added by direnv) can run a program of that project instead of zn.
+  const cursorPlugin = spec.id === 'cursor' ? cursorZnPlugin(ctx.home) : null;
+  const CURSOR_PLUGIN = cursorPlugin ? 'the zn-gate plugin for Cursor is installed (' + cursorPlugin + '), and zn-gate no longer supports it: its hooks start `node` by name, so a PATH entry that points into a project can run a program of that project in place of zn' : '';
+  const CURSOR_REMOVE = 'remove the zn-gate plugin in Cursor (Customize, in the sidebar)';
   if (spec.id === 'claude-code') {
     const plugin = claudePlugin(ctx.home, ctx.env);
     const hasCliHooks = hookEntries(readJson(userFile), spec.id).some((e) => parseCommand(e.command, spec.id));
@@ -823,6 +898,7 @@ async function checkAgent(spec, ctx) {
       const manifestFile = path.join(plugin.root, 'hooks', 'hooks.json');
       let distrust = '';
       let manifest = null;
+      let preHook = null;
       if (!plugin.off) {
         distrust = claudePluginRootProblem(plugin.root, ctx);
         if (!distrust) manifest = pluginManifest(plugin.root, 'CLAUDE_PLUGIN_ROOT');
@@ -837,16 +913,29 @@ async function checkAgent(spec, ctx) {
           res.pluginFault = true;
           distrust = res.problem;
         } else {
-          distrust = claudePreToolProblem(manifest, manifestFile, spec.tool);
-          if (distrust) { res.problem = distrust; res.fix = PLUGIN_REINSTALL; res.pluginFault = true; }
+          const pre = claudePreHook(manifest, manifestFile, spec.tool);
+          distrust = pre.problem;
+          if (distrust) { res.problem = distrust; res.fix = PLUGIN_REINSTALL; res.pluginFault = true; } else preHook = pre.hook;
         }
       }
       if (!plugin.off && !distrust) {
-        const pre = ctx.live ? spawnHook(process.execPath, [path.join(plugin.root, 'scripts', 'zn-launch.js'), 'check', 'claude-code'], {}, { CLAUDE_PLUGIN_ROOT: plugin.root }, ctx.dir) : { ran: false };
-        const sys = pre.ran && /"systemMessage"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(pre.stdout || '');
-        // The launcher's own check message is about the plugin itself (for example a Node.js it does not support).
-        if (!res.problem && sys) { res.problem = bare(oneLine(JSON.parse('"' + sys[1] + '"'), 300)); res.pluginFault = true; }
-        live = { file: process.execPath, args: [path.join(plugin.root, 'scripts', 'zn-launch.js'), 'hook', 'claude-code'], env: { CLAUDE_PLUGIN_ROOT: plugin.root }, plugin: true };
+        // The live test runs the PreToolUse command of the manifest, the one checked above, as Claude Code runs it
+        // (never zn-launch.js directly): if that command does not refuse the read of .env, the plugin protects nothing.
+        const realRoot = realOrNull(plugin.root) || plugin.root;
+        const run = claudePluginRun(CLAUDE_PRE_COMMAND, realRoot, ctx, preHook.timeout);
+        if (!run) {
+          res.problem = 'Git Bash was not found, and Claude Code runs the hooks of the zn-gate plugin with it on Windows ("shell": "bash"), so the hook cannot start';
+          res.fix = 'install Git for Windows (or set CLAUDE_CODE_GIT_BASH_PATH to its bash.exe), or use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again';
+          res.pluginFault = true;
+        } else {
+          // The plugin's SessionStart command, the same script with "check": only for the launcher's own message about
+          // the plugin itself (for example a Node.js it does not support). It never makes the plugin count as protected.
+          const checkRun = claudePluginRun(CLAUDE_CHECK_COMMAND, realRoot, ctx, 15);
+          const pre = ctx.live ? spawnHook(checkRun.file, checkRun.args, {}, checkRun.env, ctx.dir, checkRun.timeout) : { ran: false };
+          const sys = pre.ran && /"systemMessage"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(pre.stdout || '');
+          if (!res.problem && sys) { res.problem = bare(oneLine(JSON.parse('"' + sys[1] + '"'), 300)); res.pluginFault = true; }
+          live = { ...run, plugin: true };
+        }
       }
     }
   }
@@ -865,15 +954,23 @@ async function checkAgent(spec, ctx) {
           res.notes.push('zn is also set up with `zn hooks install zcode`, so every call is checked twice (ZCode does not remove duplicate hooks); keep one: run `zn hooks uninstall zcode` in your own terminal to keep the plugin, or turn the plugin off in ZCode (Settings, Plugins) to keep the hooks');
         }
         // The hook runs exactly as ZCode starts it: the program named in the plugin's hooks.json, never one looked up here.
+        // Only the PreToolUse hook the plugin ships counts: a "process" hook that runs exactly /bin/sh with
+        // ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh PreToolUse, turned on, for every tool it is asked about.
         const manifest = pluginManifest(plugin.root, 'ZCODE_PLUGIN_ROOT');
-        const pre = manifest && manifest.hooks.find((h) => h.event === 'PreToolUse');
+        const pres = manifest ? manifest.hooks.filter((h) => h.event === 'PreToolUse') : [];
+        const pre = pres.find((h) => !h.byName && h.type === 'process' && !h.off && !h.async && matcherCovers(h.matcher, spec.tool) &&
+          h.words.length === ZCODE_PRE_WORDS.length && h.words.every((w, i) => w === ZCODE_PRE_WORDS[i]));
         const REINSTALL = 'install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again';
-        if (!pre) {
-          res.problem = 'the zn-gate plugin has no PreToolUse hook in ' + path.join(plugin.root, 'hooks', 'hooks.json') + ', so ZCode runs no zn check before tool calls';
+        const zfile = path.join(plugin.root, 'hooks', 'hooks.json');
+        if (!pres.length) {
+          res.problem = 'the zn-gate plugin has no PreToolUse hook in ' + zfile + ', so ZCode runs no zn check before tool calls';
           res.fix = REINSTALL;
         } else if (manifest.bare) {
           res.problem = bareProgramProblem(manifest.bare);
           res.fix = 'update the plugin: ' + REINSTALL;
+        } else if (!pre) {
+          res.problem = 'the PreToolUse hook of the zn-gate plugin in ' + zfile + ' is not the hook the plugin ships (`' + ZCODE_PRE_WORDS.join(' ') + '`, turned on, for every tool), so ZCode runs no zn check before tool calls';
+          res.fix = REINSTALL;
         } else if (!fs.existsSync(pre.file)) {
           res.problem = 'the zn-gate plugin starts its hook with ' + pre.file + ', which is not on this computer, so the hook cannot start';
           res.fix = 'the ZCode plugin needs a system with ' + pre.file + ' (Linux); elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again';
@@ -1044,6 +1141,16 @@ async function checkAgent(spec, ctx) {
   if (installed && projModified) res.notes.push(MOD_MSG);
   if (installed && projBare) res.notes.push('the hook in ' + projFile + ' is a bare `zn hook ' + spec.id + '`: where zn or Node.js cannot start, ' + spec.name + ' runs the call unchecked there; ' + BARE_FIX);
 
+  if (cursorPlugin && !installed) {
+    // The plugin alone: Cursor is not protected, and nothing of the plugin is run here.
+    installed = true;
+    live = null;
+    res.where = cursorPlugin;
+    res.via = 'plugin';
+    res.problem = CURSOR_PLUGIN;
+    res.fix = 'run ' + (znOnPath(ctx.env) ? '' : '`npm install -g zn-gate`, then ') + '`zn hooks install cursor` in your own terminal, then ' + CURSOR_REMOVE + ', then run `zn-gate check` again';
+  }
+
   if (!installed) {
     // Whether the agent is on this machine at all, so the report offers no setup for an agent that is not there.
     try { res.found = Boolean(adapter.detect({ home: ctx.home, env: ctx.env })); } catch (err) { res.found = true; }
@@ -1080,6 +1187,19 @@ async function checkAgent(spec, ctx) {
     res.problem = runLive(spec, ctx, live);
     if (res.problem && live.plugin) res.pluginFault = true;
     else if (!res.problem) res.verified = true;
+  }
+  if (cursorPlugin && res.via !== 'plugin') {
+    // zn's own Cursor hooks next to the plugin: the plugin's hooks still run, so Cursor is not protected until it is
+    // removed. As with the Claude Code plugin, the hooks are repaired first when they do not work either.
+    res.cursorPlugin = cursorPlugin;
+    res.verified = false;
+    if (!res.problem) {
+      res.problem = CURSOR_PLUGIN + ', while the zn hooks next to it (' + res.where + ') work';
+      res.fix = CURSOR_REMOVE + ', then run `zn-gate check` again';
+    } else {
+      res.problem = CURSOR_PLUGIN + ', and the zn hooks next to it do not work either (' + bare(res.problem) + ')';
+      res.fix = 'first repair the hooks: ' + res.fix + '; after that, ' + CURSOR_REMOVE + ', then run `zn-gate check` again';
+    }
   }
   if (res.via === 'both') {
     if (res.pluginFault) {
@@ -1236,4 +1356,4 @@ function report({ results, removed, warnings }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem } };
+module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS } };
