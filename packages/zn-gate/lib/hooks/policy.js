@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-26.5';
+const POLICY_RULES_VERSION = '2026-10-26.6';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -301,11 +301,13 @@ function homeRelClass(rel) {
 function protectedElsewhere(text, opts) {
   const t = slash(text);
   const m = /^(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|\$\([^)]*\)|`[^`]*`|~[A-Za-z0-9._-]+)\/(.*)$/.exec(t)
+    // ${H}.zn: the variable's value may end with a slash.
+    || /^\$\{[A-Za-z_][A-Za-z0-9_]*\}(.+)$/.exec(t)
     // The end of a substitution the shell split off ($(echo ~)/x reads as "$(echo" and "~)/x").
     || /^[^/]*[)`]\/(.*)$/.exec(t);
   // A variable the environment (or the command itself) sets was already expanded by the classification.
   const v = /^\$\{?([A-Za-z_][A-Za-z0-9_]*)/.exec(t);
-  const known = v && (opts.env || process.env)[v[1]];
+  const known = v && (opts.env || process.env)[v[1]] && !(opts.unknownVars && opts.unknownVars.has(v[1]));
   if (m && !known) {
     const c = homeRelClass(m[1]);
     if (c) return c;
@@ -2257,26 +2259,65 @@ function bashDenial(cmd, opts = {}) {
   return deny;
 }
 
+/* find ROOT ... -delete / -exec ...: a find that deletes, started at the home folder or above it, whose expression names
+   zn's vault or an agent's plugin folders or state. The deny message, or null. */
+const FIND_PROTECTED_NAME_RE = /^\.?(?:zn|gemini|zcode|claude|codex|cursor|agents)$|^(?:plugins|antigravity-cli|cli|config|installed_plugins\.json|known_marketplaces\.json|config\.json)$/i;
+function findDeleteDenial(words, opts) {
+  const ctx = opts.ctx || contextOf(opts);
+  const home = opts.home || os.homedir();
+  const env = opts.env || process.env;
+  const cwd = path.resolve(opts.cwd || process.cwd());
+  const homes = (ctx.agent && ctx.agent.homes) || [keyOf(slash(path.resolve(home)))];
+  const bySeq = new Map();
+  for (const w of words) {
+    if (!bySeq.has(w.seq)) bySeq.set(w.seq, []);
+    bySeq.get(w.seq).push(w);
+  }
+  for (const ws of bySeq.values()) {
+    const texts = ws.map((w) => w.text.replace(/^["']|["']$/g, ''));
+    const at = texts.findIndex((x) => /^find(?:\.exe)?$/i.test(path.basename(x)));
+    if (at < 0) continue;
+    const rest = texts.slice(at + 1);
+    if (!rest.some((x) => /^-(?:delete|exec|execdir|ok|okdir)$/.test(x))) continue;
+    const named = rest.some((x) => FIND_PROTECTED_NAME_RE.test(x.replace(/[*?[\]]/g, '').replace(/^\//, '')));
+    if (!named) continue;
+    for (const r of rest) {
+      if (r.startsWith('-') || r === '(' || r === '!') break;
+      const root = keyOf(slash(path.resolve(cwd, expandEnv(expandHome(r, home), env).text)));
+      const rootPrefix = root.endsWith('/') ? root : root + '/';
+      if (/[$`]/.test(r) || homes.some((h) => h === root || h.startsWith(rootPrefix))) {
+        return 'zn: this find deletes files under ' + r + ', which holds zn\'s vault (~/.zn) or an agent\'s plugins, and the ' +
+          'names it matches include them, so it was blocked: an agent may not change how zn and its hooks run. Ask the user to make this change.';
+      }
+    }
+  }
+  return null;
+}
+
 /* NAME=value words of the command (also after export, set or declare), with ~ and the variables already known
    expanded, as an environment overlay: {NAME: value} or null. A name set twice keeps its first value; the cases a
    later value would matter are covered by the targets check (protectedElsewhere). */
-const ASSIGN_WORD_RE = /(?:^|[\s;&|(){}])(?:(?:export|declare|typeset|local|readonly)\s+(?:-\w+\s+)*)?([A-Za-z_][A-Za-z0-9_]{0,63})=("[^"]*"|'[^']*'|[^\s;&|()<>]*)/g;
+const ASSIGN_WORD_RE = /(?:^|[\s;&|(){}])(?:(?:export|declare|typeset|local|readonly)\s+(?:-\w+\s+)*)?([A-Za-z_][A-Za-z0-9_]{0,63})=("[^"]*"|'[^']*'|(?:\$\([^)]*\)|`[^`]*`|[^\s;&|()<>`])*)/g;
 function shellAssignments(cmd, opts) {
   const home = opts.home || os.homedir();
   const env = opts.env || process.env;
-  let out = null;
+  const out = {};
+  const unknown = new Set();
   let n = 0;
   for (const m of String(cmd).matchAll(ASSIGN_WORD_RE)) {
     if (++n > 64) break;
     const name = m[1];
-    if (out && name in out) continue;
+    // A name set twice may hold either value when it is used: zn does not know which.
+    if (name in out || unknown.has(name)) { delete out[name]; unknown.add(name); continue; }
     let v = m[2];
     if (/^(["']).*\1$/s.test(v)) v = v.slice(1, -1);
-    v = expandEnv(expandHome(v, home), { ...env, ...(out || {}) }).text;
-    out = out || {};
+    // The output of a command, or a variable zn cannot resolve, may be the home folder.
+    if (/\$\(|`/.test(v)) { unknown.add(name); continue; }
+    v = expandEnv(expandHome(v, home), { ...env, ...out }).text;
+    if (/\$\{?[A-Za-z_]|%[A-Za-z_][A-Za-z0-9_]*%/.test(v)) { unknown.add(name); continue; }
     out[name] = v;
   }
-  return out;
+  return { env: Object.keys(out).length ? out : null, unknown };
 }
 
 function bashDenialOf(cmd, opts = {}) {
@@ -2286,7 +2327,11 @@ function bashDenialOf(cmd, opts = {}) {
   if (keychainQuery(cmd, opts.env || process.env)) return KEYCHAIN_MESSAGE;
   // Variables the command sets itself (X=$HOME; rm -rf $X/.zn, export D=~/.zn) are expanded like the environment's.
   const assigned = shellAssignments(cmd, opts);
-  if (assigned) opts = { ...opts, env: { ...(opts.env || process.env), ...assigned } };
+  if (assigned.env || assigned.unknown.size) {
+    const env = { ...(opts.env || process.env), ...(assigned.env || {}) };
+    for (const name of assigned.unknown) delete env[name];
+    opts = { ...opts, env, unknownVars: assigned.unknown };
+  }
   // The context (home, project, agent directories) is built once per command.
   opts = { ...opts, ctx: contextOf(opts) };
   // The code of a shell inside the command (sh -c "...") is checked as a command of its own, with the same budget.
@@ -2332,6 +2377,10 @@ function bashDenialOf(cmd, opts = {}) {
     for (const t of text.split(/[\s'"`$(){};|&<>=,]+/)) if (t) split.push({ text: t, redirectTarget: false, head: '', seq: 0 });
     words.push(...split);
     readings.push(split);
+  }
+  {
+    const findDeny = findDeleteDenial(readings[0], opts);
+    if (findDeny) return findDeny;
   }
   // Where a relative .env path may be read from once the command has changed directory (cd app && cat .env).
   // Each reading is followed on its own, so a cd counts once.
@@ -2601,13 +2650,21 @@ function cdBasesOf(readings, opts) {
     let bases = [cwd];
     for (let k = 0; k < words.length && !unknown; k++) {
       // Found by its text, not by the command's head, so { cd x; ... } and if cd x; then ... count too.
-      if (!CD_CMDS.has(words[k].text.replace(/^[({]+/, '').toLowerCase())) continue;
+      // env -C DIR, env --chdir=DIR and git -C DIR run the rest of the command in DIR, like a cd.
+      let chdir = null;
+      if (!CD_CMDS.has(words[k].text.replace(/^[({]+/, '').toLowerCase())) {
+        const opt = words[k].text;
+        if (!/^(?:env|git)$/i.test(bareHead(words[k].head)) || !/^(?:-C|--chdir(?:=.*)?)$/.test(opt)) continue;
+        if (opt.startsWith('--chdir=')) chdir = opt.slice(8);
+        else if (words[k + 1] && words[k + 1].seq === words[k].seq) chdir = words[k + 1].text;
+        if (chdir === null || chdir === '') continue;
+      }
       moved = true;
       // Each cd followed costs its new places; past the budget, the rest cannot be followed.
       if (overBudget(opts.budget, bases.length)) { unknown = true; break; }
       // The target: the next word of the same simple command that is not an option (cd -P dir, Set-Location -Path dir).
-      let t = '~';
-      for (let j = k + 1; j < words.length && words[j].seq === words[k].seq; j++) {
+      let t = chdir !== null ? chdir.replace(/^["']|["']$/g, '') : '~';
+      for (let j = k + 1; chdir === null && j < words.length && words[j].seq === words[k].seq; j++) {
         const x = words[j].text.replace(/^["']|["']$/g, '').replace(/[;)}]+$/, '');
         if (!x || (x.startsWith('-') && x !== '-')) continue;
         t = x;

@@ -310,6 +310,46 @@ test('a home of "/" or a relative home still protects .zn and the plugin folders
   assert.equal(policy.writeDenial('/srv/app/.zn-cache', opts), null);
 });
 
+test('a variable set from a command, set twice, or used without a slash counts as unknown, so it may be the home folder', (t) => {
+  const { home, proj } = tmpHome(t);
+  const opts = { home, cwd: proj, env: { HOME: home } };
+  for (const cmd of [
+    'X=$(echo ~); rm -rf $X/.zn',
+    'X="$(echo ~)"; rm -rf "$X"/.zn',
+    'X=`echo ~`; rm -rf $X/.claude/plugins',
+    'H=$(echo ~/); rm -rf ${H}.zn',
+    'X=/tmp; X=$HOME; rm -rf $X/.zn',
+    'X=$HOME; X=/tmp; rm -rf $X/.gemini/antigravity-cli',
+    'rm -rf ${H}.zn',
+    'Y=$UNSET; rm -rf $Y/.zn',
+  ]) {
+    assert.ok(policy.bashDenial(cmd, opts), cmd);
+  }
+  for (const cmd of ['X=$(pwd); rm -rf $X/build', 'X=/tmp; X=/var/tmp; rm -rf $X/cache', 'rm -rf ${OUT}dist']) {
+    assert.equal(policy.bashDenial(cmd, opts), null, cmd);
+  }
+});
+
+test('env -C, git -C and find -delete or -exec rm under the home folder are followed', (t) => {
+  const { home, proj } = tmpHome(t);
+  const opts = { home, cwd: proj, env: { HOME: home } };
+  for (const cmd of [
+    'env -C ~ rm -rf .zn',
+    'env --chdir=' + home + ' rm -rf .claude/plugins',
+    'git -C ~ rm -rf --cached .gemini/antigravity-cli',
+    'find ~ -name .zn -exec rm -rf {} +',
+    'find ' + home + ' -name plugins -delete',
+    'find / -path "*antigravity-cli*" -delete',
+    'find $HOME -name installed_plugins.json -exec rm {} \\;',
+  ]) {
+    assert.ok(policy.bashDenial(cmd, opts), cmd);
+  }
+  for (const cmd of ['env -C build rm -rf out', 'git -C src clean -fdx', 'find . -name "*.pyc" -delete', 'find ~ -name .zn',
+    'find ~/proj -name node_modules -exec rm -rf {} +']) {
+    assert.equal(policy.bashDenial(cmd, opts), null, cmd);
+  }
+});
+
 test('a Codex patch is refused when any file in it is protected, and an unreadable patch too', async (t) => {
   const { home, proj } = tmpHome(t);
   const settings = path.join(home, '.claude', 'settings.json');
