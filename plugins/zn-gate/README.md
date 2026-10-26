@@ -2,13 +2,14 @@
 
 zn-gate is a local security layer for coding agents. This plugin connects an
 agent to zn-gate: hooks that keep secret values out of tool calls, tool output
-and prompts, a `zn-gate` MCP server that checks untrusted text and tool calls
-for prompt injection with local rules, a `secrets` MCP server that uses
-credentials without revealing them to the model, and a skill that explains
-them to the agent.
+and prompts, and a skill that explains them to the agent. Since version 1.14.0
+the plugin registers no MCP server: its servers started `node` by name, so a
+`node` of the project could start before anything was checked. To use the
+`secrets` MCP server, run `zn hooks install claude-code` (zn-gate installed
+with npm), which adds it with Node.js by its full path.
 
 The plugin follows the [Agent Plugins 1.0](https://github.com/agentplugins/agent-plugins-spec)
-layout (`plugin.json`, `mcp.json`, `skills/`) and adds the files Claude Code
+layout (`plugin.json`, `skills/`) and adds the files Claude Code
 and Codex read for hooks. Since version 1.14.0 there is no Cursor plugin: use
 `zn hooks install cursor` instead.
 
@@ -239,8 +240,8 @@ event is not checked twice: `zn hooks uninstall claude-code`.
 
 | Path | Read by | Purpose |
 | --- | --- | --- |
-| `plugin.json`, `mcp.json`, `skills/` | Agent Plugins clients | Manifest, MCP servers, skill |
-| `.claude-plugin/plugin.json`, `hooks/hooks.json`, `.mcp.json` | Claude Code | Manifest, hooks, MCP servers |
+| `plugin.json`, `skills/` | Agent Plugins clients | Manifest, skill |
+| `.claude-plugin/plugin.json`, `hooks/hooks.json` | Claude Code | Manifest, hooks |
 | `package.json`, `package-lock.json` | Claude Code | The pinned zn-gate release, installed into the plugin folder |
 | `com.openai/hooks.json` | Codex | Hooks, loaded after you trust them in `/hooks` |
 | `scripts/zn-launch.js` | all | Finds and verifies zn-gate, then runs it |

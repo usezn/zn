@@ -16,12 +16,11 @@
  *    mcp-registry workflow publishes): no other server.json in the repository,
  *    its version equals packages/zn-gate/package.json (and, with --release, the
  *    lock file), and "mcpName" in package.json equals its name;
- *  - the Agent Plugins manifest and mcp.json use only the fields of
- *    Agent Plugins 1.0;
+ *  - the Agent Plugins manifest uses only the fields of Agent Plugins 1.0;
  *  - no unpinned installs: no "@latest", no npx/bunx/uvx/pnpm dlx in the
  *    plugin, and every zn-gate install instruction names an exact version;
- *  - every hook and MCP server runs scripts/zn-launch.js, and the MCP servers
- *    are exactly zn-gate (local rules only) and secrets;
+ *  - every hook runs scripts/zn-launch.js, and the plugin registers no MCP
+ *    server (no mcp.json or .mcp.json, no mcpServers, no plugin options);
  *  - package.json / package-lock.json, when present, pin the same release;
  *  - --release: the lock file has the npm integrity, a provenance attestation
  *    and the file digests, the npm files exist, and no placeholder is left in
@@ -160,9 +159,6 @@ const ap = json(PLUGIN + '/plugin.json');
 if (ap.$schema !== 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json') fail('plugin.json: $schema must be the Agent Plugins 1.0.0 identifier');
 for (const k of Object.keys(ap)) if (!AP_FIELDS.has(k)) fail('plugin.json: field ' + k + ' is not part of Agent Plugins 1.0');
 if (!/^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(ap.name || '')) fail('plugin.json: invalid name');
-const apMcp = json(PLUGIN + '/mcp.json');
-if (apMcp.$schema !== 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json') fail('mcp.json: $schema must be the Agent Plugins 1.0.0 identifier');
-for (const k of Object.keys(apMcp)) if (!['$schema', 'mcpServers'].includes(k)) fail('mcp.json: unexpected field ' + k);
 
 /* ------------------------ what the plugin runs ------------------------ */
 
@@ -225,25 +221,13 @@ for (const [event, groups] of Object.entries(json(PLUGIN + '/com.openai/hooks.js
   const sh = fs.readFileSync(path.join(PLUGIN, 'scripts', 'zn-node.sh'), 'utf8');
   if (!sh.startsWith('#!/bin/sh' + String.fromCharCode(10)) || !sh.includes('zn-launch.js')) fail('scripts/zn-node.sh: must be a /bin/sh script that runs zn-launch.js');
 }
-// Each MCP server and the launcher mode that starts it (zn-gate-mcp uses local
-// rules unless the Claude Code plugin's optional api_key option is set).
-const MCP_MODES = { 'zn-gate': 'zn-gate-mcp', secrets: 'secrets-mcp' };
-// The only environment a server may get: the Claude Code key option, for zn-gate.
-const MCP_ENV = { '.mcp.json': { 'zn-gate': { ZN_PLUGIN_API_KEY: '${user_config.api_key}' } } };
-for (const [f, root] of [['mcp.json', '${PLUGIN_ROOT}'], ['.mcp.json', '${CLAUDE_PLUGIN_ROOT}']]) {
-  const servers = json(PLUGIN + '/' + f).mcpServers || {};
-  if (JSON.stringify(Object.keys(servers).sort()) !== JSON.stringify(Object.keys(MCP_MODES).sort())) {
-    fail(f + ': MCP servers must be exactly ' + Object.keys(MCP_MODES).join(', '));
-  }
-  for (const [name, s] of Object.entries(servers)) {
-    const env = (MCP_ENV[f] || {})[name];
-    const envOk = env ? JSON.stringify(s.env) === JSON.stringify(env) : !s.env;
-    // Only the Claude Code zn-gate server is started as "claude-code" (it may use the key option).
-    const args = [root + '/scripts/zn-launch.js', MCP_MODES[name]].concat(env ? ['claude-code'] : []);
-    if (s.command !== 'node' || JSON.stringify(s.args) !== JSON.stringify(args) || !envOk) {
-      fail(f + ': MCP server ' + name + ' does not run the launcher in ' + MCP_MODES[name] + ' mode');
-    }
-  }
+// The plugin registers no MCP server: its servers started `node` by name, before the launcher could check anything.
+// zn-gate's own installer adds the secrets server with Node.js by absolute path (`zn hooks install claude-code`).
+for (const f of ['mcp.json', '.mcp.json']) {
+  if (fs.existsSync(path.join(PLUGIN, f))) fail(f + ': the plugin must not register MCP servers');
+}
+for (const f of ['plugin.json', '.claude-plugin/plugin.json']) {
+  if ('mcpServers' in json(PLUGIN + '/' + f)) fail(f + ': the plugin must not register MCP servers');
 }
 
 // The listing icon named in the Claude Code manifest exists inside the plugin, outside .claude-plugin/.
@@ -254,17 +238,8 @@ for (const [f, root] of [['mcp.json', '${PLUGIN_ROOT}'], ['.mcp.json', '${CLAUDE
   }
 }
 
-// Claude Code plugin options: only the optional API key, kept as a sensitive value.
-const claudeUserConfig = json(PLUGIN + '/.claude-plugin/plugin.json').userConfig || {};
-for (const [k, v] of Object.entries(claudeUserConfig)) {
-  if (k !== 'api_key') fail('.claude-plugin/plugin.json: unexpected userConfig option ' + k);
-  else if (v.type !== 'string' || !v.title || !v.description || v.sensitive !== true || v.required !== false || v.default !== '') {
-    fail('.claude-plugin/plugin.json: userConfig api_key must be a string option with a title and description, sensitive, optional and empty by default');
-  }
-}
-if (JSON.stringify(json(PLUGIN + '/.mcp.json')).includes('${user_config.api_key}') && !claudeUserConfig.api_key) {
-  fail('.mcp.json: uses ${user_config.api_key} but .claude-plugin/plugin.json has no api_key option');
-}
+// No plugin options: the only one, the API key, went to the plugin's MCP server.
+if ('userConfig' in json(PLUGIN + '/.claude-plugin/plugin.json')) fail('.claude-plugin/plugin.json: the plugin has no options');
 // Plugin options never go to hooks (Claude Code exports them to hook processes anyway; the launcher drops them).
 for (const f of ['hooks/hooks.json', 'com.openai/hooks.json']) {
   if (fs.readFileSync(PLUGIN + '/' + f, 'utf8').includes('${user_config')) fail(f + ': hooks must not use plugin options');
