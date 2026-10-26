@@ -337,8 +337,10 @@ function claudePlugin(home, env) {
 
 /* What each hook of a plugin's manifest (hooks/hooks.json under `root`) starts, as the host starts it: ZCode runs a
    "process" hook's command directly with its args, and Claude Code runs a "command" hook through a shell. Only the form
-   zn's plugins use counts as safe: an absolute sh, bash, dash or node, with no option, no NAME=value in front and
-   nothing else on the shell line, whose first operand is a script inside the plugin folder (`${<rootVar>}/...`).
+   zn's plugins use counts as safe: a system shell by its full path (SYSTEM_SHELLS), with no option, no NAME=value in
+   front, no pattern the shell expands and nothing else on the shell line, whose first operand is a script inside the
+   plugin folder (`${<rootVar>}/...`) that really is a file there (its real path, links resolved, is inside the real
+   path of the plugin folder).
    Anything else may look a program up by name or read a script from the folder the agent runs in, the project, before
    zn's own code can clean the PATH, so a relative or empty PATH entry or a planted file could skip zn. On Windows,
    Claude Code runs a command hook with bash only when the hook says "shell": "bash"; otherwise /bin/sh is no full path.
@@ -363,6 +365,7 @@ function pluginManifest(root, rootVar, platform = process.platform) {
         }
         if (!words.length) continue;
         if (!byName) byName = unsafeStart(words, rootVar, h.type !== 'process');
+        if (!byName) byName = scriptOutside(root, fill(words[1]));
         if (!byName && h.type !== 'process' && platform === 'win32' && h.shell !== 'bash') {
           byName = 'the default Windows shell of Claude Code (no "shell": "bash"), where /bin/sh is not a full path';
         }
@@ -374,7 +377,21 @@ function pluginManifest(root, rootVar, platform = process.platform) {
 }
 
 const ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
-const SAFE_PROGRAMS = new Set(['sh', 'bash', 'dash', 'node']);
+// The only programs a plugin hook may start: the system shells by their usual full paths (not any file of that name).
+const SYSTEM_SHELLS = new Set(['/bin/sh', '/usr/bin/sh', '/bin/bash', '/usr/bin/bash', '/bin/dash', '/usr/bin/dash']);
+
+/* Why the script a safe-looking hook runs is not a file inside the plugin folder (a link out of it, a folder, missing),
+   or null. Both paths are resolved with their links, so a link inside the plugin to a file elsewhere does not pass. */
+function scriptOutside(root, script) {
+  try {
+    const realRoot = fs.realpathSync(root);
+    const real = fs.realpathSync(script);
+    if (real.startsWith(realRoot + path.sep) && fs.statSync(real).isFile()) return null;
+    return 'a script that is not a file inside the plugin folder (' + script + ' is ' + real + ')';
+  } catch (_) {
+    return 'a script that is not in the plugin folder (' + script + ' is missing)';
+  }
+}
 
 /* Why the words of a hook (before the plugin root is filled in) are not the safe form, or null when they are. The
    specific reasons (a name, env, a shell given -c) come first because they tell the user what is wrong. */
@@ -382,6 +399,8 @@ function unsafeStart(words, rootVar, shell) {
   const [prog, first] = words;
   if (shell && ASSIGN.test(prog)) return 'a NAME=value in front of the program (' + prog.split('=')[0] + '), which can make the shell read other code';
   if (!prog.startsWith('/') || /[$`~]/.test(prog)) return '`' + prog + '` by name';
+  const glob = words.find((w) => /[*?[]/.test(w));
+  if (glob !== undefined) return 'a pattern the shell or the host expands (`' + glob + '`), so what runs is not what the manifest names';
   const name = prog.slice(prog.lastIndexOf('/') + 1);
   if (name === 'env') return '`env`, which looks the program it starts up by name';
   // Code given inline (sh -c, bash -o pipefail -c, node -e, python3 -c): a new command line or program, not a script.
@@ -390,8 +409,8 @@ function unsafeStart(words, rootVar, shell) {
   const prefix = '${' + rootVar + '}/';
   const script = typeof first === 'string' && first.startsWith(prefix) && !/[$`]/.test(first.slice(prefix.length)) &&
     !first.slice(prefix.length).split('/').some((seg) => seg === '..' || seg === '.' || seg === '');
-  if (!SAFE_PROGRAMS.has(name) || !script) {
-    return '`' + words.slice(0, 2).join(' ') + '`, which is not an absolute sh or node running a script inside the plugin folder';
+  if (!SYSTEM_SHELLS.has(prog) || !script) {
+    return '`' + words.slice(0, 2).join(' ') + '`, which is not a system shell running a script inside the plugin folder';
   }
   return null;
 }
