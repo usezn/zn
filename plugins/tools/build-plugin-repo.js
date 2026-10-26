@@ -66,7 +66,6 @@ const BUNDLED_DIR = 'vendor/zn-gate';
 // and Agent Plugins manifests, npm files, its README) is shipped.
 const PLUGIN_FILES = [
   ['.claude-plugin/plugin.json', PLUGIN],
-  ['.mcp.json', PLUGIN],
   ['hooks/hooks.json', PLUGIN],
   ['icon.png', PLUGIN],
   ['LICENSE', PLUGIN],
