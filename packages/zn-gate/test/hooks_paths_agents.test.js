@@ -350,6 +350,68 @@ test('env -C, git -C and find -delete or -exec rm under the home folder are foll
   }
 });
 
+test('a linked agent configuration or plugin folder (dotfiles) is protected at its real place too', { skip: WIN }, (t) => {
+  // For each agent: the configuration folder linked elsewhere, and (separately) only its plugin folder linked elsewhere.
+  for (const [conf, sub] of [['.claude', 'plugins'], ['.codex', 'plugins'], ['.cursor', 'plugins'], ['.zcode/cli', 'plugins'],
+    ['.gemini/config', 'plugins'], ['.gemini/antigravity-cli', 'plugins']]) {
+    for (const linkWhat of ['config', 'plugins']) {
+      const { home, proj } = tmpHome(t);
+      const elsewhere = tempDir(t, 'zn-dotfiles-');
+      const opts = { home, cwd: proj, env: { HOME: home } };
+      let realPlugins;
+      if (linkWhat === 'config') {
+        const realConf = path.join(elsewhere, 'conf');
+        fs.mkdirSync(path.join(realConf, sub, 'cache', 'zn', 'scripts'), { recursive: true });
+        fs.mkdirSync(path.dirname(path.join(home, conf)), { recursive: true });
+        fs.symlinkSync(realConf, path.join(home, conf));
+        realPlugins = path.join(realConf, sub);
+      } else {
+        realPlugins = path.join(elsewhere, 'plugins');
+        fs.mkdirSync(path.join(realPlugins, 'cache', 'zn', 'scripts'), { recursive: true });
+        fs.mkdirSync(path.join(home, conf), { recursive: true });
+        fs.symlinkSync(realPlugins, path.join(home, conf, sub));
+      }
+      const launcher = path.join(realPlugins, 'cache', 'zn', 'scripts', 'zn-launch.js');
+      fs.writeFileSync(launcher, '');
+      const label = conf + ' linked ' + linkWhat;
+      assert.ok(policy.writeDenial(path.join(home, conf, sub, 'cache', 'zn', 'scripts', 'zn-launch.js'), opts), label + ': logical path');
+      assert.ok(policy.writeDenial(launcher, opts), label + ': real path');
+      assert.ok(policy.bashDenial('printf x > ' + launcher, opts), label + ': redirect to the real path');
+      assert.ok(policy.bashDenial('rm -rf ' + realPlugins, opts), label + ': remove the real plugin folder');
+      assert.equal(policy.writeDenial(path.join(elsewhere, 'notes.txt'), opts), null, label + ': a file beside it is not protected');
+    }
+  }
+});
+
+test('a linked Gemini or ZCode configuration folder keeps its plugin state protected at its real place', { skip: WIN }, (t) => {
+  const { home, proj } = tmpHome(t);
+  const elsewhere = tempDir(t, 'zn-dotfiles-');
+  const opts = { home, cwd: proj, env: { HOME: home } };
+  fs.mkdirSync(path.join(elsewhere, 'gemini', 'config'), { recursive: true });
+  fs.writeFileSync(path.join(elsewhere, 'gemini', 'config', 'config.json'), '{}');
+  fs.symlinkSync(path.join(elsewhere, 'gemini'), path.join(home, '.gemini'));
+  fs.mkdirSync(path.join(elsewhere, 'zcode', 'cli'), { recursive: true });
+  fs.symlinkSync(path.join(elsewhere, 'zcode'), path.join(home, '.zcode'));
+  assert.ok(policy.writeDenial(path.join(elsewhere, 'gemini', 'config', 'config.json'), opts));
+  assert.ok(policy.bashDenial('rm -rf ' + path.join(elsewhere, 'gemini'), opts));
+  assert.ok(policy.bashDenial('rm -rf ' + path.join(elsewhere, 'zcode', 'cli'), opts));
+  assert.equal(policy.writeDenial(path.join(elsewhere, 'gemini', 'notes.md'), opts), null);
+});
+
+test('a linked plugin folder named by CLAUDE_CONFIG_DIR or CODEX_HOME is protected at its real place', { skip: WIN }, (t) => {
+  for (const name of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME']) {
+    const { home, proj } = tmpHome(t);
+    const elsewhere = tempDir(t, 'zn-dotfiles-');
+    const conf = path.join(home, 'agent-conf');
+    const realPlugins = path.join(elsewhere, 'plugins');
+    fs.mkdirSync(realPlugins, { recursive: true });
+    fs.mkdirSync(conf);
+    fs.symlinkSync(realPlugins, path.join(conf, 'plugins'));
+    const opts = { home, cwd: proj, env: { HOME: home, [name]: conf } };
+    assert.ok(policy.writeDenial(path.join(realPlugins, 'zn-launch.js'), opts), name);
+  }
+});
+
 test('a Codex patch is refused when any file in it is protected, and an unreadable patch too', async (t) => {
   const { home, proj } = tmpHome(t);
   const settings = path.join(home, '.claude', 'settings.json');

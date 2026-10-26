@@ -40,7 +40,7 @@ What the plugin is, so you know what to expect when it is published:
 - If Node.js hangs while the plugin hook starts, the hook still answers within 28 seconds, under the 30-second timeout the plugin sets on its hooks: it blocks the call, or only warns on events that cannot block.
 - Use the plugin or `zn hooks install zcode`, not both: ZCode does not remove duplicate hooks, so every call would be checked twice. `zn hooks install zcode` warns when the plugin is on, and `zn-gate check` reports it.
 - You can turn the plugin off in Settings, Plugins. With the plugin off and `hooks.enabled` false, nothing of zn runs in ZCode, and `zn-gate check` reports it as not protected. ZCode records the switch in `~/.zcode/cli/config.json` (`plugins.enabledPlugins`), which check reads.
-- Tested on the ZCode desktop app on Linux only; macOS is not tested. The plugin's own files are not protected by zn's policy: code that runs as you can edit them.
+- Tested on the ZCode desktop app on Linux only; macOS is not tested. The plugin's own files, under `~/.zcode/cli/plugins/`, are protected by zn's policy from the agent's file tools and shell, also when `~/.zcode` is a link to another folder. This is best effort: other programs that run as you can still change them.
 
 ## What zn-gate protects in ZCode, and what it does not
 
@@ -63,7 +63,7 @@ Things to know:
 - **Hooks switched off.** With `"hooks.enabled": false` in `~/.zcode/cli/config.json`, ZCode runs none of the hooks in that file, zn's included (the hooks of a ZCode plugin keep running). A single entry can also be switched off with `"enabled": false`, or made to run in the background with `async`, and a background hook cannot block anything. `zn-gate check` reports all three as not protected, and `zn hooks install zcode` repairs them.
 - **Values can still reach the model.** A value printed by a command, or found in a file the agent is allowed to read, is not removed. Keep secrets in the vault.
 - **Subagents.** Not tested: whether ZCode runs the hooks inside its subagents.
-- **Which file the agent cannot edit through its tools:** `~/.zcode/cli/config.json`. zn's policy also protects a project's `<project>/.zcode/config.json` the same way. The files of a ZCode plugin are not protected.
+- **Which file the agent cannot edit through its tools:** `~/.zcode/cli/config.json`. zn's policy also protects a project's `<project>/.zcode/config.json` the same way, and the files of an installed ZCode plugin under `~/.zcode/cli/plugins/`.
 
 More detail is in the [threat model](../threat-model.md) and in [agent compatibility](../compat.md).
 
