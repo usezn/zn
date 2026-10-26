@@ -309,8 +309,8 @@ for (const [event, entries] of Object.entries(json(PLUGIN + '/cursor/hooks.json'
     for (const g of groups) {
       for (const h of g.hooks || []) {
         const args = JSON.stringify(h.args);
-        if (h.type !== 'process' || h.command !== 'sh' || args !== JSON.stringify(['${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh', event])) {
-          fail(ZC + '/hooks/hooks.json: ' + event + ' hook must be a process hook: sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh ' + event);
+        if (h.type !== 'process' || h.command !== '/bin/sh' || args !== JSON.stringify(['${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh', event])) {
+          fail(ZC + '/hooks/hooks.json: ' + event + ' hook must be a process hook: /bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh ' + event);
         }
         if (h.onFailure !== undefined || h.async !== undefined) fail(ZC + '/hooks/hooks.json: ' + event + ' hook must not set onFailure or async');
       }

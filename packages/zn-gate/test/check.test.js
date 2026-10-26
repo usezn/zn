@@ -475,3 +475,137 @@ test('check: a plugin turned off next to broken zn hooks: the hooks are repaired
   assert.match(r.fix, /npm install -g zn-gate`, then `zn hooks install claude-code`/);
   assert.doesNotMatch(r.fix, /plugin/);
 });
+
+test('check: a Claude Code plugin whose hooks.json starts a hook with a program by name is not protected', async (t) => {
+  const hooksJson = (cmd) => JSON.stringify({ hooks: {
+    SessionStart: [{ hooks: [{ type: 'command', command: '/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" SessionStart check claude-code' }] }],
+    PreToolUse: [{ matcher: '^(Bash|Read)$', hooks: [{ type: 'command', command: cmd, onFailure: 'block' }] }],
+  } });
+  const cases = [
+    ['node "${CLAUDE_PLUGIN_ROOT}/scripts/zn-launch.js" hook claude-code', 'node'],
+    ['"node" "${CLAUDE_PLUGIN_ROOT}/scripts/zn-launch.js" hook claude-code', 'node'],
+    ['sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code', 'sh'],
+  ];
+  for (const [cmd, prog] of cases) {
+    const home = tempDir(t, 'zn-check-ccbare-');
+    const root = fakePlugin(home, launcher());
+    fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooksJson(cmd));
+    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+    assert.equal(r.state, 'not-protected', cmd);
+    assert.match(r.problem, new RegExp('starts its PreToolUse hook with `' + prog + '` by name'), cmd);
+    assert.match(r.fix, /claude plugin update zn-gate@usezn/, cmd);
+  }
+  // The shell by its full path, with the plugin root in quotes: the plugin is checked as before.
+  const home = tempDir(t, 'zn-check-ccabs-');
+  const root = fakePlugin(home, launcher());
+  fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooksJson('/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code'));
+  const ok = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+  assert.equal(ok.state, 'protected', ok.problem);
+});
+
+test('check: only an absolute sh or node running a script inside the plugin folder counts; every other plugin hook is not protected', async (t) => {
+  const hooksJson = (cmd) => JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: cmd, onFailure: 'block' }] }] } });
+  const L = '"${CLAUDE_PLUGIN_ROOT}/scripts/zn-launch.js" hook claude-code';
+  const S = '"${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code';
+  const unsafe = [
+    // a program by name, or one that looks the next one up
+    ['env node ' + L, /`env` by name/],
+    ['./bin/node ' + L, /`\.\/bin\/node` by name/],
+    ['$HOME/node ' + L, /by name/],
+    ['/usr/bin/env sh x', /`env`, which looks the program/],
+    ['/usr/bin/env node ' + L, /`env`, which looks the program/],
+    ['/usr/bin/env -i FOO=1 node ' + L, /`env`, which looks the program/],
+    ['/usr/bin/env -u /x node ' + L, /`env`, which looks the program/],
+    ['/usr/bin/env -C /x node ' + L, /`env`, which looks the program/],
+    ['/usr/bin/env /bin/sh ' + S, /`env`, which looks the program/],
+    ['/usr/bin/env', /`env`, which looks the program/],
+    ...['nohup', 'timeout 10', 'nice', 'sudo', 'xargs', 'stdbuf -o0', 'setsid', 'time', 'flock /x', 'arch -arm64', 'xcrun']
+      .map((w) => ['/usr/bin/' + w + ' node ' + L, /not an absolute sh or node running a script inside the plugin folder/]),
+    // code given inline
+    ['/bin/sh -c "node x"', /code given inline \(`sh -c`\)/],
+    ['/bin/bash -ec "node x"', /code given inline \(`bash -ec`\)/],
+    ['/bin/bash -o pipefail -c "node x"', /code given inline \(`bash -c`\)/],
+    ['/bin/sh +e -c "node x"', /code given inline \(`sh -c`\)/],
+    ['/bin/busybox sh -c "node x"', /code given inline \(`busybox -c`\)/],
+    ['/usr/bin/fish -c "node x"', /code given inline/],
+    ['/bin/tcsh -c "node x"', /code given inline/],
+    ['/bin/rbash -c "node x"', /code given inline/],
+    ['/usr/bin/python3 -c "import os"', /code given inline/],
+    ['/usr/bin/perl -e 1', /code given inline/],
+    ['/usr/bin/node -e 1', /code given inline \(`node -e`\)/],
+    // no script, or a script outside the plugin folder
+    ['/bin/sh', /not an absolute sh or node running a script/],
+    ['/bin/sh -s', /not an absolute sh or node running a script/],
+    ['/bin/sh -', /not an absolute sh or node running a script/],
+    ['/bin/sh ./scripts/zn-node.sh x', /not an absolute sh or node running a script/],
+    ['/bin/sh scripts/zn-node.sh x', /not an absolute sh or node running a script/],
+    ['/bin/sh ../x.sh', /not an absolute sh or node running a script/],
+    ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/../x.sh"', /not an absolute sh or node running a script/],
+    ['/bin/sh /opt/x.sh', /not an absolute sh or node running a script/],
+    ['/bin/sh "$PLUGIN_ROOT/scripts/zn-node.sh"', /not an absolute sh or node running a script/],
+    ['/usr/bin/node scripts/zn-launch.js hook claude-code', /not an absolute sh or node running a script/],
+    ['/usr/bin/python3 ' + L, /not an absolute sh or node running a script/],
+    // assignments in front, shell lines, a quote never closed
+    ['BASH_ENV=./x /bin/bash ' + S, /NAME=value in front of the program \(BASH_ENV\)/],
+    ['FOO=1 /bin/sh ' + S, /NAME=value in front/],
+    ['ZN_X=1 node ' + L, /NAME=value in front/],
+    ['/bin/true; node ' + L, /shell command line/],
+    ['/bin/true && node ' + L, /shell command line/],
+    ['/bin/true|node ' + L, /shell command line/],
+    ['/bin/sh ' + S + ' > /dev/null', /shell command line/],
+    ['FOO=$(node) /bin/sh ' + S, /shell command line/],
+    ['/bin/sh "$(node)"', /shell command line/],
+    ['/bin/sh `node`', /shell command line/],
+    ["/bin/sh 'x", /backslash, a single quote or a control character/],
+    ['/bin/sh "x', /a quote that is never closed, so the hook does not start$/],
+    // B4: the shell keeps a backslash inside double quotes, so these name another program or folder
+    ['"\\/bin/sh" ' + S, /backslash, a single quote or a control character/],
+    ['/bin/sh "\\${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code', /backslash/],
+    ['/bin/sh \\\n "${CLAUDE_PLUGIN_ROOT}/x.sh"', /backslash/],
+    ["/bin/sh '${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh' PreToolUse hook claude-code", /single quote/],
+    ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/x.sh"\tPreToolUse', /control character/],
+    ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/x.sh"\nnode x', /control character/],
+  ];
+  for (const [cmd, re] of unsafe) {
+    const home = tempDir(t, 'zn-check-ccb3-');
+    const root = fakePlugin(home, launcher());
+    fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooksJson(cmd));
+    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+    assert.equal(r.state, 'not-protected', cmd);
+    assert.match(r.problem, re, cmd);
+  }
+  // The forms zn's plugins use (also with shell syntax inside quotes) are checked as before.
+  const safe = ['/bin/sh ' + S, '/bin/bash ' + S, '/usr/bin/node ' + L, '/bin/sh "${CLAUDE_PLUGIN_ROOT}/a;b|c.sh" "x && y"'];
+  if (process.platform !== 'win32') {
+    for (const cmd of safe) {
+      const home = tempDir(t, 'zn-check-ccb3ok-');
+      const root = fakePlugin(home, launcher());
+      fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooksJson(cmd));
+      const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+      assert.equal(r.state, 'protected', cmd + ': ' + r.problem);
+    }
+  }
+});
+
+test('check: on Windows a Claude Code plugin hook counts only when it runs with bash ("shell": "bash")', (t) => {
+  const { pluginManifest } = require('../lib/check')._internal;
+  const root = tempDir(t, 'zn-check-ccwin-');
+  const write = (hook) => {
+    fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), JSON.stringify({ hooks: { PreToolUse: [{ hooks: [hook] }] } }));
+  };
+  const cmd = '/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code';
+  write({ type: 'command', command: cmd });
+  assert.match(pluginManifest(root, 'CLAUDE_PLUGIN_ROOT', 'win32').bare.byName, /default Windows shell of Claude Code/);
+  assert.equal(pluginManifest(root, 'CLAUDE_PLUGIN_ROOT', 'linux').bare, null);
+  write({ type: 'command', command: cmd, shell: 'bash' });
+  assert.equal(pluginManifest(root, 'CLAUDE_PLUGIN_ROOT', 'win32').bare, null);
+  write({ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/x.js"', shell: 'bash' });
+  assert.match(pluginManifest(root, 'CLAUDE_PLUGIN_ROOT', 'win32').bare.byName, /`node` by name/);
+  write({ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/x.js"' });
+  assert.match(pluginManifest(root, 'CLAUDE_PLUGIN_ROOT', 'win32').bare.byName, /`node` by name/);
+});

@@ -22,7 +22,8 @@
 # Without a `sleep` program there is no watchdog, and the other refusals still apply.
 
 EVENT="${1:-}"
-# ZCode starts this script by its absolute path (hooks.json: sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh); any other
+# ZCode starts this script by its absolute path (hooks.json: /bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh, with the shell
+# named by its full path, because ZCode looks a bare name up on its PATH before this script can clean it); any other
 # form would depend on the folder the session runs in, so the launcher is then treated as missing.
 case "$0" in /*) HERE_DIR=${0%/*} ;; *) HERE_DIR= ;; esac
 HERE=$([ -n "$HERE_DIR" ] && CDPATH='' cd -- "$HERE_DIR" 2>/dev/null && pwd -P) || HERE=""

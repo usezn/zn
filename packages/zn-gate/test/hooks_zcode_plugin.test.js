@@ -18,6 +18,8 @@ const { tempDir } = require('./helpers/tmp');
 const zc = getAdapter('zcode');
 const posix = process.platform !== 'win32';
 const ID = 'zn-gate@usezn';
+// The plugin's real manifest in this repository.
+const REPO_HOOKS = path.join(__dirname, '..', '..', '..', 'plugins', 'zcode', 'hooks', 'hooks.json');
 
 const base = (home) => path.join(home, '.zcode', 'cli');
 const cfgFile = (home) => path.join(base(home), 'config.json');
@@ -28,11 +30,15 @@ const writeCfg = (home, obj) => {
 const readCfg = (home) => JSON.parse(fs.readFileSync(cfgFile(home), 'utf8'));
 
 // A plugin folder as ZCode leaves it in its cache. The stub hook denies a request that names ".env" and allows any other.
-function installPlugin(home, { script = true, manifest = true, id = ID } = {}) {
+function installPlugin(home, { script = true, manifest = true, id = ID, hooks = (h) => h } = {}) {
   const root = path.join(base(home), 'plugins', 'cache', 'usezn', 'zn-gate', '1.14.0');
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
   fs.mkdirSync(path.join(root, '.zcode-plugin'), { recursive: true });
   if (manifest) fs.writeFileSync(path.join(root, '.zcode-plugin', 'plugin.json'), '{"name":"zn-gate","version":"1.14.0"}');
+  if (hooks) {
+    fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooks(fs.readFileSync(REPO_HOOKS, 'utf8')));
+  }
   if (script) {
     fs.writeFileSync(path.join(root, 'scripts', 'zn-hook.sh'),
       '#!/bin/sh\ninput=$(cat)\ncase "$input" in *.env*) printf \'%s\' \'{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: .env holds plain-text secrets."}}\' ;; esac\nexit 0\n',
@@ -175,27 +181,139 @@ test('zn hooks install zcode warns when the plugin is installed and on, and not 
   assert.ok(!rep.warnings.some((w) => /also installed/.test(w)));
 });
 
-test('zn-gate check runs the plugin hook with sh from an absolute PATH entry, never a planted one', { skip: !posix }, async (t) => {
-  const check = require('../lib/check');
-  const home = tempDir(t, 'zn-zcp-sh-');
-  const cwd = tempDir(t, 'zn-zcp-sh-cwd-');
-  const marker = path.join(cwd, 'planted-sh-ran');
+// Programs planted where a relative or empty PATH entry, or the folder the agent runs in, would find them. Each one
+// only leaves a marker file and exits 0 (an "allow"), as a counterfeit interpreter that skips zn would.
+function plantPrograms(t) {
+  const cwd = tempDir(t, 'zn-zcp-plant-');
+  const marker = path.join(cwd, 'planted-ran');
   for (const d of [cwd, path.join(cwd, 'zbin')]) {
     fs.mkdirSync(d, { recursive: true });
-    fs.writeFileSync(path.join(d, 'sh'), '#!/bin/sh\n: > ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+    for (const name of ['sh', 'node']) {
+      fs.writeFileSync(path.join(d, name), '#!/bin/sh\necho ' + name + ' >> ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+    }
   }
+  return { cwd, marker };
+}
+const PLANTED_PATHS = ['.:/usr/bin:/bin', 'zbin:/usr/bin:/bin', ':/usr/bin:/bin'];
+
+async function zcodeCheck(home, cwd, PATH) {
+  const check = require('../lib/check');
+  return (await check.check({ home, cwd, env: { ...process.env, HOME: home, PATH }, live: true })).results.find((x) => x.id === 'zcode');
+}
+
+test('the ZCode plugin manifest starts every hook with the shell by its full path', () => {
+  const hooks = JSON.parse(fs.readFileSync(REPO_HOOKS, 'utf8')).hooks;
+  for (const [event, groups] of Object.entries(hooks)) {
+    for (const g of groups) for (const h of g.hooks) {
+      assert.equal(h.type, 'process', event);
+      assert.ok(path.posix.isAbsolute(h.command), event + ' starts ' + h.command + ' by name');
+    }
+  }
+});
+
+test('zn-gate check runs the plugin hook as ZCode starts it (the program named in hooks.json), never a planted one', { skip: !posix }, async (t) => {
+  const home = tempDir(t, 'zn-zcp-sh-');
+  const { cwd, marker } = plantPrograms(t);
   installPlugin(home);
   writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } } });
   const old = process.cwd();
   t.after(() => process.chdir(old));
   process.chdir(cwd);
-  for (const PATH of ['.:/usr/bin:/bin', 'zbin:/usr/bin:/bin', ':/usr/bin:/bin']) {
-    const r = (await check.check({ home, cwd, env: { ...process.env, HOME: home, PATH }, live: true })).results.find((x) => x.id === 'zcode');
-    assert.equal(fs.existsSync(marker), false, PATH + ': the planted sh ran');
+  for (const PATH of PLANTED_PATHS) {
+    const r = await zcodeCheck(home, cwd, PATH);
+    assert.equal(fs.existsSync(marker), false, PATH + ': a planted program ran');
     assert.equal(r.state, 'protected', PATH + ' ' + r.problem);
+    assert.equal(r.verified, true, PATH);
   }
-  // No sh in any absolute entry: NOT protected, with the reason.
-  const none = (await check.check({ home, cwd, env: { ...process.env, HOME: home, PATH: '.:zbin' }, live: true })).results.find((x) => x.id === 'zcode');
-  assert.equal(fs.existsSync(marker), false, 'the planted sh ran');
-  assert.match(none.problem, /no sh was found in the absolute entries of your PATH/);
+});
+
+test('zn-gate check: a plugin manifest that starts its hook by name is NOT protected, whatever the PATH', { skip: !posix }, async (t) => {
+  const home = tempDir(t, 'zn-zcp-bare-');
+  const { cwd, marker } = plantPrograms(t);
+  // The manifest of the 1.14.0 release candidates: `sh` by name.
+  installPlugin(home, { hooks: (h) => h.split('"command": "/bin/sh"').join('"command": "sh"') });
+  writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } } });
+  const old = process.cwd();
+  t.after(() => process.chdir(old));
+  process.chdir(cwd);
+  for (const PATH of [...PLANTED_PATHS, '/usr/bin:/bin']) {
+    const r = await zcodeCheck(home, cwd, PATH);
+    assert.equal(fs.existsSync(marker), false, PATH + ': a planted program ran');
+    assert.equal(r.state, 'not-protected', PATH);
+    assert.match(r.problem, /starts its \w+ hook with `sh` by name/, PATH);
+    assert.match(r.fix, /install the zn-gate plugin again in ZCode/, PATH);
+  }
+});
+
+test('zn-gate check: a manifest whose program is not on this computer, or with no PreToolUse hook, is NOT protected', { skip: !posix }, async (t) => {
+  const home = tempDir(t, 'zn-zcp-gone-');
+  const cwd = tempDir(t, 'zn-zcp-gone-cwd-');
+  installPlugin(home, { hooks: (h) => h.split('"command": "/bin/sh"').join('"command": "/nonexistent/zn-test/sh"') });
+  writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } } });
+  let r = await zcodeCheck(home, cwd, '/usr/bin:/bin');
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /starts its hook with \/nonexistent\/zn-test\/sh, which is not on this computer/);
+  const home2 = tempDir(t, 'zn-zcp-nopre-');
+  installPlugin(home2, { hooks: (h) => { const j = JSON.parse(h); delete j.hooks.PreToolUse; return JSON.stringify(j); } });
+  writeCfg(home2, { plugins: { enabledPlugins: { [ID]: true } } });
+  r = await zcodeCheck(home2, cwd, '/usr/bin:/bin');
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /has no PreToolUse hook/);
+  const home3 = tempDir(t, 'zn-zcp-nofile-');
+  installPlugin(home3, { hooks: null });
+  writeCfg(home3, { plugins: { enabledPlugins: { [ID]: true } } });
+  r = await zcodeCheck(home3, cwd, '/usr/bin:/bin');
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /has no PreToolUse hook/);
+});
+
+// The reproduction of the 1.14.0 review: with a relative or empty PATH entry, the host's own lookup of the first
+// program in the manifest picked a planted `sh`, and a shell picked a planted `node`. The real plugin manifest and
+// script, started the way ZCode starts a process hook (no shell, the project as working folder), run nothing planted.
+test('the ZCode plugin hook, started as ZCode starts it, runs no planted sh or node (relative or empty PATH entry)', { skip: !posix }, (t) => {
+  const { spawnSync } = require('child_process');
+  const pluginRoot = path.join(__dirname, '..', '..', '..', 'plugins', 'zcode');
+  const pre = JSON.parse(fs.readFileSync(REPO_HOOKS, 'utf8')).hooks.PreToolUse[0].hooks[0];
+  const args = pre.args.map((a) => a.split('${ZCODE_PLUGIN_ROOT}').join(pluginRoot));
+  const { cwd, marker } = plantPrograms(t);
+  const event = JSON.stringify({ hook_event_name: 'PreToolUse', cwd, tool_name: 'Read', tool_input: { file_path: path.join(cwd, '.env') } });
+  for (const PATH of ['.:/usr/bin:/bin', ':/usr/bin:/bin']) {
+    const r = spawnSync(pre.command, args, { cwd, input: event, encoding: 'utf8', env: { PATH, HOME: cwd }, timeout: 40000 });
+    assert.equal(r.error, undefined, PATH + ': ' + (r.error && r.error.message));
+    assert.equal(fs.existsSync(marker), false, PATH + ': planted ' + (fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim() : '') + ' ran');
+    // This checkout has no verified zn-gate copy inside the plugin folder, so the hook refuses (exit 2), as it must:
+    // never the planted program's exit 0.
+    assert.equal(r.status, 2, PATH + ': ' + r.stderr);
+  }
+  // Before the fix: the same lookup by name picks the planted shell (what the review measured).
+  const before = spawnSync('sh', args, { cwd, input: event, encoding: 'utf8', env: { PATH: '.:/usr/bin:/bin', HOME: cwd } });
+  assert.equal(before.status, 0);
+  assert.match(fs.readFileSync(marker, 'utf8'), /^sh$/m, 'the lookup by name did not pick the planted sh');
+});
+
+test('zn-gate check: a ZCode process hook counts only as an absolute sh or node on a script inside the plugin folder', { skip: !posix }, async (t) => {
+  const cwd = tempDir(t, 'zn-zcp-wl-cwd-');
+  const swap = (cmd, args) => (h) => {
+    const j = JSON.parse(h);
+    for (const groups of Object.values(j.hooks)) for (const g of groups) for (const x of g.hooks) { x.command = cmd; x.args = args(x.args); }
+    return JSON.stringify(j);
+  };
+  const cases = [
+    [swap('/usr/bin/env', (a) => ['sh', ...a]), /`env`, which looks the program/],
+    [swap('/bin/sh', (a) => ['-c', 'sh ' + a.join(' ')]), /code given inline \(`sh -c`\)/],
+    [swap('/bin/sh', (a) => ['-o', 'errexit', '-c', 'sh ' + a.join(' ')]), /code given inline \(`sh -c`\)/],
+    [swap('/usr/bin/nohup', (a) => ['sh', ...a]), /not an absolute sh or node running a script inside the plugin folder/],
+    [swap('/bin/sh', (a) => ['scripts/zn-hook.sh', a[1]]), /not an absolute sh or node running a script inside the plugin folder/],
+    [swap('/bin/sh', (a) => ['./scripts/zn-hook.sh', a[1]]), /not an absolute sh or node running a script inside the plugin folder/],
+    [swap('/bin/sh', () => ['-s']), /not an absolute sh or node running a script inside the plugin folder/],
+    [swap('/bin/sh', () => []), /not an absolute sh or node running a script inside the plugin folder/],
+  ];
+  for (const [hooks, re] of cases) {
+    const home = tempDir(t, 'zn-zcp-wl-');
+    installPlugin(home, { hooks });
+    writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } } });
+    const r = await zcodeCheck(home, cwd, '/usr/bin:/bin');
+    assert.equal(r.state, 'not-protected', String(re));
+    assert.match(r.problem, re);
+  }
 });
