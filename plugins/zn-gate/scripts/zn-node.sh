@@ -6,9 +6,10 @@
 # the current folder can be searched too. A node placed there would run with the user's rights, without zn's checks.
 #
 # Usage: zn-node.sh <Event> <zn-launch.js arguments...>
-#   e.g. zn-node.sh PreToolUse hook claude-code
-# The event JSON arrives on stdin and is passed to zn-launch.js. <Event> is only used to choose how to refuse when
-# zn-launch.js cannot be started: the events that can stop a call are blocked (exit 2); the others only warn.
+#   e.g. zn-node.sh PreToolUse hook claude-code, zn-node.sh PreToolUse hook codex, zn-node.sh beforeReadFile hook cursor
+# The event JSON arrives on stdin and is passed to zn-launch.js. <Event> and the agent (the last argument) are only used
+# to choose how to refuse when zn-launch.js cannot be started: the events that can stop a call are blocked (exit 2, and
+# for Cursor its deny answer); the others only warn (Cursor: no answer, as the launcher gives for those events).
 #
 # What zn-launch.js prints and the exit code it ends with (0, 2 or anything else) pass through unchanged: it checks the Node.js
 # version itself (and refuses when it is too old), and Claude Code's onFailure "block" handles a hook that ends with another code.
@@ -18,10 +19,14 @@
 
 EVENT="${1:-}"
 [ "$#" -gt 0 ] && shift
+AGENT=
+for a in "$@"; do AGENT=$a; done
 
 # Absolute script path only: the folder of this script is where zn-launch.js is; any other form would depend on the
 # folder the session runs in (the project), so the launcher is then treated as missing. A Windows path (C:\... or C:/...,
 # Git Bash) counts as absolute too; the folder is whatever precedes the last / or \.
+# Cursor is the exception: its plugin hooks name their files relative to the plugin folder, which is the folder Cursor
+# runs them in (./scripts/zn-node.sh), so for Cursor a ./ path is read from the current folder.
 BS='\'
 HERE_DIR=
 case "$0" in
@@ -30,6 +35,12 @@ case "$0" in
     B=${0%"$BS"*}
     if [ "$A" = "$0" ]; then HERE_DIR=$B; elif [ "$B" = "$0" ]; then HERE_DIR=$A; elif [ "${#A}" -ge "${#B}" ]; then HERE_DIR=$A; else HERE_DIR=$B; fi
     [ "$HERE_DIR" != "$0" ] || HERE_DIR=
+    ;;
+  ./*)
+    if [ "$AGENT" = cursor ]; then
+      HERE_DIR=${0%/*}
+      [ "$HERE_DIR" != "$0" ] || HERE_DIR=
+    fi
     ;;
 esac
 HERE=$([ -n "$HERE_DIR" ] && CDPATH='' cd -- "$HERE_DIR" 2>/dev/null && pwd -P) || HERE=""
@@ -49,10 +60,25 @@ PATH=$SAFE_PATH
 export PATH
 
 # Refusal: exit 2 and the reason on stderr where that blocks; elsewhere exit 0 with a message for the user.
+# Cursor reads its answers from stdout: a block is its deny answer with exit 2, and after a tool has run it gets no answer.
 refuse() {
+  case "$AGENT" in
+    codex) OFF='turn off the zn-gate plugin in Codex (/plugins)' ;;
+    cursor) OFF="turn off the zn-gate plugin in Cursor's settings" ;;
+    *) OFF='turn off the zn-gate plugin (claude plugin disable zn-gate@usezn)' ;;
+  esac
+  MSG="zn: $1 This call was blocked because zn could not check it. Fix it, or $OFF."
+  if [ "$AGENT" = cursor ]; then
+    case "$EVENT" in
+      postToolUse) exit 0 ;;
+    esac
+    printf '{"permission":"deny","continue":false,"user_message":"%s","agent_message":"%s"}\n' "$MSG" "$MSG"
+    printf '%s\n' "$MSG" >&2
+    exit 2
+  fi
   case "$EVENT" in
     PreToolUse | PermissionRequest | UserPromptSubmit | UserPromptExpansion)
-      printf '%s\n' "zn: $1 This call was blocked because zn could not check it. Fix it, or turn off the zn-gate plugin (claude plugin disable zn-gate@usezn)." >&2
+      printf '%s\n' "$MSG" >&2
       exit 2
       ;;
     *)

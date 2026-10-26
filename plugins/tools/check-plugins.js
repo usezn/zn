@@ -162,9 +162,12 @@ for (const k of Object.keys(apMcp)) if (!['$schema', 'mcpServers'].includes(k)) 
 
 /* ------------------------ what the plugin runs ------------------------ */
 
-const LAUNCHER = /^node "?(\$PLUGIN_ROOT\/|\.\/)scripts\/zn-launch\.js"? hook (codex|cursor)$/;
-// The Claude Code hooks start the launcher through scripts/zn-node.sh, which finds Node.js only in absolute PATH entries
+// Every plugin hook starts the launcher through scripts/zn-node.sh, which finds Node.js only in absolute PATH entries
 // (a `node` found by name could be one placed in a relative PATH entry or in the project folder). Each command names its own event.
+const LAUNCHERS = {
+  'com.openai/hooks.json': /^\/bin\/sh "\$PLUGIN_ROOT\/scripts\/zn-node\.sh" (\w+) hook codex$/,
+  'cursor/hooks.json': /^\/bin\/sh \.\/scripts\/zn-node\.sh (\w+) hook cursor$/,
+};
 const CLAUDE_LAUNCHER = /^\/bin\/sh "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/zn-node\.sh" (SessionStart|PreToolUse|PostToolUse|UserPromptSubmit|UserPromptExpansion) (hook claude-code|check claude-code)$/;
 function hookCommands(data) {
   const out = [];
@@ -176,10 +179,15 @@ function hookCommands(data) {
   }
   return out;
 }
-for (const f of ['com.openai/hooks.json', 'cursor/hooks.json']) {
-  const cmds = hookCommands(json(PLUGIN + '/' + f));
-  if (cmds.length === 0) fail(f + ': no hooks');
-  for (const c of cmds) if (!LAUNCHER.test(String(c))) fail(f + ': hook command does not run the launcher: ' + c);
+for (const [f, re] of Object.entries(LAUNCHERS)) {
+  const data = json(PLUGIN + '/' + f);
+  if (hookCommands(data).length === 0) fail(f + ': no hooks');
+  for (const [event, groups] of Object.entries((data && data.hooks) || {})) {
+    for (const c of hookCommands({ hooks: { [event]: groups } })) {
+      const m = re.exec(String(c));
+      if (!m || m[1] !== event) fail(f + ': ' + event + ' hook must run scripts/zn-node.sh with its own event name: ' + c);
+    }
+  }
 }
 {
   const f = 'hooks/hooks.json';

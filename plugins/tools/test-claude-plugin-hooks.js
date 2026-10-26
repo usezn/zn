@@ -2,10 +2,10 @@
 'use strict';
 
 /**
- * Tests for how the Claude Code plugin (plugins/zn-gate/hooks/hooks.json) starts Node.js: only from an absolute PATH entry,
- * through scripts/zn-node.sh, so a `node` placed in the project folder (a relative or empty PATH entry, or the current
- * folder) is never run. The hook command is taken from hooks.json and run the way Claude Code runs it (`sh -c`), in a
- * project folder that holds the planted programs. Claude Code itself is not needed here.
+ * Tests for how the zn-gate plugin hooks (Claude Code: plugins/zn-gate/hooks/hooks.json; Codex: com.openai/hooks.json;
+ * Cursor: cursor/hooks.json) start Node.js: only from an absolute PATH entry, through scripts/zn-node.sh, so a `node`
+ * placed in the project folder (a relative or empty PATH entry, or the current folder) is never run. The hook command is
+ * taken from the manifest and run through `sh -c`, in a folder that holds the planted programs. No agent is needed here.
  *
  *   node plugins/tools/test-claude-plugin-hooks.js     (from the repository root)
  */
@@ -33,6 +33,14 @@ function commandFor(event, pluginRoot) {
   return { command: h.command.split('${CLAUDE_PLUGIN_ROOT}').join(pluginRoot), spec: h };
 }
 const NODE_SH = path.join(PLUGIN, 'scripts', 'zn-node.sh');
+// event -> command of the Codex (com.openai/hooks.json) or Cursor (cursor/hooks.json) manifest.
+function manifestCommands(file) {
+  const out = {};
+  for (const [event, groups] of Object.entries(JSON.parse(fs.readFileSync(path.join(PLUGIN, file), 'utf8')).hooks)) {
+    for (const g of groups) for (const h of (g.hooks || [g])) out[event] = h.command;
+  }
+  return out;
+}
 
 try {
   test('every hook starts through scripts/zn-node.sh with its own event name, never `node` by name', () => {
@@ -47,6 +55,12 @@ try {
     }
     assert.ok(fs.existsSync(NODE_SH), 'scripts/zn-node.sh exists');
     assert.ok(fs.readFileSync(NODE_SH, 'utf8').startsWith('#!/bin/sh\n'));
+    for (const [event, c] of Object.entries(manifestCommands('com.openai/hooks.json'))) {
+      assert.strictEqual(c, '/bin/sh "$PLUGIN_ROOT/scripts/zn-node.sh" ' + event + ' hook codex', 'codex ' + event);
+    }
+    for (const [event, c] of Object.entries(manifestCommands('cursor/hooks.json'))) {
+      assert.strictEqual(c, '/bin/sh ./scripts/zn-node.sh ' + event + ' hook cursor', 'cursor ' + event);
+    }
     // The blocking events keep onFailure "block".
     for (const event of ['PreToolUse', 'UserPromptSubmit', 'UserPromptExpansion']) assert.strictEqual(hooks[event][0].hooks[0].onFailure, 'block', event);
   });
@@ -206,6 +220,97 @@ try {
       const p = run(d, 'PostToolUse', { cwd: tmp, PATH: hang + ':/usr/bin:/bin' });
       assert.strictEqual(p.status, 0);
       assert.ok(/NOT protecting/.test(p.stdout), p.stdout);
+    });
+
+    // The Codex and Cursor manifests of the same plugin. Codex runs a hook command through a shell with $PLUGIN_ROOT set;
+    // Cursor runs it in the plugin folder, so its commands name ./scripts/zn-node.sh.
+    const codexCmds = manifestCommands('com.openai/hooks.json');
+    const cursorCmds = manifestCommands('cursor/hooks.json');
+    function runCodex(dir, event, { cwd, PATH, input, env = {} }) {
+      return spawnSync('/bin/sh', ['-c', codexCmds[event]], {
+        cwd, input: input === undefined ? '{"hook_event_name":"' + event + '"}' : input, encoding: 'utf8', timeout: 60000,
+        env: { PATH, HOME: home, PLUGIN_ROOT: dir, ...env },
+      });
+    }
+    function runCursor(dir, event, { PATH, input, env = {} }) {
+      return spawnSync('/bin/sh', ['-c', cursorCmds[event]], {
+        cwd: dir, input: input === undefined ? '{"hook_event_name":"' + event + '"}' : input, encoding: 'utf8', timeout: 60000,
+        env: { PATH, HOME: home, ...env },
+      });
+    }
+    const plantIn = (dir, marker) => {
+      fs.mkdirSync(path.join(dir, 'bin'), { recursive: true });
+      for (const d of [dir, path.join(dir, 'bin')]) {
+        for (const p of ['node', 'node.exe', 'sleep']) fs.writeFileSync(path.join(d, p), '#!/bin/sh\n: > ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+      }
+    };
+    const relPaths = ['.:' + realbin, ':' + realbin, 'bin:' + realbin, realbin + ':.'];
+
+    test('Codex: a node planted in the project folder is never run, and the launcher gets the codex arguments', () => {
+      const d = plugin('codex-planted');
+      const marker = path.join(tmp, 'codex-planted-ran');
+      const work = project('codex-work', marker);
+      for (const event of Object.keys(codexCmds)) {
+        for (const PATH of relPaths) {
+          const r = runCodex(d, event, { cwd: work, PATH });
+          assert.strictEqual(fs.existsSync(marker), false, event + ' ' + PATH + ': a planted program ran');
+          assert.strictEqual(r.status, 0, event + ' ' + PATH + ': ' + r.stderr);
+          assert.strictEqual(r.stdout, JSON.stringify({ args: ['hook', 'codex'], stdin: '{"hook_event_name":"' + event + '"}' }), event);
+        }
+      }
+    });
+
+    test('Codex: with no usable Node.js PreToolUse and UserPromptSubmit block (exit 2) and PostToolUse warns', () => {
+      const d = plugin('codex-nonode', { patch: noFallback });
+      const work = project('codex-nonode-work', path.join(tmp, 'codex-nonode-ran'));
+      for (const event of ['PreToolUse', 'UserPromptSubmit']) {
+        const r = runCodex(d, event, { cwd: work, PATH: '.:' + emptybin });
+        assert.strictEqual(r.status, 2, event + ': ' + r.stderr);
+        assert.ok(/^zn: no Node\.js was found.*in Codex \(\/plugins\)\.$/m.test(r.stderr), r.stderr);
+      }
+      const p = runCodex(d, 'PostToolUse', { cwd: work, PATH: '.:' + emptybin });
+      assert.strictEqual(p.status, 0);
+      assert.ok(/NOT protecting this session/.test(JSON.parse(p.stdout).systemMessage), p.stdout);
+    });
+
+    test('Cursor: a node planted in the folder the hook runs in is never run, and the launcher gets the cursor arguments', () => {
+      const d = plugin('cursor-planted');
+      const marker = path.join(tmp, 'cursor-planted-ran');
+      plantIn(d, marker);
+      for (const event of Object.keys(cursorCmds)) {
+        for (const PATH of relPaths) {
+          const r = runCursor(d, event, { PATH });
+          assert.strictEqual(fs.existsSync(marker), false, event + ' ' + PATH + ': a planted program ran');
+          assert.strictEqual(r.status, 0, event + ' ' + PATH + ': ' + r.stderr);
+          assert.strictEqual(r.stdout, JSON.stringify({ args: ['hook', 'cursor'], stdin: '{"hook_event_name":"' + event + '"}' }), event);
+        }
+      }
+    });
+
+    test('Cursor: with no usable Node.js the events before an action get the deny answer (exit 2); postToolUse gets none', () => {
+      const d = plugin('cursor-nonode', { patch: noFallback });
+      for (const event of ['beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'preToolUse']) {
+        const r = runCursor(d, event, { PATH: '.:' + emptybin });
+        assert.strictEqual(r.status, 2, event + ': ' + r.stderr);
+        const a = JSON.parse(r.stdout);
+        assert.strictEqual(a.permission, 'deny', event);
+        assert.strictEqual(a.continue, false, event);
+        assert.ok(/^zn: no Node\.js was found.*in Cursor's settings\.$/.test(a.user_message), a.user_message);
+      }
+      const p = runCursor(d, 'postToolUse', { PATH: '.:' + emptybin });
+      assert.strictEqual(p.status, 0);
+      assert.strictEqual(p.stdout, '');
+    });
+
+    test('a ./ script path counts only for Cursor: for Claude Code and Codex the launcher is treated as missing', () => {
+      const d = plugin('relpath');
+      for (const agent of ['claude-code', 'codex']) {
+        const r = spawnSync('/bin/sh', ['./scripts/zn-node.sh', 'PreToolUse', 'hook', agent], {
+          cwd: d, input: '{}', encoding: 'utf8', timeout: 60000, env: { PATH: realbin, HOME: home },
+        });
+        assert.strictEqual(r.status, 2, agent);
+        assert.ok(/zn-launch\.js\) is missing/.test(r.stderr), r.stderr);
+      }
     });
   }
 
