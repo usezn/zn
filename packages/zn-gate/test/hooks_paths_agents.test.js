@@ -157,6 +157,95 @@ test('shell commands cannot write the agents hook configuration', (t) => {
   assert.equal(policy.bashDenial('ls -la', opts), null);
 });
 
+test('the agents plugin folders and plugin state cannot be written or removed, but can be read', (t) => {
+  const { home, proj } = tmpHome(t);
+  const moved = path.join(home, 'claude-other');
+  const codexHome = path.join(home, 'codex-home');
+  const cache = path.join(home, 'plugin-cache');
+  const opts = { home, cwd: proj, env: { CLAUDE_CONFIG_DIR: moved, CODEX_HOME: codexHome, CLAUDE_CODE_PLUGIN_CACHE_DIR: cache } };
+  const protectedPaths = [
+    path.join(home, '.claude', 'plugins', 'installed_plugins.json'),
+    path.join(home, '.claude', 'plugins', 'known_marketplaces.json'),
+    path.join(home, '.claude', 'plugins', 'cache', 'usezn', 'zn-gate', '1.14.0', 'hooks', 'hooks.json'),
+    path.join(home, '.claude', 'plugins', 'cache', 'usezn', 'zn-gate', '1.14.0', 'scripts', 'zn-node.sh'),
+    path.join(home, '.claude', 'plugins'),
+    path.join(moved, 'plugins', 'installed_plugins.json'),
+    path.join(moved, 'plugins', 'cache', 'm', 'p', '1.0.0', 'hooks', 'hooks.json'),
+    path.join(home, '.codex', 'plugins', 'cache', 'usezn', 'zn-gate', '1.14.0', 'hooks', 'hooks.json'),
+    path.join(codexHome, 'plugins', 'cache', 'usezn', 'zn-gate', '1.14.0', 'scripts', 'zn-hook.sh'),
+    path.join(home, '.cursor', 'plugins', 'zn-gate', 'hooks.json'),
+    path.join(home, '.zcode', 'cli', 'plugins', 'installed_plugins.json'),
+    path.join(home, '.zcode', 'cli', 'plugins', 'cache', 'usezn', 'zn-gate', '1.14.0', 'hooks', 'hooks.json'),
+    path.join(home, '.gemini', 'config', 'plugins', 'zn-gate', 'hooks', 'hooks.json'),
+    path.join(home, '.gemini', 'config', 'config.json'),
+    path.join(home, '.gemini', 'antigravity-cli', 'plugins', 'zn-gate', 'hooks', 'hooks.json'),
+    path.join(proj, '.agents', 'plugins', 'zn-gate', 'hooks', 'hooks.json'),
+    path.join(cache, 'installed_plugins.json'),
+    path.join(cache, 'cache', 'usezn', 'zn-gate', '1.14.0', 'scripts', 'zn-node.sh'),
+    cache,
+  ];
+  for (const f of protectedPaths) {
+    assert.match(policy.writeDenial(f, opts), /protected/, f);
+    assert.equal(policy.readDenial(f, opts), null, f);
+  }
+  // The folders that hold them cannot be removed or moved as a whole either.
+  for (const d of [path.join(home, '.zcode'), path.join(home, '.zcode', 'cli'), path.join(home, '.gemini'), path.join(home, '.gemini', 'config')]) {
+    assert.match(policy.writeDenial(d, opts), /protected/, d);
+  }
+  // Other files in those folders and in the project stay writable.
+  assert.equal(policy.writeDenial(path.join(proj, 'plugins', 'my-plugin.js'), opts), null);
+  assert.equal(policy.writeDenial(path.join(home, '.gemini', 'notes.md'), opts), null);
+});
+
+test('shell commands cannot change or remove the agents plugins, and can read them', (t) => {
+  const { home, proj } = tmpHome(t);
+  const opts = { home, cwd: proj, env: {} };
+  for (const cmd of [
+    'rm -rf ~/.claude/plugins',
+    'rm -rf ~/.claude/plugins/cache/usezn/zn-gate',
+    'echo {} > ~/.claude/plugins/installed_plugins.json',
+    'sed -i s/zn-gate/x/ ~/.zcode/cli/plugins/installed_plugins.json',
+    'rm -rf ~/.zcode',
+    'mv ~/.gemini/config ~/.gemini/config.bak',
+    'echo {} > ~/.gemini/config/config.json',
+    'rm -r ~/.codex/plugins/cache/usezn',
+    'cp evil.sh ~/.cursor/plugins/zn-gate/scripts/zn-launch.js',
+  ]) {
+    assert.match(policy.bashDenial(cmd, opts) || '', /protected/, cmd);
+  }
+  assert.equal(policy.bashDenial('cat ~/.claude/plugins/installed_plugins.json', opts), null, 'reading is allowed');
+  assert.equal(policy.bashDenial('ls ~/.zcode/cli/plugins', opts), null, 'listing is allowed');
+});
+
+test('Antigravity CLI folder: removing or moving it is refused, like the other plugin folders', (t) => {
+  const { home, proj } = tmpHome(t);
+  const opts = { home, cwd: proj, env: {} };
+  for (const cmd of ['rm -rf ~/.gemini/antigravity-cli', 'mv ~/.gemini/antigravity-cli ~/.gemini/x', 'rm -r ~/.gemini/antigravity-cli/plugins']) {
+    assert.match(policy.bashDenial(cmd, opts) || '', /protected/, cmd);
+  }
+  assert.match(policy.writeDenial(path.join(home, '.gemini', 'antigravity-cli'), opts), /protected/);
+});
+
+test('a project folder named like an agent folder is not the agent plugin folder: only the home (and the moved folders) count', (t) => {
+  const { home, proj } = tmpHome(t);
+  const opts = { home, cwd: proj, env: {} };
+  // In the project: allowed (Gemini CLI keeps its project settings in .gemini/, monorepos have nested .claude/ folders).
+  for (const cmd of ['mkdir -p .gemini', 'rm -rf .gemini', 'rm -rf .zcode', 'mv .gemini/config .gemini/old',
+    'echo {} > packages/x/.claude/plugins/foo.json', 'rm -rf packages/x/.agents/plugins']) {
+    assert.equal(policy.bashDenial(cmd, opts), null, cmd);
+  }
+  for (const f of [path.join(proj, '.gemini'), path.join(proj, '.gemini', 'config', 'config.json'),
+    path.join(proj, 'packages', 'x', '.claude', 'plugins', 'foo.json'), path.join(proj, 'packages', 'x', '.codex', 'plugins', 'a', 'b.json'),
+    path.join(proj, 'sub', '.agents', 'plugins', 'p', 'hooks.json')]) {
+    assert.equal(policy.writeDenial(f, opts), null, f);
+  }
+  // The same names in the home folder, and .agents/plugins at the project root: refused.
+  for (const cmd of ['rm -rf ~/.gemini', 'mkdir -p ~/.gemini/config', 'echo {} > ~/.claude/plugins/foo.json', 'rm -rf .agents/plugins']) {
+    assert.match(policy.bashDenial(cmd, opts) || '', /protected/, cmd);
+  }
+  assert.match(policy.writeDenial(path.join(proj, '.agents', 'plugins', 'p', 'hooks.json'), opts), /protected/);
+});
+
 test('a Codex patch is refused when any file in it is protected, and an unreadable patch too', async (t) => {
   const { home, proj } = tmpHome(t);
   const settings = path.join(home, '.claude', 'settings.json');

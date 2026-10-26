@@ -252,7 +252,7 @@ test('zn-gate check: a manifest whose program is not on this computer, or with n
   writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } } });
   let r = await zcodeCheck(home, cwd, '/usr/bin:/bin');
   assert.equal(r.state, 'not-protected');
-  assert.match(r.problem, /starts its hook with \/nonexistent\/zn-test\/sh, which is not on this computer/);
+  assert.match(r.problem, /`\/nonexistent\/zn-test\/sh .*`, which is not a system shell running a script inside the plugin folder/);
   const home2 = tempDir(t, 'zn-zcp-nopre-');
   installPlugin(home2, { hooks: (h) => { const j = JSON.parse(h); delete j.hooks.PreToolUse; return JSON.stringify(j); } });
   writeCfg(home2, { plugins: { enabledPlugins: { [ID]: true } } });
@@ -302,11 +302,11 @@ test('zn-gate check: a ZCode process hook counts only as an absolute sh or node 
     [swap('/usr/bin/env', (a) => ['sh', ...a]), /`env`, which looks the program/],
     [swap('/bin/sh', (a) => ['-c', 'sh ' + a.join(' ')]), /code given inline \(`sh -c`\)/],
     [swap('/bin/sh', (a) => ['-o', 'errexit', '-c', 'sh ' + a.join(' ')]), /code given inline \(`sh -c`\)/],
-    [swap('/usr/bin/nohup', (a) => ['sh', ...a]), /not an absolute sh or node running a script inside the plugin folder/],
-    [swap('/bin/sh', (a) => ['scripts/zn-hook.sh', a[1]]), /not an absolute sh or node running a script inside the plugin folder/],
-    [swap('/bin/sh', (a) => ['./scripts/zn-hook.sh', a[1]]), /not an absolute sh or node running a script inside the plugin folder/],
-    [swap('/bin/sh', () => ['-s']), /not an absolute sh or node running a script inside the plugin folder/],
-    [swap('/bin/sh', () => []), /not an absolute sh or node running a script inside the plugin folder/],
+    [swap('/usr/bin/nohup', (a) => ['sh', ...a]), /not a system shell running a script inside the plugin folder/],
+    [swap('/bin/sh', (a) => ['scripts/zn-hook.sh', a[1]]), /not a system shell running a script inside the plugin folder/],
+    [swap('/bin/sh', (a) => ['./scripts/zn-hook.sh', a[1]]), /not a system shell running a script inside the plugin folder/],
+    [swap('/bin/sh', () => ['-s']), /not a system shell running a script inside the plugin folder/],
+    [swap('/bin/sh', () => []), /not a system shell running a script inside the plugin folder/],
   ];
   for (const [hooks, re] of cases) {
     const home = tempDir(t, 'zn-zcp-wl-');
@@ -316,4 +316,28 @@ test('zn-gate check: a ZCode process hook counts only as an absolute sh or node 
     assert.equal(r.state, 'not-protected', String(re));
     assert.match(r.problem, re);
   }
+});
+
+test('zn-gate check: a ZCode hook with a non-system sh, a pattern, or a script linked out of the plugin is NOT protected and does not run', { skip: !posix }, async (t) => {
+  const project = tempDir(t, 'zn-zcp-strict-proj-');
+  const marker = path.join(project, 'ran.txt');
+  const planted = '#!/bin/sh\necho ran >> ' + JSON.stringify(marker) + '\nexit 0\n';
+  fs.writeFileSync(path.join(project, 'sh'), planted, { mode: 0o755 });
+  fs.writeFileSync(path.join(project, 'evil.sh'), planted, { mode: 0o755 });
+  const swapCmd = (cmd) => (h) => h.split('"command": "/bin/sh"').join('"command": ' + JSON.stringify(cmd));
+  const cases = [
+    [swapCmd(path.join(project, 'sh')), null, /not a system shell running a script inside the plugin folder/],
+    [swapCmd('/*/sh'), null, /a pattern the shell or the host expands/],
+    [(h) => h.split('scripts/zn-hook.sh').join('scripts/link.sh'), 'link', /not a file inside the plugin folder/],
+  ];
+  for (const [hooks, kind, re] of cases) {
+    const home = tempDir(t, 'zn-zcp-strict-');
+    const root = installPlugin(home, { hooks });
+    if (kind === 'link') fs.symlinkSync(path.join(project, 'evil.sh'), path.join(root, 'scripts', 'link.sh'));
+    writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } } });
+    const r = await zcodeCheck(home, project, '/usr/bin:/bin');
+    assert.equal(r.state, 'not-protected', String(re));
+    assert.match(r.problem, re);
+  }
+  assert.equal(fs.existsSync(marker), false, 'a program or script named by a refused manifest ran');
 });

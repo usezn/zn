@@ -489,6 +489,7 @@ test('check: a Claude Code plugin whose hooks.json starts a hook with a program 
   for (const [cmd, prog] of cases) {
     const home = tempDir(t, 'zn-check-ccbare-');
     const root = fakePlugin(home, launcher());
+    fs.writeFileSync(path.join(root, 'scripts', 'zn-node.sh'), '#!/bin/sh\n', { mode: 0o755 });
     fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
     fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooksJson(cmd));
     const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
@@ -499,6 +500,7 @@ test('check: a Claude Code plugin whose hooks.json starts a hook with a program 
   // The shell by its full path, with the plugin root in quotes: the plugin is checked as before.
   const home = tempDir(t, 'zn-check-ccabs-');
   const root = fakePlugin(home, launcher());
+  fs.writeFileSync(path.join(root, 'scripts', 'zn-node.sh'), '#!/bin/sh\n', { mode: 0o755 });
   fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
   fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooksJson('/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code'));
   const ok = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
@@ -522,7 +524,7 @@ test('check: only an absolute sh or node running a script inside the plugin fold
     ['/usr/bin/env /bin/sh ' + S, /`env`, which looks the program/],
     ['/usr/bin/env', /`env`, which looks the program/],
     ...['nohup', 'timeout 10', 'nice', 'sudo', 'xargs', 'stdbuf -o0', 'setsid', 'time', 'flock /x', 'arch -arm64', 'xcrun']
-      .map((w) => ['/usr/bin/' + w + ' node ' + L, /not an absolute sh or node running a script inside the plugin folder/]),
+      .map((w) => ['/usr/bin/' + w + ' node ' + L, /not a system shell running a script inside the plugin folder/]),
     // code given inline
     ['/bin/sh -c "node x"', /code given inline \(`sh -c`\)/],
     ['/bin/bash -ec "node x"', /code given inline \(`bash -ec`\)/],
@@ -535,18 +537,19 @@ test('check: only an absolute sh or node running a script inside the plugin fold
     ['/usr/bin/python3 -c "import os"', /code given inline/],
     ['/usr/bin/perl -e 1', /code given inline/],
     ['/usr/bin/node -e 1', /code given inline \(`node -e`\)/],
+    ['/usr/bin/node ' + L, /not a system shell running a script/],
     // no script, or a script outside the plugin folder
-    ['/bin/sh', /not an absolute sh or node running a script/],
-    ['/bin/sh -s', /not an absolute sh or node running a script/],
-    ['/bin/sh -', /not an absolute sh or node running a script/],
-    ['/bin/sh ./scripts/zn-node.sh x', /not an absolute sh or node running a script/],
-    ['/bin/sh scripts/zn-node.sh x', /not an absolute sh or node running a script/],
-    ['/bin/sh ../x.sh', /not an absolute sh or node running a script/],
-    ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/../x.sh"', /not an absolute sh or node running a script/],
-    ['/bin/sh /opt/x.sh', /not an absolute sh or node running a script/],
-    ['/bin/sh "$PLUGIN_ROOT/scripts/zn-node.sh"', /not an absolute sh or node running a script/],
-    ['/usr/bin/node scripts/zn-launch.js hook claude-code', /not an absolute sh or node running a script/],
-    ['/usr/bin/python3 ' + L, /not an absolute sh or node running a script/],
+    ['/bin/sh', /not a system shell running a script/],
+    ['/bin/sh -s', /not a system shell running a script/],
+    ['/bin/sh -', /not a system shell running a script/],
+    ['/bin/sh ./scripts/zn-node.sh x', /not a system shell running a script/],
+    ['/bin/sh scripts/zn-node.sh x', /not a system shell running a script/],
+    ['/bin/sh ../x.sh', /not a system shell running a script/],
+    ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/../x.sh"', /not a system shell running a script/],
+    ['/bin/sh /opt/x.sh', /not a system shell running a script/],
+    ['/bin/sh "$PLUGIN_ROOT/scripts/zn-node.sh"', /not a system shell running a script/],
+    ['/usr/bin/node scripts/zn-launch.js hook claude-code', /not a system shell running a script/],
+    ['/usr/bin/python3 ' + L, /not a system shell running a script/],
     // assignments in front, shell lines, a quote never closed
     ['BASH_ENV=./x /bin/bash ' + S, /NAME=value in front of the program \(BASH_ENV\)/],
     ['FOO=1 /bin/sh ' + S, /NAME=value in front/],
@@ -578,11 +581,13 @@ test('check: only an absolute sh or node running a script inside the plugin fold
     assert.match(r.problem, re, cmd);
   }
   // The forms zn's plugins use (also with shell syntax inside quotes) are checked as before.
-  const safe = ['/bin/sh ' + S, '/bin/bash ' + S, '/usr/bin/node ' + L, '/bin/sh "${CLAUDE_PLUGIN_ROOT}/a;b|c.sh" "x && y"'];
+  const safe = ['/bin/sh ' + S, '/bin/bash ' + S, '/bin/sh "${CLAUDE_PLUGIN_ROOT}/a;b|c.sh" "x && y"'];
   if (process.platform !== 'win32') {
     for (const cmd of safe) {
       const home = tempDir(t, 'zn-check-ccb3ok-');
       const root = fakePlugin(home, launcher());
+      fs.writeFileSync(path.join(root, 'scripts', 'zn-node.sh'), '#!/bin/sh\n', { mode: 0o755 });
+      fs.writeFileSync(path.join(root, 'a;b|c.sh'), '#!/bin/sh\n', { mode: 0o755 });
       fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
       fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooksJson(cmd));
       const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
@@ -594,6 +599,8 @@ test('check: only an absolute sh or node running a script inside the plugin fold
 test('check: on Windows a Claude Code plugin hook counts only when it runs with bash ("shell": "bash")', (t) => {
   const { pluginManifest } = require('../lib/check')._internal;
   const root = tempDir(t, 'zn-check-ccwin-');
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'scripts', 'zn-node.sh'), '#!/bin/sh\n');
   const write = (hook) => {
     fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
     fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), JSON.stringify({ hooks: { PreToolUse: [{ hooks: [hook] }] } }));
@@ -608,4 +615,37 @@ test('check: on Windows a Claude Code plugin hook counts only when it runs with 
   assert.match(pluginManifest(root, 'CLAUDE_PLUGIN_ROOT', 'win32').bare.byName, /`node` by name/);
   write({ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/x.js"' });
   assert.match(pluginManifest(root, 'CLAUDE_PLUGIN_ROOT', 'win32').bare.byName, /`node` by name/);
+});
+
+test('check: a plugin hook is NOT protected, and nothing it names runs, when its shell is not a system shell, it uses a pattern, or its script links out of the plugin', { skip: process.platform === 'win32' }, async (t) => {
+  const hooksJson = (cmd) => JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: 'command', command: cmd, onFailure: 'block' }] }] } });
+  const S = '"${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code';
+  const project = tempDir(t, 'zn-check-strict-proj-');
+  const marker = path.join(project, 'ran.txt');
+  const planted = '#!/bin/sh\necho ran >> ' + JSON.stringify(marker) + '\nexit 0\n';
+  fs.writeFileSync(path.join(project, 'sh'), planted, { mode: 0o755 });
+  fs.writeFileSync(path.join(project, 'evil.sh'), planted, { mode: 0o755 });
+  const cases = [
+    // an absolute sh that is not a system shell (a file in the project)
+    [path.join(project, 'sh') + ' ' + S, /not a system shell running a script inside the plugin folder/, null],
+    // a pattern the shell expands to some sh
+    ['/*/sh ' + S, /a pattern the shell or the host expands/, null],
+    ['/bin/s? ' + S, /a pattern the shell or the host expands/, null],
+    // the script is a link inside the plugin to a file in the project
+    ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/link.sh" PreToolUse hook claude-code', /not a file inside the plugin folder/, 'link'],
+    // the script does not exist
+    ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/missing.sh" PreToolUse hook claude-code', /is missing/, null],
+  ];
+  for (const [cmd, re, kind] of cases) {
+    const home = tempDir(t, 'zn-check-strict-');
+    const root = fakePlugin(home, launcher());
+    fs.writeFileSync(path.join(root, 'scripts', 'zn-node.sh'), planted, { mode: 0o755 });
+    if (kind === 'link') fs.symlinkSync(path.join(project, 'evil.sh'), path.join(root, 'scripts', 'link.sh'));
+    fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooksJson(cmd));
+    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+    assert.equal(r.state, 'not-protected', cmd);
+    assert.match(r.problem, re, cmd);
+  }
+  assert.equal(fs.existsSync(marker), false, 'a program or script named by a refused manifest ran');
 });
