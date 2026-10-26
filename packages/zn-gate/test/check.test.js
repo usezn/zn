@@ -965,3 +965,55 @@ test('check: no Cursor plugin, or another plugin in Cursor\'s plugin folder, lea
   r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-') }), 'cursor');
   assert.equal(r.state, 'not-set-up');
 });
+
+test('check never starts a node from the project, node_modules or a link into them, also with no plugin (node version probe)', { skip: process.platform === 'win32' }, async (t) => {
+  const { resolveHookNode } = require('../lib/check')._internal;
+  const project = tempDir(t, 'zn-check-probe-proj-');
+  fs.mkdirSync(path.join(project, '.git'));
+  fs.mkdirSync(path.join(project, 'src'), { recursive: true });
+  const marker = path.join(tempDir(t, 'zn-check-probe-mark-'), 'ran.txt');
+  const fake = '#!/bin/sh\necho "$1" >> ' + JSON.stringify(marker) + '\n[ "$1" = --version ] && echo v99.0.0\nexit 0\n';
+  const put = (dir) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'node'), fake, { mode: 0o755 }); return dir; };
+  const projBin = put(path.join(project, 'bin'));
+  const nmBin = put(path.join(tempDir(t, 'zn-check-probe-nm-'), 'node_modules', '.bin'));
+  // A folder outside the project whose node is a link to the project's node.
+  const linkDir = tempDir(t, 'zn-check-probe-link-');
+  fs.symlinkSync(path.join(projBin, 'node'), path.join(linkDir, 'node'));
+  const nodeDir = path.dirname(process.execPath);
+  const PATH = [projBin, nmBin, linkDir, nodeDir, process.env.PATH || ''].join(path.delimiter);
+  for (const cwd of [project, path.join(project, 'src')]) {
+    const hook = resolveHookNode({ PATH }, cwd);
+    assert.ok(hook && hook.version === process.versions.node, cwd + ': ' + JSON.stringify(hook));
+    assert.ok(!hook.path.startsWith(project) && !hook.path.startsWith(linkDir), hook.path);
+  }
+  // Only untrusted nodes on the PATH: the version is unknown, nothing runs.
+  assert.equal(resolveHookNode({ PATH: [projBin, nmBin, linkDir].join(path.delimiter) }, project), null);
+  // The whole check with no plugin installed (the warnings path) and with the plugin: the project node never runs.
+  const home = tempDir(t, 'zn-check-probe-home-');
+  await check({ home, env: { HOME: home, PATH }, cwd: path.join(project, 'src') });
+  await check({ home, env: { HOME: home, PATH }, cwd: path.join(project, 'src'), live: false });
+  fakePlugin(home, launcher());
+  await check({ home, env: { HOME: home, PATH }, cwd: project });
+  assert.equal(fs.existsSync(marker), false, 'zn-gate check started a node from the project, node_modules or a link into them');
+});
+
+test('check: from the home folder, or a dotfiles home with git, a Node.js only in nvm or volta counts', { skip: process.platform === 'win32' }, (t) => {
+  const { resolveHookNode } = require('../lib/check')._internal;
+  for (const [tool, dir] of [['nvm', path.join('.nvm', 'versions', 'node', 'v22.0.0', 'bin')], ['volta', path.join('.volta', 'bin')]]) {
+    for (const dotfiles of [false, true]) {
+      const home = tempDir(t, 'zn-check-homenode-');
+      if (dotfiles) fs.mkdirSync(path.join(home, '.git'));
+      const bin = path.join(home, dir);
+      fs.mkdirSync(bin, { recursive: true });
+      fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+      // Only that folder on the PATH: no system node to fall back on.
+      const env = { HOME: home, PATH: bin };
+      const proj = path.join(home, 'notes');
+      fs.mkdirSync(proj);
+      for (const cwd of [home, proj]) {
+        const hook = resolveHookNode(env, cwd);
+        assert.ok(hook && hook.version === process.versions.node, tool + (dotfiles ? ' dotfiles' : '') + ' from ' + cwd + ': ' + JSON.stringify(hook));
+      }
+    }
+  }
+});

@@ -115,11 +115,78 @@ function whichSync(cmd, pathValue) {
  * gives the program's absolute path or null (a name with a path in it is used as written); on Windows only an .exe or
  * .com, which starts without a shell.
  */
-function absolutePath(pathValue, platform = process.platform) {
+function absolutePath(pathValue, platform = process.platform, where = {}) {
   const win = platform === 'win32';
   const sep = win ? ';' : ':';
   const keep = (d) => (win ? /^(?:[A-Za-z]:[\\/]|\\\\)/.test(d) : d.startsWith('/'));
-  return String(pathValue || '').split(sep).filter(keep).join(sep);
+  const abs = String(pathValue || '').split(sep).filter(keep).join(sep);
+  // Spelled for another system (tests): only the lexical rule applies, the places are not on this disk.
+  return platform === process.platform ? trustedPath(abs, where.cwd, where.env, platform) : abs;
+}
+
+/*
+ * An absolute PATH entry can still point into the project zn runs in: its bin/, node_modules/.bin, a folder direnv adds.
+ * trustedPath drops the entries whose real path is in the folder zn runs in (`cwd`), the git work tree around it, the
+ * project the agent names (CLAUDE_PROJECT_DIR) or a node_modules folder, the rule of the plugins' zn-node.sh. The home
+ * folder and the folders above it are never the project (a Node.js from nvm or volta there stays). Real paths and the
+ * work tree are looked up once per process: this runs on every hook.
+ */
+const REAL_KEYS = new Map();
+function realKey(p, win) {
+  let r = REAL_KEYS.get(p);
+  if (r === undefined) {
+    r = path.resolve(p);
+    try { r = fs.realpathSync(r); } catch (_) { /* not there: as written */ }
+    if (win) r = r.toLowerCase();
+    if (REAL_KEYS.size > 512) REAL_KEYS.clear();
+    REAL_KEYS.set(p, r);
+  }
+  return r;
+}
+
+function insideOrSame(p, dir) {
+  const rel = path.relative(dir, p);
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
+}
+
+const GIT_ROOTS = new Map();
+function gitRootOf(dir) {
+  const start = path.resolve(dir);
+  if (GIT_ROOTS.has(start)) return GIT_ROOTS.get(start);
+  let root = null;
+  for (let cur = start; ; cur = path.dirname(cur)) {
+    try { if (fs.existsSync(path.join(cur, '.git'))) { root = cur; break; } } catch (_) { /* keep going */ }
+    if (path.dirname(cur) === cur) break;
+  }
+  if (GIT_ROOTS.size > 64) GIT_ROOTS.clear();
+  GIT_ROOTS.set(start, root);
+  return root;
+}
+
+/* The folders a program must not come from: the folder zn runs in, its git work tree and the agent's project. */
+function projectPlaces(cwd, env, win) {
+  const e = env || process.env;
+  const here = cwd || process.cwd();
+  const home = realKey(e.HOME || e.USERPROFILE || os.homedir(), win);
+  const out = [];
+  for (const d of [here, gitRootOf(here), e.CLAUDE_PROJECT_DIR]) {
+    if (!d || !path.isAbsolute(String(d))) continue;
+    const k = realKey(String(d), win);
+    if (!insideOrSame(home, k) && !out.includes(k)) out.push(k);
+  }
+  return out;
+}
+
+function untrustedPlace(real, places) {
+  return places.some((d) => insideOrSame(real, d)) || /(^|[\\/])node_modules([\\/]|$)/i.test(real);
+}
+
+function trustedPath(pathValue, cwd, env, platform = process.platform) {
+  const win = platform === 'win32';
+  const sep = win ? ';' : ':';
+  const places = projectPlaces(cwd, env, win);
+  const absolute = (d) => (win ? /^(?:[A-Za-z]:[\\/]|\\\\)/.test(d) : d.startsWith('/'));
+  return String(pathValue || '').split(sep).filter((d) => d && absolute(d) && !untrustedPlace(realKey(d, win), places)).join(sep);
 }
 
 function pathOf(env) {
@@ -127,19 +194,25 @@ function pathOf(env) {
   return e ? String(e[1] || '') : '';
 }
 
-function programEnv(env = process.env, platform = process.platform) {
+function programEnv(env = process.env, platform = process.platform, cwd) {
   const out = {};
   for (const [k, v] of Object.entries(env || {})) if (k.toUpperCase() !== 'PATH') out[k] = v;
-  out.PATH = absolutePath(pathOf(env), platform);
+  out.PATH = absolutePath(pathOf(env), platform, { cwd, env });
   if (platform === 'win32') out.NoDefaultCurrentDirectoryInExePath = '1';
   return out;
 }
 
-function findProgram(name, env = process.env) {
+function findProgram(name, env = process.env, cwd) {
   if (hasPathSeparator(name)) return name;
   const file = isWin && !/\.(?:exe|com)$/i.test(name) ? name + '.exe' : name;
-  const found = whichSync(file, absolutePath(pathOf(env)));
-  return found && (!isWin || /\.(?:exe|com)$/i.test(found)) ? path.resolve(found) : null;
+  const places = projectPlaces(cwd, env, isWin);
+  for (const dir of absolutePath(pathOf(env), process.platform, { cwd, env }).split(path.delimiter)) {
+    if (!dir) continue;
+    const found = whichSync(file, dir);
+    // A program that links into the project counts as the project's.
+    if (found && (!isWin || /\.(?:exe|com)$/i.test(found)) && !untrustedPlace(realKey(found, isWin), places)) return path.resolve(found);
+  }
+  return null;
 }
 
 /* The form approvals are stored under: case-insensitive on Windows. */
@@ -395,6 +468,7 @@ function psEnv(ps, base, extra) {
 
 module.exports = {
   absolutePath,
+  trustedPath,
   programEnv,
   findProgram,
   systemPowerShell,

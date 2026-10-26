@@ -56,16 +56,19 @@ function pluginNodeMessage(version) {
 
 /* The plugin's hooks run `node` as Claude Code finds it on its PATH, which is not always the Node.js that runs
    zn-gate (npx, nvm, several installs). This finds that `node` and asks it for its version. Never throws:
-   null means it could not be found or run. Same binary as this process: no need to start it. */
-function resolveHookNode(env) {
+   null means it could not be found or run. Same binary as this process: no need to start it.
+   Only a node the plugin's hooks would start counts, with the rule of the plugin's zn-node.sh, applied before anything
+   runs: an absolute PATH entry whose real path is in the folder check runs in (`cwd`), its project (the git work tree
+   around it) or a node_modules folder is skipped, and so is a node that links into one. A project bin/ on the PATH
+   (direnv) is never started by check; with no other node the version is unknown. */
+function resolveHookNode(env, cwd) {
   try {
-    const exe = require('./exe');
     const isWin = process.platform === 'win32';
-    const absPath = String((env || process.env).PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
-    const found = exe.whichSync(isWin ? 'node.exe' : 'node', absPath);
-    if (!found) return null;
-    const file = path.resolve(found);
     const norm = (f) => { let r = path.resolve(f); try { r = fs.realpathSync(r); } catch (err) { /* keep it */ } return isWin ? r.toLowerCase() : r; };
+    // The shared rule (exe.findProgram): never a node in the project, its git work tree or node_modules, nor one that
+    // links there; the home folder is never the project, so a Node.js from nvm or volta counts.
+    const file = require('./exe').findProgram('node', env || process.env, cwd || process.cwd());
+    if (!file) return null;
     if (norm(file) === norm(process.execPath)) return { version: process.versions.node, path: file };
     const r = spawnSync(file, ['--version'], { encoding: 'utf8', timeout: 3000, windowsHide: true, shell: false });
     const m = /^v(\d+\.\d+\.\d+)/.exec(String(r.stdout || '').trim());
@@ -82,7 +85,7 @@ function pluginNodeStatus(opts = {}) {
   const zn = opts.nodeVersion || process.versions.node;
   let hook = opts.hookNode;
   if (typeof hook === 'function') hook = hook(opts.env || process.env);
-  else if (hook === undefined) hook = opts.nodeVersion ? { version: opts.nodeVersion, path: null } : resolveHookNode(opts.env);
+  else if (hook === undefined) hook = opts.nodeVersion ? { version: opts.nodeVersion, path: null } : resolveHookNode(opts.env, opts.cwd);
   if (!hook || !hook.version) {
     return { ok: false, unknown: true, version: null, zn, why: 'zn-gate could not find or run the `node` that Claude Code will start the hooks of the plugin with (the first one on your PATH)' };
   }
@@ -687,7 +690,7 @@ const REINSTALL = (id) => 'install zn-gate again for the Node.js you use now: ru
 
 /* Absolute path of `name`, searched only in absolute PATH entries; null when there is none. */
 function onAbsPath(name, env) {
-  const absPath = String((env || process.env).PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
+  const absPath = require('./exe').absolutePath((env || process.env).PATH || '', process.platform, { env: env || process.env });
   const found = require('./exe').whichSync(process.platform === 'win32' ? name + (name === 'zn' ? '.cmd' : '.exe') : name, absPath);
   return found ? path.resolve(found) : null;
 }
@@ -695,7 +698,7 @@ function onAbsPath(name, env) {
 /* Absolute path of the `zn` command, searched only in absolute PATH entries; null when there is none. */
 function znOnPath(env) {
   // Only absolute PATH entries: a relative one (node_modules/.bin, .) depends on the folder check runs from.
-  const absPath = String((env || process.env).PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
+  const absPath = require('./exe').absolutePath((env || process.env).PATH || '', process.platform, { env: env || process.env });
   const found = require('./exe').whichSync(process.platform === 'win32' ? 'zn.cmd' : 'zn', absPath);
   return found ? path.resolve(found) : null;
 }
@@ -1249,7 +1252,7 @@ function nodeWarnings(opts, env) {
     if (a) out.push(a.message);
     let hook = opts.hookNode;
     if (typeof hook === 'function') hook = hook(env);
-    else if (hook === undefined) hook = opts.nodeVersion ? null : resolveHookNode(env);
+    else if (hook === undefined) hook = opts.nodeVersion ? null : resolveHookNode(env, opts.cwd);
     if (hook && hook.version && hook.version !== zn) {
       const h = nodeAdvice(hook.version);
       if (h) out.push('The hooks will run on Node.js ' + hook.version + (hook.path ? ' (from ' + hook.path + ')' : '') + '. ' + h.message);
