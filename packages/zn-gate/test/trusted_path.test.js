@@ -90,3 +90,20 @@ test('zn-gate shield never starts an MCP server program from the project bin/', 
   assert.notEqual(r.status, 0, 'shield found the server in the project');
   assert.equal(fs.existsSync(marker), false, 'shield started the server of the project');
 });
+
+test('programEnv drops a folder outside the project that holds a node linked into it, so a child running node cannot reach it', { skip: !POSIX }, (t) => {
+  const { home, proj, marker } = project(t);
+  const nmBin = fakeProgram(path.join(proj, 'node_modules', '.bin'), 'node', marker);
+  const outside = tempDir(t, 'zn-trust-outside-');
+  fs.symlinkSync(path.join(nmBin, 'node'), path.join(outside, 'node'));
+  const plain = tempDir(t, 'zn-trust-plain-');
+  fs.writeFileSync(path.join(plain, 'tool'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const env = { HOME: home, PATH: [outside, plain, path.dirname(process.execPath), '/usr/bin', '/bin'].join(':') };
+  const childPath = exe.programEnv(env, process.platform, proj).PATH.split(':');
+  assert.ok(!childPath.includes(outside), 'the folder with the linked node stayed: ' + childPath.join(':'));
+  assert.ok(childPath.includes(plain), 'an ordinary folder outside the project went');
+  // A child that runs `node` through that PATH gets the real Node.js, never the project's.
+  const r = spawnSync('/bin/sh', ['-c', 'node -e "process.stdout.write(process.version)"'], { cwd: proj, env: exe.programEnv(env, process.platform, proj), encoding: 'utf8', timeout: 20000 });
+  assert.equal(r.stdout, process.version, r.stderr);
+  assert.equal(fs.existsSync(marker), false, 'the project node ran');
+});

@@ -181,12 +181,36 @@ function untrustedPlace(real, places) {
   return places.some((d) => insideOrSame(real, d)) || /(^|[\\/])node_modules([\\/]|$)/i.test(real);
 }
 
+/* A folder outside the project can still hold a link into it (a `node` linked to the project's node_modules/.bin): the
+   programs zn or the programs it starts look up by name are checked in each folder kept, and a folder with one that links
+   into the project goes too (the project itself, as the folder rules name it), so a child that runs `node` or `env node` cannot reach it. One lstat per name and folder,
+   answered once per process. */
+const LINK_CHECKED = ['node', 'npx', 'npm', 'zn', 'zn-gate', 'git', 'sh', 'bash', 'python', 'python3', 'uvx', 'docker', 'claude'];
+const LINKED_DIRS = new Map();
+function linksIntoProject(dir, places, win) {
+  const key = dir + '\0' + places.join('\0');
+  if (LINKED_DIRS.has(key)) return LINKED_DIRS.get(key);
+  let bad = false;
+  const names = win ? LINK_CHECKED.flatMap((n) => [n + '.exe', n + '.cmd']) : LINK_CHECKED;
+  for (const n of names) {
+    const f = path.join(dir, n);
+    let st;
+    try { st = fs.lstatSync(f); } catch (_) { continue; }
+    // Into the project only: a global npm puts links to its own node_modules (npx, npm) in /usr/bin.
+    if (st.isSymbolicLink() && places.some((d) => insideOrSame(realKey(f, win), d))) { bad = true; break; }
+  }
+  if (LINKED_DIRS.size > 256) LINKED_DIRS.clear();
+  LINKED_DIRS.set(key, bad);
+  return bad;
+}
+
 function trustedPath(pathValue, cwd, env, platform = process.platform) {
   const win = platform === 'win32';
   const sep = win ? ';' : ':';
   const places = projectPlaces(cwd, env, win);
   const absolute = (d) => (win ? /^(?:[A-Za-z]:[\\/]|\\\\)/.test(d) : d.startsWith('/'));
-  return String(pathValue || '').split(sep).filter((d) => d && absolute(d) && !untrustedPlace(realKey(d, win), places)).join(sep);
+  return String(pathValue || '').split(sep)
+    .filter((d) => d && absolute(d) && !untrustedPlace(realKey(d, win), places) && !linksIntoProject(d, places, win)).join(sep);
 }
 
 function pathOf(env) {
