@@ -42,15 +42,19 @@ CDPATH=
 CWD_P=$(pwd -P 2>/dev/null) || CWD_P=""
 phys() {
   PHYS=""
-  [ -n "$1" ] || return 1
+  _pf=$1
+  [ -n "$_pf" ] || return 1
+  # cd prints the folder and goes back to the previous one for "-": a folder named "-" is ./-, and nothing reaches the
+  # hook's output (the agent reads it as the hook's answer).
+  [ "$_pf" != - ] || _pf=./-
   if [ -z "$CWD_P" ]; then
-    PHYS=$(cd -P -- "$1" 2>/dev/null && pwd -P) || return 1
+    PHYS=$(cd -P -- "$_pf" >/dev/null 2>&1 && pwd -P) || return 1
     return 0
   fi
-  cd -P -- "$1" 2>/dev/null || return 1
+  cd -P -- "$_pf" >/dev/null 2>&1 || return 1
   PHYS=$PWD
   # Back to the hook's folder; if it is gone, no folder is trusted (the hook then finds no Node.js and refuses).
-  cd -P -- "$CWD_P" 2>/dev/null || { PHYS=""; return 1; }
+  cd -P -- "$CWD_P" >/dev/null 2>&1 || { PHYS=""; return 1; }
   [ -n "$PHYS" ]
 }
 dir_of() {
