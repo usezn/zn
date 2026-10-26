@@ -28,6 +28,7 @@ for a in "$@"; do AGENT=$a; done
 # Absolute script path only: the folder of this script is where zn-launch.js is; any other form would depend on the
 # folder the session runs in (the project), so the launcher is then treated as missing. A Windows path (C:\... or C:/...,
 # Git Bash) counts as absolute too; the folder is whatever precedes the last / or \.
+# shellcheck disable=SC1003 # one backslash, not an escaped single quote
 BS='\'
 HERE_DIR=
 case "$0" in
