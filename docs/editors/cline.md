@@ -2,6 +2,11 @@
 
 Set up zn-gate in Cline in two minutes: add it as an MCP server, and what zn-gate does not cover there.
 
+## What you need
+
+- **Cline** in your editor, with its **MCP Servers** panel. This page does not name a minimum Cline or editor version.
+- **Node.js 18 or later**, which includes `npx` (step 1 below shows how to check).
+
 ## Install (no coding needed)
 
 1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart VS Code (or your editor).
