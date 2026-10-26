@@ -1006,7 +1006,8 @@ test('check: from the home folder, or a dotfiles home with git, a Node.js only i
       const bin = path.join(home, dir);
       fs.mkdirSync(bin, { recursive: true });
       fs.symlinkSync(process.execPath, path.join(bin, 'node'));
-      const env = { HOME: home, PATH: bin + path.delimiter + '/usr/bin' + path.delimiter + '/bin' };
+      // Only that folder on the PATH: no system node to fall back on.
+      const env = { HOME: home, PATH: bin };
       const proj = path.join(home, 'notes');
       fs.mkdirSync(proj);
       for (const cwd of [home, proj]) {
