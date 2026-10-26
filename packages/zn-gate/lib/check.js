@@ -360,12 +360,12 @@ function pluginManifest(root, rootVar, platform = process.platform) {
         } else {
           byName = shellLineProblem(h.command);
           words = shellWords(h.command);
-          if (!byName && platform === 'win32' && h.shell !== 'bash') {
-            byName = 'the default Windows shell of Claude Code (no "shell": "bash"), where /bin/sh is not a full path';
-          }
         }
         if (!words.length) continue;
         if (!byName) byName = unsafeStart(words, rootVar, h.type !== 'process');
+        if (!byName && h.type !== 'process' && platform === 'win32' && h.shell !== 'bash') {
+          byName = 'the default Windows shell of Claude Code (no "shell": "bash"), where /bin/sh is not a full path';
+        }
         hooks.push({ event, file: fill(words[0]), args: words.slice(1).map(fill), byName });
       }
     }
@@ -396,18 +396,21 @@ function unsafeStart(words, rootVar, shell) {
   return null;
 }
 
-/* Why a shell command line does more than start one program, or null: an unquoted ; & | < > or newline, a command
-   substitution ($( or a backquote, also inside double quotes), or a quote that is never closed. */
+/* Why a shell command line is not a plain list of words that zn-gate check reads exactly as the shell does, or null.
+   A backslash, a single quote or a control character (the shell and shellWords could split or unescape it
+   differently, e.g. "\/bin/sh" or "\${ROOT}"), an unquoted ; & | < > or newline, a command substitution ($( or a
+   backquote, also inside double quotes), or a quote that is never closed. */
 function shellLineProblem(line) {
+  if (/[\\'\x00-\x1f\x7f]/.test(line)) {
+    return 'a shell command line with a backslash, a single quote or a control character, which zn-gate check does not read the way the shell does';
+  }
   let q = '';
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
-    if (q === "'") { if (c === "'") q = ''; continue; }
-    if (c === '\\') { i++; continue; }
     if (c === '`' || (c === '$' && line[i + 1] === '(')) return 'a shell command line (with a command substitution), which looks its programs up by name';
     if (q === '"') { if (c === '"') q = ''; continue; }
-    if (c === '"' || c === "'") { q = c; continue; }
-    if (';&|<>\n'.includes(c)) return 'a shell command line (with ; & | < > or a line break), which looks its programs up by name';
+    if (c === '"') { q = c; continue; }
+    if (';&|<>'.includes(c)) return 'a shell command line (with ; & | < >), which looks its programs up by name';
   }
   return q ? 'a shell command line with a quote that is never closed, so the hook does not start' : null;
 }

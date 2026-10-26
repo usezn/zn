@@ -558,7 +558,15 @@ test('check: only an absolute sh or node running a script inside the plugin fold
     ['FOO=$(node) /bin/sh ' + S, /shell command line/],
     ['/bin/sh "$(node)"', /shell command line/],
     ['/bin/sh `node`', /shell command line/],
-    ["/bin/sh 'x", /a quote that is never closed, so the hook does not start$/],
+    ["/bin/sh 'x", /backslash, a single quote or a control character/],
+    ['/bin/sh "x', /a quote that is never closed, so the hook does not start$/],
+    // B4: the shell keeps a backslash inside double quotes, so these name another program or folder
+    ['"\\/bin/sh" ' + S, /backslash, a single quote or a control character/],
+    ['/bin/sh "\\${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code', /backslash/],
+    ['/bin/sh \\\n "${CLAUDE_PLUGIN_ROOT}/x.sh"', /backslash/],
+    ["/bin/sh '${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh' PreToolUse hook claude-code", /single quote/],
+    ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/x.sh"\tPreToolUse', /control character/],
+    ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/x.sh"\nnode x', /control character/],
   ];
   for (const [cmd, re] of unsafe) {
     const home = tempDir(t, 'zn-check-ccb3-');
@@ -570,7 +578,7 @@ test('check: only an absolute sh or node running a script inside the plugin fold
     assert.match(r.problem, re, cmd);
   }
   // The forms zn's plugins use (also with shell syntax inside quotes) are checked as before.
-  const safe = ['/bin/sh ' + S, '/bin/bash ' + S, '/usr/bin/node ' + L, '/bin/sh "${CLAUDE_PLUGIN_ROOT}/a;b|c.sh" \'x && y\''];
+  const safe = ['/bin/sh ' + S, '/bin/bash ' + S, '/usr/bin/node ' + L, '/bin/sh "${CLAUDE_PLUGIN_ROOT}/a;b|c.sh" "x && y"'];
   if (process.platform !== 'win32') {
     for (const cmd of safe) {
       const home = tempDir(t, 'zn-check-ccb3ok-');
@@ -597,5 +605,7 @@ test('check: on Windows a Claude Code plugin hook counts only when it runs with 
   write({ type: 'command', command: cmd, shell: 'bash' });
   assert.equal(pluginManifest(root, 'CLAUDE_PLUGIN_ROOT', 'win32').bare, null);
   write({ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/x.js"', shell: 'bash' });
+  assert.match(pluginManifest(root, 'CLAUDE_PLUGIN_ROOT', 'win32').bare.byName, /`node` by name/);
+  write({ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/x.js"' });
   assert.match(pluginManifest(root, 'CLAUDE_PLUGIN_ROOT', 'win32').bare.byName, /`node` by name/);
 });
