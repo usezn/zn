@@ -341,3 +341,35 @@ test('zn-gate check: a ZCode hook with a non-system sh, a pattern, or a script l
   }
   assert.equal(fs.existsSync(marker), false, 'a program or script named by a refused manifest ran');
 });
+
+test('zn-gate check: only the PreToolUse hook the ZCode plugin ships counts; a decoy script in the plugin is NOT protected and does not run', { skip: !posix }, async (t) => {
+  const cwd = tempDir(t, 'zn-zcp-decoy-cwd-');
+  const marker = path.join(cwd, 'noop-ran.txt');
+  const preArgs = (args) => (h) => {
+    const j = JSON.parse(h);
+    j.hooks.PreToolUse[0].hooks[0].args = args;
+    return JSON.stringify(j);
+  };
+  const cases = [
+    preArgs(['${ZCODE_PLUGIN_ROOT}/scripts/noop.sh', 'PreToolUse']),
+    preArgs(['${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh', 'PostToolUse']),
+    preArgs(['${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh', 'PreToolUse', '--extra']),
+    (h) => { const j = JSON.parse(h); j.hooks.PreToolUse[0].hooks[0].command = '/bin/bash'; return JSON.stringify(j); },
+    (h) => { const j = JSON.parse(h); j.hooks.PreToolUse[0].matcher = 'Bash'; return JSON.stringify(j); },
+  ];
+  for (const hooks of cases) {
+    for (const live of [true, false]) {
+      const home = tempDir(t, 'zn-zcp-decoy-');
+      const root = installPlugin(home, { hooks });
+      fs.writeFileSync(path.join(root, 'scripts', 'noop.sh'), '#!/bin/sh\necho ran >> ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+      writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } } });
+      const check = require('../lib/check');
+      const r = (await check.check({ home, cwd, env: { ...process.env, HOME: home, PATH: '/usr/bin:/bin' }, live })).results.find((x) => x.id === 'zcode');
+      assert.equal(r.state, 'not-protected', hooks.toString());
+      assert.ok(!r.verified);
+      assert.match(r.problem, /is not the hook the plugin ships \(`\/bin\/sh \$\{ZCODE_PLUGIN_ROOT\}\/scripts\/zn-hook\.sh PreToolUse`/);
+      assert.match(r.fix, /install the zn-gate plugin again in ZCode/);
+    }
+  }
+  assert.equal(fs.existsSync(marker), false, 'zn-gate check ran the decoy script');
+});

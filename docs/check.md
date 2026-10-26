@@ -13,8 +13,8 @@ npx -y zn-gate check
 zn-gate makes a temporary folder with two files: a `.env` file that holds a fake key (`ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key`) and an ordinary `README.txt`. For each agent set up for your user, it asks zn's hook to let the agent read each file, the same way your agent asks. An agent counts as protected only when the `.env` file is blocked and the ordinary file is allowed.
 
 - **Claude Code**: zn-gate checks the zn-gate plugin, or the hooks of `zn hooks install claude-code`. It also notices when the plugin is turned off and when a Claude Code setting turns hooks off. If your hooks were installed by an older zn-gate and lack the check for typed skills and commands, it suggests running `zn hooks install claude-code` again.
-- **Codex CLI and Cursor**: zn-gate checks the hooks of `zn hooks install`.
-- **What it runs**: for Claude Code, Codex CLI and Cursor it runs the hook that is installed, exactly as your agent would. On Windows, a hook installed as `zn hook <agent>` is not started; zn-gate checks zn's rules for it instead and says so in the output. A hook that cannot start, or that blocks every file because part of zn is missing, is reported as **NOT protected**.
+- **Codex CLI and Cursor**: zn-gate checks the hooks of `zn hooks install`. A zn-gate plugin for Cursor is reported as **NOT protected** and is never run (see [Cursor plugin](#cursor-plugin)).
+- **What it runs**: for Claude Code, Codex CLI and Cursor it runs the hook that is installed, exactly as your agent would. For the Claude Code plugin, that is the PreToolUse command of the plugin's `hooks/hooks.json`, run the way Claude Code runs it (see [Claude Code plugin](#claude-code-plugin)). On Windows, a hook installed as `zn hook <agent>` is not started; zn-gate checks zn's rules for it instead and says so in the output. A hook that cannot start, or that blocks every file because part of zn is missing, is reported as **NOT protected**.
 - **OpenCode**: zn-gate checks zn's rules. The zn plugin runs inside OpenCode, so it is not started here.
 - **Managed setups**: when your organization deploys zn through managed configuration (Claude Code managed settings, Cursor's enterprise `hooks.json`, Codex's `requirements.toml`), `zn-gate check` counts the agent as set up and names the file ("zn is installed through your organization's managed configuration"). `zn-gate status` lists it too. If zn is also set up for your user, both run, and the check says so. Policy sent only through MDM profiles, the Windows registry or an agent's cloud is not seen. If the managed hooks are broken, the line ends with: ask your administrator to repair the managed configuration (<file>). Nothing is written.
 - **What it leaves alone**: it checks the setup for your user and the managed configuration files above. A setup made for one project only (`--project`) is listed but not run.
@@ -110,6 +110,7 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   ```text
   the zn-gate plugin has no PreToolUse hook in <plugin folder>/hooks/hooks.json, so ZCode runs no zn check before tool calls
+  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`/bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
   install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again
   ```
 
@@ -191,7 +192,7 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   turn it on: run `claude plugin enable zn-gate@usezn` in your own terminal
   ```
 
-- **The plugin is not where Claude Code installs plugins, or its hooks file does not check tool calls.**
+- **The plugin is not where Claude Code installs plugins, or its hooks file does not have the hook the plugin ships.**
 
   ```text
   the zn-gate plugin listed in installed_plugins.json is in <folder>, which is not inside the folder where Claude Code installs plugins (<config folder>/plugins), so zn-gate check does not run it
@@ -199,10 +200,23 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   the zn-gate plugin has no hook manifest zn-gate check can read (<plugin folder>/hooks/hooks.json), so nothing shows that Claude Code runs a zn check before tool calls
   the zn-gate plugin has no PreToolUse hook in <plugin folder>/hooks/hooks.json, so Claude Code runs no zn check before tool calls
   the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json runs in the background (async), where Claude Code does not wait for its answer, so Claude Code runs no zn check before tool calls
+  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json runs `<command>`, which is not the hook the zn-gate plugin ships (`/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code`), so Claude Code runs no zn check before tool calls
+  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json does not have "onFailure": "block", so Claude Code runs a call unchecked when the hook cannot run
   install the plugin again: run `claude plugin uninstall zn-gate@usezn`, then `claude plugin install zn-gate@usezn`, in your own terminal, then run `zn-gate check` again
   ```
 
-  `installed_plugins.json` can name any folder, so `zn-gate check` starts nothing from the plugin until it knows the plugin is real: its folder must be inside `plugins` under your Claude Code configuration folder (`~/.claude`, or `CLAUDE_CONFIG_DIR`), or inside `CLAUDE_CODE_PLUGIN_CACHE_DIR` when that is set, and not inside the project you run the check in. Its `hooks/hooks.json` must have a PreToolUse "command" hook that is not turned off, does not run in the background, and whose matcher covers reading files. The other forms of the PreToolUse line say that the hook is turned off, is not a "command" hook, or has a matcher that does not cover Read.
+  `installed_plugins.json` can name any folder, so `zn-gate check` starts nothing from the plugin until it knows the plugin is real: its folder must be inside `plugins` under your Claude Code configuration folder (`~/.claude`, or `CLAUDE_CONFIG_DIR`), or inside `CLAUDE_CODE_PLUGIN_CACHE_DIR` when that is set, and not inside the project you run the check in. Its `hooks/hooks.json` must have the PreToolUse hook the plugin ships, exactly: a "command" hook whose command is `/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code`, with `"shell": "bash"` and `"onFailure": "block"`, not turned off, not run in the background, and with a matcher that covers reading files. Any other command counts as no zn check, even one that runs another script of the plugin, because it may answer nothing and Claude Code would then run the call. The other forms of the PreToolUse line say that the hook is turned off, is not a "command" hook, does not ask for bash, or has a matcher that does not cover Read.
+
+  The live test then runs that command the way Claude Code runs it: `/bin/sh` with the plugin's `scripts/zn-node.sh` and `PreToolUse hook claude-code` (on Windows, Git Bash runs the command line, as Claude Code does), with `CLAUDE_PLUGIN_ROOT` set to the plugin folder, `CLAUDE_PROJECT_DIR` set to the folder you run the check in, your `PATH`, and the hook's timeout (at most 15 seconds). The plugin counts as protected only when that command blocks the `.env` file and allows the ordinary file. A command that answers nothing (exit 0) or cannot start is reported as **NOT protected**. On Windows without Git Bash, the line says so and suggests Git for Windows or zn's own hooks. Before that, zn-gate also runs the plugin's own start-up check (`/bin/sh` with the same script and `SessionStart check claude-code`) only to show its message, for example about a Node.js the plugin does not support; it never makes the plugin count as protected.
+
+- **Windows: Git Bash was not found.**
+
+  ```text
+  Git Bash was not found, and Claude Code runs the hooks of the zn-gate plugin with it on Windows ("shell": "bash"), so the hook cannot start
+  install Git for Windows (or set CLAUDE_CODE_GIT_BASH_PATH to its bash.exe), or use zn's hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again
+  ```
+
+  zn-gate looks for Git Bash the way Claude Code is set up: `CLAUDE_CODE_GIT_BASH_PATH`, else the `bin\bash.exe` next to `git` on your `PATH`, else `bash` or `sh` on your `PATH`.
 
 - **The plugin needs a newer Node.js.**
 
@@ -241,6 +255,24 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   the zn-gate plugin and the hooks of `zn hooks install claude-code` are both set up, so both run, and a broken one can block every prompt
   remove the second set: run `zn hooks uninstall claude-code` in your own terminal
   ```
+
+### Cursor plugin
+
+- **A zn-gate plugin for Cursor is installed.**
+
+  ```text
+  the zn-gate plugin for Cursor is installed (<plugin folder>), and zn-gate no longer supports it: its hooks start `node` by name, so a PATH entry that points into a project can run a program of that project in place of zn
+  run `zn hooks install cursor` in your own terminal, then remove the zn-gate plugin in Cursor (Customize, in the sidebar), then run `zn-gate check` again
+  ```
+
+  zn-gate looks for the plugin under `~/.cursor/plugins` (Cursor keeps plugins you add by hand in `~/.cursor/plugins/local`): a folder counts when its `.cursor-plugin/plugin.json` is named `zn-gate` and points to github.com/usezn/zn. Other plugins there are ignored. Only that file is read; nothing of the plugin is run. The plugin is reported even when the hooks of `zn hooks install cursor` are installed too, because Cursor still runs its hooks:
+
+  ```text
+  the zn-gate plugin for Cursor is installed (<plugin folder>), and zn-gate no longer supports it: ..., while the zn hooks next to it (<hooks file>) work
+  remove the zn-gate plugin in Cursor (Customize, in the sidebar), then run `zn-gate check` again
+  ```
+
+  If those hooks do not work either, the line says so (`..., and the zn hooks next to it do not work either (<reason>)`), and the repair is to fix the hooks first, then remove the plugin.
 
 ### A setting turns the hooks off
 
