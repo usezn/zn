@@ -10,8 +10,8 @@ zn-gate 1.13.1 as a ZCode plugin: it checks every tool call and prompt for secre
 - Ships its own copy of zn-gate (`vendor/zn-gate`). `scripts/zn-launch.js` checks it against
   `scripts/zn-gate.lock.json` (SHA-256 of every file of the published release) on every call and fails closed.
   ZCode does not install npm packages, so there is no `node_modules` to go missing.
-- Needs Node.js 20.19 or later on the machine, or ZCode's own: `scripts/zn-hook.sh` looks for `node` in the PATH of the
-  hook and in the usual install folders, and falls back to the program that runs ZCode's agent. When it finds none, it
+- Needs Node.js 20.19 or later on the machine, or ZCode's own: `scripts/zn-hook.sh` looks for `node` in the absolute PATH
+  entries of the hook outside the project (never in the project folder, its git work tree or a `node_modules` folder) and in the usual install folders, and falls back to the program that runs ZCode's agent. When it finds none, it
   blocks instead of letting the call run. ZCode's documentation does not say what happens when a hook fails; in our tests with the ZCode desktop app 3.16.3 on Linux, a hook that failed (an exit code other than 2, a crash or a timeout) let the call run, and only exit code 2 or a deny answer blocked it.
 
 ## Install

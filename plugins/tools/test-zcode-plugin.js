@@ -237,6 +237,36 @@ try {
       assert.ok(/launcher \(scripts\/zn-launch\.js\) is missing/.test(rel.stderr), rel.stderr);
     });
 
+    test('zn-hook.sh never starts a program from an absolute PATH entry inside the project (bin/, node_modules/.bin, a link, the git work tree)', () => {
+      const d = fixture2('abspath', 28);
+      const work = path.join(tmp, 'abspath-work');
+      const marker = path.join(tmp, 'abspath-ran');
+      const bin = path.join(work, 'bin');
+      const nm = path.join(work, 'node_modules', '.bin');
+      for (const dir of [bin, nm, path.join(work, '.git'), path.join(work, 'sub')]) fs.mkdirSync(dir, { recursive: true });
+      for (const dir of [bin, nm]) {
+        for (const n of ['node', 'sleep', 'ps', 'readlink', 'ls', 'sort', 'cat']) fs.writeFileSync(path.join(dir, n), '#!/bin/sh\n: > ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+      }
+      const linkdir = path.join(tmp, 'abspath-linkdir');
+      fs.symlinkSync(bin, linkdir);
+      const linknode = path.join(tmp, 'abspath-linknode');
+      fs.mkdirSync(linknode);
+      fs.symlinkSync(path.join(bin, 'node'), path.join(linknode, 'node'));
+      const real = path.join(d, 'bin');
+      const cases = [[work, bin], [path.join(work, 'sub'), bin], [work, nm], [work, linkdir], [work, linknode]];
+      for (const [cwd, bad] of cases) {
+        for (const PATH of [bad + ':' + real + ':/usr/bin:/bin', real + ':' + bad + ':/usr/bin:/bin']) {
+          const r = spawnSync('/bin/sh', [fixedScript('cd-sh', 'cd "$2" && sh "$1" PreToolUse'), path.join(d, 'scripts', 'zn-hook.sh'), cwd], {
+            input: '{"hook_event_name":"PreToolUse"}', encoding: 'utf8', timeout: 30000,
+            env: { PATH, HOME: path.join(d, 'home'), ZN_STUB_OUT: '{"decision":"allow"}' },
+          });
+          assert.strictEqual(fs.existsSync(marker), false, cwd + ' ' + PATH + ': a planted program ran');
+          assert.strictEqual(r.status, 0, cwd + ' ' + PATH + ': ' + r.stderr);
+          assert.strictEqual(r.stdout, '{"decision":"allow"}', PATH);
+        }
+      }
+    });
+
     test('zn-hook.sh has a start deadline under ZCode\'s 30 second hook timeout', () => {
       const m = /^DEADLINE=(\d+)$/m.exec(fs.readFileSync(HOOK, 'utf8'));
       assert.ok(m, 'DEADLINE is set');
