@@ -3,33 +3,33 @@
   "hooks": {
     "beforeReadFile": [
       {
-        "command": "/bin/sh ./scripts/zn-node.sh beforeReadFile hook cursor",
+        "command": "node ./scripts/zn-launch.js hook cursor",
         "timeout": 30,
         "failClosed": true
       }
     ],
     "beforeShellExecution": [
       {
-        "command": "/bin/sh ./scripts/zn-node.sh beforeShellExecution hook cursor",
+        "command": "node ./scripts/zn-launch.js hook cursor",
         "timeout": 30
       }
     ],
     "beforeSubmitPrompt": [
       {
-        "command": "/bin/sh ./scripts/zn-node.sh beforeSubmitPrompt hook cursor",
+        "command": "node ./scripts/zn-launch.js hook cursor",
         "timeout": 30,
         "failClosed": true
       }
     ],
     "postToolUse": [
       {
-        "command": "/bin/sh ./scripts/zn-node.sh postToolUse hook cursor",
+        "command": "node ./scripts/zn-launch.js hook cursor",
         "timeout": 30
       }
     ],
     "preToolUse": [
       {
-        "command": "/bin/sh ./scripts/zn-node.sh preToolUse hook cursor",
+        "command": "node ./scripts/zn-launch.js hook cursor",
         "timeout": 30,
         "matcher": "Grep|Write|Delete"
       }

@@ -2,10 +2,11 @@
 'use strict';
 
 /**
- * Tests for how the zn-gate plugin hooks (Claude Code: plugins/zn-gate/hooks/hooks.json; Codex: com.openai/hooks.json;
- * Cursor: cursor/hooks.json) start Node.js: only from an absolute PATH entry, through scripts/zn-node.sh, so a `node`
- * placed in the project folder (a relative or empty PATH entry, or the current folder) is never run. The hook command is
- * taken from the manifest and run through `sh -c`, in a folder that holds the planted programs. No agent is needed here.
+ * Tests for how the zn-gate plugin hooks start Node.js. Claude Code (plugins/zn-gate/hooks/hooks.json) and Codex
+ * (com.openai/hooks.json) run hooks in the project folder, so they start Node.js only from an absolute PATH entry, through
+ * scripts/zn-node.sh, and a `node` placed in the project folder (a relative or empty PATH entry, or the current folder) is
+ * never run. Cursor (cursor/hooks.json) runs plugin hooks from the plugin folder and keeps `node ./scripts/zn-launch.js`.
+ * The hook command is taken from the manifest and run through `sh -c` (and `bash -c`). No agent is needed here.
  *
  *   node plugins/tools/test-claude-plugin-hooks.js     (from the repository root)
  */
@@ -43,7 +44,7 @@ function manifestCommands(file) {
 }
 
 try {
-  test('every hook starts through scripts/zn-node.sh with its own event name, never `node` by name', () => {
+  test('Claude Code and Codex hooks start through scripts/zn-node.sh with their own event name; Cursor keeps its launcher command', () => {
     for (const [event, groups] of Object.entries(hooks)) {
       for (const g of groups) {
         for (const h of g.hooks) {
@@ -58,8 +59,16 @@ try {
     for (const [event, c] of Object.entries(manifestCommands('com.openai/hooks.json'))) {
       assert.strictEqual(c, '/bin/sh "$PLUGIN_ROOT/scripts/zn-node.sh" ' + event + ' hook codex', 'codex ' + event);
     }
+    // Cursor runs plugin hooks from the plugin folder, and through PowerShell on Windows: it keeps the launcher command.
     for (const [event, c] of Object.entries(manifestCommands('cursor/hooks.json'))) {
-      assert.strictEqual(c, '/bin/sh ./scripts/zn-node.sh ' + event + ' hook cursor', 'cursor ' + event);
+      assert.strictEqual(c, 'node ./scripts/zn-launch.js hook cursor', 'cursor ' + event);
+    }
+    for (const groups of Object.values(hooks)) for (const g of groups) for (const h of g.hooks) assert.strictEqual(h.shell, 'bash', h.command);
+    const codexWin = JSON.parse(fs.readFileSync(path.join(PLUGIN, 'com.openai', 'hooks.json'), 'utf8')).hooks;
+    for (const [event, groups] of Object.entries(codexWin)) {
+      const w = groups[0].hooks[0].commandWindows;
+      if (event === 'PostToolUse') assert.ok(/^echo \{"systemMessage":"zn is NOT protecting this session: /.test(w), w);
+      else assert.ok(/ 1>&2 & exit 2$/.test(w) && /does not run on Windows/.test(w), event + ': ' + w);
     }
     // The blocking events keep onFailure "block".
     for (const event of ['PreToolUse', 'UserPromptSubmit', 'UserPromptExpansion']) assert.strictEqual(hooks[event][0].hooks[0].onFailure, 'block', event);
@@ -223,7 +232,7 @@ try {
     });
 
     // The Codex and Cursor manifests of the same plugin. Codex runs a hook command through a shell with $PLUGIN_ROOT set;
-    // Cursor runs it in the plugin folder, so its commands name ./scripts/zn-node.sh.
+    // Cursor runs it in the plugin folder (cursor.com/docs/agent/hooks).
     const codexCmds = manifestCommands('com.openai/hooks.json');
     const cursorCmds = manifestCommands('cursor/hooks.json');
     function runCodex(dir, event, { cwd, PATH, input, env = {} }) {
@@ -238,12 +247,6 @@ try {
         env: { PATH, HOME: home, ...env },
       });
     }
-    const plantIn = (dir, marker) => {
-      fs.mkdirSync(path.join(dir, 'bin'), { recursive: true });
-      for (const d of [dir, path.join(dir, 'bin')]) {
-        for (const p of ['node', 'node.exe', 'sleep']) fs.writeFileSync(path.join(d, p), '#!/bin/sh\n: > ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
-      }
-    };
     const relPaths = ['.:' + realbin, ':' + realbin, 'bin:' + realbin, realbin + ':.'];
 
     test('Codex: a node planted in the project folder is never run, and the launcher gets the codex arguments', () => {
@@ -273,10 +276,10 @@ try {
       assert.ok(/NOT protecting this session/.test(JSON.parse(p.stdout).systemMessage), p.stdout);
     });
 
-    test('Cursor: a node planted in the folder the hook runs in is never run, and the launcher gets the cursor arguments', () => {
+    test('Cursor: run from the plugin folder, a relative PATH entry never reaches a node planted in the project', () => {
       const d = plugin('cursor-planted');
       const marker = path.join(tmp, 'cursor-planted-ran');
-      plantIn(d, marker);
+      project('cursor-work', marker);
       for (const event of Object.keys(cursorCmds)) {
         for (const PATH of relPaths) {
           const r = runCursor(d, event, { PATH });
@@ -287,19 +290,16 @@ try {
       }
     });
 
-    test('Cursor: with no usable Node.js the events before an action get the deny answer (exit 2); postToolUse gets none', () => {
-      const d = plugin('cursor-nonode', { patch: noFallback });
-      for (const event of ['beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'preToolUse']) {
-        const r = runCursor(d, event, { PATH: '.:' + emptybin });
-        assert.strictEqual(r.status, 2, event + ': ' + r.stderr);
-        const a = JSON.parse(r.stdout);
-        assert.strictEqual(a.permission, 'deny', event);
-        assert.strictEqual(a.continue, false, event);
-        assert.ok(/^zn: no Node\.js was found.*in Cursor's settings\.$/.test(a.user_message), a.user_message);
-      }
-      const p = runCursor(d, 'postToolUse', { PATH: '.:' + emptybin });
-      assert.strictEqual(p.status, 0);
-      assert.strictEqual(p.stdout, '');
+    test('Codex: the start deadline is 26 seconds (its hooks have 30), Claude Code keeps 13', () => {
+      const text = fs.readFileSync(NODE_SH, 'utf8');
+      assert.ok(/^\[ "\$AGENT" != codex \] \|\| DEADLINE=26$/m.test(text), 'codex deadline');
+      const d = plugin('codex-hang', { patch: (t) => t.replace(/DEADLINE=26$/m, 'DEADLINE=2').replace(/^DEADLINE=13$/m, 'DEADLINE=9') });
+      const hang = path.join(tmp, 'codex-hangbin');
+      fs.mkdirSync(hang);
+      fs.writeFileSync(path.join(hang, 'node'), '#!/bin/sh\nexec sleep 300\n', { mode: 0o755 });
+      const r = runCodex(d, 'PreToolUse', { cwd: tmp, PATH: hang + ':/usr/bin:/bin' });
+      assert.strictEqual(r.status, 2, r.stderr);
+      assert.ok(/did not finish starting within 2 seconds/.test(r.stderr), r.stderr);
     });
 
     // Claude Code runs hook commands with bash on Linux and macOS (Git Bash on Windows), not only sh.
@@ -311,7 +311,6 @@ try {
         const d = plugin('bash-planted');
         const marker = path.join(tmp, 'bash-planted-ran');
         const work = project('bash-work', marker);
-        plantIn(d, marker);
         const cases = [];
         for (const event of Object.keys(hooks)) {
           cases.push([commandFor(event, d).command, work, {}, event === 'SessionStart' ? ['check', 'claude-code'] : ['hook', 'claude-code'], event]);
@@ -331,9 +330,9 @@ try {
       });
     }
 
-    test('a ./ script path counts only for Cursor: for Claude Code and Codex the launcher is treated as missing', () => {
+    test('a ./ script path never counts: the launcher is treated as missing', () => {
       const d = plugin('relpath');
-      for (const agent of ['claude-code', 'codex']) {
+      for (const agent of ['claude-code', 'codex', 'cursor']) {
         const r = spawnSync('/bin/sh', ['./scripts/zn-node.sh', 'PreToolUse', 'hook', agent], {
           cwd: d, input: '{}', encoding: 'utf8', timeout: 60000, env: { PATH: realbin, HOME: home },
         });
