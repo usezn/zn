@@ -338,9 +338,10 @@ function claudePlugin(home, env) {
 /* The first program each hook of a plugin's manifest (hooks/hooks.json under `root`) starts, as the host starts it:
    ZCode runs a "process" hook's command directly, and Claude Code runs a "command" hook through a shell, so there the
    first word is the program. The host looks a bare name up on its PATH before zn's own code runs, so a relative or
-   empty PATH entry, or the folder the agent runs in, could hold a program of that name that skips zn. Returns
-   {hooks: [{event, file, args}], bare: <first hook whose program has no path> | null}, or null when the manifest
-   cannot be read. */
+   empty PATH entry, or the folder the agent runs in, could hold a program of that name that skips zn. The same goes
+   for a program that looks the next one up itself: `env`, a shell given `-c`, and a shell command line with an
+   unquoted ; & | < > or a command substitution. Returns {hooks: [{event, file, args, byName}], bare: <first hook
+   with byName set> | null}, or null when the manifest cannot be read. byName says how the lookup happens. */
 function pluginManifest(root, rootVar) {
   const data = readJson(path.join(root, 'hooks', 'hooks.json'));
   if (!data || typeof data.hooks !== 'object' || data.hooks === null) return null;
@@ -350,16 +351,61 @@ function pluginManifest(root, rootVar) {
     for (const g of Array.isArray(groups) ? groups : []) {
       for (const h of (g && Array.isArray(g.hooks)) ? g.hooks : []) {
         if (!h || typeof h.command !== 'string') continue;
+        let hook = null;
         if (h.type === 'process') {
-          hooks.push({ event, file: fill(h.command), args: (Array.isArray(h.args) ? h.args : []).map(fill) });
+          hook = { event, file: fill(h.command), args: (Array.isArray(h.args) ? h.args : []).map(fill) };
         } else {
-          const words = shellWords(h.command).filter((w, i, all) => !(/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) && all.slice(0, i).every((x) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(x))));
-          if (words.length) hooks.push({ event, file: fill(words[0]), args: words.slice(1).map(fill) });
+          const words = shellWords(h.command).filter((w, i, all) => !(ASSIGN.test(w) && all.slice(0, i).every((x) => ASSIGN.test(x))));
+          if (!words.length) continue;
+          hook = { event, file: fill(words[0]), args: words.slice(1).map(fill) };
+          if (shellCompound(h.command)) hook.byName = 'a shell command line (with ; & | < > or a command substitution), which looks its programs up by name';
         }
+        if (!hook.byName) hook.byName = lookupByName(hook.file, hook.args);
+        hooks.push(hook);
       }
     }
   }
-  return { hooks, bare: hooks.find((h) => !path.isAbsolute(h.file)) || null };
+  return { hooks, bare: hooks.find((h) => h.byName) || null };
+}
+
+const ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const SHELL_PROGRAMS = new Set(['sh', 'bash', 'dash', 'zsh', 'ksh', 'ash', 'mksh']);
+
+/* How `file args` ends up looking a program up by name, or null when it runs the absolute program it names. */
+function lookupByName(file, args) {
+  if (!path.isAbsolute(file)) return '`' + file + '` by name';
+  const name = path.basename(file).toLowerCase().replace(/\.exe$/, '');
+  if (name === 'env') {
+    // env runs the first word that is not an option or a NAME=value through its own PATH lookup.
+    const next = args.find((a) => !a.startsWith('-') && !ASSIGN.test(a));
+    if (next === undefined) return '`env` with no program';
+    const inner = lookupByName(next, args.slice(args.indexOf(next) + 1));
+    return inner && !path.isAbsolute(next) ? '`' + next + '` by name (through `env`)' : inner;
+  }
+  // A shell given -c runs a new command line, whose programs it looks up by name.
+  if (SHELL_PROGRAMS.has(name)) {
+    for (const a of args) {
+      if (!a.startsWith('-') || a === '-' || a === '--') break;
+      if (/^-[A-Za-z]*c/.test(a)) return 'a command line run by `' + name + ' -c`, which looks its programs up by name';
+    }
+  }
+  return null;
+}
+
+/* Whether a shell command line does more than start one program: an unquoted ; & | < > or newline, or a command
+   substitution ($( or a backquote, also inside double quotes). */
+function shellCompound(line) {
+  let q = '';
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q === "'") { if (c === "'") q = ''; continue; }
+    if (c === '\\') { i++; continue; }
+    if (c === '`' || (c === '$' && line[i + 1] === '(')) return true;
+    if (q === '"') { if (c === '"') q = ''; continue; }
+    if (c === '"' || c === "'") { q = c; continue; }
+    if (';&|<>\n'.includes(c)) return true;
+  }
+  return false;
 }
 
 /* The words of a simple shell command line: spaces split them, and single or double quotes keep a word together. */
@@ -381,8 +427,8 @@ function shellWords(line) {
 
 /* The problem of a manifest hook that starts its program by name. */
 function bareProgramProblem(hook) {
-  return 'the zn-gate plugin starts its ' + hook.event + ' hook with `' + hook.file + '` by name, so a program called ' + hook.file +
-    ' in a relative or empty PATH entry, or in the folder the agent runs in, could run in its place and skip zn';
+  return 'the zn-gate plugin starts its ' + hook.event + ' hook with ' + hook.byName +
+    ', so a program of that name in a relative or empty PATH entry, or in the folder the agent runs in, could run in its place and skip zn';
 }
 
 /* zn's hooks in the agent's managed configuration: {files, entries} | null. Never throws. */
@@ -681,7 +727,7 @@ async function checkAgent(spec, ctx) {
       const manifest = plugin.off ? null : pluginManifest(plugin.root, 'CLAUDE_PLUGIN_ROOT');
       if (manifest && manifest.bare) {
         res.problem = bareProgramProblem(manifest.bare);
-        res.fix = 'update the plugin: run `claude plugin update zn-gate@usezn` in your own terminal, then run `zn-gate check` again';
+        res.fix = 'update the plugin once the release that comes with zn-gate 1.14.0 is out: run `claude plugin update zn-gate@usezn` in your own terminal; until then, use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again';
         res.pluginFault = true;
       }
     }

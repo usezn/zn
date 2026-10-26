@@ -90,12 +90,12 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 - **A plugin starts its hook with a program by name (ZCode, Claude Code).**
 
   ```text
-  the zn-gate plugin starts its PreToolUse hook with `sh` by name, so a program called sh in a relative or empty PATH entry, or in the folder the agent runs in, could run in its place and skip zn
-  update the plugin: run `claude plugin update zn-gate@usezn` in your own terminal, then run `zn-gate check` again
+  the zn-gate plugin starts its PreToolUse hook with `sh` by name, so a program of that name in a relative or empty PATH entry, or in the folder the agent runs in, could run in its place and skip zn
+  update the plugin once the release that comes with zn-gate 1.14.0 is out: run `claude plugin update zn-gate@usezn` in your own terminal; until then, use zn's hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again
   update the plugin: install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again
   ```
 
-  The agent looks a bare program name up on its own PATH before zn's hook runs, so zn cannot clean that lookup. `zn-gate check` reads the plugin's `hooks/hooks.json` and reports a hook that starts `sh`, `node` or any other program without its full path. Update the plugin: `claude plugin update zn-gate@usezn` for Claude Code, or install the plugin again in ZCode (Settings, Plugins).
+  The agent looks a bare program name up on its own PATH before zn's hook runs, so zn cannot clean that lookup. `zn-gate check` reads the plugin's `hooks/hooks.json` and reports a hook that starts `sh`, `node` or any other program without its full path, and also one that hands the lookup to another program: `env`, a shell given `-c`, or a shell command line with `;`, `&`, `|`, `<`, `>` or a command substitution. For ZCode, install the plugin again (Settings, Plugins). For Claude Code, the plugin released with zn-gate 1.14.0 starts its hooks with `/bin/sh`: update to it with `claude plugin update zn-gate@usezn` once it is out, and use zn's hooks until then.
 
 - **The ZCode plugin's hook program is not on this computer.**
 

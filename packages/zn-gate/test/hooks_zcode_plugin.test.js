@@ -290,3 +290,19 @@ test('the ZCode plugin hook, started as ZCode starts it, runs no planted sh or n
   assert.equal(before.status, 0);
   assert.match(fs.readFileSync(marker, 'utf8'), /^sh$/m, 'the lookup by name did not pick the planted sh');
 });
+
+test('zn-gate check: a ZCode process hook that starts env or a shell given -c is NOT protected', { skip: !posix }, async (t) => {
+  const cwd = tempDir(t, 'zn-zcp-env-cwd-');
+  const cases = [
+    [(h) => h.split('"command": "/bin/sh", "args": ["').join('"command": "/usr/bin/env", "args": ["sh", "'), /`sh` by name \(through `env`\)/],
+    [(h) => h.split('"command": "/bin/sh", "args": ["').join('"command": "/bin/sh", "args": ["-c", "sh '), /run by `sh -c`/],
+  ];
+  for (const [hooks, re] of cases) {
+    const home = tempDir(t, 'zn-zcp-env-');
+    installPlugin(home, { hooks });
+    writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } } });
+    const r = await zcodeCheck(home, cwd, '/usr/bin:/bin');
+    assert.equal(r.state, 'not-protected');
+    assert.match(r.problem, re);
+  }
+});
