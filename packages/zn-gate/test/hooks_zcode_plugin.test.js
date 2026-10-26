@@ -174,3 +174,28 @@ test('zn hooks install zcode warns when the plugin is installed and on, and not 
   rep = zc.install({ home: clean, nodePath: process.execPath });
   assert.ok(!rep.warnings.some((w) => /also installed/.test(w)));
 });
+
+test('zn-gate check runs the plugin hook with sh from an absolute PATH entry, never a planted one', { skip: !posix }, async (t) => {
+  const check = require('../lib/check');
+  const home = tempDir(t, 'zn-zcp-sh-');
+  const cwd = tempDir(t, 'zn-zcp-sh-cwd-');
+  const marker = path.join(cwd, 'planted-sh-ran');
+  for (const d of [cwd, path.join(cwd, 'zbin')]) {
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, 'sh'), '#!/bin/sh\n: > ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+  }
+  installPlugin(home);
+  writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } } });
+  const old = process.cwd();
+  t.after(() => process.chdir(old));
+  process.chdir(cwd);
+  for (const PATH of ['.:/usr/bin:/bin', 'zbin:/usr/bin:/bin', ':/usr/bin:/bin']) {
+    const r = (await check.check({ home, cwd, env: { ...process.env, HOME: home, PATH }, live: true })).results.find((x) => x.id === 'zcode');
+    assert.equal(fs.existsSync(marker), false, PATH + ': the planted sh ran');
+    assert.equal(r.state, 'protected', PATH + ' ' + r.problem);
+  }
+  // No sh in any absolute entry: NOT protected, with the reason.
+  const none = (await check.check({ home, cwd, env: { ...process.env, HOME: home, PATH: '.:zbin' }, live: true })).results.find((x) => x.id === 'zcode');
+  assert.equal(fs.existsSync(marker), false, 'the planted sh ran');
+  assert.match(none.problem, /no sh was found in the absolute entries of your PATH/);
+});

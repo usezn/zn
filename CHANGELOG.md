@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.14.0] - 2026-10-25
+## [1.14.0] - 2026-10-26
 
 **Breaking:** `zn run` and the agent hooks no longer accept a secret marker in a command's arguments, because arguments are visible to other processes and to command-line logs. Before: `psql "postgres://user:__ZN_DB_PASSWORD__@db/app"`. After: `zn secret set PGPASSWORD --command psql`, then `zn run --secrets PGPASSWORD -- psql "postgres://user@db/app"`, where psql reads the variable itself. A marker in an environment file that your shell loads (a shadowed `.env`) is still filled in, and a secret kept for a program or a file (`env` or `file` mode) is no longer sent by `secrets_http_request`: change its mode with `zn secret allow NAME --mode proxy` if an API needs it.
 
@@ -67,6 +67,7 @@ zn-gate 1.14.0 adds official support for Antigravity and the ZCode desktop app, 
 
 ### Changed
 - **Breaking:** `zn run` and the agent hooks no longer accept a secret marker in a command's arguments, because arguments are visible to other processes and to command-line logs. Before: `psql "postgres://user:__ZN_DB_PASSWORD__@db/app"`. After: `zn secret set PGPASSWORD --command psql`, then `zn run --secrets PGPASSWORD -- psql "postgres://user@db/app"`, where psql reads the variable itself. A marker in an environment file that your shell loads (a shadowed `.env`) is still filled in, and a secret kept for a program or a file (`env` or `file` mode) is no longer sent by `secrets_http_request`: change its mode with `zn secret allow NAME --mode proxy` if an API needs it.
+- The hook latency baseline used by the CI budget is regenerated for 1.14.0 from 11 CI runs: the new checks of this release add about 9-24 % per hook call (18 % at the median).
 - The Python `guarded_tool` decorator now scans a tool's output for prompt injection by default (`check_result=True`), matching `guard_langchain_tool`. A blocked output raises `GuardBlockError`, or with `on_block="return"` returns the fallback or a short notice. To keep the previous behavior for a tool, pass `check_result=False`; secrets in the output are still hidden as before.
 - Pull requests now get an informational review of new dependencies and a license check of the Rust, npm and Python dependencies. It only reports; it does not block a pull request.
 - The code of the npm package is now linted with eslint on every pull request. The change also removes a few unused imports and variables the linter found.
