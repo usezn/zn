@@ -5,11 +5,13 @@ Pure Python stdlib. Zero external dependencies.
 
 from __future__ import annotations
 
+import argparse
 import dataclasses
 import functools
 import inspect
 import io
 import itertools
+import logging
 import os
 from pathlib import PurePath
 import types
@@ -81,6 +83,13 @@ class _Unscannable(Exception):
 # sets or dicts) that one payload may hold before it is blocked as too big to check.
 MAX_OBJECT_VALUES = 100_000
 
+# Depth limit for tool results, counted from the top of the payload, once the
+# walk is inside an object that is not a data model (see _extract_strings).
+# Deeper content still blocks (rule size:nesting); only the limit is higher
+# than for dicts, lists and data models.
+LENIENT_MAX_DEPTH = 32
+_DEFAULT_MAX_DEPTH = 10
+
 _DICT_VIEWS = (KeysView, ValuesView, ItemsView)
 
 
@@ -147,12 +156,36 @@ def _is_framework_context(value: Any) -> bool:
     return False
 
 
-def _is_data_object(value: Any) -> bool:
-    """True for objects that carry plain data: dataclasses, pydantic, attrs and msgspec models.
+# The logging manager and placeholders reach every logger of the process
+# (manager.loggerDict), so they are not read. A logger is read without its
+# manager, parent and level cache: its handlers and filters (a capturing handler
+# holds log records) and any attribute a subclass adds are checked.
+_LOGGING_TYPES = (logging.Manager, logging.PlaceHolder)
+# Attributes of a logger that lead to the other loggers of the process.
+_LOGGER_LINKS = frozenset({"manager", "parent", "_cache"})
 
-    Agent frameworks build these from the model's tool-call arguments, so they
-    are walked as strictly as dicts and lists.
+
+class _Walk:
+    """State shared by one walk: containers read in full (kept so their ids are not
+    reused during the walk) and a count of parts left out."""
+
+    __slots__ = ("done", "skipped")
+
+    def __init__(self) -> None:
+        self.done: Dict[int, Any] = {}
+        self.skipped = 0
+
+
+def _is_data_object(value: Any) -> bool:
+    """True for objects that carry plain data: dataclasses, pydantic, attrs and msgspec
+    models, and SimpleNamespace / argparse.Namespace.
+
+    Agent frameworks build these from the model's tool-call arguments, and
+    json.loads(..., object_hook=lambda d: SimpleNamespace(**d)) builds them
+    from text, so they are walked as strictly as dicts and lists.
     """
+    if isinstance(value, (types.SimpleNamespace, argparse.Namespace)):
+        return True
     klass = type(value)
     return (dataclasses.is_dataclass(value)
             or hasattr(klass, "__pydantic_fields__") or hasattr(klass, "__fields__")
@@ -161,7 +194,9 @@ def _is_data_object(value: Any) -> bool:
 
 def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] = None,
                      _budget: Optional[List[int]] = None, _lenient: bool = False,
-                     lenient_objects: bool = True) -> List[str]:
+                     lenient_objects: bool = True,
+                     lenient_depth: Optional[int] = None,
+                     _seen: Optional[_Walk] = None) -> List[str]:
     """Recursively extract all strings from nested structures.
 
     Walks every Mapping (keys and values), list, tuple, set, frozenset and dict
@@ -176,17 +211,25 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     generator (checking it would consume it, so the guarded function would get
     an empty iterator) or when objects and generic iterables hold more than
     MAX_OBJECT_VALUES values, so callers can fail closed. A container that
-    contains itself is walked once.
+    contains itself is walked once, and a container reached through several
+    references is walked and counted once, unless part of it was left out
+    the first time. A logger is read without its links to the other loggers
+    of the process (manager, parent), and the logging manager is skipped.
 
     Inside an object that is not a data model (a plain class instance such as
     a client, a session or an agent's dependencies), the walk is best effort:
-    what sits below the depth limit or past the value budget, or cannot be
-    read, is left out instead of blocking. Such objects are built by the
-    application, not from the model's arguments, and walking them in full
-    blocked every call that passed one. Pass lenient_objects=False (as
-    check_tool_call does) to walk plain objects as strictly as data models: a
-    payload hidden below the depth limit, in an unreadable object or past the
-    value budget then raises like it does for dicts and lists.
+    what sits past the value budget or cannot be read is left out instead of
+    blocking. Such objects are built by the application, not from the
+    model's arguments, and walking them in full blocked every call that
+    passed one. Below the depth limit they are left out too, unless
+    lenient_depth is set (as check_tool_result does, since a result carries
+    outside data): the limit then rises to lenient_depth levels from the top
+    and content deeper than that still raises _NestingTooDeep, and values past
+    the budget raise _Unscannable as they do for data models. Pass
+    lenient_objects=False (as check_tool_call does) to walk plain objects as
+    strictly as data models: a payload hidden below the depth limit, in an
+    unreadable object or past the value budget then raises like it does for
+    dicts and lists.
     """
     if isinstance(data, str):
         return [data]
@@ -195,7 +238,10 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     if data is None or isinstance(data, (bool, int, float, complex, type, types.ModuleType)) \
             or inspect.isroutine(data):
         return []
-    if _is_framework_context(data):
+    if _is_framework_context(data) or isinstance(data, _LOGGING_TYPES):
+        return []
+    seen = _seen if _seen is not None else _Walk()
+    if id(data) in seen.done:
         return []
     budget = _budget if _budget is not None else [MAX_OBJECT_VALUES]
     lenient = _lenient
@@ -209,16 +255,19 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         children = list(data)
     elif isinstance(data, os.PathLike):
         path_value = os.fspath(data)
-        found = _extract_strings(path_value, max_depth, _path, budget, lenient_objects=lenient_objects)
+        found = _extract_strings(path_value, max_depth, _path, budget, lenient_objects=lenient_objects,
+                                lenient_depth=lenient_depth, _seen=seen)
         # On Windows str() gives backslashes; the path rules also see the form with forward slashes.
         if isinstance(data, PurePath) and data.as_posix() != path_value:
-            found += _extract_strings(data.as_posix(), max_depth, _path, budget, lenient_objects=lenient_objects)
+            found += _extract_strings(data.as_posix(), max_depth, _path, budget, lenient_objects=lenient_objects,
+                                lenient_depth=lenient_depth, _seen=seen)
         return found
     elif isinstance(data, io.IOBase):
         # An open file or stream: its contents are read by the tool, not passed
         # as text, and reading them here would move the file position. Check its name.
         name = getattr(data, "name", None)
-        return _extract_strings(name, max_depth, _path, budget, lenient_objects=lenient_objects) if isinstance(name, (str, bytes)) else []
+        return _extract_strings(name, max_depth, _path, budget, lenient_objects=lenient_objects,
+                                lenient_depth=lenient_depth, _seen=seen) if isinstance(name, (str, bytes)) else []
     elif isinstance(data, Iterator) or isinstance(data, AsyncIterator):
         raise _Unscannable("type:unscannable",
                            "A one-shot iterator (such as a generator) cannot be checked "
@@ -232,45 +281,67 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         is_model = _is_data_object(data)
         try:
             children = _object_fields(data)
+            if children is not None and isinstance(data, logging.Logger):
+                children = [c for i in range(0, len(children) - 1, 2)
+                            if children[i] not in _LOGGER_LINKS for c in children[i:i + 2]]
             if children is not None:
-                lenient = lenient or (not is_model and lenient_objects)
+                if not lenient and not is_model and lenient_objects:
+                    # Entering an application object: unreadable parts and the value
+                    # budget become best effort; with lenient_depth the depth limit
+                    # rises but content deeper than it still blocks.
+                    lenient = True
+                    if lenient_depth is not None:
+                        max_depth += lenient_depth - _DEFAULT_MAX_DEPTH
             elif isinstance(data, Iterable):
                 children = []
                 for item in itertools.islice(data, max(budget[0], 0) + 1):
                     children.append(item)
         except Exception:
             if lenient or (not is_model and lenient_objects):
+                seen.skipped += 1
                 return []
             raise _Unscannable("type:unscannable", "An object could not be read to check it") from None
         if children is None:
             return []
-        if lenient and budget[0] - len(children) < 0:
+        if lenient and lenient_depth is None and budget[0] - len(children) < 0:
+            seen.skipped += 1
             return []
         budget[0] -= len(children)
         if budget[0] < 0:
             raise _Unscannable("size:items", "Too many values to check")
     if max_depth <= 0:
-        if lenient:
+        if lenient and lenient_depth is None:
+            seen.skipped += 1
             return []
         raise _NestingTooDeep()
     path = _path if _path is not None else set()
     if id(data) in path:
         return []
     path.add(id(data))
+    skipped_before = seen.skipped
+    done_before = len(seen.done)
     try:
         strings: List[str] = []
         for child in children:
-            strings.extend(_extract_strings(child, max_depth - 1, path, budget, lenient, lenient_objects))
+            strings.extend(_extract_strings(child, max_depth - 1, path, budget, lenient, lenient_objects,
+                                            lenient_depth, seen))
+        if seen.skipped == skipped_before:
+            seen.done[id(data)] = data
+        else:
+            # Something below was left out: what was marked done meanwhile may have
+            # stopped at a cycle back into this partly read part, so read it again.
+            while len(seen.done) > done_before:
+                seen.done.popitem()
         return strings
     finally:
         path.discard(id(data))
 
 
-def _strings_or_block(data: Any, what: str,
-                      lenient_objects: bool = True) -> Tuple[List[str], Optional[Assessment]]:
+def _strings_or_block(data: Any, what: str, lenient_objects: bool = True,
+                      lenient_depth: Optional[int] = None) -> Tuple[List[str], Optional[Assessment]]:
     """_extract_strings, or a block Assessment when the payload cannot be checked in full."""
     try:
-        return _extract_strings(data, lenient_objects=lenient_objects), None
+        return _extract_strings(data, lenient_objects=lenient_objects, lenient_depth=lenient_depth), None
     except _NestingTooDeep:
         return [], Assessment(verdict="block", confidence=1.0, rule="size:nesting",
                               reason=f"{what} nested too deeply to check")
@@ -319,9 +390,23 @@ def _call_payload(func: Any, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> D
     return {"args": args, "kwargs": kwargs}
 
 
+def _unwrap_partial(func: Any) -> Tuple[Any, Tuple[Any, ...], Dict[str, Any]]:
+    """(innermost callable, arguments bound by functools.partial, keywords bound by it).
+    Nested partials are flattened, the outer binding last so it wins on a repeated keyword."""
+    bound_args: Tuple[Any, ...] = ()
+    bound_kwargs: Dict[str, Any] = {}
+    while isinstance(func, functools.partial):
+        bound_args = tuple(func.args) + bound_args
+        bound_kwargs = {**func.keywords, **bound_kwargs}
+        func = func.func
+    return func, bound_args, bound_kwargs
+
+
 def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[bool],
-                  lenient_objects: bool = True, allow_truncated: bool = False) -> Assessment:
-    strings_to_check, blocked = _strings_or_block(data, what, lenient_objects=lenient_objects)
+                  lenient_objects: bool = True, allow_truncated: bool = False,
+                  lenient_depth: Optional[int] = None) -> Assessment:
+    strings_to_check, blocked = _strings_or_block(data, what, lenient_objects=lenient_objects,
+                                                  lenient_depth=lenient_depth)
     if blocked is not None:
         return blocked
     if too_invisible(strings_to_check):
@@ -385,7 +470,7 @@ def check_tool_result(result: Any, block_truncated: bool = False, strict: Option
     checked in full is blocked as for check_tool_call (for example a generator).
     """
     res = _scan_strings(result, "Result", block_truncated=block_truncated, strict=strict,
-                        allow_truncated=allow_truncated)
+                        allow_truncated=allow_truncated, lenient_depth=LENIENT_MAX_DEPTH)
     if res.rule == "size:truncated":
         res.reason = "Output too large to scan in full"
     return res
@@ -777,12 +862,21 @@ def guard(
         raise ValueError('on_block="custom" needs a callback; use on_block="raise" or pass callback=...')
 
     def decorator(func: _F) -> _F:
+        if isinstance(func, (classmethod, staticmethod)):
+            # Keep the descriptor: guard the plain function inside it and wrap it again
+            # as the same kind, so calls through the class and through an instance work.
+            return cast(_F, type(func)(decorator(func.__func__)))
         func_name = getattr(func, "__name__", "anonymous")
+        target, bound_args, bound_kwargs = _unwrap_partial(func)
 
         def _on_args(args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Tuple[bool, Any]:
             """(True, value to return) when the call is blocked; raises in the raise and custom modes."""
+            if bound_args or bound_kwargs:
+                # Arguments fixed with functools.partial are scanned with the call arguments.
+                args = bound_args + args
+                kwargs = {**bound_kwargs, **kwargs}
             combined_args = {"args": args, "kwargs": kwargs}
-            assessment = check_tool_call(func_name, _call_payload(func, args, kwargs),
+            assessment = check_tool_call(func_name, _call_payload(target, args, kwargs),
                                          block_truncated=block_truncated,
                                          _lenient_objects=True)
             if assessment.allowed:
