@@ -44,6 +44,19 @@ In Cline, zn-gate works as an **MCP server**: the agent can ask it to check a pr
 
 We found no hooks in the Cline extension's documentation that zn-gate could use (hooks are documented for the Cline SDK only), and zn-gate does not install any for Cline. So in Cline zn-gate does not block reads of your `.env` or credential files and does not remove secrets from shell output or file contents. If you need that today, use zn-gate with Claude Code, Codex CLI, Cursor or OpenCode: see [compat.md](../compat.md).
 
+### Cline and Continue side by side
+
+This is what the [Continue page](continue.md) and this page each say is covered.
+
+| | Cline | Continue |
+| - | - | - |
+| zn-gate's checks available to the agent (MCP) | Yes | Yes |
+| Your other MCP servers checked for prompt injection and secrets | Yes, if you wrap them | Yes, if you wrap them |
+| Blocks reads of `.env` and credential files | No | No |
+| Removes secrets from shell output and file contents | No | No |
+| Blocks a secret pasted into the chat | No | No |
+| Edited by `zn-gate init --wrap-mcp` | No | No |
+
 ## Technical reference
 
 ### Where the configuration lives
