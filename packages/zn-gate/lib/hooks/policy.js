@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-26.4';
+const POLICY_RULES_VERSION = '2026-10-26.5';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2347,6 +2347,8 @@ function bashDenialOf(cmd, opts = {}) {
   const classified = new Map();
   // And so is its verdict, which may read the file (a .env, a .pem).
   const denied = new Map();
+  // And whether a write target may still name ~/.zn or a plugin folder (protectedElsewhere).
+  const elsewhereProt = new Map();
   // A word with * ? or [ can match a secret file; the message names a literal file when the command has one too.
   // The command is refused either way, so after a glob only a few more words are resolved on disk to find that file.
   const GLOB_NAME_LOOKAHEAD = 32;
@@ -2380,8 +2382,14 @@ function bashDenialOf(cmd, opts = {}) {
       classified.set(text, classifyWord(text, opts));
     }
     let c = classified.get(text);
-    if ((writing || w.redirectTarget) && (!c || (c.kind !== 'zn_state' && c.kind !== 'agent_config'))) {
-      const e = protectedElsewhere(text, opts);
+    // A cd's own target is not written to (where the cd leads is followed by cdBasesOf).
+    if ((writing || w.redirectTarget) && !CD_CMDS.has(bareHead(w.head).toLowerCase()) &&
+        (!c || (c.kind !== 'zn_state' && c.kind !== 'agent_config'))) {
+      if (!elsewhereProt.has(text)) {
+        if (overBudget(opts.budget, (opts.cdBases && opts.cdBases.dirs.length) || 1)) return TOO_SLOW_MESSAGE;
+        elsewhereProt.set(text, protectedElsewhere(text, opts));
+      }
+      const e = elsewhereProt.get(text);
       if (e) c = e;
     }
     if ((!c || c.kind === 'dotenv' || c.kind === 'keyfile') && (w.git || anyGit)) {
