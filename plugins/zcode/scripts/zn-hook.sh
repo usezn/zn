@@ -36,23 +36,39 @@ HERE=$([ -n "$HERE_DIR" ] && CDPATH='' cd -- "$HERE_DIR" 2>/dev/null && pwd -P) 
 # would be untrusted there. A link is followed to its target, and the target's folder must be trusted too.
 NL='
 '
+# The real path of a folder, in PHYS. Without a process per folder (a subshell is slow in Git Bash on Windows): cd -P into
+# the folder and back to the hook's folder in this shell. Only when the hook's folder cannot be read is a subshell used.
+CDPATH=
+CWD_P=$(pwd -P 2>/dev/null) || CWD_P=""
 phys() {
-  [ -n "$1" ] || return 1
-  (CDPATH='' cd -- "$1" 2>/dev/null && pwd -P)
+  PHYS=""
+  _pf=$1
+  [ -n "$_pf" ] || return 1
+  # cd prints the folder and goes back to the previous one for "-": a folder named "-" is ./-, and nothing reaches the
+  # hook's output (the agent reads it as the hook's answer).
+  [ "$_pf" != - ] || _pf=./-
+  if [ -z "$CWD_P" ]; then
+    PHYS=$(cd -P -- "$_pf" >/dev/null 2>&1 && pwd -P) || return 1
+    return 0
+  fi
+  cd -P -- "$_pf" >/dev/null 2>&1 || return 1
+  PHYS=$PWD
+  # Back to the hook's folder; if it is gone, no folder is trusted (the hook then finds no Node.js and refuses).
+  cd -P -- "$CWD_P" >/dev/null 2>&1 || { PHYS=""; return 1; }
+  [ -n "$PHYS" ]
 }
 dir_of() {
-  _dd=${1%/*}
-  [ -n "$_dd" ] || _dd=/
-  printf '%s\n' "$_dd"
+  DIR_OF=${1%/*}
+  [ -n "$DIR_OF" ] || DIR_OF=/
 }
-HOME_P=$(phys "${HOME:-/nonexistent}") || HOME_P=""
+HOME_P=""
+if phys "${HOME:-/nonexistent}"; then HOME_P=$PHYS; fi
 ROOTS=""
 add_root() {
-  _r=$(phys "$1") || return 0
-  case "$_r" in "" | / | "$HOME_P") return 0 ;; esac
-  ROOTS="$ROOTS$NL$_r"
+  phys "$1" || return 0
+  case "$PHYS" in / | "$HOME_P") return 0 ;; esac
+  ROOTS="$ROOTS$NL$PHYS"
 }
-CWD_P=$(pwd -P 2>/dev/null) || CWD_P=""
 add_root "$CWD_P"
 add_root "${CLAUDE_PROJECT_DIR:-}"
 add_root "${CURSOR_PROJECT_DIR:-}"
@@ -65,7 +81,8 @@ while [ -n "$_d" ] && [ "$_d" != / ]; do
   _d=${_d%/*}
 done
 trusted_dir() {
-  _p=$(phys "$1") || return 1
+  phys "$1" || return 1
+  _p=$PHYS
   case "$_p/" in */node_modules/*) return 1 ;; esac
   _o=$IFS
   IFS=$NL
@@ -85,12 +102,15 @@ done
 trusted_prog() {
   _f=$1
   _i=0
-  trusted_dir "$(dir_of "$_f")" || return 1
+  dir_of "$_f"
+  trusted_dir "$DIR_OF" || return 1
   while [ -L "$_f" ]; do
     [ -n "$READLINK" ] && [ "$_i" -lt 40 ] || return 1
     _t=$("$READLINK" -- "$_f") || return 1
-    case "$_t" in /*) _f=$_t ;; *) _f=$(dir_of "$_f")/$_t ;; esac
-    trusted_dir "$(dir_of "$_f")" || return 1
+    dir_of "$_f"
+    case "$_t" in /*) _f=$_t ;; *) _f=$DIR_OF/$_t ;; esac
+    dir_of "$_f"
+    trusted_dir "$DIR_OF" || return 1
     _i=$((_i + 1))
   done
   return 0

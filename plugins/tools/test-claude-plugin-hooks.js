@@ -350,6 +350,28 @@ try {
       assert.strictEqual(p.stdout, probe + ':/usr/bin');
     });
 
+    test('checking the PATH folders leaves the launcher in the folder the hook runs in', () => {
+      const d = plugin('cwd-kept');
+      const work = path.join(tmp, 'cwd-work');
+      fs.mkdirSync(path.join(work, 'bin'), { recursive: true });
+      fs.mkdirSync(path.join(work, '.git'));
+      const probe = path.join(tmp, 'cwd-probe');
+      fs.mkdirSync(probe);
+      fs.writeFileSync(path.join(probe, 'node'), '#!/bin/sh\npwd -P\n', { mode: 0o755 });
+      const r = run(d, 'PreToolUse', { cwd: work, PATH: path.join(work, 'bin') + ':' + home + ':' + probe + ':/usr/bin:/bin' });
+      assert.strictEqual(r.stdout.trim(), work);
+    });
+
+    test('a project folder named "-" (CLAUDE_PROJECT_DIR=-) puts nothing in front of the answer', () => {
+      const d = plugin('dash-dir');
+      const expected = JSON.stringify({ args: ['hook', 'claude-code'], stdin: '{"hook_event_name":"PreToolUse"}' });
+      for (const v of ['-', '--', '-P']) {
+        const r = run(d, 'PreToolUse', { cwd: elsewhere, PATH: realbin, env: { CLAUDE_PROJECT_DIR: v, CURSOR_PROJECT_DIR: v, OLDPWD: home } });
+        assert.strictEqual(r.status, 0, v + ': ' + r.stderr);
+        assert.strictEqual(r.stdout, expected, v);
+      }
+    });
+
     test('a session started in the home folder still finds a Node.js there (home is never the project)', () => {
       const d = plugin('home-start');
       const homebin = path.join(home, 'nodebin');
