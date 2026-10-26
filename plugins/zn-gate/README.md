@@ -158,6 +158,12 @@ It is not a sandbox:
   find zn-gate (only an exact copy of the pinned release passes the check). The
   launcher removes `NODE_OPTIONS` and `NODE_PATH` before zn-gate starts any
   child process.
+- **PATH entries the hooks trust.** The hooks skip `PATH` entries inside the
+  project, but not when the session runs in your home folder, and not entries
+  in `/tmp` or other folders the agent can write outside the project. If the
+  only Node.js is inside the project (a toolchain such as devbox or hermit, or
+  `node_modules/.bin`), the plugin finds no Node.js and blocks the calls it
+  cannot check: use `zn hooks install <agent>` instead.
 - **Files outside the in-memory load.** Child processes that zn-gate starts
   (the vault daemon, `zn run`, the stream scrubber) and the ES modules of its
   bundled dependencies are read from disk by Node after the check, so a change
