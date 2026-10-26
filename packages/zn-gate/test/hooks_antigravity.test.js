@@ -137,7 +137,7 @@ test('install (user) backs up, keeps foreign hooks and uninstall removes only zn
   const launcherFile = require('../lib/agents/launcher').launcherFile('antigravity', { home });
   assert.ok(fs.existsSync(launcherFile));
   agy.uninstall({ scope: 'user', home });
-  assert.equal(fs.existsSync(launcherFile), false);
+  assert.equal(fs.existsSync(launcherFile), true, 'one uninstall keeps the shared launcher');
   data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(data, { mine, off });
 });

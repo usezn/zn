@@ -62,7 +62,17 @@ jobs:
           want="$(node -p "require('./packages/zn-gate/package.json').version")"
           got="$(sed -n "s/^    default: '\([0-9][0-9.]*\)'$/\1/p" action.yml | head -1)"
           echo "action.yml version default: ${got:-none}; packages/zn-gate/package.json: $want"
-          [ "$got" = "$want" ] || { echo "::error::action.yml must default version to $want (the release it ships with), found ${got:-none}"; exit 1; }
+          if [[ "$want" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-(alpha|beta|rc)\.[0-9]+$ ]]; then
+            # A prerelease is not the default: the Action keeps the last final, older than this release's base.
+            base="${BASH_REMATCH[1]}"
+            if ! { [[ "$got" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ "$got" != "$base" ] \
+              && [ "$(printf '%s\n%s\n' "$got" "$base" | sort -V | head -1)" = "$got" ]; }; then
+              echo "::error::for the prerelease $want, action.yml must default to the last final release (older than $base), found ${got:-none}"
+              exit 1
+            fi
+          else
+            [ "$got" = "$want" ] || { echo "::error::action.yml must default version to $want (the release it ships with), found ${got:-none}"; exit 1; }
+          fi
 
       - name: Clean fixture passes
         id: clean

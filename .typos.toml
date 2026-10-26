@@ -7,3 +7,5 @@ extend-ignore-re = []
 [default.extend-words]
 # Intentional typo used as test data for the on_block validation (guard.py, its test and a changelog fragment).
 rasie = "rasie"
+# Windows 8.3 short names used as test data for the protected-path checks (SETTIN~1.JSO is settings.json).
+SETTIN = "SETTIN"

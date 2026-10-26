@@ -27,7 +27,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-24.8';
+const POLICY_RULES_VERSION = '2026-10-24.17';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -116,16 +116,43 @@ const keyOf = (s) => {
 // explicit `::$DATA` style suffix is dropped.
 const ADS_TYPE_RE = /(?::[^\\/:*?"<>|]*)?:\$(?:DATA|INDEX_ALLOCATION|BITMAP)$/i;
 function stripStreams(text) {
-  if (typeof text !== 'string' || text.indexOf(':') < 0) return text;
+  if (typeof text !== 'string') return text;
   const win = process.platform === 'win32';
+  if (!win && text.indexOf(':') < 0) return text;
   return text.split(/([\\/]+)/).map((seg, i) => {
     if (win) {
       if (/^[A-Za-z]:$/.test(seg)) return seg;
-      if (i === 0 && /^[A-Za-z]:/.test(seg)) return seg.slice(0, 2) + seg.slice(2).replace(/:.*$/, '');
-      return seg.replace(/:.*$/, '');
+      if (i === 0 && /^[A-Za-z]:/.test(seg)) return seg.slice(0, 2) + dropTrailingDotsSpaces(seg.slice(2).replace(/:.*$/, ''));
+      return dropTrailingDotsSpaces(seg.replace(/:.*$/, ''));
     }
     return seg.replace(ADS_TYPE_RE, '');
   }).join('');
+}
+// Windows drops trailing dots and spaces from a name, so `settings.json.` and `settings.json ` open `settings.json`.
+// A name made only of dots (`.`, `..`) is left alone. Scanned from the end, so a long run cannot cost more than its length.
+function dropTrailingDotsSpaces(seg) {
+  let end = seg.length;
+  while (end > 0 && (seg.charCodeAt(end - 1) === 46 || seg.charCodeAt(end - 1) === 32)) end--;
+  if (end === seg.length) return seg;
+  if (/^\.*$/.test(seg)) return seg;
+  return seg.slice(0, end);
+}
+// An 8.3 short name: up to six characters, `~`, digits, and an optional extension of up to three (`SETTIN~1.JSO`,
+// `CLAUDE~1`). The long name it stands for cannot be read from the text, so on win32 it is checked as a pattern
+// (`{,.}settin*.jso*`) against the protected names, like a typed glob.
+const SHORT_NAME_RE = /^([^~\s.:*?"<>|\\/]{1,6})~[0-9]{1,6}(?:\.([^.\s:*?"<>|\\/]{1,3}))?$/;
+function shortNameGlob(text) {
+  if (process.platform !== 'win32' || typeof text !== 'string' || text.indexOf('~') < 0) return null;
+  let found = false;
+  let lastShort = false;
+  const out = text.split(/([\\/]+)/).map((seg) => {
+    const m = SHORT_NAME_RE.exec(seg);
+    if (!/^[\\/]*$/.test(seg)) lastShort = !!m;
+    if (!m) return seg;
+    found = true;
+    return '{,.}' + m[1] + '*' + (m[2] ? '.' + m[2] + '*' : '');
+  }).join('');
+  return found ? { glob: out, lastShort } : null;
 }
 /** The pattern, ignoring case where the platform does. */
 const ci = (re) => (caseInsensitive() && !re.flags.includes('i') ? new RegExp(re.source, re.flags + 'i') : re);
@@ -300,6 +327,11 @@ function classifyPath(p, opts = {}) {
     const c = classifyResolved(candidate, ctx);
     if (c) return c;
   }
+  // A short name hides the long one: it counts as protected when it could stand for a protected file or folder.
+  const short = shortNameGlob(expanded.text);
+  // When the last name is written out, a .env there is judged by its own content (readDenial), not by the pattern.
+  // A last name that is itself a glob (`*`, `.e*`) names whatever it matches, a plain .env included: no skipping then.
+  if (short) return globClass(short.glob, short.lastShort || GLOB_RE.test(expanded.text) ? opts : { ...opts, skipDotenv: true });
   return null;
 }
 
@@ -529,12 +561,12 @@ function globClass(word, opts = {}) {
     if (e.agentVar) return { kind: 'agent_config', reason: 'a pattern built from $' + e.agentVar };
     const abs = slash(path.resolve(ctx.cwd, e.text));
     // Any pattern whose last name starts with .env names a .env file.
-    if (keyOf(path.posix.basename(abs)).startsWith('.env')) return { kind: 'credential', reason: 'a pattern that matches a .env file' };
+    if (!opts.skipDotenv && keyOf(path.posix.basename(abs)).startsWith('.env')) return { kind: 'credential', reason: 'a pattern that matches a .env file' };
     const re = globRegExp(keyOf(abs));
     if (re.impossible) continue;
     for (const ex of examples) {
       const c = classifyResolved(ex, ctx);
-      if (c && re.test(keyOf(slash(ex)))) {
+      if (c && !(opts.skipDotenv && c.kind === 'dotenv') && re.test(keyOf(slash(ex)))) {
         return c.kind === 'dotenv' ? { kind: 'credential', reason: 'a pattern that matches a .env file' } : c;
       }
     }
@@ -546,6 +578,7 @@ function globClass(word, opts = {}) {
         const c = classifyResolved(cand, ctx);
         // A key file match is judged by its content (keyFileGlobDenial); a protected file found later still wins.
         if (c && c.kind === 'keyfile') { keyHit = keyHit || c; continue; }
+        if (c && opts.skipDotenv && c.kind === 'dotenv') continue;
         if (c) return c.kind === 'dotenv' ? { kind: 'credential', reason: 'a pattern that matches a .env file' } : c;
       }
     }
@@ -711,6 +744,244 @@ function writeDenial(p, opts = {}) {
   return null;
 }
 
+/* ------------------- agent memory and instruction files ------------------- */
+
+/*
+ * The files where a coding agent keeps persistent memory and standing instructions. The agent reads them at the
+ * start of later sessions, so text written there keeps working after the session, the skill or the tool that wrote it
+ * is gone. This is the one list: change it here only. Reads are always allowed; writes ask the user (or are refused
+ * in strict mode, see instructionWritesOf in runner.js).
+ *
+ *   by file name, in any folder: MEMORY.md, SOUL.md, AGENTS.md, CLAUDE.md (also ~/.claude/CLAUDE.md),
+ *     CLAUDE.local.md, GEMINI.md, .cursorrules, .windsurfrules
+ *   by place: .cursor/rules/* (any depth), .github/copilot-instructions.md,
+ *     and the Claude Code memory folders <claude dir>/projects/<project>/memory/*
+ */
+const INSTRUCTION_FILE_NAMES = ['MEMORY.md', 'SOUL.md', 'AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md', 'GEMINI.md', '.cursorrules', '.windsurfrules'];
+const INSTRUCTION_FILE_RES = [
+  /(^|\/)\.cursor\/rules\/[^/]/,
+  /(^|\/)\.github\/copilot-instructions\.md$/,
+];
+
+/** Whether a resolved absolute path is one of the instruction files above. `ctx` comes from contextOf. */
+function isInstructionFile(abs, ctx) {
+  const s = keyOf(slash(abs));
+  const base = path.basename(s);
+  if (INSTRUCTION_FILE_NAMES.some((n) => keyOf(n) === base)) return true;
+  if (INSTRUCTION_FILE_RES.some((re) => ci(re).test(s))) return true;
+  // <claude dir>/projects/<project>/memory/<file>, for ~/.claude, the project's .claude and CLAUDE_CONFIG_DIR.
+  return ctx.agent.dirs.some((d) => s.startsWith(d + '/projects/') && /^[^/]+\/memory\/[^/]/.test(s.slice(d.length + 10)));
+}
+
+/** Whether a typed path names an instruction file, as typed or where it really leads (links followed). */
+function isInstructionPath(p, opts = {}) {
+  if (typeof p !== 'string' || !p) return false;
+  const ctx = contextOf(opts);
+  const expanded = expandEnv(expandHome(p, ctx.home), ctx.env);
+  const abs = path.resolve(ctx.cwd, expanded.text);
+  const candidates = new Set([abs, realTargetOf(abs)]);
+  const physical = physicalDotDot(expanded.text, ctx.cwd);
+  if (physical) { candidates.add(physical); candidates.add(realTargetOf(physical)); }
+  for (const candidate of candidates) if (isInstructionFile(candidate, ctx)) return true;
+  return false;
+}
+
+/**
+ * null when `p` is not an instruction file, else {file, ask, deny}: the messages for a write to it
+ * (ask: the user decides; deny: strict mode).
+ */
+function instructionWriteNotice(p, opts = {}) {
+  if (!isInstructionPath(p, opts)) return null;
+  // The name comes from the agent: no control characters, and short, in a message the user reads.
+  const shown = String(p).replace(/[\u0000-\u001f\u007f-\u009f]/g, '?');
+  const file = shown.length > 80 ? shown.slice(0, 79) + '…' : shown;
+  return {
+    file,
+    ask: 'zn: this writes to ' + file + ', which your agent reads as standing instructions in later sessions. Approve only if you asked for this change.',
+    deny: 'zn: this writes to ' + file + ', which your agent reads as standing instructions in later sessions, and zn is set to block that. Ask the user to make this change.',
+  };
+}
+
+// Programs that write the files they are given. cp, mv and the like write only their last argument; sed and perl
+// only with an in-place flag; the others any file argument. A redirect target counts for every command.
+const INSTRUCTION_WRITERS = new Set(['tee', 'cp', 'mv', 'install', 'rsync', 'ln', 'dd', 'truncate', 'touch', 'sed', 'perl', 'ex', 'ed', 'patch',
+  'set-content', 'add-content', 'out-file', 'sc', 'ac', 'ni', 'new-item', 'copy-item', 'move-item', 'copy', 'move', 'ren', 'rename-item']);
+const INSTRUCTION_DEST_LAST = new Set(['cp', 'mv', 'install', 'rsync', 'ln', 'copy', 'move', 'copy-item', 'move-item', 'ren', 'rename-item']);
+const IN_PLACE_RE = /^(?:-[A-Za-z]*i|--in-place)/;
+const INSTRUCTION_CHECKS_MAX = 64;
+
+// Words that run the next command: the command word is the first one after them (and their options).
+// Each maps to the options that take a value.
+const INSTRUCTION_WRAPPERS = new Map([
+  ['sudo', new Set(['-u', '-g', '-h', '-p', '-C', '-U', '-D', '-R', '-T', '--user', '--group', '--host'])],
+  ['doas', new Set(['-u', '-C'])],
+  ['env', new Set(['-u', '-C', '-S'])],
+  ['xargs', new Set(['-n', '-I', '-L', '-P', '-d', '-E', '-s', '-a'])],
+  ['nice', new Set(['-n'])],
+  ['time', new Set(['-f', '-o'])],
+  ['command', new Set()], ['builtin', new Set()], ['exec', new Set()], ['nohup', new Set()], ['chronic', new Set()],
+  ['timeout', new Set(['-k', '-s', '--kill-after', '--signal'])],
+  ['stdbuf', new Set(['-i', '-o', '-e', '--input', '--output', '--error'])],
+  ['ionice', new Set(['-c', '-n', '-p', '-P', '-u', '--class', '--classdata'])],
+  ['then', new Set()], ['do', new Set()], ['else', new Set()], ['if', new Set()], ['while', new Set()], ['until', new Set()],
+  ['!', new Set()], ['{', new Set()],
+]);
+
+/** Index in `seg` of the command word of a simple command (after VAR=value, sudo, env, nohup, time, xargs...); -1 if none. */
+function commandWordAt(seg, progs) {
+  let i = 0;
+  while (i < progs.length) {
+    if (seg[i].redirectTarget || /^[A-Za-z_][A-Za-z0-9_]*=/.test(seg[i].text)) { i++; continue; }
+    const takesValue = INSTRUCTION_WRAPPERS.get(progs[i]);
+    if (!takesValue) return i;
+    const wrapper = progs[i];
+    i++;
+    while (i < progs.length && seg[i].text.length > 1 && seg[i].text.startsWith('-')) i += takesValue.has(seg[i].text) ? 2 : 1;
+    if (wrapper === 'timeout') i++; // its first argument is the duration
+  }
+  return -1;
+}
+
+// Downloaders that write the file named by an output option. The value-taking short options (other than the
+// output one) end a cluster such as `-sSo`: what follows them is their value.
+const INSTRUCTION_DOWNLOADERS = {
+  curl: { long: '--output', short: 'o', valued: 'AbcCdDeEFHKmPQrtTuUwxXyYz' },
+  wget: { long: '--output-document', short: 'O', valued: 'abBeFHiIlnoPQtTUwX' },
+};
+
+/** The files a `curl` or `wget` command writes with -o/--output or -O/--output-document. */
+function downloadTargets(name, rest) {
+  const spec = INSTRUCTION_DOWNLOADERS[name];
+  const out = [];
+  for (let i = 0; i < rest.length; i++) {
+    const x = rest[i];
+    if (x === spec.long) {
+      if (i + 1 < rest.length) out.push(rest[i + 1]);
+      i++;
+    } else if (x.startsWith(spec.long + '=')) {
+      out.push(x.slice(spec.long.length + 1));
+    } else if (/^-[A-Za-z]/.test(x)) {
+      for (let k = 1; k < x.length; k++) {
+        if (x[k] === spec.short) {
+          const attached = x.slice(k + 1);
+          if (attached) out.push(attached);
+          else if (i + 1 < rest.length) { out.push(rest[i + 1]); i++; }
+          break;
+        }
+        if (spec.valued.includes(x[k])) break;
+      }
+    }
+  }
+  return out;
+}
+
+const PS_COPY_MOVE = new Set(['copy', 'move', 'copy-item', 'move-item']);
+
+/** The value of PowerShell's -Destination (any unambiguous prefix, also -Destination:value), or null. */
+function psDestinationOf(rest) {
+  for (let i = 0; i < rest.length; i++) {
+    const m = /^-des(?:t(?:i(?:n(?:a(?:t(?:i(?:o(?:n)?)?)?)?)?)?)?)?(?::(.*))?$/i.exec(rest[i]);
+    if (m) return m[1] ? m[1] : (i + 1 < rest.length ? rest[i + 1] : null);
+  }
+  return null;
+}
+
+/** The target directory named with -t DIR or --target-directory[=]DIR, or null. */
+function targetDirectoryOf(rest) {
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === '-t' || rest[i] === '--target-directory') return i + 1 < rest.length ? rest[i + 1] : null;
+    if (rest[i].startsWith('--target-directory=')) return rest[i].slice('--target-directory='.length);
+  }
+  return null;
+}
+
+/** When `dest` is a directory (named with a trailing separator, forced by -t, or existing now), where each source lands in it. */
+function intoDirectory(dest, sources, forced, opts) {
+  let isDir = forced || /[\\/]$/.test(dest);
+  if (!isDir) {
+    try {
+      const ctx = contextOf(opts);
+      isDir = fs.statSync(path.resolve(ctx.cwd, expandEnv(expandHome(dest, ctx.home), ctx.env).text)).isDirectory();
+    } catch (_) { isDir = false; }
+  }
+  if (!isDir) return [];
+  const base = dest.replace(/[\\/]+$/, '');
+  const landed = [];
+  for (const src of sources) {
+    const name = src.replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+    if (name && name !== '.' && name !== '..') landed.push(base + '/' + name);
+  }
+  return landed;
+}
+
+/** The first notice for a word of a shell command that writes an instruction file; null when none does. */
+function instructionWriteInWords(readings, opts) {
+  const seen = new Set();
+  for (const reading of readings) {
+    const segments = new Map();
+    for (const w of reading) {
+      if (!segments.has(w.seq)) segments.set(w.seq, []);
+      segments.get(w.seq).push(w);
+    }
+    for (const seg of segments.values()) {
+      const progs = seg.map((x) => x.text.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, ''));
+      const at = commandWordAt(seg, progs);
+      const candidates = [];
+      for (const w of seg) if (w.redirectTarget) candidates.push(w.text);
+      if (at >= 0 && INSTRUCTION_DOWNLOADERS[progs[at]] && Object.prototype.hasOwnProperty.call(INSTRUCTION_DOWNLOADERS, progs[at])) {
+        candidates.push(...downloadTargets(progs[at], seg.slice(at + 1).map((x) => x.text)));
+      } else if (at >= 0 && INSTRUCTION_WRITERS.has(progs[at])) {
+        const name = progs[at];
+        const rest = seg.slice(at + 1).map((x) => x.text);
+        const args = rest.filter((x) => x && !x.startsWith('-') && !/^[0-9]*[<>]/.test(x));
+        if (name === 'dd') {
+          for (const x of rest) if (x.startsWith('of=')) candidates.push(x.slice(3));
+        } else if ((name === 'sed' || name === 'perl') && !rest.some((x) => IN_PLACE_RE.test(x))) {
+          // These only read their files without an in-place flag.
+        } else if (INSTRUCTION_DEST_LAST.has(name)) {
+          // Copy-Item -Path a -Destination b: the destination is named, whatever its place.
+          const psDest = PS_COPY_MOVE.has(name) ? psDestinationOf(rest) : null;
+          const dir = psDest !== null ? null : targetDirectoryOf(rest);
+          if (psDest !== null) {
+            candidates.push(psDest, ...intoDirectory(psDest, args.filter((x) => x !== psDest), false, opts));
+          } else if (dir !== null) {
+            // -t DIR: every other argument is a source, written into DIR.
+            const at = args.indexOf(dir);
+            const sources = args.filter((_, j) => j !== at);
+            candidates.push(...intoDirectory(dir, sources, true, opts));
+          } else if (args.length > 1) {
+            const dest = args[args.length - 1];
+            candidates.push(dest, ...intoDirectory(dest, args.slice(0, -1), false, opts));
+          }
+        } else {
+          candidates.push(...args);
+        }
+      }
+      for (const text of candidates) {
+        if (!text || seen.has(text)) continue;
+        seen.add(text);
+        if (seen.size > INSTRUCTION_CHECKS_MAX || overBudget(opts.budget, 1)) return null;
+        const n = instructionWriteNotice(text, opts);
+        if (n) return n;
+      }
+    }
+  }
+  return null;
+}
+
+// The files an `apply_patch` sent as a shell command adds or updates (or moves to).
+const SHELL_PATCH_WRITES_RE = /^\*\*\* (?:(?:Add|Update) File|Move to): (.+)$/gm;
+function instructionWriteInPatch(cmd, opts) {
+  if (!/^\s*apply_patch\b/.test(String(cmd))) return null;
+  let seen = 0;
+  for (const m of String(cmd).matchAll(SHELL_PATCH_WRITES_RE)) {
+    if (++seen > SHELL_PATCH_FILES_NAMED) break;
+    const n = instructionWriteNotice(m[1].trim(), opts);
+    if (n) return n;
+  }
+  return null;
+}
+
 /* ------------------------------ shell ------------------------------ */
 
 // Characters a backslash escapes in bash, outside and inside double quotes.
@@ -775,6 +1046,8 @@ function scanFirstCommand(cmd, posix = false) {
       continue;
     }
     if (ch === '`' || (ch === '$' && s[i + 1] === '(')) { substitution = true; pushChar(ch, i); continue; }
+    // `>|` is one redirection (it overrides noclobber), not a `>` followed by a pipe.
+    if (ch === '|' && s[i - 1] === '>' && cur && cur.end === i && !cur.text.endsWith('>>')) { pushChar(ch, i); continue; }
     if (ch === ';' || ch === '&' || ch === '|' || ch === '\n' || ch === '(' || ch === ')') {
       endWord();
       return { end: i, words, substitution, operator: ch, unterminated: false };
@@ -787,9 +1060,9 @@ function scanFirstCommand(cmd, posix = false) {
 }
 
 // `>` or `>>` as a word of its own, with an optional fd or `*` (PowerShell: all streams) in front.
-const REDIRECT_OP_WORD_RE = /^(?:[0-9]*|\*)>>?$/;
+const REDIRECT_OP_WORD_RE = /^(?:[0-9]*|\*)(?:>\||>>?)$/;
 // The same operator glued to the end of a word (`x>` in `echo x> file`), read on the raw source so a quoted ">" is not one.
-const GLUED_END_RE = /(?<![\\<>&])>>?$/;
+const GLUED_END_RE = /(?<![\\<>&])(?:>\||>>?)$/;
 // What can stand in front of a redirect operator without being a word of its own: a file descriptor, `*` (PowerShell:
 // all streams) or a bash `{name}` descriptor.
 const REDIRECT_FD_PREFIX_RE = /^(?:[0-9]*|\*|\{[A-Za-z_][A-Za-z0-9_]*\})$/;
@@ -808,7 +1081,7 @@ function gluedRedirect(raw) {
     if (ch === "'" || ch === '"') { quote = ch; continue; }
     if (ch === '<') return null;
     if (ch !== '>') continue;
-    const len = raw[i + 1] === '>' ? 2 : 1;
+    const len = raw[i + 1] === '>' || raw[i + 1] === '|' ? 2 : 1; // `>|` overrides noclobber
     const next = raw[i + len];
     if (i === 0 || next === undefined || next === '&' || next === '>') return null;
     return { at: i, len };
@@ -847,7 +1120,7 @@ function allWords(cmd, posix = false) {
       // A descriptor in front (`2>x`, `{fd}>x`) belongs to the operator; any other prefix is an argument of its own.
       const gluedOp = glued !== null && !REDIRECT_FD_PREFIX_RE.test(prefixRaw);
       const afterOp = REDIRECT_OP_WORD_RE.test(prev) || GLUED_END_RE.test(prevRaw);
-      const isRedirTarget = afterOp || /^(?:[0-9]*|\*)>>?./.test(w.text) || glued !== null;
+      const isRedirTarget = afterOp || /^(?:[0-9]*|\*)(?:>\||>>?)./.test(w.text) || glued !== null;
       let t = w.text;
       let targetRaw = raw;
       if (glued) {
@@ -857,11 +1130,11 @@ function allWords(cmd, posix = false) {
         if (gluedOp) out.push({ text: dequoteFragment(prefixRaw, posix), redirectTarget: afterOp, head, seq: guard, sub, gitArgs, git: gi >= 0 });
       }
       // Input redirections: <file, 0<file, <>file (read and write), {fd}<file.
-      t = t.replace(/^(?:[0-9]*|\*)>>?/, '').replace(/^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?/, '');
+      t = t.replace(/^(?:[0-9]*|\*)(?:>\||>>?)/, '').replace(/^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?/, '');
       // A drive path after a redirect (cmd.exe and PowerShell write them with "\"): the backslashes are separators,
       // not shell escapes, so the target is read as typed (C:\Users\me\.claude\*.json keeps its "\*").
       if (isRedirTarget) {
-        const typed = targetRaw.replace(/^(?:[0-9]*|\*)>>?/, '');
+        const typed = targetRaw.replace(/^(?:[0-9]*|\*)(?:>\||>>?)/, '');
         if (/^[A-Za-z]:\\/.test(typed) && !/['"]/.test(typed)) t = typed;
       }
       out.push({ text: t, redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0 });
@@ -1802,8 +2075,15 @@ function keychainQuery(cmd, env) {
   return false;
 }
 
+/**
+ * A deny message, or null. With `opts.instructionNotice` (an object the caller owns), a command that is allowed but writes
+ * an agent memory or instruction file leaves the notice from instructionWriteNotice in `opts.instructionNotice.hit`.
+ */
 function bashDenial(cmd, opts = {}) {
-  return shellPatchMessage(cmd, bashDenialOf(cmd, opts), opts);
+  const deny = shellPatchMessage(cmd, bashDenialOf(cmd, opts), opts);
+  const note = opts.instructionNotice;
+  if (!deny && note && !note.hit) note.hit = instructionWriteInPatch(cmd, opts);
+  return deny;
 }
 
 function bashDenialOf(cmd, opts = {}) {
@@ -1933,6 +2213,7 @@ function bashDenialOf(cmd, opts = {}) {
     if (deny && /[*?[]/.test(text)) { globDeny = globDeny || deny; continue; }
     if (deny) return deny;
   }
+  if (!globDeny && opts.instructionNotice && !opts.instructionNotice.hit) opts.instructionNotice.hit = instructionWriteInWords(readings, opts);
   return globDeny;
 }
 
@@ -2605,6 +2886,8 @@ module.exports = {
   expandBraces,
   readDenial,
   writeDenial,
+  instructionWriteNotice,
+  INSTRUCTION_FILE_NAMES,
   scanFirstCommand,
   wrapWithZnRun,
   scanPowerShell,

@@ -571,7 +571,7 @@ test('install / uninstall write and remove only our hooks, with backups', { skip
   adapter.uninstall({ scope: 'user', home, env, mcp: false });
   const after = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(after, { model: 'x', hooks: { PreToolUse: [userHook] } });
-  assert.ok(!fs.existsSync(launcherFile), 'uninstall removes the launcher');
+  assert.ok(fs.existsSync(launcherFile), 'one uninstall keeps the shared launcher');
 });
 
 test('project install writes .claude/settings.json and .mcp.json', (t) => {

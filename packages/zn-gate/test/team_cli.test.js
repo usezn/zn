@@ -110,7 +110,7 @@ test('a failed join exits 1 and names the reason; a locked vault adds the unlock
   fake.teamJoin = async () => { throw Object.assign(new Error('vault is locked'), { code: CODES.LOCKED }); };
   r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'd'.repeat(32)]));
   assert.strictEqual(r.code, 1);
-  assert.match(r.stderr, /^\[zn\] vault is locked; run `(zn|npx -y zn-gate@[\d.]+) unlock`\n$/);
+  assert.match(r.stderr, /^\[zn\] vault is locked; run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`\n$/);
   // A message that already says how to unlock is not given the hint a second time.
   fake.teamJoin = async () => { throw Object.assign(new Error('vault is locked; run `zn unlock`'), { code: CODES.LOCKED }); };
   r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'd'.repeat(32)]));
@@ -186,7 +186,7 @@ test('status with a locked vault reads the copies on disk and says the vault is 
   assert.strictEqual(r.code, 0);
   assert.match(r.stdout, /Organization: Example Org \(org_Example12345678\)/);
   assert.match(r.stdout, /Policy:       none received yet/);
-  assert.match(r.stdout, /The vault is locked: policy downloads and uploads resume after `(zn|npx -y zn-gate@[0-9.]+) unlock`\./);
+  assert.match(r.stdout, /The vault is locked: policy downloads and uploads resume after `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`\./);
   r = await capture(() => runTeamCommand(['team', 'status', '--json']));
   const j = JSON.parse(r.stdout);
   assert.strictEqual(j.joined, true);
@@ -235,7 +235,7 @@ test('sync with a locked vault exits 1 with the unlock hint', async () => {
   fake.teamSync = async () => { throw Object.assign(new Error('the vault is not running'), { code: CODES.LOCKED }); };
   const r = await capture(() => runTeamCommand(['team', 'sync']));
   assert.strictEqual(r.code, 1);
-  assert.match(r.stderr, /^\[zn\] the vault is not running; run `(zn|npx -y zn-gate@[\d.]+) unlock`\n$/);
+  assert.match(r.stderr, /^\[zn\] the vault is not running; run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`\n$/);
 });
 
 test('leave says what happened', async () => {

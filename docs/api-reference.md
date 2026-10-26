@@ -165,7 +165,7 @@ from zn_gate import get_evidence_stats, export_evidence_ledger
 - `on_block='raise'` raises `GuardBlockError`; `'return'` returns `fallback` (or the `Assessment` when `fallback` is `None`); `'custom'` calls `callback(assessment, function_name, payload)` and then raises `GuardBlockError`, unless the callback raises its own exception first. A blocked call never runs the function.
 - `on_block` must be `'raise'`, `'return'` or `'custom'`; any other value, or `'custom'` without a `callback`, raises `ValueError` when the decorator is created.
 - With `check_result=True`, a result too large to scan in full (over 4 MB) is blocked by default (rule `size:truncated`); set `ZN_ALLOW_TRUNCATED=1` to allow it. `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` forces the block and also covers arguments. The `self` or `cls` of a method is not checked.
-- Application objects passed to the function (a client, a session, a dependency container) are read as far as possible: unlike `check_tool_call`, the decorator does not block an argument because a plain object in it is nested too deep or cannot be read.
+- Application objects passed to the function (a client, a session, a dependency container) are read as far as possible: unlike `check_tool_call`, the decorator does not block an argument because a plain object in it is nested too deep or cannot be read. `SimpleNamespace` and `argparse.Namespace` count as data, like dicts and dataclasses: nested deeper than ten levels they are blocked (rule `size:nesting`).
 
 ### `GuardBlockError(assessment, target='', payload=None)`
 
@@ -192,6 +192,8 @@ except GuardBlockError as e:
 - Long strings are scanned in overlapping windows up to 4 MB, as tool results are; `Assessment.truncated` is `True` when a string was not scanned in full, and `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` blocks it (rule `size:truncated`).
 
 ### `check_tool_result(result: Any, block_truncated: bool = False, strict: bool | None = None, allow_truncated: bool = False) -> Assessment`
+
+- Dicts, lists, dataclasses, models, `SimpleNamespace` (for example from `json.loads(..., object_hook=...)`) and `argparse.Namespace` nested deeper than ten levels are blocked (rule `size:nesting`). Other objects are read up to 32 levels deep and blocked past that, and more than 100,000 attribute names and values taken from them (about 50,000 attributes) is blocked (rule `size:items`) instead of being skipped. An object reached through several references is counted once, and loggers are not read (handlers, which can hold captured records, are). The same applies to results checked by `@guard(check_result=True)`.
 
 - Inspects external tool return values for indirect injection payloads. Long strings are scanned in overlapping windows up to 4 MB; `Assessment.truncated` is `True` when a string was not scanned in full. Such output (over 4 MB) is blocked by default (rule `size:truncated`) because its middle was never checked; pass `allow_truncated=True` or set `ZN_ALLOW_TRUNCATED=1` to allow it marked `truncated`. `block_truncated=True` and `ZN_BLOCK_TRUNCATED=1` force the block. `@guard(check_result=True)` uses this check.
 

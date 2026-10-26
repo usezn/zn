@@ -103,6 +103,61 @@ ordinary file, asks each agent's installed hook to read both, and counts an agen
 as protected only when the `.env` file is blocked and the ordinary file is
 allowed. Nothing is sent and no setting changes. [What the output means](check.md).
 
+## What changes when you update to 1.14
+
+A checklist of what the changes collected for 1.14 ask of you. Skip a line that
+does not apply to you. The [changelog](../CHANGELOG.md) has the full list.
+
+After updating, run these in your own terminal:
+
+- [ ] **Run `zn hooks install <agent>` again** for each agent you installed hooks
+  for with `zn hooks install`: `claude-code`, `codex`, `cursor`, `gemini` and
+  `antigravity`. This switches an existing install to the changes in this
+  release: the hook launcher script that blocks instead of running a call
+  unchecked when Node.js is gone, the check of MCP tool calls in Claude Code and
+  Codex, and the Codex hooks for `PermissionRequest` and `Stop`. With the Claude
+  Code plugin, run `claude plugin update zn-gate@usezn` and start a new session.
+- [ ] **Codex: trust the changed hooks.** Open Codex and review them in `/hooks`
+  (see [above](#codex-asks-you-to-trust-the-hooks-again)).
+- [ ] **Claude Code plugin: check your Node.js.** The plugin now needs Node.js
+  20.19 or later, not 20.12. On an older Node.js, `zn-gate init` sets up zn's
+  hooks instead, and `zn-gate check` explains why. zn-gate itself and zn's hooks
+  still run on Node.js 18 and later.
+- [ ] **Run `zn-gate check`.** Every agent that is set up should say **OK**. It
+  now also reports a Codex setup that has another tool's `PreToolUse` or
+  `PermissionRequest` hook, and a hook whose script is missing.
+
+Changes in behavior that you may notice:
+
+- [ ] **New questions and blocks in the agent hooks.** They ask before an agent
+  writes to files such as `AGENTS.md`, `CLAUDE.md` or `.cursorrules`
+  (`hooks.agentInstructionWrites`), ask before a network request that carries
+  personal data or a literal secret ([egress check](egress-check.md),
+  `hooks.egressCheck`), and refuse a recursive delete of the home folder, the
+  filesystem root or a system folder, and a write to a disk device
+  (`hooks.blockDestructiveCommands`). Each can be changed in `~/.zn/config.json`.
+- [ ] **Agents can no longer run `zn-gate uninstall`.** Run it yourself in your
+  own terminal.
+- [ ] **A tool result larger than 4 MB is blocked** by the SDK functions and the
+  Python framework integrations. The agent hooks are unchanged. The block message
+  names the opt-out (`ZN_ALLOW_TRUNCATED=1`).
+- [ ] **`DEBUG=*` no longer turns on zn's technical detail.** Use `ZN_VERBOSE=1`
+  or `DEBUG=zn`.
+- [ ] **Project installs for Claude Code** (`--project`) now write `zn hook
+  claude-code` in the shared files instead of machine paths. Run the install
+  again in the project and commit the changed file.
+
+If you use the Python package (`pip install -U zn-gate`):
+
+- [ ] **LangChain:** `ZnGuardCallbackHandler(on_block="return")` now raises
+  `ValueError`; use `guard_langchain_tool(tool, on_block="return")`. The package
+  now needs `langchain-core` 1.3.3 or later.
+- [ ] **`guarded_tool`** now checks a tool's output for prompt injection by
+  default. Pass `check_result=False` to keep the old behavior.
+- [ ] **`check_tool_call` and `@guard`** now read the strings inside objects, and
+  block a generator or other one-shot iterator (pass a list). Check that your
+  tools still pass.
+
 ## What each release asks you to do
 
 Versions from 1.8.0 on. "No action" means that updating the package is enough.
