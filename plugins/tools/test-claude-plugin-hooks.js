@@ -362,6 +362,20 @@ try {
       assert.strictEqual(r.stdout.trim(), work);
     });
 
+    test('a project folder whose name holds a newline is still the project', () => {
+      const d = plugin('nl-root');
+      const marker = path.join(tmp, 'nl-root-ran');
+      const work = project('nl\nwork', marker);
+      fs.mkdirSync(path.join(work, '.git'));
+      fs.mkdirSync(path.join(work, 'sub'));
+      const expected = JSON.stringify({ args: ['hook', 'claude-code'], stdin: '{"hook_event_name":"PreToolUse"}' });
+      for (const [cwd, env] of [[work, {}], [path.join(work, 'sub'), {}], [elsewhere, { CLAUDE_PROJECT_DIR: work }]]) {
+        const r = run(d, 'PreToolUse', { cwd, PATH: path.join(work, 'bin') + ':' + realbin, env });
+        assert.strictEqual(fs.existsSync(marker), false, JSON.stringify(cwd) + ': a planted program ran');
+        assert.strictEqual(r.stdout, expected, JSON.stringify(cwd));
+      }
+    });
+
     test('a project folder named "-" (CLAUDE_PROJECT_DIR=-) puts nothing in front of the answer', () => {
       const d = plugin('dash-dir');
       const expected = JSON.stringify({ args: ['hook', 'claude-code'], stdin: '{"hook_event_name":"PreToolUse"}' });

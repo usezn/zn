@@ -34,8 +34,6 @@ HERE=$([ -n "$HERE_DIR" ] && CDPATH='' cd -- "$HERE_DIR" 2>/dev/null && pwd -P) 
 # and any node_modules folder. An absolute PATH entry there (a bin/ of the project, node_modules/.bin, a folder added by
 # direnv) could hold a node or a sleep of the project's own. Your home folder and / never count as the project: everything
 # would be untrusted there. A link is followed to its target, and the target's folder must be trusted too.
-NL='
-'
 # The real path of a folder, in PHYS. Without a process per folder (a subshell is slow in Git Bash on Windows): cd -P into
 # the folder and back to the hook's folder in this shell. Only when the hook's folder cannot be read is a subshell used.
 CDPATH=
@@ -63,19 +61,21 @@ dir_of() {
 }
 HOME_P=""
 if phys "${HOME:-/nonexistent}"; then HOME_P=$PHYS; fi
-ROOTS=""
-add_root() {
-  phys "$1" || return 0
-  case "$PHYS" in / | "$HOME_P") return 0 ;; esac
-  ROOTS="$ROOTS$NL$PHYS"
+# One variable per project root, never a list to split: a folder name may hold any character but / (a newline too).
+root_ok() {
+  case "$PHYS" in "" | / | "$HOME_P") return 1 ;; esac
 }
-add_root "$CWD_P"
-add_root "${CLAUDE_PROJECT_DIR:-}"
-add_root "${CURSOR_PROJECT_DIR:-}"
+R1=""
+R2=""
+R3=""
+R4=""
+if phys "$CWD_P" && root_ok; then R1=$PHYS; fi
+if phys "${CLAUDE_PROJECT_DIR:-}" && root_ok; then R2=$PHYS; fi
+if phys "${CURSOR_PROJECT_DIR:-}" && root_ok; then R3=$PHYS; fi
 _d=$CWD_P
 while [ -n "$_d" ] && [ "$_d" != / ]; do
   if [ -e "$_d/.git" ]; then
-    add_root "$_d"
+    if phys "$_d" && root_ok; then R4=$PHYS; fi
     break
   fi
   _d=${_d%/*}
@@ -84,16 +84,11 @@ trusted_dir() {
   phys "$1" || return 1
   _p=$PHYS
   case "$_p/" in */node_modules/*) return 1 ;; esac
-  _o=$IFS
-  IFS=$NL
-  set -f
-  _ok=0
-  for _r in $ROOTS; do
-    case "$_p/" in "$_r"/*) _ok=1; break ;; esac
+  for _r in "$R1" "$R2" "$R3" "$R4"; do
+    [ -n "$_r" ] || continue
+    case "$_p/" in "$_r"/*) return 1 ;; esac
   done
-  set +f
-  IFS=$_o
-  return "$_ok"
+  return 0
 }
 READLINK=""
 for c in /usr/bin/readlink /bin/readlink; do
