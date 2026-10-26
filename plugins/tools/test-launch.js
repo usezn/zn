@@ -450,32 +450,10 @@ try {
     assert.match(r.stdout, /^ran codex/);
   });
 
-  test('zn-gate-mcp ignores ZN_CLOUD and ZN_API_KEY from the environment: local rules only', () => {
-    const r = run(['zn-gate-mcp'], undefined, { env: { ZN_CLOUD: '1', ZN_API_KEY: 'zn_fakekeyfakekeyfake1', ZN_LOCAL_ONLY: 'false' } });
-    assert.strictEqual(r.status, 0, r.stderr);
-    assert.strictEqual(r.stdout, 'zn-gate-mcp true true - - - -');
-  });
-
-  test('zn-gate-mcp stays local when the plugin key option is empty or not expanded', () => {
-    for (const v of ['', '   ', '${user_config.api_key}', 'short']) {
-      const r = run(['zn-gate-mcp'], undefined, { env: { ZN_PLUGIN_API_KEY: v } });
-      assert.strictEqual(r.status, 0, r.stderr);
-      assert.strictEqual(r.stdout, 'zn-gate-mcp true true - - - -', JSON.stringify(v));
-    }
-  });
-
-  test('zn-gate-mcp uses the plugin key option for the cloud, on the default endpoint only', () => {
-    const r = run(['zn-gate-mcp', 'claude-code'], undefined, { env: { ZN_PLUGIN_API_KEY: 'zn_pluginkeypluginkey1', ZN_API_KEY: 'zn_envkeyenvkeyenvkey1', ZN_API_URL: 'https://example.invalid/x', ZN_STAGE: 'dev', ZN_LOCAL_ONLY: 'true', NODE_TLS_REJECT_UNAUTHORIZED: '0' } });
-    assert.strictEqual(r.status, 0, r.stderr);
-    assert.strictEqual(r.stdout, 'zn-gate-mcp  false 1 zn_pluginkeypluginkey1 - -');
-  });
-
-  test('zn-gate-mcp ignores ZN_PLUGIN_API_KEY unless started for Claude Code', () => {
-    for (const args of [['zn-gate-mcp'], ['zn-gate-mcp', 'cursor']]) {
-      const r = run(args, undefined, { env: { ZN_PLUGIN_API_KEY: 'zn_pluginkeypluginkey1' } });
-      assert.strictEqual(r.status, 0, r.stderr);
-      assert.strictEqual(r.stdout, 'zn-gate-mcp true true - - - -', args.join(' '));
-    }
+  test('the launcher has no zn-gate-mcp mode: the plugin starts no zn-gate MCP server', () => {
+    const r = run(['zn-gate-mcp']);
+    assert.notStrictEqual(r.status, 0);
+    assert.match(r.stderr, /usage: zn-launch\.js hook <[^>]+> \| secrets-mcp \| check \[agent\]/);
   });
 
   test('a bundled plugin uses only its own vendor/zn-gate copy', () => {
