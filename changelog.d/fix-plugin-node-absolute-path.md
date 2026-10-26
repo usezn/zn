@@ -1,2 +1,0 @@
-### Security
-- The zn-gate plugin hooks for Claude Code, Codex and Cursor start Node.js only from absolute `PATH` entries (through a small `/bin/sh` script), so a `node` placed in the project folder, or reached through a relative or empty `PATH` entry, is never run in place of the real Node.js. If no Node.js is found, calls that zn cannot check are blocked, and the other events show a warning. On Windows the plugin needs Git Bash (it comes with Git for Windows); without it, use `zn hooks install <agent>` instead of the plugin.

@@ -302,6 +302,35 @@ try {
       assert.strictEqual(p.stdout, '');
     });
 
+    // Claude Code runs hook commands with bash on Linux and macOS (Git Bash on Windows), not only sh.
+    const bash = ['/bin/bash', '/usr/bin/bash', '/usr/local/bin/bash', '/opt/homebrew/bin/bash'].find((b) => fs.existsSync(b));
+    if (!bash) {
+      process.stdout.write('ok ' + (++n) + ' - every manifest command under bash -c # SKIP no bash\n');
+    } else {
+      test('every manifest command under bash -c: the planted node never runs and the launcher gets its arguments', () => {
+        const d = plugin('bash-planted');
+        const marker = path.join(tmp, 'bash-planted-ran');
+        const work = project('bash-work', marker);
+        plantIn(d, marker);
+        const cases = [];
+        for (const event of Object.keys(hooks)) {
+          cases.push([commandFor(event, d).command, work, {}, event === 'SessionStart' ? ['check', 'claude-code'] : ['hook', 'claude-code'], event]);
+        }
+        for (const event of Object.keys(codexCmds)) cases.push([codexCmds[event], work, { PLUGIN_ROOT: d }, ['hook', 'codex'], event]);
+        for (const event of Object.keys(cursorCmds)) cases.push([cursorCmds[event], d, {}, ['hook', 'cursor'], event]);
+        for (const [command, cwd, env, args, event] of cases) {
+          for (const PATH of relPaths) {
+            const r = spawnSync(bash, ['-c', command], {
+              cwd, input: '{"hook_event_name":"' + event + '"}', encoding: 'utf8', timeout: 60000, env: { PATH, HOME: home, ...env },
+            });
+            assert.strictEqual(fs.existsSync(marker), false, command + ' ' + PATH + ': a planted program ran');
+            assert.strictEqual(r.status, 0, command + ' ' + PATH + ': ' + r.stderr);
+            assert.strictEqual(r.stdout, JSON.stringify({ args, stdin: '{"hook_event_name":"' + event + '"}' }), command);
+          }
+        }
+      });
+    }
+
     test('a ./ script path counts only for Cursor: for Claude Code and Codex the launcher is treated as missing', () => {
       const d = plugin('relpath');
       for (const agent of ['claude-code', 'codex']) {
