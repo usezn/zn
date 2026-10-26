@@ -162,7 +162,20 @@ for (const k of Object.keys(apMcp)) if (!['$schema', 'mcpServers'].includes(k)) 
 
 /* ------------------------ what the plugin runs ------------------------ */
 
-const LAUNCHER = /^node "?(\$\{CLAUDE_PLUGIN_ROOT\}\/|\$PLUGIN_ROOT\/|\.\/)scripts\/zn-launch\.js"? (hook (claude-code|codex|cursor)|check claude-code)$/;
+// The Claude Code and Codex hooks start the launcher through scripts/zn-node.sh, which finds Node.js only in absolute PATH
+// entries (they run in the session's folder, the project, so a `node` found by name could be one placed there or reached
+// through a relative PATH entry). Each command names its own event.
+// Cursor runs plugin hooks "from the plugin's install directory" (cursor.com/docs/agent/hooks), so a relative PATH entry
+// points into the plugin, not the project, and its hooks keep `node ./scripts/zn-launch.js`. On Windows Cursor runs hook
+// commands through PowerShell, where /bin/sh would be a path on the current drive, not Git Bash.
+const LAUNCHERS = {
+  'com.openai/hooks.json': /^\/bin\/sh "\$PLUGIN_ROOT\/scripts\/zn-node\.sh" (\w+) hook codex$/,
+  'cursor/hooks.json': /^node \.\/scripts\/zn-launch\.js hook (cursor)$/,
+};
+// Codex on Windows runs commandWindows through cmd.exe, where /bin/sh does not exist: the plugin's Windows commands use only
+// cmd built-ins and block (exit 2) the events that can stop a call, and warn after a tool has run.
+const CODEX_WINDOWS_BLOCK = /^echo zn: the zn-gate plugin does not run on Windows, so this (call|prompt) was blocked\. Turn the plugin off and use zn hooks install codex instead\. 1>&2 & exit 2$/;
+const CLAUDE_LAUNCHER = /^\/bin\/sh "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/zn-node\.sh" (SessionStart|PreToolUse|PostToolUse|UserPromptSubmit|UserPromptExpansion) (hook claude-code|check claude-code)$/;
 function hookCommands(data) {
   const out = [];
   for (const groups of Object.values((data && data.hooks) || {})) {
@@ -173,10 +186,46 @@ function hookCommands(data) {
   }
   return out;
 }
-for (const f of ['hooks/hooks.json', 'com.openai/hooks.json', 'cursor/hooks.json']) {
-  const cmds = hookCommands(json(PLUGIN + '/' + f));
-  if (cmds.length === 0) fail(f + ': no hooks');
-  for (const c of cmds) if (!LAUNCHER.test(String(c))) fail(f + ': hook command does not run the launcher: ' + c);
+for (const [f, re] of Object.entries(LAUNCHERS)) {
+  const data = json(PLUGIN + '/' + f);
+  if (hookCommands(data).length === 0) fail(f + ': no hooks');
+  for (const [event, groups] of Object.entries((data && data.hooks) || {})) {
+    for (const c of hookCommands({ hooks: { [event]: groups } })) {
+      const m = re.exec(String(c));
+      if (f === 'cursor/hooks.json') {
+        if (!m) fail(f + ': ' + event + ' hook must run node ./scripts/zn-launch.js hook cursor: ' + c);
+      } else if (!m || m[1] !== event) {
+        fail(f + ': ' + event + ' hook must run scripts/zn-node.sh with its own event name: ' + c);
+      }
+    }
+  }
+}
+for (const [event, groups] of Object.entries(json(PLUGIN + '/com.openai/hooks.json').hooks || {})) {
+  for (const h of groups.flatMap((g) => g.hooks || [])) {
+    const w = String(h.commandWindows || '');
+    const ok = event === 'PostToolUse' ? /^echo \{"systemMessage":"zn is NOT protecting this session: [^"&|<>^]*"\}$/.test(w) : CODEX_WINDOWS_BLOCK.test(w);
+    if (!ok) fail('com.openai/hooks.json: ' + event + ' hook needs the Windows command that ' + (event === 'PostToolUse' ? 'warns' : 'blocks') + ': ' + w);
+  }
+}
+{
+  const f = 'hooks/hooks.json';
+  const data = json(PLUGIN + '/' + f);
+  let count = 0;
+  for (const [event, groups] of Object.entries((data && data.hooks) || {})) {
+    for (const g of groups) {
+      for (const h of g.hooks || []) {
+        count++;
+        const m = CLAUDE_LAUNCHER.exec(String(h.command));
+        if (!m || m[1] !== event || (m[2] === 'check claude-code') !== (event === 'SessionStart')) fail(f + ': ' + event + ' hook must run scripts/zn-node.sh with its own event name: ' + h.command);
+        // Without Git Bash, Claude Code on Windows would run the command with PowerShell, where /bin/sh is a path on the
+        // current drive; "shell": "bash" asks for bash only (code.claude.com/docs/en/hooks).
+        if (h.shell !== 'bash') fail(f + ': ' + event + ' hook must set "shell": "bash"');
+      }
+    }
+  }
+  if (count === 0) fail(f + ': no hooks');
+  const sh = fs.readFileSync(path.join(PLUGIN, 'scripts', 'zn-node.sh'), 'utf8');
+  if (!sh.startsWith('#!/bin/sh' + String.fromCharCode(10)) || !sh.includes('zn-launch.js')) fail('scripts/zn-node.sh: must be a /bin/sh script that runs zn-launch.js');
 }
 // Each MCP server and the launcher mode that starts it (zn-gate-mcp uses local
 // rules unless the Claude Code plugin's optional api_key option is set).

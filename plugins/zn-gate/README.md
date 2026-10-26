@@ -27,6 +27,18 @@ Hook scripts run on your machine: installing the plugin on the web does not inst
   Claude Code (the terminal or the desktop app).
 - Git (on Windows, Git for Windows), to add the marketplace from GitHub.
   Without it, `claude plugin marketplace add` fails because Git is not found.
+- Claude Code on Windows: Git Bash (it comes with Git for Windows). The hooks
+  ask Claude Code for bash (`"shell": "bash"`) and start through `/bin/sh`,
+  which is Git Bash's. Without Git Bash they cannot start, and tool calls and
+  prompts are blocked (not tested on Windows without Git Bash). If you cannot
+  use Git Bash, do not install the plugin: run `zn hooks install claude-code`
+  instead. If Claude Code still ran these hooks with PowerShell, `/bin/sh`
+  would mean a `\bin\sh` program at the root of the project's drive, which
+  another user of the machine may be able to create: on a shared Windows
+  machine without Git Bash, do not install the plugin.
+- Codex on Windows: the plugin does not run there. Its Windows hook commands
+  only block tool calls and prompts and tell you to run
+  `zn hooks install codex` instead of the plugin.
 - zn-gate **1.13.1**.
   - **Claude Code** installs it with the plugin: it runs your `npm` to install
     the release pinned by the plugin's `package-lock.json` (with its registry
@@ -73,7 +85,15 @@ Hook scripts run on your machine: installing the plugin on the web does not inst
 ## What the plugin runs
 
 Every hook and both MCP servers run `node scripts/zn-launch.js`, a single
-file with no dependencies that you can read in full. On every call it:
+file with no dependencies that you can read in full. Claude Code and Codex run
+hooks in your project folder, so there the hooks start it through
+`/bin/sh scripts/zn-node.sh`, which uses a Node.js found only in an absolute
+`PATH` entry or a usual install folder: a `node` in the project folder, or
+reached through a relative or empty `PATH` entry, never runs in its place. If
+it finds no Node.js, calls and prompts that zn cannot check are blocked, and
+the other events show a warning. Cursor runs plugin hooks from the plugin
+folder, so its hooks start `node scripts/zn-launch.js` directly. On every call
+the launcher:
 
 1. finds the zn-gate package: the directory set as
    `"plugin": {"packageDir": "..."}` in `~/.zn/config.json`, or else the copy
@@ -127,7 +147,8 @@ It is not a sandbox:
   and for MCP tools in Cursor. Cursor cannot replace the output of its
   built-in tools, so there a refusal only reports the problem.
 - **The agent's environment.** Whoever controls the environment the agent
-  starts hooks with chooses which `node` runs the launcher, can preload code
+  starts hooks with chooses, through the absolute entries of its `PATH`, which
+  `node` runs the launcher, can preload code
   with `NODE_OPTIONS` before the launcher starts, and chooses the `PATH` used to
   find zn-gate (only an exact copy of the pinned release passes the check). The
   launcher removes `NODE_OPTIONS` and `NODE_PATH` before zn-gate starts any
