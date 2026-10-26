@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-25.7';
+const POLICY_RULES_VERSION = '2026-10-26.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -100,6 +100,16 @@ const AGENT_CONFIG_RES = [
   [/(^|\/)opencode\.jsonc?$/, 'OpenCode configuration'],
   [/(^|\/)\.(config\/)?opencode\/plugins?\//, 'OpenCode plugins'],
   [/(^|\/)\.opencode\/plugins?\//, 'OpenCode plugins'],
+  // The agents' plugin folders and plugin state: an installed plugin runs its hooks, so changing or removing one (or
+  // its list of installed plugins) changes or switches off the hooks that check the agent, zn's plugin included.
+  [/(^|\/)\.claude\/plugins(\/|$)/, 'Claude Code plugins'],
+  [/(^|\/)\.codex\/plugins(\/|$)/, 'Codex plugins'],
+  [/(^|\/)\.cursor\/plugins(\/|$)/, 'Cursor plugins'],
+  [/(^|\/)\.zcode\/cli\/plugins(\/|$)/, 'Zcode plugins'],
+  [/(^|\/)\.gemini\/config\/plugins(\/|$)/, 'Antigravity plugins'],
+  [/(^|\/)\.gemini\/antigravity-cli\/plugins(\/|$)/, 'Antigravity CLI plugins'],
+  [/(^|\/)\.agents\/plugins(\/|$)/, 'Antigravity workspace plugins'],
+  [/(^|\/)\.gemini\/config\/config\.json$/, 'Antigravity plugin settings'],
 ];
 
 // Windows and macOS file systems are case-insensitive by default. Read on each
@@ -228,11 +238,21 @@ function agentContext(home, cwd, env) {
   if (env.OPENCODE_CONFIG_DIR) for (const k of keysOf(at(env.OPENCODE_CONFIG_DIR))) dirs.add(k);
   if (env.XDG_CONFIG_HOME) for (const k of keysOf(path.join(at(env.XDG_CONFIG_HOME), 'opencode'))) dirs.add(k);
   if (env.OPENCODE_CONFIG) for (const k of keysOf(at(env.OPENCODE_CONFIG))) files.add(k);
+  // Plugin folders under a moved configuration folder (the folder names above do not match the patterns there).
+  const plugins = new Set();
+  if (env.CLAUDE_CONFIG_DIR) for (const k of keysOf(path.join(at(env.CLAUDE_CONFIG_DIR), 'plugins'))) plugins.add(k);
+  if (env.CODEX_HOME) for (const k of keysOf(path.join(at(env.CODEX_HOME), 'plugins'))) plugins.add(k);
+  // Claude Code keeps every plugin file and its plugin state under this folder when the variable is set.
+  if (env.CLAUDE_CODE_PLUGIN_CACHE_DIR) for (const k of keysOf(at(env.CLAUDE_CODE_PLUGIN_CACHE_DIR))) plugins.add(k);
   // Roots that hold agent configuration: removing or moving them removes it.
   // Only the directory itself is protected (listing it or reading it is fine).
   const roots = new Set(keysOf(path.join(home, '.config')));
+  // The folders that hold the ZCode and Antigravity configuration and plugins.
+  for (const r of ['.zcode', path.join('.zcode', 'cli'), '.gemini', path.join('.gemini', 'config')]) {
+    for (const k of keysOf(path.join(home, r))) roots.add(k);
+  }
   if (env.XDG_CONFIG_HOME) for (const k of keysOf(at(env.XDG_CONFIG_HOME))) roots.add(k);
-  return { dirs: [...dirs], files, roots: [...roots] };
+  return { dirs: [...dirs], files, roots: [...roots], plugins: [...plugins] };
 }
 
 /** Everything a classification needs, from the options of one call. */
@@ -260,6 +280,7 @@ function classifyResolved(abs, ctx) {
     return { kind: 'agent_config', reason: 'a file in an agent configuration directory' };
   }
   if (agent.files.has(s)) return { kind: 'agent_config', reason: 'the agent configuration file the environment names' };
+  if ((agent.plugins || []).some((d) => s === d || s.startsWith(d + '/'))) return { kind: 'agent_config', reason: 'the agent plugins' };
   if (s.endsWith('.pub')) return null;
   if (creds.files.has(s)) return { kind: 'credential', reason: 'a file named by a credential environment variable' };
   for (const d of creds.dirs) if (s === d || s.startsWith(d + '/')) return { kind: 'credential', reason: 'a directory named by a credential environment variable' };
