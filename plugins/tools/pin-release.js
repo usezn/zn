@@ -197,12 +197,11 @@ async function main(argv) {
 const VERSIONED_JSON = [
   ['zn-gate/plugin.json', ['version']],
   ['zn-gate/.claude-plugin/plugin.json', ['version']],
-  ['zn-gate/.cursor-plugin/plugin.json', ['version']],
   ['zcode/.zcode-plugin/plugin.json', ['version']],
 ];
 // Only docs that name the version the plugin installs: a sentence about an older
 // release written as "zn-gate X" in one of these files would be moved too.
-const VERSIONED_DOCS = ['README.md', 'zn-gate/README.md', 'zn-gate/plugin.json', 'zn-gate/.cursor-plugin/plugin.json',
+const VERSIONED_DOCS = ['README.md', 'zn-gate/README.md', 'zn-gate/plugin.json',
   'zn-gate/.claude-plugin/plugin.json', 'zcode/README.md', 'zcode/.zcode-plugin/plugin.json'];
 
 function escapeRegExp(text) {

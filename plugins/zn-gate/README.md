@@ -9,7 +9,8 @@ them to the agent.
 
 The plugin follows the [Agent Plugins 1.0](https://github.com/agentplugins/agent-plugins-spec)
 layout (`plugin.json`, `mcp.json`, `skills/`) and adds the files Claude Code
-and Cursor read for hooks.
+and Codex read for hooks. Since version 1.14.0 there is no Cursor plugin: use
+`zn hooks install cursor` instead.
 
 **Codex:** this plugin declares zn-gate's hooks. Codex documents plugin hooks as loaded after you review and trust them in `/hooks` ([OpenAI hooks documentation](https://learn.chatgpt.com/docs/hooks)). In our test with Codex 0.162.1 we could not confirm that they load. If `/hooks` does not list zn-gate's hooks, run `zn hooks install codex` instead, which writes them into your Codex configuration; that is the tested path. The plugin's hooks need zn-gate 1.13.1 installed on the machine (`npm install -g zn-gate@1.13.1`, then `npm audit signatures`); without it, every tool call is refused. Use one set of hooks only. `com.openai/hooks.json` declares the plugin's hooks.
 
@@ -45,7 +46,7 @@ Hook scripts run on your machine: installing the plugin on the web does not inst
     integrity) into the plugin folder, with install scripts disabled. This
     needs npm on your `PATH`; without it the install is skipped, and the
     session start check says what to run.
-  - **Codex, Cursor and other agents** do not install plugin dependencies.
+  - **Codex and other agents** do not install plugin dependencies.
     Install the release yourself, then check the registry signatures of what
     you installed:
 
@@ -92,12 +93,7 @@ hooks in your project folder, so there the hooks start it through
 project folder, its git work tree or a `node_modules` folder, or reached
 through a relative or empty `PATH` entry, never runs in its place. If
 it finds no Node.js, calls and prompts that zn cannot check are blocked, and
-the other events show a warning. Cursor runs plugin hooks from the plugin
-folder, so its hooks start `node scripts/zn-launch.js` directly. They start
-`node` by name, so an absolute `PATH` entry that points into the project
-(its `node_modules/.bin`, a folder added by direnv) can run a `node` of the
-project's own; with such a `PATH`, use `zn hooks install cursor` instead. On every call
-the launcher:
+the other events show a warning. On every call the launcher:
 
 1. finds the zn-gate package: the directory set as
    `"plugin": {"packageDir": "..."}` in `~/.zn/config.json`, or else the copy
@@ -141,18 +137,13 @@ It is not a sandbox:
   marks as experimental. If a Node.js version lacks it or changes it, the
   launcher refuses to run (hooks exit 2, the MCP servers do not start).
 - **Timeouts pass in Claude Code.** A hook that does not answer in 15 s is
-  treated as a non-blocking error, and the call goes ahead. In Cursor, only the
-  file-read and prompt hooks are marked `failClosed`, so only those are blocked
-  on a timeout; a shell command or tool call goes ahead, as zn gives no answer
-  there when it has no objection and Cursor would block every call otherwise.
+  treated as a non-blocking error, and the call goes ahead.
 - **Refused output.** When the launcher refuses a tool-output event (the
   package was changed, zn-gate failed), it replaces the output with
-  `[zn plugin: output withheld because zn could not check it]` in Claude Code,
-  and for MCP tools in Cursor. Cursor cannot replace the output of its
-  built-in tools, so there a refusal only reports the problem.
+  `[zn plugin: output withheld because zn could not check it]` in Claude Code.
 - **The agent's environment.** Whoever controls the environment the agent
   starts hooks with chooses, through the absolute entries of its `PATH` (outside
-  the project, except in Cursor), which
+  the project), which
   `node` runs the launcher, can preload code
   with `NODE_OPTIONS` before the launcher starts, and chooses the `PATH` used to
   find zn-gate (only an exact copy of the pinned release passes the check). The
@@ -214,7 +205,7 @@ keep everything on your machine.
 The key is used only with the default zn endpoint, with certificate checks
 on: `ZN_API_URL`, `ZN_STAGE` and `NODE_TLS_REJECT_UNAUTHORIZED` from your
 environment are ignored by the plugin, and the key is not passed to the hooks.
-Cursor and other agents run the plugin with local rules only. What is sent
+Other agents run the plugin with local rules only. What is sent
 and kept: https://usezn.com/privacy
 
 ## Updates
@@ -239,7 +230,7 @@ claude plugin marketplace add usezn/zn@v1.13.1
 claude plugin install zn-gate@usezn
 ```
 
-Codex, Cursor and OpenCode: see [plugins/README.md](https://github.com/usezn/zn/blob/v1.13.1/plugins/README.md).
+Codex, Cursor (`zn hooks install cursor`, no plugin) and OpenCode: see [plugins/README.md](https://github.com/usezn/zn/blob/v1.13.1/plugins/README.md).
 
 If you used `zn hooks install claude-code` before, remove those hooks so each
 event is not checked twice: `zn hooks uninstall claude-code`.
@@ -252,7 +243,6 @@ event is not checked twice: `zn hooks uninstall claude-code`.
 | `.claude-plugin/plugin.json`, `hooks/hooks.json`, `.mcp.json` | Claude Code | Manifest, hooks, MCP servers |
 | `package.json`, `package-lock.json` | Claude Code | The pinned zn-gate release, installed into the plugin folder |
 | `com.openai/hooks.json` | Codex | Hooks, loaded after you trust them in `/hooks` |
-| `.cursor-plugin/plugin.json`, `cursor/hooks.json`, `cursor/mcp.json` | Cursor | Manifest, hooks, MCP servers |
 | `scripts/zn-launch.js` | all | Finds and verifies zn-gate, then runs it |
 | `scripts/zn-gate.lock.json` | all | Pinned version and file digests |
 

@@ -26,8 +26,8 @@
  *  (lib/agents/launcher.js) also exits 2 on the other events that can deny when the Node.js is gone.
  *  Only an event where this adapter always answers may be failClosed: on shell, MCP and tool-use events it
  *  writes nothing when it has no objection, Cursor documents no neutral answer ("allow" could skip its own
- *  approval; an empty object is not documented as a valid permission answer), and failClosed would block every call. The
- *  Cursor plugin's hooks.json follows the same set (plugins/tools/check-plugins.js and test/plugin_cursor_hooks.test.js).
+ *  approval; an empty object is not documented as a valid permission answer), and failClosed would block every call
+ *  (test/plugin_cursor_hooks.test.js). There is no Cursor plugin any more: its hooks started node by name.
  *
  * What Cursor allows, and so what zn does there (docs/compat.md):
  *  - Reads of credential files, .env with values and ~/.zn are denied

@@ -26,7 +26,6 @@ on:
       - 'plugins/**'
       - 'skill/**'
       - '.claude-plugin/**'
-      - '.cursor-plugin/**'
       - '.agents/**'
       - 'packages/zn-gate/package.json'
       - 'packages/zn-gate/package-lock.json'
