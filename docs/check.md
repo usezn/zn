@@ -116,6 +116,15 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   The plugin's hooks file is missing, unreadable or was edited. Installing the plugin again restores it.
 
+- **A PATH entry is inside a folder this project sits in.**
+
+  ```text
+  a PATH entry (<folder>/bin) is inside <folder>, a folder this project sits in, so the plugin hook could start a program from it and zn-gate check does not run it
+  remove <folder>/bin from your PATH (or run `zn-gate check` from a folder outside <folder>), then run `zn-gate check` again
+  ```
+
+  The Claude Code and ZCode plugin hooks skip PATH entries in the project and its git repository, but not in a folder above them (a project with no git repository checked from a subfolder, or a repository inside another one whose `bin` folder is on the PATH). zn-gate check then does not run the plugin's hook. Your home folder, the folders above it and the folders right under the root of the disk (such as `/usr`) do not count.
+
 - **The hook script of a plugin is not one zn-gate ships.**
 
   ```text

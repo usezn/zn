@@ -34,6 +34,7 @@ function textOf(res) {
   return { s, code };
 }
 
+const realOf = (p) => { try { return fs.realpathSync(p); } catch (_) { return p; } };
 const byId = (res, id) => res.results.find((r) => r.id === id);
 
 // A plugin installed where Claude Code installs plugins (or at `root`), listed in installed_plugins.json. `manifest`:
@@ -901,6 +902,60 @@ test('check: versionNewer compares x.y.z and puts a pre-release below its releas
   assert.equal(versionNewer('1.14.0-rc.2', '1.14.0'), false);
   assert.equal(versionNewer('2.0.0', '1.99.99'), true);
   assert.equal(versionNewer('x', '1.0.0'), false);
+});
+
+test('check: a PATH entry in a folder above the project (no .git, or a nested repository) stops the plugin hook from running', { skip: process.platform === 'win32' }, async (t) => {
+  const published = JSON.parse(fs.readFileSync(path.join(REPO_PLUGIN, 'hooks', 'hooks.json'), 'utf8'));
+  const nodeDir = path.dirname(process.execPath);
+  const fakeNode = (dir, marker) => {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'node'), '#!/bin/sh\necho ran > ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+  };
+  const cases = [
+    // A project with no .git, checked from a subfolder: its bin/ is in a folder above the cwd.
+    (base) => ({ bin: path.join(base, 'bin'), cwd: path.join(base, 'src', 'deep') }),
+    // A repository inside another one: the outer repository's bin/ is on the PATH.
+    (base) => {
+      fs.mkdirSync(path.join(base, '.git'), { recursive: true });
+      fs.mkdirSync(path.join(base, 'inner', '.git'), { recursive: true });
+      return { bin: path.join(base, 'bin'), cwd: path.join(base, 'inner', 'src') };
+    },
+  ];
+  for (const make of cases) {
+    const home = tempDir(t, 'zn-check-anc-');
+    const base = tempDir(t, 'zn-check-anc-proj-');
+    const marker = path.join(tempDir(t, 'zn-check-anc-mark-'), 'ran.txt');
+    const { bin, cwd } = make(base);
+    fs.mkdirSync(cwd, { recursive: true });
+    fakeNode(bin, marker);
+    fakePlugin(home, launcher(), null, { manifest: published });
+    const PATH = bin + path.delimiter + nodeDir + path.delimiter + (process.env.PATH || '');
+    const r = byId(await check({ home, env: { HOME: home, PATH }, cwd }), 'claude-code');
+    assert.equal(r.state, 'not-protected', cwd);
+    assert.match(r.problem, /is inside .*, a folder this project sits in, so the plugin hook could start a program from it/, cwd);
+    assert.match(r.fix, /^remove .* from your PATH/, cwd);
+    assert.equal(fs.existsSync(marker), false, cwd + ': the project node ran');
+  }
+  // A PATH entry outside the project (here the folder of this Node.js) does not stop it.
+  const home = tempDir(t, 'zn-check-anc-ok-');
+  fakePlugin(home, launcher(), null, { manifest: published });
+  const r = byId(await check({ home, env: { HOME: home, PATH: nodeDir + path.delimiter + (process.env.PATH || '') }, cwd: tempDir(t, 'zn-check-anc-ok-cwd-') }), 'claude-code');
+  assert.equal(r.state, 'protected', r.problem);
+});
+
+test('check: ancestorPathEntry ignores the home folder, folders above it and folders right under the root', (t) => {
+  const { ancestorPathEntry } = require('../lib/check')._internal;
+  const home = tempDir(t, 'zn-check-ancu-');
+  const proj = path.join(home, 'work', 'proj');
+  fs.mkdirSync(path.join(proj, 'sub'), { recursive: true });
+  const env = (p) => ({ PATH: p.join(path.delimiter) });
+  // ~/.local/bin is in the home folder, not in a folder between home and the project: not counted.
+  assert.equal(ancestorPathEntry({ home, cwd: path.join(proj, 'sub'), env: env([path.join(home, '.local', 'bin'), '/usr/bin']) }), null);
+  // ~/work/bin is in ~/work, which the project sits in: counted.
+  const hit = ancestorPathEntry({ home, cwd: path.join(proj, 'sub'), env: env([path.join(home, 'work', 'bin')]) });
+  assert.equal(hit && hit.folder, path.join(realOf(home), 'work'));
+  // Relative and empty entries are left to the hook's own rule.
+  assert.equal(ancestorPathEntry({ home, cwd: proj, env: env(['bin', '']) }), null);
 });
 
 test('check: run from a subfolder of a project with its bin/ on the PATH, the plugin hook does not start the project node', { skip: process.platform === 'win32' }, async (t) => {

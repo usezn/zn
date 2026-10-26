@@ -537,6 +537,36 @@ function versionNewer(a, b) {
   return false;
 }
 
+/* A PATH entry inside a folder above the project check runs in (its repository root, else the folder itself), below the home folder, as
+   {entry, folder}, or null. The plugin hooks skip PATH entries in the project and its git work tree, but not in a
+   folder above them: a project with no .git started from a subfolder, or a repository inside another one whose bin/
+   is on the PATH. check does not run a plugin hook that could start a program from there. The home folder, folders
+   above it and folders right under the file system root (/usr, /opt) are not counted. */
+function ancestorPathEntry(ctx) {
+  const home = realOrNull(ctx.home) || path.resolve(ctx.home);
+  // The project and its repository are the hook's own business (zn-node.sh skips entries in them): only folders above.
+  const top = realOrNull(projectRootOf(ctx.cwd)) || path.resolve(projectRootOf(ctx.cwd));
+  const root = path.parse(top).root;
+  const folders = [];
+  for (let d = path.dirname(top); d !== root && path.dirname(d) !== root && !isInside(home, d, true); d = path.dirname(d)) folders.push(d);
+  if (!folders.length) return null;
+  const PATH = ctx.env && typeof ctx.env.PATH === 'string' ? ctx.env.PATH : '';
+  for (const entry of PATH.split(path.delimiter)) {
+    if (!entry || !path.isAbsolute(entry)) continue;
+    const real = realOrNull(entry) || path.resolve(entry);
+    const folder = folders.find((d) => isInside(real, d, true));
+    if (folder) return { entry, folder };
+  }
+  return null;
+}
+
+function ancestorPathProblem(hit) {
+  return {
+    problem: 'a PATH entry (' + hit.entry + ') is inside ' + hit.folder + ', a folder this project sits in, so the plugin hook could start a program from it and zn-gate check does not run it',
+    fix: 'remove ' + hit.entry + ' from your PATH (or run `zn-gate check` from a folder outside ' + hit.folder + '), then run `zn-gate check` again',
+  };
+}
+
 /* The folder of a zn-gate plugin for Cursor, or null. Cursor documents ~/.cursor/plugins/local/<plugin> for plugins
    added by hand and does not say where it keeps the ones it installs, so every folder under ~/.cursor/plugins (up to 8
    levels deep, through links, each real folder once) is looked at. A folder counts when its .cursor-plugin/plugin.json is named
@@ -981,7 +1011,13 @@ async function checkAgent(spec, ctx) {
         // (never zn-launch.js directly): if that command does not refuse the read of .env, the plugin protects nothing.
         const realRoot = realOrNull(plugin.root) || plugin.root;
         const run = claudePluginRun(CLAUDE_PRE_COMMAND, realRoot, ctx, preHook.timeout);
-        if (!run) {
+        const ancestor = ancestorPathEntry(ctx);
+        if (ancestor) {
+          const a = ancestorPathProblem(ancestor);
+          res.problem = a.problem;
+          res.fix = a.fix;
+          res.pluginFault = true;
+        } else if (!run) {
           res.problem = 'Git Bash was not found, and Claude Code runs the hooks of the zn-gate plugin with it on Windows ("shell": "bash"), so the hook cannot start';
           res.fix = 'install Git for Windows (or set CLAUDE_CODE_GIT_BASH_PATH to its bash.exe), or use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again';
           res.pluginFault = true;
@@ -1037,7 +1073,14 @@ async function checkAgent(spec, ctx) {
           res.problem = 'the zn-gate plugin starts its hook with ' + pre.file + ', which is not on this computer, so the hook cannot start';
           res.fix = 'the ZCode plugin needs a system with ' + pre.file + ' (Linux); elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again';
         } else {
-          live = { file: pre.file, args: pre.args, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}, plugin: true };
+          const ancestor = ancestorPathEntry(ctx);
+          if (ancestor) {
+            const a = ancestorPathProblem(ancestor);
+            res.problem = a.problem;
+            res.fix = a.fix;
+          } else {
+            live = { file: pre.file, args: pre.args, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}, plugin: true };
+          }
         }
       } else if (!userHooksOn) {
         // Turned off, and nothing else of zn's runs: ZCode is not protected.
@@ -1418,4 +1461,4 @@ function report({ results, removed, warnings }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { PUBLISHED_PLUGIN_SCRIPTS, pluginScriptProblem, versionNewer, cursorZnPlugin, pluginManifest, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS } };
+module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { ancestorPathEntry, PUBLISHED_PLUGIN_SCRIPTS, pluginScriptProblem, versionNewer, cursorZnPlugin, pluginManifest, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS } };
