@@ -15,6 +15,7 @@ const { check: realCheck, report } = require('../lib/check');
 // supports it is injected (the check for older versions is in init_plugin_node.test.js).
 const check = (opts) => realCheck({ nodeVersion: '22.0.0', ...opts });
 const { tempDir } = require('./helpers/tmp');
+const { pluginHooks, writePluginManifest } = require('./helpers/claude_plugin');
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 
@@ -35,10 +36,15 @@ function textOf(res) {
 
 const byId = (res, id) => res.results.find((r) => r.id === id);
 
-function fakePlugin(home, launcherSource, settings) {
-  const root = path.join(home, '.claude', 'plugins', 'cache', 'usezn', 'zn-gate', '1.8.1');
+// A plugin installed where Claude Code installs plugins (or at `root`), listed in installed_plugins.json. `manifest`:
+// the hooks.json to write (a valid one by default), or null for none.
+function fakePlugin(home, launcherSource, settings, { manifest = pluginHooks(), root } = {}) {
+  root = root || path.join(home, '.claude', 'plugins', 'cache', 'usezn', 'zn-gate', '1.8.1');
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.mkdirSync(path.join(home, '.claude', 'plugins'), { recursive: true });
   fs.writeFileSync(path.join(root, 'scripts', 'zn-launch.js'), launcherSource);
+  fs.rmSync(path.join(root, 'hooks'), { recursive: true, force: true });
+  if (manifest) writePluginManifest(root, manifest);
   fs.writeFileSync(path.join(home, '.claude', 'plugins', 'installed_plugins.json'),
     JSON.stringify({ version: 2, plugins: { 'zn-gate@usezn': [{ scope: 'user', installPath: root }] } }));
   if (settings) fs.writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify(settings));
@@ -47,8 +53,9 @@ function fakePlugin(home, launcherSource, settings) {
 
 // A stand-in for the plugin launcher that hands the event to the real runner (as the real launcher does after
 // verifying the pinned package), or fails closed on every event when `broken`.
-function launcher({ broken = false, systemMessage = '' } = {}) {
-  return "const [mode] = process.argv.slice(2);\n" +
+function launcher({ broken = false, systemMessage = '', marker = '' } = {}) {
+  return (marker ? "require('fs').appendFileSync(" + JSON.stringify(marker) + ", 'ran\\n');\n" : '') +
+    "const [mode] = process.argv.slice(2);\n" +
     "if (mode === 'check') { " + (systemMessage ? "process.stdout.write(JSON.stringify({ systemMessage: " + JSON.stringify(systemMessage) + " }));" : '') + " process.exit(0); }\n" +
     (broken ? "process.stderr.write('zn plugin: zn-gate is not installed'); process.exit(2);\n"
       : "const r = require('child_process').spawnSync(process.execPath, [" + JSON.stringify(RUNNER) + ", 'claude-code'], { input: require('fs').readFileSync(0), encoding: 'utf8' });\n" +
@@ -235,6 +242,124 @@ test('check: the Claude Code plugin is checked through its launcher; a launcher 
   // The plugin alone: no second set to fall back on, so nothing is offered to turn off.
   assert.ok(!r.pluginBroken);
   assert.doesNotMatch(r.fix, /plugin disable/);
+});
+
+test('check: a plugin with no hook manifest is not protected, and its launcher is not run', async (t) => {
+  const home = tempDir(t, 'zn-check-nomanifest-');
+  const marker = path.join(tempDir(t, 'zn-check-nomanifest-mark-'), 'ran.txt');
+  const root = fakePlugin(home, launcher({ marker }), null, { manifest: null });
+  for (const live of [true, false]) {
+    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live }), 'claude-code');
+    assert.equal(r.state, 'not-protected');
+    assert.ok(!r.verified);
+    assert.match(r.problem, /has no hook manifest zn-gate check can read/);
+    assert.match(r.fix, /claude plugin install zn-gate@usezn/);
+  }
+  // A manifest that is not JSON, or has no "hooks", is the same as none.
+  for (const text of ['{', '{"description":"x"}']) {
+    fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), text);
+    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-') }), 'claude-code');
+    assert.equal(r.state, 'not-protected', text);
+    assert.match(r.problem, /has no hook manifest/, text);
+  }
+  assert.equal(fs.existsSync(marker), false, 'the launcher of a plugin with no manifest ran');
+});
+
+test('check: a plugin manifest whose PreToolUse hook does not run, does not wait, or does not cover reads is not protected', async (t) => {
+  const marker = path.join(tempDir(t, 'zn-check-pre-mark-'), 'ran.txt');
+  const other = { SessionStart: [{ hooks: [{ type: 'command', shell: 'bash', command: '/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" SessionStart check claude-code' }] }] };
+  const withMatcher = (m) => { const h = pluginHooks(); h.hooks.PreToolUse[0].matcher = m; return h; };
+  const cases = [
+    [{ hooks: other }, /has no PreToolUse hook in .*hooks\.json/],
+    [pluginHooks({ enabled: false }), /is turned off/],
+    [pluginHooks({ async: true }), /runs in the background \(async\)/],
+    [pluginHooks({ asyncRewake: true }), /runs in the background \(async\)/],
+    [pluginHooks({ type: 'prompt' }), /is not a "command" hook/],
+    [withMatcher('^(Bash|Write)$'), /matcher that does not cover Read/],
+    [withMatcher('mcp__.*'), /matcher that does not cover Read/],
+  ];
+  for (const [manifest, re] of cases) {
+    const home = tempDir(t, 'zn-check-pre-');
+    fakePlugin(home, launcher({ marker }), null, { manifest });
+    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+    assert.equal(r.state, 'not-protected', JSON.stringify(manifest));
+    assert.match(r.problem, re, JSON.stringify(manifest));
+    assert.match(r.problem, /so Claude Code runs no zn check before tool calls$/);
+  }
+  assert.equal(fs.existsSync(marker), false, 'the launcher of a plugin whose manifest was refused ran');
+  // A second PreToolUse hook that does cover reads is enough; a matcher of "*" or none covers every tool.
+  for (const manifest of [withMatcher('*'), withMatcher(''), { hooks: { PreToolUse: [...pluginHooks({ async: true }).hooks.PreToolUse, ...pluginHooks().hooks.PreToolUse] } }]) {
+    const home = tempDir(t, 'zn-check-preok-');
+    fakePlugin(home, launcher(), null, { manifest });
+    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+    assert.equal(r.state, 'protected', JSON.stringify(manifest) + ': ' + r.problem);
+    assert.equal(r.verified, true);
+  }
+});
+
+test('check: a plugin listed in a folder inside the project is not protected, and its launcher is not run', async (t) => {
+  const home = tempDir(t, 'zn-check-projplug-');
+  const project = tempDir(t, 'zn-check-projplug-repo-');
+  fs.mkdirSync(path.join(project, '.git'));
+  fs.mkdirSync(path.join(project, 'sub'));
+  const marker = path.join(tempDir(t, 'zn-check-projplug-mark-'), 'ran.txt');
+  const root = fakePlugin(home, launcher({ marker }), null, { root: path.join(project, 'plugin') });
+  // From the project folder, and from a folder below it in the same repository.
+  for (const cwd of [project, path.join(project, 'sub')]) {
+    for (const live of [true, false]) {
+      const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd, live }), 'claude-code');
+      assert.equal(r.state, 'not-protected', cwd);
+      assert.ok(!r.verified);
+      assert.match(r.problem, /not inside the folder where Claude Code installs plugins/, cwd);
+    }
+  }
+  // Claude Code's configuration folder moved into the project (CLAUDE_CONFIG_DIR): its plugins are still the project's.
+  const moved = path.join(project, 'claude-config');
+  fs.mkdirSync(path.join(moved, 'plugins'), { recursive: true });
+  const inMoved = path.join(moved, 'plugins', 'cache', 'usezn', 'zn-gate', '1.8.1');
+  fakePlugin(home, launcher({ marker }), null, { root: inMoved });
+  fs.copyFileSync(path.join(home, '.claude', 'plugins', 'installed_plugins.json'), path.join(moved, 'plugins', 'installed_plugins.json'));
+  const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH, CLAUDE_CONFIG_DIR: moved }, cwd: project, live: true }), 'claude-code');
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /inside this project/);
+  assert.equal(fs.existsSync(marker), false, 'zn-gate check ran a launcher from the project');
+  assert.ok(fs.existsSync(path.join(root, 'scripts', 'zn-launch.js')));
+  // Run from the home folder, or from a configuration folder kept in git, the installed plugin still counts.
+  fakePlugin(home, launcher());
+  fs.mkdirSync(path.join(home, '.claude', '.git'), { recursive: true });
+  for (const cwd of [home, path.join(home, '.claude'), path.join(home, '.claude', 'plugins')]) {
+    const ok = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd, live: true }), 'claude-code');
+    assert.equal(ok.state, 'protected', cwd + ': ' + ok.problem);
+  }
+});
+
+test('check: a plugin outside the folder where Claude Code installs plugins is not protected; the plugin cache folder counts', async (t) => {
+  const home = tempDir(t, 'zn-check-outplug-');
+  const elsewhere = tempDir(t, 'zn-check-outplug-dir-');
+  const marker = path.join(tempDir(t, 'zn-check-outplug-mark-'), 'ran.txt');
+  fakePlugin(home, launcher({ marker }), null, { root: path.join(elsewhere, 'zn-gate') });
+  const env = { HOME: home, PATH: process.env.PATH };
+  let r = byId(await check({ home, env, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /not inside the folder where Claude Code installs plugins/);
+  assert.equal(fs.existsSync(marker), false, 'zn-gate check ran a launcher outside the plugins folder');
+  // A link inside the plugins folder that leads out of it does not pass either.
+  if (process.platform !== 'win32') {
+    const link = path.join(home, '.claude', 'plugins', 'cache', 'linked');
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.symlinkSync(path.join(elsewhere, 'zn-gate'), link);
+    fakePlugin(home, launcher({ marker }), null, { root: link });
+    r = byId(await check({ home, env, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+    assert.equal(r.state, 'not-protected');
+    assert.match(r.problem, /not inside the folder where Claude Code installs plugins/);
+    assert.equal(fs.existsSync(marker), false);
+  }
+  // Claude Code keeps its plugins under CLAUDE_CODE_PLUGIN_CACHE_DIR when it is set.
+  fakePlugin(home, launcher(), null, { root: path.join(elsewhere, 'zn-gate') });
+  r = byId(await check({ home, env: { ...env, CLAUDE_CODE_PLUGIN_CACHE_DIR: elsewhere }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+  assert.equal(r.state, 'protected', r.problem);
+  assert.equal(r.verified, true);
 });
 
 test('check: the plugin\'s own check message, a plugin turned off, and a disableAllHooks setting are not protected', async (t) => {
