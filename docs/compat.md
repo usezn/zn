@@ -4,6 +4,16 @@ What the secrets scrubber and broker can do in each agent. zn-gate is not a sand
 depends on what each agent's hooks can see and block; formats were checked against each agent's official
 documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is in [`bench/e2e/`](../bench/e2e/).
 
+**What has been tested.**
+
+- **ZCode desktop app 3.16.3:** tested end to end in the app on Linux. On Linux and Windows it was also tested through the agent runtime that ships with the app (details: [ZCode page](editors/zcode.md)).
+- **Antigravity:** tested end to end with the official `agy` CLI 1.4.7 on Linux. 13 of the 15 scenarios gave a result and none failed. The model refused to delete the home folder, so that check was run on the installed hook directly; another plugin's hook did not always run next to zn's, while zn's hook always ran and its deny always applied.
+- **Claude Code, Codex CLI and OpenCode:** end-to-end runs with the agent itself, with 0 secret values sent to the model provider (see the table below). Codex CLI 0.163.0 and OpenCode 1.19.3 also ran end to end on Windows Server 2022.
+- **Gemini CLI 0.64.0 and GitHub Copilot CLI 1.0.98:** end-to-end runs against a scripted model provider, with 0 secret values sent.
+- **Cursor:** no end-to-end run, because Cursor has no CLI with hooks to drive.
+- **Clean install and Windows smoke test:** a clean install on Linux ran the hooks of Claude Code, Codex CLI and Cursor. A smoke test on Windows, as an administrator and as a standard user, ran the hooks of all eight agents.
+- **Desktop apps:** the Claude desktop app, the Cursor app, the Antigravity app and IDE, and the OpenCode desktop app have not been tested end to end yet. Anthropic's documentation says the Claude desktop app uses the same hooks as the Claude Code CLI, and Google's documentation lists the same hook files for the Antigravity app, IDE and CLI, so the hooks zn installs apply there too.
+
 ZCode desktop app: its hooks live in the user file the app documents (`~/.zcode/cli/config.json`, Settings -> Hooks). zn follows the hook behaviour described in the official ZCode documentation. Tested end to end on the official ZCode desktop app 3.16.3 on Linux x64 (October 2026): with zn installed, Settings -> Hooks lists zn's hooks, and in a real task zn blocked reading `.env` and `~/.aws/credentials` while ordinary commands and reads ran; the same checks also passed headless with the agent the app ships. The same checks also passed on Windows x64 (Windows Server 2022, same app version, October 2026), for an administrator and for a standard user: they ran through the agent the app ships, with zn's hooks set in the app's user config file as on Linux; the Windows app window itself was not driven. macOS was not tested.
 
 | | Claude Code | Codex CLI | Cursor (IDE) | OpenCode | Antigravity | ZCode desktop app |
@@ -21,7 +31,7 @@ ZCode desktop app: its hooks live in the user file the app documents (`~/.zcode/
 | Restore detected tokens into local commands and git-ignored files | Yes, shown in the confirmation dialog | No (tokens stay) | No (tokens stay) | No (tokens stay) | No (tokens stay) | No (tokens stay) |
 | `secrets` MCP server | Yes (registered on install) | Yes (snippet printed) | Yes (snippet printed) | Yes (snippet printed) | Not installed by the hooks; you can add the MCP server (see the [Antigravity page](editors/antigravity.md)) | Yes (registered on install) |
 | Windows | Yes, including the PowerShell tool (Claude Code 2.1.299 or later: before it, without Git for Windows, `PreToolUse` let calls through when it could not run) | The hook command was run by hand from PowerShell and from cmd.exe. The end-to-end run also passed on Windows Server 2022 with Codex 0.163.0 and PowerShell, 0 values sent to the provider ([evidence](../bench/e2e/windows/); one run, not in CI) | Not tested | End-to-end run on Windows Server 2022 with OpenCode 1.19.3 ([evidence](../bench/e2e/windows/); one run, not in CI), 0 values sent to the provider. With PowerShell, OpenCode's default shell there, a command with a marker failed instead of running in that run (the wrapping was then written for bash only; the PowerShell wrapping added since is covered by unit tests but not re-run end to end); with Git Bash (`SHELL` set) it runs | Checked by hand on a real Windows machine with the Antigravity IDE and CLI (October 2026); no automated end-to-end run | The ZCode desktop app 3.16.3 installs and runs, and the end-to-end run with zn passed on Windows (through the agent the app ships, with hooks set in the app's user config file; the app window itself was not driven). The PowerShell launcher the install writes was run on Windows Server 2022 (Windows PowerShell 5.1, Node.js 22, as administrator and as a standard user): a hook that hangs is stopped at the deadline and blocked, and a normal answer passes through |
-| End-to-end run, 0 values sent to the provider | **Yes** | **Yes** | Not run (no CLI with hooks to drive) | **Yes** | Not run | **Yes** on Linux and Windows (ZCode desktop app 3.16.3) |
+| End-to-end run, 0 values sent to the provider | **Yes** | **Yes** | Not run (no CLI with hooks to drive) | **Yes** | Run with `agy` 1.4.7 on Linux: 13 of 15 scenarios gave a result, none failed (see "What has been tested") | **Yes** on Linux and Windows (ZCode desktop app 3.16.3) |
 
 Tool output is checked within fixed limits so that the check always finishes before the agent's own hook
 timeout: 8 MiB of text and 1,000 different secret values per output, and 32 MiB of the event read from
@@ -232,9 +242,14 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     about is blocked, and the reason says what was held back and how to approve
     it (run it yourself outside the agent). A call zn has no objection to gets
     no answer (Gemini CLI's own approval applies). A pasted secret in a typed prompt is not checked.
-  - A hook that crashes or times out does not block the call: only an explicit
-    refusal (exit code 2) does. A user install goes through a small launcher
-    script that blocks the call if the Node.js zn was installed with is gone.
+  - Gemini CLI lets a call run when a hook crashes or times out: only an
+    explicit refusal (exit code 2) blocks. zn blocks instead: a user install goes
+    through a small launcher script, and a project install through a start guard,
+    that answer a hook that fails (including when the Node.js zn was installed
+    with is gone) with a block, and zn sets a 15-second timeout on its hook and
+    blocks a check that has not finished after 11 seconds (see
+    "If your agent blocks every prompt"). Hooks written before zn-gate 1.14.0
+    do not have these answers.
   - A project hook stays untrusted until you approve it in Gemini CLI, and it
     runs `zn` from your PATH, so every teammate needs zn-gate installed.
   - `hooksConfig.enabled: false`, a name in `hooksConfig.disabled` or
@@ -370,7 +385,7 @@ Install zn on every machine that runs the agent.
 ## If your agent blocks every prompt
 
 A hook that does not finish is answered by zn too, for every agent. As the hook starts, before it reads
-its input, a timer is armed 4 seconds before the agent's own hook timeout (Claude Code, Copilot CLI,
+its input, a timer is armed 4 seconds before the hook timeout zn sets for that agent (Claude Code, Copilot CLI,
 Gemini CLI and Antigravity: 15 seconds, so 11; OpenCode: 20, so 16; Codex CLI, Cursor and ZCode: 30, so
 26). If the check has not finished by then, including when the input never ends, zn answers the event with
 the block of its own agent (exit code 2, or the agent's deny answer) and exits: a tool call or prompt is
@@ -390,32 +405,37 @@ depends on the agent and on how the hooks were installed. A user install
 (`~/.zn/hooks/zn-hook-<agent>.sh`; on Windows, for Codex CLI, Cursor, Gemini CLI
 and Antigravity, the same steps written inline in PowerShell). It runs the
 Node.js it was installed with, else `zn` from the PATH, else it answers the
-block itself, without Node.js. A project install (`--project`), hooks written by
-an older zn-gate and the plugins keep a plain command. Agent by agent:
+block itself, without Node.js. A project install (`--project`) names `zn` on
+the PATH inside a short start guard (`sh -c`, PowerShell on Windows) that gives
+the same block when `zn` or Node.js is missing or fails, so it behaves like a
+user install. Hooks written by an older zn-gate (up to 1.13.1), including project
+installs, and the plugins keep a plain command. Agent by agent:
 
 - **Claude Code**: with a user install, tool calls, prompts and typed-command
   expansions are blocked in every Claude Code version; after a tool has run, zn
-  only warns in the session, so that output reaches the model unscrubbed. With
-  the plugin, a project install or older hooks, Claude Code 2.1.295 or later
+  only warns in the session, so that output reaches the model unscrubbed. A
+  project install does the same. With the plugin or older hooks, Claude Code
+  2.1.295 or later
   blocks tool calls, prompts and typed-command expansions (the hooks carry
   `onFailure: "block"`), and earlier versions let them go ahead.
 - **Codex CLI**: with a user install, tool calls, prompts and permission
-  requests are blocked, and after a tool has run zn only warns. With the plugin,
-  a project install or older hooks, Codex reports a hook failure and carries on:
-  tool calls and prompts go ahead unchecked.
+  requests are blocked, and after a tool has run zn only warns. A project
+  install does the same. With the plugin or older hooks, Codex reports a hook
+  failure and carries on: tool calls and prompts go ahead unchecked.
 - **Cursor**: with a user install, shell commands, MCP calls, file reads,
   prompts and `preToolUse` calls (Write, Delete, Grep) are blocked, and after a
-  tool has run zn only warns. With the plugin, shell commands, file reads,
-  prompts and `preToolUse` calls are blocked (its hooks are `failClosed`). With
-  a project install or older hooks, only file reads and prompts are blocked; the
-  other calls go ahead.
-- **Gemini CLI**: with a user install, tool calls are blocked. With a project
-  install or older hooks, Gemini CLI shows a warning and the tool call runs.
+  tool has run zn only warns. A project install does the same. With the
+  plugin, shell commands, file reads, prompts and `preToolUse` calls are blocked
+  (its hooks are `failClosed`). With older hooks, only file reads and prompts
+  are blocked; the other calls go ahead.
+- **Gemini CLI**: with a user install or a project install, tool calls are
+  blocked. With hooks written before zn-gate 1.14.0, Gemini CLI shows a warning
+  and the tool call runs.
 - **GitHub Copilot CLI**: a hook command that cannot start fails closed for
   `preToolUse`, so the tool call is blocked; the hook that runs after a tool
   fails open, so that output is not scrubbed. Copilot has no launcher; zn
-  blocks the call itself 4 seconds before Copilot's 15-second limit (Copilot
-  lets a call through when a hook times out).
+  sets a 15-second timeout on its hooks and blocks the call itself at 11 seconds
+  (Copilot lets a call through when a hook times out).
 - **OpenCode**: the plugin starts the hook itself. When the hook cannot start,
   times out or gives no valid answer, the tool call is blocked, the message is
   not sent and the tool output is withheld, for user and project installs alike.

@@ -316,7 +316,9 @@ function spawnHook(file, args, input, env, cwd) {
     input: JSON.stringify(input), encoding: 'utf8', timeout: HOOK_TIMEOUT_MS, cwd,
     env: { ...process.env, ZN_STATS: 'off', ...env }, windowsHide: true,
   });
-  if (r.error) return { ran: false, why: r.error.code || r.error.message };
+  // A hook that answers and exits before reading all its input makes the write fail with EPIPE although it ran: its status and output are the answer.
+  const ranAndExited = r.error && r.error.code === 'EPIPE' && typeof r.status === 'number';
+  if (r.error && !ranAndExited) return { ran: false, why: r.error.code || r.error.message };
   return { ran: true, decision: decisionOf(r.stdout, r.status), stdout: r.stdout, status: r.status };
 }
 
@@ -1089,4 +1091,4 @@ function report({ results, removed, warnings }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin } };
+module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin } };
