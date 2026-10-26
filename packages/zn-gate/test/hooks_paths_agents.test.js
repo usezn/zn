@@ -350,6 +350,53 @@ test('env -C, git -C and find -delete or -exec rm under the home folder are foll
   }
 });
 
+test('find patterns, find piped into xargs rm and git clean that reach ~/.zn or plugin folders are refused', (t) => {
+  const { home, proj } = tmpHome(t);
+  const opts = { home, cwd: proj, env: { HOME: home } };
+  for (const cmd of [
+    'find ~ -name ".z*" -exec rm -rf {} +',
+    'find ~ -path "*/.claude/plugins/*" -delete',
+    'find ~ -name "*.log" -delete',
+    'find ~ -iname "*.JSON" -delete',
+    'find ~ -regex ".*/\\.zn/.*" -delete',
+    'find ~ -regex ".*\\(log\\|tmp\\)" -delete',
+    'find ~ -mtime +30 -delete',
+    'find ~ -type f ! -name "*.pyc" -delete',
+    'find ~ -not -name "*.pyc" -delete',
+    'find ~ -name "*.log" -exec mv {} /tmp \\;',
+    'find ~ -name "*.log" | xargs rm',
+    'find ~ -name ".z*" -print0 | xargs -0 rm -rf',
+    'find ~/.zn -name "*.pyc" -delete',
+    'cd ~ && find . -name .zn -exec rm -rf {} +',
+    'cd && find -name "*.json" -delete',
+    'git -C ~ clean -fdx',
+    'cd ~ && git clean -fdx',
+    'cd ~; git clean -f -d -x',
+    'git -C ~ clean -fd .zn',
+    'git -C ~ clean -fd .claude/plugins',
+    'git -C ~ clean -fd "*"',
+  ]) {
+    assert.ok(policy.bashDenial(cmd, opts), cmd);
+  }
+  for (const cmd of [
+    'find ~ -name "*.pyc" -delete',
+    'find ~ -name __pycache__ -exec rm -rf {} +',
+    'find ~ -name "*.log" -exec cat {} \\;',
+    'find ~ -name "*.log" | xargs grep error',
+    'find ~ -name "*.log"',
+    'find . -name "*.log" -delete',
+    'find ~/proj -mtime +30 -delete',
+    'cd build && find . -delete',
+    'git clean -fdx',
+    'git -C ~ clean -n -d',
+    'git -C ~ clean --dry-run',
+    'git -C ~ clean -fd proj/build',
+    'git -C build clean -fdx',
+  ]) {
+    assert.equal(policy.bashDenial(cmd, opts), null, cmd);
+  }
+});
+
 test('a Codex patch is refused when any file in it is protected, and an unreadable patch too', async (t) => {
   const { home, proj } = tmpHome(t);
   const settings = path.join(home, '.claude', 'settings.json');

@@ -1,0 +1,3 @@
+### Security
+- A `find` that deletes from the home folder or above it is refused when what it matches may include `~/.zn` or an agent's plugin folders: a name, path or regular-expression pattern (`-name ".z*"`, `-name "*.log"`, `-path` under `.claude/plugins`, `-regex`), a negated test, or no name test at all. This also covers `find ... | xargs rm` and `-exec` of a command that changes files, and a `find` started after `cd ~`. A `find` with a narrow pattern (`-name "*.pyc"`) or one that only reads stays allowed.
+- `git clean` run in the home folder or above it (`git -C ~ clean -fdx`, `cd ~ && git clean -fdx`) is refused unless it is a dry run or its paths stay out of `~/.zn` and the plugin folders: when the home folder is a git work tree it would delete them.

@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-26.6';
+const POLICY_RULES_VERSION = '2026-10-26.7';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2259,15 +2259,59 @@ function bashDenial(cmd, opts = {}) {
   return deny;
 }
 
-/* find ROOT ... -delete / -exec ...: a find that deletes, started at the home folder or above it, whose expression names
-   zn's vault or an agent's plugin folders or state. The deny message, or null. */
-const FIND_PROTECTED_NAME_RE = /^\.?(?:zn|gemini|zcode|claude|codex|cursor|agents)$|^(?:plugins|antigravity-cli|cli|config|installed_plugins\.json|known_marketplaces\.json|config\.json)$/i;
-function findDeleteDenial(words, opts) {
+/* find ROOT ... that deletes (-delete, an -exec of a command that is not read-only, or a pipe into xargs rm and the like),
+   started at the home folder, above it or inside ~/.zn or a plugin folder, whose tests may match zn's vault or an agent's
+   plugin folders or a file in them. A test is matched against sample names and paths of those folders, so a pattern
+   (-name ".z*", a -path under .claude/plugins, -name "*.log", -regex) counts as well as a literal name; a find with no
+   name, path or regex test, or with a negated one, matches everything. The roots are resolved from every place a cd
+   leads to. The deny message, or null. */
+const FIND_HOME_RELS = ['.zn', '.claude/plugins', '.codex/plugins', '.cursor/plugins', '.zcode/cli/plugins', '.gemini/config/plugins',
+  '.gemini/antigravity-cli/plugins', '.gemini/config/config.json'];
+const FIND_SAMPLE_NAMES = ['.zn', '.claude', '.codex', '.cursor', '.gemini', '.zcode', 'plugins', 'antigravity-cli', 'cli', 'config',
+  'config.json', 'installed_plugins.json', 'known_marketplaces.json', 'vault.json', 'evidence.jsonl', 'stats.json', 'zn.log',
+  'plugin.json', 'package.json', 'hooks.json', 'settings.json', 'zn-launch.js', 'zn-gate.lock.json', 'index.js', 'README.md',
+  'LICENSE', 'node_modules', 'launch.sh', 'launch.ps1', 'launch.cmd', '.lock']
+  .concat(['json', 'jsonl', 'js', 'mjs', 'cjs', 'md', 'txt', 'log', 'sh', 'ps1', 'cmd', 'toml', 'yaml', 'yml', 'lock', 'key', 'pem', 'db',
+    'tmp', 'bak', 'sig', 'gz', 'tgz', 'zip'].map((e) => 'file.' + e));
+const FIND_SAMPLE_TAILS = ['', '/vault.json', '/zn.log', '/cache/zn/zn-gate/1.0.0/scripts/zn-launch.js', '/cache/zn/plugin.json'];
+const FIND_EXEC_READ_ONLY = new Set([...READ_ONLY_CMDS, 'md5sum', 'sha1sum', 'sha256sum', 'du', 'printf', 'test', '[', 'realpath',
+  'readlink', 'basename', 'dirname', 'cp']);
+const FIND_PIPED_DELETE_RE = /(?:^|[\s;&|(])find\s[^;&\n]*\|[^;&\n]*?(?:^|[\s|/])(?:rm|rmdir|unlink|shred|mv|truncate|trash(?:-put)?)(?=[\s;&|)]|$)/;
+
+/* A find glob as a regular expression: * and ? match a slash too, as in find (no FNM_PATHNAME). */
+function findGlobRe(glob, icase) {
+  let out = '';
+  for (let i = 0; i < glob.length; i++) {
+    const ch = glob[i];
+    if (ch === '\\' && i + 1 < glob.length) out += glob[++i].replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+    else if (ch === '*') out += '.*';
+    else if (ch === '?') out += '.';
+    else if (ch === '[') {
+      const close = glob.indexOf(']', i + 2);
+      if (close < 0) { out += '\\['; continue; }
+      let body = glob.slice(i + 1, close);
+      if (body[0] === '!') body = '^' + body.slice(1);
+      out += '[' + body.replace(/\\/g, '\\\\') + ']';
+      i = close;
+    } else out += ch.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+  }
+  try { return new RegExp('^' + out + '$', icase ? 'i' : ''); } catch (_) { return null; }
+}
+
+function findDeleteDenial(words, opts, text) {
   const ctx = opts.ctx || contextOf(opts);
   const home = opts.home || os.homedir();
   const env = opts.env || process.env;
   const cwd = path.resolve(opts.cwd || process.cwd());
   const homes = (ctx.agent && ctx.agent.homes) || [keyOf(slash(path.resolve(home)))];
+  // The protected places, as keys: ~/.zn and the plugin folders under every home, and the plugin folders the environment names.
+  // A project's own .agents/plugins is left to the path checks: counting it would refuse every broad find in a project.
+  const prot = [];
+  for (const h of homes) for (const rel of FIND_HOME_RELS) prot.push((h.endsWith('/') ? h : h + '/') + rel);
+  for (const k of (ctx.agent && ctx.agent.plugins) || []) if (!k.endsWith('/.agents/plugins')) prot.push(k);
+  const bases = opts.cdBases ? opts.cdBases.dirs : [cwd];
+  const basesUnknown = !!(opts.cdBases && opts.cdBases.unknown);
+  const piped = FIND_PIPED_DELETE_RE.test(text || '');
   const bySeq = new Map();
   for (const w of words) {
     if (!bySeq.has(w.seq)) bySeq.set(w.seq, []);
@@ -2278,20 +2322,126 @@ function findDeleteDenial(words, opts) {
     const at = texts.findIndex((x) => /^find(?:\.exe)?$/i.test(path.basename(x)));
     if (at < 0) continue;
     const rest = texts.slice(at + 1);
-    if (!rest.some((x) => /^-(?:delete|exec|execdir|ok|okdir)$/.test(x))) continue;
-    const named = rest.some((x) => FIND_PROTECTED_NAME_RE.test(x.replace(/[*?[\]]/g, '').replace(/^\//, '')));
-    if (!named) continue;
-    for (const r of rest) {
-      if (r.startsWith('-') || r === '(' || r === '!') break;
-      const root = keyOf(slash(path.resolve(cwd, expandEnv(expandHome(r, home), env).text)));
-      const rootPrefix = root.endsWith('/') ? root : root + '/';
-      if (/[$`]/.test(r) || homes.some((h) => h === root || h.startsWith(rootPrefix))) {
-        return 'zn: this find deletes files under ' + r + ', which holds zn\'s vault (~/.zn) or an agent\'s plugins, and the ' +
-          'names it matches include them, so it was blocked: an agent may not change how zn and its hooks run. Ask the user to make this change.';
+    let deletes = piped;
+    for (let i = 0; i < rest.length && !deletes; i++) {
+      if (rest[i] === '-delete') deletes = true;
+      else if (/^-(?:exec|execdir|ok|okdir)$/.test(rest[i])) {
+        const cmd = path.basename(String(rest[i + 1] || '')).replace(/\.exe$/i, '').toLowerCase();
+        if (!FIND_EXEC_READ_ONLY.has(cmd)) deletes = true;
+      }
+    }
+    if (!deletes) continue;
+    // The roots: the words before the first test, or the current folder.
+    const roots = [];
+    let i = 0;
+    for (; i < rest.length; i++) {
+      const r = rest[i];
+      if (r.startsWith('-') || r === '(' || r === '!' || r === '\\(' || r === '\\!') break;
+      roots.push(r);
+    }
+    if (!roots.length) roots.push('.');
+    // Where each root may be: the protected places it holds (or sits in), with the root as find prints it.
+    const reach = [];
+    let anyRoot = false;
+    for (const r of roots) {
+      const typed = expandEnv(expandHome(r, home), env).text;
+      if (/[$`]/.test(typed) || (basesUnknown && !path.isAbsolute(typed))) { anyRoot = true; continue; }
+      for (const b of path.isAbsolute(typed) ? [cwd] : bases) {
+        const root = keyOf(slash(path.resolve(b, typed)));
+        const rootPrefix = root.endsWith('/') ? root : root + '/';
+        const shown = typed.replace(/\/+$/, '') || '/';
+        for (const pk of prot) {
+          if (pk === root || pk.startsWith(rootPrefix)) reach.push(shown + '/' + pk.slice(rootPrefix.length));
+          else if (root.startsWith(pk + '/')) anyRoot = true;          // a find inside ~/.zn or a plugin folder
+        }
+      }
+    }
+    if (!anyRoot && !reach.length) continue;
+    // The tests: a find that may match those places (or, started inside one, anything) is refused.
+    let tests = 0;
+    let matches = anyRoot;
+    for (let j = i; j < rest.length && !matches; j++) {
+      const op = rest[j];
+      const negated = j > 0 && /^(?:!|\\!|-not)$/.test(rest[j - 1]);
+      const pat = rest[j + 1];
+      if (/^-i?(?:l?name)$/.test(op) || /^-i?(?:path|wholename)$/.test(op) || /^-i?regex$/.test(op)) {
+        tests++;
+        if (negated || pat === undefined) { matches = true; break; }
+        const icase = op.startsWith('-i');
+        let re;
+        if (/regex$/.test(op)) {
+          // An emacs regex with grouping or alternation zn does not translate: it may match anything.
+          if (/\\[(){}|]/.test(pat)) { matches = true; break; }
+          try { re = new RegExp('^(?:' + pat + ')$', icase ? 'i' : ''); } catch (_) { matches = true; break; }
+        } else re = findGlobRe(pat, icase);
+        if (!re) { matches = true; break; }
+        const samples = /name$/.test(op) && !/wholename$/.test(op)
+          ? FIND_SAMPLE_NAMES
+          : reach.flatMap((r) => FIND_SAMPLE_TAILS.map((t) => r + t));
+        if (samples.some((x) => re.test(x))) matches = true;
+        j++;
+      }
+    }
+    if (!tests) matches = true;
+    if (matches) {
+      return 'zn: zn\'s vault (~/.zn) and the agents\' plugin folders are protected, and this find deletes files under ' + roots.join(' ') +
+        ' that may include them: an agent may not change how zn and its hooks run. Ask the user to make this change.';
+    }
+  }
+  return null;
+}
+
+/* git clean that removes files (anything but -n / --dry-run), run in the home folder or above it (cd ~, git -C ~): when the home
+   folder is a git work tree, it deletes the untracked ~/.zn and plugin folders. Pathspecs that stay out of them are allowed. */
+function gitCleanDenial(words, opts) {
+  const home = opts.home || os.homedir();
+  const env = opts.env || process.env;
+  const ctx = opts.ctx || contextOf(opts);
+  const homes = (ctx.agent && ctx.agent.homes) || [keyOf(slash(path.resolve(home)))];
+  const bases = opts.cdBases ? opts.cdBases.dirs : [path.resolve(opts.cwd || process.cwd())];
+  const unknown = !!(opts.cdBases && opts.cdBases.unknown);
+  const bySeq = new Map();
+  for (const w of words) {
+    if (!bySeq.has(w.seq)) bySeq.set(w.seq, []);
+    bySeq.get(w.seq).push(w);
+  }
+  const holdsHome = (k) => { const pre = k.endsWith('/') ? k : k + '/'; return homes.some((h) => h === k || h.startsWith(pre)); };
+  for (const ws of bySeq.values()) {
+    const texts = ws.map((w) => w.text.replace(/^["']|["']$/g, ''));
+    const g = texts.findIndex((x) => /^git(?:\.exe)?$/i.test(path.basename(x)));
+    if (g < 0) continue;
+    let k = g + 1;
+    while (k < texts.length && texts[k].startsWith('-')) k += /^-[Cc]$/.test(texts[k]) ? 2 : 1;
+    if (texts[k] !== 'clean') continue;
+    const args = texts.slice(k + 1);
+    if (args.some((a) => a === '--dry-run' || /^-[a-zA-Z]*n[a-zA-Z]*$/.test(a))) continue;
+    const specs = [];
+    for (let j = 0; j < args.length; j++) {
+      if (/^(?:-e|--exclude)$/.test(args[j])) { j++; continue; }
+      if (args[j] === '--' || args[j].startsWith('-')) continue;
+      specs.push(args[j]);
+    }
+    if (unknown) return gitCleanMessage();
+    for (const b of bases) {
+      if (!specs.length) { if (holdsHome(keyOf(slash(b)))) return gitCleanMessage(); continue; }
+      for (const sp of specs) {
+        const t = expandEnv(expandHome(sp, home), env).text;
+        if (/[$`*?[]/.test(t)) return gitCleanMessage();
+        const key = keyOf(slash(path.resolve(b, t)));
+        if (holdsHome(key)) return gitCleanMessage();
+        for (const h of homes) {
+          const pre = h.endsWith('/') ? h : h + '/';
+          if (key.startsWith(pre) && homeRelClass(key.slice(pre.length))) return gitCleanMessage();
+        }
       }
     }
   }
   return null;
+}
+
+function gitCleanMessage() {
+  return 'zn: zn\'s vault (~/.zn) and the agents\' plugin folders are protected, and this git clean runs in the home folder (or ' +
+    'above it), where it deletes them when they are untracked: an agent may not change how zn and its hooks run. Ask the user to make this change.';
 }
 
 /* NAME=value words of the command (also after export, set or declare), with ~ and the variables already known
@@ -2378,13 +2528,13 @@ function bashDenialOf(cmd, opts = {}) {
     words.push(...split);
     readings.push(split);
   }
-  {
-    const findDeny = findDeleteDenial(readings[0], opts);
-    if (findDeny) return findDeny;
-  }
   // Where a relative .env path may be read from once the command has changed directory (cd app && cat .env).
   // Each reading is followed on its own, so a cd counts once.
   opts.cdBases = cdBasesOf(readings, opts);
+  {
+    const deny = findDeleteDenial(readings[0], opts, text) || gitCleanDenial(readings[0], opts);
+    if (deny) return deny;
+  }
   opts.elsewhere = new Map();
   markLinkWords(readings);
   const mentionsAgents = /\.agents/i.test(text);
