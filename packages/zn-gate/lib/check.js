@@ -426,7 +426,9 @@ function claudePluginRootProblem(root, ctx) {
   for (const dir of new Set([ctx.cwd, projectRootOf(ctx.cwd)])) {
     const proj = realOrNull(dir);
     // Run from the configuration folder itself (some keep it in git), that folder is not a project either.
-    if (!proj || isInside(home, proj, true) || (realConfig && isInside(proj, realConfig, true))) continue;
+    // Nor a dotfiles repository that the default ~/.claude links into (a CLAUDE_CONFIG_DIR inside a project still counts).
+    const dotfiles = !env.CLAUDE_CONFIG_DIR && realConfig && realConfig !== path.resolve(config) && isInside(realConfig, proj, true);
+    if (!proj || dotfiles || isInside(home, proj, true) || (realConfig && isInside(proj, realConfig, true))) continue;
     if (isInside(real, proj, true)) return 'the zn-gate plugin listed in installed_plugins.json is in ' + root + ', inside this project (' + dir + '), so zn-gate check does not run it';
   }
   if (scriptOutside(real, path.join(real, 'scripts', 'zn-launch.js'))) return 'the launcher of the zn-gate plugin (' + path.join(root, 'scripts', 'zn-launch.js') + ') is not a file inside the plugin folder';
@@ -821,11 +823,14 @@ async function checkAgent(spec, ctx) {
       // Nothing of the plugin runs until its folder and its manifest pass: the folder is one Claude Code installs
       // plugins into (not the project), and the manifest has a PreToolUse hook that Claude Code runs and waits for.
       const manifestFile = path.join(plugin.root, 'hooks', 'hooks.json');
+      // Once the folder passes, its manifest is read and its launcher started from the real path that was checked,
+      // not from the path in installed_plugins.json (a link there could be changed in between).
+      const runRoot = realOrNull(plugin.root) || plugin.root;
       let distrust = '';
       let manifest = null;
       if (!plugin.off) {
         distrust = claudePluginRootProblem(plugin.root, ctx);
-        if (!distrust) manifest = pluginManifest(plugin.root, 'CLAUDE_PLUGIN_ROOT');
+        if (!distrust) manifest = pluginManifest(runRoot, 'CLAUDE_PLUGIN_ROOT');
         if (!distrust && !manifest) distrust = 'the zn-gate plugin has no hook manifest zn-gate check can read (' + manifestFile + '), so nothing shows that Claude Code runs a zn check before tool calls';
         if (distrust) {
           res.problem = distrust;
@@ -842,11 +847,11 @@ async function checkAgent(spec, ctx) {
         }
       }
       if (!plugin.off && !distrust) {
-        const pre = ctx.live ? spawnHook(process.execPath, [path.join(plugin.root, 'scripts', 'zn-launch.js'), 'check', 'claude-code'], {}, { CLAUDE_PLUGIN_ROOT: plugin.root }, ctx.dir) : { ran: false };
+        const pre = ctx.live ? spawnHook(process.execPath, [path.join(runRoot, 'scripts', 'zn-launch.js'), 'check', 'claude-code'], {}, { CLAUDE_PLUGIN_ROOT: runRoot }, ctx.dir) : { ran: false };
         const sys = pre.ran && /"systemMessage"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(pre.stdout || '');
         // The launcher's own check message is about the plugin itself (for example a Node.js it does not support).
         if (!res.problem && sys) { res.problem = bare(oneLine(JSON.parse('"' + sys[1] + '"'), 300)); res.pluginFault = true; }
-        live = { file: process.execPath, args: [path.join(plugin.root, 'scripts', 'zn-launch.js'), 'hook', 'claude-code'], env: { CLAUDE_PLUGIN_ROOT: plugin.root }, plugin: true };
+        live = { file: process.execPath, args: [path.join(runRoot, 'scripts', 'zn-launch.js'), 'hook', 'claude-code'], env: { CLAUDE_PLUGIN_ROOT: runRoot }, plugin: true };
       }
     }
   }

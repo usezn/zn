@@ -412,6 +412,23 @@ test('a linked plugin folder named by CLAUDE_CONFIG_DIR or CODEX_HOME is protect
   }
 });
 
+test('a link below a plugin folder (cache/usezn to another folder) is protected at its real place', { skip: WIN }, (t) => {
+  for (const tree of ['.claude/plugins', '.codex/plugins', '.zcode/cli/plugins']) {
+    const { home, proj } = tmpHome(t);
+    const elsewhere = tempDir(t, 'zn-linked-cache-');
+    fs.mkdirSync(path.join(elsewhere, 'zn-gate', '1.0.0', 'scripts'), { recursive: true });
+    const launcher = path.join(elsewhere, 'zn-gate', '1.0.0', 'scripts', 'zn-launch.js');
+    fs.writeFileSync(launcher, '');
+    fs.mkdirSync(path.join(home, tree, 'cache'), { recursive: true });
+    fs.symlinkSync(elsewhere, path.join(home, tree, 'cache', 'usezn'));
+    const opts = { home, cwd: proj, env: { HOME: home } };
+    assert.ok(policy.writeDenial(launcher, opts), tree + ': real path of the linked cache');
+    assert.ok(policy.bashDenial('printf x > ' + launcher, opts), tree + ': redirect');
+    assert.ok(policy.bashDenial('rm -rf ' + elsewhere, opts), tree + ': remove the linked folder');
+    assert.equal(policy.writeDenial(path.join(proj, 'notes.txt'), opts), null, tree + ': an ordinary file');
+  }
+});
+
 test('a Codex patch is refused when any file in it is protected, and an unreadable patch too', async (t) => {
   const { home, proj } = tmpHome(t);
   const settings = path.join(home, '.claude', 'settings.json');

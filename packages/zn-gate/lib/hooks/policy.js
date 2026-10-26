@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-26.7';
+const POLICY_RULES_VERSION = '2026-10-26.8';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -265,29 +265,68 @@ function agentContext(home, cwd, env) {
   // Where each plugin folder and plugin state entry under the home folder really is: a linked configuration folder
   // (dotfiles) or plugin folder puts them outside the home folder, where the home-relative patterns do not see them.
   const state = new Set();
+  // The plugin folders as found on disk, walked for links below them (pluginLinkTargets) only when needed.
+  const pluginTrees = HOME_PLUGIN_TREES.map((r) => path.join(home, r));
   for (const r of HOME_PLUGIN_TREES) for (const k of keysOf(path.join(home, r))) plugins.add(k);
   for (const r of HOME_PLUGIN_STATE) for (const k of keysOf(path.join(home, r))) state.add(k);
   if (env.CODEX_HOME) {
     for (const k of keysOf(at(env.CODEX_HOME))) { dirs.add(k); plugins.add(k + '/plugins'); }
     for (const k of keysOf(path.join(at(env.CODEX_HOME), 'plugins'))) plugins.add(k);
+    pluginTrees.push(path.join(at(env.CODEX_HOME), 'plugins'));
   }
   // Claude Code keeps its settings here when the variable is set, and zn installs its hooks there.
   if (env.CLAUDE_CONFIG_DIR) {
     for (const k of keysOf(at(env.CLAUDE_CONFIG_DIR))) { dirs.add(k); plugins.add(k + '/plugins'); }
     for (const k of keysOf(path.join(at(env.CLAUDE_CONFIG_DIR), 'plugins'))) plugins.add(k);
+    pluginTrees.push(path.join(at(env.CLAUDE_CONFIG_DIR), 'plugins'));
   }
   if (env.OPENCODE_CONFIG_DIR) for (const k of keysOf(at(env.OPENCODE_CONFIG_DIR))) dirs.add(k);
   if (env.XDG_CONFIG_HOME) for (const k of keysOf(path.join(at(env.XDG_CONFIG_HOME), 'opencode'))) dirs.add(k);
   if (env.OPENCODE_CONFIG) for (const k of keysOf(at(env.OPENCODE_CONFIG))) files.add(k);
   // Claude Code keeps every plugin file and its plugin state under this folder when the variable is set.
-  if (env.CLAUDE_CODE_PLUGIN_CACHE_DIR) for (const k of keysOf(at(env.CLAUDE_CODE_PLUGIN_CACHE_DIR))) plugins.add(k);
+  if (env.CLAUDE_CODE_PLUGIN_CACHE_DIR) {
+    for (const k of keysOf(at(env.CLAUDE_CODE_PLUGIN_CACHE_DIR))) plugins.add(k);
+    pluginTrees.push(at(env.CLAUDE_CODE_PLUGIN_CACHE_DIR));
+  }
   // Antigravity's workspace plugins: only at the root of the project, as typed and where it really leads.
   for (const k of rootKeysOf(projectRoot)) plugins.add(k + '/.agents/plugins');
   // Roots that hold agent configuration: removing or moving them removes it.
   // Only the directory itself is protected (listing it or reading it is fine).
   const roots = new Set(keysOf(path.join(home, '.config')));
   if (env.XDG_CONFIG_HOME) for (const k of keysOf(at(env.XDG_CONFIG_HOME))) roots.add(k);
-  return { dirs: [...dirs], files, roots: [...roots], plugins: [...plugins], homes: [...homes], state };
+  return { dirs: [...dirs], files, roots: [...roots], plugins: [...plugins], homes: [...homes], state, pluginTrees };
+}
+
+/* Where the links inside the plugin folders lead (a ~/.claude/plugins/cache/usezn linked to another folder): the plugin
+   files there run as hooks too. The folders are walked once per process, a few levels deep (Claude Code keeps
+   cache/<marketplace>/<plugin>/<version>/), skipping node_modules and .git, with a cap on the entries read. */
+const PLUGIN_WALK_DEPTH = 5;
+const PLUGIN_WALK_ENTRIES = 400;
+const PLUGIN_LINKS = new Map();
+function pluginLinkTargets(agent) {
+  const trees = agent.pluginTrees || [];
+  const id = trees.join('\0');
+  if (PLUGIN_LINKS.has(id)) return PLUGIN_LINKS.get(id);
+  const out = [];
+  let budget = PLUGIN_WALK_ENTRIES;
+  const stack = trees.map((d) => [d, 0]);
+  while (stack.length && budget > 0) {
+    const [dir, depth] = stack.pop();
+    let ents;
+    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { continue; }
+    for (const e of ents) {
+      if (--budget < 0) break;
+      const p = path.join(dir, e.name);
+      if (e.isSymbolicLink()) {
+        try { out.push(keyOf(slash(fs.realpathSync(p)))); } catch (_) { /* a dangling link names nothing */ }
+      } else if (e.isDirectory() && depth + 1 < PLUGIN_WALK_DEPTH && e.name !== 'node_modules' && e.name !== '.git') {
+        stack.push([p, depth + 1]);
+      }
+    }
+  }
+  if (PLUGIN_LINKS.size > 32) PLUGIN_LINKS.clear();
+  PLUGIN_LINKS.set(id, out);
+  return out;
 }
 
 /** Everything a classification needs, from the options of one call. */
@@ -371,6 +410,7 @@ function classifyResolved(abs, ctx) {
   if (agent.files.has(s)) return { kind: 'agent_config', reason: 'the agent configuration file the environment names' };
   if ((agent.plugins || []).some((d) => s === d || s.startsWith(d + '/'))) return { kind: 'agent_config', reason: 'the agent plugins' };
   if (agent.state && agent.state.has(s)) return { kind: 'agent_config', reason: 'the agent configuration and plugin state' };
+  if (pluginLinkTargets(agent).some((d) => s === d || s.startsWith(d + '/'))) return { kind: 'agent_config', reason: 'the agent plugins' };
   if (s.endsWith('.pub')) return null;
   if (creds.files.has(s)) return { kind: 'credential', reason: 'a file named by a credential environment variable' };
   for (const d of creds.dirs) if (s === d || s.startsWith(d + '/')) return { kind: 'credential', reason: 'a directory named by a credential environment variable' };

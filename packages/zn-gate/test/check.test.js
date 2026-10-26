@@ -298,6 +298,20 @@ test('check: a plugin manifest whose PreToolUse hook does not run, does not wait
   }
 });
 
+test('check: run inside a dotfiles repository that ~/.claude links into, the installed plugin still counts', { skip: process.platform === 'win32' }, async (t) => {
+  const home = tempDir(t, 'zn-check-dotfiles-');
+  const dotfiles = tempDir(t, 'zn-check-dotfiles-repo-');
+  fs.mkdirSync(path.join(dotfiles, '.git'));
+  fs.mkdirSync(path.join(dotfiles, 'claude'));
+  fs.symlinkSync(path.join(dotfiles, 'claude'), path.join(home, '.claude'));
+  fakePlugin(home, launcher());
+  for (const cwd of [dotfiles, path.join(dotfiles, 'claude')]) {
+    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd, live: true }), 'claude-code');
+    assert.equal(r.state, 'protected', cwd + ': ' + r.problem);
+    assert.equal(r.verified, true, cwd);
+  }
+});
+
 test('check: a plugin listed in a folder inside the project is not protected, and its launcher is not run', async (t) => {
   const home = tempDir(t, 'zn-check-projplug-');
   const project = tempDir(t, 'zn-check-projplug-repo-');

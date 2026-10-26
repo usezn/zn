@@ -202,7 +202,7 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   install the plugin again: run `claude plugin uninstall zn-gate@usezn`, then `claude plugin install zn-gate@usezn`, in your own terminal, then run `zn-gate check` again
   ```
 
-  `installed_plugins.json` can name any folder, so `zn-gate check` starts nothing from the plugin until it knows the plugin is real: its folder must be inside `plugins` under your Claude Code configuration folder (`~/.claude`, or `CLAUDE_CONFIG_DIR`), or inside `CLAUDE_CODE_PLUGIN_CACHE_DIR` when that is set, and not inside the project you run the check in. Its `hooks/hooks.json` must have a PreToolUse "command" hook that is not turned off, does not run in the background, and whose matcher covers reading files. The other forms of the PreToolUse line say that the hook is turned off, is not a "command" hook, or has a matcher that does not cover Read.
+  `installed_plugins.json` can name any folder, so `zn-gate check` starts nothing from the plugin until it knows the plugin is real: its folder must be inside `plugins` under your Claude Code configuration folder (`~/.claude`, or `CLAUDE_CONFIG_DIR`), or inside `CLAUDE_CODE_PLUGIN_CACHE_DIR` when that is set, and not inside the project you run the check in (a dotfiles repository that `~/.claude` links into is not taken as that project). The plugin is then started from the real path of its folder. Its `hooks/hooks.json` must have a PreToolUse "command" hook that is not turned off, does not run in the background, and whose matcher covers reading files. The other forms of the PreToolUse line say that the hook is turned off, is not a "command" hook, or has a matcher that does not cover Read.
 
 - **The plugin needs a newer Node.js.**
 
