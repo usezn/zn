@@ -41,6 +41,8 @@ In an agent's MCP configuration, set the command to `npx` and put `-y zn-gate sh
 
 `init --wrap-mcp` finds the MCP servers in the configuration files of the agents on your machine (Claude Desktop, Claude Code, Cursor, Codex CLI, OpenCode, Antigravity and Hermes), writes a backup of each file it changes, and rewrites each local (stdio) server as a `shield` command.
 
+The command it writes names every program by its full path, because the agent starts MCP servers in the project folder, where a program found by name could be the project's own: the Node.js that runs zn-gate and zn-gate's `bin/cli.js` (or, when zn-gate itself runs through `npx`, the full path of `npx` with this exact version), then the server's program as zn-gate finds it in the `PATH` entries outside the project. A server whose program it cannot find that way is left as it was and listed with the reason; write its full path in the configuration and run the command again.
+
 ```bash
 # Preview what would change, and change nothing
 npx -y zn-gate init --dry-run

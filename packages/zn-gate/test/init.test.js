@@ -7,6 +7,13 @@ const path = require('path');
 const os = require('os');
 const { getKnownEnvironments, scanEnvironments, configureEnvironments } = require('../lib/init');
 
+// The programs a shielded server is written with, without depending on what is installed here: the wrapper and every
+// server program by an absolute path.
+const FAKE_PROGRAMS = {
+  launcher: ['/fake/node', '/fake/zn-gate/bin/cli.js', 'shield'],
+  resolveProgram: (name) => (name.includes('/') ? name : '/fake/bin/' + name),
+};
+
 test('zn-gate init - getKnownEnvironments returns list of supported agents', () => {
   const envs = getKnownEnvironments();
   assert.ok(envs.length >= 7);
@@ -58,7 +65,7 @@ test('zn-gate init - configureEnvironments dryRun does not alter configs', () =>
       { name: 'Claude Desktop', id: 'claude-desktop', filePath: testClaude, key: 'mcpServers' }
     ];
 
-    const { actions } = configureEnvironments({ envList: mockList, dryRun: true });
+    const { actions } = configureEnvironments({ ...FAKE_PROGRAMS, envList: mockList, dryRun: true });
     assert.equal(actions.length, 1);
     assert.equal(actions[0].status, 'would_shield');
 
@@ -83,13 +90,13 @@ test('zn-gate init - configureEnvironments wraps servers with zn-gate shield and
       { name: 'Claude Desktop', id: 'claude-desktop', filePath: testClaude, key: 'mcpServers' }
     ];
 
-    const { actions } = configureEnvironments({ envList: mockList });
+    const { actions } = configureEnvironments({ ...FAKE_PROGRAMS, envList: mockList, ...FAKE_PROGRAMS });
     assert.equal(actions.length, 1);
     assert.equal(actions[0].status, 'shielded');
 
     const updated = JSON.parse(fs.readFileSync(testClaude, 'utf8'));
-    assert.equal(updated.mcpServers.fetch.command, 'npx');
-    assert.ok(updated.mcpServers.fetch.args.includes('shield'));
+    assert.equal(updated.mcpServers.fetch.command, '/fake/node');
+    assert.deepEqual(updated.mcpServers.fetch.args, ['/fake/zn-gate/bin/cli.js', 'shield', '--', '/fake/bin/uvx', 'mcp-server-fetch']);
 
     // Check backup was created
     const files = fs.readdirSync(tmpDir);
@@ -97,7 +104,7 @@ test('zn-gate init - configureEnvironments wraps servers with zn-gate shield and
     assert.ok(backupFile, 'Backup file should exist');
 
     // Revert test
-    const revertRes = configureEnvironments({ envList: mockList, revert: true });
+    const revertRes = configureEnvironments({ ...FAKE_PROGRAMS, envList: mockList, revert: true });
     assert.equal(revertRes.actions[0].status, 'reverted');
 
     const reverted = JSON.parse(fs.readFileSync(testClaude, 'utf8'));
@@ -153,21 +160,22 @@ test('zn-gate init - Codex config.toml: wraps stdio servers, keeps env tables an
     assert.equal(scan.serverCount, 3);
     assert.equal(scan.allShielded, false);
 
-    const { actions } = configureEnvironments({ envList: mockList });
+    const { actions } = configureEnvironments({ ...FAKE_PROGRAMS, envList: mockList, ...FAKE_PROGRAMS });
     assert.equal(actions[0].status, 'shielded');
     const out = fs.readFileSync(file, 'utf8');
-    assert.ok(out.includes('args = ["-y", "zn-gate", "shield", "--", "npx", "-y", "@upstash/context7-mcp"]'));
-    assert.ok(out.includes('args = ["-y", "zn-gate", "shield", "--", "uvx"]'), 'server without args gets an args line');
+    assert.ok(out.includes('command = "/fake/node"'));
+    assert.ok(out.includes('args = ["/fake/zn-gate/bin/cli.js", "shield", "--", "/fake/bin/npx", "-y", "@upstash/context7-mcp"]'));
+    assert.ok(out.includes('args = ["/fake/zn-gate/bin/cli.js", "shield", "--", "/fake/bin/uvx"]'), 'server without args gets an args line');
     assert.ok(out.includes('[mcp_servers.context7.env]\nMY_ENV_VAR = "MY_ENV_VALUE"'));
     assert.ok(out.includes('url = "https://mcp.example.com/mcp"'));
     assert.ok(out.startsWith('model = "o4-mini"'));
     assert.equal(scanEnvironments(mockList)[0].allShielded, true);
 
     // idempotent
-    const again = configureEnvironments({ envList: mockList });
+    const again = configureEnvironments({ ...FAKE_PROGRAMS, envList: mockList });
     assert.equal(again.actions[0].status, 'already_shielded');
 
-    const rev = configureEnvironments({ envList: mockList, revert: true });
+    const rev = configureEnvironments({ ...FAKE_PROGRAMS, envList: mockList, revert: true });
     assert.equal(rev.actions[0].status, 'reverted');
     assert.equal(fs.readFileSync(file, 'utf8'), original);
   } finally {
@@ -182,7 +190,7 @@ test('zn-gate init - Codex config.toml with multi-line args is left untouched an
     const original = '[mcp_servers.x]\ncommand = "npx"\nargs = [\n  "-y",\n  "pkg"\n]\n';
     fs.writeFileSync(file, original);
     const mockList = [{ name: 'Codex', id: 'codex', filePath: file, key: 'mcp_servers', format: 'codex-toml' }];
-    const { actions } = configureEnvironments({ envList: mockList });
+    const { actions } = configureEnvironments({ ...FAKE_PROGRAMS, envList: mockList });
     assert.equal(actions[0].status, 'manual_required');
     assert.equal(fs.readFileSync(file, 'utf8'), original);
   } finally {
@@ -203,16 +211,16 @@ test('zn-gate init - OpenCode opencode.json: wraps local servers (command array)
     }, null, 2);
     fs.writeFileSync(file, original);
     const mockList = [{ name: 'OpenCode', id: 'opencode', filePath: file, key: 'mcp', format: 'opencode-json' }];
-    const { actions } = configureEnvironments({ envList: mockList, shadow: true });
+    const { actions } = configureEnvironments({ ...FAKE_PROGRAMS, envList: mockList, shadow: true, ...FAKE_PROGRAMS });
     assert.equal(actions[0].status, 'shielded');
     const out = JSON.parse(fs.readFileSync(file, 'utf8'));
-    assert.deepEqual(out.mcp.local1.command, ['npx', '-y', 'zn-gate', 'shield', '--shadow', '--', 'npx', '-y', 'my-mcp-command']);
+    assert.deepEqual(out.mcp.local1.command, ['/fake/node', '/fake/zn-gate/bin/cli.js', 'shield', '--shadow', '--', '/fake/bin/npx', '-y', 'my-mcp-command']);
     assert.equal(out.mcp.local1.type, 'local');
     assert.deepEqual(out.mcp.local1.environment, { A: 'b' });
     assert.deepEqual(out.mcp.remote1, { type: 'remote', url: 'https://mcp.example.com/mcp' });
     assert.equal(out.mcp.local1.args, undefined, 'OpenCode has no args key');
 
-    const rev = configureEnvironments({ envList: mockList, revert: true });
+    const rev = configureEnvironments({ ...FAKE_PROGRAMS, envList: mockList, revert: true });
     assert.equal(rev.actions[0].status, 'reverted');
     assert.equal(fs.readFileSync(file, 'utf8'), original);
   } finally {
@@ -227,9 +235,46 @@ test('zn-gate init - OpenCode JSONC with comments is not rewritten', () => {
     const original = '{\n  // my servers\n  "mcp": { "x": { "type": "local", "command": ["npx", "y"] } }\n}\n';
     fs.writeFileSync(file, original);
     const mockList = [{ name: 'OpenCode', id: 'opencode', filePath: file, key: 'mcp', format: 'opencode-json' }];
-    const { actions } = configureEnvironments({ envList: mockList });
+    const { actions } = configureEnvironments({ ...FAKE_PROGRAMS, envList: mockList });
     assert.equal(actions[0].status, 'manual_required');
     assert.equal(fs.readFileSync(file, 'utf8'), original);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('zn-gate init --shield: a server program not found by its full path is left for the user, with the reason', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-noprog-'));
+  try {
+    const file = path.join(tmpDir, 'claude.json');
+    const original = JSON.stringify({ mcpServers: { gone: { command: 'zn-no-such-program', args: ['x'] }, ok: { command: 'uvx', args: ['a'] } } }, null, 2);
+    fs.writeFileSync(file, original);
+    const mockList = [{ name: 'Claude Desktop', id: 'claude-desktop', filePath: file, key: 'mcpServers' }];
+    const resolveProgram = (name) => (name === 'uvx' ? '/fake/bin/uvx' : null);
+    const { actions } = configureEnvironments({ ...FAKE_PROGRAMS, envList: mockList, launcher: FAKE_PROGRAMS.launcher, resolveProgram });
+    assert.equal(actions[0].status, 'shielded');
+    assert.ok(actions[0].manual.some((m) => /^gone: zn-no-such-program was not found by its full path outside the project/.test(m)), JSON.stringify(actions[0]));
+    const out = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.deepEqual(out.mcpServers.gone, { command: 'zn-no-such-program', args: ['x'] }, 'the server that was not found is left as it was');
+    assert.equal(out.mcpServers.ok.command, '/fake/node');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('zn-gate init --shield: by default the wrapper is this Node.js and this zn-gate by their full paths, never npx by name', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-launcher-'));
+  try {
+    const file = path.join(tmpDir, 'claude.json');
+    fs.writeFileSync(file, JSON.stringify({ mcpServers: { s: { command: process.execPath, args: ['server.js'] } } }));
+    const mockList = [{ name: 'Claude Desktop', id: 'claude-desktop', filePath: file, key: 'mcpServers' }];
+    const { actions } = configureEnvironments({ ...FAKE_PROGRAMS, envList: mockList, launcher: undefined, resolveProgram: undefined });
+    assert.equal(actions[0].status, 'shielded', JSON.stringify(actions[0]));
+    const s = JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers.s;
+    assert.equal(s.command, process.execPath);
+    assert.equal(s.args[0], path.resolve(__dirname, '..', 'bin', 'cli.js'));
+    assert.deepEqual(s.args.slice(1), ['shield', '--', process.execPath, 'server.js']);
+    assert.ok(path.isAbsolute(s.command) && path.isAbsolute(s.args[0]));
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

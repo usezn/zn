@@ -6,6 +6,13 @@ const path = require('path');
 const os = require('os');
 const { configureEnvironments } = require('../lib/init');
 
+// The programs a shielded server is written with, without depending on what is installed here: the wrapper and every
+// server program by an absolute path.
+const FAKE_PROGRAMS = {
+  launcher: ['/fake/node', '/fake/zn-gate/bin/cli.js', 'shield'],
+  resolveProgram: (name) => (name.includes('/') ? name : '/fake/bin/' + name),
+};
+
 const CFG = JSON.stringify({ mcpServers: { fetch: { command: 'uvx', args: ['mcp-server-fetch'] } } }, null, 2);
 const canLink = (() => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-lnk-'));
@@ -47,7 +54,7 @@ test('a normal install shields the config and writes the backup next to it', () 
     const f = path.join(home, '.cursor', 'mcp.json');
     fs.mkdirSync(path.dirname(f));
     fs.writeFileSync(f, CFG);
-    const r = configureEnvironments({ envList: env(f) });
+    const r = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f) });
     assert.equal(r.actions[0].status, 'shielded');
     assert.notEqual(fs.readFileSync(f, 'utf8'), CFG);
     assert.equal(fs.readFileSync(r.actions[0].backup, 'utf8'), CFG);
@@ -62,7 +69,7 @@ test('a symlinked ~/.cursor that leads outside home is refused, nothing outside 
     fs.writeFileSync(path.join(ext, 'mcp.json'), CFG);
     fs.symlinkSync(ext, path.join(home, '.cursor'));
     const f = path.join(home, '.cursor', 'mcp.json');
-    const r = configureEnvironments({ envList: env(f) });
+    const r = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f) });
     assert.equal(r.actions[0].status, 'skipped_unsafe');
     assert.match(r.actions[0].error, /\.cursor is a link that leads outside/);
     assert.match(r.actions[0].error, /will not write through/);
@@ -70,7 +77,7 @@ test('a symlinked ~/.cursor that leads outside home is refused, nothing outside 
     assert.deepEqual(fs.readdirSync(ext), ['mcp.json']);
     // revert is refused too, even with a backup planted outside
     fs.writeFileSync(path.join(ext, 'mcp.json.bak.5'), '{"mcpServers":{"evil":{"command":"evil"}}}');
-    const rv = configureEnvironments({ envList: env(f), revert: true });
+    const rv = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f), revert: true });
     assert.equal(rv.actions[0].status, 'skipped_unsafe');
     assert.equal(fs.readFileSync(path.join(ext, 'mcp.json'), 'utf8'), CFG);
   });
@@ -83,12 +90,12 @@ test('a symlinked parent that stays inside home still works', opts, () => {
     fs.writeFileSync(path.join(dot, 'mcp.json'), CFG);
     fs.symlinkSync(dot, path.join(home, '.cursor'));
     const f = path.join(home, '.cursor', 'mcp.json');
-    const r = configureEnvironments({ envList: env(f) });
+    const r = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f) });
     assert.equal(r.actions[0].status, 'shielded');
     assert.notEqual(fs.readFileSync(path.join(dot, 'mcp.json'), 'utf8'), CFG);
     assert.equal(fs.readFileSync(r.actions[0].backup, 'utf8'), CFG);
     assert.equal(path.dirname(r.actions[0].backup), dot);
-    const rv = configureEnvironments({ envList: env(f), revert: true });
+    const rv = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f), revert: true });
     assert.equal(rv.actions[0].status, 'reverted');
     assert.equal(fs.readFileSync(path.join(dot, 'mcp.json'), 'utf8'), CFG);
   });
@@ -99,7 +106,7 @@ test('a home folder that is itself a symlink works', opts, () => {
     const f = path.join(home, '.cursor', 'mcp.json');
     fs.mkdirSync(path.dirname(f));
     fs.writeFileSync(f, CFG);
-    const r = configureEnvironments({ envList: env(f) });
+    const r = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f) });
     assert.equal(r.actions[0].status, 'shielded');
     assert.notEqual(fs.readFileSync(f, 'utf8'), CFG);
     // a link inside that home to another place inside the same home works as well
@@ -108,7 +115,7 @@ test('a home folder that is itself a symlink works', opts, () => {
     fs.writeFileSync(path.join(dot, 'mcp.json'), CFG);
     fs.rmSync(path.join(home, '.cursor'), { recursive: true });
     fs.symlinkSync(dot, path.join(home, '.cursor'));
-    const r2 = configureEnvironments({ envList: env(f) });
+    const r2 = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f) });
     assert.equal(r2.actions[0].status, 'shielded');
   });
 });
@@ -120,7 +127,7 @@ test('a final-entry symlink that points outside home is refused, as before', opt
     const f = path.join(home, '.cursor', 'mcp.json');
     fs.mkdirSync(path.dirname(f));
     fs.symlinkSync(ext, f);
-    const r = configureEnvironments({ envList: env(f) });
+    const r = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f) });
     assert.equal(r.actions[0].status, 'skipped_unsafe');
     assert.equal(fs.readFileSync(ext, 'utf8'), CFG);
     assert.deepEqual(fs.readdirSync(base).sort(), ['outside.json', 'realhome']);

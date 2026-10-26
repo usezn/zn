@@ -1,0 +1,2 @@
+### Security
+- `zn-gate init --wrap-mcp` (`--shield`) writes the shielded MCP server command with every program by its full path: the Node.js that runs zn-gate and its `bin/cli.js` (or the full path of `npx` with the exact version when zn-gate runs through `npx`), then the server's program as found in the `PATH` entries outside the project. Before, it wrote `npx` and the server's program by name, which the agent looks up from the project folder. A server whose program cannot be found that way is left as it was, with the reason.

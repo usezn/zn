@@ -62,10 +62,45 @@ function isShieldedCommand(cmd, args) {
   return /\bzn-gate\b|\bzn-mcp\b/.test(joined) || (args || []).includes('shield');
 }
 
-function shieldArgv(originalArgv, options) {
-  const argv = ['-y', 'zn-gate', 'shield'];
+/*
+ * The command written for a shielded server, as [program, ...args], with every program by its absolute path: the agent
+ * starts MCP servers with the project as the current folder, where a program found by name (npx, uvx, node) could be the
+ * project's own. The wrapper is the Node.js that runs this zn-gate with its bin/cli.js; when this zn-gate runs from npx's
+ * temporary cache, the absolute npx with this exact version. The server's program comes from exe.findProgram (absolute
+ * PATH entries outside the project). A program that cannot be found that way throws {manual: true} with the reason.
+ * options.resolveProgram and options.launcher replace the lookups (tests).
+ */
+function shieldLauncher(options) {
+  if (options.launcher) return options.launcher;
+  const cli = path.resolve(__dirname, '..', 'bin', 'cli.js');
+  if (!/[\\/]_npx[\\/]/.test(cli)) return [process.execPath, cli, 'shield'];
+  const npx = resolveProgram('npx', options);
+  if (!npx) {
+    const err = new Error('zn-gate runs from npx\'s temporary cache and no npx was found by its full path: install zn-gate (npm install -g zn-gate) and run `zn-gate init --shield` again');
+    err.manual = true;
+    throw err;
+  }
+  return [npx, '-y', 'zn-gate@' + require('../package.json').version, 'shield'];
+}
+
+function resolveProgram(name, options) {
+  if (options.resolveProgram) return options.resolveProgram(name);
+  const exe = require('./exe');
+  if (exe.hasPathSeparator(name)) return path.isAbsolute(name) ? name : null;
+  return exe.findProgram(name);
+}
+
+function shieldCommand(originalArgv, options) {
+  const [program, ...rest] = originalArgv;
+  const abs = resolveProgram(program, options);
+  if (!abs) {
+    const err = new Error(program + ' was not found by its full path outside the project (absolute PATH entries only): write its full path in the server\'s command, then run `zn-gate init --shield` again');
+    err.manual = true;
+    throw err;
+  }
+  const argv = [...shieldLauncher(options)];
   if (options.shadow) argv.push('--shadow');
-  argv.push('--', ...originalArgv);
+  argv.push('--', abs, ...rest);
   return argv;
 }
 
@@ -86,15 +121,18 @@ const mcpServersJson = {
     const json = JSON.parse(raw);
     const srvs = json[env.key || 'mcpServers'] || {};
     let modified = false;
-    for (const cfg of Object.values(srvs)) {
+    const manual = [];
+    for (const [name, cfg] of Object.entries(srvs)) {
       if (!cfg || !cfg.command) continue; // remote/url servers: nothing to wrap
       const args = cfg.args || [];
       if (isShieldedCommand(cfg.command, args)) continue;
-      cfg.args = shieldArgv([cfg.command, ...args], options);
-      cfg.command = 'npx';
+      let argv;
+      try { argv = shieldCommand([cfg.command, ...args], options); } catch (e) { if (!e.manual) throw e; manual.push(name + ': ' + e.message); continue; }
+      cfg.command = argv[0];
+      cfg.args = argv.slice(1);
       modified = true;
     }
-    return { modified, content: JSON.stringify(json, null, 2) + '\n', manual: [] };
+    return { modified, content: JSON.stringify(json, null, 2) + '\n', manual };
   },
 };
 
@@ -125,13 +163,14 @@ const opencodeJson = {
     const json = parseStrictJson(raw, env.filePath);
     const srvs = json.mcp || {};
     let modified = false;
-    for (const cfg of Object.values(srvs)) {
+    const manual = [];
+    for (const [name, cfg] of Object.entries(srvs)) {
       if (!cfg || cfg.type !== 'local' || !Array.isArray(cfg.command) || cfg.command.length === 0) continue;
       if (isShieldedCommand(cfg.command[0], cfg.command.slice(1))) continue;
-      cfg.command = ['npx', ...shieldArgv(cfg.command, options)];
+      try { cfg.command = shieldCommand(cfg.command, options); } catch (e) { if (!e.manual) throw e; manual.push(name + ': ' + e.message); continue; }
       modified = true;
     }
-    return { modified, content: JSON.stringify(json, null, 2) + '\n', manual: [] };
+    return { modified, content: JSON.stringify(json, null, 2) + '\n', manual };
   },
 };
 
@@ -267,8 +306,10 @@ const codexToml = {
       }
       const args = s.args || [];
       if (isShieldedCommand(s.command, args)) continue;
-      const newArgs = shieldArgv([s.command, ...args], options);
-      lines[s.commandLine] = `command = ${tomlStr('npx')}`;
+      let argv;
+      try { argv = shieldCommand([s.command, ...args], options); } catch (e) { if (!e.manual) throw e; manual.push(`${s.name}: ${e.message}`); continue; }
+      const newArgs = argv.slice(1);
+      lines[s.commandLine] = `command = ${tomlStr(argv[0])}`;
       const argsLine = `args = [${newArgs.map(tomlStr).join(', ')}]`;
       if (s.argsLine >= 0) lines[s.argsLine] = argsLine;
       else lines.splice(s.commandLine + 1, 0, argsLine);

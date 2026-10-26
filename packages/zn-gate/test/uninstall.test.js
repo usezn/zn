@@ -58,7 +58,7 @@ function wrapped(m) {
   const original = JSON.stringify({ mcpServers: { fetch: { command: 'uvx', args: ['mcp-server-fetch'] } } }, null, 2);
   fs.writeFileSync(file, original);
   const list = [{ name: 'Example MCP', id: 'example', filePath: file, key: 'mcpServers' }];
-  require('../lib/init').configureEnvironments({ envList: list });
+  require('../lib/init').configureEnvironments({ envList: list, launcher: ['/fake/node', '/fake/zn-gate/bin/cli.js', 'shield'], resolveProgram: (name) => (name.includes('/') ? name : '/fake/bin/' + name) });
   assert.ok(JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers.fetch.args.includes('shield'));
   return { file, original, list };
 }
@@ -381,7 +381,7 @@ test('uninstall: a project config that is a symlink is not offered for restore a
     const original = JSON.stringify({ mcpServers: { fetch: { command: 'uvx', args: ['mcp-server-fetch'] } } }, null, 2);
     fs.writeFileSync(file, original);
     const list = [{ name: 'Antigravity (this project)', id: 'antigravity-project', filePath: file, key: 'mcpServers', format: 'mcpServers-json', scope: 'project' }];
-    require('../lib/init').configureEnvironments({ envList: list });
+    require('../lib/init').configureEnvironments({ envList: list, launcher: ['/fake/node', '/fake/zn-gate/bin/cli.js', 'shield'], resolveProgram: (name) => (name.includes('/') ? name : '/fake/bin/' + name) });
     const shielded = fs.readFileSync(file, 'utf8');
     assert.ok(fs.readdirSync(dir).some((f) => /\.bak\.\d+$/.test(f)));
     const elsewhere = path.join(m.home, 'real-config.json');

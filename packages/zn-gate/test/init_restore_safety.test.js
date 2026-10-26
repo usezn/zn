@@ -6,6 +6,13 @@ const path = require('path');
 const os = require('os');
 const { configureEnvironments, latestBackup, safeRestore } = require('../lib/init');
 
+// The programs a shielded server is written with, without depending on what is installed here: the wrapper and every
+// server program by an absolute path.
+const FAKE_PROGRAMS = {
+  launcher: ['/fake/node', '/fake/zn-gate/bin/cli.js', 'shield'],
+  resolveProgram: (name) => (name.includes('/') ? name : '/fake/bin/' + name),
+};
+
 const CFG = JSON.stringify({ mcpServers: { fetch: { command: 'uvx', args: ['mcp-server-fetch'] } } }, null, 2);
 const EVIL = '{"mcpServers":{"evil":{"command":"evil"}}}';
 // realpath: on macOS os.tmpdir() is under /var, a link to /private/var, and the code under test reports real paths.
@@ -32,7 +39,7 @@ test('revert picks the numerically newest timestamp backup, not .bak.9 or .bak.o
     fs.writeFileSync(f + '.bak.1700000000001', CFG);
     fs.writeFileSync(f + '.bak.1700000000000', 'older');
     assert.equal(latestBackup(f), f + '.bak.1700000000001');
-    const r = configureEnvironments({ envList: env(f), revert: true });
+    const r = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f), revert: true });
     assert.equal(r.actions[0].status, 'reverted');
     assert.equal(fs.readFileSync(f, 'utf8'), CFG);
   } finally { fs.rmSync(d, { recursive: true, force: true }); }
@@ -46,7 +53,7 @@ test('revert refuses a symlinked config and leaves the target alone', opts, () =
     const f = path.join(d, 'proj.json');
     fs.symlinkSync(home, f);
     fs.writeFileSync(f + '.bak.5', EVIL);
-    const r = configureEnvironments({ envList: env(f), revert: true });
+    const r = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f), revert: true });
     assert.equal(r.actions[0].status, 'skipped_unsafe');
     assert.match(r.actions[0].error, /proj\.json/);
     assert.equal(fs.readFileSync(home, 'utf8'), CFG);
@@ -62,7 +69,7 @@ test('revert refuses a symlinked backup', opts, () => {
     fs.writeFileSync(f, CFG);
     fs.symlinkSync(secret, f + '.bak.1700000000000');
     assert.equal(latestBackup(f), null);
-    const r = configureEnvironments({ envList: env(f), revert: true });
+    const r = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f), revert: true });
     assert.notEqual(r.actions[0].status, 'reverted');
     assert.equal(fs.readFileSync(f, 'utf8'), CFG);
     assert.throws(() => safeRestore(f + '.bak.1700000000000', f), /backup is a symlink/);
@@ -95,7 +102,7 @@ test('project config symlinked to a home config is not overwritten by revert', o
     const pc = path.join(proj, 'mcp_config.json');
     fs.symlinkSync(home, pc);
     fs.writeFileSync(pc + '.bak.9', EVIL);
-    const r = configureEnvironments({ envList: [{ name: 'Antigravity (this project)', id: 'antigravity-project', filePath: pc, key: 'mcpServers', format: 'mcpServers-json' }], revert: true });
+    const r = configureEnvironments({ ...FAKE_PROGRAMS, envList: [{ name: 'Antigravity (this project)', id: 'antigravity-project', filePath: pc, key: 'mcpServers', format: 'mcpServers-json' }], revert: true });
     assert.equal(r.actions[0].status, 'skipped_unsafe');
     assert.equal(fs.readFileSync(home, 'utf8'), CFG);
   } finally { fs.rmSync(d, { recursive: true, force: true }); }
@@ -109,7 +116,7 @@ test('wrap refuses a symlinked config (also on dry run)', opts, () => {
     const f = path.join(d, 'link.json');
     fs.symlinkSync(home, f);
     for (const dryRun of [false, true]) {
-      const r = configureEnvironments({ envList: env(f), dryRun });
+      const r = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f), dryRun });
       assert.equal(r.actions[0].status, 'skipped_unsafe');
     }
     assert.equal(fs.readFileSync(home, 'utf8'), CFG);
@@ -122,7 +129,7 @@ test('wrap still writes a regular backup and wraps a regular config', () => {
   try {
     const f = path.join(d, 'mcp.json');
     fs.writeFileSync(f, CFG);
-    const r = configureEnvironments({ envList: env(f) });
+    const r = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f) });
     assert.equal(r.actions[0].status, 'shielded');
     assert.equal(fs.readFileSync(r.actions[0].backup, 'utf8'), CFG);
   } finally { fs.rmSync(d, { recursive: true, force: true }); }
@@ -159,7 +166,7 @@ test('project config in a symlinked .agents directory pointing into home is refu
     fs.symlinkSync(realDir, path.join(proj, '.agents'));
     const cfg = path.join(proj, '.agents', 'mcp_config.json');
     for (const revert of [true, false]) {
-      const r = inDir(proj, () => configureEnvironments({ envList: projEnv(cfg), revert }));
+      const r = inDir(proj, () => configureEnvironments({ ...FAKE_PROGRAMS, envList: projEnv(cfg), revert }));
       assert.equal(r.actions[0].status, 'skipped_unsafe');
     }
     assert.equal(fs.readFileSync(path.join(realDir, 'mcp_config.json'), 'utf8'), CFG);
@@ -172,7 +179,7 @@ test('project config or backup with a second hard link is refused', () => {
     fs.writeFileSync(cfg, CFG);
     const other = path.join(d, 'other-link');
     try { fs.linkSync(cfg, other); } catch { return; }
-    let r = inDir(proj, () => configureEnvironments({ envList: projEnv(cfg) }));
+    let r = inDir(proj, () => configureEnvironments({ ...FAKE_PROGRAMS, envList: projEnv(cfg) }));
     assert.equal(r.actions[0].status, 'skipped_unsafe');
     fs.unlinkSync(other);
     fs.writeFileSync(cfg, WRAPPED);
@@ -181,7 +188,7 @@ test('project config or backup with a second hard link is refused', () => {
     fs.linkSync(bak, other);
     assert.equal(latestBackup(cfg, 'project'), null);
     assert.equal(latestBackup(cfg), bak);
-    r = inDir(proj, () => configureEnvironments({ envList: projEnv(cfg), revert: true }));
+    r = inDir(proj, () => configureEnvironments({ ...FAKE_PROGRAMS, envList: projEnv(cfg), revert: true }));
     assert.notEqual(r.actions[0].status, 'reverted');
     assert.equal(fs.readFileSync(cfg, 'utf8'), WRAPPED);
   } finally { clean(d); }
@@ -196,13 +203,13 @@ test('home symlink to a file inside home: wrap and revert write through to the r
     const real = path.join(dotfiles, 'mcp.json');
     fs.writeFileSync(real, CFG);
     fs.symlinkSync(real, link);
-    let r = inDir(d, () => configureEnvironments({ envList: env(link) }));
+    let r = inDir(d, () => configureEnvironments({ ...FAKE_PROGRAMS, envList: env(link) }));
     assert.equal(r.actions[0].status, 'shielded');
     assert.ok(fs.lstatSync(link).isSymbolicLink(), 'link is still a symlink');
     assert.equal(path.dirname(r.actions[0].backup), FAKE_HOME);
     assert.match(fs.readFileSync(real, 'utf8'), /zn-gate/);
     assert.equal(fs.readFileSync(r.actions[0].backup, 'utf8'), CFG);
-    r = inDir(d, () => configureEnvironments({ envList: env(link), revert: true }));
+    r = inDir(d, () => configureEnvironments({ ...FAKE_PROGRAMS, envList: env(link), revert: true }));
     assert.equal(r.actions[0].status, 'reverted');
     assert.ok(fs.lstatSync(link).isSymbolicLink());
     assert.equal(fs.readFileSync(real, 'utf8'), CFG);
@@ -225,7 +232,7 @@ test('home symlink pointing into the current project is refused', opts, () => {
     fs.symlinkSync(real, link);
     fs.writeFileSync(link + '.bak.5', EVIL);
     for (const revert of [true, false]) {
-      const r = inDir(proj, () => configureEnvironments({ envList: env(link), revert }));
+      const r = inDir(proj, () => configureEnvironments({ ...FAKE_PROGRAMS, envList: env(link), revert }));
       assert.equal(r.actions[0].status, 'skipped_unsafe');
     }
     assert.equal(fs.readFileSync(real, 'utf8'), CFG);
@@ -241,7 +248,7 @@ test('wrap with an existing backup of the same name errors and does not overwrit
     Date.now = () => 1700000000555;
     try {
       fs.writeFileSync(f + '.bak.1700000000555', 'KEEP');
-      const r = configureEnvironments({ envList: env(f) });
+      const r = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f) });
       assert.equal(r.actions[0].status, 'error');
       assert.match(r.actions[0].error, /already exists/);
     } finally { Date.now = realNow; }
@@ -260,7 +267,7 @@ test('wrap does not write through a dangling symlink at the backup name', opts, 
     Date.now = () => 1700000000777;
     try {
       fs.symlinkSync(victim, f + '.bak.1700000000777');
-      const r = configureEnvironments({ envList: env(f) });
+      const r = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f) });
       assert.equal(r.actions[0].status, 'error');
     } finally { Date.now = realNow; }
     assert.equal(fs.existsSync(victim), false);
@@ -278,7 +285,7 @@ test('revert --dry-run with a symlinked backup pointing elsewhere changes nothin
     fs.writeFileSync(path.join(elsewhere, 'b'), EVIL);
     fs.symlinkSync(path.join(elsewhere, 'b'), f + '.bak.1700000000000');
     const before = fs.readdirSync(d).sort();
-    const r = configureEnvironments({ envList: env(f), revert: true, dryRun: true });
+    const r = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f), revert: true, dryRun: true });
     assert.notEqual(r.actions[0] && r.actions[0].status, 'reverted');
     assert.equal(fs.readFileSync(f, 'utf8'), WRAPPED);
     assert.deepEqual(fs.readdirSync(d).sort(), before);
@@ -292,9 +299,9 @@ test('an empty symlinked config produces no skipped_unsafe noise on wrap', opts,
     fs.writeFileSync(real, '{}');
     const link = path.join(d, 'l.json');
     fs.symlinkSync(real, link);
-    const r = configureEnvironments({ envList: env(link) });
+    const r = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(link) });
     assert.deepEqual(r.actions, []);
-    const rv = configureEnvironments({ envList: env(link), revert: true });
+    const rv = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(link), revert: true });
     assert.equal(rv.actions[0].status, 'skipped_unsafe');
   } finally { clean(d); }
 });
@@ -327,10 +334,10 @@ test('home scope with cwd equal to home still follows a dotfiles symlink', opts,
     const real = path.join(dotfiles, 'mcp.json');
     fs.writeFileSync(real, CFG);
     fs.symlinkSync(real, link);
-    let r = inDir(FAKE_HOME, () => configureEnvironments({ envList: env(link) }));
+    let r = inDir(FAKE_HOME, () => configureEnvironments({ ...FAKE_PROGRAMS, envList: env(link) }));
     assert.equal(r.actions[0].status, 'shielded');
     assert.match(fs.readFileSync(real, 'utf8'), /zn-gate/);
-    r = inDir(FAKE_HOME, () => configureEnvironments({ envList: env(link), revert: true }));
+    r = inDir(FAKE_HOME, () => configureEnvironments({ ...FAKE_PROGRAMS, envList: env(link), revert: true }));
     assert.equal(r.actions[0].status, 'reverted');
     assert.equal(fs.readFileSync(real, 'utf8'), CFG);
   } finally {
@@ -347,13 +354,13 @@ test('rename retries on a busy file and then succeeds; always busy gives a clear
     fs.writeFileSync(f, CFG);
     let calls = 0;
     fs.renameSync = (a, b) => { if (b === f && ++calls <= 2) { const e = new Error('busy'); e.code = 'EBUSY'; throw e; } return realRename(a, b); };
-    let r = configureEnvironments({ envList: env(f) });
+    let r = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f) });
     assert.equal(r.actions[0].status, 'shielded');
     assert.equal(calls, 3);
     fs.writeFileSync(f, CFG);
     calls = 0;
     fs.renameSync = (a, b) => { if (b !== f) return realRename(a, b); calls++; const e = new Error('busy'); e.code = 'EPERM'; throw e; };
-    r = configureEnvironments({ envList: env(f) });
+    r = configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f) });
     assert.equal(r.actions[0].status, 'error');
     assert.match(r.actions[0].error, /could not replace .*in use by another program/);
     assert.equal(calls, 5);
@@ -369,7 +376,7 @@ test('original file mode survives the umask', { skip: process.platform === 'win3
     fs.writeFileSync(f, CFG);
     fs.chmodSync(f, 0o664);
     const old = process.umask(0o077);
-    try { configureEnvironments({ envList: env(f) }); } finally { process.umask(old); }
+    try { configureEnvironments({ ...FAKE_PROGRAMS, envList: env(f) }); } finally { process.umask(old); }
     assert.equal(fs.statSync(f).mode & 0o777, 0o664);
   } finally { clean(d); }
 });
