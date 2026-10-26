@@ -32,7 +32,10 @@ Hook scripts run on your machine: installing the plugin on the web does not inst
   which is Git Bash's. Without Git Bash they cannot start, and tool calls and
   prompts are blocked (not tested on Windows without Git Bash). If you cannot
   use Git Bash, do not install the plugin: run `zn hooks install claude-code`
-  instead.
+  instead. If Claude Code still ran these hooks with PowerShell, `/bin/sh`
+  would mean a `\bin\sh` program at the root of the project's drive, which
+  another user of the machine may be able to create: on a shared Windows
+  machine without Git Bash, do not install the plugin.
 - Codex on Windows: the plugin does not run there. Its Windows hook commands
   only block tool calls and prompts and tell you to run
   `zn hooks install codex` instead of the plugin.
