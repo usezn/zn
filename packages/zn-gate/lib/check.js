@@ -290,7 +290,7 @@ function parseCommand(command, agentId) {
  * Claude Code documents), else bin\bash.exe of the Git for Windows whose git is on an absolute PATH entry (a default
  * install puts only Git\cmd on the PATH), else bash or sh from the absolute PATH entries. Null when there is none.
  */
-function gitBash(env) {
+function gitBash(env, { gitOnly = false } = {}) {
   const exe = require('./exe');
   const given = (env || {}).CLAUDE_CODE_GIT_BASH_PATH;
   if (typeof given === 'string' && path.isAbsolute(given)) {
@@ -301,6 +301,8 @@ function gitBash(env) {
     const bash = path.resolve(path.dirname(git), '..', 'bin', process.platform === 'win32' ? 'bash.exe' : 'bash');
     try { if (fs.statSync(bash).isFile()) return bash; } catch (err) { /* not a Git for Windows layout */ }
   }
+  // gitOnly: Claude Code runs "shell": "bash" hooks with Git Bash only; a bash.exe on the PATH is often WSL's.
+  if (gitOnly) return null;
   return exe.findProgram('bash', env) || exe.findProgram('sh', env);
 }
 
@@ -759,14 +761,15 @@ async function checkAgent(spec, ctx) {
         res.pluginFault = true;
       }
       // Claude Code runs a command hook through a shell (bash when the hook says "shell": "bash", which is Git Bash on
-      // Windows; sh otherwise), with CLAUDE_PLUGIN_ROOT set and the project as working folder. The hook is run here
+      // Windows; sh otherwise), with CLAUDE_PLUGIN_ROOT set; check runs it in its own test folder, where Claude Code
+      // would run it in the project. The hook is run here
       // the same way, so what the manifest starts (zn-node.sh, which finds Node.js and runs the launcher) is checked
       // too, not only the launcher behind it.
       const hostPre = manifest && !manifest.bare ? manifest.hooks.find((h) => h.event === 'PreToolUse' && h.raw) : null;
       if (hostPre) {
         const want = hostPre.shell === 'bash' ? 'bash' : 'sh';
         const env = ctx.env || process.env;
-        const shell = want === 'bash' ? (process.platform === 'win32' ? gitBash(env) : require('./exe').findProgram('bash', env))
+        const shell = want === 'bash' ? (process.platform === 'win32' ? gitBash(env, { gitOnly: true }) : require('./exe').findProgram('bash', env))
           : (process.platform === 'win32' ? null : '/bin/sh');
         if (shell && fs.existsSync(shell)) {
           live = { file: shell, args: ['-c', hostPre.raw], env: { CLAUDE_PLUGIN_ROOT: plugin.root, ...(ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}) }, plugin: true };

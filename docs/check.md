@@ -104,7 +104,7 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   install Git for Windows (it brings Git Bash, which Claude Code uses for hooks), or use zn's hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal
   ```
 
-  `zn-gate check` runs the plugin's hook the way Claude Code does: the command line from the plugin's `hooks/hooks.json`, through bash when the hook says `"shell": "bash"` (Git Bash on Windows) and through `sh` otherwise, with the project as the working folder. When that shell is missing, the hook cannot run; on other systems the fix says to make sure the shell is installed.
+  `zn-gate check` runs the plugin's hook the way Claude Code does: the command line from the plugin's `hooks/hooks.json`, through bash when the hook says `"shell": "bash"` (Git Bash on Windows) and through `sh` otherwise. It runs the hook in its own test folder, where Claude Code runs it in your project. When that shell is missing, the hook cannot run; on other systems the fix says to make sure the shell is installed.
 
 - **The ZCode plugin's hook program is not on this computer.**
 

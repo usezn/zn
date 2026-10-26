@@ -701,3 +701,30 @@ test('check: a plugin hook is NOT protected, and nothing it names runs, when its
   }
   assert.equal(fs.existsSync(marker), false, 'a program or script named by a refused manifest ran');
 });
+
+test('check: a plugin hook that asks for bash where there is no bash is not protected, with the fix, and nothing runs', { skip: process.platform === 'win32' }, async (t) => {
+  const home = tempDir(t, 'zn-check-nobash-');
+  const root = fakePlugin(home, launcher());
+  const mark = path.join(tempDir(t, 'zn-check-nobash-mark-'), 'ran.txt');
+  nodeSh(root, { mark });
+  fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), JSON.stringify({ hooks: { PreToolUse: [{ hooks: [
+    { type: 'command', shell: 'bash', command: '/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code', onFailure: 'block' }] }] } }));
+  // A PATH with Node.js only (a link to it in an empty folder): no bash in any absolute entry.
+  const PATH = tempDir(t, 'zn-check-nobash-path-');
+  fs.symlinkSync(process.execPath, path.join(PATH, 'node'));
+  const r = byId(await check({ home, env: { HOME: home, PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /runs the hooks of the zn-gate plugin with bash, and no bash was found/);
+  assert.match(r.fix, /zn hooks install claude-code/);
+  assert.equal(fs.existsSync(mark), false, 'the wrapper ran without a shell');
+});
+
+test('gitBash with gitOnly never falls back to a bash or sh on the PATH', (t) => {
+  const { gitBash } = require('../lib/check')._internal;
+  const dir = tempDir(t, 'zn-check-gitbash-');
+  for (const n of ['bash', 'sh']) fs.writeFileSync(path.join(dir, n), '#!/bin/sh\n', { mode: 0o755 });
+  const env = { PATH: dir };
+  assert.equal(gitBash(env, { gitOnly: true }), null);
+  assert.ok(gitBash(env), 'without gitOnly the PATH fallback stays (other callers)');
+});
