@@ -1,9 +1,10 @@
 #!/bin/sh
-# Starts scripts/zn-launch.js of the zn-gate plugin with a Node.js found only in absolute PATH entries.
+# Starts scripts/zn-launch.js of the zn-gate plugin with a Node.js found only in absolute PATH entries outside the project.
 #
 # Why: a hook command that starts `node` by name uses the first `node` on the PATH of the agent. A relative
 # entry (".", an empty entry, "bin") points into the folder the session runs in, which is the project, and on Windows
-# the current folder can be searched too. A node placed there would run with the user's rights, without zn's checks.
+# the current folder can be searched too. An absolute entry can point into the project as well (its bin/ or
+# node_modules/.bin). A node placed there would run with the user's rights, without zn's checks.
 #
 # Usage: zn-node.sh <Event> <zn-launch.js arguments...>
 #   e.g. zn-node.sh PreToolUse hook claude-code, zn-node.sh PreToolUse hook codex
@@ -41,13 +42,80 @@ case "$0" in
 esac
 HERE=$([ -n "$HERE_DIR" ] && CDPATH='' cd -- "$HERE_DIR" 2>/dev/null && pwd -P) || HERE=""
 
-# Only absolute PATH entries, for this script and everything it starts.
+# Folders the agent works in are not trusted for programs: the folder the hook runs in, the project folder the host names
+# (CLAUDE_PROJECT_DIR, CURSOR_PROJECT_DIR) and the git work tree around the hook's folder, compared by their real paths,
+# and any node_modules folder. An absolute PATH entry there (a bin/ of the project, node_modules/.bin, a folder added by
+# direnv) could hold a node or a sleep of the project's own. Your home folder and / never count as the project: everything
+# would be untrusted there. A link is followed to its target, and the target's folder must be trusted too.
+NL='
+'
+phys() {
+  [ -n "$1" ] || return 1
+  (CDPATH='' cd -- "$1" 2>/dev/null && pwd -P)
+}
+dir_of() {
+  _dd=${1%/*}
+  [ -n "$_dd" ] || _dd=/
+  printf '%s\n' "$_dd"
+}
+HOME_P=$(phys "${HOME:-/nonexistent}") || HOME_P=""
+ROOTS=""
+add_root() {
+  _r=$(phys "$1") || return 0
+  case "$_r" in "" | / | "$HOME_P") return 0 ;; esac
+  ROOTS="$ROOTS$NL$_r"
+}
+CWD_P=$(pwd -P 2>/dev/null) || CWD_P=""
+add_root "$CWD_P"
+add_root "${CLAUDE_PROJECT_DIR:-}"
+add_root "${CURSOR_PROJECT_DIR:-}"
+_d=$CWD_P
+while [ -n "$_d" ] && [ "$_d" != / ]; do
+  if [ -e "$_d/.git" ]; then
+    add_root "$_d"
+    break
+  fi
+  _d=${_d%/*}
+done
+trusted_dir() {
+  _p=$(phys "$1") || return 1
+  case "$_p/" in */node_modules/*) return 1 ;; esac
+  _o=$IFS
+  IFS=$NL
+  set -f
+  _ok=0
+  for _r in $ROOTS; do
+    case "$_p/" in "$_r"/*) _ok=1; break ;; esac
+  done
+  set +f
+  IFS=$_o
+  return "$_ok"
+}
+READLINK=""
+for c in /usr/bin/readlink /bin/readlink; do
+  if [ -x "$c" ]; then READLINK=$c; break; fi
+done
+trusted_prog() {
+  _f=$1
+  _i=0
+  trusted_dir "$(dir_of "$_f")" || return 1
+  while [ -L "$_f" ]; do
+    [ -n "$READLINK" ] && [ "$_i" -lt 40 ] || return 1
+    _t=$("$READLINK" -- "$_f") || return 1
+    case "$_t" in /*) _f=$_t ;; *) _f=$(dir_of "$_f")/$_t ;; esac
+    trusted_dir "$(dir_of "$_f")" || return 1
+    _i=$((_i + 1))
+  done
+  return 0
+}
+
+# Only absolute, trusted PATH entries, for this script and everything it starts.
 OLDIFS=$IFS
 IFS=:
 set -f
 SAFE_PATH=
 for d in $PATH; do
-  case "$d" in /*) SAFE_PATH="${SAFE_PATH:+$SAFE_PATH:}$d" ;; esac
+  case "$d" in /*) trusted_dir "$d" && SAFE_PATH="${SAFE_PATH:+$SAFE_PATH:}$d" ;; esac
 done
 set +f
 IFS=$OLDIFS
@@ -93,13 +161,18 @@ on_deadline() {
   [ -z "$CUR" ] || kill "$CUR" 2>/dev/null
   refuse "the hook did not finish starting within $DEADLINE seconds."
 }
-if command -v sleep >/dev/null 2>&1; then
+# The system's sleep, by its full path (never one found on the PATH).
+SLEEP=""
+for c in /bin/sleep /usr/bin/sleep; do
+  if [ -x "$c" ]; then SLEEP=$c; break; fi
+done
+if [ -n "$SLEEP" ]; then
   MAIN=$$
   trap on_deadline USR1
   trap stop_watchdog EXIT
   (
     exec >/dev/null 2>&1 </dev/null
-    sleep "$DEADLINE" &
+    "$SLEEP" "$DEADLINE" &
     s=$!
     trap 'kill "$s" 2>/dev/null; exit 0' TERM
     wait "$s" && kill -USR1 "$MAIN"
@@ -114,7 +187,7 @@ set -f
 for d in $PATH; do
   case "$d" in /*) ;; *) continue ;; esac
   for n in node node.exe; do
-    if [ -f "$d/$n" ] && [ -x "$d/$n" ]; then NODE="$d/$n"; break; fi
+    if [ -f "$d/$n" ] && [ -x "$d/$n" ] && trusted_prog "$d/$n"; then NODE="$d/$n"; break; fi
   done
   [ -z "$NODE" ] || break
 done
@@ -124,17 +197,25 @@ IFS=$OLDIFS
 # The usual install folders (an app often starts with a short PATH).
 if [ -z "$NODE" ]; then
   for c in /usr/local/bin/node /opt/homebrew/bin/node /usr/bin/node "/c/Program Files/nodejs/node.exe" "${HOME:-/nonexistent}/.volta/bin/node" "${HOME:-/nonexistent}/.local/share/fnm/aliases/default/bin/node"; do
-    if [ -f "$c" ] && [ -x "$c" ]; then NODE="$c"; break; fi
+    if [ -f "$c" ] && [ -x "$c" ] && trusted_prog "$c"; then NODE="$c"; break; fi
   done
 fi
-if [ -z "$NODE" ] && [ -n "${HOME:-}" ] && [ -d "$HOME/.nvm/versions/node" ]; then
+LS=""
+SORT=""
+for c in /bin/ls /usr/bin/ls; do
+  if [ -x "$c" ]; then LS=$c; break; fi
+done
+for c in /usr/bin/sort /bin/sort; do
+  if [ -x "$c" ]; then SORT=$c; break; fi
+done
+if [ -z "$NODE" ] && [ -n "${HOME:-}" ] && [ -d "$HOME/.nvm/versions/node" ] && [ -n "$LS" ] && [ -n "$SORT" ]; then
   # shellcheck disable=SC2012 # a plain list of folders, newest version first (version order: v22 before v9)
-  for c in $(ls -1d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | sort -r -V); do
-    if [ -f "$c" ] && [ -x "$c" ]; then NODE="$c"; break; fi
+  for c in $("$LS" -1d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | "$SORT" -r -V); do
+    if [ -f "$c" ] && [ -x "$c" ] && trusted_prog "$c"; then NODE="$c"; break; fi
   done
 fi
 
-[ -n "$NODE" ] || refuse "no Node.js was found for the hook (looked in the absolute entries of the PATH and the usual install folders)."
+[ -n "$NODE" ] || refuse "no Node.js was found for the hook (looked in the absolute PATH entries outside the project and the usual install folders)."
 
 "$NODE" "$LAUNCH" "$@" <&3 &
 CUR=$!

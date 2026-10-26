@@ -98,6 +98,9 @@ try {
     fs.mkdirSync(emptybin);
     const home = path.join(tmp, 'home');
     fs.mkdirSync(home);
+    // A folder to run in that holds none of the programs above: the folder a hook runs in is never trusted for programs.
+    const elsewhere = path.join(tmp, 'elsewhere');
+    fs.mkdirSync(elsewhere);
 
     function run(dir, event, { cwd, PATH, input, env = {} }) {
       const { command } = commandFor(event, dir);
@@ -181,7 +184,7 @@ try {
     test('a missing launcher blocks a blocking event', () => {
       const d = plugin('nolauncher');
       fs.rmSync(path.join(d, 'scripts', 'zn-launch.js'));
-      const r = run(d, 'PreToolUse', { cwd: tmp, PATH: realbin });
+      const r = run(d, 'PreToolUse', { cwd: elsewhere, PATH: realbin });
       assert.strictEqual(r.status, 2);
       assert.ok(/zn-launch\.js\) is missing/.test(r.stderr), r.stderr);
     });
@@ -190,17 +193,17 @@ try {
       const d = plugin('pass');
       for (const rc of ['0', '2', '1', '7']) {
         for (const event of ['PreToolUse', 'PostToolUse']) {
-          const r = run(d, event, { cwd: tmp, PATH: realbin, env: { ZN_STUB_RC: rc } });
+          const r = run(d, event, { cwd: elsewhere, PATH: realbin, env: { ZN_STUB_RC: rc } });
           assert.strictEqual(r.status, Number(rc), event + ' rc ' + rc);
           assert.strictEqual(r.stdout, JSON.stringify({ args: ['hook', 'claude-code'], stdin: '{"hook_event_name":"' + event + '"}' }), event);
           assert.strictEqual(r.stderr, '');
         }
       }
-      const c = run(d, 'SessionStart', { cwd: tmp, PATH: realbin });
+      const c = run(d, 'SessionStart', { cwd: elsewhere, PATH: realbin });
       assert.strictEqual(c.stdout, JSON.stringify({ args: ['check', 'claude-code'], stdin: '{"hook_event_name":"SessionStart"}' }));
       // A large event (tool output) reaches the launcher whole.
       const big = '{"hook_event_name":"PostToolUse","x":"' + 'a'.repeat(300000) + '"}';
-      const b = run(d, 'PostToolUse', { cwd: tmp, PATH: realbin, input: big });
+      const b = run(d, 'PostToolUse', { cwd: elsewhere, PATH: realbin, input: big });
       assert.strictEqual(JSON.parse(b.stdout).stdin.length, big.length);
     });
 
@@ -209,7 +212,7 @@ try {
       const probe = path.join(tmp, 'path-probe');
       fs.mkdirSync(probe);
       fs.writeFileSync(path.join(probe, 'node'), '#!/bin/sh\nprintf "%s" "$PATH"\n', { mode: 0o755 });
-      const r = run(d, 'PreToolUse', { cwd: tmp, PATH: '.:' + probe + ':bin::/usr/bin' });
+      const r = run(d, 'PreToolUse', { cwd: elsewhere, PATH: '.:' + probe + ':bin::/usr/bin' });
       assert.strictEqual(r.stdout, probe + ':/usr/bin');
     });
 
@@ -221,12 +224,12 @@ try {
       fs.mkdirSync(hang);
       fs.writeFileSync(path.join(hang, 'node'), '#!/bin/sh\nexec sleep 300\n', { mode: 0o755 });
       const t0 = Date.now();
-      const r = run(d, 'PreToolUse', { cwd: tmp, PATH: hang + ':/usr/bin:/bin' });
+      const r = run(d, 'PreToolUse', { cwd: elsewhere, PATH: hang + ':/usr/bin:/bin' });
       const ms = Date.now() - t0;
       assert.strictEqual(r.status, 2, r.stderr);
       assert.ok(/did not finish starting within 2 seconds/.test(r.stderr), r.stderr);
       assert.ok(ms >= 1500 && ms < 20000, 'answered at the deadline: ' + ms + ' ms');
-      const p = run(d, 'PostToolUse', { cwd: tmp, PATH: hang + ':/usr/bin:/bin' });
+      const p = run(d, 'PostToolUse', { cwd: elsewhere, PATH: hang + ':/usr/bin:/bin' });
       assert.strictEqual(p.status, 0);
       assert.ok(/NOT protecting/.test(p.stdout), p.stdout);
     });
@@ -297,9 +300,64 @@ try {
       const hang = path.join(tmp, 'codex-hangbin');
       fs.mkdirSync(hang);
       fs.writeFileSync(path.join(hang, 'node'), '#!/bin/sh\nexec sleep 300\n', { mode: 0o755 });
-      const r = runCodex(d, 'PreToolUse', { cwd: tmp, PATH: hang + ':/usr/bin:/bin' });
+      const r = runCodex(d, 'PreToolUse', { cwd: elsewhere, PATH: hang + ':/usr/bin:/bin' });
       assert.strictEqual(r.status, 2, r.stderr);
       assert.ok(/did not finish starting within 2 seconds/.test(r.stderr), r.stderr);
+    });
+
+    // An absolute PATH entry can point into the project too: its bin/, node_modules/.bin, the git work tree around the
+    // folder the hook runs in, or the project folder the host names, also through a link. None is trusted for node or sleep.
+    test('Claude Code and Codex: a node in an absolute PATH entry inside the project is never run', () => {
+      const d = plugin('abs-planted');
+      const marker = path.join(tmp, 'abs-planted-ran');
+      const work = project('abs-work', marker);
+      fs.mkdirSync(path.join(work, '.git'));
+      fs.mkdirSync(path.join(work, 'sub'));
+      const nm = path.join(work, 'node_modules', '.bin');
+      fs.mkdirSync(nm, { recursive: true });
+      for (const p of ['node', 'sleep']) fs.writeFileSync(path.join(nm, p), '#!/bin/sh\n: > ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+      const linkdir = path.join(tmp, 'abs-linkdir');
+      fs.symlinkSync(path.join(work, 'bin'), linkdir);
+      const linknode = path.join(tmp, 'abs-linknode');
+      fs.mkdirSync(linknode);
+      fs.symlinkSync(path.join(work, 'bin', 'node'), path.join(linknode, 'node'));
+      const bin = path.join(work, 'bin');
+      const cases = [
+        [work, bin + ':' + realbin, {}],
+        [path.join(work, 'sub'), bin + ':' + realbin, {}],
+        [work, nm + ':' + realbin, {}],
+        [elsewhere, nm + ':' + realbin, {}],
+        [work, linkdir + ':' + realbin, {}],
+        [work, linknode + ':' + realbin, {}],
+        [elsewhere, bin + ':' + realbin, { CLAUDE_PROJECT_DIR: work }],
+        [work, bin + ':/usr/bin:/bin:' + realbin, {}],
+      ];
+      for (const [cwd, PATH, env] of cases) {
+        const r = run(d, 'PreToolUse', { cwd, PATH, env });
+        assert.strictEqual(fs.existsSync(marker), false, cwd + ' ' + PATH + ': a planted program ran');
+        assert.strictEqual(r.status, 0, cwd + ' ' + PATH + ': ' + r.stderr);
+        assert.strictEqual(r.stdout, JSON.stringify({ args: ['hook', 'claude-code'], stdin: '{"hook_event_name":"PreToolUse"}' }), PATH);
+        const c = runCodex(d, 'PreToolUse', { cwd, PATH, env });
+        assert.strictEqual(fs.existsSync(marker), false, 'codex ' + cwd + ' ' + PATH + ': a planted program ran');
+        assert.strictEqual(c.status, 0, 'codex ' + PATH + ': ' + c.stderr);
+        assert.strictEqual(c.stdout, JSON.stringify({ args: ['hook', 'codex'], stdin: '{"hook_event_name":"PreToolUse"}' }), PATH);
+      }
+      // The project's entries are not passed on either.
+      const probe = path.join(tmp, 'abs-probe');
+      fs.mkdirSync(probe);
+      fs.writeFileSync(path.join(probe, 'node'), '#!/bin/sh\nprintf "%s" "$PATH"\n', { mode: 0o755 });
+      const p = run(d, 'PreToolUse', { cwd: work, PATH: bin + ':' + probe + ':' + nm + ':/usr/bin' });
+      assert.strictEqual(p.stdout, probe + ':/usr/bin');
+    });
+
+    test('a session started in the home folder still finds a Node.js there (home is never the project)', () => {
+      const d = plugin('home-start');
+      const homebin = path.join(home, 'nodebin');
+      fs.mkdirSync(homebin);
+      fs.symlinkSync(process.execPath, path.join(homebin, 'node'));
+      const r = run(d, 'PreToolUse', { cwd: home, PATH: homebin });
+      assert.strictEqual(r.status, 0, r.stderr);
+      assert.strictEqual(r.stdout, JSON.stringify({ args: ['hook', 'claude-code'], stdin: '{"hook_event_name":"PreToolUse"}' }));
     });
 
     // Claude Code runs hook commands with bash on Linux and macOS (Git Bash on Windows), not only sh.

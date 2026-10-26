@@ -88,11 +88,15 @@ Every hook and both MCP servers run `node scripts/zn-launch.js`, a single
 file with no dependencies that you can read in full. Claude Code and Codex run
 hooks in your project folder, so there the hooks start it through
 `/bin/sh scripts/zn-node.sh`, which uses a Node.js found only in an absolute
-`PATH` entry or a usual install folder: a `node` in the project folder, or
-reached through a relative or empty `PATH` entry, never runs in its place. If
+`PATH` entry outside the project or a usual install folder: a `node` in the
+project folder, its git work tree or a `node_modules` folder, or reached
+through a relative or empty `PATH` entry, never runs in its place. If
 it finds no Node.js, calls and prompts that zn cannot check are blocked, and
 the other events show a warning. Cursor runs plugin hooks from the plugin
-folder, so its hooks start `node scripts/zn-launch.js` directly. On every call
+folder, so its hooks start `node scripts/zn-launch.js` directly. They start
+`node` by name, so an absolute `PATH` entry that points into the project
+(its `node_modules/.bin`, a folder added by direnv) can run a `node` of the
+project's own; with such a `PATH`, use `zn hooks install cursor` instead. On every call
 the launcher:
 
 1. finds the zn-gate package: the directory set as
@@ -147,7 +151,8 @@ It is not a sandbox:
   and for MCP tools in Cursor. Cursor cannot replace the output of its
   built-in tools, so there a refusal only reports the problem.
 - **The agent's environment.** Whoever controls the environment the agent
-  starts hooks with chooses, through the absolute entries of its `PATH`, which
+  starts hooks with chooses, through the absolute entries of its `PATH` (outside
+  the project, except in Cursor), which
   `node` runs the launcher, can preload code
   with `NODE_OPTIONS` before the launcher starts, and chooses the `PATH` used to
   find zn-gate (only an exact copy of the pinned release passes the check). The
