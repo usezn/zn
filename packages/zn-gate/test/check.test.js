@@ -902,7 +902,9 @@ function cursorPluginAt(home, { manifest, folder = 'zn-gate' } = {}) {
   fs.mkdirSync(path.join(root, '.cursor-plugin'), { recursive: true });
   fs.mkdirSync(path.join(root, 'cursor'), { recursive: true });
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
-  const real = JSON.parse(fs.readFileSync(path.join(REPO_PLUGIN, '.cursor-plugin', 'plugin.json'), 'utf8'));
+  // The manifest the Cursor plugin shipped with up to 1.13.1 (the plugin is no longer offered, so it is not in the tree).
+  const real = { name: 'zn-gate', version: '1.13.1', repository: 'https://github.com/usezn/zn', license: 'MIT',
+    hooks: './cursor/hooks.json', mcpServers: './cursor/mcp.json' };
   fs.writeFileSync(path.join(root, '.cursor-plugin', 'plugin.json'), JSON.stringify(manifest || real));
   fs.writeFileSync(path.join(root, 'scripts', 'zn-launch.js'), "require('fs').appendFileSync(" + JSON.stringify(marker) + ", 'ran\\n');\n");
   fs.writeFileSync(path.join(root, 'cursor', 'hooks.json'), JSON.stringify({ version: 1, hooks: { beforeReadFile: [{ command: 'node ./scripts/zn-launch.js hook cursor' }] } }));
