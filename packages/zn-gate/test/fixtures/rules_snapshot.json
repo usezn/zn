@@ -211,7 +211,7 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-26.3",
+      "version": "2026-10-26.4",
       "ids": [
         "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
@@ -241,7 +241,7 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "e925e540c93134af8a58a31fedb0de08a78e6fc12d0889e61700bc4563a67141",
+        "lib/hooks/policy.js": "a5c7f6f37256cf57a9c4c6c2d5e7dcdbad6222f221d7341ecf82cab3989d3264",
         "lib/broker/files.js": "feade3d9b4f4222fb07fbf9a6d23131d0b578ac7c0cc95f40ff4f1edd387811c",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",

@@ -1,0 +1,2 @@
+### Security
+- The agent hooks protect `~/.zn` and the agents' plugin folders also when they are reached another way: through the real path of a linked home folder or project, after `cd ~` (or `cd`, `cd $HOME`) followed by a relative path, through a variable the command sets itself (`X=$HOME; rm -rf $X/.zn`) or one that is not set, through a command substitution (`$(echo ~)/.zn`), and through another user's `~name`. A home folder of `/` is handled too. Before, these writes and deletes were allowed.
