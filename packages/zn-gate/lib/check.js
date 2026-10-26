@@ -40,6 +40,13 @@ const CLAUDE_PRE_COMMAND = '/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" P
 // The plugin's SessionStart command: run only to show the launcher's own message (for example a Node.js it refuses).
 const CLAUDE_CHECK_COMMAND = '/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" SessionStart check claude-code';
 const ZCODE_PRE_WORDS = ['/bin/sh', '${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh', 'PreToolUse'];
+// sha256 of every scripts/zn-node.sh (Claude Code and Codex plugin) and scripts/zn-hook.sh (ZCode plugin) zn ships. A
+// test keeps the files of this repository in the lists; when a script changes, its old entry stays, so a plugin one
+// release behind still counts. A script that is not one of these is not run by check.
+const PUBLISHED_PLUGIN_SCRIPTS = {
+  'zn-node.sh': ['68430f8bac9a943c4f192de0032cfdde00310bff71e372b9bb1993f6af744bcf'],
+  'zn-hook.sh': ['97518091c57b79054d00821c36616a787f4fd51f27496098f4944a9d7c5c910d'],
+};
 
 /* The zn-gate Claude Code plugin needs Node.js 20.19 or later; zn-gate itself runs on 18 and later.
    This is the one place that says which version; the messages below and in init are built from it. */
@@ -495,27 +502,76 @@ function claudePluginRun(command, root, ctx, timeoutS, platform = process.platfo
   return { file: words[0], args: words.slice(1), env, timeout };
 }
 
+/* Why the plugin's hook script `name` (under scripts/ of the plugin folder `root`) is not one zn ships, or null:
+   {problem, fix}. The script's real file is read (at most 1 MiB) and its sha256 looked up in PUBLISHED_PLUGIN_SCRIPTS.
+   When the plugin says it is newer than this zn-gate, the fix is to update zn-gate, whose list does not know it yet. */
+function pluginScriptProblem(root, name, reinstall) {
+  const file = path.join(root, 'scripts', name);
+  let sha = null;
+  try {
+    const real = fs.realpathSync(file);
+    if (fs.statSync(real).size <= 1024 * 1024) sha = require('crypto').createHash('sha256').update(fs.readFileSync(real)).digest('hex');
+  } catch (_) { sha = null; }
+  if (sha && PUBLISHED_PLUGIN_SCRIPTS[name].includes(sha)) return null;
+  const ours = require('../package.json').version;
+  let theirs = null;
+  for (const m of ['.claude-plugin', '.zcode-plugin']) {
+    try { theirs = theirs || JSON.parse(fs.readFileSync(path.join(root, m, 'plugin.json'), 'utf8')).version; } catch (_) { /* none */ }
+  }
+  const problem = 'the hook script of the zn-gate plugin (' + file + ') is not one zn-gate ships' +
+    (sha ? ' (sha256 ' + sha.slice(0, 12) + ')' : ' (it cannot be read)') + ', so nothing shows that it runs zn\'s checks';
+  if (typeof theirs === 'string' && versionNewer(theirs, ours)) {
+    return { problem: problem + '; the plugin (' + theirs + ') is newer than this zn-gate (' + ours + ')',
+      fix: 'update zn-gate: run `npm install -g zn-gate` in your own terminal, then run `zn-gate check` again' };
+  }
+  return { problem, fix: reinstall };
+}
+
+/* Whether version a (x.y.z, a pre-release counts as below its release) is newer than b. */
+function versionNewer(a, b) {
+  const parse = (v) => {
+    const m = /^(\d+)\.(\d+)\.(\d+)(-.+)?$/.exec(String(v).trim());
+    return m ? [+m[1], +m[2], +m[3], m[4] ? 0 : 1] : null;
+  };
+  const x = parse(a);
+  const y = parse(b);
+  if (!x || !y) return false;
+  for (let i = 0; i < 4; i++) if (x[i] !== y[i]) return x[i] > y[i];
+  return false;
+}
+
 /* The folder of a zn-gate plugin for Cursor, or null. Cursor documents ~/.cursor/plugins/local/<plugin> for plugins
-   added by hand and does not say where it keeps the ones it installs, so every folder under ~/.cursor/plugins (a few
-   levels deep, links not followed) is looked at. A folder counts when its .cursor-plugin/plugin.json is named
+   added by hand and does not say where it keeps the ones it installs, so every folder under ~/.cursor/plugins (up to 8
+   levels deep, through links, each real folder once) is looked at. A folder counts when its .cursor-plugin/plugin.json is named
    "zn-gate" and points to usezn's repository. Only that file is read (a regular file, with a size limit); nothing of
    the plugin is run. */
 function cursorZnPlugin(home) {
   const audit = require('./audit');
   const queue = [[path.join(home, '.cursor', 'plugins'), 0]];
+  const visited = new Set();
   let seen = 0;
   while (queue.length && seen < 2000) {
     const [dir, depth] = queue.shift();
+    let real = dir;
+    try { real = fs.realpathSync(dir); } catch (_) { continue; }
+    if (visited.has(real)) continue;
+    visited.add(real);
     seen++;
     const text = audit._internal.readBounded(path.join(dir, '.cursor-plugin', 'plugin.json'), 64 * 1024, false).text;
     let m = null;
     try { m = text ? JSON.parse(text.replace(/^\uFEFF/, '')) : null; } catch (_) { m = null; }
     const ours = (u) => typeof u === 'string' && /^https:\/\/github\.com\/usezn\/zn(?:[/#?]|$)/.test(u);
     if (m && m.name === 'zn-gate' && (ours(m.repository) || ours(m.homepage))) return dir;
-    if (depth >= 5) continue;
+    if (depth >= 8) continue;
     let ents = [];
     try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { continue; }
-    for (const e of ents) if (e.isDirectory() && e.name !== 'node_modules' && e.name !== '.git') queue.push([path.join(dir, e.name), depth + 1]);
+    for (const e of ents) {
+      if (e.name === 'node_modules' || e.name === '.git') continue;
+      const p = path.join(dir, e.name);
+      let isDir = e.isDirectory();
+      if (!isDir && e.isSymbolicLink()) { try { isDir = fs.statSync(p).isDirectory(); } catch (_) { isDir = false; } }
+      if (isDir) queue.push([p, depth + 1]);
+    }
   }
   return null;
 }
@@ -917,8 +973,10 @@ async function checkAgent(spec, ctx) {
           distrust = res.problem;
         } else {
           const pre = claudePreHook(manifest, manifestFile, spec.tool);
-          distrust = pre.problem;
-          if (distrust) { res.problem = distrust; res.fix = PLUGIN_REINSTALL; res.pluginFault = true; } else preHook = pre.hook;
+          // The script the hook runs must be one zn ships, before check runs it.
+          const script = pre.problem ? null : pluginScriptProblem(realOrNull(plugin.root) || plugin.root, 'zn-node.sh', PLUGIN_REINSTALL);
+          distrust = pre.problem || (script && script.problem) || '';
+          if (distrust) { res.problem = distrust; res.fix = script ? script.fix : PLUGIN_REINSTALL; res.pluginFault = true; } else preHook = pre.hook;
         }
       }
       if (!plugin.off && !distrust) {
@@ -964,6 +1022,7 @@ async function checkAgent(spec, ctx) {
         const pre = pres.find((h) => !h.byName && h.type === 'process' && !h.off && !h.async && matcherCovers(h.matcher, spec.tool) &&
           h.words.length === ZCODE_PRE_WORDS.length && h.words.every((w, i) => w === ZCODE_PRE_WORDS[i]));
         const REINSTALL = 'install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again';
+        let zscript = null;
         const zfile = path.join(plugin.root, 'hooks', 'hooks.json');
         if (!pres.length) {
           res.problem = 'the zn-gate plugin has no PreToolUse hook in ' + zfile + ', so ZCode runs no zn check before tool calls';
@@ -974,6 +1033,9 @@ async function checkAgent(spec, ctx) {
         } else if (!pre) {
           res.problem = 'the PreToolUse hook of the zn-gate plugin in ' + zfile + ' is not the hook the plugin ships (`' + ZCODE_PRE_WORDS.join(' ') + '`, turned on, for every tool), so ZCode runs no zn check before tool calls';
           res.fix = REINSTALL;
+        } else if ((zscript = pluginScriptProblem(realOrNull(plugin.root) || plugin.root, 'zn-hook.sh', REINSTALL))) {
+          res.problem = zscript.problem;
+          res.fix = zscript.fix;
         } else if (!fs.existsSync(pre.file)) {
           res.problem = 'the zn-gate plugin starts its hook with ' + pre.file + ', which is not on this computer, so the hook cannot start';
           res.fix = 'the ZCode plugin needs a system with ' + pre.file + ' (Linux); elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again';
@@ -1359,4 +1421,4 @@ function report({ results, removed, warnings }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS } };
+module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { PUBLISHED_PLUGIN_SCRIPTS, pluginScriptProblem, versionNewer, cursorZnPlugin, pluginManifest, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS } };

@@ -827,13 +827,23 @@ test('check: the plugin\'s exact PreToolUse command is what runs; a zn-node.sh t
   const home = tempDir(t, 'zn-check-inert-');
   const marker = path.join(tempDir(t, 'zn-check-inert-mark-'), 'ran.txt');
   const root = fakePlugin(home, launcher({ marker }));
-  // The manifest is the shipped one, but its script exits 0 without asking zn.
-  fs.writeFileSync(path.join(root, 'scripts', 'zn-node.sh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  // The manifest is the shipped one, but its script exits 0 without asking zn: not a script zn ships, so it is not run.
+  const inert = '#!/bin/sh\nexit 0\n';
+  fs.writeFileSync(path.join(root, 'scripts', 'zn-node.sh'), inert, { mode: 0o755 });
   let r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-') }), 'claude-code');
   assert.equal(r.state, 'not-protected');
   assert.ok(!r.verified);
-  assert.match(r.problem, /did not block the read of \.env/);
+  assert.match(r.problem, /is not one zn-gate ships/);
   assert.equal(fs.existsSync(marker), false, 'zn-gate check ran zn-launch.js itself instead of the manifest command');
+  // Even were it a shipped script, the live run of the manifest command would show it blocks nothing.
+  const { PUBLISHED_PLUGIN_SCRIPTS } = require('../lib/check')._internal;
+  const inertSha = require('crypto').createHash('sha256').update(inert).digest('hex');
+  PUBLISHED_PLUGIN_SCRIPTS['zn-node.sh'].push(inertSha);
+  t.after(() => PUBLISHED_PLUGIN_SCRIPTS['zn-node.sh'].splice(PUBLISHED_PLUGIN_SCRIPTS['zn-node.sh'].indexOf(inertSha), 1));
+  r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-') }), 'claude-code');
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /did not block the read of \.env/);
+  assert.equal(fs.existsSync(marker), false);
   // With the real zn-node.sh back, the same manifest command starts the launcher, and the plugin is protected.
   fs.copyFileSync(path.join(REPO_PLUGIN, 'scripts', 'zn-node.sh'), path.join(root, 'scripts', 'zn-node.sh'));
   r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-') }), 'claude-code');
@@ -853,6 +863,44 @@ test('check: the published plugin manifest with the real zn-node.sh is protected
   const r = byId(await check({ home, env: { HOME: home, PATH }, cwd: tempDir(t, 'zn-check-cwd-') }), 'claude-code');
   assert.equal(r.state, 'protected', r.problem);
   assert.equal(r.verified, true);
+});
+
+test('check: the published hook scripts of this repository are in the list check trusts', () => {
+  const { PUBLISHED_PLUGIN_SCRIPTS } = require('../lib/check')._internal;
+  const sha = (f) => require('crypto').createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+  const repo = path.join(__dirname, '..', '..', '..', 'plugins');
+  assert.ok(PUBLISHED_PLUGIN_SCRIPTS['zn-node.sh'].includes(sha(path.join(repo, 'zn-gate', 'scripts', 'zn-node.sh'))),
+    'plugins/zn-gate/scripts/zn-node.sh changed: add its sha256 to PUBLISHED_PLUGIN_SCRIPTS in lib/check.js (keep the old one)');
+  assert.ok(PUBLISHED_PLUGIN_SCRIPTS['zn-hook.sh'].includes(sha(path.join(repo, 'zcode', 'scripts', 'zn-hook.sh'))),
+    'plugins/zcode/scripts/zn-hook.sh changed: add its sha256 to PUBLISHED_PLUGIN_SCRIPTS in lib/check.js (keep the old one)');
+});
+
+test('check: a changed zn-node.sh is not run; a plugin newer than this zn-gate asks to update zn-gate', { skip: process.platform === 'win32' }, async (t) => {
+  const marker = path.join(tempDir(t, 'zn-check-hash-mark-'), 'ran.txt');
+  for (const [version, fixRe] of [['1.0.0', /install the zn-gate plugin again|reinstall|claude plugin/i], ['99.0.0', /npm install -g zn-gate/]]) {
+    const home = tempDir(t, 'zn-check-hash-');
+    const root = fakePlugin(home, launcher({ marker }));
+    // The shipped script with one line added: it would still run zn, but it is not the file zn ships.
+    fs.appendFileSync(path.join(root, 'scripts', 'zn-node.sh'), 'echo changed >> ' + JSON.stringify(marker) + '\n');
+    fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'zn-gate', version }));
+    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+    assert.equal(r.state, 'not-protected', version);
+    assert.match(r.problem, /is not one zn-gate ships \(sha256 [0-9a-f]{12}\)/, version);
+    assert.match(r.fix, fixRe, version);
+    if (version === '99.0.0') assert.match(r.problem, /newer than this zn-gate/);
+  }
+  assert.equal(fs.existsSync(marker), false, 'zn-gate check ran a changed plugin script');
+});
+
+test('check: versionNewer compares x.y.z and puts a pre-release below its release', () => {
+  const { versionNewer } = require('../lib/check')._internal;
+  assert.equal(versionNewer('1.15.0', '1.14.0'), true);
+  assert.equal(versionNewer('1.14.0', '1.14.0'), false);
+  assert.equal(versionNewer('1.14.0', '1.14.0-rc.2'), true);
+  assert.equal(versionNewer('1.14.0-rc.2', '1.14.0'), false);
+  assert.equal(versionNewer('2.0.0', '1.99.99'), true);
+  assert.equal(versionNewer('x', '1.0.0'), false);
 });
 
 test('check: run from a subfolder of a project with its bin/ on the PATH, the plugin hook does not start the project node', { skip: process.platform === 'win32' }, async (t) => {
@@ -910,6 +958,36 @@ function cursorPluginAt(home, { manifest, folder = 'zn-gate' } = {}) {
   fs.writeFileSync(path.join(root, 'cursor', 'hooks.json'), JSON.stringify({ version: 1, hooks: { beforeReadFile: [{ command: 'node ./scripts/zn-launch.js hook cursor' }] } }));
   return { root, marker };
 }
+
+test('check: the zn-gate plugin for Cursor is found 7 levels down and through a link, and a link loop ends', { skip: process.platform === 'win32' }, async (t) => {
+  const { cursorZnPlugin } = require('../lib/check')._internal;
+  const real = JSON.parse(fs.readFileSync(path.join(REPO_PLUGIN, '.cursor-plugin', 'plugin.json'), 'utf8'));
+  const put = (dir) => {
+    fs.mkdirSync(path.join(dir, '.cursor-plugin'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.cursor-plugin', 'plugin.json'), JSON.stringify(real));
+  };
+  // Deep: ~/.cursor/plugins/a/b/c/d/e/f/zn-gate (7 levels below plugins).
+  const deepHome = tempDir(t, 'zn-check-cursordeep-');
+  const deep = path.join(deepHome, '.cursor', 'plugins', 'a', 'b', 'c', 'd', 'e', 'f', 'zn-gate');
+  put(deep);
+  assert.equal(cursorZnPlugin(deepHome), deep);
+  // Through a link: ~/.cursor/plugins/cache -> a folder elsewhere that holds the plugin.
+  const linkHome = tempDir(t, 'zn-check-cursorlink-');
+  const elsewhere = tempDir(t, 'zn-check-cursorlink-real-');
+  put(path.join(elsewhere, 'usezn', 'zn-gate'));
+  fs.mkdirSync(path.join(linkHome, '.cursor', 'plugins'), { recursive: true });
+  fs.symlinkSync(elsewhere, path.join(linkHome, '.cursor', 'plugins', 'cache'));
+  assert.equal(cursorZnPlugin(linkHome), path.join(linkHome, '.cursor', 'plugins', 'cache', 'usezn', 'zn-gate'));
+  // A link that loops back to its own folder: the walk ends, nothing is found.
+  const loopHome = tempDir(t, 'zn-check-cursorloop-');
+  fs.mkdirSync(path.join(loopHome, '.cursor', 'plugins', 'x'), { recursive: true });
+  fs.symlinkSync(path.join(loopHome, '.cursor', 'plugins'), path.join(loopHome, '.cursor', 'plugins', 'x', 'back'));
+  assert.equal(cursorZnPlugin(loopHome), null);
+  // The check itself reports the linked plugin.
+  const r = byId(await check({ home: linkHome, env: { HOME: linkHome, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: false }), 'cursor');
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /no longer supports it/);
+});
 
 test('check: a zn-gate plugin for Cursor is NOT protected, also next to zn\'s Cursor hooks, and nothing of it runs', async (t) => {
   // The plugin alone.
