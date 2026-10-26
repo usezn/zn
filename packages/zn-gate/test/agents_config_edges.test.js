@@ -272,6 +272,27 @@ test('claude-code: uninstall removes zn\'s own user MCP server, but says so when
   assert.ok(r.warnings.some((w) => /is not on your PATH: remove zn's MCP server yourself/.test(w)));
 });
 
+test('claude-code: uninstall never starts a claude found through a relative PATH entry (the folder it runs in)', { skip: process.platform === 'win32' }, (t) => {
+  const h = fakeHome(t);
+  write(path.join(h, '.claude.json'), JSON.stringify({ mcpServers: { secrets: ZN_SERVER } }));
+  const proj = fs.mkdtempSync(path.join(require('os').tmpdir(), 'zn-uninst-proj-'));
+  const marker = path.join(proj, 'ran.txt');
+  fs.writeFileSync(path.join(proj, 'claude'), '#!/bin/sh\necho ran > ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+  const oldPath = process.env.PATH;
+  const oldCwd = process.cwd();
+  process.env.PATH = '.' + path.delimiter + '/usr/bin' + path.delimiter + '/bin';
+  process.chdir(proj);
+  try {
+    const r = claude.uninstall(opts(h, { mcp: true }));
+    assert.ok(r.warnings.some((w) => /is not on your PATH: remove zn's MCP server yourself/.test(w)), JSON.stringify(r.warnings));
+  } finally {
+    process.chdir(oldCwd);
+    process.env.PATH = oldPath;
+    fs.rmSync(proj, { recursive: true, force: true });
+  }
+  assert.equal(fs.existsSync(marker), false, 'uninstall started ./claude');
+});
+
 test('claude-code: uninstall keeps someone else\'s user "secrets" server', (t) => {
   const h = fakeHome(t);
   write(path.join(h, '.claude.json'), JSON.stringify({ mcpServers: { secrets: { command: 'other-tool' } } }));

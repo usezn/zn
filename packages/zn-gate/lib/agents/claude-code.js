@@ -490,7 +490,7 @@ function uninstall(opts = {}) {
     } else {
       // Only zn's own server: a user MCP server that happens to be called "secrets" is left alone.
       const ours = userMcpServerIsOurs(opts);
-      const claude = ours !== true ? null : opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || '');
+      const claude = ours !== true ? null : opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', require('../exe').absolutePath(process.env.PATH || ''));
       if (ours === false) {
         report.warnings.push('left the MCP server named "' + MCP_SERVER_NAME + '" in place: it is not zn\'s');
       } else if (ours === null) {
