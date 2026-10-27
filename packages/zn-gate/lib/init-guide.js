@@ -257,7 +257,7 @@ async function guide(opts = {}) {
   }
   for (const i of items) if (i.note && i.steps.length) w(`${i.note}\n`);
   w('\n');
-  const tail = () => w('(To wrap the MCP servers in your agent configs, which `zn-gate init` used to do: `zn-gate init --wrap-mcp`.)\n');
+  const tail = () => w('(To wrap the MCP servers in your agent configs, which `zn-gate init` used to do:\n`zn-gate init --wrap-mcp`.)\n');
   if (!items.some((i) => i.found)) {
     w('No supported coding agent was found (Claude Code, Codex CLI, Cursor, OpenCode). Nothing was changed.\n');
     w('Install one, then run `npx -y zn-gate init` again. Other editors: https://usezn.com/docs/install\n');
@@ -271,7 +271,7 @@ async function guide(opts = {}) {
   const allSteps = [...setup, ...todo.flatMap((i) => i.steps)];
   if (!interactive) {
     w((agent
-      ? 'An AI agent is running this, so zn only prints the steps: installing hooks is your decision.'
+      ? 'An AI agent is running this, so zn only prints the steps:\ninstalling hooks is your decision.'
       : 'This is not an interactive terminal, so zn only prints the steps.') + ' Nothing was changed.\n');
     w('Run them in your own terminal:\n\n');
     for (const s of allSteps) w(`  ${s.manual}\n`);
