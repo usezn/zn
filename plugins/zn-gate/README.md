@@ -136,8 +136,12 @@ It is not a sandbox:
   `vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER`, which Node's documentation
   marks as experimental. If a Node.js version lacks it or changes it, the
   launcher refuses to run (hooks exit 2).
-- **Timeouts pass in Claude Code.** A hook that does not answer in 15 s is
-  treated as a non-blocking error, and the call goes ahead.
+- **Timeouts in Claude Code.** A hook that does not answer in 15 s fails.
+  The `PreToolUse`, `UserPromptSubmit` and `UserPromptExpansion` hooks
+  carry `onFailure: "block"`, so on Claude Code 2.1.295 and later (which
+  the plugin needs) the call or the prompt is blocked. On `SessionStart`
+  and `PostToolUse` a timeout is a non-blocking error: after a tool has
+  run, its output reaches the model without zn's scrubbing.
 - **Refused output.** When the launcher refuses a tool-output event (the
   package was changed, zn-gate failed), it replaces the output with
   `[zn plugin: output withheld because zn could not check it]` in Claude Code.

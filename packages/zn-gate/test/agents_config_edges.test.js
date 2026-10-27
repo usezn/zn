@@ -245,7 +245,7 @@ test('claude-code: project scope keeps a foreign "secrets" MCP server and remove
   const mcpFile = path.join(project, '.mcp.json');
   write(mcpFile, JSON.stringify({ mcpServers: { secrets: { command: 'other-tool' } } }));
   const r = claude.install(opts(h, { mcp: true, scope: 'project', projectDir: project }));
-  assert.ok(r.warnings.some((w) => /already exists/.test(w)));
+  assert.ok(r.warnings.some((w) => /a project install adds no MCP server/.test(w)));
   assert.deepEqual(json(mcpFile).mcpServers.secrets, { command: 'other-tool' });
 
   write(mcpFile, JSON.stringify({ mcpServers: { secrets: ZN_SERVER } }));
