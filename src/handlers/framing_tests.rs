@@ -370,14 +370,14 @@ async fn stalled_headers_are_closed_within_a_bound() {
     );
 }
 
-/// A tool call hidden in a positional array comes back as an error (the same parse error every other
+/// A tool call hidden in a positional array comes back as an error (the same invalid request every other
 /// non-object frame gets), never as a pass-through.
 #[test]
 fn array_frame_is_rejected() {
     let frame = r#"["2.0",{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"bash","arguments":{"command":"echo example"}}},"ping"]"#;
     match validate_jsonrpc(frame) {
         JsonRpcValidation::Error { code, message, .. } => {
-            assert_eq!(code, crate::jsonrpc::jsonrpc_error::PARSE_ERROR);
+            assert_eq!(code, crate::jsonrpc::jsonrpc_error::INVALID_REQUEST);
             assert!(message.contains("batches are not supported"), "{message}");
         }
         other => panic!("expected Error, got {other:?}"),
@@ -393,13 +393,50 @@ fn array_frame_is_rejected() {
 
 #[test]
 fn scalar_frames_are_rejected() {
-    for frame in ["\"ping\"", "42", "-1.5", "true", "false", "null"] {
+    for frame in [
+        "\"ping\"", "42", "-1.5", "true", "false", "null", " \n\t[1]",
+    ] {
         match validate_jsonrpc(frame) {
             JsonRpcValidation::Error { code, .. } => {
-                assert_eq!(code, crate::jsonrpc::jsonrpc_error::PARSE_ERROR, "{frame}")
+                assert_eq!(
+                    code,
+                    crate::jsonrpc::jsonrpc_error::INVALID_REQUEST,
+                    "{frame}"
+                )
             }
             other => panic!("{frame}: expected Error, got {other:?}"),
         }
+    }
+    // Not JSON at all is still a parse error.
+    for frame in ["", "   ", "[1,", "pin"] {
+        match validate_jsonrpc(frame) {
+            JsonRpcValidation::Error { code, .. } => {
+                assert_eq!(
+                    code,
+                    crate::jsonrpc::jsonrpc_error::PARSE_ERROR,
+                    "{frame:?}"
+                )
+            }
+            other => panic!("{frame:?}: expected Error, got {other:?}"),
+        }
+    }
+}
+
+/// A frame with the same top-level key twice is an error, never a pass-through: the gateway checks one
+/// method and one params, and a server that reads the first of two keys would run the other one.
+#[test]
+fn duplicate_method_or_params_is_rejected() {
+    let frames = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"bash","arguments":{}},"method":"ping"}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"ping","method":"tools/call","params":{"name":"bash","arguments":{}}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{}},"params":{"name":"bash","arguments":{"command":"echo example"}}}"#,
+        r#" {"jsonrpc":"2.0","jsonrpc":"2.0","id":1,"method":"ping"}"#,
+    ];
+    for frame in frames {
+        assert!(
+            matches!(validate_jsonrpc(frame), JsonRpcValidation::Error { .. }),
+            "{frame}"
+        );
     }
 }
 
