@@ -559,8 +559,9 @@ function userMcpServerIsOurs(opts = {}) {
  *  - the user-scope server named "secrets" is the one `zn hooks install claude-code` writes: this Node.js and
  *    this zn-gate's bin/cli.js, both by absolute path and the same files once links are resolved (a `zn` or
  *    `npx` found on the PATH could be a program of the project), and
- *  - no .mcp.json from the working folder upwards and no local-scope entry of ~/.claude.json defines a
- *    server with that name at all, and
+ *  - no .mcp.json and no local-scope entry of ~/.claude.json defines a server with that name at all, from
+ *    the working folder upwards and from the project folder Claude Code names (CLAUDE_PROJECT_DIR) upwards
+ *    (a CLAUDE_PROJECT_DIR that is not an absolute path gives null), and
  *  - for the plugin's servers (plugin_zn-gate_secrets, plugin_zn-gate_zn-gate): the zn-gate plugin is
  *    enabled in the user's settings and no project or local entry uses that name at all.
  * Anything unreadable gives null, so the call is checked as for any other server. */
@@ -591,19 +592,36 @@ function znMcpServerKind(server, cwd, opts = {}) {
   if (data === null) return null;
   const userServers = data && typeof data.mcpServers === 'object' && data.mcpServers ? data.mcpServers : {};
   const localProjects = data && typeof data.projects === 'object' && data.projects ? data.projects : {};
+  // Folder names are compared without case on Windows (a drive letter or a folder typed in another case).
+  const win = (opts.platform || process.platform) === 'win32';
+  const key = (p) => (win ? path.resolve(p).toLowerCase() : path.resolve(p));
+  // A hook can run in a folder outside the project (one added with --add-dir): look up from both. A project
+  // folder that cannot be placed leaves the servers Claude Code loads unknown.
+  const starts = [path.resolve(cwd || process.cwd())];
+  const projectDir = env.CLAUDE_PROJECT_DIR;
+  if (projectDir !== undefined && projectDir !== '') {
+    if (!path.isAbsolute(String(projectDir))) return null;
+    starts.push(String(projectDir));
+  }
+  const seen = new Set();
   const overrides = [];
-  let dir = path.resolve(cwd || process.cwd());
-  for (;;) {
-    const proj = readJsonFile(path.join(dir, '.mcp.json'));
-    if (proj === null) return null;
-    if (proj && proj.mcpServers && proj.mcpServers[server]) overrides.push(proj.mcpServers[server]);
-    for (const k of Object.keys(localProjects)) {
-      const p = localProjects[k];
-      if (path.resolve(k) === dir && p && p.mcpServers && p.mcpServers[server]) overrides.push(p.mcpServers[server]);
+  for (const start of starts) {
+    let dir = path.resolve(start);
+    for (;;) {
+      if (!seen.has(key(dir))) {
+        seen.add(key(dir));
+        const proj = readJsonFile(path.join(dir, '.mcp.json'));
+        if (proj === null) return null;
+        if (proj && proj.mcpServers && proj.mcpServers[server]) overrides.push(proj.mcpServers[server]);
+        for (const k of Object.keys(localProjects)) {
+          const p = localProjects[k];
+          if (key(k) === key(dir) && p && p.mcpServers && p.mcpServers[server]) overrides.push(p.mcpServers[server]);
+        }
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
     }
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
   }
   if (plugin) {
     if (overrides.length) return null;
