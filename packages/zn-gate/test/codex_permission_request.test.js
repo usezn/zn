@@ -71,10 +71,10 @@ test('codex PermissionRequest: a dangerous command gets deny in the Codex shape,
   assert.equal(r.output.hookSpecificOutput.permissionDecision, undefined);
   assertDenyOnly(r.output);
 
-  // A marker command: the deny tells the user the zn run command, as PreToolUse does.
+  // A marker in the arguments: the deny tells the environment-variable way, as PreToolUse does.
   const wrap = await run(codex, cx('PermissionRequest', { cwd: dir, tool_name: 'Bash', tool_input: { command: 'psql "postgres://a:__ZN_DB_PASSWORD__@h/d"' } }));
   assert.equal(wrap.output.hookSpecificOutput.decision.behavior, 'deny');
-  assert.match(wrap.output.hookSpecificOutput.decision.message, /zn run -- psql "postgres:\/\/a:__ZN_DB_PASSWORD__@h\/d"/);
+  assert.match(wrap.output.hookSpecificOutput.decision.message, /run --secrets NAME -- <command>/);
   assertDenyOnly(wrap.output);
 });
 

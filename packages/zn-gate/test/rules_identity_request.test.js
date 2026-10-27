@@ -69,7 +69,7 @@ const USER_GROUPS = {
   'pi:identity_request': [
     '(?:user|operator|owner|human|principal)',
     String.raw`(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))`,
-    String.raw`(?:your|their)\s{1,4}(?:(?:primary|login|account|real)\s{1,4})?e-?mail(?:\s{1,4}address(?:es)?)?`,
+    String.raw`their\s{1,4}(?:(?:primary|login|account|real)\s{1,4})?e-?mail(?:\s{1,4}address(?:es)?)?`,
   ],
   'pi:identity_request_multi': [
     '(?:usuario|operador|due[ñn]o|propietario)',

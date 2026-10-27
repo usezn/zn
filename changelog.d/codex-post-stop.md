@@ -1,2 +1,0 @@
-### Added
-- Codex: an optional setting, `hooks.replaceToolOutputOnSecret` in `~/.zn/config.json` (off by default; `{"hooks": {"replaceToolOutputOnSecret": true}}`). When a tool output holds a real secret value, zn also returns `continue: false` with a stop reason that names the kind of secret, never the value. Codex then replaces the tool result with that text and carries on, so the model may not see the tokenized output. Markers alone change nothing. With the setting off, nothing changes.

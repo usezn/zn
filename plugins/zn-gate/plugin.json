@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "zn-gate",
   "version": "1.13.1",
-  "description": "Local security layer for coding agents: keeps secret values out of what the agent sends to its model, gives it a secrets MCP server that uses credentials without revealing them, and checks untrusted text for prompt injection with local rules.",
+  "description": "Local security layer for coding agents: keeps secret values out of what the agent sends to its model and blocks tool calls that would read or send a secret.",
   "author": {
     "name": "usezn",
     "email": "support@usezn.com",

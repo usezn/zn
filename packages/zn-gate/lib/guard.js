@@ -13,7 +13,10 @@ const ON_BLOCK_VALUES = ['throw', 'return'];
 
 /** Plain text for a blocked call or tool result: what was blocked, why, and the next step. */
 function blockMessage(assessment, target) {
-  const reason = String((assessment && assessment.reason) || '').replace(/\.+$/, '');
+  const raw = String((assessment && assessment.reason) || '');
+  let end = raw.length;
+  while (end > 0 && raw.charCodeAt(end - 1) === 46) end--; // drop trailing dots in linear time
+  const reason = raw.slice(0, end);
   const rule = assessment && assessment.rule;
   const why = reason ? `Reason: ${reason} (rule: ${rule}).` : `Reason: the input matched rule ${rule}.`;
   const isResult = /:(result|tool_output)$/.test(target);

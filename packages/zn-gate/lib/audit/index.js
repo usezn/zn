@@ -21,6 +21,7 @@ const P = require('./patterns');
 const { BY_ID, RANK } = require('./rules');
 const mcpSecrets = require('../mcp-secrets');
 const { pruneInfo } = require('../prune');
+const { BMP_CLASS } = require('../invisible');
 
 const AGENTS = ['claude', 'codex', 'cursor', 'opencode', 'amazonq', 'copilot', 'gemini'];
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -299,12 +300,12 @@ function capHome(ctx, severity) {
 // The exact commands `zn hooks install` writes (lib/agents/config-file.js),
 // matched against the whole command. A path may not contain shell
 // metacharacters, so nothing can run before or after the zn runner.
-const HOOK_AGENTS = '(?:claude-code|codex|cursor|opencode|antigravity|copilot|gemini)';
+const HOOK_AGENTS = '(?:claude-code|codex|cursor|opencode|antigravity|copilot|gemini|zcode)';
 const SAFE_ABS = '(?:/|[A-Za-z]:/)[^;&|$`<>(){}!*?"\'\\r\\n\\\\]{1,4096}';
 const OUR_HOOKS = [
   new RegExp('^zn(?:-gate)?(?:\\.cmd|\\.exe)? hook ' + HOOK_AGENTS + '$'),
   new RegExp('^"(' + SAFE_ABS + ')" "(' + SAFE_ABS + '/zn-gate/lib/hooks/runner\\.js)" ' + HOOK_AGENTS + '$'),
-  new RegExp('^powershell\\.exe -NoProfile -NonInteractive -Command "& \'(' + SAFE_ABS + ')\' \'(' + SAFE_ABS + '/zn-gate/lib/hooks/runner\\.js)\' ' + HOOK_AGENTS + '"$'),
+  new RegExp('^' + require('../shell-quote').POWERSHELL_EXE + ' -NoProfile -NonInteractive -Command "& \'(' + SAFE_ABS + ')\' \'(' + SAFE_ABS + '/zn-gate/lib/hooks/runner\\.js)\' ' + HOOK_AGENTS + '"$'),
 ];
 
 function insideDir(dir, p) {
@@ -758,6 +759,33 @@ function insideQuotedExample(text) {
 }
 const STRONG_IN_DOCS =/^(?:pi:(?:ignore_previous|disregard|system_tag|system_bracket|template_boundary|multi_\w+)|indirect:|evasion:|exfil:markdown_image)/;
 
+// A line the reader sees as empty: whitespace, or only zero-width characters.
+const BLANK_LINE_RE = new RegExp('^[\\s\\u0085' + BMP_CLASS + ']*$');
+const BLANK_PADDING_MIN = 40;
+const BLANK_PADDING_MAX_REPORTS = 10;
+
+/**
+ * ZNA021: a run of BLANK_PADDING_MIN or more empty lines with text after it. Blank lines at the end of the
+ * file hide nothing. Reports the line where the text after the run starts; the text itself is never shown.
+ */
+function checkBlankPadding(ctx) {
+  const lines = ctx.lines;
+  let reports = 0;
+  for (let i = 0; i < lines.length && reports < BLANK_PADDING_MAX_REPORTS;) {
+    if (!BLANK_LINE_RE.test(lines[i])) { i++; continue; }
+    let j = i;
+    while (j < lines.length && BLANK_LINE_RE.test(lines[j])) j++;
+    const run = j - i;
+    if (run >= BLANK_PADDING_MIN && j < lines.length) {
+      reports++;
+      ctx.add('ZNA021', 'medium', j + 1,
+        'Text starts here after ' + run + ' empty or whitespace-only lines (lines ' + (i + 1) + ' to ' + j + '), out of view for a reviewer.',
+        { evidence: 'Lines ' + (i + 1) + ' to ' + j + ' are empty or whitespace-only' });
+    }
+    i = j;
+  }
+}
+
 /* ---- documentation shapes (SKILL.md and docs files) ---- */
 
 // A SKILL.md or a docs page describes prompts, chat formats and attacks; an
@@ -806,7 +834,7 @@ function stripBadges(text) {
 
 const SYSTEM_PLACEHOLDER_DOC = /<(?:\s*\/)?\s*system-(?:or-(?:project|user|global|local|workspace|repo)|(?:name|path|dir|directory|id|type|version|wide))\s*>/gi;
 const SYSTEM_IDENTITY_DOC = /\bsystem:(?:anonymous|authenticated|unauthenticated|masters|nodes?|serviceaccounts?(?::[\w-]+)*|kube-[\w-]+|node-[\w-]+|basic-user|discovery|public-info-viewer)(?![\w-])/gi;
-const CHAT_TOKEN_DOC = /<\|im_start\|>(?:[ \t]*(?:user|assistant|tool)\b|(?![ \t]*system\b))|<\|im_end\|>|\[\/?INST\]/gi;
+const CHAT_TOKEN_DOC = new RegExp('<\\|im_start\\|>(?:[ \\t]*(?:user|assistant|tool)\\b|(?![\\s' + BMP_CLASS + ']*(?:system\\b|$)))|<\\|im_end\\|>|\\[\\/?INST\\]', 'gim');
 
 // What may follow an opening placeholder for it to count as a name: nothing,
 // punctuation, or a file name or path glued to the tag. Checked in two steps
@@ -912,9 +940,16 @@ function docShape(t, o) {
   if (!/<\s*system[^>]*>[\s\S]*<\s*\/\s*system/i.test(rest)) rest = rest.replace(/`<(?:\s*\/)?\s*system\s*>`/gi, ' ');
   if (o.doc) rest = stripNegated(stripDocShapes(rest, o.fenced, o.closedTags));
   // A note inside a skill folder that is not a docs file: only the
-  // placeholder and identity shapes, and "system:" ending the line.
+  // placeholder and identity shapes, and "system:" ending the line (chat
+  // tokens shown as code are lowered below).
   else if (o.skillNote) rest = stripSystemShapes(rest, o.closedTags).replace(/\bsystem\s*:\s*$/i, ' ');
   if (rest !== t && !blockOf(rest)) return 'skip';
+  // A skill note that shows a chat-template token as code (in backticks or a
+  // closed fence): reported one level lower, never dropped.
+  if (!o.doc && o.skillNote) {
+    const noTokens = o.fenced ? rest.replace(CHAT_TOKEN_DOC, ' ') : rest.replace(/`[^`\n]{0,200}`/g, (q) => q.replace(CHAT_TOKEN_DOC, ' '));
+    return noTokens !== rest && !blockOf(noTokens) ? 'demo' : null;
+  }
   if (!o.doc) return null;
   // The strong pattern sits only inside the quotes of an example: reported one
   // level lower, never dropped.
@@ -950,6 +985,7 @@ function isSkillNote(rec) {
 }
 
 function checkInstructions(ctx) {
+  checkBlankPadding(ctx);
   // A file CLAUDE.md imports with @ is loaded as instructions, wherever it sits.
   const doc = !ctx.rec.importedBy && isDocFile(ctx.rec.rel);
   const skillNote = isSkillNote(ctx.rec);
@@ -969,6 +1005,14 @@ function checkInstructions(ctx) {
     if (open < 0) { open = i; continue; }
     for (let k = open + 1; k < i; k++) { fenced.add(k); fenceOpen.set(k, open); }
     open = -1;
+  }
+  // Lines under a heading about risky patterns ("Dangerous patterns", "What to flag")
+  // describe them; the section ends at the next heading of the same or a higher level.
+  const warnSection = new Set();
+  for (let i = 0, level = 0; i < ctx.lines.length; i++) {
+    const h = !fenced.has(i) && /^\s{0,3}(#{1,6})\s/.exec(ctx.lines[i]);
+    if (h) { if (level && h[1].length <= level) level = 0; if (!level && P.warningHeading(ctx.lines[i])) level = h[1].length; }
+    if (level) warnSection.add(i);
   }
   ctx.lines.forEach((raw, i) => {
     const ln = i + 1;
@@ -991,6 +1035,8 @@ function checkInstructions(ctx) {
       let res = null;
       // Strict mode: audit grades each finding itself (high, medium, info).
       try { res = rules().evaluate(t, { strict: true }); } catch (_) { res = null; }
+      // A broken project rules file is reported once, as a configuration finding (see audit()), not on every line.
+      if (res && res.rule === 'custom:invalid_rules') res = null;
       let demo = false;
       if (res && res.verdict === 'block') {
         const d = docShape(t, { doc, skillNote, closedTags, fenced: fenced.has(i), lines: ctx.lines, at: i, open: fenceOpen.get(i) });
@@ -1015,7 +1061,7 @@ function checkInstructions(ctx) {
         ctx.add('ZNA012', sev, ln, 'Rules engine: ' + (res.reason || res.rule) + (quoted ? ' (in quoted or code text)' : '') + '.');
       }
     }
-    const dl = P.downloadAndRun(t, { prose: true });
+    const dl = !(warnSection.has(i) && !fenced.has(i) && !P.imperativeStart(t)) && !P.warningText(t) && P.downloadAndRun(t, { prose: true });
     if (dl) ctx.add('ZNA013', dl.knownInstaller ? 'low' : 'medium', ln, (dl.knownInstaller ? 'A well-known installer is piped into a shell: ' : 'The instructions pipe a download into a shell: ') + short(t, 160));
     const ex = P.exfiltration(t);
     if (ex) ctx.add('ZNA014', 'high', ln, 'The instructions send sensitive material out: ' + short(t, 160));
@@ -1889,6 +1935,15 @@ function audit(opts) {
   }
   checkShadowing(root, out);
   inventory(extDirs, out);
+  try {
+    const cfg = rules().loadCustomConfig();
+    if (cfg.errors.length > 0) {
+      const m = /^line (\d+):/.exec(cfg.errors[0]);
+      const f = uncheckedFinding({ file: cfg.file, agent: 'any', severity: 'medium', detail: 'The project rules in ' + cfg.file + ' are not valid (' + cfg.errors[0] + '), so they were not applied in this audit. To fix it, edit ' + cfg.file + (m ? ' line ' + m[1] : '') + ' or delete it.', fix: 'Edit the project rules file, or delete it; zn-gate check lists the errors.' });
+      if (m) f.line = Number(m[1]);
+      out.push(f);
+    }
+  } catch (_) { /* the rules file never stops the audit */ }
   for (const u of unchecked) out.push(uncheckedFinding(u));
   if (truncated && truncated.reason === 'entries') {
     out.push(uncheckedFinding({ file: truncated.at, agent: 'any', severity: 'high', detail: 'zn audit stopped after ' + maxEntries + ' directory entries (in ' + truncated.at + '); agent directories were read first, but files after that point were not checked.' }));

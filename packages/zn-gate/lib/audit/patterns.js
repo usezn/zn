@@ -28,11 +28,83 @@ const KNOWN_INSTALLERS = [
   'claude.ai/install.sh', 'opencode.ai/install', 'get.volta.sh', 'fnm.vercel.app', 'mise.run', 'pyenv.run',
 ];
 
+// Text that talks about the pattern instead of asking for it: a checklist of
+// risky patterns, a rule that says what to flag, "`curl | sh` is unsafe".
+// Same clause, up to 120 characters before the match, or a short verdict right
+// after it. The warning word has to be about the pattern itself: words that
+// also describe a tool or a goal in an install instruction ("detect", "scan
+// for", "look for", "block", "risks", "vulnerabilities") are not used, and an
+// imperative verb (run, install, use, pipe) between the warning word and the
+// match, or at the start of the clause for the short verdict, makes it an
+// instruction again ("Install the scanner: curl ... | sh").
+const DISCUSS_BEFORE_SRC = '\\b(?:patterns?|anti-?patterns?|red flags?|flag(?:s|ged|ging)?|warn(?:s|ing)? about|forbidden|prohibited|banned|disallow(?:s|ed)?|reject(?:s|ed)?|refus(?:e|es|ed)|unsafe|insecure|dangerous|risky|harmful|malicious|suspicious)\\b';
+const DISCUSS_AFTER = /^[`'"\s)\]]{0,5}(?:\b(?:is|are|was|were)\s+(?:a\s+|an\s+|considered\s+|very\s+)?(?:dangerous|unsafe|risky|insecure|bad|harmful|forbidden|blocked|not\s+allowed|an?\s+(?:anti-?pattern|risk)|a\s+red\s+flag)\b|\b(?:without\s+(?:a\s+)?(?:hash|checksum|verification|signature))\b)/i;
+/** The clause (or list item) starts with a verb that gives an order. */
+const IMPERATIVE_START = /^[\s>*_`\-+\d.)]*(?:(?:then|and|now|first|next|also|please|finally)[\s,]+)*(?:run|execute|install|pipe|use|type|paste|call|invoke|download|fetch|get|grab|set\s+up|bootstrap|add)\b/i;
+const IMPERATIVE_WORD = /\b(?:run|runs|execute|install|pipe|use|type|paste|call|invoke|download|fetch|get|grab|set\s+up|bootstrap|add)\b/i;
+/** A contrast or consequence word after the warning: "... is unsafe, so get it with curl ..." turns the warning into a reassurance. */
+const CONTRAST_WORD = /\b(?:but|so|however|though|although|yet|still|instead|anyway|then|whereas)\b/i;
+/** Warning words that describe a thing ("the old one was unsafe"); a colon after them introduces the command. */
+const ADJECTIVE_WARNING = /^(?:unsafe|insecure|dangerous|risky|harmful|malicious|suspicious)$/i;
+
+/** A separator after the warning word that introduces the command, like a colon does. */
+const INTRODUCER = /(?::|—|–|\s-+\s|-+>|=>|\))/;
+
+function discussed(text, index, length) {
+  let seg = text.slice(Math.max(0, index - 120), index);
+  const cut = Math.max(seg.lastIndexOf('. '), seg.lastIndexOf('; '), seg.lastIndexOf('! '), seg.lastIndexOf('? '));
+  if (cut >= 0) seg = seg.slice(cut + 2);
+  const re = new RegExp(DISCUSS_BEFORE_SRC, 'gi');
+  let last = null;
+  for (let m = re.exec(seg); m; m = re.exec(seg)) last = m;
+  if (last) {
+    const rest = seg.slice(last.index + last[0].length);
+    const introduces = INTRODUCER.test(rest) && ADJECTIVE_WARNING.test(last[0]);
+    if (!IMPERATIVE_WORD.test(rest) && !CONTRAST_WORD.test(rest) && !introduces) return true;
+  }
+  if (IMPERATIVE_START.test(seg)) return false;
+  return DISCUSS_AFTER.test(text.slice(index + length, index + length + 80));
+}
+
+/** A heading that introduces a list of risky patterns ("Dangerous patterns", "What to flag"). */
+const WARNING_HEADING = /^\s{0,3}#{1,6}\s.*\b(?:(?:dangerous|risky|unsafe|insecure|suspicious|bad)\s+(?:patterns?|commands?|practices?|snippets?|installers?)|anti-?patterns?|red flags?|risks? to (?:flag|detect|watch)|what to (?:flag|detect|look for))\b/i;
+/** A verdict label at the start of a list item or line: "BAD: curl | sh ...". Severity labels are not verdicts. */
+const WARNING_LABEL = /^\s*(?:[-*+]\s+|\d+[.)]\s+)?(?:\*\*|__)?(?:danger|bad|avoid|never|don'?t|do not|unsafe|risky|insecure|wrong|incorrect|forbidden)\b\s*(?:\*\*|__)?\s*(?::|-|—|–|\))/i;
+/** A table cell that says the command was refused or is unsafe. */
+const WARNING_CELL = /\b(?:blocked?|refus\w*|reject\w*|denied|flagged|unsafe|dangerous|risks?|risky)\b/i;
+const DOWNLOAD_WORD = /\b(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod)\b/i;
+
+/** The cell has a warning word that is not negated ("no risk", "not blocked", "low risk"). */
+function warningCell(cell) {
+  const re = new RegExp(WARNING_CELL.source, 'gi');
+  for (let m = re.exec(cell); m; m = re.exec(cell)) {
+    const before = cell.slice(Math.max(0, m.index - 20), m.index);
+    const negated = /\b(?:no|not|zero|low|without|never|non)[\s-]+(?:\w+\s+)?$/i.test(before) || /n['’]t\s+(?:\w+\s+)?$/i.test(before);
+    const free = /^[\s-]*free\b/i.test(cell.slice(m.index + m[0].length));
+    if (!negated && !free) return true;
+  }
+  return false;
+}
+
+function warningText(line) {
+  const t = String(line || '').slice(0, MAX_LINE);
+  const label = WARNING_LABEL.exec(t);
+  if (label) return !IMPERATIVE_WORD.test(t.slice(label[0].length));
+  if (/^\s*\|/.test(t)) return t.split('|').some((cell) => warningCell(cell) && !DOWNLOAD_WORD.test(cell));
+  return false;
+}
+function warningHeading(line) {
+  return WARNING_HEADING.test(String(line || '').slice(0, 300));
+}
+function imperativeStart(line) {
+  return IMPERATIVE_START.test(String(line || '').slice(0, 300));
+}
+
 function downloadAndRun(text, opts) {
   const t = String(text || '').slice(0, MAX_LINE);
   for (const re of DOWNLOAD_RUN) {
     const m = re.exec(t);
-    if (m && opts && opts.prose && negated(t, m.index)) continue;
+    if (m && opts && opts.prose && (negated(t, m.index) || discussed(t, m.index, m[0].length))) continue;
     if (m) return { match: m[0], knownInstaller: KNOWN_INSTALLERS.some((h) => t.toLowerCase().includes(h)) };
   }
   return null;
@@ -461,6 +533,9 @@ module.exports = {
   CRED_FLAG_NAME,
   isCredentialFlag,
   downloadAndRun,
+  warningText,
+  warningHeading,
+  imperativeStart,
   splitCommand,
   toolName,
   packagesOf,

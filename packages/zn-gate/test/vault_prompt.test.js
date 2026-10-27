@@ -41,7 +41,7 @@ test('lines typed after each prompt are read too', async () => {
 test('different passphrases are refused with a plain message', async () => {
   const t = tty();
   t.input.write('fake-pass-aaaaa\nfake-pass-bbbbb\n');
-  await assert.rejects(getPassphrase([], true, { input: t.input, output: t.output }), /do not match.*run `(zn|npx -y zn-gate@[0-9.]+) unlock` again/);
+  await assert.rejects(getPassphrase([], true, { input: t.input, output: t.output }), /do not match.*run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock` again/);
 });
 
 test('input closed before the second prompt fails instead of waiting', async () => {
