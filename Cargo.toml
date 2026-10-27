@@ -35,7 +35,7 @@ dashmap = "5.5"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 async-stream = "0.3"
-tower_governor = "0.4"
+tower_governor = "0.8"
 aho-corasick = "1.1"
 reqwest = { version = "0.12", features = ["json"] }
 prometheus = "0.14"
