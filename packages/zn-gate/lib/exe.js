@@ -177,8 +177,16 @@ function projectPlaces(cwd, env, win) {
   return out;
 }
 
+// A PATH entry (a folder) is untrusted in the project or in any node_modules folder (node_modules/.bin).
 function untrustedPlace(real, places) {
-  return places.some((d) => insideOrSame(real, d)) || /(^|[\\/])node_modules([\\/]|$)/i.test(real);
+  return inProject(real, places) || /(^|[\\/])node_modules([\\/]|$)/i.test(real);
+}
+
+// The real file a program name resolves to counts only against the project: a global npm install (npm, nvm, Homebrew,
+// fnm) links bin/<prog> to ../lib/node_modules/<package>/..., which is not the project, while a link into the
+// project's own node_modules still is.
+function inProject(real, places) {
+  return places.some((d) => insideOrSame(real, d));
 }
 
 function trustedPath(pathValue, cwd, env, platform = process.platform) {
@@ -202,7 +210,9 @@ function programEnv(env = process.env, platform = process.platform, cwd) {
   return out;
 }
 
-function findProgram(name, env = process.env, cwd) {
+/* opts.strict: the real file may not be in any node_modules folder either: the rule of the plugins' zn-node.sh, which
+ * zn-gate check mirrors for the node the plugin hooks start. */
+function findProgram(name, env = process.env, cwd, opts = {}) {
   if (hasPathSeparator(name)) return name;
   const file = isWin && !/\.(?:exe|com)$/i.test(name) ? name + '.exe' : name;
   const places = projectPlaces(cwd, env, isWin);
@@ -210,7 +220,8 @@ function findProgram(name, env = process.env, cwd) {
     if (!dir) continue;
     const found = whichSync(file, dir);
     // A program that links into the project counts as the project's.
-    if (found && (!isWin || /\.(?:exe|com)$/i.test(found)) && !untrustedPlace(realKey(found, isWin), places)) return path.resolve(found);
+    const real = found && realKey(found, isWin);
+    if (found && (!isWin || /\.(?:exe|com)$/i.test(found)) && !(opts.strict ? untrustedPlace(real, places) : inProject(real, places))) return path.resolve(found);
   }
   return null;
 }
