@@ -771,7 +771,7 @@ test('check: a plugin hook is NOT protected, and nothing it names runs, when its
     ['/*/sh ' + S, /a pattern the shell or the host expands/, null],
     ['/bin/s? ' + S, /a pattern the shell or the host expands/, null],
     // the script is a link inside the plugin to a file in the project
-    ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/link.sh" PreToolUse hook claude-code', /not a file inside the plugin folder/, 'link'],
+    ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/link.sh" PreToolUse hook claude-code', /holds a link .* that goes outside it|not a file inside the plugin folder/, 'link'],
     // the script does not exist
     ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/missing.sh" PreToolUse hook claude-code', /is missing/, null],
   ];

@@ -328,7 +328,7 @@ test('zn-gate check: a ZCode hook with a non-system sh, a pattern, or a script l
   const cases = [
     [swapCmd(path.join(project, 'sh')), null, /not a system shell running a script inside the plugin folder/],
     [swapCmd('/*/sh'), null, /a pattern the shell or the host expands/],
-    [(h) => h.split('scripts/zn-hook.sh').join('scripts/link.sh'), 'link', /not a file inside the plugin folder/],
+    [(h) => h.split('scripts/zn-hook.sh').join('scripts/link.sh'), 'link', /holds a link .* that goes outside it|not a file inside the plugin folder/],
   ];
   for (const [hooks, kind, re] of cases) {
     const home = tempDir(t, 'zn-zcp-strict-');
