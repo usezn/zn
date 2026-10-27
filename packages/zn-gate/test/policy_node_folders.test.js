@@ -210,3 +210,42 @@ test('copies by pattern, of a folder content or with no visible source into a bi
   ];
   for (const c of ok) assert.equal(sh(c), null, c);
 });
+
+test('copies whose source is a variable, a substitution or a folder copied with -T into a bin folder are refused', () => {
+  const bad = [
+    'cp -rT src ~/.local/bin',
+    'cp -r --no-target-directory src ~/.local/bin',
+    'cp -aT src ~/bin',
+    'cp "$f" ~/.local/bin',
+    'cp $F ~/.local/bin/',
+    'for f in src/*; do cp "$f" ~/.local/bin/; done',
+    'while read f; do cp "$f" ~/.local/bin; done < list',
+    'cp $(cat list) ~/bin',
+    'cp `cat list` ~/bin',
+    "find src -exec sh -c 'cp \"$1\" ~/.local/bin' _ {} \\;",
+    'xargs -I F cp F ~/.local/bin < list',
+    'xargs -IF cp F ~/.local/bin < list',
+    'xargs --replace=F cp F ~/bin < list',
+    'xargs -i cp {} ~/bin < list',
+    'parallel cp {} ~/.local/bin ::: src/a',
+    'parallel -j4 cp {} ~/bin ::: src/a',
+    'cp src/*.ps1 ~/bin',
+    'cp src/zn.ps1 ~/bin',
+  ];
+  for (const c of bad) assert.match(String(sh(c)), /protected/, c);
+  const ok = [
+    'cp -rT src ./dist',
+    'cp -T a ./b',
+    'cp -r src ~/.local/bin',
+    'cp "$BUILD/mytool" ~/.local/bin/',
+    'cp "$f" ./dist/',
+    'for f in src/*; do cp "$f" ./dist/; done',
+    'cp $(cat list) ./dist',
+    'xargs -I F cp F ./dist < list',
+    'xargs cp -t dist/ < list',
+    'parallel cp {} ./dist ::: src/a',
+    'find src -name "*.js" -exec cp {} dist/ \\;',
+    'cp -r ./dist/ ~/bin/myapp/',
+  ];
+  for (const c of ok) assert.equal(sh(c), null, c);
+});

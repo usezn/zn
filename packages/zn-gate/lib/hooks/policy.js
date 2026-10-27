@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-27.15';
+const POLICY_RULES_VERSION = '2026-10-27.16';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1405,7 +1405,9 @@ function allWords(cmd, posix = false) {
         const typed = targetRaw.replace(/^(?:[0-9]*|\*)(?:>\||>>?)/, '');
         if (/^[A-Za-z]:\\/.test(typed) && !/['"]/.test(typed)) t = typed;
       }
-      out.push({ text: t, redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0 });
+      // `< file` only reads: its operator and file are not arguments of the command.
+      const inRedir = /^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?(?!\()/.test(w.text) || /^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?$/.test(prev);
+      out.push({ text: t, redirectTarget: isRedirTarget, inRedir, head, seq: guard, sub, gitArgs, git: gi >= 0 });
     }
     rest = rest.slice(scan.end + 1);
   }
@@ -2758,7 +2760,7 @@ const NODE_ALL_WRITE = new Set(['rm', 'rmdir', 'unlink', 'shred', 'truncate', 'c
 const NODE_DEL_MOVE = new Set(['rm', 'rmdir', 'unlink', 'shred', 'mv', 'del', 'erase', 'rd', 'ren', 'rename', 'move', 'move-item', 'remove-item']);
 // Commands whose last file is where the others go (or the one after -t).
 const NODE_DEST_LAST = new Set(['cp', 'install', 'rsync', 'scp', 'ln', 'mv', 'copy', 'copy-item', 'xcopy', 'robocopy', 'move', 'move-item']);
-const NODE_WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'nohup', 'time', 'xargs', 'exec', 'nice', 'ionice', 'stdbuf', 'timeout', 'setsid', 'builtin', 'busybox']);
+const NODE_WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'nohup', 'time', 'xargs', 'exec', 'nice', 'ionice', 'stdbuf', 'timeout', 'setsid', 'builtin', 'busybox', 'parallel']);
 // The flags of a wrapper that take the next word as their value.
 const NODE_WRAPPER_VALUE_FLAGS = {
   sudo: new Set(['-u', '-g', '-h', '-p', '-C', '-D', '-R', '-T', '-U']),
@@ -2769,7 +2771,10 @@ const NODE_WRAPPER_VALUE_FLAGS = {
   nice: new Set(['-n']),
   ionice: new Set(['-c', '-n', '-p']),
   stdbuf: new Set(['-i', '-o', '-e']),
+  parallel: new Set(['-j', '-a', '-S', '-N', '-n', '-P', '-L', '-d']),
 };
+// Words of a loop or a condition that come before the command they run (`do cp a bin`).
+const NODE_SHELL_KEYWORDS = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', '!']);
 // The name of the program in a path, without a Windows extension.
 const nameOfProgram = (t) => String(t).split(/[\\/]/).pop().toLowerCase().replace(/\.(?:exe|cmd|bat)$/, '');
 
@@ -2784,11 +2789,11 @@ function markRuns(words) {
     cur.words.push(w);
   }
   for (const run of runs) {
-    const ws = run.words.filter((x) => !x.redirectTarget);
+    const ws = run.words.filter((x) => !x.redirectTarget && !x.inRedir);
     let i = 0;
     for (; i < ws.length; i++) {
       const t = ws[i].text;
-      if (ASSIGNMENT_RE.test(t) || t === '--') continue;
+      if (ASSIGNMENT_RE.test(t) || t === '--' || NODE_SHELL_KEYWORDS.has(t)) continue;
       if (NODE_WRAPPERS.has(nameOfProgram(t))) {
         const wrap = nameOfProgram(t);
         for (let j = i + 1; j < ws.length && ws[j].text.startsWith('-'); j++) {
@@ -2806,10 +2811,23 @@ function markRuns(words) {
     run.flags = [];
     run.args = [];
     run.out = new Set();
+    // xargs -I STR, -iSTR and --replace=STR: STR stands for each item read, like `{}`.
+    run.placeholders = new Set(['{}']);
+    for (let q = 0; q < i; q++) {
+      if (nameOfProgram(ws[q].text) !== 'xargs') continue;
+      for (let j = q + 1; j < i; j++) {
+        const f = ws[j].text;
+        if (f === '-I' && ws[j + 1]) run.placeholders.add(ws[j + 1].text);
+        else if (/^-[Ii]./.test(f)) run.placeholders.add(f.slice(2));
+        else if (/^--replace=./.test(f)) run.placeholders.add(f.slice(10));
+      }
+    }
     let dest = null;
     for (let k = i + 1; k < ws.length; k++) {
       const x = ws[k];
       const t = x.text;
+      // parallel cp {} bin ::: a b : what follows ::: only feeds the command, it is not one of its words.
+      if (/^::::?$/.test(t) && ws.slice(0, i).some((y) => nameOfProgram(y.text) === 'parallel')) break;
       if (t.startsWith('-') && t.length > 1) {
         run.flags.push(t);
         if (/^--target-directory=/.test(t)) { dest = x; run.destByFlag = true; }
@@ -2854,6 +2872,8 @@ function nodeExeWrites(w, text, c, opts) {
     return c.role === 'file' && !!opts.codeHead && NODE_CODE_WRITE_RE.test(opts.cmdText || '');
   }
   if (run.out.has(w)) return c.role === 'file';
+  // cp $(cat list) ~/bin : the shell splits the substitution into its own words, so the copy is read from the text.
+  if (c.role === 'bin' && substitutionCopiesTo(text, opts.cmdText || '')) return true;
   const head = run.head;
   const isDest = run.dest === w;
   const delMove = NODE_DEL_MOVE.has(head);
@@ -2872,22 +2892,37 @@ function nodeExeWrites(w, text, c, opts) {
   const sources = run.args.filter((a) => a !== w);
   // `cp -t bin` with no file named (find -exec, xargs): what is copied cannot be seen.
   if (run.destByFlag && !sources.length) return true;
-  return sources.some((a) => nodeSourceMayBeNodeExe(String(a.text)));
+  // cp -rT src bin copies the content of src into bin, whatever is in it.
+  if (run.recursive && run.flags.some((f) => /^-[a-zA-Z]*T/.test(f) && !f.startsWith('--') || f === '--no-target-directory')) return true;
+  return sources.some((a) => nodeSourceMayBeNodeExe(String(a.text), run.placeholders));
+}
+
+/** Whether the command text has a cp, install, rsync, mv or ln with a source that ends in `$(...)` or backticks and `text` as its last word. */
+function substitutionCopiesTo(text, cmdText) {
+  const re = /(?:^|[\s;&|({])(?:cp|install|rsync|mv|ln)\s[^;&|\n]*?(?:\$\([^()]*\)|`[^`]*`)["']?\s+([^;&|\n)]*)/g;
+  for (const m of cmdText.matchAll(re)) {
+    const last = m[1].trim().split(/\s+/).pop().replace(/^["']|["']$/g, '');
+    if (last === text) return true;
+  }
+  return false;
 }
 
 // Names the hooks start (the patterns of a source are tried against them).
-const NODE_EXE_NAMES = ['node', 'zn', 'node.exe', 'zn.exe', 'zn.cmd'];
+const NODE_EXE_NAMES = ['node', 'zn', 'node.exe', 'zn.exe', 'zn.cmd', 'zn.ps1'];
 
 /**
  * Whether a file given to cp, mv, rsync or ln may leave a `node` or `zn` in the bin folder it goes to: its own name
  * is one, it is a pattern whose last part can match one (`*`, `n*`, `node*`, `?ode`, `[nz]*`; `*.sh` cannot), it names
- * a folder's content (`src/`, `src/.`, `.`), or it is a placeholder a program fills in (`{}` of xargs and find).
+ * a folder's content (`src/`, `src/.`, `.`), a variable or substitution in its last part (`"$f"`, `$(cat list)`), or a
+ * placeholder a program fills in (`{}` of xargs, find and parallel, or the string given to xargs -I).
  */
-function nodeSourceMayBeNodeExe(text) {
+function nodeSourceMayBeNodeExe(text, placeholders) {
   const t = slash(text);
   if (/(?:^|\/)\.?$/.test(t) || t === '..' || t.endsWith('/..')) return true;
-  if (t.includes('{}')) return true;
+  if (t.includes('{}') || (placeholders && [...placeholders].some((ph) => ph && t.includes(ph)))) return true;
   const base = t.split('/').pop();
+  // The last part is a variable or a command substitution: its value cannot be seen.
+  if (/[$`]/.test(base)) return true;
   if (!GLOB_RE.test(base)) return NODE_FILE_RE.test(base);
   const alts = expandBraces(base);
   if (!alts) return true;
