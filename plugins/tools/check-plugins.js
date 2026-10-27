@@ -81,9 +81,20 @@ if (pkg.mcpName !== server.name) fail('packages/zn-gate/package.json mcpName ' +
 // The registry entry follows the published package, not the plugin pin: on next the pin can lag a release.
 const serverVersions = { [SERVER_JSON + ' version']: server.version };
 serverPkgs.forEach((p, i) => { serverVersions[SERVER_JSON + ' package version ' + (i + 1)] = p.version; });
+// A prerelease (X.Y.Z-rc.N) is not pinned in the plugin: the pin stays on the last final, older than X.Y.Z.
+const pre = /^(\d+\.\d+\.\d+)-(?:alpha|beta|rc)\.\d+$/.exec(pkg.version || '');
+const olderFinal = (a, b) => {
+  const x = a.split('.').map(Number);
+  const y = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i];
+  return false;
+};
 for (const [where, got] of Object.entries(serverVersions)) {
   if (got !== pkg.version) fail(where + ': version ' + got + ' differs from packages/zn-gate/package.json version ' + pkg.version);
-  if (release && got !== v) fail(where + ': version ' + got + ' differs from the lock file version ' + v);
+  if (release && !pre && got !== v) fail(where + ': version ' + got + ' differs from the lock file version ' + v);
+}
+if (release && pre && !olderFinal(v || '0.0.0', pre[1])) {
+  fail('lock file: for the prerelease ' + pkg.version + ' the plugin pin must stay on the last final release (older than ' + pre[1] + '), got ' + v);
 }
 if (serverPkgs.length !== 1) fail(SERVER_JSON + ': expected exactly one npm package entry for zn-gate, found ' + serverPkgs.length);
 const npmPkg = serverPkgs[0] || {};

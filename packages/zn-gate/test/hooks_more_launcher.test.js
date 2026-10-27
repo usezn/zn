@@ -74,7 +74,7 @@ test('cursor: with the recorded Node.js the launcher runs the real hook', { skip
 test('cursor: uninstall removes the launcher; a project install writes none', { skip: !posix }, (t) => {
   const { env, home, adapter, file } = setup(t, 'cursor', process.execPath);
   assert.ok(fs.existsSync(file));
-  adapter.uninstall({ env, home });
+  adapter.uninstall({ env, home, removeLauncher: true });
   assert.equal(fs.existsSync(file), false);
   const proj = tempDir(t, 'zn-b96-proj-');
   adapter.install({ scope: 'project', projectDir: proj, env, home, nodePath: process.execPath, runnerPath: RUNNER });
@@ -132,7 +132,7 @@ test('gemini: uninstall removes the launcher; check reports the Node.js that is 
   assert.equal(r.state, 'not-protected');
   assert.match(r.problem, /Node\.js \(\/nonexistent\/node-gone\/bin\/node\) is no longer there/);
   assert.equal(r.fix, reinstall('gemini'));
-  ctx.adapter.uninstall({ env: ctx.env, home: ctx.home });
+  ctx.adapter.uninstall({ env: ctx.env, home: ctx.home, removeLauncher: true });
   assert.equal(fs.existsSync(ctx.file), false);
 });
 
@@ -141,7 +141,7 @@ test('antigravity: user install writes the launcher; without Node.js it answers 
   assert.ok(fs.existsSync(ctx.file));
   const data = JSON.parse(fs.readFileSync(ctx.adapter.hooksFile({ env: ctx.env, home: ctx.home }), 'utf8'));
   const command = data['zn-gate'].PreToolUse[0].hooks[0].command;
-  assert.equal(command, "'" + ctx.file + "' PreToolUse");
+  assert.equal(command, ctx.file + " PreToolUse");
   assert.ok(cfg.isOurs(command, 'antigravity'));
   const bin = tempDir(t, 'zn-b96-bin-');
   const r = run(ctx.file, 'PreToolUse', bin);
@@ -198,7 +198,7 @@ test('antigravity: the Windows launcher is an encoded PowerShell script that pri
 test('antigravity: uninstall removes the launcher; a project install writes none and keeps the plain command', { skip: !posix }, (t) => {
   const { env, home, adapter, file } = setup(t, 'antigravity', process.execPath);
   assert.ok(fs.existsSync(file));
-  adapter.uninstall({ env, home });
+  adapter.uninstall({ env, home, removeLauncher: true });
   assert.equal(fs.existsSync(file), false);
   const proj = tempDir(t, 'zn-b96-proj-');
   adapter.install({ scope: 'project', projectDir: proj, env, home, nodePath: process.execPath, runnerPath: RUNNER });

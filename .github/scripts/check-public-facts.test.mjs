@@ -1,7 +1,7 @@
 // Tests for check-public-facts.mjs: run with `node --test .github/scripts/check-public-facts.test.mjs`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { check, getPath, pinnedFiles, pyVersion, isPrerelease } from './check-public-facts.mjs';
+import { check, compareVersions, getPath, pinnedFiles, pyVersion, isPrerelease } from './check-public-facts.mjs';
 
 const FACTS = {
   version: {
@@ -164,6 +164,87 @@ test('with plugin warnings, a half-done pin or an unrelated plugin version still
   assert.equal(pluginWarnings.length, 0);
 });
 
+// examplesVersion against version: final releases only.
+const withExamples = (version, examples) => {
+  const facts = { ...FACTS, version: { ...FACTS.version, value: version }, examplesVersion: { value: examples }, docsVersion: { value: '1.0.0' } };
+  const tree = {
+    'pkg/package.json': JSON.stringify({ version, license: 'MIT' }),
+    'pkg/server.json': JSON.stringify({ packages: [{ version }] }),
+    'py/pyproject.toml': `[project]\nversion = "${version}"\n`,
+    'README.md': 'Works with Claude Code, Cursor.\n',
+  };
+  const warnings = [];
+  const errs = check(facts, Object.keys(tree), (f) => tree[f], { warnings });
+  return { errs, warnings };
+};
+
+test('final release: examplesVersion equal passes without warning', () => {
+  assert.deepEqual(withExamples('2.0.0', '2.0.0'), { errs: [], warnings: [] });
+});
+
+test('final release: examplesVersion ahead of version fails', () => {
+  const { errs } = withExamples('2.0.0', '2.1.0');
+  assert.equal(errs.length, 1);
+  assert.match(errs[0], /examplesVersion 2\.1\.0 is ahead of version 2\.0\.0/);
+  assert.equal(withExamples('2.0.0', '2.0.0-rc.1').errs.length, 0, 'a prerelease of the same version is behind, not ahead');
+  assert.equal(withExamples('2.0.0', '2.0.1').errs.length, 1);
+});
+
+test('final release: only the base X.Y.Z of examplesVersion is compared', () => {
+  assert.deepEqual(withExamples('2.0.0', '2.0.0'), { errs: [], warnings: [] }, 'final vs final');
+  assert.deepEqual(withExamples('2.0.0', '2.0.0-rc.1'), { errs: [], warnings: [] }, 'rc.1 of X.Y.Z vs final X.Y.Z');
+  assert.deepEqual(withExamples('2.0.0', '2.0.0-beta.3'), { errs: [], warnings: [] }, 'beta of X.Y.Z vs final X.Y.Z');
+  assert.deepEqual(withExamples('2.0.0', '2.1.0-rc.1'), { errs: [], warnings: [] }, 'a published rc of a later base is not ahead');
+  const behind = withExamples('2.1.0', '2.0.0-rc.1');
+  assert.equal(behind.errs.length, 1, 'an rc of an older release line fails');
+  assert.match(behind.errs[0], /examplesVersion 2\.0\.0-rc\.1 is on an older release line than version 2\.1\.0/);
+});
+
+test('final release: examples on an older release line fail', () => {
+  for (const ex of ['1.13.1', '1.12.0', '1.13.9']) {
+    const { errs, warnings } = withExamples('1.14.0', ex);
+    assert.equal(errs.length, 1, ex);
+    assert.ok(errs[0].includes('examplesVersion ' + ex + ' is on an older release line than version 1.14.0'), errs[0]);
+    assert.deepEqual(warnings, [], ex);
+  }
+});
+
+test('final release: the same release line with a lower patch only warns', () => {
+  const { errs, warnings } = withExamples('1.13.2', '1.13.1');
+  assert.deepEqual(errs, []);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /examplesVersion 1\.13\.1 is behind the final release 1\.13\.2/);
+});
+
+test('the development branch may pin the published release candidate of the next minor', () => {
+  assert.deepEqual(withExamples('1.13.1', '1.14.0-rc.1'), { errs: [], warnings: [] });
+  assert.deepEqual(withExamples('1.14.0', '1.14.0-rc.1'), { errs: [], warnings: [] }, 'the final may still pin its rc');
+  assert.equal(withExamples('1.13.1', '1.14.0').errs.length, 1, 'a final examplesVersion ahead still fails');
+});
+
+test('pre-release: examplesVersion is not checked', () => {
+  for (const ex of ['1.9.0', '2.0.0-rc.1', '2.0.0', '3.0.0']) {
+    assert.deepEqual(withExamples('2.0.0-rc.1', ex), { errs: [], warnings: [] }, ex);
+  }
+});
+
+test('final release: a malformed examplesVersion is reported; other versions are skipped', () => {
+  assert.match(withExamples('2.0.0', 'latest').errs.join(' '), /examplesVersion latest is not a version/);
+  assert.deepEqual(withExamples('2.0', '9.9.9').errs, [], 'not a final X.Y.Z: skipped, manifests agree');
+});
+
+test('a facts file without examplesVersion is unchanged', () => {
+  assert.deepEqual(run(GOOD), []);
+});
+
+test('compareVersions orders prereleases before their release', () => {
+  assert.equal(compareVersions('1.0.0-rc.1', '1.0.0'), -1);
+  assert.equal(compareVersions('1.0.0-rc.2', '1.0.0-rc.10'), -1);
+  assert.equal(compareVersions('1.10.0', '1.9.0'), 1);
+  assert.equal(compareVersions('1.0.0', '1.0.0'), 0);
+  assert.equal(compareVersions('x', '1.0.0'), null);
+});
+
 // Pre-releases: the release branch of 1.14.0-rc.1 keeps docs and examples on the last published release.
 const RC = {
   version: {
@@ -245,7 +326,8 @@ test('the examples follow examplesVersion, in the PyPI form for requirements', (
 });
 
 test('on a final release docsVersion is not used', () => {
-  const final = { ...RC, version: { ...RC.version, value: '2.1.0' }, docsVersion: { value: '2.0.0' } };
+  // examplesVersion is left out here: this test is about docsVersion (the examples rule has its own tests)
+  const final = { ...RC, version: { ...RC.version, value: '2.1.0' }, docsVersion: { value: '2.0.0' }, examplesVersion: undefined };
   const files = {
     ...RC_GOOD,
     'pkg/package.json': JSON.stringify({ version: '2.1.0' }),
@@ -254,4 +336,28 @@ test('on a final release docsVersion is not used', () => {
     'SECURITY.md': '| 2.1.x | yes |\n',
   };
   assert.deepEqual(runWith(final, files), []);
+});
+
+test('docsVersion.files follow the last final release on a pre-release and the release on a final', () => {
+  const rev = { file: 'README.md', regex: 'rev: v([0-9][^,\\s]*), hooks:' };
+  const withRev = (facts) => ({ ...facts, docsVersion: { ...facts.docsVersion, files: [rev] } });
+  const readme = (v) => `Install: npx -y zn-gate@${v} init\nrepos: [{rev: v${v}, hooks: []}]\n`;
+  // Pre-release: the rev stays on the last final release.
+  assert.deepEqual(runWith(withRev(RC), { ...RC_GOOD, 'README.md': readme('2.0.0') }), []);
+  const errs = runWith(withRev(RC), { ...RC_GOOD, 'README.md': 'Install: npx -y zn-gate@2.0.0 init\nrepos: [{rev: v2.1.0-rc.1, hooks: []}]\n' });
+  assert.equal(errs.length, 1, errs.join('\n'));
+  assert.match(errs[0], /README\.md: version 2\.1\.0-rc\.1, public-facts\.json docsVersion says 2\.0\.0/);
+  // Final release: the rev moves with the release.
+  const final = { ...withRev(RC), version: { ...RC.version, value: '2.1.0' }, examplesVersion: undefined };
+  const files = {
+    ...RC_GOOD,
+    'pkg/package.json': JSON.stringify({ version: '2.1.0' }),
+    'py/pyproject.toml': '[project]\nversion = "2.1.0"\n',
+    'README.md': readme('2.1.0'),
+    'SECURITY.md': '| 2.1.x | yes |\n',
+  };
+  assert.deepEqual(runWith(final, files), []);
+  const stale = runWith(final, { ...files, 'README.md': 'npx -y zn-gate@2.1.0 init\nrepos: [{rev: v2.0.0, hooks: []}]\n' });
+  assert.equal(stale.length, 1, stale.join('\n'));
+  assert.match(stale[0], /README\.md: version 2\.0\.0, public-facts\.json version says 2\.1\.0/);
 });

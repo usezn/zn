@@ -31,6 +31,8 @@ static SSN_REGEX: OnceLock<Regex> = OnceLock::new();
 static E164_REGEX: OnceLock<Regex> = OnceLock::new();
 static NANP_REGEX: OnceLock<Regex> = OnceLock::new();
 static JWT_REGEX: OnceLock<Regex> = OnceLock::new();
+static AUTH_HEADER_REGEX: OnceLock<Regex> = OnceLock::new();
+static AUTH_PLACEHOLDER_REGEX: OnceLock<Regex> = OnceLock::new();
 
 fn email_re() -> &'static Regex {
     EMAIL_REGEX
@@ -39,10 +41,161 @@ fn email_re() -> &'static Regex {
 
 fn api_re() -> &'static Regex {
     API_KEY_REGEX.get_or_init(|| {
-        // Matches: api_key=xxx, secret: xxx, password=xxx, token: xxx
-        // Requires at least 8 characters for the value (reduced from 16 for better detection)
-        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token|auth[_-]?token|access[_-]?token|bearer)[ ]*[:=][ ]*['"]?([a-zA-Z0-9_\-.]{8,})['"]?"#).unwrap()
+        // Matches: api_key=xxx, secret: xxx, password=xxx, token: xxx, and the same as a JSON
+        // member ("api_key": "xxx"), also inside a JSON string (\"api_key\":\"xxx\").
+        // Group 1 is the name, group 2 the optional quote that closes it. A quoted value needs
+        // its closing quote, of the same kind AND at the same escape level as the one that
+        // opens it, like the Node scrubber (the regex crate has no backreferences, so there is
+        // one alternative per level: `"v"`, `\"v\"`, `\\"v\\"`, and the same with `'`).
+        // The value may have any character but that quote, a backslash or a space (`/`, `+`,
+        // `=`, `@`, the other quote...); an unescaped double-quoted value may also have an
+        // escaped quote or backslash (`"ab\"cd"`). Groups (quote, value): 3-4 `"`, 5-6 `\"`,
+        // 7-8 `\\"`, 9-10 `'`, 11-12 `\'`, 13-14 `\\'`. A value that opens with an escaped
+        // quote and has no closing quote of its own is inside a JSON string that ends right
+        // after it: it is redacted up to there and what follows is kept (groups 15-16 and
+        // 17-18). Without a closing quote an unescaped value is not redacted, so a JSON string
+        // is never left half closed. An unquoted value (group 19) is a run of token characters.
+        // Requires at least 8 characters for the value (reduced from 16 for better detection).
+        // A value split by shell quotes ('ab''cd', ab""cd) is one word: redact all of it. Each
+        // extra piece needs a character after its quote, so the quote that closes a JSON string
+        // (`?token=abc"}`, `["token=abc","x"]`) is never taken.
+        Regex::new(r#"(?i)(api[_-]?key|secret[_-]?key|password|token|auth[_-]?token|access[_-]?token|bearer)(\\{0,2}['"])?[ \t]*[:=][ \t]*(?:(")((?:[^"\\\s]|\\["\\]){8,})"|(\\")([^"\\\s]{8,})\\"|(\\\\")([^"\\\s]{8,})\\\\"|(')([^'\\\s]{8,})'|(\\')([^'\\\s]{8,})\\'|(\\\\')([^'\\\s]{8,})\\\\'|(\\")([^"\\\s]{8,})|(\\\\")([^"\\\s]{8,})|([a-zA-Z0-9_\-./+=]{8,}))(?:['"]+[a-zA-Z0-9_\-.]+)*"#).unwrap()
     })
+}
+
+/// `Authorization: Bearer <token>` (also Basic and Token, quoted, escaped or in a JSON member).
+/// Group 1 is the header up to the token, group 2 the token (8 characters or more, no upper
+/// bound). It is not the same rule as the Node scrubber's: Rust also takes Basic, Token and
+/// Proxy-Authorization, and a token of 8 to 19 characters if it has a digit.
+fn auth_re() -> &'static Regex {
+    AUTH_HEADER_REGEX.get_or_init(|| {
+        Regex::new(r#"(?i)((?:proxy-)?authorization(?:\\{0,2}['"])?[ \t]*[:=][ \t]*(?:\\{0,2}['"])?(?:bearer|basic|token)[ \t]+)([A-Za-z0-9._~+/=-]{8,})"#).unwrap()
+    })
+}
+
+/// Words that start a template or a prose example ("your_token_here", "token", "xxx").
+fn auth_placeholder_re() -> &'static Regex {
+    AUTH_PLACEHOLDER_REGEX.get_or_init(|| {
+        Regex::new(r"(?i)^(?:your|my|an?|the|insert|put|paste|token|api|key|secret|access|auth|bearer|xxx|redacted)[-_a-z]*$|^[-_.=*x]+$|^(?:process\.env|os\.environ|os\.getenv|env\.|secrets\.|vars\.|config\.|settings\.|self\.|this\.|arn:)").unwrap()
+    })
+}
+
+/// A credential in an Authorization header looks random: it is not a placeholder or a
+/// reference and has a digit, or is long, or mixes cases (the Node scrubber's rule).
+fn auth_token_ok(token: &str) -> bool {
+    token.len() >= 8
+        && !token.contains("__ZN_")
+        && !auth_placeholder_re().is_match(token)
+        && (token.bytes().any(|b| b.is_ascii_digit())
+            || token.len() >= 20
+            || (token.len() >= 16
+                && token.bytes().any(|b| b.is_ascii_lowercase())
+                && token.bytes().any(|b| b.is_ascii_uppercase())))
+}
+
+/// Replacement for one auth_re() match: keep the header, redact the token (not a final `.`).
+fn redact_auth(caps: &regex::Captures) -> String {
+    let token = &caps[2];
+    let core = token.trim_end_matches('.');
+    if auth_token_ok(core) {
+        format!("{}[SECRET_REDACTED]{}", &caps[1], &token[core.len()..])
+    } else {
+        caps[0].to_string()
+    }
+}
+
+/// The (quote, value) capture groups of the quoted alternatives of api_re(), and whether the
+/// alternative has a closing quote of its own.
+const QUOTED_VALUE_GROUPS: [(usize, usize, bool); 8] = [
+    (3, 4, true),
+    (5, 6, true),
+    (7, 8, true),
+    (9, 10, true),
+    (11, 12, true),
+    (13, 14, true),
+    (15, 16, false),
+    (17, 18, false),
+];
+
+/// The value of one api_re() match, without its quotes.
+fn secret_value<'a>(caps: &regex::Captures<'a>) -> &'a str {
+    QUOTED_VALUE_GROUPS
+        .iter()
+        .find_map(|&(_, v, _)| caps.get(v))
+        .or_else(|| caps.get(19))
+        .map_or("", |m| m.as_str())
+}
+
+/// A placeholder or a reference, not a credential: `${API_TOKEN}`, `$API_TOKEN`,
+/// `<your-api-key>`, `********`, `xxxxxxxx`, `process.env.TOKEN`, `your_token_here`.
+fn secret_placeholder(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    value.starts_with("${")
+        || (value.starts_with('$')
+            && value.len() > 1
+            && value[1..]
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_'))
+        || (value.starts_with('<') && value.ends_with('>'))
+        || value
+            .bytes()
+            .all(|b| matches!(b, b'*' | b'x' | b'X' | b'.' | b'-' | b'_' | b'='))
+        || [
+            "process.env",
+            "os.environ",
+            "os.getenv",
+            "env.",
+            "secrets.",
+            "vars.",
+            "config.",
+            "settings.",
+            "self.",
+            "this.",
+            "arn:",
+        ]
+        .iter()
+        .any(|p| lower.starts_with(p))
+        || [
+            "your",
+            "insert",
+            "paste",
+            "redacted",
+            "changeme",
+            "placeholder",
+        ]
+        .iter()
+        .any(|p| {
+            lower.starts_with(p)
+                && lower
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || matches!(b, b'-' | b'_'))
+        })
+}
+
+/// Replacement for one api_re() match. A plain `name=value` becomes `name: [SECRET_REDACTED]`.
+/// A quoted name (a JSON member) keeps its quotes, so the output is still valid JSON.
+/// A placeholder or reference is left as it is.
+fn redact_secret(caps: &regex::Captures) -> String {
+    if secret_placeholder(secret_value(caps)) {
+        return caps[0].to_string();
+    }
+    let name = &caps[1];
+    match caps.get(2) {
+        None => format!("{name}: [SECRET_REDACTED]"),
+        Some(key_quote) => {
+            let (open, close) = QUOTED_VALUE_GROUPS
+                .iter()
+                .find_map(|&(q, _, closed)| {
+                    caps.get(q)
+                        .map(|m| (m.as_str(), if closed { m.as_str() } else { "" }))
+                })
+                .unwrap_or(("", ""));
+            format!(
+                "{name}{}: {open}[SECRET_REDACTED]{close}",
+                key_quote.as_str()
+            )
+        }
+    }
 }
 
 fn card_re() -> &'static Regex {
@@ -136,17 +289,33 @@ fn card_network_ok(d: &str) -> bool {
 }
 
 fn card_valid(raw: &str) -> bool {
+    if raw.len() < 13 {
+        return false;
+    }
     // One kind of separator only: "4111 1111-1111 1111" is not a card number.
     let has_space = raw.contains(' ');
     let has_dash = raw.contains('-');
     if has_space && has_dash {
         return false;
     }
-    let d: String = raw.chars().filter(|c| c.is_ascii_digit()).collect();
-    if !(13..=19).contains(&d.len()) || all_same(&d) {
+    // At most 19 digits: collect them on the stack (this runs for every
+    // candidate start in long inputs).
+    let mut buf = [0u8; 19];
+    let mut n = 0;
+    for b in raw.bytes().filter(u8::is_ascii_digit) {
+        if n == buf.len() {
+            return false;
+        }
+        buf[n] = b;
+        n += 1;
+    }
+    let Ok(d) = std::str::from_utf8(&buf[..n]) else {
+        return false;
+    };
+    if n < 13 || all_same(d) {
         return false;
     }
-    card_network_ok(&d) && luhn_valid(&d)
+    card_network_ok(d) && luhn_valid(d)
 }
 
 /// US SSN: area 001-899 except 666, group 01-99, serial 0001-9999.
@@ -246,40 +415,49 @@ fn continues_number(text: &str, end: usize, seps: &[char]) -> bool {
         && matches!(rest.next(), Some(c) if c.is_ascii_digit())
 }
 
-fn card_bounded(text: &str, s: usize, e: usize) -> bool {
-    let before_ok =
-        !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || ".,_-".contains(c));
-    let after_ok = !matches!(char_after(text, e), Some(c) if c.is_alphanumeric() || c == '_')
-        && !continues_number(text, e, &['.', ',']);
-    before_ok && after_ok
+fn card_lead(text: &str, s: usize) -> bool {
+    !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || ".,_-".contains(c))
 }
 
-fn ssn_bounded(text: &str, s: usize, e: usize) -> bool {
-    let before_ok =
-        !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || ".-".contains(c));
-    let after_ok = !matches!(char_after(text, e), Some(c) if c.is_alphanumeric())
-        && !continues_number(text, e, &['-']);
-    before_ok && after_ok
+fn card_trail(text: &str, e: usize) -> bool {
+    !matches!(char_after(text, e), Some(c) if c.is_alphanumeric() || c == '_')
+        && !continues_number(text, e, &['.', ','])
+}
+
+fn ssn_lead(text: &str, s: usize) -> bool {
+    !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || ".-".contains(c))
+}
+
+fn ssn_trail(text: &str, e: usize) -> bool {
+    !matches!(char_after(text, e), Some(c) if c.is_alphanumeric())
+        && !continues_number(text, e, &['-'])
 }
 
 /// E.164: the Node.js scrubber's boundaries.
-fn e164_bounded(text: &str, s: usize, e: usize) -> bool {
+fn e164_lead(text: &str, s: usize) -> bool {
     !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || c == '+')
-        && !matches!(char_after(text, e), Some(c) if c.is_numeric())
+}
+
+fn e164_trail(text: &str, e: usize) -> bool {
+    !matches!(char_after(text, e), Some(c) if c.is_numeric())
 }
 
 /// Formatted NANP numbers have no `+`, so they need stricter boundaries
 /// to stay out of version strings and longer dashed numbers.
-fn nanp_bounded(text: &str, s: usize, e: usize) -> bool {
-    let before_ok =
-        !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || "+_-".contains(c));
-    let after_ok = !matches!(char_after(text, e), Some(c) if c.is_alphanumeric() || c == '_')
-        && !continues_number(text, e, &['.', ',', '-']);
-    before_ok && after_ok
+fn nanp_lead(text: &str, s: usize) -> bool {
+    !matches!(char_before(text, s), Some(c) if c.is_alphanumeric() || "+_-".contains(c))
+}
+
+fn nanp_trail(text: &str, e: usize) -> bool {
+    !matches!(char_after(text, e), Some(c) if c.is_alphanumeric() || c == '_')
+        && !continues_number(text, e, &['.', ',', '-'])
 }
 
 type Check = fn(&str) -> bool;
-type Bound = fn(&str, usize, usize) -> bool;
+/// Leading boundary: depends only on the text before the start.
+type Lead = fn(&str, usize) -> bool;
+/// Trailing boundary: depends only on the text after the end.
+type Trail = fn(&str, usize) -> bool;
 
 /// Spans of `re` matches that stand on their own and pass `valid`.
 ///
@@ -287,24 +465,53 @@ type Bound = fn(&str, usize, usize) -> bool;
 /// that fails these checks, so when a candidate fails, shorter versions of
 /// it (ending at an earlier digit) are tried, longest first. This keeps
 /// "4111 1111 1111 1111 2025" or two cards separated by a space redacted.
-fn checked_spans(re: &Regex, text: &str, bound: Bound, valid: Check) -> Vec<(usize, usize)> {
+///
+/// When a candidate fails its leading boundary, a real match can still start
+/// inside it (a card right after an IBAN-like token), so the search resumes at
+/// the next start that passes the leading boundary, not at the candidate's
+/// end. Starts that fail it are skipped without running the regex or the
+/// validators, which keeps long runs of digits or letters linear.
+fn checked_spans(
+    re: &Regex,
+    text: &str,
+    lead: Lead,
+    trail: Trail,
+    valid: Check,
+) -> Vec<(usize, usize)> {
     let mut spans = Vec::new();
     let mut pos = 0;
+    let mut last_end = None;
     while pos < text.len() {
         let Some(m) = re.find_at(text, pos) else {
             break;
         };
         let (s, e) = (m.start(), m.end());
-        let found = (s + 1..=e)
-            .rev()
-            .filter(|&end| text.as_bytes()[end - 1].is_ascii_digit())
-            .find(|&end| bound(text, s, end) && valid(&text[s..end]));
+        // A `+` that starts right where a redacted number ended starts a new number
+        // ("+14155552671+14155552671"): judge its leading boundary as if nothing came before
+        // it, so one pass redacts both and a second pass finds nothing.
+        let adjacent = last_end == Some(s) && text.as_bytes()[s] == b'+';
+        let lead_ok = adjacent || lead(text, s);
+        let found = if lead_ok {
+            (s + 1..=e)
+                .rev()
+                .filter(|&end| text.as_bytes()[end - 1].is_ascii_digit())
+                .find(|&end| trail(text, end) && valid(&text[s..end]))
+        } else {
+            None
+        };
         match found {
             Some(end) => {
                 spans.push((s, end));
+                last_end = Some(end);
                 pos = end;
             }
-            None => pos = e,
+            None => {
+                // Matches are ASCII, so every offset up to `e` is a char boundary.
+                pos = s + 1;
+                while pos < e && !lead(text, pos) {
+                    pos += 1;
+                }
+            }
         }
     }
     spans
@@ -323,19 +530,19 @@ fn replace_spans(text: &str, spans: &[(usize, usize)], marker: &str) -> String {
 }
 
 fn card_spans(text: &str) -> Vec<(usize, usize)> {
-    checked_spans(card_re(), text, card_bounded, card_valid)
+    checked_spans(card_re(), text, card_lead, card_trail, card_valid)
 }
 
 fn ssn_spans(text: &str) -> Vec<(usize, usize)> {
-    checked_spans(ssn_re(), text, ssn_bounded, ssn_valid)
+    checked_spans(ssn_re(), text, ssn_lead, ssn_trail, ssn_valid)
 }
 
 fn e164_spans(text: &str) -> Vec<(usize, usize)> {
-    checked_spans(e164_re(), text, e164_bounded, e164_valid)
+    checked_spans(e164_re(), text, e164_lead, e164_trail, e164_valid)
 }
 
 fn nanp_spans(text: &str) -> Vec<(usize, usize)> {
-    checked_spans(nanp_re(), text, nanp_bounded, formatted_nanp_valid)
+    checked_spans(nanp_re(), text, nanp_lead, nanp_trail, formatted_nanp_valid)
 }
 
 impl Scrubber {
@@ -362,9 +569,8 @@ impl Scrubber {
         output = email_re()
             .replace_all(&output, "[EMAIL_REDACTED]")
             .to_string();
-        output = api_re()
-            .replace_all(&output, "$1: [SECRET_REDACTED]")
-            .to_string();
+        output = auth_re().replace_all(&output, redact_auth).to_string();
+        output = api_re().replace_all(&output, redact_secret).to_string();
         output = replace_spans(&output, &card_spans(&output), "[CARD_REDACTED]");
         output = replace_spans(&output, &ssn_spans(&output), "[SSN_REDACTED]");
         output = replace_spans(&output, &e164_spans(&output), "[PHONE_REDACTED]");
@@ -395,7 +601,10 @@ impl Scrubber {
         if email_re().is_match(input) {
             types.push("email");
         }
-        if api_re().is_match(input) {
+        if api_re()
+            .captures_iter(input)
+            .any(|c| !secret_placeholder(secret_value(&c)))
+        {
             types.push("api_key_or_secret");
         }
         if !card_spans(input).is_empty() {
@@ -439,6 +648,331 @@ mod tests {
     }
 
     #[test]
+    fn test_scrub_json_member() {
+        // Fake, random-looking values only.
+        let v = "zn_FAKEabcdef0123456789abcdef";
+        for input in [
+            format!(r#"{{"api_key":"{v}"}}"#),
+            format!(r#"{{"api_key" : "{v}"}}"#),
+            format!(r#"{{"api_key": "{v}"}}"#),
+            format!(r#"{{"password":"{v}","x":1}}"#),
+            format!("{{'api_key': '{v}'}}"),
+            format!(r#"{{"token": {v}}}"#),
+            format!(r#"{{"body":"{{\"api_key\":\"{v}\"}}"}}"#),
+        ] {
+            let scrubbed = Scrubber::scrub(&input);
+            assert!(
+                scrubbed.contains("[SECRET_REDACTED]"),
+                "{input} -> {scrubbed}"
+            );
+            assert!(!scrubbed.contains(v), "{input} -> {scrubbed}");
+            assert!(Scrubber::contains_pii(&input), "{input}");
+        }
+        // The quotes stay, so a redacted JSON object is still JSON.
+        assert_eq!(
+            Scrubber::scrub(&format!(r#"{{"api_key":"{v}","n":1}}"#)),
+            r#"{"api_key": "[SECRET_REDACTED]","n":1}"#
+        );
+        // Plain assignments keep their old output.
+        assert_eq!(
+            Scrubber::scrub(&format!("api_key=\"{v}\"")),
+            "api_key: [SECRET_REDACTED]"
+        );
+    }
+
+    #[test]
+    fn test_json_member_negatives() {
+        // A name that is not in the list, and a value under the 8-character minimum.
+        for input in [
+            r#"{"color":"zn_FAKEabcdef0123456789abcdef"}"#,
+            r#"{"api_key":"abc123"}"#,
+            r#"{"api_key": ""}"#,
+            r#"{"api_key_count": 3}"#,
+        ] {
+            assert_eq!(Scrubber::scrub(input), input);
+            assert!(!Scrubber::contains_pii(input), "{input}");
+        }
+    }
+
+    #[test]
+    fn test_scrub_escaped_quotes_in_json_string() {
+        // A shell command inside a JSON string: the quotes around the value are escaped.
+        let v = "zn_FAKEabcdef0123456789abcdef";
+        let input = format!(r#"{{"command":"export api_key=\"{v}\" && run"}}"#);
+        let out = Scrubber::scrub(&input);
+        assert!(!out.contains(v), "{out}");
+        assert_eq!(
+            out,
+            r#"{"command":"export api_key: [SECRET_REDACTED] && run"}"#
+        );
+        let input = format!(r#"{{"command":"curl -d password=\"{v}\""}}"#);
+        assert!(!Scrubber::scrub(&input).contains(v));
+    }
+
+    #[test]
+    fn test_scrub_authorization_header() {
+        // Fake, random-looking tokens only.
+        let t = "Zk8Qw3Lm9Xv2Rt7Yp4Nb";
+        for input in [
+            format!("Authorization: Bearer {t}"),
+            format!("curl -H \"Authorization: Bearer {t}\" https://example.com/"),
+            format!("authorization:bearer {t}"),
+            format!(r#"{{"Authorization":"Bearer {t}"}}"#),
+            format!(r#"{{"cmd":"curl -H \"Authorization: Bearer {t}\""}}"#),
+            "Authorization: Basic dXNlcjpwYXNzd29yZDEyMw==".to_string(),
+            format!("Proxy-Authorization: Bearer {t}"),
+        ] {
+            let out = Scrubber::scrub(&input);
+            assert!(out.contains("[SECRET_REDACTED]"), "{input} -> {out}");
+            assert!(
+                !out.contains(t) && !out.contains("dXNlcjpwYXNzd29yZDEyMw"),
+                "{input} -> {out}"
+            );
+        }
+        assert_eq!(
+            Scrubber::scrub(&format!("Authorization: Bearer {t}.")),
+            "Authorization: Bearer [SECRET_REDACTED]."
+        );
+        // Stable on a second pass.
+        let once = Scrubber::scrub(&format!("Authorization: Bearer {t}"));
+        assert_eq!(Scrubber::scrub(&once), once);
+    }
+
+    #[test]
+    fn test_authorization_header_negatives() {
+        // Placeholders, references, short values and words are not credentials.
+        for input in [
+            "Authorization: Bearer token",
+            "Authorization: Bearer your_token_here",
+            "Authorization: Bearer ${API_TOKEN}",
+            "Authorization: Bearer $TOKEN_VALUE",
+            "Authorization: Bearer <token>",
+            "Authorization: Bearer abcdefghijkl",
+            "Authorization: Bearer xxxxxxxxxxxx",
+            "Authorization: Bearer process.env.AUTH_TOKEN_X",
+            "Bearer tokens expire after an hour",
+        ] {
+            assert_eq!(Scrubber::scrub(input), input);
+        }
+    }
+
+    #[test]
+    fn test_scrub_shell_split_value() {
+        // The shell joins 'a''b' and a""b into one word, so no half may stay readable.
+        for input in [
+            "api_key='fakeSecret''Value1234'",
+            "api_key=fakeSecret\"\"Value1234",
+            "api_key=\"fakeSecret\"\"Value1234\"",
+            "api_key='fakeSecret'\"Value1234\"'Tail5678'",
+            "export api_key=fakeSecret''Value1234 && run",
+        ] {
+            let out = Scrubber::scrub(input);
+            assert!(
+                !out.contains("Value1234") && !out.contains("fakeSecret"),
+                "{input} -> {out}"
+            );
+            assert!(!out.contains("Tail5678"), "{input} -> {out}");
+            assert!(out.contains("[SECRET_REDACTED]"), "{input} -> {out}");
+            assert_eq!(Scrubber::scrub(&out), out);
+        }
+        assert_eq!(
+            Scrubber::scrub("export api_key=fakeSecret''Value1234 && run"),
+            "export api_key: [SECRET_REDACTED] && run"
+        );
+        // A quoted value followed by other words or members is untouched.
+        assert_eq!(
+            Scrubber::scrub(r#"api_key="fakeSecret1" "other""#),
+            r#"api_key: [SECRET_REDACTED] "other""#
+        );
+        assert_eq!(
+            Scrubber::scrub(r#"{"api_key":"fakeSecret1","n":"v"}"#),
+            r#"{"api_key": "[SECRET_REDACTED]","n":"v"}"#
+        );
+    }
+
+    #[test]
+    fn test_adjacent_phone_numbers_are_redacted_in_one_pass() {
+        // Same case as the idempotence test of the scrubber fuzz target.
+        let once = Scrubber::scrub("+14155552671+14155552671");
+        assert_eq!(once, "[PHONE_REDACTED][PHONE_REDACTED]");
+        assert_eq!(Scrubber::scrub(&once), once);
+        assert_eq!(
+            Scrubber::scrub("+14155552671+14155552671+14155552671"),
+            "[PHONE_REDACTED][PHONE_REDACTED][PHONE_REDACTED]"
+        );
+        // Separated numbers were already stable; a number glued to letters stays alone.
+        for input in ["+14155552671 +14155552671", "+14155552671,+14155552671"] {
+            let once = Scrubber::scrub(input);
+            assert_eq!(once, input.replace("+14155552671", "[PHONE_REDACTED]"));
+            assert_eq!(Scrubber::scrub(&once), once);
+        }
+        assert_eq!(Scrubber::scrub("a+14155552671"), "a+14155552671");
+    }
+
+    #[test]
+    fn test_quoted_value_is_redacted_whole_and_json_stays_valid() {
+        // Fake values with characters outside a plain token class: the whole value goes and the
+        // output still parses as JSON.
+        for value in [
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "fakeSecret+Value+1234+abcdef",
+            "fakeSecretValue1234abcdefgh==",
+            "fake.Secret@example.invalid!Value1234",
+        ] {
+            for key in ["api_key", "password", "token", "secret_key"] {
+                let input = format!(r#"{{"{key}":"{value}","n":"v"}}"#);
+                let out = Scrubber::scrub(&input);
+                assert!(!out.contains(&value[4..]), "{input} -> {out}");
+                assert_eq!(
+                    out,
+                    format!(r#"{{"{key}": "[SECRET_REDACTED]","n":"v"}}"#),
+                    "{input}"
+                );
+                serde_json::from_str::<serde_json::Value>(&out).expect("valid JSON");
+                assert_eq!(Scrubber::scrub(&out), out);
+            }
+            // Single quotes and an escaped JSON string.
+            let out = Scrubber::scrub(&format!("{{'password': '{value}'}}"));
+            assert_eq!(out, "{'password': '[SECRET_REDACTED]'}");
+            let out = Scrubber::scrub(&format!(r#"{{"cmd":"x \"api_key\":\"{value}\" y"}}"#));
+            assert!(!out.contains(&value[4..]), "{out}");
+            serde_json::from_str::<serde_json::Value>(&out).expect("valid JSON");
+        }
+        // A JSON-RPC line with such a password stays a valid request after scrubbing.
+        let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"arguments":{"password":"a/b+c=d@fakeValue1234"}}}"#;
+        let out = Scrubber::scrub(line);
+        assert!(!out.contains("fakeValue1234"), "{out}");
+        let v: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(v["method"], "tools/call");
+    }
+
+    #[test]
+    fn test_secret_at_end_of_json_string_keeps_json_valid() {
+        // The quote that closes the JSON string must stay, even when the value has `/`, `+`, `=`.
+        let v = "Zk8Qw3Lm9Xv2/Rt7Yp4Nb+==";
+        let w = "fakeSecret+Value+1234+abcdef";
+        for (input, secret) in [
+            (
+                format!(r#"{{"command":"curl https://example.com?token={v}"}}"#),
+                v,
+            ),
+            (format!(r#"["token={w}","x"]"#), w),
+            (format!(r#"{{"a":"x token={w}","b":"y"}}"#), w),
+            (format!(r#"{{"cmd":"run api_key={v}","n":1}}"#), v),
+            (format!(r#"{{"cmd":"run password={v}\n"}}"#), v),
+        ] {
+            let out = Scrubber::scrub(&input);
+            assert!(!out.contains(secret), "{input} -> {out}");
+            assert!(out.contains("[SECRET_REDACTED]"), "{input} -> {out}");
+            serde_json::from_str::<serde_json::Value>(&out)
+                .unwrap_or_else(|e| panic!("{input} -> {out}: {e}"));
+            assert_eq!(Scrubber::scrub(&out), out);
+        }
+        // A benign JSON string with `token=` in it stays valid JSON too.
+        let out = Scrubber::scrub(r#"{"path":"/v1/token=refresh/endpoint"}"#);
+        serde_json::from_str::<serde_json::Value>(&out).expect("valid JSON");
+        // Shell-split pieces still go.
+        let out = Scrubber::scrub(r#"{"cmd":"export api_key='fakeSecret''Value1234' && run"}"#);
+        assert!(
+            !out.contains("Value1234") && !out.contains("fakeSecret"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn test_quoted_value_needs_its_closing_quote() {
+        // An apostrophe inside a double-quoted value is part of the value.
+        let input = r#"{"password":"abcdefgh'xyz123","n":1}"#;
+        let out = Scrubber::scrub(input);
+        assert_eq!(out, r#"{"password": "[SECRET_REDACTED]","n":1}"#);
+        serde_json::from_str::<serde_json::Value>(&out).expect("valid JSON");
+        let out = Scrubber::scrub(r#"{'password': 'abcdefg"hij123'}"#);
+        assert_eq!(out, r#"{'password': '[SECRET_REDACTED]'}"#);
+        // A value with a space has no closing quote after its first word: like the Node
+        // scrubber, nothing is changed, and the JSON is not left half closed.
+        let input = r#"{"password":"abcdefgh ijk lmn","n":1}"#;
+        let out = Scrubber::scrub(input);
+        assert_eq!(out, input);
+        serde_json::from_str::<serde_json::Value>(&out).expect("valid JSON");
+    }
+
+    #[test]
+    fn test_closing_quote_has_the_opening_escape_level() {
+        // Each input is valid JSON. The quote that closes the value must be at the level of the
+        // one that opens it, so the output parses, the whole secret is gone, and a second pass
+        // changes nothing.
+        let cases: [(&str, &[&str]); 4] = [
+            (r#"{"password":"Abc12345!\"x"}"#, &["Abc12345", "x\""]),
+            (r#"{"token":"abcdefghijk\"lmn"}"#, &["abcdefghijk", "lmn"]),
+            (r#"{"a":"x \"token\":\"abcdefghijk"}"#, &["abcdefghijk"]),
+            (r#"{"args":["--token=\"abcdefghijkl"]}"#, &["abcdefghijkl"]),
+        ];
+        for (input, secrets) in cases {
+            serde_json::from_str::<serde_json::Value>(input).expect("valid input");
+            let out = Scrubber::scrub(input);
+            serde_json::from_str::<serde_json::Value>(&out)
+                .unwrap_or_else(|e| panic!("{input} -> {out}: {e}"));
+            assert!(out.contains("[SECRET_REDACTED]"), "{input} -> {out}");
+            for secret in secrets {
+                assert!(!out.contains(secret), "{input} -> {out}");
+            }
+            assert_eq!(Scrubber::scrub(&out), out, "not idempotent: {input}");
+        }
+        // The same members inside a JSON string, at the matching level, keep their close.
+        let input = r#"{"a":"x \"token\":\"abcdefghijk\" y"}"#;
+        let out = Scrubber::scrub(input);
+        serde_json::from_str::<serde_json::Value>(&out).expect("valid JSON");
+        assert!(!out.contains("abcdefghijk"), "{out}");
+        // Two levels of escape (a JSON string inside a JSON string): not JSON itself, but the
+        // quotes still match.
+        let input = r#"{\\"token\\":\\"abcdefghijk\\"}"#;
+        let out = Scrubber::scrub(input);
+        assert_eq!(out, r#"{\\"token\\": \\"[SECRET_REDACTED]\\"}"#);
+    }
+
+    #[test]
+    fn test_placeholders_in_json_member_are_left_alone() {
+        for input in [
+            r#"{"token": "${API_TOKEN}"}"#,
+            r#"{"token": "$API_TOKEN"}"#,
+            r#"{"api_key": "<your-api-key>"}"#,
+            r#"{"password": "********"}"#,
+            r#"{"password": "xxxxxxxxxx"}"#,
+            r#"{"token":"<|endoftext|>"}"#,
+            r#"{"token": "process.env.API_TOKEN"}"#,
+            r#"{"api_key": "your_api_key_here"}"#,
+            "token=process.env.API_TOKEN",
+        ] {
+            assert_eq!(Scrubber::scrub(input), input);
+            assert!(!Scrubber::contains_pii(input), "{input}");
+            assert!(
+                !Scrubber::detect_pii_types(input).contains(&"api_key_or_secret"),
+                "{input}"
+            );
+        }
+        // A real-looking value next to a placeholder is still redacted.
+        let out = Scrubber::scrub(r#"{"token":"${API_TOKEN}","password":"zn_FAKEabcdef0123"}"#);
+        assert_eq!(
+            out,
+            r#"{"token":"${API_TOKEN}","password": "[SECRET_REDACTED]"}"#
+        );
+    }
+
+    #[test]
+    fn test_long_authorization_token_is_redacted_whole() {
+        let token: String = (0..600)
+            .map(|i| {
+                char::from(
+                    b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[i % 62],
+                )
+            })
+            .collect();
+        let out = Scrubber::scrub(&format!("Authorization: Bearer {token}"));
+        assert_eq!(out, "Authorization: Bearer [SECRET_REDACTED]");
+        assert_eq!(Scrubber::scrub(&out), out);
+    }
+
+    #[test]
     fn test_scrub_credit_card() {
         for input in [
             "Card: 4111-1111-1111-1111",
@@ -463,6 +997,64 @@ mod tests {
         // Digits from other scripts are not part of a card number.
         let out = Scrubber::scrub("card 4111111111111111\u{0663}");
         assert!(!out.contains("[CARD_REDACTED]"), "{out}");
+    }
+
+    #[test]
+    fn test_card_after_failed_boundary_candidate() {
+        // The first candidate starts inside the IBAN-like token and fails its
+        // leading boundary; the card after the space must still be found.
+        let out = Scrubber::scrub("GB82WEST12345698765432 4111111111111111");
+        assert_eq!(out, "GB82WEST12345698765432 [CARD_REDACTED]");
+        let out = Scrubber::scrub("A4111 1111 1111 1111 4111111111111111");
+        assert_eq!(out, "A4111 1111 1111 1111 [CARD_REDACTED]");
+        let out = Scrubber::scrub("ref x12345698765432 4111-1111-1111-1111 end");
+        assert_eq!(out, "ref x12345698765432 [CARD_REDACTED] end");
+    }
+
+    #[test]
+    fn test_phone_after_failed_boundary_candidate() {
+        // "1 212-456-7890" is rejected (preceded by a dash); the number that
+        // starts after the space is a separate, standalone match.
+        let out = Scrubber::scrub("-1 212-456-7890 ok");
+        assert_eq!(out, "-1 [PHONE_REDACTED] ok");
+    }
+
+    #[test]
+    fn test_failed_boundary_retry_keeps_negatives() {
+        for input in [
+            "order-4111111111111111",
+            "x4111111111111111",
+            "GB82WEST123456987654324111111111111111",
+            "amount 4111111111111111.50",
+            "id 1234567812345670",
+            "x4111 1111 1111 1111",
+        ] {
+            assert!(
+                !Scrubber::scrub(input).contains("[CARD_REDACTED]"),
+                "{input}"
+            );
+        }
+        assert!(!Scrubber::scrub("A123-45-6789").contains("[SSN_REDACTED]"));
+    }
+
+    #[test]
+    fn test_failed_boundary_retry_stays_fast() {
+        // Long runs where every candidate fails: time must stay linear.
+        let digits = "1234567890".repeat(104_858);
+        let mixed = "ab12 ".repeat(209_716);
+        let dashed = "x1-1-1-".repeat(150_000);
+        let spaced = "1111 ".repeat(209_716);
+        let hyphens = "1111-111-".repeat(116_508);
+        let plus = "+1234567".repeat(131_072);
+        let start = std::time::Instant::now();
+        for input in [&digits, &mixed, &dashed, &spaced, &hyphens, &plus] {
+            let _ = Scrubber::scrub(input);
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "{:?}",
+            start.elapsed()
+        );
     }
 
     #[test]

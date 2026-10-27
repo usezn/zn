@@ -1,6 +1,6 @@
 # Command line reference
 
-Every command of the `zn-gate` program, with its options and exit codes. For a first walk through, start with [First 5 minutes](first-5-minutes.md).
+Every command of the `zn-gate` program, with its options and exit codes. For a first walk through, start with [First 5 minutes](first-5-minutes.md). Words you do not know are explained in the [glossary](glossary.md).
 
 ## Program names
 
@@ -216,6 +216,12 @@ Exit codes: `0` done, `2` wrong usage, no terminal, an agent running it, or the 
 
 #### `pins approve`
 
+```bash
+SERVER='paste-the-server-name-here'
+zn-gate pins approve "$SERVER"
+zn-gate pins approve --all
+```
+
 Accepts the changed or new tools of one server, or of every server with `--all`.
 
 ## Secrets and the vault
@@ -304,6 +310,10 @@ Shows who used which secret where, without values, then checks the log chain. Sa
 
 #### `secret get`
 
+```bash
+zn-gate secret get API_TOKEN   # exits 77 and points you to `run`
+```
+
 There is no way to print a secret value: `secret get` exits `77` and points you to `run`, which uses the value without showing it.
 
 Aliases: `secret reveal`.
@@ -348,7 +358,7 @@ Exit codes: the exit code of your command; `64` wrong usage, `77` refused (not a
 zn-gate unlock [--ttl 8h] [--idle 30m] [--backend name] [--passphrase-stdin] [--foreground]
 ```
 
-Unlocks the vault for this session. The first run creates it. `--ttl` and `--idle` take a number with `s`, `m` or `h` (between 1 minute and 24 hours). `--passphrase-stdin` reads the passphrase from a pipe when there is no system keychain. `--foreground` keeps the vault in this terminal and asks for confirmations here. It refuses to run under an AI agent. The time the session ends is shown in your local time, with the hours left, for example `until 23:09 (in 8 h)`.
+Unlocks the vault for this session. The first run creates it. `--ttl` and `--idle` take a number with `s`, `m` or `h` (between 1 minute and 24 hours). `--passphrase-stdin` reads the passphrase from a pipe when there is no system keychain. `--foreground` keeps the vault in this terminal and asks for confirmations here. It refuses to run under an AI agent. It says when the vault locks again: after the `--idle` time with no use, or at the end of the session at the latest, in your local time with the hours left, for example `Vault unlocked: locks after 30 min idle, or at 23:09 (in 8 h) at the latest.`
 
 If the system keychain refuses, zn says which one (macOS Keychain, Windows Credential Manager or the Linux keyring) and what to do: allow zn in the keychain window, check Credential Manager, unlock your keyring, or create the vault with a passphrase instead.
 
@@ -372,7 +382,11 @@ With no subcommand it is the same as `vault status`. Usage errors exit `2`: an u
 
 #### `vault status`
 
-Shows whether the vault exists and is unlocked, and until when (in your local time). Exit codes: `0` done, `2` wrong usage.
+```bash
+zn-gate vault status
+```
+
+Shows whether the vault exists and is unlocked and, when it is, when it locks: after the idle time with no use, or at the end of the session at the latest (in your local time). Exit codes: `0` done, `2` wrong usage.
 
 #### `vault log`
 
@@ -391,6 +405,10 @@ zn-gate vault log export --otlp [--since 7d] [--out file]
 Writes the audit log as OpenTelemetry logs (OTLP, JSON Lines) to the file, or to the screen. Needs no account. Exit codes: `0` done, `1` error, `2` without `--otlp`. [Details](team.md).
 
 #### `vault verify`
+
+```bash
+zn-gate vault verify
+```
 
 Checks the chain and signatures of the audit log. If the check fails, it says at which record, tells you not to delete or edit the log, and links the troubleshooting page. Exit codes: `0` correct, `1` broken, `2` wrong usage.
 
@@ -412,6 +430,10 @@ The way out when you lost the vault passphrase. It sets the old vault aside in a
 
 #### `vault team`
 
+```bash
+zn-gate vault team
+```
+
 Prints that a shared team vault is planned and not available, and counts the request on this machine only (see `stats`). Nothing is sent.
 
 ### `hooks`
@@ -425,11 +447,19 @@ Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, us
 
 #### `hooks install`
 
+```bash
+zn-gate hooks install claude-code --project
+```
+
 Adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. A backup of the settings is written first. With `--project`, the shared files run `zn` from the PATH rather than a path on your machine, so everyone who uses the project needs zn-gate installed globally; the install prints a note when `zn` is not on your PATH.
 
 #### `hooks uninstall`
 
-Removes them again.
+```bash
+zn-gate hooks uninstall claude-code --project
+```
+
+Removes them again. The small launcher script under `~/.zn/hooks` is shared by every profile of the same agent on your machine (for example two Claude Code profiles with different `CLAUDE_CONFIG_DIR` folders), so `hooks uninstall` leaves it in place: deleting it would stop the hooks of the other profiles. [`uninstall`](#uninstall) removes it, and `zn-gate check` reports a hook whose launcher is missing.
 
 ### `hook`
 
@@ -496,21 +526,41 @@ What zn-gate did on this machine: local counts for the last `--days` days (1 to 
 
 #### `stats share`
 
+```bash
+zn-gate stats share
+```
+
 Controls the optional sharing of pseudonymous daily counts. It is off by default. Only you can turn it on, in your own terminal. Without a word after `share` it shows the status.
 
 #### `stats share on`
+
+```bash
+zn-gate stats share on
+```
 
 Explains what would be shared and asks you to confirm. Exit `1` if you do not confirm.
 
 #### `stats share off`
 
+```bash
+zn-gate stats share off
+```
+
 Turns sharing off.
 
 #### `stats share status`
 
+```bash
+zn-gate stats share status
+```
+
 Says whether sharing is on.
 
 #### `stats share show`
+
+```bash
+zn-gate stats share show
+```
 
 Shows exactly what would be sent, and where.
 
@@ -558,9 +608,17 @@ Shows the organization, the policy version and the state of the audit upload.
 
 #### `team sync`
 
+```bash
+zn-gate team sync
+```
+
 Downloads the policy and uploads the audit log now. Exit `1` when the policy is rejected or the machine was removed.
 
 #### `team leave`
+
+```bash
+zn-gate team leave
+```
 
 Disconnects this machine from the organization.
 

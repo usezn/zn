@@ -34,7 +34,7 @@ function projectHooks(spec, cwd, userFile) {
   try { if (fs.lstatSync(file).isFile()) text = fs.readFileSync(file, 'utf8'); } catch (_) { return null; }
   if (spec.id === 'opencode') return /\/zn-gate\/lib\/hooks\/runner\.js"|"hook", "opencode"/.test(text) ? file : null;
   let tree = null;
-  try { tree = JSON.parse(text); } catch (_) { return null; }
+  try { tree = JSON.parse(text.replace(/^\uFEFF/, '')); } catch (_) { return null; }
   return chk.hookEntries(tree, spec.id).some((e) => chk.parseCommand(e.command, spec.id)) ? file : null;
 }
 
@@ -229,7 +229,7 @@ async function run(args, io) {
       for (const scope of ['user', 'project']) {
         if (!(scope === 'user' ? a.userHooks : a.projectHooks)) continue;
         try {
-          const rep = adapter.uninstall({ scope, projectDir: io.cwd, home: io.home, env: io.env, mcp: true });
+          const rep = adapter.uninstall({ scope, projectDir: io.cwd, home: io.home, env: io.env, mcp: true, removeLauncher: true });
           out(io, '  ' + a.name + ': removed zn\'s hooks (' + scope + ') in ' + rep.settings + (rep.backup ? ' (copy saved: ' + rep.backup + ')' : ''));
         } catch (err) {
           out(io, '  ' + a.name + ': could not remove the ' + scope + ' hooks: ' + (err && err.message ? err.message : err));

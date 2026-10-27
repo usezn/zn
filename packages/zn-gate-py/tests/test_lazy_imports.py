@@ -78,3 +78,23 @@ def test_rule_compiles_on_first_use_and_matches_like_a_real_pattern():
     assert isinstance(lazy.search, type(re.compile("a").search))
     ignore_case = rules.INJECTION_RULES[2][1]
     assert ignore_case.flags & re.IGNORECASE
+
+
+def test_every_lazy_pattern_compiles():
+    # An invalid pattern must fail here, in CI, and not on the first call that reaches it.
+    from zn_gate import rules
+
+    seen, todo, found = set(), list(vars(rules).values()), 0
+    while todo:
+        value = todo.pop()
+        if id(value) in seen:
+            continue
+        seen.add(id(value))
+        if isinstance(value, rules._LazyPattern):
+            value.flags  # noqa: B018  (compiles the pattern)
+            found += 1
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            todo.extend(value)
+        elif isinstance(value, dict):
+            todo.extend(value.values())
+    assert found >= 150

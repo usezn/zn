@@ -109,6 +109,9 @@ test('claude-code: reinstall replaces the launcher, uninstall removes it; a proj
   const again = JSON.parse(fs.readFileSync(claude.settingsFile({ env, home }), 'utf8'));
   assert.equal(again.hooks.PreToolUse.length, 1, 'install is idempotent');
   claude.uninstall({ env, home, mcp: false });
+  assert.equal(fs.existsSync(file), true, 'a single uninstall keeps the shared launcher');
+  claude.install({ env, home, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
+  claude.uninstall({ env, home, mcp: false, removeLauncher: true });
   assert.equal(fs.existsSync(file), false);
   const proj = tempDir(t, 'zn-b95-proj-');
   claude.install({ scope: 'project', projectDir: proj, env, home, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
