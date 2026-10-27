@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-26.7';
+const POLICY_RULES_VERSION = '2026-10-27.12';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -113,6 +113,43 @@ const AGENT_CONFIG_RES = [
 const HOME_PLUGIN_TREES = ['.claude/plugins', '.codex/plugins', '.cursor/plugins', '.zcode/cli/plugins', '.gemini/config/plugins',
   '.gemini/antigravity-cli/plugins'];
 const HOME_PLUGIN_STATE = ['.gemini/config/config.json', '.zcode', '.zcode/cli', '.gemini', '.gemini/config', '.gemini/antigravity-cli'];
+// The folders where the zn hooks and plugins look for `node` (and `zn`), under the home folder and, on Windows, the
+// usual per-user install folders. A tree is protected whole (a Node.js version manager keeps its Node.js builds and
+// shims there); a bin folder only for its `node` and `zn` files and the folder itself, because other tools install
+// there too. The hooks start the first Node.js they find in these, so replacing one runs the agent's code as the hook.
+const NODE_TREES_HOME = ['.nvm', '.volta', '.fnm', '.asdf/shims', '.asdf/installs/nodejs', '.local/share/fnm', '.local/share/nvm',
+  'scoop/shims', 'scoop/apps/nodejs', 'AppData/Local/Volta', 'AppData/Local/fnm_multishells', 'AppData/Roaming/nvm'];
+const NODE_BINS_HOME = ['.local/bin', 'bin', 'AppData/Roaming/npm'];
+// Bin folders of the system that are protected only when the user owns them (Homebrew, a user-owned /usr/local).
+const NODE_BINS_SYSTEM = ['/usr/local/bin', '/opt/homebrew/bin'];
+// Environment variables that name such folders: the version managers' homes and the Windows per-user locations.
+const NODE_TREE_ENV = ['NVM_DIR', 'VOLTA_HOME', 'FNM_DIR', 'NVM_HOME', 'NVM_SYMLINK', 'N_PREFIX', 'ASDF_DATA_DIR'];
+const NODE_TREE_ENV_SUB = [['LOCALAPPDATA', 'Volta'], ['LOCALAPPDATA', 'fnm_multishells'], ['APPDATA', 'nvm'], ['ASDF_DATA_DIR', 'shims'], ['SCOOP', 'shims'], ['SCOOP', 'apps/nodejs']];
+const NODE_BIN_ENV_SUB = [['APPDATA', 'npm']];
+const NODE_FILE_RE = /^(?:node|zn)[0-9.]*(?:\.(?:exe|cmd|bat|ps1|js|mjs|cjs|sh))?$/i;
+
+/** Whether the user owns the folder (a root-owned /usr/local/bin is not protected: the user cannot change it anyway). */
+function ownedByUser(dir) {
+  try {
+    if (typeof process.getuid !== 'function') return false;
+    return fs.statSync(dir).uid === process.getuid();
+  } catch (_) { return false; }
+}
+
+/** Keys of the folders the hooks look for node in: {trees, bins}. */
+function nodeFolders(home, env) {
+  const trees = new Set();
+  const bins = new Set();
+  for (const r of NODE_TREES_HOME) for (const k of keysOf(path.join(home, r))) trees.add(k);
+  for (const r of NODE_BINS_HOME) for (const k of keysOf(path.join(home, r))) bins.add(k);
+  for (const d of NODE_BINS_SYSTEM) if (ownedByUser(d)) for (const k of keysOf(d)) bins.add(k);
+  const at = (p) => path.resolve(String(p));
+  for (const name of NODE_TREE_ENV) if (env[name]) for (const k of keysOf(at(env[name]))) trees.add(k);
+  for (const [name, sub] of NODE_TREE_ENV_SUB) if (env[name]) for (const k of keysOf(path.join(at(env[name]), sub))) trees.add(k);
+  for (const [name, sub] of NODE_BIN_ENV_SUB) if (env[name]) for (const k of keysOf(path.join(at(env[name]), sub))) bins.add(k);
+  return { trees: [...trees], bins: [...bins] };
+}
+
 const HOME_PLUGIN_RES = [
   [/^(\.claude|\.codex|\.cursor|\.zcode\/cli|\.gemini\/config|\.gemini\/antigravity-cli)\/plugins(\/|$)/, 'the agent plugins'],
   [/^(\.gemini\/config\/config\.json|\.zcode(\/cli)?|\.gemini(\/config|\/antigravity-cli)?)$/, 'the agent configuration and plugin state'],
@@ -287,7 +324,7 @@ function agentContext(home, cwd, env) {
   // Only the directory itself is protected (listing it or reading it is fine).
   const roots = new Set(keysOf(path.join(home, '.config')));
   if (env.XDG_CONFIG_HOME) for (const k of keysOf(at(env.XDG_CONFIG_HOME))) roots.add(k);
-  return { dirs: [...dirs], files, roots: [...roots], plugins: [...plugins], homes: [...homes], state };
+  return { dirs: [...dirs], files, roots: [...roots], plugins: [...plugins], homes: [...homes], state, node: nodeFolders(home, env) };
 }
 
 /** Everything a classification needs, from the options of one call. */
@@ -371,6 +408,15 @@ function classifyResolved(abs, ctx) {
   if (agent.files.has(s)) return { kind: 'agent_config', reason: 'the agent configuration file the environment names' };
   if ((agent.plugins || []).some((d) => s === d || s.startsWith(d + '/'))) return { kind: 'agent_config', reason: 'the agent plugins' };
   if (agent.state && agent.state.has(s)) return { kind: 'agent_config', reason: 'the agent configuration and plugin state' };
+  if (agent.node) {
+    const why = 'a folder the zn hooks start Node.js or zn from';
+    if (agent.node.trees.some((d) => s === d || s.startsWith(d + '/'))) return { kind: 'agent_config', reason: why };
+    for (const d of agent.node.bins) {
+      if (s === d || (s.startsWith(d + '/') && !s.slice(d.length + 1).includes('/') && NODE_FILE_RE.test(s.slice(d.length + 1)))) {
+        return { kind: 'agent_config', reason: why };
+      }
+    }
+  }
   if (s.endsWith('.pub')) return null;
   if (creds.files.has(s)) return { kind: 'credential', reason: 'a file named by a credential environment variable' };
   for (const d of creds.dirs) if (s === d || s.startsWith(d + '/')) return { kind: 'credential', reason: 'a directory named by a credential environment variable' };
