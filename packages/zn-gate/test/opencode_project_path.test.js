@@ -97,3 +97,14 @@ test('project plugin: a trusted zn after an untrusted one on the PATH is the one
   assert.ok(!fs.existsSync(bad), 'the project zn was started');
   assert.ok(fs.existsSync(good), 'the zn outside the project was not started');
 });
+
+test('project plugin starts the zn of a global npm install (bin/zn links into lib/node_modules/zn-gate)', { skip: !posix }, async (t) => {
+  const { root, project } = setup(t);
+  const marker = path.join(root, 'global-marker');
+  const prefix = path.join(root, 'prefix');
+  const cli = makeBin(path.join(prefix, 'lib', 'node_modules', 'zn-gate', 'bin'), marker);
+  fs.mkdirSync(path.join(prefix, 'bin'));
+  fs.symlinkSync(path.relative(path.join(prefix, 'bin'), cli), path.join(prefix, 'bin', 'zn'));
+  await fireHook(project, path.join(prefix, 'bin'));
+  assert.ok(fs.existsSync(marker), 'the zn of a global npm install was not started');
+});

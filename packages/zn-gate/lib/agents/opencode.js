@@ -201,12 +201,16 @@ function projectPlaces(dir) {
   return out.filter((k) => k !== home && dirname(k) !== k);
 }
 
-// Whether a real path is inside one of the places, or inside a node_modules folder.
-function untrusted(real, places) {
-  const win = process.platform === "win32";
-  const k = win ? real.toLowerCase() : real;
-  if (k.split(/[\\\\/]/).includes("node_modules")) return true;
+// Whether a real path is inside one of the places.
+function inProject(real, places) {
+  const k = process.platform === "win32" ? real.toLowerCase() : real;
   return places.some((p) => { const rel = relative(p, k); return rel === "" || (rel.split(/[\\\\/]/)[0] !== ".." && !isAbsolute(rel)); });
+}
+
+// A PATH folder is untrusted inside the project or inside a node_modules folder (node_modules/.bin).
+function untrusted(real, places) {
+  const k = process.platform === "win32" ? real.toLowerCase() : real;
+  return k.split(/[\\\\/]/).includes("node_modules") || inProject(real, places);
 }
 
 // The environment of \`zn\`: the PATH with only its absolute entries outside the
@@ -233,7 +237,8 @@ function projectEnv(dir) {
 }
 
 // The zn to start: on macOS and Linux the first executable zn in that PATH whose
-// real file is not in the project (a zn that links into the project is skipped);
+// real file is not in the project (a zn that links into the project is skipped; a
+// global npm install, whose bin/zn links into its own lib/node_modules, counts);
 // on Windows zn.cmd through the shell, with that PATH.
 function projectZn(dir) {
   if (process.platform === "win32") return "zn";
@@ -243,7 +248,7 @@ function projectZn(dir) {
     try {
       if (!statSync(f).isFile()) continue;
       accessSync(f, fsConstants.X_OK);
-      if (!untrusted(realpathSync.native(f), places)) return f;
+      if (!inProject(realpathSync.native(f), places)) return f;
     } catch (_) { /* not there */ }
   }
   return "/nonexistent/zn";
