@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-27.12';
+const POLICY_RULES_VERSION = '2026-10-27.14';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -113,10 +113,16 @@ const AGENT_CONFIG_RES = [
 const HOME_PLUGIN_TREES = ['.claude/plugins', '.codex/plugins', '.cursor/plugins', '.zcode/cli/plugins', '.gemini/config/plugins',
   '.gemini/antigravity-cli/plugins'];
 const HOME_PLUGIN_STATE = ['.gemini/config/config.json', '.zcode', '.zcode/cli', '.gemini', '.gemini/config', '.gemini/antigravity-cli'];
-// The folders where the zn hooks and plugins look for `node` (and `zn`), under the home folder and, on Windows, the
-// usual per-user install folders. A tree is protected whole (a Node.js version manager keeps its Node.js builds and
-// shims there); a bin folder only for its `node` and `zn` files and the folder itself, because other tools install
-// there too. The hooks start the first Node.js they find in these, so replacing one runs the agent's code as the hook.
+// The usual install folders where the zn hooks and plugins look for `node` (and `zn`), under the home folder and, on
+// Windows, the usual per-user install folders. The hooks start the first Node.js they find, so replacing one runs the
+// agent's code as the hook. This class denies only writes (write, replace, move, delete, link): reading these folders
+// and running what is in them stays allowed.
+//   - a tree is protected whole (a Node.js version manager keeps its builds and shims there);
+//   - a bin folder only for its `node` and `zn` files: other tools install there too. The folder itself can be neither
+//     deleted, moved nor replaced by a link; copying into it is judged by the name the file gets;
+//   - the folders above them inside the home folder (`~/.local`, `~/.asdf`) can be neither deleted nor moved, as moving
+//     a parent would swap the protected folder for another one.
+// Not covered: other places the PATH may lead to (mise, PNPM_HOME, nodenv, ~/.npm-global/bin).
 const NODE_TREES_HOME = ['.nvm', '.volta', '.fnm', '.asdf/shims', '.asdf/installs/nodejs', '.local/share/fnm', '.local/share/nvm',
   'scoop/shims', 'scoop/apps/nodejs', 'AppData/Local/Volta', 'AppData/Local/fnm_multishells', 'AppData/Roaming/nvm'];
 const NODE_BINS_HOME = ['.local/bin', 'bin', 'AppData/Roaming/npm'];
@@ -127,6 +133,7 @@ const NODE_TREE_ENV = ['NVM_DIR', 'VOLTA_HOME', 'FNM_DIR', 'NVM_HOME', 'NVM_SYML
 const NODE_TREE_ENV_SUB = [['LOCALAPPDATA', 'Volta'], ['LOCALAPPDATA', 'fnm_multishells'], ['APPDATA', 'nvm'], ['ASDF_DATA_DIR', 'shims'], ['SCOOP', 'shims'], ['SCOOP', 'apps/nodejs']];
 const NODE_BIN_ENV_SUB = [['APPDATA', 'npm']];
 const NODE_FILE_RE = /^(?:node|zn)[0-9.]*(?:\.(?:exe|cmd|bat|ps1|js|mjs|cjs|sh))?$/i;
+const NODE_EXE_REASON = 'one of the usual folders the zn hooks start Node.js or zn from';
 
 /** Whether the user owns the folder (a root-owned /usr/local/bin is not protected: the user cannot change it anyway). */
 function ownedByUser(dir) {
@@ -136,18 +143,64 @@ function ownedByUser(dir) {
   } catch (_) { return false; }
 }
 
-/** Keys of the folders the hooks look for node in: {trees, bins}. */
-function nodeFolders(home, env) {
+/**
+ * Whether a folder named by an environment variable can be protected as a Node.js folder. A value that is relative, or
+ * that is, or holds, the home folder, the working directory or the project, or is a root, a drive or a top-level system
+ * folder would protect far more than the Node.js folders, so it is ignored.
+ */
+function usableNodeEnvDir(value, home, cwd, projectRoot) {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  const v = value.trim();
+  if (!path.isAbsolute(v) && !/^[A-Za-z]:[\\/]/.test(v)) return false;
+  const k = keyOf(slash(path.resolve(v))).replace(/\/+$/, '');
+  if (!k || /^[A-Za-z]:$/.test(k)) return false;
+  // A root, a drive, or a folder right under it (/usr, /opt, /home, C:\Users).
+  const depth = k.split('/').filter(Boolean).length;
+  if (depth <= 1 || /^[a-z]:\/(?:users|windows|program files|program files \(x86\)|programdata)$/i.test(k)) return false;
+  for (const keep of [home, cwd, projectRoot]) {
+    const kk = keyOf(slash(path.resolve(keep))).replace(/\/+$/, '');
+    if (kk === k || kk.startsWith(k + '/')) return false;
+  }
+  return true;
+}
+
+/** Keys of the folders the hooks look for node in: {trees, bins, ancestors}. */
+function nodeFolders(home, env, cwd, projectRoot) {
   const trees = new Set();
   const bins = new Set();
+  const ancestors = new Set();
   for (const r of NODE_TREES_HOME) for (const k of keysOf(path.join(home, r))) trees.add(k);
   for (const r of NODE_BINS_HOME) for (const k of keysOf(path.join(home, r))) bins.add(k);
+  // The folders between the home folder and each of these: moving or deleting one swaps or removes the protected folder.
+  for (const r of [...NODE_TREES_HOME, ...NODE_BINS_HOME]) {
+    const parts = r.split('/');
+    for (let i = 1; i < parts.length; i++) for (const k of keysOf(path.join(home, ...parts.slice(0, i)))) ancestors.add(k);
+  }
   for (const d of NODE_BINS_SYSTEM) if (ownedByUser(d)) for (const k of keysOf(d)) bins.add(k);
-  const at = (p) => path.resolve(String(p));
-  for (const name of NODE_TREE_ENV) if (env[name]) for (const k of keysOf(at(env[name]))) trees.add(k);
-  for (const [name, sub] of NODE_TREE_ENV_SUB) if (env[name]) for (const k of keysOf(path.join(at(env[name]), sub))) trees.add(k);
-  for (const [name, sub] of NODE_BIN_ENV_SUB) if (env[name]) for (const k of keysOf(path.join(at(env[name]), sub))) bins.add(k);
-  return { trees: [...trees], bins: [...bins] };
+  const usable = (v) => usableNodeEnvDir(v, home, cwd, projectRoot);
+  const at = (p) => path.resolve(String(p).trim());
+  for (const name of NODE_TREE_ENV) if (usable(env[name])) for (const k of keysOf(at(env[name]))) trees.add(k);
+  for (const [name, sub] of NODE_TREE_ENV_SUB) if (usable(env[name])) for (const k of keysOf(path.join(at(env[name]), sub))) trees.add(k);
+  for (const [name, sub] of NODE_BIN_ENV_SUB) if (usable(env[name])) for (const k of keysOf(path.join(at(env[name]), sub))) bins.add(k);
+  return { trees: [...trees], bins: [...bins], ancestors };
+}
+
+/** The Node.js folder class of a resolved key: {kind: 'node_exe', role: 'file' | 'bin' | 'ancestor'} or null. */
+function classifyNodeFolder(s, node) {
+  if (node.trees.some((d) => s === d || s.startsWith(d + '/'))) return { kind: 'node_exe', role: 'file', reason: NODE_EXE_REASON };
+  for (const d of node.bins) {
+    if (s === d) return { kind: 'node_exe', role: 'bin', reason: NODE_EXE_REASON };
+    if (s.startsWith(d + '/') && !s.slice(d.length + 1).includes('/') && NODE_FILE_RE.test(s.slice(d.length + 1))) {
+      return { kind: 'node_exe', role: 'file', reason: NODE_EXE_REASON };
+    }
+  }
+  if (node.ancestors.has(s)) return { kind: 'node_exe', role: 'ancestor', reason: NODE_EXE_REASON };
+  return null;
+}
+
+function nodeExeDenial(p, c) {
+  return 'zn: ' + p + ' is protected (' + c.reason + '): the hooks start the Node.js they find there, so an agent may not write, replace, move, delete or link ' +
+    (c.role === 'file' ? 'it' : 'this folder or its node and zn files') + '. Reading and running what is there still works. Ask the user to make this change.';
 }
 
 const HOME_PLUGIN_RES = [
@@ -324,7 +377,7 @@ function agentContext(home, cwd, env) {
   // Only the directory itself is protected (listing it or reading it is fine).
   const roots = new Set(keysOf(path.join(home, '.config')));
   if (env.XDG_CONFIG_HOME) for (const k of keysOf(at(env.XDG_CONFIG_HOME))) roots.add(k);
-  return { dirs: [...dirs], files, roots: [...roots], plugins: [...plugins], homes: [...homes], state, node: nodeFolders(home, env) };
+  return { dirs: [...dirs], files, roots: [...roots], plugins: [...plugins], homes: [...homes], state, node: nodeFolders(home, env, cwd, projectRoot) };
 }
 
 /** Everything a classification needs, from the options of one call. */
@@ -378,7 +431,7 @@ function protectedElsewhere(text, opts) {
   for (const b of bases.dirs) {
     if (b === cwd) continue;
     const c = classifyPath(path.join(b, text), opts);
-    if (c && (c.kind === 'zn_state' || c.kind === 'agent_config')) return c;
+    if (c && (c.kind === 'zn_state' || c.kind === 'agent_config' || c.kind === 'node_exe')) return c;
   }
   // A cd zn cannot follow (cd $DIR, cd -) may lead to the home folder.
   return bases.unknown ? homeRelClass(t) : null;
@@ -409,13 +462,8 @@ function classifyResolved(abs, ctx) {
   if ((agent.plugins || []).some((d) => s === d || s.startsWith(d + '/'))) return { kind: 'agent_config', reason: 'the agent plugins' };
   if (agent.state && agent.state.has(s)) return { kind: 'agent_config', reason: 'the agent configuration and plugin state' };
   if (agent.node) {
-    const why = 'a folder the zn hooks start Node.js or zn from';
-    if (agent.node.trees.some((d) => s === d || s.startsWith(d + '/'))) return { kind: 'agent_config', reason: why };
-    for (const d of agent.node.bins) {
-      if (s === d || (s.startsWith(d + '/') && !s.slice(d.length + 1).includes('/') && NODE_FILE_RE.test(s.slice(d.length + 1)))) {
-        return { kind: 'agent_config', reason: why };
-      }
-    }
+    const n = classifyNodeFolder(s, agent.node);
+    if (n) return n;
   }
   if (s.endsWith('.pub')) return null;
   if (creds.files.has(s)) return { kind: 'credential', reason: 'a file named by a credential environment variable' };
@@ -797,7 +845,7 @@ function classifyWord(text, opts = {}) {
  */
 function readDenial(p, opts = {}) {
   const c = classifyPath(p, opts);
-  if (!c || c.kind === 'agent_config') return null;
+  if (!c || c.kind === 'agent_config' || c.kind === 'node_exe') return null;
   if (c.kind === 'dotenv') {
     const abs = resolvedOf(p, opts);
     const head = readHead(abs, DOTENV_SCAN_BYTES);
@@ -901,6 +949,8 @@ function writeDenial(p, opts = {}) {
   const c = classifyPath(p, opts);
   if (c && c.kind === 'zn_state') return vaultMessage(opts);
   if (c && c.kind === 'agent_config') return agentConfigDenial(p, c);
+  // Only the files count: a folder cannot be written as a file.
+  if (c && c.kind === 'node_exe' && c.role === 'file') return nodeExeDenial(p, c);
   return null;
 }
 
@@ -1677,6 +1727,10 @@ function shellPatchMessage(cmd, deny, opts) {
     // The name comes from the agent: no control characters, and short, in a message the user reads.
     const shown = f.replace(/[\u0000-\u001f\u007f-\u009f]/g, '?');
     const name = shown.length > 120 ? shown.slice(0, 119) + '\u2026' : shown;
+    if (c && c.kind === 'node_exe') {
+      if (c.role === 'file') return 'zn: this patch was blocked because it writes to ' + name + ', ' + c.reason + '. Next step: ask the user to make this change in that file.';
+      continue;
+    }
     if (!c || c.kind === 'agent_config' || c.kind === 'zn_state') continue;
     return 'zn: this patch was blocked because it writes to ' + name + ', which zn treats as holding secrets (' + c.reason + '). ' +
       'Next step: ask the user to make this change in that file.';
@@ -2448,6 +2502,8 @@ function bashDenialOf(cmd, opts = {}) {
   // Where a relative .env path may be read from once the command has changed directory (cd app && cat .env).
   // Each reading is followed on its own, so a cd counts once.
   opts.cdBases = cdBasesOf(readings, opts);
+  markRuns(words);
+  opts.codeHead = words.some((x) => CODE_CMDS_RE.test(bareHead(x.head)));
   opts.elsewhere = new Map();
   markLinkWords(readings);
   const mentionsAgents = /\.agents/i.test(text);
@@ -2524,6 +2580,11 @@ function bashDenialOf(cmd, opts = {}) {
     if (c.kind === 'agent_config') {
       if (w.redirectTarget || writing) return agentConfigDenial(text, c);
       continue; // reading the settings is allowed
+    }
+    if (c.kind === 'node_exe') {
+      // Only writes are refused: reading, running, sourcing and changing into these folders stay allowed.
+      if (nodeExeWrites(w, text, c, opts)) return nodeExeDenial(text, c);
+      continue;
     }
     if (w.redirectTarget) continue; // appending to .env is a write, not a read
     let deny;
@@ -2682,9 +2743,121 @@ function gitObjectDenial(text, opts) {
   // git drops leading ./ from the path (HEAD:././.env is .env).
   const file = m[1].replace(/^(?:\.\/)+/, '');
   const c = classifyPath(file, opts) || classifyPath(path.basename(file), opts);
-  if (!c || c.kind === 'agent_config') return null;
+  if (!c || c.kind === 'agent_config' || c.kind === 'node_exe') return null;
   return 'zn: ' + text + ' reads ' + path.basename(file) + ' from the git repository, and zn treats that file as holding secrets, ' +
     'so it was not read. If the repository holds real values in it, tell the user: they should be rotated and removed from the history.';
+}
+
+
+/* ---------------- writes to the Node.js folders (shell) ---------------- */
+
+// Commands that write, delete or move every file they are given (the first group), and those that only delete or move.
+const NODE_ALL_WRITE = new Set(['rm', 'rmdir', 'unlink', 'shred', 'truncate', 'chmod', 'chown', 'chgrp', 'touch', 'tee', 'mkdir', 'mkfifo',
+  'mknod', 'setfacl', 'chattr', 'mv', 'del', 'erase', 'rd', 'ren', 'rename', 'move', 'move-item', 'remove-item', 'set-content',
+  'add-content', 'out-file', 'new-item', 'clear-content', 'set-item']);
+const NODE_DEL_MOVE = new Set(['rm', 'rmdir', 'unlink', 'shred', 'mv', 'del', 'erase', 'rd', 'ren', 'rename', 'move', 'move-item', 'remove-item']);
+// Commands whose last file is where the others go (or the one after -t).
+const NODE_DEST_LAST = new Set(['cp', 'install', 'rsync', 'scp', 'ln', 'mv', 'copy', 'copy-item', 'xcopy', 'robocopy', 'move', 'move-item']);
+const NODE_WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'nohup', 'time', 'xargs', 'exec', 'nice', 'ionice', 'stdbuf', 'timeout', 'setsid', 'builtin', 'busybox']);
+const NODE_WRAPPER_VALUE_FLAGS = new Set(['-u', '-g', '-h', '-p', '-c', '-d', '-r', '-t', '-U', '-C', '-D', '-R', '-T']);
+// The name of the program in a path, without a Windows extension.
+const nameOfProgram = (t) => String(t).split(/[\\/]/).pop().toLowerCase().replace(/\.(?:exe|cmd|bat)$/, '');
+
+/** Group the words of each simple command and work out its program, its flags and where its files go. */
+function markRuns(words) {
+  let cur = null;
+  let last = null;
+  const runs = [];
+  for (const w of words) {
+    if (!cur || w.seq !== last) { cur = { words: [] }; last = w.seq; runs.push(cur); }
+    w.run = cur;
+    cur.words.push(w);
+  }
+  for (const run of runs) {
+    const ws = run.words.filter((x) => !x.redirectTarget);
+    let i = 0;
+    for (; i < ws.length; i++) {
+      const t = ws[i].text;
+      if (ASSIGNMENT_RE.test(t) || t === '--') continue;
+      if (NODE_WRAPPERS.has(nameOfProgram(t))) {
+        const wrap = nameOfProgram(t);
+        for (let j = i + 1; j < ws.length && ws[j].text.startsWith('-'); j++) {
+          if (NODE_WRAPPER_VALUE_FLAGS.has(ws[j].text) && (wrap === 'sudo' || wrap === 'doas')) j++, i++;
+          i++;
+        }
+        if (wrap === 'timeout') i++;
+        continue;
+      }
+      break;
+    }
+    run.head = ws[i] ? nameOfProgram(ws[i].text) : '';
+    // The words split out of quoted code and substitutions (sequence 0) are not a command of their own.
+    if (run.words[0].seq === 0) run.head = '';
+    run.flags = [];
+    run.args = [];
+    run.out = new Set();
+    let dest = null;
+    for (let k = i + 1; k < ws.length; k++) {
+      const x = ws[k];
+      const t = x.text;
+      if (t.startsWith('-') && t.length > 1) {
+        run.flags.push(t);
+        if (/^--target-directory=/.test(t)) dest = x;
+        if (/^--(?:output|output-document|directory|directory-prefix)=|^-o.+/.test(t) && /^(?:curl|wget|7z|7za)$/.test(run.head)) run.out.add(x);
+        continue;
+      }
+      const prev = k > i + 1 && ws[k - 1].text.startsWith('-') ? ws[k - 1].text : '';
+      run.args.push(x);
+      if (prev === '-t' || prev === '--target-directory') dest = x;
+      if (/^(?:tar|bsdtar)$/.test(run.head) && (prev === '-C' || prev === '--directory')) run.out.add(x);
+      if (run.head === 'unzip' && prev === '-d') run.out.add(x);
+      if (run.head === 'curl' && (/^-[a-zA-Z]*o$/.test(prev) || prev === '--output')) run.out.add(x);
+      if (run.head === 'wget' && (prev === '-O' || prev === '--output-document' || prev === '-P' || prev === '--directory-prefix')) run.out.add(x);
+      if (run.head === 'dd' && /^of=/.test(x.text)) run.out.add(x);
+    }
+    if (!dest && NODE_DEST_LAST.has(run.head)) {
+      const idx = run.head === 'robocopy' ? 1 : run.args.length - 1;
+      if (run.args.length >= 2 && run.args[idx]) dest = run.args[idx];
+    }
+    run.dest = dest;
+    run.recursive = run.flags.some((f) => /^-[a-zA-Z]*[rRa]/.test(f) && !f.startsWith('--') || /^--(?:recursive|archive)$|^-recurse$/i.test(f));
+    run.replaceLink = run.flags.some((f) => /^-[a-zA-Z]*[nTh]/.test(f) && !f.startsWith('--') || /^--no-(?:dereference|target-directory)$/.test(f));
+    run.inPlace = run.flags.some((f) => /^-[a-zA-Z]*i/.test(f) && !f.startsWith('--') || /^--in-place/.test(f));
+    run.everyFile = NODE_ALL_WRITE.has(run.head) ||
+      (/^(?:sed|gsed|perl)$/.test(run.head) && run.inPlace) ||
+      (/^(?:find|fd)$/.test(run.head) && run.flags.some((f) => /^-(?:delete|exec|execdir|ok|okdir|fprint0?|fprintf|fls)$/.test(f)));
+  }
+}
+
+// What a command that runs interpreter code may write: a file named in code (python -c "open(...)") is judged by this.
+const NODE_CODE_WRITE_RE = /\bopen\s*\(|writeFile|appendFile|copyFile|\brename|unlink|symlink|createWriteStream|shutil|Set-Content|Out-File|Copy-Item|\b(?:cp|mv|ln|rm|tee|install|chmod|dd)\b/;
+
+/**
+ * Whether the word `text` (classified `c`, a Node.js folder) is written, replaced, moved, deleted or linked by its
+ * command. Running it, sourcing it, listing it, reading it and changing into it are not.
+ */
+function nodeExeWrites(w, text, c, opts) {
+  if (w.redirectTarget) return c.role === 'file';
+  const run = w.run;
+  if (!run || !run.head) {
+    // A word found inside the code an interpreter runs (python -c "open(...)"): refused when that code writes files.
+    return c.role === 'file' && !!opts.codeHead && NODE_CODE_WRITE_RE.test(opts.cmdText || '');
+  }
+  if (run.out.has(w)) return c.role === 'file';
+  const head = run.head;
+  const isDest = run.dest === w;
+  const delMove = NODE_DEL_MOVE.has(head);
+  if (!isDest || !NODE_DEST_LAST.has(head)) {
+    if (!run.everyFile) return false;
+    if (c.role === 'file') return true;
+    return delMove; // a folder is only refused when deleted or moved
+  }
+  // Where files are copied, moved or linked to.
+  if (c.role === 'file') return true;
+  if (c.role === 'ancestor') return head === 'mv' || head === 'move' || head === 'move-item' || (head === 'ln' && run.replaceLink) || (run.recursive && /^(?:cp|rsync|xcopy|robocopy|copy-item)$/.test(head));
+  // A bin folder: copying into it is judged by the name each file gets.
+  if (head === 'ln' && run.replaceLink) return true;
+  return run.args.some((a) => a !== w && !GLOB_RE.test(a.text) && NODE_FILE_RE.test(String(a.text).replace(/[\\/]+$/, '').split(/[\\/]/).pop()));
 }
 
 // Commands that change the directory the rest of the command runs in.
@@ -2862,6 +3035,7 @@ function adminDenial(admin, opts = {}, cmd = '') {
 
 /** The deny message for a read or write classified by classifyWord. */
 function denialOf(c, text, opts) {
+  if (c.kind === 'node_exe') return null;
   if (c.kind === 'zn_state') return vaultMessage(opts);
   if (c.kind === 'keyfile') return keyFileDenial(text, c, opts);
   if (c.kind === 'dotenv') return readDenial(text, opts);

