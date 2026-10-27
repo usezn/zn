@@ -107,7 +107,12 @@ class TestMcpSecrets(_Base):
     def test_next_step_is_plain(self):
         env = mcp.mcp_next_step("environment variable", "BRAVE_API_KEY")
         self.assertIn("npx -y zn-gate secret set BRAVE_API_KEY", env)
-        self.assertIn("__ZN_BRAVE_API_KEY__", env)
+        self.assertIn("put run, --secrets, BRAVE_API_KEY, -- and the old command first in args", env)
+        self.assertIn("environment variable BRAVE_API_KEY", env)
+        self.assertNotIn("put __ZN_", env)
+        arg = mcp.mcp_next_step("argument", "api-key")
+        self.assertIn("put run, --secrets, MCP_API_KEY, -- and the old command first in args", arg)
+        self.assertIn("a __ZN_MCP_API_KEY__ marker written in args is not filled in, because arguments are visible to other processes", arg)
         header = mcp.mcp_next_step("header", "Authorization")
         self.assertIn("${MCP_AUTHORIZATION}", header)
         self.assertNotIn("secret set", header)
@@ -243,7 +248,7 @@ class TestScanMcpConfigs(_Base):
             env = {"HOME": home, "USERPROFILE": home, "CODEX_HOME": "", "XDG_CONFIG_HOME": "", "APPDATA": ""}
             with mock.patch.dict(os.environ, env), mock.patch("pathlib.Path.home", return_value=Path(home)):
                 code, _, _ = self._json()
-                self.assertEqual(code, 0)
+                self.assertEqual(code, 3)  # no file was read
                 code, data, out = self._json(include_home=True)
             self.assertEqual(code, 1)
             self._no_value(out)

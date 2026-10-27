@@ -72,15 +72,17 @@ export function getPath(obj, path) {
 }
 
 /** Files whose pinned references are checked: tracked Markdown and JSON, minus the excluded prefixes. */
-/** Public surfaces where a plugin marketplace is added: every `marketplace add usezn/zn` there must name a release tag. */
-export function marketplaceFiles(all) {
-  return all.filter((f) => /\.md$/.test(f) && (f === 'README.md' || /^packages\/[^/]+\/README\.md$/.test(f) || /^plugins\/.*README\.md$/.test(f) || f.startsWith('docs/')));
-}
-const MARKETPLACE_ADD = /marketplace add usezn\/zn(?!\/)(@v\S*|\s+--ref\s+v\S*)?/g;
 
 export function pinnedFiles(all, exclude) {
   return all.filter((f) => /\.(md|json)$/.test(f) && !exclude.some((p) => f === p || f.startsWith(p)));
 }
+
+/** Public surfaces where a plugin marketplace is added: every `marketplace add usezn/zn` there must name a release tag. */
+export function marketplaceFiles(all) {
+  return all.filter((f) => /\.md$/.test(f) && (f === 'README.md' || /^packages\/[^/]+\/README\.md$/.test(f) || /^plugins\/.*README\.md$/.test(f) || f.startsWith('docs/')));
+}
+// The short form and the URL form (with or without .git); `usezn/zn-other` is another repository.
+const MARKETPLACE_ADD = /marketplace add (?:https:\/\/github\.com\/)?usezn\/zn(?:\.git)?(?![\w/.-])(@v\S*|#v\S*|\s+--ref\s+v\S*)?/g;
 
 /**
  * All differences between the facts and the files, as readable lines (empty = consistent).

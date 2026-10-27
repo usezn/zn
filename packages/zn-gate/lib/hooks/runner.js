@@ -11,8 +11,9 @@
  *   pre_tool    deny reads of credential files and ~/.zn, deny secret
  *               management commands, deny MCP call arguments that carry
  *               markers or secret values (other servers than zn's own),
- *               wrap shell commands (Bash, PowerShell)
- *               that carry __ZN_<NAME>__ markers in `zn run --` (ask),
+ *               refuse shell commands (Bash, PowerShell) that carry
+ *               __ZN_<NAME>__ markers in their arguments, with the way to pass
+ *               the secret as an environment variable (`zn run --secrets`),
  *               restore detected tokens per the restore policy (ask), refuse
  *               markers in WebFetch URLs (use secrets_http_request instead),
  *               and pipe Monitor commands through the streaming scrubber.
@@ -127,7 +128,8 @@ function outputInstructionNote(tool, strings, opts, agentId) {
       // Plain text that no blocking rule can match is allowed without starting the rules on it.
       if (!mayMatchRules(text, customConfig)) return null;
       const res = rules.scanWindows(text);
-      return res && res.verdict === 'block' ? noteOf(res.rule) : null;
+      // A broken project rules file blocks the commands; it is not text that reads like instructions.
+      return res && res.verdict === 'block' && res.rule !== 'custom:invalid_rules' ? noteOf(res.rule) : null;
     } catch (_) { return null; }
   };
   // Head: the start of each string, up to the shared budget. What it leaves out is the rest of that string.
@@ -236,7 +238,7 @@ const REINSTALL_USER = 'part of zn-gate is missing from this installation, so zn
   'Reinstall it with `npm install -g zn-gate@' + ZN_VERSION + '` and then run `zn hooks install`. ' +
   'To let actions pass unchecked until then, set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.';
 /* Claude Code sets CLAUDE_PLUGIN_ROOT only for the hooks of a plugin: there `zn hooks install` does not apply. */
-const AGENT_NAMES = { 'claude-code': 'Claude Code', codex: 'Codex CLI', cursor: 'Cursor', opencode: 'OpenCode', antigravity: 'Antigravity' };
+const AGENT_NAMES = { 'claude-code': 'Claude Code', codex: 'Codex CLI', cursor: 'Cursor', opencode: 'OpenCode', antigravity: 'Antigravity', zcode: 'ZCode' };
 function fixHint(agentId) {
   if (agentId === 'claude-code' && process.env.CLAUDE_PLUGIN_ROOT) {
     return 'If it happens again, ask the user to update or reinstall the zn-gate plugin (`claude plugin update zn-gate@usezn`).';
@@ -310,7 +312,13 @@ async function mapStrings(value, fn) {
 function lazyDeps(opts) {
   let engine = opts.engine;
   let vault = opts.vault === null ? null : opts.vault;
+  const injected = vault !== undefined;
   return {
+    // Closes the client this hook created (never one the caller passed in): its socket must not outlive the hook.
+    closeVault() {
+      if (injected || !vault || typeof vault.close !== 'function') return;
+      try { vault.close(); } catch (_) { /* already closed */ }
+    },
     engine() {
       if (!engine) engine = deps.loadEngine();
       return engine;
@@ -331,42 +339,82 @@ function lazyDeps(opts) {
   };
 }
 
-/**
- * The `zn run` prefix put in front of a Bash command that uses a secret. The
- * agent runs the rewritten command in bash (Claude Code's Bash tool, Git Bash
- * on Windows) or in the user's shell (OpenCode), so each path is one
- * single-quoted sh word and nothing in it is expanded.
- */
-function znRunPrefix(opts, agentId) {
-  if (opts.znRunPrefix) return opts.znRunPrefix;
-  const q = (s) => shQuote(portablePath(s));
-  const runJs = opts.runJs || path.resolve(__dirname, '..', 'broker', 'run.js');
-  return 'ZN_AGENT=' + String(agentId).replace(/[^a-z0-9-]/g, '') + ' ' + q(opts.nodePath || process.execPath) + ' ' + q(runJs) + ' --';
+/* Custom secret formats from the zn Team policy, compiled once per hook
+ * process. They only add redactions. They come from the verified readable
+ * copy (~/.zn/org-policy.json); when that copy is missing or does not verify
+ * and the vault is unlocked, from the policy held in the vault (the daemon
+ * also puts the copies back). A machine that is joined but whose policy cannot
+ * be applied (the copy does not verify, or it was deleted and the vault is
+ * locked or does not answer in time) leaves a line for the person (see
+ * takeTeamNotes). */
+let orgDetectors = null;
+let teamNotes = [];
+const takeTeamNotes = () => { const n = teamNotes; teamNotes = []; return n; };
+
+// The timer stays referenced on purpose: a promise that never settles must still reach the deadline and resolve null,
+// not leave the event loop empty (the hook would exit with nothing printed). It is cleared as soon as the promise settles.
+function withinMs(promise, ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    Promise.resolve(promise).then((v) => { clearTimeout(timer); resolve(v); }, () => { clearTimeout(timer); resolve(null); });
+  });
 }
 
-/* Custom secret formats from the zn Team policy (verified cache), compiled
- * once per hook process. They only add redactions. */
-let orgDetectors = null;
-function orgDetectorsFor(opts) {
-  if (orgDetectors === null) {
-    try {
-      const team = require('../team/policy');
-      const { detectorsOf } = require('../team/effective');
-      orgDetectors = require('../team/detectors').compile(detectorsOf(team.state({ home: opts && opts.znHome })));
-    } catch (_) { orgDetectors = []; }
-  }
+async function orgDetectorsFor(opts, vault) {
+  if (orgDetectors !== null) return orgDetectors;
+  orgDetectors = [];
+  try {
+    const team = require('../team/policy');
+    const { detectorsOf } = require('../team/effective');
+    const { compile } = require('../team/detectors');
+    const popts = { home: opts && opts.znHome };
+    const st = team.state(popts);
+    let change = null;
+    let org = st.org || null;
+    let missing = false;
+    // The organization is known on this machine (team.json, or only a policy copy is left) but its policy
+    // is not readable here: the state is 'none'. That is the file-deleted case and must not be silent.
+    const copyLost = st.state === 'none' && (Boolean(st.org) || Boolean(team.readCache(popts)));
+    if (st.state === 'active' || st.state === 'expired') {
+      orgDetectors = compile(detectorsOf(st));
+      change = st.change;
+    } else if (vault && typeof vault.teamHookInfo === 'function') {
+      const r = await withinMs(vault.teamHookInfo(), 1500);
+      if (r && r.joined) {
+        org = r.org || org;
+        if (r.state === 'active' || r.state === 'expired') { orgDetectors = compile(Array.isArray(r.detectors) ? r.detectors : []); change = r.change; }
+        else if (r.state === 'invalid') missing = true;
+      } else if (r === null && (st.state === 'invalid' || copyLost)) missing = true;
+    } else if (st.state === 'invalid' || copyLost) {
+      missing = true;
+    }
+    if (change || missing) {
+      teamNotes = require('../team/changes').takeNotices({
+        home: team.paths(popts).home, org, change, detectorsMissing: missing,
+        statusCommand: znCommand('team status'), syncCommand: znCommand('team sync'),
+      });
+    }
+  } catch (_) { /* custom detectors only add redactions: nothing to apply */ }
   return orgDetectors;
 }
 
 async function ctxFor(ev, d, agentId, destination, needVault = true) {
+  const vault = needVault ? await d.vault() : undefined;
   return {
     project: deps.findProjectRoot(ev.cwd || process.cwd()),
     agent: agentId,
     tool: ev.toolName || ev.tool,
     destination,
-    vault: needVault ? await d.vault() : undefined,
-    detectors: d.detectors ? d.detectors() : orgDetectorsFor(),
+    vault,
+    detectors: d.detectors ? d.detectors() : await orgDetectorsFor(undefined, vault),
   };
+}
+
+/* The spans of one text with every layer, the vault's values included (the vault daemon matches those: they never
+ * reach this process). An engine without scanAsync (a test double) scans with its own synchronous scan. */
+async function scanOf(engine, text, ctx) {
+  if (typeof engine.scanAsync === 'function') return (await engine.scanAsync(text, ctx)) || [];
+  return engine.scan(text, ctx) || [];
 }
 
 /* ---------------------------- egress check --------------------------- */
@@ -401,7 +449,7 @@ async function egressCheck(ev, d, agentId, mode, requests, what) {
       // The text as written, then its percent-decoded copies (an email address is "jane.doe%40example.com" in a URL or a form).
       for (const copy of [text, ...policy.egressDecodedCopies(text)]) {
         const scanned = copy === text ? part : { where: part.where, text: copy };
-        for (const span of engine.scan(copy, ctx) || []) {
+        for (const span of await scanOf(engine, copy, ctx)) {
           if (!SECRET_SOURCES.has(span.source) && span.source !== 'pii') continue;
           if (part.where === 'arguments') toServer = true;
           else hit = true;
@@ -421,14 +469,15 @@ async function egressCheck(ev, d, agentId, mode, requests, what) {
   if (mode === 'deny') {
     return {
       decision: 'deny',
-      message: 'zn blocked this ' + what + ': it ' + sentence + '. Next step: send the request without the personal data, and pass any secret through an environment variable ' +
-        '(such as $API_TOKEN) instead of writing the value in it; if the data must be sent, tell the user.',
+      message: 'zn blocked this ' + what + ': it ' + sentence + '. Next step: send the request without the personal data. Do not write the value of a secret in it, and do not expand a shell variable into its arguments (the value would show in the process list and in command-line logs). ' +
+        'For a web request use the secrets_http_request tool of the zn "secrets" MCP server (the secret in proxy mode); for a program, run it with ' + '`' + znCommand('run --secrets NAME -- <program that reads the variable>') + '`' + ', which gives it the secret as an environment variable that the program reads itself (or from standard input or a file, where it supports that). If the data must be sent, tell the user.',
     };
   }
   return {
     decision: 'ask',
     message: 'zn: this ' + what + ' ' + sentence + '. Approve it only if that data should leave this computer. ' +
-      'To send a secret, read it from an environment variable (such as $API_TOKEN) instead of writing the value in the ' + what + '.',
+      'To use a secret, do not write its value in the ' + what + ' and do not expand a shell variable into its arguments: use the secrets_http_request tool for a web request (the secret in proxy mode), or ' +
+      '`' + znCommand('run --secrets NAME -- <program that reads the variable>') + '` so the program reads the secret from its own environment variable.',
   };
 }
 
@@ -436,7 +485,7 @@ async function egressCheck(ev, d, agentId, mode, requests, what) {
 function withEgress(res, eg) {
   if (!eg) return res;
   if (eg.decision === 'deny' || res.decision === 'allow') return eg;
-  return { ...res, message: (res.message ? res.message + ' ' : '') + eg.message.replace(/^zn: /, 'Also, ') };
+  return { ...res, soft: false, confirm: true, message: (res.message ? res.message + ' ' : '') + eg.message.replace(/^zn: /, 'Also, ') };
 }
 
 /* ---------------------------- pre_tool ---------------------------- */
@@ -567,20 +616,16 @@ async function decidePre(ev, d, agentId, opts) {
     if (instruction && instructionMode === 'deny') return { decision: 'deny', message: instruction.deny };
     const withInstruction = (r) => {
       if (!instruction) return r;
-      return r.decision === 'ask' ? { ...r, message: (r.message ? r.message + ' ' : '') + instruction.ask } : { decision: 'ask', message: instruction.ask };
+      return r.decision === 'ask' ? { ...r, soft: false, confirm: true, message: (r.message ? r.message + ' ' : '') + instruction.ask } : { decision: 'ask', message: instruction.ask };
     };
 
     let command = original;
     const notes = [];
     const wrap = tool === 'powershell'
       ? policy.wrapPowerShell(command, { nodePath: opts.nodePath || process.execPath, runJs: opts.runJs || path.resolve(__dirname, '..', 'broker', 'run.js'), agent: agentId })
-      : policy.wrapWithZnRun(command, znRunPrefix(opts, agentId));
+      : policy.wrapWithZnRun(command);
+    // Neither wrapper rewrites a command any more: a marker in the arguments is refused with guidance.
     if (!wrap.ok) return { decision: 'deny', message: wrap.reason };
-    if (wrap.wrapped) {
-      command = wrap.command;
-      notes.push('runs through zn run (zn\'s secret wrapper) for ' + markers.findNamedMarkers(original).map((m) => m.name).join(', ') +
-        '; the first time, you approve the command, and secret values in its output stay hidden');
-    }
 
     const detected = markers.findMarkers(command).filter((m) => m.detected);
     let context;
@@ -607,17 +652,17 @@ async function decidePre(ev, d, agentId, opts) {
         // A command that carries markers always asks, even when nothing was rewritten
         // (already wrapped in `zn run` by the agent, or tokens kept unresolved).
         // Never let it run on the user's allow rules alone.
-        return withEgress(withInstruction({ decision: 'ask', message: 'zn: this command contains secret placeholders (such as __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + ', so it needs your approval before it runs.', context }), egress);
+        return withEgress(withInstruction({ decision: 'ask', soft: true, message: 'zn: this command contains secret placeholders (such as __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + ', so it needs your approval before it runs.', context }), egress);
       }
       return withEgress(withInstruction(notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' }), egress);
     }
     // kind tells adapters that cannot rewrite input what the rewrite was for.
-    return withEgress(withInstruction({ decision: 'ask', updatedInput: { command }, kind: wrap.wrapped ? 'wrap' : 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context }), egress);
+    return withEgress(withInstruction({ decision: 'ask', updatedInput: { command }, kind: 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context }), egress);
   }
 
   if ((tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') && Array.isArray(input.texts)) {
     // The instruction-file question comes first; the marker result only adds its own notes to it.
-    const asked = (r) => (instructionAsk ? { ...r, decision: 'ask', message: (r.message ? r.message + ' ' : '') + instructionAsk } : r);
+    const asked = (r) => (instructionAsk ? { ...r, decision: 'ask', soft: false, confirm: true, message: (r.message ? r.message + ' ' : '') + instructionAsk } : r);
     const withMarkers = input.texts.filter((t) => markers.findMarkers(t.value).length);
     if (withMarkers.length === 0) return asked({ decision: 'allow' });
     const status = input.path ? gitStatusOf(path.resolve(ev.cwd || process.cwd(), input.path)) : 'unknown';
@@ -652,7 +697,7 @@ async function decidePre(ev, d, agentId, opts) {
     const outdated = isOutdated(withheld);
     const told = [blocked.length ? blockedLine(blocked) : null, outdated ? outdatedLine() : null].filter(Boolean);
     const context = told.length ? 'zn: ' + told.join(' ') : undefined;
-    if (updates.length === 0 && told.length) return asked({ decision: 'ask', message: 'zn:' + why, context });
+    if (updates.length === 0 && told.length) return asked({ decision: 'ask', soft: true, message: 'zn:' + why, context });
     if (updates.length === 0) return asked({ decision: 'allow', message: why ? 'zn:' + why : undefined });
     return asked({
       decision: 'ask',
@@ -722,9 +767,9 @@ function decideMonitor(ev, pathOpts, opts) {
   const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts) });
   if (deny) return { decision: 'deny', message: deny };
   if (markers.findMarkers(original).length) {
-    return { decision: 'deny', message: 'zn: a monitor cannot use secret placeholders (such as __ZN_NAME__). Next step: run the command with the Bash tool instead; zn fills in the placeholders there.' };
+    return { decision: 'deny', message: 'zn: a monitor cannot use secret placeholders (such as __ZN_NAME__). Next step: give the program the secret as an environment variable with `' + znCommand('run --secrets NAME -- <command>') + '` instead.' };
   }
-  if (isMonitorWrapper(original, opts)) return { decision: 'ask', message: 'zn: this monitor already checks its output for secrets.' };
+  if (isMonitorWrapper(original, opts)) return { decision: 'ask', soft: true, message: 'zn: this monitor already checks its output for secrets.' };
   const command = wrapMonitor(original, opts);
   return { decision: 'ask', updatedInput: { command }, kind: 'monitor', message: 'zn: this monitor\'s output is checked on this computer before the model sees it. Secret values are replaced with placeholders such as __ZN_AWS_KEY_1__.' };
 }
@@ -806,12 +851,17 @@ async function decideMcp(ev, d, agentId) {
   if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
   const kinds = new Set();
   const piiKinds = new Set();
+  const windows = [];
   for (let start = 0; ; start += MCP_WINDOW - MCP_OVERLAP) {
-    for (const span of engine.scan(text.slice(start, start + MCP_WINDOW), ctx) || []) {
+    windows.push(text.slice(start, start + MCP_WINDOW));
+    if (start + MCP_WINDOW >= text.length) break;
+  }
+  if (typeof engine.warm === 'function') ctx = await engine.warm(ctx, windows);
+  for (const window of windows) {
+    for (const span of await scanOf(engine, window, ctx)) {
       if (SECRET_SOURCES.has(span.source)) kinds.add(kindLabel(span.type));
       else if (span.source === 'pii') piiKinds.add(kindLabel(span.type));
     }
-    if (start + MCP_WINDOW >= text.length) break;
   }
   if (kinds.size === 0) {
     // zn's own detector server (the plugin's) analyses the text the user asked about: no question for it.
@@ -838,7 +888,7 @@ async function decideMcp(ev, d, agentId) {
 
 // The characters lib/rules.js counts as invisible (ZERO_WIDTH_RE and INVISIBLE_ASTRAL_RE). A test keeps
 // this list equal to the rules' own. lib/rules.js is not edited for this: its files carry a rules version.
-const INVISIBLE_CHARS_RE = /[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+const INVISIBLE_CHARS_RE = /[\u200B-\u200F\u2060\uFEFF\u00AD\uFE00-\uFE0F\u061C\u180E\u115F\u1160\u3164\uFFA0\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
 
 // Limits on the check of one tool output. The tool has already run, so a hook that is killed by its
 // agent's timeout lets the whole output through unchecked (PostToolUse has no way to fail closed), and a
@@ -919,22 +969,52 @@ async function decidePost(ev, d, agentId, opts = {}) {
   let stopped = false; // a limit was reached: the strings that follow are withheld too
   let abandoned = false; // the deadline passed while the engine or the vault was still working
   let scanCtx = null;
+  let hasShort = false; // the vault (or a local file) holds a value under 8 characters, from an older version
+  // The daemon reports a count of such values (shortCount), the local matcher its own: a count, never a value.
+  const shortIn = (c) => !!(c && ((c.exactMatcher && c.exactMatcher.shortSize > 0) || (c.vaultRemote && c.vaultRemote.shortCount > 0)));
   const withhold = (s, stop) => {
     if (stop) stopped = true;
     withheld += s.length;
     return POST_WITHHELD;
   };
   const check = async (s) => {
-    if (s === POST_WITHHELD || s.length < 8) return s;
-    if (stopped || Date.now() >= deadlineAt) return withhold(s, true);
-    if (s.length > room) return withhold(s, false);
-    // The engine's own scan is pure and cheap: it counts the values this string would add to the vault.
+    if (s === POST_WITHHELD || s.length === 0) return s;
+    if (s.length >= 8 && (stopped || Date.now() >= deadlineAt)) return withhold(s, true);
+    if (s.length >= 8 && s.length > room) return withhold(s, false);
+    // Scanning counts the values this string would add to the vault.
     if (scanCtx === null) {
+      if (s.length < 8 && (stopped || Date.now() >= deadlineAt)) return s;
       scanCtx = typeof engine.prepare === 'function' ? await raceDeadline(engine.prepare(ctx), deadlineAt) : ctx;
-      if (scanCtx === DEADLINE) { abandoned = true; return withhold(s, true); }
+      if (scanCtx === DEADLINE) { abandoned = true; return s.length < 8 ? s : withhold(s, true); }
+      hasShort = shortIn(scanCtx);
+      // One request to the vault for every string that will be scanned, not one for each.
+      if (typeof engine.warm === 'function') {
+        let budget = room;
+        const todo = [];
+        for (const t of outputStrings) {
+          // A string under 8 characters is only asked about when the vault holds a short value from an older version.
+          if (typeof t !== 'string' || t.length === 0 || (t.length < 8 && !hasShort) || t.length > budget) continue;
+          budget -= t.length;
+          todo.push(t);
+        }
+        const warmed = await raceDeadline(engine.warm(scanCtx, todo), deadlineAt);
+        if (warmed === DEADLINE) { abandoned = true; scanCtx = DEADLINE; return s.length < 8 && !hasShort ? s : withhold(s, true); }
+        scanCtx = warmed;
+      }
     }
+    // A string under 8 characters is only looked at when the vault holds a short value from an older version.
+    if (s.length < 8 && !hasShort) return s;
     if (scanCtx === DEADLINE) return withhold(s, true);
-    const spans = engine.scan(s, scanCtx) || [];
+    // The vault did not answer: this string was not checked against its values, so it is not passed (like a deadline).
+    let found;
+    try {
+      found = await raceDeadline(scanOf(engine, s, scanCtx), deadlineAt);
+    } catch (err) {
+      if (err && err.vaultFailed) return withhold(s, true);
+      throw err;
+    }
+    if (found === DEADLINE) { abandoned = true; return withhold(s, true); }
+    const spans = found;
     for (const span of spans) {
       seen.add(s.slice(span.start, span.end));
       if (seen.size > tokenCap) return withhold(s, true);
@@ -1041,10 +1121,10 @@ async function decidePromptText(ev, d, agentId, expansion) {
   if (prompt.length < 8) return { decision: 'allow' };
   const engine = d.engine();
   let ctx = await ctxFor(ev, d, agentId, 'assistant');
-  // scan() is pure: prepare() first fetches the vault's exact values (and
-  // local ones), so a pasted vault secret is caught even without a pattern.
+  // prepare() first reads what the vault looks for (the daemon matches its values: none reach this process; local
+  // ones are read here), so a pasted vault secret is caught even without a pattern.
   if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
-  const spans = engine.scan(prompt, ctx) || [];
+  const spans = await scanOf(engine, prompt, ctx);
   const secrets = spans.filter((s) => SECRET_SOURCES.has(s.source));
   // Prompts only: NAME=value in the middle of a sentence, even when the value
   // does not look random (see lib/scrub/prompt.js).
@@ -1053,8 +1133,9 @@ async function decidePromptText(ev, d, agentId, expansion) {
   }
   if (secrets.length === 0) return { decision: 'allow' };
   const others = [...spans, ...secrets];
-  const scanText = (t) => { try { return engine.scan(t, ctx) || []; } catch (_) { return []; } };
-  const names = secrets.map((s) => nameOf(s) || keyBefore(prompt, s, others, scanText));
+  const scanText = async (t) => { try { return await scanOf(engine, t, ctx); } catch (_) { return []; } };
+  const names = [];
+  for (const s of secrets) names.push(nameOf(s) || await keyBefore(prompt, s, others, scanText));
   const shown = [...new Set(secrets.map((s, i) => names[i] || kindLabel(s.type)))];
   const suggestion = names[0] || suggestedName(secrets[0]);
   const stats = { detections: Object.fromEntries([...new Set(secrets.map((s) => s.type || 'SECRET'))].map((k) => [k, 1])) };
@@ -1116,7 +1197,7 @@ const KEY_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
 // The text before a value can be another secret ("<id>:<secret>"). It is used
 // as a name only if it overlaps no other detection, looks like a key
 // identifier (not a random token) and is not itself detected as a secret.
-function keyBefore(text, span, others, scanText) {
+async function keyBefore(text, span, others, scanText) {
   if (span.name || !GENERIC_TYPES.has(String(span.type || '').toUpperCase())) return null;
   const from = Math.max(0, span.start - 140);
   const m = KEY_BEFORE_RE.exec(String(text).slice(from, span.start));
@@ -1128,7 +1209,7 @@ function keyBefore(text, span, others, scanText) {
   if (!KEY_IDENT_RE.test(raw)) return null;
   if (/\d/.test(raw) && /[a-z]/.test(raw) && /[A-Z]/.test(raw)) return null;
   if ((raw.match(/\d/g) || []).length > 3) return null;
-  if (scanText && scanText(raw).length > 0) return null;
+  if (scanText && (await scanText(raw)).length > 0) return null;
   const n = raw.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/[-.]/g, '_').toUpperCase();
   return NAME_RE.test(n) ? n : null;
 }
@@ -1237,7 +1318,7 @@ async function decideStop(ev, d, agentId, opts) {
     const engine = d.engine();
     let ctx = await ctxFor(ev, d, agentId, 'assistant');
     if (typeof engine.prepare === 'function') ctx = await engine.prepare(ctx);
-    for (const span of engine.scan(message, ctx) || []) {
+    for (const span of await scanOf(engine, message, ctx)) {
       if (SECRET_SOURCES.has(span.source)) kinds.add(kindLabel(span.type));
     }
   }
@@ -1275,7 +1356,12 @@ function failDecision(ev, err, mode, agentId) {
   }
   const missing = err.code === 'ZN_UNAVAILABLE';
   const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
-  const msg = 'zn: ' + (missing ? REINSTALL : HOOK_FAILED + fixHint(agentId)) + detail;
+  const vaultDown = err.vaultFailed === true;
+  // The vault errors of the engine may already say how to fix it (zn unlock): say it once.
+  const unlockHint = /zn unlock/.test(String(err.message || '')) ? '' : ' Check that the vault is running and unlocked (zn unlock; zn lock stops it).';
+  const msg = vaultDown
+    ? 'zn: could not check this action against your secret vault, so it was blocked to keep your secrets safe.' + unlockHint + detail
+    : 'zn: ' + (missing ? REINSTALL : HOOK_FAILED + fixHint(agentId)) + detail;
   // Fail open only when the engine itself is missing and the user chose so.
   if (mode === 'open' && missing) return { decision: 'allow', failOpen: true, warning: 'zn: ' + REINSTALL_USER };
   const r = failClosed(ev, err, msg);
@@ -1302,7 +1388,7 @@ function failClosed(ev, err, msg) {
  */
 function SESSION_CONTEXT() {
   return 'zn is on in this project: it blocks reads of .env files and of the secrets vault. ' +
-    'To run a command that needs a stored secret, write the placeholder __ZN_<NAME>__ and run the command with `' + znCommand('run -- <command>') + '`.';
+    'To run a command that needs a stored secret, use `' + znCommand('run --secrets NAME -- <command>') + '`: the program reads the value from the environment variable NAME. A placeholder in the arguments is not filled in.';
 }
 
 /*
@@ -1322,21 +1408,35 @@ async function injectTestFault() {
 }
 
 /**
+ * A tool call that names no tool, or a shell call without a command, cannot be checked: block it in every agent.
+ * Returns a deny decision, or null when the call is readable.
+ */
+function unreadablePre(ev, agentId) {
+  if (typeof ev.toolName !== 'string' || !ev.toolName.trim()) {
+    return { decision: 'deny', message: 'zn: could not read the tool name of this call, so zn cannot check it and blocked it. ' + fixHint(agentId) };
+  }
+  if ((ev.tool === 'bash' || ev.tool === 'powershell') && typeof (ev.input || {}).command !== 'string') {
+    return { decision: 'deny', message: 'zn: could not read the command of this call, so zn cannot check it and blocked it. ' + fixHint(agentId) };
+  }
+  return null;
+}
+
+/**
  * Handle one raw event. Returns {output, stderr} where output is the JSON
  * value to print (or null for "no opinion").
- * opts: {engine, vault, failMode, home, znRunPrefix}
+ * opts: {engine, vault, failMode, home}
  */
 async function handle(adapter, rawEvent, opts = {}) {
   const mode = failModeOf(opts);
   let ev = null;
   let decision;
+  const d = lazyDeps(opts);
   try {
     ev = adapter.normalize(rawEvent);
-    const d = lazyDeps(opts);
     if (ev && ev.event) guardNativeText(ev);
     await injectTestFault();
     if (!ev || !ev.event) decision = { decision: 'allow' };
-    else if (ev.event === 'pre_tool') decision = await decidePre(ev, d, adapter.id, opts);
+    else if (ev.event === 'pre_tool') decision = unreadablePre(ev, adapter.id) || await decidePre(ev, d, adapter.id, opts);
     else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id, opts);
     else if (ev.event === 'user_prompt') decision = await decidePrompt(ev, d, adapter.id);
     else if (ev.event === 'stop') decision = await decideStop(ev, d, adapter.id, opts);
@@ -1345,7 +1445,12 @@ async function handle(adapter, rawEvent, opts = {}) {
     else decision = { decision: 'allow' };
   } catch (err) {
     decision = failDecision(ev, err, mode, adapter.id);
+  } finally {
+    d.closeVault();
   }
+  // zn Team: a line for the person (a policy change that lifted restrictions, or detectors that are not applied).
+  const teamLines = takeTeamNotes();
+  if (teamLines.length && decision && !decision.userMessage) decision.userMessage = teamLines.join(' ');
   const output = adapter.respond({ ...decision, event: ev });
   countHook(adapter.id, ev, decision, opts);
   recordEvidence(adapter.id, ev, decision, opts);
@@ -1427,12 +1532,16 @@ function recordEvidence(agentId, ev, decision, opts = {}) {
 
 // Reads the event. It stops after POST_STDIN_CAP characters (the text returned is then longer than the cap),
 // so a huge tool output cannot keep the hook reading until its agent's timeout.
+// What has been read so far is kept in stdinText, so the supervisor (armSupervisor) can tell what kind of event was
+// stuck when it answers for a hook whose stdin never ended.
+let stdinText = '';
 function readStdin() {
   return new Promise((resolve, reject) => {
     let raw = '';
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', (c) => {
       raw += c;
+      stdinText = raw;
       if (raw.length > POST_STDIN_CAP) {
         process.stdin.removeAllListeners('data');
         process.stdin.pause();
@@ -1444,43 +1553,82 @@ function readStdin() {
   });
 }
 
-// The keys of the top-level object that can be read in the first characters of an event (the first
-// occurrence of each, with its value when that is a string, otherwise true). Keys inside the tool arguments
-// are deeper in the object and are not counted: an agent's event name must be a key of the event itself.
-function topLevelKeys(head) {
-  const keys = {};
-  let depth = 0;
+// BEGIN top-level scan (the same text is in plugins/zn-gate/scripts/zn-launch.js and in packages/zn-gate/lib/hooks/runner.js; a test keeps the two equal)
+// The metadata of an event too large to parse: the keys of the TOP-LEVEL object that decide what the event is,
+// whatever their order and wherever they are in the text that was read (the first occurrence of each, with its
+// value when that is a short string, otherwise true). One pass, linear in the text, memory bounded by the
+// longest key or value kept (256 characters): strings are skipped as they are met and JSON depth is tracked, so a
+// key inside the tool arguments or the tool output, or text in a string that looks like a key, is never taken.
+// Returns null when the text is not the start of a JSON object.
+const TOP_KEYS = new Set(['hook_event_name', 'hookEventName', 'hook', 'tool_name', 'toolName', 'tool_response', 'toolResult', 'tool_result', 'tool_output']);
+
+function unescapeShort(s) {
+  if (s.indexOf('\\') < 0) return s;
+  try { return JSON.parse('"' + s + '"'); } catch (_) { return s; }
+}
+
+function readShortString(text, k) {
+  if (text.charCodeAt(k) !== 34) return true;
+  const end = Math.min(text.length, k + 257);
+  for (let j = k + 1; j < end; j++) {
+    const d = text.charCodeAt(j);
+    if (d === 92) j++;
+    else if (d === 34) return unescapeShort(text.slice(k + 1, j));
+  }
+  return true;
+}
+
+function topLevelKeys(text) {
+  const keys = Object.create(null);
+  const n = text.length;
   let i = 0;
-  while (i < head.length) {
-    const c = head[i];
-    if (c === '"') {
+  while (i < n && text.charCodeAt(i) <= 32) i++;
+  if (text.charCodeAt(i) !== 123) return null;
+  let depth = 0;
+  for (; i < n; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 34) {
       let j = i + 1;
-      while (j < head.length && head[j] !== '"') j += head[j] === '\\' ? 2 : 1;
-      const str = head.slice(i + 1, j);
-      i = j + 1;
-      if (depth === 1) {
-        const rest = head.slice(i, i + 300);
-        const colon = /^\s*:\s*/.exec(rest);
-        if (colon && !(str in keys)) {
-          const value = /^"((?:[^"\\]|\\.)*)"/.exec(rest.slice(colon[0].length));
-          keys[str] = value ? value[1] : true;
+      for (; j < n; j++) {
+        const d = text.charCodeAt(j);
+        if (d === 92) j++;
+        else if (d === 34) break;
+      }
+      if (j >= n) break; // the text ends inside this string
+      if (depth === 1 && j - i <= 65) {
+        const key = unescapeShort(text.slice(i + 1, j));
+        if (TOP_KEYS.has(key) && !(key in keys)) {
+          let k = j + 1;
+          while (k < n && text.charCodeAt(k) <= 32) k++;
+          if (text.charCodeAt(k) === 58) {
+            k++;
+            while (k < n && text.charCodeAt(k) <= 32) k++;
+            keys[key] = readShortString(text, k);
+          }
         }
       }
-      continue;
+      i = j;
+    } else if (c === 123 || c === 91) {
+      depth++;
+    } else if (c === 125 || c === 93) {
+      depth--;
+      if (depth <= 0) break;
     }
-    if (c === '{' || c === '[') depth++;
-    else if (c === '}' || c === ']') depth--;
-    i++;
   }
   return keys;
 }
+// END top-level scan
 
-// How each agent's post-tool event can be told from the first characters of an event that is too large to
-// read, and the replacement it takes (its adapter turns it into the agent's own answer). Each `isPost` looks
-// only at the keys of the event itself.
+// How each agent's post-tool event can be told from the keys of an event that is too large to parse (all the
+// characters that were read are scanned, whatever the order of the keys), and the replacement it takes (its
+// adapter turns it into the agent's own answer). Each `isPost` looks only at the keys of the event itself.
+// A post-tool event whose name comes after the characters that were read is told by its output key, which comes
+// before the big value: tool_response (Claude Code, Codex) or tool_output (Cursor). An event with no name and
+// no such key is not told apart from a pre-tool event, so it is refused (exit 2, or Cursor's deny) like any event
+// zn cannot read: letting it pass would let a blocking event through.
 const OVERSIZE_POST = {
-  'claude-code': { isPost: (k) => k.hook_event_name === 'PostToolUse', tool: 'bash', shape: (t) => t },
-  codex: { isPost: (k) => k.hook_event_name === 'PostToolUse', tool: 'bash', shape: (t) => t },
+  'claude-code': { isPost: (k) => k.hook_event_name === 'PostToolUse' || (k.hook_event_name === undefined && k.tool_response !== undefined), tool: 'bash', shape: (t) => t },
+  codex: { isPost: (k) => k.hook_event_name === 'PostToolUse' || (k.hook_event_name === undefined && k.tool_response !== undefined), tool: 'bash', shape: (t) => t },
   // Copilot has two shapes: with an event name, that decides; the Copilot CLI one has none, and then the
   // result is a key of the event (it can come after the arguments, in which case it cannot be seen here and the
   // event is refused).
@@ -1494,14 +1642,20 @@ const OVERSIZE_POST = {
     shape: (t) => t,
   },
   opencode: { isPost: (k) => k.hook === 'tool.execute.after', tool: 'bash', shape: (t) => ({ output: t }) },
-  cursor: { isPost: (k) => k.hook_event_name === 'postToolUse', tool: 'mcp', shape: (t) => t },
+  cursor: { isPost: (k) => k.hook_event_name === 'postToolUse' || (k.hook_event_name === undefined && k.tool_output !== undefined), tool: 'mcp', shape: (t) => t },
 };
 
 // An event over POST_STDIN_CAP characters cannot be parsed in time. A post-tool event is answered with the
-// fixed notice in place of the output; anything else is refused like any event zn cannot read.
-function oversizeEvent(agentId, adapter, text) {
+// fixed notice in place of the output; anything else is refused like any event zn cannot read. A Stop event
+// is never refused (exit 2 would make the agent go on with its answer): it passes with a warning.
+function oversizeEvent(agentId, adapter, text, why = 'the event on stdin is too large to check') {
   const spec = OVERSIZE_POST[agentId];
-  if (!spec || !spec.isPost(topLevelKeys(text.slice(0, 65536)))) return refuseInput(agentId, 'the event on stdin is too large to check');
+  const keys = topLevelKeys(text);
+  if (keys && keys.hook_event_name === 'Stop' && (agentId === 'claude-code' || agentId === 'codex')) {
+    process.stderr.write('zn hook: could not check this Stop event, so the last answer was not checked\n');
+    return;
+  }
+  if (!spec || !keys || !spec.isPost(keys)) return refuseInput(agentId, why);
   const event = { event: 'post_tool', hookEvent: 'postToolUse', tool: spec.tool, input: { texts: [] } };
   const output = adapter.respond({ decision: 'allow', updatedOutput: spec.shape(POST_WITHHELD), message: POST_CAP_NOTE, event });
   if (output !== null && output !== undefined) process.stdout.write(JSON.stringify(output));
@@ -1520,6 +1674,8 @@ function oversizeEvent(agentId, adapter, text) {
 function refuseInput(agentId, why) {
   if (failModeOf({}) === 'open') {
     process.stderr.write('zn hook: ' + why + '; passed through (hooks.whenUnavailable is "allow")\n');
+    // Antigravity denies the call when the hook prints nothing, so passing it through takes an explicit answer.
+    if (agentId === 'antigravity') process.stdout.write(JSON.stringify({ decision: 'allow' }));
     return;
   }
   // Claude Code and Codex show this stderr to the model, so it never says how to
@@ -1548,15 +1704,17 @@ const CODEX_WATCHDOG_MARGIN_S = 5;
 const CODEX_FAIL_REASON = 'zn-gate could not finish checking this in time, so it was blocked. ' +
   'Try again; if it keeps happening, run zn-gate doctor.';
 
-function codexDenyFor(eventName, reason) {
+function codexDenyFor(eventName, reason, agentId = 'codex') {
+  // ZCode reads a prompt block as {continue: false, reason}; Codex as {decision: "block", reason}.
+  if (agentId === 'zcode' && eventName === 'UserPromptSubmit') return { continue: false, reason };
   if (eventName === 'PreToolUse') return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } };
   if (eventName === 'PermissionRequest') return { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: reason } } };
   if (eventName === 'UserPromptSubmit') return { decision: 'block', reason };
   return null;
 }
 
-function codexDeadlineMs() {
-  let ms = (require('../agents/codex').HOOK_TIMEOUT_S - CODEX_WATCHDOG_MARGIN_S) * 1000;
+function codexDeadlineMs(agentId = 'codex') {
+  let ms = (require('../agents/' + agentId).HOOK_TIMEOUT_S - CODEX_WATCHDOG_MARGIN_S) * 1000;
   if (process.env.ZN_TEST_HOOK_FAULTS === '1') {
     const t = Number(process.env.ZN_TEST_HOOK_DEADLINE_MS);
     if (t > 0 && t < ms) ms = t; // tests may only shorten it
@@ -1565,17 +1723,18 @@ function codexDeadlineMs() {
 }
 
 // Returns a function that disarms the watchdog, or null when the event is not one it covers.
+// ZCode has the same gap as Codex (a hook that times out or crashes is only logged and the call runs), and exit 2 blocks.
 function armCodexFailClosed(agentId, eventName) {
-  if (agentId !== 'codex' || !codexDenyFor(eventName, '')) return null;
+  if ((agentId !== 'codex' && agentId !== 'zcode') || !codexDenyFor(eventName, '', agentId)) return null;
   let done = false;
   const failNow = () => {
     if (done) return;
     done = true;
-    try { fs.writeSync(1, JSON.stringify(codexDenyFor(eventName, CODEX_FAIL_REASON))); } catch (_) { /* nothing more to do */ }
+    try { fs.writeSync(1, JSON.stringify(codexDenyFor(eventName, CODEX_FAIL_REASON, agentId))); } catch (_) { /* nothing more to do */ }
     try { fs.writeSync(2, 'zn hook: ' + CODEX_FAIL_REASON + '\n'); } catch (_) { /* nothing more to do */ }
     process.exit(2);
   };
-  const timer = setTimeout(failNow, codexDeadlineMs());
+  const timer = setTimeout(failNow, codexDeadlineMs(agentId));
   process.on('uncaughtException', failNow);
   process.on('unhandledRejection', failNow);
   return () => {
@@ -1585,15 +1744,193 @@ function armCodexFailClosed(agentId, eventName) {
   };
 }
 
+/*
+ * Antigravity denies a tool call, with an empty reason, when its PreToolUse hook prints nothing, so a check that
+ * hangs or an error that escapes would leave the call with no word from zn (what Antigravity does when a hook
+ * runs past its timeout is not documented). While node is running, zn answers for itself first: a watchdog
+ * fires a few seconds before the hook's timeout, and an uncaught error or unhandled rejection does the same.
+ * Both print the deny decision (JSON only on stdout) and exit 2, like every other refusal of this runner.
+ */
+const ANTIGRAVITY_WATCHDOG_MARGIN_S = 5;
+const ANTIGRAVITY_FAIL_REASON = 'zn: the check could not finish in time or failed, so this call was blocked. ' +
+  'Try again; if it keeps happening, ask the user to run zn-gate check in their terminal.';
+
+function antigravityDeadlineMs() {
+  let ms = (require('../agents/antigravity').HOOK_TIMEOUT_S - ANTIGRAVITY_WATCHDOG_MARGIN_S) * 1000;
+  if (process.env.ZN_TEST_HOOK_FAULTS === '1') {
+    const t = Number(process.env.ZN_TEST_HOOK_DEADLINE_MS);
+    if (t > 0 && t < ms) ms = t; // tests may only shorten it
+  }
+  return ms;
+}
+
+// Returns a function that disarms the watchdog, or null when the event is not a PreToolUse call.
+function armAntigravityFailClosed(agentId, raw) {
+  if (agentId !== 'antigravity' || !raw || typeof raw !== 'object' || !raw.toolCall) return null;
+  let done = false;
+  const failNow = () => {
+    if (done) return;
+    done = true;
+    try { fs.writeSync(1, JSON.stringify({ decision: 'deny', reason: ANTIGRAVITY_FAIL_REASON })); } catch (_) { /* nothing more to do */ }
+    try { fs.writeSync(2, 'zn hook: ' + ANTIGRAVITY_FAIL_REASON + '\n'); } catch (_) { /* nothing more to do */ }
+    process.exit(2);
+  };
+  const timer = setTimeout(failNow, antigravityDeadlineMs());
+  process.on('uncaughtException', failNow);
+  process.on('unhandledRejection', failNow);
+  return () => {
+    clearTimeout(timer);
+    process.removeListener('uncaughtException', failNow);
+    process.removeListener('unhandledRejection', failNow);
+  };
+}
+
+/*
+ * A hook whose answer never reached the agent must not count as done. Any error on stdout (EPIPE when the agent closed its
+ * end, a destroyed stream) marks the run as failed: the exit status becomes non-zero, never 0. Under a launcher
+ * (ZN_HOOK_ACK is set) it is 1, which the launcher treats as a failure and answers with its own block for that agent; when the
+ * hook is called directly it is 2 (the documented block) for the events that block by exit code, and 1 otherwise. On a clean
+ * run the launcher is told so through the ack file (see ackDone): a status 0 with no ack is not accepted by the launcher.
+ */
+function failedWriteCode(state) {
+  if (process.env.ZN_HOOK_ACK) return 1;
+  try {
+    const agentId = state.agentId;
+    if (agentId && agentId !== 'antigravity' && require('../agents/launcher').blockExit(agentId).has(state.event)) return 2;
+  } catch (_) { /* fall through */ }
+  return 1;
+}
+
+function watchStdout(state) {
+  state.stdoutFailed = false;
+  process.stdout.on('error', () => { state.stdoutFailed = true; });
+  // A late error (after main returned, before the process ends) still turns the status non-zero.
+  process.on('exit', () => { if (state.stdoutFailed && !(process.exitCode >= 1)) process.exitCode = failedWriteCode(state); });
+}
+
+// Waits until everything written to stdout was handed over, then reports whether it all got through.
+function flushStdout(state) {
+  return new Promise((resolve) => {
+    try {
+      // A replaced write (tests capture the output that way) has no stream behind it to wait for.
+      if (Object.prototype.hasOwnProperty.call(process.stdout, 'write')) return resolve();
+      process.stdout.write('', (err) => { if (err) state.stdoutFailed = true; resolve(); });
+    } catch (_) { state.stdoutFailed = true; resolve(); }
+  });
+}
+
+// Tells the launcher that the answer was written in full (ZN_HOOK_ACK names a private file it created for this run).
+function ackDone(state) {
+  const file = process.env.ZN_HOOK_ACK;
+  if (!file || state.stdoutFailed || (process.exitCode !== undefined && process.exitCode !== 0)) return;
+  try { fs.writeFileSync(file, 'ok'); } catch (_) { /* no ack: the launcher treats the run as failed */ }
+}
+
+
+/*
+ * The supervisor of the whole hook, for every agent. Most agents let the call run when a hook runs past its timeout
+ * (Gemini CLI, Copilot CLI, Claude Code, Cursor, Codex and ZCode do; Antigravity does not say), and a hook whose stdin
+ * never ends, or whose check never finishes, would get there with no answer from zn. So a timer is armed as the hook
+ * starts, BEFORE stdin is read, SUPERVISOR_MARGIN_S seconds before the agent's own hook timeout, and answers for the event
+ * with the block of its own agent (what a refused or unreadable event gets) and exits. The event is told from what was read:
+ * a post-tool event is answered the way a too-large one is, a Stop event is only warned about (exit 2 would send the
+ * answer back to the model), anything else, including an event not seen at all, is refused. A SIGTERM, SIGHUP or SIGINT
+ * (the agent giving up on the hook) gets the same answer. The vault client waits at most as long as the deadline minus
+ * VAULT_MARGIN_S (ZN_HOOK_VAULT_WAIT_MS), so a slow vault is answered as "not checked" in time, with its own reason.
+ */
+const SUPERVISOR_MARGIN_S = 4;
+const VAULT_MARGIN_S = 3;
+const SUPERVISOR_REASON = 'the check did not finish in time';
+
+function hostTimeoutS(agentId) {
+  let seconds = POST_DEFAULT_TIMEOUT_S;
+  try {
+    const a = require('../agents').getAdapter(agentId);
+    if (a.HOOK_TIMEOUT_S > 0) seconds = a.HOOK_TIMEOUT_S;
+    else if (a.HOOK_TIMEOUT_MS > 0) seconds = a.HOOK_TIMEOUT_MS / 1000;
+  } catch (_) { /* an unknown agent gets the default */ }
+  return seconds;
+}
+
+function supervisorDeadlineMs(agentId) {
+  let ms = Math.max(1000, (hostTimeoutS(agentId) - SUPERVISOR_MARGIN_S) * 1000);
+  if (process.env.ZN_TEST_HOOK_FAULTS === '1') {
+    const t = Number(process.env.ZN_TEST_HOOK_DEADLINE_MS);
+    if (t > 0 && t < ms) ms = t; // tests may only shorten it
+  }
+  return ms;
+}
+
+// True when every byte was written (a closed pipe, or 1000 tries on a full one, is a failure the caller must not hide).
+function writeAllSync(fd, text) {
+  const buf = Buffer.from(String(text));
+  let off = 0;
+  for (let tries = 0; off < buf.length && tries < 1000; tries++) {
+    try { off += fs.writeSync(fd, buf, off); } catch (e) { if (!e || e.code !== 'EAGAIN') return false; }
+  }
+  return off >= buf.length;
+}
+
+// The answer of the supervisor: what the event gets when it cannot be checked in time.
+function supervisorAnswer(agentId, adapter, text) {
+  const keys = topLevelKeys(text) || {};
+  const name = keys.hook_event_name;
+  if ((agentId === 'codex' || agentId === 'zcode') && typeof name === 'string' && codexDenyFor(name, '', agentId)) {
+    process.stdout.write(JSON.stringify(codexDenyFor(name, CODEX_FAIL_REASON, agentId)));
+    process.stderr.write('zn hook: ' + CODEX_FAIL_REASON + '\n');
+    process.exitCode = 2;
+    return;
+  }
+  oversizeEvent(agentId, adapter, text, SUPERVISOR_REASON);
+}
+
+// Returns a function that disarms the supervisor.
+function armSupervisor(agentId, state) {
+  let adapter;
+  try { adapter = require('../agents').getAdapter(agentId); } catch (_) { return () => {}; }
+  const ms = supervisorDeadlineMs(agentId);
+  const hadWait = process.env.ZN_HOOK_VAULT_WAIT_MS;
+  process.env.ZN_HOOK_VAULT_WAIT_MS = String(Math.max(500, ms - VAULT_MARGIN_S * 1000));
+  let done = false;
+  const fire = () => {
+    if (done) return;
+    done = true;
+    // The answer must be out before the process ends: plain synchronous writes, whatever the stream.
+    process.stdout.write = (chunk, enc, cb) => { if (!writeAllSync(1, chunk)) state.stdoutFailed = true; (typeof enc === 'function' ? enc : cb || (() => {}))(); return true; };
+    process.stderr.write = (chunk, enc, cb) => { writeAllSync(2, chunk); (typeof enc === 'function' ? enc : cb || (() => {}))(); return true; };
+    try { supervisorAnswer(agentId, adapter, stdinText); } catch (_) { writeAllSync(2, 'zn hook: ' + SUPERVISOR_REASON + ', so this was blocked.' + String.fromCharCode(10)); process.exitCode = 2; }
+    // Under a launcher the answer counts only with the ack, and a failed write is never a status 0.
+    if (state.stdoutFailed) process.exitCode = failedWriteCode(state); else ackDone(state);
+    process.exit(process.exitCode || 0);
+  };
+  const timer = setTimeout(fire, ms);
+  const signals = ['SIGTERM', 'SIGHUP', 'SIGINT'];
+  for (const s of signals) process.on(s, fire);
+  return () => {
+    done = true;
+    clearTimeout(timer);
+    for (const s of signals) process.removeListener(s, fire);
+    if (hadWait === undefined) delete process.env.ZN_HOOK_VAULT_WAIT_MS; else process.env.ZN_HOOK_VAULT_WAIT_MS = hadWait;
+  };
+}
+
 async function main(args, readText = readStdin) {
-  const state = { stopEvent: false };
+  const state = { stopEvent: false, agentId: args[0] };
+  watchStdout(state);
+  stdinText = '';
+  const disarmSupervisor = armSupervisor(args[0], state);
   try {
     await handleEvent(args, state, readText);
   } catch (err) {
-    if (state.stopEvent) return stopFailSafe(err);
+    if (state.stopEvent) stopFailSafe(err);
     // Anything unexpected fails closed: the call is refused, not passed through.
-    refuseInput(args[0], 'the hook failed (' + ((err && err.message) || String(err)) + ')');
+    else refuseInput(args[0], 'the hook failed (' + ((err && err.message) || String(err)) + ')');
+  } finally {
+    disarmSupervisor();
   }
+  await flushStdout(state);
+  if (state.stdoutFailed) process.exitCode = failedWriteCode(state);
+  else ackDone(state);
 }
 
 /*
@@ -1641,18 +1978,19 @@ async function handleEvent(args, state, readText) {
     return refuseInput(agentId, 'the event on stdin is not a JSON object');
   }
   state.stopEvent = raw.hook_event_name === 'Stop';
-  const disarm = armCodexFailClosed(agentId, raw.hook_event_name);
+  state.event = raw.hook_event_name;
+  const disarm = armCodexFailClosed(agentId, raw.hook_event_name) || armAntigravityFailClosed(agentId, raw);
   try {
     const res = await handle(adapter, raw);
     if (res.stderr) process.stderr.write(res.stderr + ' (fail-open: event passed through)\n');
     try { require('../vault/client').close(); } catch (_) { /* not loaded */ }
     if (res.output !== null && res.output !== undefined) {
       // After the deadline the engine or the vault may still be working: leave as soon as the answer is written.
-      if (res.decision && res.decision.abandoned) process.stdout.write(JSON.stringify(res.output), () => process.exit(process.exitCode || 0));
+      if (res.decision && res.decision.abandoned) process.stdout.write(JSON.stringify(res.output), (err) => { if (err) state.stdoutFailed = true; else ackDone(state); process.exit(state.stdoutFailed ? failedWriteCode(state) : (process.exitCode || 0)); });
       else process.stdout.write(JSON.stringify(res.output));
     }
-    // zn itself failed: Codex also gets its documented block code, with the reason on stderr.
-    if (disarm && res.decision && res.decision.failClosed) {
+    // zn itself failed: Codex and ZCode also get their documented block code (2), with the reason on stderr.
+    if (disarm && (agentId === 'codex' || agentId === 'zcode') && res.decision && res.decision.failClosed) {
       process.stderr.write('zn hook: ' + (res.decision.message || CODEX_FAIL_REASON) + '\n');
       process.exitCode = 2;
     }
@@ -1661,7 +1999,7 @@ async function handleEvent(args, state, readText) {
   }
 }
 
-module.exports = { handle, main, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, decidePrompt, decideExpansion, decideStop };
+module.exports = { handle, main, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop };
 
 // Direct entry (`node lib/hooks/runner.js <agent>`): what installed hooks call,
 // so a hook does not pay for loading the rest of the CLI.

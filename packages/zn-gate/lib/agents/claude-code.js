@@ -63,7 +63,12 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+// Loaded on first use: the hook does not run `claude` and child_process costs a few milliseconds to load.
+let spawnSyncLazy = null;
+function spawnSync(...args) {
+  if (!spawnSyncLazy) spawnSyncLazy = require('child_process').spawnSync;
+  return spawnSyncLazy(...args);
+}
 const { writeFileAtomic } = require('../broker/files');
 const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
@@ -180,8 +185,9 @@ function respond(d) {
   const ev = d && d.event;
   if (!ev || !ev.event) return null;
   const out = respondInner(d, ev);
-  // systemMessage: a notice shown to the user (not to the model).
+  // systemMessage: a notice shown to the user (not to the model). It can stand alone, on an allow that has nothing else to say.
   if (out && d.userMessage) out.systemMessage = d.userMessage;
+  else if (!out && d.userMessage && d.decision === 'allow') return { systemMessage: d.userMessage };
   return out;
 }
 
@@ -297,7 +303,7 @@ function objectField(data, key, file) {
   return v;
 }
 
-/* Checks the project .mcp.json before anything is written, so a refusal never leaves hooks without their MCP server. */
+/* Uninstall checks the project .mcp.json before anything is changed, so a refusal leaves both files as they were. */
 function assertMcpFile(opts = {}) {
   if (opts.mcp === false || (opts.scope || 'user') !== 'project') return;
   const file = path.join(path.resolve(opts.projectDir || process.cwd()), '.mcp.json');
@@ -317,7 +323,7 @@ function stripOurs(groups) {
   const out = [];
   for (const g of groups) {
     if (!g || !Array.isArray(g.hooks)) { out.push(g); continue; }
-    const hooks = g.hooks.filter((h) => !(h && typeof h.command === 'string' && OUR_COMMAND_RE.test(h.command)));
+    const hooks = g.hooks.filter((h) => !(h && typeof h.command === 'string' && (OUR_COMMAND_RE.test(h.command) || launcher.isProjectGuard(h.command, id))));
     if (hooks.length) out.push({ ...g, hooks });
   }
   return out;
@@ -342,42 +348,56 @@ function ourHooks(command) {
 /**
  * The hook command for each event. A user install goes through zn's launcher so that a Node.js that has gone
  * away blocks instead of letting Claude Code run the call unchecked (exit 127 is a non-blocking error);
- * a project install (the file is shared, an absolute path is not) or a command given by the caller keeps
- * the plain command. Claude Code runs hooks with sh (Git Bash on Windows), so the same script serves Windows.
+ * a project install (the file is shared, an absolute path is not) runs `zn` from the PATH inside a start guard that blocks the same
+ * way; a command given by the caller keeps the plain command. Claude Code runs hooks with sh (Git Bash on Windows), so the same script serves Windows.
  */
 function commandFor(opts = {}) {
-  if (opts.command || (opts.scope || 'user') === 'project') return hookCommand(opts);
+  if (opts.command) return hookCommand(opts);
+  // A project install names `zn` on the PATH inside zn's own start guard (launcher.projectShCommand): a missing zn or Node.js blocks.
+  if ((opts.scope || 'user') === 'project') return (event) => launcher.projectShCommand(id, event);
   const node = opts.nodePath || process.execPath;
   const runner = opts.runnerPath || runnerPath();
-  const file = launcher.writeLauncher(id, node, runner, opts);
+  const file = launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true });
   return (event) => launcher.launcherCommand(file, event, opts.platform);
 }
 
 function mcpServerConfig(opts = {}) {
-  // Same rule for the shared .mcp.json of a project install: zn from the PATH.
-  if ((opts.scope || 'user') === 'project') return { command: 'zn', args: ['secrets-mcp', '--agent', 'claude-code'] };
   return { command: opts.nodePath || process.execPath, args: [opts.cliPath || cliPath(), 'secrets-mcp', '--agent', 'claude-code'] };
 }
 
-function installMcp(opts, report) {
-  const conf = mcpServerConfig(opts);
-  if ((opts.scope || 'user') === 'project') {
-    const file = path.join(path.resolve(opts.projectDir || process.cwd()), '.mcp.json');
-    const data = readJson(file);
-    data.mcpServers = objectField(data, 'mcpServers', file);
-    const existing = data.mcpServers[MCP_SERVER_NAME];
-    if (existing && !isZnSecretsServer(existing)) {
-      report.warnings.push('an MCP server named "' + MCP_SERVER_NAME + '" already exists in ' + file + '; left unchanged');
+const PROJECT_MCP_NOTE = 'a project install adds no MCP server: to use zn\'s secrets tools in Claude Code, run `zn hooks install claude-code` (your user settings)';
+
+/* A project install registers no MCP server. The shared .mcp.json could only name `zn`, and Claude Code looks that
+ * name up on the PATH it was started with, where a folder of the project can come first. The server an earlier
+ * zn-gate wrote there (the bare `zn secrets-mcp`) is removed, with a backup. */
+function removeProjectMcp(opts, report) {
+  const file = path.join(path.resolve(opts.projectDir || process.cwd()), '.mcp.json');
+  if (fs.existsSync(file)) {
+    let data;
+    let servers;
+    try {
+      data = readJson(file);
+      servers = objectField(data, 'mcpServers', file);
+    } catch (err) {
+      report.warnings.push('could not read ' + file + ' (' + err.message + '), so it was left as it is; ' + PROJECT_MCP_NOTE);
       return;
     }
-    report.mcpBackup = backup(file);
-    data.mcpServers[MCP_SERVER_NAME] = conf;
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    writeFileAtomic(file, cfg.stringifyJson(data), 0o644);
-    report.mcp = file;
-    return;
+    if (isBareZnSecrets(servers[MCP_SERVER_NAME])) {
+      report.mcpBackup = backup(file);
+      delete servers[MCP_SERVER_NAME];
+      writeFileAtomic(file, cfg.stringifyJson(data), 0o644);
+      report.warnings.push('removed the MCP server "' + MCP_SERVER_NAME + '" that an earlier zn-gate wrote to ' + file + ' (it started `zn` by name); ' + PROJECT_MCP_NOTE);
+      return;
+    }
   }
-  const claude = opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || '');
+  report.warnings.push(PROJECT_MCP_NOTE);
+}
+
+function installMcp(opts, report) {
+  if ((opts.scope || 'user') === 'project') return removeProjectMcp(opts, report);
+  const conf = mcpServerConfig(opts);
+  // Absolute PATH entries only: install often runs in a project folder, which a relative entry would point into.
+  const claude = opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', require('../exe').absolutePath(process.env.PATH || ''));
   // No JSON: this form works the same in cmd.exe, PowerShell and POSIX shells.
   const manual = 'claude mcp add --scope user ' + MCP_SERVER_NAME + ' -- ' + [conf.command, ...conf.args].map((a) => '"' + a + '"').join(' ');
   if (!claude) {
@@ -391,8 +411,10 @@ function installMcp(opts, report) {
     report.warnings.push('`claude` is a batch file (' + path.basename(claude) + '), which zn does not run through cmd.exe: register the MCP server yourself with: ' + manual);
     return;
   }
+  // Only absolute PATH entries outside the project: a `claude` script that starts with `#!/usr/bin/env node`
+  // looks node up there.
   const r = spawnSync(claude, ['mcp', 'add-json', '--scope', 'user', MCP_SERVER_NAME, JSON.stringify({ type: 'stdio', ...conf })],
-    { encoding: 'utf8', windowsHide: true });
+    { encoding: 'utf8', windowsHide: true, env: require('../exe').programEnv(opts.env || process.env) });
   if (r.status === 0) report.mcp = 'claude mcp (user scope)';
   else report.warnings.push('`claude mcp add-json` failed (' + String(r.stderr || r.stdout || r.error || '').trim().slice(0, 300) + '): register the MCP server yourself with: ' + manual);
 }
@@ -411,7 +433,6 @@ function znOnPath(opts = {}) {
  */
 function install(opts = {}) {
   const file = settingsFile(opts);
-  assertMcpFile(opts);
   const data = readJson(file);
   const report = { settings: file, backup: backup(file), warnings: [] };
   data.hooks = hooksOf(data, file);
@@ -425,7 +446,6 @@ function install(opts = {}) {
   if (opts.mcp !== false) installMcp(opts, report);
   if (!opts.command && (opts.scope || 'user') === 'project' && !znOnPath(opts)) {
     report.warnings.push('`zn` is not on your PATH, and this project install runs `zn hook claude-code`' +
-      (opts.mcp !== false ? ' and starts the MCP server with `zn`' : '') +
       ': until zn-gate is installed globally (npm i -g zn-gate, or pip install zn-gate), the hooks fail here and Claude Code may block every tool call or skip the secret checks. Everyone who uses this project needs zn on their PATH.');
   }
   // Organization settings can turn these hooks or the MCP server off with no
@@ -435,7 +455,7 @@ function install(opts = {}) {
     const users = [...new Set([file, path.join(configDir(opts), 'settings.json')])];
     const conf = mcpServerConfig(opts);
     report.warnings.push(...claudeCodePolicyWarnings({
-      managedDir: opts.managedDir, userSettings: users, mcp: opts.mcp !== false, mcpCommand: [conf.command, ...conf.args],
+      managedDir: opts.managedDir, userSettings: users, mcp: opts.mcp !== false && (opts.scope || 'user') !== 'project', mcpCommand: [conf.command, ...conf.args],
     }));
   } catch (_) { /* no policy note */ }
   return report;
@@ -481,7 +501,9 @@ function uninstall(opts = {}) {
     } else {
       // Only zn's own server: a user MCP server that happens to be called "secrets" is left alone.
       const ours = userMcpServerIsOurs(opts);
-      const claude = ours !== true ? null : opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || '');
+      // Absolute PATH entries only, as for install: a relative entry points into the folder uninstall runs in.
+      const claude = ours !== true ? null : opts.claudeBin !== undefined ? opts.claudeBin
+        : whichSync('claude', require('../exe').programEnv(opts.env || process.env).PATH);
       if (ours === false) {
         report.warnings.push('left the MCP server named "' + MCP_SERVER_NAME + '" in place: it is not zn\'s');
       } else if (ours === null) {
@@ -489,7 +511,8 @@ function uninstall(opts = {}) {
       } else if (claude && /\.(?:cmd|bat)$/i.test(claude)) {
         report.warnings.push('`claude` is a batch file (' + path.basename(claude) + '), which zn does not run through cmd.exe: remove the MCP server yourself with: claude mcp remove --scope user ' + MCP_SERVER_NAME);
       } else if (claude) {
-        spawnSync(claude, ['mcp', 'remove', '--scope', 'user', MCP_SERVER_NAME], { encoding: 'utf8', windowsHide: true });
+        spawnSync(claude, ['mcp', 'remove', '--scope', 'user', MCP_SERVER_NAME],
+          { encoding: 'utf8', windowsHide: true, env: require('../exe').programEnv(opts.env || process.env) });
       } else if (ours === true) {
         report.warnings.push('`claude` is not on your PATH: remove zn\'s MCP server yourself with: claude mcp remove --scope user ' + MCP_SERVER_NAME);
       }
@@ -533,11 +556,11 @@ function userMcpServerIsOurs(opts = {}) {
  * adapter checks the MCP configuration Claude Code itself reads. A name alone is never enough: a project
  * can define any server name in its own .mcp.json. The answer is 'secrets' (the vault server),
  * 'analyze' (the plugin's detector server) or null. It is not null only when:
- *  - the user-scope server named "secrets" is zn's (isZnSecretsServer: zn-gate's own bin/cli.js, `zn`,
- *    `zn-gate` or `npx zn-gate`, the same test the installer uses to decide a server is ours), and
+ *  - the user-scope server named "secrets" is the one `zn hooks install claude-code` writes: this Node.js and
+ *    this zn-gate's bin/cli.js, both by absolute path and the same files once links are resolved (a `zn` or
+ *    `npx` found on the PATH could be a program of the project), and
  *  - no .mcp.json from the working folder upwards and no local-scope entry of ~/.claude.json defines a
- *    server with that name, unless it is the bare command `zn secrets-mcp` that a project install writes
- *    (a relative or absolute path to a binary is not accepted), and
+ *    server with that name at all, and
  *  - for the plugin's servers (plugin_zn-gate_secrets, plugin_zn-gate_zn-gate): the zn-gate plugin is
  *    enabled in the user's settings and no project or local entry uses that name at all.
  * Anything unreadable gives null, so the call is checked as for any other server. */
@@ -552,6 +575,7 @@ function readJsonFile(file) {
   }
 }
 
+/* The server a project install of an earlier zn-gate wrote to .mcp.json (only removed now, never trusted). */
 function isBareZnSecrets(s) {
   if (!s || typeof s !== 'object' || s.url) return false;
   const args = Array.isArray(s.args) ? s.args.map(String) : [];
@@ -588,10 +612,46 @@ function znMcpServerKind(server, cwd, opts = {}) {
     if (!Object.keys(enabled).some((k) => /^zn-gate@/.test(k) && enabled[k] === true)) return null;
     return server === PLUGIN_SECRETS_SERVER ? 'secrets' : 'analyze';
   }
-  if (overrides.some((s) => !isBareZnSecrets(s))) return null;
-  if (userServers[server] !== undefined && !isZnSecretsServer(userServers[server])) return null;
-  if (!overrides.length && userServers[server] === undefined) return null;
-  return 'secrets';
+  if (overrides.length) return null;
+  return isInstalledSecretsServer(userServers[server], { ...opts, env, cwd: path.resolve(cwd || process.cwd()) }) ? 'secrets' : null;
+}
+
+function sameFile(a, b) {
+  try {
+    const x = fs.realpathSync.native(a);
+    const y = fs.realpathSync.native(b);
+    return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y;
+  } catch (_) {
+    return false;
+  }
+}
+
+function realOf(p) {
+  try {
+    const r = fs.realpathSync.native(p);
+    return process.platform === 'win32' ? r.toLowerCase() : r;
+  } catch (_) {
+    return null;
+  }
+}
+
+/* The user-scope server `zn hooks install claude-code` registers: a Node.js and a zn-gate bin/cli.js, both by
+ * absolute path, neither inside the project (the folder the hook runs in, its git work tree, CLAUDE_PROJECT_DIR).
+ * Any zn-gate copy counts, not only the one running this hook: the plugin loads zn-gate from its own vendor folder
+ * while the server was registered from the npm package. */
+function isInstalledSecretsServer(s, opts = {}) {
+  if (!s || typeof s !== 'object' || s.url || typeof s.command !== 'string') return false;
+  const args = Array.isArray(s.args) ? s.args.map(String) : [];
+  if (args[1] !== 'secrets-mcp' || !path.isAbsolute(s.command) || !path.isAbsolute(args[0] || '')) return false;
+  const node = realOf(s.command);
+  const cli = realOf(args[0]);
+  if (!node || !cli) return false;
+  const win = process.platform === 'win32';
+  if (!(win ? /^node\.exe$/ : /^node$/).test(path.basename(node))) return false;
+  if (!cli.split(path.sep).join('/').endsWith('/zn-gate/bin/cli.js')) return false;
+  const places = require('../exe').projectPlaces(opts.cwd || process.cwd(), opts.env || process.env, win);
+  const inside = (p, d) => { const rel = path.relative(d, p); return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)); };
+  return !places.some((d) => inside(node, d) || inside(cli, d));
 }
 
 function detect(opts = {}) {

@@ -1,2 +1,0 @@
-### Changed
-- Removed the "known limitation" about credentials under prefixed variable names (for example `OPENAI_API_KEY=`). Those names are redacted in env files, JSON, YAML, Dockerfile and shell forms in both the Node.js and Python packages, and new tests lock the measured forms. Lowercase or dotted prefixed names (`openai_api_key=`, `my.app.db.password=`) are not redacted by the prompt and tool-result rules.

@@ -37,12 +37,16 @@ function fromTemporaryCopy(dir = __dirname) {
   return /[\\/](?:_npx|dlx(?:-[^\\/]*)?|xfs-[^\\/]*|\.bun[\\/]install[\\/]cache|bunx-[^\\/]*)[\\/]/.test(dir);
 }
 
-/* Absolute path of a program, searched only in absolute PATH entries; null when not found. */
+/* Absolute path of a program, searched only in absolute PATH entries (exe.programEnv, exe.findProgram); null when not
+ * found. On Windows an npm-installed .cmd (npm, claude, zn) comes first, then an .exe. */
 function findProgram(name, env) {
   const exe = require('./exe');
-  const absPath = String((env || process.env).PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
-  const found = exe.whichSync(isWin ? name + '.cmd' : name, absPath) || (isWin ? exe.whichSync(name + '.exe', absPath) : null);
-  return found ? path.resolve(found) : null;
+  const e = env || process.env;
+  if (isWin) {
+    const cmd = exe.whichSync(name + '.cmd', exe.programEnv(e).PATH);
+    if (cmd) return path.resolve(cmd);
+  }
+  return exe.findProgram(name, e);
 }
 
 function samePath(a, b) {
@@ -62,8 +66,9 @@ function cmp(a, b) {
 
 /* Run a program found by findProgram, with fixed arguments. */
 function spawnProgram(file, args, env, extra = {}) {
-  const childEnv = { ...env };
-  if (isWin) childEnv.NoDefaultCurrentDirectoryInExePath = '1';
+  // The program gets only the absolute PATH entries: a .cmd shim (npm, claude on Windows) looks up `node` by name, and
+  // so do the programs it starts; a relative entry would point into the folder zn runs in, often a project.
+  const childEnv = require('./exe').programEnv(env || process.env);
   // A .cmd file (npm, claude, zn on Windows) only starts through cmd.exe; its path is absolute and quoted.
   if (isWin && /\.cmd$/i.test(file)) {
     return spawnSync('"' + file + '"', args, { ...extra, env: childEnv, shell: true, windowsHide: true });
@@ -88,7 +93,7 @@ function globalInstall(env) {
 /* The plan: {items: [{id, name, found, state, problem, steps}], setup: [step]} ; a step is {label, run: [file, args] | null, manual}. */
 async function plan(opts = {}) {
   const { getAdapter } = require('./agents');
-  const { check, _internal: { pluginNodeStatus, PLUGIN_NODE_MIN } } = require('./check');
+  const { check, _internal: { pluginNodeStatus, PLUGIN_NODE_MIN, PLUGIN_UPDATE_NOTE: pluginUpdateNote } } = require('./check');
   const env = opts.env || process.env;
   const home = opts.home;
   const nodeVersion = opts.nodeVersion || process.versions.node;
@@ -103,7 +108,7 @@ async function plan(opts = {}) {
   let needsZn = false;
   for (const r of res.results) {
     const found = r.state !== 'not-set-up' || getAdapter(r.id).detect({ home, env });
-    const item = { id: r.id, name: r.name, found, state: r.state, problem: r.problem || '', steps: [] };
+    const item = { id: r.id, name: r.name, found, state: r.state, problem: r.problem || '', steps: [], update: r.pluginOutdated ? pluginUpdateNote(r.pluginOutdated.installed) : '' };
     if (found && r.state !== 'protected') {
       // Claude Code set up with zn's own hooks is repaired with them, and with the plugin as well it drops them:
       // installing the plugin on top would run both sets.
@@ -258,10 +263,12 @@ async function guide(opts = {}) {
     else w(`  >  ${i.name.padEnd(12)} ${i.state === 'not-protected' ? 'not protected: ' + i.problem : 'not set up yet'}\n`);
   }
   for (const i of items) if (i.note && i.steps.length) w(`${i.note}\n`);
+  // A plugin older than this zn-gate is not moved by init (the marketplace is pinned to a tag): say how to move it.
+  for (const i of items) if (i.update) w(`  (${i.name}: ${i.update})\n`);
   w('\n');
   const tail = () => w('(To wrap the MCP servers in your agent configs, which `zn-gate init` used to do: `zn-gate init --wrap-mcp`.)\n');
   if (!items.some((i) => i.found)) {
-    w('No supported coding agent was found (Claude Code, Codex CLI, Cursor, OpenCode). Nothing was changed.\n');
+    w('No supported coding agent was found (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app). Nothing was changed.\n');
     w('Install one, then run `npx -y zn-gate init` again. Other editors: https://usezn.com/docs/install\n');
     tail();
     return 1;

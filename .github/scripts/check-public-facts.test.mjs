@@ -370,6 +370,13 @@ test('every marketplace add on a public surface names a release tag', () => {
     assert.equal(errs.length, 1, file);
     assert.match(errs[0], /has no release tag/);
   }
+  // The URL form must name a tag too, and another repository whose name starts with usezn/zn is not this one.
+  for (const cmd of ['claude plugin marketplace add https://github.com/usezn/zn', 'claude plugin marketplace add https://github.com/usezn/zn.git']) {
+    const errs = run({ ...GOOD, 'README.md': GOOD['README.md'] + cmd + '\n' });
+    assert.equal(errs.length, 1, cmd);
+    assert.match(errs[0], /has no release tag/);
+  }
+  assert.deepEqual(run({ ...GOOD, 'README.md': GOOD['README.md'] + 'claude plugin marketplace add usezn/zn-algo\nclaude plugin marketplace add https://github.com/usezn/zn-algo.git\n' }), []);
   // A tag of another version is caught by the pin check.
   assert.match(run({ ...GOOD, 'README.md': GOOD['README.md'] + 'claude plugin marketplace add usezn/zn@v1.0.0\n' }).join('\n'), /pins usezn[/]zn@v1[.]0[.]0/);
   // The changelog and code are not public install surfaces.

@@ -2,8 +2,9 @@ name: Rust gateway
 
 on:
   push:
-    branches: [main, next]
-    paths: ["src/**", "Cargo.toml", "Cargo.lock", ".cargo/**", "build.rs", ".github/workflows/rust.yml", ".github/scripts/rust-scope.sh", ".github/scripts/ci-scope.sh", ".github/scripts/test-ci-scope.sh"]
+    # release/** is here, and there is no paths filter, because tag-release.yml requires "build, test, clippy,
+    # fmt" on the exact release commit, whatever that commit changed. rust-scope.sh runs every push in full.
+    branches: [main, next, 'release/**']
   pull_request:
     types: [ opened, synchronize, reopened, ready_for_review ]
     # No paths filter here: "build, test, clippy, fmt" is a required check, and a workflow skipped by a
@@ -63,9 +64,11 @@ jobs:
         with:
           version: "29.3"
           repo-token: ${{ github.token }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
         if: steps.scope.outputs.rust == 'true'
         with:
+          # Release pushes never restore or save a cache that a pull request could have poisoned.
+          lookup-only: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
           # Each Rust cache is 1.5 to 3 GB, so only main saves one. next and pull requests
           # restore the cache of main (same key prefix) and save nothing, which keeps the
           # repository under its 10 GB cache limit.
@@ -82,6 +85,48 @@ jobs:
       - name: test
         if: steps.scope.outputs.rust == 'true'
         run: cargo test --locked
+
+  private-file:
+    name: private file writer (${{ matrix.os }})
+    # The owner-only file writer has a separate Windows implementation (protected DACL) and platform-specific
+    # Unix code, so its tests also run on Windows and macOS. Draft pull requests skip this job; marking the
+    # pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: bash .github/scripts/rust-scope.sh
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        if: steps.scope.outputs.rust == 'true'
+        with:
+          toolchain: 1.99.0
+      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        if: steps.scope.outputs.rust == 'true'
+        with:
+          version: "29.3"
+          repo-token: ${{ github.token }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
+        if: steps.scope.outputs.rust == 'true'
+        with:
+          # Release pushes never restore or save a cache that a pull request could have poisoned.
+          lookup-only: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: test private_file
+        if: steps.scope.outputs.rust == 'true'
+        run: cargo test --locked --lib private_file
 
   msrv:
     name: minimum supported Rust version (1.95)
@@ -115,9 +160,11 @@ jobs:
         with:
           version: "29.3"
           repo-token: ${{ github.token }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
         if: steps.scope.outputs.rust == 'true'
         with:
+          # Release pushes never restore or save a cache that a pull request could have poisoned.
+          lookup-only: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: check the declared version matches
         if: steps.scope.outputs.rust == 'true'
@@ -183,8 +230,10 @@ jobs:
         with:
           version: "29.3"
           repo-token: ${{ github.token }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
         with:
+          # Release pushes never restore or save a cache that a pull request could have poisoned.
+          lookup-only: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:

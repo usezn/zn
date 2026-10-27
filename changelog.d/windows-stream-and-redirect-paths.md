@@ -1,3 +1,0 @@
-### Fixed
-- In bash, cmd.exe and PowerShell, a redirect glued to the word before it (`echo '{}'>~/.claude/settings.json`, `echo "x">...`, `echo x>C:\Users\me\.claude\settings.json`) is now recognised as a write to that path, so the agent configuration protection applies to it, and a protected file named right before the operator (`cat ~/.ssh/id_rsa>x`) is still checked as a read. A quoted `>` is not a redirect. `POLICY_RULES_VERSION` is `2026-10-24.8`.
-- A file read written as an NTFS alternate data stream (`.aws\credentials::$DATA`, `.env:name`) is now treated as the protected file itself, so it is blocked like the plain name. A drive letter such as `C:` is never read as a stream.

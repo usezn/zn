@@ -1,0 +1,17 @@
+{
+  "cwd": "/work/proj",
+  "hookEventName": "SessionStart",
+  "mode": "default",
+  "sessionId": "sess-1",
+  "timestamp": "2026-10-24T10:00:00.000Z",
+  "traceId": "trace-1",
+  "turnId": "turn-1",
+  "agent_type": "main",
+  "hook_event_name": "SessionStart",
+  "permission_mode": "default",
+  "session_id": "sess-1",
+  "transcript_path": "/tmp/zcode-hook-x1/transcript.jsonl",
+  "transcriptPath": "/tmp/zcode-hook-x1/transcript.jsonl",
+  "source": "startup",
+  "model": "glm-5.3"
+}
