@@ -802,15 +802,16 @@ function bareProjectHook(spec, text) {
   } catch (_) { return false; }
 }
 
-/* Whether this folder's hooks file holds a hook of zn's: its text names zn, or one of its commands is zn's (on Windows the
- * project guard is an encoded PowerShell command, so the file holds no plain "zn"). */
+/* Whether this folder's hooks file holds the hook a project install writes: a command that names zn on the PATH (the
+ * guard, exact or modified, or a bare `zn hook`), as parseCommand reads it on every platform (on Windows the guard is an
+ * encoded PowerShell command, so the file holds no plain "zn"). Any other text that only mentions zn does not count.
+ * OpenCode's project file is a plugin, not a hooks file: there the text is the only sign. */
 function projectHookOurs(spec, text) {
   if (!text) return false;
-  if (/zn|runner\.js/.test(text)) return true;
-  if (spec.id === 'opencode' || spec.id === 'zcode') return false;
+  if (spec.id === 'opencode' || spec.id === 'zcode') return /zn|runner\.js/.test(text);
   try {
     const tree = JSON.parse(String(text).replace(/^\uFEFF/, ''));
-    return hookEntries(tree, spec.id).some((e) => Boolean(parseCommand(e.command, spec.id)));
+    return hookEntries(tree, spec.id).some((e) => { const c = parseCommand(e.command, spec.id); return Boolean(c && c.onPath); });
   } catch (_) { return false; }
 }
 

@@ -13,6 +13,7 @@ const { getAdapter } = require('../lib/agents');
 const { guide, plan } = require('../lib/init-guide');
 const { check, _internal } = require('../lib/check');
 const { tempDir } = require('./helpers/tmp');
+const { withGitBash, NEEDS_GIT_BASH } = require('./helpers/git_bash');
 const { writePluginManifest } = require('./helpers/claude_plugin');
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
@@ -143,8 +144,9 @@ test('init: the plugin is only said to be turned off when it was; declined, or w
   assert.match(out, /that did not finish/);
 });
 
-test('check: a plugin on Node.js before 20.19 is reported, with the way out', { skip: process.platform === 'win32' && 'the zn-gate plugin needs Git Bash on Windows, which this fixture does not provide' }, async (t) => {
+test('check: a plugin on Node.js before 20.19 is reported, with the way out', NEEDS_GIT_BASH, async (t) => {
   const m = machine(t);
+  m.env = withGitBash(m.env);
   pluginIn(m.home);
   const r = (await check({ home: m.home, env: m.env, cwd: m.cwd, nodeVersion: '18.19.0' })).results.find((x) => x.id === 'claude-code');
   assert.equal(r.state, 'not-protected');
@@ -154,8 +156,9 @@ test('check: a plugin on Node.js before 20.19 is reported, with the way out', { 
   assert.match(r.fix, /claude plugin disable zn-gate@usezn/);
 });
 
-test('check: the same plugin on Node.js 20.19 or later is protected', { skip: process.platform === 'win32' && 'the zn-gate plugin needs Git Bash on Windows, which this fixture does not provide' }, async (t) => {
+test('check: the same plugin on Node.js 20.19 or later is protected', NEEDS_GIT_BASH, async (t) => {
   const m = machine(t);
+  m.env = withGitBash(m.env);
   pluginIn(m.home);
   const r = (await check({ home: m.home, env: m.env, cwd: m.cwd, nodeVersion: '20.19.0' })).results.find((x) => x.id === 'claude-code');
   assert.equal(r.state, 'protected', r.problem);
@@ -168,8 +171,9 @@ test('check: zn hooks without the plugin are protected whatever the Node.js vers
   assert.equal(r.state, 'protected', r.problem);
 });
 
-test('check: plugin and zn hooks on an older Node.js say the plugin is what does not work', { skip: process.platform === 'win32' && 'the zn-gate plugin needs Git Bash on Windows, which this fixture does not provide' }, async (t) => {
+test('check: plugin and zn hooks on an older Node.js say the plugin is what does not work', NEEDS_GIT_BASH, async (t) => {
   const m = machine(t);
+  m.env = withGitBash(m.env);
   getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
   pluginIn(m.home);
   const r = (await check({ home: m.home, env: m.env, cwd: m.cwd, nodeVersion: '18.19.0' })).results.find((x) => x.id === 'claude-code');
@@ -226,8 +230,9 @@ test('init plan: a node that cannot be found or run never installs the plugin si
   assert.match(cc.note, /^Claude Code plugin skipped: zn-gate could not find or run the `node` that the hooks of the plugin start with/);
 });
 
-test('check: a plugin whose hooks run on an older Node.js than zn-gate is reported with both versions', { skip: process.platform === 'win32' && 'the zn-gate plugin needs Git Bash on Windows, which this fixture does not provide' }, async (t) => {
+test('check: a plugin whose hooks run on an older Node.js than zn-gate is reported with both versions', NEEDS_GIT_BASH, async (t) => {
   const m = machine(t);
+  m.env = withGitBash(m.env);
   pluginIn(m.home);
   const r = (await check({ home: m.home, env: m.env, cwd: m.cwd, nodeVersion: '22.0.0', hookNode: HOOK18 })).results.find((x) => x.id === 'claude-code');
   assert.equal(r.state, 'not-protected');
@@ -235,8 +240,9 @@ test('check: a plugin whose hooks run on an older Node.js than zn-gate is report
   assert.match(r.fix, /first `node` on your PATH/);
 });
 
-test('check: a node that cannot be found is reported as unknown, not as a pass', { skip: process.platform === 'win32' && 'the zn-gate plugin needs Git Bash on Windows, which this fixture does not provide' }, async (t) => {
+test('check: a node that cannot be found is reported as unknown, not as a pass', NEEDS_GIT_BASH, async (t) => {
   const m = machine(t);
+  m.env = withGitBash(m.env);
   pluginIn(m.home);
   const r = (await check({ home: m.home, env: m.env, cwd: m.cwd, nodeVersion: '22.0.0', hookNode: null })).results.find((x) => x.id === 'claude-code');
   assert.equal(r.state, 'not-protected');

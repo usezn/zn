@@ -178,7 +178,7 @@ test('an unreadable hook input is refused with exit code 2 and the reason on std
 
 /* --------------------------- install / uninstall -------------------------- */
 
-test('install (project): BeforeTool group with a named command hook in milliseconds; idempotent; uninstall removes the file content', { skip: process.platform === 'win32' && 'a project install writes the PowerShell guard on Windows, not the sh guard' }, (t) => {
+test('install (project): BeforeTool group with a named command hook in milliseconds; idempotent; uninstall removes the file content', (t) => {
   const dir = tempDir(t, 'zn-gem-');
   const rep = gem.install({ scope: 'project', projectDir: dir });
   const file = path.join(dir, '.gemini', 'settings.json');
@@ -190,7 +190,10 @@ test('install (project): BeforeTool group with a named command hook in milliseco
   assert.equal(g.matcher, '*');
   assert.equal(g.hooks.length, 1);
   assert.deepEqual({ ...g.hooks[0], command: undefined }, { name: 'zn-gate', type: 'command', command: undefined, timeout: 15000 });
-  assert.ok(require('../lib/agents/launcher').isProjectGuard(g.hooks[0].command, 'gemini'));
+  // zn's project guard on every platform (the encoded PowerShell one on Windows); the sh form only outside Windows.
+  const parsed = require('../lib/check')._internal.parseCommand(g.hooks[0].command, 'gemini');
+  assert.ok(parsed && parsed.onPath && parsed.guarded, g.hooks[0].command);
+  if (process.platform !== 'win32') assert.ok(require('../lib/agents/launcher').isProjectGuard(g.hooks[0].command, 'gemini'));
   gem.install({ scope: 'project', projectDir: dir });
   assert.equal(readSettings(file).hooks.BeforeTool.length, 1);
   assert.equal(gem.uninstall({ scope: 'project', projectDir: dir }).removed, 1);
