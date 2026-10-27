@@ -257,9 +257,11 @@ class TestStreamedOutput(unittest.TestCase):
             yield f"chunk key={KEY}"
 
         chunks = list(stream("weather"))
-        self.assertEqual(chunks[0], "first chunk")
-        self.assertEqual(len(chunks), 2)
-        self.assertNotIn(KEY, chunks[1])
+        # One chunk out for each chunk in (empty while the text is held), then the held text at the end.
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual(chunks[:2], ["", ""])
+        self.assertTrue(chunks[2].startswith("first chunk"))
+        self.assertNotIn(KEY, "".join(chunks))
 
     def test_async_generator_chunks_are_masked(self):
         @guard(mask_secrets=True)
@@ -270,8 +272,10 @@ class TestStreamedOutput(unittest.TestCase):
             return [c async for c in stream("weather")]
 
         chunks = asyncio.run(drain())
-        self.assertEqual(len(chunks), 1)
-        self.assertNotIn(KEY, chunks[0])
+        self.assertEqual(len(chunks), 2)
+        self.assertEqual(chunks[0], "")
+        self.assertNotIn(KEY, chunks[1])
+        self.assertIn("chunk key=", chunks[1])
 
     def test_blocked_chunk_ends_the_stream(self):
         closed = []
@@ -300,7 +304,9 @@ class TestStreamedOutput(unittest.TestCase):
             yield BAD
             yield "never sent"
 
-        self.assertEqual(list(stream("weather")), ["fine", "blocked"])
+        # The text before the blocked chunk is held back by the masker (guarded_tool masks by default)
+        # and is withheld with it; the chunk that was held comes out empty.
+        self.assertEqual(list(stream("weather")), ["", "blocked"])
 
     def test_phrase_split_across_chunks_is_blocked(self):
         # A split point where neither half is blocked on its own.
@@ -340,7 +346,7 @@ class TestStreamedOutput(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             for chunk in stream("weather"):
                 got.append(chunk)
-        self.assertEqual(got, ["fine"])
+        self.assertEqual("".join(got), "fine")
         self.assertNotIn(KEY, str(cm.exception))
         self.assertIsNone(cm.exception.__context__)
 
@@ -352,8 +358,11 @@ class TestStreamedOutput(unittest.TestCase):
             return "done"
 
         gen = echo()
-        self.assertEqual(next(gen), "ready")
-        self.assertEqual(gen.send("weather"), "got weather")
+        # The masked text is held back, but each chunk of the function still gives one chunk out,
+        # so the value sent in reaches the function at the right time.
+        self.assertEqual(next(gen), "")
+        self.assertEqual(gen.send("weather"), "")
+        self.assertEqual(next(gen), "readygot weather")
         with self.assertRaises(StopIteration) as cm:
             next(gen)
         self.assertEqual(cm.exception.value, "done")

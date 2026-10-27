@@ -18,6 +18,7 @@ const plan = (opts) => realPlan({ nodeVersion: '22.0.0', ...opts });
 const { AGENT_ENV_VARS } = require('../lib/broker/tty');
 const policy = require('../lib/hooks/policy');
 const { tempDir } = require('./helpers/tmp');
+const { writePluginManifest } = require('./helpers/claude_plugin');
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const VERSION = require('../package.json').version;
@@ -248,7 +249,7 @@ test('plan: Claude Code set up with zn hooks is repaired with zn hooks, not with
   assert.deepEqual(cc.steps.map(line), ['zn hooks install claude-code']);
 });
 
-test('plan: the plugin together with zn hooks gets one step that removes the hooks', async (t) => {
+test('plan: the plugin together with zn hooks gets one step that removes the hooks', { skip: process.platform === 'win32' && 'the zn-gate plugin needs Git Bash on Windows, which this fixture does not provide' }, async (t) => {
   const m = machine(t, ['claude-code']);
   getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
   const root = path.join(m.home, '.claude', 'plugins', 'cache', 'usezn', 'zn-gate', '1.9.0');
@@ -258,6 +259,7 @@ test('plan: the plugin together with zn hooks gets one step that removes the hoo
     "process.stdout.write(r.stdout || ''); process.exit(r.status || 0);\n");
   fs.writeFileSync(path.join(m.home, '.claude', 'plugins', 'installed_plugins.json'),
     JSON.stringify({ version: 2, plugins: { 'zn-gate@usezn': [{ scope: 'user', installPath: root }] } }));
+  writePluginManifest(root);
   const { items } = await plan({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false });
   const cc = items.find((i) => i.id === 'claude-code');
   assert.deepEqual(cc.steps.map(line), ['zn hooks uninstall claude-code']);
@@ -272,6 +274,7 @@ function pluginIn(home, enabled) {
     "process.stdout.write(r.stdout || ''); process.exit(r.status || 0);\n");
   fs.writeFileSync(path.join(home, '.claude', 'plugins', 'installed_plugins.json'),
     JSON.stringify({ version: 2, plugins: { 'zn-gate@usezn': [{ scope: 'user', installPath: root }] } }));
+  writePluginManifest(root);
   if (enabled === false) {
     const file = path.join(home, '.claude', 'settings.json');
     let tree = {};
@@ -362,6 +365,7 @@ test('plan: a broken plugin next to zn hooks gets one step that turns the plugin
   fs.writeFileSync(path.join(root, 'scripts', 'zn-launch.js'), "process.stderr.write('zn plugin: zn-gate is not installed'); process.exit(2);\n");
   fs.writeFileSync(path.join(m.home, '.claude', 'plugins', 'installed_plugins.json'),
     JSON.stringify({ version: 2, plugins: { 'zn-gate@usezn': [{ scope: 'user', installPath: root }] } }));
+  writePluginManifest(root);
   const { items } = await plan({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false });
   const cc = items.find((i) => i.id === 'claude-code');
   assert.deepEqual(cc.steps.map(line), ['claude plugin disable zn-gate@usezn']);
@@ -373,6 +377,7 @@ function brokenPluginIn(home) {
   fs.writeFileSync(path.join(root, 'scripts', 'zn-launch.js'), "process.stderr.write('zn plugin: zn-gate is not installed'); process.exit(2);\n");
   fs.writeFileSync(path.join(home, '.claude', 'plugins', 'installed_plugins.json'),
     JSON.stringify({ version: 2, plugins: { 'zn-gate@usezn': [{ scope: 'user', installPath: root }] } }));
+  writePluginManifest(root);
 }
 
 const goneNode = (m) => getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: '/nonexistent/bin/node', runnerPath: RUNNER, mcp: false });
@@ -433,7 +438,7 @@ test('guide: after repairing the hooks next to a broken plugin, the plugin is tu
   }
 });
 
-test('plan: zn rules that do not block .env get the zn-gate repair, never the plugin install', async (t) => {
+test('plan: zn rules that do not block .env get the zn-gate repair, never the plugin install', { skip: process.platform === 'win32' && 'the zn-gate plugin needs Git Bash on Windows, which this fixture does not provide' }, async (t) => {
   const runner = require('../lib/hooks/runner');
   const real = runner.handle;
   runner.handle = async () => ({ decision: { decision: 'allow' } });

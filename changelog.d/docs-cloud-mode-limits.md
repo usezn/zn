@@ -1,2 +1,0 @@
-### Changed
-- The READMEs and docs now say plainly what the optional cloud check sends (the prompt text, with only the secrets zn-gate recognizes removed, so personal data and unrecognized secrets can still be sent), that a failed cloud call falls back to the local rules instead of blocking, that the Galvanize 2 figures describe the cloud classifier and not the local rules, and that zn-gate is not a sandbox and its coverage depends on each agent's hooks.

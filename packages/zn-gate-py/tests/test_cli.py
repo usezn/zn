@@ -169,10 +169,11 @@ class TestCliScanCommand(unittest.TestCase):
     def test_binary_and_large_files_are_skipped(self):
         pem = self.BEGIN + "\n" + self.BODY + "\n" + self.END + "\n"
         # A Keynote document is a zip archive with a .key extension.
+        # Not read, so the coverage is incomplete: exit 3 (see test_scan_coverage_exit.py).
         code, out = self._scan_text("PK\x03\x04\x00\x00" + pem, name="slides.key")
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 3)
         code, out = self._scan_text("a" * (2 * 1024 * 1024 + 1) + "\n" + pem, name="big.txt")
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 3)
 
     def test_truncated_encrypted_key_body_after_its_headers_is_never_printed(self):
         begin = "-----BEGIN RSA " + "PRIVATE KEY-----"

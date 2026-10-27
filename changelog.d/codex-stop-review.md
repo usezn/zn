@@ -1,2 +1,0 @@
-### Added
-- Codex CLI: zn-gate reviews the model's final answer through Codex's `Stop` hook. It warns when the answer contains a secret value, or a `__ZN_` placeholder that zn did not see earlier in the session. The warning is shown to you, not to the model. To have Codex ask the model to rewrite such an answer, set `"stopReview": "block"` under `hooks` in `~/.zn/config.json`; zn blocks at most once per answer. Run `zn hooks install codex` again, then review the hook in `/hooks`.

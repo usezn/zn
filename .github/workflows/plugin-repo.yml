@@ -15,6 +15,12 @@
 # failure): a maintainer updates the copy and runs this workflow again by hand.
 # The checks on the published package (provenance, attestation, contents)
 # still fail the job.
+#
+# The ZCode plugin has two more jobs at the end of this file: a check that
+# builds and verifies its tree (no credential), and a release pull request
+# for its own repository (zcode_repo, usezn/zn-gate-zcode-plugin unless a
+# maintainer names another), which only runs when started by hand with
+# zcode_publish.
 name: Plugin repository
 
 on:
@@ -22,6 +28,15 @@ on:
     branches: [ main ]
     paths: [ 'plugins/zn-gate/scripts/zn-gate.lock.json' ]
   workflow_dispatch:
+    inputs:
+      zcode_repo:
+        description: 'Repository of the ZCode plugin (only used when zcode_publish is set)'
+        type: string
+        default: usezn/zn-gate-zcode-plugin
+      zcode_publish:
+        description: 'Open the release pull request in the ZCode plugin repository (the repository and its app access have to exist)'
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -213,3 +228,284 @@ jobs:
           gh pr create --repo usezn/zn-gate-plugin --base main --head "release/$VERSION" \
             --title "zn-gate $VERSION" \
             --body "The zn-gate $VERSION plugin, generated from usezn/zn at $SOURCE. Merging it publishes this version to the Claude plugin directory. Before merging: the Verify check is green on a branch that is up to date with main."
+
+  # The ZCode plugin repository (plugins/zcode, built with build-plugin-repo.js --target zcode): a check that
+  # needs no credential, and a release pull request that does and is off unless a maintainer asks for it.
+  #
+  # zcode-check builds the tree from the published release the plugin is pinned to and verifies it
+  # (verify-plugin-repo.js --target zcode), on every change of the pin and on demand, so a build that would be
+  # refused is found before anyone publishes. It writes nothing anywhere. The placeholder Verify workflow it copies
+  # into the tree is there only because the verifier requires that file; the repository's own copy is compared by
+  # the repository's own checks.
+  zcode-check:
+    name: Build and check the ZCode plugin tree
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - name: Harden the runner (egress block)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: block
+          allowed-endpoints: >-
+            github.com:443
+            api.github.com:443
+            registry.npmjs.org:443
+            tuf-repo.github.com:443
+            tuf-repo-cdn.sigstore.dev:443
+            tmaproduction.blob.core.windows.net:443
+            results-receiver.actions.githubusercontent.com:443
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: zn
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          package-manager-cache: false
+
+      - name: Find the commit that pinned the plugin
+        id: version
+        run: |
+          set -euo pipefail
+          # Same lookup as the Claude Code plugin job above (see the comments there).
+          source="$(git -C zn log -1 --first-parent --format=%H HEAD -- plugins/zn-gate/scripts/zn-gate.lock.json)"
+          git -C zn worktree add --quiet --detach ../src "$source"
+          v="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('src/plugins/zn-gate/scripts/zn-gate.lock.json','utf8')).version))")"
+          if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::the plugin is not pinned to a final release"
+            exit 1
+          fi
+          m="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('src/plugins/zcode/.zcode-plugin/plugin.json','utf8')).version))")"
+          if [ "$m" != "$v" ]; then
+            echo "::error::the ZCode plugin manifest says $m but the plugin is pinned to $v at $source: pin the release again with plugins/tools/pin-release.js, which moves both in one commit"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+
+      - name: Download the published package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if npm pack "zn-gate@$VERSION" --silent --ignore-scripts; then exit 0; fi
+            sleep 30
+          done
+          echo "::error::the pinned zn-gate release is not on npm"
+          exit 1
+
+      - name: Check the package's provenance attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE: ${{ steps.version.outputs.source }}
+        run: |
+          set -euo pipefail
+          git -C zn merge-base --is-ancestor "refs/tags/v$VERSION" "$SOURCE" || { echo "::error::the pin commit does not contain the release tag"; exit 1; }
+          signer=release.yml
+          if git -C zn cat-file -e "refs/tags/v$VERSION:.github/workflows/build-release.yml" 2>/dev/null; then signer=build-release.yml; fi
+          gh attestation verify "zn-gate-$VERSION.tgz" --repo usezn/zn \
+            --signer-workflow "usezn/zn/.github/workflows/$signer" \
+            --source-ref "refs/tags/v$VERSION" --format json > attestation.json
+          built="$(node -e "const a=JSON.parse(require('fs').readFileSync('attestation.json','utf8'));process.stdout.write(String(a[0].verificationResult.signature.certificate.sourceRepositoryDigest))")"
+          if [[ ! "$built" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the attestation names no source commit"; exit 1; fi
+          git -C zn merge-base --is-ancestor "$built" "$SOURCE" || { echo "::error::the package was not built from a commit in the pin's history"; exit 1; }
+
+      - name: Build and check the ZCode plugin tree
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE: ${{ steps.version.outputs.source }}
+        run: |
+          set -euo pipefail
+          mkdir -p tree/.github/workflows
+          cp zn/plugins/claude-dir/verify.yml tree/.github/workflows/verify.yml
+          node src/plugins/tools/build-plugin-repo.js --target zcode --tarball "zn-gate-$VERSION.tgz" --out tree --source "$SOURCE"
+          node src/plugins/tools/verify-plugin-repo.js --target zcode --repo tree --tarball "zn-gate-$VERSION.tgz"
+
+  # zcode-release-pr opens the release pull request in the ZCode plugin repository. It runs only when a maintainer
+  # starts this workflow by hand on main with zcode_publish set, after the repository exists and the GitHub App of
+  # the "plugin-repo" environment is installed on it (with Contents and Pull requests write access and no Workflows
+  # permission, like for the Claude Code plugin repository). A push never runs it, and it is behind the same
+  # environment as the job above. The repository's .github/workflows/verify.yml is added by hand with a pull
+  # request, and has to run verify-plugin-repo.js with --target zcode; until it is there this job opens nothing
+  # and ends with a warning.
+  zcode-release-pr:
+    name: Open the ZCode plugin repository release pull request
+    needs: zcode-check
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.zcode_publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: plugin-repo
+    permissions:
+      contents: read
+      attestations: read
+    env:
+      # The destination comes from the input (a single place), never from the pull request or the repository.
+      ZCODE_REPO: ${{ inputs.zcode_repo }}
+    steps:
+      - name: Harden the runner (egress block)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: block
+          allowed-endpoints: >-
+            github.com:443
+            api.github.com:443
+            registry.npmjs.org:443
+            tuf-repo.github.com:443
+            tuf-repo-cdn.sigstore.dev:443
+            tmaproduction.blob.core.windows.net:443
+            results-receiver.actions.githubusercontent.com:443
+      - name: Check the destination
+        id: dest
+        run: |
+          set -euo pipefail
+          # Only the ZCode plugin repository (never the agent plugin repository, where the App is installed too).
+          if [[ "$ZCODE_REPO" != "usezn/zn-gate-zcode-plugin" ]]; then
+            echo "::error::zcode_repo must be usezn/zn-gate-zcode-plugin: $ZCODE_REPO"
+            exit 1
+          fi
+          echo "name=${ZCODE_REPO#usezn/}" >> "$GITHUB_OUTPUT"
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: zn
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          package-manager-cache: false
+
+      - name: Find the commit that pinned the plugin
+        id: version
+        run: |
+          set -euo pipefail
+          source="$(git -C zn log -1 --first-parent --format=%H HEAD -- plugins/zn-gate/scripts/zn-gate.lock.json)"
+          git -C zn worktree add --quiet --detach ../src "$source"
+          v="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('src/plugins/zn-gate/scripts/zn-gate.lock.json','utf8')).version))")"
+          if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::the plugin is not pinned to a final release"
+            exit 1
+          fi
+          m="$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('src/plugins/zcode/.zcode-plugin/plugin.json','utf8')).version))")"
+          if [ "$m" != "$v" ]; then
+            echo "::error::the ZCode plugin manifest says $m but the plugin is pinned to $v at $source: pin the release again with plugins/tools/pin-release.js, which moves both in one commit"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+
+      - name: Check the plugin repository
+        id: plugin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git clone --quiet "https://github.com/$ZCODE_REPO.git" plugin
+          current="$(node -e "const f='plugin/zn-gate/.zcode-plugin/plugin.json';process.stdout.write(require('fs').existsSync(f)?String(JSON.parse(require('fs').readFileSync(f,'utf8')).version):'0.0.0')")"
+          if [ "$current" = "$VERSION" ] || [ "$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -1)" != "$VERSION" ]; then
+            echo "The plugin repository already has $current; nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -n "$(git -C plugin ls-remote --heads origin "release/$VERSION")" ]; then
+            open="$(gh pr list --repo "$ZCODE_REPO" --head "release/$VERSION" --state open --json number --jq 'length')"
+            if [ "$open" != "0" ]; then
+              echo "The release pull request for $VERSION is already open; nothing to do."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::release/$VERSION exists in the plugin repository without an open pull request. Delete that branch to run this again."
+            exit 1
+          fi
+          if [ ! -f plugin/.github/workflows/verify.yml ]; then
+            msg="the plugin repository has no .github/workflows/verify.yml, so the release pull request for $VERSION was not opened. Add it with a pull request (this job cannot change workflows; it has to run verify-plugin-repo.js with --target zcode), then run this workflow again."
+            echo "::warning::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+      - name: Download the published package
+        if: steps.plugin.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if npm pack "zn-gate@$VERSION" --silent --ignore-scripts; then exit 0; fi
+            sleep 30
+          done
+          echo "::error::the pinned zn-gate release is not on npm"
+          exit 1
+
+      - name: Check the package's provenance attestation
+        if: steps.plugin.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE: ${{ steps.version.outputs.source }}
+        run: |
+          set -euo pipefail
+          git -C zn merge-base --is-ancestor "refs/tags/v$VERSION" "$SOURCE" || { echo "::error::the pin commit does not contain the release tag"; exit 1; }
+          signer=release.yml
+          if git -C zn cat-file -e "refs/tags/v$VERSION:.github/workflows/build-release.yml" 2>/dev/null; then signer=build-release.yml; fi
+          gh attestation verify "zn-gate-$VERSION.tgz" --repo usezn/zn \
+            --signer-workflow "usezn/zn/.github/workflows/$signer" \
+            --source-ref "refs/tags/v$VERSION" --format json > attestation.json
+          built="$(node -e "const a=JSON.parse(require('fs').readFileSync('attestation.json','utf8'));process.stdout.write(String(a[0].verificationResult.signature.certificate.sourceRepositoryDigest))")"
+          if [[ ! "$built" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the attestation names no source commit"; exit 1; fi
+          git -C zn merge-base --is-ancestor "$built" "$SOURCE" || { echo "::error::the package was not built from a commit in the pin's history"; exit 1; }
+
+      - name: Build and check the release branch
+        if: steps.plugin.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE: ${{ steps.version.outputs.source }}
+        run: |
+          set -euo pipefail
+          git -C plugin checkout --quiet -b "release/$VERSION"
+          find plugin -mindepth 1 -maxdepth 1 ! -name .git ! -name .github -exec rm -rf {} +
+          node src/plugins/tools/build-plugin-repo.js --target zcode --tarball "zn-gate-$VERSION.tgz" --out plugin --source "$SOURCE"
+          node src/plugins/tools/verify-plugin-repo.js --target zcode --repo plugin --tarball "zn-gate-$VERSION.tgz"
+          git -C plugin config user.name zn
+          git -C plugin config user.email tljohnsilver@users.noreply.github.com
+          git -C plugin add -A
+          git -C plugin commit --quiet -m "zn-gate $VERSION" -m "Generated from usezn/zn at $SOURCE by its Plugin repository workflow."
+
+      - name: Create a token for the plugin repository
+        if: steps.plugin.outputs.skip != 'true'
+        id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.PLUGIN_REPO_APP_ID }}
+          private-key: ${{ secrets.PLUGIN_REPO_APP_KEY }}
+          owner: usezn
+          repositories: ${{ steps.dest.outputs.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Push the branch and open the pull request
+        if: steps.plugin.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE: ${{ steps.version.outputs.source }}
+        run: |
+          set -euo pipefail
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -C plugin -c http.extraheader="$auth" push --quiet origin "release/$VERSION"
+          gh pr create --repo "$ZCODE_REPO" --base main --head "release/$VERSION" \
+            --title "zn-gate $VERSION" \
+            --body "The zn-gate $VERSION plugin for ZCode, generated from usezn/zn at $SOURCE. Before merging: the Verify check is green on a branch that is up to date with main."

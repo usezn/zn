@@ -5,12 +5,15 @@ Pure Python stdlib. Zero external dependencies.
 
 from __future__ import annotations
 
+import argparse
 import dataclasses
 import functools
 import inspect
 import io
 import itertools
+import logging
 import os
+import re
 from pathlib import PurePath
 import types
 from collections.abc import AsyncIterator, ItemsView, Iterable, Iterator, KeysView, Mapping, ValuesView
@@ -81,6 +84,13 @@ class _Unscannable(Exception):
 # sets or dicts) that one payload may hold before it is blocked as too big to check.
 MAX_OBJECT_VALUES = 100_000
 
+# Depth limit for tool results, counted from the top of the payload, once the
+# walk is inside an object that is not a data model (see _extract_strings).
+# Deeper content still blocks (rule size:nesting); only the limit is higher
+# than for dicts, lists and data models.
+LENIENT_MAX_DEPTH = 32
+_DEFAULT_MAX_DEPTH = 10
+
 _DICT_VIEWS = (KeysView, ValuesView, ItemsView)
 
 
@@ -147,12 +157,36 @@ def _is_framework_context(value: Any) -> bool:
     return False
 
 
-def _is_data_object(value: Any) -> bool:
-    """True for objects that carry plain data: dataclasses, pydantic, attrs and msgspec models.
+# The logging manager and placeholders reach every logger of the process
+# (manager.loggerDict), so they are not read. A logger is read without its
+# manager, parent and level cache: its handlers and filters (a capturing handler
+# holds log records) and any attribute a subclass adds are checked.
+_LOGGING_TYPES = (logging.Manager, logging.PlaceHolder)
+# Attributes of a logger that lead to the other loggers of the process.
+_LOGGER_LINKS = frozenset({"manager", "parent", "_cache"})
 
-    Agent frameworks build these from the model's tool-call arguments, so they
-    are walked as strictly as dicts and lists.
+
+class _Walk:
+    """State shared by one walk: containers read in full (kept so their ids are not
+    reused during the walk) and a count of parts left out."""
+
+    __slots__ = ("done", "skipped")
+
+    def __init__(self) -> None:
+        self.done: Dict[int, Any] = {}
+        self.skipped = 0
+
+
+def _is_data_object(value: Any) -> bool:
+    """True for objects that carry plain data: dataclasses, pydantic, attrs and msgspec
+    models, and SimpleNamespace / argparse.Namespace.
+
+    Agent frameworks build these from the model's tool-call arguments, and
+    json.loads(..., object_hook=lambda d: SimpleNamespace(**d)) builds them
+    from text, so they are walked as strictly as dicts and lists.
     """
+    if isinstance(value, (types.SimpleNamespace, argparse.Namespace)):
+        return True
     klass = type(value)
     return (dataclasses.is_dataclass(value)
             or hasattr(klass, "__pydantic_fields__") or hasattr(klass, "__fields__")
@@ -161,7 +195,10 @@ def _is_data_object(value: Any) -> bool:
 
 def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] = None,
                      _budget: Optional[List[int]] = None, _lenient: bool = False,
-                     lenient_objects: bool = True) -> List[str]:
+                     lenient_objects: bool = True,
+                     lenient_depth: Optional[int] = None,
+                     best_effort_budget: bool = False,
+                     _seen: Optional[_Walk] = None) -> List[str]:
     """Recursively extract all strings from nested structures.
 
     Walks every Mapping (keys and values), list, tuple, set, frozenset and dict
@@ -176,17 +213,33 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     generator (checking it would consume it, so the guarded function would get
     an empty iterator) or when objects and generic iterables hold more than
     MAX_OBJECT_VALUES values, so callers can fail closed. A container that
-    contains itself is walked once.
+    contains itself is walked once, and a container reached through several
+    references is walked and counted once, unless part of it was left out
+    the first time. A logger is read without its links to the other loggers
+    of the process (manager, parent), and the logging manager is skipped.
 
     Inside an object that is not a data model (a plain class instance such as
     a client, a session or an agent's dependencies), the walk is best effort:
-    what sits below the depth limit or past the value budget, or cannot be
-    read, is left out instead of blocking. Such objects are built by the
-    application, not from the model's arguments, and walking them in full
-    blocked every call that passed one. Pass lenient_objects=False (as
-    check_tool_call does) to walk plain objects as strictly as data models: a
-    payload hidden below the depth limit, in an unreadable object or past the
-    value budget then raises like it does for dicts and lists.
+    what sits past the value budget or cannot be read is left out instead of
+    blocking. Such objects are built by the application, not from the
+    model's arguments, and walking them in full blocked every call that
+    passed one. Below the depth limit they are left out too, unless
+    lenient_depth is set (as check_tool_result does, since a result carries
+    outside data): the limit then rises to lenient_depth levels from the top
+    and content deeper than that still raises _NestingTooDeep, and values past
+    the budget raise _Unscannable as they do for data models. Pass
+    lenient_objects=False (as check_tool_call does) to walk plain objects as
+    strictly as data models: a payload hidden below the depth limit, in an
+    unreadable object or past the value budget then raises like it does for
+    dicts and lists. With best_effort_budget (as the guard decorator does for
+    its arguments, together with lenient_depth) values past the budget inside a
+    plain object are left out instead of raising, so only the depth limit is
+    raised for a client, a session or a dependency container.
+
+    A container or object that raises while it is read (a Mapping whose items()
+    is not implemented, as the connection pool of a requests.Session) is left
+    out inside a plain object, and raises _Unscannable (rule type:unscannable)
+    anywhere else.
     """
     if isinstance(data, str):
         return [data]
@@ -195,36 +248,47 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
     if data is None or isinstance(data, (bool, int, float, complex, type, types.ModuleType)) \
             or inspect.isroutine(data):
         return []
-    if _is_framework_context(data):
+    if _is_framework_context(data) or isinstance(data, _LOGGING_TYPES):
+        return []
+    seen = _seen if _seen is not None else _Walk()
+    if id(data) in seen.done:
         return []
     budget = _budget if _budget is not None else [MAX_OBJECT_VALUES]
     lenient = _lenient
     children: Optional[List[Any]]
-    if isinstance(data, Mapping):
-        children = []
-        for k, v in data.items():
-            children.append(k)
-            children.append(v)
-    elif isinstance(data, (list, tuple, set, frozenset)):
-        children = list(data)
+    if isinstance(data, (Mapping, list, tuple, set, frozenset, _DICT_VIEWS)):
+        try:
+            if isinstance(data, Mapping):
+                children = []
+                for k, v in data.items():
+                    children.append(k)
+                    children.append(v)
+            else:
+                children = list(data)
+        except Exception:
+            if lenient:
+                return []
+            raise _Unscannable("type:unscannable", "An object could not be read to check it") from None
     elif isinstance(data, os.PathLike):
         path_value = os.fspath(data)
-        found = _extract_strings(path_value, max_depth, _path, budget, lenient_objects=lenient_objects)
+        found = _extract_strings(path_value, max_depth, _path, budget, lenient_objects=lenient_objects,
+                                lenient_depth=lenient_depth, best_effort_budget=best_effort_budget, _seen=seen)
         # On Windows str() gives backslashes; the path rules also see the form with forward slashes.
         if isinstance(data, PurePath) and data.as_posix() != path_value:
-            found += _extract_strings(data.as_posix(), max_depth, _path, budget, lenient_objects=lenient_objects)
+            found += _extract_strings(data.as_posix(), max_depth, _path, budget, lenient_objects=lenient_objects,
+                                lenient_depth=lenient_depth, best_effort_budget=best_effort_budget, _seen=seen)
         return found
     elif isinstance(data, io.IOBase):
         # An open file or stream: its contents are read by the tool, not passed
         # as text, and reading them here would move the file position. Check its name.
         name = getattr(data, "name", None)
-        return _extract_strings(name, max_depth, _path, budget, lenient_objects=lenient_objects) if isinstance(name, (str, bytes)) else []
+        return _extract_strings(name, max_depth, _path, budget, lenient_objects=lenient_objects,
+                                lenient_depth=lenient_depth,
+                                best_effort_budget=best_effort_budget, _seen=seen) if isinstance(name, (str, bytes)) else []
     elif isinstance(data, Iterator) or isinstance(data, AsyncIterator):
         raise _Unscannable("type:unscannable",
                            "A one-shot iterator (such as a generator) cannot be checked "
                            "without consuming it; pass a list instead")
-    elif isinstance(data, _DICT_VIEWS):
-        children = list(data)
     else:
         # An object with attributes that is not a data model is walked best
         # effort; containers without attributes (deque, array, custom
@@ -232,45 +296,69 @@ def _extract_strings(data: Any, max_depth: int = 10, _path: Optional[Set[int]] =
         is_model = _is_data_object(data)
         try:
             children = _object_fields(data)
+            if children is not None and isinstance(data, logging.Logger):
+                children = [c for i in range(0, len(children) - 1, 2)
+                            if children[i] not in _LOGGER_LINKS for c in children[i:i + 2]]
             if children is not None:
-                lenient = lenient or (not is_model and lenient_objects)
+                if not lenient and not is_model and lenient_objects:
+                    # Entering an application object: unreadable parts and the value
+                    # budget become best effort; with lenient_depth the depth limit
+                    # rises but content deeper than it still blocks.
+                    lenient = True
+                    if lenient_depth is not None:
+                        max_depth += lenient_depth - _DEFAULT_MAX_DEPTH
             elif isinstance(data, Iterable):
                 children = []
                 for item in itertools.islice(data, max(budget[0], 0) + 1):
                     children.append(item)
         except Exception:
             if lenient or (not is_model and lenient_objects):
+                seen.skipped += 1
                 return []
             raise _Unscannable("type:unscannable", "An object could not be read to check it") from None
         if children is None:
             return []
-        if lenient and budget[0] - len(children) < 0:
+        if lenient and (lenient_depth is None or best_effort_budget) and budget[0] - len(children) < 0:
+            seen.skipped += 1
             return []
         budget[0] -= len(children)
         if budget[0] < 0:
             raise _Unscannable("size:items", "Too many values to check")
     if max_depth <= 0:
-        if lenient:
+        if lenient and lenient_depth is None:
+            seen.skipped += 1
             return []
         raise _NestingTooDeep()
     path = _path if _path is not None else set()
     if id(data) in path:
         return []
     path.add(id(data))
+    skipped_before = seen.skipped
+    done_before = len(seen.done)
     try:
         strings: List[str] = []
         for child in children:
-            strings.extend(_extract_strings(child, max_depth - 1, path, budget, lenient, lenient_objects))
+            strings.extend(_extract_strings(child, max_depth - 1, path, budget, lenient, lenient_objects,
+                                            lenient_depth, best_effort_budget, seen))
+        if seen.skipped == skipped_before:
+            seen.done[id(data)] = data
+        else:
+            # Something below was left out: what was marked done meanwhile may have
+            # stopped at a cycle back into this partly read part, so read it again.
+            while len(seen.done) > done_before:
+                seen.done.popitem()
         return strings
     finally:
         path.discard(id(data))
 
 
-def _strings_or_block(data: Any, what: str,
-                      lenient_objects: bool = True) -> Tuple[List[str], Optional[Assessment]]:
+def _strings_or_block(data: Any, what: str, lenient_objects: bool = True,
+                      lenient_depth: Optional[int] = None,
+                      best_effort_budget: bool = False) -> Tuple[List[str], Optional[Assessment]]:
     """_extract_strings, or a block Assessment when the payload cannot be checked in full."""
     try:
-        return _extract_strings(data, lenient_objects=lenient_objects), None
+        return _extract_strings(data, lenient_objects=lenient_objects, lenient_depth=lenient_depth,
+                                best_effort_budget=best_effort_budget), None
     except _NestingTooDeep:
         return [], Assessment(verdict="block", confidence=1.0, rule="size:nesting",
                               reason=f"{what} nested too deeply to check")
@@ -319,9 +407,24 @@ def _call_payload(func: Any, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> D
     return {"args": args, "kwargs": kwargs}
 
 
+def _unwrap_partial(func: Any) -> Tuple[Any, Tuple[Any, ...], Dict[str, Any]]:
+    """(innermost callable, arguments bound by functools.partial, keywords bound by it).
+    Nested partials are flattened, the outer binding last so it wins on a repeated keyword."""
+    bound_args: Tuple[Any, ...] = ()
+    bound_kwargs: Dict[str, Any] = {}
+    while isinstance(func, functools.partial):
+        bound_args = tuple(func.args) + bound_args
+        bound_kwargs = {**func.keywords, **bound_kwargs}
+        func = func.func
+    return func, bound_args, bound_kwargs
+
+
 def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[bool],
-                  lenient_objects: bool = True, allow_truncated: bool = False) -> Assessment:
-    strings_to_check, blocked = _strings_or_block(data, what, lenient_objects=lenient_objects)
+                  lenient_objects: bool = True, allow_truncated: bool = False,
+                  lenient_depth: Optional[int] = None, best_effort_budget: bool = False) -> Assessment:
+    strings_to_check, blocked = _strings_or_block(data, what, lenient_objects=lenient_objects,
+                                                  lenient_depth=lenient_depth,
+                                                  best_effort_budget=best_effort_budget)
     if blocked is not None:
         return blocked
     if too_invisible(strings_to_check):
@@ -368,8 +471,13 @@ def check_tool_call(tool_name: str, arguments: Any = None, strict: Optional[bool
     and such arguments are blocked (rule size:truncated) when block_truncated
     is set or the ZN_BLOCK_TRUNCATED environment variable is "1".
     """
+    # The guard decorator passes _lenient_objects=True: a plain application object (a client, a
+    # session, a dependency container) in the arguments is read down to the same depth as in a
+    # result, and text found there is checked; dicts, lists, namespaces and data models stay strict.
     return _scan_strings(arguments, "Arguments", block_truncated=block_truncated, strict=strict,
-                         lenient_objects=_lenient_objects)
+                         lenient_objects=_lenient_objects,
+                         lenient_depth=LENIENT_MAX_DEPTH if _lenient_objects else None,
+                         best_effort_budget=_lenient_objects)
 
 
 def check_tool_result(result: Any, block_truncated: bool = False, strict: Optional[bool] = None,
@@ -385,7 +493,7 @@ def check_tool_result(result: Any, block_truncated: bool = False, strict: Option
     checked in full is blocked as for check_tool_call (for example a generator).
     """
     res = _scan_strings(result, "Result", block_truncated=block_truncated, strict=strict,
-                        allow_truncated=allow_truncated)
+                        allow_truncated=allow_truncated, lenient_depth=LENIENT_MAX_DEPTH)
     if res.rule == "size:truncated":
         res.reason = "Output too large to scan in full"
     return res
@@ -411,6 +519,32 @@ class MaskedToolError(RuntimeError):
 # Characters of the previous streamed chunk that are checked again with the
 # next one, so a blocked phrase split between two chunks is still found.
 STREAM_OVERLAP = 256
+
+# With mask_secrets, a streamed result keeps this many characters of text back, so a
+# secret that is split between two chunks is masked whole. The longest secret the
+# masker matches in a bounded span is a JWT (8192 + 512 + 4096 characters plus the
+# separators, about 12.8 thousand); a private key block is about 3.3 thousand
+# characters for RSA 4096 and 6.4 thousand for RSA 8192. 16 KiB covers all of them.
+# The held text is kept as it arrived, not masked: a secret with an open length
+# (a credential value after a name such as api_key=) is masked whole only when
+# its start is still in the text, however long it grows.
+STREAM_MASK_HOLD = 16384
+# New text is masked in batches: nothing is masked or passed on until the held
+# text and the new chunks together exceed STREAM_MASK_HOLD by this much, so a
+# stream of many small chunks does not mask the held text again for each chunk.
+STREAM_MASK_BATCH = 4096
+# Text is passed on up to a point (a cut) where masking the text before it and the text
+# after it gives the same as masking the whole buffer, so no secret is split: the cut is
+# at least STREAM_MASK_HOLD from the end; when a secret the masker found lies across it,
+# the cut moves back to where that secret starts, and from there to earlier breaks (next
+# to a character other than a letter, digit, "_" or "-"): first the STREAM_MASK_CUT_TRIES
+# nearest ones, then breaks further and further back (64, 128, 256... characters).
+# Without a clean cut nothing is passed on until the buffer holds STREAM_MASK_FORCE
+# characters; past that, the stream is blocked (rule secret:unmaskable) rather than
+# passing part of a secret on.
+STREAM_MASK_CUT_TRIES = 24
+STREAM_MASK_FORCE = 262144
+_TOKEN_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
 _ERROR_CHAIN_LIMIT = 8
 
 
@@ -425,6 +559,196 @@ def _mask_text(text: str) -> str:
     from . import rules
     masked, _ = rules.sanitize_tool_result(text)
     return masked if isinstance(masked, str) else text
+
+
+def _mask_text_spans(text: str) -> Tuple[str, List[Tuple[int, int]]]:
+    """The masked text and where the masked secrets were in `text` (start, end)."""
+    from . import rules
+    masked, found = rules.sanitize_tool_result(text)
+    if not isinstance(masked, str):
+        return text, []
+    spans = [(d["start"], d["end"]) for d in found
+             if isinstance(d, dict) and isinstance(d.get("start"), int) and isinstance(d.get("end"), int)]
+    return masked, spans
+
+
+_OPEN_KEY = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----")
+_END_KEY = re.compile(r"-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----")
+
+
+def _open_private_key(text: str) -> Optional[int]:
+    """Start of the last private key header with no END line after it (None when none).
+
+    The private key rule only matches a whole key, so until its END line arrives the
+    masker sees no secret there: the text from the header on is held back."""
+    last = None
+    for m in _OPEN_KEY.finditer(text):
+        last = m
+    if last is None or _END_KEY.search(text, last.end()):
+        return None
+    return last.start()
+
+
+def _before_spans(spans: List[Tuple[int, int]], cut: int) -> int:
+    """cut moved back to the start of every span that lies across it."""
+    moved = True
+    while moved:
+        moved = False
+        for start, end in spans:
+            if start < cut < end:
+                cut = start
+                moved = True
+    return cut
+
+
+def _previous_break(text: str, cut: int) -> int:
+    """The nearest place before cut that is not inside a run of letters, digits, "_" and "-" (0 when none)."""
+    cut -= 1
+    while cut > 0 and text[cut - 1] in _TOKEN_CHARS and text[cut] in _TOKEN_CHARS:
+        cut -= 1
+    return max(cut, 0)
+
+
+def _cut_candidates(text: str, start: int) -> List[int]:
+    """Places to try a cut at, from start back: start and the breaks just before it, then
+    breaks further and further back, down to the first break of the text."""
+    cuts: List[int] = []
+    cut = start
+    while cut > 0 and len(cuts) < STREAM_MASK_CUT_TRIES:
+        cuts.append(cut)
+        cut = _previous_break(text, cut)
+    last = cuts[-1] if cuts else 0
+    step = 64
+    while step < start:
+        far = _previous_break(text, start - step + 1)
+        if 0 < far < last:
+            cuts.append(far)
+            last = far
+        step *= 2
+    first = 1
+    while first < len(text) and text[first - 1] in _TOKEN_CHARS and text[first] in _TOKEN_CHARS:
+        first += 1
+    if 0 < first < last:
+        cuts.append(first)
+    return cuts
+
+
+class _StreamMasker:
+    """Masks the chunks of a streamed result without letting a secret through where two
+    chunks meet.
+
+    Text (str, and bytes that are valid UTF-8) is appended to a buffer, as it arrived.
+    When the buffer is longer than STREAM_MASK_HOLD + STREAM_MASK_BATCH it is masked
+    as a whole to find where a secret lies, the text before a cut that is at least
+    STREAM_MASK_HOLD from the end and outside every secret is masked and passed on,
+    and the rest stays in the buffer, unmasked, to be masked again with the next
+    chunk, so a secret that is cut by the end of a chunk is masked whole.
+    flush() masks and passes on what is left. Chunks of other types and bytes that
+    are not UTF-8 text are masked one by one, after the buffer is flushed, so the
+    order of the stream is kept.
+    """
+
+    def __init__(self) -> None:
+        self.pending = ""
+        self.kind: Optional[type] = None  # str or bytes: the type the held text is passed on as
+        self._partial = b""  # the first bytes of a multi-byte character cut by a chunk end
+        self._next_try = 0  # do not look for a cut again before the buffer is this long
+        self.unmaskable = False  # a secret too long to pass on in parts: the stream must be blocked
+
+    def _out(self, text: str) -> Any:
+        return text.encode("utf-8") if self.kind is bytes else text
+
+    def empty(self) -> Any:
+        """An empty chunk of the type of the held text."""
+        return b"" if self.kind is bytes else ""
+
+    def flush(self) -> List[Any]:
+        """Everything still held, masked, and empty the masker."""
+        pieces: List[Any] = []
+        if self.pending:
+            pieces.append(self._out(_mask_text(self.pending)))
+        if self._partial:
+            pieces.append(self._partial)
+        self.pending = ""
+        self.kind = None
+        self._partial = b""
+        self._next_try = 0
+        return pieces
+
+    def _release(self) -> str:
+        """The masked text that can be passed on now (and drop it from the buffer), or "" when no cut is safe."""
+        text = self.pending
+        limit = len(text) - STREAM_MASK_HOLD
+        open_at = _open_private_key(text)
+        if open_at is not None and open_at < limit:
+            if open_at == 0:
+                # A private key still open at the start of the buffer: keep it whole, or block
+                # once it is longer than the stream can hold.
+                if len(text) > STREAM_MASK_FORCE:
+                    self.unmaskable = True
+                else:
+                    self._next_try = min(2 * len(text), STREAM_MASK_FORCE + 1)
+                return ""
+            limit = open_at
+        whole, spans = _mask_text_spans(text)
+        if whole == text:
+            # No secret in the buffer: any cut is safe.
+            self.pending = text[limit:]
+            return text[:limit]
+        for cut in _cut_candidates(text, _before_spans(spans, limit)):
+            head = _mask_text(text[:cut])
+            if head + _mask_text(text[cut:]) == whole:
+                self.pending = text[cut:]
+                self._next_try = 0
+                return head
+        if len(text) <= STREAM_MASK_FORCE:
+            # A secret lies across every cut tried: keep the text, look again when it is twice as long
+            # (or just past STREAM_MASK_FORCE).
+            self._next_try = min(2 * len(text), STREAM_MASK_FORCE + 1)
+            return ""
+        # Too much held and no clean cut: never pass part of a secret on.
+        self.unmaskable = True
+        return ""
+
+    def _decode(self, data: bytes) -> Optional[str]:
+        """The text of data after the bytes held from the last chunk, or None when it is not UTF-8."""
+        data = self._partial + data
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            if exc.reason != "unexpected end of data" or exc.end != len(data):
+                return None
+            self._partial = data[exc.start:]
+            return data[:exc.start].decode("utf-8")
+        self._partial = b""
+        return text
+
+    def feed(self, chunk: Any) -> Tuple[List[Any], bool]:
+        """(pieces to pass on now, True), or (what was flushed, False) when the chunk is not text:
+        the caller then masks the chunk by itself and passes it on after those pieces."""
+        pieces: List[Any] = []
+        if isinstance(chunk, str):
+            kind: type = str
+            if self.kind is bytes:
+                pieces = self.flush()
+            text = chunk
+        elif isinstance(chunk, (bytes, bytearray)):
+            kind = bytes
+            if self.kind is str:
+                pieces = self.flush()
+            decoded = self._decode(bytes(chunk))
+            if decoded is None:
+                return pieces + self.flush(), False
+            text = decoded
+        else:
+            return self.flush(), False
+        self.kind = kind
+        self.pending += text
+        if len(self.pending) > max(STREAM_MASK_HOLD + STREAM_MASK_BATCH, self._next_try):
+            ready = self._release()
+            if ready:
+                pieces.append(self._out(ready))
+        return pieces, True
 
 
 def _jsonlike(data: Any, depth: int = 0) -> Any:
@@ -463,7 +787,8 @@ def _has_secret(data: Any) -> bool:
 
 
 def _mask_value(res: Any) -> Tuple[Any, Optional[Assessment]]:
-    """(value with secrets masked, None), or (res, a block Assessment) when a secret cannot be masked.
+    """(value with secrets masked, None), or (res, a block Assessment) when a secret cannot be masked
+    or the value is too deep, too large or contains itself (rule size:nesting or size:items).
 
     Strings, lists, dicts and tuples keep their type. A result that holds an
     object (a pydantic model, a dataclass...) with a secret in it comes back as
@@ -471,7 +796,12 @@ def _mask_value(res: Any) -> Tuple[Any, Optional[Assessment]]:
     shows after masking blocks the result (rule "secret:unmaskable").
     """
     from . import rules
-    clean, _ = rules.sanitize_tool_result(res)
+    try:
+        clean, _ = rules.sanitize_tool_result(res)
+    except rules.SanitizeLimitError as exc:
+        # Nested too deeply, a container that contains itself or too many values: a controlled block.
+        return res, Assessment(verdict="block", confidence=1.0, rule=exc.rule,
+                               reason=f"The result cannot be masked: {exc.reason}")
     if isinstance(res, str):
         return clean, None
     try:
@@ -484,6 +814,20 @@ def _mask_value(res: Any) -> Tuple[Any, Optional[Assessment]]:
         pass
     return res, Assessment(verdict="block", confidence=1.0, rule="secret:unmaskable",
                            reason="The result holds a secret that could not be masked")
+
+
+def _secret_masked(original: Any, masked: Any) -> bool:
+    """Whether _mask_value hid a secret in `original`.
+
+    Decided by scanning `original`, not by comparing it with `masked`: an
+    object in a tool result can define __eq__ to always answer True.
+    """
+    if masked is original:
+        return False
+    try:
+        return _has_secret(original)
+    except Exception:
+        return True
 
 
 def _error_texts(exc: BaseException) -> List[str]:
@@ -636,8 +980,11 @@ class _ResultPolicy:
             return self.handle_error(caught)
         return self.finish(res)
 
-    def _chunk(self, chunk: Any, tail: str) -> Tuple[Any, str, bool]:
-        """(chunk to pass on, new overlap tail, stop after this chunk)."""
+    def _chunk(self, chunk: Any, tail: str, masker: Optional[_StreamMasker] = None) -> Tuple[List[Any], str, bool]:
+        """(pieces to pass on, new overlap tail, stop after this chunk).
+
+        A blocked chunk ends the stream, and the text the masker still holds is withheld with it.
+        """
         if self.check:
             assessment = check_tool_result(chunk, block_truncated=self.block_truncated)
             if assessment.allowed and tail and isinstance(chunk, str):
@@ -645,13 +992,22 @@ class _ResultPolicy:
                 if not joined.allowed:
                     assessment = joined
             if not assessment.allowed:
-                return self.blocked(assessment, chunk), "", True
+                return [self.blocked(assessment, chunk)], "", True
         new_tail = (tail + chunk)[-STREAM_OVERLAP:] if isinstance(chunk, str) else ""
-        if self.mask:
-            chunk, unmaskable = _mask_value(chunk)
-            if unmaskable is not None:
-                return self.blocked(unmaskable, None), "", True
-        return chunk, new_tail, False
+        if masker is None:
+            return [chunk], new_tail, False
+        pieces, handled = masker.feed(chunk)
+        if masker.unmaskable:
+            # The held text is withheld with the block.
+            return pieces + [self.blocked(Assessment(
+                verdict="block", confidence=1.0, rule="secret:unmaskable",
+                reason="The streamed result holds a secret too long to mask in parts"), None)], "", True
+        if handled:
+            return pieces, new_tail, False
+        masked, unmaskable = _mask_value(chunk)
+        if unmaskable is not None:
+            return pieces + [self.blocked(unmaskable, None)], "", True
+        return pieces + [masked], new_tail, False
 
     def _stream(self, gen: Any) -> Any:
         policy = self
@@ -659,22 +1015,38 @@ class _ResultPolicy:
         def guarded_stream() -> Any:
             tail = ""
             sent = None
+            masker = _StreamMasker() if policy.mask else None
             try:
                 while True:
                     caught: Optional[Exception] = None
+                    ended = False
+                    result: Any = None
+                    chunk: Any = None
                     try:
                         chunk = gen.send(sent)
                     except StopIteration as stop:
-                        return stop.value
+                        ended, result = True, stop.value
                     except GuardBlockError:
                         raise
                     except Exception as exc:
                         caught = exc
-                    if caught is not None:
-                        yield policy.handle_error(caught)
-                        return None
-                    out, tail, done = policy._chunk(chunk, tail)
-                    sent = yield out
+                    if ended or caught is not None:
+                        # The end of the stream, or its failure: pass on the text still held first.
+                        if masker is not None:
+                            for piece in masker.flush():
+                                yield piece
+                        if caught is not None:
+                            yield policy.handle_error(caught)
+                            return None
+                        return result
+                    pieces, tail, done = policy._chunk(chunk, tail, masker)
+                    if not pieces:
+                        # Nothing to pass on yet: an empty chunk keeps one output per input chunk,
+                        # so a value sent into the stream reaches the function at the right time.
+                        pieces = [masker.empty() if masker is not None else chunk]
+                    sent = None
+                    for piece in pieces:
+                        sent = yield piece
                     if done:
                         return None
             finally:
@@ -688,22 +1060,36 @@ class _ResultPolicy:
         async def guarded_astream() -> Any:
             tail = ""
             sent = None
+            masker = _StreamMasker() if policy.mask else None
             try:
                 while True:
                     caught: Optional[Exception] = None
+                    ended = False
+                    chunk: Any = None
                     try:
                         chunk = await agen.asend(sent)
                     except StopAsyncIteration:
-                        return
+                        ended = True
                     except GuardBlockError:
                         raise
                     except Exception as exc:
                         caught = exc
-                    if caught is not None:
-                        yield policy.handle_error(caught)
+                    if ended or caught is not None:
+                        # The end of the stream, or its failure: pass on the text still held first.
+                        if masker is not None:
+                            for piece in masker.flush():
+                                yield piece
+                        if caught is not None:
+                            yield policy.handle_error(caught)
                         return
-                    out, tail, done = policy._chunk(chunk, tail)
-                    sent = yield out
+                    pieces, tail, done = policy._chunk(chunk, tail, masker)
+                    if not pieces:
+                        # Nothing to pass on yet: an empty chunk keeps one output per input chunk,
+                        # so a value sent into the stream reaches the function at the right time.
+                        pieces = [masker.empty() if masker is not None else chunk]
+                    sent = None
+                    for piece in pieces:
+                        sent = yield piece
                     if done:
                         return
             finally:
@@ -740,8 +1126,15 @@ def guard(
                 callback (ValueError otherwise). A blocked call never runs the
                 function, and a blocked result is never returned.
     - fallback: Value to return if on_block="return".
-    - check_args: Whether to inspect input arguments (default True). The instance
-                  of a method (`self` or `cls`) is not inspected.
+    - check_args: Whether to inspect input arguments (default True). Data
+                  (dicts, lists, namespaces, data models) nested deeper than
+                  ten levels blocks the call (rule size:nesting). A plain
+                  application object (a client, a session, a dependency
+                  container) is read down to 32 levels and text found in it is
+                  checked; what is deeper than that blocks, and what cannot be
+                  read or is past the value budget is left out. The instance
+                  of a method (`self` or `cls`), framework run contexts and
+                  logging objects are not inspected.
     - check_result: Whether to inspect function return value (default False).
     - mask_secrets: Automatically redact leaked credentials in result (default False).
     - callback: Optional hook called on block: callback(assessment, func_name, payload).
@@ -758,10 +1151,16 @@ def guard(
       `async def`, and sync functions that return a coroutine or other
       awaitable are awaited first, then checked and masked;
     - streamed: a generator or async generator result is passed on chunk by
-      chunk, each chunk checked (together with the end of the previous one)
-      and masked. A blocked chunk ends the stream: GuardBlockError, or the
-      fallback as the last chunk with on_block="return". A secret split
-      across two chunks is not masked;
+      chunk, each chunk checked (together with the end of the previous one).
+      A blocked chunk ends the stream: GuardBlockError, or the fallback as the
+      last chunk with on_block="return". With mask_secrets the text is masked as
+      one stream, so a secret split across chunks is masked whole: the last
+      16 KiB of text are held back, as it arrived, until more text or the end
+      of the stream (also when the function fails) arrives; a secret that
+      reaches into them keeps the text from its start held as well. Each chunk the function yields
+      still gives one chunk out, empty while its text is held, so the text
+      comes out later and in larger pieces, in order and without gaps. The
+      held text is withheld when a chunk blocks;
     - exceptions: the message of an exception raised by the function is
       checked and masked like a result, because agent frameworks pass it to
       the model. A blocked message raises GuardBlockError (or returns the
@@ -777,12 +1176,23 @@ def guard(
         raise ValueError('on_block="custom" needs a callback; use on_block="raise" or pass callback=...')
 
     def decorator(func: _F) -> _F:
+        if isinstance(func, (classmethod, staticmethod)):
+            # Keep the descriptor: guard the plain function inside it and wrap it again
+            # as the same kind, so calls through the class and through an instance work.
+            return cast(_F, type(func)(decorator(func.__func__)))
         func_name = getattr(func, "__name__", "anonymous")
+        target, bound_args, bound_kwargs = _unwrap_partial(func)
 
         def _on_args(args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Tuple[bool, Any]:
             """(True, value to return) when the call is blocked; raises in the raise and custom modes."""
+            if bound_args or bound_kwargs:
+                # Arguments fixed with functools.partial are scanned with the call arguments.
+                args = bound_args + args
+                kwargs = {**bound_kwargs, **kwargs}
             combined_args = {"args": args, "kwargs": kwargs}
-            assessment = check_tool_call(func_name, _call_payload(func, args, kwargs),
+            # Plain application objects are read down to LENIENT_MAX_DEPTH levels, as in a result;
+            # data (dicts, lists, namespaces, models) deeper than ten levels blocks.
+            assessment = check_tool_call(func_name, _call_payload(target, args, kwargs),
                                          block_truncated=block_truncated,
                                          _lenient_objects=True)
             if assessment.allowed:

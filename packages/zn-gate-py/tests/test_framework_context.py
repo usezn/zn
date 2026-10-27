@@ -1,7 +1,7 @@
 """Framework run-context arguments (pydantic-ai RunContext, Google ADK ToolContext,
 OpenAI Agents SDK ToolContext / RunContextWrapper, LangChain callback managers and
-RunnableConfig) are not checked, and application objects are walked best effort,
-while the model's own arguments are still checked in full.
+RunnableConfig) are not checked, while the model's own arguments and application
+objects are still checked in full.
 
 Fictitious values only. The pydantic-ai case is skipped when it is not installed.
 """
@@ -93,14 +93,15 @@ class TestFrameworkContextArguments(unittest.TestCase):
         self.assertEqual(tool("weather", config), "ran")
         self.assertEqual(tool(BAD, config=config), "blocked")
 
-    def test_deep_application_object_does_not_block(self):
-        # An HTTP client, a session or agent dependencies: built by the
-        # application, not by the model, and often deeply nested.
+    def test_deep_application_object_is_read_to_32_levels(self):
+        # An HTTP client, a session or agent dependencies: built by the application, not by
+        # the model, and often deeply nested. They are read down to 32 levels, as a result is.
         @guard(on_block="return", fallback="blocked")
         def tool(client, q):
             return "ran"
 
-        self.assertEqual(tool(_deep(40, "x"), "weather"), "ran")
+        self.assertEqual(tool(_deep(20, "x"), "weather"), "ran")
+        self.assertEqual(tool(_deep(40, "x"), "weather"), "blocked")
 
     def test_shallow_strings_in_plain_objects_are_still_checked(self):
         @guard(on_block="return", fallback="blocked")
