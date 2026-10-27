@@ -4,12 +4,16 @@
   "private": true,
   "description": "LangChain.js and LangGraph.js agent guarded by zn-gate (runs offline)",
   "main": "index.js",
-  "scripts": { "start": "node index.js" },
-  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@langchain/core": "1.2.18",
     "@langchain/langgraph": "1.5.1",
-    "zn-gate": "1.13.1",
+    "zn-gate": "1.14.0-rc.2",
     "zod": "4.6.7"
   }
 }

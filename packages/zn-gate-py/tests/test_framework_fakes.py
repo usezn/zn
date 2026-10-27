@@ -242,8 +242,11 @@ class TestGuardedToolSync(unittest.TestCase):
             yield "key " + KEY
 
         chunks = list(stream())
-        self.assertEqual(chunks[0], "first")
-        self.assertNotIn(KEY, chunks[1])
+        # 1.14.0 holds streamed text until it can cut where no secret is split, so the
+        # text may arrive in a later chunk; what counts is the whole output.
+        self.assertTrue("".join(chunks).startswith("first"))
+        self.assertTrue(all(KEY not in c for c in chunks))
+        self.assertNotIn(KEY, "".join(chunks))
 
     def test_async_blocked_call_does_not_run(self):
         ran = []

@@ -151,17 +151,25 @@ test('E2E: shadowed .env + zn run with an allowed command never shows a value; o
   const readOut = await hook({ hook_event_name: 'PostToolUse', cwd: dir, tool_name: 'Read', tool_input: { file_path: envPath }, tool_response: { type: 'text', file: { filePath: envPath, content: shadowed } } });
   transcript.push(readOut ? JSON.stringify(readOut) : shadowed);
 
-  // 3. The agent runs a command with the marker: the hook wraps it in zn run.
+  // 3. The agent writes the marker in the arguments of a command: the hook refuses it (the value would show in the
+  //    process list) and says to use the environment. The program reads the value from its environment, where the
+  //    shadowed .env (loaded by the shell or direnv) put the marker, and zn run fills it in.
   const agentCmd = NODE + ' print.js "__ZN_DATABASE_URL_PASSWORD__"';
   transcript.push(agentCmd);
   const pre = await hook({ hook_event_name: 'PreToolUse', cwd: dir, tool_name: 'Bash', tool_input: { command: agentCmd, description: 'connect' } });
-  assert.equal(pre.hookSpecificOutput.permissionDecision, 'ask');
-  assert.equal(pre.hookSpecificOutput.updatedInput.command, 'ZN_AGENT=claude-code zn run -- ' + agentCmd);
-  // The shell would run: zn run -- node print.js __ZN_DATABASE_URL_PASSWORD__
+  assert.equal(pre.hookSpecificOutput.permissionDecision, 'deny');
+  assert.equal(pre.hookSpecificOutput.updatedInput, undefined);
+  assert.match(pre.hookSpecificOutput.permissionDecisionReason, /run --secrets NAME -- <command>/);
+  const sameInArgv = sink();
+  assert.equal(await runBroker(['--', NODE, 'print.js', '__ZN_DATABASE_URL_PASSWORD__'], {
+    vault, cwd: dir, env: PATH_ENV, stdout: sink(), stderr: sameInArgv, stdin: { isTTY: false }, znHome: path.join(dir, '.zn'),
+  }), 77, 'zn run refuses it too');
+  assert.match(sameInArgv.text(), /not filled in/);
+  // The shell would run: zn run -- node print.js, with DB_PASS=__ZN_DATABASE_URL_PASSWORD__ in its environment.
   const stdout = sink();
   const stderr = sink();
-  const code = await runBroker(['--', NODE, 'print.js', '__ZN_DATABASE_URL_PASSWORD__'], {
-    vault, cwd: dir, env: { ...PATH_ENV, ZN_AGENT: 'claude-code' }, stdout, stderr, stdin: { isTTY: false }, znHome: path.join(dir, '.zn'),
+  const code = await runBroker(['--', NODE, 'print.js'], {
+    vault, cwd: dir, env: { ...PATH_ENV, ZN_AGENT: 'claude-code', DB_PASS: '__ZN_DATABASE_URL_PASSWORD__' }, stdout, stderr, stdin: { isTTY: false }, znHome: path.join(dir, '.zn'),
   });
   assert.equal(code, 0, stderr.text());
   assert.match(stdout.text(), /connecting with __ZN_DATABASE_URL_PASSWORD__/, 'value masked in stdout');
@@ -173,7 +181,7 @@ test('E2E: shadowed .env + zn run with an allowed command never shows a value; o
   // 4. A command outside allowCommands is refused before it starts.
   const denyErr = sink();
   const denyOut = sink();
-  const denied = await runBroker(['--', NODE, 'print.js', '__ZN_GITHUB_TOKEN__'], {
+  const denied = await runBroker(['--secrets', 'GITHUB_TOKEN', '--', NODE, 'print.js'], {
     vault, cwd: dir, env: PATH_ENV, stdout: denyOut, stderr: denyErr, stdin: { isTTY: false }, znHome: path.join(dir, '.zn'),
   });
   assert.equal(denied, 77);

@@ -245,7 +245,7 @@ test('claude-code: project scope keeps a foreign "secrets" MCP server and remove
   const mcpFile = path.join(project, '.mcp.json');
   write(mcpFile, JSON.stringify({ mcpServers: { secrets: { command: 'other-tool' } } }));
   const r = claude.install(opts(h, { mcp: true, scope: 'project', projectDir: project }));
-  assert.ok(r.warnings.some((w) => /already exists/.test(w)));
+  assert.ok(r.warnings.some((w) => /a project install adds no MCP server/.test(w)));
   assert.deepEqual(json(mcpFile).mcpServers.secrets, { command: 'other-tool' });
 
   write(mcpFile, JSON.stringify({ mcpServers: { secrets: ZN_SERVER } }));
@@ -406,7 +406,7 @@ test('cursor: on win32 each hook runs through powershell.exe, and uninstall find
   cursor.install(win);
   const hooks = json(file).hooks;
   for (const entries of Object.values(hooks)) {
-    for (const e of entries) assert.match(e.command, /^powershell\.exe /);
+    for (const e of entries) assert.match(e.command, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe /);
   }
   assert.equal(cursor.uninstall(win).removed, 1);
   assert.deepEqual(json(file).hooks, {});

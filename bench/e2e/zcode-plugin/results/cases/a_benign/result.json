@@ -1,0 +1,20 @@
+{
+ "rc": 0,
+ "dur_s": 9.4,
+ "requests": 3,
+ "tool_msgs": [
+  "a.txt",
+  "1\thello world\n2\t"
+ ],
+ "proj_files": [
+  ".env",
+  "a.txt"
+ ],
+ "outcomes": [
+  "success",
+  "success",
+  "success",
+  "success",
+  "success"
+ ]
+}

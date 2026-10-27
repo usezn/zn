@@ -1,2 +1,0 @@
-### Added
-- `zn-gate check` and `zn-gate status` now read Cursor's enterprise `hooks.json` (`/etc/cursor/hooks.json` on Linux, `/Library/Application Support/Cursor/hooks.json` on macOS, `C:\ProgramData\Cursor\hooks.json` on Windows). They warn, with the file and the key, when zn's hook there has no `"failClosed": true` on `beforeReadFile` or `beforeSubmitPrompt`, and say so when that file has hooks but not zn's (those do not turn off the zn hooks you install). Nothing is written.
