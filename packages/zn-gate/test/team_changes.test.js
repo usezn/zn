@@ -141,3 +141,328 @@ test('the change line is shown once per change and the detectors line at most on
   assert.deepStrictEqual(takeNotices({ home: quiet, org: ORG, change: null, detectorsMissing: false, statusCommand: 'x', syncCommand: 'y' }), []);
   assert.ok(!fs.existsSync(quiet + '/team-notice.json'));
 });
+
+/* Additional cases: limits, edge input and the notice file. */
+{
+const os = require('os');
+const path = require('path');
+const { describeItem, MAX_ITEMS } = require('../lib/team/changes');
+const AT = '2026-01-02T03:04:05Z';
+const pol = (rules, extra) => Object.assign({ version: 1, rules }, extra || {});
+const tmpHome = () => fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'zn-changes-'));
+
+/* ---------------- restrictionChanges ---------------- */
+
+test('restrictionChanges: empty / missing policies give nothing', () => {
+  assert.deepStrictEqual(restrictionChanges(pol([]), pol([])), { items: [], more: 0 });
+  assert.deepStrictEqual(restrictionChanges(null, null), { items: [], more: 0 });
+  assert.deepStrictEqual(restrictionChanges(undefined, {}), { items: [], more: 0 });
+  assert.deepStrictEqual(restrictionChanges({ rules: 'x' }, { rules: 7 }), { items: [], more: 0 });
+});
+
+test('restrictionChanges: block removed', () => {
+  const r = restrictionChanges(pol([{ secret: 'API_KEY', deny: true }]), pol([]));
+  assert.deepStrictEqual(r, { items: [{ kind: 'block_removed', secret: 'API_KEY' }], more: 0 });
+});
+
+test('restrictionChanges: block kept or added is not a change', () => {
+  assert.strictEqual(restrictionChanges(pol([{ secret: 'A', deny: true }]), pol([{ secret: 'A', deny: true }])).items.length, 0);
+  assert.strictEqual(restrictionChanges(pol([]), pol([{ secret: 'A', deny: true }])).items.length, 0);
+});
+
+test('restrictionChanges: warn removed, but not when it became a block', () => {
+  assert.deepStrictEqual(restrictionChanges(pol([{ secret: 'A', warn: true }]), pol([])).items, [{ kind: 'warn_removed', secret: 'A' }]);
+  assert.strictEqual(restrictionChanges(pol([{ secret: 'A', warn: true }]), pol([{ secret: 'A', deny: true }])).items.length, 0);
+});
+
+test('restrictionChanges: proxy mode removed', () => {
+  const r = restrictionChanges(pol([{ secret: 'A', mode: 'proxy' }]), pol([{ secret: 'A', mode: 'inject' }]));
+  assert.deepStrictEqual(r.items, [{ kind: 'proxy_removed', secret: 'A' }]);
+});
+
+test('restrictionChanges: hosts unlimited and widened', () => {
+  const before = pol([{ secret: 'A', allowHosts: ['api.example.com'] }]);
+  assert.deepStrictEqual(restrictionChanges(before, pol([{ secret: 'A' }])).items, [{ kind: 'hosts_unlimited', secret: 'A' }]);
+  const wide = restrictionChanges(before, pol([{ secret: 'A', allowHosts: ['api.example.com', 'other.example.com'] }]));
+  assert.deepStrictEqual(wide.items, [{ kind: 'hosts_widened', secret: 'A', values: ['other.example.com'] }]);
+  const same = restrictionChanges(before, pol([{ secret: 'A', allowHosts: ['api.example.com'] }]));
+  assert.strictEqual(same.items.length, 0);
+  const narrower = restrictionChanges(pol([{ secret: 'A', allowHosts: ['a.example.com', 'b.example.com'] }]), pol([{ secret: 'A', allowHosts: ['a.example.com'] }]));
+  assert.strictEqual(narrower.items.length, 0);
+});
+
+test('restrictionChanges: wildcard host covers subdomains', () => {
+  const r = restrictionChanges(pol([{ secret: 'A', allowHosts: ['*.example.com'] }]), pol([{ secret: 'A', allowHosts: ['*.example.com', 'x.example.com'] }]));
+  assert.strictEqual(r.items.length, 0);
+});
+
+test('restrictionChanges: commands unlimited and widened', () => {
+  const before = pol([{ secret: 'A', allowCommands: ['curl'] }]);
+  assert.deepStrictEqual(restrictionChanges(before, pol([{ secret: 'A' }])).items, [{ kind: 'commands_unlimited', secret: 'A' }]);
+  assert.deepStrictEqual(restrictionChanges(before, pol([{ secret: 'A', allowCommands: ['curl', 'wget'] }])).items, [{ kind: 'commands_widened', secret: 'A', values: ['wget'] }]);
+  assert.strictEqual(restrictionChanges(before, pol([{ secret: 'A', allowCommands: ['curl -s'] }])).items.length, 0);
+});
+
+test('restrictionChanges: placement unlimited and widened', () => {
+  const before = pol([{ secret: 'A', injectAt: 'header' }]);
+  assert.deepStrictEqual(restrictionChanges(before, pol([{ secret: 'A' }])).items, [{ kind: 'placement_unlimited', secret: 'A' }]);
+  assert.deepStrictEqual(restrictionChanges(before, pol([{ secret: 'A', injectAt: 'query' }])).items, [{ kind: 'placement_widened', secret: 'A', values: ['query'] }]);
+});
+
+test('restrictionChanges: detector removed, kept detector ignored', () => {
+  const r = restrictionChanges(pol([], { detectors: [{ id: 'one' }, { id: 'two' }] }), pol([], { detectors: [{ id: 'two' }] }));
+  assert.deepStrictEqual(r.items, [{ kind: 'detector_removed', values: ['one'] }]);
+  assert.strictEqual(restrictionChanges(pol([], { detectors: [{ id: 'one' }] }), pol([])).items.length, 1);
+});
+
+test('restrictionChanges: wildcard rule in the new policy still restricts', () => {
+  const r = restrictionChanges(pol([{ secret: 'TOKEN', deny: true }]), pol([{ secret: '*', deny: true }]));
+  assert.strictEqual(r.items.length, 0);
+});
+
+test('restrictionChanges: items are sorted by secret name', () => {
+  const r = restrictionChanges(pol([{ secret: 'B', deny: true }, { secret: 'A', deny: true }]), pol([]));
+  assert.deepStrictEqual(r.items.map((i) => i.secret), ['A', 'B']);
+});
+
+test('restrictionChanges: exactly MAX_ITEMS items, no cut', () => {
+  const rules = Array.from({ length: MAX_ITEMS }, (_, i) => ({ secret: 'S' + String(i).padStart(3, '0'), deny: true }));
+  const r = restrictionChanges(pol(rules), pol([]));
+  assert.strictEqual(r.items.length, MAX_ITEMS);
+  assert.strictEqual(r.more, 0);
+});
+
+test('restrictionChanges: more than MAX_ITEMS is cut and counted in more', () => {
+  const total = MAX_ITEMS + 7;
+  const rules = Array.from({ length: total }, (_, i) => ({ secret: 'S' + String(i).padStart(3, '0'), deny: true }));
+  const r = restrictionChanges(pol(rules), pol([]));
+  assert.strictEqual(r.items.length, MAX_ITEMS);
+  assert.strictEqual(r.more, 7);
+  assert.strictEqual(r.items[0].secret, 'S000');
+});
+
+test('restrictionChanges: values are cut to 5', () => {
+  const hosts = Array.from({ length: 9 }, (_, i) => 'h' + i + '.example.com');
+  const r = restrictionChanges(pol([{ secret: 'A', allowHosts: ['base.example.com'] }]), pol([{ secret: 'A', allowHosts: ['base.example.com'].concat(hosts) }]));
+  assert.strictEqual(r.items[0].values.length, 5);
+});
+
+/* ---------------- changeRecord ---------------- */
+
+test('changeRecord: null without both policies or without a lifted restriction', () => {
+  assert.strictEqual(changeRecord(null, pol([]), AT), null);
+  assert.strictEqual(changeRecord(pol([]), null, AT), null);
+  assert.strictEqual(changeRecord(pol([]), pol([]), AT), null);
+});
+
+test('changeRecord: builds the record', () => {
+  const rec = changeRecord(pol([{ secret: 'A', deny: true }]), { version: 2, rules: [] }, AT);
+  assert.deepStrictEqual(rec, { from: 1, to: 2, at: AT, count: 1, items: [{ kind: 'block_removed', secret: 'A' }], more: 0 });
+});
+
+/* ---------------- cleanChange ---------------- */
+
+const goodRaw = () => ({ from: 1, to: 2, at: AT, count: 2, more: 0, items: [{ kind: 'block_removed', secret: 'API_KEY' }, { kind: 'detector_removed', values: ['my_fmt'] }] });
+
+test('cleanChange: a valid record survives', () => {
+  assert.deepStrictEqual(cleanChange(goodRaw()), { from: 1, to: 2, at: AT, count: 2, items: goodRaw().items, more: 0 });
+});
+
+test('cleanChange: rejects non-objects and bad headers', () => {
+  for (const bad of [null, undefined, 'x', 5, [], true]) assert.strictEqual(cleanChange(bad), null);
+  for (const patch of [{ from: -1 }, { from: 1.5 }, { from: '1' }, { to: 1e9 }, { at: 'yesterday' }, { at: 5 }, { items: 'x' }, { items: undefined }]) {
+    assert.strictEqual(cleanChange(Object.assign(goodRaw(), patch)), null, JSON.stringify(patch));
+  }
+});
+
+test('cleanChange: accepts offset and fractional timestamps', () => {
+  assert.ok(cleanChange(Object.assign(goodRaw(), { at: '2026-01-02T03:04:05.123+02:00' })));
+});
+
+test('cleanChange: drops items with unknown kind, bad secret or bad values', () => {
+  const raw = goodRaw();
+  raw.items = [
+    { kind: 'nope', secret: 'A' },
+    { kind: 'block_removed', secret: 'lowercase' },
+    { kind: 'block_removed' },
+    { kind: 'block_removed', secret: '*' },
+    { kind: 'warn_removed', secret: 'PREFIX_*' },
+    { kind: 'hosts_widened', secret: 'A', values: ['bad host!'] },
+    { kind: 'hosts_widened', secret: 'A' },
+    { kind: 'hosts_widened', secret: 'A', values: ['ok.example.com', 5, '<script>'] },
+    { kind: 'placement_widened', secret: 'A', values: ['body', 'cookie'] },
+    { kind: 'commands_widened', secret: 'A', values: ['curl -s', 'rm;ls'] },
+    { kind: 'detector_removed', values: ['Bad-Id'] },
+    null, 'x', 5,
+  ];
+  raw.count = 12;
+  const out = cleanChange(raw);
+  assert.deepStrictEqual(out.items, [
+    { kind: 'block_removed', secret: '*' },
+    { kind: 'warn_removed', secret: 'PREFIX_*' },
+    { kind: 'hosts_widened', secret: 'A', values: ['ok.example.com'] },
+    { kind: 'placement_widened', secret: 'A', values: ['body'] },
+    { kind: 'commands_widened', secret: 'A', values: ['curl -s'] },
+  ]);
+  assert.strictEqual(out.count, 12);
+  assert.strictEqual(out.more, 7);
+});
+
+test('cleanChange: extra fields are stripped', () => {
+  const raw = goodRaw();
+  raw.items[0].evil = 'x';
+  raw.extra = 1;
+  const out = cleanChange(raw);
+  assert.deepStrictEqual(Object.keys(out).sort(), ['at', 'count', 'from', 'items', 'more', 'to']);
+  assert.deepStrictEqual(out.items[0], { kind: 'block_removed', secret: 'API_KEY' });
+});
+
+test('cleanChange: only the first MAX_ITEMS items are read; count survives', () => {
+  const raw = goodRaw();
+  raw.items = Array.from({ length: MAX_ITEMS + 5 }, (_, i) => ({ kind: 'block_removed', secret: 'S' + i }));
+  raw.count = MAX_ITEMS + 5;
+  const out = cleanChange(raw);
+  assert.strictEqual(out.items.length, MAX_ITEMS);
+  assert.strictEqual(out.more, 5);
+});
+
+test('cleanChange: bad count falls back to the item count; count is never below it', () => {
+  const a = Object.assign(goodRaw(), { count: 'many' });
+  assert.strictEqual(cleanChange(a).count, 2);
+  const b = Object.assign(goodRaw(), { count: 0 });
+  assert.strictEqual(cleanChange(b).count, 2);
+  assert.strictEqual(cleanChange(b).more, 0);
+});
+
+test('cleanChange: empty items list is valid', () => {
+  assert.deepStrictEqual(cleanChange({ from: 0, to: 1, at: AT, items: [] }), { from: 0, to: 1, at: AT, count: 0, items: [], more: 0 });
+});
+
+/* ---------------- describeChange / describeItem ---------------- */
+
+test('describeChange: singular and plural header', () => {
+  const one = describeChange({ from: 1, to: 2, at: AT, count: 1, more: 0, items: [{ kind: 'block_removed', secret: 'A' }] });
+  assert.strictEqual(one[0], 'version 1 to 2 (' + AT + ') removed or loosened 1 restriction:');
+  assert.strictEqual(one[1], '  - secret A is no longer blocked');
+  assert.strictEqual(one.length, 2);
+  const many = describeChange(goodRaw());
+  assert.ok(many[0].endsWith('2 restrictions:'));
+  assert.strictEqual(many.length, 3);
+  assert.strictEqual(many[2], '  - custom secret format my_fmt is no longer redacted');
+});
+
+test('describeChange: empty list has only the header', () => {
+  const lines = describeChange({ from: 1, to: 2, at: AT, count: 0, more: 0, items: [] });
+  assert.strictEqual(lines.length, 1);
+  assert.ok(lines[0].endsWith('0 restrictions:'));
+});
+
+test('describeChange: "and N more" line only when more > 0', () => {
+  const c = { from: 1, to: 2, at: AT, count: 25, more: 5, items: [{ kind: 'block_removed', secret: 'A' }] };
+  const lines = describeChange(c);
+  assert.strictEqual(lines[lines.length - 1], '  - and 5 more');
+  assert.ok(!describeChange(Object.assign({}, c, { more: 0 })).some((l) => /and \d+ more/.test(l)));
+});
+
+test('describeChange: end to end with more than MAX_ITEMS items', () => {
+  const rules = Array.from({ length: MAX_ITEMS + 3 }, (_, i) => ({ secret: 'S' + String(i).padStart(3, '0'), deny: true }));
+  const rec = changeRecord(pol(rules), { version: 2, rules: [] }, AT);
+  const lines = describeChange(cleanChange(rec));
+  assert.strictEqual(lines.length, 1 + MAX_ITEMS + 1);
+  assert.ok(lines[0].includes(String(MAX_ITEMS + 3) + ' restrictions'));
+  assert.strictEqual(lines[lines.length - 1], '  - and 3 more');
+});
+
+test('describeItem: every kind', () => {
+  const cases = [
+    [{ kind: 'block_removed', secret: 'A' }, 'secret A is no longer blocked'],
+    [{ kind: 'warn_removed', secret: '*' }, 'every secret no longer warns'],
+    [{ kind: 'proxy_removed', secret: 'A' }, 'secret A no longer has to use proxy mode'],
+    [{ kind: 'hosts_unlimited', secret: 'A' }, 'secret A is no longer limited to a list of hosts'],
+    [{ kind: 'commands_unlimited', secret: 'A' }, 'secret A is no longer limited to a list of commands'],
+    [{ kind: 'placement_unlimited', secret: 'A' }, 'secret A is no longer limited in where it can be put in an HTTP request'],
+    [{ kind: 'hosts_widened', secret: 'A', values: ['a.example.com', 'b.example.com'] }, 'secret A may now go to more hosts: a.example.com, b.example.com'],
+    [{ kind: 'commands_widened', secret: 'A', values: ['curl'] }, 'secret A may now be used with more commands: curl'],
+    [{ kind: 'placement_widened', secret: 'A', values: ['body'] }, 'secret A may now be put in more places in an HTTP request: body'],
+    [{ kind: 'detector_removed', values: ['fmt'] }, 'custom secret format fmt is no longer redacted'],
+    [{ kind: 'unknown', secret: 'A' }, ''],
+  ];
+  for (const [item, text] of cases) assert.strictEqual(describeItem(item), text, item.kind);
+});
+
+/* ---------------- takeNotices ---------------- */
+
+const baseOpts = (home, extra) => Object.assign({ home, org: 'org_example', statusCommand: 'zn team status', syncCommand: 'zn team sync' }, extra || {});
+
+test('takeNotices: nothing to say gives no lines and writes nothing', () => {
+  const home = tmpHome();
+  assert.deepStrictEqual(takeNotices(baseOpts(home)), []);
+  assert.strictEqual(fs.existsSync(path.join(home, 'team-notice.json')), false);
+});
+
+test('takeNotices: a change is shown once per version', () => {
+  const home = tmpHome();
+  const o = baseOpts(home, { change: goodRaw() });
+  const first = takeNotices(o);
+  assert.strictEqual(first.length, 1);
+  assert.ok(first[0].includes('version 2'));
+  assert.ok(first[0].includes('removed or loosened 2 restrictions'));
+  assert.ok(first[0].includes('zn team status'));
+  assert.deepStrictEqual(takeNotices(o), []);
+  const next = Object.assign(goodRaw(), { to: 3 });
+  assert.strictEqual(takeNotices(baseOpts(home, { change: next })).length, 1);
+});
+
+test('takeNotices: singular wording and a different org shows again', () => {
+  const home = tmpHome();
+  const one = { from: 1, to: 2, at: AT, count: 1, items: [{ kind: 'block_removed', secret: 'A' }] };
+  const lines = takeNotices(baseOpts(home, { change: one }));
+  assert.ok(lines[0].includes('removed or loosened 1 restriction on'));
+  assert.strictEqual(takeNotices(baseOpts(home, { change: one })).length, 0);
+  assert.strictEqual(takeNotices(baseOpts(home, { change: one, org: 'org_other' })).length, 1);
+});
+
+test('takeNotices: an invalid change is ignored', () => {
+  const home = tmpHome();
+  assert.deepStrictEqual(takeNotices(baseOpts(home, { change: { from: 'x' } })), []);
+  assert.deepStrictEqual(takeNotices(baseOpts(home, { change: null })), []);
+});
+
+test('takeNotices: missing detectors line at most once an hour', () => {
+  const home = tmpHome();
+  const t0 = 1700000000000;
+  const o = (now) => baseOpts(home, { detectorsMissing: true, now });
+  const first = takeNotices(o(t0));
+  assert.strictEqual(first.length, 1);
+  assert.ok(first[0].includes('Team detectors not applied'));
+  assert.ok(first[0].includes('zn team sync'));
+  assert.deepStrictEqual(takeNotices(o(t0 + 3599999)), []);
+  assert.strictEqual(takeNotices(o(t0 + 3600000)).length, 1);
+});
+
+test('takeNotices: change and detectors lines together, state persisted', () => {
+  const home = tmpHome();
+  const lines = takeNotices(baseOpts(home, { change: goodRaw(), detectorsMissing: true, now: 5 }));
+  assert.strictEqual(lines.length, 2);
+  const saved = JSON.parse(fs.readFileSync(path.join(home, 'team-notice.json'), 'utf8'));
+  assert.deepStrictEqual(saved, { change_to: 2, change_org: 'org_example', detectors_at: 5 });
+});
+
+test('takeNotices: a corrupt or non-object notice file is treated as empty', () => {
+  for (const content of ['{not json', '[1,2]', 'null', '"s"']) {
+    const home = tmpHome();
+    fs.writeFileSync(path.join(home, 'team-notice.json'), content);
+    assert.strictEqual(takeNotices(baseOpts(home, { change: goodRaw() })).length, 1, content);
+  }
+});
+
+test('takeNotices: creates the home folder if missing and survives an unwritable one', () => {
+  const root = tmpHome();
+  const home = path.join(root, 'nested', 'zn');
+  assert.strictEqual(takeNotices(baseOpts(home, { change: goodRaw() })).length, 1);
+  assert.ok(fs.existsSync(path.join(home, 'team-notice.json')));
+  const blocker = path.join(root, 'file');
+  fs.writeFileSync(blocker, 'x');
+  assert.strictEqual(takeNotices(baseOpts(path.join(blocker, 'sub'), { change: goodRaw() })).length, 1);
+});
+}
