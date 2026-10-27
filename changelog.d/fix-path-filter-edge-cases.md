@@ -1,0 +1,2 @@
+### Security
+- Programs zn starts by name (`node`, `git`, `sh`, your agent) are now also never taken from a `PATH` folder inside a repository that holds your home folder (dotfiles; your usual tool folders such as `~/.local/bin`, `~/.nvm` and `~/.volta` stay trusted), from the project of a folder without git (the project your agent names, or the nearest folder with a project file), or from a repository that surrounds the one you are in.

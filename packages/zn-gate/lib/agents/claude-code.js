@@ -650,8 +650,8 @@ function isInstalledSecretsServer(s, opts = {}) {
   if (!(win ? /^node\.exe$/ : /^node$/).test(path.basename(node))) return false;
   if (!cli.split(path.sep).join('/').endsWith('/zn-gate/bin/cli.js')) return false;
   const places = require('../exe').projectPlaces(opts.cwd || process.cwd(), opts.env || process.env, win);
-  const inside = (p, d) => { const rel = path.relative(d, p); return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)); };
-  return !places.some((d) => inside(node, d) || inside(cli, d));
+  const exe = require('../exe');
+  return !exe.inPlaces(node, places) && !exe.inPlaces(cli, places);
 }
 
 function detect(opts = {}) {
