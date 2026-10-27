@@ -14,7 +14,8 @@
  * variable, a script file the agent wrote and then runs) is not seen.
  *
  *   rm_root_home     recursive delete of the home folder, the filesystem root,
- *                    a top-level system folder or a drive root
+ *                    a top-level system folder or a drive root (also find ...
+ *                    -delete, find ... | xargs rm and git clean -f there)
  *   pipe_to_shell    a download that is run as a script without being read
  *   disk_overwrite   dd, mkfs, wipefs ... on a block device, or a redirect to one
  *   perm_root        chmod -R 777 or chown -R on the root or a system folder
@@ -25,7 +26,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-23.7';
+const COMMAND_RULES_VERSION = '2026-10-27.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -51,7 +52,13 @@ const DOWNLOADERS = new Set(['curl', 'wget', 'iwr', 'irm', 'invoke-webrequest', 
 const RM_HEADS = new Set(['rm', 'remove-item', 'ri', 'del', 'erase', 'rd', 'rmdir']);
 const CMD_HEADS = new Set(['rd', 'rmdir', 'del', 'erase']);
 const DISK_TOOLS = /^(?:mkfs(?:\.[a-z0-9]+)?|mke2fs|mkswap|wipefs|shred|blkdiscard)$/;
-const FIND_TESTS = /^-(?:i?name|i?path|i?wholename|i?regex|type|[acm]time|[acm]min|newer\w*|size|user|group|perm|empty|links|inum|samefile|executable|readable|writable|uid|gid)$/;
+// find actions that run a program on each file, and the programs that delete it.
+const FIND_EXEC = new Set(['-exec', '-execdir', '-ok', '-okdir']);
+const DELETERS = /^(?:rm|shred|unlink)$/;
+// xargs options that take the next word as their value.
+const XARGS_VALUE = new Set(['-I', '-n', '-P', '-L', '-s', '-d', '-E', '-e', '-a', '--arg-file', '--delimiter', '--max-args', '--max-procs', '--max-lines', '--max-chars', '--replace', '--eof']);
+// git options before the subcommand that take the next word as their value.
+const GIT_VALUE = new Set(['-c', '--namespace', '--config-env', '--super-prefix', '--exec-path', '--git-dir']);
 const SUDO_ARG_FLAGS = new Set(['-u', '-g', '-h', '-p', '-C', '-T', '-r', '-t', '-U', '-D', '-R']);
 
 const SYSTEM_DIRS = new Set(['/bin', '/boot', '/dev', '/etc', '/home', '/lib', '/lib32', '/lib64', '/opt', '/proc', '/root',
@@ -222,6 +229,45 @@ function redirectTargets(words) {
   return out;
 }
 
+/* The paths a find command starts from: the words before its first option or expression. */
+function findPaths(args) {
+  const paths = [];
+  for (const w of args) { if (w.startsWith('-') || w === '(' || w === '!') break; paths.push(w); }
+  return paths;
+}
+
+/* The program xargs runs: its first word that is neither an option nor an option's value. */
+function xargsProgram(args) {
+  for (let i = 0; i < args.length; i++) {
+    const w = args[i];
+    if (w === '--') return args[i + 1] || '';
+    if (XARGS_VALUE.has(w)) { i++; continue; }
+    if (w.startsWith('-')) continue;
+    return w;
+  }
+  return '';
+}
+
+/* git ... clean with -f (not -n or -i) on a home, root or system folder: given with -C or --work-tree, or as a path to clean. */
+function gitCleanDanger(args) {
+  const dirs = [];
+  let i = 0;
+  for (; i < args.length; i++) {
+    const w = args[i];
+    if (w === '-C' || w === '--work-tree') { dirs.push(args[i + 1] || ''); i++; continue; }
+    if (w.startsWith('--work-tree=')) { dirs.push(w.slice('--work-tree='.length)); continue; }
+    if (GIT_VALUE.has(w)) { i++; continue; }
+    if (w.startsWith('-')) continue;
+    break;
+  }
+  if (args[i] !== 'clean') return false;
+  const sub = args.slice(i + 1);
+  const flags = sub.filter((w) => w.startsWith('-') && w !== '--');
+  const force = flags.some((w) => /^-[A-Za-z]*f/.test(w) || w === '--force');
+  const dry = flags.some((w) => /^-[A-Za-z]*[ni]/.test(w) || w === '--dry-run' || w === '--interactive');
+  return force && !dry && dirs.concat(operands(sub, 'git')).some((w) => dangerousPath(w));
+}
+
 function checkSimple(words, depth) {
   const args = unwrap(words);
   if (!args.length) return null;
@@ -251,13 +297,11 @@ function checkSimple(words, depth) {
     if ((rest.some((w) => recursiveFlag(w, head)) && operands(rest, head).some((w) => dangerousPath(w))) && on('rm_root_home')) return 'rm_root_home';
   }
   if (head === 'find') {
-    const paths = [];
-    for (const w of rest) { if (w.startsWith('-') || w === '(' || w === '!') break; paths.push(w); }
-    const del = rest.includes('-delete') || rest.some((w, i) => w === '-exec' && /^(?:rm|shred)$/.test(programName(rest[i + 1] || '')));
-    // With a test (-name, -type, -mtime ...) find removes only some files; with none it removes everything below the path.
-    const filtered = rest.some((w) => FIND_TESTS.test(w));
-    if ((del && !filtered && paths.some((w) => dangerousPath(w))) && on('rm_root_home')) return 'rm_root_home';
+    // A test (-name, -type, -mtime ...) does not make it safe: -name '*' matches every file below the path.
+    const del = rest.includes('-delete') || rest.some((w, i) => FIND_EXEC.has(w) && DELETERS.test(programName(rest[i + 1] || '')));
+    if ((del && findPaths(rest).some((w) => dangerousPath(w))) && on('rm_root_home')) return 'rm_root_home';
   }
+  if ((head === 'git' && gitCleanDanger(rest)) && on('rm_root_home')) return 'rm_root_home';
   if (head === 'chmod' || head === 'chown' || head === 'chgrp') {
     if (rest.some((w) => /^-[A-Za-z]*R[A-Za-z]*$/.test(w) || w === '--recursive')) {
       const ops = operands(rest, head);
@@ -352,6 +396,13 @@ function checkPipeline(pipe) {
         else if (heads[j].head === 'tee' && !w.startsWith('-') && i > 0) target = w;
         if ((target !== null && isRcTarget(target)) && on('rc_download')) return 'rc_download';
       }
+    }
+  }
+  // find on a home, root or system folder whose list goes to xargs rm (with -print0 and xargs -0 too).
+  const findAt = heads.findIndex((h) => h.head === 'find' && findPaths(h.args.slice(1)).some((w) => dangerousPath(w)));
+  if (findAt >= 0) {
+    for (let j = findAt + 1; j < pipe.length; j++) {
+      if ((heads[j].head === 'xargs' && DELETERS.test(programName(xargsProgram(heads[j].args.slice(1))))) && on('rm_root_home')) return 'rm_root_home';
     }
   }
   // A redirect to a block device, with or without a download.

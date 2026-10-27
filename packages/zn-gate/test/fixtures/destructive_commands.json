@@ -418,18 +418,28 @@
   "export FOO=bar && node app.js",
   "fdisk -l /dev/sda",
   "find . -name \"*.pyc\" -delete",
+  "find . -name \"*.tmp\" -print0 | xargs -0 rm",
   "find . -name \"*.tmp\" | xargs rm",
   "find . -name node_modules -type d -prune -exec rm -rf {} +",
   "find . -type f -empty -delete",
+  "find / -name \"*.conf\" -type f 2>/dev/null",
   "find / -name \"*.orig\" -type f 2>/dev/null",
   "find /home/alice/project/../other -delete",
   "find /tmp -mtime +7 -delete",
   "find /var/log -name \"*.gz\" -mtime +14 -delete",
-  "find ~ -name \"*.bak\" -mtime +30 -delete",
+  "find ~ -name \"*.bak\" -mtime +30 -print",
+  "find ~ -name \"*.bak\" -print",
+  "find ~ -name \"*.log\" | xargs ls -la",
   "find ~/Downloads -type f -name \"*.iso\"",
+  "find ~/projects -name \"*.bak\" -mtime +30 -delete",
   "find ~/projects -name .DS_Store -delete",
+  "find ~/projects/app -name \"*.log\" -delete",
   "flutter pub get",
   "gcloud compute instances list",
+  "git -C ~ clean -fdx --dry-run",
+  "git -C ~ clean -n -fdx",
+  "git -C ~ status",
+  "git -C ~/projects/app clean -fdx",
   "git add -A && git commit -m \"wip\"",
   "git bisect start",
   "git blame src/index.js",
@@ -449,6 +459,8 @@
   "git checkout release/1.4",
   "git clean -fd",
   "git clean -fdx -n",
+  "git clean -i",
+  "git clean -n -fdx",
   "git commit -m \"docs: warn that curl | sh installs are unsafe\"",
   "git commit -m \"remove rm -rf ~ from the cleanup script\"",
   "git diff chore/deps...HEAD --stat",
@@ -1100,6 +1112,7 @@
   "which rm",
   "whoami",
   "xargs -a files.txt cat",
+  "xargs -a files.txt rm",
   "yarn add @types/node",
   "yarn add express",
   "yarn add left-pad",
@@ -3078,11 +3091,83 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "find $HOME -name \"*\" -execdir rm -rf {} \\;",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find $HOME -name \"*.bak\" -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find $HOME -name \"*.log\" | xargs rm -f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find $HOME -name \"*.tmp\" -print0 | sudo xargs -0 -n 50 -P 4 rm -f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find $HOME -type f -mtime +30 -exec rm -f {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find $HOME -type f -print0 | xargs -0 rm",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "find / -delete",
    "rule": "rm_root_home"
   },
   {
    "cmd": "find / -exec rm -rf {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find / -name \"*\" -execdir rm -rf {} \\;",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find / -name \"*.bak\" -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find / -name \"*.log\" | xargs rm -f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find / -name \"*.tmp\" -print0 | sudo xargs -0 -n 50 -P 4 rm -f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find / -type f -mtime +30 -exec rm -f {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find / -type f -print0 | xargs -0 rm",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /Users/bob -name \"*\" -execdir rm -rf {} \\;",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /Users/bob -name \"*.bak\" -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /Users/bob -name \"*.log\" | xargs rm -f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /Users/bob -name \"*.tmp\" -print0 | sudo xargs -0 -n 50 -P 4 rm -f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /Users/bob -type f -mtime +30 -exec rm -f {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /Users/bob -type f -print0 | xargs -0 rm",
    "rule": "rm_root_home"
   },
   {
@@ -3102,7 +3187,55 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "find /home/alice -name \"*\" -execdir rm -rf {} \\;",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /home/alice -name \"*.bak\" -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /home/alice -name \"*.log\" | xargs rm -f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /home/alice -name \"*.tmp\" -print0 | sudo xargs -0 -n 50 -P 4 rm -f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /home/alice -type f -mtime +30 -exec rm -f {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /home/alice -type f -print0 | xargs -0 rm",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "find /home/alice/project/.. -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /usr -name \"*\" -execdir rm -rf {} \\;",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /usr -name \"*.bak\" -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /usr -name \"*.log\" | xargs rm -f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /usr -name \"*.tmp\" -print0 | sudo xargs -0 -n 50 -P 4 rm -f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /usr -type f -mtime +30 -exec rm -f {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find /usr -type f -print0 | xargs -0 rm",
    "rule": "rm_root_home"
   },
   {
@@ -3114,11 +3247,59 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "find ~ -name \"*\" -execdir rm -rf {} \\;",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find ~ -name \"*.bak\" -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find ~ -name \"*.log\" | xargs rm -f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find ~ -name \"*.tmp\" -print0 | sudo xargs -0 -n 50 -P 4 rm -f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find ~ -type f -mtime +30 -exec rm -f {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "find ~ -type f -print0 | xargs -0 rm",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "find ~/* -delete",
    "rule": "rm_root_home"
   },
   {
    "cmd": "find ~/* -exec rm -rf {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "git --work-tree=/home/alice clean -fx",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "git -C $HOME clean -ffdx",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "git -C / clean -fd",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "git -C ~ clean -fdx",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "git -c core.quotepath=off -C ~ clean -f -d -x",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "git clean -fdx ~",
    "rule": "rm_root_home"
   },
   {
@@ -3446,6 +3627,10 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "sudo git -C /usr clean -fdx",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "sudo rm --recursive --force $HOME/*",
    "rule": "rm_root_home"
   },
@@ -3581,10 +3766,6 @@
   },
   {
    "cmd": "rsync -a --delete empty/ ~/",
-   "note": "a different tool"
-  },
-  {
-   "cmd": "git clean -fdx ~",
    "note": "a different tool"
   },
   {

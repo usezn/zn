@@ -106,7 +106,7 @@ ALLOWED = [
     "rm /",
     "rmdir empty-dir",
     "find . -name '*.pyc' -delete",
-    "find / -name '*.log' -delete",
+    "find /var/log -name '*.log' -delete",
     "find /tmp/example -type f -delete",
     "chmod 755 script.sh",
     "chmod -R 755 ./public",

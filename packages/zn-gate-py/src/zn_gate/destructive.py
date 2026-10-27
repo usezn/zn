@@ -28,7 +28,7 @@ from typing import List, Optional, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-23.7"
+COMMAND_RULES_VERSION = "2026-10-27.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -56,10 +56,13 @@ _DOWNLOADERS = {"curl", "wget", "iwr", "irm", "invoke-webrequest", "invoke-restm
 _RM_HEADS = {"rm", "remove-item", "ri", "del", "erase", "rd", "rmdir"}
 _CMD_HEADS = {"rd", "rmdir", "del", "erase"}
 _DISK_TOOLS = re.compile(r"^(?:mkfs(?:\.[a-z0-9]+)?|mke2fs|mkswap|wipefs|shred|blkdiscard)$")
-_FIND_TESTS = re.compile(
-    r"^-(?:i?name|i?path|i?wholename|i?regex|type|[acm]time|[acm]min|newer\w*|size|user|group|perm|empty|links|inum|samefile|executable|readable|writable|uid|gid)$",
-    _A,
-)
+# find actions that run a program on each file, and the programs that delete it.
+_FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
+_DELETERS = re.compile(r"^(?:rm|shred|unlink)\Z")
+# xargs options that take the next word as their value.
+_XARGS_VALUE = {"-I", "-n", "-P", "-L", "-s", "-d", "-E", "-e", "-a", "--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-lines", "--max-chars", "--replace", "--eof"}
+# git options before the subcommand that take the next word as their value.
+_GIT_VALUE = {"-c", "--namespace", "--config-env", "--super-prefix", "--exec-path", "--git-dir"}
 _SUDO_ARG_FLAGS = {"-u", "-g", "-h", "-p", "-C", "-T", "-r", "-t", "-U", "-D", "-R"}
 
 _SYSTEM_DIRS = {
@@ -404,6 +407,63 @@ def _world_writable(mode: str) -> bool:
     return bool(m and (m.group(1) == "" or re.search(r"[ao]", m.group(1))))
 
 
+def _find_paths(args: List[str]) -> List[str]:
+    """The paths a find command starts from: the words before its first option or expression."""
+    paths: List[str] = []
+    for w in args:
+        if w.startswith("-") or w == "(" or w == "!":
+            break
+        paths.append(w)
+    return paths
+
+
+def _xargs_program(args: List[str]) -> str:
+    """The program xargs runs: its first word that is neither an option nor an option's value."""
+    i = 0
+    while i < len(args):
+        w = args[i]
+        if w == "--":
+            return args[i + 1] if i + 1 < len(args) else ""
+        if w in _XARGS_VALUE:
+            i += 2
+            continue
+        if w.startswith("-"):
+            i += 1
+            continue
+        return w
+    return ""
+
+
+def _git_clean_danger(args: List[str]) -> bool:
+    """git ... clean with -f (not -n or -i) on a home, root or system folder: given with -C or --work-tree, or as a path."""
+    dirs: List[str] = []
+    i = 0
+    while i < len(args):
+        w = args[i]
+        if w in ("-C", "--work-tree"):
+            dirs.append(args[i + 1] if i + 1 < len(args) else "")
+            i += 2
+            continue
+        if w.startswith("--work-tree="):
+            dirs.append(w[len("--work-tree="):])
+            i += 1
+            continue
+        if w in _GIT_VALUE:
+            i += 2
+            continue
+        if w.startswith("-"):
+            i += 1
+            continue
+        break
+    if i >= len(args) or args[i] != "clean":
+        return False
+    sub = args[i + 1:]
+    flags = [w for w in sub if w.startswith("-") and w != "--"]
+    force = any(re.match(r"^-[A-Za-z]*f", w) or w == "--force" for w in flags)
+    dry = any(re.match(r"^-[A-Za-z]*[ni]", w) or w in ("--dry-run", "--interactive") for w in flags)
+    return force and not dry and any(_dangerous_path(w) for w in dirs + _operands(sub, "git"))
+
+
 def _check_simple(words: List[str], depth: int) -> Optional[str]:
     args = _unwrap(words)
     if not args:
@@ -435,18 +495,15 @@ def _check_simple(words: List[str], depth: int) -> Optional[str]:
         if any(_recursive_flag(w, head) for w in rest) and any(_dangerous_path(w) for w in _operands(rest, head)):
             return "rm_root_home"
     if head == "find":
-        paths: List[str] = []
-        for w in rest:
-            if w.startswith("-") or w == "(" or w == "!":
-                break
-            paths.append(w)
+        # A test (-name, -type, -mtime ...) does not make it safe: -name '*' matches every file below the path.
         delete = "-delete" in rest or any(
-            w == "-exec" and re.match(r"^(?:rm|shred)\Z", _program_name(rest[j + 1] if j + 1 < len(rest) else ""))
+            w in _FIND_EXEC and _DELETERS.match(_program_name(rest[j + 1] if j + 1 < len(rest) else ""))
             for j, w in enumerate(rest)
         )
-        filtered = any(_FIND_TESTS.match(w) for w in rest)
-        if delete and not filtered and any(_dangerous_path(w) for w in paths):
+        if delete and any(_dangerous_path(w) for w in _find_paths(rest)):
             return "rm_root_home"
+    if head == "git" and _git_clean_danger(rest):
+        return "rm_root_home"
     if head in ("chmod", "chown", "chgrp"):
         if any(re.match(r"^-[A-Za-z]*R[A-Za-z]*\Z", w) or w == "--recursive" for w in rest):
             ops = _operands(rest, head)
@@ -568,6 +625,12 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
                     alts = _brace_alts(target)
                     if alts is None or any(_is_rc_path(t) for t in alts):
                         return "rc_download"
+    # find on a home, root or system folder whose list goes to xargs rm (with -print0 and xargs -0 too).
+    find_at = next((j for j, h in enumerate(heads) if h[1] == "find" and any(_dangerous_path(w) for w in _find_paths(h[0][1:]))), -1)
+    if find_at >= 0:
+        for j in range(find_at + 1, len(pipe)):
+            if heads[j][1] == "xargs" and _DELETERS.match(_program_name(_xargs_program(heads[j][0][1:]))):
+                return "rm_root_home"
     for words, _sep in pipe:
         for t in _redirect_targets(words):
             if _BLOCK_DEVICE_RE.match(t):
