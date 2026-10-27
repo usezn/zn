@@ -1,15 +1,18 @@
 name: Windows checks for Windows-specific code
 
-# Pull requests into next run Ubuntu only. This workflow adds Windows (Node.js 22) when a pull
-# request touches code with Windows-specific paths: command quoting, launching programs, the
-# keychain, the broker, agent setup and any change under packages/zn-gate/test, because the job runs
-# the whole unit test suite on Windows. Not a required check. The full Windows
-# matrix still runs on pushes to main and next, on pull requests into main and release branches,
-# and with the full-ci label.
+# The Node.js unit test suite on Windows. ci.yml runs that suite on Ubuntu only, so this is the one
+# workflow that runs it on Windows (Node.js 22):
+# - on every push to main and to a release branch, so a release commit is never tagged without it
+#   (.github/release-required-checks.txt names this job);
+# - on pull requests into next, main and release branches that touch code with Windows-specific paths
+#   (command quoting, launching programs, the keychain, the broker, agent setup) or any test;
+# - in the merge queue.
 
 on:
+  push:
+    branches: [ main, 'release/**' ]
   pull_request:
-    branches: [ next ]
+    branches: [ next, main, 'release/**' ]
     types: [ opened, synchronize, reopened, ready_for_review ]
     paths:
       - 'packages/zn-gate/lib/exe.js'
@@ -56,8 +59,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.x
-          cache: npm
-          cache-dependency-path: packages/zn-gate/package-lock.json
+          package-manager-cache: false
       - name: Install zn-gate dependencies
         working-directory: packages/zn-gate
         run: npm ci --ignore-scripts
