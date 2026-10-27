@@ -352,7 +352,7 @@ test('check: a plugin outside the folder where Claude Code installs plugins is n
     fakePlugin(home, launcher({ marker }), null, { root: link });
     r = byId(await check({ home, env, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
     assert.equal(r.state, 'not-protected');
-    assert.match(r.problem, /not inside the folder where Claude Code installs plugins/);
+    assert.match(r.problem, /reached through a link .* outside the folder where plugins are installed/);
     assert.equal(fs.existsSync(marker), false);
   }
   // Claude Code keeps its plugins under CLAUDE_CODE_PLUGIN_CACHE_DIR when it is set.

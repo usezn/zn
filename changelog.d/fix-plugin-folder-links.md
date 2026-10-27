@@ -1,0 +1,2 @@
+### Security
+- `zn-gate check` no longer trusts a zn-gate plugin for Claude Code or ZCode that is reached through a symbolic link leading out of the plugins folder (into the project, a temporary folder or any other place the agent can write), or whose hooks file or scripts are such a link. It reports the agent as not protected, says which link is the problem and how to fix it (install the plugin again), and runs nothing through the link. A link that stays inside the plugins folder still works. The ZCode plugin must now also sit inside ZCode's plugins folder.

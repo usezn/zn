@@ -431,6 +431,8 @@ function claudePluginRootProblem(root, ctx) {
   if (typeof env.CLAUDE_CODE_PLUGIN_CACHE_DIR === 'string' && path.isAbsolute(env.CLAUDE_CODE_PLUGIN_CACHE_DIR)) places.push(env.CLAUDE_CODE_PLUGIN_CACHE_DIR);
   const real = realOrNull(root);
   if (!real) return 'the zn-gate plugin folder listed in installed_plugins.json (' + root + ') is missing';
+  const link = pluginLinkProblem(root, places, CLAUDE_PLUGIN_FILES);
+  if (link) return link;
   if (!places.map(realOrNull).some((p) => p && isInside(real, p, false))) {
     return 'the zn-gate plugin listed in installed_plugins.json is in ' + root + ', which is not inside the folder where Claude Code installs plugins (' + places.join(' or ') + '), so zn-gate check does not run it';
   }
@@ -443,6 +445,65 @@ function claudePluginRootProblem(root, ctx) {
     if (isInside(real, proj, true)) return 'the zn-gate plugin listed in installed_plugins.json is in ' + root + ', inside this project (' + dir + '), so zn-gate check does not run it';
   }
   if (scriptOutside(real, path.join(real, 'scripts', 'zn-launch.js'))) return 'the launcher of the zn-gate plugin (' + path.join(root, 'scripts', 'zn-launch.js') + ') is not a file inside the plugin folder';
+  return '';
+}
+
+/* Why a link makes the plugin folder `root` one zn-gate check may not trust, or ''. A link is accepted only when the real
+   place it leads to is still inside the same folder (a link inside the plugins folder to another place inside it, or
+   inside the plugin folder to another file of it). A link that leaves it (into the project, /tmp, the home folder or
+   anywhere else) means someone other than the installer may change what runs, so nothing is read or started through it.
+   Two walks: the links between a folder in `places` (where Claude Code or ZCode keeps its plugins) and `root`, as the
+   path is written, and the links below `root` on the files that start the hook (`files`, relative to root). */
+function pluginLinkProblem(root, places, files) {
+  const leaves = (cur, within) => {
+    let st;
+    try { st = fs.lstatSync(cur); } catch (_) { return null; }
+    if (!st.isSymbolicLink()) return null;
+    const real = realOrNull(cur);
+    return !real || !isInside(real, within, true) ? (real || 'a place that is not there') : null;
+  };
+  const rootAbs = path.resolve(root);
+  for (const place of places) {
+    const abs = path.resolve(place);
+    const realPlace = realOrNull(place);
+    if (!realPlace || !isInside(rootAbs, abs, false)) continue;
+    let cur = abs;
+    for (const seg of path.relative(abs, rootAbs).split(path.sep)) {
+      cur = path.join(cur, seg);
+      const out = leaves(cur, realPlace);
+      if (out) return 'the plugin folder is reached through a link (' + cur + ' leads to ' + out + '), which is outside the folder where plugins are installed (' + place + '), so what runs could be changed by whoever can write there';
+    }
+    break;
+  }
+  const realRoot = realOrNull(root);
+  if (!realRoot) return '';
+  for (const rel of files) {
+    let cur = realRoot;
+    for (const seg of rel.split('/')) {
+      cur = path.join(cur, seg);
+      const out = leaves(cur, realRoot);
+      if (out) return 'the plugin file ' + path.join(root, rel) + ' is a link that leads to ' + out + ', outside the plugin folder, so what it holds is not what the plugin installed';
+    }
+  }
+  return '';
+}
+
+const CLAUDE_PLUGIN_FILES = ['hooks/hooks.json', 'scripts/zn-node.sh', 'scripts/zn-launch.js', '.claude-plugin/plugin.json'];
+const ZCODE_PLUGIN_FILES = ['hooks/hooks.json', 'scripts/zn-hook.sh', '.zcode-plugin/plugin.json'];
+
+/* Why the ZCode plugin folder `root` from installed_plugins.json is not one zn-gate check may start code from, or ''.
+   Same rule as Claude Code's: inside ~/.zcode/cli/plugins by its real path, and no link on the way or on its files
+   that leaves it. */
+function zcodePluginRootProblem(root, ctx) {
+  const place = path.join(ctx.home, '.zcode', 'cli', 'plugins');
+  const real = realOrNull(root);
+  if (!real) return 'the zn-gate plugin folder listed in installed_plugins.json (' + root + ') is missing';
+  const link = pluginLinkProblem(root, [place], ZCODE_PLUGIN_FILES);
+  if (link) return link;
+  const realPlace = realOrNull(place);
+  if (!realPlace || !isInside(real, realPlace, false)) {
+    return 'the zn-gate plugin listed in installed_plugins.json is in ' + root + ', which is not inside the folder where ZCode installs plugins (' + place + '), so zn-gate check does not run it';
+  }
   return '';
 }
 
@@ -959,13 +1020,17 @@ async function checkAgent(spec, ctx) {
         // The hook runs exactly as ZCode starts it: the program named in the plugin's hooks.json, never one looked up here.
         // Only the PreToolUse hook the plugin ships counts: a "process" hook that runs exactly /bin/sh with
         // ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh PreToolUse, turned on, for every tool it is asked about.
-        const manifest = pluginManifest(plugin.root, 'ZCODE_PLUGIN_ROOT');
+        const zdist = zcodePluginRootProblem(plugin.root, ctx);
+        const manifest = zdist ? null : pluginManifest(plugin.root, 'ZCODE_PLUGIN_ROOT');
         const pres = manifest ? manifest.hooks.filter((h) => h.event === 'PreToolUse') : [];
         const pre = pres.find((h) => !h.byName && h.type === 'process' && !h.off && !h.async && matcherCovers(h.matcher, spec.tool) &&
           h.words.length === ZCODE_PRE_WORDS.length && h.words.every((w, i) => w === ZCODE_PRE_WORDS[i]));
         const REINSTALL = 'install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again';
         const zfile = path.join(plugin.root, 'hooks', 'hooks.json');
-        if (!pres.length) {
+        if (zdist) {
+          res.problem = zdist;
+          res.fix = REINSTALL;
+        } else if (!pres.length) {
           res.problem = 'the zn-gate plugin has no PreToolUse hook in ' + zfile + ', so ZCode runs no zn check before tool calls';
           res.fix = REINSTALL;
         } else if (manifest.bare) {
@@ -1359,4 +1424,4 @@ function report({ results, removed, warnings }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS } };
+module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, zcodePluginRootProblem, pluginLinkProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS } };

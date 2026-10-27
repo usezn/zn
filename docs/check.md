@@ -114,7 +114,7 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again
   ```
 
-  The plugin's hooks file is missing, unreadable or was edited. Installing the plugin again restores it.
+  The plugin's hooks file is missing, unreadable or was edited. Installing the plugin again restores it. For ZCode the plugin folder must also be inside `~/.zcode/cli/plugins`, with no link on the way or on its files that leads out of it; otherwise `zn-gate check` reports it as not protected and runs nothing from it.
 
 - **The hook starts PowerShell by name (Windows, written by an older zn-gate).**
 
@@ -192,12 +192,14 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   turn it on: run `claude plugin enable zn-gate@usezn` in your own terminal
   ```
 
-- **The plugin is not where Claude Code installs plugins, or its hooks file does not have the hook the plugin ships.**
+- **The plugin is not where Claude Code installs plugins, is reached through a link that leaves that folder, or its hooks file does not have the hook the plugin ships.**
 
   ```text
   the zn-gate plugin listed in installed_plugins.json is in <folder>, which is not inside the folder where Claude Code installs plugins (<config folder>/plugins), so zn-gate check does not run it
   the zn-gate plugin listed in installed_plugins.json is in <folder>, inside this project (<project>), so zn-gate check does not run it
   the zn-gate plugin has no hook manifest zn-gate check can read (<plugin folder>/hooks/hooks.json), so nothing shows that Claude Code runs a zn check before tool calls
+  the plugin folder is reached through a link (<link> leads to <folder>), which is outside the folder where plugins are installed (<config folder>/plugins), so what runs could be changed by whoever can write there
+  the plugin file <plugin folder>/hooks/hooks.json is a link that leads to <file>, outside the plugin folder, so what it holds is not what the plugin installed
   the zn-gate plugin has no PreToolUse hook in <plugin folder>/hooks/hooks.json, so Claude Code runs no zn check before tool calls
   the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json runs in the background (async), where Claude Code does not wait for its answer, so Claude Code runs no zn check before tool calls
   the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json runs `<command>`, which is not the hook the zn-gate plugin ships (`/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/zn-node.sh" PreToolUse hook claude-code`), so Claude Code runs no zn check before tool calls
