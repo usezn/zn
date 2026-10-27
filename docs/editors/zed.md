@@ -93,6 +93,13 @@ Open the settings file you edited in Install, delete the `zn-gate` entry (and an
 
 All messages: [Troubleshooting](../troubleshooting.md).
 
+## See also
+
+- [Editors index](README.md)
+- [Remove zn-gate by hand](remove-by-hand.md)
+- [zn-gate by agent](../by-agent.md)
+- [Remove zn-gate](../uninstall.md)
+
 ## Zed documentation
 
 - MCP in Zed: <https://zed.dev/docs/ai/mcp>
