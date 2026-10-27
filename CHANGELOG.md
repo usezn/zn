@@ -135,6 +135,7 @@ zn-gate 1.14.0 adds official support for Antigravity and the ZCode desktop app, 
 - Checking a very large tool output for hidden characters is faster when the text has none.
 
 ### Fixed
+- Windows: `zn-gate check` now sees the project hook that `zn hooks install cursor --project` writes there (an encoded PowerShell command) and reports Cursor as protected for the project, instead of not set up.
 - Antigravity on Windows: the hook command that `zn hooks install antigravity` writes no longer relies on quotes. Antigravity splits the command on spaces, so a Node.js path such as `C:\Program Files\nodejs\node.exe` broke it and every tool call was blocked. Run `zn hooks install antigravity` again to replace an existing hook.
 - `zn audit` now reads instruction files that agents load through another file: `@path` imports in `CLAUDE.md` (nested ones too, up to five hops) and the `instructions` paths and globs of `opencode.json`. Before, a risky instruction moved into an imported file went unseen. Only files inside the audited directory are read.
 - `zn audit` now explains an agent file over 1 MiB in its own words (the file is too large, only its first 1 MiB was checked, split it) instead of pointing at a syntax error, and still checks that first MiB. Text files get every check on it; JSON and TOML files cannot be parsed when cut, so the finding says their hooks and settings were not reviewed.
