@@ -105,7 +105,7 @@ test('a readable event is still handled as before', () => {
 test('an empty event names the agent and how to set it up again', () => {
   const res = spawnSync(process.execPath, [RUNNER, 'cursor'], { input: '', encoding: 'utf8', env: { ...process.env, HOME: tmpHome(), USERPROFILE: tmpHome(), ZN_HOOK_FAIL_MODE: '', CLAUDE_PLUGIN_ROOT: '' } });
   assert.equal(res.status, 2);
-  assert.match(res.stderr, /run `(zn|npx -y zn-gate@[\d.]+) hooks install cursor` to set up zn for Cursor again/);
+  assert.match(res.stderr, /run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) hooks install cursor` to set up zn for Cursor again/);
 });
 
 test('an empty event from the Claude Code plugin says to update the plugin, not to run hooks install', () => {

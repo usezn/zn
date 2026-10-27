@@ -209,6 +209,10 @@ jobs:
           "$RUNNER_TEMP/sbom-venv/bin/cyclonedx-py" environment "$RUNNER_TEMP/sbom-target" \
             --pyproject packages/zn-gate-py/pyproject.toml --mc-type library --sv 1.6 --of JSON \
             --output-reproducible -o "$sbom/zn_gate-${PY_VERSION}.cdx.json"
+          # Reproducible CycloneDX output has no serialNumber, which GitHub attestations require:
+          # add one derived from the package, version and artifact hash (same build, same SBOM).
+          node .release-tools/.github/scripts/sbom-serial.js "$sbom/zn-gate-${NPM_VERSION}.cdx.json" "$RUNNER_TEMP/release/zn-gate-${NPM_VERSION}.tgz"
+          node .release-tools/.github/scripts/sbom-serial.js "$sbom/zn_gate-${PY_VERSION}.cdx.json" "$RUNNER_TEMP/release/zn_gate-${PY_VERSION}-py3-none-any.whl"
           # Each SBOM must name the package and version it describes.
           node .release-tools/.github/scripts/check-sbom.js "$sbom/zn-gate-${NPM_VERSION}.cdx.json" "$NPM_VERSION"
           node .release-tools/.github/scripts/check-sbom.js "$sbom/zn_gate-${PY_VERSION}.cdx.json" "$PY_VERSION"

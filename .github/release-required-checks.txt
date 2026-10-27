@@ -1,0 +1,16 @@
+# Checks a release commit must have passed (conclusion success, from GitHub Actions) before
+# tag-release.yml tags it. One name per line, written exactly as the check appears on a commit
+# (matrix values included). This is the union of the checks the rulesets of main and next require.
+# .github/scripts/release-required-checks.mjs lint fails when a name here matches no job in
+# .github/workflows; when the rulesets change, change this list in the same pull request.
+Node.js 18.x tests & benchmarks
+Node.js 22.x tests & benchmarks
+Node.js 24.x tests & benchmarks
+Python 3.12 tests & benchmarks (ubuntu-latest)
+Python package (build, twine check, install)
+npm package (pack, inspect, install)
+leak bench (node 22 / ubuntu-latest)
+scrubber + vault (node 22 / ubuntu-latest)
+Lint (eslint, ruff, mypy)
+Public facts
+build, test, clippy, fmt

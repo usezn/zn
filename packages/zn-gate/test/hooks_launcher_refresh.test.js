@@ -19,7 +19,7 @@ const { tempDir } = require('./helpers/tmp');
 
 const claude = getAdapter('claude-code');
 const posix = process.platform !== 'win32';
-const REAL = "process.stdout.write('REAL_RUNNER\\n'); process.exit(0);\n";
+const REAL = "require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); process.stdout.write('REAL_RUNNER\\n'); process.exit(0);\n";
 
 function setup(t) {
   const home = tempDir(t, 'zn-refresh-');
@@ -34,6 +34,19 @@ function hook(file) {
   return spawnSync('/bin/sh', [file, 'PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: '/nonexistent' } });
 }
 
+test('refresh: the launcher keeps its deadline options, and Windows (Claude Code through Git Bash) is refreshed too', { skip: !posix }, (t) => {
+  const ctx = setup(t);
+  // A launcher written by an older package: same runner path, an old digest, a 9 s deadline.
+  launcher.writeLauncher('claude-code', process.execPath, ctx.runner, { env: ctx.env, home: ctx.home, deadlineS: 9, deadlineSoft: true, runnerDigest: '00'.repeat(32) });
+  let out = '';
+  refresh.main({ env: ctx.env, home: ctx.home, runnerPath: ctx.runner, platform: 'win32', out: (s) => { out += s; } });
+  assert.match(out, /refreshed hook launchers for claude-code/);
+  const text = fs.readFileSync(ctx.file, 'utf8');
+  assert.match(text, new RegExp("^ZN_SHA='" + launcher.runnerSha(ctx.runner) + "'$", 'm'));
+  assert.match(text, /\/bin\/sleep 9 & ZN_SP=/);
+  assert.ok(text.includes('[ -x /bin/sleep ] || { zn_cap "$@"; return 0; }'));
+});
+
 function post(ctx, extra = {}) {
   let out = '';
   refresh.main({ env: ctx.env, home: ctx.home, runnerPath: ctx.runner, out: (s) => { out += s; }, ...extra });
@@ -42,7 +55,7 @@ function post(ctx, extra = {}) {
 
 test('refresh: an updated runner is picked up and the hook runs again instead of blocking', { skip: !posix }, (t) => {
   const ctx = setup(t);
-  fs.writeFileSync(ctx.runner, "process.stdout.write('NEW_VERSION\\n'); process.exit(0);\n");
+  fs.writeFileSync(ctx.runner, "require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); process.stdout.write('NEW_VERSION\\n'); process.exit(0);\n");
   assert.equal(hook(ctx.file).status, 2, 'blocked before the refresh');
   const out = post(ctx);
   assert.equal(out, 'zn-gate: refreshed hook launchers for claude-code\n');
@@ -116,7 +129,7 @@ test('refresh: a project-local install does not repoint launchers at another cop
   const ctx = setup(t);
   // A second copy of the runner, as in ./node_modules/zn-gate of a project.
   const localRunner = path.join(tempDir(t, 'zn-refresh-local-'), 'runner.js');
-  fs.writeFileSync(localRunner, "process.stdout.write('PROJECT_COPY\\n'); process.exit(0);\n");
+  fs.writeFileSync(localRunner, "require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); process.stdout.write('PROJECT_COPY\\n'); process.exit(0);\n");
   const before = fs.readFileSync(ctx.file);
   // Local install: not global, and the launcher's runner still exists.
   assert.equal(post(ctx, { runnerPath: localRunner, global: false }), '');

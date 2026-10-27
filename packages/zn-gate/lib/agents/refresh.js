@@ -13,7 +13,10 @@
  *    runner that no longer exists and this is a global install. A project-local `npm install zn-gate` has
  *    neither: the launcher keeps pointing at the global copy, so a project's node_modules is never wired into
  *    the user's hooks.
- * Windows has no launcher file to refresh (the script is inline in the agent's config): nothing happens there.
+ * The launcher keeps the options it was written with (the deadline of the agents that fail open on a timeout), and
+ * Windows is refreshed too: Claude Code runs this sh launcher there (Git Bash); the other agents' Windows hooks are
+ * inline PowerShell, with no launcher file. A launcher folder that belongs to another user (`sudo npm i -g` with the
+ * user's HOME) is left alone.
  * With `npm install --ignore-scripts` this does not run; `zn hooks install <agent>` is then the fix.
  */
 
@@ -26,6 +29,18 @@ function realOrSame(p) {
   try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); }
 }
 
+// The same file, also when one side is written with / (the launcher keeps C:/... paths on Windows).
+function samePath(a, b, win) {
+  const k = (p) => (win ? realOrSame(p.replace(/\//g, '\\')).toLowerCase() : realOrSame(p));
+  return k(a) === k(b);
+}
+
+// The options the launcher was written with, read back from it: its deadline and whether it runs the hook without a timer.
+function launcherOptions(text) {
+  const d = /\/bin\/sleep (\d+) & ZN_SP=\$!/.exec(text);
+  return d ? { deadlineS: Number(d[1]), deadlineSoft: text.includes('[ -x /bin/sleep ] || { zn_cap "$@"; return 0; }') } : {};
+}
+
 function isExecutableFile(p) {
   try { return fs.statSync(p).isFile() && (fs.accessSync(p, fs.constants.X_OK), true); } catch (_) { return false; }
 }
@@ -33,8 +48,10 @@ function isExecutableFile(p) {
 /** Refreshes the launchers; returns the agent ids whose launcher changed. */
 function refreshLaunchers(opts = {}) {
   const env = opts.env || process.env;
-  if ((opts.platform || process.platform) === 'win32') return [];
+  const platform = opts.platform || process.platform;
+  const win = platform === 'win32';
   const launcher = require('./launcher');
+  const { portablePath } = require('../shell-quote');
   const runner = opts.runnerPath || path.resolve(__dirname, '..', 'hooks', 'runner.js');
   const node = opts.nodePath || process.execPath;
   const isGlobal = opts.global !== undefined ? opts.global : (env.npm_config_global === 'true' || env.npm_config_location === 'global');
@@ -42,6 +59,8 @@ function refreshLaunchers(opts = {}) {
   const dir = launcher.launcherDir({ env, home: opts.home });
   let names;
   try { names = fs.readdirSync(dir); } catch (_) { return []; }
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  try { if (uid !== null && fs.lstatSync(dir).uid !== uid) return []; } catch (_) { return []; }
   const done = [];
   for (const name of names.sort()) {
     try {
@@ -57,13 +76,14 @@ function refreshLaunchers(opts = {}) {
       const r = /^ZN_RUNNER='([^'\n]+)'$/m.exec(text);
       const n = /^ZN_NODE='([^'\n]+)'$/m.exec(text);
       if (!r || !n) continue;
-      const same = realOrSame(r[1]) === realOrSame(runner);
+      const same = samePath(r[1], runner, win);
       const gone = !fs.existsSync(r[1]);
       if (!same && !(gone && isGlobal)) continue;
       const useNode = isExecutableFile(n[1]) ? n[1] : node;
-      const next = launcher.unixScript(id, useNode, runner);
+      const kept = launcherOptions(text);
+      const next = launcher.unixScript(id, portablePath(useNode, platform), portablePath(runner, platform), kept);
       if (next === text) continue;
-      launcher.writeLauncher(id, useNode, runner, { env, home: opts.home });
+      launcher.writeLauncher(id, useNode, runner, { env, home: opts.home, platform, ...kept });
       done.push(id);
     } catch (_) { /* one bad file never stops the others or the install */ }
   }

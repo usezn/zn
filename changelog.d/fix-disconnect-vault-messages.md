@@ -1,3 +1,0 @@
-### Fixed
-- `zn-gate disconnect` always removes its own connect setting, even when the system keychain cannot be reached. Before, it exited `1` every time and `connect` kept saying "Already connected", so there was no way out. It now says what it could not clean in the keychain and how to do it, exits `0`, and gives the unlock hint once.
-- A damaged vault file (`identity.age`, `secrets.age` or `keychain.json`) now gives one plain sentence that says which file is damaged, to restore it from a backup or run `zn vault reset` (the saved values are lost), and a link to the troubleshooting page. Before, the line ended with a stray `.;`, pointed to a file path in the repository and showed internal library detail, which now appears only with `ZN_VERBOSE=1`.

@@ -69,6 +69,7 @@ The `version` input is the exact `zn-gate` version that gets installed; ranges a
 | `version` | set by the release | Exact `zn-gate` version to install. |
 | `path` | `.` | Path to check, relative to the workspace. `audit` needs a directory. |
 | `fail-on-threat` | `true` | Fail the step on findings. `false` reports only. |
+| `allow-partial` | `false` | Scan only: `true` keeps the step green when some files or folders were not read (2 MiB or larger, cannot be read, not a regular file, binary `.key` file). They are still listed. A scan that read no file at all still fails. Needs `zn-gate` 1.14.0 or later: with an older `version` the step stops with an error. |
 | `severity-threshold` | `high` | Audit only: lowest severity that fails the step when `fail-on-threat` is `true` (`critical`, `high`, `medium`, `low`). The scan has no severities: any finding fails. |
 | `fail-on` | empty | Audit only: lowest severity that fails the step (`low`, `medium`, `high`, `critical`, `none`). When set, it overrides `fail-on-threat` and `severity-threshold`. |
 | `agents` | empty (all) | Audit only: comma-separated agents to audit, as `zn audit --agents` takes them. |
@@ -82,7 +83,7 @@ Outputs:
 | Output | Meaning |
 |---|---|
 | `sarif-file` | Path of the SARIF file (`format: sarif` only); empty if none was written. |
-| `scan-exit-code` | Exit code of the scan: `0` clean, `1` findings, `2` error; empty if it did not run. |
+| `scan-exit-code` | Exit code of the scan: `0` clean, `1` findings, `2` error, `3` no file was read, or a file or folder was not read and `allow-partial` is not `true` (zn-gate 1.14.0 and later); empty if it did not run. The step then fails with its own message and, with `format: sarif`, the report is still written. |
 | `audit-exit-code` | Exit code of the audit: `0` clean, `1` findings at or above the threshold, `2` error; empty if it did not run. |
 
 ## What the scan does not read

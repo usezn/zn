@@ -54,7 +54,7 @@ function mayMatchRules(text, customConfig) {
   if (typeof text !== 'string') return true;
   if (text.length > MAX_PREFILTER_CHARS || NON_ASCII_RE.test(text) || NORMALIZED_AWAY_RE.test(text)) return true;
   // A repository's own rules (.znrules, zn.config.json) are not covered by the hints.
-  if (customConfig && (customConfig.bannedPatterns.length > 0 || customConfig.forbiddenPaths.length > 0)) return true;
+  if (customConfig && (customConfig.bannedPatterns.length > 0 || customConfig.forbiddenPaths.length > 0 || (customConfig.errors && customConfig.errors.length > 0))) return true;
   const squeezed = text.replace(WHITESPACE_RE, '');
   if (HINT_RE.test(squeezed)) return true;
   if (EXFIL_VERB_RE.test(squeezed) && EXFIL_OBJECT_RE.test(squeezed)) return true;

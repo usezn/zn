@@ -20,8 +20,7 @@ const { tempDir } = require('./helpers/tmp');
 
 const claude = getAdapter('claude-code');
 const posix = process.platform !== 'win32';
-const SUM = ['/usr/bin/sha256sum', '/bin/sha256sum'].find((f) => fs.existsSync(f));
-const REAL = "process.stdout.write('REAL_RUNNER\\n'); process.exit(0);\n";
+const REAL = "require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); process.stdout.write('REAL_RUNNER\\n'); process.exit(0);\n";
 const CHANGED = /zn-gate changed since the hooks were installed/;
 const AGAIN = /zn hooks install claude-code/;
 
@@ -83,7 +82,7 @@ test('integrity: after the tool ran (PostToolUse) a changed runner only warns, w
 
 test('integrity: an updated package (a new runner) is blocked with the reinstall message until the hooks are installed again', { skip: !posix }, (t) => {
   const { file, runner, install } = setup(t);
-  fs.writeFileSync(runner, "process.stdout.write('NEW_VERSION\\n'); process.exit(0);\n");
+  fs.writeFileSync(runner, "require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); process.stdout.write('NEW_VERSION\\n'); process.exit(0);\n");
   const blocked = run(file, 'PreToolUse');
   assert.equal(blocked.status, 2);
   assert.match(blocked.stderr, CHANGED);
@@ -94,33 +93,47 @@ test('integrity: an updated package (a new runner) is blocked with the reinstall
   assert.equal(ok.stdout.trim(), 'NEW_VERSION');
 });
 
-test('integrity: no hash tool available: blocked, never run unverified', { skip: !posix }, (t) => {
+test('integrity: no hash tool is needed: the recorded Node.js checks the runner, also with an empty PATH', { skip: !posix }, (t) => {
   const { file } = setup(t);
   const empty = tempDir(t, 'zn-b1174-empty-');
   const r = run(file, 'PreToolUse', empty);
-  assert.equal(r.status, 2);
-  assert.doesNotMatch(r.stdout, /REAL_RUNNER/);
-  assert.match(r.stderr, CHANGED);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), 'REAL_RUNNER');
 });
 
-test('integrity: shasum or openssl alone is enough to verify', { skip: !posix || !SUM }, (t) => {
-  const { file } = setup(t);
-  const shasum = tempDir(t, 'zn-b1174-shasum-');
-  fs.writeFileSync(path.join(shasum, 'shasum'), '#!/bin/sh\nexec ' + SUM + '\n', { mode: 0o755 });
-  assert.equal(run(file, 'PreToolUse', shasum).stdout.trim(), 'REAL_RUNNER');
-  const ossl = tempDir(t, 'zn-b1174-openssl-');
-  fs.writeFileSync(path.join(ossl, 'openssl'), '#!/bin/sh\n' + SUM + ' | sed "s/^/SHA2-256(stdin)= /"\n', { mode: 0o755 });
-  // sed is looked up in the PATH of the shim, which is the safe PATH of the launcher: add the system dirs after it.
-  assert.equal(run(file, 'PreToolUse', ossl + ':/usr/bin:/bin').stdout.trim(), 'REAL_RUNNER');
+test('integrity: a hash tool in the project that prints the recorded digest cannot make a changed runner run', { skip: !posix }, (t) => {
+  const { home, file, runner } = setup(t);
+  const sha = /^ZN_SHA='([0-9a-f]{64})'$/m.exec(fs.readFileSync(file, 'utf8'))[1];
+  const mark = path.join(home, 'changed-runner-ran');
+  fs.writeFileSync(runner, "require('fs').writeFileSync(" + JSON.stringify(mark) + ", 'ran'); require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok');\n");
+  const project = tempDir(t, 'zn-b1174-proj-');
+  const bin = path.join(project, 'bin');
+  fs.mkdirSync(bin);
+  // Every tool a shell launcher could ask answers with the recorded digest (sha256sum, shasum and openssl formats).
+  fs.writeFileSync(path.join(bin, 'sha256sum'), '#!/bin/sh\necho "' + sha + '  -"\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'shasum'), '#!/bin/sh\necho "' + sha + '  -"\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'openssl'), '#!/bin/sh\necho "SHA2-256(stdin)= ' + sha + '"\n', { mode: 0o755 });
+  const r = run(file, 'PreToolUse', bin + ':/usr/bin:/bin', project);
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, CHANGED);
+  assert.equal(fs.existsSync(mark), false, 'the changed runner must not run');
 });
 
-test('integrity: a wrong answer from a hash tool is a mismatch', { skip: !posix }, (t) => {
-  const { file } = setup(t);
-  const fake = tempDir(t, 'zn-b1174-fake-');
-  fs.writeFileSync(path.join(fake, 'sha256sum'), '#!/bin/sh\necho "0000000000000000000000000000000000000000000000000000000000000000  -"\n', { mode: 0o755 });
-  const r = run(file, 'PreToolUse', fake);
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, CHANGED);
+test('integrity: the checked runner runs as the main module, with the agent id as its argument', { skip: !posix }, (t) => {
+  const { file, runner, install } = setup(t);
+  fs.writeFileSync(runner, "require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); process.stdout.write([require.main === module, process.argv[1] === __filename, process.argv[2]].join(' ') + '\\n');\n");
+  install();
+  const r = run(file, 'PreToolUse');
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), 'true true claude-code');
+});
+
+test('integrity: the deadline and other launcher options are kept with the digest', { skip: !posix }, (t) => {
+  const { runner } = setup(t);
+  const text = launcher.unixScript('codex', process.execPath, runner, { deadlineS: 7, deadlineSoft: true, runnerDigest: 'ab'.repeat(32) });
+  assert.match(text, /^ZN_SHA='(ab){32}'$/m);
+  assert.match(text, /\/bin\/sleep 7 & ZN_SP=/);
+  assert.throws(() => launcher.unixScript('codex', process.execPath, runner, { runnerDigest: 'not hex' }), /bad runner digest/);
 });
 
 test('integrity: a fake zn on an absolute PATH entry is not run when the recorded Node.js is gone', { skip: !posix }, (t) => {

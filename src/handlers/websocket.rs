@@ -390,4 +390,40 @@ mod tests {
         );
         assert_eq!(status, 403);
     }
+
+    #[derive(Clone, Default)]
+    struct LogBuf(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogBuf {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(data);
+            Ok(data.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_token_check_never_logs_the_token() {
+        let buf = LogBuf::default();
+        let writer = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let addr = spawn_server(test_config(Some(TOKEN))).await;
+        let wrong = "fake-wrong-token-0000";
+        let status = rejected_status(
+            connect(addr, &format!("?token={wrong}"), Some(ALLOWED_ORIGIN), None).await,
+        );
+        assert_eq!(status, 401);
+        let logs = String::from_utf8_lossy(&buf.0.lock().unwrap()).to_string();
+        assert!(logs.contains("Invalid or missing token"), "{logs}");
+        assert!(!logs.contains(TOKEN), "configured token leaked: {logs}");
+        assert!(!logs.contains(wrong), "provided token leaked: {logs}");
+    }
 }
