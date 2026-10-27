@@ -616,16 +616,6 @@ function znMcpServerKind(server, cwd, opts = {}) {
   return isInstalledSecretsServer(userServers[server], { ...opts, env, cwd: path.resolve(cwd || process.cwd()) }) ? 'secrets' : null;
 }
 
-function sameFile(a, b) {
-  try {
-    const x = fs.realpathSync.native(a);
-    const y = fs.realpathSync.native(b);
-    return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y;
-  } catch (_) {
-    return false;
-  }
-}
-
 function realOf(p) {
   try {
     const r = fs.realpathSync.native(p);
