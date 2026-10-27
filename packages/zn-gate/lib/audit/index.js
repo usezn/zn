@@ -21,6 +21,7 @@ const P = require('./patterns');
 const { BY_ID, RANK } = require('./rules');
 const mcpSecrets = require('../mcp-secrets');
 const { pruneInfo } = require('../prune');
+const { BMP_CLASS } = require('../invisible');
 
 const AGENTS = ['claude', 'codex', 'cursor', 'opencode', 'amazonq', 'copilot', 'gemini'];
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -299,12 +300,12 @@ function capHome(ctx, severity) {
 // The exact commands `zn hooks install` writes (lib/agents/config-file.js),
 // matched against the whole command. A path may not contain shell
 // metacharacters, so nothing can run before or after the zn runner.
-const HOOK_AGENTS = '(?:claude-code|codex|cursor|opencode|antigravity|copilot|gemini)';
+const HOOK_AGENTS = '(?:claude-code|codex|cursor|opencode|antigravity|copilot|gemini|zcode)';
 const SAFE_ABS = '(?:/|[A-Za-z]:/)[^;&|$`<>(){}!*?"\'\\r\\n\\\\]{1,4096}';
 const OUR_HOOKS = [
   new RegExp('^zn(?:-gate)?(?:\\.cmd|\\.exe)? hook ' + HOOK_AGENTS + '$'),
   new RegExp('^"(' + SAFE_ABS + ')" "(' + SAFE_ABS + '/zn-gate/lib/hooks/runner\\.js)" ' + HOOK_AGENTS + '$'),
-  new RegExp('^powershell\\.exe -NoProfile -NonInteractive -Command "& \'(' + SAFE_ABS + ')\' \'(' + SAFE_ABS + '/zn-gate/lib/hooks/runner\\.js)\' ' + HOOK_AGENTS + '"$'),
+  new RegExp('^' + require('../shell-quote').POWERSHELL_EXE + ' -NoProfile -NonInteractive -Command "& \'(' + SAFE_ABS + ')\' \'(' + SAFE_ABS + '/zn-gate/lib/hooks/runner\\.js)\' ' + HOOK_AGENTS + '"$'),
 ];
 
 function insideDir(dir, p) {
@@ -759,7 +760,7 @@ function insideQuotedExample(text) {
 const STRONG_IN_DOCS =/^(?:pi:(?:ignore_previous|disregard|system_tag|system_bracket|template_boundary|multi_\w+)|indirect:|evasion:|exfil:markdown_image)/;
 
 // A line the reader sees as empty: whitespace, or only zero-width characters.
-const BLANK_LINE_RE = /^[\s\u0085\u00ad\u200b-\u200d\u2060\ufeff]*$/;
+const BLANK_LINE_RE = new RegExp('^[\\s\\u0085' + BMP_CLASS + ']*$');
 const BLANK_PADDING_MIN = 40;
 const BLANK_PADDING_MAX_REPORTS = 10;
 
@@ -833,7 +834,7 @@ function stripBadges(text) {
 
 const SYSTEM_PLACEHOLDER_DOC = /<(?:\s*\/)?\s*system-(?:or-(?:project|user|global|local|workspace|repo)|(?:name|path|dir|directory|id|type|version|wide))\s*>/gi;
 const SYSTEM_IDENTITY_DOC = /\bsystem:(?:anonymous|authenticated|unauthenticated|masters|nodes?|serviceaccounts?(?::[\w-]+)*|kube-[\w-]+|node-[\w-]+|basic-user|discovery|public-info-viewer)(?![\w-])/gi;
-const CHAT_TOKEN_DOC = /<\|im_start\|>(?:[ \t]*(?:user|assistant|tool)\b|(?![\s\u200b-\u200d\u2060\ufeff\u00ad]*(?:system\b|$)))|<\|im_end\|>|\[\/?INST\]/gim;
+const CHAT_TOKEN_DOC = new RegExp('<\\|im_start\\|>(?:[ \\t]*(?:user|assistant|tool)\\b|(?![\\s' + BMP_CLASS + ']*(?:system\\b|$)))|<\\|im_end\\|>|\\[\\/?INST\\]', 'gim');
 
 // What may follow an opening placeholder for it to count as a name: nothing,
 // punctuation, or a file name or path glued to the tag. Checked in two steps
@@ -1034,6 +1035,8 @@ function checkInstructions(ctx) {
       let res = null;
       // Strict mode: audit grades each finding itself (high, medium, info).
       try { res = rules().evaluate(t, { strict: true }); } catch (_) { res = null; }
+      // A broken project rules file is reported once, as a configuration finding (see audit()), not on every line.
+      if (res && res.rule === 'custom:invalid_rules') res = null;
       let demo = false;
       if (res && res.verdict === 'block') {
         const d = docShape(t, { doc, skillNote, closedTags, fenced: fenced.has(i), lines: ctx.lines, at: i, open: fenceOpen.get(i) });
@@ -1932,6 +1935,15 @@ function audit(opts) {
   }
   checkShadowing(root, out);
   inventory(extDirs, out);
+  try {
+    const cfg = rules().loadCustomConfig();
+    if (cfg.errors.length > 0) {
+      const m = /^line (\d+):/.exec(cfg.errors[0]);
+      const f = uncheckedFinding({ file: cfg.file, agent: 'any', severity: 'medium', detail: 'The project rules in ' + cfg.file + ' are not valid (' + cfg.errors[0] + '), so they were not applied in this audit. To fix it, edit ' + cfg.file + (m ? ' line ' + m[1] : '') + ' or delete it.', fix: 'Edit the project rules file, or delete it; zn-gate check lists the errors.' });
+      if (m) f.line = Number(m[1]);
+      out.push(f);
+    }
+  } catch (_) { /* the rules file never stops the audit */ }
   for (const u of unchecked) out.push(uncheckedFinding(u));
   if (truncated && truncated.reason === 'entries') {
     out.push(uncheckedFinding({ file: truncated.at, agent: 'any', severity: 'high', detail: 'zn audit stopped after ' + maxEntries + ' directory entries (in ' + truncated.at + '); agent directories were read first, but files after that point were not checked.' }));

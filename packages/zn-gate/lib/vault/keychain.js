@@ -82,7 +82,7 @@ function run(cmd, args, input, extraEnv) {
     encoding: 'utf8',
     timeout: 60000,
     windowsHide: true,
-    env: Object.assign({}, process.env, extraEnv || {}),
+    env: extraEnv && extraEnv.PSModulePath ? require('../exe').psEnv(cmd, process.env, extraEnv) : Object.assign({}, process.env, extraEnv || {}),
     maxBuffer: 1024 * 1024,
   });
   if (res.error) throw znError(CODES.LOCKED, messages.keychainHelperFailed(cmd + ' (' + res.error.code + ')'));
@@ -202,7 +202,7 @@ function winCred(op, input, slot) {
   }
   const encoded = Buffer.from(WIN_SCRIPT, 'utf16le').toString('base64');
   return run(ps, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], input,
-    { ZN_CRED_OP: op, ZN_CRED_TARGET: sl.service + ':' + sl.account });
+    { PSModulePath: require('../exe').systemPsModulePath(ps), ZN_CRED_OP: op, ZN_CRED_TARGET: sl.service + ':' + sl.account });
 }
 
 const windows = {

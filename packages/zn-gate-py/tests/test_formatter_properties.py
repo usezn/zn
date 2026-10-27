@@ -165,7 +165,9 @@ def test_github_has_no_raw_line_breaks_inside_a_command(scanned, skipped, violat
 def test_text_mentions_each_finding_rule_once(scanned, skipped, violations):
     output = _render("text", scanned, skipped, violations)
     if not violations:
-        if scanned:
+        if scanned and skipped:
+            assert "scan is incomplete" in output
+        elif scanned:
             assert "All scanned prompts, tool definitions, and files are clean!" in output
         else:
             assert "No files were scanned in" in output

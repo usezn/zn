@@ -43,7 +43,7 @@ process.stdin.on('end', () => {
 _NODE_HELPERS = (
     "const m=require(process.argv[1]);const n=JSON.parse(process.argv[2]);"
     "process.stdout.write(JSON.stringify(n.map(x=>[m.normalizeName(x),m.isSecretName(m.normalizeName(x)),"
-    "m.suggestedName(m.normalizeName(x)),m.mcpNextStep('environment variable',x),m.mcpNextStep('header',x),"
+    "m.suggestedName(m.normalizeName(x)),m.mcpNextStep('environment variable',x),m.mcpNextStep('argument',x),m.mcpNextStep('setting',x),m.mcpNextStep('header',x),"
     "m.mcpSample('argument',x),m.mcpSample('URL',x),m.mcpSample('header',x)])))"
 )
 
@@ -295,7 +295,8 @@ class TestNodeParity(unittest.TestCase):
             with self.subTest(name=name):
                 norm = mcp.normalize_name(name)
                 self.assertEqual(got, [norm, mcp.is_secret_name(norm), mcp.suggested_name(norm),
-                                       mcp.mcp_next_step("environment variable", name), mcp.mcp_next_step("header", name),
+                                       mcp.mcp_next_step("environment variable", name), mcp.mcp_next_step("argument", name),
+                                       mcp.mcp_next_step("setting", name), mcp.mcp_next_step("header", name),
                                        mcp.mcp_sample("argument", name), mcp.mcp_sample("URL", name), mcp.mcp_sample("header", name)])
 
 

@@ -117,6 +117,66 @@ test('the cache accepts newer versions, refuses rollbacks and keeps the last goo
   assert.strictEqual(policy.state({ home, now: NOW }).version, 4);
 });
 
+test('a second signed policy with the same version and other content is refused; the same content is fine', (t) => {
+  const { home, k } = setup(t);
+  const widened = { rules: [{ secret: 'PROD_*', agents: ['claude-code', 'codex'], mode: 'proxy', allowHosts: ['api.stripe.com', 'api.example.net'] }] };
+  assert.strictEqual(policy.accept(sign(body({ version: 3 }), k), 'W/"e3"', { home, now: NOW }).ok, true);
+  const again = policy.accept(sign(body({ version: 3 }), k), 'W/"e3b"', { home, now: NOW });
+  assert.strictEqual(again.ok, true, 'a repeat of the same policy (new ETag) is accepted');
+  const swapped = policy.accept(sign(body({ version: 3, ...widened }), k), 'W/"e3c"', { home, now: NOW });
+  assert.strictEqual(swapped.ok, false);
+  assert.match(swapped.error, /already used with different content/);
+  assert.deepStrictEqual(policy.state({ home, now: NOW }).policy.rules, body().rules, 'the policy held is unchanged');
+  assert.strictEqual(policy.accept(sign(body({ version: 4, ...widened }), k), null, { home, now: NOW }).ok, true, 'a new version may change the content');
+});
+
+test('the daily re-sign of the same version (new issued_at and expires_at) is accepted and renews the dates', (t) => {
+  const { home, k } = setup(t);
+  const day1 = Math.floor(NOW / DAY) * DAY;
+  const signedOn = (day, over) => sign(body(Object.assign({
+    version: 3, issued_at: new Date(day).toISOString(), expires_at: new Date(day + 7 * DAY).toISOString(),
+  }, over || {})), k);
+  assert.strictEqual(policy.accept(signedOn(day1), 'W/"d1"', { home, now: day1 + 3600000 }).ok, true);
+  // Day after day the server signs the same version and rules with later dates.
+  for (let n = 1; n <= 8; n += 1) {
+    const day = day1 + n * DAY;
+    const r = policy.accept(signedOn(day), 'W/"d' + (n + 1) + '"', { home, now: day + 3600000 });
+    assert.strictEqual(r.ok, true, 'day ' + (n + 1) + ': ' + r.error);
+    const st = policy.state({ home, now: day + 3600000 });
+    assert.strictEqual(st.state, 'active', 'the policy never goes to strict mode');
+    assert.strictEqual(st.expires_at, new Date(day + 7 * DAY).toISOString(), 'the stored expiry follows the re-sign');
+  }
+  // Same version, other rules: still refused, with new dates too.
+  const day = day1 + 9 * DAY;
+  const widened = signedOn(day, { rules: [{ secret: 'PROD_*', agents: ['claude-code', 'codex'], mode: 'proxy', allowHosts: ['api.stripe.com', 'api.example.net'] }] });
+  const refused = policy.accept(widened, null, { home, now: day + 3600000 });
+  assert.strictEqual(refused.ok, false);
+  assert.match(refused.error, /different content/);
+  // An older signature of the same version cannot shorten the validity held (replay).
+  const older = policy.accept(signedOn(day1 + 6 * DAY), null, { home, now: day + 3600000 });
+  assert.strictEqual(older.ok, false);
+  assert.match(older.error, /older than the one held/);
+  assert.strictEqual(policy.state({ home, now: day1 + 8 * DAY + 3600000 }).expires_at, new Date(day1 + 8 * DAY + 7 * DAY).toISOString());
+});
+
+test('digestOf ignores the validity dates and nothing else', () => {
+  const a = body({ version: 7 });
+  const later = body({ version: 7, issued_at: new Date(Date.parse(a.issued_at) + DAY).toISOString(), expires_at: new Date(Date.parse(a.expires_at) + DAY).toISOString() });
+  assert.strictEqual(policy.digestOf(a), policy.digestOf(later));
+  assert.notStrictEqual(policy.digestOf(a), policy.digestOf(body({ version: 7, rules: [] })));
+  assert.notStrictEqual(policy.digestOf(a), policy.digestOf(body({ version: 8 })));
+});
+
+test('verifyEnvelope compares the digest only for the version held', () => {
+  const k = orgKey();
+  const held = policy.digestOf(body({ version: 5 }));
+  assert.match(held, /^[0-9a-f]{64}$/);
+  const other = sign(body({ version: 5, rules: [] }), k);
+  assert.match(policy.verifyEnvelope(other, k.pin, { now: NOW, minVersion: 5, heldDigest: held }).error, /different content/);
+  assert.strictEqual(policy.verifyEnvelope(other, k.pin, { now: NOW, minVersion: 4, heldDigest: held }).ok, true);
+  assert.strictEqual(policy.verifyEnvelope(sign(body({ version: 5 }), k), k.pin, { now: NOW, minVersion: 5, heldDigest: held }).ok, true);
+});
+
 test('the cache goes to strict mode when it expires and is ignored if edited', (t) => {
   const { home, k } = setup(t);
   policy.accept(sign(body(), k), null, { home, now: NOW });

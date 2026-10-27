@@ -1,2 +1,2 @@
-zn-gate==1.13.1
+zn-gate==1.14.0rc2
 haystack-ai==3.4.0

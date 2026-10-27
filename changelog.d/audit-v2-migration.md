@@ -1,2 +1,0 @@
-### Security
-- Existing encrypted audit records are upgraded to the id-and-namespace-bound format the first time the audit vault opens with its key, in a single transaction, and records in the old format are no longer accepted, so an old record can no longer be copied to another row or namespace and still be read. Records that cannot be read with the key are left unchanged and reported in the log.

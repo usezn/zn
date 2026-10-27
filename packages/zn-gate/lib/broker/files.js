@@ -8,7 +8,13 @@
 
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const crypto = require('crypto');
+// child_process is loaded on the first git call: most hook calls never ask git, and loading it costs a few milliseconds.
+let spawnSyncLazy = null;
+function spawnSync(...args) {
+  if (!spawnSyncLazy) spawnSyncLazy = require('child_process').spawnSync;
+  return spawnSyncLazy(...args);
+}
 
 function existingDir(p) {
   let cur = path.resolve(p);
@@ -32,10 +38,20 @@ function existingDir(p) {
 function gitStatusOf(file) {
   const abs = path.resolve(file);
   const dir = existingDir(path.dirname(abs));
-  const top = spawnSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', windowsHide: true });
+  // git from the absolute PATH entries only: this runs inside hooks, whose current folder is the project.
+  const exe = require('../exe');
+  const git = exe.findProgram('git');
+  if (!git) return 'unknown';
+  // English messages (to tell "not a repository" from other failures), and no fsmonitor: core.fsmonitor in the
+  // repository's own .git/config names a program that git would otherwise run.
+  const env = { ...exe.programEnv(), LC_ALL: 'C', LANGUAGE: 'C' };
+  const run = (args) => spawnSync(git, ['-c', 'core.fsmonitor=false', '-C', dir, ...args], { encoding: 'utf8', windowsHide: true, env });
+  const top = run(['rev-parse', '--show-toplevel']);
   if (top.error) return 'unknown';
-  if (top.status !== 0) return 'outside';
-  const ign = spawnSync('git', ['-C', dir, 'check-ignore', '-q', '--', abs], { encoding: 'utf8', windowsHide: true });
+  // Only "not a git repository" means outside; any other failure (a repository git refuses to read, such as one owned by
+  // someone else) is unknown, which callers treat as tracked.
+  if (top.status !== 0) return /not a git repository/i.test(String(top.stderr || '')) ? 'outside' : 'unknown';
+  const ign = run(['check-ignore', '-q', '--', abs]);
   if (ign.error) return 'unknown';
   if (ign.status === 0) return 'ignored';
   if (ign.status === 1) return 'tracked';
@@ -46,7 +62,7 @@ function gitStatusOf(file) {
  * The path a file has, or would have once created: the nearest existing
  * ancestor with its symlinks resolved, then the rest of the path as typed.
  */
-function realTargetOf(file) {
+function resolveTarget(file, realpath) {
   const abs = path.resolve(file);
   const root = path.parse(abs).root;
   const parts = abs.slice(root.length).split(path.sep).filter(Boolean);
@@ -62,20 +78,42 @@ function realTargetOf(file) {
     i++;
   }
   try {
-    // On Windows the native call also turns 8.3 short names (JOSPRE~1\AWS~1\CREDEN~1) into the long names the
-    // protected-path rules read; a short name of a folder with spaces or accents is not a prefix of its long name.
-    const real = process.platform === 'win32' ? fs.realpathSync.native(cur) : fs.realpathSync(cur);
+    const real = realpath(cur);
     return path.join(real, ...parts.slice(i));
   } catch (_) {
     return abs;
   }
 }
 
-/** Write a file atomically with mode 0600 (best effort on Windows). */
-function writeFileAtomic(file, data, mode = 0o600) {
-  const tmp = path.join(path.dirname(file), '.' + path.basename(file) + '.' + process.pid + '.zn-tmp');
-  fs.writeFileSync(tmp, data, { mode });
-  fs.renameSync(tmp, file);
+function realTargetOf(file) {
+  return resolveTarget(file, fs.realpathSync);
 }
 
-module.exports = { gitStatusOf, realTargetOf, writeFileAtomic };
+/**
+ * Like realTargetOf, but on Windows it uses the native call, which also turns 8.3 short names (JOSPRE~1\AWS~1\CREDEN~1)
+ * into the long names the protected-path rules read: a short name of a folder with spaces or accents is not a prefix of its
+ * long name. It only adds a candidate path for the rules to check; realTargetOf stays the identity of an approved location.
+ * Elsewhere it is the same as realTargetOf. The platform and the resolver can be passed in for tests.
+ */
+function nativeTargetOf(file, { platform = process.platform, realpath = fs.realpathSync.native } = {}) {
+  return platform === 'win32' ? resolveTarget(file, realpath) : realTargetOf(file);
+}
+
+/**
+ * Write a file atomically with mode 0600 (best effort on Windows). The temporary file has an unpredictable name and is created
+ * with O_EXCL, so a file that somebody else planted under any name is never opened (it would keep its owner and access list
+ * through the rename); the rename then replaces the target in one step.
+ */
+function writeFileAtomic(file, data, mode = 0o600) {
+  const tmp = path.join(path.dirname(file), '.' + path.basename(file) + '.' + process.pid + '.' + crypto.randomBytes(8).toString('hex') + '.zn-tmp');
+  const fd = fs.openSync(tmp, 'wx', mode);
+  try {
+    try { fs.writeFileSync(fd, data); } finally { fs.closeSync(fd); }
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (_) { /* best effort */ }
+    throw e;
+  }
+}
+
+module.exports = { gitStatusOf, realTargetOf, nativeTargetOf, writeFileAtomic };

@@ -1,0 +1,55 @@
+$ /work/zcrt /opt/ZCode/resources/glm/zcode.cjs plugins list
+rc=0
+--stdout--
+Plugins (16)
+- visualize@zcode-plugins-official [enabled]
+  official/zcode-plugins-official: /work/home/.zcode/cli/plugins/cache/zcode-plugins-official/visualize/0.1.0
+  skills: 1, commands: 0, hooks: 0, mcp: none
+- node-repl-host@zcode-plugins-official [enabled]
+  official/zcode-plugins-official: /work/home/.zcode/cli/plugins/cache/zcode-plugins-official/node-repl-host/0.6.1
+  skills: 0, commands: 0, hooks: 0, mcp: none
+- android-emulator@zcode-plugins-official [disabled]
+  official/zcode-plugins-official: /work/home/.zcode/cli/plugins/cache/zcode-plugins-official/android-emulator/0.1.0
+  skills: 0, commands: 0, hooks: 0, mcp: none
+- browser-use@zcode-plugins-official [enabled]
+  official/zcode-plugins-official: /work/home/.zcode/cli/plugins/cache/zcode-plugins-official/browser-use/0.5.1
+  skills: 2, commands: 0, hooks: 0, mcp: none
+- documents@zcode-plugins-official [enabled]
+  official/zcode-plugins-official: /work/home/.zcode/cli/plugins/cache/zcode-plugins-official/documents/0.2.1
+  skills: 2, commands: 0, hooks: 0, mcp: plugin:documents:documents
+- pdf@zcode-plugins-official [enabled]
+  official/zcode-plugins-official: /work/home/.zcode/cli/plugins/cache/zcode-plugins-official/pdf/0.2.2
+  skills: 2, commands: 0, hooks: 0, mcp: plugin:pdf:pdf
+- presentations@zcode-plugins-official [enabled]
+  official/zcode-plugins-official: /work/home/.zcode/cli/plugins/cache/zcode-plugins-official/presentations/0.2.1
+  skills: 2, commands: 0, hooks: 0, mcp: plugin:presentations:presentations
+- spreadsheets@zcode-plugins-official [enabled]
+  official/zcode-plugins-official: /work/home/.zcode/cli/plugins/cache/zcode-plugins-official/spreadsheets/0.2.1
+  skills: 2, commands: 0, hooks: 0, mcp: plugin:spreadsheets:spreadsheets
+- image-search@zcode-plugins-official [enabled]
+  official/zcode-plugins-official: /work/home/.zcode/cli/plugins/cache/zcode-plugins-official/image-search/0.1.1
+  skills: 0, commands: 0, hooks: 0, mcp: none
+- ios-simulator@zcode-plugins-official [disabled]
+  official/zcode-plugins-official: /work/home/.zcode/cli/plugins/cache/zcode-plugins-official/ios-simulator/0.1.0
+  skills: 0, commands: 0, hooks: 0, mcp: none
+- restore-legacy-sessions@zcode-plugins-official [disabled]
+  official/zcode-plugins-official: /work/home/.zcode/cli/plugins/cache/zcode-plugins-official/restore-legacy-sessions/0.1.0
+  skills: 0, commands: 0, hooks: 0, mcp: none
+- plugin-creator@zcode-plugins-official [enabled]
+  official/zcode-plugins-official: /work/home/.zcode/cli/plugins/cache/zcode-plugins-official/plugin-creator/0.1.1
+  skills: 1, commands: 0, hooks: 0, mcp: none
+- skill-creator@zcode-plugins-official [enabled]
+  official/zcode-plugins-official: /work/home/.zcode/cli/plugins/cache/zcode-plugins-official/skill-creator/0.1.0
+  skills: 1, commands: 0, hooks: 0, mcp: none
+- zcode-guide@zcode-plugins-official [enabled]
+  official/zcode-plugins-official: /work/home/.zcode/cli/plugins/cache/zcode-plugins-official/zcode-guide/0.3.0
+  skills: 6, commands: 0, hooks: 0, mcp: none
+- computer-use@zcode-plugins-official [disabled]
+  official/zcode-plugins-official: /work/home/.zcode/cli/plugins/cache/zcode-plugins-official/computer-use/0.6.5
+  skills: 0, commands: 0, hooks: 0, mcp: none
+- zn-gate@usezn [enabled]
+  cache/usezn: /work/home/.zcode/cli/plugins/cache/usezn/zn-gate/1.14.0
+  skills: 0, commands: 0, hooks: 4, mcp: none
+
+--stderr--
+

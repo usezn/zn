@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-23.7';
+const SCRUB_RULES_VERSION = '2026-10-24.1';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -378,6 +378,110 @@ function findStructured(text, out) {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Quoted values with spaces, and numbers, under a secret key           */
+/* ------------------------------------------------------------------ */
+
+/* A secret key followed by `:` `=` `=>` or `:=` and a value, in JSON, YAML,
+ * shell, Python or JS. Groups: 1 = name, 2 = the quote that closes a quoted
+ * key (with the backslashes of a JSON string inside a string), 3 = the
+ * opening quote of the value (same escapes). The name takes no suffix, so
+ * password_hint and token_count are other keys. */
+const KV_OPEN = new RegExp('(password|passwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token)(\\\\{0,2}["\'])?[ \\t]{0,16}(?:=>|:=|=|:)[ \\t]{0,16}(\\\\{0,2}["\'])?', 'gi');
+const KV_PREFILTER = /(?:pass|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)/i;
+/* Longest quoted value read. A value with no closing quote inside this
+ * window is left alone, so the work per opening quote is bounded. */
+const KV_MAX_VALUE = 4096;
+const KV_MIN_VALUE = 8;
+const KV_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+/* A placeholder, or a reference after an auth scheme word ("Bearer ${TOKEN}"). */
+const KV_PLACEHOLDER = (v) => {
+  const bare = (s) => PLACEHOLDER_RE.test(s) || PLACEHOLDER_WORDS.test(s) || /^(.)\1+$/.test(s);
+  return bare(v) || bare(v.replace(/^(?:bearer|basic|token)\s+/i, ''));
+};
+
+/* Spans of two kinds of value that the entropy rules do not see:
+ *   - a quoted value that has whitespace in it, up to its closing quote
+ *     (`"password":"abcdefgh ijk lmn"`); a double-quoted value ends at the
+ *     first quote that is not escaped, a single-quoted one at the next `'`,
+ *     and a value inside an escaped JSON string at its own escaped quote;
+ *   - a bare number of 8 or more characters under a quoted key
+ *     (`{"token":12345678}`). The replacement keeps the JSON valid: span.quote
+ *     is the quote that the engine puts around the token. An unquoted key
+ *     (YAML, shell) with a number is left alone.
+ * Values shorter than 8 characters, placeholders and values with no closing
+ * quote on the same line (and inside KV_MAX_VALUE characters) are left alone. One pass over the
+ * text; each opener reads at most KV_MAX_VALUE characters. */
+function findQuotedKv(text, out) {
+  KV_OPEN.lastIndex = 0;
+  let m;
+  while ((m = KV_OPEN.exec(text)) !== null) {
+    const afterOpen = KV_OPEN.lastIndex;
+    KV_OPEN.lastIndex = Math.max(afterOpen, m.index + 1);
+    if (m[3] === undefined) {
+      KV_NUMBER.lastIndex = afterOpen;
+      const num = KV_NUMBER.exec(text);
+      // Only a quoted key (a JSON member or a dict entry) counts: YAML and shell numbers
+      // (`password: 123456789012345`) are left alone, as the structured rules always did.
+      if (!m[2] || !num || num[0].length < KV_MIN_VALUE) continue;
+      const end = afterOpen + num[0].length;
+      if (end < text.length && /[A-Za-z0-9_.-]/.test(text[end])) continue; // part of a longer word, not a number
+      if (/^-?(\d)\1+$/.test(num[0])) continue;                            // 00000000: a mask
+      out.push({ start: afterOpen, end, quote: m[2] });
+      KV_OPEN.lastIndex = end;
+      continue;
+    }
+    const open = m[3];
+    const quote = open[open.length - 1];
+    const level = open.length - 1;           // backslashes before the opening quote
+    const start = afterOpen;
+    const limit = Math.min(text.length, start + KV_MAX_VALUE);
+    let i = start;
+    let end = -1;
+    while (i < limit) {
+      const c = text.charCodeAt(i);
+      // A value never runs over a line break: the quote that follows `token="` in a source
+      // line is the closing quote of that string, not the start of a value (print("token=" + x)).
+      if (c === 10 || c === 13) break;
+      if (c === 92) {
+        if (level > 0) {
+          // Count the run of backslashes only inside the window, so a long run stays linear.
+          let k = 0;
+          while (i + k < limit && text.charCodeAt(i + k) === 92) k++;
+          if (k === level && text[i + k] === quote) { end = i; break; }
+          i += k + 1;
+        } else if (quote !== "'") {
+          i += 2;                            // a backslash escapes the next character
+        } else {
+          i += 1;
+        }
+      } else if (level === 0 && text[i] === quote) {
+        end = i;
+        break;
+      } else {
+        i++;
+      }
+    }
+    if (end < 0) continue;
+    const value = text.slice(start, end);
+    if (value.length < KV_MIN_VALUE || !/\s/.test(value) || KV_PLACEHOLDER(value)) continue;
+    let spanEnd = end;
+    if (level === 0 && !m[2]) {
+      // A shell word glued to more quoted pieces ('a b''c') is one value: take them too.
+      let p = end + 1;
+      for (let n = 0; n < 8 && (text[p] === '"' || text[p] === "'"); n++) {
+        let q = p + 1;
+        while (q < text.length && /[A-Za-z0-9_.-]/.test(text[q])) q++;
+        if (q === p + 1) break;
+        spanEnd = q;
+        p = q + 1;
+      }
+    }
+    out.push({ start, end: spanEnd });
+    KV_OPEN.lastIndex = spanEnd;
+  }
+}
+
 const PATTERNS = [
   { type: 'ANTHROPIC_KEY', hints: ['sk-ant-'], re: re(NB + 'sk-ant-[a-z]{3,8}\\d{2}-[A-Za-z0-9_-]{32,200}' + NA),
     check: (v) => !maskedBody(v.replace(/^sk-ant-[a-z]+\d{2}-/, '')) },
@@ -595,6 +699,8 @@ const PATTERNS = [
   /* Sensitive key in structured config: YAML, docker-compose (map and
    * list), dotenv, Dockerfile ENV / ARG (see S_LINES). */
   { type: 'SECRET', hints: null, prefilter: S_PREFILTER, find: findStructured },
+  /* Quoted value with spaces, or a number, under a secret key (see findQuotedKv). */
+  { type: 'SECRET', hints: null, prefilter: KV_PREFILTER, find: findQuotedKv },
   /* `docker run -e KEY=value` / `--env KEY=value` / `--env=KEY=value`. */
   { type: 'SECRET', hints: ['-e', '--env'],
     re: re('(?<![^\\s])(?:-e|--env)(?:[ \\t]+|=)(["\']?)([A-Za-z_][A-Za-z0-9_]{0,127})=([^\\s"\'`;&|]{1,512})\\1(?![^\\s;&|)])'),
@@ -630,7 +736,11 @@ function findPatterns(text, opts) {
     if (p.find) {
       const found = [];
       p.find(text, found);
-      for (const f of found) spans.push({ start: f.start, end: f.end, type: p.type, source: 'pattern' });
+      for (const f of found) {
+        const span = { start: f.start, end: f.end, type: p.type, source: 'pattern' };
+        if (f.quote) span.quote = f.quote;
+        spans.push(span);
+      }
       continue;
     }
     p.re.lastIndex = 0;

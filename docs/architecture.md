@@ -18,12 +18,12 @@ The local pieces:
 
 - **Rules engine.** Signatures plus normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64. It checks prompts, tool arguments, tool output and MCP tool descriptions.
 - **PII and secret scrubber.** Replaces the secrets it recognises (provider keys, tokens, JWTs, private keys, database URL passwords) and detects personal data (cards, IBAN, national IDs, e-mail, phone). The model sees a marker or `[REDACTED_...]` text instead of the value.
-- **Encrypted vault.** Keeps the real values of your secrets on your machine. The agent works with stable markers such as `__ZN_AWS_KEY_1__`, and `zn run` fills in a value only for a command you approved.
+- **Encrypted vault.** Keeps the real values of your secrets on your machine. The agent works with stable markers such as `__ZN_AWS_KEY_1__`, and `zn run` puts a value in the environment of a command only when you approved it.
 - **Hash-chained audit log.** Records each assessment in `~/.zn/evidence.jsonl`.
 
 ## How it attaches to your agent
 
-- **Local hooks.** For Claude Code, Codex CLI, Cursor and OpenCode, `zn hooks install <agent>` registers zn-gate's hooks, so it also sees the agent's built-in tools: it blocks reads of secret files and pasted secrets, and scrubs shell output and file contents. (In Cursor, only MCP tool output is scrubbed.) What each agent allows is in [Agent compatibility](compat.md).
+- **Local hooks.** For Claude Code, Codex CLI, Cursor, OpenCode, Antigravity and ZCode desktop app, `zn hooks install <agent>` registers zn-gate's hooks, so it also sees the agent's built-in tools: it blocks reads of secret files and pasted secrets, and scrubs shell output and file contents. (In Cursor, only MCP tool output is scrubbed; in Antigravity and ZCode desktop app, no tool output is rewritten.) What each agent allows is in [Agent compatibility](compat.md).
 - **MCP server and `shield`.** In editors that only support MCP servers, zn-gate offers its checks as MCP tools (`analyze_prompt`, `check_tool_call`, `check_tool_result`) and can wrap your other MCP servers with `zn-gate shield`. See [Editors and coding agents](editors/README.md).
 - **Library.** Node.js and Python functions, and framework integrations, run the same checks inside your own code ([API reference](api-reference.md)).
 

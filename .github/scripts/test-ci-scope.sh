@@ -68,8 +68,8 @@ else echo "FAIL push events always run"; fails=$((fails + 1)); fi
 # here as a mention that reads nothing (a path inside a fixture or command string, or a comment).
 cd "$root"
 # docs/extra.md and docs/plain.md are in-memory file names in audit_instruction_imports.test.js, and docs/uninstall.md is
-# a command string in the destructive-command corpus: no test reads those real files.
-allow_unread=" docs/connect.md docs/guide.md docs/troubleshooting.md docs/extra.md docs/plain.md docs/uninstall.md "
+# a command string in the destructive-command corpus, and docs/x.md is a path inside a policy fixture: no test reads those real files.
+allow_unread=" docs/connect.md docs/guide.md docs/troubleshooting.md docs/extra.md docs/plain.md docs/uninstall.md docs/x.md "
 while IFS= read -r p; do
   case "$allow_unread" in *" $p "*) continue ;; esac
   n=$((n + 1))

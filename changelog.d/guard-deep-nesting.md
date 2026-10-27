@@ -1,2 +1,0 @@
-### Security
-- Tool arguments or tool results nested more than about eight levels deep were passed through without being checked, so a value hidden that far down skipped every rule. They are now blocked with the reason "nested too deeply to check". Mapping types other than a plain dict, frozensets and byte strings are now scanned as well, and a structure that contains itself no longer loops. Affects 1.13.1 and earlier of the Python package.
