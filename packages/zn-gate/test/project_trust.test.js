@@ -111,3 +111,34 @@ test('project hook guard: CLAUDE_PROJECT_DIR counts as the project even when the
     assert.equal(fs.existsSync(marker), false, label + ': the project zn ran');
   }
 });
+
+test('project hook guard: the zn of a global npm install (bin/zn links into lib/node_modules/zn-gate) runs (dash, bash --posix)', { skip: !POSIX }, (t) => {
+  for (const [label, shell, extra] of SHELLS) {
+    const { proj, marker } = setup(t);
+    const prefix = tempDir(t, 'zn-ptrust-npmg-');
+    const pkgBin = path.join(prefix, 'lib', 'node_modules', 'zn-gate', 'bin');
+    fs.mkdirSync(pkgBin, { recursive: true });
+    fs.writeFileSync(path.join(pkgBin, 'cli.js'), '#!/bin/sh\necho "zn $*" >> ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+    fs.mkdirSync(path.join(prefix, 'bin'));
+    fs.symlinkSync('../lib/node_modules/zn-gate/bin/cli.js', path.join(prefix, 'bin', 'zn'));
+    fs.symlinkSync(process.execPath, path.join(prefix, 'bin', 'node'));
+    const r = runGuard(shell, extra, proj, path.join(prefix, 'bin') + ':/usr/bin:/bin');
+    assert.equal(r.status, 0, label + ': ' + r.stdout + r.stderr);
+    assert.match(fs.readFileSync(marker, 'utf8'), /^zn hook claude-code/, label);
+  }
+});
+
+test('project hook guard: a folder above the home folder named as the project does not refuse the home folder', { skip: !POSIX }, (t) => {
+  for (const [label, shell, extra] of SHELLS) {
+    const { proj, marker } = setup(t);
+    const root = tempDir(t, 'zn-ptrust-above-');
+    const home = path.join(root, 'home');
+    const bin = fakeZn(path.join(home, '.local', 'bin'), marker);
+    const cmd = projectShCommand('claude-code', 'PreToolUse').slice('sh -c '.length);
+    const r = spawnSync(shell, [...extra, '-c', 'exec ' + shell + ' ' + extra.join(' ') + ' -c ' + cmd], {
+      cwd: proj, env: { PATH: bin + ':/usr/bin:/bin', HOME: home, CLAUDE_PROJECT_DIR: root }, input: '{}', encoding: 'utf8', timeout: 20000,
+    });
+    assert.equal(r.status, 0, label + ': ' + r.stdout + r.stderr);
+    assert.ok(fs.existsSync(marker), label + ': the zn in the home folder did not run');
+  }
+});
