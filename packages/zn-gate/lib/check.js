@@ -448,47 +448,93 @@ function claudePluginRootProblem(root, ctx) {
   return '';
 }
 
-/* Why a link makes the plugin folder `root` one zn-gate check may not trust, or ''. A link is accepted only when the real
-   place it leads to is still inside the same folder (a link inside the plugins folder to another place inside it, or
-   inside the plugin folder to another file of it). A link that leaves it (into the project, /tmp, the home folder or
-   anywhere else) means someone other than the installer may change what runs, so nothing is read or started through it.
-   Two walks: the links between a folder in `places` (where Claude Code or ZCode keeps its plugins) and `root`, as the
-   path is written, and the links below `root` on the files that start the hook (`files`, relative to root). */
-function pluginLinkProblem(root, places, files) {
-  const leaves = (cur, within) => {
+/* Follows `start` one link at a time, as the file system does, and returns the first link inside one of the folders in
+   `within` whose target (the place that link names, before the rest is followed) is not inside one of them, as
+   {link, to}; null when every link below those folders stays in them (a link above them, as /var on macOS, is followed
+   without a check), or when the path ends before a problem. Checking each hop, not only the final real path, refuses a
+   chain that leaves the folder (to /tmp, say) and comes back into it: whoever can write in the middle changes what runs.
+   At most 40 links are followed. */
+function linkHopLeaves(start, within) {
+  const inWithin = (x) => within.some((w) => isInside(x, w, true));
+  const queue = path.resolve(start).split(path.sep);
+  let cur = queue.shift() || path.sep;
+  if (!cur) cur = path.sep;
+  let hops = 0;
+  while (queue.length) {
+    const seg = queue.shift();
+    if (!seg || seg === '.') continue;
+    if (seg === '..') { cur = path.dirname(cur); continue; }
+    const next = path.join(cur, seg);
     let st;
-    try { st = fs.lstatSync(cur); } catch (_) { return null; }
-    if (!st.isSymbolicLink()) return null;
-    const real = realOrNull(cur);
-    return !real || !isInside(real, within, true) ? (real || 'a place that is not there') : null;
+    try { st = fs.lstatSync(next); } catch (_) { return null; }
+    if (!st.isSymbolicLink()) { cur = next; continue; }
+    let target;
+    try { target = fs.readlinkSync(next); } catch (_) { return { link: next, to: 'a place zn-gate cannot read' }; }
+    const abs = path.resolve(cur, target);
+    if (inWithin(next) && !inWithin(abs)) return { link: next, to: abs };
+    if (++hops > 40) return { link: next, to: 'too many links in a row' };
+    const parsed = path.parse(abs);
+    queue.unshift(...abs.slice(parsed.root.length).split(path.sep));
+    cur = parsed.root;
+  }
+  return null;
+}
+
+/* Every link in the plugin folder `realRoot`, looked at without following any (at most 20000 entries, 12 levels deep),
+   that leads out of it by any hop: {link, to} or null. Beyond the limit nothing more is looked at. */
+function treeLinkLeaves(realRoot) {
+  let seen = 0;
+  const walk = (dir, depth) => {
+    let names;
+    try { names = fs.readdirSync(dir); } catch (_) { return null; }
+    for (const name of names) {
+      if (++seen > 20000) return null;
+      const full = path.join(dir, name);
+      let st;
+      try { st = fs.lstatSync(full); } catch (_) { continue; }
+      if (st.isSymbolicLink()) {
+        const out = linkHopLeaves(full, [realRoot]);
+        if (out) return out;
+      } else if (st.isDirectory() && depth < 12) {
+        const out = walk(full, depth + 1);
+        if (out) return out;
+      }
+    }
+    return null;
   };
+  return walk(realRoot, 0);
+}
+
+/* Why a link makes the plugin folder `root` one zn-gate check may not trust, or ''. A link is accepted only when every
+   hop of it stays inside the same folder: a link inside the plugins folder to another place inside it, or a link inside
+   the plugin folder to another file of it. A link that leaves it, even one that comes back after going through /tmp
+   (into the project, the home folder or anywhere else), means someone other than the installer may change what runs,
+   so nothing is read or started through it.
+   Three looks: the links between a folder in `places` (where Claude Code or ZCode keeps its plugins) and `root`
+   (also when `root` is written with the real path of that folder), the links on the files that start the hook and load
+   the package (`files`, relative to root), and every link anywhere in the plugin folder.
+   Limit: this is a look at one moment; a link made after it and before the hook starts is not seen (the plugins
+   folders are protected against writes by zn's own policy, which is what keeps that window closed). */
+function pluginLinkProblem(root, places, files) {
   const rootAbs = path.resolve(root);
   for (const place of places) {
-    const abs = path.resolve(place);
     const realPlace = realOrNull(place);
-    if (!realPlace || !isInside(rootAbs, abs, false)) continue;
-    let cur = abs;
-    for (const seg of path.relative(abs, rootAbs).split(path.sep)) {
-      cur = path.join(cur, seg);
-      const out = leaves(cur, realPlace);
-      if (out) return 'the plugin folder is reached through a link (' + cur + ' leads to ' + out + '), which is outside the folder where plugins are installed (' + place + '), so what runs could be changed by whoever can write there';
-    }
-    break;
+    if (!realPlace) continue;
+    const out = linkHopLeaves(rootAbs, [realPlace, path.resolve(place)]);
+    if (out) return 'the plugin folder is reached through a link (' + out.link + ' leads to ' + out.to + '), which is outside the folder where plugins are installed (' + place + '), so what runs could be changed by whoever can write there';
   }
   const realRoot = realOrNull(root);
   if (!realRoot) return '';
   for (const rel of files) {
-    let cur = realRoot;
-    for (const seg of rel.split('/')) {
-      cur = path.join(cur, seg);
-      const out = leaves(cur, realRoot);
-      if (out) return 'the plugin file ' + path.join(root, rel) + ' is a link that leads to ' + out + ', outside the plugin folder, so what it holds is not what the plugin installed';
-    }
+    const out = linkHopLeaves(path.join(realRoot, rel), [realRoot]);
+    if (out) return 'the plugin file ' + path.join(root, rel) + ' is a link that leads to ' + out.to + ', outside the plugin folder, so what it holds is not what the plugin installed';
   }
+  const any = treeLinkLeaves(realRoot);
+  if (any) return 'the plugin folder holds a link (' + any.link + ' leads to ' + any.to + ') that goes outside it, so what runs is not only what the plugin installed';
   return '';
 }
 
-const CLAUDE_PLUGIN_FILES = ['hooks/hooks.json', 'scripts/zn-node.sh', 'scripts/zn-launch.js', '.claude-plugin/plugin.json'];
+const CLAUDE_PLUGIN_FILES = ['hooks/hooks.json', 'scripts/zn-node.sh', 'scripts/zn-launch.js', 'scripts/zn-gate.lock.json', 'node_modules', 'node_modules/zn-gate', 'vendor/zn-gate', '.claude-plugin/plugin.json'];
 const ZCODE_PLUGIN_FILES = ['hooks/hooks.json', 'scripts/zn-hook.sh', '.zcode-plugin/plugin.json'];
 
 /* Why the ZCode plugin folder `root` from installed_plugins.json is not one zn-gate check may start code from, or ''.

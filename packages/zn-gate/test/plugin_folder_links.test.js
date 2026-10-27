@@ -181,3 +181,75 @@ test('policy: a write through a link below a plugins folder is a write to the pr
     }
   }
 });
+
+test('Claude Code plugin: a chain of links that goes out to a writable folder and comes back into the plugins folder is NOT protected', { skip: SKIP }, async (t) => {
+  for (const kind of ['root', 'file']) {
+    const home = tempDir(t, 'zn-pfl-home-');
+    const hopDir = tempDir(t, 'zn-pfl-hop-');
+    const marker = path.join(hopDir, 'ran.txt');
+    const store = path.join(home, '.claude', 'plugins', 'store', 'zn-gate');
+    claudePlugin(home, store, marker);
+    if (kind === 'root') {
+      const hop = path.join(hopDir, 'hop');
+      fs.symlinkSync(store, hop);
+      const link = path.join(home, '.claude', 'plugins', 'cache', 'usezn', 'zn-gate');
+      fs.mkdirSync(path.dirname(link), { recursive: true });
+      fs.symlinkSync(hop, link);
+      claudePlugin(home, link, marker);
+    } else {
+      fs.copyFileSync(path.join(store, 'hooks', 'hooks.json'), path.join(store, 'hooks', 'real.json'));
+      fs.rmSync(path.join(store, 'hooks', 'hooks.json'));
+      const hop = path.join(hopDir, 'h');
+      fs.symlinkSync(path.join(store, 'hooks', 'real.json'), hop);
+      fs.symlinkSync(hop, path.join(store, 'hooks', 'hooks.json'));
+    }
+    const r = await claudeCheck(t, home);
+    assert.equal(r.state, 'not-protected', kind);
+    assert.match(r.problem, /link/, kind);
+    assert.equal(fs.existsSync(marker), false, 'zn-gate check ran the plugin through a chain of links (' + kind + ')');
+  }
+});
+
+test('Claude Code plugin whose lock file, node_modules or any other part is a link out of the plugin is NOT protected; links inside it are fine', { skip: SKIP }, async (t) => {
+  const outside = tempDir(t, 'zn-pfl-out-');
+  for (const kind of ['lock', 'node_modules', 'deep', 'inside']) {
+    const home = tempDir(t, 'zn-pfl-home-');
+    const marker = path.join(outside, 'ran-' + kind + '.txt');
+    const root = path.join(home, '.claude', 'plugins', 'cache', 'usezn', 'zn-gate', '1.0.0');
+    claudePlugin(home, root, marker);
+    if (kind === 'lock') {
+      fs.writeFileSync(path.join(outside, 'lock.json'), '{}');
+      fs.symlinkSync(path.join(outside, 'lock.json'), path.join(root, 'scripts', 'zn-gate.lock.json'));
+    } else if (kind === 'node_modules') {
+      fs.mkdirSync(path.join(outside, 'nm'), { recursive: true });
+      fs.symlinkSync(path.join(outside, 'nm'), path.join(root, 'node_modules'));
+    } else if (kind === 'deep') {
+      fs.mkdirSync(path.join(root, 'skills', 'a'), { recursive: true });
+      fs.symlinkSync(outside, path.join(root, 'skills', 'a', 'x'));
+    } else {
+      fs.mkdirSync(path.join(root, 'node_modules', '.bin'), { recursive: true });
+      fs.mkdirSync(path.join(root, 'node_modules', 'pkg'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'node_modules', 'pkg', 'cli.js'), '');
+      fs.symlinkSync('../pkg/cli.js', path.join(root, 'node_modules', '.bin', 'pkg'));
+    }
+    const r = await claudeCheck(t, home);
+    if (kind === 'inside') {
+      assert.equal(r.state, 'protected', r.problem);
+    } else {
+      assert.equal(r.state, 'not-protected', kind);
+      assert.match(r.problem, /link/, kind);
+      assert.equal(fs.existsSync(marker), false, kind);
+    }
+  }
+});
+
+test('Claude Code plugin: a plugins folder kept elsewhere as a link (dotfiles), named by its real path, is protected', { skip: SKIP }, async (t) => {
+  const home = tempDir(t, 'zn-pfl-home-');
+  const dots = tempDir(t, 'zn-pfl-dots-');
+  const marker = path.join(dots, 'ran.txt');
+  fs.symlinkSync(path.join(dots, 'claude'), path.join(home, '.claude'));
+  fs.mkdirSync(path.join(dots, 'claude', 'plugins'), { recursive: true });
+  claudePlugin(home, path.join(dots, 'claude', 'plugins', 'cache', 'zn-gate'), marker);
+  const r = await claudeCheck(t, home);
+  assert.equal(r.state, 'protected', r.problem);
+});
