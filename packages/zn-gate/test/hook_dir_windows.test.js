@@ -169,11 +169,13 @@ test('ZN_HOOK_DIR on Windows: PowerShell is the absolute System32 one, with a mi
     // only the system module folder: the user's own Documents\WindowsPowerShell\Modules is never searched (not the inherited value either)
     assert.equal(c.o.env.PSModulePath, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules');
     assert.equal(c.o.cwd, 'C:\\Windows');
-    assert.deepEqual(c.args.slice(0, 5), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command']);
+    // no -ExecutionPolicy argument: the policy covers script files, not the text of -Command
+    assert.deepEqual(c.args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-Command']);
+    assert.equal(c.args.length, 4);
   }
   // the ACL is read with .NET directly (no cmdlet, so no module to autoload) and the owner-only step does not use icacls
-  assert.match(calls[0].args[5], /GetAccessControl/);
-  assert.doesNotMatch(calls[0].args[5] + calls[1].args[5], /Get-Acl|icacls|ConvertTo-Json|New-Object/i);
+  assert.match(calls[0].args[3], /GetAccessControl/);
+  assert.doesNotMatch(calls[0].args[3] + calls[1].args[3], /Get-Acl|icacls|ConvertTo-Json|New-Object/i);
   assert.equal(calls[1].o.env.ZN_SID, ME);
   assert.equal(calls[1].o.env.ZN_DIR, 'C:\\a\\b');
 });

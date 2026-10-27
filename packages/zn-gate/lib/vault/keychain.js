@@ -201,7 +201,7 @@ function winCred(op, input, slot) {
     throw znError(CODES.LOCKED, messages.powershellMissing());
   }
   const encoded = Buffer.from(WIN_SCRIPT, 'utf16le').toString('base64');
-  return run(ps, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], input,
+  return run(ps, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], input,
     { PSModulePath: require('../exe').systemPsModulePath(ps), ZN_CRED_OP: op, ZN_CRED_TARGET: sl.service + ':' + sl.account });
 }
 
