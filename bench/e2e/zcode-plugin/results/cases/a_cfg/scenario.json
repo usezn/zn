@@ -1,0 +1,15 @@
+{
+ "steps": [
+  {
+   "tool": "write",
+   "values": {
+    "command": "ls",
+    "description": "test",
+    "file_path": "/work/home/.zcode/cli/config.json",
+    "content": "{}",
+    "text": "hello"
+   }
+  }
+ ],
+ "final": "done"
+}

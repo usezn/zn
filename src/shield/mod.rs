@@ -47,6 +47,19 @@ impl McpShield {
     }
 
     /// Generate an ephemeral auth token for WS
+    /// Startup message about the MCP WebSocket token. It names where the
+    /// token is, never the token itself, so it does not reach terminals,
+    /// container logs or journals.
+    pub fn ws_token_notice(token_file: Option<&std::path::Path>) -> String {
+        match token_file {
+            Some(file) => format!(
+                "MCP WebSocket token: generated and saved to {} (readable only by you)",
+                file.display()
+            ),
+            None => "MCP WebSocket token: taken from ZN_MCP_WS_TOKEN (not shown)".to_string(),
+        }
+    }
+
     pub fn generate_ws_token() -> String {
         uuid::Uuid::new_v4().to_string()
     }
@@ -267,5 +280,15 @@ mod tests {
             r#"{"jsonrpc":"2.0","method":"tools/list"}"#
         ));
         assert!(!canary::is_shodan_probe(r#"{"method":"initialize"}"#));
+    }
+
+    #[test]
+    fn ws_token_notice_never_contains_the_token() {
+        let token = "fake-ws-token-0000";
+        let file = std::path::Path::new("/data/zn-mcp-ws-token.txt");
+        let generated = McpShield::ws_token_notice(Some(file));
+        assert!(generated.contains("zn-mcp-ws-token.txt"));
+        assert!(!generated.contains(token));
+        assert!(!McpShield::ws_token_notice(None).contains(token));
     }
 }

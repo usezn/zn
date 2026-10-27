@@ -1,0 +1,16 @@
+{
+  "cwd": "/work/proj",
+  "hookEventName": "UserPromptSubmit",
+  "mode": "default",
+  "sessionId": "sess-1",
+  "timestamp": "2026-10-24T10:00:00.000Z",
+  "traceId": "trace-1",
+  "turnId": "turn-1",
+  "agent_type": "main",
+  "hook_event_name": "UserPromptSubmit",
+  "permission_mode": "default",
+  "session_id": "sess-1",
+  "transcript_path": "/tmp/zcode-hook-x1/transcript.jsonl",
+  "transcriptPath": "/tmp/zcode-hook-x1/transcript.jsonl",
+  "prompt": "fix the failing test"
+}

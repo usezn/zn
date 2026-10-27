@@ -10,7 +10,7 @@ test('zn unlock on an unlocked vault exits without reading the passphrase', asyn
   let asked = 0;
   await assert.rejects(unlockCmd(['unlock'], {
     agent: null,
-    clientFactory: fakeClient({ unlocked: true, expiresAt: 'x', features: ['resolve-policy'] }),
+    clientFactory: fakeClient({ unlocked: true, expiresAt: 'x', features: ['resolve-policy', 'capabilities'] }),
     getPassphrase: async () => { asked += 1; return 'fake-pass-12345'; },
   }), (err) => err.message === ALREADY_UNLOCKED);
   assert.equal(asked, 0, 'the passphrase prompt was not reached');

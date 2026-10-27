@@ -192,6 +192,7 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
     previewEnabled: true, // false: an older server without POST /v1/org/join-preview
     previewOrgName: null, // a different name in the preview than in the join (mismatch test)
     previewStatus: null, // force an HTTP status for the preview (e.g. 429, 500)
+    leaveMode: null, // POST /v1/org/install/leave: null = the real contract; {status, headers?, body?} forces an answer; {network: true} drops the connection
     active: true,
     policyVersion: 0,
     policyContent: null,
@@ -216,6 +217,24 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
     const got = Buffer.from(sha256Hex(parsed[2]), 'hex');
     if (want.length !== got.length || !crypto.timingSafeEqual(want, got)) return null;
     return inst;
+  }
+
+  /* POST /v1/org/install/leave: the installation revokes itself with its own token (200 revoked/already, 401 otherwise). */
+  function handleLeave(req, res) {
+    const mode = state.leaveMode;
+    if (mode && mode.network) { req.socket.destroy(); return undefined; }
+    if (mode && mode.status) return send(res, mode.status, mode.body || { error: 'forced' }, mode.headers || {});
+    const m = /^Bearer (\S+)$/.exec(req.headers.authorization || '');
+    const parsed = m ? INSTALL_TOKEN_RE.exec(m[1]) : null;
+    const inst = parsed ? state.installs.get(parsed[1]) : null;
+    if (!inst) return send(res, 401, { error: 'Missing or invalid install token' });
+    const hash = parsed ? sha256Hex(parsed[2]) : '';
+    if (inst.revoked && inst.leftHash === hash) return send(res, 200, { revoked: true, already: true, install_id: inst.installId });
+    if (!authInstall(req)) return send(res, 401, { error: 'Missing or invalid install token' });
+    inst.revoked = true;
+    inst.tokenHash = null;
+    inst.leftHash = hash;
+    return send(res, 200, { revoked: true, already: false, install_id: inst.installId });
   }
 
   function handlePreview(res, body) {
@@ -359,6 +378,7 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
       try { body = JSON.parse(raw.toString('utf8')); } catch { return send(res, 400, { error: 'Invalid JSON body' }); }
       return handleJoin(res, body, origin);
     }
+    if (isPost && url.pathname === '/v1/org/install/leave') return handleLeave(req, res);
     if (req.method === 'GET' && url.pathname === '/v1/org/policy') return handleGetPolicy(req, res);
     if (isPost && url.pathname === '/v1/audit/ingest') {
       let body;
@@ -404,6 +424,10 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
       if (!inst) throw new Error('unknown installation');
       inst.revoked = true;
       inst.tokenHash = null;
+    },
+    /** Forces the answer of POST /v1/org/install/leave: {status, headers?, body?}, {network: true}, or null for the real one. */
+    setLeaveMode(mode) {
+      state.leaveMode = mode;
     },
     setOrgActive(active) {
       state.active = Boolean(active);

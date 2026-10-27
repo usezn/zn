@@ -1,14 +1,16 @@
 'use strict';
 
 const fs = require('fs');
+const linearRegex = require('./linear-regex');
+const { ZERO_WIDTH_RE, INVISIBLE_ASTRAL_RE, spaceInvisible, spaceInvisibleForMatch } = require('./invisible');
 const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-25.4
+ * RULES_VERSION: 2026-10-25.25
  */
 
-const RULES_VERSION = '2026-10-25.4';
+const RULES_VERSION = '2026-10-25.25';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -147,7 +149,52 @@ for (const rule of INJECTION_RULES) {
 // `[\s\S]*?` tail, or an attribute run that may cross "<", re-scans the rest
 // of the input from every candidate and is super-linear on crafted markup.)
 const OPEN_TAG_RE = /<[a-z0-9]+(?![A-Za-z0-9_])([^<>]*)(>?)/gi;
-const HIDDEN_ATTR_RE = /(?<![A-Za-z0-9_])(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0(?:px)?|color\s*:\s*transparent|text-indent\s*:\s*-[0-9]{3,}px|hidden(?![A-Za-z0-9_]))/i;
+// What a style attribute must say to hide an element. Spaces are the ASCII ones (the CSS and HTML
+// separators), so Node and Python read the same text the same way.
+const HIDDEN_ATTR_RE = /(?<![A-Za-z0-9_-])(?:display[\t\n\f\r ]*:[\t\n\f\r ]*none|visibility[\t\n\f\r ]*:[\t\n\f\r ]*hidden|opacity[\t\n\f\r ]*:[\t\n\f\r ]*0(?:\.0+)?(?![0-9.])|font-size[\t\n\f\r ]*:[\t\n\f\r ]*0(?:px)?(?![0-9.])|color[\t\n\f\r ]*:[\t\n\f\r ]*transparent|text-indent[\t\n\f\r ]*:[\t\n\f\r ]*-[0-9]{3,}px)/i;
+// An element of at most 1px, or with a clip that leaves nothing visible, or with no height and
+// its overflow cut off, is hidden in the way screen-reader-only text is.
+const TINY_WIDTH_CSS_RE = /(?<![A-Za-z0-9_-])(?:max-)?width[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))/i;
+const TINY_HEIGHT_CSS_RE = /(?<![A-Za-z0-9_-])(?:max-)?height[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))/i;
+const OVERFLOW_HIDDEN_CSS_RE = /(?<![A-Za-z0-9_-])overflow(?:-[xy])?[\t\n\f\r ]*:[\t\n\f\r ]*hidden(?![A-Za-z0-9_-])/i;
+const CLIP_CSS_RE = /(?<![A-Za-z0-9_-])(?:clip[\t\n\f\r ]*:[\t\n\f\r ]*rect\([\t\n\f\r ]*(?:0|1px)|clip-path[\t\n\f\r ]*:[\t\n\f\r ]*inset\([\t\n\f\r ]*(?:50|100)%)/i;
+// One attribute: name, then an optional value (double-quoted, single-quoted
+// or bare). An unterminated quote runs to the end of the run, so every
+// character is read once.
+const ATTR_RE = /([^\t\n\f\r "'<>\/=]+)(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"?|'([^']*)'?|([^\t\n\f\r "'<>=`]*)))?/g;
+// The classes that hide an element in the common frameworks (a token of the class list).
+const CLASS_HIDDEN_RE = /(?:^|[\t\n\f\r ])(?:hidden|visually-hidden|sr-only|d-none|invisible|is-hidden)(?=[\t\n\f\r ]|$)/i;
+
+function isAsciiSpace(c) { return c === 32 || (c >= 9 && c <= 13 && c !== 11); }
+function asciiTrim(v) {
+  let a = 0;
+  let b = v.length;
+  while (a < b && isAsciiSpace(v.charCodeAt(a))) a++;
+  while (b > a && isAsciiSpace(v.charCodeAt(b - 1))) b--;
+  return v.slice(a, b);
+}
+
+function styleHides(v) {
+  return HIDDEN_ATTR_RE.test(v) || CLIP_CSS_RE.test(v) ||
+    (TINY_WIDTH_CSS_RE.test(v) && TINY_HEIGHT_CSS_RE.test(v)) ||
+    (OVERFLOW_HIDDEN_CSS_RE.test(v) && TINY_HEIGHT_CSS_RE.test(v));
+}
+
+// True when the attributes of an opening tag really hide the element: the
+// boolean hidden attribute, aria-hidden="true", a style that hides it, or a class
+// that hides it (hidden, sr-only and the like). A name that merely contains the word
+// (data-hidden) or a hidden word elsewhere in the tag does not count.
+function attrsHide(attrs) {
+  for (const m of attrs.matchAll(ATTR_RE)) {
+    const name = m[1].toLowerCase();
+    const value = m[2] ?? m[3] ?? m[4] ?? '';
+    if (name === 'hidden') return true;
+    if (name === 'aria-hidden' && asciiTrim(value).toLowerCase() === 'true') return true;
+    if (name === 'class' && CLASS_HIDDEN_RE.test(value)) return true;
+    if (name === 'style' && styleHides(value)) return true;
+  }
+  return false;
+}
 const HIDDEN_PAYLOAD_RE = /ignore|system|instruction|prompt|bypass|override|exfil|leak/gi;
 
 // The payload must be in the text of the hidden element itself: its content
@@ -181,7 +228,7 @@ function testHiddenTag(text) {
   const tagRe = new RegExp(OPEN_TAG_RE.source, OPEN_TAG_RE.flags);
   let m;
   while ((m = tagRe.exec(text)) !== null) {
-    if (m[2] === '>' && HIDDEN_ATTR_RE.test(m[1])) {
+    if (m[2] === '>' && attrsHide(m[1])) {
       const name = m[0].slice(1).match(/^[a-z0-9]+/i)[0].toLowerCase();
       const el = hiddenElementText(text, tagRe.lastIndex, name);
       if (new RegExp(HIDDEN_PAYLOAD_RE.source, 'i').test(el.text)) return true;
@@ -199,7 +246,7 @@ function testHiddenTagAnywhere(text) {
   const tagRe = new RegExp(OPEN_TAG_RE.source, OPEN_TAG_RE.flags);
   let m;
   while ((m = tagRe.exec(text)) !== null) {
-    if (m[2] === '>' && HIDDEN_ATTR_RE.test(m[1])) {
+    if (m[2] === '>' && attrsHide(m[1])) {
       const payloadRe = new RegExp(HIDDEN_PAYLOAD_RE.source, HIDDEN_PAYLOAD_RE.flags);
       payloadRe.lastIndex = tagRe.lastIndex;
       return payloadRe.test(text);
@@ -275,7 +322,7 @@ function matchesRule(rule, text) {
 const SENSITIVE_PATH_RULES = [
   {
     id: 'path:sensitive_file',
-    pattern: /(?:^|[\s"'`(\[@])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\$\{?HOME\}?|\/home\/[^\s/]+|\/root|[A-Za-z]:\\Users\\[^\s\\]+)[\/\\]?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i,
+    pattern: /(?:^|[\s"'`(\[@])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i,
     description: 'Targeting sensitive system credentials or environment file',
   },
 ];
@@ -341,13 +388,42 @@ function strictMode(options, cfg) {
 let customConfig = null;
 let lastConfigCheck = 0;
 
+class RulesFileError extends Error {}
+
+// Where a JSON file stops being valid, as "line L, column C" and nothing from the file itself.
+function jsonPlace(text, err) {
+  const m = /position (\d+)/.exec(err && err.message ? err.message : '');
+  if (!m) return 'the file is not valid JSON';
+  const pos = Math.min(Number(m[1]), text.length);
+  let line = 1;
+  let col = 1;
+  for (let k = 0; k < pos; k++) {
+    if (text.charCodeAt(k) === 10) { line++; col = 1; } else col++;
+  }
+  return `the file is not valid JSON at line ${line}, column ${col}`;
+}
+
+// Reads the project's rules into a new object. Nothing is applied until the whole
+// file has been read and every pattern has been checked: a file that cannot be read,
+// is not valid JSON, or holds a pattern that is not accepted (see lib/linear-regex.js)
+// gives a config with `errors`, and the rules then block until the file is fixed.
 function loadCustomConfig(forceReload = false) {
   const now = Date.now();
   if (!forceReload && customConfig !== null && now - lastConfigCheck < 5000) {
     return customConfig;
   }
   lastConfigCheck = now;
-  customConfig = { bannedPatterns: [], forbiddenPaths: [], strict: false };
+  const next = { bannedPatterns: [], forbiddenPaths: [], strict: false, errors: [], file: null };
+  const budget = { left: linearRegex.MAX_TOTAL_PROGRAM };
+  const addPattern = (src, where) => {
+    if (next.bannedPatterns.length >= linearRegex.MAX_PATTERNS) {
+      next.errors.push(`${where}: more than ${linearRegex.MAX_PATTERNS} custom patterns`);
+      return;
+    }
+    const res = linearRegex.compileCustomPattern(src, budget);
+    if (res.ok) next.bannedPatterns.push(res.rule);
+    else next.errors.push(`${where}: ${res.error}`);
+  };
 
   const candidates = [
     path.join(process.cwd(), '.znrules'),
@@ -355,40 +431,68 @@ function loadCustomConfig(forceReload = false) {
   ];
 
   for (const file of candidates) {
-    if (fs.existsSync(file)) {
+    if (!fs.existsSync(file)) continue;
+    next.file = path.basename(file);
+    try {
+      let text;
       try {
-        if (file.endsWith('.json')) {
-          const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-          if (Array.isArray(parsed.bannedPatterns)) {
-            customConfig.bannedPatterns = parsed.bannedPatterns.map((p) => new RegExp(p, 'i'));
-          }
-          if (Array.isArray(parsed.forbiddenPaths)) {
-            customConfig.forbiddenPaths = parsed.forbiddenPaths;
-          }
-          if (parsed.strict === true) customConfig.strict = true;
-        } else {
-          const lines = fs.readFileSync(file, 'utf8').split('\n');
-          for (let line of lines) {
-            line = line.trim();
-            if (!line || line.startsWith('#')) continue;
-            // `secret:` lines feed the scrubber's exact-value layer; they are
-            // values, not patterns, and must never be compiled as regexes.
-            if (line.startsWith('secret:')) continue;
-            if (line === 'strict') { customConfig.strict = true; continue; }
-            if (line.startsWith('path:')) {
-              customConfig.forbiddenPaths.push(line.slice(5).trim());
-            } else {
-              customConfig.bannedPatterns.push(new RegExp(line, 'i'));
-            }
-          }
-        }
+        text = fs.readFileSync(file, 'utf8');
       } catch (err) {
-        // Silently ignore malformed custom configs in production
+        throw new RulesFileError(`the file cannot be read (${err && err.code ? err.code : 'error'})`);
       }
-      break;
+      if (file.endsWith('.json')) {
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch (err) {
+          throw new RulesFileError(jsonPlace(text, err));
+        }
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new RulesFileError('the top level must be an object');
+        }
+        if (parsed.bannedPatterns !== undefined) {
+          if (!Array.isArray(parsed.bannedPatterns)) throw new RulesFileError('bannedPatterns must be a list');
+          parsed.bannedPatterns.forEach((p, k) => addPattern(p, `bannedPatterns[${k}]`));
+        }
+        if (parsed.forbiddenPaths !== undefined) {
+          if (!Array.isArray(parsed.forbiddenPaths) || !parsed.forbiddenPaths.every((p) => typeof p === 'string')) {
+            throw new RulesFileError('forbiddenPaths must be a list of strings');
+          }
+          next.forbiddenPaths = parsed.forbiddenPaths;
+        }
+        if (parsed.strict === true) next.strict = true;
+      } else {
+        text.split('\n').forEach((raw, k) => {
+          const line = raw.trim();
+          if (!line || line.startsWith('#')) return;
+          // `secret:` lines feed the scrubber's exact-value layer; they are
+          // values, not patterns, and must never be compiled as regexes.
+          if (line.startsWith('secret:')) return;
+          if (line === 'strict') { next.strict = true; return; }
+          if (line.startsWith('path:')) next.forbiddenPaths.push(line.slice(5).trim());
+          else addPattern(line, `line ${k + 1}`);
+        });
+      }
+    } catch (err) {
+      // The reason never repeats the text of the file: it goes to the agent and to the audit log.
+      next.errors.push(err instanceof RulesFileError ? err.message : 'the file could not be processed');
     }
+    break;
   }
+  customConfig = next;
   return customConfig;
+}
+
+// The block that holds while the project's rules file has errors.
+function invalidRulesResult(cfg) {
+  const shown = cfg.errors.slice(0, 3).join('; ') + (cfg.errors.length > 3 ? `; and ${cfg.errors.length - 3} more` : '');
+  const at = /^(line \d+|bannedPatterns\[\d+\]):/.exec(cfg.errors[0]);
+  const fix = at ? `edit ${cfg.file} at ${at[1]} or delete that ${at[1].startsWith('line') ? 'line' : 'entry'}` : `edit ${cfg.file} or delete the file`;
+  return {
+    verdict: 'block', confidence: 1.0,
+    reason: `The project rules in ${cfg.file} are not valid, so zn-gate blocks until they are fixed (${shown}). To fix it, ${fix}. Custom patterns support literals, classes, groups, alternation and the quantifiers ? * + {n,m} only; see the custom rules section of the README. \`zn-gate check\` lists these errors.`,
+    rule: 'custom:invalid_rules', engine: 'oss-local', rules_version: RULES_VERSION,
+  };
 }
 
 const HOMOGLYPH_MAP = {
@@ -399,11 +503,14 @@ const HOMOGLYPH_MAP = {
   '\u0131': 'i', '\u0130': 'I',
 };
 // Invisible characters removed before matching: zero-width spaces and joiners,
-// word joiner, BOM, soft hyphen, and variation selectors. The Unicode tag
+// word joiner, BOM, soft hyphen, variation selectors, the Mongolian vowel separator, the Hangul
+// fillers (U+115F, U+1160, U+3164, U+FFA0) and the left-to-right, right-to-left and Arabic letter
+// marks (U+200E, U+200F, U+061C). The marks occur in normal Arabic and Hebrew text, so they are only
+// removed for matching and counted by the mostly-invisible check, never blocked on their own. The
+// embeddings, overrides and isolates (U+202A-202E, U+2066-2069) are not removed here: the
+// evasion:bidi_override rule blocks them wherever they appear. The Unicode tag
 // characters (U+E0000-E007F) and the supplementary variation selectors
-// (U+E0100-E01EF) are astral and live in INVISIBLE_ASTRAL_RE.
-const ZERO_WIDTH_RE = /[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F]/g;
-const INVISIBLE_ASTRAL_RE = /[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+// (U+E0100-E01EF) are astral. The table is lib/invisible.js (ZERO_WIDTH_RE and INVISIBLE_ASTRAL_RE).
 // A line break inside a wrapped token (a key or a base64 blob printed 20 or 40 characters per line):
 // at least 10 token characters before and after it, and the next line does not
 // start a new NAME= or NAME: assignment. The secret rules also run on the text without these breaks.
@@ -448,14 +555,16 @@ function foldCompatMatch(run) {
     }
     return parts.join('');
   }
-  return COMPAT_FOLD.get(run);
+  // A character of the ranges without a folded form stays as it is.
+  const folded = COMPAT_FOLD.get(run);
+  return folded === undefined ? run : folded;
 }
 const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07/g;
 // Hard caps for the Base64 smuggling check: above either one the command is blocked.
 const MAX_B64_PAYLOADS = 16;
 const MAX_B64_DECODED_BYTES = 128 * 1024;
 // The payload is group 2 (echo/printf pipe, quoted or not, with options) or group 4 (here-string).
-const B64_EXEC_RE = /(?:echo|printf(?:\s+(?:'%s'|"%s"|%s))?)(?:\s+-[A-Za-z]{1,3})*\s+(["']?)([A-Za-z0-9+/=]{16,})\1\s*\|\s*(?:base64\s+-(?:di?|id|-decode)|openssl)|base64\s+-(?:di?|id|-decode)\s*<<<\s*(["']?)([A-Za-z0-9+/=]{16,})\3/i;
+const B64_EXEC_RE = /(?:echo|printf(?:\s+(?:'%s'|"%s"|%s))?)(?:\s+-[A-Za-z]{1,3})*\s+(["']?)([A-Za-z0-9+/=]{16,})\1\s*\|\s*(?:base64\s+-(?:di?|id|-decode)|openssl\s+(?:base64|enc)(?:\s+(?:-[A-Za-z0-9]+|-(?![A-Za-z0-9])))*?\s+-d(?![A-Za-z0-9_]))|base64\s+-(?:di?|id|-decode)\s*<<<\s*(["']?)([A-Za-z0-9+/=]{16,})\3/i;
 const B64_EXEC_ALL_RE = new RegExp(B64_EXEC_RE.source, 'gi');
 
 // Maximal whitespace runs; only runs that contain a line break are joined.
@@ -489,6 +598,11 @@ function stripInvisible(str) {
   return str.replace(ZERO_WIDTH_RE, '').replace(INVISIBLE_ASTRAL_RE, '');
 }
 
+// A character of the class WRAP_BREAK_RE reads before and after a line break ([A-Za-z0-9_\-+/=]).
+function isWrapChar(c) {
+  return (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c === 95 || c === 45 || c === 43 || c === 47 || c === 61;
+}
+
 // Index map for a text with invisible characters removed: `clean` is the text
 // without them and `map[i]` is the index in `text` of clean[i] (map[clean.length]
 // is text.length). Returns null when the text has no invisible character. A
@@ -503,6 +617,8 @@ function invisibleView(text) {
       let start = i;
       if (start > 0 && text[start - 1] === '\r') start--;
       while (start > 0 && (text[start - 1] === ' ' || text[start - 1] === '\t')) start--;
+      // WRAP_BREAK_RE starts with a look-behind for ten wrap characters: without one right here it cannot match.
+      if (start === 0 || !isWrapChar(text.charCodeAt(start - 1))) continue;
       WRAP_BREAK_AT_RE.lastIndex = start;
       const m = WRAP_BREAK_AT_RE.exec(text);
       if (m) runs.push(start, start + m[0].length);
@@ -620,10 +736,48 @@ function evaluateOversize(input, options) {
   return scanWindows(input, { ...options, maxScanChars: MAX_TOOL_RESULT_SCAN_CHARS });
 }
 
+// A run of two or more empty or whitespace-only lines becomes one empty line before any rule runs, so text
+// that follows a long padding run is read in the same scan window as the text before it. Whitespace here is
+// listed explicitly (not \s) so Node.js and Python agree. Done by scanning, not with one repeated regex group,
+// which overflows the regex stack on millions of lines; every line is looked at once.
+const BLANK_RUN_TEST = /\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n/;
+const BLANK_SPACE = /[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*/y;
+function collapseBlankRuns(text) {
+  if (typeof text !== 'string' || !BLANK_RUN_TEST.test(text)) return text;
+  const out = [];
+  let copied = 0;
+  let i = text.indexOf('\n');
+  while (i !== -1) {
+    // `i` is a line break; count the blank lines that follow it, each ended by a line break (up to `j`).
+    let j = i;
+    let blanks = 0;
+    for (;;) {
+      const k = text.indexOf('\n', j + 1);
+      if (k === -1) break;
+      BLANK_SPACE.lastIndex = j + 1;
+      BLANK_SPACE.exec(text);
+      if (BLANK_SPACE.lastIndex !== k) break;
+      blanks++;
+      j = k;
+    }
+    if (blanks >= 2) {
+      out.push(text.slice(copied, i), '\n\n');
+      copied = j + 1;
+    }
+    i = text.indexOf('\n', j + 1);
+  }
+  out.push(text.slice(copied));
+  return out.join('');
+}
+
 function evaluateUncached(input, options = {}) {
   if (typeof input !== 'string') {
     return { verdict: 'allow', confidence: 1.0, rule: 'none', reason: null, engine: 'oss-local', rules_version: RULES_VERSION };
   }
+  // Invisible padding is judged on the input as received: collapsing first would turn lines made only of
+  // zero-width characters into one empty line and hide a size:invisible block.
+  if (input.length > MAX_SCAN_CHARS && tooInvisible([input])) return invisibleBlock();
+  input = collapseBlankRuns(input);
   if (input.length > MAX_SCAN_CHARS) return evaluateOversize(input, options);
 
   // Pre-normalization passes: stripped (preserves non-Latin) and normalized (maps homoglyphs)
@@ -637,7 +791,15 @@ function evaluateUncached(input, options = {}) {
   const b64Advisory = b64.advisory;
 
   // Check against normalized, stripped, and raw input
-  const targets = Array.from(new Set([normalized, stripped, input]));
+  const targetList = [normalized, stripped, input];
+  // An invisible character used as a space ("ignore<U+3164>all previous instructions") joins the words in the
+  // stripped views, so the same passes also run with each invisible character replaced by a space.
+  const spacedInput = spaceInvisibleForMatch(input);
+  if (spacedInput !== input) {
+    const spaced = normalizeInput(spacedInput);
+    targetList.push(spaced.normalized, spaced.stripped, spacedInput);
+  }
+  const targets = Array.from(new Set(targetList));
 
   for (const text of targets) {
     // 0. Evasion Rules (BiDi Trojan Source)
@@ -689,6 +851,7 @@ function evaluateUncached(input, options = {}) {
 
   // 6. Project-specific Custom Rules (.znrules / zn.config.json)
   const cfg = loadCustomConfig();
+  if (cfg.errors.length > 0) return invalidRulesResult(cfg);
   for (const pat of cfg.bannedPatterns) {
     if (pat.test(input)) {
       return { verdict: 'block', confidence: 1.0, reason: `Matches custom repository rule: ${pat.source}`, rule: 'custom:banned_pattern', engine: 'oss-local', rules_version: RULES_VERSION };
@@ -1043,16 +1206,31 @@ function startsSecretAt(text, from, limit, patterns) {
   return false;
 }
 
+// The spaced view of the last text a rule was run on (see spaceInvisible), so the many rules of one text
+// build it once.
+let spacedMemo = { text: null, spaced: null };
+function spacedView(text) {
+  if (spacedMemo.text !== text) spacedMemo = { text, spaced: spaceInvisible(text) };
+  return spacedMemo.spaced;
+}
+
 function ruleCandidates(item, text, view, budget, out, patterns = null) {
   const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
+  // A third pass reads each invisible character as a space; its indexes are the original ones.
+  if (view) {
+    const spaced = spacedView(text);
+    if (spaced !== text) passes.push([spaced, null, true]);
+  }
   // Spans this rule found on the original text. A match on the view that overlaps two or more of them is
   // dropped, so two secrets on consecutive lines are not merged into one match across the break. A view
   // match that extends a single original match (the first line of a wrapped key) is kept, unless the next
-  // line starts a secret of its own (startsSecretAt).
-  const found = [];
+  // line starts a secret of its own (startsSecretAt). They come in order and without overlaps, so the
+  // ones a view match overlaps are counted with two binary searches.
+  const foundStarts = [];
+  const foundEnds = [];
   const flags = item.pattern.flags.includes('d') ? item.pattern.flags : item.pattern.flags + 'd';
   const regex = new RegExp(item.pattern.source, flags);
-  for (const [hay, map] of passes) {
+  for (const [hay, map, spaced] of passes) {
     if (item.requires && !hay.includes(item.requires)) continue;
     if (item.prefilter && !item.prefilter.test(hay)) continue;
     regex.lastIndex = 0;
@@ -1077,11 +1255,16 @@ function ruleCandidates(item, text, view, budget, out, patterns = null) {
         }
       }
       const [start, end] = spanIn(map, m.index, m.index + m[0].length);
-      if (!map) found.push([start, end]);
-      else {
-        const over = found.filter(([s, e]) => start < e && s < end);
-        if (over.length >= 2) continue;
-        if (over.length === 1 && patterns && startsSecretAt(text, over[0][1], end, patterns)) continue;
+      if (spaced) {
+        // Same indexes as the original: the span cannot join two matches, and it is not in order.
+      } else if (!map) {
+        foundStarts.push(start);
+        foundEnds.push(end);
+      } else {
+        const first = upperBound(foundEnds, start);
+        const over = lowerBound(foundStarts, end) - first;
+        if (over >= 2) continue;
+        if (over === 1 && patterns && startsSecretAt(text, foundEnds[first], end, patterns)) continue;
       }
       out.push({ start, end, rule: item.id, text: expandTemplate(item.replacement, groups, text) });
     }
@@ -1104,12 +1287,206 @@ function mergeCandidates(cands) {
   return merged;
 }
 
+// ---------------------------------------------------------------------------
+// Quoted credentials. The assignment rules read one word, so the rest of
+// `"api_key":"abcdefghijkl mno pqr"` would stay in the clear. Two kinds of
+// value are read here, before the other rules (the Python package does the
+// same in _find_quoted_credentials):
+//   - a quoted value of a secret key that has whitespace in it, up to its
+//     closing quote. A double-quoted value ends at the first quote that is not
+//     escaped, a single-quoted one at the next ', and a value inside an escaped
+//     JSON string at its own escaped quote;
+//   - a bare number of 8 or more characters under a QUOTED key. The
+//     replacement is written as a string, so the JSON stays valid. A number
+//     under an unquoted key (YAML, shell) is left alone.
+// Values shorter than 8 characters, placeholders and values with no closing
+// quote inside KV_MAX_VALUE characters are left alone. One pass over the text,
+// and each opener reads at most KV_MAX_VALUE characters.
+// ---------------------------------------------------------------------------
+// Groups: 1 = name, 2 = the quote that closes a quoted key (with the backslashes
+// of a JSON string inside a string), 3 = the opening quote of the value (same
+// escapes). The name takes no suffix, so password_hint and token_count are other keys.
+const KV_OPEN_RE = new RegExp('(password|passwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token)(\\\\{0,2}["\'])?[ \\t]{0,16}(?:=>|:=|=|:)[ \\t]{0,16}(\\\\{0,2}["\'])?', 'gi');
+const KV_PREFILTER_RE = /pass|secret|token|api[_-]?key|access[_-]?key|private[_-]?key/i;
+const KV_MAX_VALUE = 4096;
+const KV_MIN_VALUE = 8;
+const KV_NUMBER_RE = /-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/y;
+const KV_MASK_RE = /^-?([0-9])\1+$/;
+const KV_WORD_CHAR_RE = /[A-Za-z0-9_.-]/;
+const KV_WORD_RUN_RE = /[A-Za-z0-9_.-]*/y;
+const KV_AUTH_WORD_RE = /^(?:bearer|basic|token)\s+/i;
+// A placeholder, or a reference after an auth scheme word ("Bearer ${TOKEN}").
+const KV_PLACEHOLDER_RE = /^(?:x{3,}|\*{3,}|\.{3,}|-+|_+|<[^>]*>|\$\{?[^}]*\}?|\{\{?[^}]*\}?\}|%\(?[a-z_]*\)?s|:[a-z_]+|\[[^\]]*\])$/i;
+const KV_PLACEHOLDER_WORDS_RE = /(?:^|[^a-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|redacted|dummy|sample|foobar|hunter2|xxxx|todo|insert|replace|mypass|pass(?:word)?123)(?:[^a-z]|$)/i;
+const KV_REPEAT_RE = /^([^\n\r\u2028\u2029])\1+$/u;
+const QUOTED_CREDENTIAL_RULE = 'secret:quoted_credential';
+const KV_REPLACEMENT = '[REDACTED_SECRET]';
+
+function kvBarePlaceholder(value) {
+  return KV_PLACEHOLDER_RE.test(value) || KV_PLACEHOLDER_WORDS_RE.test(value) || KV_REPEAT_RE.test(value);
+}
+
+function kvPlaceholder(value) {
+  if (kvBarePlaceholder(value)) return true;
+  const m = KV_AUTH_WORD_RE.exec(value);
+  return m !== null && kvBarePlaceholder(value.slice(m[0].length));
+}
+
+// Index of the closing quote of a value that starts at `start`, or -1. The
+// window is KV_MAX_VALUE characters; a backslash run is counted once (the scan
+// jumps past it), so the work stays linear.
+function kvClosingQuote(text, start, quote, level) {
+  const n = text.length;
+  const limit = Math.min(n, start + KV_MAX_VALUE);
+  let i = start;
+  if (level === 0) {
+    const q = quote.charCodeAt(0);
+    while (i < limit) {
+      const c = text.charCodeAt(i);
+      if (c === q) return i;
+      // In a double-quoted value a backslash escapes the next character; in a single-quoted one it is just a character.
+      i += c === 92 && q === 34 ? 2 : 1;
+    }
+    return -1;
+  }
+  while (i < limit) {
+    if (text.charCodeAt(i) !== 92) {
+      i++;
+      continue;
+    }
+    let k = i;
+    while (k < n && text.charCodeAt(k) === 92) k++;
+    if (k - i === level && text[k] === quote) return i;
+    i = k + 1;
+  }
+  return -1;
+}
+
+// Spans {start, end, quote} of the values described above. `quote` is the quote
+// that the replacement of a bare number is wrapped in (empty for a quoted value,
+// whose own quotes stay).
+function findQuotedCredentials(text) {
+  const found = [];
+  const n = text.length;
+  const re = new RegExp(KV_OPEN_RE.source, KV_OPEN_RE.flags);
+  let pos = 0;
+  for (;;) {
+    re.lastIndex = pos;
+    const m = re.exec(text);
+    if (m === null) break;
+    const after = re.lastIndex;
+    pos = after;
+    const opener = m[3];
+    const keyQuote = m[2];
+    if (opener === undefined) {
+      KV_NUMBER_RE.lastIndex = after;
+      const num = KV_NUMBER_RE.exec(text);
+      // Only a quoted key (a JSON member or a dict entry) counts.
+      if (!keyQuote || num === null || num[0].length < KV_MIN_VALUE) continue;
+      const end = after + num[0].length;
+      if (end < n && KV_WORD_CHAR_RE.test(text[end])) continue; // part of a longer word, not a number
+      if (KV_MASK_RE.test(num[0])) continue;                    // 00000000: a mask
+      found.push({ start: after, end, quote: keyQuote });
+      pos = end;
+      continue;
+    }
+    const quote = opener[opener.length - 1];
+    const level = opener.length - 1;                          // backslashes before the opening quote
+    const start = after;
+    const end = kvClosingQuote(text, start, quote, level);
+    if (end < 0) continue;
+    const value = text.slice(start, end);
+    if (value.length < KV_MIN_VALUE || !/\s/.test(value) || kvPlaceholder(value)) continue;
+    let spanEnd = end;
+    if (level === 0 && !keyQuote) {
+      // A shell word glued to more quoted pieces ('a b''c') is one value: take them too.
+      let p = end + 1;
+      for (let k = 0; k < 8; k++) {
+        if (p >= n || (text[p] !== '"' && text[p] !== "'")) break;
+        KV_WORD_RUN_RE.lastIndex = p + 1;
+        const q = p + 1 + KV_WORD_RUN_RE.exec(text)[0].length;
+        if (q === p + 1) break;
+        spanEnd = q;
+        p = q + 1;
+      }
+    }
+    found.push({ start, end: spanEnd, quote: '' });
+    pos = spanEnd;
+  }
+  return found;
+}
+
+// The number of values of the sorted array a below x (lowerBound) or at most x (upperBound).
+function lowerBound(a, x) {
+  let lo = 0;
+  let hi = a.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (a[mid] < x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function upperBound(a, x) {
+  let lo = 0;
+  let hi = a.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (a[mid] <= x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+// Redacts the values found by findQuotedCredentials, on the text and on the text
+// without invisible characters (as every other rule).
+function redactQuotedCredentials(text) {
+  if (typeof text !== 'string' || !text || !KV_PREFILTER_RE.test(text)) return { sanitized: text, detections: [] };
+  const view = invisibleView(text);
+  const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
+  const cands = [];
+  // The first pass gives its spans in order and without overlaps, so the spans of
+  // that pass a later span overlaps are counted with two binary searches.
+  const seenStarts = [];
+  const seenEnds = [];
+  for (const [hay, map] of passes) {
+    for (const f of findQuotedCredentials(hay)) {
+      const [start, end] = spanIn(map, f.start, f.end);
+      if (!map) {
+        seenStarts.push(start);
+        seenEnds.push(end);
+      } else if (lowerBound(seenStarts, end) - upperBound(seenEnds, start) >= 2) continue;
+      cands.push({ start, end, rule: QUOTED_CREDENTIAL_RULE, text: f.quote + KV_REPLACEMENT + f.quote });
+    }
+  }
+  if (cands.length === 0) return { sanitized: text, detections: [] };
+  const detections = [];
+  let out = '';
+  let last = 0;
+  for (const e of mergeCandidates(cands)) {
+    out += text.slice(last, e.start) + e.text;
+    last = e.end;
+    detections.push({ rule: e.rule, index: e.start });
+  }
+  return { sanitized: out + text.slice(last), detections };
+}
+
+// The quoted values first (the other rules read one word and would leave the
+// rest of a value behind), then SECRET_PATTERNS.
+function redactCredentials(text) {
+  const quoted = redactQuotedCredentials(text);
+  const rest = redactWith(quoted.sanitized, SECRET_PATTERNS);
+  if (quoted.detections.length === 0) return rest;
+  return { sanitized: rest.sanitized, detections: quoted.detections.concat(rest.detections) };
+}
+
 // Redacts secrets. Every rule runs on the original text and on the text without
 // invisible characters (see ruleCandidates), and the redacted spans are the union
 // of what both find, so a secret split by a zero-width or tag character is
 // redacted whole. Texts without invisible characters are handled as before.
 function redactSecrets(text) {
-  const first = redactWith(text, SECRET_PATTERNS);
+  const first = redactCredentials(text);
   if (typeof first.sanitized !== 'string' || !first.sanitized) return first;
   const second = redactProviderFormats(first.sanitized);
   if (second.detections.length === 0) return first;
@@ -1166,7 +1543,7 @@ function redactScanRules(text) {
 
 // redactSecrets plus SCAN_SECRET_PATTERNS, for the lines `zn-gate scan` prints.
 function redactScanSecrets(text) {
-  const first = redactWith(text, SECRET_PATTERNS);
+  const first = redactCredentials(text);
   const second = redactWith(first.sanitized, SCAN_SECRET_PATTERNS);
   return { sanitized: second.sanitized, detections: first.detections.concat(second.detections) };
 }
@@ -1227,14 +1604,19 @@ const MIN_INVISIBLE_CHECK_CHARS = 64 * 1024;
 const MAX_INVISIBLE_CHARS = 200000;
 const INVISIBLE_BLOCK_REASON = 'Output is mostly invisible characters';
 
+// The characters invisibleStats counts or pairs up: the invisible ones and any high surrogate (the start of a
+// pair). A text with none of them has nothing to count, and one native scan says so far faster than the loop.
+const INVISIBLE_STATS_CANDIDATE_RE = /[\u00AD\u061C\u115F\u1160\u180E\u200B-\u200F\u2060\u3164\uFEFF\uFE00-\uFE0F\uFFA0\uD800-\uDBFF]/;
+
 function invisibleStats(text, budget) {
   const n = text.length;
+  if (!INVISIBLE_STATS_CANDIDATE_RE.test(text)) return { count: 0, length: n };
   let count = 0;
   let pairs = 0;
   for (let i = 0; i < n; i++) {
     const c = text.charCodeAt(i);
     if (c < 0xAD) continue;
-    if ((c >= 0x200B && c <= 0x200D) || c === 0x2060 || c === 0xFEFF || c === 0xAD || (c >= 0xFE00 && c <= 0xFE0F)) {
+    if ((c >= 0x200B && c <= 0x200F) || c === 0x2060 || c === 0xFEFF || c === 0xAD || (c >= 0xFE00 && c <= 0xFE0F) || c === 0x61C || c === 0x180E || c === 0x115F || c === 0x1160 || c === 0x3164 || c === 0xFFA0) {
       count++;
     } else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < n) {
       const d = text.charCodeAt(i + 1);
@@ -1292,6 +1674,7 @@ function truncatedBlocks(options) {
 
 function scanWindows(text, options = {}) {
   if (tooInvisible([text])) return invisibleBlock();
+  text = collapseBlankRuns(text);
   if (typeof text !== 'string' || text.length <= MAX_SCAN_CHARS) return evaluate(text, options);
   const step = MAX_SCAN_CHARS - SCAN_WINDOW_OVERLAP;
   const cap = Number.isFinite(options.maxScanChars) && options.maxScanChars > 0 ? options.maxScanChars : MAX_TOOL_RESULT_SCAN_CHARS;
@@ -1425,11 +1808,13 @@ module.exports = {
   analyzePrompt: evaluate,
   loadCustomConfig,
   redactSecrets,
+  QUOTED_CREDENTIAL_RULE,
   redactScanSecrets,
   redactScanRules,
   isNonSecretValue,
   sanitizeToolResult,
   tooInvisible,
+  invisibleStats,
   invisibleBlock,
   MAX_INVISIBLE_CHARS,
   MIN_INVISIBLE_CHECK_CHARS,
@@ -1445,7 +1830,7 @@ module.exports = {
   EVAL_CACHE_MAX_INPUT,
   // Helper patterns used by normalization and the hidden-element check,
   // exported so the Python port can be checked against them.
-  HELPER_PATTERNS: { ZERO_WIDTH_RE, ANSI_ESCAPE_RE, B64_EXEC_RE, WHITESPACE_RUN_RE, OPEN_TAG_RE, HIDDEN_ATTR_RE, HIDDEN_PAYLOAD_RE, MD_IMAGE_RE, MD_URL_SCHEME_RE, MD_URL_SECRET_PARAM_RE,
+  HELPER_PATTERNS: { ZERO_WIDTH_RE, ANSI_ESCAPE_RE, B64_EXEC_RE, WHITESPACE_RUN_RE, OPEN_TAG_RE, HIDDEN_ATTR_RE, TINY_WIDTH_CSS_RE, TINY_HEIGHT_CSS_RE, OVERFLOW_HIDDEN_CSS_RE, CLIP_CSS_RE, ATTR_RE, CLASS_HIDDEN_RE, HIDDEN_PAYLOAD_RE, MD_IMAGE_RE, MD_URL_SCHEME_RE, MD_URL_SECRET_PARAM_RE,
     RU_FORGET_RE, RU_FORGET_OBJECT_RE, RU_IGNORE_RE, RU_IGNORE_OBJECT_RE, RU_PHRASE_RE,
     ZH_IGNORE_RE, ZH_IGNORE_OBJECT_RE, ZH_FORGET_RE, ZH_FORGET_OBJECT_RE, ZH_PHRASE_RE,
     CREDENTIAL_URL_RE, CREDENTIAL_STORE_RE, CREDENTIAL_CODE_ROOT_RE, CREDENTIAL_PLACEHOLDER_RE, CREDENTIAL_REFERENCE_RE, CREDENTIAL_REFERENCE_NAME_RE, CREDENTIAL_PLACEHOLDER_MARK_RE,

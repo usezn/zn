@@ -2,7 +2,7 @@
 
 Set up zn-gate in Zed in two minutes: add it as an MCP server, and what zn-gate does not cover there.
 
-## Quick start (no coding needed)
+## Install (no coding needed)
 
 1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart Zed.
 2. Open the Command Palette (**Ctrl+Shift+P**, or **Cmd+Shift+P** on a Mac), type **zed: open settings file** and press Enter.
@@ -73,6 +73,25 @@ To check the output of the other MCP servers you use in Zed, start each local se
 ```
 
 Every result of that server is then checked for prompt injection, and secrets zn-gate recognizes are removed, before the agent sees it. `zn-gate init --wrap-mcp`, which does this automatically for Claude Desktop, Claude Code, Cursor, Codex, OpenCode and Antigravity, does not edit Zed's settings.
+
+## Verify
+
+Restart Zed, then ask the agent to call `zn_status` (or look for the zn-gate tools `analyze_prompt`, `check_tool_call` and `check_tool_result` in the editor's list of MCP tools). If they are listed, the server is running.
+
+`npx -y zn-gate check` does not test this setup: it checks hooks, and zn-gate does not install hooks for Zed yet. See [Check that it works](../check.md).
+
+## Uninstall
+
+Open the settings file you edited in Install, delete the `zn-gate` entry (and any wrapper you added around another MCP server with `zn-gate shield`, putting back its original command), save the file and restart Zed. No other part of zn-gate is installed by these steps, and none of this changes your code. To remove the program itself, run `npm uninstall -g zn-gate` if you installed it globally. See [Remove zn-gate](../uninstall.md).
+
+## Troubleshooting
+
+- **`node: command not found`, or Node.js is too old** (zn-gate needs 18 or later): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
+- **"running scripts is disabled on this system" on Windows:** see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+- **The zn-gate tools do not appear in Zed:** check that the settings file is valid and that the `zn-gate` entry sits inside the existing server section, then restart Zed.
+- **A command says it needs you at your own terminal:** see [It needs you at your own terminal](../troubleshooting.md#4-it-needs-you-at-your-own-terminal).
+
+All messages: [Troubleshooting](../troubleshooting.md).
 
 ## Zed documentation
 

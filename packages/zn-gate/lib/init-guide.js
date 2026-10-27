@@ -35,12 +35,16 @@ function fromTemporaryCopy(dir = __dirname) {
   return /[\\/](?:_npx|dlx(?:-[^\\/]*)?|xfs-[^\\/]*|\.bun[\\/]install[\\/]cache|bunx-[^\\/]*)[\\/]/.test(dir);
 }
 
-/* Absolute path of a program, searched only in absolute PATH entries; null when not found. */
+/* Absolute path of a program, searched only in absolute PATH entries (exe.programEnv, exe.findProgram); null when not
+ * found. On Windows an npm-installed .cmd (npm, claude, zn) comes first, then an .exe. */
 function findProgram(name, env) {
   const exe = require('./exe');
-  const absPath = String((env || process.env).PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
-  const found = exe.whichSync(isWin ? name + '.cmd' : name, absPath) || (isWin ? exe.whichSync(name + '.exe', absPath) : null);
-  return found ? path.resolve(found) : null;
+  const e = env || process.env;
+  if (isWin) {
+    const cmd = exe.whichSync(name + '.cmd', exe.programEnv(e).PATH);
+    if (cmd) return path.resolve(cmd);
+  }
+  return exe.findProgram(name, e);
 }
 
 function samePath(a, b) {
@@ -65,8 +69,9 @@ const NPM_NETWORK_FLAGS = ['--fetch-retries=1', '--fetch-retry-mintimeout=1000',
 const NPM_INSTALL_TIMEOUT_MS = 180000;
 
 function spawnProgram(file, args, env, extra = {}) {
-  const childEnv = { ...env };
-  if (isWin) childEnv.NoDefaultCurrentDirectoryInExePath = '1';
+  // The program gets only the absolute PATH entries: a .cmd shim (npm, claude on Windows) looks up `node` by name, and
+  // so do the programs it starts; a relative entry would point into the folder zn runs in, often a project.
+  const childEnv = require('./exe').programEnv(env || process.env);
   // A .cmd file (npm, claude, zn on Windows) only starts through cmd.exe; its path is absolute and quoted.
   if (isWin && /\.cmd$/i.test(file)) {
     return spawnSync('"' + file + '"', args, { ...extra, env: childEnv, shell: true, windowsHide: true });
@@ -280,7 +285,7 @@ async function guide(opts = {}) {
   w('\n');
   const tail = () => w('(To wrap the MCP servers in your agent configs, which `zn-gate init` used to do: `zn-gate init --wrap-mcp`.)\n');
   if (!items.some((i) => i.found)) {
-    w('No supported coding agent was found (Claude Code, Codex CLI, Cursor, OpenCode). Nothing was changed.\n');
+    w('No supported coding agent was found (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app). Nothing was changed.\n');
     w('Install one, then run `npx -y zn-gate init` again. Other editors: https://usezn.com/docs/install\n');
     tail();
     return 1;

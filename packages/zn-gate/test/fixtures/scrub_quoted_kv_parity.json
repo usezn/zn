@@ -1,0 +1,135 @@
+{
+  "comment": "{S} stands for the replacement of one secret: __ZN_SECRET_1__ in the Node.js scrubber, [REDACTED_SECRET] in the Python redact_secrets. Fake values only.",
+  "cases": [
+    {
+      "name": "json password with spaces",
+      "input": "{\"password\":\"abcdefgh ijk lmn\",\"n\":1}",
+      "output": "{\"password\":\"{S}\",\"n\":1}"
+    },
+    {
+      "name": "shell password with spaces keeps the tail",
+      "input": "password=\"abcdefgh ijk lmn\" x",
+      "output": "password=\"{S}\" x"
+    },
+    {
+      "name": "export single quoted",
+      "input": "export TOKEN='fake one two three' && run",
+      "output": "export TOKEN='{S}' && run"
+    },
+    {
+      "name": "json number",
+      "input": "{\"token\":12345678}",
+      "output": "{\"token\":\"{S}\"}"
+    },
+    {
+      "name": "json number nested",
+      "input": "{\"params\":{\"arguments\":{\"page_token\":123456789}}}",
+      "output": "{\"params\":{\"arguments\":{\"page_token\":\"{S}\"}}}"
+    },
+    {
+      "name": "json negative decimal",
+      "input": "{ \"token\" : -12345678.5 , \"n\" : null }",
+      "output": "{ \"token\" : \"{S}\" , \"n\" : null }"
+    },
+    {
+      "name": "json exponent",
+      "input": "{\"api_key\":1.2345678e10,\"b\":[1,2]}",
+      "output": "{\"api_key\":\"{S}\",\"b\":[1,2]}"
+    },
+    {
+      "name": "single quoted key number",
+      "input": "{'token': 12345678}",
+      "output": "{'token': '{S}'}"
+    },
+    {
+      "name": "escaped quotes inside value",
+      "input": "{\"api_key\":\"fake key \\\"with\\\" quotes and spaces\",\"n\":1}",
+      "output": "{\"api_key\":\"{S}\",\"n\":1}"
+    },
+    {
+      "name": "single quoted value, backslash is a character",
+      "input": "password='fake pass\\ phrase here' ok",
+      "output": "password='{S}' ok"
+    },
+    {
+      "name": "shell word glued to more pieces",
+      "input": "export password='fake pass phrase here''more' && run",
+      "output": "export password='{S}' && run"
+    },
+    {
+      "name": "yaml colon with quoted value",
+      "input": "password: \"abcdefgh ijk lmn\"",
+      "output": "password: \"{S}\""
+    },
+    {
+      "name": "arrow separator",
+      "input": "'secret' => 'abcdefgh ijk lmn',",
+      "output": "'secret' => '{S}',"
+    },
+    {
+      "name": "unquoted key number is left alone (equals)",
+      "input": "token=12345678 next",
+      "output": "token=12345678 next"
+    },
+    {
+      "name": "unquoted key number is left alone (yaml)",
+      "input": "password: 123456789012345",
+      "output": "password: 123456789012345"
+    },
+    {
+      "name": "short quoted value",
+      "input": "{\"password\":\"a b c\",\"n\":1}",
+      "output": "{\"password\":\"a b c\",\"n\":1}"
+    },
+    {
+      "name": "placeholder words",
+      "input": "{\"password\":\"your password here\"}",
+      "output": "{\"password\":\"your password here\"}"
+    },
+    {
+      "name": "template placeholder",
+      "input": "{\"token\":\"${API TOKEN HERE}\"}",
+      "output": "{\"token\":\"${API TOKEN HERE}\"}"
+    },
+    {
+      "name": "bearer reference",
+      "input": "token: \"Bearer ${TOKEN}\"",
+      "output": "token: \"Bearer ${TOKEN}\""
+    },
+    {
+      "name": "short number",
+      "input": "{\"token\":1234567}",
+      "output": "{\"token\":1234567}"
+    },
+    {
+      "name": "mask number",
+      "input": "{\"token\":00000000}",
+      "output": "{\"token\":00000000}"
+    },
+    {
+      "name": "repeated digit number",
+      "input": "{\"token\":11111111}",
+      "output": "{\"token\":11111111}"
+    },
+    {
+      "name": "boolean, null, array",
+      "input": "{\"token\":true,\"password\":null,\"api_key\":[1,2,3]}",
+      "output": "{\"token\":true,\"password\":null,\"api_key\":[1,2,3]}"
+    },
+    {
+      "name": "other keys",
+      "input": "{\"password_hint\":\"choose a long phrase\",\"token_count\":123456789}",
+      "output": "{\"password_hint\":\"choose a long phrase\",\"token_count\":123456789}"
+    },
+    {
+      "name": "plural keys",
+      "input": "{\"tokens\":123456789,\"max_tokens\":100000000}",
+      "output": "{\"tokens\":123456789,\"max_tokens\":100000000}"
+    },
+    {
+      "name": "no closing quote",
+      "input": "password=\"unterminated value with spaces",
+      "output": "password=\"unterminated value with spaces"
+    }
+  ]
+}
