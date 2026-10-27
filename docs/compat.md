@@ -82,8 +82,10 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
   approve the call, and the message names the kind and the server, so you can allow a CRM or a mail
   server to receive it. A secret in the same call wins over personal data (blocked, not asked). Calls
   to zn's own vault server (`secrets_http_request` with a `__ZN_` marker) are allowed only when it is
-  the user-scope `secrets` server that `zn hooks install claude-code` registers, started with the
-  Node.js and the zn-gate CLI that run zn, by full path. Any other server with the same name, such as
+  the user-scope `secrets` server that `zn hooks install claude-code` registers, started with a
+  Node.js and a zn-gate `bin/cli.js`, both by full path and outside the project once links are resolved
+  (the plugin, which runs its own copy of zn-gate, accepts the one registered from npm). Any other
+  server with the same name, such as
   one in a project's `.mcp.json` or a local-scope entry, is checked like any other, also when its
   command is `zn secrets-mcp` (Claude Code looks `zn` up on its `PATH`, where a project folder can come
   first). A project install (`--project`) adds no MCP server. The zn-gate plugin

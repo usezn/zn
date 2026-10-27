@@ -303,7 +303,7 @@ function objectField(data, key, file) {
   return v;
 }
 
-/* Checks the project .mcp.json before anything is written, so a refusal never leaves hooks without their MCP server. */
+/* Uninstall checks the project .mcp.json before anything is changed, so a refusal leaves both files as they were. */
 function assertMcpFile(opts = {}) {
   if (opts.mcp === false || (opts.scope || 'user') !== 'project') return;
   const file = path.join(path.resolve(opts.projectDir || process.cwd()), '.mcp.json');
@@ -373,8 +373,15 @@ const PROJECT_MCP_NOTE = 'a project install adds no MCP server: to use zn\'s sec
 function removeProjectMcp(opts, report) {
   const file = path.join(path.resolve(opts.projectDir || process.cwd()), '.mcp.json');
   if (fs.existsSync(file)) {
-    const data = readJson(file);
-    const servers = objectField(data, 'mcpServers', file);
+    let data;
+    let servers;
+    try {
+      data = readJson(file);
+      servers = objectField(data, 'mcpServers', file);
+    } catch (err) {
+      report.warnings.push('could not read ' + file + ' (' + err.message + '), so it was left as it is; ' + PROJECT_MCP_NOTE);
+      return;
+    }
     if (isBareZnSecrets(servers[MCP_SERVER_NAME])) {
       report.mcpBackup = backup(file);
       delete servers[MCP_SERVER_NAME];
@@ -426,7 +433,6 @@ function znOnPath(opts = {}) {
  */
 function install(opts = {}) {
   const file = settingsFile(opts);
-  assertMcpFile(opts);
   const data = readJson(file);
   const report = { settings: file, backup: backup(file), warnings: [] };
   data.hooks = hooksOf(data, file);
@@ -607,7 +613,7 @@ function znMcpServerKind(server, cwd, opts = {}) {
     return server === PLUGIN_SECRETS_SERVER ? 'secrets' : 'analyze';
   }
   if (overrides.length) return null;
-  return isInstalledSecretsServer(userServers[server], opts) ? 'secrets' : null;
+  return isInstalledSecretsServer(userServers[server], { ...opts, env, cwd: path.resolve(cwd || process.cwd()) }) ? 'secrets' : null;
 }
 
 function sameFile(a, b) {
@@ -620,11 +626,32 @@ function sameFile(a, b) {
   }
 }
 
+function realOf(p) {
+  try {
+    const r = fs.realpathSync.native(p);
+    return process.platform === 'win32' ? r.toLowerCase() : r;
+  } catch (_) {
+    return null;
+  }
+}
+
+/* The user-scope server `zn hooks install claude-code` registers: a Node.js and a zn-gate bin/cli.js, both by
+ * absolute path, neither inside the project (the folder the hook runs in, its git work tree, CLAUDE_PROJECT_DIR).
+ * Any zn-gate copy counts, not only the one running this hook: the plugin loads zn-gate from its own vendor folder
+ * while the server was registered from the npm package. */
 function isInstalledSecretsServer(s, opts = {}) {
   if (!s || typeof s !== 'object' || s.url || typeof s.command !== 'string') return false;
   const args = Array.isArray(s.args) ? s.args.map(String) : [];
   if (args[1] !== 'secrets-mcp' || !path.isAbsolute(s.command) || !path.isAbsolute(args[0] || '')) return false;
-  return sameFile(s.command, opts.nodePath || process.execPath) && sameFile(args[0], opts.cliPath || cliPath());
+  const node = realOf(s.command);
+  const cli = realOf(args[0]);
+  if (!node || !cli) return false;
+  const win = process.platform === 'win32';
+  if (!(win ? /^node\.exe$/ : /^node$/).test(path.basename(node))) return false;
+  if (!cli.split(path.sep).join('/').endsWith('/zn-gate/bin/cli.js')) return false;
+  const places = require('../exe').projectPlaces(opts.cwd || process.cwd(), opts.env || process.env, win);
+  const inside = (p, d) => { const rel = path.relative(d, p); return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)); };
+  return !places.some((d) => inside(node, d) || inside(cli, d));
 }
 
 function detect(opts = {}) {

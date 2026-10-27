@@ -877,12 +877,14 @@ test('settings.json or .mcp.json that is not a JSON object: install and uninstal
   assert.equal(fs.readFileSync(file, 'utf8'), '{"hooks": []}\n');
 });
 
-test('project install: a .mcp.json whose mcpServers is not an object stops the install before any write', (t) => {
+test('project uninstall: a .mcp.json whose mcpServers is not an object stops the uninstall before any write', (t) => {
   const dir = tempDir(t, 'zn-cc-mcpobj-');
-  fs.writeFileSync(path.join(dir, '.mcp.json'), '{"mcpServers": []}\n');
   const opts = { scope: 'project', projectDir: dir, nodePath: 'node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
-  assert.throws(() => adapter.install(opts), /"mcpServers" in .* must be an object/);
-  assert.equal(fs.existsSync(path.join(dir, '.claude', 'settings.json')), false);
+  adapter.install(opts);
+  const settings = fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8');
+  fs.writeFileSync(path.join(dir, '.mcp.json'), '{"mcpServers": []}\n');
+  assert.throws(() => adapter.uninstall(opts), /"mcpServers" in .* must be an object/);
+  assert.equal(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'), settings);
   assert.equal(fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8'), '{"mcpServers": []}\n');
 });
 
@@ -1094,6 +1096,60 @@ test('vault call: a user-scope "secrets" server is zn\'s only with this Node.js 
   writeUser({ command: 'zn', args: ['secrets-mcp'] });
   assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
   assert.equal(fs.existsSync(marker), false, 'the project zn never ran');
+});
+
+test('vault call: the plugin\'s own zn-gate copy recognizes the server registered from npm; a project copy never counts', { skip: process.platform === 'win32' }, (t) => {
+  // The plugin repository loads zn-gate from vendor/zn-gate, while `zn hooks install claude-code` registered the
+  // npm package's bin/cli.js: the vendored adapter must still see that server as zn's.
+  const root = tempDir(t, 'zn-ccvendor-');
+  const pkg = path.resolve(__dirname, '..');
+  const vendor = path.join(root, 'plugin', 'vendor', 'zn-gate');
+  for (const d of ['lib', 'bin']) fs.cpSync(path.join(pkg, d), path.join(vendor, d), { recursive: true });
+  fs.copyFileSync(path.join(pkg, 'package.json'), path.join(vendor, 'package.json'));
+  fs.symlinkSync(path.join(pkg, 'node_modules'), path.join(vendor, 'node_modules'), 'dir');
+  const vendored = require(path.join(vendor, 'lib', 'agents', 'claude-code.js'));
+  const cfgDir = claudeConfig(t);
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: cfgDir };
+  const project = path.join(root, 'project');
+  fs.mkdirSync(project);
+  const kind = (secrets, cwd = project) => {
+    fs.writeFileSync(path.join(cfgDir, '.claude.json'), JSON.stringify({ mcpServers: { secrets } }));
+    return vendored.znMcpServerKind('secrets', cwd, { env });
+  };
+  assert.equal(kind(ZN_SECRETS), 'secrets', 'npm server seen from the vendored copy');
+  assert.equal(adapter.znMcpServerKind('secrets', project, { env }), 'secrets', 'and from the npm copy');
+  // A zn-gate copy inside the project (a local dependency, a planted folder) is never zn's server.
+  const local = path.join(project, 'node_modules', 'zn-gate', 'bin');
+  fs.mkdirSync(local, { recursive: true });
+  fs.copyFileSync(ZN_CLI, path.join(local, 'cli.js'));
+  assert.equal(kind({ command: process.execPath, args: [path.join(local, 'cli.js'), 'secrets-mcp'] }), null, 'cli.js inside the project');
+  const projNode = path.join(project, 'node');
+  fs.symlinkSync(process.execPath, projNode);
+  assert.equal(kind({ command: projNode, args: [ZN_CLI, 'secrets-mcp'] }), 'secrets', 'a link resolves to the real Node.js outside the project');
+  fs.mkdirSync(path.join(project, 'tools'));
+  fs.writeFileSync(path.join(project, 'tools', 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  assert.equal(kind({ command: path.join(project, 'tools', 'node'), args: [ZN_CLI, 'secrets-mcp'] }), null, 'a Node.js inside the project');
+  // Not a Node.js, or not a zn-gate CLI.
+  const other = path.join(root, 'other', 'bin');
+  fs.mkdirSync(other, { recursive: true });
+  fs.copyFileSync(ZN_CLI, path.join(other, 'cli.js'));
+  assert.equal(kind({ command: process.execPath, args: [path.join(other, 'cli.js'), 'secrets-mcp'] }), null, 'not a zn-gate/bin/cli.js');
+  assert.equal(kind({ command: '/bin/sh', args: [ZN_CLI, 'secrets-mcp'] }), null, 'not a Node.js');
+  // Any project or local-scope override still wins, also from the vendored copy.
+  fs.writeFileSync(path.join(project, '.mcp.json'), JSON.stringify({ mcpServers: { secrets: ZN_SECRETS } }));
+  assert.equal(kind(ZN_SECRETS), null, 'a project .mcp.json override');
+});
+
+test('project install leaves an unreadable .mcp.json as it is and says so', (t) => {
+  const dir = tempDir(t, 'zn-ccp-');
+  const file = path.join(dir, '.mcp.json');
+  for (const text of ['{ not json', '{"mcpServers": []}']) {
+    fs.writeFileSync(file, text);
+    const rep = adapter.install({ scope: 'project', projectDir: dir, znBin: '/usr/local/bin/zn' });
+    assert.equal(fs.readFileSync(file, 'utf8'), text);
+    assert.ok(rep.warnings.some((w) => w.startsWith('could not read ' + file) && w.includes('zn hooks install claude-code')));
+    assert.ok(fs.existsSync(path.join(dir, '.claude', 'settings.json')), 'the hooks are still installed');
+  }
 });
 
 test('install and uninstall start claude with only the PATH entries outside the project (a shebang never picks a project node)', { skip: process.platform === 'win32' }, (t) => {

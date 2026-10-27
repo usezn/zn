@@ -468,6 +468,7 @@ function psEnv(ps, base, extra) {
 
 module.exports = {
   absolutePath,
+  projectPlaces,
   trustedPath,
   programEnv,
   findProgram,
