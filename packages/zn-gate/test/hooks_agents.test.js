@@ -418,10 +418,10 @@ test('opencode plugin: sends only the name of the shell, not its path', () => {
   assert.doesNotThrow(() => new (require('vm').Script)(src.replace(/^import .*$/m, '').replace(/^export const/m, 'const')));
 });
 
-test('opencode project plugin: zn runs with only the absolute PATH entries, and cmd.exe does not look in the project directory first', () => {
+test('opencode project plugin: zn is looked up outside the project and runs with only those PATH entries, and cmd.exe does not look in the project directory first', () => {
   const src = require('../lib/agents/opencode').pluginSource({ scope: 'project' });
-  const call = src.match(/spawn\(NODE,[^\n]*\)/)[0];
-  assert.match(call, /env: projectEnv\(\)/);
+  const call = src.match(/spawn\(projectZn\(event\.cwd\),[^\n]*\)/)[0];
+  assert.match(call, /env: projectEnv\(event\.cwd\)/);
   assert.match(src, /if \(win\) env\.NoDefaultCurrentDirectoryInExePath = "1";/);
   const user = require('../lib/agents/opencode').pluginSource({ scope: 'user', nodePath: '/usr/bin/node', runnerPath: '/opt/zn/lib/hooks/runner.js' });
   assert.match(user.match(/spawn\(NODE,[^\n]*\)/)[0], /shell: false/);

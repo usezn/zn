@@ -1,45 +1,99 @@
 'use strict';
-process.env.ZN_STATS = 'off';
 
-// The OpenCode project plugin is shared through the repository and starts `zn` from the PATH. OpenCode runs in the project
-// folder, which could hold a zn of its own: the plugin passes `zn` a PATH with only the absolute entries, so a relative or
-// empty entry never selects it, and the node that zn starts is looked up the same way.
+// A project plugin starts `zn` by name. A program named zn in a PATH entry inside the project (which an agent can write
+// to), in a node_modules folder, or a zn that links into the project must never be started. Values are fake.
 
 const test = require('node:test');
-const assert = require('node:assert/strict');
+const assert = require('node:assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
-const { tempDir } = require('./helpers/tmp');
+const opencode = require('../lib/agents/opencode');
 
-const skip = { skip: process.platform === 'win32' };
+const posix = process.platform !== 'win32';
+let n = 0;
 
-test('the project plugin never starts a zn or node from a relative or empty PATH entry', skip, async (t) => {
-  const src = require('../lib/agents/opencode').pluginSource({ scope: 'project' });
-  const dir = tempDir(t, 'zn-oc-path-');
-  const file = path.join(dir, 'zn-gate.mjs');
-  fs.writeFileSync(file, src);
-  const work = tempDir(t, 'zn-oc-work-');
-  const marker = path.join(work, 'planted-ran');
-  fs.mkdirSync(path.join(work, 'bin'));
-  for (const d of [work, path.join(work, 'bin')]) {
-    for (const n of ['zn', 'node']) fs.writeFileSync(path.join(d, n), '#!/bin/sh\n: > ' + JSON.stringify(marker) + '\necho \'{"action":"none"}\'\n', { mode: 0o755 });
+function makeBin(dir, marker) {
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'zn');
+  fs.writeFileSync(file, '#!/bin/sh\nread -r _line\necho started > "' + marker + '"\necho \'{"action":"none"}\'\n', { mode: 0o755 });
+  return file;
+}
+
+// Loads the project plugin and fires one hook with the given PATH, from the given folder (the project by default).
+async function fireHook(project, pathValue, directory = project) {
+  const plugin = opencode.pluginSource({ scope: 'project' });
+  const file = path.join(project, 'plugin' + (n++) + '.mjs');
+  fs.writeFileSync(file, plugin);
+  const saved = process.env.PATH;
+  process.env.PATH = pathValue;
+  try {
+    const mod = await import(pathToFileURL(file).href);
+    const hooks = await mod.ZnGate({ directory });
+    await hooks['tool.execute.before']({ tool: 'bash', sessionID: 's1' }, { args: { command: 'echo hi' } });
+  } catch (_) {
+    // A blocked call is fine here; only the marker matters.
+  } finally {
+    process.env.PATH = saved;
   }
-  // The real zn: prints its PATH back as the deny message, so the test sees what it was given (builtins only: that PATH has no /bin).
-  const safe = tempDir(t, 'zn-oc-safe-');
-  fs.writeFileSync(path.join(safe, 'zn'), '#!/bin/sh\nwhile IFS= read -r _; do :; done\nprintf \'{"action":"deny","message":"%s"}\' "$PATH"\n', { mode: 0o755 });
-  const { ZnGate } = await import(pathToFileURL(file).href);
-  const oldPath = process.env.PATH;
-  const oldCwd = process.cwd();
-  t.after(() => { process.env.PATH = oldPath; process.chdir(oldCwd); });
-  process.chdir(work);
-  for (const PATH of ['.:' + safe, 'bin:' + safe, ':' + safe, safe + ':']) {
-    process.env.PATH = PATH;
-    const hooks = await ZnGate({ directory: work });
-    await assert.rejects(hooks['tool.execute.before']({ tool: 'bash', sessionID: 's' }, { args: { command: 'ls' } }), (err) => {
-      assert.equal(err.message, safe, PATH);
-      return true;
-    });
-    assert.equal(fs.existsSync(marker), false, PATH + ': a planted program ran');
-  }
+}
+
+function setup(t) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-oc-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const project = path.join(root, 'project');
+  fs.mkdirSync(path.join(project, '.git'), { recursive: true });
+  return { root, project };
+}
+
+test('project plugin starts zn from a PATH entry outside the project', { skip: !posix }, async (t) => {
+  const { root, project } = setup(t);
+  const marker = path.join(root, 'outside-marker');
+  makeBin(path.join(root, 'tools'), marker);
+  await fireHook(project, path.join(root, 'tools'));
+  assert.ok(fs.existsSync(marker), 'the harness starts a zn from PATH');
+});
+
+test('project plugin never starts zn from a PATH entry inside the project', { skip: !posix }, async (t) => {
+  const { root, project } = setup(t);
+  const marker = path.join(root, 'inside-marker');
+  makeBin(path.join(project, 'bin'), marker);
+  await fireHook(project, path.join(project, 'bin'));
+  assert.ok(!fs.existsSync(marker), 'a zn from the project bin/ was started');
+});
+
+test('project plugin never starts zn from node_modules, through a link into the project, or from the git work tree above', { skip: !posix }, async (t) => {
+  const { root, project } = setup(t);
+  const marker = path.join(root, 'marker');
+  // node_modules outside the project.
+  makeBin(path.join(root, 'elsewhere', 'node_modules', '.bin'), marker);
+  await fireHook(project, path.join(root, 'elsewhere', 'node_modules', '.bin'));
+  assert.ok(!fs.existsSync(marker), 'a zn from node_modules was started');
+  // A folder outside the project that links to the project's bin.
+  const inside = makeBin(path.join(project, 'tools'), marker);
+  fs.symlinkSync(path.dirname(inside), path.join(root, 'linked-dir'));
+  await fireHook(project, path.join(root, 'linked-dir'));
+  assert.ok(!fs.existsSync(marker), 'a zn reached through a linked folder was started');
+  // A zn outside the project that is a link to the project's zn.
+  fs.mkdirSync(path.join(root, 'out'));
+  fs.symlinkSync(inside, path.join(root, 'out', 'zn'));
+  await fireHook(project, path.join(root, 'out'));
+  assert.ok(!fs.existsSync(marker), 'a zn that links into the project was started');
+  // OpenCode opened in a sub-folder: the git work tree around it is the project.
+  const sub = path.join(project, 'pkg');
+  fs.mkdirSync(sub);
+  await fireHook(project, path.join(project, 'tools'), sub);
+  assert.ok(!fs.existsSync(marker), 'a zn from the work tree above the folder was started');
+});
+
+test('project plugin: a trusted zn after an untrusted one on the PATH is the one started', { skip: !posix }, async (t) => {
+  const { root, project } = setup(t);
+  const bad = path.join(root, 'bad-marker');
+  const good = path.join(root, 'good-marker');
+  makeBin(path.join(project, 'bin'), bad);
+  makeBin(path.join(root, 'tools'), good);
+  await fireHook(project, path.join(project, 'bin') + ':' + path.join(root, 'tools'));
+  assert.ok(!fs.existsSync(bad), 'the project zn was started');
+  assert.ok(fs.existsSync(good), 'the zn outside the project was not started');
 });

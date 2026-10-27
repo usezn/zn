@@ -169,27 +169,84 @@ function pluginSource(opts = {}) {
   const argv = project ? '["hook", "opencode"]' : '[RUNNER, "opencode"]';
   // On Windows `zn` is zn.cmd, which spawn runs only through a shell. The
   // arguments are fixed strings, so the shell adds no input of its own; and
-  // neither `zn` nor the `node` it starts may come from the folder OpenCode
-  // runs in (the project, where an agent can write a zn or node of its own):
-  // the PATH keeps only its absolute entries, and cmd.exe does not look in the
+  // neither `zn` nor the `node` it starts may come from the project (where an
+  // agent can write a zn or node of its own): the PATH keeps only absolute
+  // entries whose real folder is outside the project and outside node_modules,
+  // `zn` is looked up there by the plugin itself (skipping one that links into
+  // the project) and started by its full path, and cmd.exe does not look in the
   // current directory first.
   const shell = project ? 'process.platform === "win32"' : 'false';
-  const env = project ? 'projectEnv()' : 'process.env';
+  const env = project ? 'projectEnv(event.cwd)' : 'process.env';
+  const program = project ? 'projectZn(event.cwd)' : 'NODE';
   const projectEnvSource = project ? `
-// The environment of \`zn\`: the PATH without its relative or empty entries, and
-// on Windows no search of the current directory by cmd.exe.
-function projectEnv() {
+// The real folders of the project: the folder OpenCode names, the one it runs in,
+// and the git work tree around each (never the file system root or the home folder).
+function projectPlaces(dir) {
   const win = process.platform === "win32";
+  const key = (p) => { try { const r = realpathSync.native(p); return win ? r.toLowerCase() : r; } catch (_) { return null; } };
+  const home = key(process.env.HOME || process.env.USERPROFILE || "/nonexistent");
+  const out = [];
+  for (const start of [dir, process.cwd()]) {
+    if (!start) continue;
+    let d = resolve(String(start));
+    const k = key(d);
+    if (k) out.push(k);
+    for (;;) {
+      if (existsSync(join(d, ".git"))) { const g = key(d); if (g) out.push(g); break; }
+      const up = dirname(d);
+      if (up === d) break;
+      d = up;
+    }
+  }
+  return out.filter((k) => k !== home && dirname(k) !== k);
+}
+
+// Whether a real path is inside one of the places, or inside a node_modules folder.
+function untrusted(real, places) {
+  const win = process.platform === "win32";
+  const k = win ? real.toLowerCase() : real;
+  if (k.split(/[\\\\/]/).includes("node_modules")) return true;
+  return places.some((p) => { const rel = relative(p, k); return rel === "" || (rel.split(/[\\\\/]/)[0] !== ".." && !isAbsolute(rel)); });
+}
+
+// The environment of \`zn\`: the PATH with only its absolute entries outside the
+// project, and on Windows no search of the current directory by cmd.exe.
+function projectEnv(dir) {
+  const win = process.platform === "win32";
+  const places = projectPlaces(dir);
   const env = {};
   let pathValue = "";
   for (const [k, v] of Object.entries(process.env)) {
     if (k.toUpperCase() === "PATH") pathValue = String(v || "");
     else env[k] = v;
   }
-  const keep = (d) => (win ? /^(?:[A-Za-z]:[\\\\/]|\\\\\\\\)/.test(d) : d.startsWith("/"));
+  const absolute = (d) => (win ? /^(?:[A-Za-z]:[\\\\/]|\\\\\\\\)/.test(d) : d.startsWith("/"));
+  const keep = (d) => {
+    if (!d || !absolute(d)) return false;
+    let real;
+    try { real = realpathSync.native(d); } catch (_) { return false; }
+    return !untrusted(real, places);
+  };
   env.PATH = pathValue.split(win ? ";" : ":").filter(keep).join(win ? ";" : ":");
   if (win) env.NoDefaultCurrentDirectoryInExePath = "1";
   return env;
+}
+
+// The zn to start: on macOS and Linux the first executable zn in that PATH whose
+// real file is not in the project (a zn that links into the project is skipped);
+// on Windows zn.cmd through the shell, with that PATH.
+function projectZn(dir) {
+  if (process.platform === "win32") return "zn";
+  const places = projectPlaces(dir);
+  for (const d of projectEnv(dir).PATH.split(":")) {
+    const f = join(d, "zn");
+    try {
+      if (!statSync(f).isFile()) continue;
+      accessSync(f, fsConstants.X_OK);
+      if (!untrusted(realpathSync.native(f), places)) return f;
+    } catch (_) { /* not there */ }
+  }
+  return "/nonexistent/zn";
 }
 ` : '';
   return `${PLUGIN_MARK} (written by \`zn hooks install opencode\`; remove with \`zn hooks uninstall opencode\`).
@@ -197,7 +254,7 @@ function projectEnv() {
 // which blocks reads of secret files, puts commands that use stored secrets
 // through \`zn run\`, and replaces secret values in tool output with __ZN_ tokens.
 import { spawn } from "node:child_process";
-
+${project ? 'import { accessSync, constants as fsConstants, existsSync, realpathSync, statSync } from "node:fs";\nimport { dirname, isAbsolute, join, relative, resolve } from "node:path";\n' : ''}
 ${launch}
 ${projectEnvSource}const TIMEOUT_MS = ${HOOK_TIMEOUT_S * 1000};
 // The only answers the plugin acts on. Any other answer is an error, which
@@ -223,7 +280,7 @@ function runHook(event) {
     const finish = (v) => { if (!done) { done = true; resolve(v); } };
     let child;
     try {
-      child = spawn(NODE, ${argv}, { stdio: ["pipe", "pipe", "ignore"], windowsHide: true, shell: ${shell}, env: ${env} });
+      child = spawn(${program}, ${argv}, { stdio: ["pipe", "pipe", "ignore"], windowsHide: true, shell: ${shell}, env: ${env} });
     } catch (err) {
       finish({ action: "error", message: String(err && err.message || err) });
       return;
