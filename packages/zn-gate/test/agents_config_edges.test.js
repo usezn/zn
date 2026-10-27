@@ -406,7 +406,7 @@ test('cursor: on win32 each hook runs through powershell.exe, and uninstall find
   cursor.install(win);
   const hooks = json(file).hooks;
   for (const entries of Object.values(hooks)) {
-    for (const e of entries) assert.match(e.command, /^powershell\.exe /);
+    for (const e of entries) assert.match(e.command, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe /);
   }
   assert.equal(cursor.uninstall(win).removed, 1);
   assert.deepEqual(json(file).hooks, {});

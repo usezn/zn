@@ -63,7 +63,12 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+// Loaded on first use: the hook does not run `claude` and child_process costs a few milliseconds to load.
+let spawnSyncLazy = null;
+function spawnSync(...args) {
+  if (!spawnSyncLazy) spawnSyncLazy = require('child_process').spawnSync;
+  return spawnSyncLazy(...args);
+}
 const { writeFileAtomic } = require('../broker/files');
 const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
@@ -180,8 +185,9 @@ function respond(d) {
   const ev = d && d.event;
   if (!ev || !ev.event) return null;
   const out = respondInner(d, ev);
-  // systemMessage: a notice shown to the user (not to the model).
+  // systemMessage: a notice shown to the user (not to the model). It can stand alone, on an allow that has nothing else to say.
   if (out && d.userMessage) out.systemMessage = d.userMessage;
+  else if (!out && d.userMessage && d.decision === 'allow') return { systemMessage: d.userMessage };
   return out;
 }
 
@@ -317,7 +323,7 @@ function stripOurs(groups) {
   const out = [];
   for (const g of groups) {
     if (!g || !Array.isArray(g.hooks)) { out.push(g); continue; }
-    const hooks = g.hooks.filter((h) => !(h && typeof h.command === 'string' && OUR_COMMAND_RE.test(h.command)));
+    const hooks = g.hooks.filter((h) => !(h && typeof h.command === 'string' && (OUR_COMMAND_RE.test(h.command) || launcher.isProjectGuard(h.command, id))));
     if (hooks.length) out.push({ ...g, hooks });
   }
   return out;
@@ -342,14 +348,16 @@ function ourHooks(command) {
 /**
  * The hook command for each event. A user install goes through zn's launcher so that a Node.js that has gone
  * away blocks instead of letting Claude Code run the call unchecked (exit 127 is a non-blocking error);
- * a project install (the file is shared, an absolute path is not) or a command given by the caller keeps
- * the plain command. Claude Code runs hooks with sh (Git Bash on Windows), so the same script serves Windows.
+ * a project install (the file is shared, an absolute path is not) runs `zn` from the PATH inside a start guard that blocks the same
+ * way; a command given by the caller keeps the plain command. Claude Code runs hooks with sh (Git Bash on Windows), so the same script serves Windows.
  */
 function commandFor(opts = {}) {
-  if (opts.command || (opts.scope || 'user') === 'project') return hookCommand(opts);
+  if (opts.command) return hookCommand(opts);
+  // A project install names `zn` on the PATH inside zn's own start guard (launcher.projectShCommand): a missing zn or Node.js blocks.
+  if ((opts.scope || 'user') === 'project') return (event) => launcher.projectShCommand(id, event);
   const node = opts.nodePath || process.execPath;
   const runner = opts.runnerPath || runnerPath();
-  const file = launcher.writeLauncher(id, node, runner, opts);
+  const file = launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true });
   return (event) => launcher.launcherCommand(file, event, opts.platform);
 }
 
@@ -377,7 +385,8 @@ function installMcp(opts, report) {
     report.mcp = file;
     return;
   }
-  const claude = opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || '');
+  // Absolute PATH entries only: install often runs in a project folder, which a relative entry would point into.
+  const claude = opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', require('../exe').absolutePath(process.env.PATH || ''));
   // No JSON: this form works the same in cmd.exe, PowerShell and POSIX shells.
   const manual = 'claude mcp add --scope user ' + MCP_SERVER_NAME + ' -- ' + [conf.command, ...conf.args].map((a) => '"' + a + '"').join(' ');
   if (!claude) {
@@ -481,7 +490,9 @@ function uninstall(opts = {}) {
     } else {
       // Only zn's own server: a user MCP server that happens to be called "secrets" is left alone.
       const ours = userMcpServerIsOurs(opts);
-      const claude = ours !== true ? null : opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', process.env.PATH || '');
+      // Absolute PATH entries only, as for install: a relative entry points into the folder uninstall runs in.
+      const claude = ours !== true ? null : opts.claudeBin !== undefined ? opts.claudeBin
+        : whichSync('claude', require('../exe').programEnv(opts.env || process.env).PATH);
       if (ours === false) {
         report.warnings.push('left the MCP server named "' + MCP_SERVER_NAME + '" in place: it is not zn\'s');
       } else if (ours === null) {

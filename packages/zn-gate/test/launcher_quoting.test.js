@@ -89,7 +89,7 @@ test('windowsScript keeps spaces in paths and returns null for a single quote', 
 test('windowsScriptCommand encodes a script with quotes so no quote is left on the command line', () => {
   const script = launcher.windowsScript('codex', 'PreToolUse', 'C:\\Program Files\\nodejs\\node.exe', 'C:\\Jo Doe\\runner.js');
   const cmd = launcher.windowsScriptCommand(script);
-  assert.match(cmd, /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
+  assert.match(cmd, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
   const b64 = cmd.split(' ').pop();
   assert.equal(Buffer.from(b64, 'base64').toString('utf16le'), script);
 });

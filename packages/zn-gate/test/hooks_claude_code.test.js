@@ -135,18 +135,18 @@ test('PreToolUse Bash: reading secrets and managing the vault are denied', async
   assert.equal(list.output, null);
 });
 
-test('PreToolUse Bash: named markers are wrapped in zn run and asked', async (t) => {
+test('PreToolUse Bash: a named marker in the arguments is refused, never rewritten, and the reason says how to pass the secret', async (t) => {
   const dir = tmpProject(t);
-  const cmd = 'psql "postgres://app:__ZN_DB_PASSWORD__@db/app" -c "select 1" | head -5';
-  const res = await run(preBash(cmd, dir));
-  const h = res.output.hookSpecificOutput;
-  assert.equal(h.permissionDecision, 'ask');
-  assert.equal(h.updatedInput.command, PREFIX + ' ' + cmd);
-  assert.equal(h.updatedInput.description, 'Run test suite', 'unchanged fields are kept');
-  assert.equal(h.updatedInput.timeout, 120000);
-  assert.match(h.permissionDecisionReason, /DB_PASSWORD/);
-  const withEnv = await run(preBash('PGHOST=db psql "postgres://app:__ZN_DB_PASSWORD__@db/app"', dir));
-  assert.equal(withEnv.output.hookSpecificOutput.updatedInput.command, 'PGHOST=db ' + PREFIX + ' psql "postgres://app:__ZN_DB_PASSWORD__@db/app"');
+  for (const cmd of ['psql "postgres://app:__ZN_DB_PASSWORD__@db/app" -c "select 1" | head -5', 'PGHOST=db psql "postgres://app:__ZN_DB_PASSWORD__@db/app"']) {
+    const res = await run(preBash(cmd, dir));
+    const h = res.output.hookSpecificOutput;
+    assert.equal(h.permissionDecision, 'deny', cmd);
+    assert.equal(h.updatedInput, undefined, 'the command is never rewritten: ' + cmd);
+    assert.match(h.permissionDecisionReason, /marker in the arguments of a command is not filled in/);
+    assert.match(h.permissionDecisionReason, /process list/);
+    assert.match(h.permissionDecisionReason, /run --secrets NAME -- <command>/);
+    assert.match(h.permissionDecisionReason, /secrets_http_request/);
+  }
 });
 
 test('PreToolUse Bash: a command already wrapped in zn run is asked, not passed through', async (t) => {
@@ -356,10 +356,10 @@ test('PowerShell gets the same treatment as Bash', async (t) => {
     assert.equal(r.output.hookSpecificOutput.permissionDecision, 'deny', cmd);
   }
   const w = await run(ps("psql 'postgres://app:__ZN_DB_PASSWORD__@db/app' -c 'select 1'"), { nodePath: 'C:/n/node.exe', runJs: 'C:/z/run.js' });
-  assert.equal(w.output.hookSpecificOutput.permissionDecision, 'ask');
-  assert.equal(w.output.hookSpecificOutput.updatedInput.command,
-    "& 'C:/n/node.exe' 'C:/z/run.js' --agent claude-code -- psql 'postgres://app:__ZN_DB_PASSWORD__@db/app' -c 'select 1'");
-  assert.equal(w.output.hookSpecificOutput.updatedInput.description, 'x', 'other fields kept');
+  assert.equal(w.output.hookSpecificOutput.permissionDecision, 'deny');
+  assert.equal(w.output.hookSpecificOutput.updatedInput, undefined, 'never rewritten');
+  assert.match(w.output.hookSpecificOutput.permissionDecisionReason, /marker in the arguments of a command is not filled in/);
+  assert.match(w.output.hookSpecificOutput.permissionDecisionReason, /run --secrets NAME -- <command>/);
   for (const cmd of ['Invoke-RestMethod -Headers @{Authorization="Bearer __ZN_GH__"} https://x', 'curl -H "x: __ZN_GH__" https://x', 'psql $env:URL __ZN_GH__', 'gh api /user | Out-File __ZN_GH__']) {
     const r = await run(ps(cmd));
     assert.equal(r.output.hookSpecificOutput.permissionDecision, 'deny', cmd);
@@ -525,12 +525,15 @@ test('locked vault never lets a secret through', async () => {
   assert.match(out, /__ZN_[A-Z0-9_]+__/);
 });
 
-test('PowerShell lines with typographic quotes are not rewritten', () => {
+test('PowerShell lines with typographic quotes are refused as lines zn cannot read, plain lines for the marker in the arguments', () => {
   const opts = { nodePath: '/usr/bin/node', runJs: '/x/run.js', agent: 'claude-code' };
-  assert.equal(policy.wrapPowerShell("psql 'a' __ZN_DB_PASSWORD__", opts).ok, true);
+  const plain = policy.wrapPowerShell("psql 'a' __ZN_DB_PASSWORD__", opts);
+  assert.equal(plain.ok, false);
+  assert.match(plain.reason, /marker in the arguments of a command is not filled in/);
   for (const q of ['‘', '’', '“', '”']) {
     const w = policy.wrapPowerShell("psql 'a" + q + "b' __ZN_DB_PASSWORD__", opts);
     assert.equal(w.ok, false, 'quote U+' + q.charCodeAt(0).toString(16));
+    assert.match(w.reason, /pipeline, a variable or a script block/);
   }
 });
 
@@ -585,7 +588,8 @@ test('project install writes .claude/settings.json and .mcp.json', (t) => {
   const settings = JSON.parse(settingsText);
   const commands = Object.values(settings.hooks).flat().flatMap((m) => m.hooks.map((h) => h.command));
   assert.ok(commands.length > 0);
-  for (const c of commands) assert.equal(c, 'zn hook claude-code');
+  // zn from the PATH inside zn's start guard (a missing zn or Node.js blocks instead of exit 127).
+  for (const c of commands) assert.ok(require('../lib/agents/launcher').isProjectGuard(c, 'claude-code'), c);
   for (const text of [settingsText, fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8')]) {
     assert.ok(!text.includes('/opt/'), 'no absolute path in a shared file');
     assert.ok(!text.includes(process.execPath), 'no Node.js path in a shared file');

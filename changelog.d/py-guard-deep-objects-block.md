@@ -1,2 +1,0 @@
-### Security
-- Python `check_tool_call` now blocks plain objects it cannot read in full (nested more than ten levels, unreadable, or past the value budget) with the same rules as the npm package, instead of allowing them. This applies to the framework integrations that call it (CrewAI, LangChain, Google ADK, OpenAI Agents and Pydantic AI), which now block such arguments too. The `@guard` decorator keeps reading application objects such as clients best effort.

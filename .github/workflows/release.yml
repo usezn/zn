@@ -232,10 +232,18 @@ jobs:
     if: needs.verify.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # One npm publication at a time across all versions (the workflow-level group is per tag): two
+    # releases cannot read the dist-tags, publish and move "latest" at the same time. A run that waits
+    # here keeps its place; GitHub keeps only one waiting run per group, so a third queued release would
+    # replace the second: start them one after the other.
+    concurrency:
+      group: npm-publish
+      cancel-in-progress: false
     environment:
       name: release
       url: https://www.npmjs.com/package/zn-gate/v/${{ needs.verify.outputs.npm_version }}
     permissions:
+      contents: read # the checkout of the dist-tag script
       id-token: write
     steps:
       # No network evidence yet for this job (it had no harden-runner): audit first; once a release run shows
@@ -245,6 +253,14 @@ jobs:
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
+      # Only the dist-tag script, from the commit being released (the code that is published anyway).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          path: plan
+          sparse-checkout: .github/scripts/npm-dist-tag-plan.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
       - name: Download the signed release files
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -258,63 +274,101 @@ jobs:
           node-version: 24.x
           check-latest: true
           package-manager-cache: false
-      - name: Install an npm CLI with trusted publishing support
-        run: | # zizmor: ignore[adhoc-packages] npm is pinned to one exact version
-          npm install -g npm@11.21.0
+      # Only the lockfile of the npm CLI is taken from the verified commit (no other file, no credentials).
+      # It goes to its own folder: a checkout into the workspace root would delete the downloaded release/ folder.
+      - name: Fetch the lockfile of the pinned npm CLI
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          path: npm-cli
+          sparse-checkout: .github/npm-cli
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      # npm trusted publishing needs npm >= 11.5.1; the runner's bundled npm floats with the Node.js release,
+      # so the release uses one exact CLI. It comes from a committed lockfile (sha512 integrity of the
+      # tarball), is installed with --ignore-scripts, and the integrity is compared again with the value
+      # pinned here before the CLI is put on PATH.
+      - name: Install the pinned npm CLI (integrity checked, no install scripts)
+        env:
+          NPM_CLI_VERSION: 11.21.0
+          NPM_CLI_INTEGRITY: sha512-Zov8KhamNneiLdELtj5YALtNmJW4L4fCLTzjfpzXG2w6MSHcf0UxgdlK5uloCuksWT+7mGUU7wi79cO6RqivPg==
+        run: |
+          set -euo pipefail
+          cd npm-cli/.github/npm-cli
+          locked="$(node -p "const e=require('./package-lock.json').packages['node_modules/npm']; e.version+' '+e.integrity")"
+          if [ "$locked" != "${NPM_CLI_VERSION} ${NPM_CLI_INTEGRITY}" ]; then
+            echo "::error::package-lock.json pins '$locked', the workflow expects '${NPM_CLI_VERSION} ${NPM_CLI_INTEGRITY}'"
+            exit 1
+          fi
+          npm ci --ignore-scripts --no-audit --no-fund
+          installed="$(node -p "require('./node_modules/npm/package.json').version")"
+          [ "$installed" = "$NPM_CLI_VERSION" ] || { echo "::error::installed npm $installed, expected $NPM_CLI_VERSION"; exit 1; }
+          echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Show the npm CLI in use
+        run: |
+          set -euo pipefail
+          [ "$(npm --version)" = 11.21.0 ] || { echo "::error::npm on PATH is not the pinned 11.21.0"; exit 1; }
           npm --version
+      # Reads the dist-tags again here, after any wait for approval or for another release to finish
+      # publishing, and fails closed (nothing is published) when they cannot be read or the release is
+      # not newer than what its dist-tag points to. The rules are in .github/scripts/npm-dist-tag-plan.mjs
+      # (tested by npm-dist-tag-plan.test.mjs):
+      #   final        -> latest, only if newer than the current latest; otherwise release-X.Y,
+      #                   so latest never moves back
+      #   X.Y.Z-rc.N   -> next, X.Y.Z-beta.N -> beta, X.Y.Z-alpha.N -> alpha (only if newer than the tag)
       - name: Choose the dist-tag
         id: disttag
         env:
           NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
-        # Fails closed: if the current dist-tags cannot be read, or "latest"
-        # points to a prerelease, nothing is published.
-        #   final       -> latest (only if newer than the current latest,
-        #                  otherwise release-X.Y so latest never moves back)
-        #   X.Y.Z-beta.N -> beta, X.Y.Z-rc.N -> next, X.Y.Z-alpha.N -> alpha
-        #                  (only if newer than what that tag points to)
-        # Versions are compared with the semver module bundled in the npm CLI.
         run: |
           set -euo pipefail
-          if ! dist_tags="$(npm view zn-gate dist-tags --json)"; then
+          if ! npm view zn-gate dist-tags --json --prefer-online > "$RUNNER_TEMP/dist-tags-before.json"; then
             echo "::error::Could not read the current dist-tags of zn-gate"
             exit 1
           fi
-          cat > "$RUNNER_TEMP/dist-tag.js" <<'JS'
-          const path = require('path');
-          const semver = require(path.join(process.env.NPM_ROOT, 'npm', 'node_modules', 'semver'));
-          const fail = (msg) => { console.error(`::error::${msg}`); process.exit(1); };
-          const version = process.env.NPM_VERSION;
-          let tags;
-          try { tags = JSON.parse(process.env.DIST_TAGS); } catch { fail('dist-tags output is not JSON'); }
-          if (!tags || typeof tags !== 'object' || Array.isArray(tags)) fail('unexpected dist-tags output');
-          if (!semver.valid(version)) fail(`${version} is not a valid semver version`);
-          const pre = semver.prerelease(version);
-          let tag;
-          if (pre) {
-            tag = { alpha: 'alpha', beta: 'beta', rc: 'next' }[pre[0]];
-            if (!tag) fail(`no dist-tag for prerelease type ${pre[0]}`);
-            const current = tags[tag];
-            if (current !== undefined) {
-              if (!semver.valid(current)) fail(`dist-tag ${tag} points to an invalid version (${current})`);
-              if (!semver.gt(version, current)) fail(`${version} is not newer than ${tag} (${current})`);
-            }
-          } else {
-            const current = tags.latest;
-            if (!current || !semver.valid(current)) fail(`latest is missing or invalid (${current})`);
-            if (semver.prerelease(current)) fail(`latest points to a prerelease (${current})`);
-            tag = semver.gt(version, current) ? 'latest' : `release-${semver.major(version)}.${semver.minor(version)}`;
-          }
-          process.stdout.write(tag);
-          JS
-          tag="$(NPM_ROOT="$(npm root -g)" DIST_TAGS="$dist_tags" node "$RUNNER_TEMP/dist-tag.js")"
-          echo "dist-tag: $tag"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/dist-tags-before.json"
+          node plan/.github/scripts/npm-dist-tag-plan.mjs plan "$NPM_VERSION" "$RUNNER_TEMP/dist-tags-before.json" | tee -a "$GITHUB_OUTPUT"
       - name: Publish the tarball with npm trusted publishing
         working-directory: release
         env:
           NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
           DIST_TAG: ${{ steps.disttag.outputs.tag }}
-        run: npm publish "./zn-gate-${NPM_VERSION}.tgz" --tag "$DIST_TAG" --access public --provenance --ignore-scripts
+        run: |
+          set -euo pipefail
+          # Right before publishing: the tarball must still be the file SHA256SUMS lists.
+          tarball="zn-gate-${NPM_VERSION}.tgz"
+          [ -f SHA256SUMS ] || { echo "::error::SHA256SUMS is missing"; exit 1; }
+          [ -f "$tarball" ] || { echo "::error::$tarball is missing"; exit 1; }
+          expected="$(awk -v f="$tarball" '$2 == f || $2 == "*" f { print $1 }' SHA256SUMS)"
+          if [ -z "$expected" ] || [ "$(printf '%s\n' "$expected" | wc -l)" -ne 1 ]; then
+            echo "::error::SHA256SUMS has no single entry for $tarball"; exit 1
+          fi
+          actual="$(sha256sum "$tarball" | cut -d' ' -f1)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::$tarball sha256 is $actual, SHA256SUMS lists $expected"; exit 1
+          fi
+          npm publish "./$tarball" --tag "$DIST_TAG" --access public --provenance --ignore-scripts
+      # npm can take a few seconds to show a new dist-tag: read again for up to a minute. A dist-tag that
+      # is not as planned, or a latest that moved backward, fails the job (the version is already published,
+      # so this is a loud alarm for the maintainer to fix the dist-tag by hand, not a rollback).
+      - name: Check the dist-tags after publishing
+        env:
+          NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
+          DIST_TAG: ${{ steps.disttag.outputs.tag }}
+          LATEST_BEFORE: ${{ steps.disttag.outputs.latest_before }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6; do
+            if npm view zn-gate dist-tags --json --prefer-online > "$RUNNER_TEMP/dist-tags-after.json" \
+              && node plan/.github/scripts/npm-dist-tag-plan.mjs verify "$NPM_VERSION" "$DIST_TAG" "$LATEST_BEFORE" "$RUNNER_TEMP/dist-tags-after.json"; then
+              exit 0
+            fi
+            echo "attempt $attempt: the dist-tags are not as expected yet"
+            sleep 10
+          done
+          cat "$RUNNER_TEMP/dist-tags-after.json" || true
+          echo "::error::zn-gate $NPM_VERSION was published, but its dist-tags are not as planned (dist-tag $DIST_TAG; latest before: ${LATEST_BEFORE:-none})"
+          exit 1
 
   github-release:
     name: Create the GitHub Release
