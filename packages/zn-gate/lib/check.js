@@ -67,7 +67,7 @@ function resolveHookNode(env, cwd) {
     const norm = (f) => { let r = path.resolve(f); try { r = fs.realpathSync(r); } catch (err) { /* keep it */ } return isWin ? r.toLowerCase() : r; };
     // The shared rule (exe.findProgram): never a node in the project, its git work tree or node_modules, nor one that
     // links there; the home folder is never the project, so a Node.js from nvm or volta counts.
-    const file = require('./exe').findProgram('node', env || process.env, cwd || process.cwd());
+    const file = require('./exe').findProgram('node', env || process.env, cwd || process.cwd(), { strict: true });
     if (!file) return null;
     if (norm(file) === norm(process.execPath)) return { version: process.versions.node, path: file };
     const r = spawnSync(file, ['--version'], { encoding: 'utf8', timeout: 3000, windowsHide: true, shell: false });
