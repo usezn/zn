@@ -554,18 +554,16 @@ function userMcpServerIsOurs(opts = {}) {
 /* ---- Is an MCP tool call going to one of zn's own servers? ----
  * The PreToolUse event names only the tool (mcp__<server>__<tool>), not the server's command, so the
  * adapter checks the MCP configuration Claude Code itself reads. A name alone is never enough: a project
- * can define any server name in its own .mcp.json. The answer is 'secrets' (the vault server),
- * 'analyze' (the plugin's detector server) or null. It is not null only when:
+ * can define any server name in its own .mcp.json. The answer is 'secrets' (the vault server) or null.
+ * It is not null only when:
  *  - the user-scope server named "secrets" is the one `zn hooks install claude-code` writes: this Node.js and
  *    this zn-gate's bin/cli.js, both by absolute path and the same files once links are resolved (a `zn` or
  *    `npx` found on the PATH could be a program of the project), and
- *  - no .mcp.json from the working folder upwards and no local-scope entry of ~/.claude.json defines a
- *    server with that name at all, and
- *  - for the plugin's servers (plugin_zn-gate_secrets, plugin_zn-gate_zn-gate): the zn-gate plugin is
- *    enabled in the user's settings and no project or local entry uses that name at all.
+ *  - no .mcp.json and no local-scope entry of ~/.claude.json defines a server with that name at all, from
+ *    the working folder upwards and from the project folder Claude Code names (CLAUDE_PROJECT_DIR) upwards.
+ * The zn-gate plugin registers no MCP server since 1.14.0, so a plugin server name (plugin_zn-gate_secrets,
+ * plugin_zn-gate_zn-gate) is never zn's: an older plugin started its servers with `node` from the PATH.
  * Anything unreadable gives null, so the call is checked as for any other server. */
-const PLUGIN_SECRETS_SERVER = 'plugin_zn-gate_secrets';
-const PLUGIN_ANALYZE_SERVER = 'plugin_zn-gate_zn-gate';
 
 function readJsonFile(file) {
   try {
@@ -583,34 +581,38 @@ function isBareZnSecrets(s) {
 }
 
 function znMcpServerKind(server, cwd, opts = {}) {
-  const plugin = server === PLUGIN_SECRETS_SERVER || server === PLUGIN_ANALYZE_SERVER;
-  if (server !== MCP_SERVER_NAME && !plugin) return null;
+  if (server !== MCP_SERVER_NAME) return null;
   const env = opts.env || process.env;
   const file = env.CLAUDE_CONFIG_DIR ? path.join(configDir(opts), '.claude.json') : path.join(opts.home || os.homedir(), '.claude.json');
   const data = readJsonFile(file);
   if (data === null) return null;
   const userServers = data && typeof data.mcpServers === 'object' && data.mcpServers ? data.mcpServers : {};
   const localProjects = data && typeof data.projects === 'object' && data.projects ? data.projects : {};
+  // Folder names are compared without case on Windows (a drive letter or a folder typed in another case).
+  const win = (opts.platform || process.platform) === 'win32';
+  const key = (p) => (win ? path.resolve(p).toLowerCase() : path.resolve(p));
+  // A hook can run in a folder outside the project (one added with --add-dir): look up from both.
+  const starts = [path.resolve(cwd || process.cwd())];
+  if (env.CLAUDE_PROJECT_DIR && path.isAbsolute(String(env.CLAUDE_PROJECT_DIR))) starts.push(String(env.CLAUDE_PROJECT_DIR));
+  const seen = new Set();
   const overrides = [];
-  let dir = path.resolve(cwd || process.cwd());
-  for (;;) {
-    const proj = readJsonFile(path.join(dir, '.mcp.json'));
-    if (proj === null) return null;
-    if (proj && proj.mcpServers && proj.mcpServers[server]) overrides.push(proj.mcpServers[server]);
-    for (const k of Object.keys(localProjects)) {
-      const p = localProjects[k];
-      if (path.resolve(k) === dir && p && p.mcpServers && p.mcpServers[server]) overrides.push(p.mcpServers[server]);
+  for (const start of starts) {
+    let dir = path.resolve(start);
+    for (;;) {
+      if (!seen.has(key(dir))) {
+        seen.add(key(dir));
+        const proj = readJsonFile(path.join(dir, '.mcp.json'));
+        if (proj === null) return null;
+        if (proj && proj.mcpServers && proj.mcpServers[server]) overrides.push(proj.mcpServers[server]);
+        for (const k of Object.keys(localProjects)) {
+          const p = localProjects[k];
+          if (key(k) === key(dir) && p && p.mcpServers && p.mcpServers[server]) overrides.push(p.mcpServers[server]);
+        }
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
     }
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  if (plugin) {
-    if (overrides.length) return null;
-    const settings = readJsonFile(path.join(configDir(opts), 'settings.json'));
-    const enabled = settings && settings.enabledPlugins && typeof settings.enabledPlugins === 'object' ? settings.enabledPlugins : {};
-    if (!Object.keys(enabled).some((k) => /^zn-gate@/.test(k) && enabled[k] === true)) return null;
-    return server === PLUGIN_SECRETS_SERVER ? 'secrets' : 'analyze';
   }
   if (overrides.length) return null;
   return isInstalledSecretsServer(userServers[server], { ...opts, env, cwd: path.resolve(cwd || process.cwd()) }) ? 'secrets' : null;
@@ -651,7 +653,17 @@ function isInstalledSecretsServer(s, opts = {}) {
   if (!cli.split(path.sep).join('/').endsWith('/zn-gate/bin/cli.js')) return false;
   const places = require('../exe').projectPlaces(opts.cwd || process.cwd(), opts.env || process.env, win);
   const inside = (p, d) => { const rel = path.relative(d, p); return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)); };
-  return !places.some((d) => inside(node, d) || inside(cli, d));
+  if (places.some((d) => inside(node, d) || inside(cli, d))) return false;
+  // Nothing in the entry may change what that Node.js loads: no NODE_OPTIONS or NODE_PATH, and no folder to run
+  // in that is inside the project.
+  const env = s.env && typeof s.env === 'object' ? Object.keys(s.env) : [];
+  if (env.some((k) => /^NODE_(?:OPTIONS|PATH)$/i.test(k))) return false;
+  if (s.cwd !== undefined) {
+    if (typeof s.cwd !== 'string' || !path.isAbsolute(s.cwd)) return false;
+    const where = realOf(s.cwd) || (win ? path.resolve(s.cwd).toLowerCase() : path.resolve(s.cwd));
+    if (places.some((d) => inside(where, d))) return false;
+  }
+  return true;
 }
 
 function detect(opts = {}) {
