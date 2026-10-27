@@ -393,11 +393,19 @@ function removeProjectMcp(opts, report) {
   report.warnings.push(PROJECT_MCP_NOTE);
 }
 
+/* The claude CLI to run for `claude mcp`: on the PATH entries outside the project, and not a link into the project. */
+function findClaude(env) {
+  const exe = require('../exe');
+  const found = whichSync('claude', exe.programEnv(env).PATH);
+  return found && !exe.programInProject(found, env, process.cwd()) ? found : null;
+}
+
 function installMcp(opts, report) {
   if ((opts.scope || 'user') === 'project') return removeProjectMcp(opts, report);
   const conf = mcpServerConfig(opts);
-  // Absolute PATH entries only: install often runs in a project folder, which a relative entry would point into.
-  const claude = opts.claudeBin !== undefined ? opts.claudeBin : whichSync('claude', require('../exe').absolutePath(process.env.PATH || ''));
+  // Absolute PATH entries outside the project only (install often runs in a project folder), and never a claude whose real
+  // file is in the project. A claude.cmd (npm on Windows) is still found here, for the batch-file note below.
+  const claude = opts.claudeBin !== undefined ? opts.claudeBin : findClaude(opts.env || process.env);
   // No JSON: this form works the same in cmd.exe, PowerShell and POSIX shells.
   const manual = 'claude mcp add --scope user ' + MCP_SERVER_NAME + ' -- ' + [conf.command, ...conf.args].map((a) => '"' + a + '"').join(' ');
   if (!claude) {
@@ -503,7 +511,7 @@ function uninstall(opts = {}) {
       const ours = userMcpServerIsOurs(opts);
       // Absolute PATH entries only, as for install: a relative entry points into the folder uninstall runs in.
       const claude = ours !== true ? null : opts.claudeBin !== undefined ? opts.claudeBin
-        : whichSync('claude', require('../exe').programEnv(opts.env || process.env).PATH);
+        : findClaude(opts.env || process.env);
       if (ours === false) {
         report.warnings.push('left the MCP server named "' + MCP_SERVER_NAME + '" in place: it is not zn\'s');
       } else if (ours === null) {
