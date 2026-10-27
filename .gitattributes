@@ -1,0 +1,2 @@
+# Shell scripts are run by `sh`, which rejects CRLF: keep LF in every checkout, Windows included.
+*.sh text eol=lf

@@ -132,10 +132,10 @@ test('reads check every path of the call, not only the first', async () => {
   assert.equal(r.output.decision, 'deny');
 });
 
-test('a command with a secret placeholder is blocked with the zn run command; the command is never rewritten', async () => {
+test('a command with a secret placeholder in its arguments is blocked with the environment-variable way; the command is never rewritten', async () => {
   const r = await run(bt('run_shell_command', { command: 'curl -H "Authorization: __ZN_API_KEY__" https://example.com' }));
   assert.equal(r.output.decision, 'deny');
-  assert.match(r.output.reason, /zn run -- curl/);
+  assert.match(r.output.reason, /run --secrets NAME -- <command>/);
   assert.equal(r.output.hookSpecificOutput, undefined);
 });
 
@@ -161,7 +161,7 @@ test('a search over a folder that holds a plain-text .env is blocked (Gemini hoo
   const r = await run(bt('grep_search', { pattern: 'x', dir_path: dir }));
   assert.equal(r.output.decision, 'deny');
   assert.match(r.output.reason, /\.env/);
-  assert.match(r.output.reason, /cannot ask the user/);
+  assert.match(r.output.reason, /cannot show that question/);
   assert.match(r.output.reason, /narrower path/);
 });
 
@@ -178,7 +178,7 @@ test('an unreadable hook input is refused with exit code 2 and the reason on std
 
 /* --------------------------- install / uninstall -------------------------- */
 
-test('install (project): BeforeTool group with a named command hook in milliseconds; idempotent; uninstall removes the file content', (t) => {
+test('install (project): BeforeTool group with a named command hook in milliseconds; idempotent; uninstall removes the file content', { skip: process.platform === 'win32' && 'a project install writes the PowerShell guard on Windows, not the sh guard' }, (t) => {
   const dir = tempDir(t, 'zn-gem-');
   const rep = gem.install({ scope: 'project', projectDir: dir });
   const file = path.join(dir, '.gemini', 'settings.json');
@@ -188,7 +188,9 @@ test('install (project): BeforeTool group with a named command hook in milliseco
   assert.deepEqual(Object.keys(data.hooks), ['BeforeTool']);
   const [g] = data.hooks.BeforeTool;
   assert.equal(g.matcher, '*');
-  assert.deepEqual(g.hooks, [{ name: 'zn-gate', type: 'command', command: 'zn hook gemini', timeout: 15000 }]);
+  assert.equal(g.hooks.length, 1);
+  assert.deepEqual({ ...g.hooks[0], command: undefined }, { name: 'zn-gate', type: 'command', command: undefined, timeout: 15000 });
+  assert.ok(require('../lib/agents/launcher').isProjectGuard(g.hooks[0].command, 'gemini'));
   gem.install({ scope: 'project', projectDir: dir });
   assert.equal(readSettings(file).hooks.BeforeTool.length, 1);
   assert.equal(gem.uninstall({ scope: 'project', projectDir: dir }).removed, 1);
@@ -248,15 +250,17 @@ test('install and uninstall refuse a settings file or a hooks field of the wrong
   }
 });
 
-test('install on Windows (user scope) writes the powershell form; project scope stays portable', (t) => {
+test('install on Windows (user scope) writes the powershell form; project scope is zn on the PATH inside the start guard', (t) => {
   const home = tempDir(t, 'zn-gem-win-');
   gem.install({ scope: 'user', home, platform: 'win32', nodePath: 'C:/Program Files/nodejs/node.exe', runnerPath: 'C:/zn/zn-gate/lib/hooks/runner.js' });
   const winCommand = readSettings(settingsOf(home)).hooks.BeforeTool[0].hooks[0].command;
-  assert.match(winCommand, /^powershell\.exe /);
-  assert.match(require('../lib/shell-quote').windowsCommandScript(winCommand), /runner\.js.* gemini; if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit/);
+  assert.match(winCommand, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe /);
+  assert.match(require('../lib/shell-quote').windowsCommandScript(winCommand), /runner\.js.* gemini; if \(\(\$LASTEXITCODE -eq 0 -and \(zk\)\) -or \$LASTEXITCODE -eq 2\) \{ zx/);
   const dir = tempDir(t, 'zn-gem-win-p-');
   gem.install({ scope: 'project', projectDir: dir, platform: 'win32' });
-  assert.equal(readSettings(path.join(dir, '.gemini', 'settings.json')).hooks.BeforeTool[0].hooks[0].command, 'zn hook gemini');
+  const projWin = readSettings(path.join(dir, '.gemini', 'settings.json')).hooks.BeforeTool[0].hooks[0].command;
+  assert.match(projWin, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe /);
+  assert.ok(require('../lib/agents/launcher').isProjectWindowsScript(require('../lib/shell-quote').windowsCommandScript(projWin), 'gemini'));
 });
 
 test('install warnings: experimental, fail-open on crash, no asking and no scrubbing, project trust, how it is turned off', (t) => {

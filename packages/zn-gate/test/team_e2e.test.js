@@ -173,7 +173,24 @@ test('a warn rule allows the use, tells the agent and the user, and the "warn" r
   assert.strictEqual(warned[0].host, '127.0.0.1');
 });
 
+/* A restore into a git-ignored file never writes a proxy-mode secret, so the restore tests below run on env-mode copies
+ * of the same secrets (same values and hosts); the proxy-mode ones come back afterwards. */
+const RESTORABLE = [
+  ['PROD_DB_URL', 'postgres://u:' + 'p'.repeat(24) + '@db.internal/app', ['127.0.0.1']],
+  ['STRIPE_KEY', 'sk_test_' + 'x'.repeat(24), ['api.stripe.com']],
+  ['STAGING_TOKEN', 'stg_' + 'q'.repeat(28), ['127.0.0.1']],
+];
+async function asEnvMode(fn) {
+  for (const [name, value, hosts] of RESTORABLE) await vault.setSecret(name, value, { mode: 'env', allowHosts: hosts });
+  try { await fn(); } finally {
+    for (const [name, value, hosts] of RESTORABLE) await vault.setSecret(name, value, { mode: 'proxy', allowHosts: hosts });
+  }
+}
+
 test('the vault applies the organization policy when the hooks restore a named marker', async () => {
+  // A proxy-mode secret is never restored into a file, whatever the organization policy says about it.
+  await assert.rejects(vault.resolve(HOME, '__ZN_STRIPE_KEY__', { destination: 'write_ignored', agent: 'claude-code', tool: 'Write', withPolicy: true }), (e) => e.code === 'ZN_POLICY_DENIED' && /proxy mode/.test(e.message));
+  await asEnvMode(async () => {
   const opts = { destination: 'write_ignored', agent: 'claude-code', tool: 'Write', withPolicy: true };
   // deny (PROD_*, a rule written for codex): nothing comes back for any agent, and the refusal is recorded
   const denied = await vault.resolve(HOME, '__ZN_PROD_DB_URL__', opts);
@@ -196,28 +213,29 @@ test('the vault applies the organization policy when the hooks restore a named m
   assert.deepStrictEqual(await vault.resolve(HOME, detected, opts), { value: null, policy: 1, deny: true });
   const other = await vault.mapToken(HOME, 'EMAIL', 'jane.roe@example.org');
   assert.deepStrictEqual(await vault.resolve(HOME, other, opts), { value: 'jane.roe@example.org', policy: 1 });
-  // Without a destination (zn run, the MCP tools) the token resolves as before.
-  assert.strictEqual(await vault.resolve(HOME, detected), prodValue);
+  // A request with no destination and no purpose gets nothing: the value is not read around the policy.
+  await assert.rejects(vault.resolve(HOME, detected), /does not say what the value is for/);
   const st = await vault.status();
   assert.ok(st.features.includes('resolve-policy'));
   assert.equal(st.version, require('../package.json').version);
   const recs = fs.readFileSync(path.join(process.env.ZN_HOME, 'audit.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.ok(recs.some((r) => r.secret === 'PROD_DB_URL' && r.decision === 'deny' && /^policy:org_deny:DB_URL_\d+$/.test(r.reason)));
-  // zn run and the secrets MCP tools resolve without a destination and apply the policy themselves
-  assert.strictEqual(await vault.resolve(HOME, '__ZN_STAGING_TOKEN__'), 'stg_' + 'q'.repeat(28));
+  // The broker resolves for a purpose, and the policy is applied again inside the vault (see vault_capabilities.test.js).
+  await assert.rejects(vault.resolve(HOME, '__ZN_STAGING_TOKEN__'), /does not say what the value is for/);
   const log = fs.readFileSync(path.join(process.env.ZN_HOME, 'audit.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.ok(log.some((r) => r.secret === 'PROD_DB_URL' && r.decision === 'deny' && r.reason === 'policy:org_deny' && r.mode === 'resolve'));
+  });
 });
 
 /* 1.8.0 review: the vault reports a warn rule for a scrubber token of a stored secret. */
-test('a scrubber token with the value of a stored secret under a warn rule comes back with the warning', async () => {
+test('a scrubber token with the value of a stored secret under a warn rule comes back with the warning', async () => asEnvMode(async () => {
   const opts = { destination: 'write_ignored', agent: 'claude-code', tool: 'Write', withPolicy: true };
   const detected = await vault.mapToken(HOME, 'API_KEY', 'stg_' + 'q'.repeat(28));
   const got = await vault.resolve(HOME, detected, opts);
   assert.deepStrictEqual(got, { value: 'stg_' + 'q'.repeat(28), policy: 1, warn: true, warnReason: 'Staging credentials need review.', warnName: 'STAGING_TOKEN' });
-  // Without a destination (zn run, the MCP tools) the token resolves as before.
-  assert.strictEqual(await vault.resolve(HOME, detected), 'stg_' + 'q'.repeat(28));
-});
+  // No destination and no purpose: refused.
+  await assert.rejects(vault.resolve(HOME, detected), /does not say what the value is for/);
+}));
 
 test('a self-reported agent id (ZN_AGENT) cannot dodge a rule for another agent', async () => {
   const saved = process.env.ZN_AGENT;
@@ -309,6 +327,30 @@ test('zn team status shows the organization and never the token', async () => {
   assert.strictEqual(s.vault, 'unlocked');
   assert.strictEqual(s.policy.state, 'active');
   assert.ok(!r.stdout.includes('zni_'));
+});
+
+test('zn team sync exits 1 and uploads nothing when the local audit log was tampered with', async () => {
+  // Fresh records so that there is something to upload, then a same-length edit in the middle of the log.
+  await vault.setSecret('TAMPER_PROBE', 'tp_' + 'z'.repeat(24), { mode: 'env' });
+  const file = require('../lib/vault/store').paths().auditFile;
+  const good = fs.readFileSync(file, 'utf8');
+  const lines = good.trim().split('\n');
+  const i = Math.floor(lines.length / 2);
+  const rec = JSON.parse(lines[i]);
+  rec.decision = rec.decision === 'deny' ? 'allow' : 'deny';
+  lines[i] = JSON.stringify(rec);
+  fs.writeFileSync(file, lines.join('\n') + '\n');
+  const ingests = () => cloud.requests.filter((r) => r.path === '/v1/audit/ingest').length;
+  const before = ingests();
+  const r = await zn(['team', 'sync']);
+  assert.strictEqual(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /Audit upload: tampered, 0 sent/);
+  assert.match(r.stdout, /Nothing was uploaded/);
+  assert.match(r.stderr, /audit upload failed \(tampered/);
+  assert.strictEqual(ingests(), before, 'no upload request reached the server');
+  // Put the log back and clear the mark as the user would, so the rest of the file runs on a clean vault.
+  fs.writeFileSync(file, good);
+  assert.strictEqual((await vault.auditAcknowledge()).cleared, true);
 });
 
 test('leave is confirmed outside the agent and lifts the organization policy', async () => {

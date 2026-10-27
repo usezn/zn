@@ -162,7 +162,7 @@ def test_requirements_are_pinned_to_exact_versions(name):
     ]
     assert lines
     for line in lines:
-        assert re.fullmatch(r"[A-Za-z0-9_.-]+==\d+(\.\d+)*", line), line
+        assert re.fullmatch(r"[A-Za-z0-9_.-]+==\d+(\.\d+)*(rc\d+)?", line), line
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -202,7 +202,7 @@ def test_ag2_example_runs_without_the_framework(capsys, monkeypatch):
 def test_ag2_example_has_pinned_requirements_and_readme():
     lines = [line for line in (EXAMPLES / AG2 / "requirements.txt").read_text().split() if line]
     assert any(line.startswith("ag2==") for line in lines)
-    assert all(re.fullmatch(r"[A-Za-z0-9_.-]+==\d+(\.\d+)*", line) for line in lines)
+    assert all(re.fullmatch(r"[A-Za-z0-9_.-]+==\d+(\.\d+)*(rc\d+)?", line) for line in lines)
     assert (EXAMPLES / AG2 / "README.md").is_file()
 
 

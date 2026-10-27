@@ -106,23 +106,30 @@ jobs:
           grep -q "^## \[$VERSION\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for $VERSION"; fail=1; }
           [ "$fail" -eq 0 ] || exit 1
           echo "$branch is at $SHA; tag v$VERSION is free; npm, PyPI, MCP server and CHANGELOG versions match"
-      - name: Check that every check of the commit passed
+      # The list of required checks and the script that reads it come from main, the ref this workflow
+      # runs from, and not from the commit being released: that commit cannot loosen its own gate.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          sparse-checkout: |
+            .github/release-required-checks.txt
+            .github/scripts/release-required-checks.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      # Every check named in .github/release-required-checks.txt must have succeeded on this exact commit
+      # (skipped and neutral do not count for them), and no check of the commit may have failed or still
+      # be running. The release branch runs the whole set on every push (ci.yml and the other workflows).
+      - name: Check that the required checks of the commit passed
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ inputs.sha }}
         run: |
           set -euo pipefail
-          gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?per_page=100" \
-            --jq '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv' > "$RUNNER_TEMP/checks.tsv"
-          total="$(wc -l < "$RUNNER_TEMP/checks.tsv")"
-          [ "$total" -gt 0 ] || { echo "::error::no checks ran on $SHA"; exit 1; }
-          bad="$(awk -F'\t' '$2 != "completed" || ($3 != "success" && $3 != "skipped" && $3 != "neutral")' "$RUNNER_TEMP/checks.tsv")"
-          if [ -n "$bad" ]; then
-            echo "::error::checks of $SHA that did not pass or did not finish:"
-            printf '%s\n' "$bad"
-            exit 1
-          fi
-          echo "all $total checks of $SHA passed"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?per_page=100&filter=latest" \
+            --jq '.check_runs[] | [.name, .status, (.conclusion // ""), (.app.slug // "")] | @tsv' > "$RUNNER_TEMP/checks.tsv"
+          node trusted/.github/scripts/release-required-checks.mjs verify "$RUNNER_TEMP/checks.tsv" trusted/.github/release-required-checks.txt
+          echo "the required checks of $SHA passed"
 
   tag:
     name: Create, sign and push the tag

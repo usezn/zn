@@ -1,0 +1,2 @@
+### Fixed
+- Python: a tool result that held a `logging.Logger`, or the same object many times, could be blocked with rule `size:items`, because the value budget counted an object again each time it was reached (a logger reaches every logger of the process, so about 800 loggers were enough). An object read in full is now counted once, and loggers, handlers, formatters and the logging manager are skipped, as framework contexts are. The budget counts attribute names and values, about 50,000 attributes.

@@ -5,6 +5,8 @@
  * test/fixtures/fake_secrets.js. Not used by production code.
  */
 
+const { buildMatcher } = require('../../lib/scrub/exact');
+
 function variants(value) {
   const buf = Buffer.from(String(value), 'utf8');
   return [String(value), buf.toString('base64'), buf.toString('hex'), encodeURIComponent(String(value))];
@@ -48,6 +50,16 @@ function createFakeVault(opts = {}) {
     async setSecret(name, value, meta = {}) {
       secrets.set(name, { value: String(value), meta: { ...meta } });
     },
+    // Like the daemon: the policy changes, the value stays.
+    async updateSecretMeta(name, meta = {}) {
+      if (!secrets.has(name)) {
+        const err = new Error('no secret named ' + name);
+        err.code = 'ZN_NOT_FOUND';
+        throw err;
+      }
+      secrets.set(name, { value: secrets.get(name).value, meta: { ...meta } });
+      return true;
+    },
     async listSecrets() {
       return [...secrets.entries()].map(([name, s]) => ({
         name,
@@ -62,8 +74,39 @@ function createFakeVault(opts = {}) {
     async removeSecret(name) {
       secrets.delete(name);
     },
-    async exactValues() {
-      return [...secrets.entries()].map(([name, s]) => ({ name, type: name, values: variants(s.value) }));
+    // Like the daemon, matching happens here: positions and names come back, never values.
+    async maskInfo() {
+      const list = [...secrets.entries()].map(([name, s]) => ({ name, type: name, values: variants(s.value), vault: true }));
+      let longest = 0;
+      for (const e of list) for (const v of e.values) if (v.length > longest) longest = v.length;
+      return { names: list.map((e) => e.name), longest, count: list.length };
+    },
+    async maskSpans(project, texts) {
+      const m = buildMatcher([...secrets.entries()].map(([name, s]) => ({ name, type: name, values: variants(s.value), vault: true })));
+      return texts.map((t) => m.find(t));
+    },
+    // Like the daemon's concrete operations (no value comes back except a backup the user asked for).
+    async adoptToken(project, token, name, meta = {}) {
+      const p = proj(project);
+      if (!p.byToken.has(token)) {
+        const err = new Error(token + ' is not known for this project');
+        err.code = 'ZN_NOT_FOUND';
+        throw err;
+      }
+      secrets.set(name, { value: p.byToken.get(token), meta: { ...meta } });
+      return true;
+    },
+    async sameSecretValue(name, value) {
+      return secrets.has(name) && secrets.get(name).value === String(value);
+    },
+    async readBackup(project, name) {
+      const s = secrets.get(name);
+      if (!s || s.meta.mode !== 'backup') {
+        const err = new Error(name + ' not found');
+        err.code = 'ZN_NOT_FOUND';
+        throw err;
+      }
+      return s.value;
     },
     async audit(event) {
       auditLog.push({ ...event });

@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "enabled": false
+  },
+  "plugins": {
+    "enabledPlugins": {
+      "zn-gate@usezn": true
+    }
+  }
+}

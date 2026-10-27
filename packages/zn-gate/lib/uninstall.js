@@ -99,12 +99,13 @@ async function plan(opts = {}) {
   }
   const vaultOpts = env.ZN_HOME ? { home: env.ZN_HOME } : (opts.home ? { home: path.join(home, '.zn') } : {});
   const store = require('./vault/store');
-  const files = require('./vault/reset').vaultFiles(vaultOpts);
+  const purge = require('./vault/purge');
+  const found = purge.targets(vaultOpts);
   return {
     agents,
     wrapped: wrappedConfigs(opts.envList),
     shadowed: shadowedFiles(cwd),
-    vault: { exists: files.length > 0, home: store.paths(vaultOpts).home },
+    vault: { exists: found.files.length > 0, home: store.paths(vaultOpts).home, lines: purge.describe(found, vaultOpts) },
     vaultOpts,
   };
 }
@@ -139,6 +140,8 @@ function printPlan(p, io) {
   if (p.vault.exists) {
     out(io, 'Asked separately at the end (default no):');
     out(io, '  The vault in ' + p.vault.home + ': your stored secrets. Deleting it cannot be undone.');
+    out(io, '  If you say yes, all of this is deleted:');
+    for (const l of p.vault.lines) out(io, '    - ' + l);
   }
   if (p.shadowed.length) {
     out(io, 'Left alone:');
@@ -155,8 +158,6 @@ function pluginStep(io) {
 }
 
 async function removeVault(p, io) {
-  const store = require('./vault/store');
-  const keychain = require('./vault/keychain');
   const daemon = require('./vault/daemon');
   const policy = require('./team/policy');
   const o = p.vaultOpts;
@@ -169,24 +170,24 @@ async function removeVault(p, io) {
     out(io, 'The vault was kept: it is unlocked. Run `zn lock`, then `zn-gate uninstall` again.');
     return 'failed';
   }
-  let backend = null;
-  try { const m = keychain.readMeta(o); backend = m && m.backend; } catch (_) { /* damaged */ }
   // Files first, the key last: if a file cannot be removed, the key stays and what is left still opens.
-  const left = [];
-  for (const v of require('./vault/reset').vaultFiles(o)) {
-    try { fs.unlinkSync(v.src); } catch (err) { if (!err || err.code !== 'ENOENT') left.push(v.src); }
-  }
-  if (left.length) {
+  // Every backup, token map and session file goes too, and a second look checks that none is left.
+  const purge = require('./vault/purge');
+  const r = await purge.removeAll(o);
+  if (r.left.length) {
     out(io, 'The vault was not fully deleted. These files could not be removed:');
-    for (const f of left) out(io, '  - ' + f);
+    for (const f of r.left) out(io, '  - ' + f);
     out(io, 'The vault key in your system keychain was kept, so what is left of the vault can still be opened. Delete those files by hand (or fix their permissions) and run `zn-gate uninstall` again.');
     return 'failed';
   }
-  if (backend) {
-    try { await keychain.deleteIdentity(o); } catch (_) { out(io, 'The vault files are gone, but the vault key could not be removed from your system keychain. It is harmless without the files; remove the "zn" entry by hand if you want.'); }
+  const problem = purge.keyProblem(r);
+  if (problem) {
+    out(io, 'The vault files are gone, but ' + problem.charAt(0).toLowerCase() + problem.slice(1));
+    return 'failed';
   }
-  try { fs.rmdirSync(store.paths(o).vaultDir); } catch (_) { /* not empty or gone */ }
   out(io, 'Vault deleted.');
+  const note = purge.keyNote(r);
+  if (note) out(io, note);
   return true;
 }
 
@@ -255,6 +256,8 @@ async function run(args, io) {
   if (p.vault.exists) {
     out(io, '');
     out(io, 'Your vault still holds your secrets (' + p.vault.home + ').' + (p.shadowed.length ? ' The .env files with markers need it.' : ''));
+    out(io, 'If you answer yes, all of this is deleted for good:');
+    for (const l of p.vault.lines) out(io, '  - ' + l);
     if (await ask('Delete the vault too? Every secret in it is lost for good.')) { if ((await removeVault(p, io)) === 'failed') failed++; }
     else out(io, 'The vault was kept.');
   }

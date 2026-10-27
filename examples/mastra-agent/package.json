@@ -13,7 +13,7 @@
   "dependencies": {
     "@mastra/core": "1.78.0",
     "ai": "7.0.143",
-    "zn-gate": "1.13.1",
+    "zn-gate": "1.14.0-rc.2",
     "zod": "4.1.13"
   },
   "overrides": {
