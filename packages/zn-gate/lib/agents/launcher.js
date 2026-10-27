@@ -389,25 +389,27 @@ const PROJECT_TRUST = [
 // The project guard also refuses a zn or node whose real folder is inside the project: the real folder the hook runs in, the
 // git work tree around it, CLAUDE_PROJECT_DIR or CURSOR_PROJECT_DIR (never the home folder or a folder above it), following
 // links to the last target (readlink by full path; a link with no readlink is refused). A PATH folder that is a
-// node_modules folder (node_modules/.bin) is refused too; a link target in node_modules is not, unless it is in the project:
-// a global npm install (npm, nvm, Homebrew, fnm) links bin/zn to ../lib/node_modules/zn-gate. The same rule as the
+// node_modules folder (node_modules/.bin) is refused too; for zn a link target in node_modules is not, unless it is in the
+// project: a global npm install (npm, nvm, Homebrew, fnm) links bin/zn to ../lib/node_modules/zn-gate. For node every hop
+// is checked against node_modules too, as the plugins' zn-node.sh and zn-gate check do. The same rule as the
 // plugins' zn-node.sh: an absolute PATH entry into the project (its bin, node_modules/.bin, a folder added by direnv) could
 // otherwise start a program of the project. Folders are resolved with cd -P and back, with no subshell per folder (slow in Git
 // Bash). G is set when both pass.
 const PROJECT_REAL = [
   'NL=$(printf "\\n_"); NL=${NL%_}; CDPATH=',
-  // Without the hook's real folder R0 stays empty and every folder is refused (zr cannot come back to it).
-  'R0=; cd -P . 2>/dev/null && R0=$PWD',
+  // The hook's real folder, only as an absolute path: with the folder deleted, bash leaves PWD=. there. Without it G stays
+  // empty below and zn is not started (the hook blocks).
+  'R0=; cd -P . 2>/dev/null && case $PWD in /*) R0=$PWD ;; esac',
   'zr() { RP=; case "$1" in /*) ;; *) return 1 ;; esac; cd -P -- "$1" 2>/dev/null || return 1; RP=$PWD; cd -P -- "$R0" 2>/dev/null || { RP=; return 1; }; [ -n "$RP" ]; }',
   'H=; zr "${HOME:-/nonexistent}" && H=$RP',
   'RT=',
   'ar() { zr "$1" || return 0; [ "$RP" = / ] && return 0; case "$H/" in "$RP"/*) return 0 ;; esac; RT="$RT$NL$RP"; }',
   'ar "$R0"', 'ar "${CLAUDE_PROJECT_DIR:-}"', 'ar "${CURSOR_PROJECT_DIR:-}"',
-  'D=$R0; while [ -n "$D" ] && [ "$D" != / ]; do if [ -e "$D/.git" ]; then ar "$D"; break; fi; D=${D%/*}; done',
+  'D=$R0; while [ -n "$D" ] && [ "$D" != / ]; do case "$D" in /*) ;; *) break ;; esac; if [ -e "$D/.git" ]; then ar "$D"; break; fi; D=${D%/*}; done',
   'zin() { O=$IFS; IFS=$NL; set -f; Q=1; for X in $RT; do case "$1/" in "$X"/*) Q=0; break ;; esac; done; set +f; IFS=$O; return $Q; }',
   'RL=; for X in /usr/bin/readlink /bin/readlink; do [ -x "$X" ] && { RL=$X; break; }; done',
-  'zok() { F=$1; I=0; while :; do zr "${F%/*}" || return 1; zin "$RP" && return 1; if [ "$I" = 0 ]; then case "$RP/" in */node_modules/*) return 1 ;; esac; fi; [ -L "$F" ] || return 0; [ -n "$RL" ] && [ "$I" -lt 40 ] || return 1; Y=$("$RL" -- "$F") || return 1; case "$Y" in /*) F=$Y ;; *) F=${F%/*}/$Y ;; esac; I=$((I+1)); done; }',
-  'G=; [ -n "$Z" ] && [ -n "$N" ] && zok "$Z" && zok "$N" && G=1',
+  'zok() { F=$1; S=${2:-}; I=0; while :; do zr "${F%/*}" || return 1; zin "$RP" && return 1; if [ "$I" = 0 ] || [ -n "$S" ]; then case "$RP/" in */node_modules/*) return 1 ;; esac; fi; [ -L "$F" ] || return 0; [ -n "$RL" ] && [ "$I" -lt 40 ] || return 1; Y=$("$RL" -- "$F") || return 1; case "$Y" in /*) F=$Y ;; *) F=${F%/*}/$Y ;; esac; I=$((I+1)); done; }',
+  'G=; [ -n "$R0" ] && [ -n "$Z" ] && [ -n "$N" ] && zok "$Z" && zok "$N" strict && G=1',
 ];
 
 /**

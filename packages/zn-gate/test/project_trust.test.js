@@ -142,3 +142,37 @@ test('project hook guard: a folder above the home folder named as the project do
     assert.ok(fs.existsSync(marker), label + ': the zn in the home folder did not run');
   }
 });
+
+test('project hook guard: with the hook folder deleted it ends at once and blocks (dash, bash --posix)', { skip: !POSIX }, (t) => {
+  for (const [label, shell, extra] of SHELLS) {
+    const { marker } = setup(t);
+    const bin = fakeZn(tempDir(t, 'zn-ptrust-gone-bin-'), marker);
+    const gone = path.join(tempDir(t, 'zn-ptrust-gone-'), 'work');
+    fs.mkdirSync(gone);
+    const quoted = projectShCommand('claude-code', 'PreToolUse').slice('sh -c '.length);
+    const q = (x) => "'" + x.replace(/'/g, "'\\''") + "'";
+    // cd into the folder, delete it, then start the guard from there: the shell is left in a folder that no longer exists.
+    const r = spawnSync('/bin/sh', ['-c', 'cd ' + q(gone) + ' && rmdir ' + q(gone) + ' && exec ' + shell + ' ' + extra.join(' ') + ' -c ' + quoted], {
+      env: { PATH: bin + ':/usr/bin:/bin', HOME: '/nonexistent' }, input: '{}', encoding: 'utf8', timeout: 10000,
+    });
+    assert.equal(r.signal, null, label + ': the guard did not end (killed by the timeout)');
+    assert.equal(r.status, 2, label + ': ' + r.stdout + r.stderr);
+    assert.equal(fs.existsSync(marker), false, label + ': zn ran without the hook folder');
+  }
+});
+
+test('project hook guard: a node that links into a node_modules folder outside the project is refused, as the plugin does', { skip: !POSIX }, (t) => {
+  for (const [label, shell, extra] of SHELLS) {
+    const { proj, marker } = setup(t);
+    const prefix = tempDir(t, 'zn-ptrust-nodenm-');
+    fs.mkdirSync(path.join(prefix, 'bin'));
+    fs.writeFileSync(path.join(prefix, 'bin', 'zn'), '#!/bin/sh\necho "zn $*" >> ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+    const nm = path.join(prefix, 'lib', 'node_modules', 'node', 'bin');
+    fs.mkdirSync(nm, { recursive: true });
+    fs.symlinkSync(process.execPath, path.join(nm, 'node'));
+    fs.symlinkSync('../lib/node_modules/node/bin/node', path.join(prefix, 'bin', 'node'));
+    const r = runGuard(shell, extra, proj, path.join(prefix, 'bin') + ':/usr/bin:/bin');
+    assert.equal(fs.existsSync(marker), false, label + ': zn ran with a node from node_modules');
+    assert.notEqual(r.status, 0, label);
+  }
+});
