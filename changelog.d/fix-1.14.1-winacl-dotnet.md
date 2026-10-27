@@ -1,0 +1,2 @@
+### Changed
+- Windows: the vault reads your account's SID and makes its folders, files and session key private to you with .NET calls in the system PowerShell, as the hook folder already did, instead of starting `whoami.exe` and `icacls.exe`. The result is the same: a list that does not inherit from the parent folder, with one full-control entry for your account, read back and checked before the vault starts.
