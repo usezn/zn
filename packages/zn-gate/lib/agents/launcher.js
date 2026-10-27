@@ -298,7 +298,8 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     'ZN_RAN=',
     '# The runner runs only while it has the SHA-256 recorded at install time: the Node.js above reads it once, checks it and runs',
     '# that same content (ZN_VERIFY), so no hash tool from the PATH decides. Status ' + CHANGED_RC + ' means it changed and nothing of it ran.',
-    'if [ -x "$ZN_NODE" ] && [ -f "$ZN_RUNNER" ]; then ZN_RAN=1; ' + run('"$ZN_NODE" -e "$ZN_VERIFY" "$ZN_RUNNER" "$ZN_SHA" ' + agentId) + '; ' +
+    '# --input-type=commonjs: a NODE_OPTIONS with --input-type=module would otherwise make that code an ES module, with no require.',
+    'if [ -x "$ZN_NODE" ] && [ -f "$ZN_RUNNER" ]; then ZN_RAN=1; ' + run('"$ZN_NODE" --input-type=commonjs -e "$ZN_VERIFY" "$ZN_RUNNER" "$ZN_SHA" ' + agentId) + '; ' +
       'case $ZN_RC in ' + CHANGED_RC + ') ZN_RAN=; ZN_CHANGED=1 ;; esac; zn_leave $ZN_RC; fi',
     '# Nothing is run from the PATH instead: an unverified `zn` could be any program.',
     'zn_block',

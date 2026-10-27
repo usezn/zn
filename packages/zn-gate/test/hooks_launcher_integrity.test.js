@@ -164,3 +164,38 @@ test('check: reports a launcher whose runner no longer matches the recorded SHA-
   assert.match(r.problem, /zn-gate changed since the hooks were installed/);
   assert.match(r.fix, /zn hooks install claude-code/);
 });
+
+test('integrity: a NODE_OPTIONS that makes -e an ES module does not break the hook', { skip: !posix }, (t) => {
+  const { file, runner } = setup(t);
+  const env = { PATH: process.env.PATH, HOME: '/nonexistent', NODE_OPTIONS: '--input-type=module' };
+  const ok = spawnSync('/bin/sh', [file, 'PreToolUse'], { input: '{}', encoding: 'utf8', env });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(ok.stdout.trim(), 'REAL_RUNNER');
+  fs.appendFileSync(runner, '// edited\n');
+  const blocked = spawnSync('/bin/sh', [file, 'PreToolUse'], { input: '{}', encoding: 'utf8', env });
+  assert.equal(blocked.status, 2);
+  assert.match(blocked.stderr, CHANGED);
+});
+
+// Windows: Claude Code runs this same launcher with Git Bash. The real launcher, started by bash.exe as Claude Code does,
+// runs the intact runner and blocks an edited one.
+const GIT_BASH = (() => {
+  if (process.platform !== 'win32') return null;
+  const dirs = [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], 'C:\\Program Files'].filter(Boolean);
+  for (const f of [process.env.CLAUDE_CODE_GIT_BASH_PATH, ...dirs.map((d) => path.join(d, 'Git', 'bin', 'bash.exe'))]) {
+    try { if (f && fs.statSync(f).isFile()) return f; } catch (_) { /* not there */ }
+  }
+  return null;
+})();
+
+test('integrity on Windows: Git Bash runs the launcher, the intact runner runs and an edited one is blocked', { skip: !GIT_BASH && 'Windows with Git for Windows only' }, (t) => {
+  const { file, runner } = setup(t);
+  const run = () => spawnSync(GIT_BASH, [file.replace(/\\/g, '/'), 'PreToolUse'], { input: '{}', encoding: 'utf8', env: { ...process.env } });
+  const ok = run();
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(ok.stdout.trim(), 'REAL_RUNNER');
+  fs.appendFileSync(runner, '// edited\n');
+  const blocked = run();
+  assert.equal(blocked.status, 2, blocked.stdout + blocked.stderr);
+  assert.match(blocked.stderr, CHANGED);
+});
