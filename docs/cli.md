@@ -434,7 +434,7 @@ Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, us
 
 #### `hooks install`
 
-Adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. A backup of the settings is written first. With `--project`, the shared files run `zn` from the PATH rather than a path on your machine, so everyone who uses the project needs zn-gate installed globally; the install prints a note when `zn` is not on your PATH.
+Adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. A backup of the settings is written first. With `--project`, the shared files run `zn` from the PATH rather than a path on your machine, so everyone who uses the project needs zn-gate installed globally; the install prints a note when `zn` is not on your PATH. For Claude Code, `--project` adds no MCP server (a shared `.mcp.json` could only name `zn`, looked up on the PATH): run `zn hooks install claude-code` for the `secrets` server, and a `secrets` entry that a 1.14.0 release candidate wrote to the project's `.mcp.json` is removed, with a backup.
 
 #### `hooks uninstall`
 
