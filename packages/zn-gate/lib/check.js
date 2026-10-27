@@ -67,7 +67,7 @@ function resolveHookNode(env, cwd) {
     const norm = (f) => { let r = path.resolve(f); try { r = fs.realpathSync(r); } catch (err) { /* keep it */ } return isWin ? r.toLowerCase() : r; };
     // The shared rule (exe.findProgram): never a node in the project, its git work tree or node_modules, nor one that
     // links there; the home folder is never the project, so a Node.js from nvm or volta counts.
-    const file = require('./exe').findProgram('node', env || process.env, cwd || process.cwd());
+    const file = require('./exe').findProgram('node', env || process.env, cwd || process.cwd(), { strict: true });
     if (!file) return null;
     if (norm(file) === norm(process.execPath)) return { version: process.versions.node, path: file };
     const r = spawnSync(file, ['--version'], { encoding: 'utf8', timeout: 3000, windowsHide: true, shell: false });
@@ -802,6 +802,18 @@ function bareProjectHook(spec, text) {
   } catch (_) { return false; }
 }
 
+/* Whether this folder's hooks file holds a hook of zn's: its text names zn, or one of its commands is zn's (on Windows the
+ * project guard is an encoded PowerShell command, so the file holds no plain "zn"). */
+function projectHookOurs(spec, text) {
+  if (!text) return false;
+  if (/zn|runner\.js/.test(text)) return true;
+  if (spec.id === 'opencode' || spec.id === 'zcode') return false;
+  try {
+    const tree = JSON.parse(String(text).replace(/^\uFEFF/, ''));
+    return hookEntries(tree, spec.id).some((e) => Boolean(parseCommand(e.command, spec.id)));
+  } catch (_) { return false; }
+}
+
 /* Whether this folder's hooks file holds a guard that looks like zn's but is not exactly one this version writes. */
 function modifiedProjectGuard(spec, text) {
   if (!text || spec.id === 'opencode' || spec.id === 'zcode') return false;
@@ -1161,7 +1173,7 @@ async function checkAgent(spec, ctx) {
     if (spec.id !== 'claude-code' && !znOnPath(ctx.env)) res.fix = 'run `npm install -g zn-gate`, then `zn hooks install ' + spec.id + '`, in your own terminal';
     const proj = projFile;
     const text = projText;
-    if (text && /zn|runner\.js/.test(text)) {
+    if (projectHookOurs(spec, text)) {
       res.state = 'project-only';
       res.where = proj;
       if (projBare) {
