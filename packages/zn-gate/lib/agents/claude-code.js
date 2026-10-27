@@ -560,7 +560,10 @@ function userMcpServerIsOurs(opts = {}) {
  *    this zn-gate's bin/cli.js, both by absolute path and the same files once links are resolved (a `zn` or
  *    `npx` found on the PATH could be a program of the project), and
  *  - no .mcp.json and no local-scope entry of ~/.claude.json defines a server with that name at all, from
- *    the working folder upwards and from the project folder Claude Code names (CLAUDE_PROJECT_DIR) upwards.
+ *    the working folder upwards and from the project folder Claude Code names (CLAUDE_PROJECT_DIR) upwards
+ *    (a CLAUDE_PROJECT_DIR that is not an absolute path gives null), and
+ *  - the entry sets nothing that changes what that Node.js loads (NODE_OPTIONS, NODE_PATH, a folder to run in
+ *    inside the project).
  * The zn-gate plugin registers no MCP server since 1.14.0, so a plugin server name (plugin_zn-gate_secrets,
  * plugin_zn-gate_zn-gate) is never zn's: an older plugin started its servers with `node` from the PATH.
  * Anything unreadable gives null, so the call is checked as for any other server. */
@@ -591,9 +594,14 @@ function znMcpServerKind(server, cwd, opts = {}) {
   // Folder names are compared without case on Windows (a drive letter or a folder typed in another case).
   const win = (opts.platform || process.platform) === 'win32';
   const key = (p) => (win ? path.resolve(p).toLowerCase() : path.resolve(p));
-  // A hook can run in a folder outside the project (one added with --add-dir): look up from both.
+  // A hook can run in a folder outside the project (one added with --add-dir): look up from both. A project
+  // folder that cannot be placed leaves the servers Claude Code loads unknown.
   const starts = [path.resolve(cwd || process.cwd())];
-  if (env.CLAUDE_PROJECT_DIR && path.isAbsolute(String(env.CLAUDE_PROJECT_DIR))) starts.push(String(env.CLAUDE_PROJECT_DIR));
+  const projectDir = env.CLAUDE_PROJECT_DIR;
+  if (projectDir !== undefined && projectDir !== '') {
+    if (!path.isAbsolute(String(projectDir))) return null;
+    starts.push(String(projectDir));
+  }
   const seen = new Set();
   const overrides = [];
   for (const start of starts) {
@@ -644,8 +652,8 @@ function isInstalledSecretsServer(s, opts = {}) {
   const places = require('../exe').projectPlaces(opts.cwd || process.cwd(), opts.env || process.env, win);
   const inside = (p, d) => { const rel = path.relative(d, p); return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)); };
   if (places.some((d) => inside(node, d) || inside(cli, d))) return false;
-  // Nothing in the entry may change what that Node.js loads: no NODE_OPTIONS or NODE_PATH, and no folder to run
-  // in that is inside the project.
+  // Nothing in the entry may change what that Node.js loads: no NODE_OPTIONS or NODE_PATH, and no folder to run in
+  // that is inside the project.
   const env = s.env && typeof s.env === 'object' ? Object.keys(s.env) : [];
   if (env.some((k) => /^NODE_(?:OPTIONS|PATH)$/i.test(k))) return false;
   if (s.cwd !== undefined) {

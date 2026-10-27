@@ -249,7 +249,7 @@ test('plan: Claude Code set up with zn hooks is repaired with zn hooks, not with
   assert.deepEqual(cc.steps.map(line), ['zn hooks install claude-code']);
 });
 
-test('plan: the plugin together with zn hooks gets one step that removes the hooks', async (t) => {
+test('plan: the plugin together with zn hooks gets one step that removes the hooks', { skip: process.platform === 'win32' && 'the zn-gate plugin needs Git Bash on Windows, which this fixture does not provide' }, async (t) => {
   const m = machine(t, ['claude-code']);
   getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
   const root = path.join(m.home, '.claude', 'plugins', 'cache', 'usezn', 'zn-gate', '1.9.0');
@@ -438,7 +438,7 @@ test('guide: after repairing the hooks next to a broken plugin, the plugin is tu
   }
 });
 
-test('plan: zn rules that do not block .env get the zn-gate repair, never the plugin install', async (t) => {
+test('plan: zn rules that do not block .env get the zn-gate repair, never the plugin install', { skip: process.platform === 'win32' && 'the zn-gate plugin needs Git Bash on Windows, which this fixture does not provide' }, async (t) => {
   const runner = require('../lib/hooks/runner');
   const real = runner.handle;
   runner.handle = async () => ({ decision: { decision: 'allow' } });
