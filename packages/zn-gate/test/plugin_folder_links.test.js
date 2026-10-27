@@ -253,3 +253,23 @@ test('Claude Code plugin: a plugins folder kept elsewhere as a link (dotfiles), 
   const r = await claudeCheck(t, home);
   assert.equal(r.state, 'protected', r.problem);
 });
+
+test('Claude Code plugin: a link whose target goes through another link and ".." (evil/../hop) is judged by where the file system leads', { skip: SKIP }, async (t) => {
+  const home = tempDir(t, 'zn-pfl-home-');
+  const out = tempDir(t, 'zn-pfl-dotdot-');
+  const marker = path.join(out, 'ran.txt');
+  const store = path.join(home, '.claude', 'plugins', 'store', 'zn-gate');
+  claudePlugin(home, store, marker);
+  // evil leads to out/x, so evil/.. is out; out/hop leads back to the plugin. Read as text, evil/../hop stays in cache.
+  fs.mkdirSync(path.join(out, 'x'));
+  fs.symlinkSync(store, path.join(out, 'hop'));
+  const cache = path.join(home, '.claude', 'plugins', 'cache');
+  fs.mkdirSync(cache, { recursive: true });
+  fs.symlinkSync(path.join(out, 'x'), path.join(cache, 'evil'));
+  fs.symlinkSync('evil/../hop', path.join(cache, 'zn-gate'));
+  claudePlugin(home, path.join(cache, 'zn-gate'), marker);
+  const r = await claudeCheck(t, home);
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /link/);
+  assert.equal(fs.existsSync(marker), false, 'zn-gate check ran the plugin through evil/../hop');
+});

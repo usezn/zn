@@ -393,9 +393,9 @@ function pluginManifest(root, rootVar, platform = process.platform) {
   return { hooks, bare: hooks.find((h) => h.byName) || null };
 }
 
-/* Real path of `p`, or null when it is not there. */
+/* Real path of `p` as the file system reads it (links followed, ".." applied after the link it follows), or null when it is not there. */
 function realOrNull(p) {
-  try { return fs.realpathSync(p); } catch (_) { return null; }
+  try { return fs.realpathSync.native(p); } catch (_) { return null; }
 }
 
 /* Whether `p` is `dir` itself (when `orSame`) or a path inside it. */
@@ -448,6 +448,21 @@ function claudePluginRootProblem(root, ctx) {
   return '';
 }
 
+/* The place the link target `target`, found in the folder `dir`, names, as the file system reads it: every ".." is applied
+   to the real place its left side leads to (links followed), not to the text before it (`evil/../hop` with `evil` a link
+   to another folder is next to that folder, not next to `dir`). The last name is left as it is, so a link there is
+   still seen as one. null when the folder part is not there. */
+function targetPlace(dir, target) {
+  const full = path.isAbsolute(target) ? target : dir + path.sep + target;
+  const trimmed = full.length > 1 ? full.replace(/[\\/]+$/, '') : full;
+  const cut = Math.max(trimmed.lastIndexOf('/'), process.platform === 'win32' ? trimmed.lastIndexOf('\\') : -1);
+  const last = trimmed.slice(cut + 1);
+  try {
+    if (!last || last === '.' || last === '..') return fs.realpathSync.native(trimmed || path.sep);
+    return path.join(fs.realpathSync.native(trimmed.slice(0, cut) || path.sep), last);
+  } catch (_) { return null; }
+}
+
 /* Follows `start` one link at a time, as the file system does, and returns the first link inside one of the folders in
    `within` whose target (the place that link names, before the rest is followed) is not inside one of them, as
    {link, to}; null when every link below those folders stays in them (a link above them, as /var on macOS, is followed
@@ -470,7 +485,8 @@ function linkHopLeaves(start, within) {
     if (!st.isSymbolicLink()) { cur = next; continue; }
     let target;
     try { target = fs.readlinkSync(next); } catch (_) { return { link: next, to: 'a place zn-gate cannot read' }; }
-    const abs = path.resolve(cur, target);
+    const abs = targetPlace(cur, target);
+    if (!abs) return null;
     if (inWithin(next) && !inWithin(abs)) return { link: next, to: abs };
     if (++hops > 40) return { link: next, to: 'too many links in a row' };
     const parsed = path.parse(abs);
