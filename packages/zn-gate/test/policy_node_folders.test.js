@@ -178,3 +178,35 @@ test('the parent folders cannot be moved or deleted to swap a protected folder',
     'cp -r app ~/.local/share/app', 'cd ~/.local && ls'];
   for (const c of ok) assert.equal(sh(c), null, c);
 });
+
+test('copies by pattern, of a folder content or with no visible source into a bin folder are refused', () => {
+  const bad = [
+    'cp src/node* ~/.local/bin',
+    'cp src/* ~/.local/bin/',
+    'cp -t ~/.local/bin/ src/*',
+    'cd ~/.local/bin && cp /x/* .',
+    'rsync -a src/ ~/.local/bin/',
+    'cp -r src/. ~/.local/bin/',
+    'cp -a stage/. ~/bin',
+    'xargs cp -t ~/.local/bin < list',
+    'xargs -a list cp -t ~/.local/bin',
+    'find src -name node -exec cp {} ~/.local/bin/ \;',
+    'find src -exec cp -t ~/.local/bin {} +',
+    'cp src/?ode ~/bin',
+    'cp src/[nz]* ~/bin',
+    'cp src/n* ~/bin',
+    'cp src/{node,x} ~/bin',
+    'cp --target-directory=~/bin src/*',
+  ];
+  for (const c of bad) assert.match(String(sh(c)), /protected/, c);
+  const ok = [
+    'cp ./mytool ~/.local/bin/',
+    'cp src/*.sh ~/bin/',
+    'cp src/*.py ~/.local/bin',
+    'cp src/tool-* ~/bin/',
+    'cp a b ~/.local/bin/',
+    'rsync -a src/mytool ~/.local/bin/',
+    'cp src/* ~/projects/out/',
+  ];
+  for (const c of ok) assert.equal(sh(c), null, c);
+});

@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-27.14';
+const POLICY_RULES_VERSION = '2026-10-27.15';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2502,7 +2502,7 @@ function bashDenialOf(cmd, opts = {}) {
   // Where a relative .env path may be read from once the command has changed directory (cd app && cat .env).
   // Each reading is followed on its own, so a cd counts once.
   opts.cdBases = cdBasesOf(readings, opts);
-  markRuns(words);
+  for (const r of readings) markRuns(r);
   opts.codeHead = words.some((x) => CODE_CMDS_RE.test(bareHead(x.head)));
   opts.elsewhere = new Map();
   markLinkWords(readings);
@@ -2759,7 +2759,17 @@ const NODE_DEL_MOVE = new Set(['rm', 'rmdir', 'unlink', 'shred', 'mv', 'del', 'e
 // Commands whose last file is where the others go (or the one after -t).
 const NODE_DEST_LAST = new Set(['cp', 'install', 'rsync', 'scp', 'ln', 'mv', 'copy', 'copy-item', 'xcopy', 'robocopy', 'move', 'move-item']);
 const NODE_WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'nohup', 'time', 'xargs', 'exec', 'nice', 'ionice', 'stdbuf', 'timeout', 'setsid', 'builtin', 'busybox']);
-const NODE_WRAPPER_VALUE_FLAGS = new Set(['-u', '-g', '-h', '-p', '-c', '-d', '-r', '-t', '-U', '-C', '-D', '-R', '-T']);
+// The flags of a wrapper that take the next word as their value.
+const NODE_WRAPPER_VALUE_FLAGS = {
+  sudo: new Set(['-u', '-g', '-h', '-p', '-C', '-D', '-R', '-T', '-U']),
+  doas: new Set(['-u', '-C']),
+  xargs: new Set(['-a', '-I', '-n', '-P', '-L', '-d', '-E', '-s']),
+  env: new Set(['-u', '-C', '-S']),
+  timeout: new Set(['-k', '-s']),
+  nice: new Set(['-n']),
+  ionice: new Set(['-c', '-n', '-p']),
+  stdbuf: new Set(['-i', '-o', '-e']),
+};
 // The name of the program in a path, without a Windows extension.
 const nameOfProgram = (t) => String(t).split(/[\\/]/).pop().toLowerCase().replace(/\.(?:exe|cmd|bat)$/, '');
 
@@ -2782,7 +2792,7 @@ function markRuns(words) {
       if (NODE_WRAPPERS.has(nameOfProgram(t))) {
         const wrap = nameOfProgram(t);
         for (let j = i + 1; j < ws.length && ws[j].text.startsWith('-'); j++) {
-          if (NODE_WRAPPER_VALUE_FLAGS.has(ws[j].text) && (wrap === 'sudo' || wrap === 'doas')) j++, i++;
+          if (NODE_WRAPPER_VALUE_FLAGS[wrap] && NODE_WRAPPER_VALUE_FLAGS[wrap].has(ws[j].text)) j++, i++;
           i++;
         }
         if (wrap === 'timeout') i++;
@@ -2802,13 +2812,13 @@ function markRuns(words) {
       const t = x.text;
       if (t.startsWith('-') && t.length > 1) {
         run.flags.push(t);
-        if (/^--target-directory=/.test(t)) dest = x;
+        if (/^--target-directory=/.test(t)) { dest = x; run.destByFlag = true; }
         if (/^--(?:output|output-document|directory|directory-prefix)=|^-o.+/.test(t) && /^(?:curl|wget|7z|7za)$/.test(run.head)) run.out.add(x);
         continue;
       }
       const prev = k > i + 1 && ws[k - 1].text.startsWith('-') ? ws[k - 1].text : '';
       run.args.push(x);
-      if (prev === '-t' || prev === '--target-directory') dest = x;
+      if (prev === '-t' || prev === '--target-directory') { dest = x; run.destByFlag = true; }
       if (/^(?:tar|bsdtar)$/.test(run.head) && (prev === '-C' || prev === '--directory')) run.out.add(x);
       if (run.head === 'unzip' && prev === '-d') run.out.add(x);
       if (run.head === 'curl' && (/^-[a-zA-Z]*o$/.test(prev) || prev === '--output')) run.out.add(x);
@@ -2848,6 +2858,8 @@ function nodeExeWrites(w, text, c, opts) {
   const isDest = run.dest === w;
   const delMove = NODE_DEL_MOVE.has(head);
   if (!isDest || !NODE_DEST_LAST.has(head)) {
+    // find -exec cp {} bin/ ; : the copy is made by the program find starts.
+    if (c.role === 'bin' && /^(?:find|fd)$/.test(head) && run.everyFile && run.args.some((a) => /^(?:cp|mv|install|ln|rsync|copy|copy-item)$/i.test(a.text))) return true;
     if (!run.everyFile) return false;
     if (c.role === 'file') return true;
     return delMove; // a folder is only refused when deleted or moved
@@ -2857,8 +2869,31 @@ function nodeExeWrites(w, text, c, opts) {
   if (c.role === 'ancestor') return head === 'mv' || head === 'move' || head === 'move-item' || (head === 'ln' && run.replaceLink) || (run.recursive && /^(?:cp|rsync|xcopy|robocopy|copy-item)$/.test(head));
   // A bin folder: copying into it is judged by the name each file gets.
   if (head === 'ln' && run.replaceLink) return true;
-  return run.args.some((a) => a !== w && !GLOB_RE.test(a.text) && NODE_FILE_RE.test(String(a.text).replace(/[\\/]+$/, '').split(/[\\/]/).pop()));
+  const sources = run.args.filter((a) => a !== w);
+  // `cp -t bin` with no file named (find -exec, xargs): what is copied cannot be seen.
+  if (run.destByFlag && !sources.length) return true;
+  return sources.some((a) => nodeSourceMayBeNodeExe(String(a.text)));
 }
+
+// Names the hooks start (the patterns of a source are tried against them).
+const NODE_EXE_NAMES = ['node', 'zn', 'node.exe', 'zn.exe', 'zn.cmd'];
+
+/**
+ * Whether a file given to cp, mv, rsync or ln may leave a `node` or `zn` in the bin folder it goes to: its own name
+ * is one, it is a pattern whose last part can match one (`*`, `n*`, `node*`, `?ode`, `[nz]*`; `*.sh` cannot), it names
+ * a folder's content (`src/`, `src/.`, `.`), or it is a placeholder a program fills in (`{}` of xargs and find).
+ */
+function nodeSourceMayBeNodeExe(text) {
+  const t = slash(text);
+  if (/(?:^|\/)\.?$/.test(t) || t === '..' || t.endsWith('/..')) return true;
+  if (t.includes('{}')) return true;
+  const base = t.split('/').pop();
+  if (!GLOB_RE.test(base)) return NODE_FILE_RE.test(base);
+  const alts = expandBraces(base);
+  if (!alts) return true;
+  return alts.some((alt) => (GLOB_RE.test(alt) ? NODE_EXE_NAMES.some((n) => globRegExp(alt).test(n)) : NODE_FILE_RE.test(alt)));
+}
+
 
 // Commands that change the directory the rest of the command runs in.
 const CD_CMDS = new Set(['cd', 'chdir', 'pushd', 'sl', 'set-location', 'push-location']);
