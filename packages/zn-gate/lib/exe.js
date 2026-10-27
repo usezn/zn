@@ -184,47 +184,32 @@ function projectRootOf(dir, stop) {
 }
 
 /*
- * User folders where tools install programs (a Node.js from nvm or volta, cargo, pipx). They stay trusted even when the
- * whole home folder is a project, see projectPlaces.
- */
-const USER_BINS = [['.local', 'bin'], ['bin'], ['.nvm'], ['.volta'], ['.cargo', 'bin'], ['.bun', 'bin']];
-
-/*
- * The folders a program must not come from: the folder zn runs in, the git work trees around it (up to the home folder,
- * not including it), the agent's project (CLAUDE_PROJECT_DIR) and, with no git work tree, the nearest folder with a
- * project file.
+ * The folders a program must not come from: the folder zn runs in, the git work trees around it, the agent's project
+ * (CLAUDE_PROJECT_DIR) and, with no git work tree, the nearest folder with a project file.
  *
- * The home folder and the folders above it are never the project, with one exception. When the nearest git work tree
- * IS the home folder (a dotfiles repository) the whole home is tracked by a repository whose files come from a remote
- * and whose pull can add any of them, so a program in it is not safer than one in a project. Then the home folder is a
- * place too, except the user folders in USER_BINS. The trade-off: a program that a tool installed elsewhere in the home
- * folder (for example ~/tools/bin) is skipped there, and the PATH entry has to move into one of those folders or out of
- * the home; the other way, a repository could put a fake zn or git anywhere in the home folder and run it as the user.
- * `places.home` and `places.userBins` tell untrustedPlace and inPlaces which entry is that home place.
+ * The home folder and the folders above it are never the project: Node.js, zn and the other tools are installed in many
+ * places there (nvm, volta, fnm, asdf, pyenv, ~/.local/bin, a global npm prefix), and skipping them would leave the hooks
+ * with nothing to start. A home folder that is itself a git work tree (dotfiles) is therefore treated as no work tree
+ * at all: the folder zn runs in and the nearest folder with a project file still count, the rest of the home does not.
  */
 function projectPlaces(cwd, env, win) {
   const e = env || process.env;
   const here = cwd || process.cwd();
   const home = realKey(e.HOME || e.USERPROFILE || os.homedir(), win);
-  const roots = gitRootsOf(here);
-  const homeRepo = roots.length > 0 && realKey(roots[0], win) === home;
-  const out = [];
+  const roots = gitRootsOf(here).filter((r) => !insideOrSame(home, realKey(r, win)));
   const extra = roots.length ? [] : [projectRootOf(here, home)];
+  const out = [];
   for (const d of [here, ...roots, ...extra, e.CLAUDE_PROJECT_DIR]) {
     if (!d || !path.isAbsolute(String(d))) continue;
     const k = realKey(String(d), win);
-    if (k === home && homeRepo) {
-      if (!out.includes(k)) out.push(k);
-      out.home = home;
-      out.userBins = USER_BINS.map((p) => realKey(path.join(home, ...p), win));
-    } else if (!insideOrSame(home, k) && !out.includes(k)) out.push(k);
+    if (!insideOrSame(home, k) && !out.includes(k)) out.push(k);
   }
   return out;
 }
 
-/* Is `real` inside one of the places (the user's program folders in a home that is a repository excepted)? */
+/* Is `real` inside one of the places? */
 function inPlaces(real, places) {
-  return places.some((d) => insideOrSame(real, d) && !(d === places.home && places.userBins.some((b) => insideOrSame(real, b))));
+  return places.some((d) => insideOrSame(real, d));
 }
 
 function untrustedPlace(real, places) {

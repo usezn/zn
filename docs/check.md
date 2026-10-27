@@ -444,7 +444,7 @@ Something unexpected stopped the check for that agent, and the line gives the er
 
 zn starts a few programs by name (`node`, `git`, `sh`, your agent). It never starts one that sits in your project, so a repository cannot slip in its own copy. A folder on your `PATH` is skipped when it is inside the folder zn runs in, inside a git repository around it, inside the folder your agent names as the project, or inside a `node_modules` folder. Three cases need a word:
 
-- **Your home folder is a git repository (dotfiles).** The whole home counts as the project, because anything pulled into the repository could land anywhere in it. Your usual tool folders stay trusted: `~/.local/bin`, `~/bin`, `~/.nvm`, `~/.volta`, `~/.cargo/bin` and `~/.bun/bin`. A tool in another folder of your home, for example `~/tools/bin`, is skipped: move it to one of those folders.
+- **Your home folder is a git repository (dotfiles).** That repository is not taken as your project: your tools live in your home (nvm, volta, asdf, `~/.local/bin`, a global npm folder) and stay usable. A project inside your home without its own git is found as below, by its project file.
 - **A project without git.** zn uses the project your agent names. If none is named, it uses the nearest folder above the current one that holds a project file (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `Gemfile`, `pom.xml`, `composer.json`, `CLAUDE.md` or `AGENTS.md`), looking up to 8 levels. A project with none of these is only known by the folder zn runs in, so a `bin/` folder beside it is not skipped.
 - **A repository inside another repository.** The repositories around it count too, up to 8 levels above the nearest one. A repository that contains your home folder does not.
 

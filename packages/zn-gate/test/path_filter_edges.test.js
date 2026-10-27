@@ -27,32 +27,31 @@ function fakeProgram(dir, name, marker) {
 
 const list = (s) => s.split(':').filter(Boolean);
 
-test('a home folder that is a git work tree: the home is a project, its tool folders are not', { skip: !POSIX }, (t) => {
+test('a home folder that is a git work tree (dotfiles): its tools stay trusted, a project in it is still found', { skip: !POSIX }, (t) => {
   const home = tempDir(t, 'zn-edge-home-');
   const marker = path.join(tempDir(t, 'zn-edge-mark-'), 'ran.txt');
   gitInit(home);
-  const tools = path.join(home, 'tools', 'bin');
-  const keep = [path.join(home, '.local', 'bin'), path.join(home, 'bin'), path.join(home, '.nvm', 'versions', 'node', 'v20.0.0', 'bin'), path.join(home, '.volta', 'bin'), '/usr/bin'];
-  for (const d of [tools, ...keep.slice(0, 4)]) fs.mkdirSync(d, { recursive: true });
-  const PATH = [tools, ...keep].join(':');
+  // Tools installed anywhere in the home stay usable: skipping them would leave the hooks nothing to start.
+  const tools = [path.join(home, 'tools', 'bin'), path.join(home, '.asdf', 'shims'), path.join(home, '.npm-global', 'bin'), path.join(home, '.local', 'bin')];
+  for (const d of tools) fs.mkdirSync(d, { recursive: true });
   for (const cwd of [home, path.join(home, 'notes')]) {
     fs.mkdirSync(cwd, { recursive: true });
-    assert.deepEqual(list(exe.trustedPath(PATH, cwd, { HOME: home })), keep, 'cwd ' + cwd);
+    assert.deepEqual(list(exe.trustedPath([...tools, '/usr/bin'].join(':'), cwd, { HOME: home })), [...tools, '/usr/bin'], 'cwd ' + cwd);
   }
-  // CLAUDE_PROJECT_DIR inside the home is skipped as before.
-  const proj = path.join(home, 'work', 'p');
-  fs.mkdirSync(path.join(proj, 'bin'), { recursive: true });
-  assert.deepEqual(list(exe.trustedPath([path.join(proj, 'bin'), ...keep].join(':'), home, { HOME: home, CLAUDE_PROJECT_DIR: proj })), keep);
-  // findProgram: a git in the home's own folder is never started, one in ~/.local/bin is found.
-  fakeProgram(tools, 'git', marker);
-  assert.equal(exe.findProgram('git', { HOME: home, PATH: tools }, home), null);
-  fakeProgram(keep[0], 'git', marker);
-  assert.equal(exe.findProgram('git', { HOME: home, PATH: [tools, keep[0]].join(':') }, home), path.join(keep[0], 'git'));
+  assert.ok(!exe.projectPlaces(home, { HOME: home }, false).includes(fs.realpathSync(home)));
+  // A project without its own .git inside that home: the home repository is not its work tree, so the nearest folder
+  // with a project file marks it, and its bin/ is skipped when zn runs in a subfolder.
+  const proj = path.join(home, 'code', 'p');
+  fs.mkdirSync(path.join(proj, 'src'), { recursive: true });
+  fs.mkdirSync(path.join(proj, 'bin'));
+  fs.writeFileSync(path.join(proj, 'package.json'), '{}');
+  const cwd = path.join(proj, 'src');
+  assert.deepEqual(list(exe.trustedPath([path.join(proj, 'bin'), tools[0], '/usr/bin'].join(':'), cwd, { HOME: home })), [tools[0], '/usr/bin']);
+  fakeProgram(path.join(proj, 'bin'), 'git', marker);
+  assert.equal(exe.findProgram('git', { HOME: home, PATH: path.join(proj, 'bin') }, cwd), null);
+  fakeProgram(tools[0], 'git', marker);
+  assert.equal(exe.findProgram('git', { HOME: home, PATH: [path.join(proj, 'bin'), tools[0]].join(':') }, cwd), path.join(tools[0], 'git'));
   assert.equal(fs.existsSync(marker), false);
-  // projectPlaces holds the home, never the folders above it.
-  const places = exe.projectPlaces(home, { HOME: home }, false);
-  assert.ok(places.includes(fs.realpathSync(home)));
-  assert.ok(!places.includes(path.dirname(fs.realpathSync(home))));
 });
 
 test('a home folder that is not a git work tree stays trusted as a whole', { skip: !POSIX }, (t) => {
