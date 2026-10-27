@@ -178,7 +178,7 @@ test('an unreadable hook input is refused with exit code 2 and the reason on std
 
 /* --------------------------- install / uninstall -------------------------- */
 
-test('install (project): BeforeTool group with a named command hook in milliseconds; idempotent; uninstall removes the file content', (t) => {
+test('install (project): BeforeTool group with a named command hook in milliseconds; idempotent; uninstall removes the file content', { skip: process.platform === 'win32' && 'a project install writes the PowerShell guard on Windows, not the sh guard' }, (t) => {
   const dir = tempDir(t, 'zn-gem-');
   const rep = gem.install({ scope: 'project', projectDir: dir });
   const file = path.join(dir, '.gemini', 'settings.json');

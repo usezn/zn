@@ -48,7 +48,7 @@ test('suggestions: a link anywhere in the path of a candidate rules it out (chec
   assert.match(launcher.spaceMessage('/x y/z', { fs: fsx, env: {}, user: 'ana' }), /Choose any folder that meets these rules/);
 });
 
-test('suggestions: XDG_DATA_HOME comes first when it is set and has no space, and needs no sudo when it is writable', () => {
+test('suggestions: XDG_DATA_HOME comes first when it is set and has no space, and needs no sudo when it is writable', { skip: process.platform === 'win32' && 'XDG folders and sudo are POSIX only' }, () => {
   const fsx = fakeFs({ dirs: ['/', '/home', '/home/ana', '/home/ana/data', '/opt'], writable: ['/home/ana/data'] });
   const list = launcher.hookDirSuggestions({ fs: fsx, env: { XDG_DATA_HOME: '/home/ana/data' }, user: 'ana' });
   assert.equal(list[0].dir, '/home/ana/data/zn-hooks');
@@ -56,7 +56,7 @@ test('suggestions: XDG_DATA_HOME comes first when it is set and has no space, an
   assert.equal(list[1].dir, '/opt/ana-zn-hooks');
 });
 
-test('suggestions: XDG_DATA_HOME that needs sudo also gives the folder to you, so the check accepts it', () => {
+test('suggestions: XDG_DATA_HOME that needs sudo also gives the folder to you, so the check accepts it', { skip: process.platform === 'win32' && 'XDG folders and sudo are POSIX only' }, () => {
   const fsx = fakeFs({ dirs: ['/', '/srv', '/srv/data'] });
   const list = launcher.hookDirSuggestions({ fs: fsx, env: { XDG_DATA_HOME: '/srv/data' }, user: 'ana' });
   assert.equal(list[0].command, 'sudo mkdir -p -m 700 /srv/data/zn-hooks && sudo chown ana /srv/data/zn-hooks');
