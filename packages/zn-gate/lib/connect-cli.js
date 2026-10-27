@@ -59,7 +59,9 @@ function openBrowser(url) {
   }
   if (!cmd) return false;
   try {
-    const r = spawnSync(cmd, args, { stdio: 'ignore', timeout: 15000, windowsHide: true });
+    const opts = { stdio: 'ignore', timeout: 15000, windowsHide: true };
+    if (process.platform === 'win32') opts.env = require('./exe').psEnv(cmd);
+    const r = spawnSync(cmd, args, opts);
     return !r.error && r.status === 0;
   } catch (_) { return false; }
 }

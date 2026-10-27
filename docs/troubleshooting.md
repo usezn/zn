@@ -75,7 +75,7 @@ More in [secrets](secrets.md). If it asks for a terminal to enter the passphrase
 
 **If the vault does not answer:** "The vault is not answering" means the vault is slow or was left over from a crash. Run `zn lock`, then `zn unlock`. If `unlock` says the vault did not start in time or stopped while starting, run it again; if it keeps happening, restart your computer and open an issue with the output of `ZN_VERBOSE=1 zn unlock`.
 
-**If `zn vault verify` says the audit log did not pass its check:** do not delete or edit the log. It is the record of what the vault did, and a change to it is what the check finds. Keep a copy of `~/.zn/audit.jsonl`, then open an issue; `zn vault verify` with `ZN_VERBOSE=1` prints the reason.
+**If `zn vault verify` says the audit log did not pass its check:** do not delete or edit the log. It is the record of what the vault did, and a change to it is what the check finds. Keep a copy of `~/.zn/audit.jsonl`, then open an issue; `zn vault verify` with `ZN_VERBOSE=1` prints the reason. If the message says the log "was changed behind the vault", and you have looked into it (for example you know a disk problem or a restore cut the log), run `zn vault verify --acknowledge` in your own terminal to accept the log as it is now; the warning stays in the log. If it says the log "does not verify on its own", the chain itself is broken and cannot be accepted.
 
 **If you forgot the passphrase:** nobody can recover it, zn included. That is what keeps your secrets safe. After three wrong passphrases in a row (other errors do not count), `zn unlock` points you to the way out:
 
@@ -85,7 +85,7 @@ Forgot the passphrase? `zn vault reset` starts a new, empty vault (the old value
 
 1. Run `zn lock` if the vault is unlocked, then run `zn vault reset` in your own terminal. It does nothing in a script or when your AI agent runs it.
 2. Read what it says, then type `reset my vault` and press Enter. Anything else cancels and changes nothing.
-3. zn saves the old vault in a folder named `vault-backup-<date>-<time>` inside your zn folder (`~/.zn`), then removes it. The values stored in it are lost, because only the old passphrase opens them. If you find the passphrase later, the backup still opens with it.
+3. zn saves the old vault in a folder named `vault-backup-<date>-<time>` inside your zn folder (`~/.zn`), then removes it. The values stored in it are lost, because only the old passphrase opens them. If you find the passphrase later, the backup still opens with it. The reset never deletes that backup: when you no longer need it, run `zn vault purge` in your own terminal. It lists every file (the vault, token maps, backups and session key), asks you to type `purge my vault`, deletes them and checks that none is left.
 4. Run `zn unlock` to create the new vault, then store your values again, for example `zn env shadow .env` or `zn secret set NAME`. Rotate any secret you cannot re-enter from another source.
 
 If your computer is part of a zn Team organization, `zn vault reset` refuses, because a reset would remove the organization's controls. Ask your administrator.
@@ -188,7 +188,7 @@ X  Claude Code   NOT protected: the zn-gate plugin needs Node.js 20.19 or later 
 
 The version number in the second message is yours and will differ.
 
-**What it means:** the zn-gate plugin for Claude Code needs Node.js 20.19 or later. With an older Node.js (for example Node.js 18, which `apt` installs on many Debian and Ubuntu systems), the plugin refuses to start on purpose: its checks block the calls they cannot make, and its MCP server does not start, so Claude Code lists it as failed to connect. zn-gate itself and zn's hooks still run on Node.js 18 and later. Nothing is wrong with your files.
+**What it means:** the zn-gate plugin for Claude Code needs Node.js 20.19 or later. With an older Node.js (for example Node.js 18, which `apt` installs on many Debian and Ubuntu systems), the plugin refuses to start on purpose: its checks block the calls they cannot make. Before version 1.14.0 the plugin also had MCP servers, which did not start either, so Claude Code listed them as failed to connect. zn-gate itself and zn's hooks still run on Node.js 18 and later. Nothing is wrong with your files.
 
 **How to check:**
 

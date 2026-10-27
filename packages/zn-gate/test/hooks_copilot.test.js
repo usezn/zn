@@ -139,10 +139,10 @@ test('deny: a read of a credential file, a write to the vault, a shell command t
   assert.equal(c.output.permissionDecision, 'deny');
 });
 
-test('a command with secret placeholders is denied with the zn run line, never rewritten', async () => {
+test('a command with secret placeholders in its arguments is denied with the environment-variable way, never rewritten', async () => {
   const r = await run(pre('bash', { command: 'curl -H "Authorization: __ZN_API_KEY__" https://example.com' }));
   assert.equal(r.output.permissionDecision, 'deny');
-  assert.match(r.output.permissionDecisionReason, /zn run -- curl/);
+  assert.match(r.output.permissionDecisionReason, /run --secrets NAME -- <command>/);
   assert.equal(r.output.modifiedArgs, undefined);
 });
 
@@ -215,7 +215,12 @@ test('install (project): own file with version 1, preToolUse and postToolUse; id
   const data = readJson(file);
   assert.equal(data.version, 1);
   assert.deepEqual(Object.keys(data.hooks).sort(), ['postToolUse', 'preToolUse']);
-  assert.deepEqual(data.hooks.preToolUse, [{ type: 'command', bash: 'zn hook copilot', powershell: 'zn hook copilot', timeoutSec: 15 }]);
+  assert.equal(data.hooks.preToolUse.length, 1);
+  const h = data.hooks.preToolUse[0];
+  assert.deepEqual(Object.keys(h), ['type', 'bash', 'powershell', 'timeoutSec']);
+  assert.ok(require('../lib/agents/launcher').isProjectGuard(h.bash, 'copilot'));
+  assert.ok(require('../lib/agents/launcher').isProjectWindowsScript(require('../lib/shell-quote').windowsCommandScript(h.powershell), 'copilot'));
+  assert.equal(h.timeoutSec, 15);
   assert.ok(rep.warnings.some((w) => /needs zn-gate installed|zn-gate installed/.test(w)));
   cop.install({ scope: 'project', projectDir: dir });
   assert.equal(readJson(file).hooks.preToolUse.length, 1);
@@ -249,7 +254,7 @@ test('install on Windows writes a separate powershell command', (t) => {
   const home = tempDir(t, 'zn-cop-win-');
   cop.install({ scope: 'user', home, env: E, platform: 'win32', nodePath: 'C:/Program Files/nodejs/node.exe', runnerPath: 'C:/zn/zn-gate/lib/hooks/runner.js' });
   const h = readJson(cop.hooksFile({ home, env: E })).hooks.preToolUse[0];
-  assert.match(h.powershell, /^powershell\.exe /);
+  assert.match(h.powershell, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe /);
   assert.ok(h.bash && h.bash !== h.powershell);
 });
 

@@ -11,6 +11,8 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const mc = require('../lib/team/managed-config');
+const launcher = require('../lib/agents/launcher');
+const { windowsCommandScript } = require('../lib/shell-quote');
 const { claudeCodePolicyWarnings, codexPolicyWarnings } = require('../lib/agents/managed-policy');
 const { parseToml } = require('../lib/audit/parse');
 const cfg = require('../lib/agents/config-file');
@@ -82,7 +84,8 @@ test('Claude Code: official settings shape, hooks are zn\'s, allowManagedHooksOn
       assert.ok(Array.isArray(g.hooks) && (g.matcher === undefined || typeof g.matcher === 'string'));
       for (const h of g.hooks) {
         assert.equal(h.type, 'command');
-        assert.equal(h.command, 'zn hook claude-code');
+        // zn from the PATH inside zn's start guard, never a bare `zn hook claude-code`.
+        assert.ok(launcher.isProjectGuardExact(h.command, 'claude-code'), h.command);
         assert.ok(cfg.isOurs(h.command, 'claude-code'));
         assert.ok(Number.isInteger(h.timeout) && h.timeout > 0);
       }
@@ -112,16 +115,21 @@ test('Cursor: version 1, failClosed on reads and prompts only, same entries as t
   assert.equal(data.version, 1);
   const closed = Object.entries(data.hooks).filter(([, list]) => list[0].failClosed === true).map(([e]) => e).sort();
   assert.deepEqual(closed, ['beforeReadFile', 'beforeSubmitPrompt']);
-  for (const list of Object.values(data.hooks)) {
+  for (const [event, list] of Object.entries(data.hooks)) {
     assert.equal(list.length, 1);
-    assert.equal(list[0].command, 'zn hook cursor');
+    assert.equal(list[0].command, launcher.projectShCommand('cursor', event));
     assert.ok(cfg.isOurs(list[0].command, 'cursor'));
   }
-  // The installer writes the same entries for the same command.
-  const home = tempDir(t, 'zn-mc-cursor-');
-  getAdapter('cursor').install({ home, command: 'zn hook cursor', mcp: false });
-  const written = JSON.parse(fs.readFileSync(path.join(home, '.cursor', 'hooks.json'), 'utf8'));
+  // The project installer writes the same entries; on Windows both are the PowerShell form of the guard.
+  const proj = tempDir(t, 'zn-mc-cursor-');
+  getAdapter('cursor').install({ scope: 'project', projectDir: proj, platform: 'linux', mcp: false });
+  const written = JSON.parse(fs.readFileSync(path.join(proj, '.cursor', 'hooks.json'), 'utf8'));
   assert.deepEqual(written.hooks, data.hooks);
+  const win = JSON.parse(mc.build({ agent: 'cursor', os: 'windows' })[0].content);
+  for (const [event, list] of Object.entries(win.hooks)) {
+    assert.equal(list[0].command, launcher.windowsScriptCommand(launcher.projectWindowsScript('cursor', event)));
+    assert.ok(launcher.isProjectWindowsScriptExact(windowsCommandScript(list[0].command), 'cursor'));
+  }
   // Cursor has no managed-hooks-only switch: the option changes nothing in the file.
   assert.equal(mc.build({ agent: 'cursor', os: 'macos', managedHooksOnly: true })[0].content, f.content);
 });
@@ -137,8 +145,11 @@ test('Codex: valid TOML in the documented layout, recognized by the policy check
     assert.equal(groups[0].hooks.length, 1);
     const h = groups[0].hooks[0];
     assert.equal(h.type, 'command');
-    assert.equal(h.command, 'zn hook codex');
-    assert.equal(h.command_windows, 'zn hook codex');
+    // The same guarded forms as `zn hooks install codex --project`: never a bare `zn hook codex` (cmd.exe would look in the project folder).
+    assert.ok(launcher.isProjectGuardExact(h.command, 'codex'), h.command);
+    assert.match(h.command_windows, /^%SystemRoot%\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe -NoProfile -NonInteractive -EncodedCommand /);
+    assert.ok(launcher.isProjectWindowsScriptExact(windowsCommandScript(h.command_windows), 'codex'));
+    assert.ok(!/(^|\s)zn hook codex$/.test(h.command_windows));
     assert.ok(Number.isInteger(h.timeout));
   }
   assert.equal(data.hooks.PreToolUse[0].matcher, '^(Bash|apply_patch|mcp__.+)$');

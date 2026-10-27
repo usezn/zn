@@ -1,2 +1,0 @@
-### Fixed
-- Antigravity: when the zn hook cannot start because Node.js is missing, `zn hooks install antigravity` now writes a launcher script that answers Antigravity's deny format with the repair step (install zn-gate and run `zn hooks install antigravity` again), so the call is blocked with a message from zn instead of with none. It also covers a hook that starts and then fails. On Windows the same steps are written inline. Run `zn hooks install antigravity` again to get it.

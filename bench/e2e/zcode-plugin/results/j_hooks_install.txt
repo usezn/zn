@@ -1,0 +1,12 @@
+$ (pty) /work/node/bin/zn hooks install zcode
+rc=0 answers_sent=0
+--output--
+Installed zn hooks for zcode in /work/home/.zcode/cli/config.json
+  backup: /work/home/.zcode/cli/config.json.bak-zn-20261024T192836
+  MCP server "secrets": /work/home/.zcode/cli/config.json
+  note: the zn-gate plugin (zn-gate@usezn) is also installed and turned on in ZCode, so every call is checked twice (ZCode does not remove duplicate hooks): once by the plugin and once by these hooks. Keep one of them: to keep the plugin, run `zn hooks uninstall zcode`; to keep these hooks, turn the plugin off in ZCode (Settings, Plugins).
+  note: zn checks tool calls (PreToolUse, PermissionRequest) and prompts before they run: it blocks reads and writes of secret files, shell commands that handle secrets, MCP calls that would send a secret and prompts that contain one.
+  note: ZCode cannot rewrite what a tool returns: a value printed by a command or read from a file reaches the model. zn adds a notice to the output when it holds a secret. Keep secrets in the vault.
+  note: ZCode runs hooks only from /work/home/.zcode/cli/config.json (hooks of a project are ignored) and only when "hooks.enabled" is true: zn turned it on. Start a new ZCode session: a running one keeps the hooks it started with.
+  note: ZCode lets a call run when its hook cannot start or crashes (only exit code 2 blocks). If the Node.js zn was installed with goes away, zn's launcher blocks the call instead; run `zn-gate check` to see that the hook works.
+
