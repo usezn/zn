@@ -270,7 +270,7 @@ test('install --project is idempotent and uninstall removes the guarded hook', s
   }
 });
 
-test('check: a bare `zn hook` in a project file is reported as not protected; the guarded one is not', { skip: process.platform === 'win32' && 'a project install writes the PowerShell guard on Windows, not the sh guard' }, async (t) => {
+test('check: a bare `zn hook` in a project file is reported as not protected; the guarded one is not', async (t) => {
   const { check } = require('../lib/check');
   const home = tempDir(t, 'zn-pg-chk-');
   for (const agent of ['claude-code', 'codex', 'cursor', 'gemini', 'copilot']) {
