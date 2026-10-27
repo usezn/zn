@@ -22,7 +22,7 @@ function runGuard(shell, extra, cwd, PATH) {
   assert.ok(cmd.startsWith('sh -c '), cmd.slice(0, 20));
   const quoted = cmd.slice('sh -c '.length);
   return spawnSync(shell, [...extra, '-c', 'exec ' + shell + ' ' + extra.join(' ') + ' -c ' + quoted], {
-    cwd, env: { PATH, HOME: cwd }, input: '{}', encoding: 'utf8', timeout: 20000,
+    cwd, env: { PATH, HOME: '/nonexistent' }, input: '{}', encoding: 'utf8', timeout: 20000,
   });
 }
 
@@ -60,13 +60,54 @@ test('project hook guard: zn found through a relative PATH entry (the project fo
   }
 });
 
-// The guard trusts any absolute PATH entry today; the rule of the plugins' zn-node.sh (skip entries whose real path is in
-// the project, its git work tree or node_modules) is still to be ported into it. Kept as todo until then.
-test('project hook guard: zn and node from an absolute PATH entry inside the project are not started (dash, bash --posix)', { skip: !POSIX, todo: 'port the zn-node.sh folder rule into PROJECT_TRUST' }, (t) => {
+// The rule of the plugins' zn-node.sh: an entry whose real path is in the project, its git work tree or node_modules is skipped.
+test('project hook guard: zn and node from an absolute PATH entry inside the project are not started (dash, bash --posix)', { skip: !POSIX }, (t) => {
   for (const [label, shell, extra] of SHELLS) {
     const { proj, marker } = setup(t);
     const bin = fakeZn(path.join(proj, 'bin'), marker);
     runGuard(shell, extra, proj, bin + ':/usr/bin:/bin');
+    assert.equal(fs.existsSync(marker), false, label + ': the project zn ran');
+  }
+});
+
+test('project hook guard: a project bin reached through a link, node_modules/.bin and a sub-folder of the git work tree are not started', { skip: !POSIX }, (t) => {
+  for (const [label, shell, extra] of SHELLS) {
+    const { proj, marker } = setup(t);
+    const inside = fakeZn(path.join(proj, 'tools', 'bin'), marker);
+    // A folder outside the project that links to the project's bin.
+    const link = path.join(tempDir(t, 'zn-ptrust-link-'), 'bin');
+    fs.symlinkSync(inside, link);
+    const sub = path.join(proj, 'pkg');
+    fs.mkdirSync(sub);
+    const mods = fakeZn(path.join(tempDir(t, 'zn-ptrust-nm-'), 'node_modules', '.bin'), marker);
+    for (const [where, dir, cwd] of [['link', link, proj], ['node_modules', mods, proj], ['sub-folder', inside, sub]]) {
+      runGuard(shell, extra, cwd, dir + ':/usr/bin:/bin');
+      assert.equal(fs.existsSync(marker), false, label + ' ' + where + ': the project zn ran');
+    }
+  }
+});
+
+test('project hook guard: a zn outside the project that links into the project is not started', { skip: !POSIX }, (t) => {
+  for (const [label, shell, extra] of SHELLS) {
+    const { proj, marker } = setup(t);
+    const inside = fakeZn(path.join(proj, 'bin'), marker);
+    const bin = tempDir(t, 'zn-ptrust-out-');
+    fs.symlinkSync(path.join(inside, 'zn'), path.join(bin, 'zn'));
+    fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+    runGuard(shell, extra, proj, bin + ':/usr/bin:/bin');
+    assert.equal(fs.existsSync(marker), false, label + ': the zn linked into the project ran');
+  }
+});
+
+test('project hook guard: CLAUDE_PROJECT_DIR counts as the project even when the hook runs elsewhere', { skip: !POSIX }, (t) => {
+  for (const [label, shell, extra] of SHELLS) {
+    const { proj, marker } = setup(t);
+    const bin = fakeZn(path.join(proj, 'bin'), marker);
+    const elsewhere = tempDir(t, 'zn-ptrust-else-');
+    const cmd = projectShCommand('claude-code', 'PreToolUse').slice('sh -c '.length);
+    spawnSync(shell, [...extra, '-c', 'exec ' + shell + ' ' + extra.join(' ') + ' -c ' + cmd], {
+      cwd: elsewhere, env: { PATH: bin + ':/usr/bin:/bin', HOME: elsewhere, CLAUDE_PROJECT_DIR: proj }, input: '{}', encoding: 'utf8', timeout: 20000,
+    });
     assert.equal(fs.existsSync(marker), false, label + ': the project zn ran');
   }
 });

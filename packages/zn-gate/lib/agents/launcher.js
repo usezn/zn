@@ -386,6 +386,27 @@ const PROJECT_TRUST = [
   'U=', '[ "$ND" != "$P" ] && U=n', '[ "$NS" != "$P" ] && U=n',
 ];
 
+// The project guard also refuses a zn or node whose real folder is inside the project: the real folder the hook runs in, the
+// git work tree around it, CLAUDE_PROJECT_DIR or CURSOR_PROJECT_DIR (never / or the home folder), or any node_modules folder,
+// following links to the last target (readlink by full path; a link with no readlink is refused). The same rule as the
+// plugins' zn-node.sh: an absolute PATH entry into the project (its bin, node_modules/.bin, a folder added by direnv) could
+// otherwise start a program of the project. Folders are resolved with cd -P and back, with no subshell per folder (slow in Git
+// Bash). G is set when both pass.
+const PROJECT_REAL = [
+  'NL=$(printf "\\n_"); NL=${NL%_}; CDPATH=',
+  'cd -P . 2>/dev/null; R0=$PWD',
+  'zr() { RP=; case "$1" in /*) ;; *) return 1 ;; esac; cd -P -- "$1" 2>/dev/null || return 1; RP=$PWD; cd -P -- "$R0" 2>/dev/null || { RP=; return 1; }; [ -n "$RP" ]; }',
+  'H=; zr "${HOME:-/nonexistent}" && H=$RP',
+  'RT=',
+  'ar() { zr "$1" || return 0; [ "$RP" = / ] || [ "$RP" = "$H" ] || RT="$RT$NL$RP"; }',
+  'ar "$R0"', 'ar "${CLAUDE_PROJECT_DIR:-}"', 'ar "${CURSOR_PROJECT_DIR:-}"',
+  'D=$R0; while [ -n "$D" ] && [ "$D" != / ]; do if [ -e "$D/.git" ]; then ar "$D"; break; fi; D=${D%/*}; done',
+  'zin() { case "$1/" in */node_modules/*) return 0 ;; esac; O=$IFS; IFS=$NL; set -f; Q=1; for X in $RT; do case "$1/" in "$X"/*) Q=0; break ;; esac; done; set +f; IFS=$O; return $Q; }',
+  'RL=; for X in /usr/bin/readlink /bin/readlink; do [ -x "$X" ] && { RL=$X; break; }; done',
+  'zok() { F=$1; I=0; while :; do zr "${F%/*}" || return 1; zin "$RP" && return 1; [ -L "$F" ] || return 0; [ -n "$RL" ] && [ "$I" -lt 40 ] || return 1; Y=$("$RL" -- "$F") || return 1; case "$Y" in /*) F=$Y ;; *) F=${F%/*}/$Y ;; esac; I=$((I+1)); done; }',
+  'G=; [ -n "$Z" ] && [ -n "$N" ] && zok "$Z" && zok "$N" && G=1',
+];
+
 /**
  * The POSIX project hook command (see above) for one event (omit it for Antigravity). Every agent that runs project hooks
  * through a shell gets the same guard, so a `zn` or Node.js that is gone ends in that agent's own blocking answer instead of
@@ -404,8 +425,8 @@ function projectShCommand(agentId, event) {
       ...(a.stderr ? ["echo '" + a.stderr + "' >&2"] : []),
       'exit ' + a.exit,
     ].join('; ');
-    const script = 'Z=$(command -v zn); N=$(command -v node); ' + PROJECT_TRUST.join('; ') + '; R=missing; ' +
-      'if [ -n "$N" ] && [ "${Z#/}" != "$Z" ] && [ "${N#/}" != "$N" ] && [ -n "$T" ] && [ -n "$U" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
+    const script = 'Z=$(command -v zn); N=$(command -v node); ' + PROJECT_TRUST.join('; ') + '; ' + PROJECT_REAL.join('; ') + '; R=missing; ' +
+      'if [ -n "$N" ] && [ "${Z#/}" != "$Z" ] && [ "${N#/}" != "$N" ] && [ -n "$T" ] && [ -n "$U" ] && [ -n "$G" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
       'if [ "$R" = ran ]; then ' + say(crash) + '; fi; ' + say(missing);
     return 'sh -c ' + shQuote(script);
   }
