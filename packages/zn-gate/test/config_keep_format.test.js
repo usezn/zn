@@ -69,18 +69,18 @@ for (const [name, style] of Object.entries(STYLES)) {
 }
 
 test('claude-code: a project .mcp.json keeps CRLF and its indentation', (t) => {
+  // A project install adds no MCP server; it only removes the bare `zn secrets-mcp` a release candidate wrote.
   const home = tempDir(t, 'zn-keepfmt-');
   const proj = path.join(home, 'proj');
   const file = path.join(proj, '.mcp.json');
-  const original = render({ mcpServers: { other: { command: 'x' } } }, { eol: '\r\n', indent: 4 });
-  put(file, original);
+  const fmt = { eol: '\r\n', indent: 4 };
+  const bare = { command: 'zn', args: ['secrets-mcp', '--agent', 'claude-code'] };
+  put(file, render({ mcpServers: { other: { command: 'x' }, secrets: bare } }, fmt));
   claude.install(opts(home, { scope: 'project', projectDir: proj, mcp: true, znBin: '/usr/bin/zn', command: 'zn hook claude-code' }));
-  const installed = fs.readFileSync(file, 'utf8');
-  assert.ok(installed.includes('"secrets"'));
-  assert.ok(!/(?<!\r)\n/.test(installed));
-  assert.ok(installed.includes('\r\n            "command"'));
+  const cleaned = render({ mcpServers: { other: { command: 'x' } } }, fmt);
+  assert.equal(fs.readFileSync(file, 'utf8'), cleaned);
   claude.uninstall(opts(home, { scope: 'project', projectDir: proj, mcp: true }));
-  assert.equal(fs.readFileSync(file, 'utf8'), original);
+  assert.equal(fs.readFileSync(file, 'utf8'), cleaned);
 });
 
 test('cursor: hooks.json keeps CRLF, tabs and a BOM, and uninstall restores the original bytes', (t) => {

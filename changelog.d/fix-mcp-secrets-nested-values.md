@@ -1,3 +1,0 @@
-### Fixed
-- The check for plaintext credentials in MCP server configuration files now also finds a credential written inside an object or array under a secret-named key, such as `"API_TOKEN": { "value": "..." }` or `"DB_PASSWORD": { "default": "..." }`, in JSON and in TOML. References, placeholders and empty values are still not reported.
-- The Python package reports the position of an MCP credential in UTF-16 code units, like the Node.js package, so both give the same result for a file with emoji or other characters outside the basic plane before the credential. The text that is masked does not change.

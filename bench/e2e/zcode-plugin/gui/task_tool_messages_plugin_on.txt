@@ -1,0 +1,5 @@
+Tool results the model received in the GUI task (plugin installed from Settings -> Plugins, hooks.enabled=false):
+- zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.14.0 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read a
+- zn: ~/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `npx -y zn-
+- a.txt
+- 1	hello world 2	

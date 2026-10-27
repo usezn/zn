@@ -2,6 +2,8 @@
 
 Set up zn-gate in Cursor in two minutes, then the technical details: the MCP server, the hooks that block secret reads and scrub MCP output, and what Cursor does not let zn-gate cover.
 
+There is no zn-gate plugin for Cursor since zn-gate 1.14.0: use `zn hooks install cursor` below. The plugin's hooks started `node` by name, so an absolute `PATH` entry that points into the project (its `node_modules/.bin`, a folder added by direnv) could run a `node` of the project's own in place of the real one, and Cursor has no hook setting that names the program by its full path on macOS and Linux and still works on Windows. If you added the zn-gate plugin in Cursor, remove it there (Customize) and run `zn hooks install cursor`: Cursor's documentation does not say what happens to an installed plugin that is no longer in its repository.
+
 ## Install (no coding needed)
 
 1. **Check that Node.js is installed.** In Cursor, open **Terminal → New Terminal**, paste `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/), then close and reopen Cursor.
@@ -71,7 +73,7 @@ Every result of a wrapped server is checked for prompt injection, and secrets zn
 
 - `beforeMCPExecution` denies an MCP call whose arguments carry a secret value or a `__ZN_` marker, unless it goes to zn's `secrets` server (from 1.7.0; run `zn hooks install cursor` again to add it).
 - `beforeReadFile` and `beforeSubmitPrompt` fail closed: if the hook crashes or times out, the read or the prompt is blocked. If the Node.js zn-gate was installed with is gone, a small launcher script (`~/.zn/hooks/zn-hook-cursor.sh`) blocks shell commands, MCP calls, file reads and prompts instead of letting them run; `zn-gate check` reports it, and `npm install -g zn-gate` then `zn hooks install cursor` fixes it.
-- `beforeShellExecution` blocks commands that read secret files and points the agent to `zn run` for commands that need a secret.
+- `beforeShellExecution` blocks commands that read secret files and refuses a `__ZN_` marker in a command's arguments and points the agent to `zn run --secrets` for commands that need a secret.
 - `postToolUse` removes secrets from MCP tool output (the only output Cursor lets a hook change).
 - `preToolUse` checks writes and deletes on a best-effort basis: Cursor does not document the input of every tool.
 

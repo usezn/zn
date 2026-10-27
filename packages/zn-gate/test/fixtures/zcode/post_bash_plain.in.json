@@ -1,0 +1,34 @@
+{
+  "cwd": "/work/proj",
+  "hookEventName": "PostToolUse",
+  "mode": "default",
+  "sessionId": "sess-1",
+  "timestamp": "2026-10-24T10:00:00.000Z",
+  "traceId": "trace-1",
+  "turnId": "turn-1",
+  "agent_type": "main",
+  "hook_event_name": "PostToolUse",
+  "permission_mode": "default",
+  "session_id": "sess-1",
+  "transcript_path": "/tmp/zcode-hook-x1/transcript.jsonl",
+  "transcriptPath": "/tmp/zcode-hook-x1/transcript.jsonl",
+  "riskLevel": "high",
+  "toolCallId": "tool-1",
+  "toolInput": {
+    "command": "echo hi"
+  },
+  "toolName": "Bash",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo hi"
+  },
+  "tool_use_id": "tool-1",
+  "toolResponse": {
+    "stdout": "hello world there",
+    "exitCode": 0
+  },
+  "tool_response": {
+    "stdout": "hello world there",
+    "exitCode": 0
+  }
+}

@@ -44,8 +44,8 @@ def guarded_tool(
     or a sync function that returns a coroutine) get the same treatment: the
     call is awaited, then the output is checked and masked exactly as for a
     sync tool. A generator or async generator result is passed on chunk by
-    chunk, each chunk checked and masked (a secret split across two chunks is
-    not masked). The message of an exception raised by the tool is checked and
+    chunk, each chunk checked, and the text masked as one stream (a secret split
+    across two chunks is masked whole; see guard). The message of an exception raised by the tool is checked and
     masked like its output, because frameworks pass it to the model: a blocked
     message raises GuardBlockError (or returns the fallback), and a message
     with a secret is raised again as an exception of the same type carrying

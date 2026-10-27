@@ -100,7 +100,7 @@ test('codex launcher: recorded Node.js gone but zn and node on an absolute PATH:
   const { file } = setup(t, GONE);
   const bin = tempDir(t, 'zn-b93-bin-');
   fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\necho "VIA_ZN $*"\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\necho "VIA_ZN $*"\nprintf ok > "$ZN_HOOK_ACK"\n', { mode: 0o755 });
   const r = runLauncher(file, 'PreToolUse', '{}', bin);
   assert.equal(r.status, 0);
   assert.equal(r.stdout.trim(), 'VIA_ZN hook codex');
@@ -116,6 +116,26 @@ test('codex launcher: a zn found through a relative PATH entry is not run (it bl
   assert.doesNotMatch(r.stdout, /PLANTED/);
 });
 
+test('codex launcher: the zn it falls back to runs with only the absolute PATH entries, so its env node never finds a planted node', { skip: !posix }, (t) => {
+  const { file } = setup(t, GONE);
+  const safe = tempDir(t, 'zn-fb-safe-');
+  fs.symlinkSync(process.execPath, path.join(safe, 'node'));
+  fs.writeFileSync(path.join(safe, 'zn'), '#!/usr/bin/env node\nprocess.stdout.write(process.env.PATH);\nprocess.exit(2);\n', { mode: 0o755 });
+  const work = tempDir(t, 'zn-fb-work-');
+  const marker = path.join(work, 'planted-node-ran');
+  fs.mkdirSync(path.join(work, 'bin'));
+  for (const d of [work, path.join(work, 'bin')]) fs.writeFileSync(path.join(d, 'node'), '#!/bin/sh\n: > ' + JSON.stringify(marker) + '\nexit 0\n', { mode: 0o755 });
+  const shells = ['/bin/sh', ...['dash', 'bash'].map((n) => ['/bin', '/usr/bin'].map((d) => path.join(d, n)).find((f) => fs.existsSync(f))).filter(Boolean)];
+  for (const shell of new Set(shells)) {
+    for (const PATH of ['.:' + safe, 'bin:' + safe, ':' + safe]) {
+      const r = spawnSync(shell, [file, 'PreToolUse'], { input: '{}', encoding: 'utf8', cwd: work, env: { PATH, HOME: '/nonexistent' } });
+      assert.equal(fs.existsSync(marker), false, shell + ' ' + PATH + ': the planted node ran');
+      assert.equal(r.status, 2, shell + ' ' + PATH + ' ' + r.stderr);
+      assert.equal(r.stdout, safe, shell + ' ' + PATH);
+    }
+  }
+});
+
 test('codex uninstall removes the launcher; a project install writes none', { skip: !posix }, (t) => {
   const { env, home, file } = setup(t, process.execPath);
   assert.ok(fs.existsSync(file));
@@ -124,14 +144,14 @@ test('codex uninstall removes the launcher; a project install writes none', { sk
   const proj = tempDir(t, 'zn-b93-proj-');
   codex.install({ scope: 'project', projectDir: proj, env, home, mcp: false });
   const data = JSON.parse(fs.readFileSync(path.join(proj, '.codex', 'hooks.json'), 'utf8'));
-  assert.equal(data.hooks.PreToolUse[0].hooks[0].command, 'zn hook codex');
+  assert.ok(launcher.isProjectGuard(data.hooks.PreToolUse[0].hooks[0].command, 'codex'));
   assert.equal(fs.existsSync(file), false);
 });
 
 test('codex windows command: a path that needs escaping keeps the plain command', () => {
   assert.equal(launcher.windowsScript('codex', 'PreToolUse', "C:/it's/node.exe", 'C:/x/runner.js'), null);
   const s = launcher.windowsScript('codex', 'PreToolUse', 'C:/node/node.exe', 'C:/z/zn-gate/lib/hooks/runner.js');
-  assert.match(s, /^\$ProgressPreference='SilentlyContinue'; \$zt=0; if \(\(Test-Path -LiteralPath 'C:\/node\/node\.exe'\)/);
+  assert.match(s, /^\$ProgressPreference='SilentlyContinue'; \$zt=0; \$za = .*?function zf\(\$x\) \{.*?return \$null \}; if \(\[System\.IO\.File\]::Exists\('C:\/node\/node\.exe'\)/);
   assert.match(s, /exit 2 # zn hook codex$/);
   assert.match(launcher.windowsScript('codex', 'Stop', 'C:/node/node.exe', 'C:/r.js'), /systemMessage.*exit 0 # zn hook codex$/);
 });

@@ -8,9 +8,10 @@ const { configureEnvironments, latestBackup, safeRestore } = require('../lib/ini
 
 const CFG = JSON.stringify({ mcpServers: { fetch: { command: 'uvx', args: ['mcp-server-fetch'] } } }, null, 2);
 const EVIL = '{"mcpServers":{"evil":{"command":"evil"}}}';
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-safe-'));
+// realpath: on macOS os.tmpdir() is under /var, a link to /private/var, and the code under test reports real paths.
+const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-safe-')));
 // A fake home folder (a sibling of the other temp dirs) so home-scope rules are testable.
-const FAKE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-home-'));
+const FAKE_HOME = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-home-')));
 process.env.HOME = FAKE_HOME;
 process.env.USERPROFILE = FAKE_HOME;
 process.on('exit', () => fs.rmSync(FAKE_HOME, { recursive: true, force: true }));
