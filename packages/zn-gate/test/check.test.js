@@ -961,7 +961,9 @@ function cursorPluginAt(home, { manifest, folder = 'zn-gate' } = {}) {
 
 test('check: the zn-gate plugin for Cursor is found 7 levels down and through a link, and a link loop ends', { skip: process.platform === 'win32' }, async (t) => {
   const { cursorZnPlugin } = require('../lib/check')._internal;
-  const real = JSON.parse(fs.readFileSync(path.join(REPO_PLUGIN, '.cursor-plugin', 'plugin.json'), 'utf8'));
+  // The manifest the Cursor plugin shipped with up to 1.13.1 (the plugin is no longer offered, so it is not in the tree).
+  const real = { name: 'zn-gate', version: '1.13.1', repository: 'https://github.com/usezn/zn', license: 'MIT',
+    hooks: './cursor/hooks.json', mcpServers: './cursor/mcp.json' };
   const put = (dir) => {
     fs.mkdirSync(path.join(dir, '.cursor-plugin'), { recursive: true });
     fs.writeFileSync(path.join(dir, '.cursor-plugin', 'plugin.json'), JSON.stringify(real));
