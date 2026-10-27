@@ -74,11 +74,11 @@ test('cursor: with the recorded Node.js the launcher runs the real hook', { skip
 test('cursor: uninstall removes the launcher; a project install writes none', { skip: !posix }, (t) => {
   const { env, home, adapter, file } = setup(t, 'cursor', process.execPath);
   assert.ok(fs.existsSync(file));
-  adapter.uninstall({ env, home });
+  adapter.uninstall({ env, home, removeLauncher: true });
   assert.equal(fs.existsSync(file), false);
   const proj = tempDir(t, 'zn-b96-proj-');
   adapter.install({ scope: 'project', projectDir: proj, env, home, nodePath: process.execPath, runnerPath: RUNNER });
-  assert.match(JSON.parse(fs.readFileSync(path.join(proj, '.cursor', 'hooks.json'), 'utf8')).hooks.preToolUse[0].command, / cursor$/);
+  assert.ok(launcher.isProjectGuard(JSON.parse(fs.readFileSync(path.join(proj, '.cursor', 'hooks.json'), 'utf8')).hooks.preToolUse[0].command, 'cursor'));
   assert.equal(fs.existsSync(file), false);
 });
 
@@ -132,7 +132,7 @@ test('gemini: uninstall removes the launcher; check reports the Node.js that is 
   assert.equal(r.state, 'not-protected');
   assert.match(r.problem, /Node\.js \(\/nonexistent\/node-gone\/bin\/node\) is no longer there/);
   assert.equal(r.fix, reinstall('gemini'));
-  ctx.adapter.uninstall({ env: ctx.env, home: ctx.home });
+  ctx.adapter.uninstall({ env: ctx.env, home: ctx.home, removeLauncher: true });
   assert.equal(fs.existsSync(ctx.file), false);
 });
 
@@ -190,21 +190,21 @@ test('antigravity: the Windows launcher is an encoded PowerShell script that pri
   const home = tempDir(t, 'zn-b96-win-');
   getAdapter('antigravity').install({ home, platform: 'win32', nodePath: 'C:\\Program Files\\nodejs\\node.exe', runnerPath: 'C:\\zn\\lib\\hooks\\runner.js', env: { ZN_HOME: path.join(home, '.zn') } });
   const written = JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'config', 'hooks.json'), 'utf8'))['zn-gate'].PreToolUse[0].hooks[0].command;
-  assert.match(written, /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
+  assert.match(written, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
   assert.equal(windowsCommandScript(written), script);
   assert.ok(cfg.isOurs(written, 'antigravity'));
 });
 
-test('antigravity: uninstall removes the launcher; a project install writes none and keeps the plain command', { skip: !posix }, (t) => {
+test('antigravity: uninstall removes the launcher; a project install writes none and wraps `zn hook antigravity` in its own guard', { skip: !posix }, (t) => {
   const { env, home, adapter, file } = setup(t, 'antigravity', process.execPath);
   assert.ok(fs.existsSync(file));
-  adapter.uninstall({ env, home });
+  adapter.uninstall({ env, home, removeLauncher: true });
   assert.equal(fs.existsSync(file), false);
   const proj = tempDir(t, 'zn-b96-proj-');
   adapter.install({ scope: 'project', projectDir: proj, env, home, nodePath: process.execPath, runnerPath: RUNNER });
   assert.equal(fs.existsSync(file), false);
   const data = JSON.parse(fs.readFileSync(path.join(proj, '.agents', 'hooks.json'), 'utf8'));
-  assert.equal(data['zn-gate'].PreToolUse[0].hooks[0].command, 'zn hook antigravity');
+  assert.equal(data['zn-gate'].PreToolUse[0].hooks[0].command, require('../lib/agents/launcher').projectShCommand('antigravity'));
 });
 
 test('a hook that starts and then fails is blocked, not passed through, and zn on PATH is not tried after it', { skip: !posix }, (t) => {
@@ -243,10 +243,10 @@ test('windows: cursor and gemini also print their deny JSON, call zn.cmd and lea
     const s = windowsCommandScript(cmd);
     assert.ok(s.startsWith("$ProgressPreference='SilentlyContinue';"), id);
     assert.ok(s.includes(deny), id + ' deny JSON');
-    assert.ok(s.includes('& zn.cmd hook ' + id) && !/& zn hook/.test(s), id + ' zn.cmd');
-    assert.ok(!/exit \$LASTEXITCODE \}/.test(s.replace(/if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit \$LASTEXITCODE \}/g, '')), id + ' no unconditional exit');
+    assert.ok(s.includes("& (zf 'zn.cmd') hook " + id) && !/& zn hook/.test(s), id + ' zn.cmd');
+    assert.ok(!/exit \$LASTEXITCODE \}/.test(s.replace(/if \(\(\$LASTEXITCODE -eq 0 -and \(zk\)\) -or \$LASTEXITCODE -eq 2\) \{ zx 0 \}/g, '')), id + ' no unconditional exit');
     assert.match(s, /exit 0 # zn hook /, id + ': Cursor and Gemini read the deny JSON only with exit 0');
-    assert.ok(s.includes('-eq 2) { exit 0 }'), id + ': the runner refusal is passed on as exit 0');
+    assert.ok(s.includes('-eq 2) { zx 0 }'), id + ': the runner refusal is passed on as exit 0');
   }
 });
 

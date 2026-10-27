@@ -1,0 +1,47 @@
+name: Release SBOM scripts
+
+# The release build adds a serial number to each CycloneDX SBOM and checks it before signing.
+# A broken script would only show up in a release run, so test the scripts whenever they change.
+on:
+  pull_request:
+    paths:
+      - '.github/scripts/sbom-serial.js'
+      - '.github/scripts/sbom-serial.test.mjs'
+      - '.github/scripts/check-sbom.js'
+      - '.github/workflows/build-release.yml'
+      - '.github/workflows/release-sbom.yml'
+  push:
+    branches: [ main, next ]
+    paths:
+      - '.github/scripts/sbom-serial.js'
+      - '.github/scripts/sbom-serial.test.mjs'
+      - '.github/scripts/check-sbom.js'
+      - '.github/workflows/build-release.yml'
+      - '.github/workflows/release-sbom.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-sbom-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sbom-scripts:
+    name: Release SBOM scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+      - name: Test the SBOM serial number and check scripts
+        run: node --test .github/scripts/sbom-serial.test.mjs

@@ -254,13 +254,130 @@ test('state is saved after every batch, so a failure between batches resumes at 
   assert.deepStrictEqual(again.calls[0].events.map((e) => e.seq), [7, 8, 9]);
 });
 
-test('uploaded counts what the server reports as accepted', async (t) => {
+test('the head moves only up to what the server confirmed: accepted fewer than the batch advances to that record', async (t) => {
+  const f = setup(t);
+  fillLog(f.auditFile, 5);
+  const recs = lines(f.auditFile).map((l) => JSON.parse(l));
+  // The server stored 2 of the 5 and then stops answering: the head is record 2, not record 5.
+  const api = fakeApi([{ response: { status: 200, body: { accepted: 2 } } }, { status: 503 }]);
+  const r = await uploadPending(opts(f, api));
+  assert.strictEqual(r.status, 'offline');
+  assert.strictEqual(r.uploaded, 2);
+  assert.deepStrictEqual(r.head, { seq: 2, mac: recs[1].mac });
+  assert.strictEqual(r.pending, 3);
+  assert.strictEqual(readJson(f.stateFile).head.seq, 2);
+  // The next call resends from record 3.
+  const again = fakeApi();
+  const r2 = await uploadPending(opts(f, again));
+  assert.deepStrictEqual(again.calls[0].events.map((e) => e.seq), [3, 4, 5]);
+  assert.strictEqual(r2.head.seq, 5);
+});
+
+test('a partial answer is followed by the rest of the batch in the same call', async (t) => {
   const f = setup(t);
   fillLog(f.auditFile, 5);
   const api = fakeApi([{ response: { status: 200, body: { accepted: 2 } } }]);
   const r = await uploadPending(opts(f, api));
-  assert.strictEqual(r.uploaded, 2);
+  assert.strictEqual(r.status, 'ok');
+  assert.deepStrictEqual(api.calls.map((c) => c.events.map((e) => e.seq)), [[1, 2, 3, 4, 5], [3, 4, 5]]);
+  assert.strictEqual(r.uploaded, 5);
   assert.strictEqual(r.head.seq, 5);
+});
+
+test('the server head confirms an overlapping resend: accepted 0 and a head inside the batch advances to that head', async (t) => {
+  const f = setup(t);
+  fillLog(f.auditFile, 6);
+  const recs = lines(f.auditFile).map((l) => JSON.parse(l));
+  const api = fakeApi([{ response: { status: 200, body: { accepted: 0, duplicate: true, head: { seq: 6 } } } }]);
+  const r = await uploadPending(opts(f, api));
+  assert.strictEqual(r.status, 'ok');
+  assert.strictEqual(r.uploaded, 0);
+  assert.deepStrictEqual(r.head, { seq: 6, mac: recs[5].mac });
+  const part = fakeApi([{ response: { status: 200, body: { accepted: 2, head: { seq: 4 } } } }, { status: 503 }]);
+  fs.rmSync(f.stateFile);
+  const r2 = await uploadPending(opts(f, part));
+  assert.strictEqual(r2.head.seq, 4, 'the head the server states, not the last record sent');
+});
+
+const INCOHERENT = [
+  ['accepted more than the batch', { accepted: 99 }],
+  ['negative accepted', { accepted: -1 }],
+  ['accepted that is not an integer', { accepted: '2' }],
+  ['nothing stored but not a duplicate answer', { accepted: 0 }],
+  ['no accepted and no head', {}],
+  ['head outside the batch', { accepted: 3, head: { seq: 400 } }],
+  ['head that is not an object', { accepted: 3, head: 3 }],
+  ['head before the batch', { accepted: 3, head: { seq: 0 } }],
+  ['accepted more than the records up to the head', { accepted: 4, head: { seq: 2 } }],
+];
+
+for (const [name, body] of INCOHERENT) {
+  test(`an incoherent 200 answer (${name}) advances nothing`, async (t) => {
+    const f = setup(t);
+    fillLog(f.auditFile, 5);
+    const r = await uploadPending(opts(f, fakeApi([{ response: { status: 200, body } }])));
+    assert.strictEqual(r.status, 'error');
+    assert.strictEqual(r.head, null);
+    assert.strictEqual(r.uploaded, 0);
+    assert.strictEqual(r.pending, 5);
+    assert.strictEqual(readJson(f.stateFile).head, null);
+    assert.ok(readJson(f.stateFile).last_error);
+  });
+}
+
+/* ---------------- "since joining": records before startAfterSeq never leave ---------------- */
+
+test('startAfterSeq: the first upload starts after the join, earlier records are not sent or counted as pending', async (t) => {
+  const f = setup(t);
+  fillLog(f.auditFile, 8);
+  assert.strictEqual(pendingCount({ auditFile: f.auditFile, stateFile: f.stateFile }), 8);
+  assert.strictEqual(pendingCount({ auditFile: f.auditFile, stateFile: f.stateFile, startAfterSeq: 5 }), 3);
+  const api = fakeApi();
+  const r = await uploadPending(opts(f, api, { startAfterSeq: 5 }));
+  assert.strictEqual(r.status, 'ok');
+  assert.deepStrictEqual(api.calls[0].events.map((e) => e.seq), [6, 7, 8]);
+  assert.strictEqual(r.uploaded, 3);
+  assert.strictEqual(r.head.seq, 8);
+  assert.strictEqual(r.pending, 0);
+  // Later records follow from the head; the floor no longer matters.
+  fillLog(f.auditFile, 2);
+  const again = fakeApi();
+  await uploadPending(opts(f, again, { startAfterSeq: 5 }));
+  assert.deepStrictEqual(again.calls[0].events.map((e) => e.seq), [9, 10]);
+});
+
+test('startAfterSeq: nothing is sent while there are no records after the join, and a gap in the older history is not reported', async (t) => {
+  const f = setup(t);
+  fillLog(f.auditFile, 6);
+  const ls = lines(f.auditFile);
+  ls.splice(1, 1); // a gap at seq 2, in the part that never leaves this machine
+  fs.writeFileSync(f.auditFile, ls.join('\n') + '\n');
+  const none = fakeApi();
+  const r = await uploadPending(opts(f, none, { startAfterSeq: 6 }));
+  assert.strictEqual(r.status, 'nothing');
+  assert.strictEqual(none.calls.length, 0);
+  const some = fakeApi();
+  fillLog(f.auditFile, 1);
+  const r2 = await uploadPending(opts(f, some, { startAfterSeq: 6 }));
+  assert.strictEqual(r2.status, 'ok');
+  assert.deepStrictEqual(some.calls[0].events.map((e) => e.seq), [7]);
+});
+
+test('startAfterSeq must be a non-negative integer', async (t) => {
+  const f = setup(t);
+  for (const bad of [-1, 1.5, '3', null]) {
+    await assert.rejects(uploadPending(opts(f, fakeApi(), { startAfterSeq: bad })), /startAfterSeq must be a non-negative integer/);
+  }
+});
+
+test('a head whose MAC does not match the local record is reported as diverged and advances nothing', async (t) => {
+  const f = setup(t);
+  fillLog(f.auditFile, 3);
+  const api = fakeApi([{ response: { status: 200, body: { accepted: 3, head: { seq: 3, mac: 'f'.repeat(64) } } } }]);
+  const r = await uploadPending(opts(f, api));
+  assert.strictEqual(r.status, 'diverged');
+  assert.strictEqual(r.head, null);
+  assert.strictEqual(r.pending, 3);
 });
 
 /* ---------------- corrupt records in the source log ---------------- */

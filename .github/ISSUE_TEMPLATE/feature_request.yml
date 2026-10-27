@@ -33,6 +33,10 @@ body:
         - Codex CLI
         - Cursor
         - OpenCode
+        - Antigravity
+        - ZCode desktop app
+        - Gemini CLI (experimental)
+        - Copilot CLI (experimental)
         - Other MCP client
         - Not applicable
     validations:

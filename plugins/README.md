@@ -9,14 +9,13 @@ agent:
 | --- | --- | --- |
 | Claude Code | hooks, `zn-gate` and `secrets` MCP servers, skill; installs zn-gate itself | marketplace in this repository |
 | Codex | `zn-gate` and `secrets` MCP servers, skill, hooks (see below) | marketplace in this repository |
-| Cursor | hooks, `zn-gate` and `secrets` MCP servers, skill | plugin from this repository |
+| Cursor | (no plugin since 1.14.0, see below) | `zn hooks install cursor` |
 | Other Agent Plugins clients | `zn-gate` and `secrets` MCP servers, skill | the `plugins/zn-gate` directory |
 | OpenCode | (no plugin manifest) | `zn hooks install opencode` |
 
 What zn-gate can and cannot do in each agent is listed in
 [docs/compat.md](https://github.com/usezn/zn/blob/v1.13.1/docs/compat.md). The Codex plugin declares zn-gate's hooks too, but we could not confirm that
-Codex loads them (see below). Cursor loading these hooks from a
-plugin has not been tested yet.
+Codex loads them (see below).
 
 ## Security model
 
@@ -124,11 +123,15 @@ so zn-gate's Codex plugin is distributed through the repository marketplace
 
 ### Cursor
 
-Add the plugin from this repository (`plugins/zn-gate`) in Cursor's plugin
-settings. Cursor reads `.cursor-plugin/plugin.json`, which points to its own
-hook and MCP files in `cursor/`. Every Cursor hook is marked `failClosed`, so
-a crash or a timeout blocks the action (stricter than
-`zn hooks install cursor`, which marks only file reads and prompts).
+Since version 1.14.0 there is no plugin for Cursor. Use `zn hooks install cursor`,
+whose launcher starts the Node.js it was installed with by its full path. The
+plugin's hooks started `node` by name, so an absolute `PATH` entry that points
+into the project (its `node_modules/.bin`, a folder added by direnv) could run
+a `node` of the project's own in place of the real one, and Cursor has no hook
+setting that names the program by its full path on macOS and Linux and still
+works on Windows. If you added the zn-gate plugin in Cursor, remove it there
+(Customize) and run `zn hooks install cursor`: Cursor's documentation does not
+say what happens to an installed plugin that is no longer in its repository.
 
 ### Other Agent Plugins clients
 
@@ -167,8 +170,7 @@ npm's own integrity check of the tarball, not on the plugin's file digests.
 2. Run `node plugins/tools/pin-release.js X.Y.Z` to regenerate
    `plugins/zn-gate/scripts/zn-gate.lock.json` from the published tarball.
 3. Set `X.Y.Z` in `plugins/zn-gate/plugin.json`,
-   `plugins/zn-gate/.claude-plugin/plugin.json`,
-   `plugins/zn-gate/.cursor-plugin/plugin.json`, the documentation links and the
+   `plugins/zn-gate/.claude-plugin/plugin.json`, the documentation links and the
    install instructions. `packages/zn-gate/server.json` changes with the npm
    package version, not with the plugin pin.
 4. Run `node plugins/tools/check-plugins.js --release`; it must print OK. CI

@@ -41,6 +41,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { whichSync } = require('../broker/markers');
+const { askAsDeny, isPlainAsk } = require('./ask-deny');
 const { writeFileAtomic } = require('../broker/files');
 const cfg = require('./config-file');
 const { patchScan, PATCH_SCAN_CAP } = require('./codex');
@@ -135,6 +136,8 @@ function respond(d) {
   const ev = d && d.event;
   if (!ev || !ev.event) return { action: 'none' };
   if (d.decision === 'deny' && ev.event !== 'post_tool') return { action: 'deny', message: d.message || 'Blocked by zn' };
+  // OpenCode's plugin API has no question: one that zn wanted to ask is a deny.
+  if (ev.event === 'pre_tool' && isPlainAsk(d)) return { action: 'deny', message: askAsDeny('OpenCode', d) };
   // Only rewrites that add no secret value (wrapping in `zn run`) are
   // applied. Restoring detected values into the arguments is not: OpenCode
   // keeps the mutated arguments in the session, where the model could read
@@ -166,10 +169,29 @@ function pluginSource(opts = {}) {
   const argv = project ? '["hook", "opencode"]' : '[RUNNER, "opencode"]';
   // On Windows `zn` is zn.cmd, which spawn runs only through a shell. The
   // arguments are fixed strings, so the shell adds no input of its own; and
-  // cmd.exe must not look for `zn` in the current directory first (the
-  // project, where an agent can write a zn.cmd of its own).
+  // neither `zn` nor the `node` it starts may come from the folder OpenCode
+  // runs in (the project, where an agent can write a zn or node of its own):
+  // the PATH keeps only its absolute entries, and cmd.exe does not look in the
+  // current directory first.
   const shell = project ? 'process.platform === "win32"' : 'false';
-  const env = project ? '{ ...process.env, NoDefaultCurrentDirectoryInExePath: "1" }' : 'process.env';
+  const env = project ? 'projectEnv()' : 'process.env';
+  const projectEnvSource = project ? `
+// The environment of \`zn\`: the PATH without its relative or empty entries, and
+// on Windows no search of the current directory by cmd.exe.
+function projectEnv() {
+  const win = process.platform === "win32";
+  const env = {};
+  let pathValue = "";
+  for (const [k, v] of Object.entries(process.env)) {
+    if (k.toUpperCase() === "PATH") pathValue = String(v || "");
+    else env[k] = v;
+  }
+  const keep = (d) => (win ? /^(?:[A-Za-z]:[\\\\/]|\\\\\\\\)/.test(d) : d.startsWith("/"));
+  env.PATH = pathValue.split(win ? ";" : ":").filter(keep).join(win ? ";" : ":");
+  if (win) env.NoDefaultCurrentDirectoryInExePath = "1";
+  return env;
+}
+` : '';
   return `${PLUGIN_MARK} (written by \`zn hooks install opencode\`; remove with \`zn hooks uninstall opencode\`).
 // Sends tool calls, tool results and chat messages to the local zn hook runner,
 // which blocks reads of secret files, puts commands that use stored secrets
@@ -177,7 +199,7 @@ function pluginSource(opts = {}) {
 import { spawn } from "node:child_process";
 
 ${launch}
-const TIMEOUT_MS = ${HOOK_TIMEOUT_S * 1000};
+${projectEnvSource}const TIMEOUT_MS = ${HOOK_TIMEOUT_S * 1000};
 // The only answers the plugin acts on. Any other answer is an error, which
 // blocks the call (before), withholds the output (after) or stops the message.
 const ACTIONS = ["none", "deny", "error", "args", "output"];
@@ -219,6 +241,8 @@ function runHook(event) {
         finish(answer);
       }
     });
+    // A hook that ends without reading its input (EPIPE) is answered by close above; it must not crash OpenCode.
+    child.stdin.on("error", () => {});
     child.stdin.end(JSON.stringify(event));
   });
 }

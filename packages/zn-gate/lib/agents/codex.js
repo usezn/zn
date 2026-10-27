@@ -58,11 +58,12 @@
  *
  * What that means here (docs/compat.md):
  *  - Reads of credential files, .env with values and ~/.zn are denied.
- *  - A command with __ZN_<NAME>__ markers is denied with the exact
- *    `zn run -- ...` command to use instead, because rewriting it would
- *    need "allow", which skips the user's approval policy. Once the agent
- *    runs it through zn run, the hook stays silent and Codex's approval
- *    policy plus zn run's own checks apply.
+ *  - A command with __ZN_<NAME>__ markers in its arguments is denied with
+ *    the way to pass the secret as an environment variable instead
+ *    (`zn run --secrets NAME -- ...`); a rewrite would need "allow", which
+ *    skips the user's approval policy. Once the agent runs it through zn
+ *    run, the hook stays silent and Codex's approval policy plus zn run's
+ *    own checks apply.
  *  - Detected tokens are never restored into commands (that would also need
  *    "allow"); they stay as tokens.
  *  - Output with secrets is replaced, through "block", by its tokenized
@@ -74,6 +75,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
+const { askAsDeny, isPlainAsk } = require('./ask-deny');
 const { whichSync } = require('../broker/markers');
 const launcher = require('./launcher');
 
@@ -272,8 +274,10 @@ function respond(d) {
       out = deny('zn: this command uses a stored secret. Run it through zn instead, exactly like this: zn run -- ' + ev.input.command +
         '  (zn puts the value only into that process, if the user allowed this command for the secret).');
     }
-    // Restoring detected tokens or asking would need "allow" (skips the
-    // user's approval policy) or "ask" (unsupported): stay silent.
+    else if (isPlainAsk(d)) out = deny(askAsDeny('Codex CLI', d));
+    // Restoring detected tokens would need "allow" (skips the user's approval
+    // policy) or "ask" (unsupported): stay silent. A question zn wanted to
+    // ask is a deny, because Codex hooks cannot ask.
     if (!ev.permissionRequest) return out;
     // PermissionRequest: the same deny and reason, in its own shape. Never "allow".
     return out && { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: out.hookSpecificOutput.permissionDecisionReason } } };
@@ -358,17 +362,22 @@ function hookGroups(handler) {
 /**
  * The hook handler for each event. A user install goes through zn's launcher
  * (lib/agents/launcher.js) so that a Node.js that has gone away blocks instead
- * of letting Codex run the call unchecked; a project install, or a command
- * given by the caller, keeps the plain command.
+ * of letting Codex run the call unchecked; a project install runs `zn` from the
+ * PATH inside a start guard that blocks the same way; a command given by the
+ * caller keeps the plain command.
  */
 function handlerFor(opts = {}) {
   const base = { type: 'command', timeout: HOOK_TIMEOUT_S, statusMessage: HOOK_STATUS };
   const plain = () => ({ ...base, command: cfg.hookCommand(id, opts), commandWindows: cfg.hookCommandWindows(id, opts) });
-  if (opts.command || (opts.scope || 'user') === 'project') return plain;
+  if (opts.command) return plain;
+  // A project install runs `zn` from the PATH inside zn's start guard (launcher.projectShCommand): a missing zn or Node.js blocks.
+  if ((opts.scope || 'user') === 'project') {
+    return (event) => ({ ...plain(), command: launcher.projectShCommand(id, event), commandWindows: launcher.windowsScriptCommand(launcher.projectWindowsScript(id, event), { cmd: true }) });
+  }
   const platform = opts.platform || process.platform;
   const node = opts.nodePath || process.execPath;
   const runner = opts.runnerPath || cfg.runnerPath();
-  const file = platform === 'win32' ? null : launcher.writeLauncher(id, node, runner, opts);
+  const file = platform === 'win32' ? null : launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true });
   return (event) => {
     const h = plain();
     if (file) h.command = launcher.launcherCommand(file, event, platform);
@@ -419,8 +428,9 @@ function uninstall(opts = {}) {
     report.removed = 1;
     if (Object.keys(data.hooks).length === 0) delete data.hooks;
     cfg.writeJson(file, data);
-    // The launcher of a user install (see handlerFor) is no longer referenced.
-    if ((opts.scope || 'user') !== 'project') {
+    // The launcher (see handlerFor) is shared by every config of this machine: one uninstall leaves it in place,
+    // only the machine-wide uninstall (opts.removeLauncher) deletes it.
+    if ((opts.scope || 'user') !== 'project' && opts.removeLauncher === true) {
       try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
     }
   }

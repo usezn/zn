@@ -1,3 +1,0 @@
-### Fixed
-- `zn audit --agents <name>` no longer says "No findings in 0 agent files" when it found nothing to read for that agent. It now prints `<agent>: not checked` with the places it looked, so a missed location is not mistaken for a clean result. The JSON report lists each agent with `checked` and its file count under `summary.agentStatus`. Exit codes are unchanged.
-- `zn audit` no longer skips an agent file that exists but cannot be read (for example, permission denied). It reports it as a high ZNA020 finding, so the run fails by default and `--agents` no longer says the file is missing.

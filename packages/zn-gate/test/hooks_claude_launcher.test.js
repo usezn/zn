@@ -95,7 +95,7 @@ test('claude-code launcher: recorded Node.js gone but zn and node on an absolute
   const { file } = setup(t, GONE);
   const bin = tempDir(t, 'zn-b95-bin-');
   fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\necho "VIA_ZN $*"\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\necho "VIA_ZN $*"\nprintf ok > "$ZN_HOOK_ACK"\n', { mode: 0o755 });
   const r = runLauncher(file, 'PreToolUse', '{}', bin);
   assert.equal(r.status, 0);
   assert.equal(r.stdout.trim(), 'VIA_ZN hook claude-code');
@@ -109,11 +109,14 @@ test('claude-code: reinstall replaces the launcher, uninstall removes it; a proj
   const again = JSON.parse(fs.readFileSync(claude.settingsFile({ env, home }), 'utf8'));
   assert.equal(again.hooks.PreToolUse.length, 1, 'install is idempotent');
   claude.uninstall({ env, home, mcp: false });
+  assert.equal(fs.existsSync(file), true, 'a single uninstall keeps the shared launcher');
+  claude.install({ env, home, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
+  claude.uninstall({ env, home, mcp: false, removeLauncher: true });
   assert.equal(fs.existsSync(file), false);
   const proj = tempDir(t, 'zn-b95-proj-');
   claude.install({ scope: 'project', projectDir: proj, env, home, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
   const pd = JSON.parse(fs.readFileSync(path.join(proj, '.claude', 'settings.json'), 'utf8'));
-  assert.match(pd.hooks.PreToolUse[0].hooks[0].command, / claude-code$/);
+  assert.ok(launcher.isProjectGuard(pd.hooks.PreToolUse[0].hooks[0].command, 'claude-code'));
   assert.equal(fs.existsSync(file), false);
 });
 

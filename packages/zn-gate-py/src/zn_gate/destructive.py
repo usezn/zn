@@ -24,7 +24,7 @@ The Node.js and Python versions give the same answer on the shared test corpus
 from __future__ import annotations
 
 import re
-from typing import List, Optional, Tuple
+from typing import Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tuple
 
 from .rules import Assessment
 
@@ -107,27 +107,35 @@ _PS_DISK_RE = re.compile(r"(?:^|[\s;&|(])(?:format-volume|clear-disk)\b", _AI)
 # Code an interpreter runs from its command line (python -c, node -e, perl -e, ruby -e) and a download piped into one.
 # Every quantifier is bounded, so the scan over the code is linear.
 _INTERPRETER_RE = re.compile(r"^(?:py|python(?:[23](?:\.\d+)?)?|pypy3?|node(?:js)?|perl|ruby)\Z", _A)
-_INTERPRETERS = {
-    "py": {
-        "skip": {"-W", "-X"},
-        "code": re.compile(r"^-[A-Za-z]*c\Z", _A),
-        "no_stdin": re.compile(r"^(?:-[A-Za-z]*[cmVh][A-Za-z]*|--(?:version|help))\Z", _A),
-    },
-    "node": {
-        "skip": {"-r", "--require", "--import", "--loader", "--experimental-loader"},
-        "code": re.compile(r"^(?:-e|-p|-pe|--eval|--print)\Z", _A),
-        "no_stdin": re.compile(r"^(?:-[A-Za-z]*[epcvh][A-Za-z]*|--(?:eval|print|check|version|help|test)(?:=.*)?)\Z", _A | re.S),
-    },
-    "perl": {
-        "skip": {"-I"},
-        "code": re.compile(r"^-[A-Za-z]*[eE]\Z", _A),
-        "no_stdin": re.compile(r"^-[A-Za-z]*[eEcvVh][A-Za-z]*\Z", _A),
-    },
-    "ruby": {
-        "skip": {"-r", "-I"},
-        "code": re.compile(r"^-[A-Za-z]*e\Z", _A),
-        "no_stdin": re.compile(r"^(?:-[A-Za-z]*[ecvh][A-Za-z]*|--(?:version|help))\Z", _A),
-    },
+class _InterpSpec(NamedTuple):
+    """How one interpreter family takes code and options on its command line."""
+
+    skip: FrozenSet[str]
+    code: Pattern[str]
+    no_stdin: Pattern[str]
+
+
+_INTERPRETERS: Dict[str, _InterpSpec] = {
+    "py": _InterpSpec(
+        skip=frozenset({"-W", "-X"}),
+        code=re.compile(r"^-[A-Za-z]*c\Z", _A),
+        no_stdin=re.compile(r"^(?:-[A-Za-z]*[cmVh][A-Za-z]*|--(?:version|help))\Z", _A),
+    ),
+    "node": _InterpSpec(
+        skip=frozenset({"-r", "--require", "--import", "--loader", "--experimental-loader"}),
+        code=re.compile(r"^(?:-e|-p|-pe|--eval|--print)\Z", _A),
+        no_stdin=re.compile(r"^(?:-[A-Za-z]*[epcvh][A-Za-z]*|--(?:eval|print|check|version|help|test)(?:=.*)?)\Z", _A | re.S),
+    ),
+    "perl": _InterpSpec(
+        skip=frozenset({"-I"}),
+        code=re.compile(r"^-[A-Za-z]*[eE]\Z", _A),
+        no_stdin=re.compile(r"^-[A-Za-z]*[eEcvVh][A-Za-z]*\Z", _A),
+    ),
+    "ruby": _InterpSpec(
+        skip=frozenset({"-r", "-I"}),
+        code=re.compile(r"^-[A-Za-z]*e\Z", _A),
+        no_stdin=re.compile(r"^(?:-[A-Za-z]*[ecvh][A-Za-z]*|--(?:version|help))\Z", _A),
+    ),
 }
 _NODE_EVAL_EQ_RE = re.compile(r"^--(?:eval|print)=([\s\S]*)\Z")
 # A recursive-delete call: shutil.rmtree, fs.rmSync / rmdirSync / rm / rmdir, rimraf, File::Path remove_tree / rmtree,
@@ -481,7 +489,7 @@ def _interpreter_code(kind: str, rest: List[str]) -> List[str]:
         w = rest[i]
         if w == "--" or not w.startswith("-"):
             break
-        if spec["code"].match(w):
+        if spec.code.match(w):
             if i + 1 < len(rest):
                 out.append(rest[i + 1])
             i += 2
@@ -492,7 +500,7 @@ def _interpreter_code(kind: str, rest: List[str]) -> List[str]:
         if m:
             out.append(m.group(1))
             break
-        if w in spec["skip"]:
+        if w in spec.skip:
             i += 1
         i += 1
     return out
@@ -508,7 +516,9 @@ def _protected_argument(tail: str) -> bool:
     if home:
         return bool(_OI_AFTER_HOME_RE.match(t[home.end():]))
     lit = _OI_LITERAL_RE.match(t)
-    return bool(lit) and bool(_dangerous_path(_OI_ENV_HOME_RE.sub("~", lit.group(2))))
+    if lit is None:
+        return False
+    return bool(_dangerous_path(_OI_ENV_HOME_RE.sub("~", lit.group(2))))
 
 
 def _code_deletes_protected(code: str) -> bool:
@@ -536,10 +546,10 @@ def _reads_script_from_stdin(kind: str, rest: List[str]) -> bool:
         w = rest[i]
         if w == "-":
             return True
-        if spec["no_stdin"].match(w):
+        if spec.no_stdin.match(w):
             return False
         if w.startswith("-"):
-            if w in spec["skip"]:
+            if w in spec.skip:
                 i += 1
             i += 1
             continue

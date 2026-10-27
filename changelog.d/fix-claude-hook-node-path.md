@@ -1,5 +1,0 @@
-### Security
-- Claude Code: `zn hooks install claude-code` no longer lets Claude Code run tool calls unchecked when the Node.js it was installed with disappears (an `nvm` switch or uninstall, an upgrade). The hook command was that Node.js's absolute path, so it failed to start (exit 127) and Claude Code treats that as a non-blocking error. The hook is now a small launcher script under `~/.zn/hooks` that runs the Node.js it was installed with, else `zn` from your PATH, else blocks (exit code 2 on tool calls, prompts and typed skills or commands, a warning after a tool has run) without needing Node.js. The tool-call hook also sets `onFailure: "block"`, as the prompt hooks already did. Run `zn hooks install claude-code` again to switch an existing install over. The zn-gate plugin's tool-call hook now sets `onFailure: "block"` too, so a missing `node` blocks instead of letting calls run.
-
-### Fixed
-- `zn-gate check` now reports a Claude Code hook whose Node.js, zn-gate files or launcher script are gone, and says to run `npm install -g zn-gate` and `zn hooks install claude-code`.

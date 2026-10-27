@@ -66,15 +66,30 @@ const BUNDLED_DIR = 'vendor/zn-gate';
 // and Agent Plugins manifests, npm files, its README) is shipped.
 const PLUGIN_FILES = [
   ['.claude-plugin/plugin.json', PLUGIN],
-  ['.mcp.json', PLUGIN],
   ['hooks/hooks.json', PLUGIN],
   ['icon.png', PLUGIN],
   ['LICENSE', PLUGIN],
   ['scripts/zn-launch.js', PLUGIN],
+  ['scripts/zn-node.sh', PLUGIN],
   ['skills/zn-secrets/SKILL.md', PLUGIN],
   ['README.md', CLAUDE_DIR],
   ['SECURITY.md', CLAUDE_DIR],
   ['PROVENANCE.md', CLAUDE_DIR],
+];
+// The ZCode plugin (a separate tree: ZCode loads hooks/hooks.json of the plugin root whatever the manifest says, and
+// the Claude Code hooks of plugins/zn-gate are not its hooks). It has its own marketplace.json at the root and the
+// plugin in zn-gate/, with the same bundled zn-gate and the same launcher and lock as the Claude Code plugin.
+const ZCODE = path.resolve(__dirname, '..', 'zcode');
+const ZCODE_DIR = 'zn-gate';
+const ZCODE_FILES = [
+  ['marketplace.json', ZCODE, 'marketplace.json'],
+  ['.zcode-plugin/plugin.json', ZCODE, ZCODE_DIR + '/.zcode-plugin/plugin.json'],
+  ['hooks/hooks.json', ZCODE, ZCODE_DIR + '/hooks/hooks.json'],
+  ['scripts/zn-hook.sh', ZCODE, ZCODE_DIR + '/scripts/zn-hook.sh'],
+  ['README.md', ZCODE, ZCODE_DIR + '/README.md'],
+  ['scripts/zn-launch.js', PLUGIN, ZCODE_DIR + '/scripts/zn-launch.js'],
+  ['icon.png', PLUGIN, ZCODE_DIR + '/icon.png'],
+  ['LICENSE', PLUGIN, ZCODE_DIR + '/LICENSE'],
 ];
 const GITATTRIBUTES = '* -text\n';
 const PRUNE = /\.(?:d\.[mc]?ts|[mc]?ts|map)$/;
@@ -173,6 +188,34 @@ function esmRequests(sources) {
 const IMPORT_WORD = /(?<![.\w$])import\b/g;
 const LITERAL_ARG = /^\s*(['"])([^'"\n]+)\1\s*\)/;
 const UNCHECKABLE = /\bcreateRequire\b|\bimport\.meta\.resolve\b|\bprocess\.mainModule\b|\brequire\s*\(\s*(['"])(?:node:)?module\1/;
+// The one file of the package that may use the exception below.
+const COMPILE_CACHE_FILE = /^lib\/compile-cache\.js$/;
+const MODULE_REQUIRE = /\brequire\s*\(\s*(['"])(?:node:)?module\1\s*\)/g;
+const MODULE_DECL = /(?<![.\w$])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*(['"])(?:node:)?module\2\s*\)\s*;/;
+const ENABLE_COMPILE_CACHE_MEMBER = /^\s*\.\s*enableCompileCache(?![\w$])(?!\s*=(?!=))/;
+
+/**
+ * For lib/compile-cache.js only: the text with one narrow use of the "module" built-in taken out: a single
+ * "const NAME = require('module');" where NAME is used at least once and
+ * every use is "NAME.enableCompileCache" (read or called, never assigned).
+ * That member only turns on V8's compile cache; it loads nothing. Any other
+ * use, such as createRequire, Module._load or passing the module around, is
+ * left in place for the UNCHECKABLE rule to refuse.
+ */
+function withoutCompileCacheUse(rel, text) {
+  if (!COMPILE_CACHE_FILE.test(rel)) return text;
+  if ((text.match(MODULE_REQUIRE) || []).length !== 1) return text;
+  const decl = MODULE_DECL.exec(text);
+  if (!decl) return text;
+  const rest = text.slice(0, decl.index) + text.slice(decl.index + decl[0].length);
+  let uses = 0;
+  for (const m of rest.matchAll(/[A-Za-z_$][\w$]*/g)) {
+    if (m[0] !== decl[1] || rest[m.index - 1] === '.' && rest[m.index - 2] !== '.') continue;
+    if (!ENABLE_COMPILE_CACHE_MEMBER.test(rest.slice(m.index + m[0].length))) return text;
+    uses++;
+  }
+  return uses ? rest : text;
+}
 const MODULE_BUILTINS = new Set(['module', 'node:module']);
 
 /**
@@ -224,7 +267,7 @@ function dynamicImports(rel, text, problems) {
     if (lit) out.push(lit[2]);
     else problems.push(rel + ': import() with a computed name cannot be checked');
   }
-  if (UNCHECKABLE.test(text)) {
+  if (UNCHECKABLE.test(withoutCompileCacheUse(rel, text))) {
     problems.push(rel + ': uses createRequire, import.meta.resolve, process.mainModule or the "module" built-in, which cannot be checked');
   }
   return out;
@@ -361,6 +404,36 @@ function pluginTree(bundle, version, integrity, source) {
   return out;
 }
 
+/**
+ * A source file of this repository. A shell script is shipped with LF line ends whatever the checkout did to it
+ * (Git for Windows turns LF into CRLF unless a .gitattributes rule says otherwise, and `sh` rejects a CRLF script).
+ */
+function readSource(abs) {
+  const body = fs.readFileSync(abs);
+  return abs.endsWith('.sh') ? Buffer.from(body.toString('utf8').replace(/\r\n/g, '\n'), 'utf8') : body;
+}
+
+/** The tree of the ZCode plugin repository (see ZCODE_FILES). */
+function zcodeTree(bundle, version, integrity, source) {
+  const out = new Map();
+  for (const [rel, from, dest] of ZCODE_FILES) {
+    const abs = path.join(from, ...rel.split('/'));
+    if (fs.lstatSync(abs).isSymbolicLink()) throw new Error(path.relative(path.resolve(__dirname, '..', '..'), abs) + ' is a symbolic link');
+    out.set(dest, readSource(abs));
+  }
+  const manifest = JSON.parse(out.get(ZCODE_DIR + '/.zcode-plugin/plugin.json').toString('utf8'));
+  if (manifest.version !== version) {
+    throw new Error('plugins/zcode is pinned to ' + manifest.version + ', the tarball is zn-gate ' + version + ': run pin-release.js first');
+  }
+  const files = {};
+  for (const rel of [...bundle.keys()].sort()) files[rel] = sha256(bundle.get(rel));
+  const lock = { package: 'zn-gate', version, registry: REGISTRY, integrity, bundled: BUNDLED_DIR, source, files };
+  out.set(ZCODE_DIR + '/scripts/zn-gate.lock.json', Buffer.from(JSON.stringify(lock, null, 2) + '\n'));
+  out.set('.gitattributes', Buffer.from(GITATTRIBUTES));
+  for (const [rel, body] of bundle) out.set(ZCODE_DIR + '/' + BUNDLED_DIR + '/' + rel, body);
+  return out;
+}
+
 function checkLimits(tree) {
   const problems = [];
   if (tree.size > MAX_FILES) problems.push(tree.size + ' files (the limit is ' + MAX_FILES + ')');
@@ -383,7 +456,8 @@ async function registryIntegrity(version) {
  * Build the tree into out. opts.integrity replaces the registry lookup; only
  * the tests use it (the command line has no such option).
  */
-async function build({ tarball, out, integrity, source }) {
+async function build({ tarball, out, integrity, source, target }) {
+  if (target !== undefined && target !== 'claude' && target !== 'zcode') throw new Error('unknown target ' + target + ' (claude or zcode)');
   const commit = source || execFileSync('git', ['-C', path.resolve(__dirname, '..', '..'), 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('the source must be a full commit hash: ' + commit);
   const tgz = fs.readFileSync(tarball);
@@ -402,7 +476,7 @@ async function build({ tarball, out, integrity, source }) {
 
   const importProblems = checkImports(bundle);
   if (importProblems.length) throw new Error('imports that are not checked or do not resolve inside the bundle:\n  ' + importProblems.join('\n  '));
-  const tree = pluginTree(bundle, pkg.version, expected, commit);
+  const tree = target === 'zcode' ? zcodeTree(bundle, pkg.version, expected, commit) : pluginTree(bundle, pkg.version, expected, commit);
   const limitProblems = checkLimits(tree);
   if (limitProblems.length) throw new Error('over the plugin directory limits:\n  ' + limitProblems.join('\n  '));
 
@@ -415,28 +489,28 @@ async function build({ tarball, out, integrity, source }) {
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, body);
   }
-  return { version: pkg.version, files: tree.size, bundled: bundle.size };
+  return { version: pkg.version, files: tree.size, bundled: bundle.size, target };
 }
 
-const USAGE = 'usage: build-plugin-repo.js --tarball <zn-gate-X.Y.Z.tgz> --out <dir> [--source <commit>]';
+const USAGE = 'usage: build-plugin-repo.js --tarball <zn-gate-X.Y.Z.tgz> --out <dir> [--source <commit>] [--target claude|zcode]';
 
 function parseArgs(argv) {
   const opts = {};
   for (let i = 0; i < argv.length; i += 2) {
     const k = argv[i];
     const v = argv[i + 1];
-    if (!['--tarball', '--out', '--source'].includes(k) || v === undefined) throw new Error(USAGE);
+    if (!['--tarball', '--out', '--source', '--target'].includes(k) || v === undefined) throw new Error(USAGE);
     opts[k.slice(2)] = v;
   }
   if (!opts.tarball || !opts.out) throw new Error(USAGE);
   return opts;
 }
 
-module.exports = { build, bundleFiles, checkImports, checkLimits, PLUGIN_FILES, BUNDLED_DIR, PRUNE };
+module.exports = { build, readSource, bundleFiles, checkImports, checkLimits, PLUGIN_FILES, ZCODE_FILES, ZCODE_DIR, BUNDLED_DIR, PRUNE };
 
 if (require.main === module) {
   build(parseArgs(process.argv.slice(2))).then((r) => {
-    process.stdout.write('Built the plugin repository for zn-gate ' + r.version + ': ' + r.files + ' files (' + r.bundled + ' bundled)\n');
+    process.stdout.write('Built the ' + (r.target === 'zcode' ? 'ZCode ' : '') + 'plugin repository for zn-gate ' + r.version + ': ' + r.files + ' files (' + r.bundled + ' bundled)\n');
   }).catch((err) => {
     process.stderr.write('build-plugin-repo: ' + err.message + '\n');
     process.exitCode = 1;
