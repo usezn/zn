@@ -74,9 +74,12 @@ claude plugin marketplace add usezn/zn@v1.13.1
 claude plugin install zn-gate@usezn
 ```
 
-Leave auto-update off for this marketplace (the default), and upgrade on
-purpose with `claude plugin update zn-gate@usezn`, which also installs the
-newly pinned zn-gate. If you installed hooks before with
+Leave auto-update off for this marketplace (the default). It is added at a
+release tag, so `claude plugin update` keeps that release: to upgrade, run
+`claude plugin marketplace remove usezn`, then
+`claude plugin marketplace add usezn/zn@vX.Y.Z` with the new release and
+`claude plugin install zn-gate@usezn`, which also installs the newly pinned
+zn-gate. If you installed hooks before with
 `zn hooks install claude-code`, remove them: `zn hooks uninstall claude-code`.
 
 ### Codex

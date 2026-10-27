@@ -336,9 +336,13 @@ function spawnHook(file, args, input, env, cwd, timeout = HOOK_TIMEOUT_MS) {
   return { ran: true, decision: decisionOf(r.stdout, r.status), stdout: r.stdout, status: r.status };
 }
 
-const PLUGIN_UPDATE_NOTE = (installed) => 'the zn-gate plugin is version ' + installed + ' and this zn-gate is ' + VERSION + '; the plugin does not update by itself, so in your own terminal run `claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn@v' + VERSION + '` and `claude plugin install zn-gate@usezn`';
+// How to move the Claude Code plugin to this release. The marketplace is added at a release tag, so `claude plugin update`
+// keeps the plugin that tag holds: the marketplace is removed and added again at the new tag.
+const PLUGIN_UPDATE_STEPS = 'run `claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn@v' + VERSION + '` and `claude plugin install zn-gate@usezn` in your own terminal';
+const PLUGIN_UPDATE_NOTE = (installed) => 'the zn-gate plugin is version ' + installed + ' and this zn-gate is ' + VERSION + '; the plugin does not update by itself, so ' + PLUGIN_UPDATE_STEPS;
 
-/* Whether version `a` is older than `b` (numbers before any "-" are compared); false when either is not a version. */
+/* Whether version `a` is older than `b` (numbers before any "-" are compared, so 1.15.0-rc.1 and 1.15.0 count as the same
+ * version and no note is given between them); false when either is not a version. */
 function olderVersion(a, b) {
   const num = (v) => { const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(v || '')); return m ? m.slice(1, 4).map(Number) : null; };
   const x = num(a);
@@ -939,7 +943,7 @@ async function checkAgent(spec, ctx) {
           res.pluginFault = true;
         } else if (manifest.bare) {
           res.problem = bareProgramProblem(manifest.bare);
-          res.fix = 'update the plugin: run `claude plugin update zn-gate@usezn` in your own terminal; if `zn-gate check` still reports this, use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again';
+          res.fix = 'update the plugin: ' + PLUGIN_UPDATE_STEPS + '; if `zn-gate check` still reports this, use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again';
           res.pluginFault = true;
           distrust = res.problem;
         } else {

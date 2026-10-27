@@ -181,7 +181,8 @@ After updating, run these in your own terminal:
   release: the hook launcher script that blocks instead of running a call
   unchecked when Node.js is gone, the check of MCP tool calls in Claude Code and
   Codex, and the Codex hooks for `PermissionRequest` and `Stop`. With the Claude
-  Code plugin, run `claude plugin update zn-gate@usezn` and start a new session.
+  Code plugin, remove the marketplace and add it again at the new release tag
+  (the steps are under "Other cases" above), then start a new session.
 - [ ] **Codex: trust the changed hooks.** Open Codex and review them in `/hooks`
   (see [above](#codex-asks-you-to-trust-the-hooks-again)).
 - [ ] **Claude Code plugin: check your Node.js.** The plugin now needs Node.js
