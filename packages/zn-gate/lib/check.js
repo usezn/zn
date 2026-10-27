@@ -448,21 +448,6 @@ function claudePluginRootProblem(root, ctx) {
   return '';
 }
 
-/* The place the link target `target`, found in the folder `dir`, names, as the file system reads it: every ".." is applied
-   to the real place its left side leads to (links followed), not to the text before it (`evil/../hop` with `evil` a link
-   to another folder is next to that folder, not next to `dir`). The last name is left as it is, so a link there is
-   still seen as one. null when the folder part is not there. */
-function targetPlace(dir, target) {
-  const full = path.isAbsolute(target) ? target : dir + path.sep + target;
-  const trimmed = full.length > 1 ? full.replace(/[\\/]+$/, '') : full;
-  const cut = Math.max(trimmed.lastIndexOf('/'), process.platform === 'win32' ? trimmed.lastIndexOf('\\') : -1);
-  const last = trimmed.slice(cut + 1);
-  try {
-    if (!last || last === '.' || last === '..') return fs.realpathSync.native(trimmed || path.sep);
-    return path.join(fs.realpathSync.native(trimmed.slice(0, cut) || path.sep), last);
-  } catch (_) { return null; }
-}
-
 /* Follows `start` one link at a time, as the file system does, and returns the first link inside one of the folders in
    `within` whose target (the place that link names, before the rest is followed) is not inside one of them, as
    {link, to}; null when every link below those folders stays in them (a link above them, as /var on macOS, is followed
@@ -471,27 +456,36 @@ function targetPlace(dir, target) {
    At most 40 links are followed. */
 function linkHopLeaves(start, within) {
   const inWithin = (x) => within.some((w) => isInside(x, w, true));
-  const queue = path.resolve(start).split(path.sep);
-  let cur = queue.shift() || path.sep;
-  if (!cur) cur = path.sep;
+  // The places on the way down to `within` (/home before /home/u/.claude/plugins) are not a way out.
+  const onTheWay = (x) => inWithin(x) || within.some((w) => isInside(w, x, true));
+  // Each queued part carries `guard`, the link inside `within` it came from (or null), and `end`, set on the last part of
+  // that link's target. While those parts are consumed, `cur` (always a real place, because every link before it is
+  // already expanded) must not leave `within` and its ancestors, and must be inside it after the last part.
+  const queue = path.resolve(start).split(path.sep).map((seg) => ({ seg, guard: null, end: false }));
+  let cur = queue.shift().seg || path.sep;
   let hops = 0;
   while (queue.length) {
-    const seg = queue.shift();
-    if (!seg || seg === '.') continue;
-    if (seg === '..') { cur = path.dirname(cur); continue; }
-    const next = path.join(cur, seg);
-    let st;
-    try { st = fs.lstatSync(next); } catch (_) { return null; }
-    if (!st.isSymbolicLink()) { cur = next; continue; }
-    let target;
-    try { target = fs.readlinkSync(next); } catch (_) { return { link: next, to: 'a place zn-gate cannot read' }; }
-    const abs = targetPlace(cur, target);
-    if (!abs) return null;
-    if (inWithin(next) && !inWithin(abs)) return { link: next, to: abs };
-    if (++hops > 40) return { link: next, to: 'too many links in a row' };
-    const parsed = path.parse(abs);
-    queue.unshift(...abs.slice(parsed.root.length).split(path.sep));
-    cur = parsed.root;
+    const { seg, guard, end } = queue.shift();
+    if (seg === '..') cur = path.dirname(cur);
+    else if (seg && seg !== '.') {
+      const next = path.join(cur, seg);
+      let st;
+      try { st = fs.lstatSync(next); } catch (_) { return null; }
+      if (!st.isSymbolicLink()) cur = next;
+      else {
+        let target;
+        try { target = fs.readlinkSync(next); } catch (_) { return { link: next, to: 'a place zn-gate cannot read' }; }
+        if (++hops > 40) return { link: next, to: 'too many links in a row' };
+        const g = guard || (inWithin(next) ? next : null);
+        const parsed = path.parse(target);
+        const parts = target.slice(parsed.root.length).split(/[\/]+/).filter((x) => x && x !== '.');
+        if (parsed.root) cur = path.resolve(parsed.root);
+        if (!parts.length && g && !inWithin(cur)) return { link: g, to: cur };
+        queue.unshift(...parts.map((x, i) => ({ seg: x, guard: g, end: i === parts.length - 1 && (guard ? end : true) })));
+        continue;
+      }
+    }
+    if (guard && !(end ? inWithin(cur) : onTheWay(cur))) return { link: guard, to: cur };
   }
   return null;
 }

@@ -273,3 +273,37 @@ test('Claude Code plugin: a link whose target goes through another link and ".."
   assert.match(r.problem, /link/);
   assert.equal(fs.existsSync(marker), false, 'zn-gate check ran the plugin through evil/../hop');
 });
+
+test('Claude Code plugin: a link that leaves the plugins folder and comes back inside the folder part of its target is NOT protected', { skip: SKIP }, async (t) => {
+  for (const kind of ['direct', 'relative', 'file']) {
+    const home = tempDir(t, 'zn-pfl-home-');
+    const out = tempDir(t, 'zn-pfl-back-');
+    const marker = path.join(out, 'ran.txt');
+    const plugins = path.join(home, '.claude', 'plugins');
+    const store = path.join(plugins, 'store', 'zn-gate');
+    claudePlugin(home, store, marker);
+    if (kind === 'file') {
+      // A link inside the plugin to a file of it, through a folder outside that leads back to the plugin.
+      fs.writeFileSync(path.join(store, 'scripts', 'real.js'), 'module.exports = 1;\n');
+      fs.symlinkSync(path.join(store, 'scripts'), path.join(out, 'back'));
+      fs.symlinkSync(path.join(out, 'back', 'real.js'), path.join(store, 'scripts', 'r.js'));
+    } else {
+      const cache = path.join(plugins, 'cache');
+      fs.mkdirSync(cache, { recursive: true });
+      if (kind === 'direct') {
+        fs.symlinkSync(path.join(plugins, 'store'), path.join(out, 'hopdir'));
+        fs.symlinkSync(path.join(out, 'hopdir', 'zn-gate'), path.join(cache, 'zn-gate'));
+      } else {
+        fs.mkdirSync(path.join(out, 'x'));
+        fs.symlinkSync(path.join(plugins, 'store'), path.join(out, 'x', 'sub'));
+        fs.symlinkSync(path.join(out, 'x'), path.join(cache, 'evil'));
+        fs.symlinkSync('evil/sub/zn-gate', path.join(cache, 'zn-gate'));
+      }
+      claudePlugin(home, path.join(cache, 'zn-gate'), marker);
+    }
+    const r = await claudeCheck(t, home);
+    assert.equal(r.state, 'not-protected', kind);
+    assert.match(r.problem, /link/, kind);
+    assert.equal(fs.existsSync(marker), false, 'zn-gate check ran the plugin through a chain that leaves and returns (' + kind + ')');
+  }
+});
