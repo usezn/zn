@@ -1,0 +1,77 @@
+zn-gate: disclosure for the npm dual-use content policy
+
+Package:   zn-gate
+Source:    https://github.com/usezn/zn
+Security:  https://github.com/usezn/zn/blob/main/SECURITY.md
+
+This package is a defensive security tool. Some of what it does can look like
+malware to an automatic scanner, because protecting a computer from a coding
+agent means touching the same places an attacker would: the configuration of
+other programs, the permissions of files, and the way programs are started.
+This file says what each of those things is for, and when it happens.
+
+1. What zn-gate is
+
+zn-gate is a local security layer for coding agents. It runs on the computer of
+the person who installs it, between the agent and the files, commands and tools
+the agent uses. It blocks the agent from reading files that hold secrets, hides
+secret values in what tools return, checks text for prompt injection, reviews
+MCP servers, and keeps secrets in an encrypted vault on the user's own computer.
+It does not need an account. Its source code is open (MIT license).
+
+2. Hooks in the configuration of other programs
+
+zn-gate adds hooks to the configuration of the coding agents it protects:
+Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, the ZCode desktop app
+and, as experimental support, Gemini CLI and GitHub Copilot CLI. A hook is an
+entry that tells the agent to ask zn-gate before it runs a tool, reads a file or
+sends a prompt. This happens only when the person runs `zn hooks install` or
+`zn-gate init` in their own terminal (`init` asks before each change). Nothing
+is written when the package is installed or imported. `zn-gate uninstall` lists
+what zn-gate added (hooks, wrapped MCP servers, the Claude Code plugin) and
+removes it after asking. The hooks also guard their own files, so that the agent
+cannot switch the protection off by editing them.
+
+3. PowerShell and file permissions on Windows
+
+On Windows, zn-gate starts the PowerShell that ships with the system, by its
+full path inside the Windows folder, never one found through the PATH or the
+project folder. It passes the script with -EncodedCommand so that no shell
+changes its quotes. It uses it for three things:
+  - to make the vault folder and the folder of zn's hook files readable only by
+    the current user. This uses .NET access-control calls that replace the
+    folder's permission list with a single entry for that user; zn-gate then
+    reads the list back and checks it;
+  - to keep the vault key in the Windows Credential Manager, through a few lines
+    of C# that PowerShell compiles in memory to call the system's own credential
+    functions;
+  - to show a confirmation window.
+Nothing is downloaded for this, no user or group is created or changed, and the
+permission changes apply only to zn-gate's own folders and files.
+
+4. Deleting the vault
+
+`zn vault purge` deletes the vault on the user's own computer (the encrypted
+secrets, their token maps, the audit log, the backups and the session key) and
+the vault key that zn-gate stored in the system keychain. It lists every file
+it will delete, and the person has to type a confirmation phrase in their own
+terminal. It refuses to run when an AI agent is the one running it (a script
+with no terminal and no agent can pass --yes). It deletes only zn-gate's own
+files and the keychain entry zn-gate created.
+
+5. No install scripts, no downloaded code, no telemetry by default
+
+The package has no preinstall, install or postinstall script. It does not
+download or run code from the network; everything it runs is in the package. It
+collects no telemetry unless the person turns it on. Network use is limited to
+features the person chooses: the optional cloud check (`zn-gate connect`, which
+talks to https://api.usezn.com), zn Team after the person joins an organization,
+and, off by default, pseudonymous daily counts that `zn-gate stats share on`
+sends after printing them. Hooks, the vault, the shield and every other command
+work locally. The local dashboard listens on 127.0.0.1 only.
+
+6. More information
+
+Source code, documentation and issues: https://github.com/usezn/zn
+Security policy and private reporting of vulnerabilities:
+https://github.com/usezn/zn/blob/main/SECURITY.md

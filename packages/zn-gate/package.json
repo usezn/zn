@@ -39,12 +39,16 @@
   "scripts": {
     "test": "node test/run-all.js"
   },
+  "contentPolicy": {
+    "class": "dual-use"
+  },
   "files": [
     "bin/",
     "lib/",
     "README.md",
     "LICENSE",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "DISCLOSURE"
   ],
   "engines": {
     "node": ">=18"
