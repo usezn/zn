@@ -43,11 +43,18 @@ const lockVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'plugins/zn-gate/
 // The cases describe a release pull request before the tag (the lock file on the previous release). Once the plugin is
 // pinned to this version they do not apply.
 const previous = lockVersion;
+// True when version a is lower than version b (both X.Y.Z). On next the pin can be AHEAD of the package version until the
+// release is merged back, and then these cases do not apply either.
+function older(a, b) {
+  const x = a.split('.').map(Number), y = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i];
+  return false;
+}
 // Release tags of the repository: rc tags and the tag of this version are not the previous release.
 let TAGS = 'v1.12.0 v1.13.0 v' + previous + ' v' + pkgVersion + '-rc.1 v' + pkgVersion;
 
 try {
-  if (/^\d+\.\d+\.\d+$/.test(pkgVersion) && lockVersion !== pkgVersion) {
+  if (/^\d+\.\d+\.\d+$/.test(pkgVersion) && older(lockVersion, pkgVersion)) {
     // The state of a release pull request before the tag.
     const a = copyTree();
     assert.ok(check(a, '--release', '--pre-tag').ok, 'pre-tag: the lock on the previous release passes');
