@@ -833,7 +833,7 @@ test('install writes the zcode launcher with a deadline 2 s under the hook timeo
   zc.install({ home, nodePath: '/usr/bin/node' });
   const text = fs.readFileSync(launcher.launcherFile('zcode', { home, env: process.env }), 'utf8');
   assert.equal(zc.LAUNCHER_DEADLINE_S, zc.HOOK_TIMEOUT_S - 2);
-  assert.match(text, new RegExp('sleep ' + zc.LAUNCHER_DEADLINE_S + ' &'));
+  assert.ok(text.includes('"$ZN_SL" ' + zc.LAUNCHER_DEADLINE_S + ' &'), 'the timer sleeps for the deadline');
   assert.doesNotMatch(launcher.unixScript('codex', '/usr/bin/node', RUNNER), /zn_run/);
 });
 
@@ -931,11 +931,36 @@ test('launcher deadline: a timer that cannot start blocks without running the ho
   const hook = fakeNode(t, 'touch ' + marker + '; cat; exit 0');
   const file = launcher.writeLauncher('zcode', hook, RUNNER, { home, env: process.env, deadlineS: 5 });
   const text = fs.readFileSync(file, 'utf8');
-  assert.ok(text.includes('/bin/sleep 5 &'), 'the timer is /bin/sleep with an absolute path');
-  fs.writeFileSync(file, text.split('/bin/sleep').join('/nonexistent/sleep'), { mode: 0o755 });
+  assert.ok(text.includes('"$ZN_SL" 5 &'), 'the timer is a sleep found by absolute path');
+  fs.writeFileSync(file, text.replace(/\/(?:usr\/)?bin\/sleep|\/run\/current-system\/(?:sw|profile)\/bin\/sleep/g, '/nonexistent/sleep'), { mode: 0o755 });
   const r = spawnSync(file, ['PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
   assert.equal(r.status, 2, r.stderr);
   assert.equal(fs.existsSync(marker), false, 'the hook did not run without a deadline');
+});
+
+test('launcher deadline: with no /bin/sleep (NixOS, Guix) the timer is found in the other system folders and the hook runs', { skip: !posix || !fs.existsSync('/usr/bin/sleep') }, (t) => {
+  const home = tempDir(t, 'zn-zc-usrsleep-');
+  const hook = fakeNode(t, 'cat >/dev/null; echo answer; printf ok > "$ZN_HOOK_ACK"; exit 0');
+  const file = launcher.writeLauncher('zcode', hook, RUNNER, { home, env: process.env, deadlineS: 5 });
+  const text = fs.readFileSync(file, 'utf8');
+  assert.ok(text.includes('for ZN_X in /bin/sleep /usr/bin/sleep '), 'the system folders are tried in order');
+  fs.writeFileSync(file, text.replace('for ZN_X in /bin/sleep ', 'for ZN_X in /nonexistent/sleep '), { mode: 0o755 });
+  const r = spawnSync(file, ['PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), 'answer');
+});
+
+test('a TMPDIR that is missing or cannot be written does not block: the launcher falls back to /tmp', { skip: !posix }, (t) => {
+  const home = tempDir(t, 'zn-zc-tmpdir-');
+  const hook = fakeNode(t, 'cat >/dev/null; echo answer; printf ok > "$ZN_HOOK_ACK"; exit 0');
+  for (const deadlineS of [5, undefined]) {
+    const file = launcher.writeLauncher('zcode', hook, RUNNER, { home: tempDir(t, 'zn-zc-tmpdir-h-'), env: process.env, deadlineS });
+    for (const TMPDIR of [path.join(home, 'missing'), '/proc']) {
+      const r = spawnSync(file, ['PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, TMPDIR }, timeout: 20000 });
+      assert.equal(r.status, 0, TMPDIR + ' (deadline ' + deadlineS + '): ' + r.stderr);
+      assert.equal(r.stdout.trim(), 'answer', TMPDIR);
+    }
+  }
 });
 
 test('failed install and failed uninstall leave no .bak-zn file behind', { skip: !posix }, (t) => {

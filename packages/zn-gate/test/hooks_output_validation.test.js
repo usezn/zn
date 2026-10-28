@@ -194,10 +194,23 @@ test('posix launcher: the confirmation file is removed when the launcher ends', 
   }
 });
 
+// The launcher falls back from TMPDIR to /tmp; these tests take the fallback out of a copy to reach "no private file at all".
+const withoutTmpFallback = (file) => {
+  const text = fs.readFileSync(file, 'utf8');
+  const out = text.replace('for ZN_TD in "${TMPDIR:-/tmp}" /tmp; do', 'for ZN_TD in "${TMPDIR:-/tmp}"; do');
+  assert.notEqual(out, text, 'the test copy has no /tmp fallback');
+  fs.writeFileSync(file, out, { mode: 0o755 });
+  return file;
+};
+
 test('posix launcher: no confirmation file possible (unwritable temp folder): nothing is accepted as done, the call is blocked', { skip: !posix }, (t) => {
-  const file = writeScript(t, 'claude-code', GOOD);
-  const r = spawnSync('/bin/sh', [file, 'PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: '/nonexistent', TMPDIR: '/nonexistent/zn-no-tmp' } });
+  const env = { PATH: process.env.PATH, HOME: '/nonexistent', TMPDIR: '/nonexistent/zn-no-tmp' };
+  const file = withoutTmpFallback(writeScript(t, 'claude-code', GOOD));
+  const r = spawnSync('/bin/sh', [file, 'PreToolUse'], { input: '{}', encoding: 'utf8', env });
   assert.equal(r.status, 2);
+  // With the /tmp fallback the same TMPDIR does not block.
+  const ok = spawnSync('/bin/sh', [writeScript(t, 'claude-code', GOOD), 'PreToolUse'], { input: '{}', encoding: 'utf8', env });
+  assert.equal(ok.status, 0, ok.stderr);
 });
 
 test('posix launcher: Antigravity (deny JSON on stdout) with a runner that prints "{": the launcher prints its own complete deny JSON', { skip: !posix }, async (t) => {
@@ -304,7 +317,7 @@ test('posix launcher (no mktemp): a FIFO and a link planted at the predictable n
 
 test('posix launcher (no mktemp): every name taken by a FIFO: blocked at once, no hang', { skip: !posix }, (t) => {
   const tmp = tempDir(t, 'zn-ov-plant-');
-  const file = noMktempScript(t, GOOD);
+  const file = withoutTmpFallback(noMktempScript(t, GOOD));
   const r = runPlanted(file, tmp, 'for i in 1 2 3 4 5 6; do mkfifo "$TMPDIR/zn-$n.$$.$i"; done');
   assert.equal(r.status, 2, r.stderr);
   assert.match(r.stderr, /so this was blocked/);
