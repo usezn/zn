@@ -26,7 +26,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-28.1';
+const COMMAND_RULES_VERSION = '2026-10-28.2';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -245,16 +245,29 @@ function findPaths(args) {
   return paths;
 }
 
-/* The program xargs runs: its first word that is neither an option nor an option's value. */
-function xargsProgram(args) {
+/* The command xargs runs: its words from the first one that is neither an option nor an option's value. */
+function xargsCommand(args) {
   for (let i = 0; i < args.length; i++) {
     const w = args[i];
-    if (w === '--') return args[i + 1] || '';
+    if (w === '--') return args.slice(i + 1);
     if (XARGS_VALUE.has(w)) { i++; continue; }
     if (w.startsWith('-')) continue;
-    return w;
+    return args.slice(i);
   }
-  return '';
+  return [];
+}
+
+/* Whether the command `words` (run by xargs or find -exec) deletes: rm, shred or unlink, also behind a wrapper (sudo,
+   env, nice, timeout ...) or as the first command of the code of sh -c. */
+function runsDeleter(words, depth = 0) {
+  const u = unwrap(words);
+  const head = programName(u[0] || '');
+  if (DELETERS.test(head)) return true;
+  if (SHELLS.has(head) && depth < MAX_DEPTH) {
+    const k = u.findIndex((w) => /^-[A-Za-z]*c[A-Za-z]*$/.test(w));
+    if (k > 0 && u[k + 1]) return runsDeleter(u[k + 1].trim().split(/\s+/), depth + 1);
+  }
+  return false;
 }
 
 /* git ... clean with -f (not -n or -i) on a home, root or system folder: given with -C or --work-tree, or as a path to clean. */
@@ -307,7 +320,7 @@ function checkSimple(words, depth) {
   }
   if (head === 'find') {
     // A test (-name, -type, -mtime ...) does not make it safe: -name '*' matches every file below the path.
-    const del = rest.includes('-delete') || rest.some((w, i) => FIND_EXEC.has(w) && DELETERS.test(programName(rest[i + 1] || '')));
+    const del = rest.includes('-delete') || rest.some((w, i) => FIND_EXEC.has(w) && runsDeleter(rest.slice(i + 1)));
     if ((del && findPaths(rest).some((w) => dangerousPath(w))) && on('rm_root_home')) return 'rm_root_home';
   }
   if ((head === 'git' && gitCleanDanger(rest)) && on('rm_root_home')) return 'rm_root_home';
@@ -411,7 +424,7 @@ function checkPipeline(pipe) {
   const findAt = heads.findIndex((h) => h.head === 'find' && findPaths(h.args.slice(1)).some((w) => dangerousPath(w)));
   if (findAt >= 0) {
     for (let j = findAt + 1; j < pipe.length; j++) {
-      if ((heads[j].head === 'xargs' && DELETERS.test(programName(xargsProgram(heads[j].args.slice(1))))) && on('rm_root_home')) return 'rm_root_home';
+      if ((heads[j].head === 'xargs' && runsDeleter(xargsCommand(heads[j].args.slice(1)))) && on('rm_root_home')) return 'rm_root_home';
     }
   }
   // A redirect to a block device, with or without a download.

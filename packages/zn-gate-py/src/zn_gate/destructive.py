@@ -28,7 +28,7 @@ from typing import List, Optional, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-28.1"
+COMMAND_RULES_VERSION = "2026-10-28.2"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -425,21 +425,35 @@ def _find_paths(args: List[str]) -> List[str]:
     return paths
 
 
-def _xargs_program(args: List[str]) -> str:
-    """The program xargs runs: its first word that is neither an option nor an option's value."""
+def _xargs_command(args: List[str]) -> List[str]:
+    """The command xargs runs: its words from the first one that is neither an option nor an option's value."""
     i = 0
     while i < len(args):
         w = args[i]
         if w == "--":
-            return args[i + 1] if i + 1 < len(args) else ""
+            return args[i + 1:]
         if w in _XARGS_VALUE:
             i += 2
             continue
         if w.startswith("-"):
             i += 1
             continue
-        return w
-    return ""
+        return args[i:]
+    return []
+
+
+def _runs_deleter(words: List[str], depth: int = 0) -> bool:
+    """Whether the command `words` (run by xargs or find -exec) deletes: rm, shred or unlink, also behind
+    a wrapper (sudo, env, nice, timeout ...) or as the first command of the code of sh -c."""
+    u = _unwrap(words)
+    head = _program_name(u[0] if u else "")
+    if _DELETERS.match(head):
+        return True
+    if head in _SHELLS and depth < _MAX_DEPTH:
+        k = next((j for j, w in enumerate(u) if re.match(r"^-[A-Za-z]*c[A-Za-z]*\Z", w)), -1)
+        if k > 0 and k + 1 < len(u):
+            return _runs_deleter(u[k + 1].split(), depth + 1)
+    return False
 
 
 def _git_clean_danger(args: List[str]) -> bool:
@@ -505,7 +519,7 @@ def _check_simple(words: List[str], depth: int) -> Optional[str]:
     if head == "find":
         # A test (-name, -type, -mtime ...) does not make it safe: -name '*' matches every file below the path.
         delete = "-delete" in rest or any(
-            w in _FIND_EXEC and _DELETERS.match(_program_name(rest[j + 1] if j + 1 < len(rest) else ""))
+            w in _FIND_EXEC and _runs_deleter(rest[j + 1:])
             for j, w in enumerate(rest)
         )
         if delete and any(_dangerous_path(w) for w in _find_paths(rest)):
@@ -637,7 +651,7 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
     find_at = next((j for j, h in enumerate(heads) if h[1] == "find" and any(_dangerous_path(w) for w in _find_paths(h[0][1:]))), -1)
     if find_at >= 0:
         for j in range(find_at + 1, len(pipe)):
-            if heads[j][1] == "xargs" and _DELETERS.match(_program_name(_xargs_program(heads[j][0][1:]))):
+            if heads[j][1] == "xargs" and _runs_deleter(_xargs_command(heads[j][0][1:])):
                 return "rm_root_home"
     for words, _sep in pipe:
         for t in _redirect_targets(words):

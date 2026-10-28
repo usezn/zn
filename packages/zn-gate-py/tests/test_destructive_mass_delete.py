@@ -5,6 +5,15 @@ zn-gate/test/destructive_mass_delete.test.js. The strings are test data: they ar
 from zn_gate.destructive import check_command
 
 BLOCKED = [
+    "find ~ | xargs sudo rm",
+    "find ~ -print0 | xargs -0 env rm",
+    "find / | xargs nice rm -f",
+    "find ~ | xargs timeout 5 rm",
+    "find ~ -exec sudo rm -rf {} +",
+    "find ~ -exec env rm {} \\;",
+    "find / -exec nice rm {} +",
+    "find ~ -exec sh -c 'rm -rf {}' \\;",
+    "find ~ | xargs sh -c 'rm -f \"$@\"' _",
     "find -L ~ -delete",
     "find -H / -name x -delete",
     "find -P -L ~ -exec rm {} +",
@@ -30,6 +39,10 @@ BLOCKED = [
 ]
 
 ALLOWED = [
+    "find ~ | xargs sudo ls -la",
+    "find ~ -exec sh -c 'echo {}' \\;",
+    "find ./build | xargs sudo rm",
+    "find ~ -exec env cat {} +",
     "find -L ~/projects/app/build -delete",
     "find -L ~ -name x -print",
     "find -O3 ./build -delete",
