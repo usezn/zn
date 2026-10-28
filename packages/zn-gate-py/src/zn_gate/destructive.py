@@ -28,7 +28,7 @@ from typing import List, Optional, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-27.1"
+COMMAND_RULES_VERSION = "2026-10-28.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -407,10 +407,18 @@ def _world_writable(mode: str) -> bool:
     return bool(m and (m.group(1) == "" or re.search(r"[ao]", m.group(1))))
 
 
+# The options find takes before its paths: -H, -L, -P (links), -D <debug options> and -O<level>.
+_FIND_GLOBAL_RE = re.compile(r"^-(?:[HLP]+|D|O\d*)\Z")
+
+
 def _find_paths(args: List[str]) -> List[str]:
-    """The paths a find command starts from: the words before its first option or expression."""
+    """The paths a find command starts from: the words before its first option or
+    expression, after its leading options."""
     paths: List[str] = []
-    for w in args:
+    i = 0
+    while i < len(args) and _FIND_GLOBAL_RE.match(args[i]):
+        i += 2 if args[i] == "-D" else 1
+    for w in args[i:]:
         if w.startswith("-") or w == "(" or w == "!":
             break
         paths.append(w)

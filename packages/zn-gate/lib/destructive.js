@@ -26,7 +26,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-27.1';
+const COMMAND_RULES_VERSION = '2026-10-28.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -229,10 +229,19 @@ function redirectTargets(words) {
   return out;
 }
 
-/* The paths a find command starts from: the words before its first option or expression. */
+// The options find takes before its paths: -H, -L, -P (links), -D <debug options> and -O<level>.
+const FIND_GLOBAL_RE = /^-(?:[HLP]+|D|O\d*)$/;
+
+/* The paths a find command starts from: the words before its first option or expression, after its leading options. */
 function findPaths(args) {
   const paths = [];
-  for (const w of args) { if (w.startsWith('-') || w === '(' || w === '!') break; paths.push(w); }
+  let i = 0;
+  while (i < args.length && FIND_GLOBAL_RE.test(args[i])) i += args[i] === '-D' ? 2 : 1;
+  for (; i < args.length; i++) {
+    const w = args[i];
+    if (w.startsWith('-') || w === '(' || w === '!') break;
+    paths.push(w);
+  }
   return paths;
 }
 

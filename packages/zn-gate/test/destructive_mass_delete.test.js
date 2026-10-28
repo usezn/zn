@@ -9,6 +9,11 @@ const assert = require('node:assert/strict');
 const { checkCommand, denial } = require('../lib/destructive');
 
 const BLOCKED = [
+  'find -L ~ -delete',
+  'find -H / -name x -delete',
+  'find -P -L ~ -exec rm {} +',
+  'find -D tree ~ -delete',
+  'find -O3 / -delete',
   'find ~ -name "*.bak" -delete',
   'find / -name "*" -delete',
   'find $HOME -type f -mtime +30 -exec rm -f {} +',
@@ -29,6 +34,9 @@ const BLOCKED = [
 ];
 
 const ALLOWED = [
+  'find -L ~/projects/app/build -delete',
+  'find -L ~ -name x -print',
+  'find -O3 ./build -delete',
   'find ~ -name "*.bak" -print',
   'find / -name "*.conf" -type f 2>/dev/null',
   'find . -name "*.pyc" -delete',
