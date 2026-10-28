@@ -125,7 +125,6 @@ test('own tools can be installed in the bin folders; only node and zn names and 
     'mkdir -p ~/bin',
     'cp target/release/mytool ~/.local/bin/',
     'install -m755 build/tool ~/.local/bin/',
-    'tar -C ~/.local/bin -xzf tool.tgz',
     'mkdir -p ~/bin && cp scripts/deploy.sh ~/bin/',
     'cp -t ~/.local/bin ./mytool',
     'ln -s ./mytool ~/.local/bin/mytool',
@@ -329,6 +328,50 @@ test('the words after a command substitution stay in the command around it: writ
     'cp a ./dist/ 2>&1',
     'node ~/.local/bin/zn --version 2>&1',
     'cp a ./dist/ # ~/bin',
+  ];
+  for (const c of ok) assert.equal(sh(c), null, c);
+});
+
+test('Daybreak 1.15: archives, global installs, patch and git, ~name, <> and one-line functions that write a Node.js folder are refused', () => {
+  const me = require('os').userInfo().username;
+  const bad = [
+    'tar -xzf fixture-with-node.tgz -C ~/.local/bin',
+    'tar -C ~/.local/bin -xzf tool.tgz',
+    'unzip fixture-with-node.zip -d ~/.local/bin',
+    'npm install -g --prefix ~/.local ./fixture-node-package',
+    'npm i -g --prefix=~/.local ./pkg',
+    'pnpm add --global --prefix ~/.local ./pkg',
+    'patch ~/.nvm/nvm.sh < changes.diff',
+    'git -C ~/.nvm checkout fake-ref',
+    'git clone https://example.com/fake.git ~/.nvm/versions/node/v22',
+    'git -C ~/.nvm reset --hard',
+    'cp src/node ~' + me + '/bin/node',
+    ': <> ~/.local/bin/node',
+    'exec 3<>~/.local/bin/node',
+    'exec 3<> ~/.local/bin/node',
+    'f(){ cp src/node ~/.local/bin/; }; f',
+    'function f { cp src/node ~/.local/bin/; }; f',
+    '{ cp src/node ~/.local/bin/; }',
+  ];
+  for (const c of bad) assert.match(String(sh(c)), /protected/, c);
+  const ok = [
+    'mkdir -p ./bin && cp src/node ./bin/node',
+    'npm install',
+    'npm ci',
+    'npm install -g zn-gate',
+    'npm install --prefix ./vendor ./pkg',
+    'cp build/mytool ~/bin/',
+    'go install example.com/fake@v1.0.0',
+    'cargo install fake',
+    'git -C ~/.nvm status',
+    'git -C ~/.nvm log --oneline',
+    'git -C ~/.nvm diff',
+    'tar -xzf app.tgz -C ./build',
+    'cat < ~/.nvm/nvm.sh',
+    'f(){ echo hi; }; f',
+    '{ cp a ./dist/; }',
+    'exec 3<> ./fifo-example',
+    'cat < ~/.local/bin/node',
   ];
   for (const c of ok) assert.equal(sh(c), null, c);
 });

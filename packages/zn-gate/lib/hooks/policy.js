@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-28.4';
+const POLICY_RULES_VERSION = '2026-10-28.6';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -38,9 +38,21 @@ const POLICY_RULES_VERSION = '2026-10-28.4';
 const HOME_VAR_RE = /^(?:\$\{?HOME\}?|\$env:(?:HOME|USERPROFILE)|%USERPROFILE%|%HOMEDRIVE%%HOMEPATH%)(?=$|[\\/])/i;
 const ZN_HOME_VAR_RE = /^(?:\$\{?ZN_HOME\}?|\$env:ZN_HOME|%ZN_HOME%)(?=$|[\\/])/i;
 
+let currentUserName;
+// The login name of this account (bash expands ~name of it to the same home as ~), or '' when it cannot be read.
+function userName() {
+  if (currentUserName === undefined) {
+    try { currentUserName = String(os.userInfo().username || ''); } catch (_) { currentUserName = ''; }
+  }
+  return currentUserName;
+}
+
 function expandHome(p, home) {
   if (p === '~') return home;
   if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(home, p.slice(2));
+  // ~name of this account (~ubuntu when the user is ubuntu) is the same home.
+  const named = /^~([A-Za-z0-9._-]+)(?=$|[\/\\])/.exec(p);
+  if (named && named[1] === userName()) return path.join(home, p.slice(named[0].length + 1));
   if (ZN_HOME_VAR_RE.test(p)) return path.join(home, '.zn', p.replace(ZN_HOME_VAR_RE, ''));
   if (HOME_VAR_RE.test(p)) return path.join(home, p.replace(HOME_VAR_RE, ''));
   return p;
@@ -1423,8 +1435,11 @@ function allWords(cmd, posix = false) {
         if (/^[A-Za-z]:\\/.test(typed) && !/['"]/.test(typed)) t = typed;
       }
       // `< file` only reads: its operator and file are not arguments of the command.
+      // `<>file`, `3<> file`: opened for reading and for writing (and created when missing): read like `<`, and also a
+      // write target (readWrite) for the folders and settings that may not be written.
+      const readWrite = /^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>(?!\()/.test(w.text) || /^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>$/.test(prev);
       const inRedir = /^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?(?!\()/.test(w.text) || /^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?$/.test(prev);
-      ctx.words.push({ text: t, redirectTarget: isRedirTarget, inRedir, head, seq, sub, gitArgs, git: gi >= 0, comment });
+      ctx.words.push({ text: t, redirectTarget: isRedirTarget, readWrite, inRedir, head, seq, sub, gitArgs, git: gi >= 0, comment });
     }
     if (scan.operator === '(') {
       // $( <( >( : this command goes on after the matching ); a plain ( starts a subshell, and the command ends here.
@@ -2597,7 +2612,7 @@ function bashDenialOf(cmd, opts = {}) {
     }
     let c = classified.get(text);
     // A cd's own target is not written to (where the cd leads is followed by cdBasesOf).
-    if ((writing || w.redirectTarget) && !CD_CMDS.has(bareHead(w.head).toLowerCase()) &&
+    if ((writing || w.redirectTarget || w.readWrite) && !CD_CMDS.has(bareHead(w.head).toLowerCase()) &&
         (!c || (c.kind !== 'zn_state' && c.kind !== 'agent_config'))) {
       if (!elsewhereProt.has(text)) {
         if (overBudget(opts.budget, (opts.cdBases && opts.cdBases.dirs.length) || 1)) return TOO_SLOW_MESSAGE;
@@ -2624,7 +2639,7 @@ function bashDenialOf(cmd, opts = {}) {
     }
     if (c.kind === 'zn_state') return denialOf(c, text, opts);
     if (c.kind === 'agent_config') {
-      if (w.redirectTarget || writing) return agentConfigDenial(text, c);
+      if (w.redirectTarget || w.readWrite || writing) return agentConfigDenial(text, c);
       continue; // reading the settings is allowed
     }
     if (c.kind === 'node_exe') {
@@ -2837,7 +2852,7 @@ const PARALLEL_SHORT_NO_VALUE = new Set(['-k', '-q', '-u', '-v', '-t', '-X', '-m
 // parallel fills in {}, {1}, {/}, {.}, {//}, {#} and the rest for each item.
 const PARALLEL_PLACEHOLDER_RE = /\{[^{}\s]*\}/;
 // Words of a loop or a condition that come before the command they run (`do cp a bin`).
-const NODE_SHELL_KEYWORDS = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', '!']);
+const NODE_SHELL_KEYWORDS = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', '!', '{', '}']);
 // The name of the program in a path, without a Windows extension.
 const nameOfProgram = (t) => String(t).split(/[\\/]/).pop().toLowerCase().replace(/\.(?:exe|cmd|bat)$/, '');
 
@@ -2859,6 +2874,24 @@ function wrapperPlaceholders(ws, to, set) {
   return set;
 }
 
+// git subcommands that change the work tree (or make a new one), and the options before a subcommand that take a value.
+const GIT_TREE_WRITE = new Set(['checkout', 'switch', 'restore', 'reset', 'clone', 'pull', 'merge', 'rebase', 'apply', 'am',
+  'cherry-pick', 'revert', 'stash', 'rm', 'mv', 'clean', 'init', 'submodule', 'worktree', 'read-tree', 'checkout-index']);
+const GIT_PRE_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--config-env']);
+// Package managers whose global install puts the package's programs in <prefix>/bin.
+const PKG_MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
+
+/** The subcommand of the git at ws[i]: its first word that is neither an option nor an option's value. */
+function gitSubcommandOf(ws, i) {
+  for (let k = i + 1; k < ws.length; k++) {
+    const t = ws[k].text;
+    if (GIT_PRE_VALUE.has(t)) { k++; continue; }
+    if (t.startsWith('-')) continue;
+    return t.toLowerCase();
+  }
+  return '';
+}
+
 /** Group the words of each simple command and work out its program, its flags and where its files go. `outer` holds
     the placeholders of the xargs or parallel that runs this command as shell code (xargs -I F sh -c 'cp F bin'). */
 function markRuns(words, outer) {
@@ -2878,6 +2911,8 @@ function markRuns(words, outer) {
     for (; i < ws.length; i++) {
       const t = ws[i].text;
       if (ASSIGNMENT_RE.test(t) || t === '--' || NODE_SHELL_KEYWORDS.has(t)) continue;
+      // function name { ...; } : the body is the command (f(){ ...; } reaches here as its body already).
+      if (t === 'function' && ws[i + 1]) { i++; continue; }
       if (NODE_WRAPPERS.has(nameOfProgram(t))) {
         const wrap = nameOfProgram(t);
         for (let j = i + 1; j < ws.length && ws[j].text.startsWith('-'); j++) {
@@ -2892,6 +2927,11 @@ function markRuns(words, outer) {
       break;
     }
     run.head = ws[i] ? nameOfProgram(ws[i].text) : '';
+    // Programs that change the files of a folder they are given without naming each file: patch, and git when its
+    // subcommand writes the work tree (checkout, clone, pull, reset...). A Node.js folder among their words is refused.
+    run.treeWrite = run.head === 'patch' || (run.head === 'git' && GIT_TREE_WRITE.has(gitSubcommandOf(ws, i)));
+    // npm, pnpm, yarn and bun with a global install into a prefix: the prefix gets the package's bin (node, zn...).
+    run.anyOut = new Set();
     // The words split out of quoted code and substitutions (sequence 0) are not a command of their own.
     if (run.words[0].seq === 0) run.head = '';
     run.flags = [];
@@ -2909,6 +2949,7 @@ function markRuns(words, outer) {
         run.flags.push(t);
         if (/^--target-directory=/.test(t)) { dest = x; run.destByFlag = true; }
         if (/^--(?:output|output-document|directory|directory-prefix)=|^-o.+/.test(t) && /^(?:curl|wget|7z|7za)$/.test(run.head)) run.out.add(x);
+        if (PKG_MANAGERS.has(run.head) && /^--prefix=/.test(t)) run.anyOut.add(x);
         continue;
       }
       const prev = k > i + 1 && ws[k - 1].text.startsWith('-') ? ws[k - 1].text : '';
@@ -2916,10 +2957,13 @@ function markRuns(words, outer) {
       if (prev === '-t' || prev === '--target-directory') { dest = x; run.destByFlag = true; }
       if (/^(?:tar|bsdtar)$/.test(run.head) && (prev === '-C' || prev === '--directory')) run.out.add(x);
       if (run.head === 'unzip' && prev === '-d') run.out.add(x);
+      if (PKG_MANAGERS.has(run.head) && prev === '--prefix') run.anyOut.add(x);
       if (run.head === 'curl' && (/^-[a-zA-Z]*o$/.test(prev) || prev === '--output')) run.out.add(x);
       if (run.head === 'wget' && (prev === '-O' || prev === '--output-document' || prev === '-P' || prev === '--directory-prefix')) run.out.add(x);
       if (run.head === 'dd' && /^of=/.test(x.text)) run.out.add(x);
     }
+    // A prefix counts only for a global install (-g, --global, --location=global).
+    if (run.anyOut.size && !run.flags.some((f) => f === '-g' || f === '--global' || f === '--location=global')) run.anyOut.clear();
     if (!dest && NODE_DEST_LAST.has(run.head)) {
       const idx = run.head === 'robocopy' ? 1 : run.args.length - 1;
       if (run.args.length >= 2 && run.args[idx]) dest = run.args[idx];
@@ -2942,7 +2986,7 @@ const NODE_CODE_WRITE_RE = /\bopen\s*\(|writeFile|appendFile|copyFile|\brename|u
  * command. Running it, sourcing it, listing it, reading it and changing into it are not.
  */
 function nodeExeWrites(w, text, c, opts) {
-  if (w.redirectTarget) return c.role === 'file';
+  if (w.redirectTarget || w.readWrite) return c.role === 'file';
   const run = w.run;
   // parallel --unknown-option ... : what it runs cannot be told apart from the option's value.
   if (c.role === 'bin' && run && run.unsure) return true;
@@ -2950,7 +2994,11 @@ function nodeExeWrites(w, text, c, opts) {
     // A word found inside the code an interpreter runs (python -c "open(...)"): refused when that code writes files.
     return c.role === 'file' && !!opts.codeHead && NODE_CODE_WRITE_RE.test(opts.cmdText || '');
   }
-  if (run.out.has(w)) return c.role === 'file';
+  // A global install with this prefix, or patch/git writing a Node.js folder: refused whatever the role.
+  if ((run.anyOut && run.anyOut.has(w)) || run.treeWrite) return true;
+  // An archive extracted (tar -C, unzip -d) or a file downloaded into a bin folder may be a node or zn: its names
+  // cannot be seen, so it is refused like a file written there.
+  if (run.out.has(w)) return c.role === 'file' || c.role === 'bin';
   const head = run.head;
   const isDest = run.dest === w;
   const delMove = NODE_DEL_MOVE.has(head);
