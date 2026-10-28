@@ -327,10 +327,10 @@ jobs:
           persist-credentials: false
       - name: Scan AI agent prompts and tools
         # Pin the action to a full commit SHA; the comment names the release.
-        uses: usezn/zn@746be20f3276ab0d589f2d6df941b5d31a5396d8 # v1.13.1
+        uses: usezn/zn@2afcaa17c7d1cb8fb5ded21f5f849ce8eba2bc5e # v1.14.1
         with:
-          version: '1.13.1'
-          package-sha256: '7fab55ba5c01790c06582144b7f991dc03698039813fdb1556986f6327bed0a1'
+          version: '1.14.1'
+          package-sha256: '5ae5bae2625cad5fc1d0ca6d88a0d32f0e26310ef285d8adf48ddf68cb6983ba'
           path: '.'
           fail-on-threat: 'true'
           format: 'github'
@@ -362,9 +362,9 @@ jobs:
         id: zn
         # Pin to the full commit SHA of an Action release v1.10.0 or later.
         # The zn-gate package version is set by version below.
-        uses: usezn/zn@746be20f3276ab0d589f2d6df941b5d31a5396d8 # v1.13.1
+        uses: usezn/zn@2afcaa17c7d1cb8fb5ded21f5f849ce8eba2bc5e # v1.14.1
         with:
-          version: '1.13.1'
+          version: '1.14.1'
           mode: 'both'
           format: 'sarif'
           severity-threshold: 'medium'   # stricter than the default (high)
