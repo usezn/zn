@@ -50,10 +50,20 @@ for these things only:
     `zn-gate connect`, and to read the clipboard when the person passes
     --clipboard to store a secret;
   - to run zn's own hook once when the person runs `zn-gate check`.
+  - to give the vault's local named pipe the same single-user permission list;
+  - to read, without changing them, the permission lists of a script and of
+    every folder above it before the vault passes a secret to that script, and
+    of the folder that holds zn's hook launcher and the folders above it, so
+    that zn refuses a place that another account can change;
+  - to read the list of running programs (name, parent and command line) when a
+    command that only a person should run, such as `zn-gate init`,
+    `zn-gate uninstall`, `zn vault purge` or adding a secret, checks whether a
+    coding agent started it. The list is kept in memory only; it is not saved
+    or sent.
 The hooks that zn-gate writes for an agent on Windows also start this
 PowerShell to run zn-gate. Nothing is downloaded for this, no user or group is
 created or changed, and the permission changes apply only to zn-gate's own
-folders and files.
+folders, files and named pipe.
 
 4. Deleting the vault
 
@@ -72,9 +82,11 @@ download or run code from the network; everything it runs is in the package. It
 collects no telemetry unless the person turns it on. Network use is limited to
 features the person chooses: the optional cloud check (`zn-gate connect`, which
 talks to https://api.usezn.com), zn Team after the person joins an organization,
-and, off by default, pseudonymous daily counts that `zn-gate stats share on`
-sends after printing them. Hooks, the vault, the shield and every other command
-work locally. The local dashboard listens on 127.0.0.1 only.
+HTTP requests that the secrets MCP server makes for an agent, only to the hosts
+the person allowed for each secret (`zn secret allow --host`), and, off by
+default, pseudonymous daily counts that `zn-gate stats share on` sends after
+printing them. Hooks, the vault, the shield and every other command work
+locally. The local dashboard listens on 127.0.0.1 only.
 
 6. More information
 
