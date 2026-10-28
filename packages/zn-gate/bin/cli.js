@@ -1067,7 +1067,13 @@ ${ruleLine(process.env, 60)}\n`);
       const res = exportEvidenceLedger(EVIDENCE_FILE, format);
       if (!res.valid) process.stderr.write(`Tamper detected: ${res.error}\n${recoveryHint()}\n`);
       if (options.output) {
-        fs.writeFileSync(options.output, res.content, 'utf8');
+        try {
+          fs.writeFileSync(options.output, res.content, 'utf8');
+        } catch (err) {
+          process.stderr.write(`zn-gate: could not write ${options.output}: ${fileErrorWhy(err)}. Choose another file with --output.\n`);
+          process.exitCode = 1;
+          return;
+        }
         process.stdout.write(`Exported ${res.total} audit records to ${options.output} (Integrity: ${res.valid ? 'VALID' : 'TAMPERED'}).\n`);
       } else {
         process.stdout.write(res.content);
@@ -1270,7 +1276,29 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
   process.exit(1);
 }
 
+// Why a file could not be read or written, in plain words (the code shows with ZN_VERBOSE=1), or the error's own message.
+function fileErrorWhy(err) {
+  const why = {
+    EACCES: 'your account is not allowed to write there',
+    EPERM: 'your account is not allowed to write there',
+    ENOENT: 'its folder does not exist',
+    ENOTDIR: 'a part of the path is a file where a folder should be',
+    EISDIR: 'that is a folder, not a file',
+    ENOSPC: 'the disk is full',
+    EDQUOT: 'your disk quota is used up',
+    EROFS: 'it is on a read-only disk',
+    ENAMETOOLONG: 'the path is too long',
+  }[err && err.code];
+  if (!why) return String((err && err.message) || err);
+  return why + (require('../lib/verbose').isVerbose(process.env) ? ' [' + err.code + ']' : '');
+}
+
 main().catch((err) => {
-  process.stderr.write(`[zn-gate] Fatal error: ${err.message}\n`);
+  // A file system error names its file and the reason; anything else keeps its message.
+  if (err && err.path && typeof err.code === 'string' && /^E[A-Z]+$/.test(err.code)) {
+    process.stderr.write(`[zn-gate] ${err.path}: ${fileErrorWhy(err)}.\n`);
+  } else {
+    process.stderr.write(`[zn-gate] Fatal error: ${err.message}\n`);
+  }
   process.exit(1);
 });
