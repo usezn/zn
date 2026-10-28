@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-28.1';
+const POLICY_RULES_VERSION = '2026-10-28.4';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1316,6 +1316,9 @@ function scanFirstCommand(cmd, posix = false) {
     if (ch === '`' || (ch === '$' && s[i + 1] === '(')) { substitution = true; pushChar(ch, i); continue; }
     // `>|` is one redirection (it overrides noclobber), not a `>` followed by a pipe.
     if (ch === '|' && s[i - 1] === '>' && cur && cur.end === i && !cur.text.endsWith('>>')) { pushChar(ch, i); continue; }
+    // `2>&1`, `>&2`, `<&3`: a copy of a descriptor, part of the redirection, not a `&` that ends the command (the rest of it
+    // would be read as a command of its own, and the word before as its last argument).
+    if (ch === '&' && (s[i - 1] === '>' || s[i - 1] === '<') && cur && cur.end === i && /^[0-9-]/.test(s[i + 1] || '')) { pushChar(ch, i); continue; }
     if (ch === ';' || ch === '&' || ch === '|' || ch === '\n' || ch === '(' || ch === ')') {
       endWord();
       return { end: i, words, substitution, operator: ch, unterminated: false };
@@ -1369,18 +1372,32 @@ function allWords(cmd, posix = false) {
   const out = [];
   let rest = String(cmd);
   let guard = 0;
+  // The scan stops at the ( of $( ), <( ) and >( ). The commands inside are read as commands of their own, and the words
+  // after the matching ) go on with the command around it (cp $(cat list) ~/bin: ~/bin is still a word of cp), with its
+  // sequence number and program. Its words wait in `open` and are added to `out` together, after the inner commands.
+  const open = [];
+  let ctx = null;
+  // One push per word: a spread of a long command (40 000 words) would be slow and can overflow the stack.
+  const flush = (ws) => { for (const w of ws) out.push(w); };
   while (rest.length && guard++ < SIMPLE_COMMANDS_MAX) {
     const scan = scanFirstCommand(rest, posix);
-    const head = commandName(scan.words);
-    // git also runs behind sudo, env, command, xargs and the like.
-    const gi = gitStart(scan.words);
-    const sub = gi >= 0 ? gitSubcommand(scan.words.slice(gi)) : '';
-    const gitArgs = sub ? scan.words.map((x) => x.text) : null;
+    if (!ctx) {
+      // git also runs behind sudo, env, command, xargs and the like.
+      const gi0 = gitStart(scan.words);
+      const sub0 = gi0 >= 0 ? gitSubcommand(scan.words.slice(gi0)) : '';
+      ctx = { seq: guard, head: commandName(scan.words), gi: gi0, sub: sub0, gitArgs: sub0 ? scan.words.map((x) => x.text) : null, words: [] };
+    }
+    const { head, gi, sub, gitArgs } = ctx;
+    const seq = ctx.seq;
+    // From an unquoted # at the start of a word, bash and PowerShell read a comment. Those words are still checked as
+    // paths (cmd.exe has no such comment), but they are not arguments of the command (markRuns).
+    let comment = false;
     for (let k = 0; k < scan.words.length; k++) {
       const w = scan.words[k];
       const prev = k > 0 ? scan.words[k - 1].text : '';
       const prevRaw = k > 0 ? rest.slice(scan.words[k - 1].start, scan.words[k - 1].end) : '';
       const raw = rest.slice(w.start, w.end);
+      if (raw.startsWith('#')) comment = true;
       // The operator can sit at the end of the word before (`echo x> file`, `echo x>> file`) or inside the word
       // (`echo x>file`): a redirect whatever the program, bash, cmd.exe or PowerShell.
       const glued = gluedRedirect(raw);
@@ -1395,7 +1412,7 @@ function allWords(cmd, posix = false) {
         targetRaw = raw.slice(glued.at + glued.len);
         t = dequoteFragment(targetRaw, posix);
         // `cat ~/.ssh/id_rsa>x` reads the file before it writes x: the part before the operator is checked as a word.
-        if (gluedOp) out.push({ text: dequoteFragment(prefixRaw, posix), redirectTarget: afterOp, head, seq: guard, sub, gitArgs, git: gi >= 0 });
+        if (gluedOp) ctx.words.push({ text: dequoteFragment(prefixRaw, posix), redirectTarget: afterOp, head, seq, sub, gitArgs, git: gi >= 0 });
       }
       // Input redirections: <file, 0<file, <>file (read and write), {fd}<file.
       t = t.replace(/^(?:[0-9]*|\*)(?:>\||>>?)/, '').replace(/^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?/, '');
@@ -1407,10 +1424,27 @@ function allWords(cmd, posix = false) {
       }
       // `< file` only reads: its operator and file are not arguments of the command.
       const inRedir = /^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?(?!\()/.test(w.text) || /^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?$/.test(prev);
-      out.push({ text: t, redirectTarget: isRedirTarget, inRedir, head, seq: guard, sub, gitArgs, git: gi >= 0 });
+      ctx.words.push({ text: t, redirectTarget: isRedirTarget, inRedir, head, seq, sub, gitArgs, git: gi >= 0, comment });
+    }
+    if (scan.operator === '(') {
+      // $( <( >( : this command goes on after the matching ); a plain ( starts a subshell, and the command ends here.
+      const inner = /[$<>]$/.test(rest.slice(0, scan.end));
+      // <( ) and >( ) give the command a file name it cannot see, as $( ) gives a word: `$` stands for it.
+      if (/[<>]$/.test(rest.slice(0, scan.end))) ctx.words.push({ text: '$', redirectTarget: false, inRedir: false, head, seq, sub, gitArgs, git: gi >= 0 });
+      if (!inner) flush(ctx.words);
+      open.push(inner ? ctx : null);
+      ctx = null;
+    } else if (scan.operator === ')') {
+      flush(ctx.words);
+      ctx = open.length ? open.pop() : null;
+    } else {
+      flush(ctx.words);
+      ctx = null;
     }
     rest = rest.slice(scan.end + 1);
   }
+  if (ctx) flush(ctx.words);
+  while (open.length) { const c = open.pop(); if (c) flush(c.words); }
   // Simple commands past the limit were not read: the caller refuses the command rather than check only part of it.
   if (rest.length) out.truncated = true;
   return out;
@@ -2781,7 +2815,7 @@ const NODE_WRAPPER_VALUE_FLAGS = {
   nice: new Set(['-n']),
   ionice: new Set(['-c', '-n', '-p']),
   stdbuf: new Set(['-i', '-o', '-e']),
-  parallel: new Set(['-j', '-a', '-S', '-N', '-n', '-P', '-L', '-d', '-I', '-C', '-E', '--jobs', '--max-procs', '--arg-file',
+  parallel: new Set(['-j', '-a', '-S', '-N', '-n', '-P', '-L', '-d', '-I', '-C', '-E', '-J', '-s', '-W', '--jobs', '--max-procs', '--arg-file',
     '--sshlogin', '--sshloginfile', '--slf', '--max-args', '--max-replace-args', '--delimiter', '--colsep', '--load',
     '--memfree', '--timeout', '--retries', '--joblog', '--results', '--res', '--tmpdir', '--workdir', '--wd', '--basefile',
     '--bf', '--return', '--transferfile', '--tf', '--nice', '--halt', '--halt-on-error', '--delay', '--tagstring',
@@ -2790,7 +2824,7 @@ const NODE_WRAPPER_VALUE_FLAGS = {
     '--dirnamereplace', '--dnr', '--basenameextensionreplace', '--bner', '--seqreplace', '--slotreplace', '--termseq',
     '--arg-sep', '--arg-file-sep', '--eof', '--shellquote-of', '--sqlmaster', '--sqlworker', '--sqlandworker', '--ssh-delay']),
 };
-// Options of parallel that take no value. Any other long option makes the command it runs unsure, and a copy into a
+// Long options of parallel that take no value. Any other option (long, or short and on its own) makes the command it runs unsure, and a copy into a
 // bin folder in it is refused: a value read as the command would hide the copy.
 const PARALLEL_NO_VALUE = new Set(['--keep-order', '--verbose', '--dry-run', '--null', '--no-notice', '--will-cite', '--bar',
   '--eta', '--progress', '--line-buffer', '--lb', '--ungroup', '--group', '--quote', '--pipe', '--pipepart', '--tag', '--xargs',
@@ -2798,6 +2832,8 @@ const PARALLEL_NO_VALUE = new Set(['--keep-order', '--verbose', '--dry-run', '--
   '--silent', '--joblog-append', '--keep-going', '--round-robin', '--group-by', '--linebuffer', '--interactive', '--citation',
   '--version', '--help', '--total-jobs', '--resume', '--resume-failed', '--retry-failed', '--use-cpus-instead-of-cores',
   '--use-cores-instead-of-cpus', '--no-run-if-empty', '--noswap', '--number-of-cpus', '--number-of-cores', '--fg', '--bg']);
+// Short options of parallel that take no value written apart (-i, -e, -l and -D take one only when glued: -i{}).
+const PARALLEL_SHORT_NO_VALUE = new Set(['-k', '-q', '-u', '-v', '-t', '-X', '-m', '-0', '-g', '-p', '-r', '-x', '-i', '-e', '-l', '-D', '-h', '-V']);
 // parallel fills in {}, {1}, {/}, {.}, {//}, {#} and the rest for each item.
 const PARALLEL_PLACEHOLDER_RE = /\{[^{}\s]*\}/;
 // Words of a loop or a condition that come before the command they run (`do cp a bin`).
@@ -2835,7 +2871,9 @@ function markRuns(words, outer) {
     cur.words.push(w);
   }
   for (const run of runs) {
-    const ws = run.words.filter((x) => !x.redirectTarget && !x.inRedir);
+    // The operator of a redirection (`>`, `2>`, `>>`; its text is left empty once the operator is cut off) is not an
+    // argument either: its target is already marked. Nor is a comment.
+    const ws = run.words.filter((x) => !x.redirectTarget && !x.inRedir && !x.comment && x.text !== '' && !REDIRECT_OP_WORD_RE.test(x.text));
     let i = 0;
     for (; i < ws.length; i++) {
       const t = ws[i].text;
@@ -2843,8 +2881,8 @@ function markRuns(words, outer) {
       if (NODE_WRAPPERS.has(nameOfProgram(t))) {
         const wrap = nameOfProgram(t);
         for (let j = i + 1; j < ws.length && ws[j].text.startsWith('-'); j++) {
-          if (wrap === 'parallel' && /^--[^=]+$/.test(ws[j].text) && !NODE_WRAPPER_VALUE_FLAGS.parallel.has(ws[j].text) &&
-              !PARALLEL_NO_VALUE.has(ws[j].text)) run.unsure = true;
+          if (wrap === 'parallel' && !NODE_WRAPPER_VALUE_FLAGS.parallel.has(ws[j].text) &&
+              ((/^--[^=]+$/.test(ws[j].text) && !PARALLEL_NO_VALUE.has(ws[j].text)) || (/^-[^-]$/.test(ws[j].text) && !PARALLEL_SHORT_NO_VALUE.has(ws[j].text)))) run.unsure = true;
           if (NODE_WRAPPER_VALUE_FLAGS[wrap] && NODE_WRAPPER_VALUE_FLAGS[wrap].has(ws[j].text)) j++, i++;
           i++;
         }
@@ -2905,9 +2943,6 @@ const NODE_CODE_WRITE_RE = /\bopen\s*\(|writeFile|appendFile|copyFile|\brename|u
  */
 function nodeExeWrites(w, text, c, opts) {
   if (w.redirectTarget) return c.role === 'file';
-  // cp $(cat list) ~/bin/ : the shell splits the substitution into its own words, and the word after it starts a new
-  // command for the scanner (with no program), so the copy is read from the text, before the program is looked at.
-  if (c.role === 'bin' && substitutionCopiesTo(text, opts.cmdText || '')) return true;
   const run = w.run;
   // parallel --unknown-option ... : what it runs cannot be told apart from the option's value.
   if (c.role === 'bin' && run && run.unsure) return true;
@@ -2937,59 +2972,6 @@ function nodeExeWrites(w, text, c, opts) {
   // cp -rT src bin copies the content of src into bin, whatever is in it.
   if (run.recursive && run.flags.some((f) => /^-[a-zA-Z]*T/.test(f) && !f.startsWith('--') || f === '--no-target-directory')) return true;
   return sources.some((a) => nodeSourceMayBeNodeExe(String(a.text), run.placeholders));
-}
-
-/* The simple commands of `cmdText` at its top level, each as its words with quotes kept: split at ; & | and new lines
-   outside quotes, $( ) and backticks. A word that has a $( ) or backticks in it is marked `sub`. */
-function topLevelCommands(cmdText) {
-  const cmds = [];
-  let words = [];
-  let word = '';
-  let sub = false;
-  let depth = 0;
-  let tick = false;
-  let quote = '';
-  const endWord = () => { if (word) words.push({ text: word, sub }); word = ''; sub = false; };
-  const endCmd = () => { endWord(); if (words.length) cmds.push(words); words = []; };
-  for (let i = 0; i < cmdText.length; i++) {
-    const ch = cmdText[i];
-    if (quote === "'") { word += ch; if (ch === "'") quote = ''; continue; }
-    if (ch === '\\' && i + 1 < cmdText.length) { word += ch + cmdText[++i]; continue; }
-    if (ch === '`') { tick = !tick; sub = true; word += ch; continue; }
-    if (ch === '$' && cmdText[i + 1] === '(') { depth++; sub = true; word += '$('; i++; continue; }
-    if (depth || tick) {
-      if (ch === '(') depth++;
-      else if (ch === ')') depth--;
-      word += ch;
-      continue;
-    }
-    if (ch === '"') { quote = quote ? '' : '"'; word += ch; continue; }
-    if (quote) { word += ch; continue; }
-    if (ch === "'") { quote = "'"; word += ch; continue; }
-    if (/[;&|\n]/.test(ch)) endCmd();
-    else if (/[\s()]/.test(ch)) endWord();
-    else word += ch;
-  }
-  endCmd();
-  return cmds;
-}
-
-const unquote = (t) => t.replace(/["']/g, '');
-const noEndSlash = (t) => (t.length > 1 ? t.replace(/[\\/]+$/, '') : t);
-
-/** Whether the command text has a cp, install, rsync, mv or ln with a source made by $( ) or backticks (nested too)
-    and `text` as its last word. Both sides are compared without quotes and without a slash at the end. */
-function substitutionCopiesTo(text, cmdText) {
-  if (!/\$\(|`/.test(cmdText)) return false;
-  const want = noEndSlash(unquote(text));
-  for (const ws of topLevelCommands(cmdText)) {
-    const at = ws.findIndex((x) => /^(?:cp|install|rsync|mv|ln)$/.test(nameOfProgram(unquote(x.text))));
-    if (at < 0 || ws.length - at < 3) continue;
-    const last = ws[ws.length - 1];
-    if (!ws.slice(at + 1, -1).some((x) => x.sub)) continue;
-    if (noEndSlash(unquote(last.text)) === want) return true;
-  }
-  return false;
 }
 
 // Names the hooks start (the patterns of a source are tried against them).

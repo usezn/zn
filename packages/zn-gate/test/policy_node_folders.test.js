@@ -282,3 +282,53 @@ test('a substitution as the source, with the destination ending in a slash or ne
   ];
   for (const c of ok) assert.equal(sh(c), null, c);
 });
+
+test('the words after a command substitution stay in the command around it: writes, deletes and moves there are judged as usual', () => {
+  const bad = [
+    'cp $(echo /x/evil) ~/bin/zn',
+    'cp -f $(echo /x/evil) ~/.local/bin/zn.cmd',
+    'cp $(echo /x/evil) ~/.nvm/nvm.sh',
+    'cp $(cat list) ~/.nvm/',
+    'cp $(cat list) ~/.volta/bin/',
+    'rm -rf $(true) ~/.nvm',
+    'rm -rf $(echo) ~/.local/bin',
+    'mv $(echo) ~/.local/bin /x/old',
+    'cp $(cat list) ~/bin/ 2>/dev/null',
+    'cp $(cat list) ~/bin/ >/dev/null',
+    'cp $(cat list) ~/bin/ 2>&1',
+    'cp $(cat list) ~/bin/ > out.txt',
+    'cp $(cat list) ~/.local/bin/ </dev/null',
+    'cp $(cat list) ~/bin/ -v',
+    'cp $(cat list) ~/bin -f',
+    'rsync -a $(cat list) ~/.local/bin/ --quiet',
+    'cp $(echo ")") ~/bin/',
+    'cp <(cat x) ~/bin/zn',
+    'parallel -J p cp {} ~/bin ::: a',
+    'parallel -s 1000 cp {} ~/bin ::: a',
+    'parallel -W /x cp {} ~/bin ::: a',
+    'parallel -Y cp {} ~/bin ::: a',
+    'cp /x/e ~/bin/zn 2>&1',
+    'cp /x/e ~/.local/bin/node 2>&1 | tee log',
+    'cp /x/e ~/bin/zn >&2',
+    'cp /x/e ~/bin/zn > out.txt',
+    'cp $(cat list) ~/bin/ # c',
+    'cp /x/e ~/bin/zn # copy it',
+    'cp /x/e ~/.local/bin/node >> log.txt',
+  ];
+  for (const c of bad) assert.match(String(sh(c)), /protected/, c);
+  const ok = [
+    'cp "$(go env GOPATH)/bin/tool" ~/bin/',
+    'cp $(cat list) ./dist/ 2>/dev/null',
+    'echo $(cat list) > ./out.txt',
+    'diff <(ls a) <(ls b)',
+    'cat $(ls ~/.nvm/*.sh)',
+    'ls -l $(command -v node)',
+    '(cd ./src && cp a ../dist/)',
+    'parallel -k -j 4 cp {} ./dist ::: a',
+    'parallel -s 1000 cp {} ./dist ::: a',
+    'cp a ./dist/ 2>&1',
+    'node ~/.local/bin/zn --version 2>&1',
+    'cp a ./dist/ # ~/bin',
+  ];
+  for (const c of ok) assert.equal(sh(c), null, c);
+});
