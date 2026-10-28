@@ -57,6 +57,36 @@
         "why": "the minimum version of the allow-partial input and of the scan exit code 3 (not a pin)"
       },
       {
+        "file": "docs/check.md",
+        "pin": "zn-gate 1.14.0",
+        "why": "the release that made zn-gate check accept only absolute plugin hook programs (not a pin)"
+      },
+      {
+        "file": "docs/compat.md",
+        "pin": "zn-gate 1.14.0",
+        "why": "the release that changed hook launchers and the hooks written before it (not a pin)"
+      },
+      {
+        "file": "docs/editors/README.md",
+        "pin": "zn-gate 1.14.0",
+        "why": "the release that added the experimental Gemini CLI and GitHub Copilot CLI adapters (not a pin)"
+      },
+      {
+        "file": "docs/editors/cursor.md",
+        "pin": "zn-gate 1.14.0",
+        "why": "the release that removed the Cursor plugin (not a pin)"
+      },
+      {
+        "file": "docs/threat-model.md",
+        "pin": "zn-gate 1.14.0",
+        "why": "the release that changed hooks written before it (not a pin)"
+      },
+      {
+        "file": "docs/upgrading.md",
+        "pin": "zn-gate 1.14.0",
+        "why": "the release that changed the Gemini CLI hooks written before it (not a pin)"
+      },
+      {
         "file": "docs/verify-release.md",
         "pin": "zn-gate@1.5.0",
         "why": "example of reading the attestations of a past release"
