@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import urllib.request
 import urllib.error
 from typing import Any, Dict, Optional, cast
@@ -59,6 +60,41 @@ def long_input_mode(value: Optional[str] = None) -> str:
     return "off" if v in ("off", "none", "truncate", "0", "false", "no") else "windows"
 
 
+class CloudGateError(urllib.error.URLError):
+    """The cloud gate could not give an answer, in plain words with the next step. It is a URLError, so code that
+    catches URLError keeps working; `code` holds the HTTP status when the gate answered with one."""
+
+    def __init__(self, message: str, code: Optional[int] = None) -> None:
+        super().__init__(message)
+        self.code = code
+
+    def __str__(self) -> str:
+        return str(self.reason)
+
+
+class CloudGateAnswerError(CloudGateError, ValueError):
+    """The answer of the cloud gate could not be read: still a ValueError, as a bad body always raised."""
+
+
+def _cloud_error(exc: BaseException, timeout: float) -> CloudGateError:
+    """The plain CloudGateError for a failed call to the cloud gate."""
+    if isinstance(exc, urllib.error.HTTPError):
+        code = exc.code
+        if code in (401, 403):
+            return CloudGateError(f"the cloud gate did not accept the API key (HTTP {code}). "
+                                  "Check ZN_API_KEY, or run zn-gate status.", code)
+        if code == 429:
+            return CloudGateError("the cloud gate asked to slow down (HTTP 429). Try again in a minute.", code)
+        return CloudGateError(f"the cloud gate answered with an error (HTTP {code}). Try again later.", code)
+    reason = getattr(exc, "reason", exc)
+    if isinstance(reason, (socket.timeout, TimeoutError)) or isinstance(exc, (socket.timeout, TimeoutError)):
+        return CloudGateError(f"the cloud gate did not answer within {timeout:g} s. Try again later.")
+    if isinstance(exc, (ValueError, UnicodeDecodeError)):
+        return CloudGateAnswerError("the answer of the cloud gate could not be read. Try again later.")
+    return CloudGateError("the cloud gate could not be reached. Check the network connection "
+                          "(and ZN_ENDPOINT if you set one).")
+
+
 def analyze_cloud(
     input_text: str,
     api_key: str,
@@ -79,11 +115,15 @@ def analyze_cloud(
         "User-Agent": f"zn-gate/{__version__} (python-stdlib-client)",
     }
     req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8")
-        parsed: Dict[str, Any] = json.loads(raw)
-        parsed["engine"] = "cloud-v30" if "/v30" in endpoint else "cloud-prod"
-        return parsed
+    # A failure raises CloudGateError (a URLError) that says what went wrong and what to do.
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+            parsed: Dict[str, Any] = json.loads(raw)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise _cloud_error(exc, timeout) from exc
+    parsed["engine"] = "cloud-v30" if "/v30" in endpoint else "cloud-prod"
+    return parsed
 
 
 def analyze(

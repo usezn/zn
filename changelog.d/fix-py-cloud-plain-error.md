@@ -1,0 +1,2 @@
+### Fixed
+- Python: `analyze_cloud` now raises `CloudGateError` with a plain message and the next step (the API key was not accepted, the gate asked to slow down, it answered with an error, did not answer in time, could not be reached, or its answer could not be read) instead of a raw `URLError` or `HTTPError`. It is still a `URLError` (and an unreadable answer is still a `ValueError`), and `code` holds the HTTP status. `analyze()` puts the same text in `cloud_error` when it falls back to the local rules.
