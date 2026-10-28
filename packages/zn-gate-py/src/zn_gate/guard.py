@@ -19,7 +19,7 @@ import types
 from collections.abc import AsyncIterator, ItemsView, Iterable, Iterator, KeysView, Mapping, ValuesView
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple, TypeVar, cast
 
-from .rules import Assessment, invisible_block, scan_windows, too_invisible
+from .rules import Assessment, env_flag, invisible_block, scan_windows, too_invisible
 from .rules import MAX_SCAN_CHARS, MAX_TOOL_RESULT_SCAN_CHARS, _check_base64_pipes, truncated_blocks
 
 
@@ -448,7 +448,7 @@ def _scan_strings(data: Any, what: str, block_truncated: bool, strict: Optional[
             return res
         truncated = truncated or res.truncated
         advisory = advisory or res.advisory
-    if truncated and ((what == "Arguments" and (block_truncated or os.environ.get("ZN_BLOCK_TRUNCATED") == "1"))
+    if truncated and ((what == "Arguments" and (block_truncated or env_flag("ZN_BLOCK_TRUNCATED")))
                       or (what != "Arguments" and truncated_blocks(block_truncated, allow_truncated))):
         return Assessment(verdict="block", confidence=1.0, rule="size:truncated",
                           reason=f"{what} too large to scan in full", truncated=True)

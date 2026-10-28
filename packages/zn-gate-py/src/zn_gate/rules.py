@@ -17,7 +17,7 @@ import re
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, cast, overload
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
 RULES_VERSION = "2026-10-27.2"
@@ -564,6 +564,23 @@ def normalize_input(text: str) -> Tuple[str, str]:
 
 # Default policy by tiers (same list as ADVISORY_BY_DEFAULT in rules.js). A
 # match of these heuristic rules is an advisory unless strict mode is on
+_ENV_FLAG_WARNED: Set[Tuple[str, str]] = set()
+
+
+def env_flag(name: str) -> bool:
+    """True when the hardening flag `name` (ZN_STRICT, ZN_BLOCK_TRUNCATED) is set to "1", the only value that turns it
+    on. Any other value (true, yes, on...) leaves it off, so it is said once in the log rather than ignored silently."""
+    value = os.environ.get(name)
+    if value == "1":
+        return True
+    if value not in (None, "", "0") and (name, value) not in _ENV_FLAG_WARNED:
+        _ENV_FLAG_WARNED.add((name, value))
+        import logging
+        logging.getLogger("zn_gate").warning(
+            "zn_gate: %s is set to %r, but only %s=1 turns it on, so it is off", name, value[:20], name)
+    return False
+
+
 # (strict=True, or ZN_STRICT=1 in the environment).
 ADVISORY_BY_DEFAULT = frozenset([
     'pi:identity_override',
@@ -583,7 +600,7 @@ ADVISORY_BY_DEFAULT = frozenset([
 
 def _strict(strict: Optional[bool]) -> bool:
     # The environment can only harden: strict=False does not lift ZN_STRICT=1 (as in Node.js).
-    return bool(strict) or os.environ.get('ZN_STRICT') == '1'
+    return bool(strict) or env_flag('ZN_STRICT')
 
 
 def _b64_decode_lenient(data: str) -> bytes:
@@ -1810,7 +1827,7 @@ def truncated_blocks(block_truncated: bool = False, allow_truncated: bool = Fals
     block_truncated=True or ZN_BLOCK_TRUNCATED=1 (the former opt-in) still
     forces the block and wins over the opt-out.
     """
-    if block_truncated or os.environ.get('ZN_BLOCK_TRUNCATED') == '1':
+    if block_truncated or env_flag('ZN_BLOCK_TRUNCATED'):
         return True
     return not (allow_truncated or os.environ.get('ZN_ALLOW_TRUNCATED') == '1')
 
