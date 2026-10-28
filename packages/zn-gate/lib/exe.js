@@ -136,7 +136,7 @@ function realKey(p, win) {
   let r = REAL_KEYS.get(p);
   if (r === undefined) {
     r = path.resolve(p);
-    try { r = fs.realpathSync(r); } catch (_) { /* not there: as written */ }
+    try { r = fs.realpathSync.native(r); } catch (_) { /* not there: as written */ }
     if (win) r = r.toLowerCase();
     if (REAL_KEYS.size > 512) REAL_KEYS.clear();
     REAL_KEYS.set(p, r);
@@ -189,6 +189,21 @@ function inProject(real, places) {
   return places.some((d) => insideOrSame(real, d));
 }
 
+// The node_modules folder right in the home folder: packages installed with a package.json in ~, never a global install
+// (those live under a prefix such as /usr/local, ~/.nvm or ~/.npm-global). Counts as the project for a program's real file.
+function inHomeModules(real, env, win) {
+  const e = env || process.env;
+  return insideOrSame(real, realKey(path.join(e.HOME || e.USERPROFILE || os.homedir(), 'node_modules'), win));
+}
+
+/** Whether the real file of a program found on the PATH is in the project (cwd, its git work tree, CLAUDE_PROJECT_DIR) or in
+ * the home folder's node_modules: a link from a trusted PATH folder into there counts as the project's program. */
+function programInProject(file, env = process.env, cwd, platform = process.platform) {
+  const win = platform === 'win32';
+  const real = realKey(file, win);
+  return inProject(real, projectPlaces(cwd, env, win)) || inHomeModules(real, env, win);
+}
+
 function trustedPath(pathValue, cwd, env, platform = process.platform) {
   const win = platform === 'win32';
   const sep = win ? ';' : ':';
@@ -221,7 +236,7 @@ function findProgram(name, env = process.env, cwd, opts = {}) {
     const found = whichSync(file, dir);
     // A program that links into the project counts as the project's.
     const real = found && realKey(found, isWin);
-    if (found && (!isWin || /\.(?:exe|com)$/i.test(found)) && !(opts.strict ? untrustedPlace(real, places) : inProject(real, places))) return path.resolve(found);
+    if (found && (!isWin || /\.(?:exe|com)$/i.test(found)) && !(opts.strict ? untrustedPlace(real, places) : (inProject(real, places) || inHomeModules(real, env, isWin)))) return path.resolve(found);
   }
   return null;
 }
@@ -477,7 +492,7 @@ function psEnv(ps, base, extra) {
   return env;
 }
 
-module.exports = {
+module.exports = { programInProject,
   absolutePath,
   projectPlaces,
   trustedPath,
