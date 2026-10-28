@@ -37,6 +37,9 @@ use zn::engine::reputation::ReputationSystem;
 use zn::engine::rules::ManagedRuleset;
 use zn::engine::watcher::PolicyWatcher;
 use zn::engine::{ZnEngine, ZnEngineConfig};
+#[cfg(test)]
+use zn::jsonrpc::ArgSource;
+use zn::jsonrpc::{jsonrpc_error, validate_jsonrpc, with_arguments, JsonRpcValidation};
 use zn::metrics;
 use zn::proxy::McpPool;
 use zn::scrubber::Scrubber;
@@ -44,33 +47,6 @@ use zn::shield;
 use zn::tenants::{TenantContext, TenantRole, TenantStore, GLOBAL_NAMESPACE};
 use zn::tui;
 use zn::webhooks::{self, WebhookManager};
-
-/// JSON-RPC 2.0 request structure with full spec compliance
-#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
-struct JsonRpcRequest {
-    /// JSON-RPC version - must be "2.0"
-    jsonrpc: Option<String>,
-    /// Request ID (can be string, number, or null for notifications)
-    #[serde(default)]
-    id: Option<serde_json::Value>,
-    /// Method name
-    #[serde(default)]
-    method: String,
-    /// Parameters (positional array or named object)
-    #[serde(default)]
-    pub params: Option<serde_json::Value>,
-    /// Optional Agent Identifier
-    #[serde(default)]
-    pub agent_id: Option<String>,
-}
-
-/// JSON-RPC 2.0 error codes
-mod jsonrpc_error {
-    pub const PARSE_ERROR: i32 = -32700;
-    pub const INVALID_REQUEST: i32 = -32600;
-    pub const INVALID_PARAMS: i32 = -32602;
-    pub const POLICY_DENIED: i32 = -32000; // Server error range
-}
 
 /// Longest agent id kept from a message; longer ids are cut (the id is a label, not an identity).
 const MAX_AGENT_ID_CHARS: usize = 128;
@@ -93,56 +69,6 @@ fn reputation_key(namespace: &str, agent_id: &str) -> String {
     format!("{}\u{1f}{}", namespace, agent_id)
 }
 
-/// Where validate_jsonrpc took the tool arguments from.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum ArgSource {
-    /// `params.<key>` of a tools/call (`arguments`, `args` or `input`).
-    Key(&'static str),
-    /// No arguments in the frame (checked as `{}`).
-    Missing,
-    /// The whole `params` (A2A methods).
-    WholeParams,
-}
-
-/// The JSON-RPC frame with its tool arguments replaced by `arguments` (a JSON text), in exactly the place
-/// validate_jsonrpc took them from. None if either side does not parse or that place is not there.
-/// serde_json does not keep key order, so the rebuilt frame may list keys in another order.
-fn with_arguments(frame: &str, arguments: &str, source: ArgSource) -> Option<String> {
-    let mut v: serde_json::Value = serde_json::from_str(frame).ok()?;
-    let new_args: serde_json::Value = serde_json::from_str(arguments).ok()?;
-    let params = v.get_mut("params")?;
-    match source {
-        ArgSource::Key(k) => {
-            params.get(k)?;
-            params[k] = new_args;
-        }
-        ArgSource::WholeParams => *params = new_args,
-        ArgSource::Missing => return None,
-    }
-    serde_json::to_string(&v).ok()
-}
-
-/// Result of validating a JSON-RPC request
-#[derive(Debug)]
-enum JsonRpcValidation {
-    /// Valid tool call with extracted name and arguments
-    ToolCall {
-        id: Option<serde_json::Value>,
-        tool_name: String,
-        arguments: String,
-        agent_id: Option<String>,
-        source: ArgSource,
-    },
-    /// Valid JSON-RPC but not a tool call - pass through
-    PassThrough,
-    /// Invalid JSON-RPC - return error response
-    Error {
-        id: Option<serde_json::Value>,
-        code: i32,
-        message: String,
-    },
-}
-
 /// Build a JSON-RPC 2.0 error response
 fn jsonrpc_error_response(id: Option<serde_json::Value>, code: i32, message: &str) -> String {
     serde_json::json!({
@@ -156,117 +82,8 @@ fn jsonrpc_error_response(id: Option<serde_json::Value>, code: i32, message: &st
     .to_string()
 }
 
-/// Validate and extract tool call from JSON-RPC request
-fn validate_jsonrpc(json_str: &str) -> JsonRpcValidation {
-    // Parse JSON
-    let request: JsonRpcRequest = match serde_json::from_str(json_str) {
-        Ok(r) => r,
-        Err(_) => {
-            return JsonRpcValidation::Error {
-                id: None,
-                code: jsonrpc_error::PARSE_ERROR,
-                message: "Parse error: Invalid JSON".to_string(),
-            }
-        }
-    };
-
-    // Validate JSON-RPC version if present
-    if let Some(ref version) = request.jsonrpc {
-        if version != "2.0" {
-            return JsonRpcValidation::Error {
-                id: request.id,
-                code: jsonrpc_error::INVALID_REQUEST,
-                message: format!("Invalid Request: jsonrpc must be '2.0', got '{}'", version),
-            };
-        }
-    }
-
-    // Check if method is empty
-    if request.method.is_empty() {
-        return JsonRpcValidation::Error {
-            id: request.id,
-            code: jsonrpc_error::INVALID_REQUEST,
-            message: "Invalid Request: method is required".to_string(),
-        };
-    }
-
-    // Check for Tool Call OR A2A Task
-    if request.method == "tools/call" {
-        let params = match request.params {
-            Some(p) => p,
-            None => {
-                return JsonRpcValidation::Error {
-                    id: request.id,
-                    code: jsonrpc_error::INVALID_PARAMS,
-                    message: "Invalid params: params object required".to_string(),
-                }
-            }
-        };
-
-        let tool_name = match params
-            .get("name")
-            .and_then(|n| n.as_str())
-            .map(|s| s.to_string())
-        {
-            Some(n) if !n.is_empty() => n,
-            _ => {
-                return JsonRpcValidation::Error {
-                    id: request.id,
-                    code: jsonrpc_error::INVALID_PARAMS,
-                    message: "Invalid params: tool name is required".to_string(),
-                }
-            }
-        };
-
-        // Extract arguments as JSON string
-        let source = ["arguments", "args", "input"]
-            .into_iter()
-            .find(|k| params.get(*k).is_some())
-            .map(ArgSource::Key)
-            .unwrap_or(ArgSource::Missing);
-        let arguments = match source {
-            ArgSource::Key(k) => params[k].to_string(),
-            _ => "{}".to_string(),
-        };
-
-        return JsonRpcValidation::ToolCall {
-            id: request.id,
-            tool_name,
-            arguments,
-            agent_id: request.agent_id,
-            source,
-        };
-    } else if zn::a2a::is_a2a_method(&request.method) {
-        // A2A Protocol Handler - Full Parity
-        let params = match request.params {
-            Some(p) => p,
-            None => serde_json::json!({}),
-        };
-
-        // Use robust policy resolution from A2A module
-        let virt_tool_name = zn::a2a::resolve_policy_context(&request.method, &params);
-
-        // For A2A, the "arguments" for inspection are the full task payload
-        let arguments = params.to_string();
-
-        return JsonRpcValidation::ToolCall {
-            id: request.id,
-            tool_name: virt_tool_name,
-            arguments,
-            agent_id: request.agent_id,
-            source: ArgSource::WholeParams,
-        };
-    }
-
-    JsonRpcValidation::PassThrough
-}
-
 #[derive(Parser, Debug)]
-#[command(
-    name = "zn",
-    version = "1.0.0",
-    about = "🛡️ zn - Zero Trust Layer for AI Agents"
-)]
+#[command(name = "zn", version, about = "🛡️ zn - Zero Trust Layer for AI Agents")]
 struct Args {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -386,13 +203,11 @@ async fn main() -> Result<()> {
             }
         },
         Some(Commands::Init) => {
-            let config = ZnConfig::default();
-            let json = serde_json::to_string_pretty(&config)?;
-            std::fs::write("zn.json", json)?;
+            ZnConfig::write_init_file(std::path::Path::new("zn.json"))?;
             log::success("Initialized zn.json with default secure configuration.")?;
             note(
                 "Next Steps",
-                "Review zn.json and run `zn start` to engage the firewall.",
+                "Review zn.json and run `zn start` to engage the firewall.\nKeys and tokens (ZN_API_KEY, ZN_JWT_SECRET, ZN_MCP_WS_TOKEN, ZN_DB_KEY) are not written to zn.json: keep them in the environment.",
             )?;
             return Ok(());
         }
@@ -488,35 +303,69 @@ async fn start_proxy(args: Args) -> Result<()> {
     let kms_vault: Arc<Box<dyn SecretVault>> = match zn_config.kms.kms_type.as_str() {
         "aws" => {
             log::info("Initializing AWS KMS Vault...").ok();
-            Arc::new(Box::new(AwsKmsVault::new().await))
+            // The data key is kept across restarts through its encrypted copy,
+            // saved next to the audit database.
+            Arc::new(Box::new(
+                AwsKmsVault::new(
+                    zn::crypto::kms_vault::data_key_file_for(&zn_config.audit.db_path),
+                    zn::crypto::kms_vault::recover_flag_from_env(),
+                )
+                .await,
+            ))
         }
-        _ => Arc::new(Box::new(LocalVault::new(
-            zn_config.audit.encryption_key.clone(),
-        ))),
+        _ => {
+            // The audit key is a passphrase for the audit log. The local
+            // vault reads it as a raw 32-byte hex key, and only when a key id
+            // asks the vault for one. Without a key id, no key is passed in.
+            let vault_key = if zn_config.kms.key_id.is_some() {
+                zn_config.audit.encryption_key.clone()
+            } else {
+                None
+            };
+            Arc::new(Box::new(
+                LocalVault::new(vault_key).map_err(|e| anyhow!("Invalid vault key: {}", e))?,
+            ))
+        }
     };
 
     // If key_id is provided, try to fetch key from KMS
-    let db_key = if let Some(key_id) = &zn_config.kms.key_id {
-        match kms_vault.get_encryption_key(key_id).await {
-            Ok(k) => Some(hex::encode(k)),
-            Err(e) => {
-                log::warning(format!(
-                    "Failed to fetch key from KMS: {}. Falling back to config.",
-                    e
-                ))
-                .ok();
-                zn_config.audit.encryption_key.clone()
-            }
-        }
-    } else {
-        zn_config.audit.encryption_key.clone()
+    let kms_fetch = match &zn_config.kms.key_id {
+        Some(key_id) => Some(
+            kms_vault
+                .get_encryption_key(key_id)
+                .await
+                .map(hex::encode)
+                .map_err(|e| e.to_string()),
+        ),
+        None => None,
     };
+    let (db_key, fell_back) = resolve_db_key(
+        kms_fetch,
+        zn_config.kms.allow_config_fallback,
+        zn_config.audit.encryption_key.clone(),
+    )
+    .map_err(|e| anyhow!(e))?;
+    if fell_back {
+        log::warning(
+            "KMS key could not be fetched; running with the key from the config because kms.allow_config_fallback is enabled. Fix the KMS access and turn the option off."
+                .to_string(),
+        )
+        .ok();
+    }
+
+    // Key for the content references kept in the audit log and the vector
+    // memory; it never leaves this machine.
+    zn::ai::init_ref_key(std::path::Path::new("data"))
+        .map_err(|e| anyhow!("cannot set up data/ref.key: {e}"))?;
 
     // Initialize Audit Vault
-    let vault = Arc::new(AuditVault::new(
-        &zn_config.audit.db_path,
-        db_key.as_deref(),
-    )?);
+    if zn_config.audit.store_payloads && db_key.is_none() {
+        anyhow::bail!("audit.store_payloads needs an encryption key; none is available");
+    }
+    let vault = Arc::new(
+        AuditVault::new(&zn_config.audit.db_path, db_key.as_deref())?
+            .with_payload_storage(zn_config.audit.store_payloads),
+    );
 
     // Initialize Tenant Store
     // A generated SuperAdmin key is written next to the audit database,
@@ -540,11 +389,17 @@ async fn start_proxy(args: Args) -> Result<()> {
         webhook_manager.run(webhook_rx).await;
     });
 
-    // Generate MCP WS Token if missing
+    // Generate MCP WS Token if missing. A generated token is written to a
+    // private file next to the audit database, never printed.
+    let mut ws_token_file: Option<PathBuf> = None;
     if zn_config.security.mcp_ws_token.is_none() {
-        zn_config.security.mcp_ws_token = Some(shield::McpShield::generate_ws_token());
+        let token = shield::McpShield::generate_ws_token();
+        ws_token_file = Some(zn::tenants::generate_ws_token_file(
+            &zn_config.audit.db_path,
+            &token,
+        )?);
+        zn_config.security.mcp_ws_token = Some(token);
     }
-    let mcp_token = zn_config.security.mcp_ws_token.clone().unwrap_or_default();
 
     // Initialize Neural Core
     log::info("🧠 Initializing Neural Core (Candle)...")?;
@@ -660,16 +515,21 @@ async fn start_proxy(args: Args) -> Result<()> {
     let bind_address = state.config.server.bind_address.clone();
     let api_state = state.clone();
 
+    // Built before the task starts so a bad value is a normal startup error.
+    let rate_limit = api_state.config.security.rate_limit_per_minute;
+    let governor_conf = GovernorConfigBuilder::default()
+        .per_second(1)
+        .burst_size(rate_limit)
+        .finish()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "security.rate_limit_per_minute is {rate_limit}, but the rate limiter needs a value of at least 1"
+            )
+        })?;
+
     tokio::spawn(async move {
         let allowed_origins = api_state.config.security.allowed_origins.clone();
         let cors = build_cors_layer(&allowed_origins);
-
-        let rate_limit = api_state.config.security.rate_limit_per_minute;
-        let governor_conf = GovernorConfigBuilder::default()
-            .per_second(1)
-            .burst_size(rate_limit as u32)
-            .finish()
-            .expect("Failed to create rate limiter config");
 
         let governor_layer = GovernorLayer {
             config: std::sync::Arc::new(governor_conf),
@@ -739,9 +599,10 @@ async fn start_proxy(args: Args) -> Result<()> {
     });
 
     log::success("zn Core active. Zero Trust Layer Engaged.")?;
-    if state.config.environment == "development" {
-        note("Security", format!("MCP WebSocket Token: {}", mcp_token))?;
-    }
+    note(
+        "Security",
+        shield::McpShield::ws_token_notice(ws_token_file.as_deref()),
+    )?;
     note("Ready", "Listening for JSON-RPC on stdin...")?;
 
     let stdin = io::stdin();
@@ -870,7 +731,7 @@ impl AnalyzerPipeline {
                 }
             };
 
-        // 1.5 Fusion Gate (B-3): block iff rules hit OR head score >= tau.
+        // 1.5 Fusion Gate: block iff rules hit OR head score >= tau.
         // Disabled config / missing model degrades to exactly (rules_hit,
         // None): byte-identical output, no "fusion" key.
         let (fused_blocked, fusion_ev) = zn::engine::neural::evaluate(
@@ -936,7 +797,7 @@ impl AnalyzerPipeline {
             "rule": matched_rule,
             "score": risk_score
         });
-        // B-3 evidence rides with the verdict (same FusionEvidence schema as
+        // Fusion Gate evidence rides with the verdict (same FusionEvidence schema as
         // AuditEntry.fusion); serialized ONLY when the neural camera actually
         // participated in a block, mirroring the audit serde contract.
         if let Some(ev) = &fusion_ev {
@@ -1039,7 +900,6 @@ impl ZnMcpServer {
 
 #[tool_handler(
     name = "zn",
-    version = "1.0.0",
     instructions = "zn prompt-security tools: run every untrusted prompt or tool payload through analyze_prompt before acting on it."
 )]
 impl ServerHandler for ZnMcpServer {}
@@ -1055,6 +915,43 @@ async fn run_mcp() -> Result<()> {
     Ok(())
 }
 
+/// Namespace of one connection: the authenticated one (WebSocket tenants) or, for the local stdio proxy,
+/// the configured one, and the global one when neither exists. Memory, reputation and the audit log all use
+/// this single value, so an entry is visible to the tenant that made the call and to nobody else.
+fn resolve_namespace(authenticated: Option<String>, configured: Option<&str>) -> String {
+    authenticated
+        .or_else(|| configured.map(str::to_string))
+        .unwrap_or_else(|| GLOBAL_NAMESPACE.to_string())
+}
+
+/// Write one audit record. A failure is logged (event name and error, never the
+/// payload) and counted in `zn_audit_write_failures_total`; the caller decides
+/// whether it denies the call (`audit.require_write`).
+fn audit_write(state: &AppState, event: &str, entry: AuditEntry) -> bool {
+    match state.vault.log(entry) {
+        Ok(()) => true,
+        Err(e) => {
+            metrics::record_audit_write_failure();
+            log::error(format!("AUDIT WRITE FAILED for {event}: {e}")).ok();
+            false
+        }
+    }
+}
+
+/// The webhook alert for an audit entry: metadata only. The request payload
+/// never leaves in a webhook, even when `audit.store_payloads` keeps it in the
+/// database.
+fn alert_for(entry: &AuditEntry) -> webhooks::AlertPayload {
+    webhooks::AlertPayload {
+        event: entry.event.clone(),
+        tool_name: entry.tool_name.clone(),
+        status: entry.status.clone(),
+        timestamp: entry.timestamp.clone(),
+        policy_match: entry.policy_match.clone(),
+        details: None,
+    }
+}
+
 async fn process_mcp_message(
     line: &str,
     state: &AppState,
@@ -1063,9 +960,7 @@ async fn process_mcp_message(
     // The vector memory is scoped to the authenticated namespace (WebSocket
     // tenants) or, for the local stdio proxy, to the configured one. The
     // agent id comes from the message and is not trusted for isolation.
-    let memory_namespace = namespace
-        .or_else(|| state.config.security.namespace.clone())
-        .unwrap_or_else(|| GLOBAL_NAMESPACE.to_string());
+    let memory_namespace = resolve_namespace(namespace, state.config.security.namespace.as_deref());
     let scrubbed_line = Scrubber::scrub(line);
 
     // Shodan Canary: Detect potential reconnaissance scans
@@ -1148,17 +1043,7 @@ async fn process_mcp_message(
                 }
             };
 
-            // 0. CLOUDFLARE STYLE: CACHE CHECK
-            if let Some(cached_result) = state.cache.get(&agent_id_str, &tool_name, &arguments) {
-                log::info(format!(
-                    "✨ CACHE HIT: {} (Agent: {})",
-                    tool_name, agent_id_str
-                ))
-                .ok();
-                return Ok(Some(cached_result));
-            }
-
-            // 1. ACTIVE DEFENSE CHECK
+            // 0. ACTIVE DEFENSE CHECK (before the cache, so a ban always wins)
             // Before processing, check if this agent is BANNED
             if let Err(ban_msg) = state.reputation.check_agent_status(&rep_key) {
                 log::error(format!(
@@ -1170,6 +1055,16 @@ async fn process_mcp_message(
                     id, -32003, // Custom error code for BANNED
                     &ban_msg,
                 )));
+            }
+
+            // 1. CLOUDFLARE STYLE: CACHE CHECK (only for agents that are not banned)
+            if let Some(cached_result) = state.cache.get(&agent_id_str, &tool_name, &arguments) {
+                log::info(format!(
+                    "✨ CACHE HIT: {} (Agent: {})",
+                    tool_name, agent_id_str
+                ))
+                .ok();
+                return Ok(Some(cached_result));
             }
 
             log::info(format!(
@@ -1282,13 +1177,16 @@ async fn process_mcp_message(
                                 neural_veto = true;
                                 metrics::record_neural_block();
                                 log::warning(format!(
-                                    "🛑 NEURAL VETO: risk {:.4} (anomaly {:.4} vs {}, classifier {:?} vs {}) Nearest: '{}'",
+                                    "🛑 NEURAL VETO: risk {:.4} (anomaly {:.4} vs {}, classifier {:?} vs {}) Nearest ref: '{}'",
                                     risk,
                                     distance,
                                     adjusted_threshold,
                                     prob,
                                     adjusted_classifier_threshold,
-                                    nearest.as_ref().map(|(t, _)| t.as_str()).unwrap_or("-")
+                                    nearest
+                                        .as_ref()
+                                        .map(|(t, _)| zn::ai::content_ref(t))
+                                        .unwrap_or_else(|| "-".to_string())
                                 ))
                                 .ok();
                             } else {
@@ -1304,8 +1202,11 @@ async fn process_mcp_message(
                         let mem = state.memory.clone();
                         let ns = memory_namespace.clone();
                         let agent = agent_id_str.clone();
+                        // The memory keeps the vector and a hash of the call,
+                        // never the arguments themselves.
+                        let neural_ref = zn::ai::content_ref(&neural_input);
                         tokio::spawn(async move {
-                            let _ = mem.store(&ns, &agent, &neural_input, &vec).await;
+                            let _ = mem.store(&ns, &agent, &neural_ref, &vec).await;
                         });
 
                         log::info(format!(
@@ -1380,7 +1281,11 @@ async fn process_mcp_message(
 
             // E-2: nearest-neighbor audit (if enabled)
             let nearest_neighbor_entry = if state.config.guardrails.nearest_neighbor_audit {
-                nearest.as_ref().map(|(t, d)| format!("{}:{:.4}", t, d))
+                // Distance plus a content-free reference to the neighbour
+                // (never its text).
+                nearest
+                    .as_ref()
+                    .map(|(t, d)| format!("{}:{:.4}", zn::ai::content_ref(t), d))
             } else {
                 None
             };
@@ -1392,26 +1297,50 @@ async fn process_mcp_message(
                 tool_name: tool_name.clone(),
                 status: status.clone(),
                 policy_match: policy_match.clone(),
-                payload: Some(Scrubber::scrub(&arguments)),
+                payload: zn::audit::payload_if_enabled(
+                    state.config.audit.store_payloads,
+                    Scrubber::scrub(&arguments),
+                ),
                 agent_id: Some(agent_id_str.clone()),
-                namespace: state.config.security.namespace.clone(),
+                namespace: Some(memory_namespace.clone()),
                 anomaly_score,
                 nearest_neighbor: nearest_neighbor_entry.clone(),
-                // B-3: live-path fusion evidence is attached where the fused
+                // Fusion Gate: live-path fusion evidence is attached where the fused
                 // decision is wired in; schema field defaults to absent here.
                 fusion: None,
             };
-            let _ = state.vault.log(entry.clone());
-
-            // Log nearest-neighbor separately if enabled
+            // Log nearest-neighbor separately if enabled. It goes first: with
+            // `audit.require_write`, a failed write here denies the call before
+            // any TOOL_CALL row exists, so no row says ALLOWED for a denied call.
+            let mut audit_written = true;
             if let Some(nn) = nearest_neighbor_entry {
                 let nn_entry = AuditEntry::new("NEAREST_NEIGHBOR", &tool_name, "AUDIT")
-                    .with_payload(nn)
+                    .with_nearest_neighbor(nn.clone())
+                    .with_namespace(&memory_namespace)
                     .with_agent_id(&agent_id_str);
-                let _ = state.vault.log(nn_entry);
+                audit_written = audit_write(state, "NEAREST_NEIGHBOR", nn_entry);
+            }
+            if audit_written || !state.config.audit.require_write {
+                audit_written &= audit_write(state, &entry.event, entry.clone());
             }
 
-            let _ = state.tx.send(entry.clone());
+            if !audit_written && state.config.audit.require_write {
+                return Ok(Some(jsonrpc_error_response(
+                    id,
+                    -32001,
+                    &format!(
+                        "Tool call '{}' denied: the audit record could not be written (audit.require_write is on)",
+                        tool_name
+                    ),
+                )));
+            }
+
+            // The event stream carries metadata only, never a payload (even
+            // when `audit.store_payloads` keeps one in the database): the
+            // scrubber cannot know every secret field.
+            let mut streamed = entry.clone();
+            streamed.payload = None;
+            let _ = state.tx.send(streamed);
 
             if status == "ALLOWED" {
                 metrics::record_tool_call(&tool_name, "ALLOWED");
@@ -1440,14 +1369,7 @@ async fn process_mcp_message(
 
                 // Send webhook alert
                 let alert_tx = state.webhook_tx.clone();
-                let alert_payload = webhooks::AlertPayload {
-                    event: entry.event.clone(),
-                    tool_name: entry.tool_name.clone(),
-                    status: entry.status.clone(),
-                    timestamp: entry.timestamp.clone(),
-                    policy_match: entry.policy_match.clone(),
-                    details: entry.payload.clone(),
-                };
+                let alert_payload = alert_for(&entry);
                 tokio::spawn(async move {
                     let _ = webhooks::send_alert(&alert_tx, alert_payload).await;
                 });
@@ -1466,9 +1388,6 @@ async fn process_mcp_message(
         }
     }
 }
-
-/// Largest MCP WebSocket message or frame the gateway reads.
-const MAX_WS_MESSAGE_BYTES: usize = 1024 * 1024;
 
 async fn mcp_ws_handler(
     State(state): State<AppState>,
@@ -1509,9 +1428,8 @@ async fn mcp_ws_handler(
     }
 
     let namespace = tenant.namespace.clone();
-    // A frame or message over 1 MiB closes the connection (the default limit is 64 MiB).
-    ws.max_message_size(MAX_WS_MESSAGE_BYTES)
-        .max_frame_size(MAX_WS_MESSAGE_BYTES)
+    // A frame or message over the configured limit closes the connection.
+    zn::handlers::websocket::apply_limits(ws, &state.config.server)
         .on_upgrade(move |socket| handle_ws_socket(socket, state, namespace))
 }
 
@@ -1703,19 +1621,13 @@ async fn policies_upload_handler(
                 }
             };
 
-            // Save to the policy directory: temporary file + rename, no symlinks.
-            if let Err(e) = zn::engine::write_policy_file(&path, &data) {
+            // Verify the signatures on the bytes in memory, then save them
+            // (temporary file + rename, no symlinks) and register the policy.
+            // A policy that fails a check is never written.
+            if let Err(e) = state.engine.install_policy(&path, &data) {
                 return axum::response::Json(serde_json::json!({
                     "status": "error",
-                    "error": format!("Failed to save file: {}", e)
-                }));
-            }
-
-            // Register policy
-            if let Err(e) = state.engine.register_policy_from_file(&path) {
-                return axum::response::Json(serde_json::json!({
-                    "status": "error",
-                    "error": format!("Failed to register policy: {}", e)
+                    "error": format!("Failed to install policy: {}", e)
                 }));
             }
 
@@ -2208,6 +2120,57 @@ mod fusion_wiring_tests {
     }
 }
 
+/// Picks the audit database key. `kms_fetch` is `None` when no KMS key is
+/// configured, otherwise the result of fetching it. Returns the key and
+/// whether the config key was used because the KMS fetch failed.
+fn resolve_db_key(
+    kms_fetch: Option<Result<String, String>>,
+    allow_config_fallback: bool,
+    config_key: Option<String>,
+) -> Result<(Option<String>, bool), String> {
+    match kms_fetch {
+        None => Ok((config_key, false)),
+        Some(Ok(key)) => Ok((Some(key), false)),
+        Some(Err(_)) if allow_config_fallback => Ok((config_key, true)),
+        Some(Err(e)) => Err(format!(
+            "Failed to fetch the encryption key from the KMS: {e}. Refusing to start with a different key. Fix the KMS access, or set kms.allow_config_fallback = true to allow the key from the config."
+        )),
+    }
+}
+
+#[cfg(test)]
+mod kms_key_tests {
+    use super::resolve_db_key;
+
+    fn cfg() -> Option<String> {
+        Some("config-key".to_string())
+    }
+
+    #[test]
+    fn kms_key_wins_when_fetched() {
+        let r = resolve_db_key(Some(Ok("kms-key".into())), false, cfg()).unwrap();
+        assert_eq!(r, (Some("kms-key".to_string()), false));
+    }
+
+    #[test]
+    fn kms_failure_without_opt_in_refuses_to_start() {
+        let e = resolve_db_key(Some(Err("denied".into())), false, cfg()).unwrap_err();
+        assert!(e.contains("denied") && e.contains("allow_config_fallback"));
+    }
+
+    #[test]
+    fn kms_failure_with_opt_in_falls_back_and_says_so() {
+        let r = resolve_db_key(Some(Err("denied".into())), true, cfg()).unwrap();
+        assert_eq!(r, (cfg(), true));
+    }
+
+    #[test]
+    fn no_kms_configured_uses_config_key() {
+        assert_eq!(resolve_db_key(None, false, cfg()).unwrap(), (cfg(), false));
+        assert_eq!(resolve_db_key(None, false, None).unwrap(), (None, false));
+    }
+}
+
 #[cfg(test)]
 mod gateway_hardening_tests {
     use super::{bounded_agent_id, reputation_key, with_arguments, ArgSource, MAX_AGENT_ID_CHARS};
@@ -2266,5 +2229,479 @@ mod gateway_hardening_tests {
         // The place the arguments came from must still be there; no arguments: nothing to rebuild.
         assert!(with_arguments(frame, "{}", ArgSource::Key("input")).is_none());
         assert!(with_arguments(frame, "{}", ArgSource::Missing).is_none());
+    }
+}
+
+/// Tenant isolation of the audit log: an entry carries the namespace of the authenticated caller, so
+/// `/api/v1/logs`, `/api/v1/stats` and the SSE stream of one tenant never show the calls of another one.
+#[cfg(test)]
+mod audit_isolation_tests {
+    use super::*;
+    use axum::response::IntoResponse;
+    use futures::StreamExt;
+    use std::time::Duration;
+    use zn::handlers::{
+        api::{self, ApiState},
+        sse::{self, SseState},
+    };
+
+    fn test_state(configured_namespace: Option<&str>) -> (AppState, tempfile::TempDir) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut config = zn::config::ZnConfig::default();
+        config.neural.enabled = false;
+        config.security.namespace = configured_namespace.map(str::to_string);
+        let engine = Arc::new(
+            ZnEngine::new(zn::engine::ZnEngineConfig {
+                gas_limit: 10_000_000,
+                memory_limit: 10 * 1024 * 1024,
+                timeout_ms: 50,
+                allowed_hashes: vec![],
+                signing_public_key: None,
+            })
+            .expect("engine"),
+        );
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let tenants = Arc::new(
+            TenantStore::new(Arc::new(std::sync::Mutex::new(conn))).expect("tenant store"),
+        );
+        let backend: Arc<dyn zn::ai::ModelBackend> = Arc::new(zn::ai::FastBootBackend::new(8));
+        let memory_dir = dir.path().join("vectors");
+        std::fs::create_dir_all(&memory_dir).unwrap();
+        let (tx, _) = broadcast::channel(64);
+        let (webhook_tx, webhook_rx) = tokio::sync::mpsc::channel(8);
+        std::mem::forget(webhook_rx);
+        let state = AppState {
+            tx,
+            vault: Arc::new(AuditVault::new(":memory:", None).expect("vault")),
+            reputation: Arc::new(ReputationSystem::new()),
+            engine,
+            pool: Arc::new(McpPool::new(std::collections::HashMap::new())),
+            webhook_tx,
+            tenants,
+            canary: Arc::new(zn::ai::CanaryDeployer::new(backend)),
+            memory: Arc::new(zn::ai::VectorMemory::new(
+                memory_dir.to_str().unwrap(),
+                8,
+                "example-model",
+            )),
+            loop_breaker: Arc::new(zn::engine::loop_breaker::LoopBreaker::new(
+                config.loop_breaker.clone(),
+            )),
+            cache: Arc::new(zn::engine::cache::ResultCache::new(config.caching.clone())),
+            consensus: Arc::new(zn::engine::consensus::ConsensusManager::new(
+                config.consensus.clone(),
+            )),
+            config: Arc::new(config),
+        };
+        (state, dir)
+    }
+
+    fn frame(tool: &str) -> String {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": { "name": tool, "arguments": { "query": "hello" } }
+        })
+        .to_string()
+    }
+
+    fn tenant(namespace: &str, role: TenantRole) -> TenantContext {
+        TenantContext {
+            id: format!("id-{namespace}"),
+            name: format!("org-{namespace}"),
+            namespace: namespace.to_string(),
+            role,
+        }
+    }
+
+    fn api_state(state: &AppState) -> ApiState {
+        ApiState {
+            vault: Arc::clone(&state.vault),
+            engine: Arc::clone(&state.engine),
+            tenants: Arc::clone(&state.tenants),
+            consensus: Arc::clone(&state.consensus),
+        }
+    }
+
+    async fn logs_of(state: &AppState, who: TenantContext) -> Vec<String> {
+        let res = api::logs(
+            State(api_state(state)),
+            Extension(who),
+            axum::extract::Query(std::collections::HashMap::new()),
+        )
+        .await;
+        assert_eq!(res.0["status"], "ok");
+        let mut tools: Vec<String> = res.0["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["tool_name"].as_str().unwrap().to_string())
+            .collect();
+        tools.sort();
+        tools
+    }
+
+    async fn total_of(state: &AppState, who: TenantContext) -> u64 {
+        let res = api::stats(State(api_state(state)), Extension(who)).await;
+        assert_eq!(res.0["status"], "ok");
+        res.0["stats"]["total"].as_u64().unwrap()
+    }
+
+    /// Everything the SSE stream delivers until it stays quiet for a moment.
+    async fn drain(body: &mut axum::body::BodyDataStream) -> Vec<String> {
+        let mut tools = Vec::new();
+        while let Ok(Some(chunk)) =
+            tokio::time::timeout(Duration::from_millis(300), body.next()).await
+        {
+            let text = String::from_utf8(chunk.unwrap().to_vec()).unwrap();
+            if let Some(data) = text.strip_prefix("data: ") {
+                let v: serde_json::Value = serde_json::from_str(data.trim_end()).unwrap();
+                tools.push(v["tool_name"].as_str().unwrap().to_string());
+            }
+        }
+        tools.sort();
+        tools
+    }
+
+    async fn open_sse(state: &AppState, who: TenantContext) -> axum::body::BodyDataStream {
+        let sse = sse::events(
+            State(SseState {
+                tx: state.tx.clone(),
+            }),
+            Extension(who),
+        )
+        .await;
+        sse.into_response().into_body().into_data_stream()
+    }
+
+    #[test]
+    fn namespace_is_the_authenticated_one_then_the_configured_one_then_global() {
+        assert_eq!(resolve_namespace(Some("a".into()), Some("b")), "a");
+        assert_eq!(resolve_namespace(None, Some("b")), "b");
+        assert_eq!(resolve_namespace(None, None), GLOBAL_NAMESPACE);
+    }
+
+    /// The configured namespace of the process equals the one of tenant B: before the fix, the calls of tenant
+    /// A were labelled with it, so B saw them and A saw nothing of its own.
+    #[tokio::test]
+    async fn logs_stats_and_sse_show_each_tenant_only_its_own_calls() {
+        let (state, _dir) = test_state(Some("tenant-b"));
+        let mut sse_a = open_sse(&state, tenant("tenant-a", TenantRole::User)).await;
+        let mut sse_b = open_sse(&state, tenant("tenant-b", TenantRole::User)).await;
+        let mut sse_root = open_sse(&state, tenant("global", TenantRole::SuperAdmin)).await;
+
+        for tool in ["a_one", "a_two"] {
+            process_mcp_message(&frame(tool), &state, Some("tenant-a".to_string()))
+                .await
+                .unwrap();
+        }
+        process_mcp_message(&frame("b_one"), &state, Some("tenant-b".to_string()))
+            .await
+            .unwrap();
+        // A legacy row without a namespace (written by an older version).
+        state
+            .vault
+            .log(AuditEntry::new("TOOL_CALL", "legacy_row", "ALLOWED"))
+            .unwrap();
+
+        let a = tenant("tenant-a", TenantRole::User);
+        let b = tenant("tenant-b", TenantRole::User);
+        let root = tenant("global", TenantRole::SuperAdmin);
+
+        assert_eq!(logs_of(&state, a.clone()).await, ["a_one", "a_two"]);
+        assert_eq!(logs_of(&state, b.clone()).await, ["b_one"]);
+        assert_eq!(
+            logs_of(&state, root.clone()).await,
+            ["a_one", "a_two", "b_one", "legacy_row"]
+        );
+
+        assert_eq!(total_of(&state, a).await, 2);
+        assert_eq!(total_of(&state, b).await, 1);
+        assert_eq!(total_of(&state, root).await, 4);
+
+        assert_eq!(drain(&mut sse_a).await, ["a_one", "a_two"]);
+        assert_eq!(drain(&mut sse_b).await, ["b_one"]);
+        assert_eq!(drain(&mut sse_root).await, ["a_one", "a_two", "b_one"]);
+    }
+
+    /// With no configured namespace the tenants used to get nothing at all (entries had no namespace).
+    #[tokio::test]
+    async fn tenants_see_their_calls_when_no_namespace_is_configured() {
+        let (state, _dir) = test_state(None);
+        process_mcp_message(&frame("a_one"), &state, Some("tenant-a".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(
+            logs_of(&state, tenant("tenant-a", TenantRole::User)).await,
+            ["a_one"]
+        );
+        assert!(logs_of(&state, tenant("tenant-b", TenantRole::User))
+            .await
+            .is_empty());
+    }
+
+    /// A local stdio session (no authenticated tenant) is labelled with the configured namespace, or the
+    /// global one, never left empty.
+    #[tokio::test]
+    async fn local_session_entries_use_the_configured_or_global_namespace() {
+        let (state, _dir) = test_state(Some("example-local"));
+        process_mcp_message(&frame("local_one"), &state, None)
+            .await
+            .unwrap();
+        let rows = state.vault.get_recent(10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].namespace.as_deref(), Some("example-local"));
+
+        let (state, _dir) = test_state(None);
+        process_mcp_message(&frame("local_two"), &state, None)
+            .await
+            .unwrap();
+        let rows = state.vault.get_recent(10).unwrap();
+        assert_eq!(rows[0].namespace.as_deref(), Some(GLOBAL_NAMESPACE));
+    }
+}
+
+#[cfg(test)]
+mod audit_metadata_tests {
+    use super::*;
+    use std::path::Path;
+
+    const MARKER: &str = "zebra-marker-7f3a91";
+
+    /// Paths under `dir` (any depth) whose bytes contain `needle`.
+    fn files_containing(dir: &Path, needle: &str) -> Vec<String> {
+        let mut hits = Vec::new();
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if std::fs::read(&p)
+                    .map(|b| b.windows(needle.len()).any(|w| w == needle.as_bytes()))
+                    .unwrap_or(false)
+                {
+                    hits.push(p.display().to_string());
+                }
+            }
+        }
+        hits
+    }
+
+    fn test_state(root: &Path, require_write: bool) -> AppState {
+        test_state_with(root, require_write, false)
+    }
+
+    fn test_state_with(root: &Path, require_write: bool, store_payloads: bool) -> AppState {
+        std::fs::create_dir_all(root).unwrap();
+        let mut cfg = ZnConfig::default();
+        cfg.audit.db_path = root.join("audit.db").to_string_lossy().into_owned();
+        cfg.audit.require_write = require_write;
+        assert!(cfg.neural.enabled, "neural is on by default");
+        assert!(
+            !cfg.audit.store_payloads,
+            "payload storage is off by default"
+        );
+        cfg.audit.store_payloads = store_payloads;
+        assert!(cfg.guardrails.nearest_neighbor_audit);
+        let vault = Arc::new(
+            AuditVault::new(&cfg.audit.db_path, None)
+                .unwrap()
+                .with_payload_storage(cfg.audit.store_payloads),
+        );
+        let tenants = Arc::new(TenantStore::new(vault.get_connection()).unwrap());
+        let engine = Arc::new(
+            ZnEngine::new(ZnEngineConfig {
+                gas_limit: cfg.engine.gas_limit,
+                memory_limit: cfg.engine.memory_limit_mb * 1024 * 1024,
+                timeout_ms: cfg.engine.timeout_ms,
+                allowed_hashes: cfg.engine.allowed_policy_hashes.clone(),
+                signing_public_key: cfg.engine.signing_public_key.clone(),
+            })
+            .unwrap(),
+        );
+        let (tx, _) = broadcast::channel(64);
+        let (webhook_tx, _webhook_rx) = tokio::sync::mpsc::channel(8);
+        let backend: Arc<dyn zn::ai::ModelBackend> = Arc::new(zn::ai::FastBootBackend::new(384));
+        let vectors = root.join("vectors");
+        std::fs::create_dir_all(&vectors).unwrap();
+        let memory = Arc::new(zn::ai::VectorMemory::new(
+            vectors.to_str().unwrap(),
+            384,
+            "test-audit-metadata",
+        ));
+        let cache = Arc::new(zn::engine::cache::ResultCache::new(cfg.caching.clone()));
+        let pool =
+            Arc::new(McpPool::new(std::collections::HashMap::new()).with_cache(cache.clone()));
+        AppState {
+            tx,
+            vault,
+            reputation: Arc::new(ReputationSystem::new()),
+            engine,
+            pool,
+            webhook_tx,
+            tenants,
+            canary: Arc::new(zn::ai::CanaryDeployer::new(backend)),
+            memory,
+            loop_breaker: Arc::new(zn::engine::loop_breaker::LoopBreaker::new(
+                cfg.loop_breaker.clone(),
+            )),
+            cache,
+            consensus: Arc::new(zn::engine::consensus::ConsensusManager::new(
+                cfg.consensus.clone(),
+            )),
+            config: Arc::new(cfg),
+        }
+    }
+
+    fn call(n: u32, text: &str) -> String {
+        serde_json::json!({
+            "jsonrpc": "2.0", "id": n, "method": "tools/call",
+            "params": {"name": "read_note", "arguments": {"text": text}}
+        })
+        .to_string()
+    }
+
+    async fn wait_for_memory(state: &AppState) {
+        let vec = state
+            .canary
+            .backend_for("anonymous")
+            .embed("probe")
+            .unwrap();
+        for _ in 0..100 {
+            let found = state
+                .memory
+                .search(GLOBAL_NAMESPACE, "anonymous", &vec, 1)
+                .await
+                .map(|r| !r.is_empty())
+                .unwrap_or(false);
+            if found {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!("the vector memory never stored the first call");
+    }
+
+    #[test]
+    fn scan_helper_finds_a_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("sub")).unwrap();
+        std::fs::write(dir.path().join("sub/a.bin"), format!("xx{MARKER}yy")).unwrap();
+        assert_eq!(files_containing(dir.path(), MARKER).len(), 1);
+        assert!(files_containing(dir.path(), "absent-needle").is_empty());
+    }
+
+    #[tokio::test]
+    async fn default_config_keeps_call_content_out_of_audit_sse_and_vectors() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path(), false);
+        let mut rx = state.tx.subscribe();
+
+        process_mcp_message(&call(1, &format!("{MARKER} first")), &state, None)
+            .await
+            .unwrap();
+        wait_for_memory(&state).await;
+        process_mcp_message(&call(2, &format!("{MARKER} second")), &state, None)
+            .await
+            .unwrap();
+
+        let mut events = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            events.push(e);
+        }
+        assert!(!events.is_empty(), "the calls must reach the SSE stream");
+        let sse = serde_json::to_string(&events).unwrap();
+        assert!(!sse.contains(MARKER), "SSE events carry call content");
+        let nn = events
+            .iter()
+            .filter_map(|e| e.nearest_neighbor.clone())
+            .next()
+            .expect("the second call must report a nearest neighbour");
+        assert!(nn.starts_with("h:"), "neighbour must be a reference: {nn}");
+
+        let rows = state.vault.get_recent(100).unwrap();
+        assert!(rows.iter().any(|r| r.event == "NEAREST_NEIGHBOR"));
+        assert!(!serde_json::to_string(&rows).unwrap().contains(MARKER));
+
+        assert!(
+            files_containing(dir.path(), MARKER).is_empty(),
+            "call content reached a file: {:?}",
+            files_containing(dir.path(), MARKER)
+        );
+    }
+
+    #[test]
+    fn webhook_alerts_carry_metadata_only() {
+        let mut entry = AuditEntry::new("TOOL_CALL", "read_note", "DENIED");
+        entry.payload = Some(format!("{MARKER} recovery_code=hunter2"));
+        let alert = alert_for(&entry);
+        assert!(alert.details.is_none());
+        assert!(!serde_json::to_string(&alert).unwrap().contains(MARKER));
+        assert_eq!(alert.tool_name, "read_note");
+    }
+
+    #[tokio::test]
+    async fn stored_payloads_never_reach_the_event_stream() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state_with(dir.path(), false, true);
+        let mut rx = state.tx.subscribe();
+        let text = format!("{MARKER} recovery_code=hunter2-not-a-pattern");
+        process_mcp_message(&call(1, &text), &state, None)
+            .await
+            .unwrap();
+        let rows = state.vault.get_recent(100).unwrap();
+        assert!(
+            serde_json::to_string(&rows).unwrap().contains(MARKER),
+            "the database keeps the payload when store_payloads is on"
+        );
+        let mut events = Vec::new();
+        while let Ok(e) = rx.try_recv() {
+            events.push(e);
+        }
+        assert!(!events.is_empty());
+        assert!(events.iter().all(|e| e.payload.is_none()));
+        assert!(!serde_json::to_string(&events).unwrap().contains(MARKER));
+    }
+
+    #[tokio::test]
+    async fn audit_write_failure_is_counted_and_only_blocks_with_require_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let open = test_state(&dir.path().join("a"), false);
+        let strict = test_state(&dir.path().join("b"), true);
+        for st in [&open, &strict] {
+            st.vault
+                .get_connection()
+                .lock()
+                .unwrap()
+                .execute_batch("DROP TABLE audit_logs")
+                .unwrap();
+        }
+        let before = zn::metrics::AUDIT_WRITE_FAILURES.get();
+
+        let out = process_mcp_message(&call(1, "plain note"), &open, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            !out.contains("audit record could not be written"),
+            "default mode must not block: {out}"
+        );
+        assert!(zn::metrics::AUDIT_WRITE_FAILURES.get() > before);
+
+        let out = process_mcp_message(&call(2, "plain note"), &strict, None)
+            .await
+            .unwrap()
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(
+            v["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("audit record could not be written"),
+            "require_write must deny: {out}"
+        );
+        assert!(v.get("result").is_none());
     }
 }

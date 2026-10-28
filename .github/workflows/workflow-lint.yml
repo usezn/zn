@@ -1,0 +1,107 @@
+name: Workflow lint
+
+# Lints the GitHub Actions workflows and the composite action of this repository with actionlint
+# (syntax, expressions, shell scripts) and zizmor (security: injection, permissions, unpinned or
+# impostor actions, cache poisoning). Both tools are pinned: actionlint by a checksum of the release
+# archive, zizmor by hashes in .github/workflow-lint/zizmor-requirements.txt. Settings and the few
+# justified exceptions live in .github/zizmor.yml and in "zizmor: ignore" comments next to the code.
+on:
+  # No paths filter on pull_request: this check is required by the branch rulesets, and a filtered
+  # workflow never reports on a pull request that skips it. The first step checks the changed paths
+  # instead and the remaining steps are skipped when none of them is a workflow file.
+  pull_request:
+    branches: [ main, next, 'release/**' ]
+  push:
+    branches: [ main, next ]
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+      - '.github/workflow-lint/**'
+      - '.github/zizmor.yml'
+      - 'action.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workflow-lint-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Retry npm and pip downloads instead of failing a run on one network error.
+  NPM_CONFIG_FETCH_RETRIES: "5"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000"
+  PIP_RETRIES: "5"
+  PIP_TIMEOUT: "60"
+
+jobs:
+  workflow-lint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ACTIONLINT_VERSION: 1.7.12
+      # SHA-256 of actionlint_<version>_linux_amd64.tar.gz, from the release's checksums file.
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Two commits: on a pull request HEAD is the merge commit and HEAD^1 is the base branch tip.
+          fetch-depth: 2
+      - name: Detect workflow changes
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          lint=true
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            lint=false
+            while IFS= read -r changed; do
+              case "$changed" in
+                .github/workflows/*|.github/actions/*|.github/workflow-lint/*|.github/zizmor.yml|action.yml) lint=true ;;
+              esac
+            done < <(git diff --name-only HEAD^1 HEAD)
+          fi
+          echo "lint=${lint}" >> "$GITHUB_OUTPUT"
+          echo "Workflow files changed or full run requested: ${lint}"
+      - name: Install actionlint (checksum verified)
+        if: steps.scope.outputs.lint == 'true'
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check --strict -
+          mkdir "$RUNNER_TEMP/actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/actionlint" actionlint
+          echo "$RUNNER_TEMP/actionlint" >> "$GITHUB_PATH"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: steps.scope.outputs.lint == 'true'
+        with:
+          python-version: '3.13'
+          package-manager-cache: false
+      - name: Install zizmor (hash pinned)
+        if: steps.scope.outputs.lint == 'true'
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python -m pip install --require-hashes --no-deps --requirement .github/workflow-lint/zizmor-requirements.txt
+      - name: actionlint
+        if: steps.scope.outputs.lint == 'true'
+        # The runner image ships shellcheck, which actionlint uses to check the scripts in run: steps.
+        run: actionlint -color
+      - name: zizmor
+        if: steps.scope.outputs.lint == 'true'
+        env:
+          # Read-only token: lets zizmor check pinned commits and action versions against GitHub.
+          GH_TOKEN: ${{ github.token }}
+        run: zizmor --no-progress --config .github/zizmor.yml .github/workflows action.yml

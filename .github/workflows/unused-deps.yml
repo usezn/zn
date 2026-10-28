@@ -1,0 +1,64 @@
+name: Unused dependencies
+
+on:
+  push:
+    branches: [main, next]
+    paths: ["packages/zn-gate/**", "src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/unused-deps.yml"]
+  pull_request:
+    types: [ opened, synchronize, reopened, ready_for_review ]
+    paths: ["packages/zn-gate/**", "src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/unused-deps.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unused-deps-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Both jobs only report for now: they never fail the workflow, and neither is a required check.
+jobs:
+  knip:
+    name: knip (zn-gate, informational)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: knip (unused and unlisted dependencies)
+        working-directory: packages/zn-gate
+        run: npx --yes knip@6.42.0 --dependencies
+
+  cargo-machete:
+    name: cargo-machete (informational)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: 1.99.0
+      - name: Install cargo-machete
+        run: cargo install --locked --version 0.9.1 cargo-machete
+      - name: cargo-machete
+        run: cargo machete

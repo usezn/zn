@@ -42,21 +42,21 @@ function run(adapter, raw, extra = {}) {
   return runner.handle(adapter, raw, { engine: fakeEngine, vault: createFakeVault(), failMode: 'open', znRunPrefix: 'ZN_AGENT=x "node" "run.js" --', ...extra });
 }
 
-test('registry lists the four adapters', () => {
-  assert.deepEqual(listAdapters().sort(), ['claude-code', 'codex', 'cursor', 'opencode']);
+test('registry lists the eight adapters', () => {
+  assert.deepEqual(listAdapters().sort(), ['antigravity', 'claude-code', 'codex', 'copilot', 'cursor', 'gemini', 'opencode', 'zcode']);
 });
 
 /* ------------------------------- Codex ------------------------------- */
 
 const cx = (event, extra) => ({ session_id: 's', transcript_path: '/t', cwd: extra.cwd || '/', hook_event_name: event, model: 'm', ...extra });
 
-test('codex: credential reads are denied, markers get the zn run command, no auto-approval', async (t) => {
+test('codex: credential reads are denied, markers in arguments get the environment-variable way, no auto-approval', async (t) => {
   const dir = tmpProject(t);
   const d1 = await run(codex, cx('PreToolUse', { cwd: dir, tool_name: 'Bash', tool_input: { command: 'cat .env' } }));
   assert.equal(d1.output.hookSpecificOutput.permissionDecision, 'deny');
   const d2 = await run(codex, cx('PreToolUse', { cwd: dir, tool_name: 'Bash', tool_input: { command: 'psql "postgres://a:__ZN_DB_PASSWORD__@h/d"' } }));
   assert.equal(d2.output.hookSpecificOutput.permissionDecision, 'deny');
-  assert.match(d2.output.hookSpecificOutput.permissionDecisionReason, /zn run -- psql "postgres:\/\/a:__ZN_DB_PASSWORD__@h\/d"/);
+  assert.match(d2.output.hookSpecificOutput.permissionDecisionReason, /run --secrets NAME -- <command>/);
   assert.equal(d2.output.hookSpecificOutput.updatedInput, undefined, 'never rewrites (would need allow)');
   // Already wrapped: no opinion, Codex's approval policy applies.
   const d3 = await run(codex, cx('PreToolUse', { cwd: dir, tool_name: 'Bash', tool_input: { command: 'zn run -- psql "postgres://a:__ZN_DB_PASSWORD__@h/d"' } }));
@@ -87,9 +87,9 @@ test('codex: output with secrets is replaced through block; prompts with secrets
   assert.equal((await run(codex, cx('PostToolUse', { tool_name: 'Bash', tool_input: {}, tool_response: { stdout: 'ok' } }))).output, null);
 });
 
-test('codex: install writes hooks.json (user and project) and uninstall removes only ours', (t) => {
+test('codex: install writes hooks.json (user and project) and uninstall removes only ours', { skip: process.platform === 'win32' }, (t) => {
   const home = tempDir(t, 'zn-cx-');
-  const env = { CODEX_HOME: path.join(home, '.codex') };
+  const env = { CODEX_HOME: path.join(home, '.codex'), ZN_HOME: path.join(home, '.zn') };
   const file = codex.hooksFile({ env });
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'mine.sh' }] }] } }));
@@ -98,7 +98,8 @@ test('codex: install writes hooks.json (user and project) and uninstall removes 
   assert.ok(rep.warnings.some((w) => /\/hooks/.test(w)), 'tells the user to trust the hooks');
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.equal(data.hooks.PreToolUse.length, 2);
-  assert.equal(data.hooks.PreToolUse[1].hooks[0].command, "'/usr/bin/node' '/x/lib/hooks/runner.js' codex");
+  assert.match(data.hooks.PreToolUse[1].hooks[0].command, /^'.*zn-hook-codex\.sh' PreToolUse$/);
+  assert.ok(fs.readFileSync(path.join(home, '.zn', 'hooks', 'zn-hook-codex.sh'), 'utf8').includes("ZN_NODE='/usr/bin/node'"));
   assert.equal(data.hooks.PostToolUse[0].matcher, codex.POST_MATCHER);
   codex.install({ env, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js' });
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).hooks.PreToolUse.length, 2, 'idempotent');
@@ -122,13 +123,13 @@ test('cursor: beforeReadFile denies plain .env and credential files, allows othe
   assert.deepEqual(r2.output, { permission: 'allow' });
 });
 
-test('cursor: shell commands: deny reads, zn run guidance for markers, ask once wrapped, silent otherwise', async (t) => {
+test('cursor: shell commands: deny reads, environment-variable guidance for markers, ask once wrapped, silent otherwise', async (t) => {
   const dir = tmpProject(t);
   const a = await run(cursor, cu('beforeShellExecution', { cwd: dir, command: 'grep KEY .env', sandbox: false }));
   assert.equal(a.output.permission, 'deny');
   const b = await run(cursor, cu('beforeShellExecution', { cwd: dir, command: 'gh api -H "Authorization: token __ZN_GITHUB_TOKEN__" /user' }));
   assert.equal(b.output.permission, 'deny');
-  assert.match(b.output.agent_message, /zn run -- gh api/);
+  assert.match(b.output.agent_message, /run --secrets NAME -- <command>/);
   const c = await run(cursor, cu('beforeShellExecution', { cwd: dir, command: 'zn run -- gh api -H "Authorization: token __ZN_GITHUB_TOKEN__" /user' }));
   assert.equal(c.output.permission, 'ask');
   assert.equal((await run(cursor, cu('beforeShellExecution', { cwd: dir, command: 'ls' }))).output, null, 'no auto-approval');
@@ -146,14 +147,16 @@ test('cursor: MCP output is tokenized, built-in output cannot be, prompts with s
   assert.deepEqual((await run(cursor, cu('beforeSubmitPrompt', { prompt: 'hello' }))).output, { continue: true });
 });
 
-test('cursor: install writes version 1 hooks.json with our events', (t) => {
+test('cursor: install writes version 1 hooks.json with our events', { skip: process.platform === 'win32' }, (t) => {
   const home = tempDir(t, 'zn-cu-');
   // platform is explicit: on Windows the default is the PowerShell form (below).
   cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js', platform: 'linux' });
   const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
   assert.equal(data.version, 1);
   assert.deepEqual(Object.keys(data.hooks).sort(), [...cursor.EVENTS].sort());
-  assert.equal(data.hooks.beforeReadFile[0].command, "'/usr/bin/node' '/x/lib/hooks/runner.js' cursor");
+  // A user install goes through the launcher (lib/agents/launcher.js; see hooks_more_launcher.test.js).
+  assert.match(data.hooks.beforeReadFile[0].command, /\/\.zn\/hooks\/zn-hook-cursor\.sh' beforeReadFile$/);
+  assert.match(fs.readFileSync(path.join(home, '.zn', 'hooks', 'zn-hook-cursor.sh'), 'utf8'), /^ZN_NODE='\/usr\/bin\/node'$/m);
   cursor.uninstall({ home });
   assert.deepEqual(JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8')).hooks, {});
 });
@@ -162,9 +165,12 @@ test('cursor: install on Windows wraps the hook command in powershell.exe', (t) 
   const home = tempDir(t, 'zn-cu-win-');
   cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js', platform: 'win32' });
   const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
-  const expected = 'powershell.exe -NoProfile -NonInteractive -Command "& \'/usr/bin/node\' \'/x/lib/hooks/runner.js\' cursor"';
-  assert.equal(data.hooks.beforeReadFile[0].command, expected);
-  assert.equal(data.hooks.beforeMCPExecution[0].command, expected);
+  for (const ev of ['beforeReadFile', 'beforeMCPExecution']) {
+    const command = data.hooks[ev][0].command;
+    assert.match(command, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe -NoProfile -NonInteractive -EncodedCommand /);
+    const script = require('../lib/shell-quote').windowsCommandScript(command);
+    assert.ok(script.includes("& '/usr/bin/node' '/x/lib/hooks/runner.js' cursor"), script);
+  }
   cursor.uninstall({ home, platform: 'win32' });
   assert.deepEqual(JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8')).hooks, {});
 });
@@ -176,7 +182,7 @@ test('cursor: beforeMCPExecution is installed without failClosed', (t) => {
   cursor.install({ home, nodePath: '/usr/bin/node', runnerPath: '/x/lib/hooks/runner.js', platform: 'linux' });
   const data = JSON.parse(fs.readFileSync(cursor.hooksFile({ home }), 'utf8'));
   const entry = data.hooks.beforeMCPExecution[0];
-  assert.equal(entry.command, "'/usr/bin/node' '/x/lib/hooks/runner.js' cursor");
+  assert.match(entry.command, /zn-hook-cursor\.sh' beforeMCPExecution$/);
   assert.equal(entry.timeout, 30);
   assert.equal(entry.failClosed, undefined, 'no failClosed: an empty answer would block every MCP call');
   cursor.uninstall({ home });
@@ -246,13 +252,14 @@ test('cursor: a "secrets" server is ours only when it is zn\'s own install', asy
   assert.equal(nameOnly.output.permission, 'deny');
 });
 
-test('cursor: MCP calls from Claude Code and OpenCode are allowed without the engine or the vault', async (t) => {
+test('cursor: MCP calls from OpenCode are allowed without the engine or the vault; Claude Code checks them', async (t) => {
   const dir = tmpProject(t);
   // An engine that throws: any scan or prepare would make the call fail closed (deny).
   const boom = { scan() { throw new Error('engine used'); }, async prepare() { throw new Error('engine used'); } };
   const claudeCode = getAdapter('claude-code');
+  // Claude Code's PreToolUse hook checks MCP arguments (it did not before), so the engine is used.
   const cc = await run(claudeCode, cx('PreToolUse', { cwd: dir, tool_name: 'mcp__github__get_issue', tool_input: { number: 1 } }), { engine: boom });
-  assert.equal(cc.decision.decision, 'allow');
+  assert.equal(cc.decision.decision, 'deny');
   const oc = await run(opencode, { hook: 'tool.execute.before', tool: 'github_get_file', cwd: dir, args: { path: 'README.md' } }, { engine: boom });
   assert.equal(oc.decision.decision, 'allow');
 });
@@ -278,8 +285,8 @@ test('opencode: before/after/chat events map to runner decisions', async (t) => 
   const deny = await run(opencode, { hook: 'tool.execute.before', tool: 'read', cwd: dir, args: { filePath: path.join(dir, '.env') } });
   assert.equal(deny.output.action, 'deny');
   const wrap = await run(opencode, { hook: 'tool.execute.before', tool: 'bash', cwd: dir, args: { command: 'psql __ZN_DB_PASSWORD__', description: 'd' } });
-  assert.equal(wrap.output.action, 'args');
-  assert.match(wrap.output.args.command, /run\.js" -- psql __ZN_DB_PASSWORD__$/);
+  assert.equal(wrap.output.action, 'deny');
+  assert.match(wrap.output.message, /marker in the arguments of a command is not filled in/);
   const after = await run(opencode, { hook: 'tool.execute.after', tool: 'bash', cwd: dir, args: {}, output: 'AWS=' + AWS });
   assert.equal(after.output.action, 'output');
   assert.ok(!after.output.output.includes(AWS));
@@ -290,7 +297,7 @@ test('opencode: before/after/chat events map to runner decisions', async (t) => 
   assert.deepEqual((await run(opencode, { hook: 'tool.execute.before', tool: 'bash', cwd: dir, args: { command: 'ls' } })).output, { action: 'none' });
 });
 
-test('opencode: the installed plugin, driven like OpenCode does, blocks, rewrites in place and scrubs', async (t) => {
+test('opencode: the installed plugin, driven like OpenCode does, blocks and scrubs', async (t) => {
   const dir = tmpProject(t);
   const xdg = tempDir(t, 'zn-oc-');
   const znHome = tempDir(t, 'zn-oc-home-');
@@ -298,6 +305,8 @@ test('opencode: the installed plugin, driven like OpenCode does, blocks, rewrite
   const rep = opencode.install({ env });
   assert.ok(rep.settings.endsWith(path.join('opencode', 'plugins', 'zn-gate.js')));
   const saved = process.env.ZN_HOME;
+  const savedShell = process.env.SHELL;
+  process.env.SHELL = 'bash'; // the plugin reads it at load; Windows runners have none, which means PowerShell
   process.env.ZN_HOME = znHome; // vault locked: the real engine redacts irreversibly
   try {
     // OpenCode loads the plugin as an ES module; Node 18 needs the .mjs extension for that.
@@ -309,9 +318,9 @@ test('opencode: the installed plugin, driven like OpenCode does, blocks, rewrite
     await assert.rejects(hooks['tool.execute.before']({ tool: 'read', sessionID: 's', callID: 'c' }, { args: { filePath: path.join(dir, '.env') } }), /env shadow/);
     const args = { command: 'psql __ZN_DB_PASSWORD__', description: 'x' };
     const out1 = { args };
-    await hooks['tool.execute.before']({ tool: 'bash', sessionID: 's', callID: 'c' }, out1);
-    assert.equal(out1.args, args, 'mutated in place, not replaced');
-    assert.match(args.command, /run\.js' -- psql __ZN_DB_PASSWORD__$/);
+    await assert.rejects(hooks['tool.execute.before']({ tool: 'bash', sessionID: 's', callID: 'c' }, out1), /marker in the arguments of a command is not filled in/);
+    assert.equal(out1.args, args);
+    assert.equal(args.command, 'psql __ZN_DB_PASSWORD__', 'never rewritten');
     assert.equal(args.description, 'x');
     const res = { title: 't', output: 'line\nAWS_ACCESS_KEY_ID=' + AWS + '\n', metadata: { preview: 'AWS_ACCESS_KEY_ID=' + AWS, display: { type: 'file', text: AWS }, truncated: false } };
     await hooks['tool.execute.after']({ tool: 'bash', sessionID: 's', callID: 'c', args: {} }, res);
@@ -327,6 +336,7 @@ test('opencode: the installed plugin, driven like OpenCode does, blocks, rewrite
     await hooks['chat.message']({ sessionID: 's' }, { message: {}, parts: [{ type: 'text', text: 'hello' }] });
   } finally {
     if (saved === undefined) delete process.env.ZN_HOME; else process.env.ZN_HOME = saved;
+    if (savedShell === undefined) delete process.env.SHELL; else process.env.SHELL = savedShell;
   }
   opencode.uninstall({ env });
   assert.ok(!fs.existsSync(rep.settings));
@@ -340,10 +350,79 @@ test('opencode: install refuses to overwrite a plugin it did not write', (t) => 
   assert.throws(() => opencode.install({ env: { XDG_CONFIG_HOME: xdg } }), /not written by zn/);
 });
 
-test('opencode project plugin: cmd.exe does not look for zn in the project directory first', () => {
+test('opencode: with PowerShell as the shell, a marker in the arguments is refused with the environment-variable way', async (t) => {
+  const dir = tmpProject(t);
+  const opts = { nodePath: String.raw`C:\Program Files\nodejs\node.exe`, runJs: String.raw`C:\Users\ana\zn\run.js` };
+  for (const shell of ['pwsh', 'pwsh.exe', 'powershell.exe', String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`]) {
+    const r = await run(opencode, { hook: 'tool.execute.before', tool: 'bash', shell, cwd: dir, args: { command: "psql 'postgres://app:__ZN_DB_PASSWORD__@db.example.test/app' -c 'select 1'" } }, opts);
+    assert.equal(r.output.action, 'deny', shell);
+    assert.match(r.output.message, /marker in the arguments of a command is not filled in/, shell);
+    assert.match(r.output.message, /run --secrets NAME -- <command>/, shell);
+  }
+  // No marker: left alone.
+  const none = await run(opencode, { hook: 'tool.execute.before', tool: 'bash', shell: 'pwsh', cwd: dir, args: { command: 'Get-ChildItem' } }, opts);
+  assert.deepEqual(none.output, { action: 'none' });
+  // Not one plain native command: refused, never run with a placeholder.
+  for (const command of ['Get-Content x | psql __ZN_DB_PASSWORD__', 'Invoke-WebRequest __ZN_API_KEY__', 'psql $env:X __ZN_DB_PASSWORD__']) {
+    const d = await run(opencode, { hook: 'tool.execute.before', tool: 'bash', shell: 'pwsh', cwd: dir, args: { command } }, opts);
+    assert.equal(d.output.action, 'deny', command);
+    assert.match(d.output.message, /PowerShell/);
+  }
+});
+
+test('opencode: bash and unknown shells are checked as bash', async (t) => {
+  const dir = tmpProject(t);
+  for (const shell of [undefined, '', 'bash', '/usr/bin/zsh', 'sh', 'fish', 'nushell']) {
+    const r = await run(opencode, { hook: 'tool.execute.before', tool: 'bash', shell, cwd: dir, args: { command: 'psql __ZN_DB_PASSWORD__' } });
+    assert.equal(r.output.action, 'deny', String(shell));
+    assert.match(r.output.message, /marker in the arguments of a command is not filled in/, String(shell));
+    // A pipeline is read the bash way: the PowerShell wording is not used.
+    const piped = await run(opencode, { hook: 'tool.execute.before', tool: 'bash', shell, cwd: dir, args: { command: 'Get-Content x | psql __ZN_DB_PASSWORD__' } });
+    assert.equal(piped.output.action, 'deny', String(shell));
+    assert.doesNotMatch(piped.output.message, /PowerShell/, String(shell));
+  }
+  assert.equal(opencode.isPowerShellName('pwsh-preview'), true);
+  assert.equal(opencode.isPowerShellName('powershell-core'), false);
+});
+
+test('opencode: on Windows an unset or non-bash SHELL means PowerShell, a bash SHELL keeps bash', async (t) => {
+  const dir = tmpProject(t);
+  const opts = { nodePath: String.raw`C:\node.exe`, runJs: String.raw`C:\x\run.js` };
+  // A pipeline tells the two readings apart: PowerShell says so, bash does not.
+  const call = (shell, platform) => run(opencode, { hook: 'tool.execute.before', tool: 'bash', shell, platform, cwd: dir, args: { command: 'Get-Content x | psql __ZN_DB_PASSWORD__' } }, opts);
+  for (const shell of [undefined, '', 'cmd', 'fish']) {
+    const r = await call(shell, 'win32');
+    assert.equal(r.output.action, 'deny', String(shell));
+    assert.match(r.output.message, /PowerShell/, String(shell));
+  }
+  for (const shell of ['bash', 'bash.exe', 'sh.exe', 'zsh']) {
+    const r = await call(shell, 'win32');
+    assert.equal(r.output.action, 'deny', String(shell));
+    assert.doesNotMatch(r.output.message, /PowerShell/, String(shell));
+  }
+  for (const shell of [undefined, '', 'bash']) {
+    const r = await call(shell, 'linux');
+    assert.equal(r.output.action, 'deny', String(shell));
+    assert.doesNotMatch(r.output.message, /PowerShell/, String(shell));
+  }
+  assert.equal(opencode.usesPowerShell('', 'win32'), true);
+  assert.equal(opencode.usesPowerShell('', 'darwin'), false);
+});
+
+test('opencode plugin: sends only the name of the shell, not its path', () => {
+  const src = opencode.pluginSource({ scope: 'user', nodePath: '/usr/bin/node', runnerPath: '/opt/zn/lib/hooks/runner.js' });
+  assert.match(src, /process\.env\.SHELL/);
+  assert.match(src, /\.split\("\/"\)\.pop\(\)/);
+  assert.match(src, /args: output\.args, shell: SHELL, platform: process\.platform/);
+  // The generated plugin is valid JavaScript.
+  assert.doesNotThrow(() => new (require('vm').Script)(src.replace(/^import .*$/m, '').replace(/^export const/m, 'const')));
+});
+
+test('opencode project plugin: zn runs with only the absolute PATH entries, and cmd.exe does not look in the project directory first', () => {
   const src = require('../lib/agents/opencode').pluginSource({ scope: 'project' });
   const call = src.match(/spawn\(NODE,[^\n]*\)/)[0];
-  assert.match(call, /NoDefaultCurrentDirectoryInExePath: "1"/);
+  assert.match(call, /env: projectEnv\(\)/);
+  assert.match(src, /if \(win\) env\.NoDefaultCurrentDirectoryInExePath = "1";/);
   const user = require('../lib/agents/opencode').pluginSource({ scope: 'user', nodePath: '/usr/bin/node', runnerPath: '/opt/zn/lib/hooks/runner.js' });
   assert.match(user.match(/spawn\(NODE,[^\n]*\)/)[0], /shell: false/);
 });
@@ -355,4 +434,31 @@ test('cursor: the MCP size notice tells the agent to tell the user, not to resen
   assert.equal(big.output.permission, 'deny');
   assert.match(big.output.agent_message, /Next step: tell the user; do not resend this content in parts\./);
   assert.doesNotMatch(big.output.agent_message, /split|smaller calls/);
+});
+
+// --help / -h on every subcommand prints its usage and exits 0 (no "needs a value").
+test('--help and -h print the usage for hooks, secret, env and team subcommands', () => {
+  const { spawnSync } = require('child_process');
+  const cli = require('path').join(__dirname, '..', 'bin', 'cli.js');
+  const cases = [
+    [['hooks', 'install', '--help'], /usage: zn hooks install\|uninstall/],
+    [['hooks', 'uninstall', '-h'], /usage: zn hooks install\|uninstall/],
+    [['hooks', 'install', 'codex', '--project', '--help'], /--no-mcp/],
+    [['secret', 'set', '--help'], /usage: zn secret/],
+    [['secret', 'allow', '-h'], /usage: zn secret/],
+    [['env', 'shadow', '--help'], /usage: zn env shadow/],
+    [['env', 'unshadow', '-h'], /usage: zn env shadow/],
+    [['env', 'unshadow', 'F', '--backup', '--help'], /usage: zn env shadow/],
+    [['team', '--help'], /usage: zn team join/],
+  ];
+  for (const [args, re] of cases) {
+    const r = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', env: { ...process.env, ZN_LOCAL_ONLY: 'true' } });
+    assert.strictEqual(r.status, 0, args.join(' ') + ': ' + r.stderr);
+    assert.match(r.stdout, re, args.join(' '));
+    assert.doesNotMatch(r.stderr + r.stdout, /needs a value/);
+  }
+  // A lone `--` stops help detection: the usage is not printed and the invalid-name error code is kept.
+  const r = spawnSync(process.execPath, [cli, 'secret', 'set', '--', '--help'], { encoding: 'utf8', env: { ...process.env, ZN_LOCAL_ONLY: 'true' } });
+  assert.doesNotMatch(r.stdout, /usage: zn secret/);
+  assert.strictEqual(r.status, 64, r.stderr);
 });

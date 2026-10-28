@@ -21,6 +21,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  GITSIGN_VERSION: 0.17.1
+  GITSIGN_SHA256: 69213a8a0813a151e5a47d0060862952ff833a845d57309dff76f7ba6600abae
+  EXPECTED_SERVER_NAME: io.github.usezn/zn-gate
+  EXPECTED_NPM_IDENTIFIER: zn-gate
+  EXPECTED_REPOSITORY_URL: https://github.com/usezn/zn
   MCP_PUBLISHER_VERSION: v1.8.1
   MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
 
@@ -36,6 +41,13 @@ jobs:
       contents: read
       id-token: write
     steps:
+      # No network evidence yet for this job (it had no harden-runner): audit first; once a release run shows
+      # its endpoints in the step-security insights, switch to egress-policy: block with allowed-endpoints.
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
       - name: Check the tag name
         env:
           TAG: ${{ inputs.tag }}
@@ -47,18 +59,79 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: Check that server.json matches the tag
+      # Same checks as the verify job of release.yml: the commit must be on main or a release/* branch,
+      # and from 1.12.0 on the tag must be the one tag-release.yml signed.
+      - name: Check the branch and the signature of the tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-list -n 1 "refs/tags/$TAG")"
+          if git for-each-ref --contains "$sha" --format='%(refname:short)' refs/remotes/origin \
+              | grep -Eq '^origin/(main|release/.+)$'; then
+            echo "Tagged commit $sha is on main or a release/* branch"
+          else
+            echo "::error::Tagged commit $sha is not on main or a release/* branch"; exit 1
+          fi
+          base="${TAG#v}"; base="${base%%-*}"
+          if ! git cat-file -e "$sha:.github/workflows/tag-release.yml" 2>/dev/null \
+              && [ "$(printf '%s\n' 1.12.0 "$base" | sort -V | head -n 1)" != 1.12.0 ]; then
+            echo "$TAG predates signed tags (before 1.12.0): its tag is not signed."
+            exit 0
+          fi
+          # The annotated tag object itself, as it is on GitHub, and still on the verified commit.
+          git fetch --force --no-tags origin "refs/tags/$TAG:refs/tags/$TAG"
+          [ "$(git cat-file -t "refs/tags/$TAG")" = tag ] || { echo "::error::$TAG is not an annotated, signed tag"; exit 1; }
+          [ "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$sha" ] || { echo "::error::$TAG no longer points to $sha"; exit 1; }
+          url="https://github.com/sigstore/gitsign/releases/download/v${GITSIGN_VERSION}/gitsign_${GITSIGN_VERSION}_linux_amd64"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/gitsign" "$url"
+          echo "${GITSIGN_SHA256}  $RUNNER_TEMP/gitsign" | sha256sum --strict -c -
+          chmod +x "$RUNNER_TEMP/gitsign"
+          "$RUNNER_TEMP/gitsign" verify-tag "$TAG" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/tag-release.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+      - name: Check that server.json matches the tag and the fixed fields
         env:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           tag_version="${TAG#v}"
-          for v in $(node -p "const d=require('./packages/zn-gate/server.json'); [d.version, ...(d.packages||[]).map(p=>p.version)].join(' ')"); do
-            if [ "$v" != "$tag_version" ]; then
-              echo "::error::packages/zn-gate/server.json has version $v, tag expects $tag_version"; exit 1
-            fi
-          done
+          node - "$tag_version" <<'JS'
+          const fs = require('fs');
+          const tagVersion = process.argv[2];
+          const d = JSON.parse(fs.readFileSync('packages/zn-gate/server.json', 'utf8'));
+          const errors = [];
+          const expect = (what, got, want) => { if (got !== want) errors.push(`${what} is ${JSON.stringify(got)}, expected ${JSON.stringify(want)}`); };
+          expect('name', d.name, process.env.EXPECTED_SERVER_NAME);
+          expect('repository.url', d.repository && d.repository.url, process.env.EXPECTED_REPOSITORY_URL);
+          expect('repository.source', d.repository && d.repository.source, 'github');
+          expect('version', d.version, tagVersion);
+          const pkgs = Array.isArray(d.packages) ? d.packages : [];
+          if (pkgs.length !== 1) errors.push(`expected exactly one package, found ${pkgs.length}`);
+          for (const p of pkgs) {
+            expect('packages[].registryType', p.registryType, 'npm');
+            expect('packages[].identifier', p.identifier, process.env.EXPECTED_NPM_IDENTIFIER);
+            expect('packages[].version', p.version, tagVersion);
+          }
+          if (errors.length) { for (const e of errors) console.error(`::error::packages/zn-gate/server.json: ${e}`); process.exit(1); }
+          console.log('server.json fixed fields and versions match');
+          JS
+      # The registry entry must point at an npm release that exists and carries a provenance attestation.
+      - name: Check that the npm release exists and has provenance
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          curl -fsS --retry 3 -o "$RUNNER_TEMP/npm-version.json" "https://registry.npmjs.org/${EXPECTED_NPM_IDENTIFIER}/${version}"
+          att_url="$(node -p "const d=require(process.argv[1]); if (d.name !== process.env.EXPECTED_NPM_IDENTIFIER || d.version !== process.argv[2]) { throw new Error('unexpected package ' + d.name + '@' + d.version); } (d.dist && d.dist.attestations && d.dist.attestations.url) || ''" "$RUNNER_TEMP/npm-version.json" "$version")"
+          if [ -z "$att_url" ]; then
+            echo "::error::${EXPECTED_NPM_IDENTIFIER}@${version} has no dist.attestations on npm (not published, or published without provenance)"; exit 1
+          fi
+          curl -fsS --retry 3 -o "$RUNNER_TEMP/npm-attestations.json" "$att_url"
+          node -e "const a=require(process.argv[1]).attestations||[]; if (!a.some(x => /slsa\.dev\/provenance/.test(x.predicateType||''))) { console.error('::error::no SLSA provenance attestation for the npm release'); process.exit(1); } console.log('npm release has a SLSA provenance attestation');" "$RUNNER_TEMP/npm-attestations.json"
       - name: Install mcp-publisher (pinned, checksum verified)
         run: |
           set -euo pipefail

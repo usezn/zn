@@ -8,7 +8,7 @@ The Rust gateway reads `ZN_API_KEY` as the key for its own management API. It ne
 
 On first start, with an empty database, the gateway seeds a default organisation with a super-admin key: `ZN_API_KEY` if it is set, otherwise a random key. A random key is written to `zn-superadmin-key.txt` next to the audit database (`zn.db` by default), readable only by your user (mode 0600 on Unix; on Windows the file inherits the permissions of its directory). Copy it somewhere safe, then delete the file. The key is never printed, so it does not end up in terminal scrollback or container logs; earlier versions printed a generated key to stdout. If the file cannot be written, the gateway does not start and seeds nothing.
 
-> For agent protection (Claude Code, Codex CLI, Cursor, OpenCode, LangChain, CrewAI), use `zn-gate` (Node.js) or `zn-gate` on PyPI (Python). They need no compilation.
+> For agent protection (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, LangChain, CrewAI), use `zn-gate` (Node.js) or `zn-gate` on PyPI (Python). They need no compilation.
 
 ## Hardening (October 2026)
 
@@ -17,9 +17,39 @@ A review of an older snapshot of this gateway found issues that only affect some
 - **Bans per tenant.** The reputation and ban list is kept per namespace (WebSocket tenant or the configured namespace) and agent id, so a tenant can no longer ban another tenant's agent ids (such as the default `anonymous`), and `/api/v1/reputation` shows a tenant only its own namespace. The agent id in a message is a label, not an identity, and is cut to 128 characters.
 - **Sanitized images are forwarded.** With `visual_pii_redaction` on, an allowed tool call now carries the sanitized arguments (metadata stripped), the same ones that were checked and stored in the audit vault, instead of the original frame, in the place they were read from (the rebuilt frame may list its keys in another order). If the frame cannot be rebuilt, the call is refused.
 - **Bounded WebSocket messages.** `/mcp/ws` closes a connection whose message or frame is over 1 MiB (the library default was 64 MiB).
+- **WebSocket limits are configurable.** The limits are the `server.ws_max_message_bytes` (default 1048576, 1 MiB) and `server.ws_max_frame_bytes` (default 1048576, 1 MiB) settings; a message or frame over its limit closes the connection.
+- **Consensus actions expire.** A proposed action that is not approved within `consensus.pending_ttl_secs` seconds (default 900, 15 minutes; 0 means the default) can no longer be approved and is removed.
 - **Query-string credentials only for SSE and WebSocket.** The `api_key` and `token` query parameters are accepted only on `/api/v1/events` and `/mcp/ws`, where a browser client cannot send headers; on every other route a credential must come in a header.
 
-Known limits that remain, because the gateway is not distributed: the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault, the consensus queue and the loop breaker have no size or age limit; a policy upload is written before it is verified; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
+A policy upload is verified before anything is written. The gateway checks the allowed-hash list and the Ed25519 signature (and the ML-DSA-65 signature when `ZN_PQ_PUBLIC_KEY` is set, which then makes it mandatory) on the uploaded bytes in memory, reading the signatures from the `.wasm.sig` and `.wasm.pqs` files next to the policy, and checks that the WASM compiles. Only then does it write the file, to a temporary file in the policy directory that is synced and renamed over the target. A policy that fails any check leaves no file behind, and a policy already installed under that name stays as it was.
+
+Known limits that remain, because the gateway is not distributed: the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault and the loop breaker have no size or age limit; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
+
+## Audit payloads
+
+By default the audit database keeps only metadata for each call: event, time, tool name, status, matched policy, agent and namespace. The request payload is not stored. To keep payloads, set `audit.store_payloads = true` (or `ZN_AUDIT_STORE_PAYLOADS=1`); this needs an encryption key (`ZN_DB_KEY`, or a KMS key) in every environment, and the gateway refuses to start without one. Payloads are scrubbed before they are written. Records written by earlier versions stay readable.
+
+A database that was set up with an encryption key is not opened without it. If you start the gateway without `ZN_DB_KEY` (or a KMS key) against such a database, it stops with an error that names these two settings; set the key it was created with and start again. Keep the file: its records cannot be read without the key.
+
+Calls keep no content in the audit database, the event stream or the vector memory by default. With the neural layer on (the default), the memory keeps the vector of each call and a hash of it, not the arguments, and the `nearest_neighbor` field and the neural veto log name the closest earlier call only by a short reference (`h:` and 16 hex characters of its HMAC-SHA256) plus the distance. The reference is a keyed hash (HMAC) with a key kept on this machine (`data/ref.key`, created on first start; it is created readable by its owner only, mode 0600 on Unix and an owner-only access list on Windows); keep that file private, because the key is what stops short values such as PINs or codes from being recovered from a reference. The neighbour record is written before the call record, so with `audit.require_write` a failed write denies the call before any call record exists. Vector memory files written by earlier versions held the text of old calls; on the first start of this version the gateway replaces that text with the keyed reference, compacts the file, and does not use a file it could not clean. A `ref.key` that is a link, belongs to another user, or can be read by group or others (Unix), or whose access list is not owner-only (Windows), is refused at start. Audit records written by earlier versions may hold the text of a neighbour in `nearest_neighbor` and in the payload of `NEAREST_NEIGHBOR` records; on the first start of this version the gateway replaces that text with the keyed reference and clears those payloads, and a `NEAREST_NEIGHBOR` record keeps no payload at all. The live event stream (SSE), the SIEM export and webhook alerts carry metadata only, never the request payload, even when `audit.store_payloads` is on. If `data/ref.key` is damaged (wrong length) it is replaced by a new key and a warning is logged; earlier `h:` references stay in the logs but no longer match the references of new calls. Cleaning old text also compacts the audit database and the vector memory file, so the text does not stay in free pages.
+
+If an audit record cannot be written, the gateway logs the error (never the payload) and increments the `zn_audit_write_failures_total` counter, and the call goes on. To fail closed instead, set `audit.require_write = true` (or `ZN_AUDIT_REQUIRE_WRITE=1`): a call whose audit record cannot be written is denied with a JSON-RPC error.
+
+If ZN_NAMESPACE (security.namespace) equals a tenant's namespace, that tenant also sees the local stdio calls of this process.
+
+## AWS KMS data key
+
+With `kms.kms_type = "aws"` and `kms.key_id` set, the audit database key is a KMS data key. The gateway creates it once (`GenerateDataKey`, AES-256, encryption context `purpose=zn-gate-audit-db-key`) and saves only its encrypted copy in `zn-kms-data-key.json`, in the same directory as the audit database (`audit.db_path`). The file is written atomically with mode 0600 and holds the KMS key id and the encrypted key, never the plaintext key. On every later start the gateway sends the encrypted key to KMS `Decrypt` and gets the same key back, so audit records written before a restart stay readable. The key needs `kms:GenerateDataKey` and `kms:Decrypt` permissions.
+
+The gateway never replaces the key by itself. It refuses to start, with a message that names the file, when:
+
+- the file is damaged or has an unknown version;
+- KMS cannot decrypt the stored key (credentials, region, permissions or a deleted key);
+- `kms.key_id` is different from the key id stored in the file.
+
+If the old key is gone for good and you accept that earlier encrypted records are lost, start once with `ZN_KMS_RECOVER_NEW_DATA_KEY=true`: the gateway creates a new data key and overwrites the file (it logs a warning). Remove the variable afterwards. Back up `zn-kms-data-key.json` with the audit database: without it, and without KMS access to the same key, the records cannot be read.
+
+An audit database created by an earlier release used a data key that was never saved, so its encrypted records cannot be recovered. Start with a new audit database path or remove the old database.
 
 ## Post-quantum policy signatures
 
@@ -65,7 +95,7 @@ sqlite3 zn.db "UPDATE tenants SET api_key_hash = '$HASH' WHERE id = '<tenant id 
 
 ### MCP WebSocket token
 
-`ZN_MCP_WS_TOKEN` is an extra check for MCP WebSocket connections, on top of the management API authentication, sent in the `token` query parameter or the `X-MCP-Token` header. Surrounding whitespace is ignored, a blank value counts as not set (the gateway then generates a random token), and the comparison takes constant time. The `token` query parameter is also read as a management API credential, which takes the first `api_key` or `token` parameter: a client that sends both should put `api_key` first, or send the MCP token in the `X-MCP-Token` header.
+`ZN_MCP_WS_TOKEN` is an extra check for MCP WebSocket connections, on top of the management API authentication, sent in the `token` query parameter or the `X-MCP-Token` header. Surrounding whitespace is ignored, a blank value counts as not set (the gateway then generates a random token), and the comparison takes constant time. A generated token is saved in `zn-mcp-ws-token.txt`, in the same directory as `audit.db_path` (mode 0600; on Windows the file inherits the directory ACL). It changes on every start and is never printed, so read it from that file, or set `ZN_MCP_WS_TOKEN` to use a stable one. If the file cannot be written, the gateway refuses to start and asks you to set `ZN_MCP_WS_TOKEN`. The `token` query parameter is also read as a management API credential, which takes the first `api_key` or `token` parameter: a client that sends both should put `api_key` first, or send the MCP token in the `X-MCP-Token` header.
 
 ## Policy endpoints
 
@@ -102,6 +132,7 @@ A search runs on the request path, so it is tried once and gives up after one se
 ## Building from Source
 
 ### Prerequisites
+
 - Rust 1.95 or later (`cargo`); CI uses 1.99.0 and the Dockerfile builds with `rust:1-bookworm`
 - `protoc` 29 or later
 - OpenSSL / libssl-dev
@@ -110,3 +141,9 @@ A search runs on the request path, so it is tried once and gives up after one se
 cargo build --release
 ./target/release/zn --help
 ```
+
+## KMS key and the config fallback
+
+When `kms.key_id` (or `ZN_KMS_KEY_ID`) is set, the gateway takes the audit database key from the KMS. If that key cannot be fetched, the gateway now refuses to start with a clear error instead of quietly using the key from the config.
+
+To keep the old behaviour on purpose, set `kms.allow_config_fallback = true` (or `ZN_KMS_ALLOW_CONFIG_FALLBACK=true`). The gateway then starts with the config key and logs a warning on every start. The option is off by default. Without `kms.key_id`, nothing changes: the key from the config is used.

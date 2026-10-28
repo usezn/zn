@@ -7,6 +7,9 @@ name: Build release
 # calling workflow, which makes the build provenance SLSA Build Level 3: the
 # attestations name this file as their signer workflow.
 #
+# It also writes a CycloneDX SBOM for the npm package and one for the Python
+# package, attests them (SBOM attestation) and attaches them to the release.
+#
 # How to verify a release: docs/verify-release.md
 
 on:
@@ -50,7 +53,7 @@ jobs:
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -88,7 +91,7 @@ jobs:
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -108,6 +111,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.x
+          check-latest: true
           # No Actions cache in a release build: nothing it builds can be read from or written to a cache.
           package-manager-cache: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -120,6 +124,7 @@ jobs:
         run: |
           set -euo pipefail
           npm ci --ignore-scripts
+          node "$GITHUB_WORKSPACE/.release-tools/.github/scripts/prune-bundled-sources.js" .
           mkdir -p "$RUNNER_TEMP/release"
           npm pack --ignore-scripts --json --pack-destination "$RUNNER_TEMP/release" > "$RUNNER_TEMP/pack.json"
       - name: Check tarball contents
@@ -128,6 +133,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m venv "$RUNNER_TEMP/build-venv"
+          "$RUNNER_TEMP/build-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .release-tools/.github/pip-bootstrap-requirements.txt
           "$RUNNER_TEMP/build-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir \
             --require-hashes -r .release-tools/.github/release-requirements.txt
       - name: Build the sdist and wheel
@@ -146,6 +152,10 @@ jobs:
           diff "$RUNNER_TEMP/release.sum" "$RUNNER_TEMP/rebuild.sum" || { echo "::error::the Python sdist or wheel differs between two builds of the same commit"; exit 1; }
           rm -rf "$RUNNER_TEMP/rebuild"
           "$RUNNER_TEMP/build-venv/bin/python" -m twine check --strict "$RUNNER_TEMP"/release/*.whl "$RUNNER_TEMP"/release/*.tar.gz
+      - name: Check wheel and sdist contents
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/build-venv/bin/python" -I .release-tools/.github/scripts/check-python-pack.py "$RUNNER_TEMP"/release/*.whl "$RUNNER_TEMP"/release/*.tar.gz
       - name: Check file names and write SHA256SUMS
         working-directory: ${{ runner.temp }}/release
         env:
@@ -169,6 +179,51 @@ jobs:
           path: ${{ runner.temp }}/release/
           if-no-files-found: error
           retention-days: 7
+      - name: Install the SBOM tools (hash-pinned)
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/sbom-venv"
+          "$RUNNER_TEMP/sbom-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .release-tools/.github/pip-bootstrap-requirements.txt
+          "$RUNNER_TEMP/sbom-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir \
+            --require-hashes -r .release-tools/.github/sbom-requirements.txt
+          # The npm tool comes from a committed lockfile with integrity hashes, and runs no install scripts.
+          mkdir -p "$RUNNER_TEMP/sbom-npm"
+          cp .release-tools/.github/sbom-tools/package.json .release-tools/.github/sbom-tools/package-lock.json "$RUNNER_TEMP/sbom-npm/"
+          npm ci --ignore-scripts --prefix "$RUNNER_TEMP/sbom-npm"
+      - name: Write the CycloneDX SBOMs
+        env:
+          NPM_VERSION: ${{ inputs.npm_version }}
+          PY_VERSION: ${{ inputs.py_version }}
+        run: |
+          set -euo pipefail
+          sbom="$RUNNER_TEMP/sbom"
+          mkdir -p "$sbom"
+          # npm package: what ships in the tarball (runtime dependencies from the lockfile, no dev tools).
+          (cd packages/zn-gate && "$RUNNER_TEMP/sbom-npm/node_modules/.bin/cyclonedx-npm" \
+            --omit dev --mc-type library --spec-version 1.6 --output-reproducible \
+            --output-format JSON --output-file "$sbom/zn-gate-${NPM_VERSION}.cdx.json")
+          # Python package: install the built wheel alone in an empty environment and list what is in it.
+          python -m venv --without-pip "$RUNNER_TEMP/sbom-target"
+          "$RUNNER_TEMP/build-venv/bin/python" -m pip --python "$RUNNER_TEMP/sbom-target/bin/python" \
+            install --disable-pip-version-check --no-cache-dir "$RUNNER_TEMP/release/zn_gate-${PY_VERSION}-py3-none-any.whl"
+          "$RUNNER_TEMP/sbom-venv/bin/cyclonedx-py" environment "$RUNNER_TEMP/sbom-target" \
+            --pyproject packages/zn-gate-py/pyproject.toml --mc-type library --sv 1.6 --of JSON \
+            --output-reproducible -o "$sbom/zn_gate-${PY_VERSION}.cdx.json"
+          # Reproducible CycloneDX output has no serialNumber, which GitHub attestations require:
+          # add one derived from the package, version and artifact hash (same build, same SBOM).
+          node .release-tools/.github/scripts/sbom-serial.js "$sbom/zn-gate-${NPM_VERSION}.cdx.json" "$RUNNER_TEMP/release/zn-gate-${NPM_VERSION}.tgz"
+          node .release-tools/.github/scripts/sbom-serial.js "$sbom/zn_gate-${PY_VERSION}.cdx.json" "$RUNNER_TEMP/release/zn_gate-${PY_VERSION}-py3-none-any.whl"
+          # Each SBOM must name the package and version it describes.
+          node .release-tools/.github/scripts/check-sbom.js "$sbom/zn-gate-${NPM_VERSION}.cdx.json" "$NPM_VERSION"
+          node .release-tools/.github/scripts/check-sbom.js "$sbom/zn_gate-${PY_VERSION}.cdx.json" "$PY_VERSION"
+          ls -l "$sbom"
+      - name: Upload unsigned SBOMs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-sbom-unsigned
+          path: ${{ runner.temp }}/sbom/
+          if-no-files-found: error
+          retention-days: 7
 
   sign:
     name: Attest and sign
@@ -185,6 +240,13 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      # No network evidence yet for this job (it had no harden-runner): audit first; once a release run shows
+      # its endpoints in the step-security insights, switch to egress-policy: block with allowed-endpoints.
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
       - name: Download the build
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -193,6 +255,19 @@ jobs:
       - name: Check SHA256SUMS
         working-directory: release
         run: sha256sum --strict -c SHA256SUMS
+      - name: Download the SBOMs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-sbom-unsigned
+          path: sbom
+      - name: Move the SBOMs next to the release files
+        env:
+          NPM_VERSION: ${{ inputs.npm_version }}
+          PY_VERSION: ${{ inputs.py_version }}
+        run: |
+          set -euo pipefail
+          [ "$(find sbom -type f | wc -l)" -eq 2 ] || { echo "::error::expected 2 SBOM files"; ls -l sbom; exit 1; }
+          mv "sbom/zn-gate-${NPM_VERSION}.cdx.json" "sbom/zn_gate-${PY_VERSION}.cdx.json" release/
       - name: GitHub artifact attestations (build provenance)
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -200,7 +275,20 @@ jobs:
             release/*.tgz
             release/*.whl
             release/*.tar.gz
+            release/*.cdx.json
             release/SHA256SUMS
+      - name: GitHub artifact attestation (SBOM of the npm package)
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: release/zn-gate-${{ inputs.npm_version }}.tgz
+          sbom-path: release/zn-gate-${{ inputs.npm_version }}.cdx.json
+      - name: GitHub artifact attestation (SBOM of the Python package)
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: |
+            release/zn_gate-${{ inputs.py_version }}.tar.gz
+            release/zn_gate-${{ inputs.py_version }}-py3-none-any.whl
+          sbom-path: release/zn_gate-${{ inputs.py_version }}.cdx.json
       # In a called workflow the signing identity is this file at the ref of the
       # run (the tag), not the calling release.yml.
       - name: Sigstore signatures
@@ -210,6 +298,7 @@ jobs:
             release/*.tgz
             release/*.whl
             release/*.tar.gz
+            release/*.cdx.json
             release/SHA256SUMS
           verify: true
           verify-cert-identity: https://github.com/${{ github.repository }}/.github/workflows/build-release.yml@${{ github.ref }}

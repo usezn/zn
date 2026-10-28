@@ -1,0 +1,11 @@
+{
+  "session_id": "sess-1",
+  "transcript_path": "${HOME}/.gemini/tmp/proj/chats/session.json",
+  "cwd": "/work/proj",
+  "hook_event_name": "BeforeTool",
+  "timestamp": "2026-10-19T10:00:00.000Z",
+  "tool_name": "list_directory",
+  "tool_input": {
+    "dir_path": "/work/proj"
+  }
+}

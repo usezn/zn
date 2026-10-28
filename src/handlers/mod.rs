@@ -6,3 +6,6 @@
 pub mod api;
 pub mod sse;
 pub mod websocket;
+
+#[cfg(test)]
+mod limits_tests;

@@ -1,0 +1,54 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch)$|^mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'Z=$(command -v zn); N=$(command -v node); P=:$PATH:; ZD=${P#*\":${Z%/*}:\"}; ZS=${P#*\":${Z%/*}/:\"}; ND=${P#*\":${N%/*}:\"}; NS=${P#*\":${N%/*}/:\"}; T=; [ \"$ZD\" != \"$P\" ] && T=z; [ \"$ZS\" != \"$P\" ] && T=z; U=; [ \"$ND\" != \"$P\" ] && U=n; [ \"$NS\" != \"$P\" ] && U=n; R=missing; if [ -n \"$N\" ] && [ \"${Z#/}\" != \"$Z\" ] && [ \"${N#/}\" != \"$N\" ] && [ -n \"$T\" ] && [ -n \"$U\" ]; then R=ran; \"$Z\" hook claude-code; C=$?; [ \"$C\" = 0 ] && exit 0; [ \"$C\" = 2 ] && exit 2; fi; if [ \"$R\" = ran ]; then echo '\"'\"'zn: its hook failed, so this was blocked. Ask the user to run `zn-gate check` in their terminal to see why.'\"'\"' >&2; exit 2; fi; echo '\"'\"'zn: its hook cannot start because zn or Node.js was not found on the PATH, so this was blocked. Ask the user to run `npm install -g zn-gate` in their terminal.'\"'\"' >&2; exit 2'",
+            "timeout": 15,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(Bash|PowerShell|Monitor|Read|Grep|LSP|WebFetch|ReadMcpResourceTool)$|^mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'Z=$(command -v zn); N=$(command -v node); P=:$PATH:; ZD=${P#*\":${Z%/*}:\"}; ZS=${P#*\":${Z%/*}/:\"}; ND=${P#*\":${N%/*}:\"}; NS=${P#*\":${N%/*}/:\"}; T=; [ \"$ZD\" != \"$P\" ] && T=z; [ \"$ZS\" != \"$P\" ] && T=z; U=; [ \"$ND\" != \"$P\" ] && U=n; [ \"$NS\" != \"$P\" ] && U=n; R=missing; if [ -n \"$N\" ] && [ \"${Z#/}\" != \"$Z\" ] && [ \"${N#/}\" != \"$N\" ] && [ -n \"$T\" ] && [ -n \"$U\" ]; then R=ran; \"$Z\" hook claude-code; C=$?; [ \"$C\" = 0 ] && exit 0; [ \"$C\" = 2 ] && exit 2; fi; if [ \"$R\" = ran ]; then echo '\"'\"'{\"systemMessage\":\"zn is NOT protecting this session: its hook failed. Please run `zn-gate check` in your own terminal to see why.\"}'\"'\"'; exit 0; fi; echo '\"'\"'{\"systemMessage\":\"zn is NOT protecting this session: its hook cannot start because zn or Node.js was not found on the PATH. Please run `npm install -g zn-gate` in your own terminal.\"}'\"'\"'; exit 0'",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'Z=$(command -v zn); N=$(command -v node); P=:$PATH:; ZD=${P#*\":${Z%/*}:\"}; ZS=${P#*\":${Z%/*}/:\"}; ND=${P#*\":${N%/*}:\"}; NS=${P#*\":${N%/*}/:\"}; T=; [ \"$ZD\" != \"$P\" ] && T=z; [ \"$ZS\" != \"$P\" ] && T=z; U=; [ \"$ND\" != \"$P\" ] && U=n; [ \"$NS\" != \"$P\" ] && U=n; R=missing; if [ -n \"$N\" ] && [ \"${Z#/}\" != \"$Z\" ] && [ \"${N#/}\" != \"$N\" ] && [ -n \"$T\" ] && [ -n \"$U\" ]; then R=ran; \"$Z\" hook claude-code; C=$?; [ \"$C\" = 0 ] && exit 0; [ \"$C\" = 2 ] && exit 2; fi; if [ \"$R\" = ran ]; then echo '\"'\"'zn: its hook failed, so this was blocked. Ask the user to run `zn-gate check` in their terminal to see why.'\"'\"' >&2; exit 2; fi; echo '\"'\"'zn: its hook cannot start because zn or Node.js was not found on the PATH, so this was blocked. Ask the user to run `npm install -g zn-gate` in their terminal.'\"'\"' >&2; exit 2'",
+            "timeout": 15,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "UserPromptExpansion": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'Z=$(command -v zn); N=$(command -v node); P=:$PATH:; ZD=${P#*\":${Z%/*}:\"}; ZS=${P#*\":${Z%/*}/:\"}; ND=${P#*\":${N%/*}:\"}; NS=${P#*\":${N%/*}/:\"}; T=; [ \"$ZD\" != \"$P\" ] && T=z; [ \"$ZS\" != \"$P\" ] && T=z; U=; [ \"$ND\" != \"$P\" ] && U=n; [ \"$NS\" != \"$P\" ] && U=n; R=missing; if [ -n \"$N\" ] && [ \"${Z#/}\" != \"$Z\" ] && [ \"${N#/}\" != \"$N\" ] && [ -n \"$T\" ] && [ -n \"$U\" ]; then R=ran; \"$Z\" hook claude-code; C=$?; [ \"$C\" = 0 ] && exit 0; [ \"$C\" = 2 ] && exit 2; fi; if [ \"$R\" = ran ]; then echo '\"'\"'zn: its hook failed, so this was blocked. Ask the user to run `zn-gate check` in their terminal to see why.'\"'\"' >&2; exit 2; fi; echo '\"'\"'zn: its hook cannot start because zn or Node.js was not found on the PATH, so this was blocked. Ask the user to run `npm install -g zn-gate` in their terminal.'\"'\"' >&2; exit 2'",
+            "timeout": 15,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ]
+  },
+  "allowManagedHooksOnly": true
+}

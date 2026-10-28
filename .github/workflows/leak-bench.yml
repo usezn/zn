@@ -2,28 +2,25 @@ name: zn-gate leak bench
 
 # Pull requests into next run the checks the rulesets require and Ubuntu with Node.js 22. Pushes to next
 # run every Node.js version on Ubuntu and Windows, without macOS. The full matrix (Windows and macOS,
-# every Node.js version) runs on pushes to main, on pull requests into main and release branches, on any
-# pull request labelled full-ci, and on manual runs.
+# every Node.js version) runs on pushes to main and release branches, on the daily schedule, on pull requests into main and
+# release branches, on any pull request labelled full-ci, and on manual runs.
 on:
   push:
-    branches: [ main, next ]
-    # Documentation-only pushes skip this workflow. Markdown under packages/, plugins/, skill/,
-    # bench/ and .github/ still runs it (the package and plugin checks read some of it): a stricter
-    # version of the split that .github/scripts/ci-scope.sh makes for pull requests.
-    paths:
-      - '**'
-      - '!docs/**'
-      - '!**/*.md'
-      - 'packages/**'
-      - 'plugins/**'
-      - 'skill/**'
-      - 'bench/**'
-      - '.github/**'
+    # release/** is here, and there is no paths filter, because tag-release.yml requires the checks of this
+    # workflow (and of the other workflows listed in .github/release-required-checks.txt) on the exact
+    # release commit: a documentation-only top commit, such as a changelog edit, must still get all of them.
+    branches: [ main, next, 'release/**' ]
   pull_request:
     branches: [ next, main, 'release/**' ]
     types: [ opened, synchronize, reopened, labeled, ready_for_review ]
     # No paths filter here: these jobs give required checks, and a workflow skipped by a
     # paths filter leaves them pending. ci-scope.sh skips their steps for documentation instead.
+  # The merge queue: the same sample as a pull request into next, the full matrix for main and release/*.
+  merge_group:
+    types: [ checks_requested ]
+  # Daily full run on the default branch.
+  schedule:
+    - cron: '30 6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -46,14 +43,14 @@ jobs:
       fail-fast: false
       matrix:
         # "leak bench (node 22 / ubuntu-latest)" is a required check: it always runs.
-        os: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
-        node: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[20, 22, 24]' || '[22]') }}
+        os: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
+        node: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[20, 22, 24]' || '[22]') }}
         # Pushes to next leave macOS out (3 jobs); every other full run keeps it.
         exclude: ${{ fromJSON((github.event_name == 'push' && github.ref == 'refs/heads/next') && '[{"os":"macos-latest"}]' || '[]') }}
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -65,17 +62,20 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          SCOPE: core
+          OWN: .github/workflows/leak-bench.yml
+          FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         working-directory: .
         run: bash .github/scripts/ci-scope.sh
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: steps.scope.outputs.run == 'true'
         with:
+          package-manager-cache: false
           node-version: ${{ matrix.node }}
       - name: Restore benign corpus cache
-        if: steps.scope.outputs.run == 'true'
+        if: steps.scope.outputs.run == 'true' && !(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/'))
         id: corpus-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0 # zizmor: ignore[cache-poisoning] skipped on release pushes by the if above
         with:
           path: |
             packages/zn-gate/test/fixtures/benign/python-stdlib

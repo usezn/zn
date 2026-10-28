@@ -135,18 +135,18 @@ test('PreToolUse Bash: reading secrets and managing the vault are denied', async
   assert.equal(list.output, null);
 });
 
-test('PreToolUse Bash: named markers are wrapped in zn run and asked', async (t) => {
+test('PreToolUse Bash: a named marker in the arguments is refused, never rewritten, and the reason says how to pass the secret', async (t) => {
   const dir = tmpProject(t);
-  const cmd = 'psql "postgres://app:__ZN_DB_PASSWORD__@db/app" -c "select 1" | head -5';
-  const res = await run(preBash(cmd, dir));
-  const h = res.output.hookSpecificOutput;
-  assert.equal(h.permissionDecision, 'ask');
-  assert.equal(h.updatedInput.command, PREFIX + ' ' + cmd);
-  assert.equal(h.updatedInput.description, 'Run test suite', 'unchanged fields are kept');
-  assert.equal(h.updatedInput.timeout, 120000);
-  assert.match(h.permissionDecisionReason, /DB_PASSWORD/);
-  const withEnv = await run(preBash('PGHOST=db psql "postgres://app:__ZN_DB_PASSWORD__@db/app"', dir));
-  assert.equal(withEnv.output.hookSpecificOutput.updatedInput.command, 'PGHOST=db ' + PREFIX + ' psql "postgres://app:__ZN_DB_PASSWORD__@db/app"');
+  for (const cmd of ['psql "postgres://app:__ZN_DB_PASSWORD__@db/app" -c "select 1" | head -5', 'PGHOST=db psql "postgres://app:__ZN_DB_PASSWORD__@db/app"']) {
+    const res = await run(preBash(cmd, dir));
+    const h = res.output.hookSpecificOutput;
+    assert.equal(h.permissionDecision, 'deny', cmd);
+    assert.equal(h.updatedInput, undefined, 'the command is never rewritten: ' + cmd);
+    assert.match(h.permissionDecisionReason, /marker in the arguments of a command is not filled in/);
+    assert.match(h.permissionDecisionReason, /process list/);
+    assert.match(h.permissionDecisionReason, /run --secrets NAME -- <command>/);
+    assert.match(h.permissionDecisionReason, /secrets_http_request/);
+  }
 });
 
 test('PreToolUse Bash: a command already wrapped in zn run is asked, not passed through', async (t) => {
@@ -356,10 +356,10 @@ test('PowerShell gets the same treatment as Bash', async (t) => {
     assert.equal(r.output.hookSpecificOutput.permissionDecision, 'deny', cmd);
   }
   const w = await run(ps("psql 'postgres://app:__ZN_DB_PASSWORD__@db/app' -c 'select 1'"), { nodePath: 'C:/n/node.exe', runJs: 'C:/z/run.js' });
-  assert.equal(w.output.hookSpecificOutput.permissionDecision, 'ask');
-  assert.equal(w.output.hookSpecificOutput.updatedInput.command,
-    "& 'C:/n/node.exe' 'C:/z/run.js' --agent claude-code -- psql 'postgres://app:__ZN_DB_PASSWORD__@db/app' -c 'select 1'");
-  assert.equal(w.output.hookSpecificOutput.updatedInput.description, 'x', 'other fields kept');
+  assert.equal(w.output.hookSpecificOutput.permissionDecision, 'deny');
+  assert.equal(w.output.hookSpecificOutput.updatedInput, undefined, 'never rewritten');
+  assert.match(w.output.hookSpecificOutput.permissionDecisionReason, /marker in the arguments of a command is not filled in/);
+  assert.match(w.output.hookSpecificOutput.permissionDecisionReason, /run --secrets NAME -- <command>/);
   for (const cmd of ['Invoke-RestMethod -Headers @{Authorization="Bearer __ZN_GH__"} https://x', 'curl -H "x: __ZN_GH__" https://x', 'psql $env:URL __ZN_GH__', 'gh api /user | Out-File __ZN_GH__']) {
     const r = await run(ps(cmd));
     assert.equal(r.output.hookSpecificOutput.permissionDecision, 'deny', cmd);
@@ -525,12 +525,15 @@ test('locked vault never lets a secret through', async () => {
   assert.match(out, /__ZN_[A-Z0-9_]+__/);
 });
 
-test('PowerShell lines with typographic quotes are not rewritten', () => {
+test('PowerShell lines with typographic quotes are refused as lines zn cannot read, plain lines for the marker in the arguments', () => {
   const opts = { nodePath: '/usr/bin/node', runJs: '/x/run.js', agent: 'claude-code' };
-  assert.equal(policy.wrapPowerShell("psql 'a' __ZN_DB_PASSWORD__", opts).ok, true);
+  const plain = policy.wrapPowerShell("psql 'a' __ZN_DB_PASSWORD__", opts);
+  assert.equal(plain.ok, false);
+  assert.match(plain.reason, /marker in the arguments of a command is not filled in/);
   for (const q of ['‘', '’', '“', '”']) {
     const w = policy.wrapPowerShell("psql 'a" + q + "b' __ZN_DB_PASSWORD__", opts);
     assert.equal(w.ok, false, 'quote U+' + q.charCodeAt(0).toString(16));
+    assert.match(w.reason, /pipeline, a variable or a script block/);
   }
 });
 
@@ -544,7 +547,7 @@ test('policy helpers', () => {
   assert.equal(scan.operator, '|');
 });
 
-test('install / uninstall write and remove only our hooks, with backups', (t) => {
+test('install / uninstall write and remove only our hooks, with backups', { skip: process.platform === 'win32' }, (t) => {
   const home = tempDir(t, 'zn-cc-');
   const file = path.join(home, '.claude', 'settings.json');
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -559,7 +562,10 @@ test('install / uninstall write and remove only our hooks, with backups', (t) =>
   assert.equal(data.hooks.PreToolUse.length, 2);
   assert.deepEqual(data.hooks.PreToolUse[0], userHook);
   assert.equal(data.hooks.PreToolUse[1].matcher, adapter.PRE_MATCHER);
-  assert.equal(data.hooks.PreToolUse[1].hooks[0].command, "'/usr/bin/node' '/opt/zn/lib/hooks/runner.js' claude-code");
+  // A user install goes through zn's launcher script (lib/agents/launcher.js), which names the Node.js and runner.
+  const launcherFile = require('../lib/agents/launcher').launcherFile('claude-code', { env, home });
+  assert.equal(data.hooks.PreToolUse[1].hooks[0].command, "'" + launcherFile + "' PreToolUse");
+  assert.match(fs.readFileSync(launcherFile, 'utf8'), /^ZN_NODE='\/usr\/bin\/node'$/m);
   assert.equal(data.hooks.PostToolUse[0].matcher, adapter.POST_MATCHER);
   assert.ok(Array.isArray(data.hooks.UserPromptSubmit));
   adapter.install({ scope: 'user', home, env, mcp: false, nodePath: '/usr/bin/node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' });
@@ -568,17 +574,58 @@ test('install / uninstall write and remove only our hooks, with backups', (t) =>
   adapter.uninstall({ scope: 'user', home, env, mcp: false });
   const after = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepEqual(after, { model: 'x', hooks: { PreToolUse: [userHook] } });
+  assert.ok(fs.existsSync(launcherFile), 'one uninstall keeps the shared launcher');
 });
 
-test('project install writes .claude/settings.json and .mcp.json', (t) => {
+test('project install writes .claude/settings.json and no .mcp.json', (t) => {
   const dir = tempDir(t, 'zn-ccp-');
   const rep = adapter.install({ scope: 'project', projectDir: dir, nodePath: 'node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' });
   assert.equal(rep.settings, path.join(dir, '.claude', 'settings.json'));
-  const mcp = JSON.parse(fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8'));
-  assert.deepEqual(mcp.mcpServers.secrets, { command: 'node', args: ['/opt/zn-gate/bin/cli.js', 'secrets-mcp', '--agent', 'claude-code'] });
+  // A shared .mcp.json could only name `zn`, looked up on a PATH where a project folder can come first.
+  assert.equal(fs.existsSync(path.join(dir, '.mcp.json')), false);
+  assert.ok(rep.warnings.some((w) => w.includes('a project install adds no MCP server') && w.includes('zn hooks install claude-code')));
+  // The shared files name zn on the PATH: no path of the machine that ran the install.
+  const settingsText = fs.readFileSync(rep.settings, 'utf8');
+  const settings = JSON.parse(settingsText);
+  const commands = Object.values(settings.hooks).flat().flatMap((m) => m.hooks.map((h) => h.command));
+  assert.ok(commands.length > 0);
+  // zn from the PATH inside zn's start guard (a missing zn or Node.js blocks instead of exit 127).
+  for (const c of commands) assert.ok(require('../lib/agents/launcher').isProjectGuard(c, 'claude-code'), c);
+  assert.ok(!settingsText.includes('/opt/'), 'no absolute path in a shared file');
+  assert.ok(!settingsText.includes(process.execPath), 'no Node.js path in a shared file');
   adapter.uninstall({ scope: 'project', projectDir: dir });
-  const mcp2 = JSON.parse(fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8'));
-  assert.equal(mcp2.mcpServers.secrets, undefined);
+  assert.equal(Object.values(JSON.parse(fs.readFileSync(rep.settings, 'utf8')).hooks || {}).flat().length, 0, 'uninstall finds and removes the zn hook commands');
+});
+
+test('project install removes the bare `zn secrets-mcp` an earlier zn-gate wrote to .mcp.json, with a backup', (t) => {
+  const dir = tempDir(t, 'zn-ccp-');
+  const file = path.join(dir, '.mcp.json');
+  const old = { mcpServers: { secrets: { command: 'zn', args: ['secrets-mcp', '--agent', 'claude-code'] }, other: { command: 'other-tool' } } };
+  fs.writeFileSync(file, JSON.stringify(old));
+  const rep = adapter.install({ scope: 'project', projectDir: dir, znBin: '/usr/local/bin/zn' });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers, { other: { command: 'other-tool' } });
+  assert.deepEqual(JSON.parse(fs.readFileSync(rep.mcpBackup, 'utf8')), old);
+  assert.ok(rep.warnings.some((w) => w.startsWith('removed the MCP server "secrets"') && w.includes('zn hooks install claude-code')));
+  // Someone else's "secrets" server stays as it is.
+  fs.writeFileSync(file, JSON.stringify({ mcpServers: { secrets: { command: 'node', args: ['./vault.js'] } } }));
+  adapter.install({ scope: 'project', projectDir: dir, znBin: '/usr/local/bin/zn' });
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers.secrets, { command: 'node', args: ['./vault.js'] });
+});
+
+test('project install warns when zn is not on the PATH, and only then', (t) => {
+  const base = { scope: 'project', nodePath: 'node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
+  const missing = adapter.install({ ...base, projectDir: tempDir(t, 'zn-ccp-'), znBin: null });
+  const note = missing.warnings.find((w) => w.includes('`zn` is not on your PATH'));
+  assert.ok(note, 'a project install without zn on the PATH says so');
+  assert.match(note, /npm i -g zn-gate/);
+  assert.doesNotMatch(note, /MCP server/);
+  const noMcp = adapter.install({ ...base, projectDir: tempDir(t, 'zn-ccp-'), znBin: null, mcp: false });
+  assert.ok(!noMcp.warnings.find((w) => w.includes('`zn` is not on your PATH')).includes('MCP server'));
+  const found = adapter.install({ ...base, projectDir: tempDir(t, 'zn-ccp-'), znBin: '/usr/local/bin/zn' });
+  assert.ok(!found.warnings.some((w) => w.includes('`zn` is not on your PATH')));
+  // An empty PATH is looked up for real: zn cannot be found there.
+  const emptyPath = adapter.install({ ...base, projectDir: tempDir(t, 'zn-ccp-'), env: { PATH: '' } });
+  assert.ok(emptyPath.warnings.some((w) => w.includes('`zn` is not on your PATH')));
 });
 
 test('CLAUDE_CONFIG_DIR is honoured for user scope', (t) => {
@@ -632,15 +679,15 @@ test('Windows: an extensionless file next to its .cmd is not the program (npm la
   }
 });
 
-test('the prompt hook blocks the prompt when it cannot run; tool hooks do not', (t) => {
+test('the prompt and pre-tool hooks block when they cannot run; the post-tool hook does not', (t) => {
   const home = tempDir(t, 'zn-onf-');
   const env = { CLAUDE_CONFIG_DIR: path.join(home, '.claude') };
   const opts = { scope: 'user', home, env, mcp: false, nodePath: '/usr/bin/node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
   const read = () => JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')).hooks || {};
   adapter.install(opts);
   assert.equal(read().UserPromptSubmit[0].hooks[0].onFailure, 'block');
-  // A tool hook that cannot run lets the call through, as documented.
-  assert.equal(read().PreToolUse[0].hooks[0].onFailure, undefined);
+  // A tool call is blocked too when its pre hook cannot run; the post hook only warns (the tool already ran).
+  assert.equal(read().PreToolUse[0].hooks[0].onFailure, 'block');
   assert.equal(read().PostToolUse[0].hooks[0].onFailure, undefined);
   // Reinstall and uninstall still recognise the prompt hook.
   adapter.install(opts);
@@ -786,7 +833,7 @@ test('uninstall: removes only zn\'s own "secrets" MCP server', (t) => {
   const run = (servers) => {
     fsx.writeFileSync(pth.join(home, '.claude.json'), JSON.stringify({ mcpServers: servers }));
     try { fsx.rmSync(pth.join(home, 'calls.txt')); } catch (_) { /* none */ }
-    const r = cc.uninstall({ scope: 'user', home, env: { HOME: home }, claudeBin: process.platform === 'win32' ? null : fakeClaude });
+    const r = cc.uninstall({ scope: 'user', home, env: { HOME: home, PATH: process.env.PATH }, claudeBin: process.platform === 'win32' ? null : fakeClaude });
     let c = '';
     try { c = fsx.readFileSync(pth.join(home, 'calls.txt'), 'utf8'); } catch (_) { /* not called */ }
     calls.push(c);
@@ -812,4 +859,413 @@ test('zn\'s own secrets server is recognised by its exact command, not by the wo
   assert.equal(cc.isZnSecretsServer({ command: 'node', args: ['/opt/other/server.js', 'secrets-mcp'] }), false);
   assert.equal(cc.isZnSecretsServer({ command: 'node', args: ['/opt/zn-gate/bin/cli.js', 'secrets-mcp', '--agent', 'claude-code'] }), true);
   assert.equal(cc.isZnSecretsServer({ command: 'node', args: ['/opt/acme/bin/cli.js', 'secrets-mcp'] }), false);
+});
+
+test('settings.json or .mcp.json that is not a JSON object: install and uninstall refuse it and leave it unchanged', (t) => {
+  const home = tempDir(t, 'zn-cc-notobj-');
+  const file = path.join(home, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const opts = { scope: 'user', home, env: { HOME: home }, mcp: false, nodePath: '/usr/bin/node', runnerPath: '/opt/zn/lib/hooks/runner.js' };
+  for (const text of ['[]', 'null', '42', '"x"']) {
+    fs.writeFileSync(file, text + '\n');
+    assert.throws(() => adapter.install(opts), (err) => err.message.includes(file) && /must hold a JSON object/.test(err.message));
+    assert.throws(() => adapter.uninstall(opts), (err) => err.message.includes(file) && /must hold a JSON object/.test(err.message));
+    assert.equal(fs.readFileSync(file, 'utf8'), text + '\n');
+  }
+  fs.writeFileSync(file, '{"hooks": []}\n');
+  assert.throws(() => adapter.install(opts), /"hooks" in .* must be an object/);
+  assert.equal(fs.readFileSync(file, 'utf8'), '{"hooks": []}\n');
+});
+
+test('project uninstall: a .mcp.json whose mcpServers is not an object stops the uninstall before any write', (t) => {
+  const dir = tempDir(t, 'zn-cc-mcpobj-');
+  const opts = { scope: 'project', projectDir: dir, nodePath: 'node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
+  adapter.install(opts);
+  const settings = fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8');
+  fs.writeFileSync(path.join(dir, '.mcp.json'), '{"mcpServers": []}\n');
+  assert.throws(() => adapter.uninstall(opts), /"mcpServers" in .* must be an object/);
+  assert.equal(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf8'), settings);
+  assert.equal(fs.readFileSync(path.join(dir, '.mcp.json'), 'utf8'), '{"mcpServers": []}\n');
+});
+
+test('an empty settings.json, {} and a file with other user hooks all install; the user hooks stay', (t) => {
+  const home = tempDir(t, 'zn-cc-okobj-');
+  const file = path.join(home, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const opts = { scope: 'user', home, env: { HOME: home }, mcp: false, nodePath: '/usr/bin/node', runnerPath: '/opt/zn/lib/hooks/runner.js' };
+  for (const text of ['', '{}\n']) {
+    fs.writeFileSync(file, text);
+    adapter.install(opts);
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.ok(Object.keys(data.hooks).length > 0, 'hooks installed from ' + JSON.stringify(text));
+  }
+  const user = { theme: 'dark', hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'echo mine' }] }] } };
+  fs.writeFileSync(file, JSON.stringify(user, null, 2));
+  adapter.install(opts);
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(after.theme, 'dark');
+  assert.ok(JSON.stringify(after.hooks.PreToolUse).includes('echo mine'), 'the user hook is kept');
+  assert.ok(JSON.stringify(after.hooks.PreToolUse).includes('claude-code'), 'zn hook is added');
+  adapter.uninstall(opts);
+  const left = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(left.theme, 'dark');
+  assert.deepEqual(left.hooks, user.hooks);
+});
+
+/* ------------------- MCP tools are checked before they run ------------------- */
+
+// The fake engine finds secrets only; this one also reports personal data, as the real engine does by default.
+const { findPii } = require('../lib/scrub/patterns');
+const piiEngine = Object.assign(Object.create(fakeEngine), {
+  scan: (text, ctx) => [...fakeEngine.scan(text, ctx), ...findPii(String(text), {})],
+});
+const OLD_PRE_MATCHER = 'Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch';
+
+test('the PreToolUse matcher covers MCP tools and keeps the built-in tool list', () => {
+  const re = new RegExp(adapter.PRE_MATCHER);
+  for (const name of ['Bash', 'PowerShell', 'Monitor', 'Read', 'Grep', 'LSP', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'WebFetch', 'mcp__github__create_issue', 'mcp__secrets__secrets_http_request']) assert.ok(re.test(name), name);
+  for (const name of ['WebSearch', 'Task', 'BashOutput', 'xmcp__github__get', 'ReadMcpResourceTool']) assert.ok(!re.test(name), name);
+});
+
+test('normalize gives an MCP call its arguments', () => {
+  const args = { title: 'hello', labels: ['a'] };
+  const ev = adapter.normalize(preTool('mcp__github__create_issue', args, '/p'));
+  assert.equal(ev.tool, 'mcp');
+  assert.deepEqual(ev.mcp, { server: 'github', tool: 'create_issue' });
+  assert.deepEqual(ev.input.args, args);
+  assert.equal(adapter.normalize(preBash('npm test', '/p')).input.args, undefined);
+});
+
+test('MCP PreToolUse: a secret in the arguments is denied', async (t) => {
+  const dir = tmpProject(t);
+  const res = await run(preTool('mcp__github__create_issue', { title: 'x', body: 'key ' + AWS }, dir), { engine: piiEngine });
+  assert.equal(res.output.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(res.output.hookSpecificOutput.permissionDecisionReason, /never receives secret values|would send a secret/);
+  assert.ok(!JSON.stringify(res.output).includes(AWS));
+});
+
+test('MCP PreToolUse: a secret wins over personal data (deny, not ask)', async (t) => {
+  const dir = tmpProject(t);
+  const res = await run(preTool('mcp__github__create_issue', { body: 'alice@example.com ' + AWS }, dir), { engine: piiEngine });
+  assert.equal(res.output.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+test('MCP PreToolUse: personal data alone asks, naming the kind and the server', async (t) => {
+  const dir = tmpProject(t);
+  const res = await run(preTool('mcp__crm__add_contact', { note: 'write to alice@example.com' }, dir), { engine: piiEngine });
+  const out = res.output.hookSpecificOutput;
+  assert.equal(out.permissionDecision, 'ask');
+  assert.match(out.permissionDecisionReason, /personal data \(an email\)/);
+  assert.match(out.permissionDecisionReason, /the MCP server crm/);
+  assert.match(out.permissionDecisionReason, /Approve only if/);
+  assert.ok(!out.permissionDecisionReason.includes('alice@example.com'));
+});
+
+test('MCP PreToolUse: a clean call is allowed (no opinion), and PII checks can be turned off by the engine', async (t) => {
+  const dir = tmpProject(t);
+  const clean = await run(preTool('mcp__github__list_issues', { state: 'open' }, dir), { engine: piiEngine });
+  assert.equal(clean.output, null);
+  const noPii = await run(preTool('mcp__crm__add_contact', { note: 'alice@example.com' }, dir), { engine: fakeEngine });
+  assert.equal(noPii.output, null);
+});
+
+test('install writes the new PreToolUse matcher, replaces an old exact-list one, and uninstall removes it', { skip: process.platform === 'win32' }, (t) => {
+  const home = tempDir(t, 'zn-cc-mcp-');
+  const file = path.join(home, '.claude', 'settings.json');
+  const env = {};
+  const opts = { scope: 'user', home, env, mcp: false, nodePath: '/usr/bin/node', cliPath: '/opt/zn-gate/bin/cli.js', runnerPath: '/opt/zn/lib/hooks/runner.js' };
+  adapter.install(opts);
+  const pre = () => JSON.parse(fs.readFileSync(file, 'utf8')).hooks.PreToolUse;
+  assert.equal(pre().length, 1);
+  assert.equal(pre()[0].matcher, '^(Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch)$|^mcp__.*');
+  // A settings file from an earlier zn-gate: the exact-list matcher is replaced, not duplicated.
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  data.hooks.PreToolUse[0].matcher = OLD_PRE_MATCHER;
+  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  adapter.install(opts);
+  assert.equal(pre().length, 1);
+  assert.equal(pre()[0].matcher, adapter.PRE_MATCHER);
+  adapter.uninstall({ scope: 'user', home, env, mcp: false });
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).hooks, undefined);
+});
+
+/* ---------- zn's own servers are recognised from the MCP configuration, not from a name ---------- */
+
+// What `zn hooks install claude-code` registers: this Node.js and this zn-gate's CLI, by absolute path.
+const ZN_CLI = path.resolve(__dirname, '..', 'bin', 'cli.js');
+const ZN_SECRETS = { command: process.execPath, args: [ZN_CLI, 'secrets-mcp', '--agent', 'claude-code'] };
+const VAULT_CALL = { url: 'https://api.example.com/user', method: 'GET', headers: { Authorization: 'Bearer __ZN_GITHUB_TOKEN__' } };
+
+// A Claude Code config dir (CLAUDE_CONFIG_DIR) with the given .claude.json and settings.json, restored after the test.
+function claudeConfig(t, { claudeJson, settings } = {}) {
+  const dir = tempDir(t, 'zn-ccfg-');
+  if (claudeJson) fs.writeFileSync(path.join(dir, '.claude.json'), JSON.stringify(claudeJson));
+  if (settings) fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(settings));
+  const before = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = dir;
+  t.after(() => { if (before === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = before; });
+  return dir;
+}
+const decisionOf = (res) => (res.output ? res.output.hookSpecificOutput.permissionDecision : 'allow');
+const VAULT_TOOL = 'mcp__secrets__secrets_http_request';
+
+test('vault call: through the user-scope secrets server it is allowed, with the placeholder', async (t) => {
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } } });
+  const dir = tmpProject(t);
+  const ev = adapter.normalize(preTool(VAULT_TOOL, VAULT_CALL, dir));
+  assert.equal(ev.mcp.ours, 'secrets');
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'allow');
+  // The same placeholder sent to any other server is still blocked.
+  assert.equal(decisionOf(await run(preTool('mcp__github__create_issue', VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+  // A real secret is still blocked on the way to zn's own server.
+  const withSecret = { ...VAULT_CALL, headers: { Authorization: 'Bearer ' + GHP } };
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, withSecret, dir), { engine: piiEngine })), 'deny');
+});
+
+test('vault call: a secrets server that is not zn (user scope) is checked', async (t) => {
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: { command: 'node', args: ['/opt/vault-example/server.js'] } } } });
+  const dir = tmpProject(t);
+  assert.equal(adapter.normalize(preTool('mcp__secrets__x', {}, dir)).mcp.ours, undefined);
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+});
+
+test('vault call: no secrets server in the config at all is checked', async (t) => {
+  claudeConfig(t, { claudeJson: { mcpServers: {} } });
+  const dir = tmpProject(t);
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+});
+
+test('vault call: a project .mcp.json that redefines "secrets" elsewhere is checked, even when the user-scope one is zn', async (t) => {
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } } });
+  const dir = tmpProject(t);
+  fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { secrets: { command: 'node', args: ['./collect.js'] } } }));
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+  // Also from a sub-folder of the project, and when the project one only looks like zn (a path to a binary).
+  const sub = path.join(dir, 'a', 'b');
+  fs.mkdirSync(sub, { recursive: true });
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, sub), { engine: piiEngine })), 'deny');
+  fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { secrets: { command: './zn', args: ['secrets-mcp'] } } }));
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+  // A server reached by URL is never zn.
+  fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { secrets: { type: 'http', url: 'https://collect.example.com/mcp', command: 'zn', args: ['secrets-mcp'] } } }));
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+});
+
+test('vault call: a project .mcp.json with the bare `zn secrets-mcp` is checked like any other server', async (t) => {
+  // `zn` there is looked up on the PATH, where a project folder can come first: never zn's own server.
+  const cfgDir = claudeConfig(t);
+  for (const claudeJson of [{}, { mcpServers: { secrets: ZN_SECRETS } }]) {
+    fs.writeFileSync(path.join(cfgDir, '.claude.json'), JSON.stringify(claudeJson));
+    const dir = tmpProject(t);
+    fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { secrets: { command: 'zn', args: ['secrets-mcp', '--agent', 'claude-code'] } } }));
+    assert.equal(adapter.normalize(preTool(VAULT_TOOL, VAULT_CALL, dir)).mcp.ours, undefined);
+    assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+  }
+});
+
+test('vault call: a user-scope "secrets" server is zn\'s only with this Node.js and this CLI by absolute path', { skip: process.platform === 'win32' }, async (t) => {
+  const dir = tmpProject(t);
+  const bin = path.join(dir, 'bin');
+  const marker = path.join(dir, 'zn-ran');
+  fs.mkdirSync(bin);
+  // A project zn first on the PATH: it must never be started or trusted.
+  fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\necho ran > ' + JSON.stringify(marker) + '\n', { mode: 0o755 });
+  const copy = path.join(dir, 'cli.js');
+  fs.copyFileSync(ZN_CLI, copy);
+  const link = path.join(dir, 'node-link');
+  fs.symlinkSync(process.execPath, link);
+  const cfgDir = claudeConfig(t);
+  const writeUser = (secrets) => fs.writeFileSync(path.join(cfgDir, '.claude.json'), JSON.stringify({ mcpServers: { secrets } }));
+  const kind = (secrets) => {
+    writeUser(secrets);
+    return adapter.normalize(preTool(VAULT_TOOL, VAULT_CALL, dir)).mcp.ours;
+  };
+  const saved = process.env.PATH;
+  process.env.PATH = bin + path.delimiter + saved;
+  t.after(() => { process.env.PATH = saved; });
+  assert.equal(kind({ command: 'zn', args: ['secrets-mcp', '--agent', 'claude-code'] }), undefined);
+  assert.equal(kind({ command: path.join(bin, 'zn'), args: ['secrets-mcp'] }), undefined);
+  assert.equal(kind({ command: 'npx', args: ['-y', 'zn-gate', 'secrets-mcp'] }), undefined);
+  assert.equal(kind({ command: process.execPath, args: [copy, 'secrets-mcp'] }), undefined, 'another cli.js');
+  assert.equal(kind({ command: path.join(bin, 'zn'), args: [ZN_CLI, 'secrets-mcp'] }), undefined, 'another program');
+  assert.equal(kind({ command: process.execPath, args: ['bin/cli.js', 'secrets-mcp'] }), undefined, 'a relative path');
+  assert.equal(kind({ ...ZN_SECRETS, url: 'https://collect.example.com/mcp' }), undefined);
+  assert.equal(kind(ZN_SECRETS), 'secrets');
+  assert.equal(kind({ command: link, args: [ZN_CLI, 'secrets-mcp'] }), 'secrets', 'the same Node.js through a link');
+  // The placeholder only goes to that server.
+  writeUser({ command: 'zn', args: ['secrets-mcp'] });
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+  assert.equal(fs.existsSync(marker), false, 'the project zn never ran');
+});
+
+test('vault call: the plugin\'s own zn-gate copy recognizes the server registered from npm; a project copy never counts', { skip: process.platform === 'win32' }, (t) => {
+  // The plugin repository loads zn-gate from vendor/zn-gate, while `zn hooks install claude-code` registered the
+  // npm package's bin/cli.js: the vendored adapter must still see that server as zn's.
+  const root = tempDir(t, 'zn-ccvendor-');
+  const pkg = path.resolve(__dirname, '..');
+  const vendor = path.join(root, 'plugin', 'vendor', 'zn-gate');
+  for (const d of ['lib', 'bin']) fs.cpSync(path.join(pkg, d), path.join(vendor, d), { recursive: true });
+  fs.copyFileSync(path.join(pkg, 'package.json'), path.join(vendor, 'package.json'));
+  fs.symlinkSync(path.join(pkg, 'node_modules'), path.join(vendor, 'node_modules'), 'dir');
+  const vendored = require(path.join(vendor, 'lib', 'agents', 'claude-code.js'));
+  const cfgDir = claudeConfig(t);
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: cfgDir };
+  const project = path.join(root, 'project');
+  fs.mkdirSync(project);
+  const kind = (secrets, cwd = project) => {
+    fs.writeFileSync(path.join(cfgDir, '.claude.json'), JSON.stringify({ mcpServers: { secrets } }));
+    return vendored.znMcpServerKind('secrets', cwd, { env });
+  };
+  assert.equal(kind(ZN_SECRETS), 'secrets', 'npm server seen from the vendored copy');
+  assert.equal(adapter.znMcpServerKind('secrets', project, { env }), 'secrets', 'and from the npm copy');
+  // A zn-gate copy inside the project (a local dependency, a planted folder) is never zn's server.
+  const local = path.join(project, 'node_modules', 'zn-gate', 'bin');
+  fs.mkdirSync(local, { recursive: true });
+  fs.copyFileSync(ZN_CLI, path.join(local, 'cli.js'));
+  assert.equal(kind({ command: process.execPath, args: [path.join(local, 'cli.js'), 'secrets-mcp'] }), null, 'cli.js inside the project');
+  const projNode = path.join(project, 'node');
+  fs.symlinkSync(process.execPath, projNode);
+  assert.equal(kind({ command: projNode, args: [ZN_CLI, 'secrets-mcp'] }), 'secrets', 'a link resolves to the real Node.js outside the project');
+  fs.mkdirSync(path.join(project, 'tools'));
+  fs.writeFileSync(path.join(project, 'tools', 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  assert.equal(kind({ command: path.join(project, 'tools', 'node'), args: [ZN_CLI, 'secrets-mcp'] }), null, 'a Node.js inside the project');
+  // Not a Node.js, or not a zn-gate CLI.
+  const other = path.join(root, 'other', 'bin');
+  fs.mkdirSync(other, { recursive: true });
+  fs.copyFileSync(ZN_CLI, path.join(other, 'cli.js'));
+  assert.equal(kind({ command: process.execPath, args: [path.join(other, 'cli.js'), 'secrets-mcp'] }), null, 'not a zn-gate/bin/cli.js');
+  assert.equal(kind({ command: '/bin/sh', args: [ZN_CLI, 'secrets-mcp'] }), null, 'not a Node.js');
+  // Any project or local-scope override still wins, also from the vendored copy.
+  fs.writeFileSync(path.join(project, '.mcp.json'), JSON.stringify({ mcpServers: { secrets: ZN_SECRETS } }));
+  assert.equal(kind(ZN_SECRETS), null, 'a project .mcp.json override');
+});
+
+test('project install leaves an unreadable .mcp.json as it is and says so', (t) => {
+  const dir = tempDir(t, 'zn-ccp-');
+  const file = path.join(dir, '.mcp.json');
+  for (const text of ['{ not json', '{"mcpServers": []}']) {
+    fs.writeFileSync(file, text);
+    const rep = adapter.install({ scope: 'project', projectDir: dir, znBin: '/usr/local/bin/zn' });
+    assert.equal(fs.readFileSync(file, 'utf8'), text);
+    assert.ok(rep.warnings.some((w) => w.startsWith('could not read ' + file) && w.includes('zn hooks install claude-code')));
+    assert.ok(fs.existsSync(path.join(dir, '.claude', 'settings.json')), 'the hooks are still installed');
+  }
+});
+
+test('install and uninstall start claude with only the PATH entries outside the project (a shebang never picks a project node)', { skip: process.platform === 'win32' }, (t) => {
+  const root = tempDir(t, 'zn-ccshebang-');
+  const project = path.join(root, 'project');
+  const projBin = path.join(project, 'bin');
+  const tools = path.join(root, 'tools');
+  const home = path.join(root, 'home');
+  for (const d of [projBin, tools, home]) fs.mkdirSync(d, { recursive: true });
+  const nodeMarker = path.join(root, 'project-node-ran');
+  const calls = path.join(root, 'claude-calls');
+  fs.writeFileSync(path.join(projBin, 'node'), '#!/bin/sh\necho "$@" >> ' + JSON.stringify(nodeMarker) + '\nexit 0\n', { mode: 0o755 });
+  const claude = path.join(tools, 'claude');
+  fs.writeFileSync(claude, '#!/usr/bin/env node\nrequire("fs").appendFileSync(' + JSON.stringify(calls) + ', process.argv.slice(2).join(" ") + "\\n");\n', { mode: 0o755 });
+  const env = { HOME: home, CLAUDE_PROJECT_DIR: project, PATH: [projBin, tools, path.dirname(process.execPath), '/usr/bin', '/bin'].join(':') };
+  // The same PATH for zn itself, as when it runs in a shell where the project bin comes first (direnv).
+  const saved = process.env.PATH;
+  process.env.PATH = env.PATH;
+  t.after(() => { process.env.PATH = saved; });
+  const rep = adapter.install({ scope: 'user', home, env, claudeBin: claude, runnerPath: '/opt/zn/lib/hooks/runner.js' });
+  assert.equal(rep.mcp, 'claude mcp (user scope)');
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ mcpServers: { secrets: ZN_SECRETS } }));
+  adapter.uninstall({ scope: 'user', home, env, claudeBin: claude });
+  assert.equal(fs.existsSync(nodeMarker), false, 'the project node never ran');
+  const lines = fs.readFileSync(calls, 'utf8').trim().split('\n');
+  assert.match(lines[0], /^mcp add-json --scope user secrets /);
+  assert.match(lines[1], /^mcp remove --scope user secrets$/);
+});
+
+test('vault call: a local-scope entry of .claude.json that redefines "secrets" is checked', async (t) => {
+  const dir = tmpProject(t);
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS }, projects: { [dir]: { mcpServers: { secrets: { command: 'node', args: ['/opt/x.js'] } } } } } });
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+});
+
+test('vault call: a project server is seen from CLAUDE_PROJECT_DIR too, when the hook runs in a folder outside the project', async (t) => {
+  const cfgDir = claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } } });
+  const project = tmpProject(t);
+  const outside = tempDir(t, 'zn-adddir-');
+  fs.writeFileSync(path.join(project, '.mcp.json'), JSON.stringify({ mcpServers: { secrets: { command: 'node', args: ['./collect.js'] } } }));
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: cfgDir };
+  delete env.CLAUDE_PROJECT_DIR;
+  assert.equal(adapter.znMcpServerKind('secrets', outside, { env }), 'secrets');
+  assert.equal(adapter.znMcpServerKind('secrets', outside, { env: { ...env, CLAUDE_PROJECT_DIR: project } }), null);
+  // A sub-folder of the project named as the project: its parents are looked at too.
+  const sub = path.join(project, 'pkg');
+  fs.mkdirSync(sub);
+  assert.equal(adapter.znMcpServerKind('secrets', outside, { env: { ...env, CLAUDE_PROJECT_DIR: sub } }), null);
+  // A project folder that is not an absolute path: the scope is unknown, so the call is checked.
+  fs.rmSync(path.join(project, '.mcp.json'));
+  assert.equal(adapter.znMcpServerKind('secrets', outside, { env: { ...env, CLAUDE_PROJECT_DIR: 'project' } }), null);
+  assert.equal(adapter.znMcpServerKind('secrets', outside, { env: { ...env, CLAUDE_PROJECT_DIR: project } }), 'secrets');
+  // The same with a local-scope entry.
+  fs.writeFileSync(path.join(cfgDir, '.claude.json'), JSON.stringify({ mcpServers: { secrets: ZN_SECRETS }, projects: { [project]: { mcpServers: { secrets: { command: 'node', args: ['/opt/x.js'] } } } } }));
+  assert.equal(adapter.znMcpServerKind('secrets', outside, { env: { ...env, CLAUDE_PROJECT_DIR: project } }), null);
+  // Through the hook: the placeholder is not sent to the project's server.
+  fs.writeFileSync(path.join(cfgDir, '.claude.json'), JSON.stringify({ mcpServers: { secrets: ZN_SECRETS } }));
+  fs.writeFileSync(path.join(project, '.mcp.json'), JSON.stringify({ mcpServers: { secrets: { command: 'node', args: ['./collect.js'] } } }));
+  const before = process.env.CLAUDE_PROJECT_DIR;
+  process.env.CLAUDE_PROJECT_DIR = project;
+  t.after(() => { if (before === undefined) delete process.env.CLAUDE_PROJECT_DIR; else process.env.CLAUDE_PROJECT_DIR = before; });
+  assert.equal(adapter.normalize(preTool(VAULT_TOOL, {}, outside)).mcp.ours, undefined);
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, outside), { engine: piiEngine })), 'deny');
+});
+
+test('vault call: on Windows a local-scope entry is found whatever the case of its folder name', (t) => {
+  const dir = tmpProject(t);
+  const cfgDir = claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS }, projects: { [dir.toUpperCase()]: { mcpServers: { secrets: { command: 'node', args: ['/opt/x.js'] } } } } } });
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: cfgDir };
+  delete env.CLAUDE_PROJECT_DIR;
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { env, platform: 'win32' }), null);
+  if (process.platform !== 'win32') assert.equal(adapter.znMcpServerKind('secrets', dir, { env, platform: 'linux' }), 'secrets', 'case matters elsewhere');
+});
+
+test('vault call: an unreadable config is checked (fails closed)', async (t) => {
+  const cfg = claudeConfig(t);
+  fs.writeFileSync(path.join(cfg, '.claude.json'), '{ not json');
+  const dir = tmpProject(t);
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+});
+
+test('vault call: a plugin server name is never zn\'s, also with the plugin enabled (the plugin registers no MCP server)', async (t) => {
+  const dir = tmpProject(t);
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } }, settings: { enabledPlugins: { 'zn-gate@zn': true } } });
+  const name = 'mcp__plugin_zn-gate_secrets__secrets_http_request';
+  assert.equal(adapter.normalize(preTool(name, {}, dir)).mcp.ours, undefined);
+  assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+  assert.equal(adapter.normalize(preTool('mcp__plugin_zn-gate_zn-gate__analyze_prompt', {}, dir)).mcp.ours, undefined);
+  assert.equal(decisionOf(await run(preTool('mcp__plugin_other_secrets__secrets_http_request', VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+});
+
+test('vault call: a user-scope entry that sets NODE_OPTIONS, NODE_PATH or a folder in the project is not zn\'s', (t) => {
+  const dir = tmpProject(t);
+  const cfgDir = claudeConfig(t);
+  const kind = (secrets) => {
+    fs.writeFileSync(path.join(cfgDir, '.claude.json'), JSON.stringify({ mcpServers: { secrets } }));
+    const env = { ...process.env, CLAUDE_CONFIG_DIR: cfgDir };
+    delete env.CLAUDE_PROJECT_DIR;
+    return adapter.znMcpServerKind('secrets', dir, { env });
+  };
+  assert.equal(kind(ZN_SECRETS), 'secrets');
+  assert.equal(kind({ ...ZN_SECRETS, env: { NODE_OPTIONS: '--require ./x.js' } }), null);
+  assert.equal(kind({ ...ZN_SECRETS, env: { node_path: path.join(dir, 'lib') } }), null);
+  assert.equal(kind({ ...ZN_SECRETS, env: { ZN_EXAMPLE: '1' } }), 'secrets');
+  assert.equal(kind({ ...ZN_SECRETS, cwd: dir }), null);
+  assert.equal(kind({ ...ZN_SECRETS, cwd: 'relative' }), null);
+  assert.equal(kind({ ...ZN_SECRETS, cwd: path.dirname(process.execPath) }), 'secrets');
+});
+
+test('personal data: asked for the secrets server, for a plugin server name and for any other', async (t) => {
+  const dir = tmpProject(t);
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } }, settings: { enabledPlugins: { 'zn-gate@zn': true } } });
+  const note = { text: 'write to alice@example.com' };
+  assert.equal(decisionOf(await run(preTool('mcp__plugin_zn-gate_zn-gate__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, { ...VAULT_CALL, body: note.text }, dir), { engine: piiEngine })), 'ask');
+  assert.equal(decisionOf(await run(preTool('mcp__crm__add_contact', note, dir), { engine: piiEngine })), 'ask');
+  // A secret is denied even for the detector server.
+  assert.equal(decisionOf(await run(preTool('mcp__plugin_zn-gate_zn-gate__analyze_prompt', { text: AWS }, dir), { engine: piiEngine })), 'deny');
 });

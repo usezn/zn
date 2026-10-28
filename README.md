@@ -12,7 +12,7 @@
 
 <p align="center">
   <strong>The local security layer for coding agents.</strong><br/>
-  zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor or OpenCode.<br/>
+  zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app.<br/>
   An open-source security layer that runs on your machine, between your agent and the tools and content it touches.
 </p>
 
@@ -33,13 +33,13 @@
 
 ---
 
-**For:** developers using Claude Code, Codex CLI, Cursor, OpenCode or any MCP client, and teams building agents with MCP, LangChain, CrewAI or LlamaIndex.
+**For:** developers using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or any MCP client, and teams building agents with MCP, LangChain, CrewAI or LlamaIndex.
 
 **What it does:** keeps secret values out of what your agent sends to its model, checks what your agent reads and calls for prompt injection, and audits prompts, skills and configs. Everything runs on your machine, is MIT-licensed and needs no account. The Python package has no runtime dependencies; the npm package's only one is `age-encryption` (with its `@noble`/`@scure` dependencies) for the secret vault, bundled in the package.
 
 ## Install
 
-Everything runs on your machine; no account or API key is needed. You need Node.js 18 or later (the LTS version from [nodejs.org](https://nodejs.org/)). With an older Node.js, the `zn-gate` and `zn` commands stop and say how to install it. The Claude Code plugin needs Node.js 20.12 or later.
+Everything runs on your machine; no account or API key is needed. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. With a Node.js older than 18, the `zn-gate` and `zn` commands stop and say how to install it.
 
 **Getting started: four steps, one command each.** Run them in your own terminal.
 
@@ -56,8 +56,8 @@ npx -y zn-gate init
 
 `init` does this:
 
-- It finds Claude Code, Codex CLI, Cursor and OpenCode on your machine.
-- For each one that is not protected yet, it shows the setup: the zn-gate plugin for Claude Code (or zn's hooks when your Node.js is older than 20.12), and zn's hooks for the others.
+- It finds Claude Code, Codex CLI, Cursor, OpenCode, Antigravity and ZCode desktop app on your machine.
+- For each one that is not protected yet, it shows the setup: the zn-gate plugin for Claude Code (or zn's hooks when your Node.js is older than 20.19), and zn's hooks for the others.
 - It runs each step only after you confirm it.
 - It ends with `zn-gate check`.
 
@@ -71,7 +71,7 @@ Run it yourself, in your own terminal, with no arguments. When an AI agent or a 
 - "running scripts is disabled on this system" on Windows: see the PowerShell note above.
 - `init` only prints steps and changes nothing: an AI agent or a script ran it. Run it yourself in your own terminal.
 - `check` shows **NOT protected**: that line says why and what to run. [What the output means](docs/check.md).
-- You want to undo what `init` changed: `npx -y zn-gate init --revert`.
+- You want to remove zn-gate: `npx -y zn-gate uninstall` shows what it will remove (the Claude Code plugin, zn's hooks, wrapped MCP servers) and asks first. `init --revert` only puts back MCP configs saved before wrapping.
 
 **Then keep your `.env` values in the vault.** With the plugin or the hooks, the agent cannot read `.env` files with real values; move them into zn-gate's encrypted vault, and the file keeps markers such as `__ZN_STRIPE_KEY__`:
 
@@ -82,14 +82,14 @@ npx -y zn-gate env shadow .env
 
 After this, your own app also reads the markers in `.env`: start it with zn-gate's `run` command once you allow it ([docs/secrets.md](docs/secrets.md)). `env shadow` tells you how to undo it.
 
-Five-minute walkthrough: [docs/secrets.md](docs/secrets.md). Limits: [docs/threat-model.md](docs/threat-model.md). Words you do not know: [docs/glossary.md](docs/glossary.md).
+New here? [First 5 minutes](docs/first-5-minutes.md). All the guides: [docs index](docs/README.md). Five-minute walkthrough: [docs/secrets.md](docs/secrets.md). Limits: [docs/threat-model.md](docs/threat-model.md). Words you do not know: [docs/glossary.md](docs/glossary.md). Every command and exit code: [docs/cli.md](docs/cli.md). Removing zn-gate: [docs/uninstall.md](docs/uninstall.md).
 
 <details>
 <summary><strong>Other ways to install</strong>: one agent at a time, other editors, Python, MCP server only, wrapping the MCP servers you already use</summary>
 
 **One agent at a time** (the same steps `init` runs):
 
-**Claude Code: the plugin.** You also need Git and Claude Code 2.1.295 or later. The plugin needs Node.js 20.12 or later. With an older Node.js, `npx -y zn-gate init` skips the plugin and sets up zn's hooks for Claude Code instead (`zn-gate check` says so if the plugin is installed); update Node.js to use the plugin.
+**Claude Code: the plugin.** You also need Git and Claude Code 2.1.295 or later. The plugin needs Node.js 20.19 or later. With an older Node.js, `npx -y zn-gate init` skips the plugin and sets up zn's hooks for Claude Code instead (`zn-gate check` says so if the plugin is installed); update Node.js to use the plugin.
 
 ```bash
 claude plugin marketplace add usezn/zn
@@ -98,7 +98,7 @@ claude plugin install zn-gate@usezn
 
 Already ran `zn hooks install claude-code` before? Run `zn hooks uninstall claude-code` first, otherwise both sets of hooks run.
 
-Start a new Claude Code session. Claude Code is then blocked from reading `.env` files with real values and credential files, secrets in what its tools return are replaced with markers or redacted before the model sees them, a secret pasted into a prompt is blocked, and Claude can check untrusted text for prompt injection. Not covered: Claude Code sessions in the cloud, Cowork and chat. Details: [plugins/zn-gate](plugins/zn-gate/README.md).
+Start a new Claude Code session. Claude Code is then blocked from reading `.env` files with real values and credential files, secrets in what its tools return are replaced with markers or redacted before the model sees them, a secret pasted into a prompt is blocked. The plugin adds no MCP server since version 1.14.0: for the `secrets` server, run `zn hooks install claude-code` instead of the plugin. Not covered: Claude Code sessions in the cloud, Cowork and chat. Details: [plugins/zn-gate](plugins/zn-gate/README.md).
 
 **Codex CLI, Cursor or OpenCode: the hooks.**
 
@@ -109,16 +109,38 @@ zn hooks install codex           # or: cursor, opencode
 
 In Codex, approve the new hooks with `/hooks`. In Cursor, shell output and file contents are not scrubbed. What each agent supports: [docs/compat.md](docs/compat.md).
 
-**Other editors** (VS Code, Antigravity, Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/).
+**Other editors** (VS Code, Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/).
+
+**Antigravity.** `zn hooks install antigravity` (or `npx -y zn-gate init`) adds a hook that runs before each tool call. It blocks reads and writes of secret files and shell commands that handle secrets, and the agent cannot edit the hook files. It cannot remove secrets from what a tool returns, Antigravity's MCP configuration files are not protected, and Antigravity does not document what happens when a hook fails (in our tests the call is blocked), so treat it as a first layer. The MCP server works there too. Details: [Antigravity page](docs/editors/antigravity.md).
+
+**ZCode desktop app.** `zn hooks install zcode` (or `npx -y zn-gate init`) adds hooks that run before each tool call and before each prompt. It blocks reads and writes of secret files, shell commands that handle secrets, MCP calls that would send a secret, and a prompt that contains a secret, and the agent cannot edit ZCode's own config file. It cannot remove secrets from what a tool returns (zn adds a notice when an output holds one), ZCode ignores the hooks of a project, and zn's launcher blocks the call when its Node.js is gone, so treat it as a first layer. ZCode's documentation does not say what happens when a hook fails; in our tests with the ZCode desktop app 3.16.3 on Linux, a hook that failed (an exit code other than 2, a crash or a timeout) let the call run, and only exit code 2 or a deny answer blocked it. Tested end to end on the ZCode desktop app 3.16.3 on Linux x64 and Windows x64 (Windows Server 2022, through the agent the app ships; the Windows app window was not driven); macOS is not tested. Details: [ZCode page](docs/editors/zcode.md).
+
+**Copilot CLI (experimental).** `zn hooks install copilot` adds hooks that run before and after each tool call. They block reads and writes of secret files and shell commands that handle secrets, and replace secret values in the results of read-type and shell tools. They cannot block a typed prompt, Copilot lets a call through when a hook times out, so zn, which sets a 15-second timeout on its hooks, blocks the call itself at 11 seconds, it has not been tested on Windows, and Copilot's own session log keeps the original output, so treat it as a first layer. Details: [Copilot CLI notes](docs/compat.md).
+
+**Gemini CLI (experimental).** `zn hooks install gemini` adds a hook that runs before each tool call. It blocks reads and writes of secret files and shell commands that handle secrets, and the agent cannot edit Gemini CLI's settings files. It does not change what a tool returns, Gemini CLI hooks cannot ask you for confirmation, and Gemini CLI lets a call run when a hook crashes or times out, so zn blocks it instead (a hook that fails is answered with a block, and zn sets a 15-second timeout on its hook and answers a check still running after 11 seconds with a block), so treat it as a first layer. Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts on 18 June 2026; Gemini CLI keeps working with zn-gate. Details: [Gemini CLI notes](docs/compat.md).
+
+Wrap any MCP server with the `shield` proxy, try it in shadow mode first, and review changes to its tools with `pins`: [docs/shield.md](docs/shield.md).
 
 **Python: for agents you build yourself** (rules engine and secret redaction for LangChain, CrewAI, LlamaIndex or plain tool calling). It does not protect Claude Code, Codex, Cursor or other coding agents. Install it in a virtual environment; many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one ("externally-managed-environment"):
+
+On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package first: `sudo apt install python3-venv`.
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install zn-gate      # Windows: .venv\Scripts\pip install zn-gate
 ```
 
-On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package first: `sudo apt install python3-venv`.
+**Only the command-line tools (`scan`, `test`, `status`)?** Install the Python CLI as a standalone tool, without a virtual environment:
+
+```bash
+pipx install zn-gate
+pipx ensurepath        # then close and reopen your terminal
+zn-gate scan .
+```
+
+`pipx ensurepath` puts `~/.local/bin` on your PATH. Until you reopen the terminal, `zn-gate` is reported as "command not found". With uv: `uv tool install zn-gate` (run `uv tool update-shell` if the command is not found). To run it once without installing: `uvx zn-gate scan .`
+
+The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app, run `npx -y zn-gate init` (Node 18 or later).
 
 For LangChain and LangGraph, `ZnGuardCallbackHandler` stops the run when it blocks a prompt, a tool call or a tool output, and `guard_langchain_tool(tool)` wraps a tool so its arguments are checked before it runs and its output is checked and masked before the model reads it. A callback cannot change what a tool returns, so the handler with `mask_secrets=True` (default) also stops the run on a secret in a tool output (it fails closed); to hide secrets and keep going, wrap the tool and create the handler with `mask_secrets=False`. See the [Python package guide](packages/zn-gate-py/README.md#langchain--langgraph).
 
@@ -136,7 +158,7 @@ Cursor (`~/.cursor/mcp.json`) and other editors: `{ "mcpServers": { "zn-gate": {
 ```bash
 npx -y zn-gate init --dry-run   # preview
 npx -y zn-gate init --wrap-mcp  # wrap (backup first)
-npx -y zn-gate init --revert    # undo
+npx -y zn-gate init --revert    # put back the MCP configs saved before wrapping
 ```
 
 It reads Claude Desktop, Claude Code (`~/.claude.json`), Cursor (`~/.cursor/mcp.json`), Codex CLI (`~/.codex/config.toml`), OpenCode (`~/.config/opencode/opencode.json`) and Antigravity (`~/.gemini/antigravity/mcp_config.json`). [Full list and rules](packages/zn-gate/README.md#wrap-the-mcp-servers-you-already-use).
@@ -167,13 +189,14 @@ npx -y zn-gate check
 
 For each agent set up for your user, zn-gate asks its hook to let the agent read a `.env` file with a fake key and an ordinary file, in a temporary folder. It shows what your agent would be told, and a line that says **NOT protected** says how to fix it. Nothing is sent over the network and no setting changes. [What the output means](docs/check.md).
 
+<!-- snippet-test -->
 ```bash
 npx -y zn-gate test
 ```
 
 This runs the local self-test (51 curated vectors: 26 attacks, 25 benign) and shows per-decision latency on your machine. It is a smoke test, not a detection rate. Nothing is sent over the network.
 
-**For developers: see the redaction by hand.** Send a tool output with a fake AWS key (AWS's documentation example) and a database password through zn-gate, exactly as your agent would, and look for `sanitized_content` in the output; that field is what the model would see:
+**For developers: see the redaction by hand.** Send a tool output with a fake AWS key (AWS's documentation example) and a database password through zn-gate, exactly as your agent would, and look for `sanitized_content` in the output; that field is what the model would see. In the full output, `verdict: allow` only means that no prompt injection was found; the secrets are hidden in `sanitized_content` (here `[REDACTED_AWS_KEY]` and `[REDACTED_DB_PASSWORD]`), and `secrets_redacted` counts them:
 
 ```bash
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"check_tool_result","arguments":{"tool_name":"read_file","content":"AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nDATABASE_URL=postgres://app:hunter2@db:5432/main"}}}' \
@@ -193,16 +216,19 @@ Where zn-gate sits in a tool call, as an MCP server or as the `shield` proxy aro
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/tool-call-sequence-animated-dark.svg"><img alt="Sequence diagram. The agent sends analyze_prompt to zn-gate on your machine, which allows or blocks it. Then check_tool_call, which allows the call with secrets masked or blocks it. The agent runs the tool. The output comes back through check_tool_result or shield, and zn-gate returns it with secrets redacted, or neutralized if it carries an injection." src="docs/diagrams/tool-call-sequence-animated-light.svg" width="800"></picture>
 
 ### Scrubber: secrets stay out of the model's context
+
 - **Today, through zn-gate:** redacts AWS keys, OpenAI and Anthropic keys, GitHub tokens, JWTs, private keys and database URL passwords in everything that passes through zn-gate: tool output checked with `check_tool_result`, tool arguments checked with `check_tool_call`, and output of MCP servers wrapped by `zn-gate shield` / `init`. Python: `sanitize_tool_result`, `@guard(mask_secrets=True)` and the framework integrations.
-- **Today, agent hooks and vault (npm package):** hooks for Claude Code, Codex CLI and OpenCode scrub the output of the agents' built-in tools and block pasted secrets (in Cursor only MCP tool output is scrubbed); a local encrypted vault with stable markers (`__ZN_AWS_KEY_1__`); `zn run` fills values only into commands you approved; personal data (cards, IBAN, national IDs, e-mail, phone) is detected too. What each agent allows differs: see [docs/compat.md](docs/compat.md).
+- **Today, agent hooks and vault (npm package):** hooks for Claude Code, Codex CLI and OpenCode scrub the output of the agents' built-in tools and block pasted secrets (in Cursor only MCP tool output is scrubbed); a local encrypted vault with stable markers (`__ZN_AWS_KEY_1__`); `zn run` gives a value (as an environment variable) only to commands you approved; personal data (cards, IBAN, national IDs, e-mail, phone) is detected too. What each agent allows differs: see [docs/compat.md](docs/compat.md).
 
 ### Galvanize: prompt-injection detection
+
 - **Today, local:** a deterministic rules engine (signatures plus normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64) checks prompts, tool arguments, tool output and MCP tool descriptions.
-- **Today, optional cloud check:** the Galvanize 2 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-2), Apache-2.0) can also check prompts sent to `analyze_prompt`, only if you set `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed from the prompt on your machine before it is sent; personal data is not removed on this path.
+- **Today, optional cloud check:** the Galvanize 2 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-2), Apache-2.0) can also check prompts sent to `analyze_prompt`, only if you set `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed from the prompt on your machine before it is sent; personal data is not removed on this path, and a secret zn-gate does not recognize is sent with the text.
 - **Roadmap:** running Galvanize locally inside zn-gate.
 
 ### Scan: audit what your agent is about to trust
-- **Today:** `zn-gate scan <path>` audits prompt templates, `AGENTS.md` / `SKILL.md` files and configs for injection traps and leaked secrets (exit code 1 on findings, for CI). A leaked secret is reported as **Secret found**, with the next step: `npx -y zn-gate env shadow <file>` moves the values of a `.env` file into the local vault, `npx -y zn-gate secret set NAME` stores any other one. It finds provider keys and tokens, opaque `Authorization: Bearer` tokens, passwords in URLs, and secrets passed as command-line flags (`--token=...`) or assigned to a name such as `password` or `api_key`. The same check runs as a [GitHub Action](#github-action). MCP servers can be checked on the web at [usezn.com/scan](https://usezn.com/scan).
+
+- **Today:** `zn-gate scan <path>` audits prompt templates, `AGENTS.md` / `SKILL.md` files and configs for injection traps and leaked secrets (exit code 1 on findings, for CI). A link given as the folder to scan is followed. When no file is scanned, the report says "No files were scanned in <path>" and the exit code is 3. A file or folder that could not be read (for example a file of 2 MiB or larger) is listed and also makes the exit code 3, unless you pass `--allow-partial`. A leaked secret is reported as **Secret found**, with the next step: `npx -y zn-gate env shadow <file>` moves the values of a `.env` file into the local vault, `npx -y zn-gate secret set NAME` stores any other one. It finds provider keys and tokens, opaque `Authorization: Bearer` tokens, passwords in URLs, and secrets passed as command-line flags (`--token=...`) or assigned to a name such as `password` or `api_key`. The same check runs as a [GitHub Action](#github-action). It also checks the MCP server configs (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `claude_desktop_config.json` and others) for keys and passwords written in plain text in `env`, `headers`, arguments or URLs; it never prints the value, and `--include-home` checks your own MCP configs too. MCP servers can be checked on the web at [usezn.com/scan](https://usezn.com/scan).
 - **Roadmap:** auditing MCP servers and skills from the CLI before you add them.
 
 ## What the cloud adds for teams
@@ -213,7 +239,7 @@ Everything above runs locally, for free, with no account. The optional cloud at 
 - **A larger detection model** for prompts, when you opt in (`ZN_CLOUD=1`).
 - **Team controls** (shared policies, organization-level audit): in progress.
 
-By default nothing is sent. If you set `ZN_CLOUD=1` and an API key, run `zn-gate connect`, or use the API key option of the Claude Code plugin, `analyze` sends the prompt text after removing the secrets zn-gate detects locally: personal data is not removed on this path, and a secret it does not detect would be sent with the text. The dashboard keeps the metadata of each cloud decision. Tool output and tool-call arguments are never sent.
+By default nothing is sent. If you set `ZN_CLOUD=1` and an API key, run `zn-gate connect`, or use the API key option of the Claude Code plugin, `analyze` sends the prompt text after removing the secrets zn-gate detects locally: personal data is not removed on this path, and a secret it does not detect would be sent with the text. The dashboard keeps the metadata of each cloud decision. Tool output and tool-call arguments are never sent. If the cloud call fails (no connection, a timeout, an error from the service, or a saved key that cannot be read), the prompt is checked by the local rules alone and the result says `fallback: true`. The check does not fail closed: a prompt the local rules allow goes through.
 
 ## What leaves your machine
 
@@ -226,8 +252,11 @@ By default nothing is sent. If you set `ZN_CLOUD=1` and an API key, run `zn-gate
 | Tool output (`check_tool_result`, `shield`) | Locally | **Never**, in any configuration |
 | Tool-call arguments (`check_tool_call`, `shield`) | Locally | **Never**, in any configuration |
 | MCP tool and parameter descriptions (`shield`) | Locally | **Never**, in any configuration |
-| Counts of what zn-gate did (`zn-gate stats`: checks, blocks, secrets replaced, per secret type) | Written locally to `~/.zn/stats.json` | **Never**, unless you turn on `zn-gate stats share on`: then one report a day with a random installation id, the day, the zn-gate, OS and Node.js versions, the agent and part of zn-gate used most, and the number of secrets found per built-in type (never values, prompts, variable or secret names, paths, hosts or emails). `zn-gate stats share show` shows it first. |
-| Prompts (`analyze_prompt`, `zn-gate analyze`, Python `analyze()`) | Locally | Only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`, run `zn-gate connect` yourself (Node package), or use the API key option of the Claude Code plugin (for `analyze_prompt` only). Detected secrets are removed locally before sending; personal data is not. |
+| Counts of what zn-gate did (`zn-gate stats`: checks, blocks, secrets replaced, per secret type) | Written locally to `~/.zn/stats.json` | **Never**, unless you turn on `zn-gate stats share on`: then, each time you run `zn-gate stats`, one report per complete day (at most the last 3 days) with a random installation id, the day, the zn-gate, OS and Node.js versions, the agent and part of zn-gate used most, and the number of secrets found per built-in type (never values, prompts, variable or secret names, paths, hosts or emails). `zn-gate stats share show` shows it first. |
+| Prompts (`analyze_prompt`, `zn-gate analyze`, Python `analyze()`) | Locally | Only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`, run `zn-gate connect` yourself (Node package), or use the API key option of the Claude Code plugin (for `analyze_prompt` only). Detected secrets are removed locally before sending. Personal data, and any secret zn-gate does not recognize, is sent as written. |
+| Team audit trail (`~/.zn/audit.jsonl`) | Written locally | Only on a machine joined to a Team organization with `zn team join`: while the vault is unlocked, the vault daemon syncs a few seconds after `zn unlock` and then every 15 minutes, and uploads audit metadata only (time, secret name, how it was used, agent, tool, command name, host, decision and its reason, written since you joined; earlier records only with `zn team join --include-history`) to your organization. Never secret values, prompts, file contents or tool output. See [zn Team](docs/team.md). |
+| Secret values in the vault (`secrets_http_request`, `zn run`) | Encrypted locally | **Never to zn.** zn gives a value only to a program you allowed (`zn run`, in its environment) or puts it into a request the agent asks for, and only to hosts you allowed for that secret (headers only by default). What an allowed program does with it is up to that program ([limits](docs/threat-model.md)). |
+| `zn-gate connect` and `zn-gate disconnect` | Locally | Only when you run them yourself in your own terminal. They send only the API key, to `api.usezn.com`: to check it (`/prod/usage`) and, with `disconnect --revoke` or when you say yes, to revoke it (`/prod/keys/self`). |
 
 `ZN_API_KEY` alone enables nothing. `zn-gate connect` is the other way to opt in: you run it, in your own terminal, and it keeps the key in your system keychain or the zn vault, never in a file (`zn-gate disconnect` undoes it and can revoke the key on usezn.com when you say yes; [details](docs/connect.md)). `ZN_LOCAL_ONLY=true` overrides `ZN_CLOUD=1` and a connected key. `npx -y zn-gate status` shows the active detection engine and whether the optional cloud check is on. Sharing of usage statistics is off by default and has its own status: `npx -y zn-gate stats share status`.
 
@@ -240,8 +269,13 @@ We only publish numbers we can reproduce, with the method next to them.
 - **Latency of the local engine:** one table by input size, with hardware, date and the script to reproduce it (`bench/bench_by_size.js`), in the [npm package README](packages/zn-gate/README.md#performance-local-rules-engine-no-network). Short summary from that run, with secret redaction (p50): about 0.045 ms for a 200 B prompt, 0.3 ms for a 4 KB tool output, about 4 ms for 64 KB.
 - **Self-test:** 51 curated vectors pass. That is a smoke test, not a detection or false-positive rate.
 - **Known limitation:** on whole source files, the rules can flag ordinary code comments. Version 1.5.0 reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. To check it on your own source files, run `zn-gate scan --code <path>`; for the MCP servers you wrap, `--shadow` logs detections without blocking.
-- **Known limitation:** detection of credentials under prefixed variable names (e.g. `OPENAI_API_KEY=`) is partial in this release.
-- **Detection rates:** on a private held-out set of 3,309 examples, Galvanize 2 has 83.4% recall at a 0.81% false positive rate (serving threshold 0.662); these numbers are for the cloud classifier, not the local rules engine. Method, per-language results, known weak spots and a reproducible benchmark are in the [model card](https://huggingface.co/usezn/Galvanize-2) and the [announcement](https://usezn.com/blog/introducing-galvanize-2/). It is one layer of defense, not a guarantee.
+- **Known limitation:** credentials under prefixed upper-case variable names (`OPENAI_API_KEY=`, `MY_APP_DB_PASSWORD=`, `export X_SECRET=`) are redacted in env files, JSON, YAML, Dockerfile and shell forms, and placeholders such as `YOUR_KEY` or `${VAR}` are left alone (tested in the npm and PyPI packages). Lower-case or dotted names such as `openai_api_key=` or `my.app.db.password=` are not redacted by the prompt and tool-result rules.
+- **Detection rates:** on a private held-out set of 3,309 examples, Galvanize 2 has 83.4% recall at a 0.81% false positive rate (serving threshold 0.662); these numbers are for the cloud classifier only. They do not measure the local rules engine and are not protection that zn-gate gives you offline; the local engine has no detection rate, only the self-test and latency above. Method, per-language results, known weak spots and a reproducible benchmark are in the [model card](https://huggingface.co/usezn/Galvanize-2) and the [announcement](https://usezn.com/blog/introducing-galvanize-2/). It is one layer of defense, not a guarantee.
+
+## What zn-gate is not
+
+- **Not a sandbox.** zn-gate checks what its hooks, MCP wrappers and library calls can see, and blocks or rewrites it. A program the agent starts can still do things the hooks cannot read. For that, use your agent's own sandbox or permission prompts (see the [threat model](docs/threat-model.md)).
+- **Coverage depends on the agent.** Each agent's hooks see and can change different things: for example, Cursor cannot rewrite shell or file output, and Codex replaces a result instead of editing it. [Agent compatibility](docs/compat.md) lists it per agent, and `npx -y zn-gate check` shows what your own agents are covered for.
 
 ## Configuration
 
@@ -256,11 +290,11 @@ zn Team: `zn team join <token>` connects a machine to your organization's signed
 
 Custom rules: add banned patterns and forbidden paths in `.znrules` or `zn.config.json` at your project root ([example](packages/zn-gate/README.md#custom-rules-znrules-or-znconfigjson)).
 
-Audit log: `zn-gate shield` appends each decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a redacted preview. It detects accidental or partial edits; it is not tamper-proof against someone with write access to the file. Check it with `npx -y zn-gate evidence --verify`.
+Audit log: `zn-gate shield` appends each decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a redacted preview. It detects accidental or partial edits; it is not tamper-proof against someone with write access to the file. Check it with `npx -y zn-gate evidence --verify`. The agent hooks add to the same log when they block something or hide a secret in a tool result: it records the agent, the kind of event, a rule name and the kinds of secret, never a secret value, a command, a file path or your prompt.
 
 ### GitHub Action
 
-Guide for the audit mode (permissions, code scanning, badge): [docs/github-action.md](docs/github-action.md).
+Guide for the audit mode (permissions, code scanning, badge): [docs/github-action.md](docs/github-action.md). To report findings without failing the build, see [Warn without failing the build](docs/github-action.md#warn-without-failing-the-build).
 
 The action installs the published zn-gate packages at an exact version and runs on the runner only; it sends nothing anywhere. It has two checks, chosen with `mode`:
 
@@ -326,9 +360,9 @@ jobs:
           persist-credentials: false
       - name: Audit agent configs
         id: zn
-        # Pin to the full commit SHA of the first Action release that has the
-        # mode input. The zn-gate package version is set by version below.
-        uses: usezn/zn@<commit-sha> # <first Action release with mode>
+        # Pin to the full commit SHA of an Action release v1.10.0 or later.
+        # The zn-gate package version is set by version below.
+        uses: usezn/zn@746be20f3276ab0d589f2d6df941b5d31a5396d8 # v1.13.1
         with:
           version: '1.13.1'
           mode: 'both'
@@ -341,25 +375,28 @@ jobs:
           sarif_file: ${{ steps.zn.outputs.sarif-file }}
 ```
 
+The `mode`, `agents`, `fail-on`, `severity-threshold`, `sarif-file` and `npm-integrity` inputs and the `audit-exit-code` output need two things: an Action release of v1.10.0 or later (the ref in `uses:`) and a zn-gate package of 1.6.0 or later (the `version` input). The default `version` already meets the second. With `uses:` pinned to an older commit, the runner only warns about the unknown inputs ("Unexpected input") and the step runs a plain scan, which can pass: no audit runs.
+
 | Input | Default | Description |
 |---|---|---|
-| `version` | `1.13.1` | Exact `zn-gate` version to install. Ranges and `latest` are refused. `audit` needs 1.6.0 or later. |
-| `mode` | `scan` | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). `scan`, `audit` or `both`. |
+| `version` | `1.14.1` | Exact `zn-gate` version to install. Ranges and `latest` are refused. `audit` needs 1.6.0 or later. |
+| `mode` | `scan` | `scan`, `audit` or `both`. |
 | `path` | `.` | File or directory to scan. `audit` needs a directory: with `both` a file skips the audit with a warning; with `audit` the step fails. |
-| `fail-on-threat` | `true` | Fail the step on findings. For `scan`, anything found (an injection trap or a secret); for `audit`, findings at or above `severity-threshold`. Set `false` to report only. Any value other than `true` or `false` fails the step. `true` or `false`, in any case; other values fail the step. |
-| `severity-threshold` | `high` | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). Audit only: lowest severity that fails the step when `fail-on-threat` is `true`: `critical`, `high` (high and critical), `medium` or `low`. The scan has no severities, so any scan finding fails. |
-| `fail-on` | empty | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). Audit only: lowest severity that fails the step (`low`, `medium`, `high`, `critical`, `none`), passed as is to `zn audit --fail-on`. When set, it overrides `fail-on-threat` and `severity-threshold` for the audit. |
-| `agents` | empty | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). Audit only: comma-separated agents to audit (`zn audit --agents`). Empty audits all supported agents. |
-| `format` | `github` | `github` (inline annotations), `text`, `json` or `sarif` (`sarif` requires a release of the action that includes audit mode). |
-| `sarif-file` | empty | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). With `format: sarif`, where to write the file: inside the workspace or the runner temp directory, and not a symbolic link or under one. Empty writes `zn-gate.sarif` in a new directory under the runner temp directory. |
+| `allow-partial` | `false` | Scan only: `true` keeps the step green when some files or folders were not read (2 MiB or larger, cannot be read, not a regular file, binary `.key` file); they are still listed. A scan that read no file at all still fails. Needs zn-gate 1.14.0 or later (an older `version` stops with an error). |
+| `fail-on-threat` | `true` | Fail the step on findings. For `scan`, anything found (an injection trap or a secret); for `audit`, findings at or above `severity-threshold`. Set `false` to report only. `true` or `false`, in any case; other values fail the step. |
+| `severity-threshold` | `high` | Audit only: lowest severity that fails the step when `fail-on-threat` is `true`: `critical`, `high` (high and critical), `medium` or `low`. The scan has no severities, so any scan finding fails. |
+| `fail-on` | empty | Audit only: lowest severity that fails the step (`low`, `medium`, `high`, `critical`, `none`), passed as is to `zn audit --fail-on`. When set, it overrides `fail-on-threat` and `severity-threshold` for the audit. |
+| `agents` | empty | Audit only: comma-separated agents to audit (`zn audit --agents`). Empty audits all supported agents. |
+| `format` | `github` | `github` (inline annotations), `text`, `json` or `sarif`. |
+| `sarif-file` | empty | With `format: sarif`, where to write the file: inside the workspace or the runner temp directory, and not a symbolic link or under one. Empty writes `zn-gate.sarif` in a new directory under the runner temp directory. |
 | `package-sha256` | empty | Requires v1.5.0 or later of the action. SHA-256 of the PyPI wheel for `version`, as listed on PyPI. When set, the install fails if the downloaded file has a different hash. Older releases of the action ignore this input with only a warning, so no hash is checked. |
-| `npm-integrity` | empty | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). Integrity string (`sha512-...`) of the npm tarball for `version`. When set, the audit fails if the tarball has a different hash. |
+| `npm-integrity` | empty | Integrity string (`sha512-...`) of the npm tarball for `version`. When set, the audit fails if the tarball has a different hash. |
 
 | Output | Description |
 |---|---|
-| `sarif-file` | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). Path of the SARIF file (`format: sarif` only). Empty if no check produced a report (for example, the scan ended in an error) or the file could not be written. |
-| `scan-exit-code` | Exit code of the scan: 0 clean (or `fail-on-threat: 'false'`), 1 something found (an injection trap or a secret), 2 error. Empty if the scan did not run. |
-| `audit-exit-code` | Requires a release of the action that includes audit mode (see the [CHANGELOG](CHANGELOG.md)). Exit code of the audit: 0 clean, 1 findings at or above `fail-on`, 2 error. Empty if it did not run. |
+| `sarif-file` | Path of the SARIF file (`format: sarif` only). Empty if no check produced a report (for example, the scan ended in an error) or the file could not be written. |
+| `scan-exit-code` | Exit code of the scan: 0 clean (or `fail-on-threat: 'false'`), 1 something found (an injection trap or a secret), 2 error, 3 (zn-gate 1.14.0 and later) no file was read, or a file or folder was not read and `allow-partial` is not `true`. The step then fails with its own message; with `format: sarif` the report is still written. Empty if the scan did not run. |
+| `audit-exit-code` | Exit code of the audit: 0 clean, 1 findings at or above `fail-on`, 2 error. Empty if it did not run. |
 
 The scan finds more secret types with each release (1.9.1 added secrets passed as command-line flags and assigned to names such as `password` or `api_key`), so a job that fails on findings can start failing on files that passed before: pin `version` and read the findings before you update it.
 
@@ -371,6 +408,10 @@ With `mode: both` and `format: sarif`, the file holds one SARIF run per check (`
 
 Permissions: the action itself needs only `contents: read`; add `security-events: write` to the job only when you upload SARIF (and, in private repositories, `actions: read`, which `upload-sarif` needs). Packages are installed without running install scripts or build steps (`--only-binary=:all: --no-deps` for the wheel, `--ignore-scripts` for the npm tarball, whose dependencies are bundled) into private directories under the runner temp directory. pip still reads the runner's own pip settings (`PIP_*` environment variables and `pip.conf`), so a mirror or proxy you configure there is used; set `package-sha256` so that the wheel is checked whatever index it comes from (and `npm-integrity` for the npm tarball). Run it on `pull_request`, never on `pull_request_target`: do not check out untrusted pull-request code in a `pull_request_target` workflow. With `mode: audit` or `both` the action also sets up Node.js 22 for the rest of the job.
 
+### pre-commit
+
+Run both checks before each commit with the [pre-commit](https://pre-commit.com) framework (needs Node.js 18 or later; ids `zn-gate-scan` and `zn-audit`). The hooks file ships from release 1.14.0, so `rev` must be a release tag of 1.14.0 or later: earlier tags have no `.pre-commit-hooks.yaml` and pre-commit fails with `InvalidManifestError`. Add `repos: [{repo: https://github.com/usezn/zn, rev: v1.14.1, hooks: [{id: zn-gate-scan}, {id: zn-audit}]}]` to `.pre-commit-config.yaml`. Each tag's hooks run the exact zn-gate version of that tag (`npx --yes zn-gate@1.14.1 ...`), so the `rev` you pin decides which version runs on every commit. The scan hook reads the whole repository, so a file of 2 MiB or more makes it exit 3; to accept skipped files, add `args: [--allow-partial]` to the `zn-gate-scan` hook.
+
 ### Repository layout
 
 - `packages/zn-gate`: Node.js CLI, MCP server and `shield` proxy (npm).
@@ -379,17 +420,50 @@ Permissions: the action itself needs only `contents: read`; add `security-events
 - `bench/`: benchmark scripts and results.
 - `assets/brand/`: logo files (SVG master and light/dark variants, PNG lockup and banners).
 
+## Examples
+
+Runnable examples are in [`examples/`](examples/). The code API checks text for sensitive paths, prompt injection in tool output and secrets, and redacts the secrets; it does not block destructive shell commands.
+
+| Example | Language | Framework | What it shows |
+|---|---|---|---|
+| [`python-basic`](examples/python-basic) | Python | None | Evaluate a prompt and guard a tool function. |
+| [`node-basic`](examples/node-basic) | JavaScript | None | Inspect a prompt and sanitize a tool result with the Node.js package. |
+| [`custom-rules`](examples/custom-rules) | JavaScript | None | Load project rules from `.znrules`. |
+| [`langchain-agent`](examples/langchain-agent) | Python | LangChain / LangGraph | Wrap tools so a blocked call does not run and secrets in tool output are hidden; a callback handler stops the run on a block. |
+| [`crewai-agent`](examples/crewai-agent) | Python | CrewAI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`llamaindex-agent`](examples/llamaindex-agent) | Python | LlamaIndex | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`ag2-agent`](examples/ag2-agent) | Python | AG2 | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`openai-agents-sdk`](examples/openai-agents-sdk) | Python | OpenAI Agents SDK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`pydantic-ai-agent`](examples/pydantic-ai-agent) | Python | Pydantic AI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`google-adk-agent`](examples/google-adk-agent) | Python | Google ADK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`langchain-js`](examples/langchain-js) | JavaScript | LangChain.js / LangGraph.js | Block a dangerous tool call and scrub what a tool returns before the model reads it. |
+| [`openai-agents-js`](examples/openai-agents-js) | JavaScript | OpenAI Agents SDK for JavaScript | Block a dangerous tool call and scrub what a tool returns before the model reads it. |
+| [`promptfoo`](examples/promptfoo) | YAML | Promptfoo | Run a deterministic guardrail suite with Promptfoo. |
+| [`github-action`](examples/github-action) | YAML | GitHub Actions | Scan agent prompts and configs in pull requests with the GitHub Action. |
+
 ## FAQ
 
 **Do I need an account or API key?** No. Everything local works without one. An account is only needed for the optional cloud (team audit and the larger detection model).
 
 **Does zn-gate slow my agent down?** The local check adds under a millisecond for typical prompts and tool outputs (p99 0.8 ms at 4 KB on our test host). See the measured table above.
 
-**Will it block legitimate content?** Sometimes. Use `init --shadow` or `shield --shadow` to log detections without blocking while you evaluate it.
+**Will it block legitimate content?** Sometimes. Use `init --shadow` or `shield --shadow` to log detections without blocking while you evaluate it. Details in [docs/shield.md](docs/shield.md).
 
-**Which agents are supported?** Any MCP client. `init` can rewrite configs for the agents listed under [Install](#install).
+**Can zn-gate block keys in tool output?** Yes. When a tool returns a secret value (an AWS, OpenAI or Anthropic key, a GitHub token, a JWT, a private key or a password in a database URL), zn-gate replaces each value it recognises with a marker or redacts it before the model sees it. "Block" here means that rewrite of the output; the tool call itself is not stopped. What is covered depends on the agent (the full table is in [docs/compat.md](docs/compat.md)):
 
-**How do I remove it?** `npx -y zn-gate init --revert` restores your configs from the backup. For a standalone server, remove the `zn-gate` entry from your agent config.
+- **Claude Code and OpenCode:** every tool, including shell commands, file reads, search and MCP.
+- **Codex CLI:** the result is replaced by its scrubbed text, so the model gets text instead of the structured result. Codex's own session log keeps the original output.
+- **Cursor:** MCP tool output only. Cursor's hooks cannot rewrite shell or file-read output.
+- **ZCode:** `zn hooks install zcode` blocks reads and writes of secret files, shell commands that handle secrets, MCP calls that would send a secret and prompts that contain one. It cannot rewrite what a tool returns, so a value a command prints still reaches the model (zn adds a notice). ZCode ignores the hooks of a project. Details: [docs/editors/zcode.md](docs/editors/zcode.md).
+- **Copilot CLI (experimental):** `zn hooks install copilot` blocks reads and writes of secret files and shell commands that handle secrets, and replaces secret values in the results of read-type and shell tools. It cannot block a typed prompt, lets a call through when its hook times out (zn sets a 15-second timeout on its hooks and blocks the call itself at 11 seconds), has not been tested on Windows, and Copilot's own session log keeps the original output. Details: [docs/compat.md](docs/compat.md).
+- **Gemini CLI (experimental):** Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts on 18 June 2026; Gemini CLI keeps working with zn-gate. `zn hooks install gemini` blocks reads and writes of secret files and shell commands that handle secrets. It does not change what a tool returns, so a value a command prints still reaches the model. Details: [docs/compat.md](docs/compat.md).
+- **Hermes Agent and the Cursor CLI:** not covered yet. For any MCP client, the output of an MCP server wrapped with `zn-gate shield` or `init` is scrubbed.
+
+For Codex CLI, zn also reviews the model's final answer. By default it only warns you; with `"stopReview": "block"` under `hooks` in `~/.zn/config.json`, Codex asks the model to rewrite a final answer that contains a secret value. A second opt-in, `"replaceToolOutputOnSecret": true` under `hooks` in the same file, makes Codex replace a tool result that holds a real secret with zn's stop text and carry on, so the model gets that text instead of the output. See [docs/compat.md](docs/compat.md).
+
+**Which agents are supported?** Claude Code, Codex CLI, Cursor, OpenCode, Antigravity and ZCode desktop app, through hooks (what each one supports: [docs/compat.md](docs/compat.md)). Other editors (VS Code, Windsurf, Cline, Zed, JetBrains, Continue) work as an MCP server only: [setup for each one](https://usezn.com/docs/integrations/editors/). `init` can also wrap the MCP servers you already use.
+
+**How do I remove it?** Run `npx -y zn-gate uninstall` in your own terminal. It lists what it found (the Claude Code plugin, zn's hooks for each agent, wrapped MCP servers), asks before removing, and ends with `zn-gate check`. Your vault is only deleted if you confirm that separately. `npx -y zn-gate uninstall --dry-run` shows the list and changes nothing. To remove one part at a time, or for the steps by agent, see the [removal guide](docs/uninstall.md). `init --revert` is narrower: it only puts back the MCP configs that were saved before `init --wrap-mcp` wrapped them. For a standalone server, remove the `zn-gate` entry from your agent config.
 
 ## Security
 

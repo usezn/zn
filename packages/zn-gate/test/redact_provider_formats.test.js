@@ -150,3 +150,43 @@ test('the text sent to the cloud analysis has the provider tokens redacted', asy
     assert.ok(!body.includes(key) && !body.includes(slack), 'a provider token was sent to the cloud');
   }
 });
+
+test('redactSecrets hides the password of a connection URL with any scheme, as the Python package does', () => {
+  const pw = 'FAKE-pass-' + r(8);
+  for (const scheme of ['mssql', 'sqlserver', 'oracle', 'clickhouse', 'cockroachdb', 'mariadb', 'jdbc']) {
+    const text = `conn = ${scheme}://sa:${pw}@db.example.test:1433/app`;
+    const out = redactSecrets(text);
+    assert.equal(out.sanitized, `conn = ${scheme}://sa:[REDACTED_URL_PASSWORD]@db.example.test:1433/app`);
+    assert.ok(out.detections.some((d) => d.rule === 'secret:url_password'), scheme);
+  }
+});
+
+test('redactSecrets keeps the schemes it already redacted, and leaves references, short passwords and non-URLs alone', () => {
+  const pw = 'FAKE-pass-' + r(8);
+  assert.equal(redactSecrets(`postgres://u:${pw}@h.example.test/x`).sanitized, 'postgres://u:[REDACTED_DB_PASSWORD]@h.example.test/x');
+  assert.equal(redactSecrets(`mssql://u:$` + `{DB_PASS}@h.example.test/x`).sanitized, 'mssql://u:$' + '{DB_PASS}@h.example.test/x');
+  assert.equal(redactSecrets('mssql://u:abc@h.example.test/x').sanitized, 'mssql://u:abc@h.example.test/x');
+  // A scheme after non-ASCII letters (CJK, accents) is still a URL: the password is redacted, never left in clear.
+  for (const prefix of ['连接', '数据库', 'é', 'ſ']) {
+    for (const scheme of ['https', 'mssql']) {
+      const out = redactSecrets(`${prefix}${scheme}://u:${pw}@h.example.test/x`);
+      assert.equal(out.sanitized, `${prefix}${scheme}://u:[REDACTED_URL_PASSWORD]@h.example.test/x`, prefix + scheme);
+      assert.ok(!out.sanitized.includes(pw));
+    }
+  }
+});
+
+// A provider key that a wider match of another kind (a NAME=value or key: assignment, or a GitHub token
+// running into the next line) covered was dropped with that match and left in the text.
+test('a provider key covered by a wider match of another kind is still redacted', () => {
+  const stripe = 'sk_' + 'live_' + r(28);
+  const github = 'gh' + 'p_' + r(36);
+  // Found by fuzzing: the key: assignment, joined with the next lines, was the wider match.
+  for (const text of [
+    'token: ' + stripe + '\n  Results/output\nResults/output\n  ',
+    'token: ' + stripe + '\n' + 'sk_' + 'live_' + r(13) + '\r\n' + github + '_v2\n  ',
+  ]) {
+    const out = redactSecrets(text).sanitized;
+    assert.ok(!out.includes(stripe.slice(8)), JSON.stringify(out));
+  }
+});

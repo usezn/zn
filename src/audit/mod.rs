@@ -9,17 +9,24 @@
 
 pub mod exporter;
 
+#[cfg(test)]
+mod kat_tests;
+
+#[cfg(test)]
+mod entry_vault_tests;
+
 use crate::metrics;
 use aes_gcm::{
-    aead::{Aead, KeyInit},
+    aead::{Aead, KeyInit, Payload},
     Aes256Gcm, Nonce,
 };
 use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose, Engine as _};
 use chrono::Utc;
 use rusqlite::{params, Connection, Row};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 /// Represents a single audit event in the system
@@ -47,7 +54,7 @@ pub struct AuditEntry {
     pub anomaly_score: Option<f32>,
     /// Nearest neighbor entry for audit (format: "text:distance")
     pub nearest_neighbor: Option<String>,
-    /// B-3 Fusion Gate evidence; present only when the neural camera
+    /// Fusion Gate evidence; present only when the neural camera
     /// participated in a block decision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fusion: Option<FusionEvidence>,
@@ -98,19 +105,27 @@ impl AuditEntry {
         self
     }
 
+    /// Tag the entry with the namespace of the authenticated caller. The
+    /// value must come from the authentication layer (or the configured
+    /// namespace of a local session), never from request content.
+    pub fn with_namespace(mut self, namespace: impl Into<String>) -> Self {
+        self.namespace = Some(namespace.into());
+        self
+    }
+
     pub fn with_nearest_neighbor(mut self, nn: impl Into<String>) -> Self {
         self.nearest_neighbor = Some(nn.into());
         self
     }
 
-    /// B-3: attach Fusion Gate evidence (block events, fusion active only).
+    /// Attach Fusion Gate evidence (block events, fusion active only).
     pub fn with_fusion(mut self, fusion: FusionEvidence) -> Self {
         self.fusion = Some(fusion);
         self
     }
 }
 
-/// B-3 Fusion Gate evidence: which cameras fired plus the neural inputs that
+/// Fusion Gate evidence: which cameras fired plus the neural inputs that
 /// produced the decision. Attached to audit entries only when the neural
 /// camera actively participated AND the call was blocked.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -125,6 +140,18 @@ pub struct FusionEvidence {
     pub model_id: String,
 }
 
+/// Derive the 32-byte AES-256-GCM key from a passphrase and the per-database salt.
+///
+/// Argon2id, version 0x13, m = 19456 KiB, t = 2, p = 1 (the `Argon2::default()` parameters).
+/// Existing audit databases depend on this exact output; `kat_tests` pins it.
+fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32]> {
+    let mut key = [0u8; 32];
+    argon2::Argon2::default()
+        .hash_password_into(passphrase.as_bytes(), salt, &mut key)
+        .map_err(|e| anyhow!("Failed to derive encryption key: {}", e))?;
+    Ok(key)
+}
+
 /// Persistent storage for audit logs with built-in encryption support
 pub struct AuditVault {
     conn: Arc<Mutex<Connection>>,
@@ -132,15 +159,69 @@ pub struct AuditVault {
     db_path: String,
     /// Key for payload encryption (AES-256-GCM)
     encryption_key: Option<[u8; 32]>,
+    /// Whether request payloads are persisted. The gateway turns this off by
+    /// default (`audit.store_payloads`); a bare `AuditVault::new` keeps the
+    /// library behaviour so embedders and tests are unchanged.
+    store_payloads: bool,
+}
+
+/// Returns the payload to attach to an audit entry: `None` unless payload
+/// storage was explicitly enabled, so by default a record holds metadata only.
+pub fn payload_if_enabled(store_payloads: bool, payload: impl Into<String>) -> Option<String> {
+    if store_payloads {
+        Some(payload.into())
+    } else {
+        None
+    }
 }
 
 impl AuditVault {
+    /// Enable or disable persisting payloads. When disabled, any payload on an
+    /// entry is dropped before it is written.
+    pub fn with_payload_storage(mut self, enabled: bool) -> Self {
+        self.store_payloads = enabled;
+        self
+    }
+
     /// Create a new AuditVault, initializing the database schema if needed
     pub fn new(db_path: &str, encryption_key: Option<&str>) -> Result<Self> {
         info!("Initializing AuditVault at: {}", db_path);
 
-        let conn = Connection::open(db_path)
+        let mut conn = Connection::open(db_path)
             .map_err(|e| anyhow!("Failed to open audit database '{}': {}", db_path, e))?;
+
+        // Wait for other processes that have the file open (the first start
+        // after an upgrade compacts the file and needs a write lock).
+        conn.busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(|e| anyhow!("Failed to set busy_timeout: {}", e))?;
+
+        // Overwrite deleted and replaced content with zeros, so text that a
+        // cleanup replaces does not stay in free pages of the file.
+        conn.execute_batch("PRAGMA secure_delete = ON;")
+            .map_err(|e| anyhow!("Failed to set secure_delete: {}", e))?;
+
+        // A database that was set up with an encryption key is not opened
+        // without it, and nothing is written before that check.
+        if encryption_key.is_none() {
+            let has_metadata: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'metadata'",
+                [],
+                |r| r.get(0),
+            )?;
+            if has_metadata > 0 {
+                let encrypted: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM metadata WHERE key IN ('key_check', 'derivation_salt')",
+                    [],
+                    |r| r.get(0),
+                )?;
+                if encrypted > 0 {
+                    return Err(anyhow!(
+                        "audit database '{}' is encrypted but no key was given. Set the ZN_DB_KEY environment variable to the passphrase it was created with (or configure a KMS key with kms.key_id), then start again. Do not delete the file: its records cannot be read without the key.",
+                        db_path
+                    ));
+                }
+            }
+        }
 
         // Create metadata table for persistent configuration (like salt)
         conn.execute(
@@ -173,10 +254,7 @@ impl AuditVault {
                 new_salt.to_vec()
             };
 
-            let mut key = [0u8; 32];
-            argon2::Argon2::default()
-                .hash_password_into(key_str.as_bytes(), &salt, &mut key)
-                .map_err(|e| anyhow!("Failed to derive encryption key: {}", e))?;
+            let key = derive_key(key_str, &salt)?;
             info!("Audit encryption enabled with persistent salt");
             Some(key)
         } else {
@@ -222,7 +300,7 @@ impl AuditVault {
             .ok();
         }
 
-        // Migration: add fusion column if missing (B-3)
+        // Migration: add fusion column if missing
         let has_fusion: bool = conn
             .query_row(
                 "SELECT COUNT(*) FROM pragma_table_info('audit_logs') WHERE name = 'fusion'",
@@ -237,10 +315,79 @@ impl AuditVault {
                 .ok();
         }
 
+        // Upgrade records written in the old format the first time the vault
+        // opens with its key. A key that fails the stored key check is refused
+        // before anything is written.
+        if let Some(key) = &derived_key {
+            let had_key_check = verify_key_check(&conn, key)?;
+            if !had_key_check {
+                refuse_if_no_stored_record_opens(&conn, key)?;
+            }
+            // Past this point the key is proven (a stored record opened with
+            // it, or nothing is encrypted yet).
+            let report = migrate_v1_records(&mut conn, key)?;
+            if !had_key_check {
+                write_key_check(&conn, key)?;
+            }
+            if report.migrated > 0 {
+                info!(
+                    "Audit records upgraded to the bound format: {}",
+                    report.migrated
+                );
+            }
+            if report.unreadable > 0 {
+                warn!(
+                    "{} old-format audit records could not be read with this key and were left unchanged",
+                    report.unreadable
+                );
+            }
+            if report.not_encrypted > 0 {
+                warn!(
+                    "{} audit records are not encrypted and were left unchanged",
+                    report.not_encrypted
+                );
+            }
+        }
+
+        // Records written by 1.13.x kept the text of the nearest neighbour.
+        let scrubbed = scrub_legacy_neighbours(&mut conn)?;
+        if scrubbed > 0 {
+            info!(
+                "Audit records with neighbour text replaced by a keyed reference: {}",
+                scrubbed
+            );
+        }
+
+        // The cleanup leaves a marker until the file has been compacted, so a
+        // VACUUM that was interrupted is repeated at the next start.
+        let vacuum_pending: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM metadata WHERE key = 'neighbours_vacuum_pending'",
+            [],
+            |r| r.get(0),
+        )?;
+        if vacuum_pending > 0 {
+            conn.execute_batch("VACUUM;")
+                .map_err(|e| anyhow!("Failed to compact the audit database: {}", e))?;
+            let (busy, log, done): (i64, i64, i64) =
+                conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })?;
+            if busy != 0 || log != done {
+                return Err(anyhow!(
+                    "audit database log checkpoint incomplete after compaction; retrying on the next start"
+                ));
+            }
+            conn.execute(
+                "DELETE FROM metadata WHERE key = 'neighbours_vacuum_pending'",
+                [],
+            )?;
+        }
+
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             db_path: db_path.to_string(),
             encryption_key: derived_key,
+            store_payloads: true,
         })
     }
 
@@ -251,23 +398,11 @@ impl AuditVault {
             .lock()
             .map_err(|e| anyhow!("Lock poisoned: {}", e))?;
 
-        // Encrypt payload if key is available
-        let payload = if let (Some(key_bytes), Some(p_raw)) = (&self.encryption_key, &entry.payload)
-        {
-            let cipher = Aes256Gcm::new(key_bytes.into());
-            let nonce_bytes = Uuid::new_v4().as_bytes()[..12].to_vec();
-            let nonce = Nonce::from_slice(&nonce_bytes);
-
-            let encrypted = cipher
-                .encrypt(nonce, p_raw.as_bytes())
-                .map_err(|_| anyhow!("Payload encryption failed"))?;
-
-            use base64::{engine::general_purpose, Engine as _};
-            let encoded = format!(
-                "{}:{}",
-                general_purpose::STANDARD.encode(&nonce_bytes),
-                general_purpose::STANDARD.encode(&encrypted)
-            );
+        // Encrypt payload if key is available; drop it when storage is off.
+        let payload = if !self.store_payloads {
+            None
+        } else if let (Some(key_bytes), Some(p_raw)) = (&self.encryption_key, &entry.payload) {
+            let encoded = encrypt_payload(key_bytes, &entry.id, entry.namespace.as_deref(), p_raw)?;
             Some(encoded)
         } else {
             entry.payload.clone()
@@ -338,24 +473,8 @@ impl AuditVault {
 
                 // Decrypt payload if key is available
                 if let (Some(key_bytes), Some(p_enc)) = (&self.encryption_key, &payload) {
-                    if p_enc.contains(':') {
-                        let parts: Vec<&str> = p_enc.split(':').collect();
-                        if parts.len() == 2 {
-                            use base64::{engine::general_purpose, Engine as _};
-                            if let (Ok(nonce_bytes), Ok(ciphertext)) = (
-                                general_purpose::STANDARD.decode(parts[0]),
-                                general_purpose::STANDARD.decode(parts[1]),
-                            ) {
-                                let cipher = Aes256Gcm::new(key_bytes.into());
-                                let nonce = Nonce::from_slice(&nonce_bytes);
-                                if let Ok(decrypted) = cipher.decrypt(nonce, ciphertext.as_slice())
-                                {
-                                    if let Ok(s) = String::from_utf8(decrypted) {
-                                        payload = Some(s);
-                                    }
-                                }
-                            }
-                        }
+                    if let Some(s) = decrypt_payload(key_bytes, &id, namespace.as_deref(), p_enc) {
+                        payload = Some(s);
                     }
                 }
 
@@ -458,24 +577,8 @@ impl AuditVault {
 
                 // Decrypt payload if key is available
                 if let (Some(key_bytes), Some(p_enc)) = (&self.encryption_key, &payload) {
-                    if p_enc.contains(':') {
-                        let parts: Vec<&str> = p_enc.split(':').collect();
-                        if parts.len() == 2 {
-                            use base64::{engine::general_purpose, Engine as _};
-                            if let (Ok(nonce_bytes), Ok(ciphertext)) = (
-                                general_purpose::STANDARD.decode(parts[0]),
-                                general_purpose::STANDARD.decode(parts[1]),
-                            ) {
-                                let cipher = Aes256Gcm::new(key_bytes.into());
-                                let nonce = Nonce::from_slice(&nonce_bytes);
-                                if let Ok(decrypted) = cipher.decrypt(nonce, ciphertext.as_slice())
-                                {
-                                    if let Ok(s) = String::from_utf8(decrypted) {
-                                        payload = Some(s);
-                                    }
-                                }
-                            }
-                        }
+                    if let Some(s) = decrypt_payload(key_bytes, &id, namespace.as_deref(), p_enc) {
+                        payload = Some(s);
                     }
                 }
 
@@ -539,6 +642,446 @@ impl AuditVault {
     }
 }
 
+/// Length in bytes of an AES-GCM nonce.
+const NONCE_LEN: usize = 12;
+
+/// Draw a fresh 12-byte nonce from the cryptographically secure,
+/// OS-seeded random generator (`rand::rng()`).
+fn random_nonce_bytes() -> [u8; NONCE_LEN] {
+    use rand::Rng;
+    let mut nonce = [0u8; NONCE_LEN];
+    rand::rng().fill_bytes(&mut nonce);
+    nonce
+}
+
+/// Build a nonce from stored bytes. Returns `None` when the length is not 12
+/// instead of panicking.
+fn nonce_from_bytes(bytes: &[u8]) -> Option<aes_gcm::aead::Nonce<Aes256Gcm>> {
+    <[u8; NONCE_LEN]>::try_from(bytes).ok().map(Nonce::from)
+}
+
+/// Prefix of the current record format.
+const V2_PREFIX: &str = "v2:";
+
+/// Fixed label mixed into the additional authenticated data of v2 records.
+const AAD_NAMESPACE: &str = "zn-audit-v2";
+
+/// Additional authenticated data of a v2 record: a fixed label, then the
+/// row id and the namespace, each with a presence flag and a length prefix
+/// so that no two (id, namespace) pairs give the same bytes.
+fn record_aad(record_id: &str, namespace: Option<&str>) -> Vec<u8> {
+    let mut aad = AAD_NAMESPACE.as_bytes().to_vec();
+    for field in [Some(record_id), namespace] {
+        match field {
+            Some(f) => {
+                aad.push(1);
+                aad.extend_from_slice(&(f.len() as u64).to_be_bytes());
+                aad.extend_from_slice(f.as_bytes());
+            }
+            None => aad.push(0),
+        }
+    }
+    aad
+}
+
+/// Encrypt a payload as `v2:base64(nonce):base64(ciphertext)`. The record id
+/// and namespace are authenticated together with the ciphertext, so the record
+/// only decrypts for the row and namespace it was written for.
+fn encrypt_payload(
+    key_bytes: &[u8; 32],
+    record_id: &str,
+    namespace: Option<&str>,
+    plaintext: &str,
+) -> Result<String> {
+    let cipher = Aes256Gcm::new(key_bytes.into());
+    let nonce_bytes = random_nonce_bytes();
+    let nonce = Nonce::from(nonce_bytes);
+    let aad = record_aad(record_id, namespace);
+    let encrypted = cipher
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext.as_bytes(),
+                aad: &aad,
+            },
+        )
+        .map_err(|_| anyhow!("Payload encryption failed"))?;
+    Ok(format!(
+        "{}{}:{}",
+        V2_PREFIX,
+        general_purpose::STANDARD.encode(nonce_bytes),
+        general_purpose::STANDARD.encode(&encrypted)
+    ))
+}
+
+/// Decrypt `base64(nonce):base64(ciphertext)` with the given additional
+/// authenticated data. Returns `None` for anything malformed, including a
+/// nonce that is not 12 bytes long.
+fn decrypt_body(key_bytes: &[u8; 32], body: &str, aad: &[u8]) -> Option<String> {
+    let parts: Vec<&str> = body.split(':').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let nonce_bytes = general_purpose::STANDARD.decode(parts[0]).ok()?;
+    let ciphertext = general_purpose::STANDARD.decode(parts[1]).ok()?;
+    let nonce = nonce_from_bytes(&nonce_bytes)?;
+    let cipher = Aes256Gcm::new(key_bytes.into());
+    let decrypted = cipher
+        .decrypt(
+            &nonce,
+            Payload {
+                msg: ciphertext.as_slice(),
+                aad,
+            },
+        )
+        .ok()?;
+    String::from_utf8(decrypted).ok()
+}
+
+/// Decrypt a stored payload. Only `v2:` records are accepted, and only for the
+/// id and namespace of the row they were written for. Records in the old
+/// format (no prefix, no authenticated id) are refused: they are upgraded once
+/// by `migrate_v1_records` when the vault opens. Returns `None` for anything
+/// else, malformed records included.
+fn decrypt_payload(
+    key_bytes: &[u8; 32],
+    record_id: &str,
+    namespace: Option<&str>,
+    stored: &str,
+) -> Option<String> {
+    let body = stored.strip_prefix(V2_PREFIX)?;
+    decrypt_body(key_bytes, body, &record_aad(record_id, namespace))
+}
+
+/// Decrypt a record in the old format (`base64(nonce):base64(ciphertext)`, no
+/// additional authenticated data). Used only by the one-time upgrade.
+fn decrypt_legacy_payload(key_bytes: &[u8; 32], stored: &str) -> Option<String> {
+    if stored.starts_with(V2_PREFIX) {
+        return None;
+    }
+    decrypt_body(key_bytes, stored, &[])
+}
+
+/// Metadata entry that proves which passphrase a database was created with.
+///
+/// Construction: AES-256-GCM (the cipher that already protects the records)
+/// of a fixed constant, with a fresh random nonce and its own additional
+/// authenticated data, stored as `base64(nonce):base64(ciphertext)`. GCM
+/// rejects any other key, so a successful decryption is proof that the key
+/// matches. This adds no new primitive. The distinct AAD means the value can
+/// never be mistaken for, or replayed as, a record (record AAD starts with
+/// `zn-audit-v2`). Guessing a passphrase from it costs the same Argon2id work
+/// as guessing it from any record, so it gives an attacker nothing extra.
+const KEY_CHECK_KEY: &str = "key_check";
+const KEY_CHECK_AAD: &[u8] = b"zn-audit-keycheck";
+const KEY_CHECK_PLAINTEXT: &str = "zn-audit-key-check";
+
+fn make_key_check(key_bytes: &[u8; 32]) -> Result<String> {
+    let cipher = Aes256Gcm::new(key_bytes.into());
+    let nonce_bytes = random_nonce_bytes();
+    let encrypted = cipher
+        .encrypt(
+            &Nonce::from(nonce_bytes),
+            Payload {
+                msg: KEY_CHECK_PLAINTEXT.as_bytes(),
+                aad: KEY_CHECK_AAD,
+            },
+        )
+        .map_err(|_| anyhow!("Key check encryption failed"))?;
+    Ok(format!(
+        "{}:{}",
+        general_purpose::STANDARD.encode(nonce_bytes),
+        general_purpose::STANDARD.encode(&encrypted)
+    ))
+}
+
+fn key_check_matches(key_bytes: &[u8; 32], stored: &str) -> bool {
+    decrypt_body(key_bytes, stored, KEY_CHECK_AAD).as_deref() == Some(KEY_CHECK_PLAINTEXT)
+}
+
+fn read_key_check(conn: &Connection) -> Option<String> {
+    conn.query_row(
+        "SELECT value FROM metadata WHERE key = ?1",
+        [KEY_CHECK_KEY],
+        |r| r.get(0),
+    )
+    .ok()
+}
+
+/// Refuse a key that does not match the stored key check. Returns whether a
+/// key check exists. A damaged value cannot be told apart from a wrong key, so
+/// it is refused too, with a message that names both.
+fn verify_key_check(conn: &Connection, key_bytes: &[u8; 32]) -> Result<bool> {
+    match read_key_check(conn) {
+        None => Ok(false),
+        Some(stored) if key_check_matches(key_bytes, &stored) => Ok(true),
+        Some(_) => Err(anyhow!(
+            "Audit database cannot be opened: wrong passphrase (or the stored key check is damaged). No audit records were changed."
+        )),
+    }
+}
+
+/// Without a key check, a database that holds encrypted records (bound or in
+/// the old shape) must open at least one of them with this key; otherwise the
+/// passphrase is wrong. A database with no encrypted records accepts the first
+/// passphrase, like the salt. A database whose encrypted records are all
+/// corrupted therefore opens with no passphrase at all (it fails closed).
+fn refuse_if_no_stored_record_opens(conn: &Connection, key_bytes: &[u8; 32]) -> Result<()> {
+    let mut stmt =
+        conn.prepare("SELECT id, namespace, payload FROM audit_logs WHERE payload IS NOT NULL")?;
+    let mut rows = stmt.query([])?;
+    let mut has_encrypted = false;
+    while let Some(r) = rows.next()? {
+        let id: String = r.get(0)?;
+        let namespace: Option<String> = r.get(1)?;
+        let payload: String = r.get(2)?;
+        let opens = if payload.starts_with(V2_PREFIX) {
+            has_encrypted = true;
+            decrypt_payload(key_bytes, &id, namespace.as_deref(), &payload).is_some()
+        } else if is_legacy_shaped(&payload) {
+            has_encrypted = true;
+            decrypt_legacy_payload(key_bytes, &payload).is_some()
+        } else {
+            false
+        };
+        if opens {
+            return Ok(());
+        }
+    }
+    if has_encrypted {
+        return Err(anyhow!(
+            "Audit database cannot be opened: wrong passphrase (no stored record opens with it). No audit records were changed."
+        ));
+    }
+    Ok(())
+}
+
+/// Store the key check. Only called after `refuse_if_no_stored_record_opens`
+/// let the open proceed: the key opened a stored record, or the database holds
+/// nothing encrypted that the key could contradict.
+fn write_key_check(conn: &Connection, key_bytes: &[u8; 32]) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES (?1, ?2)",
+        params![KEY_CHECK_KEY, make_key_check(key_bytes)?],
+    )?;
+    Ok(())
+}
+
+/// Metadata key and value that mark a database whose records are all in the
+/// bound format.
+const FORMAT_KEY: &str = "audit_format";
+const FORMAT_V2: &str = "v2";
+
+/// Outcome of the upgrade of old-format records.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct MigrationReport {
+    /// Records rewritten in the bound format.
+    migrated: usize,
+    /// Records in the old shape that did not decrypt with this key.
+    unreadable: usize,
+    /// Rows that are not in the old shape at all (plain text stored before
+    /// encryption was enabled). Left as they are.
+    not_encrypted: usize,
+}
+
+/// True when `stored` has the shape of an old-format record: base64 of a
+/// 12-byte nonce, ':', base64 of at least a 16-byte tag.
+fn is_legacy_shaped(stored: &str) -> bool {
+    let mut parts = stored.split(':');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(n), Some(c), None) => {
+            matches!(general_purpose::STANDARD.decode(n), Ok(v) if v.len() == NONCE_LEN)
+                && matches!(general_purpose::STANDARD.decode(c), Ok(v) if v.len() >= 16)
+        }
+        _ => false,
+    }
+}
+
+/// Rewrite every old-format record as a `v2:` record bound to its own id and
+/// namespace, in one transaction, and then store `audit_format=v2` in the
+/// metadata table.
+///
+/// - A database already marked `v2` is left alone (the marker is the only
+///   trigger: record timestamps and contents are writable and prove nothing).
+/// - If the process stops half way, the transaction rolls back and the next
+///   open starts again.
+/// - Rows that do not decrypt with this key are never deleted or changed.
+///   Rows that are not in the old shape (plain text from before encryption
+///   was on) are only counted. The caller must have proven the key first, so
+///   the marker is set even if some old-shaped rows stay unreadable (corrupted):
+///   they are left as they are, and an old record planted afterwards is never
+///   rewritten as a valid bound one. The open vault never accepts the old
+///   format either way.
+fn migrate_v1_records(conn: &mut Connection, key_bytes: &[u8; 32]) -> Result<MigrationReport> {
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| anyhow!("Failed to start audit upgrade: {}", e))?;
+    let marked: Option<String> = tx
+        .query_row(
+            "SELECT value FROM metadata WHERE key = ?1",
+            [FORMAT_KEY],
+            |r| r.get(0),
+        )
+        .ok();
+    if marked.as_deref() == Some(FORMAT_V2) {
+        return Ok(MigrationReport::default());
+    }
+
+    let rows: Vec<(String, Option<String>, String)> = {
+        let mut stmt = tx.prepare(
+            "SELECT id, namespace, payload FROM audit_logs
+             WHERE payload IS NOT NULL AND substr(payload, 1, 3) != 'v2:'",
+        )?;
+        let mapped = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        mapped.collect::<std::result::Result<_, _>>()?
+    };
+
+    let mut report = MigrationReport::default();
+    for (id, namespace, stored) in rows {
+        match decrypt_legacy_payload(key_bytes, &stored) {
+            Some(plain) => {
+                let upgraded = encrypt_payload(key_bytes, &id, namespace.as_deref(), &plain)?;
+                tx.execute(
+                    "UPDATE audit_logs SET payload = ?1 WHERE id = ?2",
+                    params![upgraded, id],
+                )?;
+                report.migrated += 1;
+            }
+            None => {
+                if is_legacy_shaped(&stored) {
+                    report.unreadable += 1;
+                } else {
+                    report.not_encrypted += 1;
+                }
+            }
+        }
+    }
+    tx.execute(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES (?1, ?2)",
+        params![FORMAT_KEY, FORMAT_V2],
+    )?;
+    tx.commit()
+        .map_err(|e| anyhow!("Failed to commit audit upgrade: {}", e))?;
+    Ok(report)
+}
+
+/// True for exactly what the gateway writes in `nearest_neighbor`: a reference
+/// (`h:` and 16 lowercase hex characters) alone, or followed by `:` and a finite
+/// number. Anything else, including a reference followed by other text, is
+/// treated as legacy text. The whole value must match.
+fn is_neighbour_ref(value: &str) -> bool {
+    let Some(head) = value.get(..18) else {
+        return false;
+    };
+    if !crate::ai::is_content_ref(head) {
+        return false;
+    }
+    match value[18..].strip_prefix(':') {
+        None => value.len() == 18,
+        Some(distance) => distance.parse::<f32>().is_ok_and(f32::is_finite),
+    }
+}
+
+/// The distance 1.13 wrote after the text of a neighbour: digits, a dot and four
+/// decimals. Only that shape is kept as a distance; other suffixes are text.
+fn is_legacy_distance(distance: &str) -> bool {
+    match distance.split_once('.') {
+        Some((whole, frac)) => {
+            !whole.is_empty()
+                && whole.bytes().all(|b| b.is_ascii_digit())
+                && frac.len() == 4
+                && frac.bytes().all(|b| b.is_ascii_digit())
+                && distance.parse::<f32>().is_ok_and(f32::is_finite)
+        }
+        None => false,
+    }
+}
+
+/// The reference for a legacy `nearest_neighbor` value.
+fn neighbour_to_ref(value: &str) -> String {
+    match value.rsplit_once(':') {
+        Some((text, distance)) if is_legacy_distance(distance) => {
+            format!("{}:{}", crate::ai::content_ref(text), distance)
+        }
+        _ => crate::ai::content_ref(value),
+    }
+}
+
+/// SQL that is true only for values the Rust check accepts (a reference alone,
+/// or with a short plain decimal distance): it lets a start skip them without
+/// reading them. The Rust check decides for every other row.
+const SQL_NEIGHBOUR_OK: &str = "(nearest_neighbor GLOB ?1 OR (nearest_neighbor GLOB ?2 \
+     AND length(nearest_neighbor) <= 31 \
+     AND substr(nearest_neighbor, 20) NOT GLOB '*[^0-9.]*' \
+     AND length(substr(nearest_neighbor, 20)) - length(replace(substr(nearest_neighbor, 20), '.', '')) = 1))";
+
+/// Rows whose `nearest_neighbor` is not a reference in the strict sense.
+fn legacy_neighbour_rows(tx: &rusqlite::Transaction<'_>) -> Result<Vec<(String, String)>> {
+    let hex16 = "[0-9a-f]".repeat(16);
+    let bare = format!("h:{hex16}");
+    let with_dist = format!("h:{hex16}:[0-9]*");
+    let mut stmt = tx.prepare(&format!(
+        "SELECT id, nearest_neighbor FROM audit_logs WHERE nearest_neighbor IS NOT NULL \
+         AND NOT {SQL_NEIGHBOUR_OK}"
+    ))?;
+    let mapped = stmt.query_map(params![bare, with_dist], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    let mut out = Vec::new();
+    for row in mapped {
+        let (id, nn): (String, String) = row?;
+        if !is_neighbour_ref(&nn) {
+            out.push((id, nn));
+        }
+    }
+    Ok(out)
+}
+
+/// One-time upgrade of audit rows written before the neighbour was kept as a
+/// reference: a `nearest_neighbor` that is not a reference (see
+/// `is_neighbour_ref`) becomes `content_ref(text):<distance>`, or the reference
+/// of the whole value when it does not end in a distance, and the payload of an
+/// old `NEAREST_NEIGHBOR` row, which held the same text, is cleared. Rows that
+/// already hold a reference are left alone, so running it again changes nothing.
+fn scrub_legacy_neighbours(conn: &mut Connection) -> Result<usize> {
+    // Select and update in one transaction, so no other writer can slip a row
+    // in between and nothing is left half converted.
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let rows = legacy_neighbour_rows(&tx)?;
+    let mut changed = rows.len();
+    for (id, nn) in &rows {
+        tx.execute(
+            "UPDATE audit_logs SET nearest_neighbor = ?1 WHERE id = ?2",
+            params![neighbour_to_ref(nn), id],
+        )?;
+    }
+    // A NEAREST_NEIGHBOR row never keeps a payload: the reference is in
+    // `nearest_neighbor`, and an old payload held the text of the neighbour
+    // (also when that column is empty or already a reference).
+    changed += tx.execute(
+        "UPDATE audit_logs SET payload = NULL WHERE event = 'NEAREST_NEIGHBOR' AND payload IS NOT NULL",
+        [],
+    )?;
+    // Nothing in clear may remain; otherwise the whole cleanup is undone.
+    let payloads_left: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM audit_logs WHERE event = 'NEAREST_NEIGHBOR' AND payload IS NOT NULL",
+        [],
+        |r| r.get(0),
+    )?;
+    let left = legacy_neighbour_rows(&tx)?.len() as i64 + payloads_left;
+    if left != 0 {
+        return Err(anyhow!(
+            "{left} audit rows still hold neighbour text after the cleanup"
+        ));
+    }
+    if changed > 0 {
+        tx.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES ('neighbours_vacuum_pending', '1')",
+            [],
+        )?;
+    }
+    tx.commit()?;
+    Ok(changed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -557,6 +1100,38 @@ mod tests {
     }
 
     #[test]
+    fn payload_is_not_persisted_when_storage_is_off() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None)
+            .expect("vault")
+            .with_payload_storage(false);
+        let e = AuditEntry::new("TOOL_CALL", "http_post", "ALLOWED")
+            .with_payload("{\"token\":\"example-token-not-real\",\"body\":\"example body\"}");
+        let id = e.id.clone();
+        vault.log(e).unwrap();
+        let raw: Option<String> = vault
+            .get_connection()
+            .lock()
+            .unwrap()
+            .query_row("SELECT payload FROM audit_logs WHERE id = ?1", [&id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(raw.is_none(), "payload must not be stored: {raw:?}");
+        let got = vault.get_recent(5).unwrap();
+        assert_eq!(got[0].tool_name, "http_post");
+        assert!(got[0].payload.is_none());
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn payload_if_enabled_is_off_by_default() {
+        assert_eq!(payload_if_enabled(false, "x"), None);
+        assert_eq!(payload_if_enabled(true, "x").as_deref(), Some("x"));
+    }
+
+    #[test]
     fn test_audit_entry_builder() {
         let entry = AuditEntry::new("TOOL_CALL", "read_file", "ALLOWED")
             .with_policy("base_security")
@@ -572,7 +1147,7 @@ mod tests {
         assert!(entry.nearest_neighbor.is_none());
     }
 
-    /// B-3: the fusion object must appear in serialized records ONLY when
+    /// The fusion object must appear in serialized records ONLY when
     /// fusion actively participated (cameras/score/tau absent otherwise).
     #[test]
     fn fusion_evidence_serialized_only_when_fusion_active() {
@@ -600,7 +1175,7 @@ mod tests {
         assert!(fused_json.contains("zn-minilm-l6-v2-sec-1787490939"));
     }
 
-    /// B-3: fusion evidence survives the audit vault round-trip.
+    /// Fusion evidence survives the audit vault round-trip.
     #[test]
     fn fusion_evidence_persists_through_audit_vault() {
         let path = temp_db_path();
@@ -720,5 +1295,1112 @@ mod tests {
         assert!(recent[0].payload.as_ref().unwrap().contains("secret"));
 
         fs::remove_file(&path).ok();
+    }
+
+    const TEST_KEY: [u8; 32] = [7u8; 32];
+    const ID_A: &str = "3f2b8c1e-0000-4000-8000-000000000001";
+    const ID_B: &str = "3f2b8c1e-0000-4000-8000-000000000002";
+
+    #[test]
+    fn nonces_differ_between_encryptions_and_are_12_bytes() {
+        let a = encrypt_payload(&TEST_KEY, ID_A, None, "same plaintext").unwrap();
+        let b = encrypt_payload(&TEST_KEY, ID_A, None, "same plaintext").unwrap();
+        let nonce_a = general_purpose::STANDARD
+            .decode(a.split(':').nth(1).unwrap())
+            .unwrap();
+        let nonce_b = general_purpose::STANDARD
+            .decode(b.split(':').nth(1).unwrap())
+            .unwrap();
+        assert_eq!(nonce_a.len(), 12);
+        assert_eq!(nonce_b.len(), 12);
+        assert_ne!(nonce_a, nonce_b);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn encrypt_decrypt_round_trip() {
+        let plain = r#"{"path": "/example/test"}"#;
+        let stored = encrypt_payload(&TEST_KEY, ID_A, None, plain).unwrap();
+        assert_eq!(
+            decrypt_payload(&TEST_KEY, ID_A, None, &stored).as_deref(),
+            Some(plain)
+        );
+        assert_eq!(decrypt_payload(&[8u8; 32], ID_A, None, &stored), None);
+    }
+
+    #[test]
+    fn wrong_length_nonce_is_rejected_without_panic() {
+        let stored = encrypt_payload(&TEST_KEY, ID_A, None, "payload").unwrap();
+        let ciphertext = stored.split(':').nth(2).unwrap();
+        for len in [0usize, 11, 13, 16, 32] {
+            let bad_nonce = general_purpose::STANDARD.encode(vec![1u8; len]);
+            let record = format!("v2:{bad_nonce}:{ciphertext}");
+            assert_eq!(
+                decrypt_payload(&TEST_KEY, ID_A, None, &record),
+                None,
+                "len {len}"
+            );
+        }
+        assert!(nonce_from_bytes(&[0u8; 11]).is_none());
+        assert!(nonce_from_bytes(&[0u8; 12]).is_some());
+    }
+
+    #[test]
+    fn record_with_uuid_derived_nonce_still_decrypts() {
+        // Written by the previous implementation: nonce = first 12 bytes of
+        // UUID f47ac10b-58cc-4372-a567-0e02b2c3d479, key = bytes 0..32.
+        let key: [u8; 32] = core::array::from_fn(|i| i as u8);
+        let stored = "9HrBC1jMQ3KlZw4C:L/y1YqQCZUTXTgxQwtxWpwR43HyLXNyF9bCDJUsoYcmfaX8+qmP4L4M=";
+        assert_eq!(
+            decrypt_legacy_payload(&key, stored).as_deref(),
+            Some(r#"{"path": "/example/test"}"#)
+        );
+    }
+
+    #[test]
+    fn new_records_use_the_v2_format() {
+        let stored = encrypt_payload(&TEST_KEY, ID_A, None, "payload").unwrap();
+        assert!(stored.starts_with("v2:"));
+        assert_eq!(stored.split(':').count(), 3);
+    }
+
+    #[test]
+    fn v2_record_does_not_decrypt_for_another_row() {
+        let stored = encrypt_payload(&TEST_KEY, ID_A, None, "payload").unwrap();
+        assert_eq!(
+            decrypt_payload(&TEST_KEY, ID_A, None, &stored).as_deref(),
+            Some("payload")
+        );
+        assert_eq!(decrypt_payload(&TEST_KEY, ID_B, None, &stored), None);
+    }
+
+    #[test]
+    fn v2_payload_moved_between_rows_is_not_readable() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, Some("test-passphrase")).expect("vault");
+        let mut first = AuditEntry::new("event_a", "tool", "ALLOWED");
+        first.payload = Some("first secret".to_string());
+        let mut second = AuditEntry::new("event_b", "tool", "ALLOWED");
+        second.payload = Some("second secret".to_string());
+        let (first_id, second_id) = (first.id.clone(), second.id.clone());
+        vault.log(first).unwrap();
+        vault.log(second).unwrap();
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            conn.execute(
+                "UPDATE audit_logs SET payload = (SELECT payload FROM audit_logs WHERE id = ?1) WHERE id = ?2",
+                params![first_id, second_id],
+            )
+            .unwrap();
+        }
+        let rows = vault.get_recent(10).unwrap();
+        let moved = rows.iter().find(|r| r.id == second_id).unwrap();
+        // Not decrypted: the stored text comes back as it is.
+        assert!(moved.payload.as_deref().unwrap().starts_with("v2:"));
+        let original = rows.iter().find(|r| r.id == first_id).unwrap();
+        assert_eq!(original.payload.as_deref(), Some("first secret"));
+        fs::remove_file(&path).ok();
+    }
+
+    const LEGACY_KEY_PASSPHRASE: &str = "test-passphrase";
+
+    /// Derive the vault key the same way `AuditVault::new` does.
+    fn vault_key(path: &str, passphrase: &str) -> [u8; 32] {
+        let conn = Connection::open(path).unwrap();
+        let salt_hex: String = conn
+            .query_row(
+                "SELECT value FROM metadata WHERE key = 'derivation_salt'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let salt = hex::decode(salt_hex).unwrap();
+        derive_key(passphrase, &salt).unwrap()
+    }
+
+    /// Old-format record: random nonce, no additional authenticated data.
+    fn legacy_record(key: &[u8; 32], plaintext: &str) -> String {
+        let cipher = Aes256Gcm::new(key.into());
+        let nonce_bytes = random_nonce_bytes();
+        let encrypted = cipher
+            .encrypt(&Nonce::from(nonce_bytes), plaintext.as_bytes())
+            .unwrap();
+        format!(
+            "{}:{}",
+            general_purpose::STANDARD.encode(nonce_bytes),
+            general_purpose::STANDARD.encode(encrypted)
+        )
+    }
+
+    fn set_payload(path: &str, id: &str, payload: &str) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute(
+            "UPDATE audit_logs SET payload = ?1 WHERE id = ?2",
+            params![payload, id],
+        )
+        .unwrap();
+    }
+
+    fn raw_payload(path: &str, id: &str) -> String {
+        let conn = Connection::open(path).unwrap();
+        conn.query_row("SELECT payload FROM audit_logs WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
+        .unwrap()
+    }
+
+    fn format_marker(path: &str) -> Option<String> {
+        let conn = Connection::open(path).unwrap();
+        conn.query_row(
+            "SELECT value FROM metadata WHERE key = 'audit_format'",
+            [],
+            |r| r.get(0),
+        )
+        .ok()
+    }
+
+    /// Build a database with `n` entries logged through a keyed vault, then
+    /// turn their payloads into old-format records. Returns id, namespace and
+    /// plaintext of each.
+    fn legacy_db(path: &str, n: usize) -> Vec<(String, Option<String>, String)> {
+        let vault = AuditVault::new(path, Some(LEGACY_KEY_PASSPHRASE)).expect("vault");
+        let mut out = Vec::new();
+        for i in 0..n {
+            let mut e = AuditEntry::new("event", "tool", "ALLOWED");
+            e.payload = Some(format!("secret {i}"));
+            if i % 2 == 0 {
+                e.namespace = Some(format!("tenant_{i}"));
+            }
+            out.push((e.id.clone(), e.namespace.clone(), format!("secret {i}")));
+            vault.log(e).unwrap();
+        }
+        drop(vault);
+        let key = vault_key(path, LEGACY_KEY_PASSPHRASE);
+        for (id, _, plain) in &out {
+            set_payload(path, id, &legacy_record(&key, plain));
+        }
+        // Back to the state of a database written before the upgrade existed.
+        let conn = Connection::open(path).unwrap();
+        conn.execute("DELETE FROM metadata WHERE key = 'audit_format'", [])
+            .unwrap();
+        conn.execute("DELETE FROM metadata WHERE key = 'key_check'", [])
+            .unwrap();
+        out
+    }
+
+    #[test]
+    fn decrypt_payload_refuses_the_old_format() {
+        let key: [u8; 32] = core::array::from_fn(|i| i as u8);
+        let stored = "9HrBC1jMQ3KlZw4C:L/y1YqQCZUTXTgxQwtxWpwR43HyLXNyF9bCDJUsoYcmfaX8+qmP4L4M=";
+        for id in [ID_A, ID_B, ""] {
+            assert_eq!(decrypt_payload(&key, id, None, stored), None);
+        }
+        assert_eq!(
+            decrypt_legacy_payload(&key, stored).as_deref(),
+            Some(r#"{"path": "/example/test"}"#)
+        );
+    }
+
+    #[test]
+    fn migration_rewrites_old_records_and_they_read_back() {
+        let path = temp_db_path();
+        let rows = legacy_db(&path, 4);
+        for (id, _, _) in &rows {
+            assert!(!raw_payload(&path, id).starts_with("v2:"));
+        }
+        let vault = AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).expect("vault");
+        for (id, _, _) in &rows {
+            assert!(raw_payload(&path, id).starts_with("v2:"));
+        }
+        assert_eq!(format_marker(&path).as_deref(), Some("v2"));
+        let read = vault.get_recent(10).unwrap();
+        assert_eq!(read.len(), 4);
+        for (id, ns, plain) in &rows {
+            let r = read.iter().find(|r| &r.id == id).unwrap();
+            assert_eq!(r.payload.as_deref(), Some(plain.as_str()));
+            assert_eq!(&r.namespace, ns);
+        }
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn old_record_inserted_after_migration_is_refused() {
+        let path = temp_db_path();
+        let rows = legacy_db(&path, 1);
+        drop(AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap());
+        let key = vault_key(&path, LEGACY_KEY_PASSPHRASE);
+        let (id, _, _) = &rows[0];
+        let old = legacy_record(&key, "planted");
+        set_payload(&path, id, &old);
+        // A fresh open does not read it and does not rewrite it.
+        let vault = AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap();
+        assert_eq!(raw_payload(&path, id), old);
+        let read = vault.get_recent(10).unwrap();
+        assert_eq!(read[0].payload.as_deref(), Some(old.as_str()));
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn migration_is_idempotent() {
+        let path = temp_db_path();
+        let rows = legacy_db(&path, 3);
+        drop(AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap());
+        let after_first: Vec<String> = rows
+            .iter()
+            .map(|(id, _, _)| raw_payload(&path, id))
+            .collect();
+        let vault = AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap();
+        let after_second: Vec<String> = rows
+            .iter()
+            .map(|(id, _, _)| raw_payload(&path, id))
+            .collect();
+        assert_eq!(after_first, after_second);
+        assert_eq!(vault.count().unwrap(), 3);
+        drop(vault);
+        // A direct call on a marked database does nothing.
+        let key = vault_key(&path, LEGACY_KEY_PASSPHRASE);
+        let mut conn = Connection::open(&path).unwrap();
+        assert_eq!(
+            migrate_v1_records(&mut conn, &key).unwrap(),
+            MigrationReport::default()
+        );
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn migration_with_an_unreadable_record_upgrades_the_rest() {
+        const BAD: &str = "AAAAAAAAAAAAAAAA:bm90IGEgcmVhbCBjaXBoZXJ0ZXh0";
+        let path = temp_db_path();
+        let rows = legacy_db(&path, 3);
+        let corrupted_id = rows[1].0.clone();
+        set_payload(&path, &corrupted_id, BAD);
+        let vault = AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap();
+        // The unreadable row is untouched, the others are upgraded.
+        assert_eq!(raw_payload(&path, &corrupted_id), BAD);
+        let read = vault.get_recent(10).unwrap();
+        for (id, _, plain) in &rows {
+            let r = read.iter().find(|r| &r.id == id).unwrap();
+            if id == &corrupted_id {
+                assert_ne!(r.payload.as_deref(), Some(plain.as_str()));
+            } else {
+                assert_eq!(r.payload.as_deref(), Some(plain.as_str()));
+                assert!(raw_payload(&path, id).starts_with("v2:"));
+            }
+        }
+        // The key is proven right by the rows that migrated, so the marker is set.
+        assert_eq!(format_marker(&path).as_deref(), Some("v2"));
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn plain_text_rows_do_not_block_the_marker() {
+        let path = temp_db_path();
+        let rows = legacy_db(&path, 3);
+        set_payload(&path, &rows[1].0, "stored before encryption was on");
+        let vault = AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap();
+        assert_eq!(format_marker(&path).as_deref(), Some("v2"));
+        assert_eq!(
+            raw_payload(&path, &rows[1].0),
+            "stored before encryption was on"
+        );
+        assert!(raw_payload(&path, &rows[0].0).starts_with("v2:"));
+        drop(vault);
+        // Only plain text rows and no old records: nothing proves the key, but
+        // nothing is unreadable either, so the marker is set.
+        let path2 = temp_db_path();
+        let rows2 = legacy_db(&path2, 1);
+        set_payload(&path2, &rows2[0].0, "plain");
+        drop(AuditVault::new(&path2, Some(LEGACY_KEY_PASSPHRASE)).unwrap());
+        assert_eq!(format_marker(&path2).as_deref(), Some("v2"));
+        fs::remove_file(&path).ok();
+        fs::remove_file(&path2).ok();
+    }
+
+    #[test]
+    fn old_record_planted_after_a_corrupted_row_is_not_rewritten() {
+        const BAD: &str = "AAAAAAAAAAAAAAAA:bm90IGEgcmVhbCBjaXBoZXJ0ZXh0";
+        let path = temp_db_path();
+        let rows = legacy_db(&path, 3);
+        set_payload(&path, &rows[1].0, BAD);
+        drop(AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap());
+        assert_eq!(format_marker(&path).as_deref(), Some("v2"));
+        assert_eq!(raw_payload(&path, &rows[1].0), BAD);
+        // Plant a valid old record (as if copied from an old backup).
+        let key = vault_key(&path, LEGACY_KEY_PASSPHRASE);
+        let planted = legacy_record(&key, "planted");
+        set_payload(&path, &rows[2].0, &planted);
+        let vault = AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap();
+        assert_eq!(raw_payload(&path, &rows[2].0), planted);
+        let read = vault.get_recent(10).unwrap();
+        let r = read.iter().find(|r| r.id == rows[2].0).unwrap();
+        assert_eq!(r.payload.as_deref(), Some(planted.as_str()));
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn wrong_passphrase_does_not_lock_out_the_right_one() {
+        let path = temp_db_path();
+        let rows = legacy_db(&path, 2);
+        let before: Vec<String> = rows
+            .iter()
+            .map(|(id, _, _)| raw_payload(&path, id))
+            .collect();
+        // An old-format-only database refuses the wrong passphrase.
+        let err = AuditVault::new(&path, Some("wrong-passphrase"))
+            .err()
+            .expect("wrong passphrase must be refused")
+            .to_string();
+        assert!(err.contains("wrong passphrase"), "{err}");
+        assert_eq!(format_marker(&path), None);
+        assert_eq!(key_check_value(&path), None);
+        for ((id, _, _), old) in rows.iter().zip(&before) {
+            assert_eq!(&raw_payload(&path, id), old);
+        }
+        // The right one still gets in and upgrades everything.
+        let vault = AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap();
+        let read = vault.get_recent(10).unwrap();
+        for (id, _, plain) in &rows {
+            let r = read.iter().find(|r| &r.id == id).unwrap();
+            assert_eq!(r.payload.as_deref(), Some(plain.as_str()));
+        }
+        assert_eq!(format_marker(&path).as_deref(), Some("v2"));
+        assert!(key_check_value(&path).is_some());
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn wrong_then_right_then_wrong_never_locks_out_the_right_one() {
+        let path = temp_db_path();
+        let rows = legacy_db(&path, 2);
+        for round in 0..2 {
+            assert!(
+                AuditVault::new(&path, Some("wrong-passphrase")).is_err(),
+                "round {round}"
+            );
+            let vault = AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap();
+            log_payload(&vault, "after");
+            let read = vault.get_recent(10).unwrap();
+            for (id, _, plain) in &rows {
+                let r = read.iter().find(|r| &r.id == id).unwrap();
+                assert_eq!(r.payload.as_deref(), Some(plain.as_str()));
+            }
+            drop(vault);
+        }
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn database_with_only_corrupted_encrypted_rows_fails_closed() {
+        const BAD: &str = "AAAAAAAAAAAAAAAA:bm90IGEgcmVhbCBjaXBoZXJ0ZXh0";
+        let path = temp_db_path();
+        legacy_db(&path, 1);
+        let conn = Connection::open(&path).unwrap();
+        conn.execute("UPDATE audit_logs SET payload = ?1", [BAD])
+            .unwrap();
+        drop(conn);
+        assert!(AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).is_err());
+        assert_eq!(key_check_value(&path), None);
+        fs::remove_file(&path).ok();
+    }
+
+    fn key_check_value(path: &str) -> Option<String> {
+        let conn = Connection::open(path).unwrap();
+        read_key_check(&conn)
+    }
+
+    fn set_metadata(path: &str, key: &str, value: Option<&str>) {
+        let conn = Connection::open(path).unwrap();
+        match value {
+            Some(v) => conn
+                .execute(
+                    "INSERT OR REPLACE INTO metadata (key, value) VALUES (?1, ?2)",
+                    params![key, v],
+                )
+                .unwrap(),
+            None => conn
+                .execute("DELETE FROM metadata WHERE key = ?1", [key])
+                .unwrap(),
+        };
+    }
+
+    fn plant_garbage_v2_row(path: &str) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute(
+            "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload)
+             VALUES ('garbage-first', '2026-01-01T00:00:00Z', 'e', 't', 'ALLOWED', 'v2:garbage')",
+            [],
+        )
+        .unwrap();
+    }
+
+    fn log_payload(vault: &AuditVault, payload: &str) {
+        let mut e = AuditEntry::new("event", "tool", "ALLOWED");
+        e.payload = Some(payload.into());
+        vault.log(e).unwrap();
+    }
+
+    #[test]
+    fn first_open_with_a_key_writes_the_key_check() {
+        let path = temp_db_path();
+        drop(AuditVault::new(&path, Some("right")).unwrap());
+        let stored = key_check_value(&path).expect("key check written");
+        assert!(key_check_matches(&vault_key(&path, "right"), &stored));
+        drop(AuditVault::new(&path, Some("right")).unwrap());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn encrypted_database_without_a_key_names_the_fix() {
+        let path = temp_db_path();
+        drop(AuditVault::new(&path, Some("right")).unwrap());
+        let msg = match AuditVault::new(&path, None) {
+            Ok(_) => panic!("an encrypted database must not open without a key"),
+            Err(e) => e.to_string(),
+        };
+        assert!(msg.contains("ZN_DB_KEY"), "message was: {msg}");
+        assert!(msg.contains("kms.key_id"), "message was: {msg}");
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn no_key_means_no_key_check() {
+        let path = temp_db_path();
+        drop(AuditVault::new(&path, None).unwrap());
+        assert_eq!(key_check_value(&path), None);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn wrong_passphrase_is_refused_once_a_key_check_exists() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, Some("right")).unwrap();
+        log_payload(&vault, "secret");
+        drop(vault);
+        let err = AuditVault::new(&path, Some("wrong"))
+            .err()
+            .expect("wrong passphrase must be refused")
+            .to_string();
+        assert!(err.contains("wrong passphrase"), "{err}");
+        // No record was changed by the refused open.
+        let conn = Connection::open(&path).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM audit_logs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+        drop(conn);
+        let vault = AuditVault::new(&path, Some("right")).unwrap();
+        assert_eq!(
+            vault.get_recent(5).unwrap()[0].payload.as_deref(),
+            Some("secret")
+        );
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn existing_database_gets_a_key_check_after_verification() {
+        let path = temp_db_path();
+        legacy_db(&path, 2);
+        assert_eq!(key_check_value(&path), None);
+        drop(AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap());
+        assert!(key_check_value(&path).is_some());
+        // A bound database whose key check was removed gets it back.
+        set_metadata(&path, KEY_CHECK_KEY, None);
+        drop(AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap());
+        assert!(key_check_value(&path).is_some());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn refused_open_writes_no_key_check() {
+        let path = temp_db_path();
+        legacy_db(&path, 2);
+        assert!(AuditVault::new(&path, Some("wrong-passphrase")).is_err());
+        assert_eq!(key_check_value(&path), None);
+        // The right passphrase still works and then writes it.
+        drop(AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap());
+        assert!(key_check_value(&path).is_some());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn corrupted_key_check_is_a_clear_error_not_a_panic() {
+        for bad in ["", "not base64 at all", "AAAA:AAAA", "a:b:c"] {
+            let path = temp_db_path();
+            drop(AuditVault::new(&path, Some("right")).unwrap());
+            set_metadata(&path, KEY_CHECK_KEY, Some(bad));
+            let err = AuditVault::new(&path, Some("right"))
+                .err()
+                .expect("damaged key check must be refused")
+                .to_string();
+            assert!(err.contains("wrong passphrase"), "{err}");
+            fs::remove_file(&path).ok();
+        }
+    }
+
+    #[test]
+    fn planted_garbage_row_does_not_block_key_verification() {
+        let path = temp_db_path();
+        drop(AuditVault::new(&path, Some("right")).unwrap());
+        plant_garbage_v2_row(&path);
+        let vault = AuditVault::new(&path, Some("right")).unwrap();
+        log_payload(&vault, "real");
+        drop(vault);
+        set_metadata(&path, KEY_CHECK_KEY, None);
+        let key = vault_key(&path, "right");
+        let conn = Connection::open(&path).unwrap();
+        assert!(refuse_if_no_stored_record_opens(&conn, &key).is_ok());
+        drop(conn);
+        drop(AuditVault::new(&path, Some("right")).unwrap());
+        assert!(key_check_value(&path).is_some());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn planted_garbage_row_does_not_hold_the_upgrade_marker_open() {
+        const BAD: &str = "AAAAAAAAAAAAAAAA:bm90IGEgcmVhbCBjaXBoZXJ0ZXh0";
+        let path = temp_db_path();
+        drop(AuditVault::new(&path, Some("right")).unwrap());
+        plant_garbage_v2_row(&path);
+        let vault = AuditVault::new(&path, Some("right")).unwrap();
+        log_payload(&vault, "real");
+        drop(vault);
+        // Only an unreadable old record besides the good bound one.
+        set_metadata(&path, FORMAT_KEY, None);
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute(
+                "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload)
+                 VALUES ('old-bad', '2026-01-01T00:00:00Z', 'e', 't', 'ALLOWED', ?1)",
+                [BAD],
+            )
+            .unwrap();
+        }
+        drop(AuditVault::new(&path, Some("right")).unwrap());
+        assert_eq!(format_marker(&path).as_deref(), Some("v2"));
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn wrong_passphrase_is_refused_when_the_key_check_is_missing() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, Some("right")).unwrap();
+        log_payload(&vault, "secret");
+        drop(vault);
+        set_metadata(&path, KEY_CHECK_KEY, None);
+        let err = AuditVault::new(&path, Some("wrong"))
+            .err()
+            .expect("wrong passphrase must be refused")
+            .to_string();
+        assert!(err.contains("wrong passphrase"), "{err}");
+        let conn = Connection::open(&path).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM audit_logs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+        drop(conn);
+        assert_eq!(key_check_value(&path), None);
+        let vault = AuditVault::new(&path, Some("right")).unwrap();
+        assert_eq!(
+            vault.get_recent(5).unwrap()[0].payload.as_deref(),
+            Some("secret")
+        );
+        drop(vault);
+        assert!(key_check_value(&path).is_some());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn many_garbage_rows_do_not_lock_out_the_right_passphrase() {
+        let path = temp_db_path();
+        drop(AuditVault::new(&path, Some("right")).unwrap());
+        {
+            let conn = Connection::open(&path).unwrap();
+            for i in 0..1001 {
+                conn.execute(
+                    "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload)
+                     VALUES (?1, '2026-01-01T00:00:00Z', 'e', 't', 'ALLOWED', 'v2:garbage')",
+                    [format!("garbage-{i:05}")],
+                )
+                .unwrap();
+            }
+        }
+        let vault = AuditVault::new(&path, Some("right")).unwrap();
+        log_payload(&vault, "real");
+        drop(vault);
+        set_metadata(&path, KEY_CHECK_KEY, None);
+        // The good record sits after 1001 garbage rows and still verifies.
+        drop(AuditVault::new(&path, Some("right")).unwrap());
+        assert!(key_check_value(&path).is_some());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn valid_key_check_sets_the_marker_behind_many_garbage_rows() {
+        const BAD: &str = "AAAAAAAAAAAAAAAA:bm90IGEgcmVhbCBjaXBoZXJ0ZXh0";
+        let path = temp_db_path();
+        drop(AuditVault::new(&path, Some("right")).unwrap());
+        {
+            let conn = Connection::open(&path).unwrap();
+            for i in 0..1001 {
+                conn.execute(
+                    "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload)
+                     VALUES (?1, '2026-01-01T00:00:00Z', 'e', 't', 'ALLOWED', 'v2:garbage')",
+                    [format!("garbage-{i:05}")],
+                )
+                .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload)
+                 VALUES ('old-bad', '2026-01-01T00:00:00Z', 'e', 't', 'ALLOWED', ?1)",
+                [BAD],
+            )
+            .unwrap();
+        }
+        set_metadata(&path, FORMAT_KEY, None);
+        assert!(key_check_value(&path).is_some());
+        drop(AuditVault::new(&path, Some("right")).unwrap());
+        assert_eq!(format_marker(&path).as_deref(), Some("v2"));
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn binding_holds_after_migration() {
+        let path = temp_db_path();
+        let rows = legacy_db(&path, 3);
+        let vault = AuditVault::new(&path, Some(LEGACY_KEY_PASSPHRASE)).unwrap();
+        let id0 = rows[0].0.clone();
+        let id1 = rows[1].0.clone();
+        let id2 = rows[2].0.clone();
+        // Move a migrated payload to another row, and another row to a new namespace.
+        let payload0 = raw_payload(&path, &id0);
+        set_payload(&path, &id1, &payload0);
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            conn.execute(
+                "UPDATE audit_logs SET namespace = 'other_tenant' WHERE id = ?1",
+                [&id2],
+            )
+            .unwrap();
+        }
+        let read = vault.get_recent(10).unwrap();
+        let r0 = read.iter().find(|r| r.id == id0).unwrap();
+        let r1 = read.iter().find(|r| r.id == id1).unwrap();
+        let r2 = read.iter().find(|r| r.id == id2).unwrap();
+        assert_eq!(r0.payload.as_deref(), Some("secret 0"));
+        assert!(r1.payload.as_deref().unwrap().starts_with("v2:"));
+        assert!(r2.payload.as_deref().unwrap().starts_with("v2:"));
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn malformed_v2_records_return_none_without_panic() {
+        let good = encrypt_payload(&TEST_KEY, ID_A, None, "payload").unwrap();
+        let nonce = good.split(':').nth(1).unwrap().to_string();
+        let ct = good.split(':').nth(2).unwrap().to_string();
+        let cases = [
+            "v2:".to_string(),
+            "v2:abc".to_string(),
+            format!("v2:{nonce}"),
+            format!("v2:{nonce}:{ct}:extra"),
+            "v2:!!!:!!!".to_string(),
+            format!("v2:{nonce}:!!!"),
+            format!("v2::{ct}"),
+            format!("v2:v2:{nonce}:{ct}"),
+        ];
+        for case in cases {
+            assert_eq!(
+                decrypt_payload(&TEST_KEY, ID_A, None, &case),
+                None,
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
+    fn v2_record_with_prefix_stripped_does_not_decrypt() {
+        let stored = encrypt_payload(&TEST_KEY, ID_A, None, "payload").unwrap();
+        let stripped = stored.strip_prefix("v2:").unwrap();
+        assert_eq!(decrypt_payload(&TEST_KEY, ID_A, None, stripped), None);
+    }
+
+    #[test]
+    fn v2_record_is_bound_to_its_namespace() {
+        let namespaces = [Some("a"), None, Some("")];
+        for (i, written) in namespaces.iter().enumerate() {
+            let stored = encrypt_payload(&TEST_KEY, ID_A, *written, "payload").unwrap();
+            for (j, read) in namespaces.iter().enumerate() {
+                let got = decrypt_payload(&TEST_KEY, ID_A, *read, &stored);
+                if i == j {
+                    assert_eq!(got.as_deref(), Some("payload"));
+                } else {
+                    assert_eq!(got, None, "written {written:?}, read {read:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn record_moved_to_another_namespace_is_not_readable() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, Some("test-passphrase")).expect("vault");
+        let mut entry = AuditEntry::new("event_a", "tool", "ALLOWED");
+        entry.payload = Some("tenant a secret".to_string());
+        entry.namespace = Some("tenant_a".to_string());
+        vault.log(entry).unwrap();
+        let before = vault.get_recent_by_namespace("tenant_a", 10).unwrap();
+        assert_eq!(before[0].payload.as_deref(), Some("tenant a secret"));
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            conn.execute(
+                "UPDATE audit_logs SET namespace = 'tenant_b' WHERE namespace = 'tenant_a'",
+                [],
+            )
+            .unwrap();
+        }
+        let moved = vault.get_recent_by_namespace("tenant_b", 10).unwrap();
+        assert_eq!(moved.len(), 1);
+        let text = moved[0].payload.as_deref().unwrap();
+        assert!(text.starts_with("v2:"));
+        assert!(!text.contains("tenant a secret"));
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn old_neighbour_text_is_replaced_by_a_reference_once() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            let ins = "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload, nearest_neighbor) VALUES (?1, 't', ?2, 'tool', 'AUDIT', ?3, ?4)";
+            conn.execute(
+                ins,
+                params![
+                    "a",
+                    "TOOL_CALL",
+                    None::<String>,
+                    "login: {\"pin\":\"4821\"}:0.2500"
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params![
+                    "b",
+                    "NEAREST_NEIGHBOR",
+                    "login: {\"pin\":\"4821\"}:0.2500",
+                    "login: {\"pin\":\"4821\"}:0.2500"
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params!["c", "TOOL_CALL", None::<String>, "no distance here"],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params!["d", "NEAREST_NEIGHBOR", "keep", "h:0123456789abcdef:0.5000"],
+            )
+            .unwrap();
+        }
+        drop(vault);
+
+        let vault = AuditVault::new(&path, None).expect("reopen");
+        let get = |id: &str| -> (Option<String>, Option<String>) {
+            vault
+                .get_connection()
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT nearest_neighbor, payload FROM audit_logs WHERE id = ?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap()
+        };
+        let want = format!(
+            "{}:0.2500",
+            crate::ai::content_ref("login: {\"pin\":\"4821\"}")
+        );
+        assert_eq!(get("a").0.as_deref(), Some(want.as_str()));
+        let b = get("b");
+        assert_eq!(b.0.as_deref(), Some(want.as_str()));
+        assert!(b.1.is_none(), "old neighbour payload must be cleared");
+        let c = get("c").0.unwrap();
+        assert!(crate::ai::is_content_ref(&c), "{c}");
+        let d = get("d");
+        assert_eq!(d.0.as_deref(), Some("h:0123456789abcdef:0.5000"));
+        assert_eq!(d.1, None, "a neighbour row keeps no payload");
+        let all = format!("{:?}", vault.get_recent(10).unwrap());
+        assert!(!all.contains("4821") && !all.contains("no distance"));
+        drop(vault);
+
+        // A second opening changes nothing.
+        let vault = AuditVault::new(&path, None).expect("third open");
+        assert_eq!(get_nn(&vault, "a"), want);
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn old_neighbour_payloads_are_cleared_even_when_the_column_is_empty_or_a_reference() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            let ins = "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload, nearest_neighbor) VALUES (?1, 't', 'NEAREST_NEIGHBOR', 'tool', 'AUDIT', ?2, ?3)";
+            conn.execute(
+                ins,
+                params!["x", "login: {\"pin\":\"4821\"}", None::<String>],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params![
+                    "y",
+                    "login: {\"pin\":\"4821\"}",
+                    "h:0123456789abcdef:0.5000"
+                ],
+            )
+            .unwrap();
+        }
+        drop(vault);
+        let vault = AuditVault::new(&path, None).expect("reopen");
+        let all = format!("{:?}", vault.get_recent(10).unwrap());
+        assert!(!all.contains("4821"), "old neighbour text survived: {all}");
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    fn file_bytes_contain(path: &str, needle: &str) -> bool {
+        [path.to_string(), format!("{path}-wal")]
+            .iter()
+            .filter_map(|p| fs::read(p).ok())
+            .any(|b| b.windows(needle.len()).any(|w| w == needle.as_bytes()))
+    }
+
+    #[test]
+    fn old_neighbour_text_leaves_no_trace_in_the_audit_file() {
+        let marker = "neighbour-marker-7f3a91-zebra";
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            let long = format!("{marker} {}", "payload text ".repeat(600));
+            for i in 0..20 {
+                conn.execute(
+                    "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload, nearest_neighbor) VALUES (?1, 't', 'NEAREST_NEIGHBOR', 'tool', 'AUDIT', ?2, ?3)",
+                    params![format!("n{i}"), long, format!("{marker} {i}:0.1000")],
+                )
+                .unwrap();
+            }
+        }
+        drop(vault);
+        assert!(
+            file_bytes_contain(&path, marker),
+            "setup: the text is on disk"
+        );
+
+        let vault = AuditVault::new(&path, None).expect("reopen scrubs");
+        drop(vault);
+        assert!(
+            !file_bytes_contain(&path, marker),
+            "the neighbour text must not stay in the file"
+        );
+        fs::remove_file(&path).ok();
+        fs::remove_file(format!("{path}-wal")).ok();
+    }
+
+    #[test]
+    fn the_scrub_leaves_the_vacuum_marker_and_the_next_start_compacts() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        vault
+            .get_connection()
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload, nearest_neighbor) VALUES ('n1', 't', 'NEAREST_NEIGHBOR', 'tool', 'AUDIT', 'old text', 'old text:0.1000')",
+                [],
+            )
+            .unwrap();
+        drop(vault);
+        let mut c = Connection::open(&path).unwrap();
+        assert!(scrub_legacy_neighbours(&mut c).unwrap() > 0);
+        let marker = "SELECT COUNT(*) FROM metadata WHERE key = 'neighbours_vacuum_pending'";
+        let m: i64 = c.query_row(marker, [], |r| r.get(0)).unwrap();
+        assert_eq!(m, 1, "the scrub must leave the compaction marker");
+        drop(c);
+
+        // The next start compacts the file and removes the marker.
+        let vault = AuditVault::new(&path, None).expect("reopen");
+        let left: i64 = vault
+            .get_connection()
+            .lock()
+            .unwrap()
+            .query_row(marker, [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn only_exact_references_count_as_migrated() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        let cases = [
+            "h:0123456789abcdef:recovery_code=4821",
+            "h:0123456789abcdef:NaN",
+            "h:0123456789abcdef:inf",
+            "h:0123456789abcdef:-inf",
+            "h:0123456789abcdef:",
+            "h:0123456789abcdef:a:b:0.5000",
+            "h:0123456789ABCDEF:0.5000",
+            "h:0123456789abcde:0.5000",
+            "h:0123456789abcdef0:0.5000",
+            "pin:4821",
+        ];
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            for (i, v) in cases.iter().enumerate() {
+                conn.execute(
+                    "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, nearest_neighbor) VALUES (?1, 't', 'TOOL_CALL', 'tool', 'AUDIT', ?2)",
+                    params![format!("c{i}"), v],
+                )
+                .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, nearest_neighbor) VALUES ('ok1', 't', 'TOOL_CALL', 'tool', 'AUDIT', 'h:0123456789abcdef:0.5000')",
+                [],
+            )
+            .unwrap();
+        }
+        drop(vault);
+        let vault = AuditVault::new(&path, None).expect("reopen scrubs");
+        for (i, case) in cases.iter().enumerate() {
+            let v = get_nn(&vault, &format!("c{i}"));
+            assert!(is_neighbour_ref(&v), "{case} became {v}");
+            assert_ne!(&v, case);
+        }
+        assert_eq!(get_nn(&vault, "ok1"), "h:0123456789abcdef:0.5000");
+        drop(vault);
+        assert!(!file_bytes_contain(&path, "recovery_code=4821"));
+        assert!(!file_bytes_contain(&path, "pin:4821"));
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn the_reference_check_takes_exact_forms_only() {
+        for ok in [
+            "h:0123456789abcdef",
+            "h:0123456789abcdef:0.5000",
+            "h:0123456789abcdef:12",
+        ] {
+            assert!(is_neighbour_ref(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "h:0123456789abcdef:",
+            "h:0123456789abcdef:NaN",
+            "h:0123456789abcdef:inf",
+            "h:0123456789abcdef:-inf",
+            "h:0123456789abcdef:0.5:0.5",
+            "h:0123456789abcdef:secret",
+            "h:0123456789abcdefg",
+            "h:0123456789ABCDEF",
+            "h:0123456789abcde",
+            "h:0123456789abcdef0",
+            "h:0123456789abcdef0:0.5",
+            "x:0123456789abcdef",
+        ] {
+            assert!(!is_neighbour_ref(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn an_encrypted_database_is_not_opened_or_changed_without_its_key() {
+        let path = temp_db_path();
+        drop(AuditVault::new(&path, Some("a key")).expect("encrypted vault"));
+        let before = fs::read(&path).unwrap();
+        assert!(AuditVault::new(&path, None).is_err());
+        assert_eq!(fs::read(&path).unwrap(), before, "the file must not change");
+        // With the key it still opens.
+        drop(AuditVault::new(&path, Some("a key")).expect("reopen with the key"));
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_second_opening_touches_no_rows() {
+        let path = temp_db_path();
+        let vault = AuditVault::new(&path, None).expect("vault");
+        {
+            let conn = vault.get_connection();
+            let conn = conn.lock().unwrap();
+            let ins = "INSERT INTO audit_logs (id, timestamp, event, tool_name, status, payload, nearest_neighbor) VALUES (?1, 't', ?2, 'tool', 'AUDIT', ?3, ?4)";
+            conn.execute(
+                ins,
+                params!["a", "TOOL_CALL", None::<String>, "old text:0.1000"],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params!["b", "NEAREST_NEIGHBOR", "keep", "h:0123456789abcdef:0.5000"],
+            )
+            .unwrap();
+            conn.execute(
+                ins,
+                params!["c", "TOOL_CALL", None::<String>, "h:0123456789abcdef"],
+            )
+            .unwrap();
+            // Looks like a reference prefix but is not one: must still be scrubbed.
+            conn.execute(
+                ins,
+                params!["d", "TOOL_CALL", None::<String>, "h:not a reference:0.2"],
+            )
+            .unwrap();
+        }
+        drop(vault);
+
+        let vault = AuditVault::new(&path, None).expect("second open");
+        {
+            let conn = vault.get_connection();
+            let mut conn = conn.lock().unwrap();
+            let before = conn.total_changes();
+            assert_eq!(scrub_legacy_neighbours(&mut conn).unwrap(), 0);
+            assert_eq!(conn.total_changes(), before, "no row may be written");
+        }
+        assert!(is_neighbour_ref(&get_nn(&vault, "d")));
+        assert_eq!(get_nn(&vault, "b"), "h:0123456789abcdef:0.5000");
+        assert_eq!(get_nn(&vault, "c"), "h:0123456789abcdef");
+        drop(vault);
+        fs::remove_file(&path).ok();
+    }
+
+    fn get_nn(vault: &AuditVault, id: &str) -> String {
+        vault
+            .get_connection()
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT nearest_neighbor FROM audit_logs WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
     }
 }

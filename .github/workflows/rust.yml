@@ -2,11 +2,17 @@ name: Rust gateway
 
 on:
   push:
-    branches: [main, next]
-    paths: ["src/**", "Cargo.toml", "Cargo.lock", ".cargo/**", "build.rs", ".github/workflows/rust.yml"]
+    # release/** is here, and there is no paths filter, because tag-release.yml requires "build, test, clippy,
+    # fmt" on the exact release commit, whatever that commit changed. rust-scope.sh runs every push in full.
+    branches: [main, next, 'release/**']
   pull_request:
     types: [ opened, synchronize, reopened, ready_for_review ]
-    paths: ["src/**", "Cargo.toml", "Cargo.lock", ".cargo/**", "build.rs", ".github/workflows/rust.yml"]
+    # No paths filter here: "build, test, clippy, fmt" is a required check, and a workflow skipped by a
+    # paths filter leaves it pending. rust-scope.sh skips the steps when no Rust file changed instead.
+  # The merge queue on next runs the required checks again on the queued commit; rust-scope.sh compares
+  # it with the group's base commit, so a group with no Rust change skips the steps like a pull request.
+  merge_group:
+    types: [ checks_requested ]
   schedule:
     - cron: "17 6 * * 1" # weekly advisory check
   workflow_dispatch:
@@ -30,13 +36,23 @@ jobs:
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: bash .github/scripts/rust-scope.sh
+      - name: Test the scope scripts
+        run: bash .github/scripts/test-ci-scope.sh
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        if: steps.scope.outputs.rust == 'true'
         with:
           # Pinned so a new stable release cannot fail CI through new lints.
           # Bump deliberately; the minimum supported version is rust-version
@@ -44,22 +60,120 @@ jobs:
           toolchain: 1.99.0
           components: clippy, rustfmt
       - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        if: steps.scope.outputs.rust == 'true'
         with:
           version: "29.3"
           repo-token: ${{ github.token }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
+        if: steps.scope.outputs.rust == 'true'
         with:
+          # Release pushes never restore or save a cache that a pull request could have poisoned.
+          lookup-only: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
           # Each Rust cache is 1.5 to 3 GB, so only main saves one. next and pull requests
           # restore the cache of main (same key prefix) and save nothing, which keeps the
           # repository under its 10 GB cache limit.
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: fmt
+        if: steps.scope.outputs.rust == 'true'
         run: cargo fmt --all -- --check
       - name: clippy
+        if: steps.scope.outputs.rust == 'true'
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: build
+        if: steps.scope.outputs.rust == 'true'
         run: cargo build --locked
       - name: test
+        if: steps.scope.outputs.rust == 'true'
+        run: cargo test --locked
+
+  private-file:
+    name: private file writer (${{ matrix.os }})
+    # The owner-only file writer has a separate Windows implementation (protected DACL) and platform-specific
+    # Unix code, so its tests also run on Windows and macOS. Draft pull requests skip this job; marking the
+    # pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: bash .github/scripts/rust-scope.sh
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        if: steps.scope.outputs.rust == 'true'
+        with:
+          toolchain: 1.99.0
+      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        if: steps.scope.outputs.rust == 'true'
+        with:
+          version: "29.3"
+          repo-token: ${{ github.token }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
+        if: steps.scope.outputs.rust == 'true'
+        with:
+          # Release pushes never restore or save a cache that a pull request could have poisoned.
+          lookup-only: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: test private_file
+        if: steps.scope.outputs.rust == 'true'
+        run: cargo test --locked --lib private_file
+
+  msrv:
+    name: minimum supported Rust version (1.95)
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: bash .github/scripts/rust-scope.sh
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        if: steps.scope.outputs.rust == 'true'
+        with:
+          # Must equal rust-version in Cargo.toml.
+          toolchain: "1.95"
+      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        if: steps.scope.outputs.rust == 'true'
+        with:
+          version: "29.3"
+          repo-token: ${{ github.token }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
+        if: steps.scope.outputs.rust == 'true'
+        with:
+          # Release pushes never restore or save a cache that a pull request could have poisoned.
+          lookup-only: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: check the declared version matches
+        if: steps.scope.outputs.rust == 'true'
+        run: grep -q '^rust-version = "1.95"$' Cargo.toml
+      - name: check
+        if: steps.scope.outputs.rust == 'true'
+        run: cargo check --locked --all-targets
+      - name: test
+        if: steps.scope.outputs.rust == 'true'
         run: cargo test --locked
 
   audit:
@@ -71,14 +185,76 @@ jobs:
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: bash .github/scripts/rust-scope.sh
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        if: steps.scope.outputs.rust == 'true'
         with:
           tool: cargo-audit
       - name: cargo audit
+        if: steps.scope.outputs.rust == 'true'
         run: cargo audit
+
+  coverage:
+    name: coverage report
+    # Report only, no threshold, and it repeats the build and tests, so it runs on pushes to main and next
+    # and on manual runs, not on pull requests or the weekly schedule.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: 1.99.0
+          components: llvm-tools-preview
+      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.3"
+          repo-token: ${{ github.token }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
+        with:
+          # Release pushes never restore or save a cache that a pull request could have poisoned.
+          lookup-only: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-llvm-cov
+      - name: Run the tests with a coverage report
+        # The same tests as the test step above, measured with cargo-llvm-cov. Report only, no threshold.
+        run: |
+          set -o pipefail
+          cargo llvm-cov --locked --lcov --output-path "$RUNNER_TEMP/coverage-rust.lcov"
+          cargo llvm-cov report --locked 2>&1 | tee "$RUNNER_TEMP/coverage-rust.log"
+          {
+            echo '### zn-gate (Rust) coverage'
+            echo '```'
+            grep -E '^TOTAL' "$RUNNER_TEMP/coverage-rust.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Rust coverage report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-rust
+          path: ${{ runner.temp }}/coverage-rust.lcov
+          if-no-files-found: ignore
+          retention-days: 14

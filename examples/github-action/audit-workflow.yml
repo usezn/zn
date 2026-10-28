@@ -19,9 +19,9 @@ jobs:
           persist-credentials: false
       - name: Audit agent configs
         id: zn
-        # Pin to the full commit SHA of the first Action release that has the
-        # mode input. The zn-gate package version is set by version below.
-        uses: usezn/zn@<commit-sha> # <first Action release with mode>
+        # Pin to the full commit SHA of an Action release v1.10.0 or later.
+        # The zn-gate package version is set by version below.
+        uses: usezn/zn@746be20f3276ab0d589f2d6df941b5d31a5396d8 # v1.13.1
         with:
           version: '1.13.1'
           mode: 'both'

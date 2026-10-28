@@ -1,0 +1,89 @@
+{
+  "_comment": "Median over many CI runs of the p95 of each hook case divided by the p50 start-up of a bare node in the same run (bench/hook_latency_matrix.js). Update with: node bench/hook_latency_gate.js report1.json report2.json ... --update-baseline",
+  "meta": {
+    "date": "2026-10-24",
+    "node": "v22.23.4",
+    "platform": "win32 10.0.26100",
+    "cpu": "AMD EPYC 9V74 80-Core Processor                 x4",
+    "runs": 40,
+    "bareNodeP50": 43.5,
+    "reports": 29
+  },
+  "results": [
+    {
+      "agent": "claude-code",
+      "case": "PreToolUse Bash",
+      "ratio": 2.589
+    },
+    {
+      "agent": "codex",
+      "case": "PreToolUse Bash",
+      "ratio": 2.528
+    },
+    {
+      "agent": "cursor",
+      "case": "beforeShellExecution",
+      "ratio": 2.449
+    },
+    {
+      "agent": "claude-code",
+      "case": "PostToolUse Bash 1 KB",
+      "ratio": 3.093
+    },
+    {
+      "agent": "codex",
+      "case": "PostToolUse Bash 1 KB",
+      "ratio": 3.449
+    },
+    {
+      "agent": "cursor",
+      "case": "postToolUse MCP 1 KB",
+      "ratio": 3.01
+    },
+    {
+      "agent": "claude-code",
+      "case": "PostToolUse Bash 100 KB",
+      "ratio": 3.217
+    },
+    {
+      "agent": "codex",
+      "case": "PostToolUse Bash 100 KB",
+      "ratio": 3.663
+    },
+    {
+      "agent": "cursor",
+      "case": "postToolUse MCP 100 KB",
+      "ratio": 3.182
+    },
+    {
+      "agent": "claude-code",
+      "case": "PostToolUse Bash 100 KB with 2 secrets",
+      "ratio": 3.535
+    },
+    {
+      "agent": "codex",
+      "case": "PostToolUse Bash 100 KB with 2 secrets",
+      "ratio": 3.914
+    },
+    {
+      "agent": "cursor",
+      "case": "postToolUse MCP 100 KB with 2 secrets",
+      "ratio": 3.468
+    },
+    {
+      "agent": "claude-code",
+      "case": "PostToolUse Bash 1000 KB",
+      "ratio": 3.819
+    },
+    {
+      "agent": "codex",
+      "case": "PostToolUse Bash 1000 KB",
+      "ratio": 4.198
+    },
+    {
+      "agent": "cursor",
+      "case": "postToolUse MCP 1000 KB",
+      "ratio": 3.833
+    }
+  ]
+}

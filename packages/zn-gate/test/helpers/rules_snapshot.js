@@ -44,7 +44,7 @@ function ruleTableIds(mod) {
 
 const LAYERS = {
   rules: {
-    files: ['lib/rules.js'],
+    files: ['lib/rules.js', 'lib/mcp-secrets.js'],
     versionFile: 'lib/rules.js',
     versionConst: 'RULES_VERSION',
     ids: () => ruleTableIds(load('lib/rules.js')),
@@ -76,6 +76,7 @@ const LAYERS = {
       'lib/broker/markers.js',
       'lib/broker/dotenv.js',
       'lib/shell-quote.js',
+      'lib/destructive.js',
     ],
     versionFile: 'lib/hooks/policy.js',
     versionConst: 'POLICY_RULES_VERSION',

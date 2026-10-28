@@ -28,26 +28,27 @@ and each result is also given as its p95 divided by that start-up time.
 
 ## Results
 
-GitHub Actions `ubuntu-latest` runner (4 vCPU AMD EPYC 7763), Node.js 22.23, 2026-10-17. Times in
-milliseconds; a bare `node -e ""` takes 25 ms (p50).
+GitHub Actions `ubuntu-latest` runner (4 vCPU AMD EPYC 7763), Node.js 22.23, 2026-10-19, with the compile
+cache of the hook enabled. Times in milliseconds; a bare `node -e ""` takes 24 ms (p50). Runner speed varies
+from one run to the next by a few milliseconds; the budget below compares against Node's start-up in the same run.
 
 | Agent | Event | p50 | p95 |
 |---|---|---|---|
-| Claude Code | PreToolUse, shell command | 51 | 54.7 |
-| Codex CLI | PreToolUse, shell command | 52 | 53.8 |
-| Cursor | beforeShellExecution | 51.7 | 58.6 |
-| Claude Code | PostToolUse, 1 KB | 63 | 65 |
-| Codex CLI | PostToolUse, 1 KB | 62.2 | 65.3 |
-| Cursor | postToolUse (MCP), 1 KB | 62.2 | 64 |
-| Claude Code | PostToolUse, 100 KB | 67.5 | 70.4 |
-| Codex CLI | PostToolUse, 100 KB | 67 | 68.8 |
-| Cursor | postToolUse (MCP), 100 KB | 66.9 | 68.9 |
-| Claude Code | PostToolUse, 100 KB with 2 secrets | 73.8 | 76.3 |
-| Codex CLI | PostToolUse, 100 KB with 2 secrets | 74.7 | 77.5 |
-| Cursor | postToolUse (MCP), 100 KB with 2 secrets | 75.9 | 77.9 |
-| Claude Code | PostToolUse, 1000 KB | 85.8 | 89.4 |
-| Codex CLI | PostToolUse, 1000 KB | 86.4 | 88.5 |
-| Cursor | postToolUse (MCP), 1000 KB | 88.9 | 92.3 |
+| Claude Code | PreToolUse, shell command | 54 | 56.1 |
+| Codex CLI | PreToolUse, shell command | 53.1 | 55.6 |
+| Cursor | beforeShellExecution | 53.7 | 55.4 |
+| Claude Code | PostToolUse, 1 KB | 57.3 | 61.6 |
+| Codex CLI | PostToolUse, 1 KB | 57.2 | 60.7 |
+| Cursor | postToolUse (MCP), 1 KB | 57.1 | 58.8 |
+| Claude Code | PostToolUse, 100 KB | 61.9 | 65.4 |
+| Codex CLI | PostToolUse, 100 KB | 62 | 63.7 |
+| Cursor | postToolUse (MCP), 100 KB | 62.3 | 64.2 |
+| Claude Code | PostToolUse, 100 KB with 2 secrets | 69.5 | 72.3 |
+| Codex CLI | PostToolUse, 100 KB with 2 secrets | 68.8 | 72.3 |
+| Cursor | postToolUse (MCP), 100 KB with 2 secrets | 69.1 | 71.4 |
+| Claude Code | PostToolUse, 1000 KB | 79.7 | 81.4 |
+| Codex CLI | PostToolUse, 1000 KB | 79.2 | 82.6 |
+| Cursor | postToolUse (MCP), 1000 KB | 82.5 | 86.7 |
 
 On another machine the times change with it: dividing by Node's own start-up, as the budget does, removes
 most of that difference, not all of it.
@@ -58,8 +59,17 @@ OpenCode is not in the table: its zn plugin runs inside the OpenCode process, so
 
 ## The budget in CI
 
-The `Hook latency` workflow runs this benchmark on every pull request that changes the hook code. It fails
-when a case's p95, divided by Node's start-up in the same run, is more than 20 % above
-`bench/hook_latency_baseline.json`. A case over the limit is measured again with twice the samples first,
+The `Hook latency` workflow runs this benchmark on every pull request that changes the hook code. Each case
+is compared with `bench/hook_latency_baseline.json` (the median of many runs) as its p95 divided by Node's start-up
+in the same run. The run fails in two ways: one case more than 20 % above its baseline, or the whole run
+slower, with the median of all cases more than 10 % above the baseline. The second check catches a change that
+makes every case a little slower, which no single case would show. A case over the limit is measured again with twice the samples first,
 so one slow sample does not fail it. The run fails too when the baseline file is missing. A deliberate change of the baseline is a commit of its own:
-`node bench/hook_latency_gate.js report.json --update-baseline`.
+`node bench/hook_latency_gate.js report1.json report2.json ... --update-baseline`, which writes the median ratio of
+every case over the reports given (use reports of several runs on `next`, from the workflow's artifacts).
+
+The same benchmark also runs on a Windows runner, where starting a process is slower. That job has its own
+baseline, `bench/hook_latency_baseline_windows.json`, and is not a required check: it reports but does not
+block a merge. Its per-case margin is 35 % instead of 20 %: Windows runners come with several CPU models and
+their timings vary about twice as much as on Linux, and with 20 % runs failed often with no code change.
+The whole-run check (10 %) is the same on both. The summary of each run has one table with the Linux and Windows numbers side by side.

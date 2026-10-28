@@ -248,7 +248,7 @@ test('the 13 fixed must-not-touch snippets stay intact in the pattern layer', ()
 test('prefixes quoted in docs and look-alikes are not secrets', () => {
   for (const t of [
     'Anthropic keys start with sk-ant- and OpenAI keys with sk-.',
-    'Use AKIA as prefix; e.g. AKIAIOSFODNN7EXAMPLE',
+    'Use AKIA as a prefix for access key ids',
     'github tokens look like ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
     'commit 3f786850e387550fdab836ed7e6dc881de23001b',
     'sha1: 2fd4e1c67a2d28fced849ee1bb76e7391b93eb12 and aws secret mention',
@@ -323,6 +323,73 @@ test('public IPv4 is opt-in', () => {
   assert.deepStrictEqual(pii('host 8.8.8.8'), []);
   assert.deepStrictEqual(pii('host 8.8.8.8', { pii: { ipv4: true } }), ['IPV4:8.8.8.8']);
   assert.deepStrictEqual(pii('host 10.0.0.1 and 192.168.1.1', { pii: { ipv4: true } }), []);
+});
+
+/* ---------------- key-based PII: name, address, username ---------------- */
+
+test('name, address and username are detected from an explicit header key', () => {
+  assert.deepStrictEqual(pii('X-User-Name: Alice Example'), ['PERSON_NAME:Alice Example']);
+  assert.deepStrictEqual(pii('x-full-name: Alice Example\r\nAccept: */*'), ['PERSON_NAME:Alice Example']);
+  assert.deepStrictEqual(pii('X-Address: 1 Example Street, Springfield'), ['POSTAL_ADDRESS:1 Example Street, Springfield']);
+  assert.deepStrictEqual(pii('X-Username: alice_ex'), ['USERNAME:alice_ex']);
+  assert.deepStrictEqual(pii('X-User: alice_ex'), ['USERNAME:alice_ex']);
+  assert.deepStrictEqual(pii("curl -H 'X-User-Name: Alice Example' https://example.com/a"), ['PERSON_NAME:Alice Example']);
+  assert.deepStrictEqual(pii('{"headers": {"X-Username": "alice_ex"}}'), ['USERNAME:alice_ex']);
+});
+
+test('name, address and username are detected in query strings and form bodies', () => {
+  assert.deepStrictEqual(
+    pii('GET /a?full_name=Alice+Example&user=alice_ex&address=1%20Example%20Street&x=1'),
+    ['PERSON_NAME:Alice+Example', 'POSTAL_ADDRESS:1%20Example%20Street', 'USERNAME:alice_ex']);
+  assert.deepStrictEqual(pii('a=1&name=Alice%20Example&b=2'), ['PERSON_NAME:Alice%20Example']);
+  assert.deepStrictEqual(pii('username=alice_ex&password_hint=x'), ['USERNAME:alice_ex']);
+  assert.deepStrictEqual(pii('name=Alice Example\naddress=1 Example Street'), ['PERSON_NAME:Alice Example', 'POSTAL_ADDRESS:1 Example Street']);
+});
+
+test('only the value is the span; the key stays', () => {
+  const t = 'X-User-Name: Alice Example';
+  const s = P.findPii(t, {})[0];
+  assert.strictEqual(t.slice(0, s.start), 'X-User-Name: ');
+  assert.strictEqual(s.source, 'pii');
+});
+
+test('the same values without their key are not detected', () => {
+  for (const t of ['Alice Example', 'hello Alice Example', '1 Example Street, Springfield', 'alice_ex', 'X-Request-Id: Alice Example',
+    'Accept: Alice Example', 'filename=Alice Example', 'hostname=alice_ex', 'x.user=alice_ex']) {
+    assert.deepStrictEqual(pii(t), [], t);
+  }
+});
+
+test('key-based PII false-positive guards', () => {
+  for (const t of [
+    'X-User-Name:', 'X-User-Name: ', 'X-User: ubuntu', 'X-User: ${USER}', 'X-User-Name: <name>', 'X-Username: null',
+    '?name=build', '?name=my-package', '?name=Alice', '&user=123456', '&user=root', 'username=',
+    'user=git', 'user=postgres', 'username=mysql', '&user=nginx', '&user=deploy', 'USER=alice_ex', 'USERNAME=alice_ex', 'run(user=alice_ex)', '    user=alice_ex,', 'name=build\n', 'name = Alice Example',
+    '?address=0x00000000219ab540356cbb839cbe05303d7705fa', '?address=192.0.2.1', 'X-Address: https://example.com/a b',
+    '--user=alice_ex', 'X-Full-Name: {{name}}',
+  ]) {
+    assert.deepStrictEqual(pii(t), [], t);
+  }
+  // an e-mail value is left to the e-mail detector
+  assert.deepStrictEqual(pii('?address=alice@example.com'), ['EMAIL:alice@example.com']);
+  // a single given name is accepted only behind a name-specific key
+  assert.deepStrictEqual(pii('?full_name=Alice'), ['PERSON_NAME:Alice']);
+});
+
+test('the pii setting turns the key-based types on and off one by one', () => {
+  const text = 'X-User-Name: Alice Example\nX-Address: 1 Example Street, Springfield\nX-Username: alice_ex\n';
+  assert.deepStrictEqual(pii(text, { pii: { name: false } }), ['POSTAL_ADDRESS:1 Example Street, Springfield', 'USERNAME:alice_ex']);
+  assert.deepStrictEqual(pii(text, { pii: { address: false } }), ['PERSON_NAME:Alice Example', 'USERNAME:alice_ex']);
+  assert.deepStrictEqual(pii(text, { pii: { username: false } }), ['PERSON_NAME:Alice Example', 'POSTAL_ADDRESS:1 Example Street, Springfield']);
+  assert.strictEqual(P.PII_DEFAULTS.name && P.PII_DEFAULTS.address && P.PII_DEFAULTS.username, true);
+});
+
+test('the key-based types are PII, never secrets', () => {
+  for (const t of ['PERSON_NAME', 'POSTAL_ADDRESS', 'USERNAME']) {
+    assert.ok(P.PII_TYPES.includes(t));
+    assert.ok(!P.SECRET_TYPES.includes(t));
+  }
+  assert.deepStrictEqual(P.findPatterns('X-User-Name: Alice Example\nX-Username: alice_ex', {}), []);
 });
 
 const KNOWN_OK = [
@@ -478,5 +545,12 @@ test('provider formats from gitleaks: placeholder bodies are not tokens', () => 
     'sha256~abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ', 'pul-' + '0123456789abcdef'.repeat(3).slice(0, 40),
     'LTAIabcdefghijKLMNOP1234']) {
     assert.deepStrictEqual(types(t), [], t);
+  }
+});
+
+test('AWS key ids ending in EXAMPLE are redacted for every prefix', () => {
+  for (const prefix of ['AKIA', 'ASIA', 'ABIA', 'ACCA']) {
+    const t = 'key ' + prefix + 'IOSFODNN7' + 'EXAMPLE' + ' here';
+    assert.deepStrictEqual(types(t), ['AWS_KEY'], t);
   }
 });

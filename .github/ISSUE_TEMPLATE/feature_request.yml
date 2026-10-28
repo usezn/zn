@@ -1,0 +1,48 @@
+name: Feature request
+description: Propose a change you are ready to describe.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For open questions and early ideas, start a thread in [GitHub Discussions](https://github.com/usezn/zn/discussions). Open an issue when you can describe the problem and the change you propose.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What should zn-gate do instead?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent or client this is about
+      options:
+        - Claude Code
+        - Codex CLI
+        - Cursor
+        - OpenCode
+        - Antigravity
+        - ZCode desktop app
+        - Gemini CLI (experimental)
+        - Copilot CLI (experimental)
+        - Other MCP client
+        - Not applicable
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links or examples. Do not paste secrets or personal data.

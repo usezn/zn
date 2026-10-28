@@ -5,7 +5,7 @@ Zero external dependencies, runnable with standard `python -m unittest`.
 
 import asyncio
 import unittest
-from zn_gate import evaluate, normalize_input, guard, check_tool_call, check_tool_result, GuardBlockError
+from zn_gate import evaluate, guard, check_tool_call, check_tool_result, GuardBlockError
 
 
 class TestZnGateRules(unittest.TestCase):

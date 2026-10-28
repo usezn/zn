@@ -15,10 +15,11 @@ import json
 import os
 import urllib.request
 import urllib.error
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
-from .rules import evaluate, redact_secrets, Assessment, RULES_VERSION
+from .rules import evaluate, redact_secrets
 from . import __version__
+from .verbose import is_verbose
 
 DEFAULT_ENDPOINT = "https://api.usezn.com/v30/analyze"
 
@@ -26,7 +27,7 @@ DEFAULT_ENDPOINT = "https://api.usezn.com/v30/analyze"
 def resolve_endpoint(options: Optional[Dict[str, Any]] = None) -> str:
     options = options or {}
     if "api_url" in options and options["api_url"]:
-        return options["api_url"]
+        return cast(str, options["api_url"])
     if os.environ.get("ZN_API_URL"):
         return os.environ["ZN_API_URL"]
     stage = options.get("stage") or os.environ.get("ZN_STAGE") or "v30"
@@ -79,8 +80,8 @@ def analyze_cloud(
     }
     req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = resp.read().decode("utf-8")
-        parsed = json.loads(body)
+        raw = resp.read().decode("utf-8")
+        parsed: Dict[str, Any] = json.loads(raw)
         parsed["engine"] = "cloud-v30" if "/v30" in endpoint else "cloud-prod"
         return parsed
 
@@ -134,7 +135,7 @@ def analyze(
         sanitized, detections = redact_secrets(input_text)
         # Length in UTF-16 units, as the Node.js client counts it.
         windows = long_input_mode(long_input) == "windows" and len(sanitized.encode("utf-16-le")) // 2 > LONG_INPUT_MIN_CHARS
-        cloud_res = analyze_cloud(input_text, key, target_url,
+        cloud_res = analyze_cloud(input_text, key or "", target_url,
                                   timeout=timeout if timeout is not None else (WINDOWS_TIMEOUT if windows else 4.0),
                                   long_input="windows" if windows else None)
         cloud_res["mode"] = "hybrid-cloud"
@@ -148,7 +149,7 @@ def analyze(
                                     % (li.get("reason") or "no windows"))
         return cloud_res
     except Exception as exc:
-        if os.environ.get("DEBUG") or os.environ.get("ZN_VERBOSE"):
+        if is_verbose():
             import sys
             sys.stderr.write(f"[zn-gate] Warning: Cloud gate error ({exc}). Using local OSS rules fallback.\n")
         return {

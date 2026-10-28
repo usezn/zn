@@ -11,13 +11,14 @@ const fs = require('fs');
 const path = require('path');
 const { getAdapter } = require('../lib/agents');
 const { guide: realGuide, plan: realPlan, fromTemporaryCopy, _internal } = require('../lib/init-guide');
-// These tests are about what they say whatever Node.js runs them: the plugin needs 20.12 or later, so one that
+// These tests are about what they say whatever Node.js runs them: the plugin needs 20.19 or later, so one that
 // supports it is injected (the check for older versions is in init_plugin_node.test.js).
 const guide = (opts) => realGuide({ nodeVersion: '22.0.0', ...opts });
 const plan = (opts) => realPlan({ nodeVersion: '22.0.0', ...opts });
 const { AGENT_ENV_VARS } = require('../lib/broker/tty');
 const policy = require('../lib/hooks/policy');
 const { tempDir } = require('./helpers/tmp');
+const { writePluginManifest } = require('./helpers/claude_plugin');
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const VERSION = require('../package.json').version;
@@ -248,7 +249,7 @@ test('plan: Claude Code set up with zn hooks is repaired with zn hooks, not with
   assert.deepEqual(cc.steps.map(line), ['zn hooks install claude-code']);
 });
 
-test('plan: the plugin together with zn hooks gets one step that removes the hooks', async (t) => {
+test('plan: the plugin together with zn hooks gets one step that removes the hooks', { skip: process.platform === 'win32' && 'the zn-gate plugin needs Git Bash on Windows, which this fixture does not provide' }, async (t) => {
   const m = machine(t, ['claude-code']);
   getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
   const root = path.join(m.home, '.claude', 'plugins', 'cache', 'usezn', 'zn-gate', '1.9.0');
@@ -258,6 +259,7 @@ test('plan: the plugin together with zn hooks gets one step that removes the hoo
     "process.stdout.write(r.stdout || ''); process.exit(r.status || 0);\n");
   fs.writeFileSync(path.join(m.home, '.claude', 'plugins', 'installed_plugins.json'),
     JSON.stringify({ version: 2, plugins: { 'zn-gate@usezn': [{ scope: 'user', installPath: root }] } }));
+  writePluginManifest(root);
   const { items } = await plan({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false });
   const cc = items.find((i) => i.id === 'claude-code');
   assert.deepEqual(cc.steps.map(line), ['zn hooks uninstall claude-code']);
@@ -272,6 +274,7 @@ function pluginIn(home, enabled) {
     "process.stdout.write(r.stdout || ''); process.exit(r.status || 0);\n");
   fs.writeFileSync(path.join(home, '.claude', 'plugins', 'installed_plugins.json'),
     JSON.stringify({ version: 2, plugins: { 'zn-gate@usezn': [{ scope: 'user', installPath: root }] } }));
+  writePluginManifest(root);
   if (enabled === false) {
     const file = path.join(home, '.claude', 'settings.json');
     let tree = {};
@@ -362,6 +365,7 @@ test('plan: a broken plugin next to zn hooks gets one step that turns the plugin
   fs.writeFileSync(path.join(root, 'scripts', 'zn-launch.js'), "process.stderr.write('zn plugin: zn-gate is not installed'); process.exit(2);\n");
   fs.writeFileSync(path.join(m.home, '.claude', 'plugins', 'installed_plugins.json'),
     JSON.stringify({ version: 2, plugins: { 'zn-gate@usezn': [{ scope: 'user', installPath: root }] } }));
+  writePluginManifest(root);
   const { items } = await plan({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false });
   const cc = items.find((i) => i.id === 'claude-code');
   assert.deepEqual(cc.steps.map(line), ['claude plugin disable zn-gate@usezn']);
@@ -373,6 +377,7 @@ function brokenPluginIn(home) {
   fs.writeFileSync(path.join(root, 'scripts', 'zn-launch.js'), "process.stderr.write('zn plugin: zn-gate is not installed'); process.exit(2);\n");
   fs.writeFileSync(path.join(home, '.claude', 'plugins', 'installed_plugins.json'),
     JSON.stringify({ version: 2, plugins: { 'zn-gate@usezn': [{ scope: 'user', installPath: root }] } }));
+  writePluginManifest(root);
 }
 
 const goneNode = (m) => getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: '/nonexistent/bin/node', runnerPath: RUNNER, mcp: false });
@@ -433,7 +438,7 @@ test('guide: after repairing the hooks next to a broken plugin, the plugin is tu
   }
 });
 
-test('plan: zn rules that do not block .env get the zn-gate repair, never the plugin install', async (t) => {
+test('plan: zn rules that do not block .env get the zn-gate repair, never the plugin install', { skip: process.platform === 'win32' && 'the zn-gate plugin needs Git Bash on Windows, which this fixture does not provide' }, async (t) => {
   const runner = require('../lib/hooks/runner');
   const real = runner.handle;
   runner.handle = async () => ({ decision: { decision: 'allow' } });
@@ -479,4 +484,44 @@ test('plan: a plugin turned off next to broken zn hooks repairs the hooks only',
   const cc = items.find((i) => i.id === 'claude-code');
   assert.equal(cc.state, 'not-protected');
   assert.deepEqual(cc.steps.map(line), ['zn hooks install claude-code']);
+});
+
+const posixOnly = { skip: process.platform === 'win32' && 'EACCES is a POSIX failure' };
+
+test('guide: npm failing with EACCES gives a clear next step, never sudo', posixOnly, async (t) => {
+  const m = machine(t, ['codex', 'cursor']);
+  const out = capture();
+  const run = () => ({ ok: false, stderr: 'npm error code EACCES\nnpm error syscall mkdir\nnpm error path /usr/local/lib/node_modules\n' });
+  const code = await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN, prefix: '/usr/local' }, shell: '/bin/zsh', stdin: tty, write: out.write, run, confirm: async () => true });
+  const text = out.text();
+  assert.equal(code, 1);
+  assert.match(text, /npm is not allowed to write to its global folder \(\/usr\/local\)/);
+  assert.match(text, /Codex CLI, Cursor stay unprotected/);
+  assert.match(text, /npm config set prefix ~\/\.npm-global/);
+  assert.match(text, /export PATH="\$HOME\/\.npm-global\/bin:\$PATH"' >> ~\/\.zshrc/);
+  assert.match(text, /npx -y zn-gate init/);
+  assert.match(text, /nvm/);
+  assert.doesNotMatch(text, /sudo/);
+  assert.doesNotMatch(text, /Run it yourself/);
+});
+
+test('guide: any other npm failure keeps the plain message', posixOnly, async (t) => {
+  const m = machine(t, ['codex']);
+  const out = capture();
+  const run = () => ({ ok: false, stderr: 'npm error code ENOTFOUND\n' });
+  await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN }, stdin: tty, write: out.write, run, confirm: async () => true });
+  assert.match(out.text(), /that did not finish\. Run it yourself: npm install -g zn-gate@/);
+  assert.doesNotMatch(out.text(), /global folder/);
+  // A step stub that only returns false (no output) also keeps it.
+  const out2 = capture();
+  await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN }, stdin: tty, write: out2.write, run: () => false, confirm: async () => true });
+  assert.match(out2.text(), /Run it yourself/);
+});
+
+test('permissionFailure: a global folder that is not writable counts, a missing one does not', posixOnly, (t) => {
+  const { permissionFailure } = _internal;
+  assert.equal(permissionFailure('', ''), false);
+  assert.equal(permissionFailure('npm ERR! EPERM: operation not permitted', ''), true);
+  assert.equal(permissionFailure('', path.join(tempDir(t, 'zn-prefix-'), 'does-not-exist')), false);
+  assert.equal(permissionFailure('', tempDir(t, 'zn-prefix-')), false);
 });

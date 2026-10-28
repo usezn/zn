@@ -8,7 +8,6 @@ and `node` must be installed, otherwise the test is skipped.
 """
 
 import json
-import re
 import shutil
 import subprocess
 import tempfile
@@ -228,7 +227,7 @@ class TestProviderFormatsParity(unittest.TestCase):
             ("secret:alibaba_key_id", "ALIBABA_KEY_ID", 'LTAIabcdefghijKLMNOP1234'),
         ]
         node = _node_types([t for _, _, t in cases])
-        for (rule_id, node_type, text), types in zip(cases, node):
+        for (rule_id, node_type, text), types in zip(cases, node, strict=False):
             with self.subTest(text=text):
                 _, found = R.redact_secrets(text)
                 self.assertNotIn(rule_id, [d["rule"] for d in found])

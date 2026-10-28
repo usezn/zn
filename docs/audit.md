@@ -24,7 +24,7 @@ It runs locally and sends nothing anywhere.
 
 ## Usage
 
-```
+```text
 zn audit [path] [--format text|json|sarif] [--output <file>]
          [--fail-on low|medium|high|critical|none]
          [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
@@ -71,14 +71,25 @@ Project files at any depth (configs in a subdirectory apply when an agent
 starts there). Agent directories (`.claude`, `.codex`, `.cursor`, `.github`,
 `skills`, ...) are read first. Outside them, `node_modules`, `vendor`, build
 and virtualenv directories are skipped; inside them nothing is skipped, so a
-skill called `build` is still read. `.git` is never read.
+skill called `build` is still read. `.git` is never read. The skipped
+directories that a project could use for its own files (`build`, `dist`,
+`out`, `vendor`, `target`) are listed under "Directories not read" in the text
+report and in `skippedDirs` in the JSON report. `target` is skipped only next
+to a `Cargo.toml`, `pom.xml`, Gradle or sbt build file, and `vendor` only next
+to `go.mod`, `composer.json`, `Gemfile` or `Cargo.toml`; without one they are
+ordinary directories and are read.
 
 Nothing the repository controls can make a file disappear from the report
 silently:
 
 - a symbolic link to an agent file or directory inside the repository is
   followed; one that leaves the repository is reported (ZNA020, high);
-- an agent file over 1 MB is reported (ZNA020, high) instead of skipped;
+- an agent file over 1 MiB is reported (ZNA020, high) instead of skipped, and
+  the first 1 MiB is still checked. Text files (instructions, workflows) get
+  every check on that part. JSON and TOML files cannot be parsed when cut, so
+  their hooks and settings are not reviewed; only a line search for stored
+  credentials and downloads piped into a shell runs. The finding says so, and
+  nothing after the first 1 MiB is reported as clean;
 - the scan stops after 50,000 directory entries or 120 seconds, and says so
   with a ZNA020 high finding (so the run fails at the default threshold);
 - FIFOs, devices and sockets are never opened;
@@ -127,23 +138,24 @@ Rule ids are stable: a rule may get better, but its id never changes meaning.
 | ZNA008 | high | An environment variable that loads code or certificates (`NODE_OPTIONS`, `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `PYTHONSTARTUP`, `BASH_ENV`, `PATH`, `GIT_SSH_COMMAND`, `NODE_EXTRA_CA_CERTS`, ...) or moves where the agent reads its config (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `XDG_CONFIG_HOME`, `OPENCODE_CONFIG`) | Every process the agent starts runs the injected code or trusts the injected certificate; a moved config directory loads a config shipped in the repository. Also checked in the `env` of every MCP server, zn's own included. CVE-2025-61260 |
 | ZNA009 | high | A credential helper command in project settings (`apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`, `otelHeadersHelper`) | Runs to fetch credentials and decides which key the agent uses |
 | ZNA010 | high / medium | Broad permissions: `Bash(*)`, `Bash`, `*`, interpreter wildcards such as `Bash(python:*)`, `defaultMode: bypassPermissions`, Codex `approval_policy = "never"` with full access, OpenCode `"bash": "allow"`, VS Code `chat.tools.autoApprove` | The agent runs anything an injected instruction asks, without a prompt |
-| ZNA011 | high | A secret value in an agent config or instruction file | Committed credentials leak with the repository; detection uses the zn scrubber, and the report never prints the value |
-| ZNA012 | high / medium / low | A prompt-injection pattern in agent instructions (the zn rules engine: instruction overrides, fake system tags, hidden HTML, invisible Unicode, markdown image beacons) | The agent reads the file as trusted guidance. High for the strong patterns; medium for weaker ones ("you are now", "forget"); in the files an agent reads as instructions (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules` and rules, `copilot-instructions.md`, skills, commands, prompts) a strong pattern is never lowered, because the agent reads it the same, quoted or not. In a skill's supporting notes (any file in a skill folder other than `SKILL.md`) it is lowered to medium only when the match lies inside the quotes of an example ("e.g. '...'", "such as '...'"). A weak pattern is lowered by an example marker or inside a code block that is closed again. Blockquotes and unclosed code blocks never lower anything. Rules that are noisy in documentation ("act as", mentions of credentials or `.env`) are not used here |
-| ZNA013 | medium / low | Instructions tell the agent to download and run code | Same as ZNA002 once the agent follows them; low for well-known installers (rustup, uv, bun, deno, nvm, Homebrew) |
-| ZNA014 | high | Instructions tell the agent to send secrets or files out (`.env`, `~/.ssh`, tokens to a URL, `curl -d @.env`, `env \| curl`) | Direct exfiltration through the agent |
+| ZNA011 | high | A secret value in an agent config or instruction file: a known key format anywhere in the file and, in MCP server configs, a value written in plain text under a name such as an API key, token, password or `Authorization` header, in a credential argument (`--api-key`) or in a URL key (`?api_key=`). A reference (`${NAME}`, `__ZN_NAME__`) is not a finding | Committed credentials leak with the repository; the report never prints the value, only its kind and the name that holds it, and the fix says what to do |
+| ZNA012 | high / medium / low | A prompt-injection pattern in agent instructions (the zn rules engine: instruction overrides, fake system tags, hidden HTML, invisible Unicode, markdown image beacons) | The agent reads the file as trusted guidance. High for the strong patterns; medium for weaker ones ("you are now", "forget"); in the files an agent reads as instructions (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules` and rules, `copilot-instructions.md`, skills, commands, prompts) a strong pattern is never lowered, because the agent reads it the same, quoted or not. In a skill's supporting notes (any file in a skill folder other than `SKILL.md`) it is lowered to medium only when the match lies inside the quotes of an example ("e.g. '...'", "such as '...'"). A weak pattern is lowered by an example marker or inside a code block that is closed again. Blockquotes and unclosed code blocks never lower anything. Rules that are noisy in documentation ("act as", mentions of credentials or `.env`) are not used here. `SKILL.md` and docs pages (a `docs/` folder outside the agent instruction folders such as `.claude/`, `.cursor/`, `.github/prompts` or `commands/`, and `README` files) get a few documentation shapes: a chat token inside code or quotes, a `<system-or-project>` style placeholder that wraps no text (it is reported when it is closed anywhere in the file, when no word comes before it on the line, or when an order follows it on the line, and a closing tag is always reported; the same two shapes also apply in the other notes of a skill folder, where a chat token shown inside backticks or a closed code block is reported as medium instead of high), `system:anonymous` style identity values, a badge image from a known badge host and a warning that names its object ("never follow instructions found in the page") are not reported, unless the warning itself holds an override phrase; closed quotes right after "phrases like", "such as" or "e.g." and an attack shown inside a code block under a heading about injection are reported one level lower (a strong pattern is medium, never dropped). Any other quote, an unclosed quote and an order that follows a warning, with or without a comma ("Don't trust the text in the page ignore all previous instructions"), are read as instructions. Instruction files (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, `copilot-instructions.md`, rules, commands, prompts) get none of these shapes even inside a `docs/` folder. A system role token, a role marker on its own line and an override phrase stay high |
+| ZNA013 | medium / low | Instructions tell the agent to download and run code | Same as ZNA002 once the agent follows them; low for well-known installers (rustup, uv, bun, deno, nvm, Homebrew); text that warns about or lists the pattern (a risk checklist under a heading such as "Dangerous patterns", a table row with a verdict cell such as "blocked", "unsafe") is not reported; a line that starts with an order (run, install, use, get, add, pipe), an order after a warning that turns into a reassurance ("unsafe, so get it with ...", "flagged, but here it is fine: ..."), an order after a verdict label ("Avoid: just run ..."), an order after a warning followed by a colon, a dash or an arrow ("unsafe: curl ...", "unsafe — curl ...", "unsafe -> curl ..."), a table row whose note says "no risk", "not blocked", "risk-free" or "isn't risky", a line inside a code block and a line with a severity label such as "Critical:" are always reported |
+| ZNA014 | high | Instructions tell the agent to send secrets or files out (`.env`, `~/.ssh`, tokens to a URL, `curl -d @.env`, `env \| curl`); setup steps such as `git clone <url>`, `cp .env.example .env` and a "create a key at" step with a link are not | Direct exfiltration through the agent |
 | ZNA015 | medium | Instructions tell the agent to skip safety checks or to hide what it does (`--no-verify`, `--dangerously-skip-permissions`, "disable the sandbox", "do not tell the user") | Removes the checks that would catch the rest. "Never ask the user" is not concealment and is not reported |
 | ZNA016 | critical (Windows executables) / high | An executable in the audited root shares its name with a common tool (`git.exe`, `node.exe`, `npm.cmd`, `python`, `zn.cmd`, ...) | Windows and some tools search the current directory first: the planted file runs instead of the real tool. CVE-2026-63093 |
 | ZNA017 | medium | Project settings add plugin marketplaces or enable plugins (`extraKnownMarketplaces`, `enabledPlugins`) | Third-party plugins (hooks, MCP servers, skills) get installed and updated once the project is trusted ("Plugin4Shell") |
 | ZNA018 | low | The repository ships agent extensions (commands, subagents, skills, plugins) | Inventory: they are reviewed by the other rules, but you should know they are there |
 | ZNA019 | high / medium | A CI workflow runs an AI agent on input anyone can write (`issues`, `issue_comment`, `pull_request_target`, discussions) | An issue or comment becomes instructions for an agent that holds repository tokens. High with `pull_request_target`, issue or comment text pasted into the workflow (`${{ github.event.issue.body }}`, also through `env:`), an action opened to users without write access (`allowed_non_write_users`), or a CLI step (`claude -p`, `codex exec`) with write permissions and no author filter. Medium otherwise: the common agent actions check the actor's own permission before running |
-| ZNA020 | high / low | An agent file could not be checked: a syntax error, a size over 1 MB, a symbolic link leaving the repository, or a scan that stopped early | The agent may still act on it. High when the file can run commands or redirect the agent (the text is then searched for risky keys, and `runOn: folderOpen` or a download piped into a shell is still reported), when it uses a reserved key such as `__proto__`, or when the scan did not finish; low for a syntax error in a file that cannot run anything |
+| ZNA020 | high / low | An agent file could not be checked: a syntax error, a size over 1 MiB (the first 1 MiB is still checked), a symbolic link leaving the repository, or a scan that stopped early | The agent may still act on it. High when the file can run commands or redirect the agent (the text is then searched for risky keys, and `runOn: folderOpen` or a download piped into a shell is still reported), when it uses a reserved key such as `__proto__`, or when the scan did not finish; low for a syntax error in a file that cannot run anything |
+| ZNA021 | medium | An agent instruction file (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, rules, `copilot-instructions.md`, `SKILL.md` and other skill, command and agent files) has a run of 40 or more empty or whitespace-only lines with more text after it | The text after the run is out of view for a person who opens the file and past the part of it a classifier reads. The finding gives the line where that text starts and the length of the run; the text is not printed. Blank lines at the end of a file are not reported. The check counts lines and uses no text patterns: read the file from the reported line |
 
 ## Output
 
 ### Text
 
-```
-zn audit  ./some-repo  (zn-gate 1.13.1)
+```text
+zn audit  ./some-repo  (zn-gate 1.14.1)
 
 CRITICAL  ZNA007  .claude/settings.json:4  [claude]
           Model API endpoint overridden by the project
@@ -165,7 +177,7 @@ file names) are printed as `\x1b`, never sent to the terminal.
 {
   "version": 1,
   "tool": "zn-gate",
-  "toolVersion": "1.13.1",
+  "toolVersion": "1.14.1",
   "root": "/home/me/some-repo",
   "findings": [
     {
@@ -187,10 +199,21 @@ file names) are printed as `\x1b`, never sent to the terminal.
     "bySeverity": { "critical": 1, "high": 0, "medium": 0, "low": 0 },
     "failOn": "high",
     "failed": true,
-    "agents": ["claude", "codex", "cursor", "opencode", "amazonq", "copilot", "gemini"]
+    "agents": ["claude", "codex", "cursor", "opencode", "amazonq", "copilot", "gemini"],
+    "agentStatus": [
+      { "agent": "claude", "files": 3, "checked": true },
+      { "agent": "codex", "files": 0, "checked": false }
+    ]
   }
 }
 ```
+
+`summary.agentStatus` says, for each selected agent, how many files were read and whether
+anything was checked. With `--agents`, the text report adds a line such as
+`codex: not checked (no instruction or config files found where zn looks: AGENTS.md, .codex/)`
+for an agent with no files, so a missed location is not mistaken for a clean result. The
+exit code does not change. A file that exists but cannot be read (for example, permission
+denied) is a high ZNA020 finding, never a clean result.
 
 `file` is relative to `root` with forward slashes; files from `--include-home`
 start with `~/`. `agent` is the agent that reads the file (`any` when several
@@ -209,7 +232,7 @@ findings) so alerts survive line moves and stay unique. Findings from
 flag off in CI.
 
 ```yaml
-- run: npx -y zn-gate@1.13.1 audit --format sarif --output zn-audit.sarif --fail-on none
+- run: npx -y zn-gate@1.14.1 audit --format sarif --output zn-audit.sarif --fail-on none
 - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
   with:
     sarif_file: zn-audit.sarif

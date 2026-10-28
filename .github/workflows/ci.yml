@@ -1,30 +1,28 @@
 name: zn CI
 
-# Pull requests into next run the checks the rulesets require and Ubuntu with Node.js 22. The full matrix
-# (every Node.js and Python version, Windows and macOS) runs on pushes to main and next, on pull requests
-# into main and release branches, and on any pull request labelled full-ci. Its only macOS job is Python 3.12.
-# A pull request into next that changes the Python package, the Node package it shares fixtures with,
-# bench/ or this workflow also runs the whole Python matrix.
+# Pull requests into next run the checks the rulesets require (Node.js 18.x, 22.x and 24.x, Python 3.12, the
+# npm and Python package builds), all on Ubuntu, plus one lint job. The full matrix (every Node.js and
+# Python version, Windows and macOS) runs on pushes to main, next and release branches, on the daily schedule, on manual runs,
+# on pull requests into main and release branches, and on any pull request labelled full-ci. Its only macOS
+# job is Python 3.12.
 on:
   push:
-    branches: [ main, next ]
-    # Documentation-only pushes skip this workflow. Markdown under packages/, plugins/, skill/,
-    # bench/ and .github/ still runs it (the package and plugin checks read some of it): a stricter
-    # version of the split that .github/scripts/ci-scope.sh makes for pull requests.
-    paths:
-      - '**'
-      - '!docs/**'
-      - '!**/*.md'
-      - 'packages/**'
-      - 'plugins/**'
-      - 'skill/**'
-      - 'bench/**'
-      - '.github/**'
+    # release/** is here, and there is no paths filter, because tag-release.yml requires the checks of this
+    # workflow (and of the other workflows listed in .github/release-required-checks.txt) on the exact
+    # release commit: a documentation-only top commit, such as a changelog edit, must still get all of them.
+    branches: [ main, next, 'release/**' ]
   pull_request:
     branches: [ main, next, 'release/**' ]
     types: [ opened, synchronize, reopened, labeled, ready_for_review ]
     # No paths filter here: these jobs give required checks, and a workflow skipped by a
     # paths filter leaves them pending. ci-scope.sh skips their steps for documentation instead.
+  # The merge queue: the same sample as a pull request into next, the full matrix for main and release/*.
+  merge_group:
+    types: [ checks_requested ]
+  # Daily full run on the default branch.
+  schedule:
+    - cron: '30 6 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -34,6 +32,14 @@ permissions:
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+
+env:
+  # Retry npm and pip downloads instead of failing a run on one network error.
+  NPM_CONFIG_FETCH_RETRIES: "5"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000"
+  PIP_RETRIES: "5"
+  PIP_TIMEOUT: "60"
 
 jobs:
   test-node:
@@ -46,11 +52,11 @@ jobs:
       fail-fast: false
       matrix:
         # 18.x, 22.x and 24.x are required checks: they always run.
-        node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["18.x", "20.x", "22.x", "24.x"]' || '["18.x", "22.x", "24.x"]') }}
+        node-version: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["18.x", "20.x", "22.x", "24.x", "26.x"]' || '["18.x", "22.x", "24.x"]') }}
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -62,24 +68,47 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         working-directory: .
         run: bash .github/scripts/ci-scope.sh
       - name: Use Node.js ${{ matrix.node-version }}
         if: steps.scope.outputs.run == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version: ${{ matrix.node-version }}
-          cache: npm
-          cache-dependency-path: packages/zn-gate/package-lock.json
+          check-latest: true
       - name: Install zn-gate dependencies
         if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate
         run: npm ci --ignore-scripts
       - name: Run zn-gate unit tests
-        if: steps.scope.outputs.run == 'true'
+        if: steps.scope.outputs.run == 'true' && matrix.node-version != '22.x'
         working-directory: packages/zn-gate
         run: npm test
+      - name: Run zn-gate unit tests with a coverage report
+        # The same tests as `npm test`, run under c8 on one Node.js version. Report only, no threshold.
+        if: steps.scope.outputs.run == 'true' && matrix.node-version == '22.x'
+        working-directory: packages/zn-gate
+        run: |
+          set -o pipefail
+          npx --no-install c8 --reporter=lcov --reporter=text --reporter=text-summary \
+            --report-dir="$RUNNER_TEMP/coverage-node" --include='lib/**' --include='bin/**' \
+            node test/run-all.js 2>&1 | tee "$RUNNER_TEMP/coverage-node.log"
+          {
+            echo '### zn-gate (Node.js) coverage'
+            echo '```'
+            sed -n '/^=* Coverage summary =*/,/^=*$/p' "$RUNNER_TEMP/coverage-node.log" | grep -E '^(Statements|Branches|Functions|Lines)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Node.js coverage report
+        if: always() && steps.scope.outputs.run == 'true' && matrix.node-version == '22.x'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-node
+          path: ${{ runner.temp }}/coverage-node/lcov.info
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Run zn-gate integration tests
         if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate
@@ -88,9 +117,8 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         run: node bench/bench_node.js
 
-  # The Python tests also read files from packages/zn-gate (rule fixtures) and run bench/bench_python.py.
-  # A pull request into next that touches any of them runs the whole Python matrix, not only 3.12:
-  # a failure on an older Python version must show up before the merge, not on the push to next.
+  # Pull requests into next run Python 3.12 on Ubuntu only. Older and newer Python versions, Windows and
+  # macOS run on the push to next; label a pull request full-ci to run them before the merge.
   test-python:
     name: Python ${{ matrix.python-version }} tests & benchmarks (${{ matrix.os }})
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
@@ -100,68 +128,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The matrix is fixed so that every job name is known when the run starts (a matrix built from
-        # another job leaves a check with an unexpanded name when the run is cancelled early).
-        # "Python 3.12 tests & benchmarks (ubuntu-latest)" is a required check: it always runs. The
-        # other entries decide in their first step whether this change needs them and end quickly if not.
-        include:
-          - { os: ubuntu-latest, python-version: "3.10" }
-          - { os: ubuntu-latest, python-version: "3.11" }
-          - { os: ubuntu-latest, python-version: "3.12" }
-          - { os: ubuntu-latest, python-version: "3.13" }
-          - { os: windows-latest, python-version: "3.12" }
-          - { os: macos-latest, python-version: "3.12" }
+        # "Python 3.12 tests & benchmarks (ubuntu-latest)" is a required check (plain pytest; the coverage
+        # report is the python-coverage job): it is in both lists. The
+        # list depends only on the event (never on another job), so every job name is known when the
+        # run starts.
+        include: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.12"}]') }}
     defaults:
       run:
         shell: bash
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Decide whether this matrix entry runs
-        id: entry
-        shell: bash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          # Pushes, pull requests into main or a release branch and full-ci pull requests run every entry.
-          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
-          PRIMARY: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' }}
-          PY_VERSION: ${{ matrix.python-version }}
-          RUNNER_OS_NAME: ${{ matrix.os }}
-        working-directory: .
-        run: |
-          # A pull request into next that touches the Python package, the Node package it shares fixtures
-          # with, bench/ or the CI setup runs the whole matrix; any other one runs Python 3.12 on Ubuntu only.
-          # Any error while listing the files means the full matrix: when in doubt, test more.
-          run=true
-          if [ "$PRIMARY" != "true" ] && [ "$FULL" != "true" ]; then
-            if [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && git fetch --no-tags --depth=1 origin "$BASE_SHA" > /dev/null 2>&1 \
-               && files="$(git diff --no-renames --name-only "$BASE_SHA" HEAD)"; then
-              # An empty list (no net change) is a doubt too: keep the entry.
-              [ -n "$files" ] && run=false
-              while IFS= read -r f; do
-                case "$f" in
-                  packages/zn-gate-py/*|packages/zn-gate/*|bench/*|.github/workflows/ci.yml|.github/ci-test-requirements.txt|.github/scripts/ci-scope.sh)
-                    run=true; echo "runs the full Python matrix: $f"; break ;;
-                esac
-              done <<< "$files"
-            fi
-          fi
-          [ "$run" = "true" ] || echo "this change does not need Python $PY_VERSION on $RUNNER_OS_NAME"
-          echo "run=$run" | tee -a "$GITHUB_OUTPUT"
       - name: Decide what this change needs
         id: scope
-        if: steps.entry.outputs.run == 'true'
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         working-directory: .
         run: bash .github/scripts/ci-scope.sh
       - name: Set up Python ${{ matrix.python-version }}
@@ -169,26 +159,27 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: |
-            packages/zn-gate-py/pyproject.toml
-            .github/ci-test-requirements.txt
+          # No pip cache: the test tools are small and hash-pinned, and each cache key saved a
+          # new 200-350 MB copy that pushed the repository toward its 10 GB cache limit.
       - name: Install package and test dependencies
         if: steps.scope.outputs.run == 'true'
         # Test tools pinned with hashes; the package itself has no dependencies.
         run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
           python -m pip install --require-hashes -r .github/ci-test-requirements.txt
           python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
       - name: Install LangChain and LlamaIndex for the integration tests
         # One entry is enough: the tests that drive the integrations through the real frameworks run here
         # and skip on the other entries.
         if: steps.scope.outputs.run == 'true' && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-        run: python -m pip install --require-hashes -r .github/ci-framework-test-requirements.txt
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python -m pip install --require-hashes -r .github/ci-framework-test-requirements.txt
       - name: Run pytest (unit + integration)
         if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate-py
         env:
-          # Where the frameworks were installed above their tests must run, not skip.
+          # Where the frameworks were installed above, their tests must run, not skip.
           ZN_REQUIRE_FRAMEWORKS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12') && '1' || '' }}
         run: python -m pytest tests/ -v
       - name: Run the LangChain and LlamaIndex integration tests on the oldest supported langchain-core
@@ -199,6 +190,7 @@ jobs:
           ZN_REQUIRE_FRAMEWORKS: "1"
         run: |
           python -m venv "$RUNNER_TEMP/venv-oldest-langchain"
+          "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
           "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --require-hashes -r .github/ci-test-requirements.txt
           "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --require-hashes -r .github/ci-framework-test-requirements-oldest.txt
           "$RUNNER_TEMP/venv-oldest-langchain/bin/python" -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
@@ -209,16 +201,65 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         run: python bench/bench_python.py
 
-  pack-node:
-    name: npm package (pack, inspect, install)
+  # The coverage report for the Python package, off the pull request path: "Python 3.12 tests & benchmarks
+  # (ubuntu-latest)" above is a required check and runs plain pytest, so the tracing slowdown and the
+  # report upload never delay a merge. Runs on pushes to main and next, on the daily schedule and on
+  # manual runs; it is not a required check. Report only, no threshold.
+  python-coverage:
+    name: Python 3.12 coverage report (ubuntu-latest)
+    # Not in pull requests or the merge queue: it is a report, not a required check.
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python -m pip install --require-hashes -r .github/ci-test-requirements.txt
+          python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
+      - name: Run pytest (unit + integration) with a coverage report
+        # One wall-clock test is left out here (tracing slows it past its limit); the required job runs it untraced.
+        working-directory: packages/zn-gate-py
+        run: |
+          python -m pytest tests/ -v --deselect tests/test_cli.py::TestCliScanCommand::test_many_key_blocks_scan_in_linear_time --cov=zn_gate --cov-report=term --cov-report=xml:"$RUNNER_TEMP/coverage-python.xml" 2>&1 | tee "$RUNNER_TEMP/coverage-python.log"
+          {
+            echo '### zn-gate (Python) coverage'
+            echo '```'
+            grep -E '^TOTAL' "$RUNNER_TEMP/coverage-python.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Python coverage report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-python
+          path: ${{ runner.temp }}/coverage-python.xml
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # One job for the linters: eslint on zn-gate (rules in .github/eslint), ruff and mypy on the Python
+  # package (rules in packages/zn-gate-py/pyproject.toml). Each one blocks the run, and each runs even
+  # when an earlier one failed, so one run reports all of them.
+  lint:
+    name: Lint (eslint, ruff, mypy)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Harden the runner (egress audit)
-        if: runner.os == 'Linux'
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -230,19 +271,93 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        run: bash .github/scripts/ci-scope.sh
+      - if: steps.scope.outputs.run == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          package-manager-cache: false
+          node-version: 22
+      - name: Install the eslint tooling
+        id: eslint-tools
+        if: steps.scope.outputs.run == 'true'
+        working-directory: .github/eslint
+        run: npm ci --ignore-scripts
+      - name: eslint
+        if: ${{ !cancelled() && steps.scope.outputs.run == 'true' && steps.eslint-tools.outcome == 'success' }}
+        working-directory: packages/zn-gate
+        run: ../../.github/eslint/node_modules/.bin/eslint -c ../../.github/eslint/eslint.config.mjs --max-warnings 0 .
+      - name: Set up Python
+        id: python
+        if: ${{ !cancelled() && steps.scope.outputs.run == 'true' }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          # No pip cache: the test tools are small and hash-pinned, and each cache key saved a
+          # new 200-350 MB copy that pushed the repository toward its 10 GB cache limit.
+      - name: Install ruff and mypy
+        id: python-tools
+        if: ${{ !cancelled() && steps.python.outcome == 'success' }}
+        # Pinned with hashes in the same file as the test tools.
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python -m pip install --require-hashes -r .github/ci-test-requirements.txt
+      - name: Run ruff
+        if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
+        working-directory: packages/zn-gate-py
+        run: python -m ruff check .
+      - name: Run mypy
+        if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
+        working-directory: packages/zn-gate-py
+        run: python -m mypy
+      - name: Run mypy --strict on the public API
+        if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
+        # Blocking. The modules behind everything in zn_gate.__all__ are checked in
+        # strict mode, together with a file of type-level assertions that fails to
+        # type-check if a public signature changes shape.
+        working-directory: packages/zn-gate-py
+        run: >-
+          python -m mypy --strict
+          src/zn_gate/__init__.py src/zn_gate/rules.py src/zn_gate/guard.py
+          src/zn_gate/client.py src/zn_gate/evidence.py
+          typing_check/check_public_api.py
+
+  pack-node:
+    name: npm package (pack, inspect, install)
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         working-directory: .
         run: bash .github/scripts/ci-scope.sh
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: steps.scope.outputs.run == 'true'
         with:
+          package-manager-cache: false
           node-version: 22.x
-          cache: npm
-          cache-dependency-path: packages/zn-gate/package-lock.json
       - name: Install dependencies (bundled into the tarball)
         if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate
         run: npm ci --ignore-scripts
+      - name: Prune sources and maps from the bundled dependencies
+        if: steps.scope.outputs.run == 'true'
+        run: node .github/scripts/prune-bundled-sources.js packages/zn-gate
       - name: Pack
         if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate
@@ -255,7 +370,7 @@ jobs:
         run: node .github/scripts/check-npm-pack.js "$RUNNER_TEMP/pack/pack.json" packages/zn-gate
       - name: Install the tarball in an empty project (offline)
         if: steps.scope.outputs.run == 'true'
-        run: |
+        run: | # zizmor: ignore[adhoc-packages] the tarball just built by this job is installed offline
           mkdir -p "$RUNNER_TEMP/smoke"
           cd "$RUNNER_TEMP/smoke"
           npm init -y > /dev/null
@@ -296,7 +411,7 @@ jobs:
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -308,28 +423,29 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FULL: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         working-directory: .
         run: bash .github/scripts/ci-scope.sh
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         if: steps.scope.outputs.run == 'true'
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: |
-            packages/zn-gate-py/pyproject.toml
-            .github/release-requirements.txt
+          # No pip cache: the test tools are small and hash-pinned, and each cache key saved a
+          # new 200-350 MB copy that pushed the repository toward its 10 GB cache limit.
       - name: Install build tools
         if: steps.scope.outputs.run == 'true'
         # The hash-pinned tools the release workflow uses.
-        run: python -m pip install --require-hashes -r .github/release-requirements.txt
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python -m pip install --require-hashes -r .github/release-requirements.txt
       - name: Build sdist and wheel, twice, and require the same bytes
         if: steps.scope.outputs.run == 'true'
         # setuptools stamps the files it generates with the build time; normalize-sdist.py keeps every
         # name and byte of content and fixes the times, owners, order and gzip header.
         run: |
           set -euo pipefail
-          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
           for out in dist rebuild; do
             python -m build --no-isolation packages/zn-gate-py --outdir "$RUNNER_TEMP/$out"
             python -I .github/scripts/normalize-sdist.py "$RUNNER_TEMP"/$out/*.tar.gz
@@ -342,6 +458,11 @@ jobs:
       - name: twine check
         if: steps.scope.outputs.run == 'true'
         run: python -m twine check --strict "$RUNNER_TEMP"/dist/*
+      - name: Check wheel and sdist contents
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          python -I .github/scripts/test_check_python_pack.py
+          python -I .github/scripts/check-python-pack.py "$RUNNER_TEMP"/dist/*.whl "$RUNNER_TEMP"/dist/*.tar.gz
       - name: List sdist contents
         if: steps.scope.outputs.run == 'true'
         run: tar -tzf "$RUNNER_TEMP"/dist/*.tar.gz
@@ -349,6 +470,7 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         run: |
           python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
           "$RUNNER_TEMP/venv/bin/python" -m pip install "$RUNNER_TEMP"/dist/*.whl
       - name: Smoke test the installed CLI
         if: steps.scope.outputs.run == 'true'

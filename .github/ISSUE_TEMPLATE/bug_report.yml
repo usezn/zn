@@ -1,0 +1,95 @@
+name: Bug report
+description: Something in zn-gate does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For a question or an idea, use [GitHub Discussions](https://github.com/usezn/zn/discussions) instead. If you found a security problem, do not open an issue: follow the [security policy](https://github.com/usezn/zn/security/policy).
+  - type: input
+    id: version
+    attributes:
+      label: zn-gate version
+      description: Run `npx -y zn-gate --version` (npm) or `zn-gate --version` if it is installed.
+      placeholder: "for example 1.13.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent or client
+      options:
+        - Claude Code
+        - Codex CLI
+        - Cursor
+        - OpenCode
+        - Antigravity
+        - ZCode desktop app
+        - Gemini CLI (experimental)
+        - Copilot CLI (experimental)
+        - Other MCP client
+        - Not applicable
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - npm (npx or npm install)
+        - PyPI (pip)
+        - Agent plugin
+        - GitHub Action
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact commands or actions, starting from a clean state if you can.
+      placeholder: |
+        1. Run ...
+        2. Ask the agent to ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output and logs
+      description: |
+        The output of `npx -y zn-gate doctor` and any error text help a lot. Remove API keys, tokens, passwords and personal data before you paste. Never paste a key or the content of a `.env` file.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I removed every secret and personal detail from this report.
+          required: true
+        - label: I searched the existing issues and did not find the same problem.
+          required: true

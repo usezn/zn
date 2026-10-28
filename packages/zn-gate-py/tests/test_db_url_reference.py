@@ -24,3 +24,15 @@ def test_literals_are_redacted():
               "redis://app:%hunter2%@cache.example.com",
               "postgres://app:{{s3cr3t}}@db.example.com", "mysql://app:$pass@db.example.com"):
         assert "[REDACTED_DB_PASSWORD]" in str(_clean(t)), t
+
+
+def test_scheme_with_driver_name_is_redacted():
+    fake = "ZnTestFakePw42x"
+    for t in ("oracle+cx_oracle://app:" + fake + "@db.example.invalid/x",
+              "postgresql+psycopg2://app:" + fake + "@db.example.invalid/x",
+              "mssql+pyodbc://app:" + fake + "@db.example.invalid/x",
+              "my_scheme://app:" + fake + "@db.example.invalid/x",
+              "x_oracle+cx_oracle://app:" + fake + "@db.example.invalid/x"):
+        assert fake not in str(_clean(t)), t
+    ref = "oracle+cx_oracle://app:${DB_PASS}@db.example.invalid/x"
+    assert _clean(ref) == ref

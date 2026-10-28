@@ -2,14 +2,14 @@
 
 Thank you for your interest in contributing to **zn**! We welcome bug reports, rule improvements, security research, and pull requests.
 
-How the project is maintained, how pull requests are reviewed and how releases are made: [GOVERNANCE.md](GOVERNANCE.md). Pull requests target the `next` branch.
+How the project is maintained, how pull requests are reviewed and how releases are made: [GOVERNANCE.md](GOVERNANCE.md). Pull requests target the `next` branch. Releases ship weekly: a pull request merged into `next` by Thursday goes into that week's release candidate and, after testing, into the release on Tuesday ([release schedule](GOVERNANCE.md#release-schedule)).
 
 ## Architecture Overview
 
 `zn` is designed as a local-first security gate with minimal dependencies:
 - `packages/zn-gate/`: Node.js SDK, CLI, MCP Server, and stdio Shield proxy. Its only runtime dependency is `age-encryption` (with its `@noble`/`@scure` dependencies) for the secret vault, bundled in the package.
 - `packages/zn-gate-py/`: Python SDK, CLI, and agent framework integrations (Python standard library only).
-- `src/`: legacy Rust gateway (see [docs/rust-core.md](docs/rust-core.md)); not released and not built in CI.
+- `src/`: legacy Rust gateway (see [docs/rust-core.md](docs/rust-core.md)); not released as a package. CI builds, tests and lints it ([rust.yml](.github/workflows/rust.yml)).
 
 ## Development Setup
 
@@ -49,22 +49,38 @@ Each rule layer has a version constant that must increase whenever the layer's r
 
 | Layer | Constant | Files covered by the snapshot |
 | --- | --- | --- |
-| Detection rules | `RULES_VERSION` | `lib/rules.js` |
+| Detection rules | `RULES_VERSION` | `lib/rules.js`, `lib/mcp-secrets.js` |
 | Scrubber types | `SCRUB_RULES_VERSION` | `lib/scrub/patterns.js`, `lib/scrub/exact.js` |
 | `zn audit` | `AUDIT_RULES_VERSION` | `lib/audit/rules.js`, `lib/audit/patterns.js` |
 | Hook policy | `POLICY_RULES_VERSION` | `lib/hooks/policy.js`, `lib/broker/files.js`, `lib/broker/markers.js`, `lib/broker/dotenv.js`, `lib/shell-quote.js` |
 
-The Python `rules.py` is not in the snapshot. The parity test (`test/rules_parity.test.js`) keeps it equal to `rules.js`.
+The Python `rules.py` and `mcp_secrets.py` are not in the snapshot. The parity test (`test/rules_parity.test.js`) keeps `rules.py` equal to `rules.js`; `mcp_secrets.py` is kept equal to `lib/mcp-secrets.js` by the shared samples in `test/fixtures/mcp_config_secret_samples.json`, which both test suites run.
 
 When you change a layer:
 
-1. Bump its version in the format `YYYY-MM-DD.N`. The version must increase. Dates compare as text and `N` compares as a number, so `2026-10-14.10` is newer than `2026-10-14.9`. Adding or removing a file in a layer counts as a change.
+1. Bump its version in the format `YYYY-MM-DD.N`. The version must increase. Dates compare as text and `N` compares as a number, so `2026-10-14.10` is newer than `2026-10-14.9`; the suffix is a plain integer and is never compared as text. Adding or removing a file in a layer counts as a change.
 2. Run `node packages/zn-gate/scripts/update-rules-snapshot.js`. It rewrites `packages/zn-gate/test/fixtures/rules_snapshot.json` and refuses to record a change whose version did not increase.
 3. Commit the updated snapshot with the change. `npm test` in `packages/zn-gate` runs `test/rules_snapshot.test.js`. It fails on a changed file with the same or an older version, on a version that moved without a file change, and on rule ids that were added or removed.
+
+On pull requests, CI also runs `node .github/scripts/check-rule-versions.mjs origin/<base>`. It compares every version constant with the one at the merge base and fails when a version is lower, when a layer's files changed with the same version, or when the Node and Python packages disagree on `RULES_VERSION` or `COMMAND_RULES_VERSION`.
 
 `--force` writes the snapshot anyway and prints a loud warning. Reviewers must justify, in the pull request, any hash change made without a version increase; do not approve one without that justification.
 
 CI also runs the false-positive gate, `node bench/rules_fp_gate.js`. It counts the blocks over the benign corpus and over `packages/zn-gate/test/fixtures/benign_phrases.json`, and fails when the total, or the count for any rule, rises above `bench/rules_fp_baseline.json`. Lower counts pass with a warning that the baseline is stale. If your change must block more benign text, explain why in the pull request, then run `node bench/rules_fp_gate.js --update-baseline`. Changing the phrase list also changes the scanned count, so update the baseline in the same commit. Known false positives stay in the phrase list and in the baseline. The gate evaluates from an empty directory, so a local `.znrules` or `zn.config.json` cannot change its counts.
+
+## Runnable doc snippets
+
+A code block in `README.md`, `packages/*/README.md` or `docs/*.md` is tested when the line above its opening fence is this marker (an HTML comment, so it shows nothing on GitHub or npm):
+
+````markdown
+<!-- snippet-test -->
+```python
+from zn_gate import evaluate
+print(evaluate("Summarize the quarterly revenue report.").verdict)
+```
+````
+
+The `Doc snippets` workflow runs each marked `javascript`, `python` or `bash` block alone, against the package built from the commit (`npm pack` of `packages/zn-gate`, `packages/zn-gate-py` installed in a virtual environment), in an empty network namespace and with no API key. The block must exit 0. A failure names the file and line of the block. Mark a block only when it can run as written and offline, with no setup from a previous block, no account and no agent installed; the rest of the docs stay as they are. To try it locally: `python3 .github/scripts/doc-snippets.py list`, then `python3 .github/scripts/doc-snippets.py run` (add `--netns` on Linux with `sudo`).
 
 ## Questions and Ideas
 

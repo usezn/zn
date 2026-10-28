@@ -3,14 +3,17 @@ LlamaIndex query and tool protection for zn-gate.
 
 For LlamaIndex tools, wrap the function with `guarded_tool` before
 `FunctionTool.from_defaults(fn=...)`: the arguments are checked before the
-function runs and secrets in its output are hidden before the agent reads it.
+function runs and the output is checked and masked before the agent reads it.
 """
 from __future__ import annotations
 import copy
 from typing import Any, Optional
 
-from ..guard import GuardBlockError, block_message
+from ..guard import GuardBlockError, block_message, validate_on_block
 from ..rules import evaluate, sanitize_tool_result
+
+
+ON_BLOCK_MODES = ("raise", "return", "ignore")
 
 
 class ZnLlamaGuard:
@@ -28,6 +31,7 @@ class ZnLlamaGuard:
     """
     def __init__(self, on_block: str = "raise", mask_secrets: bool = True,
                  raise_on_violation: Optional[bool] = None, fallback: Optional[str] = None):
+        on_block = validate_on_block(on_block, ON_BLOCK_MODES)
         if raise_on_violation is not None:
             self.on_block = "raise" if raise_on_violation else "ignore"
         else:
