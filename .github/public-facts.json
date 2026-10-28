@@ -269,7 +269,7 @@
   ],
   "pluginVersion": {
     "_comment": "The zn-gate version the agent plugin is pinned to. It follows the release one step later: plugins/tools/pin-release.js moves it, the plugin manifests and the plugin docs in one commit after npm publishes the release.",
-    "value": "1.13.1",
+    "value": "1.14.1",
     "files": [
       {
         "file": "plugins/zn-gate/plugin.json",
