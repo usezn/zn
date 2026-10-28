@@ -1051,7 +1051,10 @@ ${ruleLine(process.env, 60)}\n`);
     }
 
     const totalModified = actions.filter(a => a.status === 'shielded' || a.status === 'reverted').length;
-    process.stdout.write(`\nDone. Checked ${scanned.length} environment configurations (${totalModified} modified).\n\n`);
+    const failed = actions.filter(a => a.status === 'error').length;
+    process.stdout.write(`\nDone. Checked ${scanned.length} environment configurations (${totalModified} modified${failed ? `, ${failed} could not be changed` : ''}).\n\n`);
+    // A config that could not be changed is a failure, also for scripts: exit 1.
+    if (failed) process.exitCode = 1;
     return;
   }
 

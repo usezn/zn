@@ -645,11 +645,30 @@ function configureEnvironments(options = {}) {
         actions.push({ env: env.name, status: 'already_shielded' });
       }
     } catch (err) {
-      actions.push({ env: env.name, status: err.manual ? 'manual_required' : 'error', error: err.message, file: env.filePath });
+      actions.push({ env: env.name, status: err.manual ? 'manual_required' : 'error', error: err.manual ? err.message : wrapErrorText(err, env.filePath), file: env.filePath });
     }
   }
 
   return { scanned: envs, actions };
+}
+
+// Why a config could not be changed, in plain words, naming the config (never zn's temporary file next to it) and the next
+// step. A file system error gets its reason; any other error keeps its message. The code shows with ZN_VERBOSE=1.
+const WRAP_WHY = {
+  EACCES: 'your account is not allowed to change it or its folder',
+  EPERM: 'your account is not allowed to change it or its folder',
+  ENOSPC: 'the disk is full',
+  EDQUOT: 'your disk quota is used up',
+  EROFS: 'it is on a read-only disk',
+  ENOTDIR: 'a part of its path is a file where a folder should be',
+  EISDIR: 'it is a folder, not a file',
+  ENAMETOOLONG: 'its path is too long',
+};
+function wrapErrorText(err, file) {
+  const why = err && WRAP_WHY[err.code];
+  if (!why) return String((err && err.message) || err);
+  const code = require('./verbose').isVerbose(process.env) ? ' [' + err.code + ']' : '';
+  return 'zn could not change ' + file + ': ' + why + code + '. It was left as it was. Fix that, then run `zn-gate init --wrap-mcp` again.';
 }
 
 module.exports = {
