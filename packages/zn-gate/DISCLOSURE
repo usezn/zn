@@ -36,18 +36,24 @@ cannot switch the protection off by editing them.
 
 On Windows, zn-gate starts the PowerShell that ships with the system, by its
 full path inside the Windows folder, never one found through the PATH or the
-project folder. It passes the script with -EncodedCommand so that no shell
-changes its quotes. It uses it for three things:
-  - to make the vault folder and the folder of zn's hook files readable only by
-    the current user. This uses .NET access-control calls that replace the
-    folder's permission list with a single entry for that user; zn-gate then
+project folder. It runs short inline scripts with -Command or -EncodedCommand,
+for these things only:
+  - to make the vault and zn's hook files readable only by the current user.
+    This uses .NET access-control calls that replace the permission list of
+    those folders and files with a single entry for that user; zn-gate then
     reads the list back and checks it;
   - to keep the vault key in the Windows Credential Manager, through a few lines
     of C# that PowerShell compiles in memory to call the system's own credential
     functions;
-  - to show a confirmation window.
-Nothing is downloaded for this, no user or group is created or changed, and the
-permission changes apply only to zn-gate's own folders and files.
+  - to show a confirmation window;
+  - to open the browser at the sign-in page when the person runs
+    `zn-gate connect`, and to read the clipboard when the person passes
+    --clipboard to store a secret;
+  - to run zn's own hook once when the person runs `zn-gate check`.
+The hooks that zn-gate writes for an agent on Windows also start this
+PowerShell to run zn-gate. Nothing is downloaded for this, no user or group is
+created or changed, and the permission changes apply only to zn-gate's own
+folders and files.
 
 4. Deleting the vault
 
