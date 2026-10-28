@@ -176,3 +176,63 @@ test('project hook guard: a node that links into a node_modules folder outside t
     assert.notEqual(r.status, 0, label);
   }
 });
+
+// N6: a refusal says which rule refused, not that zn is missing.
+test('project hook guard: each refusal names its rule (relative entry, folder gone, inside the project, link not followed)', { skip: !POSIX }, (t) => {
+  const q = (x) => "'" + x.replace(/'/g, "'\\''") + "'";
+  for (const [label, shell, extra] of SHELLS) {
+    const said = {};
+    {
+      const { proj, marker } = setup(t);
+      fakeZn(path.join(proj, 'bin'), marker);
+      said.relative = runGuard(shell, extra, proj, 'bin:/usr/bin:/bin');
+    }
+    {
+      const { proj, marker } = setup(t);
+      const bin = fakeZn(path.join(proj, 'bin'), marker);
+      said.inside = runGuard(shell, extra, proj, bin + ':/usr/bin:/bin');
+    }
+    {
+      const { proj, marker } = setup(t);
+      // node is a link, on a system with no readlink (simulated: the guard looks for none): it cannot be followed.
+      const bin = fakeZn(tempDir(t, 'zn-ptrust-norl-'), marker);
+      const script = projectShCommand('claude-code', 'PreToolUse').slice('sh -c '.length).replace('/usr/bin/readlink /bin/readlink', '/nonexistent/readlink');
+      said.unresolved = spawnSync(shell, [...extra, '-c', 'exec ' + shell + ' ' + extra.join(' ') + ' -c ' + script], {
+        cwd: proj, env: { PATH: bin + ':/usr/bin:/bin', HOME: '/nonexistent' }, input: '{}', encoding: 'utf8', timeout: 20000,
+      });
+    }
+    {
+      const { marker } = setup(t);
+      const bin = fakeZn(tempDir(t, 'zn-ptrust-gone-bin-'), marker);
+      const gone = path.join(tempDir(t, 'zn-ptrust-gone-'), 'work');
+      fs.mkdirSync(gone);
+      const quoted = projectShCommand('claude-code', 'PreToolUse').slice('sh -c '.length);
+      said.gone = spawnSync('/bin/sh', ['-c', 'cd ' + q(gone) + ' && rmdir ' + q(gone) + ' && exec ' + shell + ' ' + extra.join(' ') + ' -c ' + quoted], {
+        env: { PATH: bin + ':/usr/bin:/bin', HOME: '/nonexistent' }, input: '{}', encoding: 'utf8', timeout: 10000,
+      });
+    }
+    const expect = {
+      relative: /found only through a relative PATH entry.*keep only absolute folders in the PATH/,
+      inside: /inside this project or a node_modules folder.*outside the project/,
+      unresolved: /a link zn could not follow to its real folder/,
+      gone: /the folder it runs in no longer exists.*restart the agent from the project folder/,
+    };
+    for (const [why, r] of Object.entries(said)) {
+      assert.equal(r.status, 2, label + ' ' + why + ': ' + r.stdout + r.stderr);
+      assert.match(r.stderr, expect[why], label + ' ' + why);
+      assert.doesNotMatch(r.stderr, /was not found on the PATH/, label + ' ' + why);
+    }
+    // Nothing on the PATH at all is still the install step.
+    const { proj } = setup(t);
+    const none = runGuard(shell, extra, proj, '/nonexistent');
+    assert.match(none.stderr, /zn or Node.js was not found on the PATH.*npm install -g zn-gate/, label);
+  }
+});
+
+test('project hook answers: an event that cannot block warns with the same rule', () => {
+  const { projectShCommand: cmd } = require('../lib/agents/launcher');
+  const text = cmd('claude-code', 'PostToolUse');
+  for (const re of [/NOT protecting this session: its hook cannot start because the folder it runs in no longer exists/,
+    /NOT protecting this session: its hook cannot start because the zn or Node.js found on the PATH is inside this project/,
+    /NOT protecting this session: its hook cannot start because zn or Node.js was found only through a relative PATH entry/]) assert.match(text, re);
+});

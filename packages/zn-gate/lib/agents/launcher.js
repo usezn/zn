@@ -333,13 +333,31 @@ const ZF = "$env:NoDefaultCurrentDirectoryInExePath = '1'; $env:PATH = (($env:PA
 const IFS = '${IFS}';
 const SH_SAFE_TEXT = /^[^'"\\%$\n\r]+$/;
 
+// Why the project guard did not start zn, and what the user does about it: [the reason, the step told to the agent, the step
+// told to the user when the guard only warns (the same when omitted)]. `missing` is the only one the Antigravity and Windows
+// guards tell apart; the readable POSIX guard (projectShCommand) also says which of its rules refused.
+const GUARD_REASONS = {
+  missing: ['zn or Node.js was not found on the PATH', 'run `npm install -g zn-gate` in their terminal', 'run `npm install -g zn-gate` in your own terminal'],
+  relative: ['zn or Node.js was found only through a relative PATH entry (such as bin or .), which depends on the folder the agent runs in',
+    'keep only absolute folders in the PATH'],
+  gone: ['the folder it runs in no longer exists or cannot be opened, so zn cannot tell which project this is', 'restart the agent from the project folder'],
+  inside: ['the zn or Node.js found on the PATH is inside this project or a node_modules folder, and a project must not choose the program that checks it',
+    'put a global install (`npm install -g zn-gate`) and Node.js first on the PATH, outside the project'],
+  unresolved: ['the zn or Node.js found on the PATH is a link zn could not follow to its real folder (no readlink, more than 40 links, or a folder that cannot be opened)',
+    'put a plain install of zn-gate and Node.js first on the PATH'],
+};
+
 function projectTexts(agentId) {
-  const missing = 'zn: its hook cannot start because zn or Node.js was not found on the PATH, so this was blocked. Ask the user to run `npm install -g zn-gate` in their terminal.';
-  const crash = crashText(agentId);
-  const warnMissing = 'zn is NOT protecting this session: its hook cannot start because zn or Node.js was not found on the PATH. Please run `npm install -g zn-gate` in your own terminal.';
-  const warnCrash = crashWarnText();
-  for (const t of [missing, crash, warnMissing, warnCrash]) if (!SH_SAFE_TEXT.test(t)) throw new Error('zn: unsafe text in the project hook');
-  return { missing, crash, warnMissing, warnCrash };
+  const block = {};
+  const warn = {};
+  for (const [why, [reason, step, ownStep]] of Object.entries(GUARD_REASONS)) {
+    block[why] = 'zn: its hook cannot start because ' + reason + ', so this was blocked. Ask the user to ' + step + '.';
+    warn[why] = 'zn is NOT protecting this session: its hook cannot start because ' + reason + '. Please ' + (ownStep || step) + '.';
+  }
+  block.crash = crashText(agentId);
+  warn.crash = crashWarnText();
+  for (const t of [...Object.values(block), ...Object.values(warn)]) if (!SH_SAFE_TEXT.test(t)) throw new Error('zn: unsafe text in the project hook');
+  return { block, warn };
 }
 
 // What the guard prints when the hook cannot start, for the agents that read a block from a deny JSON on stdout (exit 0).
@@ -354,24 +372,23 @@ const PROJECT_WIN_DENY_JSON = {
 };
 
 /**
- * What the project hook of one agent and event answers when `zn` or Node.js cannot start (why: 'missing') or the hook ran and
- * failed (why: 'crash'): {stdout, stderr, exit}, each text or null. A blocking event answers the agent's own blocking response
+ * What the project hook of one agent and event answers when `zn` or Node.js cannot start (why: 'missing', or a rule of
+ * GUARD_REASONS) or the hook ran and failed (why: 'crash'): {stdout, stderr, exit}, each text or null. A blocking event answers the agent's own blocking response
  * (exit 2 with the reason on stderr, or the deny JSON); an event that cannot block only warns. Antigravity (no event given)
  * denies every call, as its project hook always did.
  */
 function projectAnswer(agentId, event, why, win) {
   const t = projectTexts(agentId);
-  const crash = why === 'crash';
   const block = agentId === 'antigravity' ? true : agentId === 'copilot' ? event === 'preToolUse' : blockExit(agentId).has(event);
   if (block) {
-    const r = crash ? t.crash : t.missing;
+    const r = t.block[why];
     if (PROJECT_DENY_JSON[agentId]) return { stdout: JSON.stringify(PROJECT_DENY_JSON[agentId](r)), stderr: null, exit: 0 };
     if (win && PROJECT_WIN_DENY_JSON[agentId]) return { stdout: JSON.stringify(PROJECT_WIN_DENY_JSON[agentId](r)), stderr: r, exit: 0 };
     return { stdout: null, stderr: r, exit: 2 };
   }
-  const w = crash ? t.warnCrash : t.warnMissing;
+  const w = t.warn[why];
   if (agentId !== 'copilot' && blockJson(agentId).has(event)) {
-    return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: crash ? t.crash : t.missing } } }), stderr: null, exit: 0 };
+    return { stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: t.block[why] } } }), stderr: null, exit: 0 };
   }
   if (agentId === 'copilot' || WARN_STDERR.has(agentId)) return { stdout: null, stderr: w, exit: 0 };
   return { stdout: JSON.stringify({ systemMessage: w }), stderr: null, exit: 0 };
@@ -408,8 +425,10 @@ const PROJECT_REAL = [
   'D=$R0; while [ -n "$D" ] && [ "$D" != / ]; do case "$D" in /*) ;; *) break ;; esac; if [ -e "$D/.git" ]; then ar "$D"; break; fi; D=${D%/*}; done',
   'zin() { O=$IFS; IFS=$NL; set -f; Q=1; for X in $RT; do case "$1/" in "$X"/*) Q=0; break ;; esac; done; set +f; IFS=$O; return $Q; }',
   'RL=; for X in /usr/bin/readlink /bin/readlink; do [ -x "$X" ] && { RL=$X; break; }; done',
-  'zok() { F=$1; S=${2:-}; I=0; while :; do zr "${F%/*}" || return 1; zin "$RP" && return 1; if [ "$I" = 0 ] || [ -n "$S" ]; then case "$RP/" in */node_modules/*) return 1 ;; esac; fi; [ -L "$F" ] || return 0; [ -n "$RL" ] && [ "$I" -lt 40 ] || return 1; Y=$("$RL" -- "$F") || return 1; case "$Y" in /*) F=$Y ;; *) F=${F%/*}/$Y ;; esac; I=$((I+1)); done; }',
-  'G=; [ -n "$R0" ] && [ -n "$Z" ] && [ -n "$N" ] && zok "$Z" && zok "$N" strict && G=1',
+  // ZW says why zok refused: inside (the project or node_modules) or unresolved (a folder or link it could not follow).
+  'zok() { F=$1; S=${2:-}; I=0; ZW=unresolved; while :; do zr "${F%/*}" || return 1; zin "$RP" && { ZW=inside; return 1; }; if [ "$I" = 0 ] || [ -n "$S" ]; then case "$RP/" in */node_modules/*) ZW=inside; return 1 ;; esac; fi; [ -L "$F" ] || return 0; [ -n "$RL" ] && [ "$I" -lt 40 ] || return 1; Y=$("$RL" -- "$F") || return 1; case "$Y" in /*) F=$Y ;; *) F=${F%/*}/$Y ;; esac; I=$((I+1)); done; }',
+  // W is the rule that refused when G stays empty: gone (no real hook folder), or the reason zok gave.
+  'G=; W=gone; [ -n "$R0" ] && W=; [ -n "$R0" ] && [ -n "$Z" ] && [ -n "$N" ] && { if zok "$Z" && zok "$N" strict; then G=1; else W=$ZW; fi; }',
 ];
 
 /**
@@ -423,16 +442,19 @@ function projectShCommand(agentId, event) {
   // An agent that runs the command through a shell (every one but Antigravity) gets the readable script in single quotes: the
   // ${IFS} form below is for a command split on spaces with no shell, and a shell such as zsh does not split an unquoted ${IFS}.
   if (agentId !== 'antigravity') {
-    const crash = projectAnswer(agentId, event, 'crash', false);
-    const missing = projectAnswer(agentId, event, 'missing', false);
+    const answer = (why) => projectAnswer(agentId, event, why, false);
     const say = (a) => [
       ...(a.stdout ? ["echo '" + a.stdout + "'"] : []),
       ...(a.stderr ? ["echo '" + a.stderr + "' >&2"] : []),
       'exit ' + a.exit,
     ].join('; ');
+    const found = '[ -n "$N" ] && [ "${Z#/}" != "$Z" ] && [ "${N#/}" != "$N" ] && [ -n "$T" ] && [ -n "$U" ]';
+    // Found but refused: the answer names the rule (W) instead of saying that zn is missing.
+    const refused = 'if ' + found + '; then case $W in ' + ['gone', 'inside', 'unresolved'].map((w) => w + ') ' + say(answer(w)) + ' ;;').join(' ') + ' esac; ' +
+      'elif [ -n "$Z" ] && [ -n "$N" ]; then ' + say(answer('relative')) + '; fi; ';
     const script = 'Z=$(command -v zn); N=$(command -v node); ' + PROJECT_TRUST.join('; ') + '; ' + PROJECT_REAL.join('; ') + '; R=missing; ' +
-      'if [ -n "$N" ] && [ "${Z#/}" != "$Z" ] && [ "${N#/}" != "$N" ] && [ -n "$T" ] && [ -n "$U" ] && [ -n "$G" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
-      'if [ "$R" = ran ]; then ' + say(crash) + '; fi; ' + say(missing);
+      'if ' + found + ' && [ -n "$G" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
+      'if [ "$R" = ran ]; then ' + say(answer('crash')) + '; fi; ' + refused + say(answer('missing'));
     return 'sh -c ' + shQuote(script);
   }
   const sp = (...w) => w.join(IFS);

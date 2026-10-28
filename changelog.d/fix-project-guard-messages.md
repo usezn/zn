@@ -1,0 +1,2 @@
+### Changed
+- The `sh -c` guard of a project install now says why it did not start `zn`: found only through a relative `PATH` entry, the folder the hook runs in is gone, the `zn` or Node.js found is inside the project or a `node_modules` folder, or it is a link that cannot be followed. Before, every one of these said that zn was not found and to run `npm install -g zn-gate`, which does not help. Run `zn hooks install <agent> --project` again to write the new guard.

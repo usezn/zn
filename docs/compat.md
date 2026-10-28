@@ -357,7 +357,13 @@ letting the call run: exit code 2 with the reason for Claude Code, Codex,
 Cursor and Gemini CLI (on Windows, Cursor and Gemini CLI get a deny answer on
 stdout and exit code 0 instead), and a deny answer for Copilot CLI, Antigravity
 and the Codex permission request. On events that cannot block (after a tool
-ran) it only warns. OpenCode's project
+ran) it only warns. When `zn` and Node.js are on the PATH but the guard will not
+start them, the reason names the rule that refused: found only through a
+relative PATH entry, the folder the hook runs in is gone, the program is inside
+the project or a `node_modules` folder, or it is a link that cannot be followed
+(no `readlink`); only a `zn` or Node.js that is not there at all gets the
+`npm install -g zn-gate` step. Antigravity's guard and the PowerShell guard on
+Windows give the install step in every case. OpenCode's project
 plugin blocks by itself when `zn` cannot start. ZCode does not run project
 hooks. A project file written by zn-gate 1.13 or earlier holds a bare
 `zn hook <agent>` that fails open: run `zn hooks install <agent> --project`
