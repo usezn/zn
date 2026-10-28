@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Which npm dist-tag a release is published under, and the check that it ended up there.
 //
-//   node .github/scripts/npm-dist-tag-plan.mjs plan <version> <dist-tags.json>
+//   node .github/scripts/npm-dist-tag-plan.mjs plan <version> <dist-tags.json> [<plan.json>]
 //     Prints "tag=<dist-tag>" and "latest_before=<version>" (for $GITHUB_OUTPUT). Fails closed.
+//     With <plan.json>, also writes {version, tag, latest_before} there, to keep with the stage.
 //       final release        -> latest, only if newer than the current latest; otherwise release-X.Y,
 //                               so "latest" never moves back
 //       X.Y.Z-rc.N           -> next        (only if newer than what next points to)
@@ -14,8 +15,13 @@
 //     "latest" did not move backward (it is not older than <latest-before>, and, when the release was
 //     published as latest, not older than <version>; a newer release that landed meanwhile is fine).
 //
+//   node .github/scripts/npm-dist-tag-plan.mjs staged <version> <plan.json>
+//     For a re-run that finds <version> already on npm: reads the plan written when it was staged,
+//     checks that it is for <version> and that its dist-tag fits the version, and prints the same two
+//     lines as "plan". Fails closed on a missing, unreadable or mismatched plan.
+//
 // <dist-tags.json> is the output of `npm view zn-gate dist-tags --json`.
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -96,11 +102,31 @@ export function verify(version, tag, latestBefore, tags) {
   return true;
 }
 
+export function stagedPlan(version, saved) {
+  const v = parse(version);
+  if (!v) throw new Error(`${version} is not a valid semver version`);
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('the saved dist-tag plan is not an object');
+  const { version: pv, tag, latest_before: lb } = saved;
+  if (pv !== version) throw new Error(`the saved dist-tag plan is for ${pv}, not ${version}`);
+  const allowed = v.pre.length ? [PRERELEASE_TAGS[v.pre[0]]] : ['latest', `release-${v.major}.${v.minor}`];
+  if (typeof tag !== 'string' || !allowed.includes(tag)) throw new Error(`the saved dist-tag ${tag} does not fit ${version}`);
+  if (typeof lb !== 'string' || (lb !== '' && !parse(lb))) throw new Error(`the saved latest-before (${lb}) is not a version`);
+  if (!v.pre.length && !lb) throw new Error('the saved plan of a final release has no latest-before');
+  return { tag, latestBefore: lb };
+}
+
 function main(argv) {
   const [cmd, ...a] = argv;
   try {
-    if (cmd === 'plan' && a.length === 2) {
+    if (cmd === 'plan' && (a.length === 2 || a.length === 3)) {
       const { tag, latestBefore } = plan(a[0], JSON.parse(readFileSync(a[1], 'utf8')));
+      if (a[2]) writeFileSync(a[2], JSON.stringify({ version: a[0], tag, latest_before: latestBefore }) + '\n');
+      console.log(`tag=${tag}`);
+      console.log(`latest_before=${latestBefore}`);
+      return 0;
+    }
+    if (cmd === 'staged' && a.length === 2) {
+      const { tag, latestBefore } = stagedPlan(a[0], JSON.parse(readFileSync(a[1], 'utf8')));
       console.log(`tag=${tag}`);
       console.log(`latest_before=${latestBefore}`);
       return 0;
@@ -110,7 +136,7 @@ function main(argv) {
       console.log(`dist-tags are as expected: ${a[1]} -> ${a[0]}`);
       return 0;
     }
-    throw new Error('usage: npm-dist-tag-plan.mjs plan <version> <dist-tags.json> | verify <version> <tag> <latest-before> <dist-tags.json>');
+    throw new Error('usage: npm-dist-tag-plan.mjs plan <version> <dist-tags.json> [<plan.json>] | staged <version> <plan.json> | verify <version> <tag> <latest-before> <dist-tags.json>');
   } catch (e) {
     console.error(`::error::${e.message}`);
     return 1;

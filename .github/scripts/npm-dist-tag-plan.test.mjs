@@ -2,11 +2,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compare, plan, verify } from './npm-dist-tag-plan.mjs';
+import { compare, plan, stagedPlan, verify } from './npm-dist-tag-plan.mjs';
 
 const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'npm-dist-tag-plan.mjs');
 
@@ -91,4 +91,35 @@ test('the command line prints GITHUB_OUTPUT lines and exits non-zero on a refusa
   assert.equal(spawnSync(process.execPath, [script, 'verify', '1.14.0', 'latest', '1.13.1', after], { encoding: 'utf8' }).status, 0);
   assert.equal(spawnSync(process.execPath, [script, 'verify', '1.14.1', 'latest', '1.13.1', after], { encoding: 'utf8' }).status, 1);
   assert.equal(spawnSync(process.execPath, [script, 'nonsense'], { encoding: 'utf8' }).status, 1);
+});
+
+test('a saved plan is accepted only for its version and with a dist-tag that fits it', () => {
+  assert.deepEqual(stagedPlan('1.14.1', { version: '1.14.1', tag: 'latest', latest_before: '1.14.0' }), { tag: 'latest', latestBefore: '1.14.0' });
+  assert.deepEqual(stagedPlan('1.13.2', { version: '1.13.2', tag: 'release-1.13', latest_before: '1.14.1' }), { tag: 'release-1.13', latestBefore: '1.14.1' });
+  assert.deepEqual(stagedPlan('1.15.0-rc.1', { version: '1.15.0-rc.1', tag: 'next', latest_before: '' }), { tag: 'next', latestBefore: '' });
+  assert.throws(() => stagedPlan('1.14.1', { version: '1.14.0', tag: 'latest', latest_before: '1.13.1' }), /is for 1.14.0/);
+  assert.throws(() => stagedPlan('1.14.1', { version: '1.14.1', tag: 'next', latest_before: '1.14.0' }), /does not fit/);
+  assert.throws(() => stagedPlan('1.14.1', { version: '1.14.1', tag: 'release-1.13', latest_before: '1.14.0' }), /does not fit/);
+  assert.throws(() => stagedPlan('1.15.0-rc.1', { version: '1.15.0-rc.1', tag: 'latest', latest_before: '' }), /does not fit/);
+  assert.throws(() => stagedPlan('1.14.1', { version: '1.14.1', tag: 'latest', latest_before: '' }), /no latest-before/);
+  assert.throws(() => stagedPlan('1.14.1', { version: '1.14.1', tag: 'latest', latest_before: 'x' }), /not a version/);
+  assert.throws(() => stagedPlan('1.14.1', null), /not an object/);
+  assert.throws(() => stagedPlan('1.14.1', []), /not an object/);
+});
+
+test('plan writes the plan file and staged reads it back; a missing plan fails', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'dist-tag-'));
+  const tags = path.join(dir, 'tags.json');
+  const saved = path.join(dir, 'plan.json');
+  writeFileSync(tags, JSON.stringify({ latest: '1.14.0' }));
+  const ok = spawnSync(process.execPath, [script, 'plan', '1.14.1', tags, saved], { encoding: 'utf8' });
+  assert.equal(ok.status, 0);
+  assert.deepEqual(JSON.parse(readFileSync(saved, 'utf8')), { version: '1.14.1', tag: 'latest', latest_before: '1.14.0' });
+  const back = spawnSync(process.execPath, [script, 'staged', '1.14.1', saved], { encoding: 'utf8' });
+  assert.equal(back.status, 0);
+  assert.equal(back.stdout, ok.stdout);
+  assert.equal(spawnSync(process.execPath, [script, 'staged', '1.14.2', saved], { encoding: 'utf8' }).status, 1);
+  const missing = spawnSync(process.execPath, [script, 'staged', '1.14.1', path.join(dir, 'none.json')], { encoding: 'utf8' });
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /::error::/);
 });
