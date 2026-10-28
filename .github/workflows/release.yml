@@ -352,6 +352,7 @@ jobs:
         if: steps.live.outputs.live != 'true'
         env:
           NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
+          RELEASE_SHA: ${{ needs.verify.outputs.sha }}
         run: |
           set -euo pipefail
           if ! npm view zn-gate dist-tags --json --prefer-online > "$RUNNER_TEMP/dist-tags-before.json"; then
@@ -361,7 +362,7 @@ jobs:
           cat "$RUNNER_TEMP/dist-tags-before.json"
           mkdir -p "$RUNNER_TEMP/dist-tag-plan"
           node plan/.github/scripts/npm-dist-tag-plan.mjs plan "$NPM_VERSION" "$RUNNER_TEMP/dist-tags-before.json" \
-            "$RUNNER_TEMP/dist-tag-plan/npm-dist-tag-plan.json" | tee -a "$GITHUB_OUTPUT"
+            "$RUNNER_TEMP/dist-tag-plan/npm-dist-tag-plan.json" "$RELEASE_SHA" | tee -a "$GITHUB_OUTPUT"
       # The plan is kept with the run before staging: a re-run of this job after a late approval finds the
       # version already on npm and checks the dist-tags against this plan (it cannot plan again, the tags
       # have moved by then). A re-run that stages again replaces it.
@@ -466,18 +467,21 @@ jobs:
           set -euo pipefail
           for attempt in 1 2 3 4 5 6; do
             if npm view zn-gate dist-tags --json --prefer-online > "$RUNNER_TEMP/dist-tags-after.json" \
-              && node plan/.github/scripts/npm-dist-tag-plan.mjs verify "$NPM_VERSION" "$DIST_TAG" "$LATEST_BEFORE" "$RUNNER_TEMP/dist-tags-after.json"; then
+              && npm view zn-gate versions --json --prefer-online > "$RUNNER_TEMP/versions-after.json" \
+              && node plan/.github/scripts/npm-dist-tag-plan.mjs verify "$NPM_VERSION" "$DIST_TAG" "$LATEST_BEFORE" \
+                "$RUNNER_TEMP/dist-tags-after.json" "$RUNNER_TEMP/versions-after.json"; then
               exit 0
             fi
             echo "attempt $attempt: the dist-tags are not as expected yet"
             sleep 10
           done
           cat "$RUNNER_TEMP/dist-tags-after.json" || true
-          echo "::error::zn-gate $NPM_VERSION was published, but its dist-tags are not as planned (dist-tag $DIST_TAG; latest before: ${LATEST_BEFORE:-none})"
+          echo "::error::zn-gate $NPM_VERSION was published, but its dist-tags are not as planned (dist-tag $DIST_TAG; latest before: ${LATEST_BEFORE:-none}; latest must not be older than the newest final on npm)"
           exit 1
-      # Version already on npm (a re-run after a late approval): the plan made when it was staged in this run
-      # is checked, exactly like the normal path. Without a trustworthy plan (published outside this run, or
-      # the plan is lost) the job fails, so no GitHub Release is created until a maintainer reconciles by hand.
+      # Version already on npm (a re-run after a late approval): the plan saved when this run staged the
+      # package (same version and commit) is checked, exactly like the normal path, together with the
+      # tarball integrity checked above. Without that plan (lost, or this run never staged) the job fails,
+      # so no GitHub Release is created until a maintainer reconciles by hand.
       - name: Fetch the dist-tag plan made when the package was staged
         id: staged-plan
         if: steps.live.outputs.live == 'true'
@@ -490,6 +494,7 @@ jobs:
         if: steps.live.outputs.live == 'true'
         env:
           NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
+          RELEASE_SHA: ${{ needs.verify.outputs.sha }}
           PLAN_FETCH: ${{ steps.staged-plan.outcome }}
         run: |
           set -euo pipefail
@@ -499,7 +504,7 @@ jobs:
             echo "::error::zn-gate $NPM_VERSION is already on npm, but this run has no dist-tag plan from staging it (published outside this run, or the plan was lost). $reconcile"
             exit 1
           fi
-          if ! node plan/.github/scripts/npm-dist-tag-plan.mjs staged "$NPM_VERSION" "$plan" > "$RUNNER_TEMP/staged-plan.txt"; then
+          if ! node plan/.github/scripts/npm-dist-tag-plan.mjs staged "$NPM_VERSION" "$plan" "$RELEASE_SHA" > "$RUNNER_TEMP/staged-plan.txt"; then
             echo "::error::The saved dist-tag plan cannot be trusted for zn-gate $NPM_VERSION. $reconcile"
             exit 1
           fi
@@ -507,7 +512,9 @@ jobs:
           LATEST_BEFORE="$(sed -n 's/^latest_before=//p' "$RUNNER_TEMP/staged-plan.txt")"
           for attempt in 1 2 3 4 5 6; do
             if npm view zn-gate dist-tags --json --prefer-online > "$RUNNER_TEMP/dist-tags-after.json" \
-              && node plan/.github/scripts/npm-dist-tag-plan.mjs verify "$NPM_VERSION" "$DIST_TAG" "$LATEST_BEFORE" "$RUNNER_TEMP/dist-tags-after.json"; then
+              && npm view zn-gate versions --json --prefer-online > "$RUNNER_TEMP/versions-after.json" \
+              && node plan/.github/scripts/npm-dist-tag-plan.mjs verify "$NPM_VERSION" "$DIST_TAG" "$LATEST_BEFORE" \
+                "$RUNNER_TEMP/dist-tags-after.json" "$RUNNER_TEMP/versions-after.json"; then
               exit 0
             fi
             echo "attempt $attempt: the dist-tags are not as expected yet"
