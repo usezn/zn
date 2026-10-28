@@ -84,7 +84,7 @@ after **30 days**: from then on, ask an organization admin to remove the
 installation from the dashboard. `zn team status` shows the pending record
 (since when, the last error and when zn-gate stops trying); `--json` has it
 as `revocation_pending`. A server that answers 404 or 405 (an older API) is
-treated as "not supported yet", never as revoked. If the server asks to wait
+reported as "this server does not support leaving yet", never as revoked. If the server asks to wait
 (HTTP 429), zn-gate waits for the time it gave.
 
 ## The organization policy
@@ -238,7 +238,7 @@ patterns are skipped on the machine, and all custom detectors together get
 | No network, policy still valid (policies are valid for 7 days) | The policy keeps applying. Audit records wait in `~/.zn/audit.jsonl` and are uploaded later. The automatic sync keeps the reason it failed (`zn team status` shows it under "Last sync") and writes one audit record, then at most one more every 6 hours while it keeps failing. |
 | No network for longer than the policy's validity | Strict mode: the restrictions keep applying; anything the organization had opened is withdrawn until a fresh policy arrives. `zn team status` says so. |
 | A downloaded policy fails a check (signature, key, organization, expiry, older version, same version with other content) | It is refused and the last accepted policy stays. The refusal is recorded in the audit log. |
-| An admin removes this machine | Uploads stop. `zn team status` shows "removed from org". The last policy applies until it expires, then strict mode. |
+| An admin removes this machine | Uploads stop. `zn team status` shows "REMOVED FROM ORG". The last policy applies until it expires, then strict mode. |
 | The vault is locked | Nothing is downloaded or uploaded until `zn unlock`. The last accepted policy still applies to every use of a secret, which needs the vault unlocked anyway. |
 | `~/.zn/team.json` or `~/.zn/org-policy.json` is deleted or edited | The vault puts them back (see below). |
 

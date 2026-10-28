@@ -202,6 +202,19 @@ The version number in the second message is yours and will differ.
 
 Running `npx -y zn-gate init` on a Node.js older than 20.19 does the second option for you: it skips the plugin and sets up zn's hooks for Claude Code instead, and if the plugin is already installed it offers to turn it off once the hooks work. Node.js 22 LTS is recommended; 18 or later is enough for the hooks and the CLI. See the [README](../README.md#install).
 
+## 12. Short messages
+
+These are one-line messages zn prints when it stops on purpose. Each says what to do next; this table adds the reason.
+
+| Message starts with | What it means |
+|---|---|
+| `invalid join token (expected znj_...)` | The text you pasted is not a join token. Copy it again from the invitation your administrator sent. |
+| `nothing to approve: this machine has no organization policy waiting for your answer` | There is no pending question from your organization. Run `zn team status` to check. |
+| `The two passphrases do not match` | You typed the passphrase twice and the two differed. Nothing was created; run `zn unlock` again. |
+| `The vault is already unlocked, so there is nothing to do` | The vault is open. To unlock it again (for example with a new time limit), run `zn lock` first. |
+| `The --ttl and --idle times must be between 1m and 24h` | Use a time such as `30m` or `8h`. |
+| `Cancelled: nothing was entered` | You closed the prompt without typing a value. Run the command again when you are ready. |
+
 ## Also useful
 
 - Your agent blocks every prompt after you upgraded or removed Node.js: see [If your agent blocks every prompt](compat.md#if-your-agent-blocks-every-prompt).
