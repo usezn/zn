@@ -147,6 +147,31 @@ function vaultNotAnswering(detail, env) {
   return 'The vault is not answering. Run `' + zn('lock') + '`, then `' + zn('unlock') + '`.' + verboseDetail(detail, env);
 }
 
+/* zn's own folder (ZN_HOME, ~/.zn) or a folder in it cannot be used: a file in its place, no access, a link loop. Locking
+   and unlocking fail the same way there, so the message names the folder and the fix instead. `err` is the error of a
+   file in that folder; returns null for any other error. */
+const FOLDER_WHY = {
+  ENOTDIR: 'a file is where the folder should be',
+  EACCES: 'your account is not allowed to open it',
+  EPERM: 'your account is not allowed to open it',
+  ELOOP: 'it is a link that leads in a circle',
+};
+function znFolderProblem(err, home, env) {
+  const why = err && FOLDER_WHY[err.code];
+  if (!why || typeof home !== 'string' || !home) return null;
+  const fs = require('fs');
+  const path = require('path');
+  // Name the first folder on the way down from zn's folder that cannot be used.
+  let bad = home;
+  for (const d of [home, path.join(home, 'run'), path.join(home, 'vault')]) {
+    let ok = false;
+    try { ok = fs.statSync(d).isDirectory(); fs.readdirSync(d); } catch (_) { ok = false; }
+    if (!ok) { bad = d; break; }
+  }
+  return "zn's folder " + bad + ' cannot be used: ' + why + '. Fix it (move the file away or give your account access to the folder), ' +
+    'then run `' + zn('unlock') + '`.' + verboseDetail(err.code, env);
+}
+
 function auditFailed(record, error, env) {
   return 'The audit log did not pass its check (at record ' + record + '). Do not delete or edit it: it is the proof of what happened. ' +
     'More: ' + TROUBLESHOOTING_URL + verboseDetail(error, env);
@@ -295,7 +320,7 @@ module.exports = {
   invalidDuration, DURATION_RANGE, unknownBackend, unlockNeedsTerminal, FOREGROUND_NEEDS_TERMINAL,
   PASSPHRASE_NEEDS_TERMINAL, passphraseCancelled, passphraseMismatch, forgetLockFirst, vaultAlreadyUnlocked,
   keychainProblem, secretToolMissing, powershellMissing, keychainHelperFailed, keychainLostKey,
-  verboseDetail, vaultStartTimeout, vaultStartExited, vaultNotAnswering, auditFailed, vaultLockedBecause,
+  verboseDetail, vaultStartTimeout, vaultStartExited, vaultNotAnswering, znFolderProblem, auditFailed, vaultLockedBecause,
   CONNECT_KEY_ON_COMMAND_LINE, CONNECT_CANCELLED, CONNECT_NOT_A_KEY, CONNECT_REJECTED,
   connectFullAccess, connectUnverified, connectSaveFailed, revokeNotReached, connectNoStore, environmentRefusal, isNetworkFailure,
   PINS_USAGE_APPROVE, pinsAgentRefusal, PINS_NEEDS_TERMINAL, PINS_NOT_APPROVED, pinsError,

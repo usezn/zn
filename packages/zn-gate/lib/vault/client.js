@@ -164,7 +164,12 @@ function lockedError(detail, notRunning = false) {
 
 function readSessionKey(keyFile) {
   let buf;
-  try { buf = store.readPrivateFile(keyFile); } catch (err) { throw lockedError(err.code); }
+  try { buf = store.readPrivateFile(keyFile); } catch (err) {
+    // zn's folder itself is unusable (a file in its place, no access): lock and unlock would fail too, so say that.
+    const folder = require('../messages').znFolderProblem(err, path.dirname(path.dirname(keyFile)));
+    if (folder) throw znError(CODES.LOCKED, folder);
+    throw lockedError(err.code);
+  }
   if (buf === null) throw lockedError(null, true);
   const hex = buf.toString('utf8').trim();
   if (!/^[0-9a-f]{64}$/.test(hex)) throw lockedError('bad session key');

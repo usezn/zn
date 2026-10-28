@@ -386,7 +386,9 @@ async function runVaultCommand(args) {
     process.stderr.write('usage: ' + z('unlock') + ' | ' + z('lock') + ' | ' + z('vault status') + ' | ' + z('vault verify') + ' | ' + z('vault log [--since 1h]') + ' | ' + z('vault forget [dir]') + ' | ' + z('vault reset') + ' | ' + z('vault purge') + '\n');
     return 2;
   } catch (err) {
-    process.stderr.write('[zn] ' + messageWithUnlockHint(err) + '\n');
+    let folder = null;
+    try { folder = require('../messages').znFolderProblem(err, store.paths({}).home); } catch (_) { /* the plain message below */ }
+    process.stderr.write('[zn] ' + (folder || messageWithUnlockHint(err)) + '\n');
     if (err && err.usage) process.stderr.write(USAGE[err.usage]() + '\n');
     // A wrong passphrase, again and again: point to the way out.
     if (args[0] === 'unlock' && err && err.code === CODES.LOCKED) {
