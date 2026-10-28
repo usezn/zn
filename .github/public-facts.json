@@ -1,7 +1,7 @@
 {
   "_comment": "Public facts of zn-gate, checked on every pull request by .github/scripts/check-public-facts.mjs. A release changes version.value in the same pull request as the manifests and the pinned docs.",
   "version": {
-    "value": "1.14.0",
+    "value": "1.14.1",
     "files": [
       {
         "file": "packages/zn-gate/package.json",
@@ -75,7 +75,7 @@
   },
   "docsVersion": {
     "_comment": "The last final release. While version.value is a pre-release, the pins in the docs, the files below and the {minor} of the text facts are checked against this one. The final release step sets it to the new release.",
-    "value": "1.14.0",
+    "value": "1.14.1",
     "files": [
       {
         "file": "README.md",
