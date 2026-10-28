@@ -28,7 +28,7 @@ test('a failed write of the lock token removes the lock and the next write is no
     process.stderr.write = stderr;
     writeMock.mock.restore();
   }
-  assert.ok(seen.includes('ENOSPC'), seen);
+  assert.ok(seen.includes('the disk is full') && !seen.includes('ENOSPC'), seen);
   assert.ok(!seen.includes('another process'), seen);
   assert.equal(fs.existsSync(lock), false, 'the empty lock file must not stay behind');
   const started = Date.now();

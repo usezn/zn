@@ -264,6 +264,9 @@ test('a directory that cannot be written: warns, does not throw', { skip: proces
     const err = captureStderr(() => { r = fresh.logEvidence({ payload: 'x' }, path.join(sub, 'evidence.jsonl')); });
     assert.equal(r, null);
     assert.match(err, /cannot write to the evidence log/);
+    assert.match(err, /your account is not allowed to write it or its folder/);
+    assert.match(err, /run `zn-gate check`/);
+    assert.doesNotMatch(err, /\(E[A-Z]+\)/, 'no raw error code');
   } finally {
     fs.chmodSync(sub, 0o700);
     fs.rmSync(dir, { recursive: true, force: true });

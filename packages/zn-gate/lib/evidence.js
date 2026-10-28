@@ -432,14 +432,28 @@ function logEvidence(event, filePath = EVIDENCE_FILE, opts = {}) {
     const now = Date.now();
     if (lastWriteWarnAt === null || now - lastWriteWarnAt >= WARN_INTERVAL_MS) {
       lastWriteWarnAt = now;
-      const why = e instanceof EvidenceLockError ? e.message : (e.code || e.message);
-      process.stderr.write(`zn-gate: cannot write to the evidence log ${filePath} (${why}). Events are not being recorded; the log is left as it is.\n`);
+      const why = e instanceof EvidenceLockError ? e.message : (LOG_WRITE_WHY[e.code] || e.message);
+      const code = !(e instanceof EvidenceLockError) && e.code && require('./verbose').isVerbose(process.env) ? ' [' + e.code + ']' : '';
+      process.stderr.write(`zn-gate: cannot write to the evidence log ${filePath}: ${why}${code}. zn still checks your agent's actions, but they are not being recorded; the log is left as it is. Fix that, then run \`zn-gate check\`.\n`);
     }
     return null;
   } finally {
     if (token !== null) releaseLock(lockPath, token);
   }
 }
+
+// Why the evidence log cannot be written, in plain words (the code shows with ZN_VERBOSE=1).
+const LOG_WRITE_WHY = {
+  EACCES: 'your account is not allowed to write it or its folder',
+  EPERM: 'your account is not allowed to write it or its folder',
+  ENOSPC: 'the disk is full',
+  EDQUOT: 'your disk quota is used up',
+  EROFS: 'it is on a read-only disk',
+  ENOTDIR: 'a part of its path is a file where a folder should be',
+  ENOENT: 'its folder does not exist',
+  EISDIR: 'it is a folder, not a file',
+  ENAMETOOLONG: 'its path is too long',
+};
 
 // The preview keeps 120 characters, so only the start of the payload is redacted for it: redacting a
 // 40 MB tool output in full to keep 120 characters would be a second full pass. 64 KB leaves room for a
