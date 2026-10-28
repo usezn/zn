@@ -10,27 +10,54 @@ const OTHER_GROUP = 'S-1-5-32-545'; // Users
 const GOOD_DIR = 'O:' + ME + 'G:S-1-5-21-111-222-333-513D:PAI(A;OICI;FA;;;' + ME + ')';
 const OPEN_DIR = 'O:' + ME + 'G:S-1-5-21-111-222-333-513D:AI(A;OICIID;FA;;;' + ME + ')(A;OICIID;0x1200a9;;;BU)(A;OICIID;FA;;;SY)';
 
+// What each PowerShell text does, told apart by the .NET calls it makes.
+const kindOf = (args) => {
+  const script = args[args.length - 1];
+  if (script.includes('WindowsIdentity')) return 'sid';
+  if (script.includes('SetAccessRuleProtection')) return 'set';
+  return 'read';
+};
+
 function fake(initial, opts) {
   const o = opts || {};
   const calls = [];
   let sddl = initial;
   const tools = {
-    icacls: 'icacls',
-    whoami: 'whoami',
     powershell: o.noPowershell ? null : 'powershell',
     run(file, args, env) {
-      calls.push({ file, args, env });
-      if (file === 'whoami') return { status: 0, stdout: '"DESKTOP\\me","' + ME + '"\r\n' };
-      if (file === 'icacls') {
-        if (o.icaclsFails) return { status: 5, stdout: '' };
-        if (args[1] === '/grant:r') sddl = o.afterApply || GOOD_DIR;
-        return { status: 0, stdout: 'ok' };
+      const kind = kindOf(args);
+      calls.push({ file, args, env, kind });
+      if (kind === 'sid') return o.sidFails ? { status: 1, stdout: '', stderr: 'Exception' } : { status: 0, stdout: ME + '\r\n' };
+      if (kind === 'set') {
+        if (o.setFails) return { status: 1, stdout: '', stderr: 'UnauthorizedAccessException: denied' };
+        sddl = o.afterApply || GOOD_DIR;
+        return { status: 0, stdout: '' };
       }
       return { status: 0, stdout: sddl };
     },
   };
   return { tools, calls };
 }
+
+test('the account SID comes from the process token through the system PowerShell, not from another program', () => {
+  const { tools, calls } = fake(GOOD_DIR);
+  assert.equal(winacl.currentUserSid(tools), ME);
+  assert.deepEqual(calls.map((c) => [c.file, c.kind]), [['powershell', 'sid']]);
+  for (const stdout of ['', 'S-1-5-21-1-2-3-1001 extra', '"x","' + ME + '"', 'S-1-5-21-1-2-3-1001\nS-1-5-18']) {
+    const t = { powershell: 'powershell', run: () => ({ status: 0, stdout }) };
+    assert.throws(() => winacl.currentUserSid(t), (e) => e.code === 'ZN_POLICY_DENIED' && /account SID/.test(e.message), JSON.stringify(stdout));
+  }
+  assert.throws(() => winacl.currentUserSid(fake(GOOD_DIR, { sidFails: true }).tools), (e) => e.code === 'ZN_POLICY_DENIED');
+});
+
+test('no other program is started: only the system PowerShell', () => {
+  for (const initial of [GOOD_DIR, OPEN_DIR]) {
+    const { tools, calls } = fake(initial);
+    winacl.ensurePrivate('C:\\zn\\vault', { dir: true, tools });
+    assert.ok(calls.every((c) => c.file === 'powershell'), JSON.stringify(calls.map((c) => c.file)));
+    assert.ok(calls.every((c) => !/icacls|whoami/i.test(c.args.join(' '))));
+  }
+});
 
 test('parseSddl reads owner, flags and entries', () => {
   const a = winacl.parseSddl(OPEN_DIR);
@@ -61,43 +88,46 @@ test('another owner or a missing access list is a problem (an owner can rewrite 
 test('ensurePrivate leaves a private folder alone', () => {
   const { tools, calls } = fake(GOOD_DIR);
   winacl.ensurePrivate('C:\\zn\\vault', { dir: true, tools });
-  assert.equal(calls.filter((c) => c.file === 'icacls').length, 0);
+  assert.equal(calls.filter((c) => c.kind === 'set').length, 0);
 });
 
-test('ensurePrivate resets, protects and grants only the current SID, then reads it back', () => {
+test('ensurePrivate replaces the list with a protected one that grants only the current SID, then reads it back', () => {
   const { tools, calls } = fake(OPEN_DIR);
   winacl.ensurePrivate('C:\\zn\\vault', { dir: true, tools });
-  const ic = calls.filter((c) => c.file === 'icacls').map((c) => c.args);
-  assert.deepEqual(ic, [
-    ['C:\\zn\\vault', '/reset'],
-    ['C:\\zn\\vault', '/inheritance:r'],
-    ['C:\\zn\\vault', '/grant:r', '*' + ME + ':(OI)(CI)F'],
-  ]);
-  // the path travels in the environment, never inside the PowerShell text
-  const ps = calls.filter((c) => c.file === 'powershell');
-  assert.equal(ps.length, 2);
-  assert.ok(ps.every((c) => c.env.ZN_ACL_PATH === 'C:\\zn\\vault' && !c.args.join(' ').includes('C:\\zn')));
+  assert.deepEqual(calls.map((c) => c.kind), ['sid', 'read', 'set', 'read']);
+  const set = calls.find((c) => c.kind === 'set');
+  assert.deepEqual(set.env, { ZN_ACL_PATH: 'C:\\zn\\vault', ZN_ACL_SID: ME, ZN_ACL_DIR: '1' });
+  const script = set.args[set.args.length - 1];
+  // a new list (nothing kept from the old one), protected from inheritance, one FullControl allow entry inherited by files and folders
+  assert.ok(script.includes('[System.Security.AccessControl.DirectorySecurity]::new()'));
+  assert.ok(script.includes('$acl.SetAccessRuleProtection($true, $false)'));
+  assert.ok(script.includes('([int]1 -bor [int]2)') && script.includes('FullControl') && script.includes('::Allow'));
+  assert.equal(script.match(/AddAccessRule/g).length, 2, 'one entry for a folder, one for a file');
+  // the path and the SID travel in the environment, never inside the PowerShell text
+  assert.ok(calls.filter((c) => c.kind !== 'sid').every((c) => c.env.ZN_ACL_PATH === 'C:\\zn\\vault' && !c.args.join(' ').includes('C:\\zn') && !c.args.join(' ').includes(ME)));
 });
 
-test('a file gets a file grant (no inheritance flags)', () => {
+test('a file gets a file entry (no inheritance flags)', () => {
   const { tools, calls } = fake('O:' + ME + 'D:AI(A;ID;0x1200a9;;;BU)(A;ID;FA;;;' + ME + ')', { afterApply: 'O:' + ME + 'D:P(A;;FA;;;' + ME + ')' });
   winacl.ensurePrivate('C:\\zn\\run\\session.key', { dir: false, tools });
-  const grant = calls.find((c) => c.file === 'icacls' && c.args[1] === '/grant:r');
-  assert.deepEqual(grant.args, ['C:\\zn\\run\\session.key', '/grant:r', '*' + ME + ':F']);
+  const set = calls.find((c) => c.kind === 'set');
+  assert.deepEqual(set.env, { ZN_ACL_PATH: 'C:\\zn\\run\\session.key', ZN_ACL_SID: ME, ZN_ACL_DIR: '0' });
+  assert.ok(set.args[set.args.length - 1].includes('[System.Security.AccessControl.FileSecurity]::new()'));
 });
 
 test('it refuses when the permissions cannot be set, cannot be read, or are still open afterwards', () => {
   for (const [initial, opts] of [
-    [OPEN_DIR, { icaclsFails: true }],
+    [OPEN_DIR, { setFails: true }],
     [OPEN_DIR, { afterApply: OPEN_DIR }],
     [OPEN_DIR, { noPowershell: true }],
   ]) {
     const { tools } = fake(initial, opts);
     assert.throws(() => winacl.ensurePrivate('D:\\zn', { dir: true, tools }), (e) => e.code === 'ZN_POLICY_DENIED' && /will not keep the vault there/.test(e.message));
   }
-  const bad = fake(GOOD_DIR);
-  bad.tools.whoami = null;
+  const bad = fake(GOOD_DIR, { sidFails: true });
   assert.throws(() => winacl.ensurePrivate('D:\\zn', { dir: true, tools: bad.tools }), (e) => e.code === 'ZN_POLICY_DENIED');
+  const denied = fake(OPEN_DIR, { setFails: true });
+  assert.throws(() => winacl.ensurePrivate('D:\\zn', { dir: true, tools: denied.tools }), (e) => /could not set its permissions: UnauthorizedAccessException/.test(e.message));
   const garbage = fake('');
   assert.throws(() => winacl.ensurePrivate('D:\\zn', { dir: true, tools: garbage.tools }), (e) => e.code === 'ZN_POLICY_DENIED');
 });
@@ -105,16 +135,15 @@ test('it refuses when the permissions cannot be set, cannot be read, or are stil
 test('the pipe gets one entry for the user and one for SYSTEM through one connection, read back there', () => {
   const calls = [];
   const tools = {
-    whoami: 'whoami',
     powershell: 'powershell',
     run(file, args, env) {
-      calls.push({ file, args, env });
-      if (file === 'whoami') return { status: 0, stdout: '"x","' + ME + '"' };
+      calls.push({ file, args, env, kind: kindOf(args) });
+      if (kindOf(args) === 'sid') return { status: 0, stdout: ME };
       return { status: 0, stdout: 'O:' + ME + 'D:P(A;;FA;;;' + ME + ')(A;;FA;;;SY)' };
     },
   };
   winacl.ensurePipe(PIPE, { tools });
-  const ps = calls.filter((c) => c.file === 'powershell');
+  const ps = calls.filter((c) => c.kind !== 'sid');
   assert.equal(ps.length, 1, 'one connection only');
   assert.equal(ps[0].env.ZN_ACL_SID, ME);
   assert.equal(ps[0].env.ZN_ACL_PATH, PIPE);
@@ -125,10 +154,10 @@ test('the pipe gets one entry for the user and one for SYSTEM through one connec
 });
 
 test('the pipe is refused when the result still lets another account in, or it cannot be set', () => {
-  const who = { status: 0, stdout: '"x","' + ME + '"' };
-  const open = { whoami: 'whoami', powershell: 'powershell', run: (f) => (f === 'whoami' ? who : { status: 0, stdout: 'O:' + ME + 'D:(A;;FA;;;WD)' }) };
+  const who = { status: 0, stdout: ME };
+  const open = { powershell: 'powershell', run: (f, a) => (kindOf(a) === 'sid' ? who : { status: 0, stdout: 'O:' + ME + 'D:(A;;FA;;;WD)' }) };
   assert.throws(() => winacl.ensurePipe(PIPE, { tools: open }), (e) => e.code === 'ZN_POLICY_DENIED');
-  const failing = { whoami: 'whoami', powershell: 'powershell', run: (f) => (f === 'whoami' ? who : { status: 1, stdout: '', stderr: 'Exception: pipe busy' }) };
+  const failing = { powershell: 'powershell', run: (f, a) => (kindOf(a) === 'sid' ? who : { status: 1, stdout: '', stderr: 'Exception: pipe busy' }) };
   assert.throws(() => winacl.ensurePipe(PIPE, { tools: failing }), (e) => e.code === 'ZN_POLICY_DENIED' && /pipe busy/.test(e.message));
 });
 
@@ -158,6 +187,34 @@ test('ensurePrivate accepts the SDDL of the built-in Administrator and checks sc
   assert.doesNotThrow(() => winacl.ensurePrivate('C:\zn', { dir: true, tools: t, userSid: ADM }));
   assert.deepEqual(winacl.scriptEntriesRisk([{ path: 'C:\s\a.cmd', dir: false, sddl: 'O:LAD:P(A;;FA;;;LA)(A;;FA;;;SY)' }], ADM).deny, null);
   assert.match(winacl.scriptEntriesRisk([{ path: 'C:\s\a.cmd', dir: false, sddl: 'O:LAD:P(A;;FA;;;LA)' }], ME).deny, /owned by LA/);
+});
+
+test('real Windows: a folder and a file open to the Users group are made owner-only and read back as private', { skip: process.platform !== 'win32' }, (t) => {
+  const fs = require('fs');
+  const path = require('path');
+  const { spawnSync } = require('child_process');
+  const { tempDir } = require('./helpers/tmp');
+  winacl._forget();
+  const me = winacl.currentUserSid(winacl.realTools());
+  const dir = tempDir(t, 'zn-winacl-');
+  const file = path.join(dir, 'session.key');
+  fs.writeFileSync(file, 'x');
+  // test setup only (zn itself starts no icacls): give the Users group modify rights on both
+  for (const [p, grant] of [[dir, '*S-1-5-32-545:(OI)(CI)M'], [file, '*S-1-5-32-545:M']]) {
+    const r = spawnSync('icacls.exe', [p, '/grant', grant], { encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+  }
+  assert.ok(winacl.verifyPrivate(dir, { dir: true }).length > 0, 'the folder starts open');
+  winacl.ensurePrivate(dir, { dir: true });
+  winacl.ensurePrivate(file, { dir: false });
+  assert.deepEqual(winacl.verifyPrivate(dir, { dir: true }), []);
+  assert.deepEqual(winacl.verifyPrivate(file, {}), []);
+  const acl = winacl.parseSddl(spawnSync(require('../lib/exe').systemPowerShell(), ['-NoProfile', '-NonInteractive', '-Command',
+    "[Console]::Out.Write([System.IO.DirectoryInfo]::new($env:ZN_T).GetAccessControl().GetSecurityDescriptorSddlForm('Access'))"], { encoding: 'utf8', env: { ...process.env, ZN_T: dir } }).stdout);
+  assert.match(acl.flags, /P/);
+  assert.deepEqual(acl.aces.map((a) => [a.type, a.flags, a.rights]), [['A', 'OICI', 'FA']]);
+  // SDDL writes the built-in Administrator (GitHub's Windows runners) as LA
+  assert.ok(acl.aces[0].sid === me || acl.aces[0].sid === 'LA', acl.aces[0].sid);
 });
 
 test('on other systems the real entry points do nothing', { skip: process.platform === 'win32' }, () => {

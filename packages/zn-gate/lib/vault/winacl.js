@@ -9,10 +9,10 @@
  * the daemon. Nothing here trusts what was inherited:
  *
  *   ensurePrivate(target, {dir})  sets a protected, owner-only access list
- *       (icacls: no inheritance, one allow entry for the current user's SID),
- *       then reads it back as SDDL (Get-Acl, independent of the system
- *       language) and checks it. If it cannot be set or checked, it throws
- *       ZN_POLICY_DENIED: the vault does not start on a path it cannot protect.
+ *       (no inheritance, one allow entry for the current user's SID), then
+ *       reads it back as SDDL (independent of the system language) and checks
+ *       it. If it cannot be set or checked, it throws ZN_POLICY_DENIED: the
+ *       vault does not start on a path it cannot protect.
  *   verifyPrivate(target, {dir}) only checks.
  *
  * The check accepts allow entries for the current user, SYSTEM and the
@@ -20,11 +20,13 @@
  * also requires that the owner is one of them: an owner can rewrite the list.
  * For folders the list must be protected from inheritance.
  *
- * Every system tool is taken from the kernel's \SystemRoot link, never from
- * PATH, SystemRoot or the current directory, which an agent can influence.
+ * Everything runs as .NET calls in the system PowerShell, the same way as the
+ * hook folder's access list (lib/agents/launcher.js): the account SID, setting
+ * the list and reading it back. The PowerShell is taken from the kernel's
+ * \SystemRoot link (lib/exe.js), never from PATH, SystemRoot or the current
+ * directory, which an agent can influence.
  */
 
-const fs = require('fs');
 const cp = require('child_process');
 const { CODES, znError } = require('../errors');
 
@@ -47,15 +49,6 @@ let sidMemo = null; // the account SID, read once per process (real tools only)
 
 function lower(p) { return String(p).toLowerCase(); }
 
-/** A System32 program (icacls.exe, whoami.exe), or null. */
-function systemTool(name) {
-  if (process.platform !== 'win32') return null;
-  let p;
-  try { p = fs.realpathSync.native('\\\\?\\GLOBALROOT\\SystemRoot\\System32\\' + name); } catch (_) { return null; }
-  if (!/^[A-Za-z]:\\[^%!"]+\\System32\\[A-Za-z0-9.]+$/.test(p)) return null;
-  return p;
-}
-
 function defaultRun(file, args, env) {
   const r = cp.spawnSync(file, args, {
     encoding: 'utf8',
@@ -68,10 +61,10 @@ function defaultRun(file, args, env) {
 
 /**
  * The commands used, with an injectable runner for tests:
- * tools = {run(file, args, env) -> {status, stdout}, icacls, whoami, powershell}.
+ * tools = {run(file, args, env) -> {status, stdout}, powershell}.
  */
 function realTools() {
-  return { run: defaultRun, icacls: systemTool('icacls.exe'), whoami: systemTool('whoami.exe'), powershell: require('../exe').systemPowerShell() };
+  return { run: defaultRun, powershell: require('../exe').systemPowerShell() };
 }
 
 /** A short, single-line reason from a failed command (never holds vault data: only tool messages). */
@@ -85,12 +78,14 @@ function fail(what, detail) {
     ', so it will not keep the vault there. Next step: use the default location (leave ZN_HOME unset), or a folder on a local NTFS drive where you can change permissions.');
 }
 
-/** SID of the current user, from `whoami /user /fo csv /nh`. */
+const SID_SCRIPT = "$ErrorActionPreference='Stop'; [Console]::Out.Write([System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value)";
+
+/** SID of the current user, from the process token (.NET WindowsIdentity). */
 function currentUserSid(tools) {
   if (sidMemo && tools.run === defaultRun) return sidMemo;
-  if (!tools.whoami) throw fail('the vault', 'whoami.exe was not found');
-  const r = tools.run(tools.whoami, ['/user', '/fo', 'csv', '/nh']);
-  const m = /"(S-1-\d+(?:-\d+)+)"\s*$/m.exec(String(r.stdout || ''));
+  if (!tools.powershell) throw fail('the vault', 'the system PowerShell was not found');
+  const r = tools.run(tools.powershell, ['-NoProfile', '-NonInteractive', '-Command', SID_SCRIPT]);
+  const m = /^(S-1-\d+(?:-\d+)+)$/.exec(String(r.stdout || '').trim());
   if (r.status !== 0 || !m) throw fail('the vault', 'could not read the account SID');
   if (tools.run === defaultRun) sidMemo = m[1];
   return m[1];
@@ -159,18 +154,32 @@ function readSddl(target, tools) {
   return text;
 }
 
+// A new access list that replaces the old one: protected from inheritance, with one FullControl entry for the account (inherited by
+// files and subfolders for a folder), as the hook folder gets in lib/agents/launcher.js (WIN_PRIVATE_SCRIPT). The owner is not changed.
+const PRIVATE_SCRIPT = [
+  "$ErrorActionPreference='Stop'",
+  '$p = $env:ZN_ACL_PATH',
+  '$sid = [System.Security.Principal.SecurityIdentifier]::new($env:ZN_ACL_SID)',
+  '$full = [System.Security.AccessControl.FileSystemRights]::FullControl',
+  '$allow = [System.Security.AccessControl.AccessControlType]::Allow',
+  "if ($env:ZN_ACL_DIR -eq '1') {",
+  '  $acl = [System.Security.AccessControl.DirectorySecurity]::new()',
+  '  $acl.SetAccessRuleProtection($true, $false)',
+  '  $inh = [System.Security.AccessControl.InheritanceFlags]([int]1 -bor [int]2)',
+  '  $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($sid, $full, $inh, [System.Security.AccessControl.PropagationFlags]::None, $allow))',
+  '  [System.IO.DirectoryInfo]::new($p).SetAccessControl($acl)',
+  '} else {',
+  '  $acl = [System.Security.AccessControl.FileSecurity]::new()',
+  '  $acl.SetAccessRuleProtection($true, $false)',
+  '  $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($sid, $full, $allow))',
+  '  [System.IO.FileInfo]::new($p).SetAccessControl($acl)',
+  '}',
+].join('\n');
+
 function applyAcl(target, isDir, userSid, tools) {
-  if (!tools.icacls) throw fail(target, 'icacls.exe was not found');
-  const grant = '*' + userSid + (isDir ? ':(OI)(CI)F' : ':F');
-  const steps = [
-    [target, '/reset'],
-    [target, '/inheritance:r'],
-    [target, '/grant:r', grant],
-  ];
-  for (const a of steps) {
-    const r = tools.run(tools.icacls, a);
-    if (r.status !== 0) throw fail(target, 'icacls ' + a[1] + ' failed' + why(r));
-  }
+  if (!tools.powershell) throw fail(target, 'the system PowerShell was not found');
+  const r = tools.run(tools.powershell, ['-NoProfile', '-NonInteractive', '-Command', PRIVATE_SCRIPT], { ZN_ACL_PATH: target, ZN_ACL_SID: userSid, ZN_ACL_DIR: isDir ? '1' : '0' });
+  if (r.status !== 0) throw fail(target, 'could not set its permissions' + why(r));
 }
 
 /**
@@ -324,4 +333,4 @@ function scriptWriteRisk(target, opts) {
   return scriptEntriesRisk(entries, sid);
 }
 
-module.exports = { scriptWriteRisk, scriptEntriesRisk, rightsMask, ensurePrivate, ensurePipe, verifyPrivate, parseSddl, problems, currentUserSid, systemTool, realTools, _forget: () => { ok.clear(); sidMemo = null; } };
+module.exports = { scriptWriteRisk, scriptEntriesRisk, rightsMask, ensurePrivate, ensurePipe, verifyPrivate, parseSddl, problems, currentUserSid, realTools, _forget: () => { ok.clear(); sidMemo = null; } };

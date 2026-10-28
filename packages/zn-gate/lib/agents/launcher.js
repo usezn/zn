@@ -744,7 +744,8 @@ function runWinPowerShell(script, extra, io = {}) {
   const env = { SystemRoot: root, windir: root, SystemDrive: root.slice(0, 2), PATH: w.join(root, 'System32'), ...extra };
   for (const k of Object.keys(env)) if (/^psmodulepath$/i.test(k)) delete env[k];
   env.PSModulePath = require('../exe').systemPsModulePath(ps);
-  return spawnSync(ps, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+  // No -ExecutionPolicy: the policy covers script files, not the text of -Command.
+  return spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', script], {
     env, cwd: root, encoding: 'utf8', timeout: 30000, windowsHide: true,
   });
 }
