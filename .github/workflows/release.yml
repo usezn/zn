@@ -1,8 +1,16 @@
 name: Release
 
 # Builds the npm tarball and the Python sdist and wheel once, signs them, and
-# publishes those exact files to PyPI and npm (OIDC trusted publishing, no
-# stored tokens) and to a GitHub Release.
+# publishes those exact files to PyPI (OIDC trusted publishing, no stored
+# tokens), stages them on npm and creates a GitHub Release.
+#
+# npm: zn-gate is declared dual-use, and npm does not let a dual-use package be
+# published directly with trusted publishing: the workflow stages the signed
+# tarball (`npm stage publish`, OIDC, no stored token) and a maintainer approves
+# the stage with 2FA, on npmjs.com (Staged Packages > Approve) or with
+# `npm stage approve <stage-id>`. Nothing is public on npm until then. The npm
+# job waits for the approval, so the GitHub Release is only created once the
+# package is live. PyPI does not wait for npm.
 #
 # - Tag push (vX.Y.Z or vX.Y.Z-beta.N): verify, then build in the reusable
 #   build-release.yml, then wait for approval on the "release" environment
@@ -231,7 +239,12 @@ jobs:
     needs: [verify, build]
     if: needs.verify.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Staging takes a few minutes; the rest is the wait for the maintainer's 2FA approval on npm.
+    # Keep this above APPROVAL_WAIT_MINUTES plus about 10 minutes.
+    timeout-minutes: 150
+    env:
+      # How long the job waits for a maintainer to approve the staged package on npm.
+      APPROVAL_WAIT_MINUTES: "120"
     # One npm publication at a time across all versions (the workflow-level group is per tag): two
     # releases cannot read the dist-tags, publish and move "latest" at the same time. A run that waits
     # here keeps its place; GitHub keeps only one waiting run per group, so a third queued release would
@@ -284,10 +297,11 @@ jobs:
           sparse-checkout: .github/npm-cli
           sparse-checkout-cone-mode: false
           persist-credentials: false
-      # npm trusted publishing needs npm >= 11.5.1; the runner's bundled npm floats with the Node.js release,
-      # so the release uses one exact CLI. It comes from a committed lockfile (sha512 integrity of the
-      # tarball), is installed with --ignore-scripts, and the integrity is compared again with the value
-      # pinned here before the CLI is put on PATH.
+      # `npm stage publish` needs npm >= 11.15.0 and Node.js >= 22.14.0 (11.21.0 is the pinned version);
+      # the runner's bundled npm floats with the Node.js release, so the release uses one exact CLI.
+      # It comes from a committed lockfile (sha512 integrity of the tarball), is installed with
+      # --ignore-scripts, and the integrity is compared again with the value pinned here before the CLI
+      # is put on PATH.
       - name: Install the pinned npm CLI (integrity checked, no install scripts)
         env:
           NPM_CLI_VERSION: 11.21.0
@@ -308,7 +322,24 @@ jobs:
         run: |
           set -euo pipefail
           [ "$(npm --version)" = 11.21.0 ] || { echo "::error::npm on PATH is not the pinned 11.21.0"; exit 1; }
-          npm --version
+          node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 14) ? 0 : 1)' \
+            || { echo "::error::Node.js $(node --version) is older than 22.14, which npm stage needs"; exit 1; }
+          echo "node $(node --version), npm $(npm --version)"
+      # A re-run after the stage was approved late (the wait below timed out, the maintainer approved the
+      # stage anyway) finds the version already on npm: it does not stage again, it only checks that what is
+      # live is this tarball.
+      - name: Check whether this version is already on npm
+        id: live
+        env:
+          NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
+        run: |
+          set -euo pipefail
+          if [ "$(npm view "zn-gate@${NPM_VERSION}" version --prefer-online 2>/dev/null || true)" = "$NPM_VERSION" ]; then
+            echo "live=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Already on npm::zn-gate $NPM_VERSION is already on npm, so it is not staged again."
+          else
+            echo "live=false" >> "$GITHUB_OUTPUT"
+          fi
       # Reads the dist-tags again here, after any wait for approval or for another release to finish
       # publishing, and fails closed (nothing is published) when they cannot be read or the release is
       # not newer than what its dist-tag points to. The rules are in .github/scripts/npm-dist-tag-plan.mjs
@@ -318,6 +349,7 @@ jobs:
       #   X.Y.Z-rc.N   -> next, X.Y.Z-beta.N -> beta, X.Y.Z-alpha.N -> alpha (only if newer than the tag)
       - name: Choose the dist-tag
         id: disttag
+        if: steps.live.outputs.live != 'true'
         env:
           NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
         run: |
@@ -328,14 +360,17 @@ jobs:
           fi
           cat "$RUNNER_TEMP/dist-tags-before.json"
           node plan/.github/scripts/npm-dist-tag-plan.mjs plan "$NPM_VERSION" "$RUNNER_TEMP/dist-tags-before.json" | tee -a "$GITHUB_OUTPUT"
-      - name: Publish the tarball with npm trusted publishing
+      # Stages the tarball; it is not public until a maintainer approves it with 2FA. The dist-tag chosen
+      # above is stored with the stage and applied when it is approved.
+      - name: Stage the tarball with npm trusted publishing
+        if: steps.live.outputs.live != 'true'
         working-directory: release
         env:
           NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
           DIST_TAG: ${{ steps.disttag.outputs.tag }}
         run: |
           set -euo pipefail
-          # Right before publishing: the tarball must still be the file SHA256SUMS lists.
+          # Right before staging: the tarball must still be the file SHA256SUMS lists.
           tarball="zn-gate-${NPM_VERSION}.tgz"
           [ -f SHA256SUMS ] || { echo "::error::SHA256SUMS is missing"; exit 1; }
           [ -f "$tarball" ] || { echo "::error::$tarball is missing"; exit 1; }
@@ -347,11 +382,68 @@ jobs:
           if [ "$actual" != "$expected" ]; then
             echo "::error::$tarball sha256 is $actual, SHA256SUMS lists $expected"; exit 1
           fi
-          npm publish "./$tarball" --tag "$DIST_TAG" --access public --provenance --ignore-scripts
+          npm stage publish "./$tarball" --tag "$DIST_TAG" --access public --provenance --ignore-scripts 2>&1 | tee "$RUNNER_TEMP/stage-output.txt"
+      - name: Show how to approve the staged package
+        if: steps.live.outputs.live != 'true'
+        env:
+          NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
+          DIST_TAG: ${{ steps.disttag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### zn-gate $NPM_VERSION is staged on npm and is not public yet"
+            echo
+            echo "A maintainer has to approve it with 2FA. This job waits for up to $APPROVAL_WAIT_MINUTES minutes."
+            echo
+            echo "1. npmjs.com > zn-gate > Staged Packages > Approve, or"
+            echo "2. \`npm stage approve <stage-id>\` (\`npm stage list zn-gate\` shows the stage id; it may also be in the log of the staging step)."
+            echo
+            echo "It will be published under the \`$DIST_TAG\` dist-tag. To refuse it: \`npm stage reject <stage-id>\`."
+            echo
+            echo "Output of \`npm stage publish\` (lines about the stage and the provenance):"
+            echo
+            echo '```'
+            grep -iE 'stag|provenance|sigstore|rekor|transparency' "$RUNNER_TEMP/stage-output.txt" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=npm approval needed::zn-gate $NPM_VERSION is staged. Approve it with 2FA on npmjs.com (Staged Packages) or with npm stage approve <stage-id>."
+      # Polls npm once a minute until the version is public, keeping this job (and the npm-publish
+      # concurrency group) busy so that the GitHub Release is only created after the package is live and
+      # no other release is staged meanwhile. When it is public, what is live must be exactly this tarball
+      # (the registry integrity is compared with the sha512 of the verified file), not another stage.
+      - name: Wait for the approval on npm
+        working-directory: release
+        env:
+          NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
+        run: |
+          set -euo pipefail
+          tarball="zn-gate-${NPM_VERSION}.tgz"
+          want="sha512-$(openssl dgst -sha512 -binary "$tarball" | base64 -w0)"
+          deadline=$((SECONDS + APPROVAL_WAIT_MINUTES * 60))
+          until [ "$(npm view "zn-gate@${NPM_VERSION}" version --prefer-online 2>/dev/null || true)" = "$NPM_VERSION" ]; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::zn-gate $NPM_VERSION was not approved on npm within $APPROVAL_WAIT_MINUTES minutes. The stage may still be pending: approve it on npmjs.com (Staged Packages) or with npm stage approve <stage-id>, then re-run the failed jobs of this run (an already approved version is not staged again), or reject it with npm stage reject <stage-id>."
+              exit 1
+            fi
+            echo "$((SECONDS / 60)) min: zn-gate $NPM_VERSION is not public yet, waiting for the approval on npm"
+            sleep 60
+          done
+          got=""
+          for attempt in 1 2 3 4 5 6; do
+            got="$(npm view "zn-gate@${NPM_VERSION}" dist.integrity --prefer-online 2>/dev/null || true)"
+            [ -n "$got" ] && break
+            sleep 10
+          done
+          if [ "$got" != "$want" ]; then
+            echo "::error::zn-gate $NPM_VERSION is on npm with integrity '${got}', but the verified tarball has '${want}'"
+            exit 1
+          fi
+          echo "zn-gate $NPM_VERSION is on npm and is the verified tarball ($want)"
       # npm can take a few seconds to show a new dist-tag: read again for up to a minute. A dist-tag that
       # is not as planned, or a latest that moved backward, fails the job (the version is already published,
       # so this is a loud alarm for the maintainer to fix the dist-tag by hand, not a rollback).
       - name: Check the dist-tags after publishing
+        if: steps.live.outputs.live != 'true'
         env:
           NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
           DIST_TAG: ${{ steps.disttag.outputs.tag }}
@@ -369,6 +461,13 @@ jobs:
           cat "$RUNNER_TEMP/dist-tags-after.json" || true
           echo "::error::zn-gate $NPM_VERSION was published, but its dist-tags are not as planned (dist-tag $DIST_TAG; latest before: ${LATEST_BEFORE:-none})"
           exit 1
+      # The dist-tag plan was made in the run that staged the package; it is not made again here.
+      - name: Show the dist-tags (version already on npm)
+        if: steps.live.outputs.live == 'true'
+        run: |
+          set -euo pipefail
+          echo "::warning title=Dist-tags not re-checked::zn-gate was already on npm when this job started, so the dist-tag plan was not repeated. Check the dist-tags below."
+          npm view zn-gate dist-tags --json --prefer-online
 
   github-release:
     name: Create the GitHub Release
