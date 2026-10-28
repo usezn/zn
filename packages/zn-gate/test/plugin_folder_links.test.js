@@ -307,3 +307,13 @@ test('Claude Code plugin: a link that leaves the plugins folder and comes back i
     assert.equal(fs.existsSync(marker), false, 'zn-gate check ran the plugin through a chain that leaves and returns (' + kind + ')');
   }
 });
+
+test('the target of a link is split at \\ and / on Windows, and only at / elsewhere', () => {
+  const { linkTargetParts } = require('../lib/check')._internal;
+  assert.deepEqual(linkTargetParts('C:\\Users\\u\\.claude\\plugins\\cache\\evil\\sub\\zn-gate', 'win32'),
+    { root: 'C:\\', parts: ['Users', 'u', '.claude', 'plugins', 'cache', 'evil', 'sub', 'zn-gate'] });
+  assert.deepEqual(linkTargetParts('evil\\sub\\zn-gate', 'win32'), { root: '', parts: ['evil', 'sub', 'zn-gate'] });
+  assert.deepEqual(linkTargetParts('..\\..\\store/1.15.0', 'win32'), { root: '', parts: ['..', '..', 'store', '1.15.0'] });
+  assert.deepEqual(linkTargetParts('/a/./b//c', 'linux'), { root: '/', parts: ['a', 'b', 'c'] });
+  assert.deepEqual(linkTargetParts('a\\b/c', 'linux'), { root: '', parts: ['a\\b', 'c'] });
+});

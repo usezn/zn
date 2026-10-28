@@ -448,6 +448,15 @@ function claudePluginRootProblem(root, ctx) {
   return '';
 }
 
+/* The root and the parts of the target of a link, split as the file system of `platform` reads it. On Windows a junction
+   or a mklink link names its target with \ (C:\a\b, or a\b), so both separators split it; elsewhere \ is an ordinary
+   character of a name and only / splits. */
+function linkTargetParts(target, platform = process.platform) {
+  const win = platform === 'win32';
+  const root = (win ? path.win32 : path.posix).parse(target).root;
+  return { root, parts: target.slice(root.length).split(win ? /[\\/]+/ : /\/+/).filter((x) => x && x !== '.') };
+}
+
 /* Follows `start` one link at a time, as the file system does, and returns the first link inside one of the folders in
    `within` whose target (the place that link names, before the rest is followed) is not inside one of them, as
    {link, to}; null when every link below those folders stays in them (a link above them, as /var on macOS, is followed
@@ -466,6 +475,8 @@ function linkHopLeaves(start, within) {
   let hops = 0;
   while (queue.length) {
     const { seg, guard, end } = queue.shift();
+    // Windows applies a '..' of a target to its text before the file system sees it, so an evil\..\store that Windows
+    // resolves inside can be refused here: a rare false positive that fails closed.
     if (seg === '..') cur = path.dirname(cur);
     else if (seg && seg !== '.') {
       const next = path.join(cur, seg);
@@ -477,9 +488,8 @@ function linkHopLeaves(start, within) {
         try { target = fs.readlinkSync(next); } catch (_) { return { link: next, to: 'a place zn-gate cannot read' }; }
         if (++hops > 40) return { link: next, to: 'too many links in a row' };
         const g = guard || (inWithin(next) ? next : null);
-        const parsed = path.parse(target);
-        const parts = target.slice(parsed.root.length).split(/[\/]+/).filter((x) => x && x !== '.');
-        if (parsed.root) cur = path.resolve(parsed.root);
+        const { root, parts } = linkTargetParts(target);
+        if (root) cur = path.resolve(root);
         if (!parts.length && g && !inWithin(cur)) return { link: g, to: cur };
         queue.unshift(...parts.map((x, i) => ({ seg: x, guard: g, end: i === parts.length - 1 && (guard ? end : true) })));
         continue;
@@ -1492,4 +1502,4 @@ function report({ results, removed, warnings }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, zcodePluginRootProblem, pluginLinkProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS } };
+module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, zcodePluginRootProblem, pluginLinkProblem, linkTargetParts, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS } };
