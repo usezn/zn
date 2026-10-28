@@ -1231,28 +1231,39 @@ test('vault call: an unreadable config is checked (fails closed)', async (t) => 
   assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
 });
 
-test('vault call: through the plugin server it is allowed when the plugin is enabled, and not otherwise', async (t) => {
+test('vault call: a plugin server name is never zn\'s, also with the plugin enabled (the plugin registers no MCP server)', async (t) => {
   const dir = tmpProject(t);
-  const cfg = claudeConfig(t, { settings: { enabledPlugins: { 'zn-gate@zn': true } } });
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } }, settings: { enabledPlugins: { 'zn-gate@zn': true } } });
   const name = 'mcp__plugin_zn-gate_secrets__secrets_http_request';
-  assert.equal(adapter.normalize(preTool(name, {}, dir)).mcp.ours, 'secrets');
-  assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'allow');
-  // A server of another plugin with a similar name is not zn.
+  assert.equal(adapter.normalize(preTool(name, {}, dir)).mcp.ours, undefined);
+  assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+  assert.equal(adapter.normalize(preTool('mcp__plugin_zn-gate_zn-gate__analyze_prompt', {}, dir)).mcp.ours, undefined);
   assert.equal(decisionOf(await run(preTool('mcp__plugin_other_secrets__secrets_http_request', VAULT_CALL, dir), { engine: piiEngine })), 'deny');
-  // A project that defines a server with the plugin's name is not the plugin.
-  fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { 'plugin_zn-gate_secrets': { command: 'node', args: ['./collect.js'] } } }));
-  assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
-  // Plugin disabled: no trust.
-  fs.rmSync(path.join(dir, '.mcp.json'));
-  fs.writeFileSync(path.join(cfg, 'settings.json'), JSON.stringify({ enabledPlugins: { 'zn-gate@zn': false } }));
-  assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
 });
 
-test('personal data: asked for the secrets server, not asked for the plugin detector server, asked for any other', async (t) => {
+test('vault call: a user-scope entry that sets NODE_OPTIONS, NODE_PATH or a folder in the project is not zn\'s', (t) => {
+  const dir = tmpProject(t);
+  const cfgDir = claudeConfig(t);
+  const kind = (secrets) => {
+    fs.writeFileSync(path.join(cfgDir, '.claude.json'), JSON.stringify({ mcpServers: { secrets } }));
+    const env = { ...process.env, CLAUDE_CONFIG_DIR: cfgDir };
+    delete env.CLAUDE_PROJECT_DIR;
+    return adapter.znMcpServerKind('secrets', dir, { env });
+  };
+  assert.equal(kind(ZN_SECRETS), 'secrets');
+  assert.equal(kind({ ...ZN_SECRETS, env: { NODE_OPTIONS: '--require ./x.js' } }), null);
+  assert.equal(kind({ ...ZN_SECRETS, env: { node_path: path.join(dir, 'lib') } }), null);
+  assert.equal(kind({ ...ZN_SECRETS, env: { ZN_EXAMPLE: '1' } }), 'secrets');
+  assert.equal(kind({ ...ZN_SECRETS, cwd: dir }), null);
+  assert.equal(kind({ ...ZN_SECRETS, cwd: 'relative' }), null);
+  assert.equal(kind({ ...ZN_SECRETS, cwd: path.dirname(process.execPath) }), 'secrets');
+});
+
+test('personal data: asked for the secrets server, for a plugin server name and for any other', async (t) => {
   const dir = tmpProject(t);
   claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } }, settings: { enabledPlugins: { 'zn-gate@zn': true } } });
   const note = { text: 'write to alice@example.com' };
-  assert.equal(decisionOf(await run(preTool('mcp__plugin_zn-gate_zn-gate__analyze_prompt', note, dir), { engine: piiEngine })), 'allow');
+  assert.equal(decisionOf(await run(preTool('mcp__plugin_zn-gate_zn-gate__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
   assert.equal(decisionOf(await run(preTool(VAULT_TOOL, { ...VAULT_CALL, body: note.text }, dir), { engine: piiEngine })), 'ask');
   assert.equal(decisionOf(await run(preTool('mcp__crm__add_contact', note, dir), { engine: piiEngine })), 'ask');
   // A secret is denied even for the detector server.
