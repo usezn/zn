@@ -249,3 +249,36 @@ test('copies whose source is a variable, a substitution or a folder copied with 
   ];
   for (const c of ok) assert.equal(sh(c), null, c);
 });
+
+test('a substitution as the source, with the destination ending in a slash or nested, and parallel and xargs commands in any form are refused', () => {
+  const bad = [
+    'cp $(cat list) ~/bin/',
+    'cp $(cat list) $HOME/.local/bin/',
+    'rsync -a $(cat list) ~/.local/bin/',
+    'cp $(cat $(echo list)) ~/bin',
+    'cp $(cat list) "$HOME/.local/bin/"',
+    'sudo cp $(cat list) ~/bin/',
+    'parallel --jobs 4 cp {} ~/bin ::: src/a',
+    'parallel cp {1} ~/bin ::: src/a',
+    'parallel cp {/} ~/bin ::: src/a',
+    'parallel cp {.} ~/bin ::: src/a',
+    'parallel -I F cp F ~/bin ::: src/a',
+    "parallel 'cp {} ~/.local/bin' ::: src/a",
+    'parallel --some-new-option 4 cp {} ~/bin ::: src/a',
+    "xargs -I F sh -c 'cp F ~/.local/bin' < list",
+    "xargs -n 1 -I F sh -c 'cp F ~/.local/bin' < list",
+  ];
+  for (const c of bad) assert.match(String(sh(c)), /protected/, c);
+  const ok = [
+    'cp $(cat list) ./dist/',
+    'cp $(cat $(echo list)) ./dist',
+    'cp $(git ls-files "*.sh") ./dist/',
+    'echo $(cat list) ~/bin/',
+    'parallel --jobs 4 cp {} ./dist ::: src/a',
+    "parallel 'cp {} ./dist' ::: src/a",
+    'parallel --keep-order gzip ::: a b',
+    "xargs -I F sh -c 'cp F ./dist' < list",
+    'cp ./mytool ~/.local/bin/',
+  ];
+  for (const c of ok) assert.equal(sh(c), null, c);
+});

@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-27.16';
+const POLICY_RULES_VERSION = '2026-10-28.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1863,6 +1863,13 @@ function codesOfCommand(w, out) {
       launcherCodes(w, j, name, out);
     }
   }
+  // parallel 'cp {} dest' ::: a b : a command written as one word is run by a shell.
+  const par = w.findIndex((x) => programName(x.text) === 'parallel');
+  if (par >= 0) {
+    let j = par + 1;
+    while (j < w.length && w[j].text.startsWith('-')) j += NODE_WRAPPER_VALUE_FLAGS.parallel.has(w[j].text) ? 2 : 1;
+    if (w[j] && /\s/.test(w[j].text)) out.add(w[j].text);
+  }
 }
 
 /* --------------------------- here-documents --------------------------- */
@@ -2482,9 +2489,12 @@ function bashDenialOf(cmd, opts = {}) {
   for (const r of readings) shellCodesOf(r, codes);
   if (codes.size) {
     if (depth >= SHELL_CODE_DEPTH) return TOO_NESTED_MESSAGE;
+    // The placeholders of an xargs or parallel that runs the code (xargs -I F sh -c 'cp F bin') stand for files there too.
+    const outerPlaceholders = new Set(opts.outerPlaceholders || []);
+    for (const r of readings) wrapperPlaceholders(r, r.length, outerPlaceholders);
     for (const code of codes) {
       if (overBudget(opts.budget, 5)) return TOO_SLOW_MESSAGE;
-      const deny = bashDenialOf(code, { ...opts, depth: depth + 1 });
+      const deny = bashDenialOf(code, { ...opts, depth: depth + 1, outerPlaceholders });
       if (deny) return deny;
     }
   }
@@ -2504,7 +2514,7 @@ function bashDenialOf(cmd, opts = {}) {
   // Where a relative .env path may be read from once the command has changed directory (cd app && cat .env).
   // Each reading is followed on its own, so a cd counts once.
   opts.cdBases = cdBasesOf(readings, opts);
-  for (const r of readings) markRuns(r);
+  for (const r of readings) markRuns(r, opts.outerPlaceholders);
   opts.codeHead = words.some((x) => CODE_CMDS_RE.test(bareHead(x.head)));
   opts.elsewhere = new Map();
   markLinkWords(readings);
@@ -2771,15 +2781,51 @@ const NODE_WRAPPER_VALUE_FLAGS = {
   nice: new Set(['-n']),
   ionice: new Set(['-c', '-n', '-p']),
   stdbuf: new Set(['-i', '-o', '-e']),
-  parallel: new Set(['-j', '-a', '-S', '-N', '-n', '-P', '-L', '-d']),
+  parallel: new Set(['-j', '-a', '-S', '-N', '-n', '-P', '-L', '-d', '-I', '-C', '-E', '--jobs', '--max-procs', '--arg-file',
+    '--sshlogin', '--sshloginfile', '--slf', '--max-args', '--max-replace-args', '--delimiter', '--colsep', '--load',
+    '--memfree', '--timeout', '--retries', '--joblog', '--results', '--res', '--tmpdir', '--workdir', '--wd', '--basefile',
+    '--bf', '--return', '--transferfile', '--tf', '--nice', '--halt', '--halt-on-error', '--delay', '--tagstring',
+    '--tag-string', '--env', '--block', '--block-size', '--recstart', '--recend', '--header', '--rpl', '--profile', '--id',
+    '--limit', '--ssh', '--max-chars', '--max-lines', '--replace', '--extensionreplace', '--er', '--basenamereplace', '--bnr',
+    '--dirnamereplace', '--dnr', '--basenameextensionreplace', '--bner', '--seqreplace', '--slotreplace', '--termseq',
+    '--arg-sep', '--arg-file-sep', '--eof', '--shellquote-of', '--sqlmaster', '--sqlworker', '--sqlandworker', '--ssh-delay']),
 };
+// Options of parallel that take no value. Any other long option makes the command it runs unsure, and a copy into a
+// bin folder in it is refused: a value read as the command would hide the copy.
+const PARALLEL_NO_VALUE = new Set(['--keep-order', '--verbose', '--dry-run', '--null', '--no-notice', '--will-cite', '--bar',
+  '--eta', '--progress', '--line-buffer', '--lb', '--ungroup', '--group', '--quote', '--pipe', '--pipepart', '--tag', '--xargs',
+  '--shuf', '--plus', '--trim', '--files', '--compress', '--fifo', '--cat', '--controlmaster', '--nonall', '--onall',
+  '--silent', '--joblog-append', '--keep-going', '--round-robin', '--group-by', '--linebuffer', '--interactive', '--citation',
+  '--version', '--help', '--total-jobs', '--resume', '--resume-failed', '--retry-failed', '--use-cpus-instead-of-cores',
+  '--use-cores-instead-of-cpus', '--no-run-if-empty', '--noswap', '--number-of-cpus', '--number-of-cores', '--fg', '--bg']);
+// parallel fills in {}, {1}, {/}, {.}, {//}, {#} and the rest for each item.
+const PARALLEL_PLACEHOLDER_RE = /\{[^{}\s]*\}/;
 // Words of a loop or a condition that come before the command they run (`do cp a bin`).
 const NODE_SHELL_KEYWORDS = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', '!']);
 // The name of the program in a path, without a Windows extension.
 const nameOfProgram = (t) => String(t).split(/[\\/]/).pop().toLowerCase().replace(/\.(?:exe|cmd|bat)$/, '');
 
-/** Group the words of each simple command and work out its program, its flags and where its files go. */
-function markRuns(words) {
+/* The placeholders that xargs and parallel among ws[0..to) fill in for each item: {} and the text of xargs -I STR,
+   -iSTR or --replace=STR (and parallel -I STR), and any {...} when parallel runs the command. */
+function wrapperPlaceholders(ws, to, set) {
+  for (let q = 0; q < to; q++) {
+    const wrap = nameOfProgram(ws[q].text);
+    if (wrap !== 'xargs' && wrap !== 'parallel') continue;
+    if (wrap === 'parallel') set.add(PARALLEL_PLACEHOLDER_RE);
+    for (let j = q + 1; j < to && ws[j].text.startsWith('-'); j++) {
+      const f = ws[j].text;
+      if (f === '-I' && ws[j + 1]) set.add(ws[++j].text);
+      else if (/^-[Ii]./.test(f)) set.add(f.slice(2));
+      else if (/^--replace=./.test(f)) set.add(f.slice(10));
+      else if (NODE_WRAPPER_VALUE_FLAGS[wrap].has(f)) j++;
+    }
+  }
+  return set;
+}
+
+/** Group the words of each simple command and work out its program, its flags and where its files go. `outer` holds
+    the placeholders of the xargs or parallel that runs this command as shell code (xargs -I F sh -c 'cp F bin'). */
+function markRuns(words, outer) {
   let cur = null;
   let last = null;
   const runs = [];
@@ -2797,6 +2843,8 @@ function markRuns(words) {
       if (NODE_WRAPPERS.has(nameOfProgram(t))) {
         const wrap = nameOfProgram(t);
         for (let j = i + 1; j < ws.length && ws[j].text.startsWith('-'); j++) {
+          if (wrap === 'parallel' && /^--[^=]+$/.test(ws[j].text) && !NODE_WRAPPER_VALUE_FLAGS.parallel.has(ws[j].text) &&
+              !PARALLEL_NO_VALUE.has(ws[j].text)) run.unsure = true;
           if (NODE_WRAPPER_VALUE_FLAGS[wrap] && NODE_WRAPPER_VALUE_FLAGS[wrap].has(ws[j].text)) j++, i++;
           i++;
         }
@@ -2812,16 +2860,7 @@ function markRuns(words) {
     run.args = [];
     run.out = new Set();
     // xargs -I STR, -iSTR and --replace=STR: STR stands for each item read, like `{}`.
-    run.placeholders = new Set(['{}']);
-    for (let q = 0; q < i; q++) {
-      if (nameOfProgram(ws[q].text) !== 'xargs') continue;
-      for (let j = q + 1; j < i; j++) {
-        const f = ws[j].text;
-        if (f === '-I' && ws[j + 1]) run.placeholders.add(ws[j + 1].text);
-        else if (/^-[Ii]./.test(f)) run.placeholders.add(f.slice(2));
-        else if (/^--replace=./.test(f)) run.placeholders.add(f.slice(10));
-      }
-    }
+    run.placeholders = wrapperPlaceholders(ws, i, new Set(['{}', ...(outer || [])]));
     let dest = null;
     for (let k = i + 1; k < ws.length; k++) {
       const x = ws[k];
@@ -2866,14 +2905,17 @@ const NODE_CODE_WRITE_RE = /\bopen\s*\(|writeFile|appendFile|copyFile|\brename|u
  */
 function nodeExeWrites(w, text, c, opts) {
   if (w.redirectTarget) return c.role === 'file';
+  // cp $(cat list) ~/bin/ : the shell splits the substitution into its own words, and the word after it starts a new
+  // command for the scanner (with no program), so the copy is read from the text, before the program is looked at.
+  if (c.role === 'bin' && substitutionCopiesTo(text, opts.cmdText || '')) return true;
   const run = w.run;
+  // parallel --unknown-option ... : what it runs cannot be told apart from the option's value.
+  if (c.role === 'bin' && run && run.unsure) return true;
   if (!run || !run.head) {
     // A word found inside the code an interpreter runs (python -c "open(...)"): refused when that code writes files.
     return c.role === 'file' && !!opts.codeHead && NODE_CODE_WRITE_RE.test(opts.cmdText || '');
   }
   if (run.out.has(w)) return c.role === 'file';
-  // cp $(cat list) ~/bin : the shell splits the substitution into its own words, so the copy is read from the text.
-  if (c.role === 'bin' && substitutionCopiesTo(text, opts.cmdText || '')) return true;
   const head = run.head;
   const isDest = run.dest === w;
   const delMove = NODE_DEL_MOVE.has(head);
@@ -2897,12 +2939,55 @@ function nodeExeWrites(w, text, c, opts) {
   return sources.some((a) => nodeSourceMayBeNodeExe(String(a.text), run.placeholders));
 }
 
-/** Whether the command text has a cp, install, rsync, mv or ln with a source that ends in `$(...)` or backticks and `text` as its last word. */
+/* The simple commands of `cmdText` at its top level, each as its words with quotes kept: split at ; & | and new lines
+   outside quotes, $( ) and backticks. A word that has a $( ) or backticks in it is marked `sub`. */
+function topLevelCommands(cmdText) {
+  const cmds = [];
+  let words = [];
+  let word = '';
+  let sub = false;
+  let depth = 0;
+  let tick = false;
+  let quote = '';
+  const endWord = () => { if (word) words.push({ text: word, sub }); word = ''; sub = false; };
+  const endCmd = () => { endWord(); if (words.length) cmds.push(words); words = []; };
+  for (let i = 0; i < cmdText.length; i++) {
+    const ch = cmdText[i];
+    if (quote === "'") { word += ch; if (ch === "'") quote = ''; continue; }
+    if (ch === '\\' && i + 1 < cmdText.length) { word += ch + cmdText[++i]; continue; }
+    if (ch === '`') { tick = !tick; sub = true; word += ch; continue; }
+    if (ch === '$' && cmdText[i + 1] === '(') { depth++; sub = true; word += '$('; i++; continue; }
+    if (depth || tick) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      word += ch;
+      continue;
+    }
+    if (ch === '"') { quote = quote ? '' : '"'; word += ch; continue; }
+    if (quote) { word += ch; continue; }
+    if (ch === "'") { quote = "'"; word += ch; continue; }
+    if (/[;&|\n]/.test(ch)) endCmd();
+    else if (/[\s()]/.test(ch)) endWord();
+    else word += ch;
+  }
+  endCmd();
+  return cmds;
+}
+
+const unquote = (t) => t.replace(/["']/g, '');
+const noEndSlash = (t) => (t.length > 1 ? t.replace(/[\\/]+$/, '') : t);
+
+/** Whether the command text has a cp, install, rsync, mv or ln with a source made by $( ) or backticks (nested too)
+    and `text` as its last word. Both sides are compared without quotes and without a slash at the end. */
 function substitutionCopiesTo(text, cmdText) {
-  const re = /(?:^|[\s;&|({])(?:cp|install|rsync|mv|ln)\s[^;&|\n]*?(?:\$\([^()]*\)|`[^`]*`)["']?\s+([^;&|\n)]*)/g;
-  for (const m of cmdText.matchAll(re)) {
-    const last = m[1].trim().split(/\s+/).pop().replace(/^["']|["']$/g, '');
-    if (last === text) return true;
+  if (!/\$\(|`/.test(cmdText)) return false;
+  const want = noEndSlash(unquote(text));
+  for (const ws of topLevelCommands(cmdText)) {
+    const at = ws.findIndex((x) => /^(?:cp|install|rsync|mv|ln)$/.test(nameOfProgram(unquote(x.text))));
+    if (at < 0 || ws.length - at < 3) continue;
+    const last = ws[ws.length - 1];
+    if (!ws.slice(at + 1, -1).some((x) => x.sub)) continue;
+    if (noEndSlash(unquote(last.text)) === want) return true;
   }
   return false;
 }
@@ -2919,7 +3004,7 @@ const NODE_EXE_NAMES = ['node', 'zn', 'node.exe', 'zn.exe', 'zn.cmd', 'zn.ps1'];
 function nodeSourceMayBeNodeExe(text, placeholders) {
   const t = slash(text);
   if (/(?:^|\/)\.?$/.test(t) || t === '..' || t.endsWith('/..')) return true;
-  if (t.includes('{}') || (placeholders && [...placeholders].some((ph) => ph && t.includes(ph)))) return true;
+  if (t.includes('{}') || (placeholders && [...placeholders].some((ph) => (ph instanceof RegExp ? ph.test(t) : ph && t.includes(ph))))) return true;
   const base = t.split('/').pop();
   // The last part is a variable or a command substitution: its value cannot be seen.
   if (/[$`]/.test(base)) return true;
