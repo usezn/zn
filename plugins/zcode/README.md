@@ -1,6 +1,6 @@
 # zn-gate plugin for the ZCode desktop app
 
-zn-gate 1.13.1 as a ZCode plugin: it checks every tool call and prompt for secrets before ZCode runs it.
+zn-gate 1.14.1 as a ZCode plugin: it checks every tool call and prompt for secrets before ZCode runs it.
 
 - Blocks reads and writes of secret files (`.env` with values, `~/.aws/credentials`, `~/.zn`), shell commands that read them
   or handle the vault, MCP calls that would send a secret to a server, and prompts that contain a secret.
