@@ -232,6 +232,9 @@ jobs:
     if: needs.verify.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      dist_tag: ${{ steps.disttag.outputs.tag }}
+      latest_before: ${{ steps.disttag.outputs.latest_before }}
     # One npm publication at a time across all versions (the workflow-level group is per tag): two
     # releases cannot read the dist-tags, publish and move "latest" at the same time. A run that waits
     # here keeps its place; GitHub keeps only one waiting run per group, so a third queued release would
@@ -348,26 +351,53 @@ jobs:
             echo "::error::$tarball sha256 is $actual, SHA256SUMS lists $expected"; exit 1
           fi
           npm publish "./$tarball" --tag "$DIST_TAG" --access public --provenance --ignore-scripts
-      # npm can take a few seconds to show a new dist-tag: read again for up to a minute. A dist-tag that
-      # is not as planned, or a latest that moved backward, fails the job (the version is already published,
-      # so this is a loud alarm for the maintainer to fix the dist-tag by hand, not a rollback).
+  # npm can take minutes to show a new version ("being processed"), so the dist-tags are checked in their own job,
+  # for up to 20 minutes, and a slow npm does not hold back the GitHub Release (that job needs only the publish).
+  # A dist-tag that is not as planned, or a latest that moved backward, still fails this job: the version is
+  # already published, so this is a loud alarm for the maintainer to fix the dist-tag by hand, not a rollback.
+  npm-dist-tags:
+    name: Check the npm dist-tags
+    needs: [verify, publish-npm]
+    if: needs.verify.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read # the checkout of the dist-tag script
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      # Only the dist-tag script, from the commit being released.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          path: plan
+          sparse-checkout: .github/scripts/npm-dist-tag-plan.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
       - name: Check the dist-tags after publishing
         env:
           NPM_VERSION: ${{ needs.verify.outputs.npm_version }}
-          DIST_TAG: ${{ steps.disttag.outputs.tag }}
-          LATEST_BEFORE: ${{ steps.disttag.outputs.latest_before }}
+          DIST_TAG: ${{ needs.publish-npm.outputs.dist_tag }}
+          LATEST_BEFORE: ${{ needs.publish-npm.outputs.latest_before }}
         run: |
           set -euo pipefail
-          for attempt in 1 2 3 4 5 6; do
+          # Every 30 seconds for up to 20 minutes.
+          for attempt in $(seq 1 40); do
             if npm view zn-gate dist-tags --json --prefer-online > "$RUNNER_TEMP/dist-tags-after.json" \
               && node plan/.github/scripts/npm-dist-tag-plan.mjs verify "$NPM_VERSION" "$DIST_TAG" "$LATEST_BEFORE" "$RUNNER_TEMP/dist-tags-after.json"; then
+              echo "The dist-tags are as planned (attempt $attempt)"
               exit 0
             fi
             echo "attempt $attempt: the dist-tags are not as expected yet"
-            sleep 10
+            sleep 30
           done
           cat "$RUNNER_TEMP/dist-tags-after.json" || true
-          echo "::error::zn-gate $NPM_VERSION was published, but its dist-tags are not as planned (dist-tag $DIST_TAG; latest before: ${LATEST_BEFORE:-none})"
+          msg="zn-gate $NPM_VERSION was published, but after 20 minutes its dist-tags are not as planned (dist-tag $DIST_TAG; latest before: ${LATEST_BEFORE:-none})"
+          echo "::error::$msg"
+          echo "$msg. Check them with \`npm view zn-gate dist-tags\` and fix them by hand with \`npm dist-tag add\`." >> "$GITHUB_STEP_SUMMARY"
           exit 1
 
   github-release:
@@ -406,21 +436,9 @@ jobs:
           TAG: ${{ needs.verify.outputs.tag }}
         run: |
           set -euo pipefail
-          awk -v v="$NPM_VERSION" '
-            index($0, "## [" v "]") == 1 { on = 1; next }
-            on && /^## \[/ { exit }
-            on { print }
-          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
-          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
-            echo "::error::No section for $NPM_VERSION in CHANGELOG.md"
-            exit 1
-          fi
-          {
-            echo
-            echo "---"
-            echo
-            echo "How to verify these files: [docs/verify-release.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/docs/verify-release.md)"
-          } >> "$RUNNER_TEMP/notes.md"
+          # GitHub rejects a release body over 125,000 characters: longer notes leave out the Fixed list and
+          # link the full CHANGELOG.md section instead (see the script).
+          node .github/scripts/release-notes.mjs --version "$NPM_VERSION" --tag "$TAG" --repo "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/notes.md"
       - name: Check that the tag still points to the verified commit
         env:
           TAG: ${{ needs.verify.outputs.tag }}
