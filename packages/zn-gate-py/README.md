@@ -22,14 +22,17 @@
 
 Install it in a virtual environment. Many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one, with an "externally-managed-environment" error:
 
-On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package first: `sudo apt install python3-venv`.
+On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package first: `sudo apt update && sudo apt install python3-venv`.
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install zn-gate      # Windows: .venv\Scripts\pip install zn-gate
+.venv/bin/zn-gate scan .           # Windows: .venv\Scripts\zn-gate scan .
 ```
 
-**Only the command-line tools (`scan`, `test`, `status`)?** Install the Python CLI as a standalone tool, without a virtual environment:
+`zn-gate` is installed inside the environment, so run it as shown, or run `source .venv/bin/activate` once in each terminal and then `zn-gate scan .` (Windows: `.venv\Scripts\activate`).
+
+**Only the command-line tools (`scan`, `test`, `status`)?** Install the Python CLI as a standalone tool, without a virtual environment. On Ubuntu and Debian, first run `sudo apt update && sudo apt install pipx`. Bare `pip` is often missing there too (`pip: command not found`), and `pip install` into the system Python is refused, so use pipx, uv or a virtual environment. To get uv, follow the [official uv installation guide](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```bash
 pipx install zn-gate
@@ -46,7 +49,9 @@ Inside an environment you already use (your project's virtualenv, Poetry, uv), `
 **If something fails:**
 
 - `externally-managed-environment`: install it in a virtual environment, as shown above.
-- `python3 -m venv` fails on Debian or Ubuntu: run `sudo apt install python3-venv`.
+- `pip: command not found` or `No module named pip`: this system has no pip for its Python. Use the virtual environment or pipx steps above.
+- `zn-gate: command not found` after a virtual environment install: run `.venv/bin/zn-gate scan .`, or run `source .venv/bin/activate` first.
+- `python3 -m venv` fails on Debian or Ubuntu: run `sudo apt update && sudo apt install python3-venv`.
 - Python says it cannot find `zn_gate`: run your script with the Python of that environment (`.venv/bin/python`; Windows: `.venv\Scripts\python`).
 - Legitimate content is blocked: use `on_block="return"` with a fallback while you evaluate it.
 - You use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app: this package does not protect them. Run `npx -y zn-gate init` in your own terminal instead.

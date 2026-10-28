@@ -11,5 +11,7 @@
   "shield.test.js",
   "init.test.js",
   "local_only.test.js",
-  "evidence.test.js"
+  "evidence.test.js",
+  "hooks_supervisor.test.js",
+  "shield_invisible_items.test.js"
 ]
