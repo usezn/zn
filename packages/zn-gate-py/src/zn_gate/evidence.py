@@ -181,10 +181,24 @@ def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
     while True:
         try:
             fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            # If the token cannot be written whole (a full disk, a short write) or the file cannot be
+            # closed, remove the lock again: left behind, it would make every later writer wait for it.
+            done = False
             try:
-                os.write(fd, token.encode("ascii"))
+                data = token.encode("ascii")
+                if os.write(fd, data) != len(data):
+                    raise OSError(errno.ENOSPC, "the lock token was only partly written")
+                done = True
             finally:
-                os.close(fd)
+                try:
+                    os.close(fd)
+                except OSError:
+                    if done:
+                        done = False
+                        _unlink_lock(lock_path)
+                        raise
+                if not done:
+                    _unlink_lock(lock_path)
             return token
         except FileExistsError:
             pass

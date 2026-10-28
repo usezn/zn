@@ -160,13 +160,16 @@ function acquireLock(lockPath, waitMs = LOCK_WAIT_MS) {
   for (;;) {
     try {
       const fd = fs.openSync(lockPath, 'wx', LEDGER_FILE_MODE);
-      // If the token cannot be written (a full disk), remove the empty lock again: left behind, it would
-      // make every later writer wait for it and report that another process is writing.
-      let wrote = false;
-      try { fs.writeSync(fd, token); wrote = true; } finally {
-        fs.closeSync(fd);
-        if (!wrote) { try { fs.unlinkSync(lockPath); } catch { /* best effort */ } }
-      }
+      // If the token cannot be written whole (a full disk, a short write) or the file cannot be closed, remove the
+      // lock again: left behind, it would make every later writer wait for it and report that another process is
+      // writing. unlinkLock retries while a Windows virus scanner holds the file.
+      let failure = null;
+      try {
+        const n = fs.writeSync(fd, token);
+        if (n !== Buffer.byteLength(token)) failure = Object.assign(new Error('the lock token was only partly written (' + n + ' bytes)'), { code: 'ENOSPC' });
+      } catch (err) { failure = err; }
+      try { fs.closeSync(fd); } catch (err) { failure = failure || err; }
+      if (failure) { unlinkLock(lockPath); throw failure; }
       return token;
     } catch (e) {
       // On Windows a lock that is being deleted answers EPERM/EACCES instead of EEXIST. If the
