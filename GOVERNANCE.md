@@ -137,7 +137,7 @@ their advisory.
      workflow stages the package (npm staged publishing) and a maintainer
      approves it with two-factor authentication before it is public; the package
      declares dual-use content (`contentPolicy` in `package.json` and a
-     `DISCLOSURE` file at the root of the tarball);
+     `DISCLOSURE` file at the root of the package);
    - a GitHub Release is created with the files, `SHA256SUMS` and the signature
      bundles (as a draft for final versions, which the maintainer reviews and
      publishes).

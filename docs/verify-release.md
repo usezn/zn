@@ -12,7 +12,7 @@ it becomes public only after a maintainer approves the stage with two-factor
 authentication, and the workflow then checks that the version on npm is the
 verified tarball. The npm package declares its content as dual-use
 (`contentPolicy` in `package.json`) and explains why in a `DISCLOSURE` file at
-the root of the tarball.
+the root of the package.
 
 Each release has:
 
