@@ -28,7 +28,7 @@ from typing import List, Optional, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-28.3"
+COMMAND_RULES_VERSION = "2026-10-28.4"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -259,6 +259,10 @@ def _unwrap(args: List[str]) -> List[str]:
         guard += 1
         a = args[i]
         if _ASSIGN_RE.match(a):
+            i += 1
+            continue
+        # A brace group ({ rm -rf ~; }) or a subshell runs the command after it.
+        if a in ("{", "("):
             i += 1
             continue
         name = _program_name(a)
@@ -691,7 +695,8 @@ def _check_segments(segs: List[Tuple[List[str], Optional[str]]], depth: int) -> 
 
 
 def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
-    text = str(cmd)
+    # A carriage return splits words like a space does in PowerShell and cmd.exe, so it is read as one.
+    text = str(cmd).replace("\r", " ")
     if len(text) > _MAX_CHARS:
         return _OVERFLOW
     bare = text if len(text) > _QUOTE_SCAN_MAX else _QUOTED_RE.sub("''", text)

@@ -9,6 +9,11 @@ const assert = require('node:assert/strict');
 const { checkCommand, denial } = require('../lib/destructive');
 
 const BLOCKED = [
+  '{ find ~ -delete; }',
+  '{ rm -rf ~; }',
+  'find ~ -delete\r',
+  'rm -rf ~\r',
+  '{ git -C ~ clean -fdx; }',
   'stdbuf -o0 rm -rf ~',
   'stdbuf -o 0 find ~ -delete',
   'busybox rm -rf /',
@@ -52,6 +57,8 @@ const BLOCKED = [
 ];
 
 const ALLOWED = [
+  '{ rm -rf ./build; }',
+  'find ./build -delete\r',
   'stdbuf -o0 rm -rf ./build',
   'busybox rm -rf ./dist',
   'rm -rf ~example-user/projects/app/build',

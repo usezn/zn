@@ -26,7 +26,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-28.3';
+const COMMAND_RULES_VERSION = '2026-10-28.4';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -116,6 +116,8 @@ function unwrap(args) {
   for (let guard = 0; guard < 8 && i < args.length; guard++) {
     const a = args[i];
     if (ASSIGN_RE.test(a)) { i++; continue; }
+    // A brace group ({ rm -rf ~; }) or a subshell runs the command after it.
+    if (a === '{' || a === '(') { i++; continue; }
     const name = programName(a);
     if (name === 'sudo' || name === 'doas') {
       i++;
@@ -463,7 +465,9 @@ function checkSegments(segs, depth) {
 }
 
 function analyze(cmd, depth = 0) {
-  const text = String(cmd);
+  // A carriage return (a command pasted from a Windows file, or sent as a CR line end) splits words like a space does in
+  // PowerShell and cmd.exe, so it is read as one: find ~ -delete<CR> is the same command.
+  const text = String(cmd).replace(/\r/g, ' ');
   if (text.length > MAX_CHARS) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
   // Text inside quotes is data (echo "a fork bomb is :(){ :|:& };:"); the code a shell runs from a string is checked
   // again on its own below, so the patterns that do not need the quotes read the text without them.
