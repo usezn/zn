@@ -192,7 +192,7 @@ try {
     test('the exit code and the output of the launcher pass through unchanged', () => {
       const d = plugin('pass');
       for (const rc of ['0', '2', '1', '7']) {
-        for (const event of ['PreToolUse', 'PostToolUse']) {
+        for (const event of rc === '0' || rc === '2' ? ['PreToolUse', 'PostToolUse'] : ['PostToolUse']) {
           const r = run(d, event, { cwd: elsewhere, PATH: realbin, env: { ZN_STUB_RC: rc } });
           assert.strictEqual(r.status, Number(rc), event + ' rc ' + rc);
           assert.strictEqual(r.stdout, JSON.stringify({ args: ['hook', 'claude-code'], stdin: '{"hook_event_name":"' + event + '"}' }), event);
@@ -205,6 +205,22 @@ try {
       const big = '{"hook_event_name":"PostToolUse","x":"' + 'a'.repeat(300000) + '"}';
       const b = run(d, 'PostToolUse', { cwd: elsewhere, PATH: realbin, input: big });
       assert.strictEqual(JSON.parse(b.stdout).stdin.length, big.length);
+    });
+
+    test('a launcher that fails (exit 1, 7, 137) on a blocking event is refused (exit 2) for Claude Code and Codex', () => {
+      const d = plugin('fail');
+      for (const rc of ['1', '7', '137']) {
+        for (const event of ['PreToolUse', 'UserPromptSubmit']) {
+          const r = run(d, event, { cwd: elsewhere, PATH: realbin, env: { ZN_STUB_RC: rc } });
+          assert.strictEqual(r.status, 2, event + ' rc ' + rc + ': ' + r.stderr);
+          assert.ok(r.stderr.startsWith('zn: the hook ended with exit code ' + rc + '. This call was blocked'), r.stderr);
+        }
+        const codex = spawnSync('/bin/sh', [path.join(d, 'scripts', 'zn-node.sh'), 'PreToolUse', 'hook', 'codex'], {
+          cwd: elsewhere, input: '{}', encoding: 'utf8', timeout: 60000, env: { PATH: realbin, HOME: home, ZN_STUB_RC: rc },
+        });
+        assert.strictEqual(codex.status, 2, 'codex rc ' + rc + ': ' + codex.stderr);
+        assert.ok(/turn off the zn-gate plugin in Codex/.test(codex.stderr), codex.stderr);
+      }
     });
 
     test('only absolute PATH entries reach the launcher', () => {

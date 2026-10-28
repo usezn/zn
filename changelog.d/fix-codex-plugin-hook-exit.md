@@ -1,0 +1,2 @@
+### Security
+- Codex plugin: when the zn hook started by the plugin fails (Node.js crashes or is stopped, any exit code other than 0 or 2), `PreToolUse`, `PermissionRequest` and `UserPromptSubmit` are now blocked with a reason. Codex treats any other exit code as a hook failure and runs the call, so a crashing hook let tool calls through without a check. The Claude Code plugin already blocked these through `onFailure`; the ZCode plugin already refused them.

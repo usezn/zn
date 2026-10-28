@@ -23,6 +23,7 @@ unset -f [ test wait kill command printf cd pwd ls sort sleep 2>/dev/null
 
 EVENT="${1:-}"
 [ "$#" -gt 0 ] && shift
+MODE="${1:-}"
 AGENT=
 for a in "$@"; do AGENT=$a; done
 
@@ -242,4 +243,14 @@ CUR=$!
 wait "$CUR"
 rc=$?
 CUR=""
+# Any code but 0 (done) and 2 (blocked) is a failed hook: Claude Code blocks it (onFailure), but Codex lets the call run.
+# On a blocking event zn refuses here, as the ZCode plugin does; the other events keep the code (their output may be written).
+case "$rc" in
+  0 | 2) ;;
+  *)
+    case "$EVENT" in
+      PreToolUse | PermissionRequest | UserPromptSubmit | UserPromptExpansion) [ "$MODE" = hook ] && refuse "the hook ended with exit code $rc." ;;
+    esac
+    ;;
+esac
 exit "$rc"
