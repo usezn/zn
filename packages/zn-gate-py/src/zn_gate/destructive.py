@@ -28,7 +28,7 @@ from typing import List, Optional, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-28.2"
+COMMAND_RULES_VERSION = "2026-10-28.3"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -291,6 +291,18 @@ def _unwrap(args: List[str]) -> List[str]:
                 if f in ("-n", "-c"):
                     i += 1
             continue
+        # stdbuf -o0 / -o 0 rm ...; busybox and toybox run the applet named next (busybox rm -rf ~).
+        if name == "stdbuf":
+            i += 1
+            while i < len(args) and args[i].startswith("-"):
+                f = args[i]
+                i += 1
+                if re.match(r"^-[ioe]\Z", f):
+                    i += 1
+            continue
+        if name in ("busybox", "toybox"):
+            i += 1
+            continue
         if name == "timeout":
             i += 1
             while i < len(args) and args[i].startswith("-"):
@@ -348,6 +360,9 @@ def _dangerous_path(word: str) -> str:
     if t == "*":
         return ""
     if t.lower() in _HOME_WORDS:
+        return "home"
+    # ~name is the home folder of the account `name`.
+    if re.match(r"^~[A-Za-z0-9._-]+\Z", t):
         return "home"
     if t in _SYSTEM_DIRS:
         return "system"

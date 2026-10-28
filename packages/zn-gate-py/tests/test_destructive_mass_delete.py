@@ -5,6 +5,15 @@ zn-gate/test/destructive_mass_delete.test.js. The strings are test data: they ar
 from zn_gate.destructive import check_command
 
 BLOCKED = [
+    "stdbuf -o0 rm -rf ~",
+    "stdbuf -o 0 find ~ -delete",
+    "busybox rm -rf /",
+    "toybox find ~ -delete",
+    "busybox git -C ~ clean -fdx",
+    "rm -rf ~example-user",
+    "find ~example-user -delete",
+    "git -C ~example-user clean -fdx",
+    "rm -rf ~example-user/",
     "find ~ | xargs sudo rm",
     "find ~ -print0 | xargs -0 env rm",
     "find / | xargs nice rm -f",
@@ -39,6 +48,10 @@ BLOCKED = [
 ]
 
 ALLOWED = [
+    "stdbuf -o0 rm -rf ./build",
+    "busybox rm -rf ./dist",
+    "rm -rf ~example-user/projects/app/build",
+    "ls ~example-user",
     "find ~ | xargs sudo ls -la",
     "find ~ -exec sh -c 'echo {}' \\;",
     "find ./build | xargs sudo rm",

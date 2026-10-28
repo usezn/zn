@@ -26,7 +26,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-28.2';
+const COMMAND_RULES_VERSION = '2026-10-28.3';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -137,6 +137,13 @@ function unwrap(args) {
       while (i < args.length && args[i].startsWith('-')) { const f = args[i++]; if (f === '-n' || f === '-c') i++; }
       continue;
     }
+    // stdbuf -o0 / -o 0 rm ...; busybox and toybox run the applet named next (busybox rm -rf ~).
+    if (name === 'stdbuf') {
+      i++;
+      while (i < args.length && args[i].startsWith('-')) { const f = args[i++]; if (/^-[ioe]$/.test(f)) i++; }
+      continue;
+    }
+    if (name === 'busybox' || name === 'toybox') { i++; continue; }
     if (name === 'timeout') {
       i++;
       while (i < args.length && args[i].startsWith('-')) i++;
@@ -189,6 +196,8 @@ function dangerousPath(word) {
   if (t === '*') return '';
   const low = t.toLowerCase();
   if (HOME_WORDS.has(low)) return 'home';
+  // ~name is the home folder of the account `name`.
+  if (/^~[A-Za-z0-9._-]+$/.test(t)) return 'home';
   if (SYSTEM_DIRS.has(t)) return 'system';
   if (/^\/(?:home|Users)\/[^/*.][^/*]*$/.test(t)) return 'home';
   if (/^[A-Za-z]:$/.test(t)) return 'root';
