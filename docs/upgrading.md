@@ -37,10 +37,20 @@ finds lack a hook that your zn-gate has.
 
 Other cases:
 
-- **The zn-gate plugin for Claude Code** updates through Claude Code's plugin
-  manager (`/plugin` inside Claude Code). Start a new Claude Code session
-  afterwards. The plugin installs the zn-gate release it is pinned to, so you do
-  not run `zn hooks install` for it. Do not keep both the plugin and the hooks of
+- **The zn-gate plugin for Claude Code** is added from a marketplace pinned to a
+  release tag, so `/plugin` and `claude plugin update` do not bring a newer
+  release by themselves. To move to a new release, run this in your own
+  terminal, with the tag of the release you want in place of `vX.Y.Z`:
+
+  ```bash
+  claude plugin marketplace remove usezn
+  claude plugin marketplace add usezn/zn@vX.Y.Z
+  claude plugin install zn-gate@usezn
+  ```
+
+  Start a new Claude Code session afterwards. `zn-gate check` tells you when the
+  plugin is older than your zn-gate. The plugin installs the zn-gate release it
+  is pinned to, so you do not run `zn hooks install` for it. Do not keep both the plugin and the hooks of
   `zn hooks install claude-code`: both would run. Remove the hooks with
   `zn hooks uninstall claude-code`.
 - **OpenCode** uses a small plugin file that zn-gate writes. Run
@@ -171,7 +181,8 @@ After updating, run these in your own terminal:
   release: the hook launcher script that blocks instead of running a call
   unchecked when Node.js is gone, the check of MCP tool calls in Claude Code and
   Codex, and the Codex hooks for `PermissionRequest` and `Stop`. With the Claude
-  Code plugin, run `claude plugin update zn-gate@usezn` and start a new session.
+  Code plugin, remove the marketplace and add it again at the new release tag
+  (the steps are under "Other cases" above), then start a new session.
 - [ ] **Codex: trust the changed hooks.** Open Codex and review them in `/hooks`
   (see [above](#codex-asks-you-to-trust-the-hooks-again)).
 - [ ] **Claude Code plugin: check your Node.js.** The plugin now needs Node.js

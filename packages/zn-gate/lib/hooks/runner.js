@@ -241,7 +241,7 @@ const REINSTALL_USER = 'part of zn-gate is missing from this installation, so zn
 const AGENT_NAMES = { 'claude-code': 'Claude Code', codex: 'Codex CLI', cursor: 'Cursor', opencode: 'OpenCode', antigravity: 'Antigravity', zcode: 'ZCode' };
 function fixHint(agentId) {
   if (agentId === 'claude-code' && process.env.CLAUDE_PLUGIN_ROOT) {
-    return 'If it happens again, ask the user to update or reinstall the zn-gate plugin (`claude plugin update zn-gate@usezn`).';
+    return 'If it happens again, ask the user to reinstall the zn-gate plugin at its release in their terminal: `claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn@v' + ZN_VERSION + '`, `claude plugin install zn-gate@usezn`.';
   }
   const name = AGENT_NAMES[agentId];
   return 'If it happens again, ask the user to run `' + znCommand('hooks install' + (name ? ' ' + agentId : '')) + '`' +

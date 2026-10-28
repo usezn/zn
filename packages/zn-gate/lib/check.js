@@ -30,6 +30,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { nodeAdvice } = require('./node-support');
+const VERSION = require('../package.json').version;
 
 const FAKE_LINE = 'ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key\n';
 const HOOK_TIMEOUT_MS = 15000;
@@ -102,7 +103,7 @@ function pluginNodeProblem(st) {
 const AGENTS = [
   {
     id: 'claude-code', name: 'Claude Code', event: 'PreToolUse', tool: 'Read',
-    fix: 'install the zn-gate plugin: `claude plugin marketplace add usezn/zn`, then `claude plugin install zn-gate@usezn`',
+    fix: 'install the zn-gate plugin: `claude plugin marketplace add usezn/zn@v' + VERSION + '`, then `claude plugin install zn-gate@usezn`',
     file: (a, o) => a.settingsFile(o), project: (dir) => path.join(dir, '.claude', 'settings.json'),
     request: (dir, file) => ({ hook_event_name: 'PreToolUse', session_id: 'zn-check', cwd: dir, tool_name: 'Read', tool_input: { file_path: file } }),
   },
@@ -335,17 +336,41 @@ function spawnHook(file, args, input, env, cwd, timeout = HOOK_TIMEOUT_MS) {
   return { ran: true, decision: decisionOf(r.stdout, r.status), stdout: r.stdout, status: r.status };
 }
 
+// How to move the Claude Code plugin to this release. The marketplace is added at a release tag, so `claude plugin update`
+// keeps the plugin that tag holds: the marketplace is removed and added again at the new tag.
+const PLUGIN_UPDATE_STEPS = 'run `claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn/zn@v' + VERSION + '` and `claude plugin install zn-gate@usezn` in your own terminal';
+const PLUGIN_UPDATE_NOTE = (installed) => 'the zn-gate plugin is version ' + installed + ' and this zn-gate is ' + VERSION + '; the plugin does not update by itself, so ' + PLUGIN_UPDATE_STEPS;
+
+/* Whether version `a` is older than `b` (numbers before any "-" are compared, so 1.15.0-rc.1 and 1.15.0 count as the same
+ * version and no note is given between them); false when either is not a version. */
+function olderVersion(a, b) {
+  const num = (v) => { const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(v || '')); return m ? m.slice(1, 4).map(Number) : null; };
+  const x = num(a);
+  const y = num(b);
+  if (!x || !y) return false;
+  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i];
+  return false;
+}
+
+/* The version of an installed plugin: what installed_plugins.json says, else its manifest; '' when neither does. */
+function pluginVersionOf(entry, root) {
+  if (entry && typeof entry.version === 'string' && /^\d+\.\d+\.\d+/.test(entry.version)) return entry.version;
+  const manifest = readJson(path.join(root, '.claude-plugin', 'plugin.json'));
+  return manifest && typeof manifest.version === 'string' ? manifest.version : '';
+}
+
 /* Folders of the zn-gate Claude Code plugin listed in installed_plugins.json. */
 function claudePlugin(home, env) {
   const cc = require('./agents').getAdapter('claude-code');
   const dir = cc.configDir({ home, env });
   const listed = readJson(path.join(dir, 'plugins', 'installed_plugins.json'));
   const entries = listed && listed.plugins && listed.plugins[PLUGIN_ID];
-  const roots = (Array.isArray(entries) ? entries : entries ? [entries] : [])
-    .map((e) => e && e.installPath).filter((p) => typeof p === 'string' && fs.existsSync(path.join(p, 'scripts', 'zn-launch.js')));
+  const found = (Array.isArray(entries) ? entries : entries ? [entries] : [])
+    .filter((e) => e && typeof e.installPath === 'string' && fs.existsSync(path.join(e.installPath, 'scripts', 'zn-launch.js')));
+  const roots = found.map((e) => e.installPath);
   const settings = readJson(cc.settingsFile({ home, env })) || {};
   const off = settings.enabledPlugins && settings.enabledPlugins[PLUGIN_ID] === false;
-  return { root: roots[0] || null, off };
+  return { root: roots[0] || null, off, version: roots[0] ? pluginVersionOf(found[0], roots[0]) : '' };
 }
 
 /* What each hook of a plugin's manifest (hooks/hooks.json under `root`) starts, as the host starts it: ZCode runs a
@@ -896,6 +921,12 @@ async function checkAgent(spec, ctx) {
       // zn's own hooks left next to the plugin both run, and a broken prompt hook among them blocks every prompt.
       // Which set to drop depends on whether the plugin works, so the plugin is checked first (below).
       if (hasCliHooks) res.via = 'both';
+      // The marketplace is added at one release's tag, so the plugin does not follow new releases by itself: tell a
+      // person whose plugin is older than this zn-gate how to move it (the tag, then the plugin).
+      if (olderVersion(plugin.version, VERSION)) {
+        res.pluginOutdated = { installed: plugin.version, current: VERSION };
+        res.notes.push(PLUGIN_UPDATE_NOTE(plugin.version));
+      }
       if (plugin.off) {
         res.pluginOff = true;
         res.problem = 'the zn-gate plugin is turned off in your Claude Code settings';
@@ -924,7 +955,7 @@ async function checkAgent(spec, ctx) {
           res.pluginFault = true;
         } else if (manifest.bare) {
           res.problem = bareProgramProblem(manifest.bare);
-          res.fix = 'update the plugin: run `claude plugin update zn-gate@usezn` in your own terminal; if `zn-gate check` still reports this, use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again';
+          res.fix = 'update the plugin: ' + PLUGIN_UPDATE_STEPS + '; if `zn-gate check` still reports this, use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again';
           res.pluginFault = true;
           distrust = res.problem;
         } else {
@@ -1371,4 +1402,4 @@ function report({ results, removed, warnings }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS } };
+module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { PLUGIN_UPDATE_NOTE, olderVersion, pluginManifest, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS } };

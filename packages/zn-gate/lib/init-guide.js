@@ -28,6 +28,8 @@ const { spawnSync } = require('child_process');
 
 const PKG_ROOT = path.join(__dirname, '..');
 const VERSION = require('../package.json').version;
+// The plugin marketplace is added at this release's tag, so `claude plugin update` never follows the default branch.
+const MARKETPLACE_REF = 'usezn/zn@v' + VERSION;
 const isWin = process.platform === 'win32';
 
 /* zn-gate runs from a temporary copy (npx, pnpm dlx, yarn dlx, bunx) rather than an install that stays. */
@@ -96,7 +98,7 @@ function globalInstall(env) {
 /* The plan: {items: [{id, name, found, state, problem, steps}], setup: [step]} ; a step is {label, run: [file, args] | null, manual}. */
 async function plan(opts = {}) {
   const { getAdapter } = require('./agents');
-  const { check, _internal: { pluginNodeStatus, PLUGIN_NODE_MIN } } = require('./check');
+  const { check, _internal: { pluginNodeStatus, PLUGIN_NODE_MIN, PLUGIN_UPDATE_NOTE: pluginUpdateNote } } = require('./check');
   const env = opts.env || process.env;
   const home = opts.home;
   const nodeVersion = opts.nodeVersion || process.versions.node;
@@ -111,7 +113,7 @@ async function plan(opts = {}) {
   let needsZn = false;
   for (const r of res.results) {
     const found = r.state !== 'not-set-up' || getAdapter(r.id).detect({ home, env });
-    const item = { id: r.id, name: r.name, found, state: r.state, problem: r.problem || '', steps: [] };
+    const item = { id: r.id, name: r.name, found, state: r.state, problem: r.problem || '', steps: [], update: r.pluginOutdated ? pluginUpdateNote(r.pluginOutdated.installed) : '' };
     if (found && r.state !== 'protected') {
       // Claude Code set up with zn's own hooks is repaired with them, and with the plugin as well it drops them:
       // installing the plugin on top would run both sets.
@@ -152,10 +154,10 @@ async function plan(opts = {}) {
       } else if (!hooksVerb) {
         const claude = opts.claude !== undefined ? opts.claude : findProgram('claude', env);
         if (claude) {
-          item.steps.push({ label: 'add the usezn plugin marketplace', run: [claude, ['plugin', 'marketplace', 'add', 'usezn/zn']], manual: 'claude plugin marketplace add usezn/zn' });
+          item.steps.push({ label: 'add the usezn plugin marketplace', run: [claude, ['plugin', 'marketplace', 'add', MARKETPLACE_REF]], manual: 'claude plugin marketplace add ' + MARKETPLACE_REF });
           item.steps.push({ label: 'install the zn-gate plugin', run: [claude, ['plugin', 'install', 'zn-gate@usezn']], manual: 'claude plugin install zn-gate@usezn' });
         } else {
-          item.steps.push({ label: 'do this yourself', run: null, manual: 'in Claude Code, type /plugin marketplace add usezn/zn and then /plugin install zn-gate@usezn' });
+          item.steps.push({ label: 'do this yourself', run: null, manual: 'in Claude Code, type /plugin marketplace add ' + MARKETPLACE_REF + ' and then /plugin install zn-gate@usezn' });
         }
       } else {
         needsZn = true;
@@ -282,6 +284,8 @@ async function guide(opts = {}) {
     else w(`  >  ${i.name.padEnd(12)} ${i.state === 'not-protected' ? 'not protected: ' + i.problem : 'not set up yet'}\n`);
   }
   for (const i of items) if (i.note && i.steps.length) w(`${i.note}\n`);
+  // A plugin older than this zn-gate is not moved by init (the marketplace is pinned to a tag): say how to move it.
+  for (const i of items) if (i.update) w(`  (${i.name}: ${i.update})\n`);
   w('\n');
   const tail = () => w('(To wrap the MCP servers in your agent configs, which `zn-gate init` used to do: `zn-gate init --wrap-mcp`.)\n');
   if (!items.some((i) => i.found)) {

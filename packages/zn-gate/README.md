@@ -71,7 +71,7 @@ Five-minute walkthrough: [docs/secrets.md](https://github.com/usezn/zn/blob/main
 **Claude Code: the plugin.** You also need Git and Claude Code 2.1.295 or later. The plugin needs Node.js 20.19 or later. With an older Node.js, `npx -y zn-gate init` skips the plugin and sets up zn's hooks for Claude Code instead (`zn-gate check` says so if the plugin is installed); update Node.js to use the plugin.
 
 ```bash
-claude plugin marketplace add usezn/zn
+claude plugin marketplace add usezn/zn@v1.14.0
 claude plugin install zn-gate@usezn
 ```
 

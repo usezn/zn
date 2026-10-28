@@ -18,7 +18,8 @@ const { writePluginManifest } = require('./helpers/claude_plugin');
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const CLAUDE = path.resolve('/opt/bin/claude');
 const line = (s) => s.manual;
-const PLUGIN_STEPS = ['claude plugin marketplace add usezn/zn', 'claude plugin install zn-gate@usezn'];
+const VERSION = require('../package.json').version;
+const PLUGIN_STEPS = ['claude plugin marketplace add usezn/zn@v' + VERSION, 'claude plugin install zn-gate@usezn'];
 
 function machine(t) {
   const home = tempDir(t, 'zn-initnode-home-');
@@ -249,4 +250,67 @@ test('resolveHookNode: finds nothing on an empty PATH and never throws', () => {
   assert.equal(_internal.resolveHookNode({ PATH: path.join(path.sep, 'no', 'such', 'dir') }), null);
   const own = _internal.resolveHookNode({ PATH: path.dirname(process.execPath) });
   assert.ok(own && own.version === process.versions.node);
+});
+
+// The marketplace is added at one release's tag, so the plugin never follows a newer release by itself.
+function pluginWithVersion(m, version) {
+  pluginIn(m.home);
+  const file = path.join(m.home, '.claude', 'plugins', 'installed_plugins.json');
+  const listed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  listed.plugins['zn-gate@usezn'][0].version = version;
+  fs.writeFileSync(file, JSON.stringify(listed));
+}
+
+test('olderVersion compares the numbers before any pre-release suffix', () => {
+  const older = _internal.olderVersion;
+  assert.equal(older('1.13.1', '1.14.0'), true);
+  assert.equal(older('1.9.0', '1.14.0'), true);
+  assert.equal(older('1.14.0', '1.14.0'), false);
+  assert.equal(older('1.14.0-rc.1', '1.14.0'), false);
+  assert.equal(older('1.15.0', '1.14.0'), false);
+  assert.equal(older('', '1.14.0'), false);
+  assert.equal(older('nonsense', '1.14.0'), false);
+});
+
+test('check: a plugin older than this zn-gate says how to move it, a current one says nothing', async (t) => {
+  const old = machine(t);
+  pluginWithVersion(old, '1.9.0');
+  const res = await check({ home: old.home, env: old.env, cwd: old.cwd, nodeVersion: '22.5.1' });
+  const cc = res.results.find((r) => r.id === 'claude-code');
+  assert.deepEqual(cc.pluginOutdated, { installed: '1.9.0', current: VERSION });
+  const note = cc.notes.find((n) => /does not update by itself/.test(n));
+  assert.ok(note, JSON.stringify(cc.notes));
+  assert.match(note, /plugin is version 1\.9\.0/);
+  assert.ok(note.includes('claude plugin marketplace remove usezn'));
+  assert.ok(note.includes('claude plugin marketplace add usezn/zn@v' + VERSION));
+  assert.ok(note.includes('claude plugin install zn-gate@usezn'));
+
+  const current = machine(t);
+  pluginWithVersion(current, VERSION);
+  const res2 = await check({ home: current.home, env: current.env, cwd: current.cwd, nodeVersion: '22.5.1' });
+  const cc2 = res2.results.find((r) => r.id === 'claude-code');
+  assert.equal(cc2.pluginOutdated, undefined);
+  assert.equal(cc2.notes.some((n) => /does not update by itself/.test(n)), false);
+
+  const unknown = machine(t);
+  pluginIn(unknown.home);
+  const res3 = await check({ home: unknown.home, env: unknown.env, cwd: unknown.cwd, nodeVersion: '22.5.1' });
+  assert.equal(res3.results.find((r) => r.id === 'claude-code').pluginOutdated, undefined);
+});
+
+test('init: an installed plugin older than this zn-gate gets the steps to move it', async (t) => {
+  const m = machine(t);
+  pluginWithVersion(m, '1.9.0');
+  let out = '';
+  await guide({ ...m, nodeVersion: '22.5.1', stdin: { isTTY: false }, write: (s) => { out += s; } });
+  assert.match(out, /Claude Code: the zn-gate plugin is version 1\.9\.0 and this zn-gate is /);
+  assert.ok(out.includes('claude plugin marketplace add usezn/zn@v' + VERSION));
+});
+
+test('init: a plugin of the same version as this zn-gate adds no update line', async (t) => {
+  const m = machine(t);
+  pluginWithVersion(m, VERSION);
+  let out = '';
+  await guide({ ...m, nodeVersion: '22.5.1', stdin: { isTTY: false }, write: (s) => { out += s; } });
+  assert.doesNotMatch(out, /does not update by itself/);
 });

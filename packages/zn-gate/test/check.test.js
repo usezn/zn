@@ -620,7 +620,9 @@ test('check: a Claude Code plugin whose hooks.json starts a hook with a program 
     const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
     assert.equal(r.state, 'not-protected', cmd);
     assert.match(r.problem, new RegExp('starts its PreToolUse hook with `' + prog + '` by name'), cmd);
-    assert.match(r.fix, /claude plugin update zn-gate@usezn/, cmd);
+    // A marketplace at a release tag is moved by removing it and adding it at the new tag; `claude plugin update` keeps the old one.
+    assert.match(r.fix, /claude plugin marketplace remove usezn`, `claude plugin marketplace add usezn\/zn@v\d+\.\d+\.\d+/, cmd);
+    assert.doesNotMatch(r.fix, /claude plugin update/, cmd);
   }
   // The shell by its full path, with the plugin root in quotes: no program by name. Without "shell": "bash" it is still
   // not the hook the plugin ships; with it (and the plugin's real zn-node.sh), the plugin is protected.
