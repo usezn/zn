@@ -26,7 +26,13 @@ Hook scripts run on your machine: installing the plugin on the web does not inst
   session start that `node` was not found, and prompts, tool calls and typed
   commands are blocked (Claude Code 2.1.295 and later; earlier versions let
   them through unchecked). Install Node.js from https://nodejs.org and restart
-  Claude Code (the terminal or the desktop app).
+  Claude Code (the terminal or the desktop app). On Ubuntu and Debian,
+  `apt install nodejs` can give Node.js 18 (Ubuntu 24.04 does), which is too
+  old: use a current LTS from nodejs.org.
+- The native Claude Code installer (`curl -fsSL https://claude.ai/install.sh | bash`)
+  puts `claude` in `~/.local/bin`. If `claude` is "command not found", add that
+  folder to your `PATH` (`echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc`)
+  and open a new terminal.
 - Git (on Windows, Git for Windows), to add the marketplace from GitHub.
   Without it, `claude plugin marketplace add` fails because Git is not found.
 - Claude Code on Windows: Git Bash (it comes with Git for Windows). The hooks

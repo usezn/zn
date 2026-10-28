@@ -68,7 +68,9 @@ Five-minute walkthrough: [docs/secrets.md](https://github.com/usezn/zn/blob/main
 
 **One agent at a time** (the same steps `init` runs):
 
-**Claude Code: the plugin.** You also need Git and Claude Code 2.1.295 or later. The plugin needs Node.js 20.19 or later. With an older Node.js, `npx -y zn-gate init` skips the plugin and sets up zn's hooks for Claude Code instead (`zn-gate check` says so if the plugin is installed); update Node.js to use the plugin.
+**Claude Code: the plugin.** You also need Git and Claude Code 2.1.295 or later. The plugin needs Node.js 20.19 or later. With an older Node.js, `npx -y zn-gate init` skips the plugin and sets up zn's hooks for Claude Code instead (`zn-gate check` says so if the plugin is installed); update Node.js to use the plugin. On Ubuntu and Debian, `apt install nodejs` can give Node.js 18 (Ubuntu 24.04 does), which is too old for the plugin: install a current LTS from [nodejs.org](https://nodejs.org/) instead and check `node --version`.
+
+If you installed Claude Code with its native installer (`curl -fsSL https://claude.ai/install.sh | bash`) and `claude` is "command not found", add `~/.local/bin` to your `PATH` yourself: `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc`, then open a new terminal (use `~/.zshrc` with zsh).
 
 ```bash
 claude plugin marketplace add usezn/zn
