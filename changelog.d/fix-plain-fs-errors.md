@@ -1,0 +1,2 @@
+### Fixed
+- `zn hooks`, `zn vault`, `zn secret`, `zn team` and the commands that share their error path no longer print raw file system errors such as `EACCES: permission denied, open '...'` or the name of a temporary file. They say what is wrong with which file (no permission, the disk is full, a file where a folder should be, a path that is too long) and what to do. The code is still shown with `ZN_VERBOSE=1`. A Claude Code settings file that cannot be read is no longer reported as one that cannot be parsed.
