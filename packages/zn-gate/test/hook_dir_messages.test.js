@@ -159,3 +159,31 @@ test('refusal: a parent that cannot be written gives a plain message instead of 
   assert.doesNotMatch(msg, /EACCES|mkdir '/);
   fs.chmodSync(parent, 0o700);
 });
+
+test('refusal: a folder another account keeps private is named, never a raw EACCES', skip, (t) => {
+  if (typeof process.getuid === 'function' && process.getuid() === 0) return; // root can open anything
+  const locked = mkdirMode(path.join(tempDir(t, 'zn-hdm-'), 'theirs'), 0o000);
+  try {
+    const msg = refusal(() => launcher.ensureSafeHookDir(path.join(locked, 'hooks'), 'linux', { trustedRoot: TMP_ROOT }));
+    assert.ok(msg.includes('your account cannot open ' + locked + ': it belongs to another account'), msg);
+    assert.match(msg, /Choose a folder of your own/);
+    assert.doesNotMatch(msg, /EACCES|lstat '|mkdir '/);
+  } finally { fs.chmodSync(locked, 0o700); }
+});
+
+test('the default launcher folder that cannot be made gives a plain message, not a raw errno', (t) => {
+  const home = tempDir(t, 'zn-hdm-home-');
+  fs.writeFileSync(path.join(home, '.zn'), 'a file where the folder should be');
+  let msg = '';
+  try {
+    launcher.writeLauncher('claude-code', process.execPath, '/x/runner.js', { home, env: {} });
+  } catch (e) { msg = e.message; }
+  assert.match(msg, /zn could not create the folder for its hook launcher/);
+  assert.match(msg, /is a file, not a folder/);
+  assert.match(msg, /set ZN_HOOK_DIR to a folder of your own/);
+  assert.doesNotMatch(msg, /ENOTDIR|EEXIST|mkdir '/);
+});
+
+test('describeFsError: EEXIST says the folder is there but cannot be seen', () => {
+  assert.match(launcher.describeFsError({ code: 'EEXIST' }, '/a/b'), /\/a\/b already exists, but your account cannot see it/);
+});

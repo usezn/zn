@@ -1,0 +1,2 @@
+### Fixed
+- `zn hooks install` with `ZN_HOOK_DIR` set to a folder that another account keeps private (for example `C:\znh` created by an administrator) no longer ends with a raw `EEXIST: file already exists, mkdir`. It names the folder, says your account cannot open it because it belongs to another account, and tells you to choose a folder of your own or unset `ZN_HOOK_DIR`. A launcher folder that cannot be created, also the default `~/.zn/hooks`, is explained in plain words instead of a raw error code.

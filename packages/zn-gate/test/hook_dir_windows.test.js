@@ -379,3 +379,37 @@ test('real Windows: a launcher is written, its own owner and access list are che
   const again = launcher.readWinAcls([file]);
   assert.match(launcher.winProblem(again.entries[0], again.user, 'file'), /can be changed by other users/);
 });
+
+// Another account's private folder (C:\znh made by an admin): Windows refuses even to look at it, so it seemed missing and zn
+// went on to create it, ending in a raw "EEXIST: file already exists, mkdir". The fake fs below plays that account's folder.
+test('ZN_HOOK_DIR on Windows: a folder of another account is named in plain words, never a raw EEXIST or EPERM', (t) => {
+  const root = tempDir(t, 'zn-whd-other-');
+  const theirs = path.join(root, 'znh');
+  const eperm = (p) => Object.assign(new Error("EPERM: operation not permitted, lstat '" + p + "'"), { code: 'EPERM', path: p });
+  const orig = { lstatSync: fs.lstatSync, existsSync: fs.existsSync, mkdirSync: fs.mkdirSync };
+  fs.lstatSync = (p, ...a) => { if (p === theirs || p.startsWith(theirs + path.sep)) throw eperm(p); return orig.lstatSync(p, ...a); };
+  fs.existsSync = (p) => (p === theirs || p.startsWith(theirs + path.sep) ? false : orig.existsSync(p));
+  fs.mkdirSync = (p, ...a) => { if (p === theirs) throw Object.assign(new Error("EEXIST: file already exists, mkdir '" + p + "'"), { code: 'EEXIST', path: p }); return orig.mkdirSync(p, ...a); };
+  const msgs = [];
+  try {
+    for (const dir of [theirs, path.join(theirs, 'hooks')]) {
+      try { win(dir, opts()); assert.fail('expected a refusal'); } catch (e) { msgs.push(e.message); }
+    }
+  } finally { Object.assign(fs, orig); }
+  for (const msg of msgs) {
+    assert.ok(msg.includes('your account cannot open ' + theirs + ': it belongs to another account'), msg);
+    assert.match(msg, /unset ZN_HOOK_DIR/);
+    assert.doesNotMatch(msg, /EEXIST|EPERM|mkdir '|lstat '/);
+  }
+});
+
+test('ZN_HOOK_DIR on Windows: a level that cannot be created is named in plain words (EEXIST from a folder that appeared)', (t) => {
+  const root = tempDir(t, 'zn-whd-race-');
+  const dir = path.join(root, 'hooks');
+  const orig = fs.mkdirSync;
+  fs.mkdirSync = (p, ...a) => { if (p === dir) throw Object.assign(new Error("EEXIST: file already exists, mkdir '" + p + "'"), { code: 'EEXIST', path: p }); return orig(p, ...a); };
+  let msg = '';
+  try { win(dir, opts()); } catch (e) { msg = e.message; } finally { fs.mkdirSync = orig; }
+  assert.ok(msg.includes(dir + ' already exists, but your account cannot see it'), msg);
+  assert.doesNotMatch(msg, /EEXIST|mkdir '/);
+});

@@ -273,13 +273,43 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
   ].join('\n');
 }
 
+/* The nearest of `abs` and the folders above it that exists (a dangling link counts). A folder this account may not look
+   at (another account's private folder: EACCES or EPERM, where existsSync only says false) is refused through
+   `refuse(folder)`, instead of walking past it and failing later on a raw mkdir error (EEXIST). That folder is, on Windows,
+   the highest one that cannot be read (C:\znh for C:\znh\hooks), and elsewhere the one above, which cannot be searched. */
+function nearestExisting(abs, refuse, win) {
+  let blocked = null;
+  for (let p = abs; ; p = path.dirname(p)) {
+    let code = null;
+    try { fs.lstatSync(p); } catch (e) { code = (e && e.code) || 'EUNKNOWN'; }
+    if (code === 'EACCES' || code === 'EPERM') {
+      if (!win) throw refuse(path.dirname(p));
+      blocked = p;
+    } else if (!code) {
+      if (blocked) throw refuse(blocked);
+      return p;
+    }
+    if (path.dirname(p) === p) {
+      if (blocked) throw refuse(blocked);
+      return p;
+    }
+  }
+}
+
+const cannotOpen = (p) => 'your account cannot open ' + p + ': it belongs to another account, or its access list leaves you out';
+
 /** Writes the launcher (directory 0700, file 0755) and returns its path. */
 function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   const file = launcherFile(agentId, opts);
   const dir = path.dirname(file);
   // ZN_HOOK_DIR names any folder: the launcher in it runs on every tool call, so the folder must be ours and private.
   if ((opts.env || process.env).ZN_HOOK_DIR) ensureSafeHookDir(dir, opts.platform || process.platform, { trustedRoot: opts.hookDirTrustedRoot, readWinAcls: opts.readWinAcls, setWinPrivate: opts.setWinPrivate });
-  else fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  else {
+    try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch (e) {
+      throw new Error('zn could not create the folder for its hook launcher, ' + dir + ': ' + describeFsError(e, e.path || dir) +
+        '. Fix that folder, or set ZN_HOOK_DIR to a folder of your own.');
+    }
+  }
   // On Windows the script runs in Git Bash: write the paths with / so that `zn-gate check` can read them back.
   const platform = opts.platform || process.platform;
   writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform), { deadlineS: opts.deadlineS, deadlineSoft: opts.deadlineSoft }), 0o755);
@@ -508,6 +538,7 @@ function describeFsError(e, p) {
   if (code === 'ENOENT') return 'the folder ' + p + ' does not exist (or it was removed while zn was checking it)';
   if (code === 'ENOTDIR') return p + ' is a file, not a folder, so nothing can be created in or below it';
   if (code === 'EACCES' || code === 'EPERM') return 'you are not allowed to read or create ' + p;
+  if (code === 'EEXIST') return p + ' already exists, but your account cannot see it (it belongs to another account, or it appeared while zn was creating it)';
   if (code === 'EROFS') return p + ' is on a read-only disk';
   if (code === 'ELOOP') return 'the links at ' + p + ' lead in a circle';
   return 'the system refused to use ' + p + ' (' + (code || 'unknown error') + ')';
@@ -850,10 +881,11 @@ function createPrivateWinFolders(abs, existing, user, setPrivate) {
   const made = [];
   try {
     for (const p of missing) {
-      fs.mkdirSync(p);
+      try { fs.mkdirSync(p); } catch (e) { throw new Error(winUnsafeMessage(abs, describeFsError(e, p))); }
       made.push(p);
       setPrivate(p, user);
-      const held = fs.readdirSync(p);
+      let held;
+      try { held = fs.readdirSync(p); } catch (e) { throw new Error(winUnsafeMessage(abs, describeFsError(e, p))); }
       if (held.length) throw new Error(winUnsafeMessage(abs, 'a new folder was not empty when it was made private (' + p + ' holds ' + held.length + ' item(s))'));
     }
   } catch (e) {
@@ -867,8 +899,7 @@ function ensureSafeWinHookDir(dir, opts = {}) {
   const trusted = opts.trustedRoot ? path.resolve(opts.trustedRoot) : null;
   const readAcls = opts.readWinAcls || readWinAcls;
   const setPrivate = opts.setWinPrivate || setWinPrivate;
-  let existing = abs;
-  while (!fs.existsSync(existing) && !isLink(existing)) existing = path.dirname(existing);
+  const existing = nearestExisting(abs, (p) => new Error(winUnsafeMessage(dir, cannotOpen(p))), true);
   if (isLink(abs)) throw new Error(winUnsafeMessage(dir, 'it is a link'));
   const user = checkWinChain(existing, trusted, abs, readAcls, existing === abs ? opts.file : null);
   if (existing === abs) return;
@@ -894,8 +925,7 @@ function ensureSafeHookDir(dir, platform = process.platform, opts = {}) {
   if (platform === 'win32') return ensureSafeWinHookDir(dir, opts);
   const abs = path.resolve(dir);
   const trusted = opts.trustedRoot ? path.resolve(opts.trustedRoot) : null;
-  let existing = abs;
-  while (!fs.existsSync(existing) && !isLink(existing)) existing = path.dirname(existing);
+  const existing = nearestExisting(abs, (p) => new Error(unsafeDirMessage(dir, cannotOpen(p), 'Choose a folder of your own.')), false);
   if (isLink(abs)) throw new Error(unsafeDirMessage(dir, 'it is a link'));
   checkChain(existing, trusted, abs);
   try { fs.mkdirSync(abs, { recursive: true, mode: 0o700 }); } catch (e) { throw new Error(unsafeDirMessage(dir, describeFsError(e, abs), 'Choose a folder you can create.')); }
