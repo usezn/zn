@@ -10,6 +10,11 @@ from zn_gate.destructive import check_command
 U = "https://example.com/i.py"
 
 RM = [
+    'python3 -c"import shutil; shutil.rmtree(\'/\')"',
+    'python3 -Bc"import shutil; shutil.rmtree(\'/usr\')"',
+    'perl -e\'use File::Path; rmtree("/")\'',
+    'ruby -e\'require "fileutils"; FileUtils.rm_rf("/etc")\'',
+    'node -e"require(\'fs\').rmSync(\'/\', {recursive:true})"',
     "python3 -c \"import shutil,os; shutil.rmtree(os.path.expanduser('~'))\"",
     "python3 -c \"import shutil; shutil.rmtree('/')\"",
     "python -c 'import shutil; shutil.rmtree(\"/home/alice\")'",
@@ -61,6 +66,10 @@ PIPE = [
 ]
 
 BENIGN = [
+    'python3 -c"print(\'hello\')"',
+    "perl -e'print 1'",
+    'python3 -c"import shutil; shutil.rmtree(\'./build\')"',
+    'node -e"require(\'fs\').rmSync(\'./dist\', {recursive:true})"',
     'python3 -c "print(1)"',
     "python3 -c \"import shutil; shutil.rmtree('build')\"",
     "python3 -c \"import shutil; shutil.rmtree('/tmp/build-4821')\"",

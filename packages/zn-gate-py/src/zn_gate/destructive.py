@@ -28,7 +28,7 @@ from typing import Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-23.10"
+COMMAND_RULES_VERSION = "2026-10-28.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -480,6 +480,15 @@ def _interpreter_kind(head: str) -> str:
     return "node" if head.startswith("node") else head
 
 
+# The code option glued to its code in one word (python3 -c"CODE", perl -e'CODE', node -e"CODE"): the code.
+_GLUED_CODE: Dict[str, "re.Pattern[str]"] = {
+    "py": re.compile(r"^-[A-Za-z]*?c([\s\S]+)\Z"),
+    "node": re.compile(r"^-(?:pe|e|p)([\s\S]+)\Z"),
+    "perl": re.compile(r"^-[A-Za-z]*?[eE]([\s\S]+)\Z"),
+    "ruby": re.compile(r"^-[A-Za-z]*?e([\s\S]+)\Z"),
+}
+
+
 def _interpreter_code(kind: str, rest: List[str]) -> List[str]:
     """The code strings given on the command line of an interpreter (python -c CODE, node -e CODE, perl -e CODE, ruby -e CODE)."""
     spec = _INTERPRETERS[kind]
@@ -489,6 +498,14 @@ def _interpreter_code(kind: str, rest: List[str]) -> List[str]:
         w = rest[i]
         if w == "--" or not w.startswith("-"):
             break
+        glued = (_GLUED_CODE[kind].match(w)
+                 if not w.startswith("--") and not spec.code.match(w) and w not in spec.skip else None)
+        if glued:
+            out.append(glued.group(1))
+            if kind in ("py", "node"):
+                break
+            i += 1
+            continue
         if spec.code.match(w):
             if i + 1 < len(rest):
                 out.append(rest[i + 1])
@@ -528,9 +545,9 @@ def _code_deletes_protected(code: str) -> bool:
         if name in _OI_NEEDS_PAREN and not m.group(2):
             continue
         tail = code[m.end():m.end() + 300]
-        if name in _OI_NEEDS_RECURSIVE and not _OI_RECURSIVE_RE.search(tail):
-            continue
-        if _protected_argument(tail):
+        # The argument first: it fails at its first characters for almost every call, and the search for the
+        # recursive option is then skipped.
+        if _protected_argument(tail) and (name not in _OI_NEEDS_RECURSIVE or _OI_RECURSIVE_RE.search(tail)):
             return True
     for m in _OI_GLOB_RE.finditer(code):
         if _protected_argument(code[m.end():m.end() + 300]):

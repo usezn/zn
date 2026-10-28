@@ -25,7 +25,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-23.10';
+const COMMAND_RULES_VERSION = '2026-10-28.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -253,12 +253,26 @@ function interpreterKind(head) {
 }
 
 /* The code strings given on the command line of an interpreter (python -c CODE, node -e CODE, perl -e CODE, ruby -e CODE). */
+// The code option glued to its code in one word (python3 -c"CODE", perl -e'CODE', node -e"CODE"): the code.
+const GLUED_CODE = {
+  py: /^-[A-Za-z]*?c([\s\S]+)$/,
+  node: /^-(?:pe|e|p)([\s\S]+)$/,
+  perl: /^-[A-Za-z]*?[eE]([\s\S]+)$/,
+  ruby: /^-[A-Za-z]*?e([\s\S]+)$/,
+};
+
 function interpreterCode(kind, rest) {
   const def = INTERPRETERS[kind];
   const out = [];
   for (let i = 0; i < rest.length; i++) {
     const w = rest[i];
     if (w === '--' || !w.startsWith('-')) break;
+    const glued = !w.startsWith('--') && !def.code.test(w) && !def.skip.has(w) ? GLUED_CODE[kind].exec(w) : null;
+    if (glued) {
+      out.push(glued[1]);
+      if (kind === 'py' || kind === 'node') break;
+      continue;
+    }
     if (def.code.test(w)) {
       if (i + 1 < rest.length) out.push(rest[i + 1]);
       i++;
@@ -290,8 +304,9 @@ function codeDeletesProtected(code) {
     if (OI_NEEDS_PAREN.has(name) && !m[2]) continue;
     const from = m.index + m[0].length;
     const tail = code.slice(from, from + 300);
-    if (OI_NEEDS_RECURSIVE.has(name) && !OI_RECURSIVE_RE.test(tail)) continue;
-    if (protectedArgument(tail)) return true;
+    // The argument first: it fails at its first characters for almost every call, and the search for the
+    // recursive option is then skipped.
+    if (protectedArgument(tail) && (!OI_NEEDS_RECURSIVE.has(name) || OI_RECURSIVE_RE.test(tail))) return true;
   }
   for (const m of code.matchAll(OI_GLOB_RE)) {
     const from = m.index + m[0].length;
