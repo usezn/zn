@@ -21,7 +21,9 @@ runner and run it only while it matches. An update with npm rewrites them by
 itself (an install step of the package). If your update does not run install
 scripts (`npm install --ignore-scripts`, or pnpm and bun, which skip them by
 default), run `zn hooks install <agent>` again for each agent: until then the
-hooks block tool calls and say so.
+hooks block tool calls and say so. The same goes if you installed or updated
+with `sudo`: run `zn hooks install <agent>` again as yourself (without `sudo`)
+after the update.
 
 If `zn-gate check` says an agent is not protected, it also prints the command
 that fixes it.
