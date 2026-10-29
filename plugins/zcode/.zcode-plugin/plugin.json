@@ -1,7 +1,7 @@
 {
   "name": "zn-gate",
   "displayName": "zn-gate",
-  "version": "1.13.1",
+  "version": "1.14.1",
   "description": "Local security layer for the ZCode desktop app: blocks reads and writes of secret files, shell commands and MCP calls that would handle a secret, and prompts that contain one. Runs a pinned, verified copy of zn-gate that ships inside the plugin; no account and no API key.",
   "icon": "./icon.png",
   "author": {

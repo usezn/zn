@@ -255,30 +255,29 @@ test('Windows: a script owned by another account, or with no access list, is ref
 
 test('Windows: scriptWriteRisk reads the file and its folders in one call and fails closed', () => {
   const calls = [];
+  const isSid = (args) => args[args.length - 1].includes('WindowsIdentity');
   const tools = {
     powershell: 'ps.exe',
-    whoami: 'whoami.exe',
     run(file, args) {
-      calls.push(file);
-      if (file === 'whoami.exe') return { status: 0, stdout: '"u","' + ME + '"\n' };
+      calls.push(isSid(args) ? 'sid' : 'acl');
+      if (isSid(args)) return { status: 0, stdout: ME + '\n' };
       return { status: 0, stdout: 'F|C:\\u\\a.cmd|' + base + '\nD|C:\\u|' + base + '\nD|C:\\|' + base + '\n' };
     },
   };
   const ok = winacl.scriptWriteRisk('C:\\u\\a.cmd', { tools });
   assert.equal(ok.deny, null);
   assert.equal(ok.warn, 'C:\\u\\a.cmd');
-  assert.equal(calls.filter((c) => c === 'ps.exe').length, 1);
-  const bad = winacl.scriptWriteRisk('C:\\u\\a.cmd', { tools: { ...tools, run: (f) => (f === 'whoami.exe' ? { status: 0, stdout: '"u","' + ME + '"' } : { status: 1, stdout: '', stderr: 'boom' }) } });
+  assert.equal(calls.filter((c) => c === 'acl').length, 1);
+  const bad = winacl.scriptWriteRisk('C:\\u\\a.cmd', { tools: { ...tools, run: (f, a) => (isSid(a) ? { status: 0, stdout: ME } : { status: 1, stdout: '', stderr: 'boom' }) } });
   assert.match(bad.deny, /could not be read/);
-  const empty = winacl.scriptWriteRisk('C:\\u\\a.cmd', { tools: { ...tools, run: (f) => (f === 'whoami.exe' ? { status: 0, stdout: '"u","' + ME + '"' } : { status: 0, stdout: '' }) } });
+  const empty = winacl.scriptWriteRisk('C:\\u\\a.cmd', { tools: { ...tools, run: (f, a) => (isSid(a) ? { status: 0, stdout: ME } : { status: 0, stdout: '' }) } });
   assert.match(empty.deny, /could not be read/);
 });
 
 test('Windows: scriptRisk uses the Windows check for a .cmd/.bat descriptor', () => {
   const tools = {
     powershell: 'ps.exe',
-    whoami: 'whoami.exe',
-    run: (f) => (f === 'whoami.exe' ? { status: 0, stdout: '"u","' + ME + '"' } : { status: 0, stdout: 'F|C:\\u\\a.cmd|' + base + '(A;;0x1301bf;;;' + OTHER + ')\nD|C:\\u|' + base + '\n' }),
+    run: (f, a) => (a[a.length - 1].includes('WindowsIdentity') ? { status: 0, stdout: ME } : { status: 0, stdout: 'F|C:\\u\\a.cmd|' + base + '(A;;0x1301bf;;;' + OTHER + ')\nD|C:\\u|' + base + '\n' }),
   };
   const r = exe.scriptRisk({ script: true }, 'C:\\u\\a.cmd', { platform: 'win32', tools });
   assert.match(r.deny, /can write it/);

@@ -30,7 +30,7 @@ function copyTree() {
 // The previous release comes from the repository's git tags; the tests give the tag list instead of asking the remote.
 function check(dir, ...args) {
   const tags = process.env.TEST_TAGS || TAGS;
-  const r = spawnSync(process.execPath, [path.join(ROOT, 'plugins', 'tools', 'check-plugins.js'), ...args], { cwd: dir, encoding: 'utf8', env: { ...process.env, ZN_CHECK_PLUGINS_TAGS: tags } });
+  const r = spawnSync(process.execPath, [path.join(ROOT, 'plugins', 'tools', 'check-plugins.js'), ...args], { cwd: dir, encoding: 'utf8', env: { ...process.env, ZN_CHECK_PLUGINS_TAGS: tags, ZN_CHECK_PLUGINS_NPM_MISSING: process.env.TEST_NPM_MISSING || '' } });
   return { ok: r.status === 0, out: r.stdout + r.stderr };
 }
 function rewrite(dir, rel, fn) {
@@ -60,6 +60,21 @@ try {
     const d = check(c, '--release', '--pre-tag');
     assert.ok(!d.ok && /must be the previous release 1\.13\.0/.test(d.out), 'pre-tag: a lock that is not the previous release fails: ' + d.out);
     delete process.env.TEST_TAGS;
+    // A release tag that npm does not have is not the previous release (1.14.0 reached PyPI only): the pin may stay
+    // below it. Without the 404 that tag is the previous release and the pin must be on it.
+    const p = previous.split('.').map(Number);
+    const gap = [p[0], p[1], p[2] + 1].join('.');
+    const q = pkgVersion.split('.').map(Number);
+    if (p[0] === q[0] && p[1] === q[1] ? p[2] + 1 < q[2] : true) {
+      process.env.TEST_TAGS = TAGS + ' v' + gap;
+      const g = copyTree();
+      const h = check(g, '--release', '--pre-tag');
+      assert.ok(!h.ok && h.out.includes('must be the previous release ' + gap), 'pre-tag: a newer release on npm must be the pin: ' + h.out);
+      process.env.TEST_NPM_MISSING = gap;
+      assert.ok(check(g, '--release', '--pre-tag').ok, 'pre-tag: a release tag that npm does not have is skipped');
+      delete process.env.TEST_TAGS;
+      delete process.env.TEST_NPM_MISSING;
+    }
     // After the pin: every place that names the old release names the new one.
     const e = copyTree();
     for (const rel of execFileSync('git', ['ls-files', 'plugins'], { cwd: ROOT, encoding: 'utf8' }).split('\n').filter(Boolean)) {

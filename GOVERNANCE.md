@@ -133,7 +133,11 @@ their advisory.
    the run and approves it, then:
    - the files are signed with Sigstore and get GitHub build provenance attestations;
    - the same files are published to npm and PyPI with trusted publishing (no
-     long-lived tokens), with npm provenance and PyPI attestations;
+     long-lived tokens), with npm provenance and PyPI attestations. On npm the
+     workflow stages the package (npm staged publishing) and a maintainer
+     approves it with two-factor authentication before it is public; the package
+     declares dual-use content (`contentPolicy` in `package.json` and a
+     `DISCLOSURE` file at the root of the package);
    - a GitHub Release is created with the files, `SHA256SUMS` and the signature
      bundles (as a draft for final versions, which the maintainer reviews and
      publishes).

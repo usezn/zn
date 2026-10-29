@@ -253,7 +253,9 @@ function parseCommand(command, agentId) {
     const n = new RegExp("^ZN_NODE='(" + audit.SAFE_ABS + ")'$", 'm').exec(text);
     const r = new RegExp("^ZN_RUNNER='(" + audit.SAFE_ABS + ")'$", 'm').exec(text);
     if (!n || !r) return { launcher: lm[1], event: lm[2], unreadable: true, ...extra };
-    return { launcher: lm[1], event: lm[2], node: n[1], runner: r[1], ...extra };
+    // The SHA-256 of the runner recorded at install time (absent in a launcher written by an older zn-gate).
+    const h = /^ZN_SHA='([0-9a-f]*)'$/m.exec(text);
+    return { launcher: lm[1], event: lm[2], node: n[1], runner: r[1], sha: h ? h[1] : null, ...extra };
   }
   // On Windows, Cursor and Gemini CLI run the same three steps as an encoded PowerShell script (launcher.windowsScript).
   const ws = require('./shell-quote').windowsCommandScript(c);
@@ -765,13 +767,19 @@ function cliHooks(spec, ctx, userFile, given) {
     // The launcher runs the Node.js it was installed with, else `zn` from the PATH, else it blocks (see launcher.js).
     const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch (err) { return false; } };
     const recorded = !cmd.unreadable && isFile(cmd.node) && isFile(cmd.runner);
-    const viaPath = !recorded && !cmd.unreadable && Boolean(znOnPath(ctx.env) && onAbsPath('node', ctx.env));
+    // Only the PowerShell script of Windows still falls back to `zn` on the PATH; the sh launcher runs nothing it has not verified.
+    const viaPath = Boolean(cmd.winScript) && !recorded && !cmd.unreadable && Boolean(znOnPath(ctx.env) && onAbsPath('node', ctx.env));
+    // The sh launcher runs the runner only if it still has the SHA-256 recorded at install time.
+    const runnerChanged = recorded && !cmd.winScript && typeof cmd.sha === 'string' && require('./agents/launcher').runnerSha(cmd.runner) !== cmd.sha;
     if (spec.id === 'antigravity' && cmd.quoted && !cmd.winScript) {
       // Antigravity splits the command on spaces and runs it with no shell: the quotes stay in the file name (ENOENT).
       out.problem = 'its hook cannot start: Antigravity runs the command without a shell, so the quotes around the launcher path (' + cmd.launcher + ') become part of the file name and the hook never runs';
       out.fix = REINSTALL(spec.id);
     } else if (cmd.unreadable) {
       out.problem = 'its hook cannot start: its launcher script (' + cmd.launcher + ') is missing or was changed';
+      out.fix = REINSTALL(spec.id);
+    } else if (runnerChanged) {
+      out.problem = 'its hook is blocking tool calls and prompts: zn-gate changed since the hooks were installed (' + cmd.runner + ' no longer matches the launcher), so zn will not run it';
       out.fix = REINSTALL(spec.id);
     } else if (!recorded && !viaPath) {
       out.problem = 'its hook cannot start: its ' + (isFile(cmd.node) ? 'zn-gate files (' + cmd.runner + ')' : 'Node.js (' + cmd.node + ')') + ' is no longer there, so zn now blocks the tool calls and prompts instead of checking them';

@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.1] - 2026-10-28
+
+zn-gate 1.14.1 is the first 1.14 release on npm. 1.14.0 was published on PyPI but never reached npm, and npm does not let a version number be used again, so npm users get everything in the 1.14.0 section below together with this release. The npm package now declares that it is a dual-use security tool and ships a `DISCLOSURE` file that explains what it does to other programs' configuration, to Windows file permissions and to the vault. On Windows, the vault no longer starts `whoami.exe` and `icacls.exe`, and zn-gate no longer passes an execution policy argument to PowerShell. A program from the `node_modules` folder of your home folder is no longer started, and in Claude Code a user-scope `secrets` server entry that sets `NODE_OPTIONS` or `NODE_PATH` is no longer taken as zn's. The Python package changes only in its version number. Update with `npm install -g zn-gate` or `pip install -U zn-gate`, and report problems at https://github.com/usezn/zn/issues.
+
+### Changed
+- The npm package declares that it is a dual-use security tool (`contentPolicy` in `package.json`) and ships a `DISCLOSURE` file that says what the package does to other programs' configuration, to Windows file permissions and to the vault, and when. Nothing about how zn-gate behaves changes.
+- Windows: zn no longer passes `-ExecutionPolicy Bypass` to the system PowerShell it starts (the hook folder's permissions, the vault keychain entry and the confirmation dialog). These run inline commands, which the execution policy does not cover, and they were tested with the `AllSigned` and `Restricted` policies.
+- Windows: the vault reads your account's SID and makes its folders, files and session key private to you with .NET calls in the system PowerShell, as the hook folder already did, instead of starting `whoami.exe` and `icacls.exe`. The result is the same: a list that does not inherit from the parent folder, with one full-control entry for your account, read back and checked before the vault starts.
+
+### Security
+- A program found on the `PATH` whose real file is in the `node_modules` folder of your home folder is not started either, also when zn-gate runs in the home folder. The Claude Code installer and uninstaller no longer run a `claude` that links into the project, and real paths are compared in their canonical spelling (letter case on macOS).
+- Claude Code: the user-scope `secrets` server is no longer taken as zn's when its entry sets `NODE_OPTIONS` or `NODE_PATH`, or a folder inside the project to run in. The MCP server names of the zn-gate plugin are no longer trusted either: the plugin registers no MCP server since 1.14.0, and an older plugin started its servers with `node` from the `PATH`.
+
 ## [1.14.0] - 2026-10-26
 
 **Breaking:** `zn run` and the agent hooks no longer accept a secret marker in a command's arguments, because arguments are visible to other processes and to command-line logs. Before: `psql "postgres://user:__ZN_DB_PASSWORD__@db/app"`. After: `zn secret set PGPASSWORD --command psql`, then `zn run --secrets PGPASSWORD -- psql "postgres://user@db/app"`, where psql reads the variable itself. A marker in an environment file that your shell loads (a shadowed `.env`) is still filled in, and a secret kept for a program or a file (`env` or `file` mode) is no longer sent by `secrets_http_request`: change its mode with `zn secret allow NAME --mode proxy` if an API needs it.
@@ -1067,7 +1080,8 @@ Limits: [docs/threat-model.md](docs/threat-model.md). Per-agent support:
 - MCP Server interface for Claude Code, Cursor, and custom agent loops.
 - Bidirectional inspection for prompt inputs and tool returns.
 
-[Unreleased]: https://github.com/usezn/zn/compare/v1.14.0...next
+[Unreleased]: https://github.com/usezn/zn/compare/v1.14.1...next
+[1.14.1]: https://github.com/usezn/zn/compare/v1.14.0...v1.14.1
 [1.14.0]: https://github.com/usezn/zn/compare/v1.13.1...v1.14.0
 [1.13.1]: https://github.com/usezn/zn/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/usezn/zn/compare/v1.12.0...v1.13.0
