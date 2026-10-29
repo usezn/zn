@@ -86,6 +86,15 @@ npm install -g zn-gate
 zn hooks install codex           # or: cursor, opencode
 ```
 
+If `npm install -g` fails with `EACCES` (common with Node.js from your Linux distribution, such as `dnf` or `apk`, and with Node.js from nodejs.org on macOS), do not use `sudo`. Give npm a folder in your home directory, then run the install again:
+
+```bash
+mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.bashrc   # ~/.zshrc on macOS, ~/.profile if you have no .bashrc
+```
+
+Open a new terminal so the new PATH applies.
+
 In Codex, approve the new hooks with `/hooks`. In Cursor, shell output and file contents are not scrubbed. What each agent supports: [docs/compat.md](https://github.com/usezn/zn/blob/main/docs/compat.md).
 
 **Other editors** (VS Code, Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/).
