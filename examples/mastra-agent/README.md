@@ -14,7 +14,7 @@ Everything runs on your machine. The model is the AI SDK's test model (`MockLang
 - Node.js 22.13 or newer (`@mastra/core` needs it)
 - `zn-gate` 1.12.0 or newer
 
-The versions in `package.json` are exact (`@mastra/core` 1.78.0, `ai` 7.0.143, `zod` 4.1.13, `zn-gate` 1.12.0), and `package-lock.json` pins the rest, so the example behaves the same on your machine as it did when it was written.
+The versions in `package.json` are exact (`@mastra/core` 1.78.0, `ai` 7.0.143, `zod` 4.6.6, `zn-gate` 1.12.0), and `package-lock.json` pins the rest, so the example behaves the same on your machine as it did when it was written.
 
 ## Run
 
