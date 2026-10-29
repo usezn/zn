@@ -63,13 +63,17 @@ const ME = 'S-1-5-21-111-222-333-1001';
 function winaclScripts() {
   const seen = [];
   const tools = {
-    icacls: 'icacls', whoami: 'whoami', powershell: PS,
+    powershell: PS,
     run(file, args, env) {
       if (file === PS) seen.push({ script: args[args.length - 1], env });
       return { status: 0, stdout: 'O:' + ME + 'G:S-1-5-21-111-222-333-513D:PAI(A;OICI;FA;;;' + ME + ')', stderr: '' };
     },
   };
   try { winacl.verifyPrivate('C:\\x\\y', { tools, userSid: ME, dir: true }); } catch (_) { /* the stub answer is only a capture */ }
+  try { winacl.currentUserSid(tools); } catch (_) { /* same */ }
+  // an open list, so the owner-only list is set (a folder and a file)
+  const open = { ...tools, run(file, args, env) { if (file === PS) seen.push({ script: args[args.length - 1], env }); return { status: 0, stdout: 'O:' + ME + 'D:AI(A;ID;FA;;;BU)', stderr: '' }; } };
+  try { winacl.ensurePrivate('C:\\x\\y', { tools: open, userSid: ME, dir: true }); } catch (_) { /* same */ }
   try { winacl.ensurePipe('\\\\.\\pipe\\zn-test', { tools, userSid: ME }); } catch (_) { /* same */ }
   try { winacl.scriptWriteRisk('C:\\x\\y.cmd', { tools, userSid: ME }); } catch (_) { /* same */ }
   return seen;
@@ -100,7 +104,10 @@ test('the lint itself finds cmdlets, aliases and Verb-Noun names, and ignores te
 test('every PowerShell script zn runs is free of cmdlets and aliases', () => {
   const all = scripts();
   assert.ok(Object.keys(all).length >= 16, Object.keys(all).join(','));
-  assert.equal(winaclScripts().length, 3);
+  // read, account SID, read + set + read of an open folder, pipe, script folders
+  const vault = winaclScripts();
+  assert.equal(vault.length, 7);
+  assert.ok(vault.some((c) => c.script.includes('SetAccessRuleProtection')) && vault.some((c) => c.script.includes('WindowsIdentity')));
   for (const [name, script] of Object.entries(all)) {
     assert.equal(typeof script, 'string', name);
     assert.deepEqual(commands(script), [], name + ' calls a cmdlet or alias');
@@ -231,6 +238,12 @@ test('real Windows: a module planted in the user Documents folder does not chang
   const sddl = winacl.verifyPrivate(dir, { dir: true });
   assert.ok(Array.isArray(sddl));
   assert.ok(!fs.existsSync(marker), 'a planted cmdlet ran in the vault ACL read');
+  // the vault ACL set: the account SID and the owner-only list, read back as private
+  winacl._forget();
+  const vdir = tempDir(t, 'zn-planted-vault-');
+  winacl.ensurePrivate(vdir, { dir: true });
+  assert.deepEqual(winacl.verifyPrivate(vdir, { dir: true }), []);
+  assert.ok(!fs.existsSync(marker), 'a planted cmdlet ran in the vault ACL set');
   // the ACL scripts of the hook folder
   const adir = tempDir(t, 'zn-planted-acl-');
   const doc = launcher.readWinAcls([adir]);
