@@ -245,15 +245,15 @@ test('windows (real PowerShell): a runner that prints "{" and exits 0 does not c
 });
 
 for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]]) {
-  test('posix launcher (' + name + '): the Daybreak case through `zn hook` (bin/cli.js): EPIPE on the answer is blocked, not accepted as status 0', { skip: !posix }, async (t) => {
+  test('posix launcher (' + name + '): the Daybreak case through the real runner: EPIPE on the answer is blocked, not accepted as status 0', { skip: !posix }, async (t) => {
     const dir = tempDir(t, 'zn-ov-cli-');
     const bin = path.join(dir, 'bin');
     fs.mkdirSync(bin);
     fs.symlinkSync(process.execPath, path.join(bin, 'node'));
     fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\nexec "' + process.execPath + '" "' + CLI + '" "$@"\n', { mode: 0o755 });
     const file = path.join(dir, 'launcher.sh');
-    // The recorded runner is gone, so the launcher runs `zn hook` from the PATH (the Daybreak repro).
-    fs.writeFileSync(file, launcher.unixScript('claude-code', '/nonexistent/node-gone/bin/node', '/nonexistent/runner.js', opts), { mode: 0o755 });
+    // The launcher checks and runs zn-gate's own runner (it no longer falls back to `zn hook` from the PATH).
+    fs.writeFileSync(file, launcher.unixScript('claude-code', process.execPath, path.resolve(__dirname, '..', 'lib', 'hooks', 'runner.js'), opts), { mode: 0o755 });
     const home = tempDir(t, 'zn-ov-home-');
     fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
     const run = (closeRead) => new Promise((resolve) => {
