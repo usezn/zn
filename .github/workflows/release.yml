@@ -297,15 +297,15 @@ jobs:
           sparse-checkout: .github/npm-cli
           sparse-checkout-cone-mode: false
           persist-credentials: false
-      # `npm stage publish` needs npm >= 11.15.0 and Node.js >= 22.14.0 (11.21.0 is the pinned version);
+      # `npm stage publish` needs npm >= 11.15.0 and Node.js >= 22.14.0 (11.21.1 is the pinned version);
       # the runner's bundled npm floats with the Node.js release, so the release uses one exact CLI.
       # It comes from a committed lockfile (sha512 integrity of the tarball), is installed with
       # --ignore-scripts, and the integrity is compared again with the value pinned here before the CLI
       # is put on PATH.
       - name: Install the pinned npm CLI (integrity checked, no install scripts)
         env:
-          NPM_CLI_VERSION: 11.21.0
-          NPM_CLI_INTEGRITY: sha512-Zov8KhamNneiLdELtj5YALtNmJW4L4fCLTzjfpzXG2w6MSHcf0UxgdlK5uloCuksWT+7mGUU7wi79cO6RqivPg==
+          NPM_CLI_VERSION: 11.21.1
+          NPM_CLI_INTEGRITY: sha512-YTzL6QBEJXyHcTu0JiUc7RKMp+mzlJtl7rGLmERaXUQeFHIMc9atdr6G9M9C8vDWbv40epoTQAzNL2/PtZVDhQ==
         run: |
           set -euo pipefail
           cd npm-cli/.github/npm-cli
@@ -321,7 +321,7 @@ jobs:
       - name: Show the npm CLI in use
         run: |
           set -euo pipefail
-          [ "$(npm --version)" = 11.21.0 ] || { echo "::error::npm on PATH is not the pinned 11.21.0"; exit 1; }
+          [ "$(npm --version)" = 11.21.1 ] || { echo "::error::npm on PATH is not the pinned 11.21.1"; exit 1; }
           node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 14) ? 0 : 1)' \
             || { echo "::error::Node.js $(node --version) is older than 22.14, which npm stage needs"; exit 1; }
           echo "node $(node --version), npm $(npm --version)"

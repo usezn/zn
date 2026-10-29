@@ -253,7 +253,9 @@ function parseCommand(command, agentId) {
     const n = new RegExp("^ZN_NODE='(" + audit.SAFE_ABS + ")'$", 'm').exec(text);
     const r = new RegExp("^ZN_RUNNER='(" + audit.SAFE_ABS + ")'$", 'm').exec(text);
     if (!n || !r) return { launcher: lm[1], event: lm[2], unreadable: true, ...extra };
-    return { launcher: lm[1], event: lm[2], node: n[1], runner: r[1], ...extra };
+    // The SHA-256 of the runner recorded at install time (absent in a launcher written by an older zn-gate).
+    const h = /^ZN_SHA='([0-9a-f]*)'$/m.exec(text);
+    return { launcher: lm[1], event: lm[2], node: n[1], runner: r[1], sha: h ? h[1] : null, ...extra };
   }
   // On Windows, Cursor and Gemini CLI run the same three steps as an encoded PowerShell script (launcher.windowsScript).
   const ws = require('./shell-quote').windowsCommandScript(c);
@@ -346,6 +348,21 @@ function claudePlugin(home, env) {
   const settings = readJson(cc.settingsFile({ home, env })) || {};
   const off = settings.enabledPlugins && settings.enabledPlugins[PLUGIN_ID] === false;
   return { root: roots[0] || null, off };
+}
+
+/* A note when the plugin in `root` is not the version of this zn-gate, or ''. The plugin runs its own pinned copy of
+   zn-gate, so Claude Code's tool calls follow the rules of the plugin's version. Which one to update depends on which is
+   older; a pre-release command (an rc being tried) only shows both versions. */
+function pluginVersionNote(root, own = require('../package.json').version) {
+  const manifest = readJson(path.join(root, '.claude-plugin', 'plugin.json'));
+  const v = manifest && typeof manifest.version === 'string' ? manifest.version : '';
+  if (!v || v === own) return '';
+  const both = 'the zn-gate plugin is version ' + v + ' and the zn-gate command is ' + own;
+  if (/-/.test(own)) return both;
+  if (require('./init-guide')._internal.cmp(v, own) < 0) {
+    return both + ', so Claude Code\'s tool calls follow the rules of zn-gate ' + v + '. To match them, run `claude plugin update zn-gate@usezn` in your own terminal and start a new Claude Code session';
+  }
+  return both + ', so this check runs older rules than the plugin. To match them, run `npm install -g zn-gate@latest` (or `npx -y zn-gate@latest check`) in your own terminal';
 }
 
 /* What each hook of a plugin's manifest (hooks/hooks.json under `root`) starts, as the host starts it: ZCode runs a
@@ -750,13 +767,19 @@ function cliHooks(spec, ctx, userFile, given) {
     // The launcher runs the Node.js it was installed with, else `zn` from the PATH, else it blocks (see launcher.js).
     const isFile = (f) => { try { return fs.statSync(f).isFile(); } catch (err) { return false; } };
     const recorded = !cmd.unreadable && isFile(cmd.node) && isFile(cmd.runner);
-    const viaPath = !recorded && !cmd.unreadable && Boolean(znOnPath(ctx.env) && onAbsPath('node', ctx.env));
+    // Only the PowerShell script of Windows still falls back to `zn` on the PATH; the sh launcher runs nothing it has not verified.
+    const viaPath = Boolean(cmd.winScript) && !recorded && !cmd.unreadable && Boolean(znOnPath(ctx.env) && onAbsPath('node', ctx.env));
+    // The sh launcher runs the runner only if it still has the SHA-256 recorded at install time.
+    const runnerChanged = recorded && !cmd.winScript && typeof cmd.sha === 'string' && require('./agents/launcher').runnerSha(cmd.runner) !== cmd.sha;
     if (spec.id === 'antigravity' && cmd.quoted && !cmd.winScript) {
       // Antigravity splits the command on spaces and runs it with no shell: the quotes stay in the file name (ENOENT).
       out.problem = 'its hook cannot start: Antigravity runs the command without a shell, so the quotes around the launcher path (' + cmd.launcher + ') become part of the file name and the hook never runs';
       out.fix = REINSTALL(spec.id);
     } else if (cmd.unreadable) {
       out.problem = 'its hook cannot start: its launcher script (' + cmd.launcher + ') is missing or was changed';
+      out.fix = REINSTALL(spec.id);
+    } else if (runnerChanged) {
+      out.problem = 'its hook is blocking tool calls and prompts: zn-gate changed since the hooks were installed (' + cmd.runner + ' no longer matches the launcher), so zn will not run it';
       out.fix = REINSTALL(spec.id);
     } else if (!recorded && !viaPath) {
       out.problem = 'its hook cannot start: its ' + (isFile(cmd.node) ? 'zn-gate files (' + cmd.runner + ')' : 'Node.js (' + cmd.node + ')') + ' is no longer there, so zn now blocks the tool calls and prompts instead of checking them';
@@ -896,6 +919,8 @@ async function checkAgent(spec, ctx) {
       // zn's own hooks left next to the plugin both run, and a broken prompt hook among them blocks every prompt.
       // Which set to drop depends on whether the plugin works, so the plugin is checked first (below).
       if (hasCliHooks) res.via = 'both';
+      const versionNote = pluginVersionNote(plugin.root);
+      if (versionNote) res.notes.push(versionNote);
       if (plugin.off) {
         res.pluginOff = true;
         res.problem = 'the zn-gate plugin is turned off in your Claude Code settings';
@@ -1371,4 +1396,4 @@ function report({ results, removed, warnings }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS } };
+module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
