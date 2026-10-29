@@ -68,10 +68,24 @@ function cmp(a, b) {
 const NPM_NETWORK_FLAGS = ['--fetch-retries=1', '--fetch-retry-mintimeout=1000', '--fetch-retry-maxtimeout=5000', '--fetch-timeout=15000'];
 const NPM_INSTALL_TIMEOUT_MS = 180000;
 
+/* On Windows npm.cmd only starts npm-cli.js with the node next to it, through cmd.exe. A timeout ends cmd.exe but not
+   that node, which goes on installing and writing after zn has moved on. [node, npm-cli.js] to run npm directly, without
+   a shell, so a timeout ends npm itself; null when `file` is not npm.cmd in the layout Node.js installs. */
+function npmCli(file, platform = process.platform) {
+  if (platform !== 'win32' || !/^npm\.cmd$/i.test(path.basename(file))) return null;
+  const dir = path.dirname(file);
+  const cli = path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  if (!fs.existsSync(cli)) return null;
+  const node = path.join(dir, 'node.exe');
+  return [fs.existsSync(node) ? node : process.execPath, cli];
+}
+
 function spawnProgram(file, args, env, extra = {}) {
   // The program gets only the absolute PATH entries: a .cmd shim (npm, claude on Windows) looks up `node` by name, and
   // so do the programs it starts; a relative entry would point into the folder zn runs in, often a project.
   const childEnv = require('./exe').programEnv(env || process.env);
+  const direct = isWin ? npmCli(file) : null;
+  if (direct) return spawnSync(direct[0], [direct[1], ...args], { ...extra, env: childEnv, windowsHide: true });
   // A .cmd file (npm, claude, zn on Windows) only starts through cmd.exe; its path is absolute and quoted.
   if (isWin && /\.cmd$/i.test(file)) {
     return spawnSync('"' + file + '"', args, { ...extra, env: childEnv, shell: true, windowsHide: true });
@@ -351,4 +365,4 @@ async function guide(opts = {}) {
   return skipped ? 1 : code;
 }
 
-module.exports = { guide, plan, fromTemporaryCopy, _internal: { networkFailure, NPM_NETWORK_FLAGS, permissionFailure, permissionAdvice, findProgram, globalInstall, cmp, runStep, spawnProgram } };
+module.exports = { guide, plan, fromTemporaryCopy, _internal: { networkFailure, NPM_NETWORK_FLAGS, permissionFailure, permissionAdvice, findProgram, globalInstall, cmp, runStep, spawnProgram, npmCli } };

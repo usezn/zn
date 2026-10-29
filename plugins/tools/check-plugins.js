@@ -27,7 +27,8 @@
  *    the plugin docs.
  * --pre-tag (with --release): the plugin can only be pinned to a release after npm publishes it, so on the release pull
  * request and on the release tag the lock file may stay on the PREVIOUS published release (the highest final vX.Y.Z tag of
- * the repository below this version, nothing older; read from the git tags, not from a file a pull request can edit), or
+ * the repository below this version that npm has, nothing older; read from the git tags, not from a file a pull request
+ * can edit; a tag whose version npm answers 404 for was never published there and is skipped), or
  * already be on this version. Every other release check, including the integrity, the attestation and the file digests of
  * the lock file as it is, stays strict. The strict form (no --pre-tag) runs on main once npm has the version: then the
  * lock file must equal it.
@@ -122,7 +123,19 @@ function previousRelease(version) {
   const cur = version.split('.').map(Number);
   const below = vs.filter((x) => { for (let i = 0; i < 3; i++) if (x[i] !== cur[i]) return x[i] < cur[i]; return false; });
   below.sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2]);
-  return below.length ? below[below.length - 1].join('.') : null;
+  for (let i = below.length - 1; i >= 0; i--) {
+    const s = below[i].join('.');
+    if (!missingOnNpm(s)) return s;
+  }
+  return null;
+}
+// A tag whose version npm does not have is not a published release (zn-gate 1.14.0 reached PyPI only). Only an npm
+// 404 skips a tag: any other error keeps it, so the check stays strict when npm cannot be asked.
+// (ZN_CHECK_PLUGINS_NPM_MISSING, space separated, replaces the npm lookup in tests.)
+function missingOnNpm(version) {
+  if (process.env.ZN_CHECK_PLUGINS_NPM_MISSING !== undefined) return process.env.ZN_CHECK_PLUGINS_NPM_MISSING.split(/\s+/).includes(version);
+  const r = require('child_process').spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['view', 'zn-gate@' + version, 'version'], { cwd: ROOT, encoding: 'utf8' });
+  return r.status !== 0 && /E404/.test(String(r.stderr || ''));
 }
 if (preTag && !pre && v !== pkg.version) {
   const prev = previousRelease(pkg.version);

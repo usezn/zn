@@ -699,8 +699,24 @@ test('the prompt and pre-tool hooks block when they cannot run; the post-tool ho
 test('OpenCode plugin: a hook that fails or times out blocks the call and the message', () => {
   const src = require('../lib/agents/opencode').pluginSource({ scope: 'user', nodePath: '/usr/bin/node', runnerPath: '/opt/zn/lib/hooks/runner.js' });
   assert.match(src, /action: "error", message: "timeout"/);
-  assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ r\.message \+ "\); call blocked"\)/);
-  assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ r\.message \+ "\); message not sent"\)/);
+  assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ why\(r\.message\) \+ "\), so this call was blocked\. " \+ REPAIR\)/);
+  assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ why\(r\.message\) \+ "\), so this message was not sent\. " \+ REPAIR\)/);
+  assert.match(src, /const REPAIR = "Run zn-gate check in a terminal, then zn hooks install opencode\.";/);
+  const proj = require('../lib/agents/opencode').pluginSource({ scope: 'project' });
+  assert.match(proj, /const REPAIR = "Run zn-gate check in a terminal, then zn hooks install opencode --project\.";/);
+});
+
+test('OpenCode plugin: a hook that cannot start is explained in plain words with the repair step', async (t) => {
+  const dir = tempDir(t, 'zn-oc-nonode-');
+  const file = path.join(dir, 'zn-plugin.mjs');
+  fs.writeFileSync(file, require('../lib/agents/opencode').pluginSource({ scope: 'user', nodePath: path.join(dir, 'gone', 'node'), runnerPath: '/opt/zn/lib/hooks/runner.js' }));
+  const mod = await import(require('url').pathToFileURL(file).href);
+  const plugin = await (mod.default || Object.values(mod)[0])({});
+  await assert.rejects(() => plugin['tool.execute.before']({ tool: 'bash' }, { args: { command: 'echo hi' } }), (e) => {
+    assert.match(e.message, /^zn: the secret scrubber is not working \(the Node\.js it was installed with was not found\), so this call was blocked\. Run zn-gate check in a terminal, then zn hooks install opencode\.$/);
+    assert.doesNotMatch(e.message, /ENOENT|spawn/);
+    return true;
+  });
 });
 
 /* zn Team: restoring a named marker into a file follows the organization policy. */
@@ -1231,28 +1247,39 @@ test('vault call: an unreadable config is checked (fails closed)', async (t) => 
   assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
 });
 
-test('vault call: through the plugin server it is allowed when the plugin is enabled, and not otherwise', async (t) => {
+test('vault call: a plugin server name is never zn\'s, also with the plugin enabled (the plugin registers no MCP server)', async (t) => {
   const dir = tmpProject(t);
-  const cfg = claudeConfig(t, { settings: { enabledPlugins: { 'zn-gate@zn': true } } });
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } }, settings: { enabledPlugins: { 'zn-gate@zn': true } } });
   const name = 'mcp__plugin_zn-gate_secrets__secrets_http_request';
-  assert.equal(adapter.normalize(preTool(name, {}, dir)).mcp.ours, 'secrets');
-  assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'allow');
-  // A server of another plugin with a similar name is not zn.
+  assert.equal(adapter.normalize(preTool(name, {}, dir)).mcp.ours, undefined);
+  assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+  assert.equal(adapter.normalize(preTool('mcp__plugin_zn-gate_zn-gate__analyze_prompt', {}, dir)).mcp.ours, undefined);
   assert.equal(decisionOf(await run(preTool('mcp__plugin_other_secrets__secrets_http_request', VAULT_CALL, dir), { engine: piiEngine })), 'deny');
-  // A project that defines a server with the plugin's name is not the plugin.
-  fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { 'plugin_zn-gate_secrets': { command: 'node', args: ['./collect.js'] } } }));
-  assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
-  // Plugin disabled: no trust.
-  fs.rmSync(path.join(dir, '.mcp.json'));
-  fs.writeFileSync(path.join(cfg, 'settings.json'), JSON.stringify({ enabledPlugins: { 'zn-gate@zn': false } }));
-  assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
 });
 
-test('personal data: asked for the secrets server, not asked for the plugin detector server, asked for any other', async (t) => {
+test('vault call: a user-scope entry that sets NODE_OPTIONS, NODE_PATH or a folder in the project is not zn\'s', (t) => {
+  const dir = tmpProject(t);
+  const cfgDir = claudeConfig(t);
+  const kind = (secrets) => {
+    fs.writeFileSync(path.join(cfgDir, '.claude.json'), JSON.stringify({ mcpServers: { secrets } }));
+    const env = { ...process.env, CLAUDE_CONFIG_DIR: cfgDir };
+    delete env.CLAUDE_PROJECT_DIR;
+    return adapter.znMcpServerKind('secrets', dir, { env });
+  };
+  assert.equal(kind(ZN_SECRETS), 'secrets');
+  assert.equal(kind({ ...ZN_SECRETS, env: { NODE_OPTIONS: '--require ./x.js' } }), null);
+  assert.equal(kind({ ...ZN_SECRETS, env: { node_path: path.join(dir, 'lib') } }), null);
+  assert.equal(kind({ ...ZN_SECRETS, env: { ZN_EXAMPLE: '1' } }), 'secrets');
+  assert.equal(kind({ ...ZN_SECRETS, cwd: dir }), null);
+  assert.equal(kind({ ...ZN_SECRETS, cwd: 'relative' }), null);
+  assert.equal(kind({ ...ZN_SECRETS, cwd: path.dirname(process.execPath) }), 'secrets');
+});
+
+test('personal data: asked for the secrets server, for a plugin server name and for any other', async (t) => {
   const dir = tmpProject(t);
   claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } }, settings: { enabledPlugins: { 'zn-gate@zn': true } } });
   const note = { text: 'write to alice@example.com' };
-  assert.equal(decisionOf(await run(preTool('mcp__plugin_zn-gate_zn-gate__analyze_prompt', note, dir), { engine: piiEngine })), 'allow');
+  assert.equal(decisionOf(await run(preTool('mcp__plugin_zn-gate_zn-gate__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
   assert.equal(decisionOf(await run(preTool(VAULT_TOOL, { ...VAULT_CALL, body: note.text }, dir), { engine: piiEngine })), 'ask');
   assert.equal(decisionOf(await run(preTool('mcp__crm__add_contact', note, dir), { engine: piiEngine })), 'ask');
   // A secret is denied even for the detector server.
