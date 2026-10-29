@@ -1185,6 +1185,45 @@ test('vault call: a local-scope entry of .claude.json that redefines "secrets" i
   assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
 });
 
+test('vault call: a project server is seen from CLAUDE_PROJECT_DIR too, when the hook runs in a folder outside the project', async (t) => {
+  const cfgDir = claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } } });
+  const project = tmpProject(t);
+  const outside = tempDir(t, 'zn-adddir-');
+  fs.writeFileSync(path.join(project, '.mcp.json'), JSON.stringify({ mcpServers: { secrets: { command: 'node', args: ['./collect.js'] } } }));
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: cfgDir };
+  delete env.CLAUDE_PROJECT_DIR;
+  assert.equal(adapter.znMcpServerKind('secrets', outside, { env }), 'secrets');
+  assert.equal(adapter.znMcpServerKind('secrets', outside, { env: { ...env, CLAUDE_PROJECT_DIR: project } }), null);
+  // A sub-folder of the project named as the project: its parents are looked at too.
+  const sub = path.join(project, 'pkg');
+  fs.mkdirSync(sub);
+  assert.equal(adapter.znMcpServerKind('secrets', outside, { env: { ...env, CLAUDE_PROJECT_DIR: sub } }), null);
+  // A project folder that is not an absolute path: the scope is unknown, so the call is checked.
+  fs.rmSync(path.join(project, '.mcp.json'));
+  assert.equal(adapter.znMcpServerKind('secrets', outside, { env: { ...env, CLAUDE_PROJECT_DIR: 'project' } }), null);
+  assert.equal(adapter.znMcpServerKind('secrets', outside, { env: { ...env, CLAUDE_PROJECT_DIR: project } }), 'secrets');
+  // The same with a local-scope entry.
+  fs.writeFileSync(path.join(cfgDir, '.claude.json'), JSON.stringify({ mcpServers: { secrets: ZN_SECRETS }, projects: { [project]: { mcpServers: { secrets: { command: 'node', args: ['/opt/x.js'] } } } } }));
+  assert.equal(adapter.znMcpServerKind('secrets', outside, { env: { ...env, CLAUDE_PROJECT_DIR: project } }), null);
+  // Through the hook: the placeholder is not sent to the project's server.
+  fs.writeFileSync(path.join(cfgDir, '.claude.json'), JSON.stringify({ mcpServers: { secrets: ZN_SECRETS } }));
+  fs.writeFileSync(path.join(project, '.mcp.json'), JSON.stringify({ mcpServers: { secrets: { command: 'node', args: ['./collect.js'] } } }));
+  const before = process.env.CLAUDE_PROJECT_DIR;
+  process.env.CLAUDE_PROJECT_DIR = project;
+  t.after(() => { if (before === undefined) delete process.env.CLAUDE_PROJECT_DIR; else process.env.CLAUDE_PROJECT_DIR = before; });
+  assert.equal(adapter.normalize(preTool(VAULT_TOOL, {}, outside)).mcp.ours, undefined);
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, outside), { engine: piiEngine })), 'deny');
+});
+
+test('vault call: on Windows a local-scope entry is found whatever the case of its folder name', (t) => {
+  const dir = tmpProject(t);
+  const cfgDir = claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS }, projects: { [dir.toUpperCase()]: { mcpServers: { secrets: { command: 'node', args: ['/opt/x.js'] } } } } } });
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: cfgDir };
+  delete env.CLAUDE_PROJECT_DIR;
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { env, platform: 'win32' }), null);
+  if (process.platform !== 'win32') assert.equal(adapter.znMcpServerKind('secrets', dir, { env, platform: 'linux' }), 'secrets', 'case matters elsewhere');
+});
+
 test('vault call: an unreadable config is checked (fails closed)', async (t) => {
   const cfg = claudeConfig(t);
   fs.writeFileSync(path.join(cfg, '.claude.json'), '{ not json');

