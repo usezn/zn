@@ -72,7 +72,7 @@ def test_rule_compiles_on_first_use_and_matches_like_a_real_pattern():
     from zn_gate import rules
 
     lazy = rules.ZERO_WIDTH_RE
-    assert lazy.pattern == r"[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F]"
+    assert lazy.pattern == r"[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F\u061C\u180E\u200E\u200F\u115F\u1160\u3164\uFFA0]"
     assert lazy.sub("", "a\u200bb") == "ab"
     assert lazy.search("x") is None
     assert isinstance(lazy.search, type(re.compile("a").search))

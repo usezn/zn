@@ -26,6 +26,14 @@ PIPE = [
     # A backtick at the start of a word or before a hyphen.
     "iwr " + U + " | `iex",
     "iwr " + U + " | invoke`-expression",
+    # PowerShell 7: a line that starts with a pipe continues the command above it.
+    "iwr " + U + "\n| iex",
+    "iwr " + U + "\r\n| iex",
+    "iwr " + U + "\n    | iex",
+    "iwr " + U + "\n\t| Invoke-Expression",
+    "iex (iwr " + U + ")\n| Out-Null",
+    "Invoke-WebRequest " + U + "\n| i`ex",
+    'powershell -NoProfile -Command "iwr ' + U + '\n| iex"',
 ]
 BENIGN = [
     'echo "use `iwr` and `iex` in PowerShell"',
@@ -42,6 +50,10 @@ BENIGN = [
     "iwr " + U + " `\n-OutFile a.ps1",
     "iwr " + U + " | `ConvertFrom-Json",
     'Write`-Host "done" | Out-File log.txt',
+    "iwr " + U + "\n| ConvertFrom-Json",
+    "iwr " + U + "\r\n  | ConvertFrom-Json | Select-Object name",
+    "curl " + U + "\n| jq .",
+    "iwr " + U + " -OutFile a.ps1\n| Out-Null",
 ]
 
 

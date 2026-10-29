@@ -28,12 +28,13 @@ function ops({ answer = true } = {}) {
   };
   const state = {
     opts: { home: process.env.ZN_HOME },
+    paths: { auditFile: path.join(process.env.ZN_HOME, 'audit.jsonl') },
     loadSecrets: async () => secrets, saveSecrets: async () => {}, serial: (fn) => fn(),
   };
   const o = makeTeamOps({
     state, fetchImpl,
     writeAudit: (r) => audit.push(r),
-    confirmOutOfBand: async (req) => { dialogs.push(req); if (!answer) { const e = new Error('declined'); e.code = 'ZN_DECLINED'; throw e; } },
+    confirmOutOfBand: async (req) => { if (/^look up the organization/.test(req.title)) return; dialogs.push(req); if (!answer) { const e = new Error('declined'); e.code = 'ZN_DECLINED'; throw e; } },
   });
   return { o, audit, dialogs, secrets };
 }

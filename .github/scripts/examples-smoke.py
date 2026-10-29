@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES = ROOT / "examples"
 LOCAL = ROOT / "packages" / "zn-gate-py"
 MARKER = ".requires-next"
-PIN = re.compile(r"^zn-gate==(\d+\.\d+\.\d+)\s*$", re.M)
+PIN = re.compile(r"^zn-gate==(\d+\.\d+\.\d+(?:rc\d+)?)\s*$", re.M)  # a published release candidate is allowed before the final is on PyPI
 VERSION = re.compile(r"\d+\.\d+\.\d+")
 # Text the example's main() must print: the page is read through the guard, a secret is hidden, and the
 # framework was found (the job installs it, so "is not installed" means the install did not work).
@@ -38,7 +38,10 @@ RUN_TIMEOUT = 120
 
 
 def version_tuple(text):
-    return tuple(int(part) for part in text.split("."))
+    """1.14.0 -> (1, 14, 0, 1, 0); a release candidate 1.14.0rc2 -> (1, 14, 0, 0, 2), below its final."""
+    base, _, rc = text.partition("rc")
+    nums = tuple(int(part) for part in base.split("."))
+    return nums + ((0, int(rc)) if rc else (1, 0))
 
 
 def example_dirs():

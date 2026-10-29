@@ -1,2 +1,0 @@
-### Security
-- In the experimental Rust gateway, a policy uploaded to the management API is now checked before it is saved. The Ed25519 signature (and the post-quantum signature, when `ZN_PQ_PUBLIC_KEY` is set) is verified on the uploaded bytes, and the file is then written through a temporary file that is renamed into place. A policy with a bad or missing signature leaves no file on disk and does not replace an existing policy.

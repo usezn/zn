@@ -49,6 +49,7 @@
 const claude = require('../agents/claude-code');
 const cursor = require('../agents/cursor');
 const codex = require('../agents/codex');
+const launcher = require('../agents/launcher');
 const { managedDir } = require('../agents/managed-policy');
 
 const READ_DATE = '2026-10-19';
@@ -66,7 +67,11 @@ const DOCS = {
 const USAGE = 'usage: zn team managed-config [--agent claude-code|cursor|codex|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
 const INSTALL_NOTE = 'zn-gate must be installed on each machine with `zn` on the PATH (npm install -g zn-gate).';
 
-const ZN_HOOK = (agent) => 'zn hook ' + agent;
+// The hooks run `zn` from the PATH inside zn's start guard, as a project install writes them (launcher.projectShCommand):
+// a missing zn or Node.js blocks, and neither zn, node nor powershell.exe can come from the folder the agent runs in.
+// On Windows, Codex runs command_windows through cmd.exe, so it names powershell.exe through %SystemRoot%.
+const shGuard = (agent) => (event) => launcher.projectShCommand(agent, event);
+const winGuard = (agent, opts) => (event) => launcher.windowsScriptCommand(launcher.projectWindowsScript(agent, event), opts);
 
 function osDefault() {
   return process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux';
@@ -88,12 +93,11 @@ function codexToml(opts) {
   lines.push('', '[features]', 'hooks = true');
   const h = {
     type: 'command',
-    command: ZN_HOOK('codex'),
-    commandWindows: ZN_HOOK('codex'),
     timeout: codex.HOOK_TIMEOUT_S,
     statusMessage: codex.HOOK_STATUS,
   };
-  for (const [event, group] of Object.entries(codex.hookGroups(h))) {
+  const handler = (event) => ({ ...h, command: shGuard('codex')(event), commandWindows: winGuard('codex', { cmd: true })(event) });
+  for (const [event, group] of Object.entries(codex.hookGroups(handler))) {
     lines.push('', '[[hooks.' + event + ']]');
     if (group.matcher !== undefined) lines.push('matcher = ' + t(group.matcher));
     for (const x of group.hooks) {
@@ -107,7 +111,8 @@ function codexToml(opts) {
 function claudeFiles(os, opts) {
   const dir = managedDir(PLATFORM[os]);
   // ourHooks gives one matcher group per event; settings hold a list of groups per event.
-  const settings = { hooks: Object.fromEntries(Object.entries(claude.ourHooks(ZN_HOOK('claude-code'))).map(([e, g]) => [e, [g]])) };
+  // Claude Code runs hook commands through sh (Git Bash on Windows), so every OS gets the sh guard.
+  const settings = { hooks: Object.fromEntries(Object.entries(claude.ourHooks(shGuard('claude-code'))).map(([e, g]) => [e, [g]])) };
   if (opts.managedHooksOnly) settings.allowManagedHooksOnly = true;
   const files = [{
     file: join(os, dir, 'managed-settings.json'),
@@ -137,7 +142,8 @@ function claudeFiles(os, opts) {
 }
 
 function cursorFiles(os, opts) {
-  const entries = cursor.hookEntries(ZN_HOOK('cursor'));
+  // Cursor wraps hook commands in PowerShell on Windows: the PowerShell form of the guard there.
+  const entries = cursor.hookEntries(os === 'windows' ? winGuard('cursor') : shGuard('cursor'));
   const notes = [
     'If this file already exists, merge the "hooks" entries into it.',
     'failClosed is on for beforeReadFile and beforeSubmitPrompt: if the hook crashes, times out or prints nothing, Cursor blocks the read or the prompt.',

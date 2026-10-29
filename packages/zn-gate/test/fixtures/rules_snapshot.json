@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-10-27.1",
+      "version": "2026-10-29.4",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -47,13 +47,13 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "540c90e43b6c91e92af3345925e3779461f122f9c8fcb6a3740b814c7b64d6d5",
-        "lib/mcp-secrets.js": "6a59fc9809d6b1a3509ff285d21be57e2906449b1c78644e41fe142eccda69b9"
+        "lib/rules.js": "8513c92293933bbd08e15a1d51a3e73d537b691321bd2116d2abc221f61d0013",
+        "lib/mcp-secrets.js": "1a051cdb7ac9cd04b46494a2efe0aa90ab136a5e866d2dbf42d4431888ab7487"
       }
     },
     "scrub": {
       "version_const": "SCRUB_RULES_VERSION",
-      "version": "2026-10-23.7",
+      "version": "2026-10-24.1",
       "ids": [
         "AGE_SECRET_KEY",
         "ALIBABA_KEY_ID",
@@ -146,11 +146,12 @@
         "exact.looksNonSecret",
         "exact.parseDotenv",
         "exact.urlPassword",
+        "exact.validateSecretValue",
         "exact.variants"
       ],
       "sha256": {
-        "lib/scrub/patterns.js": "f6ccca7fe227413f9dba4128ac821fdbbce1dbb07158377e10168f2ba6bb8790",
-        "lib/scrub/exact.js": "d104e85ec6a25e7d6d4b6c428bd0bf8b25d43c3ead313f6872f508b65793bf6b"
+        "lib/scrub/patterns.js": "ce5ad532a50614e1eca3f62380c78606bdeee37c7105f8d713c2d17db7418a1a",
+        "lib/scrub/exact.js": "cc4344ace825676514a2edac385a013b29fb14faed5bc1cd3c779d0f8587eddd"
       }
     },
     "audit": {
@@ -210,7 +211,7 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-24.17",
+      "version": "2026-10-27.2",
       "ids": [
         "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
@@ -240,12 +241,12 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "f6bad96f33ea5c01df927cdff751b0c3840a1cc529562fa1aa656ee02527ff67",
-        "lib/broker/files.js": "45dd8927cc626ac35e8c036e5118ec3c584a3f3a396640c09cee8b545e67c097",
+        "lib/hooks/policy.js": "fd2df211aa87338f0f1956a3e40ae15fd84af87cb3f10ecb2bd00a3f3072b244",
+        "lib/broker/files.js": "feade3d9b4f4222fb07fbf9a6d23131d0b578ac7c0cc95f40ff4f1edd387811c",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
-        "lib/shell-quote.js": "7624e8bfde93f671d0ef9ae8dd0fcc1002344d1556c30ceb0e14daa41fd5a122",
-        "lib/destructive.js": "6a469b3003140e52faa40d42f8a2ee53c9ba9bfd146bde4d576a0d77b13350b5"
+        "lib/shell-quote.js": "91cf4832cf68d4a367854f0c6e982c349afad2934e634f743d33aaf7c71c7471",
+        "lib/destructive.js": "50b903bbab2221d18b008dc8e8e29878764c3bcd3ae93b2d7fffa046d9830477"
       }
     }
   }

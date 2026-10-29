@@ -14,7 +14,7 @@
 
 **For:** developers building their own agents with LangChain, CrewAI, LlamaIndex or plain Python tool calling.
 
-> **Using Claude Code, Codex CLI, Cursor or OpenCode?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later; 22 LTS is recommended, and the Claude Code plugin needs 20.19 or later): see [Install](https://github.com/usezn/zn#install).
+> **Using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later; 22 LTS is recommended, and the Claude Code plugin needs 20.19 or later): see [Install](https://github.com/usezn/zn#install).
 
 ---
 
@@ -22,14 +22,17 @@
 
 Install it in a virtual environment. Many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one, with an "externally-managed-environment" error:
 
-On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package first: `sudo apt install python3-venv`.
+On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package first: `sudo apt update && sudo apt install python3-venv`.
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install zn-gate      # Windows: .venv\Scripts\pip install zn-gate
+.venv/bin/zn-gate scan .           # Windows: .venv\Scripts\zn-gate scan .
 ```
 
-**Only the command-line tools (`scan`, `test`, `status`)?** Install the Python CLI as a standalone tool, without a virtual environment:
+`zn-gate` is installed inside the environment, so run it as shown, or run `source .venv/bin/activate` once in each terminal and then `zn-gate scan .` (Windows: `.venv\Scripts\activate`).
+
+**Only the command-line tools (`scan`, `test`, `status`)?** Install the Python CLI as a standalone tool, without a virtual environment. On Ubuntu and Debian, first run `sudo apt update && sudo apt install pipx`. Bare `pip` is often missing there too (`pip: command not found`), and `pip install` into the system Python is refused, so use pipx, uv or a virtual environment. To get uv, follow the [official uv installation guide](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```bash
 pipx install zn-gate
@@ -39,17 +42,19 @@ zn-gate scan .
 
 `pipx ensurepath` puts `~/.local/bin` on your PATH. Until you reopen the terminal, `zn-gate` is reported as "command not found". With uv: `uv tool install zn-gate` (run `uv tool update-shell` if the command is not found). To run it once without installing: `uvx zn-gate scan .`
 
-The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor or OpenCode, run `npx -y zn-gate init` (Node 18 or later).
+The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app, run `npx -y zn-gate init` (Node 18 or later).
 
 Inside an environment you already use (your project's virtualenv, Poetry, uv), `pip install zn-gate` is enough. Python 3.10 or later (CI tests 3.10 to 3.14). Zero runtime dependencies.
 
 **If something fails:**
 
 - `externally-managed-environment`: install it in a virtual environment, as shown above.
-- `python3 -m venv` fails on Debian or Ubuntu: run `sudo apt install python3-venv`.
+- `pip: command not found` or `No module named pip`: this system has no pip for its Python. Use the virtual environment or pipx steps above.
+- `zn-gate: command not found` after a virtual environment install: run `.venv/bin/zn-gate scan .`, or run `source .venv/bin/activate` first.
+- `python3 -m venv` fails on Debian or Ubuntu: run `sudo apt update && sudo apt install python3-venv`.
 - Python says it cannot find `zn_gate`: run your script with the Python of that environment (`.venv/bin/python`; Windows: `.venv\Scripts\python`).
 - Legitimate content is blocked: use `on_block="return"` with a fallback while you evaluate it.
-- You use Claude Code, Codex CLI, Cursor or OpenCode: this package does not protect them. Run `npx -y zn-gate init` in your own terminal instead.
+- You use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app: this package does not protect them. Run `npx -y zn-gate init` in your own terminal instead.
 
 ## Check that it works
 
@@ -141,7 +146,7 @@ The checks read every string inside the arguments: dict keys and values, lists, 
 With `check_result` or `mask_secrets` (both on by default in `guarded_tool`), `@guard` and `guarded_tool` handle every form of tool output the same way:
 
 - **Async**: `async def` functions, callable objects whose `__call__` is `async def`, and sync functions that return a coroutine are awaited, then checked and masked.
-- **Streamed output**: a generator or async generator is passed on chunk by chunk. Each chunk is checked (together with the end of the previous chunk, so a phrase split in two is still found) and masked. A blocked chunk ends the stream: `GuardBlockError`, or the `fallback` as the last chunk with `on_block="return"`. A secret split across two chunks is not masked, so do not stream secrets in small pieces.
+- **Streamed output**: a generator or async generator is passed on chunk by chunk. Each chunk is checked (together with the end of the previous chunk, so a phrase split in two is still found). A blocked chunk ends the stream: `GuardBlockError`, or the `fallback` as the last chunk with `on_block="return"`. With `mask_secrets` the text is masked as one stream, so a secret split across chunks is masked whole: the last 16 KiB of text are held back, as it arrived, until more text or the end of the stream arrives (also when the tool fails), and a secret that reaches into them keeps the text from its start held too. Each chunk the tool yields still gives one chunk out, empty while its text is held, so the text comes out later and in larger pieces, in order and in full, and a short stream comes out at its end. The held text is withheld when a chunk blocks.
 - **Objects**: a result that is a pydantic model, a dataclass or another plain object is read field by field. With `mask_secrets` a secret inside it is masked, and the model gets the object as plain data (a dict) with the secret hidden. A secret that cannot be masked blocks the result (rule `secret:unmaskable`).
 - **Errors**: agent frameworks send the message of a tool's exception to the model (LangChain `handle_tool_error`, LangGraph `ToolNode`, the OpenAI Agents SDK, CrewAI), so it is checked and masked like the output. A blocked message raises `GuardBlockError` (or returns the `fallback`). A message with a secret is raised again as an exception of the same type that carries only the masked message, without the original exception attached; when the type cannot be rebuilt that way, `zn_gate.guard.MaskedToolError` (a `RuntimeError`) is raised instead. Other exceptions are raised unchanged.
 

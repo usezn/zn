@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-27.1
+RULES_VERSION: 2026-10-29.4
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import bisect
 from array import array
 import json
 import math
@@ -20,10 +21,10 @@ import re
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict, cast, overload
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-10-27.1"
+RULES_VERSION = "2026-10-29.4"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -98,7 +99,7 @@ def _rc(pattern: str, flags: int = 0) -> "re.Pattern[str]":
     return cast("re.Pattern[str]", _LazyPattern(pattern, flags))
 
 
-ZERO_WIDTH_RE = _rc(r'[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F]')
+ZERO_WIDTH_RE = _rc(r'[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F\u061C\u180E\u200E\u200F\u115F\u1160\u3164\uFFA0]')
 INVISIBLE_ASTRAL_RE = _rc(r'[\U000E0000-\U000E007F\U000E0100-\U000E01EF]')
 # Line breaks are joined only in texts up to this size (see MAX_WRAP_VIEW_CHARS in rules.js).
 MAX_WRAP_VIEW_CHARS = 1 << 20
@@ -110,7 +111,7 @@ ANSI_ESCAPE_RE = _rc(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07')
 MAX_B64_PAYLOADS = 16
 MAX_B64_DECODED_BYTES = 128 * 1024
 # The payload is group 2 (echo/printf pipe, quoted or not, with options) or group 4 (here-string).
-B64_EXEC_RE = _rc(r'''(?:echo|printf(?:\s+(?:'%s'|"%s"|%s))?)(?:\s+-[A-Za-z]{1,3})*\s+(["']?)([A-Za-z0-9+/=]{16,})\1\s*\|\s*(?:base64\s+-(?:di?|id|-decode)|openssl)|base64\s+-(?:di?|id|-decode)\s*<<<\s*(["']?)([A-Za-z0-9+/=]{16,})\3''', re.IGNORECASE)
+B64_EXEC_RE = _rc(r'''(?:echo|printf(?:\s+(?:'%s'|"%s"|%s))?)(?:\s+-[A-Za-z]{1,3})*\s+(["']?)([A-Za-z0-9+/=]{16,})\1\s*\|\s*(?:base64\s+-(?:di?|id|-decode)|openssl\s+(?:base64|enc)(?:\s+(?:-[A-Za-z0-9]+|-(?![A-Za-z0-9])))*?\s+-d(?![A-Za-z0-9_]))|base64\s+-(?:di?|id|-decode)\s*<<<\s*(["']?)([A-Za-z0-9+/=]{16,})\3''', re.IGNORECASE)
 # Maximal whitespace runs; only runs that contain a line break are joined.
 # A pattern anchored on the line break (such as [^\S\r\n]*[\r\n]) would rescan
 # a long run of spaces from every position.
@@ -210,8 +211,8 @@ INJECTION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     ('pi:multi_de', _rc(r'ignoriere\s+(alle\s+)?(anweisungen|instruktionen)|vergiss\s+(alles|jede)|du\s+bist\s+jetzt|handle\s+als', re.IGNORECASE), 'Multilingual prompt injection (German)'),
     ('pi:multi_ru', _rc(r'забудь\s+[^\n]{0,80}?(все|инструкции)|игнорируй\s+[^\n]{0,80}?(все|предыдущие)|действуй\s+как|ты\s+теперь|найди\s+пароли', re.IGNORECASE), 'Multilingual prompt injection (Russian)'),
     ('pi:multi_zh', _rc(r'忽略[^\n]{0,80}?(指示|指令|提示)|忘记[^\n]{0,80}?(指示|指令|一切)|你现在是|初始提示词'), 'Multilingual prompt injection (Chinese)'),
-    ('pi:identity_request', _rc(r"""(?<![A-Za-z0-9_])(?<!never\s)(?<!not\s)(?<!n't\s)(?<!n\u2019t\s)(?<!avoid\s)(?:include|add|put|attach|append|insert|embed|set|send|pass|forward|submit|post|write|specify|provide|supply|encode|inject|place|share|transmit|reveal|disclose|expose)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder))[\x27’]s\s{1,4}(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)|(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)\s{1,4}(?:of|for)\s{1,4}(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder)))(?![A-Za-z0-9_])[^\n]{0,80}?(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))|(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))[^\n]{0,80}?(?:(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder))[\x27’]s\s{1,4}(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)|(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)\s{1,4}(?:of|for)\s{1,4}(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder)))(?![A-Za-z0-9_]))|(?<![A-Za-z0-9_])(?:(?:identify|reveal|disclose|state|report|announce)\s{1,4}(?:to\s{1,4}(?:me|us|this\s{1,4}[a-z]{3,10})\s{1,4})?(?:who\s{1,4})?your\s{1,4}(?:user|operator|owner|human|principal)(?:\s{1,4}is)?(?![A-Za-z0-9_])|(?:tell|inform)\s{1,4}(?:me|us)\s{1,4}who\s{1,4}(?:your|the)\s{1,4}(?:user|operator|owner|human|principal)\s{1,4}is(?![A-Za-z0-9_])|(?:tell|state|say|reveal|report)[^\n]{0,20}?who\s{1,4}you\s{1,4}(?:are|[\x27’]re)\s{1,4}(?:working|acting)\s{1,4}for(?![A-Za-z0-9_]))""", re.IGNORECASE), "Tool result asks the agent to identify its user or put the user identity in a request"),
-    ('pi:identity_request_multi', _rc(r"""(?<![A-Za-z0-9_])(?:incluye|incluya|incluyas|añade|añada|agrega|agregue|pon|ponga|envía|envia|envíe|adjunta|adjunte|inserta|pasa|indica|comparte|revela)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario))[^\n]{0,80}?(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)|(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)[^\n]{0,80}?(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario)))|(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)[^\n]{0,60}?(?<![A-Za-z0-9_])(?:incluye|incluya|incluyas|añade|añada|agrega|agregue|pon|ponga|envía|envia|envíe|adjunta|adjunte|inserta|pasa|indica|comparte|revela)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario))|(?<![A-Za-z0-9_])(?:inclua|inclui|adicione|adiciona|coloque|coloca|envie|envia|anexe|insira|passe|compartilhe|revele)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio))[^\n]{0,80}?(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)[^\n]{0,80}?(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio)))|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)[^\n]{0,60}?(?<![A-Za-z0-9_])(?:inclua|inclui|adicione|adiciona|coloque|coloca|envie|envia|anexe|insira|passe|compartilhe|revele)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio))|(?<![A-Za-z0-9_])(?:inclus|incluez|ajoute|ajoutez|mets|mettez|envoie|envoyez|joins|joignez|insère|insérez|transmets|transmettez|partage|partagez|révèle|révélez)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire))[^\n]{0,80}?(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)[^\n]{0,80}?(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire)))|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)[^\n]{0,60}?(?<![A-Za-z0-9_])(?:inclus|incluez|ajoute|ajoutez|mets|mettez|envoie|envoyez|joins|joignez|insère|insérez|transmets|transmettez|partage|partagez|révèle|révélez)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire))|(?<![A-Za-z0-9_])(?:füge|fuege|sende|schicke|übergib|uebergib|setze|gib|teile|nenne|hänge|binde)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators))[^\n]{0,80}?(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)[^\n]{0,80}?(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)))|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)[^\n]{0,60}?(?<![A-Za-z0-9_])(?:füge|fuege|sende|schicke|übergib|uebergib|setze|gib|teile|nenne|hänge|binde)(?![A-Za-z0-9_])[^\n]{0,60}?(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators))|(?:добавь|добавьте|включи|включите|отправь|отправьте|передай|передайте|укажи|укажите|вставь|вставьте)[^\n]{0,60}?(?:(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*))[^\n]{0,80}?(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)[^\n]{0,80}?(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)))|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)[^\n]{0,60}?(?:добавь|добавьте|включи|включите|отправь|отправьте|передай|передайте|укажи|укажите|вставь|вставьте)[^\n]{0,60}?(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*))|(?:添加|加入|包含|附上|发送|传递|提供|填写|放入|带上|附加)[^\n]{0,60}?(?:(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者))[^\n]{0,80}?(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)[^\n]{0,80}?(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者)))|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)[^\n]{0,60}?(?:添加|加入|包含|附上|发送|传递|提供|填写|放入|带上|附加)[^\n]{0,60}?(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者))""", re.IGNORECASE), "Tool result asks the agent to identify its user or put the user identity in a request (non-English)"),
+    ('pi:identity_request', _rc(r"""(?<![A-Za-z0-9_])(?<!never\s)(?<!not\s)(?<!n't\s)(?<!n\u2019t\s)(?<!avoid\s)(?:run|execute|invoke|call)\s{1,4}[\x60\x27\x22]{0,2}(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))(?![A-Za-z0-9_.-])[^\n]{0,100}?(?:\n[^\n]{0,100}?)?(?<![A-Za-z0-9_])(?:include|add|put|attach|append|insert|embed|send|pass|forward|submit|post|write|place|share|transmit|inject|encode|set)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|request\s{1,4}(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:in|into|inside|within|with|to|on)\s{1,4}(?:an?|the|your|every|each|any|all|subsequent|following|outgoing|next)\s{1,4}(?:(?:http|outgoing|network|api|subsequent|following)\s{1,4}){0,2}(?:requests?|calls?))|(?<![A-Za-z0-9_])(?<!never\s)(?<!not\s)(?<!n't\s)(?<!n\u2019t\s)(?<!avoid\s)(?:include|add|put|attach|append|insert|embed|send|pass|forward|submit|post|write|place|share|transmit|inject|encode|set)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:output|result|value)\s{1,4}of\s{1,4}[\x60\x27\x22]{0,2}(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))(?![A-Za-z0-9_.-])|[\x60\x27\x22]{0,2}(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))[\x60\x27\x22]{0,2}\s{1,4}(?:output|result))(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|request\s{1,4}(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:in|into|inside|within|with|to|on)\s{1,4}(?:an?|the|your|every|each|any|all|subsequent|following|outgoing|next)\s{1,4}(?:(?:http|outgoing|network|api|subsequent|following)\s{1,4}){0,2}(?:requests?|calls?))|(?<![A-Za-z0-9_])(?<!never\s)(?<!not\s)(?<!n't\s)(?<!n\u2019t\s)(?<!avoid\s)(?:include|add|put|attach|append|insert|embed|set|send|pass|forward|submit|post|write|specify|provide|supply|encode|inject|place|share|transmit|reveal|disclose|expose)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:the|your)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)\s{1,4}(?:(?:full|real|login|primary)\s{1,4})?(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|phone(?:\s{1,4}number)?)|their\s{1,4}(?:(?:primary|login|account|real)\s{1,4})?e-?mail(?:\s{1,4}address(?:es)?)?(?=[^\n]{0,80}?(?:(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|next\s{1,4}(?:http\s{1,4})?(?:request|call)))(?!(?:(?!(?<![A-Za-z0-9_])x-[a-z0-9-]|next\s)[^\n]){0,80}?(?:user-agent|mailto|(?<![A-Za-z0-9_])from\s{1,4}h[a-z]{3,5}|(?:request\s{1,4})?(?:body|payload)|(?<![A-Za-z0-9_])form(?![A-Za-z0-9_])))|(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder))[\x27’]s\s{1,4}(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)|(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)\s{1,4}(?:of|for)\s{1,4}(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder)))(?![A-Za-z0-9_])[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))|(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:the|your)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)\s{1,4}(?:(?:full|real|login|primary)\s{1,4})?(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|phone(?:\s{1,4}number)?)|their\s{1,4}(?:(?:primary|login|account|real)\s{1,4})?e-?mail(?:\s{1,4}address(?:es)?)?(?=[^\n]{0,80}?(?:(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|next\s{1,4}(?:http\s{1,4})?(?:request|call)))(?!(?:(?!(?<![A-Za-z0-9_])x-[a-z0-9-]|next\s)[^\n]){0,80}?(?:user-agent|mailto|(?<![A-Za-z0-9_])from\s{1,4}h[a-z]{3,5}|(?:request\s{1,4})?(?:body|payload)|(?<![A-Za-z0-9_])form(?![A-Za-z0-9_])))|(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder))[\x27’]s\s{1,4}(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)|(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)\s{1,4}(?:of|for)\s{1,4}(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder)))(?![A-Za-z0-9_]))|(?<![A-Za-z0-9_])(?:(?:identify|reveal|disclose|state|report|announce)\s{1,4}(?:to\s{1,4}(?:me|us|this\s{1,4}[a-z]{3,10})\s{1,4})?(?:who\s{1,4})?your\s{1,4}(?:user|operator|owner|human|principal)(?:\s{1,4}is)?(?![A-Za-z0-9_])|(?:tell|inform)\s{1,4}(?:me|us)\s{1,4}who\s{1,4}(?:your|the)\s{1,4}(?:user|operator|owner|human|principal)\s{1,4}is(?![A-Za-z0-9_])|(?:tell|state|say|reveal|report)[^\n]{0,20}?who\s{1,4}you(?:\s{1,4}are|\s{0,4}[\x27’]re)\s{1,4}(?:working|acting)\s{1,4}for(?![A-Za-z0-9_]))""", re.IGNORECASE), "Tool result asks the agent to identify its user or put the user identity in a request"),
+    ('pi:identity_request_multi', _rc(r"""(?<![A-Za-z0-9_])(?:ejecuta|ejecute|corre|lanza)\s{1,4}[\x60\x27\x22]{0,2}(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))(?![A-Za-z0-9_.-])[^\n]{0,100}?(?:\n[^\n]{0,100}?)?(?<![A-Za-z0-9_])(?:incluye|incluya|a[ñn]ade|a[ñn]ada|agrega|agregue|pon|ponga|env[ií]a|env[ií]e|adjunta|adjunte|inserta|pasa)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)|(?<![A-Za-z0-9_])(?:incluye|incluya|incluyas|añade|añada|agrega|agregue|pon|ponga|envía|envia|envíe|adjunta|adjunte|inserta|pasa|indica|comparte|revela)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)|(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario)))|(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?<![A-Za-z0-9_])(?:incluye|incluya|incluyas|añade|añada|agrega|agregue|pon|ponga|envía|envia|envíe|adjunta|adjunte|inserta|pasa|indica|comparte|revela)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario))|(?<![A-Za-z0-9_])(?:inclua|inclui|adicione|adiciona|coloque|coloca|envie|envia|anexe|insira|passe|compartilhe|revele)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio)))|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?<![A-Za-z0-9_])(?:inclua|inclui|adicione|adiciona|coloque|coloca|envie|envia|anexe|insira|passe|compartilhe|revele)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio))|(?<![A-Za-z0-9_])(?:inclus|incluez|ajoute|ajoutez|mets|mettez|envoie|envoyez|joins|joignez|insère|insérez|transmets|transmettez|partage|partagez|révèle|révélez)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire)))|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?<![A-Za-z0-9_])(?:inclus|incluez|ajoute|ajoutez|mets|mettez|envoie|envoyez|joins|joignez|insère|insérez|transmets|transmettez|partage|partagez|révèle|révélez)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire))|(?<![A-Za-z0-9_])(?:füge|fuege|sende|schicke|übergib|uebergib|setze|gib|teile|nenne|hänge|binde)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)))|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?<![A-Za-z0-9_])(?:füge|fuege|sende|schicke|übergib|uebergib|setze|gib|teile|nenne|hänge|binde)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators))|(?:добавь|добавьте|включи|включите|отправь|отправьте|передай|передайте|укажи|укажите|вставь|вставьте)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)))|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:добавь|добавьте|включи|включите|отправь|отправьте|передай|передайте|укажи|укажите|вставь|вставьте)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*))|(?:添加|加入|包含|附上|发送|传递|提供|填写|放入|带上|附加)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者)))|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:添加|加入|包含|附上|发送|传递|提供|填写|放入|带上|附加)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者))""", re.IGNORECASE), "Tool result asks the agent to identify its user or put the user identity in a request (non-English)"),
 ]
 
 EVASION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
@@ -230,7 +231,47 @@ EVASION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
 # [\s\S]*? tail, or an attribute run that may cross "<", re-scans the rest of
 # the input from every candidate and is super-linear on crafted markup.)
 OPEN_TAG_RE = _rc(r'<[a-z0-9]+(?![A-Za-z0-9_])([^<>]*)(>?)', re.IGNORECASE)
-HIDDEN_ATTR_RE = _rc(r'(?<![A-Za-z0-9_])(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|font-size\s*:\s*0(?:px)?|color\s*:\s*transparent|text-indent\s*:\s*-[0-9]{3,}px|hidden(?![A-Za-z0-9_]))', re.IGNORECASE)
+# What a style attribute must say to hide an element. Spaces are the ASCII ones (the CSS and HTML
+# separators), so Node and Python read the same text the same way.
+HIDDEN_ATTR_RE = _rc(r'(?<![A-Za-z0-9_-])(?:display[\t\n\f\r ]*:[\t\n\f\r ]*none|visibility[\t\n\f\r ]*:[\t\n\f\r ]*hidden|opacity[\t\n\f\r ]*:[\t\n\f\r ]*0(?:\.0+)?(?![0-9.])|font-size[\t\n\f\r ]*:[\t\n\f\r ]*0(?:px)?(?![0-9.])|color[\t\n\f\r ]*:[\t\n\f\r ]*transparent|text-indent[\t\n\f\r ]*:[\t\n\f\r ]*-[0-9]{3,}px)', re.IGNORECASE)
+# An element of at most 1px, or with a clip that leaves nothing visible, or with no height and
+# its overflow cut off, is hidden in the way screen-reader-only text is.
+TINY_WIDTH_CSS_RE = _rc(r'(?<![A-Za-z0-9_-])(?:max-)?width[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))', re.IGNORECASE)
+TINY_HEIGHT_CSS_RE = _rc(r'(?<![A-Za-z0-9_-])(?:max-)?height[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))', re.IGNORECASE)
+OVERFLOW_HIDDEN_CSS_RE = _rc(r'(?<![A-Za-z0-9_-])overflow(?:-[xy])?[\t\n\f\r ]*:[\t\n\f\r ]*hidden(?![A-Za-z0-9_-])', re.IGNORECASE)
+CLIP_CSS_RE = _rc(r'(?<![A-Za-z0-9_-])(?:clip[\t\n\f\r ]*:[\t\n\f\r ]*rect\([\t\n\f\r ]*(?:0|1px)|clip-path[\t\n\f\r ]*:[\t\n\f\r ]*inset\([\t\n\f\r ]*(?:50|100)%)', re.IGNORECASE)
+# One attribute: name, then an optional value (double-quoted, single-quoted
+# or bare). An unterminated quote runs to the end of the run, so every
+# character is read once.
+ATTR_RE = _rc(r'''([^\t\n\f\r "'<>\/=]+)(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"?|'([^']*)'?|([^\t\n\f\r "'<>=`]*)))?''')
+# The classes that hide an element in the common frameworks (a token of the class list).
+CLASS_HIDDEN_RE = _rc(r'(?:^|[\t\n\f\r ])(?:hidden|visually-hidden|sr-only|d-none|invisible|is-hidden)(?=[\t\n\f\r ]|$)', re.IGNORECASE)
+_ASCII_SPACE = '\t\n\f\r '
+
+
+def _style_hides(v: str) -> bool:
+    return bool(HIDDEN_ATTR_RE.search(v) or CLIP_CSS_RE.search(v)
+                or (TINY_WIDTH_CSS_RE.search(v) and TINY_HEIGHT_CSS_RE.search(v))
+                or (OVERFLOW_HIDDEN_CSS_RE.search(v) and TINY_HEIGHT_CSS_RE.search(v)))
+
+
+# True when the attributes of an opening tag really hide the element: the
+# boolean hidden attribute, aria-hidden="true", a style that hides it, or a class
+# that hides it (hidden, sr-only and the like). A name that merely contains the word
+# (data-hidden) or a hidden word elsewhere in the tag does not count.
+def _attrs_hide(attrs: str) -> bool:
+    for m in ATTR_RE.finditer(attrs):
+        name = m.group(1).lower()
+        value = next((g for g in (m.group(2), m.group(3), m.group(4)) if g is not None), '')
+        if name == 'hidden':
+            return True
+        if name == 'aria-hidden' and value.strip(_ASCII_SPACE).lower() == 'true':
+            return True
+        if name == 'class' and CLASS_HIDDEN_RE.search(value):
+            return True
+        if name == 'style' and _style_hides(value):
+            return True
+    return False
 HIDDEN_PAYLOAD_RE = _rc(r'ignore|system|instruction|prompt|bypass|override|exfil|leak', re.IGNORECASE)
 
 
@@ -270,7 +311,7 @@ def _test_hidden_tag(text: str) -> bool:
         if m is None:
             return False
         pos = m.end()
-        if m.group(2) == '>' and HIDDEN_ATTR_RE.search(m.group(1)):
+        if m.group(2) == '>' and _attrs_hide(m.group(1)):
             tag = _TAG_NAME_RE.match(m.group(0))
             if tag is None:
                 continue
@@ -287,7 +328,7 @@ def _test_hidden_tag(text: str) -> bool:
 # payload word. Used only for advisories.
 def _test_hidden_tag_anywhere(text: str) -> bool:
     for m in OPEN_TAG_RE.finditer(text):
-        if m.group(2) == '>' and HIDDEN_ATTR_RE.search(m.group(1)):
+        if m.group(2) == '>' and _attrs_hide(m.group(1)):
             return HIDDEN_PAYLOAD_RE.search(text, m.end()) is not None
     return False
 
@@ -338,11 +379,11 @@ def _test_markdown_image(text: str) -> bool:
 # that), so a text the pattern would match is never skipped.
 IDENTITY_PREFILTERS: Dict[str, Tuple[re.Pattern[str], ...]] = {
     'pi:identity_request': (
-        _rc(r"""(?:user|operator|owner|human|principal)|customer|account\s{1,4}holder|who""", re.IGNORECASE),
-        _rc(r"""(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))|who|your\s{1,4}(?:user|operator|owner|human|principal)""", re.IGNORECASE),
+        _rc(r"""(?:user|operator|owner|human|principal)|customer|account\s{1,4}holder|who|(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))|their\s{1,4}(?:(?:primary|login|account|real)\s{1,4})?e-?mail(?:\s{1,4}address(?:es)?)?""", re.IGNORECASE),
+        _rc(r"""(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))|who|your\s{1,4}(?:user|operator|owner|human|principal)|(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|request\s{1,4}(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:in|into|inside|within|with|to|on)\s{1,4}(?:an?|the|your|every|each|any|all|subsequent|following|outgoing|next)\s{1,4}(?:(?:http|outgoing|network|api|subsequent|following)\s{1,4}){0,2}(?:requests?|calls?))""", re.IGNORECASE),
     ),
     'pi:identity_request_multi': (
-        _rc(r"""(?:usuario|operador|due[ñn]o|propietario)|(?:usu[aá]rio|operador|dono|propriet[aá]rio)|(?:utilisateur|opérateur|propriétaire)|(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)|(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)|(?:用户|使用者|操作者|主人|所有者)""", re.IGNORECASE),
+        _rc(r"""(?:usuario|operador|due[ñn]o|propietario)|(?:usu[aá]rio|operador|dono|propriet[aá]rio)|(?:utilisateur|opérateur|propriétaire)|(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)|(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)|(?:用户|使用者|操作者|主人|所有者)|(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))""", re.IGNORECASE),
         _rc(r"""(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)""", re.IGNORECASE),
     ),
 }
@@ -402,7 +443,7 @@ ADVISORY_RULES: List[Tuple[str, Any, str]] = [
 SENSITIVE_PATH_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'path:sensitive_file',
-        _rc(r"""(?:^|[\s"'`(\[@])(?:~|\/home\/[^\s/]+|\/root)?\/?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\$\{?HOME\}?|\/home\/[^\s/]+|\/root|[A-Za-z]:\\Users\\[^\s\\]+)[\/\\]?\.(?:ssh\/(?:id_rsa|id_ed25519|authorized_keys)|aws\/credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
+        _rc(r"""(?:^|[\s"'`(\[@])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
         'Targeting sensitive system credentials or environment file',
     ),
 ]
@@ -487,6 +528,29 @@ def _join_line_break(m: 're.Match[str]') -> str:
     return run
 
 
+def _space_invisible(text: str) -> str:
+    """The text with every invisible character replaced by one space (one per code point, so an index in the
+    result is the same index in `text`). The view that catches an invisible character used as a space between
+    two words (see spaceInvisible in lib/invisible.js)."""
+    return INVISIBLE_ASTRAL_RE.sub(' ', ZERO_WIDTH_RE.sub(' ', text))
+
+
+# (text, its spaced view) as ONE tuple, replaced in a single assignment: a thread that reads it always gets a
+# text together with its own view, whatever other threads are doing.
+_SPACED_MEMO: Tuple[Optional[str], str] = (None, '')
+
+
+def _spaced_view(text: str) -> str:
+    """_space_invisible of the last text a rule was run on, so the many rules of one text build it once."""
+    global _SPACED_MEMO
+    memo = _SPACED_MEMO
+    if memo[0] is text:
+        return memo[1]
+    view = _space_invisible(text)
+    _SPACED_MEMO = (text, view)
+    return view
+
+
 def _strip_invisible(text: str) -> str:
     """Removes invisible characters (zero-width, variation selectors, tag characters)."""
     return INVISIBLE_ASTRAL_RE.sub('', ZERO_WIDTH_RE.sub('', text))
@@ -546,6 +610,23 @@ def normalize_input(text: str) -> Tuple[str, str]:
 
 # Default policy by tiers (same list as ADVISORY_BY_DEFAULT in rules.js). A
 # match of these heuristic rules is an advisory unless strict mode is on
+_ENV_FLAG_WARNED: Set[Tuple[str, str]] = set()
+
+
+def env_flag(name: str) -> bool:
+    """True when the hardening flag `name` (ZN_STRICT, ZN_BLOCK_TRUNCATED) is set to "1", the only value that turns it
+    on. Any other value (true, yes, on...) leaves it off, so it is said once in the log rather than ignored silently."""
+    value = os.environ.get(name)
+    if value == "1":
+        return True
+    if value not in (None, "", "0") and (name, value) not in _ENV_FLAG_WARNED:
+        _ENV_FLAG_WARNED.add((name, value))
+        import logging
+        logging.getLogger("zn_gate").warning(
+            "zn_gate: %s is set to %r, but only %s=1 turns it on, so it is off", name, value[:20], name)
+    return False
+
+
 # (strict=True, or ZN_STRICT=1 in the environment).
 ADVISORY_BY_DEFAULT = frozenset([
     'pi:identity_override',
@@ -565,7 +646,7 @@ ADVISORY_BY_DEFAULT = frozenset([
 
 def _strict(strict: Optional[bool]) -> bool:
     # The environment can only harden: strict=False does not lift ZN_STRICT=1 (as in Node.js).
-    return bool(strict) or os.environ.get('ZN_STRICT') == '1'
+    return bool(strict) or env_flag('ZN_STRICT')
 
 
 def _b64_decode_lenient(data: str) -> bytes:
@@ -694,7 +775,14 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
     if b64_block is not None:
         return b64_block
 
-    targets = list(dict.fromkeys([normalized, stripped, raw]))
+    target_list = [normalized, stripped, raw]
+    # An invisible character used as a space joins the words in the stripped views, so the same passes also
+    # run with each invisible character replaced by a space (see evaluateUncached in rules.js).
+    spaced_input = _space_invisible(input_text)
+    if spaced_input != input_text:
+        spaced_normalized, spaced_stripped = normalize_input(spaced_input)
+        target_list += [spaced_normalized, spaced_stripped, spaced_input.translate(_CASE_FOLD_GUARD)]
+    targets = list(dict.fromkeys(target_list))
 
     for text in targets:
         # 0. Evasion Rules (BiDi Trojan Source)
@@ -1333,6 +1421,191 @@ SCAN_SECRET_PREFILTERS: Dict[str, re.Pattern[str]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Quoted values with spaces, and numbers, under a secret key. Same as
+# findQuotedKv in packages/zn-gate/lib/scrub/patterns.js (the Node.js
+# scrubber): the credential rules above read one word, so
+# `"password":"abcdefgh ijk lmn"` and `{"token":12345678}` were left in the
+# clear. Two kinds of value are redacted:
+#   - a quoted value that has whitespace in it, up to its closing quote: a
+#     double-quoted value ends at the first quote that is not escaped, a
+#     single-quoted one at the next ', and a value inside an escaped JSON
+#     string at its own escaped quote;
+#   - a bare number of 8 or more characters under a QUOTED key. The
+#     replacement is written as a string, so the JSON stays valid. A number
+#     under an unquoted key (YAML, shell) is left alone.
+# Values shorter than 8 characters, placeholders and values with no closing
+# quote inside _KV_MAX_VALUE characters are left alone. One pass over the
+# text, and each opener reads at most _KV_MAX_VALUE characters.
+# ---------------------------------------------------------------------------
+_KV_OPEN_RE = _rc(
+    r"""(password|passwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token)"""
+    r"""(\\{0,2}["'])?[ \t]{0,16}(?:=>|:=|=|:)[ \t]{0,16}(\\{0,2}["'])?""",
+    re.IGNORECASE | re.ASCII)
+_KV_PREFILTER_RE = _rc(r"""pass|secret|token|api[_-]?key|access[_-]?key|private[_-]?key""", re.IGNORECASE | re.ASCII)
+_KV_MAX_VALUE = 4096
+_KV_MIN_VALUE = 8
+_KV_NUMBER_RE = _rc(r"""-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?""")
+_KV_MASK_RE = _rc(r"""-?([0-9])\1+""")
+_KV_WORD_CHAR_RE = _rc(r"""[A-Za-z0-9_.-]""")
+_KV_WORD_RUN_RE = _rc(r"""[A-Za-z0-9_.-]*""")
+_KV_BACKSLASH_RE = _rc(r"""\\""")
+_KV_BACKSLASH_RUN_RE = _rc(r"""\\+""")
+_KV_DQUOTE_SPECIAL_RE = _rc(r"""["\\]""")
+# JavaScript's \s: the same set of characters as in the Node.js scrubber.
+_KV_SPACE = '\t\n\x0b\x0c\r \xa0  -     　﻿'
+_KV_SPACE_RE = _rc('[' + _KV_SPACE + ']')
+_KV_AUTH_WORD_RE = _rc('(?:bearer|basic|token)[' + _KV_SPACE + ']+', re.IGNORECASE | re.ASCII)
+# A placeholder, or a reference after an auth scheme word ("Bearer ${TOKEN}").
+_KV_PLACEHOLDER_RE = _rc(
+    r"""(?:x{3,}|\*{3,}|\.{3,}|-+|_+|<[^>]*>|\$\{?[^}]*\}?|\{\{?[^}]*\}?\}|%\(?[a-z_]*\)?s|:[a-z_]+|\[[^\]]*\])""",
+    re.IGNORECASE | re.ASCII)
+_KV_PLACEHOLDER_WORDS_RE = _rc(
+    r"""(?:^|[^a-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|redacted|dummy|sample|foobar|hunter2|xxxx|todo|insert|replace|mypass|pass(?:word)?123)(?:[^a-z]|$)""",
+    re.IGNORECASE | re.ASCII)
+_KV_REPEAT_RE = _rc('([^\n\r  ])\\1+')
+QUOTED_CREDENTIAL_RULE = "secret:quoted_credential"
+_KV_REPLACEMENT = "[REDACTED_SECRET]"
+
+
+def _kv_bare_placeholder(value: str) -> bool:
+    return (_KV_PLACEHOLDER_RE.fullmatch(value) is not None or _KV_PLACEHOLDER_WORDS_RE.search(value) is not None
+            or _KV_REPEAT_RE.fullmatch(value) is not None)
+
+
+def _kv_placeholder(value: str) -> bool:
+    if _kv_bare_placeholder(value):
+        return True
+    m = _KV_AUTH_WORD_RE.match(value)
+    return m is not None and _kv_bare_placeholder(value[m.end():])
+
+
+def _find_quoted_credentials(text: str) -> List[Tuple[int, int, str]]:
+    """Spans (start, end, quote) of the values described above. quote is the
+    quote that the replacement of a bare number is wrapped in (empty for a
+    quoted value, whose own quotes stay)."""
+    found: List[Tuple[int, int, str]] = []
+    n = len(text)
+    pos = 0
+    while True:
+        m = _KV_OPEN_RE.search(text, pos)
+        if m is None:
+            break
+        after = m.end()
+        pos = after
+        opener = m.group(3)
+        key_quote = m.group(2)
+        if opener is None:
+            num = _KV_NUMBER_RE.match(text, after)
+            # Only a quoted key (a JSON member or a dict entry) counts.
+            if not key_quote or num is None or num.end() - after < _KV_MIN_VALUE:
+                continue
+            end = num.end()
+            if end < n and _KV_WORD_CHAR_RE.match(text, end) is not None:
+                continue                              # part of a longer word, not a number
+            if _KV_MASK_RE.fullmatch(num.group()) is not None:
+                continue                              # 00000000: a mask
+            found.append((after, end, key_quote))
+            pos = end
+            continue
+        quote = opener[-1]
+        level = len(opener) - 1                       # backslashes before the opening quote
+        start = after
+        limit = min(n, start + _KV_MAX_VALUE)
+        end = -1
+        i = start
+        if level == 0 and quote == '"':
+            while True:
+                hit = _KV_DQUOTE_SPECIAL_RE.search(text, i, limit)
+                if hit is None:
+                    break
+                if text[hit.start()] == '"':
+                    end = hit.start()
+                    break
+                i = hit.start() + 2                   # a backslash escapes the next character
+        elif level == 0:
+            end = text.find(quote, i, limit)          # single quote: a backslash is just a character
+        else:
+            while True:
+                hit = _KV_BACKSLASH_RE.search(text, i, limit)
+                if hit is None:
+                    break
+                i = hit.start()
+                run_match = _KV_BACKSLASH_RUN_RE.match(text, i)
+                assert run_match is not None
+                run = run_match.end() - i
+                if run == level and text[i + run:i + run + 1] == quote:
+                    end = i
+                    break
+                i += run + 1
+        if end < 0:
+            continue
+        value = text[start:end]
+        if _utf16_len(value) < _KV_MIN_VALUE or _KV_SPACE_RE.search(value) is None or _kv_placeholder(value):
+            continue
+        span_end = end
+        if level == 0 and not key_quote:
+            # A shell word glued to more quoted pieces ('a b''c') is one value: take them too.
+            p = end + 1
+            for _ in range(8):
+                if p >= n or text[p] not in '"\'':
+                    break
+                word = _KV_WORD_RUN_RE.match(text, p + 1)
+                assert word is not None
+                q = word.end()
+                if q == p + 1:
+                    break
+                span_end = q
+                p = q + 1
+        found.append((start, span_end, ''))
+        pos = span_end
+    return found
+
+
+def _redact_quoted_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """Redacts the values found by _find_quoted_credentials, on the text and on
+    the text without invisible characters (as every other rule)."""
+    if not text or _KV_PREFILTER_RE.search(text) is None:
+        return text, []
+    view = invisible_view(text)
+    passes: List[Tuple[str, Optional['array[int]']]] = [(text, None)]
+    if view is not None:
+        passes.append(view)
+    cands: List[Tuple[int, int, str, str]] = []
+    # The first pass gives its spans in order and without overlaps, so the spans of
+    # that pass a later span overlaps are counted with two binary searches.
+    seen_starts: List[int] = []
+    seen_ends: List[int] = []
+    for hay, mapping in passes:
+        for start, end, quote in _find_quoted_credentials(hay):
+            s, e = _span_in(mapping, start, end)
+            if mapping is None:
+                seen_starts.append(s)
+                seen_ends.append(e)
+            elif bisect.bisect_left(seen_starts, e) - bisect.bisect_right(seen_ends, s) >= 2:
+                continue
+            cands.append((s, e, QUOTED_CREDENTIAL_RULE, quote + _KV_REPLACEMENT + quote))
+    if not cands:
+        return text, []
+    detections: List[Dict[str, Any]] = []
+    edits: List[Tuple[int, int, str]] = []
+    for start, end, rule_id, new in _merge_candidates(cands):
+        detections.append({"rule": rule_id, "start": start, "end": end})
+        edits.append((start, end, new))
+    return _apply_edits(text, edits), detections
+
+
+def _redact_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """The quoted values first (the other rules read one word and would leave
+    the rest of `"api_key":"abcdefghijkl mno pqr"` behind), then SECRET_PATTERNS
+    and the provider formats."""
+    if not isinstance(text, str) or not text:
+        return text, []
+    redacted, first = _redact_quoted_credentials(text)
+    redacted, rest = _redact_with(redacted, SECRET_PATTERNS + PROVIDER_SECRET_PATTERNS)
+    return redacted, first + rest
+
+
 def _apply_edits(text: str, edits: List[Tuple[int, int, str]]) -> str:
     """Replaces the (start, end, replacement) spans, in ascending order, in text."""
     parts = []
@@ -1384,13 +1657,19 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
     original coordinates. The rule runs on the original text and on the text
     without invisible characters (see ruleCandidates in rules.js). match_check,
     when given, receives the whole match and returns False to skip it."""
-    passes: List[Tuple[str, Optional['array[int]']]] = [(text, None)]
+    passes: List[Tuple[str, Optional['array[int]'], bool]] = [(text, None, False)]
     # Spans this rule found on the original text; a view match overlapping two or more is dropped
-    # (see ruleCandidates in rules.js).
-    found: List[Tuple[int, int]] = []
+    # (see ruleCandidates in rules.js). They come in order and without overlaps, so the ones a
+    # view match overlaps are counted with two binary searches.
+    found_starts: List[int] = []
+    found_ends: List[int] = []
     if view is not None:
-        passes.append(view)
-    for hay, mapping in passes:
+        passes.append((view[0], view[1], False))
+        # A third pass reads each invisible character as a space; its indexes are the original ones.
+        spaced = _spaced_view(text)
+        if spaced != text:
+            passes.append((spaced, None, True))
+    for hay, mapping, is_spaced in passes:
         required = SECRET_PATTERN_REQUIRES.get(rule_id)
         if required and required not in hay:
             continue
@@ -1426,13 +1705,17 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
                     if value_filter(value, prefix):
                         continue
             start, end = _span_in(mapping, m.start(), m.end())
-            if mapping is None:
-                found.append((start, end))
+            if is_spaced:
+                pass  # same indexes as the original: it cannot join two matches, and it is not in order
+            elif mapping is None:
+                found_starts.append(start)
+                found_ends.append(end)
             else:
-                over = [(s, e) for s, e in found if start < e and s < end]
-                if len(over) >= 2:
+                first = bisect.bisect_right(found_ends, start)
+                over = bisect.bisect_left(found_starts, end) - first
+                if over >= 2:
                     continue
-                if len(over) == 1 and patterns and _starts_secret_at(text, over[0][1], end, patterns):
+                if over == 1 and patterns and _starts_secret_at(text, found_ends[first], end, patterns):
                     continue
             out.append((start, end, rule_id, _expand_template(replacement, groups, text)))
 
@@ -1460,14 +1743,14 @@ def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     characters; the redacted spans are the union of both (see redactSecrets in
     rules.js).
     """
-    return _redact_with(text, SECRET_PATTERNS + PROVIDER_SECRET_PATTERNS)
+    return _redact_credentials(text)
 
 
 def redact_scan_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     """redact_secrets plus SCAN_SECRET_PATTERNS, for `zn-gate scan`: the scan
     rules run on the text redact_secrets already redacted (redactScanSecrets in
     rules.js, with the provider formats in between as the Node.js scan does)."""
-    redacted, first = _redact_with(text, SECRET_PATTERNS + PROVIDER_SECRET_PATTERNS)
+    redacted, first = _redact_credentials(text)
     redacted, second = _redact_with(redacted, SCAN_SECRET_PATTERNS)
     return redacted, first + second
 
@@ -1590,7 +1873,7 @@ def truncated_blocks(block_truncated: bool = False, allow_truncated: bool = Fals
     block_truncated=True or ZN_BLOCK_TRUNCATED=1 (the former opt-in) still
     forces the block and wins over the opt-out.
     """
-    if block_truncated or os.environ.get('ZN_BLOCK_TRUNCATED') == '1':
+    if block_truncated or env_flag('ZN_BLOCK_TRUNCATED'):
         return True
     return not (allow_truncated or os.environ.get('ZN_ALLOW_TRUNCATED') == '1')
 
@@ -1634,6 +1917,24 @@ class SanitizedToolResult(TypedDict):
     sanitized_content: str
 
 
+# Limits of the deep-data form of sanitize_tool_result, the same as the walker of
+# the guard (guard._DEFAULT_MAX_DEPTH and guard.MAX_OBJECT_VALUES): ten levels of
+# dicts, lists, tuples and sets, and 100,000 values in all.
+SANITIZE_MAX_DEPTH = 10
+SANITIZE_MAX_ITEMS = 100_000
+
+
+class SanitizeLimitError(ValueError):
+    """Raised by sanitize_tool_result(data) for data it will not walk to mask: nested deeper
+    than SANITIZE_MAX_DEPTH levels, a container that contains itself (rule size:nesting) or
+    more than SANITIZE_MAX_ITEMS values (rule size:items)."""
+
+    def __init__(self, rule: str, reason: str):
+        super().__init__(reason)
+        self.rule = rule
+        self.reason = reason
+
+
 @overload
 def sanitize_tool_result(
     tool_or_result: Any,
@@ -1670,6 +1971,10 @@ def sanitize_tool_result(
       1) sanitize_tool_result(data) -> returns (clean_data, detections)
       2) sanitize_tool_result(tool_name, content, mask_secrets=True) -> returns dict with
          {tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content}
+    In form 1, data nested deeper than ten levels, a container that contains itself
+    or more than 100,000 values raises SanitizeLimitError (a ValueError with the
+    attributes rule, "size:nesting" or "size:items", and reason) instead of
+    exhausting the stack.
     In form 2, content that is not a string (a dict, list or object) is checked
     string by string, as check_tool_result does, and as JSON text;
     sanitized_content is that JSON text (as in Node.js), with secrets masked.
@@ -1769,7 +2074,30 @@ def sanitize_tool_result(
             out.append(c)
         return out
 
+    path: set[int] = set()
+    budget = [SANITIZE_MAX_ITEMS]
+
+    def _enter(val: Any) -> None:
+        """Take one level for the container `val`, or raise SanitizeLimitError."""
+        if id(val) in path:
+            raise SanitizeLimitError("size:nesting", "The data contains itself")
+        if len(path) >= SANITIZE_MAX_DEPTH:
+            raise SanitizeLimitError("size:nesting", "The data is nested too deeply to mask")
+        budget[0] -= len(val) * 2 if isinstance(val, dict) else len(val)
+        if budget[0] < 0:
+            raise SanitizeLimitError("size:items", "The data holds too many values to mask")
+        path.add(id(val))
+
     def _sanitize(val: Any) -> Any:
+        if not isinstance(val, (dict, list, tuple, set, frozenset)):
+            return _sanitize_value(val)
+        _enter(val)
+        try:
+            return _sanitize_value(val)
+        finally:
+            path.discard(id(val))
+
+    def _sanitize_value(val: Any) -> Any:
         if isinstance(val, str):
             clean_str, det = redact_secrets(val)
             if det:
@@ -1807,12 +2135,26 @@ _eval_cache: Dict[Tuple[bool, str], Tuple[Any, ...]] = {}
 _eval_cache_ver = RULES_VERSION
 
 
-def evaluate(input_text: str, strict: Optional[bool] = None) -> Assessment:
+# Marks an argument that was not passed, so evaluate(None) keeps its old answer.
+_NOT_GIVEN: Any = object()
+
+
+def evaluate(text: Optional[str] = _NOT_GIVEN, strict: Optional[bool] = None, *,
+             input_text: Optional[str] = _NOT_GIVEN) -> Assessment:
     """Cached entry point: LRU(2048) keyed on raw input and strict mode, version-guarded.
 
-    strict=True (or ZN_STRICT=1) also blocks the heuristic rules that are
-    advisories by default (ADVISORY_BY_DEFAULT)."""
+    The text goes first or as text=...; input_text=... is the older keyword
+    name and still works. strict=True (or ZN_STRICT=1) also blocks the
+    heuristic rules that are advisories by default (ADVISORY_BY_DEFAULT)."""
     global _eval_cache_ver
+    if input_text is not _NOT_GIVEN:
+        if text is not _NOT_GIVEN:
+            raise TypeError("evaluate() takes the text once: pass text or input_text, not both")
+        text = input_text
+    elif text is _NOT_GIVEN:
+        raise TypeError("evaluate() missing the text to check")
+    # None is not a str but keeps its old answer (the check below handles it).
+    input_text = cast(str, text)
     strict = _strict(strict)
     if not isinstance(input_text, str) or len(input_text) > EVAL_CACHE_MAX_INPUT:
         return _evaluate_uncached(input_text, strict)

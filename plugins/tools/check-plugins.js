@@ -6,7 +6,8 @@
  * entry. Run from the repository root:
  *
  *   node plugins/tools/check-plugins.js            # every commit (CI)
- *   node plugins/tools/check-plugins.js --release  # before tagging a release
+ *   node plugins/tools/check-plugins.js --release --pre-tag  # release pull request and release tag (see below)
+ *   node plugins/tools/check-plugins.js --release  # main, once the release is published: the lock file pins it
  *
  * Checks:
  *  - every JSON file parses;
@@ -15,16 +16,22 @@
  *    mcp-registry workflow publishes): no other server.json in the repository,
  *    its version equals packages/zn-gate/package.json (and, with --release, the
  *    lock file), and "mcpName" in package.json equals its name;
- *  - the Agent Plugins manifest and mcp.json use only the fields of
- *    Agent Plugins 1.0;
+ *  - the Agent Plugins manifest uses only the fields of Agent Plugins 1.0;
  *  - no unpinned installs: no "@latest", no npx/bunx/uvx/pnpm dlx in the
  *    plugin, and every zn-gate install instruction names an exact version;
- *  - every hook and MCP server runs scripts/zn-launch.js, and the MCP servers
- *    are exactly zn-gate (local rules only) and secrets;
+ *  - every hook runs scripts/zn-launch.js, and the plugin registers no MCP
+ *    server (no mcp.json or .mcp.json, no mcpServers, no plugin options);
  *  - package.json / package-lock.json, when present, pin the same release;
  *  - --release: the lock file has the npm integrity, a provenance attestation
  *    and the file digests, the npm files exist, and no placeholder is left in
  *    the plugin docs.
+ * --pre-tag (with --release): the plugin can only be pinned to a release after npm publishes it, so on the release pull
+ * request and on the release tag the lock file may stay on the PREVIOUS published release (the highest final vX.Y.Z tag of
+ * the repository below this version that npm has, nothing older; read from the git tags, not from a file a pull request
+ * can edit; a tag whose version npm answers 404 for was never published there and is skipped), or
+ * already be on this version. Every other release check, including the integrity, the attestation and the file digests of
+ * the lock file as it is, stays strict. The strict form (no --pre-tag) runs on main once npm has the version: then the
+ * lock file must equal it.
  * No dependencies; Node.js 18 or later.
  */
 
@@ -34,6 +41,7 @@ const path = require('path');
 const ROOT = process.cwd();
 const PLUGIN = 'plugins/zn-gate';
 const release = process.argv.includes('--release');
+const preTag = release && process.argv.includes('--pre-tag');
 const errors = [];
 
 function fail(msg) { errors.push(msg); }
@@ -53,7 +61,12 @@ function walk(rel) {
   return fs.readdirSync(abs).flatMap((n) => walk(path.posix.join(rel, n)));
 }
 
-const files = [...walk('plugins'), '.claude-plugin/marketplace.json', '.cursor-plugin/marketplace.json', '.agents/plugins/marketplace.json'];
+const files = [...walk('plugins'), '.claude-plugin/marketplace.json', '.agents/plugins/marketplace.json'];
+// The Cursor plugin is no longer offered (1.14.0): its hooks started node by name, so an absolute PATH entry inside the
+// project could run a program of the project in its place. Cursor users run `zn hooks install cursor` instead.
+for (const f of ['.cursor-plugin', PLUGIN + '/.cursor-plugin', PLUGIN + '/cursor']) {
+  if (fs.existsSync(path.join(ROOT, f))) fail(f + ': the Cursor plugin is no longer offered (use zn hooks install cursor)');
+}
 for (const f of files) {
   if (!fs.existsSync(path.join(ROOT, f))) fail(f + ': missing');
   else if (f.endsWith('.json')) json(f);
@@ -69,7 +82,7 @@ const serverPkgs = (server.packages || []).filter((p) => p && p.identifier === '
 const versions = {
   'plugin.json': json(PLUGIN + '/plugin.json').version,
   '.claude-plugin/plugin.json': json(PLUGIN + '/.claude-plugin/plugin.json').version,
-  '.cursor-plugin/plugin.json': json(PLUGIN + '/.cursor-plugin/plugin.json').version,
+  'plugins/zcode/.zcode-plugin/plugin.json': json('plugins/zcode/.zcode-plugin/plugin.json').version,
 };
 for (const [where, got] of Object.entries(versions)) {
   if (got !== v) fail(where + ': version ' + got + ' differs from the lock file version ' + v);
@@ -91,10 +104,43 @@ const olderFinal = (a, b) => {
 };
 for (const [where, got] of Object.entries(serverVersions)) {
   if (got !== pkg.version) fail(where + ': version ' + got + ' differs from packages/zn-gate/package.json version ' + pkg.version);
-  if (release && !pre && got !== v) fail(where + ': version ' + got + ' differs from the lock file version ' + v);
+  if (release && !pre && !preTag && got !== v) fail(where + ': version ' + got + ' differs from the lock file version ' + v);
 }
 if (release && pre && !olderFinal(v || '0.0.0', pre[1])) {
   fail('lock file: for the prerelease ' + pkg.version + ' the plugin pin must stay on the last final release (older than ' + pre[1] + '), got ' + v);
+}
+// Before the tag the pin may lag by exactly one release: the previous published one, from the repository's git tags
+// (ZN_CHECK_PLUGINS_TAGS, space separated, replaces the lookup in tests).
+function previousRelease(version) {
+  let names;
+  if (process.env.ZN_CHECK_PLUGINS_TAGS !== undefined) names = process.env.ZN_CHECK_PLUGINS_TAGS.split(/\s+/).filter(Boolean);
+  else {
+    const r = require('child_process').spawnSync('git', ['ls-remote', '--tags', '--refs', 'origin'], { cwd: ROOT, encoding: 'utf8' });
+    if (r.status !== 0) return null;
+    names = r.stdout.split('\n').map((l) => l.split('refs/tags/')[1]).filter(Boolean);
+  }
+  const vs = names.map((t) => /^v(\d+)\.(\d+)\.(\d+)$/.exec(t)).filter(Boolean).map((m) => m.slice(1).map(Number));
+  const cur = version.split('.').map(Number);
+  const below = vs.filter((x) => { for (let i = 0; i < 3; i++) if (x[i] !== cur[i]) return x[i] < cur[i]; return false; });
+  below.sort((x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2]);
+  for (let i = below.length - 1; i >= 0; i--) {
+    const s = below[i].join('.');
+    if (!missingOnNpm(s)) return s;
+  }
+  return null;
+}
+// A tag whose version npm does not have is not a published release (zn-gate 1.14.0 reached PyPI only). Only an npm
+// 404 skips a tag: any other error keeps it, so the check stays strict when npm cannot be asked.
+// (ZN_CHECK_PLUGINS_NPM_MISSING, space separated, replaces the npm lookup in tests.)
+function missingOnNpm(version) {
+  if (process.env.ZN_CHECK_PLUGINS_NPM_MISSING !== undefined) return process.env.ZN_CHECK_PLUGINS_NPM_MISSING.split(/\s+/).includes(version);
+  const r = require('child_process').spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['view', 'zn-gate@' + version, 'version'], { cwd: ROOT, encoding: 'utf8' });
+  return r.status !== 0 && /E404/.test(String(r.stderr || ''));
+}
+if (preTag && !pre && v !== pkg.version) {
+  const prev = previousRelease(pkg.version);
+  if (!prev) fail('git tags: no release tag below ' + pkg.version + ' found (is the repository reachable?), cannot tell the previous release for --pre-tag');
+  else if (v !== prev) fail('lock file: before the tag the plugin pin must be the previous release ' + prev + ' or ' + pkg.version + ', got ' + v);
 }
 if (serverPkgs.length !== 1) fail(SERVER_JSON + ': expected exactly one npm package entry for zn-gate, found ' + serverPkgs.length);
 const npmPkg = serverPkgs[0] || {};
@@ -126,13 +172,19 @@ const ap = json(PLUGIN + '/plugin.json');
 if (ap.$schema !== 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json') fail('plugin.json: $schema must be the Agent Plugins 1.0.0 identifier');
 for (const k of Object.keys(ap)) if (!AP_FIELDS.has(k)) fail('plugin.json: field ' + k + ' is not part of Agent Plugins 1.0');
 if (!/^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(ap.name || '')) fail('plugin.json: invalid name');
-const apMcp = json(PLUGIN + '/mcp.json');
-if (apMcp.$schema !== 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json') fail('mcp.json: $schema must be the Agent Plugins 1.0.0 identifier');
-for (const k of Object.keys(apMcp)) if (!['$schema', 'mcpServers'].includes(k)) fail('mcp.json: unexpected field ' + k);
 
 /* ------------------------ what the plugin runs ------------------------ */
 
-const LAUNCHER = /^node "?(\$\{CLAUDE_PLUGIN_ROOT\}\/|\$PLUGIN_ROOT\/|\.\/)scripts\/zn-launch\.js"? (hook (claude-code|codex|cursor)|check claude-code)$/;
+// The Claude Code and Codex hooks start the launcher through scripts/zn-node.sh, which finds Node.js only in absolute PATH
+// entries (they run in the session's folder, the project, so a `node` found by name could be one placed there or reached
+// through a relative PATH entry). Each command names its own event.
+const LAUNCHERS = {
+  'com.openai/hooks.json': /^\/bin\/sh "\$PLUGIN_ROOT\/scripts\/zn-node\.sh" (\w+) hook codex$/,
+};
+// Codex on Windows runs commandWindows through cmd.exe, where /bin/sh does not exist: the plugin's Windows commands use only
+// cmd built-ins and block (exit 2) the events that can stop a call, and warn after a tool has run.
+const CODEX_WINDOWS_BLOCK = /^echo zn: the zn-gate plugin does not run on Windows, so this (call|prompt) was blocked\. Turn the plugin off and use zn hooks install codex instead\. 1>&2 & exit 2$/;
+const CLAUDE_LAUNCHER = /^\/bin\/sh "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/zn-node\.sh" (SessionStart|PreToolUse|PostToolUse|UserPromptSubmit|UserPromptExpansion) (hook claude-code|check claude-code)$/;
 function hookCommands(data) {
   const out = [];
   for (const groups of Object.values((data && data.hooks) || {})) {
@@ -143,30 +195,52 @@ function hookCommands(data) {
   }
   return out;
 }
-for (const f of ['hooks/hooks.json', 'com.openai/hooks.json', 'cursor/hooks.json']) {
-  const cmds = hookCommands(json(PLUGIN + '/' + f));
-  if (cmds.length === 0) fail(f + ': no hooks');
-  for (const c of cmds) if (!LAUNCHER.test(String(c))) fail(f + ': hook command does not run the launcher: ' + c);
-}
-// Each MCP server and the launcher mode that starts it (zn-gate-mcp uses local
-// rules unless the Claude Code plugin's optional api_key option is set).
-const MCP_MODES = { 'zn-gate': 'zn-gate-mcp', secrets: 'secrets-mcp' };
-// The only environment a server may get: the Claude Code key option, for zn-gate.
-const MCP_ENV = { '.mcp.json': { 'zn-gate': { ZN_PLUGIN_API_KEY: '${user_config.api_key}' } } };
-for (const [f, root] of [['mcp.json', '${PLUGIN_ROOT}'], ['.mcp.json', '${CLAUDE_PLUGIN_ROOT}'], ['cursor/mcp.json', '${CURSOR_PLUGIN_ROOT}']]) {
-  const servers = json(PLUGIN + '/' + f).mcpServers || {};
-  if (JSON.stringify(Object.keys(servers).sort()) !== JSON.stringify(Object.keys(MCP_MODES).sort())) {
-    fail(f + ': MCP servers must be exactly ' + Object.keys(MCP_MODES).join(', '));
-  }
-  for (const [name, s] of Object.entries(servers)) {
-    const env = (MCP_ENV[f] || {})[name];
-    const envOk = env ? JSON.stringify(s.env) === JSON.stringify(env) : !s.env;
-    // Only the Claude Code zn-gate server is started as "claude-code" (it may use the key option).
-    const args = [root + '/scripts/zn-launch.js', MCP_MODES[name]].concat(env ? ['claude-code'] : []);
-    if (s.command !== 'node' || JSON.stringify(s.args) !== JSON.stringify(args) || !envOk) {
-      fail(f + ': MCP server ' + name + ' does not run the launcher in ' + MCP_MODES[name] + ' mode');
+for (const [f, re] of Object.entries(LAUNCHERS)) {
+  const data = json(PLUGIN + '/' + f);
+  if (hookCommands(data).length === 0) fail(f + ': no hooks');
+  for (const [event, groups] of Object.entries((data && data.hooks) || {})) {
+    for (const c of hookCommands({ hooks: { [event]: groups } })) {
+      const m = re.exec(String(c));
+      if (!m || m[1] !== event) {
+        fail(f + ': ' + event + ' hook must run scripts/zn-node.sh with its own event name: ' + c);
+      }
     }
   }
+}
+for (const [event, groups] of Object.entries(json(PLUGIN + '/com.openai/hooks.json').hooks || {})) {
+  for (const h of groups.flatMap((g) => g.hooks || [])) {
+    const w = String(h.commandWindows || '');
+    const ok = event === 'PostToolUse' ? /^echo \{"systemMessage":"zn is NOT protecting this session: [^"&|<>^]*"\}$/.test(w) : CODEX_WINDOWS_BLOCK.test(w);
+    if (!ok) fail('com.openai/hooks.json: ' + event + ' hook needs the Windows command that ' + (event === 'PostToolUse' ? 'warns' : 'blocks') + ': ' + w);
+  }
+}
+{
+  const f = 'hooks/hooks.json';
+  const data = json(PLUGIN + '/' + f);
+  let count = 0;
+  for (const [event, groups] of Object.entries((data && data.hooks) || {})) {
+    for (const g of groups) {
+      for (const h of g.hooks || []) {
+        count++;
+        const m = CLAUDE_LAUNCHER.exec(String(h.command));
+        if (!m || m[1] !== event || (m[2] === 'check claude-code') !== (event === 'SessionStart')) fail(f + ': ' + event + ' hook must run scripts/zn-node.sh with its own event name: ' + h.command);
+        // Without Git Bash, Claude Code on Windows would run the command with PowerShell, where /bin/sh is a path on the
+        // current drive; "shell": "bash" asks for bash only (code.claude.com/docs/en/hooks).
+        if (h.shell !== 'bash') fail(f + ': ' + event + ' hook must set "shell": "bash"');
+      }
+    }
+  }
+  if (count === 0) fail(f + ': no hooks');
+  const sh = fs.readFileSync(path.join(PLUGIN, 'scripts', 'zn-node.sh'), 'utf8');
+  if (!sh.startsWith('#!/bin/sh' + String.fromCharCode(10)) || !sh.includes('zn-launch.js')) fail('scripts/zn-node.sh: must be a /bin/sh script that runs zn-launch.js');
+}
+// The plugin registers no MCP server: its servers started `node` by name, before the launcher could check anything.
+// zn-gate's own installer adds the secrets server with Node.js by absolute path (`zn hooks install claude-code`).
+for (const f of ['mcp.json', '.mcp.json']) {
+  if (fs.existsSync(path.join(PLUGIN, f))) fail(f + ': the plugin must not register MCP servers');
+}
+for (const f of ['plugin.json', '.claude-plugin/plugin.json']) {
+  if ('mcpServers' in json(PLUGIN + '/' + f)) fail(f + ': the plugin must not register MCP servers');
 }
 
 // The listing icon named in the Claude Code manifest exists inside the plugin, outside .claude-plugin/.
@@ -177,29 +251,13 @@ for (const [f, root] of [['mcp.json', '${PLUGIN_ROOT}'], ['.mcp.json', '${CLAUDE
   }
 }
 
-// Claude Code plugin options: only the optional API key, kept as a sensitive value.
-const claudeUserConfig = json(PLUGIN + '/.claude-plugin/plugin.json').userConfig || {};
-for (const [k, v] of Object.entries(claudeUserConfig)) {
-  if (k !== 'api_key') fail('.claude-plugin/plugin.json: unexpected userConfig option ' + k);
-  else if (v.type !== 'string' || !v.title || !v.description || v.sensitive !== true || v.required !== false || v.default !== '') {
-    fail('.claude-plugin/plugin.json: userConfig api_key must be a string option with a title and description, sensitive, optional and empty by default');
-  }
-}
-if (JSON.stringify(json(PLUGIN + '/.mcp.json')).includes('${user_config.api_key}') && !claudeUserConfig.api_key) {
-  fail('.mcp.json: uses ${user_config.api_key} but .claude-plugin/plugin.json has no api_key option');
-}
+// No plugin options: the only one, the API key, went to the plugin's MCP server.
+if ('userConfig' in json(PLUGIN + '/.claude-plugin/plugin.json')) fail('.claude-plugin/plugin.json: the plugin has no options');
 // Plugin options never go to hooks (Claude Code exports them to hook processes anyway; the launcher drops them).
-for (const f of ['hooks/hooks.json', 'com.openai/hooks.json', 'cursor/hooks.json']) {
+for (const f of ['hooks/hooks.json', 'com.openai/hooks.json']) {
   if (fs.readFileSync(PLUGIN + '/' + f, 'utf8').includes('${user_config')) fail(f + ': hooks must not use plugin options');
 }
 
-const cursorManifest = json(PLUGIN + '/.cursor-plugin/plugin.json');
-if (cursorManifest.hooks !== './cursor/hooks.json' || cursorManifest.mcpServers !== './cursor/mcp.json') {
-  fail('.cursor-plugin/plugin.json: hooks and mcpServers must point to the Cursor files in cursor/');
-}
-for (const [event, entries] of Object.entries(json(PLUGIN + '/cursor/hooks.json').hooks || {})) {
-  for (const e of entries) if (e.failClosed !== true) fail('cursor/hooks.json: ' + event + ' hook is not failClosed');
-}
 // A hook on a blocking event that cannot run must block, not let the call or prompt through.
 {
   const events = (json(PLUGIN + '/hooks/hooks.json').hooks || {});
@@ -208,6 +266,37 @@ for (const [event, entries] of Object.entries(json(PLUGIN + '/cursor/hooks.json'
     if (!hooks.length) fail('hooks/hooks.json: no ' + event + ' hook');
     for (const h of hooks) if (h.onFailure !== 'block') fail('hooks/hooks.json: ' + event + ' hook is not onFailure "block"');
   }
+}
+
+/* ----------------------------- ZCode plugin ----------------------------- */
+
+// The ZCode plugin has its own tree (ZCode always loads hooks/hooks.json of the plugin root, so the Claude Code hooks cannot be
+// shared). Every hook runs scripts/zn-hook.sh with its own event name; the script runs the launcher in "hook zcode" mode.
+{
+  const ZC = 'plugins/zcode';
+  const zhooks = (json(ZC + '/hooks/hooks.json').hooks) || {};
+  const EVENTS = ['PermissionRequest', 'PostToolUse', 'PreToolUse', 'UserPromptSubmit'];
+  if (JSON.stringify(Object.keys(zhooks).sort()) !== JSON.stringify(EVENTS)) fail(ZC + '/hooks/hooks.json: events must be exactly ' + EVENTS.join(', '));
+  for (const [event, groups] of Object.entries(zhooks)) {
+    for (const g of groups) {
+      for (const h of g.hooks || []) {
+        const args = JSON.stringify(h.args);
+        if (h.type !== 'process' || h.command !== '/bin/sh' || args !== JSON.stringify(['${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh', event])) {
+          fail(ZC + '/hooks/hooks.json: ' + event + ' hook must be a process hook: /bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh ' + event);
+        }
+        if (h.onFailure !== undefined || h.async !== undefined) fail(ZC + '/hooks/hooks.json: ' + event + ' hook must not set onFailure or async');
+      }
+    }
+  }
+  const zm = json(ZC + '/.zcode-plugin/plugin.json');
+  if (zm.name !== 'zn-gate') fail(ZC + '/.zcode-plugin/plugin.json: name must be zn-gate');
+  for (const k of ['hooks', 'mcpServers', 'userConfig']) {
+    if (zm[k] !== undefined) fail(ZC + '/.zcode-plugin/plugin.json: no "' + k + '" key (the hooks file is found by name; there is nothing to configure)');
+  }
+  const mk = json(ZC + '/marketplace.json');
+  const entry = (mk.plugins || [])[0] || {};
+  if ((mk.plugins || []).length !== 1 || entry.name !== 'zn-gate' || entry.source !== './zn-gate') fail(ZC + '/marketplace.json: one plugin, zn-gate, with source ./zn-gate');
+  if (!fs.readFileSync(path.join(ROOT, ZC, 'scripts', 'zn-hook.sh'), 'utf8').includes('hook zcode')) fail(ZC + '/scripts/zn-hook.sh: must run the launcher in "hook zcode" mode');
 }
 
 /* ------------------------------- links ------------------------------- */
@@ -324,5 +413,5 @@ if (errors.length) {
   process.stderr.write(errors.map((e) => 'check-plugins: ' + e).join('\n') + '\n');
   process.exitCode = 1;
 } else {
-  process.stdout.write('check-plugins: OK (zn-gate ' + v + (release ? ', release mode' : '') + ')\n');
+  process.stdout.write('check-plugins: OK (zn-gate ' + v + (release ? (preTag ? ', release mode before the tag' : ', release mode') : '') + ')\n');
 }

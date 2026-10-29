@@ -190,7 +190,8 @@ class TestGuardMasksObjects(unittest.TestCase):
         out = fetch
         with self.assertRaises(GuardBlockError) as ctx:
             out()
-        self.assertEqual(ctx.exception.assessment.rule, "secret:unmaskable")
+        # Eighty levels are past the ten the masker walks: a controlled block, not a RecursionError.
+        self.assertEqual(ctx.exception.assessment.rule, "size:nesting")
 
     def test_streamed_object_chunk_is_masked(self):
         @guard(mask_secrets=True)

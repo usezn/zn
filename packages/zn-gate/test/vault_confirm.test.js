@@ -120,6 +120,7 @@ test('guiCommand: Windows needs the system PowerShell and sends the text in the 
   const cmd = confirm.guiCommand(req, { platform: 'win32', powershell: 'C:\\fake\\powershell.exe', exists: () => true, timeoutMs: 1000 });
   assert.equal(cmd.file, 'C:\\fake\\powershell.exe');
   assert.ok(cmd.args.includes('-EncodedCommand'));
+  assert.ok(!cmd.args.some((a) => /^-ExecutionPolicy$/i.test(a)), 'no execution policy argument');
   assert.equal(cmd.env.ZN_CONFIRM_TEXT, 'fake text');
   assert.equal(cmd.env.ZN_CONFIRM_TITLE, 'zn: T');
   assert.equal(cmd.env.ZN_CONFIRM_SECONDS, '5'); // never below five seconds

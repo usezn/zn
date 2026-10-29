@@ -1,2 +1,0 @@
-### Fixed
-- `zn-gate shield` logs at most 50 blocked texts of one server message one by one, on stderr and in the evidence log; the rest are counted in one summary line and one evidence event. Every text is still checked and replaced. Before, a server that sent thousands of blocked texts in one message could keep the proxy busy for many seconds writing logs (about 30 s for 20,000 on a Windows runner).

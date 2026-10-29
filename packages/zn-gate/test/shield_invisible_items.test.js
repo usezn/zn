@@ -77,7 +77,9 @@ for (const name of ['split', 'split_mixed', 'resources', 'structured', 'sc_only'
     assert.ok(text.includes('[zn-gate SECURITY BLOCKED]'));
     assert.ok(!text.includes('\u200b'), 'invisible characters must be removed');
     assert.ok(text.length < 100000);
-    assert.ok(ms < 1200, `took ${ms} ms`);
+    // A bound on the work, not a benchmark: the file runs on its own (runner-plain.json), and a loaded CI runner still
+    // needs a few seconds, while a quadratic scan of the payload would take far longer.
+    assert.ok(ms < 4000, `took ${ms} ms`);
   });
 }
 
