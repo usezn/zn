@@ -81,15 +81,7 @@ def test_unknown_license_is_flagged(tmp_path):
         ("MIT License", "MIT"),
         ("BSD License", "BSD-3-Clause"),
         ("Apache Software License", "Apache-2.0"),
-        pytest.param(
-            "ISC License (ISCL)",
-            "ISC",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason="known bug: is_allowed() strips the trailing ')' before the NAMES lookup, "
-                "so 'ISC License (ISCL)' is never mapped to ISC and ISC packages are flagged",
-            ),
-        ),
+        ("ISC License (ISCL)", "ISC"),
     ],
 )
 def test_classifier_names_are_mapped_to_spdx_ids(tmp_path, classifier, spdx):
@@ -118,13 +110,21 @@ def test_and_expression_with_a_denied_part_is_flagged(tmp_path):
     assert table_row("and-denied", "1.0.0", "MIT AND GPL-3.0", "review") in r.stdout
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="known gap: AND expressions are not split, so both-allowed parts are flagged (conservative)",
-)
 def test_and_expression_of_allowed_parts_is_ok(tmp_path):
     r = run(tmp_path, [row("and-allowed", "1.0.0", "MIT AND Apache-2.0")])
     assert table_row("and-allowed", "1.0.0", "MIT AND Apache-2.0", "ok") in r.stdout
+
+
+def test_and_with_a_parenthesised_or_group(tmp_path):
+    r = run(
+        tmp_path,
+        [
+            row("and-group", "1.0.0", "MIT AND (Apache-2.0 OR GPL-3.0)"),
+            row("and-group-denied", "1.0.0", "(GPL-3.0 OR AGPL-3.0) AND MIT"),
+        ],
+    )
+    assert table_row("and-group", "1.0.0", "MIT AND (Apache-2.0 OR GPL-3.0)", "ok") in r.stdout
+    assert table_row("and-group-denied", "1.0.0", "(GPL-3.0 OR AGPL-3.0) AND MIT", "review") in r.stdout
 
 
 def test_comments_in_the_allowlist_are_not_license_ids(tmp_path):

@@ -126,12 +126,22 @@ test('dual licenses: OR needs one allowed alternative, AND needs all of them', (
   assert.ok(r.stdout.includes(header(5, 2)), r.stdout);
 });
 
-test('a parenthesised OR inside an AND is still satisfied by its allowed alternative', { todo: 'known gap: the AND split runs before the OR split, so "MIT OR (Apache-2.0 AND GPL-3.0)" is flagged although MIT alone allows it (conservative false positive)' }, () => {
+test('an AND group inside an OR is satisfied by its allowed alternative', () => {
   const root = nodeModules({
     nested: { name: 'nested', version: '1.0.0', license: 'MIT OR (Apache-2.0 AND GPL-3.0)' },
   });
   const r = check(root);
   assert.ok(r.stdout.includes(row('nested', '1.0.0', 'MIT OR (Apache-2.0 AND GPL-3.0)', 'ok')), r.stdout);
+});
+
+test('nested parentheses group as written: AND inside OR, OR inside AND', () => {
+  const root = nodeModules({
+    deepOk: { name: 'deep-ok', version: '1.0.0', license: '(MIT OR (Apache-2.0 AND GPL-3.0)) AND ISC' },
+    deepDenied: { name: 'deep-denied', version: '1.0.0', license: 'GPL-3.0 AND (MIT OR Apache-2.0)' },
+  });
+  const r = check(root);
+  assert.ok(r.stdout.includes(row('deep-ok', '1.0.0', '(MIT OR (Apache-2.0 AND GPL-3.0)) AND ISC', 'ok')), r.stdout);
+  assert.ok(r.stdout.includes(row('deep-denied', '1.0.0', 'GPL-3.0 AND (MIT OR Apache-2.0)', 'review')), r.stdout);
 });
 
 test('scoped packages and nested node_modules are found; .bin and folders without package.json are skipped', () => {
