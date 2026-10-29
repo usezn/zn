@@ -531,9 +531,7 @@ async fn start_proxy(args: Args) -> Result<()> {
         let allowed_origins = api_state.config.security.allowed_origins.clone();
         let cors = build_cors_layer(&allowed_origins);
 
-        let governor_layer = GovernorLayer {
-            config: std::sync::Arc::new(governor_conf),
-        };
+        let governor_layer = GovernorLayer::new(std::sync::Arc::new(governor_conf));
 
         let auth_config = Arc::new(
             AuthConfig::new(
@@ -1447,7 +1445,7 @@ async fn handle_ws_socket(
         if let Message::Text(text) = msg {
             match process_mcp_message(&text, &state, Some(namespace.clone())).await {
                 Ok(Some(response)) => {
-                    if let Err(e) = sender.send(Message::Text(response)).await {
+                    if let Err(e) = sender.send(Message::Text(response.into())).await {
                         tracing::error!("WS send error: {}", e);
                         break;
                     }
