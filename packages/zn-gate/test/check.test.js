@@ -1017,3 +1017,29 @@ test('check: from the home folder, or a dotfiles home with git, a Node.js only i
     }
   }
 });
+
+test('check: a Claude Code plugin of another version than zn-gate gets a note with the update command', async (t) => {
+  const own = require('../package.json').version;
+  const cases = [['1.0.0', true], [own, false], [null, false]];
+  for (const [version, noted] of cases) {
+    const home = tempDir(t, 'zn-check-plugin-version-');
+    const root = fakePlugin(home, launcher());
+    if (version) {
+      fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+      fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'zn-gate', version }));
+    }
+    const res = await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: false });
+    const r = byId(res, 'claude-code');
+    const note = r.notes.find((n) => /plugin is version/.test(n));
+    if (!noted) {
+      assert.equal(note, undefined, `plugin ${version}: ${note}`);
+      continue;
+    }
+    assert.ok(note, r.notes.join(' | '));
+    assert.ok(note.includes('version 1.0.0 and the zn-gate command is ' + own), note);
+    assert.match(note, /claude plugin update zn-gate@usezn/);
+    // A note, not a fault: the version alone never makes the plugin NOT protected.
+    assert.equal(r.problem || '', '', r.problem);
+    assert.match(textOf(res).s, /\(the zn-gate plugin is version 1\.0\.0/);
+  }
+});

@@ -348,6 +348,15 @@ function claudePlugin(home, env) {
   return { root: roots[0] || null, off };
 }
 
+/* A note when the plugin in `root` is not the version of this zn-gate, or ''. The plugin runs its own pinned copy of
+   zn-gate, so Claude Code is checked with the rules of the plugin's version until the plugin is updated. */
+function pluginVersionNote(root, own = require('../package.json').version) {
+  const manifest = readJson(path.join(root, '.claude-plugin', 'plugin.json'));
+  const v = manifest && typeof manifest.version === 'string' ? manifest.version : '';
+  if (!v || v === own) return '';
+  return 'the zn-gate plugin is version ' + v + ' and the zn-gate command is ' + own + ', so Claude Code is checked with the rules of ' + v + '. To match them, run `claude plugin update zn-gate@usezn` in your own terminal and start a new Claude Code session';
+}
+
 /* What each hook of a plugin's manifest (hooks/hooks.json under `root`) starts, as the host starts it: ZCode runs a
    "process" hook's command directly with its args, and Claude Code runs a "command" hook through a shell. Only the form
    zn's plugins use counts as safe: a system shell by its full path (SYSTEM_SHELLS), with no option, no NAME=value in
@@ -896,6 +905,8 @@ async function checkAgent(spec, ctx) {
       // zn's own hooks left next to the plugin both run, and a broken prompt hook among them blocks every prompt.
       // Which set to drop depends on whether the plugin works, so the plugin is checked first (below).
       if (hasCliHooks) res.via = 'both';
+      const versionNote = pluginVersionNote(plugin.root);
+      if (versionNote) res.notes.push(versionNote);
       if (plugin.off) {
         res.pluginOff = true;
         res.problem = 'the zn-gate plugin is turned off in your Claude Code settings';
