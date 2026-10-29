@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.15.0-rc.1] - 2026-11-03
 
+zn-gate 1.15.0 hardens how the hooks start and what the command check reads. On macOS and Linux, and for Claude Code on Windows, zn's hook launcher now runs zn-gate's hook runner only while that file matches the copy recorded at install time, and no longer falls back to a `zn` found on the PATH; if you update with pnpm, bun or `--ignore-scripts`, run `zn hooks install <agent>` again. The destructive-command check now reads one-liners given to `python -c`, `node -e`, `perl -e` and `ruby -e`, ANSI-C quoting (`$'...'`) and PowerShell 7 line continuation. Messages are clearer when a check runs out of time, when `zn-gate init` has no internet connection and when the OpenCode hook cannot start, and in ZCode a tool output zn could not check is no longer reported as withheld. The Python package now warns when `ZN_STRICT` or `ZN_BLOCK_TRUNCATED` is set to a value other than `1`, and when a LangChain or LlamaIndex guard with `on_block="ignore"` lets a blocked item through. This is a release candidate: install it with `npm install -g zn-gate@next` or `pip install --pre zn-gate`, and report problems at https://github.com/usezn/zn/issues.
+
 ### Changed
 - The identity-request injection rule (`pi:identity_request`, Node.js and Python) flags "send their e-mail" only when the destination is an `X-` header or the next request: API docs that ask for an email address "in every request" or "on each request" are no longer reported. A place the rule leaves out (the User-Agent, a mailto link, the request body or a form) now only counts when it is the destination, so "in the X-Example-User header of the next request, not in the User-Agent" is reported.
 
