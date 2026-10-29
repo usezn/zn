@@ -1316,15 +1316,18 @@ mod tests {
             .expect("three runs")
     }
 
-    /// Time must grow about linearly: quadrupling the input may cost at most
-    /// 8x (a quadratic algorithm costs 16x), plus a small allowance for
-    /// noise. Relative, so the machine's speed does not matter.
+    /// Time must grow about linearly: 8x the input may cost at most 16x (a
+    /// quadratic algorithm costs 64x), plus a small allowance for noise.
+    /// Relative, so the machine's speed does not matter. One untimed run
+    /// comes first: timed on a cold CPU (low clock, empty caches), the small
+    /// input looked slower than it is and a quadratic loop could pass.
     fn assert_scales_linearly(work: &dyn Fn(usize), size: usize) {
-        let small = best_of_three(work, size / 4);
+        work(size / 8);
+        let small = best_of_three(work, size / 8);
         let large = best_of_three(work, size);
         assert!(
-            large < small * 8 + std::time::Duration::from_millis(50),
-            "4x the input took {large:?} against {small:?}"
+            large < small * 16 + std::time::Duration::from_millis(50),
+            "8x the input took {large:?} against {small:?}"
         );
         // Only a hang guard; the ratio above is the real check.
         assert!(large < std::time::Duration::from_secs(30), "{large:?}");
@@ -1351,7 +1354,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "4x the input took")]
+    #[should_panic(expected = "8x the input took")]
     fn test_scaling_check_rejects_quadratic_time() {
         // Proves the check above can fail: a deliberately quadratic loop.
         let quadratic = |n: usize| {
