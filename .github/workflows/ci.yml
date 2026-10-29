@@ -306,6 +306,11 @@ jobs:
         if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
         working-directory: packages/zn-gate-py
         run: python -m ruff check .
+      - name: Test the CI helper scripts
+        if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
+        run: |
+          python -m pytest .github/scripts/test_normalize_sdist.py .github/scripts/test_doc_snippets.py -q
+          python -m ruff check .github/scripts/test_normalize_sdist.py .github/scripts/test_doc_snippets.py
       - name: Run mypy
         if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
         working-directory: packages/zn-gate-py
