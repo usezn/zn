@@ -439,6 +439,22 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
 
   `<file>` is `.github/copilot/settings.json` or `.github/copilot/settings.local.json` in the folder where you ran the check. Remove the setting, or ask whoever owns the repository.
 
+- **A note about your own Copilot settings.** It appears under an **OK** line, not as NOT protected:
+
+  ```text
+  your Copilot user settings have "disableAllHooks" turned on; the docs do not say whether that skips hook files, so check that zn still runs
+  ```
+
+  Your own Copilot settings file sets `disableAllHooks` to `true`. GitHub's documentation does not say whether that also skips hook files, so zn-gate cannot tell. If you did not set it on purpose, remove the line from that file, then run `zn-gate check` again.
+
+- **A warning when you install.** `zn hooks install copilot` prints this when zn's own hooks file had `disableAllHooks` turned on:
+
+  ```text
+  "disableAllHooks" was true in this file and was removed: it switched every hook of the file off.
+  ```
+
+  The install turned your protection back on. Nothing else to do. The other messages zn-gate prints are explained in [Troubleshooting](troubleshooting.md#block-and-warn-reasons-by-family).
+
 ### zn-gate could not finish the check
 
 ```text
