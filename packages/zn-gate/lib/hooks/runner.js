@@ -1659,9 +1659,11 @@ function oversizeEvent(agentId, adapter, text, why = 'the event on stdin is too 
   }
   if (!spec || !keys || !spec.isPost(keys)) return refuseInput(agentId, why);
   const event = { event: 'post_tool', hookEvent: 'postToolUse', tool: spec.tool, input: { texts: [] } };
-  // ZCode cannot hide tool output: after a timeout it gets the timeout notice, not the withheld one.
+  // ZCode cannot hide tool output: after a timeout it gets the timeout notice, and for an output too large to read its
+  // adapter's own notice (stats.withheld), never the withheld one.
   const note = why === SUPERVISOR_REASON && agentId === 'zcode' ? POST_TIMEOUT_NOTE : POST_CAP_NOTE;
-  const output = adapter.respond({ decision: 'allow', updatedOutput: spec.shape(POST_WITHHELD), message: note, event });
+  const stats = agentId === 'zcode' && why !== SUPERVISOR_REASON ? { withheld: true } : undefined;
+  const output = adapter.respond({ decision: 'allow', updatedOutput: spec.shape(POST_WITHHELD), message: note, event, stats });
   if (output !== null && output !== undefined) process.stdout.write(JSON.stringify(output));
 }
 
