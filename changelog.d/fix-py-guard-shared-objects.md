@@ -1,2 +1,0 @@
-### Fixed
-- Python: a tool result that held the same object many times could be blocked with rule `size:items`, because the value budget counted an object again each time it was reached. An object read in full is now counted once. Loggers are now read instead of skipped (1.14.0 skipped logging objects): a logger is read without its links to the other loggers of the process, its handlers, filters and any attribute a subclass adds are checked, and the logging manager is skipped. The budget counts attribute names and values, about 50,000 attributes.
