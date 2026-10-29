@@ -97,7 +97,7 @@ print(r.verdict)           # allow
 **Galvanize: prompt-injection detection**
 
 - Today, local: `evaluate`, `check_tool_call`, `check_tool_result` and `@guard` run a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64.
-- Today, optional cloud: `analyze()` can also query the Galvanize 2 classifier ([open weights](https://huggingface.co/usezn/Galvanize-2), Apache-2.0), only with `ZN_CLOUD=1` and `ZN_API_KEY`.
+- Today, optional cloud: `analyze()` can also query the Galvanize 3 classifier ([announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=pypi&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), has open weights under Apache-2.0), only with `ZN_CLOUD=1` and `ZN_API_KEY`.
 - Roadmap: running Galvanize locally.
 
 **Scan: audit what your agent is about to trust**
@@ -294,7 +294,7 @@ A DSPy ReAct agent whose tools are guarded by zn-gate is in [examples/dspy-agent
 We only publish numbers we can reproduce, with the method next to them.
 
 - **Latency:** the measured table by input size is in the [npm package README](https://github.com/usezn/zn/blob/main/packages/zn-gate/README.md#performance-local-rules-engine-no-network) (Node engine, with hardware and script). For the Python engine, run `python3 bench/bench_python.py` from the [repository](https://github.com/usezn/zn).
-- **Accuracy:** the engine is a deterministic signature and normalization layer, not a semantic classifier. On whole source files it can flag ordinary code comments; 1.5.0 reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. These rules have no published detection rate; held-out results for the optional cloud classifier, Galvanize 2, are on its [model card](https://huggingface.co/usezn/Galvanize-2); they do not measure these local rules.
+- **Accuracy:** the engine is a deterministic signature and normalization layer, not a semantic classifier. On whole source files it can flag ordinary code comments; 1.5.0 reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. These rules have no published detection rate; results for the optional cloud classifier, Galvanize 3, are in its [announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=pypi&utm_medium=readme&utm_campaign=galvanize-3); they do not measure these local rules.
 - **Not a sandbox:** zn-gate checks the text and calls that reach it. It does not restrict what a program does. What it covers in each coding agent depends on that agent's hooks: see the [agent compatibility table](https://github.com/usezn/zn/blob/main/docs/compat.md).
 
 ## Configuration
