@@ -533,6 +533,8 @@ zn-gate stats share on|off|status|show
 
 What zn-gate did on this machine: local counts for the last `--days` days (1 to 90, default 30). Exit codes: `0` done, `2` wrong usage.
 
+When sharing is on, `stats` also sends the counts of the days not yet shared and prints only the days that were really sent. With `--json`, those days are listed in `sent_days`, and the days whose upload failed are counted in `send_failed`. A day that failed is tried again on the next run, even when a later day was sent.
+
 #### `stats share`
 
 ```bash

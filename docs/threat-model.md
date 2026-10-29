@@ -451,7 +451,7 @@ stop malware running as the same user (see above).
   the invisible characters removed and the rest redacted, and is reported as
   denied. Known limit: Claude Code ignores a replacement whose shape differs
   from the output of a built-in tool, so a built-in tool result over 32 MiB
-  cannot be withheld (MCP output is not validated, so it is).
+  cannot be withheld (MCP output is not validated, so it is). ZCode cannot withhold an event over 32 MiB either: it gets a notice and the output passes (exit 0).
 - **Text hidden behind blank lines:** a skill, rules file or tool output can put a long run of empty or whitespace-only lines before its real text, which pushes that text out of a reviewer's view and out of the window a classifier reads. The local rules read every run of blank lines as one blank line, and `zn audit` reports a run of 40 or more blank lines with text after it (ZNA021), giving the line where the text starts.
 - **Scrubber error:** fails closed. The tool call is denied, the output
   withheld or the prompt blocked. A missing engine also fails closed, and the
