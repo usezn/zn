@@ -699,8 +699,24 @@ test('the prompt and pre-tool hooks block when they cannot run; the post-tool ho
 test('OpenCode plugin: a hook that fails or times out blocks the call and the message', () => {
   const src = require('../lib/agents/opencode').pluginSource({ scope: 'user', nodePath: '/usr/bin/node', runnerPath: '/opt/zn/lib/hooks/runner.js' });
   assert.match(src, /action: "error", message: "timeout"/);
-  assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ r\.message \+ "\); call blocked"\)/);
-  assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ r\.message \+ "\); message not sent"\)/);
+  assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ why\(r\.message\) \+ "\), so this call was blocked\. " \+ REPAIR\)/);
+  assert.match(src, /if \(r\.action === "error"\) throw new Error\("zn: the secret scrubber is not working \(" \+ why\(r\.message\) \+ "\), so this message was not sent\. " \+ REPAIR\)/);
+  assert.match(src, /const REPAIR = "Run zn-gate check in a terminal, then zn hooks install opencode\.";/);
+  const proj = require('../lib/agents/opencode').pluginSource({ scope: 'project' });
+  assert.match(proj, /const REPAIR = "Run zn-gate check in a terminal, then zn hooks install opencode --project\.";/);
+});
+
+test('OpenCode plugin: a hook that cannot start is explained in plain words with the repair step', async (t) => {
+  const dir = tempDir(t, 'zn-oc-nonode-');
+  const file = path.join(dir, 'zn-plugin.mjs');
+  fs.writeFileSync(file, require('../lib/agents/opencode').pluginSource({ scope: 'user', nodePath: path.join(dir, 'gone', 'node'), runnerPath: '/opt/zn/lib/hooks/runner.js' }));
+  const mod = await import(require('url').pathToFileURL(file).href);
+  const plugin = await (mod.default || Object.values(mod)[0])({});
+  await assert.rejects(() => plugin['tool.execute.before']({ tool: 'bash' }, { args: { command: 'echo hi' } }), (e) => {
+    assert.match(e.message, /^zn: the secret scrubber is not working \(the Node\.js it was installed with was not found\), so this call was blocked\. Run zn-gate check in a terminal, then zn hooks install opencode\.$/);
+    assert.doesNotMatch(e.message, /ENOENT|spawn/);
+    return true;
+  });
 });
 
 /* zn Team: restoring a named marker into a file follows the organization policy. */

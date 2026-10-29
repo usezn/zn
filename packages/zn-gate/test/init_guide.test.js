@@ -582,3 +582,40 @@ test('guide: the npm install step is bounded: flags on the command and a timeout
   assert.ok(setup[0].timeout > 0 && setup[0].timeout <= 300000);
   assert.equal(setup[0].manual, 'npm install -g zn-gate@' + VERSION);
 });
+
+// npm.cmd in the layout Node.js installs on Windows: npm-cli.js under node_modules, and maybe node.exe next to it.
+function fakeNpmShim(t, { nodeExe = false, cliSource = '' } = {}) {
+  const dir = tempDir(t, 'zn-npm-shim-');
+  fs.writeFileSync(path.join(dir, 'npm.cmd'), '@echo off\r\nnode "%~dp0node_modules\\npm\\bin\\npm-cli.js" %*\r\n');
+  fs.mkdirSync(path.join(dir, 'node_modules', 'npm', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js'), cliSource || '');
+  if (nodeExe) fs.writeFileSync(path.join(dir, 'node.exe'), '');
+  return dir;
+}
+
+test('init: on Windows npm runs as npm-cli.js under its own node, without cmd.exe, so a timeout ends npm itself', (t) => {
+  const dir = fakeNpmShim(t);
+  const cli = path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  assert.deepEqual(_internal.npmCli(path.join(dir, 'npm.cmd'), 'win32'), [process.execPath, cli]);
+  assert.deepEqual(_internal.npmCli(path.join(dir, 'NPM.CMD'), 'win32'), [process.execPath, cli]);
+  fs.writeFileSync(path.join(dir, 'node.exe'), '');
+  assert.deepEqual(_internal.npmCli(path.join(dir, 'npm.cmd'), 'win32'), [path.join(dir, 'node.exe'), cli]);
+  // Anything else keeps the shim: another platform, another program, or a shim without npm-cli.js beside it.
+  assert.equal(_internal.npmCli(path.join(dir, 'npm.cmd'), 'linux'), null);
+  assert.equal(_internal.npmCli(path.join(dir, 'npx.cmd'), 'win32'), null);
+  fs.rmSync(cli);
+  assert.equal(_internal.npmCli(path.join(dir, 'npm.cmd'), 'win32'), null);
+});
+
+test('init: a slow npm on Windows is ended at the timeout and writes nothing after it', { skip: process.platform !== 'win32' && 'npm.cmd runs only on Windows' }, async (t) => {
+  const marker = path.join(tempDir(t, 'zn-npm-marker-'), 'still-running');
+  // npm that keeps going: it would write the marker after 4 s and wait 30 s.
+  const dir = fakeNpmShim(t, { cliSource: 'setTimeout(() => require("fs").writeFileSync(' + JSON.stringify(marker) + ', "x"), 4000); setTimeout(() => {}, 30000);\n' });
+  const started = Date.now();
+  const r = _internal.runStep({ run: [path.join(dir, 'npm.cmd'), ['install', '-g', 'zn-gate']], timeout: 1500 }, { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot });
+  assert.equal(r.timedOut, true);
+  assert.equal(r.ok, false);
+  assert.ok(Date.now() - started < 10000, 'runStep returned after ' + (Date.now() - started) + ' ms');
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+  assert.equal(fs.existsSync(marker), false, 'npm was still running after the timeout');
+});
