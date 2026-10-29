@@ -84,3 +84,9 @@ the hooks of one agent with `npx -y zn-gate hooks uninstall <agent>`, and MCP
 wrapping with `npx -y zn-gate init --revert`. Afterwards, run
 `npx -y zn-gate check` to see what is left. See
 [Piece by piece](uninstall.md#piece-by-piece).
+
+## Your data
+
+### 11. Where is my data?
+
+The check runs locally on your machine unless you turn on the optional cloud check. With it on, only the text of `analyze_prompt` and `zn-gate analyze` calls is sent, after zn-gate removed the secrets it detects. See [What leaves your machine](../README.md#what-leaves-your-machine) for the full list, and [Turn on the optional cloud check](connect.md) to turn it on or off.
