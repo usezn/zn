@@ -129,6 +129,39 @@ test('a confirmed reset backs up the old vault and a new empty vault works', asy
   assert.deepEqual((await store.readEncrypted(p.secretsFile, id)).secrets, {});
 });
 
+test('with an OS keychain the warning says the key is replaced at the next unlock, not by the reset (B-1952)', async (t) => {
+  const s = setup(t);
+  await s.makeVault(OLD);
+  t.mock.method(keychain, 'readMeta', () => ({ backend: 'macos' }));
+  const said = [];
+  await reset.resetVault({}, person({ ask: async () => 'no', out: (l) => said.push(l) }));
+  const line = said.find((l) => /keychain/.test(l));
+  assert.ok(line, said.join('\n'));
+  assert.match(line, /stays in your macos keychain until you run `.*unlock`/);
+  assert.doesNotMatch(line, /is replaced in your/);
+});
+
+test('an old file that cannot be removed after the backup stops with the backup path and what is left (B-1952)', async (t) => {
+  const s = setup(t);
+  await s.makeVault(OLD);
+  const real = fs.unlinkSync;
+  t.mock.method(fs, 'unlinkSync', (f) => {
+    if (String(f).endsWith('secrets.age')) { const e = new Error('operation not permitted'); e.code = 'EPERM'; throw e; }
+    return real(f);
+  });
+  const errs = [];
+  const rc = await reset.resetVault({}, person({ ask: async () => reset.PHRASE, err: (l) => errs.push(l) }));
+  assert.equal(rc, 1);
+  const text = errs.join('\n');
+  const m = text.match(/saved in full in (\S+), but 1 old file/);
+  assert.ok(m, text);
+  assert.ok(fs.existsSync(path.join(m[1], 'vault', 'secrets.age')), 'the backup has the file that was left');
+  assert.match(text, /secrets\.age \(EPERM\)/);
+  assert.match(text, /Remove them by hand/);
+  assert.ok(fs.existsSync(path.join(store.paths({}).vaultDir, 'secrets.age')), 'the file that failed is still there');
+  assert.ok(!fs.existsSync(path.join(store.paths({}).vaultDir, 'identity.age')), 'the others were removed');
+});
+
 test('a second reset in the same second does not overwrite the first backup', async (t) => {
   const s = setup(t);
   const now = new Date(2026, 9, 19, 12, 0, 0);
