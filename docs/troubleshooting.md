@@ -346,7 +346,7 @@ The stored value of a secret goes only into the first command of a command line,
 
 **What to do:** ask the agent to run the command that needs the secret on its own, with `zn run --secrets NAME -- <command>`. Do other steps in separate commands.
 
-#### "zn: putting a secret in a shell variable would store only its placeholder" / "a secret in a VAR=__ZN_NAME__ assignment before a command cannot be filled in"
+#### "zn: putting a secret in a shell variable would store only its placeholder" / "a secret in a `VAR=__ZN_NAME__` assignment before a command cannot be filled in"
 
 **What happened:** the command sets a variable to a marker, such as `TOKEN=__ZN_TOKEN__ command`. zn cannot fill markers in there.
 
@@ -713,7 +713,7 @@ your Copilot user settings have "disableAllHooks" turned on; the docs do not say
 
 ### Where a message points you
 
-- A message that ends with "More: https://usezn.com/docs/zn-gate/troubleshooting/" (a vault that did not start, a damaged vault file, a failed audit log check) points to this page. [Section 5](#5-your-secret-vault-is-locked) covers the vault, and [section 10](#10-the-evidence-log--is-damaged) the logs.
+- A message that ends with "More: <https://usezn.com/docs/zn-gate/troubleshooting/>" (a vault that did not start, a damaged vault file, a failed audit log check) points to this page. [Section 5](#5-your-secret-vault-is-locked) covers the vault, and [section 10](#10-the-evidence-log--is-damaged) the logs.
 - A message that ends with "Docs: docs/audit.md" means the [audit page](audit.md): [`docs/audit.md`](https://github.com/usezn/zn/blob/main/docs/audit.md) on GitHub.
 
 ## Also useful
