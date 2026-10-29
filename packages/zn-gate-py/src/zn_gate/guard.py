@@ -28,9 +28,10 @@ _F = TypeVar("_F", bound=Callable[..., Any])
 
 def warn_ignored(assessment: Assessment, target: str) -> None:
     """on_block="ignore" let a blocked call, prompt or output through: say so in the log (the rule and
-    where, never the text), so a block is never silent."""
+    where, never the text), so a block is never silent. The target is logged with %r, so a name with a
+    newline cannot forge extra log lines."""
     logging.getLogger("zn_gate").warning(
-        "zn_gate: %s was blocked (rule %s), but on_block='ignore' let it through", target, assessment.rule)
+        "zn_gate: %r was blocked (rule %s), but on_block='ignore' let it through", target, assessment.rule)
 
 
 def block_message(assessment: Assessment, target: str) -> str:

@@ -188,9 +188,12 @@ class ZnGuardCallbackHandler(BaseCallbackHandler):
             warn_ignored(unmaskable, "langchain:tool_output")
             return output
         changed = _secret_masked(content, masked)
-        if changed and self.on_block == "raise":
+        if changed:
             _, found = sanitize_tool_result(content)
-            raise GuardBlockError(_secret_assessment(found), target="langchain:tool_output", payload=masked)
+            if self.on_block == "raise":
+                raise GuardBlockError(_secret_assessment(found), target="langchain:tool_output", payload=masked)
+            # LangChain ignores the return value, so the secret still reaches the model: say so.
+            warn_ignored(_secret_assessment(found), "langchain:tool_output")
         return masked if changed else output
 
     def on_tool_error(
@@ -211,18 +214,23 @@ class ZnGuardCallbackHandler(BaseCallbackHandler):
         An error LangChain itself handles (ToolException with
         handle_tool_error) becomes a tool output and goes through on_tool_end.
         """
-        if self.on_block != "raise" or not isinstance(error, Exception) or isinstance(error, GuardBlockError):
+        if not isinstance(error, Exception) or isinstance(error, GuardBlockError):
             return None
         texts = _error_texts(error)
         message = texts[0] if texts else ""
         assessment = check_tool_result(texts[:2], block_truncated=self.block_truncated)
         if not assessment.allowed:
-            raise GuardBlockError(assessment, target="langchain:tool_output", payload=_mask_text(message))
+            if self.on_block == "raise":
+                raise GuardBlockError(assessment, target="langchain:tool_output", payload=_mask_text(message))
+            warn_ignored(assessment, "langchain:tool_output")
+            return None
         if self.mask_secrets:
             found = _error_secrets(error)
             if found:
-                raise GuardBlockError(_secret_assessment(found), target="langchain:tool_output",
-                                      payload=_mask_text(message))
+                if self.on_block == "raise":
+                    raise GuardBlockError(_secret_assessment(found), target="langchain:tool_output",
+                                          payload=_mask_text(message))
+                warn_ignored(_secret_assessment(found), "langchain:tool_output")
         return None
 
 
