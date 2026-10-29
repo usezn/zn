@@ -280,8 +280,14 @@ Records go to `~/.zn/evidence.jsonl`, hash-chained with SHA-256, with a secret-r
 ```bash
 zn-gate scan ./prompts          # audit prompts, skills and configs (exit 1 on findings)
 zn-gate analyze "some prompt"   # local check; cloud only with ZN_CLOUD=1 + key
+zn-gate test "some text"        # check one text against the rules (exit 1 if flagged)
+zn-gate evidence --verify       # check the local evidence log (also --export, --format jsonl|csv, --output FILE)
+zn-gate stats --days 7          # local counts of what zn-gate did (also --json)
 zn-gate status                  # engine and what leaves the machine
+zn-gate --version
 ```
+
+Options worth knowing: `scan` takes `--format text|json|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude` and `--include-home`; `analyze` takes `--local-only`, `--key`, `--stage`, `--url` and `--long-input windows|off`. Run `zn-gate <command> --help` for the full list. The commands of the npm package (`init`, `hooks`, `secret`, `vault`, `shield`, `team` and the rest) are not in this package: they print a note and exit `2`. Full list of differences: [Command line reference](https://github.com/usezn/zn/blob/main/docs/cli.md#the-python-package).
 
 More runnable examples are in [examples/](https://github.com/usezn/zn/tree/main/examples), including [a Haystack agent with a guarded tool](https://github.com/usezn/zn/tree/main/examples/haystack-agent) and [a smolagents agent with a guarded tool](https://github.com/usezn/zn/tree/main/examples/smolagents-agent).
 
