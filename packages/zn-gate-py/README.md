@@ -166,7 +166,7 @@ handler = ZnGuardCallbackHandler(on_block="raise")
 # pass callbacks=[handler] to your agent, chain or tool
 ```
 
-The handler stops the run. With `on_block="raise"` (default) a blocked prompt, tool call or tool output raises `GuardBlockError` out of the agent: the tool does not run and the output does not reach the model. `on_block="ignore"` turns that off. `"return"` is not accepted (it raises `ValueError`), because LangChain ignores what a callback returns; any other value raises `ValueError` too.
+The handler stops the run. With `on_block="raise"` (default) a blocked prompt, tool call or tool output raises `GuardBlockError` out of the agent: the tool does not run and the output does not reach the model. `on_block="ignore"` turns that off: each blocked prompt, tool call, tool output, tool error or secret in a tool output that is let through is logged as a warning (logger `zn_gate`) with the rule and where it happened, never the text. `"return"` is not accepted (it raises `ValueError`), because LangChain ignores what a callback returns; any other value raises `ValueError` too.
 
 A callback cannot change what a tool returns. So with `mask_secrets=True` (default) a tool output that contains a secret also stops the run (it fails closed instead of letting the secret reach the model). The same goes for a tool's error, whose text LangChain (`handle_tool_error`) and LangGraph (`ToolNode(handle_tool_errors=True)`) send to the model: when the message is blocked or contains a secret, the handler replaces the error with `GuardBlockError`, whose message holds no secret. To hide the secret and keep going, or to give the model a block message instead of the output, wrap the tool (needs `langchain-core`):
 
@@ -250,7 +250,7 @@ safe_query = guard.on_query_start(user_query)
 clean_response = guard.sanitize_response(query_engine.query(safe_query))
 ```
 
-`on_block` accepts `"raise"` (default), `"return"` or `"ignore"`; any other value raises `ValueError`. With `"return"`, `on_query_start` returns `fallback`, or a short block message, in place of the query, so the engine never sees the blocked text. `sanitize_response` hides secrets in text, lists, dicts and in the text of a LlamaIndex `Response` (on a copy).
+`on_block` accepts `"raise"` (default), `"return"` or `"ignore"`; any other value raises `ValueError`. With `"return"`, `on_query_start` returns `fallback`, or a short block message, in place of the query, so the engine never sees the blocked text. `sanitize_response` hides secrets in text, lists, dicts and in the text of a LlamaIndex `Response` (on a copy). With `on_block="ignore"` (or `raise_on_violation=False`), a blocked query that is let through is logged as a warning (logger `zn_gate`) with the rule, never the text.
 
 For LlamaIndex tools, wrap the function with `guarded_tool` before `FunctionTool.from_defaults(fn=...)`: the arguments are checked before it runs and its output is checked and masked before the agent reads it (see the `llamaindex-agent` example).
 
@@ -303,6 +303,8 @@ We only publish numbers we can reproduce, with the method next to them.
 - `ZN_API_KEY`: API key from [usezn.com/dashboard](https://usezn.com/dashboard/). No effect without `ZN_CLOUD=1`.
 - `ZN_LOCAL_ONLY`: `true` forces local-only.
 - `ZN_STRICT`: `1` also blocks the rules that only warn by default (same as `evaluate(text, strict=True)`; also `check_tool_call`, `check_tool_result` and `sanitize_tool_result` take `strict=True`).
+- `ZN_BLOCK_TRUNCATED`: `1` blocks output too large to scan in full (same as `block_truncated=True`).
+- `ZN_STRICT` and `ZN_BLOCK_TRUNCATED` turn on only with the value `1`. Another value such as `true` or `yes` leaves them off and logs a warning (logger `zn_gate`), once per value.
 - `ZN_STAGE` / `ZN_API_URL`: cloud endpoint selection.
 - `NO_COLOR` (any non-empty value) or `TERM=dumb`: the command line output leaves out its symbols; the status words (ALLOW, BLOCK, clean, ...) stay.
 
