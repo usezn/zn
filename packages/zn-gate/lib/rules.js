@@ -4,13 +4,14 @@ const fs = require('fs');
 const linearRegex = require('./linear-regex');
 const { ZERO_WIDTH_RE, INVISIBLE_ASTRAL_RE, spaceInvisible, spaceInvisibleForMatch } = require('./invisible');
 const path = require('path');
+const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
  * RULES_VERSION: 2026-10-27.2
  */
 
-const RULES_VERSION = '2026-10-28.1';
+const RULES_VERSION = '2026-10-29.1';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -381,7 +382,7 @@ const ADVISORY_BY_DEFAULT = new Set([
 ]);
 
 function strictMode(options, cfg) {
-  return (options && options.strict === true) || process.env.ZN_STRICT === '1' || (cfg && cfg.strict === true);
+  return (options && options.strict === true) || envFlag('ZN_STRICT') || (cfg && cfg.strict === true);
 }
 
 // Local custom rules cache (.znrules or zn.config.json)
@@ -1668,7 +1669,7 @@ function invisibleBlock() {
 // options.blockTruncated or ZN_BLOCK_TRUNCATED=1 (the former opt-in) still
 // forces the block and wins over the opt-out.
 function truncatedBlocks(options) {
-  if (options.blockTruncated === true || process.env.ZN_BLOCK_TRUNCATED === '1') return true;
+  if (options.blockTruncated === true || envFlag('ZN_BLOCK_TRUNCATED')) return true;
   return !(options.allowTruncated === true || process.env.ZN_ALLOW_TRUNCATED === '1');
 }
 

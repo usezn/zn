@@ -50,6 +50,7 @@ const policy = require('./policy');
 const markers = require('../broker/markers');
 const { gitStatusOf } = require('../broker/files');
 const deps = require('../deps');
+const { envFlag } = require('../env-flag');
 const { shQuote, SH_QUOTE_ESCAPE, portablePath } = require('../shell-quote');
 const { znCommand } = require('../zn-command');
 const { hasUnsafeText } = require('../safe-text');
@@ -194,7 +195,7 @@ function destructiveRulesOf(opts) {
  */
 function instructionWritesOf(opts) {
   if (opts.instructionWrites) return ['ask', 'deny', 'off'].includes(opts.instructionWrites) ? opts.instructionWrites : 'ask';
-  if (process.env.ZN_STRICT === '1') return 'deny';
+  if (envFlag('ZN_STRICT')) return 'deny';
   const hooks = readConfig(opts.home).hooks || {};
   const v = hooks.agentInstructionWrites;
   if (v === false || ['off', 'allow'].includes(String(v).toLowerCase())) return 'off';
