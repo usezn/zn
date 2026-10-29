@@ -117,14 +117,29 @@ test('a check that runs out of time gives every agent the same next step', async
   }
 });
 
-test('zcode: a post-tool event whose check runs out of time gets the withheld notice, not a block', async (t) => {
+test('zcode: a post-tool event whose check runs out of time gets the timeout notice (not withheld), not a block', async (t) => {
   const post = { hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'echo hi' }, tool_response: 'hi' };
   const { child, done } = runner(t, 'zcode', { ZN_TEST_HOOK_FAULT: 'hang', ZN_TEST_HOOK_HANG_MS: '20000', ZN_TEST_HOOK_DEADLINE_MS: '500' });
   child.stdin.end(JSON.stringify(post));
   const r = await done;
   assert.equal(r.status, 0, JSON.stringify(r));
   assert.doesNotMatch(r.stdout + r.stderr, /so it was blocked|so this was blocked/);
-  assert.equal(JSON.parse(r.stdout).hookSpecificOutput.hookEventName, 'PostToolUse');
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.hookSpecificOutput.hookEventName, 'PostToolUse');
+  const note = out.hookSpecificOutput.additionalContext;
+  assert.match(note, /the check timed out/, note);
+  assert.match(note, /It was NOT withheld/, note);
+  assert.doesNotMatch(note, /withheld because|too large/, note);
+  assert.match(note, /ask the user to run `zn-gate check` in their terminal/, note);
+});
+
+test('claude-code: a post-tool event whose check runs out of time keeps the withheld text', async (t) => {
+  const post = { hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'echo hi' }, tool_response: 'hi' };
+  const { child, done } = runner(t, 'claude-code', { ZN_TEST_HOOK_FAULT: 'hang', ZN_TEST_HOOK_HANG_MS: '20000', ZN_TEST_HOOK_DEADLINE_MS: '500' });
+  child.stdin.end(JSON.stringify(post));
+  const r = await done;
+  assert.equal(r.status, 0, JSON.stringify(r));
+  assert.match(r.stdout + r.stderr, /withheld because it is too large to check for secrets in time/, r.stdout + r.stderr);
 });
 
 test('the deadline of every agent is its hook timeout minus the margin of the supervisor', () => {

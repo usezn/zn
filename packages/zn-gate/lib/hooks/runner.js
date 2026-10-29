@@ -1659,7 +1659,9 @@ function oversizeEvent(agentId, adapter, text, why = 'the event on stdin is too 
   }
   if (!spec || !keys || !spec.isPost(keys)) return refuseInput(agentId, why);
   const event = { event: 'post_tool', hookEvent: 'postToolUse', tool: spec.tool, input: { texts: [] } };
-  const output = adapter.respond({ decision: 'allow', updatedOutput: spec.shape(POST_WITHHELD), message: POST_CAP_NOTE, event });
+  // ZCode cannot hide tool output: after a timeout it gets the timeout notice, not the withheld one.
+  const note = why === SUPERVISOR_REASON && agentId === 'zcode' ? POST_TIMEOUT_NOTE : POST_CAP_NOTE;
+  const output = adapter.respond({ decision: 'allow', updatedOutput: spec.shape(POST_WITHHELD), message: note, event });
   if (output !== null && output !== undefined) process.stdout.write(JSON.stringify(output));
 }
 
@@ -1707,6 +1709,10 @@ const CODEX_WATCHDOG_MARGIN_S = 5;
 // The step every agent gets when a check did not finish in time or failed: the same words whatever the agent.
 const TIMEOUT_STEP = 'Try again; if it keeps happening, ask the user to run `zn-gate check` in their terminal.';
 const CODEX_FAIL_REASON = 'zn: the check could not finish in time or failed, so this was blocked. ' + TIMEOUT_STEP;
+// A ZCode post-tool event whose check timed out: the tool had already run and ZCode cannot hide its output.
+const POST_TIMEOUT_NOTE = 'zn: the check timed out, so this output was not checked for secrets. It was NOT withheld: ' +
+  'ZCode cannot hide tool output, so anything secret in it is already in this conversation. ' +
+  'Do not repeat it; if it holds a real secret, tell the user to rotate it. ' + TIMEOUT_STEP;
 
 function codexDenyFor(eventName, reason, agentId = 'codex') {
   // ZCode reads a prompt block as {continue: false, reason}; Codex as {decision: "block", reason}.
