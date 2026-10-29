@@ -16,6 +16,13 @@ them.
    Most releases need nothing more.
 3. Run `zn-gate check`. Every agent that is set up should say **OK**.
 
+The hook launchers of `zn hooks install` keep the SHA-256 of zn-gate's hook
+runner and run it only while it matches. An update with npm rewrites them by
+itself (an install step of the package). If your update does not run install
+scripts (`npm install --ignore-scripts`, or pnpm and bun, which skip them by
+default), run `zn hooks install <agent>` again for each agent: until then the
+hooks block tool calls and say so.
+
 If `zn-gate check` says an agent is not protected, it also prints the command
 that fixes it.
 
@@ -76,7 +83,9 @@ depends on the agent and on how the hooks were installed. A user install
 (`zn hooks install <agent>`) writes a small launcher script as the hook command
 (`~/.zn/hooks/zn-hook-<agent>.sh`; on Windows, for Codex CLI, Cursor, Gemini CLI
 and Antigravity, the same steps written inline in PowerShell). It runs the
-Node.js it was installed with, else `zn` from the PATH, else it answers the
+Node.js it was installed with, while its runner still has the SHA-256 recorded
+at install time (never a `zn` from the PATH, except in the inline PowerShell
+hooks on Windows), else it answers the
 block itself, without Node.js. A project install (`--project`) names `zn` on
 the PATH inside a short start guard (`sh -c`, PowerShell on Windows) that gives
 the same block when `zn` or Node.js is missing or fails, so it behaves like a
