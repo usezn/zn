@@ -187,8 +187,8 @@ class TestLinearTime(unittest.TestCase):
         inputs = [fill('sk-', big), 'sk-' * 66 + marker + 'a' + '-' * (big - 207), fill('sk-helicone-', big),
                   fill('sk-a1b2c3d-', big), fill('sk-' + marker, big)]
         for s in inputs:
-            ms = time_ms(redact_secrets, s)
-            self.assertLess(ms, EVALUATE_256K_MS, f"redact_secrets took {ms:.1f} ms on {s[:12]!r}... x 256 KB")
+            ms = cpu_ms(redact_secrets, s)
+            self.assertLess(ms, EVALUATE_256K_MS, f"redact_secrets took {ms:.1f} ms CPU on {s[:12]!r}... x 256 KB")
 
     def test_evaluate_256k_worst_cases(self):
         for unit in ['A', 'A\n', '\n', '\r\n', ' ', '/*', '忽略', 'забудь ', '<a x=', '<a', '![](http://a?key=', '-eyJ']:
@@ -200,8 +200,8 @@ class TestLinearTime(unittest.TestCase):
 class TestLargeInputs(unittest.TestCase):
     def test_inputs_over_the_scan_limit_are_scanned_whole(self):
         s = fill('A', 1024 * 1024)
-        ms = time_ms(evaluate, s)
-        self.assertLess(ms, 4 * EVALUATE_256K_MS)
+        ms = cpu_ms(evaluate, s)
+        self.assertLess(ms, 4 * EVALUATE_256K_MS, f"evaluate took {ms:.1f} ms CPU on 1 MB")
         res = evaluate(s)
         self.assertEqual(res.verdict, 'allow')
         self.assertFalse(res.truncated)
