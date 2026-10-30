@@ -9,6 +9,7 @@ const policy = require('../lib/hooks/policy');
 const exe = require('../lib/exe');
 const os = require('os');
 const path = require('path');
+const { budget } = require('./helpers/time_budget');
 
 // Real absolute paths for the platform: a POSIX-style home such as '/home/u' is not
 // absolute on Windows, so "~/..." would not resolve to a credential file there.
@@ -54,7 +55,7 @@ test('many "*" never make the match slow', () => {
     const t0 = process.hrtime.bigint();
     for (const t of targets) m.test(t);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 1000, w.slice(0, 12) + '... took ' + ms.toFixed(1) + ' ms');
+    assert.ok(ms < budget(1000), w.slice(0, 12) + '... took ' + ms.toFixed(1) + ' ms');
   }
 });
 
@@ -62,7 +63,7 @@ test("a very long glob word is handled quickly", () => {
   const t0 = process.hrtime.bigint();
   policy.classifyWord('*a'.repeat(30000) + 'b', OPTS);
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.ok(ms < 1000, 'took ' + ms.toFixed(1) + ' ms');
+  assert.ok(ms < budget(1000), 'took ' + ms.toFixed(1) + ' ms');
 });
 
 test('a bash command with a long glob is checked quickly, and still denied when it names a credential file', () => {
@@ -72,7 +73,7 @@ test('a bash command with a long glob is checked quickly, and still denied when 
   const deny = policy.bashDenial('cat ~/' + '*'.repeat(20000) + '/credentials', opts);
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
   assert.ok(deny, 'a glob that names ~/.aws/credentials is denied');
-  assert.ok(ms < 1500, 'took ' + ms.toFixed(1) + ' ms');
+  assert.ok(ms < budget(1500), 'took ' + ms.toFixed(1) + ' ms');
 });
 
 test('the program name of a very long command word is read fast, and short ones as before', () => {
@@ -80,7 +81,7 @@ test('the program name of a very long command word is read fast, and short ones 
   exe.interpreterBase('python' + '1'.repeat(50000) + ' x.py');
   exe.interpreterBase('node' + '-1'.repeat(25000) + ' x.js');
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.ok(ms < 100, 'took ' + ms.toFixed(1) + ' ms');
+  assert.ok(ms < budget(100), 'took ' + ms.toFixed(1) + ' ms');
   assert.equal(exe.interpreterBase('python3.12m script.py'), 'python');
   assert.equal(exe.interpreterBase('/usr/bin/node22 a.js'), 'node');
   assert.equal(exe.interpreterBase('C:\\Python\\pythonw.exe a.py'), 'pythonw');
@@ -137,7 +138,7 @@ test('a very long path is classified quickly', () => {
     policy.bashDenial('cat ' + w, opts);
     files.realTargetOf(w);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 2000, w.slice(0, 10) + '... took ' + ms.toFixed(1) + ' ms');
+    assert.ok(ms < budget(2000), w.slice(0, 10) + '... took ' + ms.toFixed(1) + ' ms');
   }
 });
 
@@ -149,7 +150,7 @@ test('long legitimate commands with "?" are not refused', () => {
     const deny = policy.bashDenial(cmd, opts);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
     assert.equal(deny, null, cmd.slice(0, 30));
-    assert.ok(ms < 1500, cmd.slice(0, 20) + '... took ' + ms.toFixed(1) + ' ms');
+    assert.ok(ms < budget(1500), cmd.slice(0, 20) + '... took ' + ms.toFixed(1) + ' ms');
   }
 });
 
@@ -158,7 +159,7 @@ test('a word with very many "[" is refused quickly', () => {
   const c = policy.classifyWord('['.repeat(50000), OPTS);
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
   assert.equal(c && c.kind, 'credential');
-  assert.ok(ms < 1000, 'took ' + ms.toFixed(1) + ' ms');
+  assert.ok(ms < budget(1000), 'took ' + ms.toFixed(1) + ' ms');
 });
 
 test('realTargetOf keeps its result for existing and missing paths', () => {
@@ -187,7 +188,7 @@ test('bracket expressions are scanned once per pattern', () => {
     policy.classifyWord(w, opts);
     policy.bashDenial('cat ' + w, opts);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 2000, w.slice(0, 12) + '... took ' + ms.toFixed(1) + ' ms');
+    assert.ok(ms < budget(2000), w.slice(0, 12) + '... took ' + ms.toFixed(1) + ' ms');
   }
 });
 

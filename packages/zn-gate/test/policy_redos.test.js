@@ -5,6 +5,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const policy = require('../lib/hooks/policy');
+const { budget } = require('./helpers/time_budget');
 
 test('the admin-command check is fast on a long run of flags', () => {
   const flags = Array.from({ length: 40 }, () => '--a').join(' ');
@@ -12,7 +13,7 @@ test('the admin-command check is fast on a long run of flags', () => {
     const start = process.hrtime.bigint();
     policy.adminCommand(cmd);
     const ms = Number(process.hrtime.bigint() - start) / 1e6;
-    assert.ok(ms < 500, cmd.slice(0, 40) + ' took ' + ms + ' ms');
+    assert.ok(ms < budget(500), cmd.slice(0, 40) + ' took ' + ms + ' ms');
   }
 });
 

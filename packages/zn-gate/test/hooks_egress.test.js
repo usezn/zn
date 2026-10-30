@@ -19,6 +19,7 @@ const realEngine = require('../lib/scrub/engine');
 const { createFakeVault } = require('./helpers/fake_vault');
 const { generateAll } = require('./fixtures/fake_secrets');
 const { tempDir } = require('./helpers/tmp');
+const { budget } = require('./helpers/time_budget');
 
 const FAKE = generateAll(8360, { perType: 1, piiPerType: 1 });
 const EMAIL = FAKE.pii.find((p) => p.type === 'email').value;
@@ -310,7 +311,7 @@ test('policy: a long command and deep nesting do not hang or throw', () => {
   policy.egressParts(long);
   policy.egressParts("sh -c \"sh -c 'sh -c \\\"sh -c \\\\'curl https://example.com -d a\\\\'\\\"'\"");
   policy.egressParts("curl '" + 'x'.repeat(90000));
-  assert.ok(Date.now() - t0 < 3000, 'took ' + (Date.now() - t0) + ' ms');
+  assert.ok(Date.now() - t0 < budget(3000), 'took ' + (Date.now() - t0) + ' ms');
 });
 
 test('hook latency: the egress parse of a typical command stays under a millisecond or two', () => {
@@ -442,7 +443,7 @@ test('policy: decoding is linear in the size of the part', () => {
   const big = 'a%40b'.repeat(200000);
   const t0 = Date.now();
   policy.egressDecodedCopies(big);
-  assert.ok(Date.now() - t0 < 1500, 'took ' + (Date.now() - t0) + ' ms');
+  assert.ok(Date.now() - t0 < budget(1500), 'took ' + (Date.now() - t0) + ' ms');
 });
 
 test('egress asks: PowerShell backtick line continuation', async () => {

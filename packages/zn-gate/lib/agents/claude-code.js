@@ -285,7 +285,8 @@ function readJson(file) {
     data = text.replace(/^\uFEFF/, '').trim() ? cfg.parseJson(text) : {};
   } catch (err) {
     if (err.code === 'ENOENT') return {};
-    throw new Error('cannot parse ' + file + ': ' + err.message);
+    // A file that cannot be read (no permission, a folder in its place) is not a parse error.
+    throw new Error(require('../errors').fsErrorText(err, file) || 'cannot parse ' + file + ': ' + err.message);
   }
   if (data === null || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error(file + ' must hold a JSON object, not ' + (data === null ? 'null' : Array.isArray(data) ? 'an array' : typeof data) + ' (left unchanged)');

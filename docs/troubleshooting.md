@@ -752,6 +752,10 @@ From time to time browsers and runtimes stop trusting a certificate authority. I
 
 The Node.js package always refuses a connection whose certificate does not check out, even when `NODE_TLS_REJECT_UNAUTHORIZED=0` is set. If `NODE_EXTRA_CA_CERTS` or `SSL_CERT_FILE` is set in your terminal, it will not send the key saved by `zn-gate connect` (see [8. "will not send the saved key"](#8-will-not-send-the-saved-key-tls-settings)). A key you pass in `ZN_API_KEY` (or with `--key`) is sent anyway, and Node.js then trusts `NODE_EXTRA_CA_CERTS`. The Python package follows your system's TLS settings, `SSL_CERT_FILE` and `SSL_CERT_DIR` included. In every case, updating the list as above is the better fix.
 
+### Hooks block everything: "zn-gate changed since the hooks were installed"
+
+The hook launcher keeps a fingerprint of zn-gate's hook runner and runs it only while it matches, so after the files change your agent blocks its tool calls and prompts and shows `zn-gate changed since the hooks were installed`. `npm update -g zn-gate` fixes the launchers by itself, but not when the update ran with `--ignore-scripts`, with bun, or with `sudo`. In your own terminal, without `sudo`, run `zn hooks install <agent>` again (for example `zn hooks install claude-code`), then start a new session. More in [check](check.md) and [upgrading](upgrading.md).
+
 ### npm says EACCES when init installs zn-gate
 
 On macOS (Node.js from nodejs.org) and on Linux (Node.js from your distribution), npm often cannot write to its global folder, so `npm install -g zn-gate` fails with `EACCES`. `zn-gate init` says so and lists the agents left unprotected until zn-gate is installed. Do not use `sudo`. Give npm a folder in your home directory, in your own terminal:

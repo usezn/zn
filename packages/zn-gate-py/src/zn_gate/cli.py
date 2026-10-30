@@ -756,7 +756,7 @@ def npm_only_message(command: str) -> str:
 
 # Commands that exist only in the npm package and take no explanation of the
 # Python/agents split: they just say where the command lives.
-NPM_ONLY_SIMPLE_COMMANDS = frozenset({"report", "reach", "connect", "disconnect"})
+NPM_ONLY_SIMPLE_COMMANDS = frozenset({"report", "reach", "connect", "disconnect", "uninstall"})
 
 
 def npm_only_simple_message(command: str) -> str:
@@ -766,6 +766,14 @@ def npm_only_simple_message(command: str) -> str:
         f"  npx -y zn-gate {command}\n"
         f"or, after npm install -g zn-gate:\n"
         f"  zn-gate {command}\n"
+    )
+
+
+def npm_help_message() -> str:
+    return (
+        "zn-gate help is not a command. The npm package shows its help with --help.\n"
+        "Run it with Node.js 18 or later:\n"
+        "  npx -y zn-gate --help\n"
     )
 
 
@@ -833,6 +841,12 @@ def main() -> int:
     first = sys.argv[1] if len(sys.argv) > 1 else None
     if first in NPM_ONLY_SIMPLE_COMMANDS:
         sys.stderr.write(npm_only_simple_message(first))
+        return 2
+    if first == "help":
+        sys.stderr.write(npm_help_message())
+        return 2
+    if first == "stats" and sys.argv[2:3] == ["share"]:
+        sys.stderr.write(npm_only_simple_message("stats share"))
         return 2
     if first == "version":
         print(f"zn-gate {__version__} (rules: {RULES_VERSION})")
