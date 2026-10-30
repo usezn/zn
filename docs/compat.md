@@ -535,3 +535,8 @@ A tool that an adapter reports only as a generic file access (some Gemini CLI, C
 
 Hermes Agent and the Cursor CLI. GitHub Copilot CLI and Gemini CLI have experimental hooks (see their entries above). A proxy for outgoing
 HTTP from `zn run` (for `curl`, `gh` or SDKs) is planned for a later release.
+
+Devin CLI is not supported. It also reads the Claude Code hooks in `.claude/settings.json`, so a
+`zn hooks install claude-code` there runs inside Devin too, but Devin names its tools `exec`, `read`,
+`write` and `edit`. zn still checks prompts, `read` and MCP tools, but it does **not** check the shell
+commands or the file writes Devin makes. Do not rely on the Claude Code install to protect Devin.
