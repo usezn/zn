@@ -31,6 +31,8 @@ installed zn-gate:
   so the hooks block tool calls and say so until you run
   `zn hooks install <agent>` again for each agent.
 
+If you installed or updated with `sudo`, run `zn hooks install <agent>` again as yourself (without `sudo`) after the update.
+
 If `zn-gate check` says an agent is not protected, it also prints the command
 that fixes it.
 
