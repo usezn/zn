@@ -53,12 +53,12 @@ test('winCommandText on win32 rewrites zn and npx commands to the .cmd forms', (
       'Run `npx.cmd -y zn-gate init` in your own terminal, then `zn.cmd hooks install codex`.'
     );
     assert.equal(
-      winCommandText('then run `zn-gate check` again; or zn env shadow .env'),
-      'then run `zn-gate.cmd check` again; or zn.cmd env shadow .env'
+      winCommandText('then run `zn-gate check` again; or `zn env shadow .env`'),
+      'then run `zn-gate.cmd check` again; or `zn.cmd env shadow .env`'
     );
     assert.equal(
-      winCommandText('Ask the user to run npx -y zn-gate@1.14.1 env shadow .env'),
-      'Ask the user to run npx.cmd -y zn-gate@1.14.1 env shadow .env'
+      winCommandText('Ask the user to run `npx -y zn-gate@1.14.1 env shadow .env`'),
+      'Ask the user to run `npx.cmd -y zn-gate@1.14.1 env shadow .env`'
     );
   });
 });

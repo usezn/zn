@@ -56,15 +56,24 @@ const CLI_VERBS = 'hooks|env|secret|unlock|lock|run|hook|init|check|audit|test|s
 const ZN_WORD = new RegExp('(^|[^\\w./-])(?<!-y )(zn-gate|zn)(?= (?:' + CLI_VERBS + ')\\b)', 'g');
 const NPX_WORD = /(^|[^\w./-])npx(?= -y zn-gate)/g;
 
-/**
- * A message that names zn commands, written for the shell the person uses.
- * On Windows `zn hooks install x` becomes `zn.cmd hooks install x` and
- * `npx -y zn-gate init` becomes `npx.cmd -y zn-gate init`. Other systems get
- * the text back unchanged.
- */
-function winCommandText(text, platform = process.platform) {
+const CODE_SPAN = /`[^`\n]+`/g;
+
+/** A command line (a `manual:` step): every zn and npx command in it is rewritten for Windows. */
+function winManualText(text, platform = process.platform) {
   if (platform !== 'win32' || typeof text !== 'string') return text;
   return text.replace(NPX_WORD, '$1npx.cmd').replace(ZN_WORD, (m, pre, name) => pre + name + '.cmd');
 }
 
-module.exports = { znCommand, znOnPath, cliName, winCommandText, PACKAGE_VERSION: version };
+/**
+ * A message that names zn commands, written for the shell the person uses.
+ * Only the text between backticks (inline code) changes, so ordinary sentences
+ * stay as they are: on Windows `zn hooks install x` becomes `zn.cmd hooks install x`
+ * and `npx -y zn-gate init` becomes `npx.cmd -y zn-gate init`, while a sentence
+ * that says "no zn check runs" is left alone. Other systems get the text back unchanged.
+ */
+function winCommandText(text, platform = process.platform) {
+  if (platform !== 'win32' || typeof text !== 'string') return text;
+  return text.replace(CODE_SPAN, (span) => winManualText(span, platform));
+}
+
+module.exports = { znCommand, znOnPath, cliName, winCommandText, winManualText, PACKAGE_VERSION: version };

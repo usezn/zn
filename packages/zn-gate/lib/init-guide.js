@@ -281,7 +281,7 @@ function permissionAdvice({ prefix, env, todo, shell }) {
  */
 async function guide(opts = {}) {
   const env = opts.env || process.env;
-  const { winCommandText } = require('./zn-command');
+  const { winCommandText, winManualText } = require('./zn-command');
   const out = opts.write || ((s) => process.stdout.write(s));
   const w = (s) => out(winCommandText(s));
   const tty = require('./broker/tty');
@@ -289,6 +289,8 @@ async function guide(opts = {}) {
   const agent = tty.agentDetected(env, opts);
   const interactive = Boolean(stdin.isTTY) && !agent;
   const { items, setup } = await plan(opts);
+  // A step's manual text is a command line: on Windows it names the .cmd forms.
+  for (const st of [...setup, ...items.flatMap((i) => i.steps)]) if (st.manual) st.manual = winManualText(st.manual);
 
   w('\nzn-gate init: set up zn for the coding agents on this machine\n\n');
   const todo = items.filter((i) => i.steps.length);
