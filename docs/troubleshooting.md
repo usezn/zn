@@ -754,7 +754,7 @@ The Node.js package always refuses a connection whose certificate does not check
 
 ### Hooks block everything: "zn-gate changed since the hooks were installed"
 
-The hook launcher keeps a fingerprint of zn-gate's hook runner and runs it only while it matches, so after the files change your agent blocks its tool calls and prompts and shows `zn-gate changed since the hooks were installed`. `npm update -g zn-gate` fixes the launchers by itself, but not when the update ran with `--ignore-scripts`, with bun, or with `sudo`. In your own terminal, without `sudo`, run `zn hooks install <agent>` again (for example `zn hooks install claude-code`), then start a new session. More in [check](check.md) and [upgrading](upgrading.md).
+The hook launcher keeps a fingerprint of zn-gate's hook runner and runs it only while it matches, so after the files change your agent blocks its tool calls and prompts and shows the message "zn-gate changed since the hooks were installed". `npm update -g zn-gate` fixes the launchers by itself, but not when the update ran with `--ignore-scripts`, with bun, or with `sudo`. In your own terminal, without `sudo`, run `zn hooks install <agent>` again (for example `zn hooks install claude-code`), then start a new session. More in [check](check.md) and [upgrading](upgrading.md).
 
 ### npm says EACCES when init installs zn-gate
 
