@@ -19,6 +19,13 @@ const { AGENT_ENV_VARS } = require('../lib/broker/tty');
 const policy = require('../lib/hooks/policy');
 const { tempDir } = require('./helpers/tmp');
 const { writePluginManifest } = require('./helpers/claude_plugin');
+const { WIN, gitBashExe } = require('./helpers/git_bash');
+
+// On Windows the zn-gate plugin of Claude Code runs in Git Bash. These tests run there with a Git Bash given the way Claude Code
+// documents (CLAUDE_CODE_GIT_BASH_PATH), and are skipped only when the computer has none; the Windows tests without Git Bash are below.
+const GIT_BASH = gitBashExe();
+const NEEDS_BASH = WIN && !GIT_BASH && 'the zn-gate plugin needs Git Bash on Windows, and this computer has none';
+const withBash = (m) => { if (WIN && GIT_BASH) m.env.CLAUDE_CODE_GIT_BASH_PATH = GIT_BASH; return m; };
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const VERSION = require('../package.json').version;
@@ -249,8 +256,8 @@ test('plan: Claude Code set up with zn hooks is repaired with zn hooks, not with
   assert.deepEqual(cc.steps.map(line), ['zn hooks install claude-code']);
 });
 
-test('plan: the plugin together with zn hooks gets one step that removes the hooks', { skip: process.platform === 'win32' && 'the zn-gate plugin needs Git Bash on Windows, which this fixture does not provide' }, async (t) => {
-  const m = machine(t, ['claude-code']);
+test('plan: the plugin together with zn hooks gets one step that removes the hooks', { skip: NEEDS_BASH }, async (t) => {
+  const m = withBash(machine(t, ['claude-code']));
   getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
   const root = path.join(m.home, '.claude', 'plugins', 'cache', 'usezn', 'zn-gate', '1.9.0');
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
@@ -264,6 +271,16 @@ test('plan: the plugin together with zn hooks gets one step that removes the hoo
   const cc = items.find((i) => i.id === 'claude-code');
   assert.deepEqual(cc.steps.map(line), ['zn hooks uninstall claude-code']);
   assert.match(cc.steps[0].label, /the zn-gate plugin stays/);
+});
+
+test('plan on Windows without Git Bash: the plugin cannot start there, so it is turned off and zn hooks stay', { skip: !WIN && 'Windows only' }, async (t) => {
+  // No CLAUDE_CODE_GIT_BASH_PATH and an empty PATH: Claude Code would run the plugin hook with Git Bash, and there is none.
+  const m = machine(t, ['claude-code']);
+  getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
+  pluginIn(m.home);
+  const { items } = await plan({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false });
+  const cc = items.find((i) => i.id === 'claude-code');
+  assert.deepEqual(cc.steps.map(line), ['claude plugin disable zn-gate@usezn']);
 });
 
 function pluginIn(home, enabled) {
@@ -438,21 +455,22 @@ test('guide: after repairing the hooks next to a broken plugin, the plugin is tu
   }
 });
 
-test('plan: zn rules that do not block .env get the zn-gate repair, never the plugin install', { skip: process.platform === 'win32' && 'the zn-gate plugin needs Git Bash on Windows, which this fixture does not provide' }, async (t) => {
+// Windows without Git Bash: the plan for a plugin that cannot start there is the plugin install again (measured; not asserted: reinstalling cannot give it a Git Bash).
+test('plan: zn rules that do not block .env get the zn-gate repair, never the plugin install', { skip: NEEDS_BASH }, async (t) => {
   const runner = require('../lib/hooks/runner');
   const real = runner.handle;
   runner.handle = async () => ({ decision: { decision: 'allow' } });
   t.after(() => { runner.handle = real; });
-  const m = machine(t, ['claude-code']);
+  const m = withBash(machine(t, ['claude-code']));
   pluginIn(m.home);
   const { items } = await plan({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false });
   const cc = items.find((i) => i.id === 'claude-code');
   assert.deepEqual(cc.steps.map(line), ['install zn-gate again: run `npm install -g zn-gate` in your own terminal, then run `zn-gate check` again']);
   assert.equal(cc.steps[0].run, null);
   // Claude Code set up with zn hooks only, and a broken plugin next to broken hooks: the same single step.
-  const h = machine(t, ['claude-code']);
+  const h = withBash(machine(t, ['claude-code']));
   getAdapter('claude-code').install({ scope: 'user', home: h.home, env: h.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
-  const b = machine(t, ['claude-code']);
+  const b = withBash(machine(t, ['claude-code']));
   goneNode(b);
   brokenPluginIn(b.home);
   for (const mm of [h, b]) {
