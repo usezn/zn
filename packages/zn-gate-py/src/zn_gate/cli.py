@@ -781,7 +781,9 @@ def build_parser() -> argparse.ArgumentParser:
     """The argument parser. Its sub-commands are the commands this package knows."""
     parser = argparse.ArgumentParser(
         prog="zn-gate",
-        description="zn deterministic guardrail engine for AI agents and LLM tool calling."
+        description="zn deterministic guardrail engine for AI agents and LLM tool calling.",
+        epilog="Also: reach --history  which secrets your coding agents kept in their session history "
+               "(types and counts, never values) [--json] [--max-seconds N]",
     )
     # -v and -V print the version too, as in the npm package.
     parser.add_argument("-v", "-V", "--version", action="version", version=f"zn-gate {__version__} (rules: {RULES_VERSION})")
@@ -839,6 +841,10 @@ def known_commands(parser: argparse.ArgumentParser) -> frozenset[str]:
 def main() -> int:
     _configure_output_streams()
     first = sys.argv[1] if len(sys.argv) > 1 else None
+    if first == "reach" and any(a in ("--history", "-h", "--help") or a.startswith("--max-seconds") for a in sys.argv[2:]):
+        # The one part of reach that is in this package: the history of your agents (the rest is npm only).
+        from .reach_history import run as run_reach_history
+        return run_reach_history(sys.argv[2:])
     if first in NPM_ONLY_SIMPLE_COMMANDS:
         sys.stderr.write(npm_only_simple_message(first))
         return 2
