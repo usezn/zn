@@ -34,7 +34,7 @@ Short meanings of words used in the zn-gate docs.
 
 **Home folder** (`~`): your personal folder on the computer. zn-gate keeps its own files in `~/.zn`.
 
-**Session key**: a key zn keeps while your vault is unlocked, so that only your user account can talk to the vault.
+**Session key**: a key zn keeps while your vault is unlocked.
 
 **Secret**: a value that gives access to something, such as an API key, a token or a password.
 
