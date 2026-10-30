@@ -344,6 +344,12 @@ function headKey(secrets) {
   return secrets.auditHead ? secrets.auditHead.seq + ':' + secrets.auditHead.mac : '';
 }
 
+/* Plain message for a log that could not be read (a permission problem, a failing disk). */
+function readErrorText(err) {
+  const code = err && err.code ? String(err.code).replace(/[^A-Za-z0-9_]/g, '').slice(0, 40) : '';
+  return 'the audit log cannot be read' + (code ? ' (' + code + ')' : '') + '; this is a read error, not a sign that it was changed. Next step: check the permissions and free space of ~/.zn/audit.jsonl, then try again.';
+}
+
 function chainStatus(state, opts) {
   const secrets = state.secrets;
   if (!secrets) throw znError(CODES.LOCKED, 'vault locked');
@@ -366,7 +372,8 @@ function chainStatus(state, opts) {
   try {
     r = audit.verify({ file, key: Buffer.from(secrets.auditKey, 'hex'), checkpoint: secrets.auditHead });
   } catch (err) {
-    r = { ok: false, records: 0, error: 'the audit log cannot be read' };
+    // An IO error is not evidence of tampering: report it, keep the checkpoint, store no mark.
+    return { ok: false, records: 0, readError: true, error: readErrorText(err) };
   }
   if (!r.ok) {
     recordTamper(state, r.error + (r.line ? ' (record ' + r.line + ')' : ''), null);
@@ -970,7 +977,13 @@ function makeOps(state, ctl) {
       // The encrypted vault remembers the last record (sequence number and
       // MAC): a lost tail or a replaced one is reported, and the warning is stored.
       const secrets = state.secrets;
-      const r = audit.verify({ file: auditFile, key: Buffer.from(secrets.auditKey, 'hex'), checkpoint: secrets.auditHead });
+      let r;
+      try {
+        r = audit.verify({ file: auditFile, key: Buffer.from(secrets.auditKey, 'hex'), checkpoint: secrets.auditHead });
+      } catch (err) {
+        if (secrets.auditTamper) r = { ok: false, records: 0 };
+        else return { ok: false, records: 0, readError: true, error: readErrorText(err) };
+      }
       if (!r.ok && !secrets.auditTamper) recordTamper(state, r.error + (r.line ? ' (record ' + r.line + ')' : ''), null);
       const t = secrets.auditTamper;
       if (!t) return r;
