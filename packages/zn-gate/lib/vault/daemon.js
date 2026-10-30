@@ -1010,6 +1010,8 @@ function makeOps(state, ctl) {
       const c = chainStatus(state);
       if (!c.ok) return { ok: false, tampered: c.tampered === true, error: c.error, line: c.line };
       const a = args && typeof args === 'object' ? args : {};
+      // verifyOnly: the caller streams the file itself; the content is not built here (a big log would not fit one message).
+      if (a.verifyOnly === true) return { ok: true, records: c.records };
       const r = require('../team/otel').exportAuditFile({ auditFile, since: a.since, installId: a.installId, orgId: a.orgId });
       return Object.assign({ ok: true }, r);
     },
