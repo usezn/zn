@@ -439,7 +439,7 @@ add('python3 -c "print(1)"', "python3 -c \"import shutil; shutil.rmtree('build')
 addRisk('rm_root_home', '(rm -rf ~)');
 addRisk('rm_root_home', 'time rm -rf ~');
 addRisk('rm_root_home', 'case x in x) rm -rf ~;; esac');
-// B-2410: a function defined on the line, coproc and env -S run a command through a wrapper; each is read through.
+// A function defined on the line, coproc and env -S run a command through a wrapper; each is read through.
 for (const t of ['~', '/', '$HOME', '/etc', '/home/alice']) {
   addRisk('rm_root_home', 'function f { rm -rf ' + t + '; }; f');
   addRisk('rm_root_home', 'function f() { rm -rf ' + t + '; }; f');
@@ -452,9 +452,14 @@ for (const t of ['~', '/', '$HOME', '/etc', '/home/alice']) {
   addRisk('rm_root_home', 'env -S "rm -rf ' + t + '"');
   addRisk('rm_root_home', "env -S 'rm -rf " + t + "'");
   addRisk('rm_root_home', 'env --split-string="rm -rf ' + t + '"');
+  addRisk('rm_root_home', "env -0S 'rm -rf " + t + "'");
+  addRisk('rm_root_home', "env -iS'rm -rf " + t + "'");
+  addRisk('rm_root_home', "env --split-s 'rm -rf " + t + "'");
+  addRisk('rm_root_home', "env -S '-i rm -rf " + t + "'");
+  addRisk('rm_root_home', "env -S '-u X rm -rf " + t + "'");
 }
 add('f() { ls; }; f', 'function f { ls; }; f', 'function f() { ls -la; }; f', 'function f { rm -rf ./build; }; f', 'coproc ls', 'coproc NAME { ls; }',
-  'coproc { sleep 1; }', 'env -S "ls -la"', "env -S 'echo hi'", 'env --split-string="ls -la"', 'env -S "rm -rf ./build"');
+  'coproc { sleep 1; }', 'env -S "ls -la"', "env -S 'echo hi'", 'env --split-string="ls -la"', 'env -S "rm -rf ./build"', "env -0S 'ls -la'", "env --split-s 'ls -la'", "env -S '-i ls -la'");
 
 /* ---------------------- shapes the policy does not read ---------------------- */
 const notCovered = [

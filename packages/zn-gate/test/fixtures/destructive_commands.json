@@ -430,7 +430,9 @@
   "echo use `iwr` | cat",
   "echo ~",
   "env --chdir=build rm -rf .",
+  "env --split-s 'ls -la'",
   "env --split-string=\"ls -la\"",
+  "env -0S 'ls -la'",
   "env -C / ls .",
   "env -C / true && rm -rf ./build",
   "env -C ~ ls -la",
@@ -442,6 +444,7 @@
   "env -C ~/projects/app sh -c \"rm -rf .\"",
   "env -S \"ls -la\"",
   "env -S \"rm -rf ./build\"",
+  "env -S '-i ls -la'",
   "env -S 'echo hi'",
   "env CI=1 rm --recursive --force .gradle build",
   "env CI=1 rm --recursive --force .tox build",
@@ -4056,6 +4059,26 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "env --split-s 'rm -rf $HOME'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-s 'rm -rf /'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-s 'rm -rf /etc'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-s 'rm -rf /home/alice'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-s 'rm -rf ~'",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "env --split-string=\"rm -rf $HOME\"",
    "rule": "rm_root_home"
   },
@@ -4073,6 +4096,26 @@
   },
   {
    "cmd": "env --split-string=\"rm -rf ~\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -0S 'rm -rf $HOME'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -0S 'rm -rf /'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -0S 'rm -rf /etc'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -0S 'rm -rf /home/alice'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -0S 'rm -rf ~'",
    "rule": "rm_root_home"
   },
   {
@@ -4256,6 +4299,46 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "env -S '-i rm -rf $HOME'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-i rm -rf /'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-i rm -rf /etc'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-i rm -rf /home/alice'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-i rm -rf ~'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-u X rm -rf $HOME'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-u X rm -rf /'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-u X rm -rf /etc'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-u X rm -rf /home/alice'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S '-u X rm -rf ~'",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "env -S 'rm -rf $HOME'",
    "rule": "rm_root_home"
   },
@@ -4297,6 +4380,26 @@
   },
   {
    "cmd": "env -iC ~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iS'rm -rf $HOME'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iS'rm -rf /'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iS'rm -rf /etc'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iS'rm -rf /home/alice'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iS'rm -rf ~'",
    "rule": "rm_root_home"
   },
   {

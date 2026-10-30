@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-30.16';
+const COMMAND_RULES_VERSION = '2026-10-30.17';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -274,6 +274,36 @@ function addDir(dirs, w) { if (w) dirs.push(w); }
 // Programs that only run another command: more than 32 of them in a row is refused, not read.
 const WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'exec', 'nohup', 'time', 'builtin', 'setsid', 'nice', 'ionice', 'timeout']);
 
+/* One env option word f (args[i - 1]); returns the index of the next word. Options are read like GNU env (getopt_long "+C:iS:u:v0a:"):
+   a short cluster is walked letter by letter, and C, S, u or a take the rest of the cluster or the next word as their value; a long
+   option may be an unambiguous prefix (--split-s, --chd). The -S string is kept for a second reading. */
+const ENV_LONG = ['ignore-environment', 'null', 'unset', 'chdir', 'split-string', 'argv0', 'debug', 'default-signal', 'ignore-signal', 'block-signal', 'list-signal-handling', 'version', 'help'];
+const ENV_LONG_VALUE = new Set(['unset', 'chdir', 'split-string', 'argv0']);
+function envOption(f, args, i, dirs, splits) {
+  const take = (kind, val, hasVal) => {
+    if (!hasVal) { val = i < args.length ? args[i] : undefined; i++; }
+    if (val === undefined) return;
+    if (kind === 'C') addDir(dirs, val);
+    else if (kind === 'S') splits.push(val);
+  };
+  if (f.startsWith('--')) {
+    const eq = f.indexOf('=');
+    const key = eq < 0 ? f.slice(2) : f.slice(2, eq);
+    if (!key) return i;
+    const names = ENV_LONG.filter((n) => n.startsWith(key));
+    const name = names.includes(key) ? key : names.length === 1 ? names[0] : null;
+    if (name && ENV_LONG_VALUE.has(name)) {
+      take(name === 'chdir' ? 'C' : name === 'split-string' ? 'S' : 'u', eq < 0 ? undefined : f.slice(eq + 1), eq >= 0);
+    }
+    return i;
+  }
+  for (let k = 1; k < f.length; k++) {
+    const c = f[k];
+    if (c === 'C' || c === 'S' || c === 'u' || c === 'a') { take(c, f.slice(k + 1), k + 1 < f.length); break; }
+  }
+  return i;
+}
+
 /* The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...) and shell keywords,
    with the words of the env -C / --chdir and sudo -D / --chdir options: { args, dir, overflow } (dir = null when none;
    overflow = more wrappers than can be followed). */
@@ -314,14 +344,7 @@ function unwrapDir(args) {
       while (i < args.length && (args[i].startsWith('-') || ASSIGN_RE.test(args[i]))) {
         const f = args[i++];
         if (!f.startsWith('-')) continue;
-        if (f === '--chdir' || /^-[A-Za-z]*C$/.test(f)) { addDir(dirs, args[i++]); continue; }
-        if (f.startsWith('--chdir=')) { addDir(dirs, f.slice(8)); continue; }
-        if (/^-C./.test(f)) { addDir(dirs, f.slice(2)); continue; }
-        // env -S "cmd args": the string is split into words and run as the command line.
-        if (f === '--split-string' || /^-[A-Za-z]*S$/.test(f)) { if (i < args.length) splits.push(args[i]); i++; continue; }
-        if (f.startsWith('--split-string=')) { splits.push(f.slice(15)); continue; }
-        if (/^-S./.test(f)) { splits.push(f.slice(2)); continue; }
-        if (f === '-u') i++;
+        i = envOption(f, args, i, dirs, splits);
       }
       continue;
     }
@@ -500,7 +523,9 @@ function checkSimple(words, depth, known) {
   // words after them. One reading for all of them, so the cost does not multiply with the number of -S options.
   if (un.splits.length && depth < MAX_DEPTH) {
     const tail = args.map((w) => "'" + w.replace(/'/g, "'\\''") + "'").join(' ');
-    const hit = analyze(un.splits.join(' ') + ' ' + tail, depth + 1, known);
+    // The string is read as the rest of an env command, so env options inside it (-i, -u NAME, -C DIR, -S) are read too.
+    const text = un.splits.map((x) => x.replace(/\\_/g, ' ').replace(/\\[tnvfr]/g, ' ')).join(' ');
+    const hit = analyze('env ' + text + ' ' + tail, depth + 1, known);
     if (hit) return hit;
   }
   if (!args.length) return null;

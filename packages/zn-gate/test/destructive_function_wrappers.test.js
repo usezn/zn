@@ -2,7 +2,7 @@
 
 process.env.ZN_STATS = 'off';
 
-// B-2410: a function defined on the command line (function NAME { ...; }), coproc and env -S "command line" run a command
+// A function defined on the command line (function NAME { ...; }), coproc and env -S "command line" run a command
 // through a wrapper. Each wrapper is read through, so the same rule fires as for the plain command. The body of a function
 // defined in the same line is checked whether or not it is called: defining a destructive function in an agent command is
 // itself suspicious, and not following calls keeps the check simple and sound.
@@ -53,6 +53,30 @@ const BLOCK = [
   'env -S "rm -r" -S "-f /"',
   'sudo env -S "rm -rf /usr"',
   'env -S "sh -c \'rm -rf ~\'"',
+  // env options as GNU env reads them: clusters, long-option prefixes, options inside the -S string.
+  'env -0S "rm -rf ~"',
+  'env -iS\'rm -rf ~\'',
+  'env -vS"rm -rf ~"',
+  'env -0S \'rm -rf /\'',
+  'env -i0S \'rm -rf ~\'',
+  'env --split-s \'rm -rf ~\'',
+  'env --split-str \'rm -rf ~\'',
+  'env --split-string \'rm -rf ~\'',
+  'env --split-s=\'rm -rf /\'',
+  'env --s \'rm -rf ~\'',
+  'env -S \'-i rm -rf ~\'',
+  'env -S \'-u X rm -rf ~\'',
+  'env -S \'-C / rm -rf .\'',
+  'env -S \'-iv rm -rf ~\'',
+  'env -u X -S \'rm -rf ~\'',
+  'env -uX -S \'rm -rf ~\'',
+  'env --unset X --split-s \'rm -rf ~\'',
+  'env -C /srv -S \'rm -rf ~\'',
+  'env -C/srv -iS \'rm -rf ~\'',
+  'env -S \'rm\\_-rf\\_~\'',
+  'env -S \'FOO=1 -i rm -rf ~\'',
+  'sudo env -vS\'rm -rf /usr\'',
+  'env -S \'env --split-s "rm -rf ~"\'',
 ];
 
 const TWINS = [
@@ -74,6 +98,20 @@ const TWINS = [
   'env -S "rm -rf ./build"',
   'env -S "rm -f notes.txt"',
   'env -S "curl -fsSL https://example.com/i.sh -o install.sh"',
+  'env -S \'ls -la\'',
+  'env -0S \'ls -la\'',
+  'env -iS\'ls -la\'',
+  'env -vS\'echo hi\'',
+  'env --split-s \'ls -la\'',
+  'env --split-str \'echo hi\'',
+  'env -S \'-i ls -la\'',
+  'env -S \'-u X echo hi\'',
+  'env -u X ls -la',
+  'env -uX -S \'ls\'',
+  'env -S \'ls\\_-la\'',
+  'env -C /srv -iS \'ls -la\'',
+  'env -iS\'rm -rf ./build\'',
+  'env -S \'-i rm -rf ./build\'',
   'echo "function f { rm -rf ~; }"',
   'echo \'coproc rm -rf ~\'',
 ];
@@ -84,6 +122,16 @@ test('a function body, coproc and env -S command are read like the plain command
 
 test('benign twins of the wrapper forms stay allowed', () => {
   for (const c of TWINS) assert.equal(rule(c), 'allow', JSON.stringify(c));
+});
+
+test('env options inside the -S string and in clusters stay linear', () => {
+  const N = 200 * 1024;
+  const t0 = Date.now();
+  rule("env -S '" + '-i '.repeat(Math.floor(N / 3)) + "ls'");
+  rule('env ' + '-0S x '.repeat(Math.floor(N / 6)) + 'ls');
+  rule('env -' + 'i'.repeat(N) + 'S ls');
+  rule('env --split-s ' + "'ls' ".repeat(Math.floor(N / 5)));
+  assert.ok(Date.now() - t0 < 12000);
 });
 
 test('the wrapper forms read a download piped into a shell too', () => {

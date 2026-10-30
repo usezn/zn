@@ -1,4 +1,4 @@
-"""B-2410: a function defined on the command line (function NAME { ...; }), coproc and env -S "command line" run a command
+"""A function defined on the command line (function NAME { ...; }), coproc and env -S "command line" run a command
 through a wrapper. Each wrapper is read through, so the same rule fires as for the plain command. The body of a function
 defined in the same line is checked whether or not it is called. Mirrors
 packages/zn-gate/test/destructive_function_wrappers.test.js. Only the text is checked; nothing is run."""
@@ -48,6 +48,30 @@ BLOCK = [
     'env -S "rm -r" -S "-f /"',
     'sudo env -S "rm -rf /usr"',
     "env -S \"sh -c 'rm -rf ~'\"",
+    # env options as GNU env reads them: clusters, long-option prefixes, options inside the -S string.
+    'env -0S "rm -rf ~"',
+    "env -iS'rm -rf ~'",
+    'env -vS"rm -rf ~"',
+    "env -0S 'rm -rf /'",
+    "env -i0S 'rm -rf ~'",
+    "env --split-s 'rm -rf ~'",
+    "env --split-str 'rm -rf ~'",
+    "env --split-string 'rm -rf ~'",
+    "env --split-s='rm -rf /'",
+    "env --s 'rm -rf ~'",
+    "env -S '-i rm -rf ~'",
+    "env -S '-u X rm -rf ~'",
+    "env -S '-C / rm -rf .'",
+    "env -S '-iv rm -rf ~'",
+    "env -u X -S 'rm -rf ~'",
+    "env -uX -S 'rm -rf ~'",
+    "env --unset X --split-s 'rm -rf ~'",
+    "env -C /srv -S 'rm -rf ~'",
+    "env -C/srv -iS 'rm -rf ~'",
+    "env -S 'rm\\_-rf\\_~'",
+    "env -S 'FOO=1 -i rm -rf ~'",
+    "sudo env -vS'rm -rf /usr'",
+    'env -S \'env --split-s "rm -rf ~"\'',
 ]
 
 TWINS = [
@@ -69,6 +93,20 @@ TWINS = [
     'env -S "rm -rf ./build"',
     'env -S "rm -f notes.txt"',
     'env -S "curl -fsSL https://example.com/i.sh -o install.sh"',
+    "env -S 'ls -la'",
+    "env -0S 'ls -la'",
+    "env -iS'ls -la'",
+    "env -vS'echo hi'",
+    "env --split-s 'ls -la'",
+    "env --split-str 'echo hi'",
+    "env -S '-i ls -la'",
+    "env -S '-u X echo hi'",
+    'env -u X ls -la',
+    "env -uX -S 'ls'",
+    "env -S 'ls\\_-la'",
+    "env -C /srv -iS 'ls -la'",
+    "env -iS'rm -rf ./build'",
+    "env -S '-i rm -rf ./build'",
     'echo "function f { rm -rf ~; }"',
     "echo 'coproc rm -rf ~'",
 ]
@@ -82,6 +120,16 @@ def test_wrapper_form_blocked(cmd):
 @pytest.mark.parametrize("cmd", TWINS)
 def test_twin_allowed(cmd):
     assert rule(cmd) == "allow"
+
+
+def test_env_option_forms_stay_linear():
+    n = 200 * 1024
+    t0 = time.time()
+    rule("env -S '" + "-i " * (n // 3) + "ls'")
+    rule("env " + "-0S x " * (n // 6) + "ls")
+    rule("env -" + "i" * n + "S ls")
+    rule("env --split-s " + "'ls' " * (n // 5))
+    assert time.time() - t0 < 12
 
 
 def test_wrapper_forms_read_download_pipes():

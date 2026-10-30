@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-30.16"
+COMMAND_RULES_VERSION = "2026-10-30.17"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -589,30 +589,7 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str]]
                 i += 1
                 if not f.startswith("-"):
                     continue
-                if f == "--chdir" or re.match(r"^-[A-Za-z]*C\Z", f):
-                    _add_dir(chdir, args[i] if i < len(args) else None)
-                    i += 1
-                    continue
-                if f.startswith("--chdir="):
-                    _add_dir(chdir, f[8:])
-                    continue
-                if re.match(r"^-C.", f):
-                    _add_dir(chdir, f[2:])
-                    continue
-                # env -S "cmd args": the string is split into words and run as the command line.
-                if f == "--split-string" or re.match(r"^-[A-Za-z]*S\Z", f):
-                    if i < len(args):
-                        splits.append(args[i])
-                    i += 1
-                    continue
-                if f.startswith("--split-string="):
-                    splits.append(f[15:])
-                    continue
-                if re.match(r"^-S.", f):
-                    splits.append(f[2:])
-                    continue
-                if f == "-u":
-                    i += 1
+                i = _env_option(f, args, i, chdir, splits)
             continue
         # Every other wrapper of the shared list (nohup, nice, ionice, timeout, stdbuf, command, exec, xargs, busybox ...).
         if name in _WRAPPERS:
@@ -620,6 +597,45 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str]]
             continue
         break
     return args[i:], chdir, overflow, splits
+
+
+_ENV_LONG = ("ignore-environment", "null", "unset", "chdir", "split-string", "argv0", "debug", "default-signal",
+             "ignore-signal", "block-signal", "list-signal-handling", "version", "help")
+_ENV_LONG_VALUE = ("unset", "chdir", "split-string", "argv0")
+
+
+def _env_option(f: str, args: List[str], i: int, chdir: list, splits: List[str]) -> int:
+    """One env option word f (args[i - 1]); returns the index of the next word. Read like GNU env (getopt_long "+C:iS:u:v0a:"):
+    a short cluster is walked letter by letter, and C, S, u or a take the rest of the cluster or the next word as their value;
+    a long option may be an unambiguous prefix (--split-s, --chd). The -S string is kept for a second reading."""
+    def take(kind: str, val, has_val: bool) -> None:
+        nonlocal i
+        if not has_val:
+            val = args[i] if i < len(args) else None
+            i += 1
+        if val is None:
+            return
+        if kind == "C":
+            _add_dir(chdir, val)
+        elif kind == "S":
+            splits.append(val)
+
+    if f.startswith("--"):
+        eq = f.find("=")
+        key = f[2:] if eq < 0 else f[2:eq]
+        if not key:
+            return i
+        names = [n for n in _ENV_LONG if n.startswith(key)]
+        name = key if key in names else (names[0] if len(names) == 1 else None)
+        if name in _ENV_LONG_VALUE:
+            take("C" if name == "chdir" else "S" if name == "split-string" else "u", None if eq < 0 else f[eq + 1:], eq >= 0)
+        return i
+    for k in range(1, len(f)):
+        c = f[k]
+        if c in "CSua":
+            take(c, f[k + 1:], k + 1 < len(f))
+            break
+    return i
 
 
 def _unwrap(args: List[str]) -> List[str]:
@@ -960,7 +976,9 @@ def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[s
     # the words after them. One reading for all of them, so the cost does not multiply with the number of -S options.
     if splits and depth < _MAX_DEPTH:
         tail = " ".join("'" + w.replace("'", "'\\''") + "'" for w in args)
-        hit = _analyze(" ".join(splits) + " " + tail, depth + 1, known)
+        # The string is read as the rest of an env command, so env options inside it (-i, -u NAME, -C DIR, -S) are read too.
+        text = " ".join(re.sub(r"\\[_tnvfr]", " ", x) for x in splits)
+        hit = _analyze("env " + text + " " + tail, depth + 1, known)
         if hit:
             return hit
     if not args:
