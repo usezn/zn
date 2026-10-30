@@ -902,6 +902,57 @@ async function runReachCommand(rest) {
   return zr.failed(r, failOn) ? 1 : 0;
 }
 
+// Options of scan and analyze. Any other option that starts with "--" is refused with exit 2: it is named and
+// the options the command takes are listed. Everything after a bare "--" is positional text, and so is anything
+// that does not start with "--" (analyze text may start with "-").
+const CLOUD_VALUE_OPTIONS = ['--key', '--stage', '--url', '--long-input'];
+const CLOUD_FLAG_OPTIONS = ['--local-only', '--verbose'];
+const COMMAND_OPTIONS = {
+  scan: {
+    value: ['--format', '--include', '--exclude', ...CLOUD_VALUE_OPTIONS],
+    flag: ['--code', '--all', '--allow-partial', '--include-home', ...CLOUD_FLAG_OPTIONS],
+    listed: ['--format', '--include', '--exclude', '--code', '--all', '--allow-partial', '--include-home'],
+  },
+  analyze: {
+    value: CLOUD_VALUE_OPTIONS,
+    flag: CLOUD_FLAG_OPTIONS,
+    listed: CLOUD_VALUE_OPTIONS.concat(CLOUD_FLAG_OPTIONS),
+  },
+};
+
+// The problem with an option of scan or analyze, or null when every option is one the command takes.
+function optionProblem(command, args) {
+  const spec = COMMAND_OPTIONS[command];
+  for (let i = 1; i < args.length; i++) {
+    const tok = args[i];
+    if (tok === '--') break;
+    if (!tok.startsWith('--')) continue;
+    const name = tok.split('=')[0];
+    const shown = tok.replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
+    const takesValue = spec.value.includes(name);
+    if (!takesValue && !spec.flag.includes(name)) {
+      let msg = 'unknown option "' + shown + '". The options of zn-gate ' + command + ' are ' + spec.listed.join(', ') + '.';
+      if (command === 'analyze') msg += ' To analyze text that starts with "--", put "--" before it: zn-gate analyze -- "<text>".';
+      return msg;
+    }
+    if (tok !== name) {
+      return takesValue ? '"' + shown + '": give the value as the next argument, as ' + name + ' VALUE.' : name + ' takes no value.';
+    }
+    if (takesValue) i++;
+  }
+  return null;
+}
+
+// The folder that scan audits: the first argument that is not an option or an option's value; "." when none.
+function scanTargetOf(args) {
+  for (let i = 1; i < args.length; i++) {
+    if (args[i] === '--') return args[i + 1] || '.';
+    if (!args[i].startsWith('--')) return args[i];
+    if (COMMAND_OPTIONS.scan.value.includes(args[i])) i++;
+  }
+  return '.';
+}
+
 async function main() {
   const args = process.argv.slice(2);
   if (args[0] === 'audit') {
@@ -946,6 +997,15 @@ async function main() {
   if (args.includes('-V') || args.includes('--version') || args[0] === 'version' || args[0] === '-v') {
     process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION}; scrub rules: ${SCRUB_RULES_VERSION}; audit rules: ${AUDIT_RULES_VERSION})\n`);
     process.exit(0);
+  }
+
+  if (args[0] === 'scan' || args[0] === 'analyze') {
+    const problem = optionProblem(args[0], args);
+    if (problem) {
+      process.stderr.write('zn-gate: ' + problem + '\n');
+      process.exitCode = 2;
+      return;
+    }
   }
 
   // Parse options
@@ -1065,7 +1125,7 @@ ${ruleLine(process.env, 60)}\n`);
   }
 
   if (command === 'scan') {
-    const targetPath = args[1] && !args[1].startsWith('--') ? args[1] : '.';
+    const targetPath = scanTargetOf(args);
     await handleScan(targetPath, options);
     return;
   }
@@ -1201,7 +1261,8 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
   }
 
   if (command === 'analyze') {
-    const textArgs = args.filter((a, idx) => {
+    const dashAt = args.indexOf('--');
+    const textArgs = dashAt !== -1 ? args.slice(dashAt + 1) : args.filter((a, idx) => {
       if (idx === 0) return false;
       if (a.startsWith('--')) return false;
       if (idx > 0 && args[idx - 1].startsWith('--') && args[idx - 1] !== '--local-only' && args[idx - 1] !== '--verbose') return false;
