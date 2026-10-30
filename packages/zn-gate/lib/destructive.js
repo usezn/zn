@@ -538,12 +538,31 @@ function isRcTarget(w) {
   return alts === null || alts.some(isRcPath);
 }
 
-function checkPipeline(pipe) {
+/* The words of a command without its redirections and their targets (>> ~/.bashrc curl URL is curl URL). */
+function stripRedirects(words) {
+  const out = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (/^\d*[<>]>?\|?$/.test(w)) { i++; continue; }
+    if (/^\d*[<>]>?\|?[^<>(\s]/.test(w)) continue;
+    out.push(w);
+  }
+  return out;
+}
+
+/* The folder a segment of a pipeline runs in: `known` (null = unknown) moved by an env -C / sudo -D in front of it. */
+function segmentDir(known, dir) {
+  const d = inDir(known, dir);
+  return typeof d === 'string' ? d : null;
+}
+
+function checkPipeline(pipe, known = null) {
   const heads = pipe.map((s) => {
-    const a = unwrap(s.words);
+    const un = unwrapDir(stripRedirects(s.words));
+    const a = un.args;
     const alts = a.length ? braceAlts(a[0]) : [''];
     const names = (alts || [String(a[0])]).map(programName);
-    return { args: a, head: names[0], names, overflow: alts === null };
+    return { args: a, head: names[0], names, overflow: alts === null, dir: segmentDir(known, un.dir) };
   });
   const firstDl = heads.findIndex((h) => h.overflow || h.names.some((n) => DOWNLOADERS.has(n)));
   if (firstDl >= 0) {
@@ -574,8 +593,11 @@ function checkPipeline(pipe) {
         else if (/^\d*>>?\|?.+$/.test(w)) target = w.replace(/^\d*>>?\|?/, '');
         else if (outFlag(prev)) target = w;
         else if (/^(?:--output|--output-document|-OutFile)[=:]/i.test(w)) target = w.replace(/^[^=:]*[=:]/, '');
+        else if (/^-[A-Za-z]*?[oO][^\s]/.test(w)) target = w.replace(/^-[A-Za-z]*?[oO]/, ''); // curl -o$HOME/.bashrc
         else if (heads[j].head === 'tee' && !w.startsWith('-') && i > 0) target = w;
-        if ((target !== null && isRcTarget(target)) && on('rc_download')) return 'rc_download';
+        else if (heads[j].head === 'dd' && w.startsWith('of=')) target = w.slice(3);
+        // A relative file is read from the folder an earlier cd, pushd or env -C moved to.
+        if ((target !== null && isRcTarget(fromCwd(heads[j].dir, target))) && on('rc_download')) return 'rc_download';
       }
     }
   }
@@ -615,12 +637,12 @@ function checkSegments(segs, depth, known0 = null) {
     }
     pipe.push(seg);
     if (!isPipe(seg.sep)) {
-      const hit2 = checkPipeline(pipe);
+      const hit2 = checkPipeline(pipe, known);
       if (hit2) return hit2;
       pipe = [];
     }
   }
-  return pipe.length ? checkPipeline(pipe) : null;
+  return pipe.length ? checkPipeline(pipe, known) : null;
 }
 
 function analyze(cmd, depth = 0, known = null) {

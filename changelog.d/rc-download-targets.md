@@ -1,0 +1,2 @@
+### Security
+- A download written into a shell startup file is now found whatever the spelling of the target: `curl -o$HOME/.bashrc URL`, `>> ~/.bashrc curl URL`, `curl URL | dd of=$HOME/.bashrc`, `curl URL | tee -a ~/.zshrc`, and a relative file after a change of folder (`cd ~ && curl URL -o .bashrc`, `pushd ~ && ...`, `env -C ~ curl URL -o .bashrc`). A file in a project folder (`cd ~/app && curl URL -o notes.txt`) stays allowed.

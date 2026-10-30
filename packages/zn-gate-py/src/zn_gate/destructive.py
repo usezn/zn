@@ -989,17 +989,40 @@ def _brace_alts(w: str) -> Optional[List[str]]:
     return _expand_braces(_SEQ_RE.sub(_expand_seq, str(w)))
 
 
-def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str]:
+def _strip_redirects(words: List[str]) -> List[str]:
+    """The words of a command without its redirections and their targets (>> ~/.bashrc curl URL is curl URL)."""
+    out: List[str] = []
+    skip = False
+    for w in words:
+        if skip:
+            skip = False
+            continue
+        if re.match(r"^\d*[<>]>?\|?\Z", w, _A):
+            skip = True
+            continue
+        if re.match(r"^\d*[<>]>?\|?[^<>(\s]", w, _A):
+            continue
+        out.append(w)
+    return out
+
+
+def _segment_dir(known: Optional[str], d: Optional[str]) -> Optional[str]:
+    """The folder a segment of a pipeline runs in: known (None = unknown) moved by an env -C / sudo -D in front of it."""
+    r = _in_dir(known, d)
+    return r if isinstance(r, str) else None
+
+
+def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None) -> Optional[str]:
     heads = []
     for words, _sep in pipe:
-        a = _unwrap(words)
+        a, d = _unwrap_dir(_strip_redirects(words))
         alts = _brace_alts(a[0]) if a else [""]
         names = [_program_name(x) for x in (alts if alts is not None else [str(a[0])])]
-        heads.append((a, names[0], names, alts is None))
+        heads.append((a, names[0], names, alts is None, _segment_dir(known, d)))
     first_dl = next((j for j, h in enumerate(heads) if h[3] or any(n in _DOWNLOADERS for n in h[2])), -1)
     if first_dl >= 0:
         for j in range(first_dl + 1, len(pipe)):
-            args, head, names, overflow = heads[j]
+            args, head, names, overflow, _dir = heads[j]
             # an interpreter that reads its program from the pipe (python3, python3 -, node, perl, ruby)
             interp = "" if overflow or any(n in _SHELLS for n in names) else next((k for k in map(_interpreter_kind, names) if k), "")
             if interp:
@@ -1026,10 +1049,15 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
                     target = w
                 elif re.match(r"^(?:--output|--output-document|-OutFile)[=:]", w, re.I):
                     target = re.sub(r"^[^=:]*[=:]", "", w, count=1)
+                elif re.match(r"^-[A-Za-z]*?[oO]\S", w):
+                    target = re.sub(r"^-[A-Za-z]*?[oO]", "", w, count=1)  # curl -o$HOME/.bashrc
                 elif heads[j][1] == "tee" and not w.startswith("-") and i > 0:
                     target = w
+                elif heads[j][1] == "dd" and w.startswith("of="):
+                    target = w[3:]
                 if target is not None:
-                    alts = _brace_alts(target)
+                    # A relative file is read from the folder an earlier cd, pushd or env -C moved to.
+                    alts = _brace_alts(_from_cwd(heads[j][4], target))
                     if alts is None or any(_is_rc_path(t) for t in alts):
                         return "rc_download"
     for words, _sep in pipe:
@@ -1066,11 +1094,11 @@ def _check_segments(
                 cwd = known if known is not None and _dangerous_path(known) else None
         pipe.append((words, sep))
         if not _is_pipe(sep):
-            hit2 = _check_pipeline(pipe)
+            hit2 = _check_pipeline(pipe, known)
             if hit2:
                 return hit2
             pipe = []
-    return _check_pipeline(pipe) if pipe else None
+    return _check_pipeline(pipe, known) if pipe else None
 
 
 def _analyze(cmd: str, depth: int = 0, known: Optional[str] = None) -> Optional[str]:
