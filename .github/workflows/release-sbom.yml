@@ -8,6 +8,9 @@ on:
       - '.github/scripts/sbom-serial.js'
       - '.github/scripts/sbom-serial.test.mjs'
       - '.github/scripts/check-sbom.js'
+      - '.github/scripts/check-sbom.test.mjs'
+      - '.github/scripts/check-npm-pack.js'
+      - '.github/scripts/check-npm-pack.test.mjs'
       - '.github/workflows/build-release.yml'
       - '.github/workflows/release-sbom.yml'
   push:
@@ -16,6 +19,9 @@ on:
       - '.github/scripts/sbom-serial.js'
       - '.github/scripts/sbom-serial.test.mjs'
       - '.github/scripts/check-sbom.js'
+      - '.github/scripts/check-sbom.test.mjs'
+      - '.github/scripts/check-npm-pack.js'
+      - '.github/scripts/check-npm-pack.test.mjs'
       - '.github/workflows/build-release.yml'
       - '.github/workflows/release-sbom.yml'
 
