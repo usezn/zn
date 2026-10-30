@@ -99,6 +99,7 @@ jobs:
           base=$(grep -v '^#' ../../.github/windows-skip-baseline.txt | tr -d '[:space:]')
           echo "Tests skipped on Windows: $count (baseline $base)"
           echo "Tests skipped on Windows: $count (baseline $base)" >> "$GITHUB_STEP_SUMMARY"
+          case "$base" in ''|*[!0-9]*) echo 'The baseline in .github/windows-skip-baseline.txt is not a number.'; exit 1;; esac
           if [ "$found" = 0 ]; then echo 'No skipped-test summary found in the test output.'; exit 1; fi
           if [ "$count" -gt "$base" ]; then
             echo "More tests are skipped on Windows than the baseline allows ($count > $base). Run them, or skip them with a reason and raise the baseline in .github/windows-skip-baseline.txt."

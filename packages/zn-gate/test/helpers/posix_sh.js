@@ -20,7 +20,7 @@ function starts(program) {
 
 const hasPosixSh = process.platform !== 'win32' || (starts('/bin/sh') && starts('sh'));
 
-const NEEDS = 'needs a POSIX sh: on Windows, Git for Windows with its usr/bin folder linked as \bin and on the PATH';
+const NEEDS = 'needs a POSIX sh: on Windows, Git for Windows with its usr/bin folder linked as \\bin and on the PATH';
 
 /**
  * The value for the `skip` option of a test that needs a POSIX sh. On Windows the test is skipped with the
