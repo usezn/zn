@@ -201,7 +201,7 @@ function projectEnv() {
 // which blocks reads of secret files, puts commands that use stored secrets
 // through \`zn run\`, and replaces secret values in tool output with __ZN_ tokens.
 import { spawn } from "node:child_process";
-import { statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 
 ${launch}
 ${projectEnvSource}const TIMEOUT_MS = ${HOOK_TIMEOUT_S * 1000};
@@ -215,7 +215,12 @@ const SHELL = String(process.env.SHELL || "").replace(/\\\\/g, "/").split("/").p
 // Why the hook could not answer, in plain words: a spawn error names the missing program, not a raw ENOENT.
 const REPAIR = ${repair};
 // A spawn also fails with ENOENT when the folder OpenCode was started from was deleted (on Linux and macOS it still answers a stat, with no links left); then the fix is not to reinstall anything.
+// Several checks, since platforms disagree: the folder path remembered at start is gone, the current folder cannot be read, or it has no links left.
+let START = null;
+try { START = process.cwd(); } catch (_) { /* already gone */ }
 function folderGone() {
+  try { if (START && !existsSync(START)) return true; } catch (_) { return true; }
+  try { process.cwd(); } catch (_) { return true; }
   try { return statSync(".").nlink === 0; } catch (_) { return true; }
 }
 function why(m) {
