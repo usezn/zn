@@ -1,0 +1,1 @@
+- `zn-gate check` now labels Gemini CLI as experimental, like Copilot CLI, matching the install warning and the docs.
