@@ -53,7 +53,7 @@ test('render: plain messages are cleaned, structured ones keep warnings first an
 test('noneChannel refuses every request with a message that explains how to get a channel', async () => {
   const ch = confirm.noneChannel();
   assert.equal(ch.kind, 'none');
-  await assert.rejects(() => ch.confirm({ title: 't' }), (e) => e.code === 'ZN_POLICY_DENIED' && e.noChannel === true && /(zn|npx -y zn-gate@[0-9.]+) unlock --foreground/.test(e.message));
+  await assert.rejects(() => ch.confirm({ title: 't' }), (e) => e.code === 'ZN_POLICY_DENIED' && e.noChannel === true && /(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock --foreground/.test(e.message));
 });
 
 test('ttyChannel: yes, YES and "y" allow; anything else denies', async (tc) => {
@@ -120,6 +120,7 @@ test('guiCommand: Windows needs the system PowerShell and sends the text in the 
   const cmd = confirm.guiCommand(req, { platform: 'win32', powershell: 'C:\\fake\\powershell.exe', exists: () => true, timeoutMs: 1000 });
   assert.equal(cmd.file, 'C:\\fake\\powershell.exe');
   assert.ok(cmd.args.includes('-EncodedCommand'));
+  assert.ok(!cmd.args.some((a) => /^-ExecutionPolicy$/i.test(a)), 'no execution policy argument');
   assert.equal(cmd.env.ZN_CONFIRM_TEXT, 'fake text');
   assert.equal(cmd.env.ZN_CONFIRM_TITLE, 'zn: T');
   assert.equal(cmd.env.ZN_CONFIRM_SECONDS, '5'); // never below five seconds

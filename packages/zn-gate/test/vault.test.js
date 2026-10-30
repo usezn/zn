@@ -34,6 +34,7 @@ const mode = (f) => fs.statSync(f).mode & 0o777;
 
 let identity = null;
 let srv = null;
+let GH_VALUE = null;
 
 // The daemon's out-of-band confirmation channel, answered by the test.
 const confirmations = [];
@@ -160,9 +161,9 @@ test('daemon: tokens are deterministic per project and survive a restart', async
   await startDaemon();
   const c2 = clientMod.createClient({});
   assert.strictEqual(await c2.mapToken('/work/app', 'EMAIL', v1), t1);
-  assert.strictEqual(await c2.resolve('/work/app', t1), v1);
-  assert.strictEqual(await c2.resolve('/work/other', t1), 'bob@example.org');
-  assert.strictEqual(await c2.resolve('/work/app', '__ZN_EMAIL_42__'), null);
+  assert.strictEqual(await c2.resolve('/work/app', t1, { destination: 'write_ignored' }), v1);
+  assert.strictEqual(await c2.resolve('/work/other', t1, { destination: 'write_ignored' }), 'bob@example.org');
+  assert.strictEqual(await c2.resolve('/work/app', '__ZN_EMAIL_42__', { destination: 'write_ignored' }), null);
   c2.close();
 });
 
@@ -203,7 +204,8 @@ test('daemon: the zn cloud key is refused to hooks, the broker and zn run', asyn
 test('daemon: named secrets, reserved names, metadata updates, backups', async () => {
   const c = clientMod.createClient({});
   const value = 'ghp_' + fake(36);
-  await c.setSecret('GITHUB_TOKEN', value, { mode: 'proxy', allowHosts: ['api.github.com', 'not a host!'], injectAt: 'header', bogus: 1 });
+  await c.setSecret('GITHUB_TOKEN', value, { mode: 'env', allowHosts: ['api.github.com', 'not a host!'], injectAt: 'header', bogus: 1 });
+  GH_VALUE = value;
   for (const bad of ['AWS_KEY_1', 'REDACTED_EMAIL', 'lowercase', 'X'.repeat(80)]) {
     await assert.rejects(c.setSecret(bad, 'x'.repeat(12)), (e) => e.code === 'ZN_POLICY_DENIED', bad);
   }
@@ -212,18 +214,74 @@ test('daemon: named secrets, reserved names, metadata updates, backups', async (
   assert.deepStrictEqual(list[0].allowHosts, ['api.github.com']);
   assert.ok(!JSON.stringify(list).includes(value), 'listSecrets must never return values');
   await c.updateSecretMeta('GITHUB_TOKEN', { allowHosts: ['api.github.com', 'uploads.github.com'] });
-  assert.strictEqual(await c.resolve('/work/app', '__ZN_GITHUB_TOKEN__'), value, 'meta update keeps the value');
+  assert.strictEqual(await c.resolve('/work/app', '__ZN_GITHUB_TOKEN__', { destination: 'write_ignored' }), value, 'meta update keeps the value');
   await assert.rejects(c.updateSecretMeta('MISSING', {}), (e) => e.code === 'ZN_NOT_FOUND');
-  await c.setSecret('ENV_BACKUP_ABCDEF', 'A=1\nB=' + fake(20) + '\n', { mode: 'backup' });
-  const exact = await c.exactValues('/work/app');
-  assert.ok(exact.some((e) => e.name === 'GITHUB_TOKEN' && e.values[0] === value && e.values.length >= 4));
-  assert.ok(!exact.some((e) => e.name === 'ENV_BACKUP_ABCDEF'), 'backups are not exact values');
-  assert.ok(exact.some((e) => !e.name && e.type === 'EMAIL'), 'detected project values are exact values');
+  const backupText = 'A=1\nB=' + fake(20) + '\n';
+  await c.setSecret('ENV_BACKUP_ABCDEF', backupText, { mode: 'backup' });
+  // The daemon matches; no call hands out a value, an encoding of one or a hash.
+  const info = await c.maskInfo('/work/app');
+  assert.ok(info.names.includes('GITHUB_TOKEN') && info.longest >= value.length && info.count >= 4);
+  assert.ok(!info.names.includes('ENV_BACKUP_ABCDEF'), 'backups are not looked for');
+  assert.ok(!JSON.stringify(info).includes(value));
+  const [found, backupFound, detectedFound] = await c.maskSpans('/work/app', ['x ' + value + ' y', backupText, 'to bob@example.org now']);
+  assert.ok(found.some((s) => s.name === 'GITHUB_TOKEN' && s.variant === 'raw' && s.start === 2 && s.end === 2 + value.length && s.vault === true));
+  assert.ok(found.every((s) => !('value' in s) && !('values' in s)));
+  assert.deepStrictEqual(backupFound, [], 'backups are not exact values');
+  assert.ok(detectedFound.some((s) => !s.name && s.type === 'EMAIL'), 'detected project values are matched too');
+  await assert.rejects(c.call('exactValues', ['/work/app', { purpose: 'mask' }]), (e) => e.code === 'ZN_POLICY_DENIED' && /unknown operation/.test(e.message));
   assert.strictEqual(await c.removeSecret('ENV_BACKUP_ABCDEF'), true);
   assert.strictEqual(await c.removeSecret('ENV_BACKUP_ABCDEF'), false);
   list = await c.listSecrets();
   assert.deepStrictEqual(list.map((s) => s.name), ['GITHUB_TOKEN']);
   c.close();
+});
+
+test('daemon: a new value under 8 characters is refused; a short value from an older version keeps working', async () => {
+  const c = clientMod.createClient({});
+  for (const short of ['a', 'abc123', 'abcdefg']) {
+    await assert.rejects(c.setSecret('SHORT_PIN', short, { mode: 'env' }), (e) => e.code === 'ZN_POLICY_DENIED' && /at least 8 characters/.test(e.message), short);
+  }
+  assert.ok(!(await c.listSecrets()).some((s) => s.name === 'SHORT_PIN'), 'nothing was stored');
+  await c.setSecret('EIGHT_PIN', 'abcdefgh', { mode: 'env' });
+  assert.strictEqual(await c.removeSecret('EIGHT_PIN'), true);
+  c.close();
+  // A vault written by an older version holds a 6-character value.
+  await stopDaemon();
+  const p = store.paths();
+  const meta = keychain.readMeta({});
+  const doc = await store.readEncrypted(p.secretsFile, identity);
+  const original = fs.readFileSync(p.secretsFile);
+  try {
+    doc.secrets.LEGACY_PIN = { mode: 'env', allowHosts: [], allowCommands: [], allowIn: ['header'], source: 'local', value: 'pin-42', created: new Date().toISOString(), lastUsed: null };
+    // The integrity tag the daemon checks (HMAC keyed by the identity), as an older version wrote it.
+    delete doc.mac;
+    const macKey = crypto.createHmac('sha256', String(identity)).update('zn-vault-integrity-v1').digest();
+    doc.mac = crypto.createHmac('sha256', macKey).update(JSON.stringify(doc)).digest('hex');
+    await store.writeEncrypted(p.secretsFile, doc, meta.recipient);
+    await startDaemon();
+    const d = clientMod.createClient({});
+    // The daemon matches it itself (exactly, the whole text) and reports only a count of such values.
+    const info = await d.maskInfo('/work/app');
+    assert.strictEqual(info.shortCount, 1, 'one short value, counted and never shown');
+    assert.ok(info.names.includes('LEGACY_PIN'));
+    assert.ok(!JSON.stringify(info).includes('pin-42'));
+    const [whole, padded, inside, partial] = await d.maskSpans('/work/app', ['pin-42', ' pin-42\n', 'use pin-42 here', 'pin-4']);
+    assert.deepStrictEqual(whole.map((x) => [x.start, x.end, x.name]), [[0, 6, 'LEGACY_PIN']]);
+    assert.deepStrictEqual(padded.map((x) => [x.start, x.end, x.name]), [[1, 7, 'LEGACY_PIN']]);
+    assert.deepStrictEqual(inside, [], 'never as part of a longer text');
+    assert.deepStrictEqual(partial, []);
+    assert.strictEqual(await d.resolve('/work/app', '__ZN_LEGACY_PIN__', { destination: 'write_ignored' }), 'pin-42', 'it still resolves');
+    // Saving it again unchanged (a metadata change) is allowed; another short value is not.
+    await d.setSecret('LEGACY_PIN', 'pin-42', { mode: 'env', allowCommands: ['node'] });
+    await assert.rejects(d.setSecret('LEGACY_PIN', 'pin-43', { mode: 'env' }), (e) => /at least 8 characters/.test(e.message));
+    assert.strictEqual(await d.removeSecret('LEGACY_PIN'), true);
+    d.close();
+  } finally {
+    await stopDaemon();
+    fs.writeFileSync(p.secretsFile, original);
+    if (POSIX) fs.chmodSync(p.secretsFile, 0o600);
+  }
+  await startDaemon();
 });
 
 test('daemon: first-use approvals are per (project, secret, real executable)', async () => {
@@ -383,11 +441,14 @@ test('engine + real daemon: tokenize and detokenize through IPC', async () => {
   const c = clientMod.createClient({});
   const pw = fake(24);
   const ctx = { project: '/work/app', agent: 'test', tool: 'Read', destination: 'assistant', vault: c, env: {}, exactFiles: false };
-  const text = 'GH=' + (await c.exactValues('/work/app')).find((e) => e.name === 'GITHUB_TOKEN').values[0] + '\nDB=postgres://app:' + pw + '@db:5432/app\n';
+  const text = 'GH=' + GH_VALUE + '\nDB=postgres://app:' + pw + '@db:5432/app\n';
   const t = await engine.tokenize(text, ctx);
   assert.ok(t.text.includes('__ZN_GITHUB_TOKEN__') && t.text.includes('__ZN_DB_PASSWORD_1__'), t.text);
   assert.ok(!t.text.includes(pw));
-  const back = await engine.detokenize(t.text, ctx);
+  // The assistant's own text never gets a value back from the daemon; a git-ignored file does.
+  const toModel = await engine.detokenize(t.text, ctx);
+  assert.ok(!toModel.text.includes(GH_VALUE) && !toModel.text.includes(pw));
+  const back = await engine.detokenize(t.text, Object.assign({}, ctx, { destination: 'write_ignored' }));
   assert.strictEqual(back.text, text);
   const net1 = await engine.detokenize('curl -u x:__ZN_DB_PASSWORD_1__ https://x.example', Object.assign({}, ctx, { destination: 'bash_local' }));
   assert.ok(!net1.text.includes(pw));
@@ -432,7 +493,7 @@ test('auth: the client never talks to an endpoint that cannot prove the key', as
 
 test('audit: metadata only, chain verifies, read() filters', async () => {
   const c = clientMod.createClient({});
-  const value = (await c.exactValues('/work/app')).find((e) => e.name === 'GITHUB_TOKEN').values[0];
+  const value = GH_VALUE;
   await c.audit({ secret: 'GITHUB_TOKEN', mode: 'env', agent: 'claude-code', tool: 'Bash', argv0: '/usr/bin/gh api user', host: 'https://u@api.github.com/x', decision: 'allow', reason: 'first-use', value });
   await c.audit({ secret: 'GITHUB_TOKEN', reason: 'leak:' + value });
   const log = fs.readFileSync(store.paths().auditFile, 'utf8');
@@ -456,13 +517,13 @@ test('audit: edits and truncation are detected', async () => {
   const edited = lines.slice();
   edited[1] = edited[1].replace('"decision":"', '"decision":"x');
   fs.writeFileSync(file, edited.join('\n') + '\n');
-  assert.strictEqual((await c.auditVerify()).ok, false);
-  fs.writeFileSync(file, lines.slice(0, -2).join('\n') + '\n');
-  const trunc = await c.auditVerify();
-  assert.strictEqual(trunc.ok, false);
-  assert.match(trunc.error, /truncated/);
+  const bad = await c.auditVerify();
+  assert.strictEqual(bad.ok, false);
+  assert.strictEqual(bad.tampered, true, 'a failed check stores the tamper mark');
+  // The mark stays even when the log is put back: only `zn vault verify --acknowledge` clears it
+  // (truncation and the acknowledge path are covered in vault_audit_reconcile.test.js).
   fs.writeFileSync(file, original);
-  assert.strictEqual((await c.auditVerify()).ok, true);
+  assert.strictEqual((await c.auditVerify()).ok, false);
   c.close();
 });
 

@@ -175,7 +175,7 @@ fn default_channel_capacity() -> usize {
 }
 
 /// Security-related configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
     /// API key for authentication (if None, auth is disabled - NOT recommended for production)
     pub api_key: Option<String>,
@@ -200,6 +200,23 @@ pub struct SecurityConfig {
 
     /// Token for MCP WebSocket authentication
     pub mcp_ws_token: Option<String>,
+}
+
+/// Debug output hides the API key, the JWT secret and the MCP WebSocket
+/// token, so a `{:?}` of the configuration never leaks them.
+impl std::fmt::Debug for SecurityConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let hide = |v: &Option<String>| v.as_ref().map(|_| "<redacted>");
+        f.debug_struct("SecurityConfig")
+            .field("api_key", &hide(&self.api_key))
+            .field("allowed_origins", &self.allowed_origins)
+            .field("rate_limit_enabled", &self.rate_limit_enabled)
+            .field("rate_limit_per_minute", &self.rate_limit_per_minute)
+            .field("namespace", &self.namespace)
+            .field("jwt_secret", &hide(&self.jwt_secret))
+            .field("mcp_ws_token", &hide(&self.mcp_ws_token))
+            .finish()
+    }
 }
 
 impl Default for SecurityConfig {
@@ -315,6 +332,20 @@ pub struct AuditConfig {
 
     /// Database encryption key
     pub encryption_key: Option<String>,
+
+    /// Persist the (scrubbed) request payload of each audited call.
+    /// Off by default: the audit log keeps only metadata (event, time, tool,
+    /// status, policy, agent, namespace). Turning it on requires an
+    /// encryption key (`ZN_DB_KEY`), in every environment.
+    #[serde(default)]
+    pub store_payloads: bool,
+
+    /// Fail closed when the audit record of a call cannot be written: the
+    /// call is denied with a JSON-RPC error. Off by default: a write failure
+    /// is logged and counted (`zn_audit_write_failures_total`) and the call
+    /// goes on.
+    #[serde(default)]
+    pub require_write: bool,
 }
 
 impl Default for AuditConfig {
@@ -324,6 +355,8 @@ impl Default for AuditConfig {
             max_logs_in_memory: default_max_logs(),
             encryption_enabled: false,
             encryption_key: std::env::var("ZN_DB_KEY").ok(),
+            store_payloads: false,
+            require_write: false,
         }
     }
 }
@@ -683,6 +716,61 @@ fn default_fpr_margin() -> f64 {
 }
 
 impl ZnConfig {
+    /// A copy without the values `ZnConfig::default()` takes from the
+    /// environment, so they are not written to a file. Keys and tokens
+    /// (`ZN_API_KEY`, `ZN_JWT_SECRET`, `ZN_MCP_WS_TOKEN`, `ZN_DB_KEY`) are
+    /// always cleared. The namespace and the KMS key id and region are cleared
+    /// when they equal the current environment value (a value set in the
+    /// config itself is kept). Cleared values are read from the environment
+    /// again at start.
+    pub fn without_env_values(&self) -> Self {
+        fn same_as_env(value: &mut Option<String>, var: &str) {
+            if let (Some(v), Ok(env)) = (value.as_ref(), std::env::var(var)) {
+                if *v == env {
+                    *value = None;
+                }
+            }
+        }
+        let mut config = self.clone();
+        config.security.api_key = None;
+        config.security.jwt_secret = None;
+        config.security.mcp_ws_token = None;
+        config.audit.encryption_key = None;
+        same_as_env(&mut config.security.namespace, "ZN_NAMESPACE");
+        same_as_env(&mut config.kms.key_id, "ZN_KMS_KEY_ID");
+        same_as_env(&mut config.kms.region, "ZN_KMS_REGION");
+        config
+    }
+
+    /// The configuration `zn init` writes: the defaults, without any value
+    /// read from the environment.
+    pub fn init_template() -> Self {
+        Self::default().without_env_values()
+    }
+
+    /// Write `init_template()` to `path` as JSON, owner-only on Unix.
+    pub fn write_init_file(path: &Path) -> Result<()> {
+        Self::write_private_json(path, &Self::init_template())
+    }
+
+    /// Write `config` to `path` as pretty JSON through `write_private_file`.
+    pub fn write_private_json(path: &Path, config: &Self) -> Result<()> {
+        let json = serde_json::to_string_pretty(config)?;
+        Self::write_private_file(path, json.as_bytes())
+    }
+
+    /// The one protected writer for files that hold configuration (zn.json
+    /// and the locally saved synced config). It delegates to the shared
+    /// private-file module: a new 0600 temporary file in the same directory is
+    /// renamed over `path`, so a reader never sees a partial file and an
+    /// existing regular file is replaced atomically and ends up owner-only. A
+    /// `path` that is a symbolic link or is not a regular file (a directory, a
+    /// FIFO, a device) is refused and left untouched.
+    pub fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+        crate::private_file::create_private_file(path, bytes)
+            .map_err(|e| anyhow!("cannot write {}: {e}", path.display()))
+    }
+
     /// Load configuration from file with environment variable overrides
     pub fn load(path: Option<&Path>) -> Result<Self> {
         let mut config = if let Some(p) = path {
@@ -790,6 +878,14 @@ impl ZnConfig {
             self.audit.encryption_enabled = true;
         }
 
+        if let Ok(v) = std::env::var("ZN_AUDIT_STORE_PAYLOADS") {
+            self.audit.store_payloads = matches!(v.trim(), "1" | "true" | "TRUE" | "True");
+        }
+
+        if let Ok(v) = std::env::var("ZN_AUDIT_REQUIRE_WRITE") {
+            self.audit.require_write = matches!(v.trim(), "1" | "true" | "TRUE" | "True");
+        }
+
         if let Ok(endpoint) = std::env::var("ZN_SIEM_ENDPOINT") {
             self.siem.endpoint = Some(endpoint);
         }
@@ -892,6 +988,15 @@ impl ZnConfig {
         {
             return Err(anyhow!(
                 "Audit log encryption is MANDATORY in production. Please set ZN_DB_KEY."
+            ));
+        }
+
+        if self.audit.store_payloads
+            && self.kms.key_id.is_none()
+            && (!self.audit.encryption_enabled || self.audit.encryption_key.is_none())
+        {
+            return Err(anyhow!(
+                "audit.store_payloads needs an encryption key: set ZN_DB_KEY, or leave payloads off (the default)."
             ));
         }
 
@@ -1029,5 +1134,58 @@ mod credential_tests {
         );
         assert_eq!(credential_override(some("  "), None), None);
         assert_eq!(credential_override(None, None), None);
+    }
+
+    #[test]
+    fn security_config_debug_hides_secrets() {
+        let c = SecurityConfig {
+            api_key: Some("fake-api-key-0000".to_string()),
+            jwt_secret: Some("fake-jwt-secret-0000".to_string()),
+            mcp_ws_token: Some("fake-ws-token-0000".to_string()),
+            ..SecurityConfig::default()
+        };
+        let out = format!("{:?} {:#?}", c, c);
+        for secret in [
+            "fake-api-key-0000",
+            "fake-jwt-secret-0000",
+            "fake-ws-token-0000",
+        ] {
+            assert!(!out.contains(secret), "{secret} leaked");
+        }
+        assert!(out.contains("<redacted>"));
+    }
+}
+
+#[cfg(test)]
+mod audit_payload_tests {
+    use super::*;
+
+    #[test]
+    fn payload_storage_is_off_by_default() {
+        assert!(!AuditConfig::default().store_payloads);
+        let parsed: AuditConfig = serde_json::from_str("{}").unwrap();
+        assert!(!parsed.store_payloads);
+    }
+
+    #[test]
+    fn payload_storage_without_a_key_is_refused() {
+        let mut cfg = ZnConfig::default();
+        cfg.audit.store_payloads = true;
+        cfg.audit.encryption_enabled = false;
+        cfg.audit.encryption_key = None;
+        cfg.kms.key_id = None;
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("store_payloads"), "{err}");
+    }
+
+    #[test]
+    fn payload_storage_with_a_key_passes_that_check() {
+        let mut cfg = ZnConfig::default();
+        cfg.audit.store_payloads = true;
+        cfg.audit.encryption_enabled = true;
+        cfg.audit.encryption_key = Some("example-passphrase-not-secret".into());
+        if let Err(e) = cfg.validate() {
+            assert!(!e.to_string().contains("store_payloads"), "{e}");
+        }
     }
 }

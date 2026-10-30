@@ -1,0 +1,91 @@
+#!/usr/bin/env node
+'use strict';
+
+/**
+ * Tests the release pin check (check-plugins.js --release) in a copy of the repository: before the tag the plugin pin
+ * may stay on the previous release (and nothing older); on the tag it must equal the version. Run from the repository root.
+ */
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const assert = require('assert');
+const { spawnSync, execFileSync } = require('child_process');
+
+const ROOT = process.cwd();
+const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-check-plugins-')));
+let n = 0;
+
+function copyTree() {
+  const dir = path.join(tmp, 'repo' + (++n));
+  const list = execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 28 }).split('\0').filter(Boolean);
+  for (const f of list) {
+    const src = path.join(ROOT, f);
+    if (!fs.existsSync(src) || fs.lstatSync(src).isDirectory()) continue;
+    fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+    fs.copyFileSync(src, path.join(dir, f));
+  }
+  return dir;
+}
+// The previous release comes from the repository's git tags; the tests give the tag list instead of asking the remote.
+function check(dir, ...args) {
+  const tags = process.env.TEST_TAGS || TAGS;
+  const r = spawnSync(process.execPath, [path.join(ROOT, 'plugins', 'tools', 'check-plugins.js'), ...args], { cwd: dir, encoding: 'utf8', env: { ...process.env, ZN_CHECK_PLUGINS_TAGS: tags, ZN_CHECK_PLUGINS_NPM_MISSING: process.env.TEST_NPM_MISSING || '' } });
+  return { ok: r.status === 0, out: r.stdout + r.stderr };
+}
+function rewrite(dir, rel, fn) {
+  const f = path.join(dir, rel);
+  fs.writeFileSync(f, fn(fs.readFileSync(f, 'utf8')));
+}
+// The version in the repository and the previous release in its changelog.
+const pkgVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'packages/zn-gate/package.json'), 'utf8')).version;
+const lockVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'plugins/zn-gate/scripts/zn-gate.lock.json'), 'utf8')).version;
+// The cases describe a release pull request before the tag (the lock file on the previous release). Once the plugin is
+// pinned to this version they do not apply.
+const previous = lockVersion;
+// Release tags of the repository: rc tags and the tag of this version are not the previous release.
+let TAGS = 'v1.12.0 v1.13.0 v' + previous + ' v' + pkgVersion + '-rc.1 v' + pkgVersion;
+
+try {
+  if (/^\d+\.\d+\.\d+$/.test(pkgVersion) && lockVersion !== pkgVersion) {
+    // The state of a release pull request before the tag.
+    const a = copyTree();
+    assert.ok(check(a, '--release', '--pre-tag').ok, 'pre-tag: the lock on the previous release passes');
+    const b = check(a, '--release');
+    assert.ok(!b.ok && /differs from the lock file version/.test(b.out), 'tag: the lock on the previous release fails');
+    // Nothing older than the previous release (the tags say it is 1.13.0), and the changelog cannot change that.
+    const c = copyTree();
+    rewrite(c, 'CHANGELOG.md', (s) => s.replace('## [' + pkgVersion + ']', '## [' + pkgVersion + ']\n\n## [' + previous + ']\n\n## [0.0.1]'));
+    process.env.TEST_TAGS = 'v1.12.0 v1.13.0 v' + pkgVersion + '-rc.1';
+    const d = check(c, '--release', '--pre-tag');
+    assert.ok(!d.ok && /must be the previous release 1\.13\.0/.test(d.out), 'pre-tag: a lock that is not the previous release fails: ' + d.out);
+    delete process.env.TEST_TAGS;
+    // A release tag that npm does not have is not the previous release (1.14.0 reached PyPI only): the pin may stay
+    // below it. Without the 404 that tag is the previous release and the pin must be on it.
+    const p = previous.split('.').map(Number);
+    const gap = [p[0], p[1], p[2] + 1].join('.');
+    const q = pkgVersion.split('.').map(Number);
+    if (p[0] === q[0] && p[1] === q[1] ? p[2] + 1 < q[2] : true) {
+      process.env.TEST_TAGS = TAGS + ' v' + gap;
+      const g = copyTree();
+      const h = check(g, '--release', '--pre-tag');
+      assert.ok(!h.ok && h.out.includes('must be the previous release ' + gap), 'pre-tag: a newer release on npm must be the pin: ' + h.out);
+      process.env.TEST_NPM_MISSING = gap;
+      assert.ok(check(g, '--release', '--pre-tag').ok, 'pre-tag: a release tag that npm does not have is skipped');
+      delete process.env.TEST_TAGS;
+      delete process.env.TEST_NPM_MISSING;
+    }
+    // After the pin: every place that names the old release names the new one.
+    const e = copyTree();
+    for (const rel of execFileSync('git', ['ls-files', 'plugins'], { cwd: ROOT, encoding: 'utf8' }).split('\n').filter(Boolean)) {
+      if (fs.existsSync(path.join(e, rel))) rewrite(e, rel, (s) => s.split(previous).join(pkgVersion));
+    }
+    assert.ok(check(e, '--release').ok, 'tag: the lock on this release passes: ' + check(e, '--release').out);
+    assert.ok(check(e, '--release', '--pre-tag').ok, 'pre-tag: the lock already on this release passes');
+  } else {
+    process.stdout.write('skipped: the lock file is already on ' + lockVersion + ' (version ' + pkgVersion + ')\n');
+  }
+  process.stdout.write('ok\n');
+} finally {
+  fs.rmSync(tmp, { recursive: true, force: true });
+}

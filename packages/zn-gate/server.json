@@ -1,19 +1,19 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.usezn/zn-gate",
-  "description": "The local security layer for coding agents: secret redaction, injection checks and an MCP proxy.",
+  "description": "The local security layer for coding agents. No account, and nothing is sent by default.",
   "repository": {
     "url": "https://github.com/usezn/zn",
     "source": "github",
     "subfolder": "packages/zn-gate"
   },
   "websiteUrl": "https://usezn.com",
-  "version": "1.13.1",
+  "version": "1.14.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "zn-gate",
-      "version": "1.13.1",
+      "version": "1.14.1",
       "transport": {
         "type": "stdio"
       },

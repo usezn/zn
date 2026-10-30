@@ -6,7 +6,7 @@ npx -y zn-gate connect
 
 (or `zn-gate connect` if you installed it with `npm i -g zn-gate`).
 
-zn-gate works fully on your computer, needs no account and sends nothing. This command is optional. It adds one thing: when you or your agent use the `analyze_prompt` tool (or `zn-gate analyze`), the text, with detected secrets hidden first, is also checked by the Galvanize 2 classifier at usezn.com. Hooks, file and secret protection, the shield and every other command stay local and never use it.
+zn-gate works fully on your computer, needs no account and sends nothing. This command is optional. It adds one thing: when you or your agent use the `analyze_prompt` tool (or `zn-gate analyze`), the text, with detected secrets hidden first, is also checked by the Galvanize 3 classifier at usezn.com. Hooks, file and secret protection, the shield and every other command stay local and never use it.
 
 ## What `zn-gate connect` does
 
@@ -52,6 +52,17 @@ A saved key is only ever sent to <https://api.usezn.com>. `--url` and `ZN_API_UR
 - **The key could not be checked** (no answer, an error): check your connection and try again.
 - **It says nothing was saved because there is no keychain**: unlock the vault with `zn unlock` and run `zn-gate connect` again, or set `ZN_CLOUD=1` and `ZN_API_KEY` in your shell yourself.
 - **You want to stop**: run `zn-gate disconnect`.
+
+## Common messages
+
+- **Refuses to run (AI agent or no terminal)**: run `zn-gate connect` or `zn-gate disconnect` in your own terminal.
+- **Full-access key refused**: create an analysis-only key on <https://usezn.com/connect>, then run `zn-gate connect` again.
+- **Key rejected, or could not be checked**: check your connection and run `zn-gate connect` again. Nothing was saved.
+- **Nothing saved, no keychain**: run `zn unlock` and then `zn-gate connect`, or set `ZN_CLOUD=1` and `ZN_API_KEY` in your shell.
+- **Saved key cannot be read, prompts checked locally**: run `zn-gate status`, then `zn-gate connect --reconnect` to replace the key.
+- **`fallback: true` in a result**: the cloud call failed and the local rules checked the prompt. See [What is sent](#what-is-sent).
+
+For the full steps, see [If something fails](#if-something-fails).
 
 ## What is sent
 

@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 
 const sq = require('../lib/shell-quote');
 
-const HEAD = 'powershell.exe -NoProfile -NonInteractive ';
+const HEAD = sq.powershellExe() + ' -NoProfile -NonInteractive ';
 
 test('an encoded windowsCommand() result comes back in the readable form', () => {
   const encoded = sq.windowsCommand('C:/example/zn.exe', ['run', 'a b'], [], { encoded: true });
@@ -36,4 +36,15 @@ test('empty, undefined and null give an empty string', () => {
   assert.equal(sq.readableWindowsCommand(''), '');
   assert.equal(sq.readableWindowsCommand(undefined), '');
   assert.equal(sq.readableWindowsCommand(null), '');
+});
+
+test('only the system PowerShell path (or %SystemRoot%, or the bare name of older versions) is read as a hook command', () => {
+  const enc = 'ZQBjAGgAbwAgADEA';
+  for (const head of ['C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe', 'D:/WINDOWS/system32/WindowsPowerShell/v1.0/powershell.exe',
+    '%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', 'powershell.exe']) {
+    assert.equal(sq.windowsCommandScript(head + ' -NoProfile -NonInteractive -EncodedCommand ' + enc), 'echo 1', head);
+  }
+  for (const head of ['C:/Users/u/repo/powershell.exe', 'C:/Windows/Temp/powershell.exe', 'C:/x/y/System32/WindowsPowerShell/v1.0/powershell.exe', './powershell.exe']) {
+    assert.equal(sq.windowsCommandScript(head + ' -NoProfile -NonInteractive -EncodedCommand ' + enc), null, head);
+  }
 });

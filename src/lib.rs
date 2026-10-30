@@ -15,6 +15,7 @@ pub mod http_limits;
 pub mod jsonrpc;
 pub mod lfi_guard;
 pub mod metrics;
+pub mod private_file;
 pub mod prompt_guard;
 pub mod proxy;
 pub mod scrubber;

@@ -74,7 +74,7 @@ test('runBroker: a locked vault with a required marker is an error, not a silent
   vault.resolve = async () => locked();
   const stdout = sink();
   const stderr = sink();
-  const code = await runBroker(['--', NODE, '-e', 'console.log("should not run")', '__ZN_DEMO_DB__'], { vault, env: nodeEnv, stdout, stderr, stdin: { isTTY: false } });
+  const code = await runBroker(['--secrets', 'DEMO_DB', '--', NODE, '-e', 'console.log("should not run")'], { vault, env: nodeEnv, stdout, stderr, stdin: { isTTY: false } });
   assert.notEqual(code, 0);
   assert.ok(!stdout.text().includes('should not run'));
 });

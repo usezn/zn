@@ -18,34 +18,50 @@ const cfg = require('../lib/agents/config-file');
 const launcher = require('../lib/agents/launcher');
 const { check } = require('../lib/check');
 const { tempDir } = require('./helpers/tmp');
+const { WIN, SH, fwd, pathList, shEnv, ensureShLauncher, putNode } = require('./helpers/git_bash');
 
 const RUNNER = path.resolve(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const posix = process.platform !== 'win32';
+// The sh launcher runs in sh (Git Bash on Windows). A Windows install writes none for Cursor, Gemini or Antigravity: their hooks are
+// PowerShell there, so these tests write the launcher the way the other systems do and run it in Git Bash.
+const needSh = !SH && 'needs sh (Git Bash on Windows)';
+// Windows: check reads the hook entry (a PowerShell script there), not the launcher.
+const WIN_CHECK = !posix && 'a Windows install has no sh launcher for check to read (its PowerShell hook is covered by the windows tests)';
+const BIN_TAIL = WIN ? [] : ['/usr/bin', '/bin'];
 const GONE = '/nonexistent/node-gone/bin/node';
 const reinstall = (id) => 'install zn-gate again for the Node.js you use now: run `npm install -g zn-gate`, then `zn hooks install ' + id + '`, in your own terminal';
 
-function setup(t, id, nodePath) {
+// On Windows the install writes no launcher: write it as the other systems do (same hook timeout), to run it in Git Bash.
+function shLauncher(id, env, home, nodePath, runnerPath) {
+  if (!WIN) return launcher.launcherFile(id, { env, home });
+  const a = getAdapter(id);
+  return ensureShLauncher(id, { env, home, nodePath, runnerPath, timeoutS: a.HOOK_TIMEOUT_S || a.HOOK_TIMEOUT_MS / 1000 });
+}
+
+function setup(t, id, nodePath, withSh = true) {
   const home = tempDir(t, 'zn-b96-');
   const env = { HOME: home, ZN_HOME: path.join(home, '.zn'), PATH: process.env.PATH };
   const adapter = getAdapter(id);
   adapter.install({ env, home, nodePath, runnerPath: RUNNER, mcp: false });
-  return { home, env, adapter, file: launcher.launcherFile(id, { env, home }) };
+  const file = withSh ? shLauncher(id, env, home, nodePath, RUNNER) : launcher.launcherFile(id, { env, home });
+  return { home, env, adapter, file };
 }
 
 function run(file, event, pathValue) {
-  return spawnSync('/bin/sh', [file, event], { input: '{}', encoding: 'utf8', env: { PATH: pathValue, HOME: '/nonexistent' } });
+  return spawnSync(SH, [fwd(file), event], { input: '{}', encoding: 'utf8', env: shEnv({ PATH: pathValue, HOME: '/nonexistent' }) });
 }
 
 const stateOf = async (t, ctx, id, pathValue) =>
   (await check({ home: ctx.home, env: { ...ctx.env, PATH: pathValue }, cwd: tempDir(t, 'zn-b96-cwd-') })).results.find((x) => x.id === id);
 
-test('cursor: user install writes the launcher; the events that can deny block, postToolUse only warns', { skip: !posix }, (t) => {
+test('cursor: user install writes the launcher; the events that can deny block, postToolUse only warns', { skip: needSh }, (t) => {
   const { home, env, adapter, file } = setup(t, 'cursor', GONE);
   assert.ok(file.startsWith(path.join(home, '.zn', 'hooks')));
   const data = JSON.parse(fs.readFileSync(adapter.hooksFile({ env, home }), 'utf8'));
   for (const ev of adapter.EVENTS) {
     const h = data.hooks[ev][0];
-    assert.equal(h.command, "'" + file + "' " + ev);
+    if (WIN) assert.match(require('../lib/shell-quote').windowsCommandScript(h.command), / # zn hook cursor$/, ev + ': Windows runs PowerShell, the sh launcher is only run here by hand');
+    else assert.equal(h.command, "'" + file + "' " + ev);
     assert.ok(cfg.isOurs(h.command, 'cursor'));
   }
   assert.equal(data.hooks.beforeReadFile[0].failClosed, true, 'failClosed stays');
@@ -62,27 +78,29 @@ test('cursor: user install writes the launcher; the events that can deny block, 
   assert.equal(post.stdout, '');
 });
 
-test('cursor: with the recorded Node.js the launcher runs the real hook', { skip: !posix }, (t) => {
+test('cursor: with the recorded Node.js the launcher runs the real hook', { skip: needSh }, (t) => {
   const { file } = setup(t, 'cursor', process.execPath);
   const dir = tempDir(t, 'zn-b96-proj-');
   fs.writeFileSync(path.join(dir, '.env'), 'API_KEY=sk-test-EXAMPLE0000000000000000\n');
-  const r = spawnSync('/bin/sh', [file, 'beforeReadFile'], { input: JSON.stringify({ hook_event_name: 'beforeReadFile', cwd: dir, file_path: path.join(dir, '.env'), content: 'x', workspace_roots: [dir] }), encoding: 'utf8', env: { PATH: process.env.PATH, HOME: '/nonexistent' } });
+  const r = spawnSync(SH, [fwd(file), 'beforeReadFile'], { input: JSON.stringify({ hook_event_name: 'beforeReadFile', cwd: dir, file_path: path.join(dir, '.env'), content: 'x', workspace_roots: [dir] }), encoding: 'utf8', env: shEnv({ PATH: process.env.PATH, HOME: '/nonexistent' }) });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /"permission":\s*"deny"/);
 });
 
-test('cursor: uninstall removes the launcher; a project install writes none', { skip: !posix }, (t) => {
+test('cursor: uninstall removes the launcher; a project install writes none', (t) => {
   const { env, home, adapter, file } = setup(t, 'cursor', process.execPath);
   assert.ok(fs.existsSync(file));
   adapter.uninstall({ env, home, removeLauncher: true });
   assert.equal(fs.existsSync(file), false);
   const proj = tempDir(t, 'zn-b96-proj-');
   adapter.install({ scope: 'project', projectDir: proj, env, home, nodePath: process.execPath, runnerPath: RUNNER });
-  assert.match(JSON.parse(fs.readFileSync(path.join(proj, '.cursor', 'hooks.json'), 'utf8')).hooks.preToolUse[0].command, / cursor$/);
+  const pcmd = JSON.parse(fs.readFileSync(path.join(proj, '.cursor', 'hooks.json'), 'utf8')).hooks.preToolUse[0].command;
+  if (WIN) assert.ok(launcher.isProjectWindowsScript(require('../lib/shell-quote').windowsCommandScript(pcmd), 'cursor'));
+  else assert.ok(launcher.isProjectGuard(pcmd, 'cursor'));
   assert.equal(fs.existsSync(file), false);
 });
 
-test('cursor: check reports the Node.js that is gone with the reinstall fix', { skip: !posix }, async (t) => {
+test('cursor: check reports the Node.js that is gone with the reinstall fix', { skip: WIN_CHECK }, async (t) => {
   const ctx = setup(t, 'cursor', process.execPath);
   fs.writeFileSync(ctx.file, fs.readFileSync(ctx.file, 'utf8').replace(/^ZN_NODE=.*$/m, "ZN_NODE='" + GONE + "'"));
   const r = await stateOf(t, ctx, 'cursor', tempDir(t, 'zn-b96-bin-'));
@@ -103,11 +121,12 @@ test('cursor windows: each event is an inline PowerShell script that blocks with
   assert.equal(fs.existsSync(launcher.launcherFile('cursor', { home, env: { ZN_HOME: path.join(home, '.zn') } })), false);
 });
 
-test('gemini: user install writes the launcher; BeforeTool blocks with exit 2 when the Node.js is gone', { skip: !posix }, (t) => {
+test('gemini: user install writes the launcher; BeforeTool blocks with exit 2 when the Node.js is gone', { skip: needSh }, (t) => {
   const { home, env, adapter, file } = setup(t, 'gemini', GONE);
   const data = JSON.parse(fs.readFileSync(adapter.settingsFile({ env, home }), 'utf8'));
   const h = data.hooks.BeforeTool[0].hooks[0];
-  assert.equal(h.command, "'" + file + "' BeforeTool");
+  if (WIN) assert.match(require('../lib/shell-quote').windowsCommandScript(h.command), / # zn hook gemini$/, 'Windows runs PowerShell, the sh launcher is only run here by hand');
+  else assert.equal(h.command, "'" + file + "' BeforeTool");
   assert.ok(cfg.isOurs(h.command, 'gemini'));
   const r = run(file, 'BeforeTool', tempDir(t, 'zn-b96-bin-'));
   assert.equal(r.status, 2);
@@ -115,17 +134,17 @@ test('gemini: user install writes the launcher; BeforeTool blocks with exit 2 wh
   assert.equal(r.stdout, '');
 });
 
-test('gemini: with the recorded Node.js the launcher runs the real hook', { skip: !posix }, (t) => {
+test('gemini: with the recorded Node.js the launcher runs the real hook', { skip: needSh }, (t) => {
   const { file } = setup(t, 'gemini', process.execPath);
   const dir = tempDir(t, 'zn-b96-proj-');
   fs.writeFileSync(path.join(dir, '.env'), 'API_KEY=sk-test-EXAMPLE0000000000000000\n');
   const ev = { hook_event_name: 'BeforeTool', session_id: 's', cwd: dir, tool_name: 'read_file', tool_input: { file_path: path.join(dir, '.env') } };
-  const r = spawnSync('/bin/sh', [file, 'BeforeTool'], { input: JSON.stringify(ev), encoding: 'utf8', env: { PATH: process.env.PATH, HOME: '/nonexistent' } });
+  const r = spawnSync(SH, [fwd(file), 'BeforeTool'], { input: JSON.stringify(ev), encoding: 'utf8', env: shEnv({ PATH: process.env.PATH, HOME: '/nonexistent' }) });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /"decision":\s*"deny"/);
 });
 
-test('gemini: uninstall removes the launcher; check reports the Node.js that is gone', { skip: !posix }, async (t) => {
+test('gemini: uninstall removes the launcher; check reports the Node.js that is gone', { skip: WIN_CHECK }, async (t) => {
   const ctx = setup(t, 'gemini', process.execPath);
   fs.writeFileSync(ctx.file, fs.readFileSync(ctx.file, 'utf8').replace(/^ZN_NODE=.*$/m, "ZN_NODE='" + GONE + "'"));
   const r = await stateOf(t, ctx, 'gemini', tempDir(t, 'zn-b96-bin-'));
@@ -136,12 +155,13 @@ test('gemini: uninstall removes the launcher; check reports the Node.js that is 
   assert.equal(fs.existsSync(ctx.file), false);
 });
 
-test('antigravity: user install writes the launcher; without Node.js it answers a deny JSON with the repair step', { skip: !posix }, async (t) => {
+test('antigravity: user install writes the launcher; without Node.js it answers a deny JSON with the repair step', { skip: needSh }, async (t) => {
   const ctx = setup(t, 'antigravity', GONE);
   assert.ok(fs.existsSync(ctx.file));
   const data = JSON.parse(fs.readFileSync(ctx.adapter.hooksFile({ env: ctx.env, home: ctx.home }), 'utf8'));
   const command = data['zn-gate'].PreToolUse[0].hooks[0].command;
-  assert.equal(command, ctx.file + " PreToolUse");
+  if (WIN) assert.match(require('../lib/shell-quote').windowsCommandScript(command), / # zn hook antigravity$/, 'Windows runs PowerShell, the sh launcher is only run here by hand');
+  else assert.equal(command, ctx.file + " PreToolUse");
   assert.ok(cfg.isOurs(command, 'antigravity'));
   const bin = tempDir(t, 'zn-b96-bin-');
   const r = run(ctx.file, 'PreToolUse', bin);
@@ -151,27 +171,28 @@ test('antigravity: user install writes the launcher; without Node.js it answers 
   assert.equal(out.decision, 'deny');
   assert.match(out.reason, /npm install -g zn-gate/);
   assert.match(out.reason, /zn hooks install antigravity/);
+  if (WIN) return; // check reads the PowerShell hook entry on Windows, not this launcher
   const state = await stateOf(t, ctx, 'antigravity', bin);
   assert.equal(state.state, 'not-protected');
   assert.match(state.problem, /its hook cannot start/);
   assert.equal(state.fix, reinstall('antigravity'));
 });
 
-test('antigravity: a hook that starts and then fails is also a deny JSON; the recorded Node.js runs the real hook', { skip: !posix }, (t) => {
+test('antigravity: a hook that starts and then fails is also a deny JSON; the recorded Node.js runs the real hook', { skip: needSh }, (t) => {
   const broken = path.join(tempDir(t, 'zn-b96-broken-'), 'runner.js');
   fs.writeFileSync(broken, "throw new Error('broken install');\n");
   const home = tempDir(t, 'zn-b96-crash-');
   const env = { HOME: home, ZN_HOME: path.join(home, '.zn'), PATH: process.env.PATH };
   getAdapter('antigravity').install({ env, home, nodePath: process.execPath, runnerPath: broken, mcp: false });
-  const file = launcher.launcherFile('antigravity', { env, home });
-  const r = run(file, 'PreToolUse', tempDir(t, 'zn-b96-bin-'));
+  const file = shLauncher('antigravity', env, home, process.execPath, broken);
+  const r = run(file, 'PreToolUse', pathList([tempDir(t, 'zn-b96-bin-'), ...BIN_TAIL]));
   assert.equal(r.status, 0);
   const out = JSON.parse(r.stdout);
   assert.equal(out.decision, 'deny');
   assert.match(out.reason, /zn-gate check/);
   const ok = setup(t, 'antigravity', process.execPath);
   const call = { toolCall: { name: 'run_command', args: { CommandLine: 'echo hello' } }, workspacePaths: [home] };
-  const live = spawnSync('/bin/sh', [ok.file, 'PreToolUse'], { input: JSON.stringify(call), encoding: 'utf8', env: { PATH: process.env.PATH, HOME: '/nonexistent' } });
+  const live = spawnSync(SH, [fwd(ok.file), 'PreToolUse'], { input: JSON.stringify(call), encoding: 'utf8', env: shEnv({ PATH: process.env.PATH, HOME: '/nonexistent' }) });
   assert.equal(live.status, 0, live.stderr);
   assert.deepEqual(JSON.parse(live.stdout), { decision: 'allow' });
 });
@@ -190,12 +211,12 @@ test('antigravity: the Windows launcher is an encoded PowerShell script that pri
   const home = tempDir(t, 'zn-b96-win-');
   getAdapter('antigravity').install({ home, platform: 'win32', nodePath: 'C:\\Program Files\\nodejs\\node.exe', runnerPath: 'C:\\zn\\lib\\hooks\\runner.js', env: { ZN_HOME: path.join(home, '.zn') } });
   const written = JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'config', 'hooks.json'), 'utf8'))['zn-gate'].PreToolUse[0].hooks[0].command;
-  assert.match(written, /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
+  assert.match(written, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/);
   assert.equal(windowsCommandScript(written), script);
   assert.ok(cfg.isOurs(written, 'antigravity'));
 });
 
-test('antigravity: uninstall removes the launcher; a project install writes none and keeps the plain command', { skip: !posix }, (t) => {
+test('antigravity: uninstall removes the launcher; a project install writes none and wraps `zn hook antigravity` in its own guard', (t) => {
   const { env, home, adapter, file } = setup(t, 'antigravity', process.execPath);
   assert.ok(fs.existsSync(file));
   adapter.uninstall({ env, home, removeLauncher: true });
@@ -204,27 +225,29 @@ test('antigravity: uninstall removes the launcher; a project install writes none
   adapter.install({ scope: 'project', projectDir: proj, env, home, nodePath: process.execPath, runnerPath: RUNNER });
   assert.equal(fs.existsSync(file), false);
   const data = JSON.parse(fs.readFileSync(path.join(proj, '.agents', 'hooks.json'), 'utf8'));
-  assert.equal(data['zn-gate'].PreToolUse[0].hooks[0].command, 'zn hook antigravity');
+  const pcmd = data['zn-gate'].PreToolUse[0].hooks[0].command;
+  if (WIN) assert.ok(launcher.isProjectWindowsScript(require('../lib/shell-quote').windowsCommandScript(pcmd), 'antigravity'));
+  else assert.equal(pcmd, require('../lib/agents/launcher').projectShCommand('antigravity'));
 });
 
-test('a hook that starts and then fails is blocked, not passed through, and zn on PATH is not tried after it', { skip: !posix }, (t) => {
+test('a hook that starts and then fails is blocked, not passed through, and zn on PATH is not tried after it', { skip: needSh }, (t) => {
   const broken = path.join(tempDir(t, 'zn-b96-broken-'), 'runner.js');
   fs.writeFileSync(broken, "throw new Error('broken install');\n");
   const bin = tempDir(t, 'zn-b96-bin2-');
   const mark = path.join(bin, 'zn-ran');
-  fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+  putNode(bin);
   fs.writeFileSync(path.join(bin, 'zn'), '#!/bin/sh\ntouch ' + JSON.stringify(mark) + '\nexit 0\n', { mode: 0o755 });
   for (const [id, block, warn] of [['gemini', 'BeforeTool', null], ['cursor', 'beforeShellExecution', 'postToolUse']]) {
     const home = tempDir(t, 'zn-b96-crash-');
     const env = { HOME: home, ZN_HOME: path.join(home, '.zn'), PATH: process.env.PATH };
     getAdapter(id).install({ env, home, nodePath: process.execPath, runnerPath: broken, mcp: false });
-    const file = launcher.launcherFile(id, { env, home });
-    const r = run(file, block, bin);
+    const file = shLauncher(id, env, home, process.execPath, broken);
+    const r = run(file, block, pathList([bin, ...BIN_TAIL]));
     assert.equal(r.status, 2, id + ' ' + block + ': ' + r.stderr);
     assert.match(r.stderr, /its hook failed, so this was blocked.*zn-gate check/);
     assert.equal(fs.existsSync(mark), false, 'zn on PATH must not run after the recorded hook failed');
     if (warn) {
-      const w = run(file, warn, bin);
+      const w = run(file, warn, pathList([bin, ...BIN_TAIL]));
       assert.equal(w.status, 0);
       assert.match(w.stderr, /its hook failed/);
     }
@@ -243,10 +266,10 @@ test('windows: cursor and gemini also print their deny JSON, call zn.cmd and lea
     const s = windowsCommandScript(cmd);
     assert.ok(s.startsWith("$ProgressPreference='SilentlyContinue';"), id);
     assert.ok(s.includes(deny), id + ' deny JSON');
-    assert.ok(s.includes('& zn.cmd hook ' + id) && !/& zn hook/.test(s), id + ' zn.cmd');
-    assert.ok(!/exit \$LASTEXITCODE \}/.test(s.replace(/if \(\$LASTEXITCODE -eq 0 -or \$LASTEXITCODE -eq 2\) \{ exit \$LASTEXITCODE \}/g, '')), id + ' no unconditional exit');
+    assert.ok(s.includes("& (zf 'zn.cmd') hook " + id) && !/& zn hook/.test(s), id + ' zn.cmd');
+    assert.ok(!/exit \$LASTEXITCODE \}/.test(s.replace(/if \(\(\$LASTEXITCODE -eq 0 -and \(zk\)\) -or \$LASTEXITCODE -eq 2\) \{ zx 0 \}/g, '')), id + ' no unconditional exit');
     assert.match(s, /exit 0 # zn hook /, id + ': Cursor and Gemini read the deny JSON only with exit 0');
-    assert.ok(s.includes('-eq 2) { exit 0 }'), id + ': the runner refusal is passed on as exit 0');
+    assert.ok(s.includes('-eq 2) { zx 0 }'), id + ': the runner refusal is passed on as exit 0');
   }
 });
 

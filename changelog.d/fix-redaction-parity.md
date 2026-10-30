@@ -1,2 +1,0 @@
-### Security
-- Node.js library: `redactSecrets` and `sanitizeToolResult` could leave a provider key, such as a Stripe key, unredacted when a wider match of another kind covered it (for example `token: sk_live_...` followed by `NAME=`, joined with the lines after it). The provider formats are now matched on their own, as in the Python package. A CI test redacts seeded random texts of fake keys with both packages and fails if either package leaves a key in the output.

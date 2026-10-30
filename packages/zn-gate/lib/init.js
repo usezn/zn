@@ -298,6 +298,13 @@ function scanEnvironments(customEnvList = null) {
   for (const env of envs) {
     const exists = fs.existsSync(env.filePath);
     let servers = [];
+    // existsSync says false for a folder it may not enter: tell "not there" from "cannot be read".
+    let unreadable = '';
+    if (!exists) {
+      try { fs.lstatSync(env.filePath); } catch (e) {
+        if (e && (e.code === 'EACCES' || e.code === 'EPERM')) unreadable = require('./errors').fsErrorText(e, env.filePath) || '';
+      }
+    }
 
     if (exists) {
       try {
@@ -312,6 +319,7 @@ function scanEnvironments(customEnvList = null) {
     results.push({
       ...env,
       exists,
+      unreadable,
       servers,
       serverCount: valid.length,
       allShielded: valid.length > 0 && valid.filter((s) => !s.remote).every((s) => s.shielded),
@@ -354,11 +362,64 @@ function sameRealDir(a, b) {
 }
 
 /**
+ * The folders a home-scope config may live under: the home folder and the
+ * config roots the known environments use (XDG, APPDATA, CODEX_HOME).
+ */
+function homeScopeRoots() {
+  const roots = [os.homedir()];
+  for (const v of [process.env.XDG_CONFIG_HOME, process.env.APPDATA, process.env.CODEX_HOME]) {
+    if (v && path.isAbsolute(v)) roots.push(v);
+  }
+  return roots;
+}
+
+/**
+ * Checks every folder above a home-scope config, not only the file itself.
+ * A parent that is a symlink is fine while its real path stays inside the
+ * root the config is declared under (the home folder, reached through a link
+ * or not); one that leads outside it is refused, naming the link, because
+ * writing there would replace a file that is not zn-gate's to change.
+ * Returns { dir } with the real directory to write and back up in, or { reason }.
+ */
+function validateHomeParents(filePath) {
+  const declared = path.resolve(path.dirname(filePath));
+  const realDir = realOrNull(declared);
+  if (!realDir) return { reason: 'config folder cannot be resolved' };
+  let root = null;
+  for (const r of homeScopeRoots()) {
+    const lexical = path.resolve(r);
+    if (isInside(declared, lexical) && (root === null || lexical.length > root.length)) root = lexical;
+  }
+  // A path outside every known root (a custom list) is only checked as itself.
+  if (root === null) return { dir: realDir };
+  const realRoot = realOrNull(root);
+  if (!realRoot) return { reason: 'config root cannot be resolved' };
+  if (isInside(realDir, realRoot)) return { dir: realDir };
+  let cur = root;
+  for (const part of path.relative(root, declared).split(path.sep).filter(Boolean)) {
+    cur = path.join(cur, part);
+    let st = null;
+    try {
+      st = fs.lstatSync(cur);
+    } catch {}
+    if (st && st.isSymbolicLink()) {
+      const real = realOrNull(cur);
+      if (!real || !isInside(real, realRoot)) {
+        return { reason: `${cur} is a link that leads outside ${root}; zn-gate will not write through it` };
+      }
+    }
+  }
+  return { reason: `config folder is outside ${root}; zn-gate will not write through a link to it` };
+}
+
+/**
  * Where a config really lives, or why it cannot be touched safely.
  * Project scope (a repository controls it): a plain file with one link, whose
  * real directory is inside the current directory. Home scope: a plain file, or
  * a symlink (dotfiles managers) to a regular file inside the home folder and
- * outside the current directory.
+ * outside the current directory; every folder above it must stay inside the
+ * home folder once links are resolved. The result carries the real folder
+ * (dir) so the backup and the write go through the validated path.
  */
 function resolveConfig(filePath, scope) {
   let st;
@@ -373,9 +434,11 @@ function resolveConfig(filePath, scope) {
     const dir = realOrNull(path.dirname(filePath));
     const cwd = realOrNull(process.cwd());
     if (!dir || !cwd || !isInside(dir, cwd)) return { reason: 'config directory is outside the project' };
-    return { target: filePath };
+    return { target: path.join(dir, path.basename(filePath)), dir };
   }
-  if (st.isFile()) return { target: filePath };
+  const parents = validateHomeParents(filePath);
+  if (parents.reason) return { reason: parents.reason };
+  if (st.isFile()) return { target: path.join(parents.dir, path.basename(filePath)), dir: parents.dir };
   if (!st.isSymbolicLink()) return { reason: 'config is not a regular file' };
   const real = realOrNull(filePath);
   const home = realOrNull(os.homedir());
@@ -385,11 +448,20 @@ function resolveConfig(filePath, scope) {
     return { reason: 'config is a symlink that points outside your home folder; move the real file into your home folder, or wrap this server by hand' };
   }
   if (cwd && cwd !== home && isInside(real, cwd)) return { reason: 'config is a symlink that points into the current project' };
-  return { target: real };
+  return { target: real, dir: parents.dir };
+}
+
+/** Refuses to write in a folder that is not already its own real path (a link swapped in after the check). */
+function assertRealDir(dir) {
+  const real = realOrNull(dir);
+  if (!real || real !== dir) {
+    throw new Error(`${dir} is not a real folder (a link was put in its place); zn-gate will not write through it`);
+  }
 }
 
 /** Writes content to a temp file next to target, then renames it over target. */
 function atomicWrite(target, content) {
+  assertRealDir(path.dirname(target));
   let mode = 0o600;
   try {
     mode = fs.statSync(target).mode & 0o777;
@@ -430,6 +502,7 @@ function createBackup(src, backup) {
     }
   };
   if (!lstatMissing()) throw exists();
+  assertRealDir(path.dirname(backup));
   let mode = 0o600;
   try {
     mode = fs.statSync(src).mode & 0o777;
@@ -529,7 +602,7 @@ function configureEnvironments(options = {}) {
     }
 
     if (options.revert) {
-      const latestBak = latestBackup(env.filePath, env.scope);
+      const latestBak = latestBackup(path.join(resolved.dir, path.basename(env.filePath)), env.scope);
 
       if (latestBak) {
         try {
@@ -560,8 +633,8 @@ function configureEnvironments(options = {}) {
 
       let backup;
       if (modified && !options.dryRun) {
-        backup = `${env.filePath}.bak.${Date.now()}`;
-        createBackup(env.filePath, backup);
+        backup = path.join(resolved.dir, `${path.basename(env.filePath)}.bak.${Date.now()}`);
+        createBackup(resolved.target, backup);
         atomicWrite(resolved.target, content);
       }
 

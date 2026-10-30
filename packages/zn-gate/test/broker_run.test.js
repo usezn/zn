@@ -8,7 +8,7 @@ const { Writable } = require('stream');
 
 const markers = require('../lib/broker/markers');
 const { createMasker, variantsOf } = require('../lib/broker/mask');
-const { runBroker, parseRunArgs } = require('../lib/broker/run');
+const { runBroker, parseRunArgs, prepare, argvMarkers } = require('../lib/broker/run');
 const { createFakeVault } = require('./helpers/fake_vault');
 const { generateAll } = require('./fixtures/fake_secrets');
 const { tempDir } = require('./helpers/tmp');
@@ -132,19 +132,58 @@ test('parseRunArgs requires -- and validates names', () => {
   assert.throws(() => parseRunArgs(['--secrets', 'KEY_1', '--', 'x']), /reserved/);
 });
 
-test('zn run injects into argv for an allowed command and masks the output', async () => {
+test('zn run refuses a secret marker in the arguments, never starts the program and says how to pass it in the environment', async () => {
+  const vault = await setup();
+  for (const arg of ['postgres://app:__ZN_DB_PASSWORD__@db/app', '__ZN_DB_PASSWORD__', '--password=__ZN_DB_PASSWORD__']) {
+    const stdout = sink();
+    const stderr = sink();
+    const code = await runBroker(['--', NODE, '-e', 'console.log("should not run", process.argv.slice(1))', arg], {
+      vault, env: nodeEnv, stdout, stderr, stdin: { isTTY: false },
+    });
+    assert.equal(code, 77, arg);
+    assert.equal(stdout.text(), '', 'the program never ran: ' + arg);
+    assert.match(stderr.text(), /secret marker in the command arguments \(__ZN_DB_PASSWORD__\) is not filled in/);
+    assert.match(stderr.text(), /visible to other processes \(ps\)/);
+    assert.match(stderr.text(), /run --secrets DB_PASSWORD -- <command>/);
+    assert.ok(!stderr.text().includes(PG));
+  }
+  // The same refusal when the arguments are checked directly, before the vault is asked anything.
+  const calls = [];
+  const spy = { ...vault, listSecrets: async () => { calls.push('list'); return vault.listSecrets(); }, resolve: async () => { calls.push('resolve'); return PG; } };
+  await assert.rejects(prepare(parseRunArgs(['--', NODE, 'x', '__ZN_DB_PASSWORD__']), { vault: spy, env: nodeEnv }), (e) => e.code === 'ZN_POLICY_DENIED' && /not filled in/.test(e.message));
+  assert.deepEqual(calls, [], 'the vault is not asked for the value');
+  // A detected token (not a stored secret) is not a named marker and is left to the scrubber.
+  assert.deepEqual(argvMarkers(parseRunArgs(['--', 'x', '__ZN_AWS_KEY_1__', 'a __ZN_A__ __ZN_B__ __ZN_A__'])), ['A', 'B']);
+});
+
+test('zn run passes an allowed secret in the environment only: the value is not in the arguments of the program', async () => {
+  const vault = await setup();
+  const probe = 'const v = process.env.DB_PASSWORD;' +
+    'const argvHasIt = process.argv.some((a) => a.includes(v));' +
+    'let cmdline = "";' +
+    'try { cmdline = require("fs").readFileSync("/proc/self/cmdline", "latin1"); } catch (_) { /* not Linux */ }' +
+    'console.log("env:" + (v ? "set" : "missing") + " argv:" + argvHasIt + " cmdline:" + cmdline.includes(v))';
+  const stdout = sink();
+  const stderr = sink();
+  const code = await runBroker(['--secrets', 'DB_PASSWORD', '--', NODE, '-e', probe], { vault, env: nodeEnv, stdout, stderr, stdin: { isTTY: false }, approvals: { isApproved: async () => true, recordApproval: async () => {} } });
+  assert.equal(code, 0, stderr.text());
+  assert.equal(stdout.text().trim(), 'env:set argv:false cmdline:false');
+  assert.ok(vault.auditLog.some((e) => e.decision === 'allow' && e.secret === 'DB_PASSWORD' && e.argv0 === NODE));
+  assert.ok(vault.auditLog.every((e) => !JSON.stringify(e).includes(PG)), 'audit holds no values');
+});
+
+test('zn run fills a marker of the inherited environment for an allowed and approved program, and masks the output', async () => {
   const vault = await setup();
   const stdout = sink();
   const stderr = sink();
-  const code = await runBroker(['--', NODE, '-e', 'const v=process.argv[1]; console.log("arg:" + v); console.log(Buffer.from(v).toString("base64")); console.error("err " + v)', 'postgres://app:__ZN_DB_PASSWORD__@db/app'], {
-    vault, env: nodeEnv, stdout, stderr, stdin: { isTTY: false }, approvals: { isApproved: async () => true, recordApproval: async () => {} },
+  const code = await runBroker(['--', NODE, '-e', 'const v=process.env.DB_URL; console.log("env:" + v); console.log(Buffer.from(v).toString("base64")); console.error("err " + v)'], {
+    vault, env: { ...nodeEnv, DB_URL: 'postgres://app:__ZN_DB_PASSWORD__@db/app' }, stdout, stderr, stdin: { isTTY: false },
+    approvals: { isApproved: async () => true, recordApproval: async () => {} },
   });
   assert.equal(code, 0, stderr.text());
   assert.ok(!stdout.text().includes(PG));
   assert.ok(!stderr.text().includes(PG));
-  assert.match(stdout.text(), /arg:postgres:\/\/app:__ZN_DB_PASSWORD__@db\/app/);
-  assert.ok(vault.auditLog.some((e) => e.decision === 'allow' && e.secret === 'DB_PASSWORD' && e.argv0 === NODE));
-  assert.ok(vault.auditLog.every((e) => !JSON.stringify(e).includes(PG)), 'audit holds no values');
+  assert.match(stdout.text(), /env:postgres:\/\/app:__ZN_DB_PASSWORD__@db\/app/);
 });
 
 test('zn run --secrets sets the env var only in the child', async () => {
@@ -187,7 +226,7 @@ test('zn run passes loader variables through when no secret value is injected', 
 test('zn run refuses a command outside allowCommands and points to secrets_http_request', async () => {
   const vault = await setup({ allowCommands: ['psql'] });
   const stderr = sink();
-  const code = await runBroker(['--', NODE, '-e', 'console.log(process.argv[1])', '__ZN_DB_PASSWORD__'], { vault, env: nodeEnv, stdout: sink(), stderr, stdin: { isTTY: false } });
+  const code = await runBroker(['--secrets', 'DB_PASSWORD', '--', NODE, '-e', 'console.log(1)'], { vault, env: nodeEnv, stdout: sink(), stderr, stdin: { isTTY: false } });
   assert.equal(code, 77);
   assert.match(stderr.text(), /Not allowed: /);
   assert.match(stderr.text(), /secrets_http_request/);
@@ -198,10 +237,10 @@ test('zn run refuses proxy-mode secrets, unknown secrets and agent-planted binar
   const vault = await setup();
   await vault.setSecret('GITHUB_TOKEN', GHP, { mode: 'proxy', allowHosts: ['api.github.com'], allowCommands: [NODE] });
   const e1 = sink();
-  assert.equal(await runBroker(['--', NODE, '-e', '1', '__ZN_GITHUB_TOKEN__'], { vault, env: nodeEnv, stdout: sink(), stderr: e1, stdin: { isTTY: false } }), 77);
+  assert.equal(await runBroker(['--secrets', 'GITHUB_TOKEN', '--', NODE, '-e', '1'], { vault, env: nodeEnv, stdout: sink(), stderr: e1, stdin: { isTTY: false } }), 77);
   assert.match(e1.text(), /proxy mode/);
   const e2 = sink();
-  assert.equal(await runBroker(['--', NODE, '-e', '1', '__ZN_NOPE__'], { vault, env: nodeEnv, stdout: sink(), stderr: e2, stdin: { isTTY: false } }), 127);
+  assert.equal(await runBroker(['--secrets', 'NOPE', '--', NODE, '-e', '1'], { vault, env: nodeEnv, stdout: sink(), stderr: e2, stdin: { isTTY: false } }), 127);
   assert.match(e2.text(), /zn secret set NOPE/);
 
   const dir = tempDir(t, 'zn-plant-');
@@ -209,13 +248,13 @@ test('zn run refuses proxy-mode secrets, unknown secrets and agent-planted binar
   fs.writeFileSync(fakeBin, process.platform === 'win32' ? '@echo %*\r\n' : '#!/bin/sh\necho "$@"\n', { mode: 0o755 });
   await vault.setSecret('DB_PASSWORD', PG, { mode: 'env', allowCommands: ['psql'] });
   const e3 = sink();
-  const code = await runBroker(['--', 'psql', '__ZN_DB_PASSWORD__'], { vault, env: { PATH: dir }, stdout: sink(), stderr: e3, stdin: { isTTY: false } });
+  const code = await runBroker(['--secrets', 'DB_PASSWORD', '--', 'psql'], { vault, env: { PATH: dir }, stdout: sink(), stderr: e3, stdin: { isTTY: false } });
   assert.equal(code, 77);
   assert.match(e3.text(), /temp directory/);
 });
 
 test('first use is confirmed by the vault, never on the command terminal, and only once', async () => {
-  const args = ['--', NODE, '-e', 'console.log(1)', '__ZN_DB_PASSWORD__'];
+  const args = ['--secrets', 'DB_PASSWORD', '--', NODE, '-e', 'console.log(1)'];
   let asked = 0;
   const vault = createFakeVault({ withApprovals: true, confirm: async () => { asked++; return true; } });
   await vault.setSecret('DB_PASSWORD', PG, { mode: 'env', allowCommands: [NODE] });
@@ -239,7 +278,7 @@ test('a vault without approval calls never approves (no file fallback)', async (
   const znHome = tempDir(t, 'zn-appr-');
   const vault = createFakeVault();
   await vault.setSecret('DB_PASSWORD', PG, { mode: 'env', allowCommands: [NODE] });
-  const args = ['--', NODE, '-e', '1', '__ZN_DB_PASSWORD__'];
+  const args = ['--secrets', 'DB_PASSWORD', '--', NODE, '-e', '1'];
   const e = sink();
   assert.equal(await runBroker(args, { vault, znHome, env: nodeEnv, stdout: sink(), stderr: e, stdin: { isTTY: true }, confirm: async () => true }), 77);
   assert.match(e.text(), /cannot record approvals/);

@@ -35,12 +35,16 @@ function fromTemporaryCopy(dir = __dirname) {
   return /[\\/](?:_npx|dlx(?:-[^\\/]*)?|xfs-[^\\/]*|\.bun[\\/]install[\\/]cache|bunx-[^\\/]*)[\\/]/.test(dir);
 }
 
-/* Absolute path of a program, searched only in absolute PATH entries; null when not found. */
+/* Absolute path of a program, searched only in absolute PATH entries (exe.programEnv, exe.findProgram); null when not
+ * found. On Windows an npm-installed .cmd (npm, claude, zn) comes first, then an .exe. */
 function findProgram(name, env) {
   const exe = require('./exe');
-  const absPath = String((env || process.env).PATH || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d)).join(path.delimiter);
-  const found = exe.whichSync(isWin ? name + '.cmd' : name, absPath) || (isWin ? exe.whichSync(name + '.exe', absPath) : null);
-  return found ? path.resolve(found) : null;
+  const e = env || process.env;
+  if (isWin) {
+    const cmd = exe.whichSync(name + '.cmd', exe.programEnv(e).PATH);
+    if (cmd) return path.resolve(cmd);
+  }
+  return exe.findProgram(name, e);
 }
 
 function samePath(a, b) {
@@ -59,9 +63,29 @@ function cmp(a, b) {
 }
 
 /* Run a program found by findProgram, with fixed arguments. */
+/* Without internet, npm retries for minutes before it gives up. These flags make it fail within about 30 s, and the child
+   process is stopped after 3 minutes whatever npm does. */
+const NPM_NETWORK_FLAGS = ['--fetch-retries=1', '--fetch-retry-mintimeout=1000', '--fetch-retry-maxtimeout=5000', '--fetch-timeout=15000'];
+const NPM_INSTALL_TIMEOUT_MS = 180000;
+
+/* On Windows npm.cmd only starts npm-cli.js with the node next to it, through cmd.exe. A timeout ends cmd.exe but not
+   that node, which goes on installing and writing after zn has moved on. [node, npm-cli.js] to run npm directly, without
+   a shell, so a timeout ends npm itself; null when `file` is not npm.cmd in the layout Node.js installs. */
+function npmCli(file, platform = process.platform) {
+  if (platform !== 'win32' || !/^npm\.cmd$/i.test(path.basename(file))) return null;
+  const dir = path.dirname(file);
+  const cli = path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  if (!fs.existsSync(cli)) return null;
+  const node = path.join(dir, 'node.exe');
+  return [fs.existsSync(node) ? node : process.execPath, cli];
+}
+
 function spawnProgram(file, args, env, extra = {}) {
-  const childEnv = { ...env };
-  if (isWin) childEnv.NoDefaultCurrentDirectoryInExePath = '1';
+  // The program gets only the absolute PATH entries: a .cmd shim (npm, claude on Windows) looks up `node` by name, and
+  // so do the programs it starts; a relative entry would point into the folder zn runs in, often a project.
+  const childEnv = require('./exe').programEnv(env || process.env);
+  const direct = isWin ? npmCli(file) : null;
+  if (direct) return spawnSync(direct[0], [direct[1], ...args], { ...extra, env: childEnv, windowsHide: true });
   // A .cmd file (npm, claude, zn on Windows) only starts through cmd.exe; its path is absolute and quoted.
   if (isWin && /\.cmd$/i.test(file)) {
     return spawnSync('"' + file + '"', args, { ...extra, env: childEnv, shell: true, windowsHide: true });
@@ -171,7 +195,7 @@ async function plan(opts = {}) {
     if (glob.version && cmp(glob.version, VERSION) >= 0) {
       // A global install that is the same or newer is used as it is: never downgrade it.
     } else if (glob.npm) {
-      setup.push({ label: 'install zn-gate ' + VERSION + ' for your user' + (glob.version ? ' (you have ' + glob.version + ')' : ''), run: [glob.npm, ['install', '-g', 'zn-gate@' + VERSION]], manual: 'npm install -g zn-gate@' + VERSION });
+      setup.push({ label: 'install zn-gate ' + VERSION + ' for your user' + (glob.version ? ' (you have ' + glob.version + ')' : ''), run: [glob.npm, ['install', '-g', ...NPM_NETWORK_FLAGS, 'zn-gate@' + VERSION]], timeout: NPM_INSTALL_TIMEOUT_MS, manual: 'npm install -g zn-gate@' + VERSION, shown: 'npm install -g ' + NPM_NETWORK_FLAGS.join(' ') + ' zn-gate@' + VERSION });
     } else {
       setup.push({ label: 'install zn-gate for your user', run: null, manual: 'npm install -g zn-gate' });
     }
@@ -192,9 +216,11 @@ async function hooksWorkNextToPlugin(opts, id) {
 function runStep(step, env) {
   const [file, args] = step.run;
   // stderr is copied to the terminal as it is, and kept to tell a permission failure from any other.
-  const r = spawnProgram(file, args, env, { stdio: ['inherit', 'inherit', 'pipe'], encoding: 'utf8' });
+  const extra = { stdio: ['inherit', 'inherit', 'pipe'], encoding: 'utf8' };
+  if (step.timeout) extra.timeout = step.timeout;
+  const r = spawnProgram(file, args, env, extra);
   if (r.stderr) process.stderr.write(r.stderr);
-  return { ok: !r.error && r.status === 0, stderr: String(r.stderr || '') };
+  return { ok: !r.error && r.status === 0, stderr: String(r.stderr || ''), timedOut: Boolean(r.error && r.error.code === 'ETIMEDOUT') };
 }
 
 const isPosix = process.platform !== 'win32';
@@ -204,6 +230,20 @@ function globalPrefix(opts, step) {
   if (opts.prefix) return opts.prefix;
   if (opts.global && opts.global.prefix) return opts.global.prefix;
   try { return globalInstall(opts.env || process.env).prefix || ''; } catch { return ''; }
+}
+
+/* True when npm's output shows it could not reach the registry (no internet, DNS or proxy failure), or it was stopped for waiting too long. */
+function networkFailure(stderr, timedOut) {
+  return Boolean(timedOut) || /\b(EAI_AGAIN|ENOTFOUND|ETIMEDOUT|ECONNREFUSED|ENETUNREACH)\b/.test(String(stderr || ''));
+}
+
+function networkAdvice(manual) {
+  return [
+    '  that did not finish: npm could not reach the registry. That can be no internet connection, a VPN or proxy that blocks it, or a company registry that is down.',
+    '  Check your connection (and your VPN or proxy), then run it again:',
+    '    ' + manual,
+    ''
+  ].join(String.fromCharCode(10)) + String.fromCharCode(10);
 }
 
 /* True when npm could not write its global folder: EACCES/EPERM in its output, or that folder is not writable. POSIX only. */
@@ -259,7 +299,7 @@ async function guide(opts = {}) {
   w('\n');
   const tail = () => w('(To wrap the MCP servers in your agent configs, which `zn-gate init` used to do: `zn-gate init --wrap-mcp`.)\n');
   if (!items.some((i) => i.found)) {
-    w('No supported coding agent was found (Claude Code, Codex CLI, Cursor, OpenCode). Nothing was changed.\n');
+    w('No supported coding agent was found (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app). Nothing was changed.\n');
     w('Install one, then run `npx -y zn-gate init` again. Other editors: https://usezn.com/docs/install\n');
     tail();
     return 1;
@@ -285,10 +325,11 @@ async function guide(opts = {}) {
   let globalReady = !setup.length;
   for (const s of setup) {
     if (!s.run) { w(`First, ${s.label}: ${s.manual}\n`); skipped++; break; }
-    if (!(await ask(`${s.label}: run \`${s.manual}\`?`))) { w(`  skipped. You can run it later: ${s.manual}\n`); skipped++; break; }
+    if (!(await ask(`${s.label}: run \`${s.shown || s.manual}\`?`))) { w(`  skipped. You can run it later: ${s.manual}\n`); skipped++; break; }
     const res = run(s, env);
     if (!(res === true || (res && res.ok))) {
-      if (s.run && permissionFailure(res && res.stderr, globalPrefix(opts, s))) w(permissionAdvice({ prefix: globalPrefix(opts, s), env, todo, shell: opts.shell }));
+      if (s.run && networkFailure(res && res.stderr, res && res.timedOut)) w(networkAdvice(s.manual));
+      else if (s.run && permissionFailure(res && res.stderr, globalPrefix(opts, s))) w(permissionAdvice({ prefix: globalPrefix(opts, s), env, todo, shell: opts.shell }));
       else w(`  that did not finish. Run it yourself: ${s.manual}\n`);
       skipped++; break;
     }
@@ -324,4 +365,4 @@ async function guide(opts = {}) {
   return skipped ? 1 : code;
 }
 
-module.exports = { guide, plan, fromTemporaryCopy, _internal: { permissionFailure, permissionAdvice, findProgram, globalInstall, cmp, runStep, spawnProgram } };
+module.exports = { guide, plan, fromTemporaryCopy, _internal: { networkFailure, NPM_NETWORK_FLAGS, permissionFailure, permissionAdvice, findProgram, globalInstall, cmp, runStep, spawnProgram, npmCli } };

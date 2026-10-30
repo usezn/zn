@@ -36,8 +36,8 @@ Both return the same result as `evaluate`, with a rule such as `destructive:rm_r
 
 | Rule | Default | Blocks | Examples |
 | --- | --- | --- | --- |
-| `rm_root_home` | on | Recursive delete of the home folder, the filesystem root, a top-level system folder or a drive root. Also `find` with `-delete` or `-exec rm` on those paths and no test such as `-name`. | `rm -rf ~`, `rm -rf $HOME/*`, `rm -rf /`, `rm -rf /usr`, `rm -rf /home/alice`, `Remove-Item -Recurse -Force $env:USERPROFILE`, `rd /s /q C:\` |
-| `pipe_to_shell` | off | A download that is run as a script without being read. | `curl https://example.com/install.sh \| sh`, `wget -qO- ... \| sudo bash`, `sh -c "$(curl ...)"`, `bash <(curl ...)`, `iwr ... \| iex` |
+| `rm_root_home` | on | Recursive delete of the home folder, the filesystem root, a top-level system folder or a drive root. Also `find` with `-delete` or `-exec rm` on those paths and no test such as `-name`. Also the one-liners `python -c`, `node -e`, `perl -e` and `ruby -e` that call a recursive delete (`shutil.rmtree`, `fs.rmSync` with `recursive`, `remove_tree`, `FileUtils.rm_rf`, `unlink glob`) on one of those paths. | `rm -rf ~`, `rm -rf $HOME/*`, `rm -rf /`, `rm -rf /usr`, `rm -rf /home/alice`, `Remove-Item -Recurse -Force $env:USERPROFILE`, `rd /s /q C:\` |
+| `pipe_to_shell` | off | A download that is run as a script without being read, or into `python`, `node`, `perl` or `ruby` when it reads the program from the pipe (`curl ... \| python3`, `\| sudo python3 -`); `\| python3 -m json.tool` and `\| python3 script.py` are fine. | `curl https://example.com/install.sh \| sh`, `wget -qO- ... \| sudo bash`, `sh -c "$(curl ...)"`, `bash <(curl ...)`, `iwr ... \| iex` |
 | `disk_overwrite` | on | `dd` with `of=` a block device, `mkfs`, `mkswap`, `wipefs`, `shred` or `blkdiscard` on one, a redirect into one, PowerShell `Format-Volume` and `Clear-Disk`. | `dd if=/dev/zero of=/dev/sda`, `mkfs.ext4 /dev/nvme0n1p2`, `cat /dev/zero > /dev/sda` |
 | `perm_root` | off | `chmod -R`, `chown -R` or `chgrp -R` on the filesystem root or a top-level system folder; `chmod -R` with a world-writable mode on the home folder. | `chmod -R 777 /`, `chown -R nobody /usr`, `chmod -R 777 ~` |
 | `fork_bomb` | off | The classic shell fork bomb, under any function name. | `:(){ :\|:& };:` |
@@ -53,8 +53,8 @@ The check reads command text only. These are **not** covered, and the check lets
 
 - A path the command builds at run time: `rm -rf "$DIR"` with an empty `DIR`, `rm -rf *` in an unknown folder, or a target that comes from a pipe (`echo ~ | xargs rm -rf`).
 - A program or shell named by a variable set earlier on the same line (`C=curl; $C https://example.com/i.sh | sh`): the value is not followed. Quoting that bash decodes before it runs the word (`$'\x63url'`, `c\url`) is read.
-- A script saved first and run later (`curl -o x.sh ... && sh x.sh`), or a download piped into an interpreter that is not a shell (`curl ... | python3`).
-- Other tools and languages (`rsync --delete`, `git clean`, `python -c "shutil.rmtree(...)"`), and paths below the top level (`rm -rf /usr/local`).
+- A script saved first and run later (`curl -o x.sh ... && sh x.sh`), or a download piped into an interpreter that is given a script file (`curl ... | python3 script.py`, which only reads the download as data).
+- Other tools (`rsync --delete`, `git clean`), code in a file or built at run time (a script the agent wrote, `python3 -c "shutil.rmtree(path)"` with a variable), and paths below the top level (`rm -rf /usr/local`).
 - Commands that run inside a container (`docker run ... rm -rf /`) or on another machine (`ssh host "rm -rf /"`).
 - Anything an agent does by writing a file and then running it.
 
@@ -65,6 +65,16 @@ For those, use a sandbox, a container or your agent's own permission prompts. Th
 The test corpus has about 1,000 ordinary developer commands (builds, git, package managers, containers, `rm -rf node_modules dist build target .venv`, `curl -o`, `curl | jq`, edits to `.bashrc`, and many that sit close to the blocked shapes) and about 550 commands with the blocked shapes, written from templates with varied flags, targets and fictitious hosts. On that corpus there are no false positives and no misses; the corpus is written by the same people who wrote the rules, so read it as a regression test, not as an error rate on all real commands. Run `node bench/destructive_policy.js` in the repository to see the numbers, and `--docs` to also check the shell lines of the repository's documentation.
 
 Cost: about 5 microseconds per command for the check itself, and a few microseconds more for a hook decision, which takes about 160 microseconds without it. The check code is loaded the first time a shell command is checked, and not at all when you turn the check off.
+
+## How to read a blocked-command message
+
+A block tells you two things: the command did not run, and which rule matched. Use the rule name to find the matching row in [What it blocks](#what-it-blocks). The rule name appears with a `destructive:` prefix, for example `destructive:rm_root_home`.
+
+- `destructive:rm_root_home` for `rm -rf ~`: a recursive delete of the home folder. It is on by default.
+- `destructive:disk_overwrite` for `dd if=/dev/zero of=/dev/sda`: a write to a disk device. It is on by default.
+- `destructive:pipe_to_shell` for `curl https://example.com/install.sh | sh`: a download run without being read. It is only active if you turned it on.
+
+If the command was what you meant, the agent will ask you to confirm; run it yourself in a terminal. If the command was a mistake, tell the agent what you actually want. If a rule blocks work you do often, see [Change the settings](#change-the-settings). For commands the check does not cover, see [What it does not do](#what-it-does-not-do).
 
 ## If it blocks a command you want
 

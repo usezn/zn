@@ -16,12 +16,29 @@ them.
    Most releases need nothing more.
 3. Run `zn-gate check`. Every agent that is set up should say **OK**.
 
+The hook launchers of `zn hooks install` keep the SHA-256 of zn-gate's hook
+runner and run it only while it matches. An update with npm rewrites them by
+itself (an install step of the package). If your update does not run install
+scripts, the launchers are not refreshed, and what happens depends on how you
+installed zn-gate:
+
+- **pnpm** (`pnpm add -g zn-gate@<newer>`) skips install scripts. The old
+  version's folder stays on disk, so the hooks keep working but run the runner
+  of the previous version, with its older rules, until you run
+  `zn hooks install <agent>` again. `zn-gate check` still says **OK** and adds a
+  note that names the older version.
+- **bun** and `npm install --ignore-scripts` skip them too. The runner changed,
+  so the hooks block tool calls and say so until you run
+  `zn hooks install <agent>` again for each agent.
+
+If you installed or updated with `sudo`, run `zn hooks install <agent>` again as yourself (without `sudo`) after the update.
+
 If `zn-gate check` says an agent is not protected, it also prints the command
 that fixes it.
 
 ## Run `zn hooks install <agent>` again when a release changes the hook
 
-The hooks of `zn hooks install` (Claude Code, Codex CLI, Cursor) are written into
+The hooks of `zn hooks install` (Claude Code, Codex CLI, Cursor, ZCode desktop app) are written into
 the agent's own settings, so a new zn-gate does not rewrite them by itself. When
 a release adds or changes a hook, the release notes in the
 [changelog](../CHANGELOG.md) say so and name the agent. Run the install again
@@ -68,12 +85,70 @@ for everyday work.
 A user install of the hooks writes the paths of the Node.js and of the zn-gate
 files it was run from. A global npm package belongs to one Node.js version, so
 `nvm use`, `nvm uninstall`, a Homebrew Node.js upgrade or a new Node.js install
-can leave the hook pointing at something that is gone. When the hook cannot
-start:
+can leave the hook pointing at something that is gone.
 
-- Prompts: Claude Code 2.1.295 or later, Cursor and OpenCode block them instead
-  of letting them through unchecked. Codex CLI lets them through.
-- Tool calls: in Claude Code and Codex CLI they go ahead unchecked.
+When zn's hook cannot start (for example, the Node.js it was installed with was
+removed, and `node` or `zn` is not on the PATH of the agent), what happens
+depends on the agent and on how the hooks were installed. A user install
+(`zn hooks install <agent>`) writes a small launcher script as the hook command
+(`~/.zn/hooks/zn-hook-<agent>.sh`; on Windows, for Codex CLI, Cursor, Gemini CLI
+and Antigravity, the same steps written inline in PowerShell). It runs the
+Node.js it was installed with, while its runner still has the SHA-256 recorded
+at install time (never a `zn` from the PATH, except in the inline PowerShell
+hooks on Windows), else it answers the
+block itself, without Node.js. A project install (`--project`) names `zn` on
+the PATH inside a short start guard (`sh -c`, PowerShell on Windows) that gives
+the same block when `zn` or Node.js is missing or fails, so it behaves like a
+user install. Hooks written by an older zn-gate (up to 1.13.1), including project
+installs, and the plugins keep a plain command. Agent by agent:
+
+- **Claude Code**: with a user install, tool calls, prompts and typed-command
+  expansions are blocked in every Claude Code version; after a tool has run, zn
+  only warns in the session, so that output reaches the model unscrubbed. A
+  project install does the same. With the plugin or older hooks, Claude Code
+  2.1.295 or later
+  blocks tool calls, prompts and typed-command expansions (the hooks carry
+  `onFailure: "block"`), and earlier versions let them go ahead.
+- **Codex CLI**: with a user install, tool calls, prompts and permission
+  requests are blocked, and after a tool has run zn only warns. A project
+  install does the same. With the plugin or older hooks, Codex reports a hook
+  failure and carries on: tool calls and prompts go ahead unchecked.
+- **Cursor**: with a user install, shell commands, MCP calls, file reads,
+  prompts and `preToolUse` calls (Write, Delete, Grep) are blocked, and after a
+  tool has run zn only warns. A project install does the same. With the
+  plugin, shell commands, file reads, prompts and `preToolUse` calls are blocked
+  (its hooks are `failClosed`). With older hooks, only file reads and prompts
+  are blocked; the other calls go ahead.
+- **Gemini CLI**: with a user install or a project install, tool calls are
+  blocked. With hooks written before zn-gate 1.14.0, Gemini CLI shows a warning
+  and the tool call runs.
+- **GitHub Copilot CLI**: a hook command that cannot start fails closed for
+  `preToolUse`, so the tool call is blocked; the hook that runs after a tool
+  fails open, so that output is not scrubbed. Copilot has no launcher, and it
+  lets a call through when a hook times out, so zn sets a 15-second timeout on
+  its hooks and blocks the call itself at 11 seconds.
+- **OpenCode**: the plugin starts the hook itself. When the hook cannot start,
+  times out or gives no valid answer, the tool call is blocked, the message is
+  not sent and the tool output is withheld, for user and project installs alike.
+- **Antigravity**: Antigravity does not document what a hook that cannot start
+  does. With a user install, the launcher answers a deny with the repair step
+  (the one block Antigravity documents), so the tool call is blocked. A
+  project install wraps `zn hook antigravity` in a one-line guard (`sh -c`, PowerShell on
+  Windows), so a missing `zn` or `node` ends in that deny too. Only hooks installed
+  by an older zn-gate keep the plain command: for those, zn-gate cannot promise
+  anything (the call may be blocked with no message from zn, or run). Not tested:
+  a hook that times out.
+- **ZCode**: ZCode's documentation says exit code 2 or a deny answer blocks and any
+  other non-zero exit code fails the hook recoverably; it does not say what happens
+  when a hook cannot start or times out (not tested). With the user install (the only one
+  ZCode has), the launcher exits 2 with the repair step on tool calls, permission
+  requests and prompts, and after a tool has run zn only warns. The launcher also
+  stops a hook that has not finished after 28 seconds (2 seconds under the 30-second
+  timeout zn sets on its hook entries) and blocks the call, on Windows too. If ZCode cannot
+  start the launcher itself (the file deleted or not executable), the call goes
+  ahead unchecked.
+
+`zn-gate check` says which agents are in this state.
 
 To fix it, with the Node.js you want to keep:
 
@@ -89,8 +164,7 @@ To fix it, with the Node.js you want to keep:
    back on with `zn hooks install <agent>` or
    `claude plugin enable zn-gate@usezn`, then run `zn-gate check` again.
 
-Details on what each agent does when the hook cannot run:
-[compat.md](compat.md#if-your-agent-blocks-every-prompt).
+The same text is in [compat.md](compat.md#if-your-agent-blocks-every-prompt).
 
 ## Check that it works
 
@@ -103,6 +177,85 @@ ordinary file, asks each agent's installed hook to read both, and counts an agen
 as protected only when the `.env` file is blocked and the ordinary file is
 allowed. Nothing is sent and no setting changes. [What the output means](check.md).
 
+## What changes when you update to 1.14
+
+A checklist of what the changes collected for 1.14 ask of you. Skip a line that
+does not apply to you. The [changelog](../CHANGELOG.md) has the full list.
+
+After updating, run these in your own terminal:
+
+- [ ] **Run `zn hooks install <agent>` again** for each agent you installed hooks
+  for with `zn hooks install`: `claude-code`, `codex`, `cursor`, `gemini` and
+  `antigravity`. This switches an existing install to the changes in this
+  release: the hook launcher script that blocks instead of running a call
+  unchecked when Node.js is gone, the check of MCP tool calls in Claude Code and
+  Codex, and the Codex hooks for `PermissionRequest` and `Stop`. With the Claude
+  Code plugin, run `claude plugin update zn-gate@usezn` and start a new session.
+- [ ] **Codex: trust the changed hooks.** Open Codex and review them in `/hooks`
+  (see [above](#codex-asks-you-to-trust-the-hooks-again)).
+- [ ] **Claude Code plugin: check your Node.js.** The plugin now needs Node.js
+  20.19 or later, not 20.12. On an older Node.js, `zn-gate init` sets up zn's
+  hooks instead, and `zn-gate check` explains why. zn-gate itself and zn's hooks
+  still run on Node.js 18 and later.
+- [ ] **Run `zn-gate check`.** Every agent that is set up should say **OK**. It
+  now also reports a Codex setup that has another tool's `PreToolUse` or
+  `PermissionRequest` hook, and a hook whose script is missing.
+
+Changes in behavior that you may notice:
+
+- [ ] **New questions and blocks in the agent hooks.** They ask before an agent
+  writes to files such as `AGENTS.md`, `CLAUDE.md` or `.cursorrules`
+  (`hooks.agentInstructionWrites`), ask before a network request that carries
+  personal data or a literal secret ([egress check](egress-check.md),
+  `hooks.egressCheck`), and refuse a recursive delete of the home folder, the
+  filesystem root or a system folder, and a write to a disk device
+  (`hooks.blockDestructiveCommands`). Each can be changed in `~/.zn/config.json`.
+- [ ] **Agents can no longer run `zn-gate uninstall`.** Run it yourself in your
+  own terminal.
+- [ ] **A tool result larger than 4 MB is blocked** by the SDK functions and the
+  Python framework integrations. The agent hooks are unchanged. The block message
+  names the opt-out (`ZN_ALLOW_TRUNCATED=1`).
+- [ ] **`DEBUG=*` no longer turns on zn's technical detail.** Use `ZN_VERBOSE=1`
+  or `DEBUG=zn`.
+- [ ] **Project installs for Claude Code** (`--project`) now write `zn hook
+  claude-code` in the shared files instead of machine paths. Run the install
+  again in the project and commit the changed file.
+
+If you use the Python package (`pip install -U zn-gate`):
+
+- [ ] **LangChain:** `ZnGuardCallbackHandler(on_block="return")` now raises
+  `ValueError`; use `guard_langchain_tool(tool, on_block="return")`. The package
+  now needs `langchain-core` 1.3.3 or later.
+- [ ] **`guarded_tool`** now checks a tool's output for prompt injection by
+  default. Pass `check_result=False` to keep the old behavior.
+- [ ] **`check_tool_call` and `@guard`** now read the strings inside objects, and
+  block a generator or other one-shot iterator (pass a list). Check that your
+  tools still pass.
+
+## Going back to the previous version
+
+Run these in your own terminal, not through an AI agent. Going back does not
+touch your code or your vault.
+
+1. Remove the hooks of each agent you set up with `zn hooks install`:
+   `npx -y zn-gate hooks uninstall claude-code` (use `codex`, `cursor`,
+   `opencode` or `antigravity` for the others, and add `--project` for a project
+   install). With the Claude Code plugin, see [Remove zn-gate](uninstall.md#claude-code-plugin).
+2. Remove the program: `npm uninstall -g zn-gate`, and `pip uninstall zn-gate`
+   if you also installed the Python package
+   ([details](uninstall.md#the-program-itself)).
+3. Install the older release with your package manager, the same way you
+   installed zn-gate the first time. The commands on this page
+   (`npm install -g zn-gate`, `pip install -U zn-gate`) install the newest release.
+4. Run `zn hooks install <agent>` again for each agent, and trust the hooks in
+   `/hooks` if you use Codex.
+5. Run `zn-gate check`. Every agent that is set up should say **OK**.
+
+Before you go back, look up your versions in
+[the table below](#what-each-release-asks-you-to-do): one row says not to go back
+to 1.7.1 in a zn Team organization with Warn rules. For the full removal steps,
+see [Remove zn-gate](uninstall.md).
+
 ## What each release asks you to do
 
 Versions from 1.8.0 on. "No action" means that updating the package is enough.
@@ -110,6 +263,8 @@ For the full list of changes, see the [changelog](../CHANGELOG.md).
 
 | Version | Date | What to do |
 |---|---|---|
+| 1.14.0 | 2026-10-27 | A CI job or pre-commit hook that runs `zn-gate scan` can now exit `3` when a file was skipped (for example a JSON or Markdown file of 2 MiB or more) or when no file was read. Pass `--allow-partial` to accept skipped files (an empty scan still exits `3`); in the GitHub Action set `allow-partial: true`, and in pre-commit add `args: [--allow-partial]` to the `zn-gate-scan` hook. |
+| 1.14.0 | 2026-10-27 | **A secret marker in a command's arguments is now refused**, because arguments are visible to other processes and to command-line logs. Before: `psql "postgres://user:__ZN_DB_PASSWORD__@db/app"`. After: `zn secret set PGPASSWORD --command psql`, then `zn run --secrets PGPASSWORD -- psql "postgres://user@db/app"`, where psql reads the variable itself. A secret kept for a program or a file (`env` or `file` mode) is no longer sent by `secrets_http_request`: run `zn secret allow NAME --mode proxy` if an API needs it. Approvals saved by earlier versions do not carry over: the first time a command uses a secret after you update, zn asks you to approve it again. A vault that is already unlocked while you update is restarted by `zn unlock`. |
 | 1.13.0 | 2026-10-19 | If you installed Claude Code hooks with `zn hooks install claude-code`, run it again to add the hook that checks what a typed skill or command expands into (`zn-gate check` tells you; the plugin has it already). On a Node.js older than 20.12, `zn-gate init` sets up hooks instead of the plugin; if you have the plugin there, `check` gives the way out. In a GitHub workflow that uses the Action without `version`, set `version` to choose what runs: the 1.12.0 Action defaulted to 1.10.0. |
 | 1.12.0 | 2026-10-18 | No action. If you verify release signatures, the signer workflow is now `build-release.yml` (see [verify-release.md](verify-release.md)). |
 | 1.11.0 | 2026-10-17 | No action. A CI job that fails when `zn-gate scan` finds secrets can start failing on tokens of the new types (for example Square, Discord, Grafana or Notion tokens): look at each finding and rotate any real token. |

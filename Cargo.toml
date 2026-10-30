@@ -1,6 +1,6 @@
 [package]
 name = "zn"
-version = "1.13.1"
+version = "1.14.1"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
@@ -21,12 +21,12 @@ thiserror = "1.0"
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-axum = { version = "0.7", features = ["macros", "ws", "multipart"] }
+axum = { version = "0.8", features = ["macros", "ws", "multipart"] }
 tower-http = { version = "0.5", features = ["cors", "auth", "fs", "timeout"] }
 # Already in the tree through axum; named here to run the management API with read timeouts.
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "service"] }
-wasmtime = "48"
+wasmtime = { version = "48", default-features = false, features = ["anyhow", "async", "backtrace", "gc", "gc-copying", "gc-drc", "gc-null", "wat", "profiling", "parallel-compilation", "cranelift", "pooling-allocator", "demangle", "addr2line", "coredump", "debug-builtins", "runtime", "component-model", "component-model-async", "threads", "stack-switching", "std", "debug", "compile-time-builtins", "wit-parser"] }
 rusqlite = { version = "0.40", default-features = false, features = ["bundled", "cache", "fallible_uint"] }
 ratatui = "0.30"
 crossterm = "0.29"
@@ -38,7 +38,7 @@ dashmap = "5.5"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 async-stream = "0.3"
-tower_governor = "0.4"
+tower_governor = { version = "0.8", default-features = false, features = ["axum"] }
 aho-corasick = "1.1"
 reqwest = { version = "0.12", features = ["json"] }
 prometheus = "0.14"
@@ -60,7 +60,9 @@ opentelemetry_sdk = { version = "0.33", features = ["trace"] }
 sha2 = "0.11"
 rand = "0.10"
 ml-dsa = { version = "0.1.1", default-features = false, features = ["alloc"] }
-jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
+# The gateway only verifies HMAC (HS256) tokens. The aws-lc-rs backend is already in the tree
+# (rustls), so this drops the RustCrypto RSA/P-256/P-384 stack (rsa, p256, p384, crypto-bigint).
+jsonwebtoken = { version = "10.3", default-features = false, features = ["aws_lc_rs"] }
 async-trait = "0.1"
 aws-config = { version = "1.11", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client", "credentials-process", "sso"] }
 aws-sdk-kms = { version = "1.117", default-features = false, features = ["rt-tokio", "default-https-client"] }
@@ -74,6 +76,12 @@ tokenizers = "0.22.2"
 # schemars needed directly: JsonSchema derive expands to `schemars::` paths.
 rmcp = { version = "=3.5.1", features = ["server", "macros", "schemars", "transport-io"] }
 schemars = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.189"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
 
 [package.metadata.cargo-machete]
 # schemars is used through the rmcp::schemars derive, which expands to schemars:: paths,

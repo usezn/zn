@@ -1,0 +1,9 @@
+{
+  "name": "zn-release-npm-cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pinned npm CLI that publishes the npm release with trusted publishing",
+  "devDependencies": {
+    "npm": "11.21.1"
+  }
+}

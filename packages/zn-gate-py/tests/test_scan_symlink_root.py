@@ -65,21 +65,21 @@ class ScanSymlinkRoot(unittest.TestCase):
         self._link(outside, proj / "linked", True)
         rc, out = _scan(proj)
         data = json.loads(out)
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 3)
         self.assertEqual(data["total_files"], 0)
         self.assertEqual(data["threats"], [])
         self.assertIn("No files were scanned in", data["warning"])
 
-    def test_empty_scan_says_so_and_exits_zero(self):
+    def test_empty_scan_says_so_and_exits_three(self):
         rc, out = _scan(self.base, "text")
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 3)
         self.assertIn(f"No files were scanned in {self.base}", out)
         self.assertNotIn("are clean", out)
         rc, out = _scan(self.base, "github")
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 3)
         self.assertIn("::warning title=Nothing scanned::No files were scanned in ", out)
         rc, out = _scan(self.base, "json")
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 3)
         self.assertTrue(json.loads(out)["warning"].startswith("No files were scanned in "))
 
 

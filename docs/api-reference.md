@@ -1,5 +1,56 @@
 # zn-gate API Reference
 
+## Table of contents
+
+- [Node.js (`zn-gate`)](#nodejs-zn-gate)
+  - [`evaluate(text, options)`](#evaluatetext-options)
+  - [`analyze(text, options)`](#analyzetext-options)
+  - [`analyzeLocal(text, options)`](#analyzelocaltext-options)
+  - [`isCloudEnabled(options)`](#iscloudenabledoptions)
+  - [`usesStoredKey(options)`](#usesstoredkeyoptions)
+  - [`usableApiKey(value)`](#usableapikeyvalue)
+  - [`longInputMode(options)`](#longinputmodeoptions)
+  - [`resolveEndpoint(options, flags)`](#resolveendpointoptions-flags)
+  - [Constants](#constants)
+  - [`sanitizeToolResult(toolName, content, options)`](#sanitizetoolresulttoolname-content-options)
+  - [`redactSecrets(text)`](#redactsecretstext)
+  - [`checkToolResult(toolName, content, options)`](#checktoolresulttoolname-content-options)
+  - [`checkCommand(command)`](#checkcommandcommand)
+  - [`checkToolCall(toolName, args, options)`](#checktoolcalltoolname-args-options)
+  - [`guardTool(fn, options)`](#guardtoolfn-options)
+  - [`GuardBlockError`](#guardblockerror)
+  - [`sanitizeToolResult`, `redactSecrets`, `verifyEvidenceLedger` and `logEvidence`](#sanitizetoolresult-redactsecrets-verifyevidenceledger-and-logevidence)
+  - [`logEvidence(event, filePath, options)`](#logevidenceevent-filepath-options)
+  - [`verifyEvidenceLedger(filePath)`](#verifyevidenceledgerfilepath)
+- [Python (`zn-gate`)](#python-zn-gate)
+  - [`evaluate(text: str, strict: bool | None = None) -> Assessment`](#evaluatetext-str-strict-bool--none--none---assessment)
+  - [`@guard(on_block='raise'|'return'|'custom', fallback=None, check_args=True, check_result=False, mask_secrets=False, callback=None, block_truncated=False)`](#guardon_blockraisereturncustom-fallbacknone-check_argstrue-check_resultfalse-mask_secretsfalse-callbacknone-block_truncatedfalse)
+  - [`GuardBlockError(assessment, target='', payload=None)`](#guardblockerrorassessment-target-payloadnone)
+  - [`check_tool_call(tool_name: str, arguments: Any = None, strict: bool | None = None, block_truncated: bool = False) -> Assessment`](#check_tool_calltool_name-str-arguments-any--none-strict-bool--none--none-block_truncated-bool--false---assessment)
+  - [`check_tool_result(result: Any, block_truncated: bool = False, strict: bool | None = None, allow_truncated: bool = False) -> Assessment`](#check_tool_resultresult-any-block_truncated-bool--false-strict-bool--none--none-allow_truncated-bool--false---assessment)
+  - [`check_command(command: str) -> Assessment`](#check_commandcommand-str---assessment)
+  - [`normalize_input(text: str) -> tuple[str, str]`](#normalize_inputtext-str---tuplestr-str)
+  - [`redact_secrets(text: str) -> tuple[str, list[dict]]`](#redact_secretstext-str---tuplestr-listdict)
+  - [`sanitize_tool_result(tool_or_result, content=None, mask_secrets=True, block_truncated=False, strict=None, allow_truncated=False)`](#sanitize_tool_resulttool_or_result-contentnone-mask_secretstrue-block_truncatedfalse-strictnone-allow_truncatedfalse)
+  - [`analyze(input_text, api_key=None, endpoint=None, timeout=None, local_only=False, long_input=None, **kwargs) -> dict`](#analyzeinput_text-api_keynone-endpointnone-timeoutnone-local_onlyfalse-long_inputnone-kwargs---dict)
+  - [`analyze_cloud(input_text, api_key, endpoint_url=None, timeout=4.0, long_input=None) -> dict`](#analyze_cloudinput_text-api_key-endpoint_urlnone-timeout40-long_inputnone---dict)
+  - [`is_cloud_enabled(api_key: str | None = None, local_only: bool = False) -> bool`](#is_cloud_enabledapi_key-str--none--none-local_only-bool--false---bool)
+  - [`resolve_endpoint(options: dict | None = None) -> str`](#resolve_endpointoptions-dict--none--none---str)
+  - [`log_evidence(event: dict, file_path: str = EVIDENCE_FILE, lock_wait: float = 2.0) -> dict | None`](#log_evidenceevent-dict-file_path-str--evidence_file-lock_wait-float--20---dict--none)
+  - [`verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> dict`](#verify_evidence_ledgerfile_path-str--evidence_file---dict)
+  - [`get_evidence_stats(file_path: str = EVIDENCE_FILE, limit: int = 50) -> dict`](#get_evidence_statsfile_path-str--evidence_file-limit-int--50---dict)
+  - [`export_evidence_ledger(file_path: str | None = None, format: str = 'jsonl') -> dict`](#export_evidence_ledgerfile_path-str--none--none-format-str--jsonl---dict)
+  - [Constants (Python)](#constants-python)
+  - [Framework integrations (`zn_gate.integrations`)](#framework-integrations-zn_gateintegrations)
+  - [`ZnGuardCallbackHandler(on_block='raise', mask_secrets=True, raise_on_injection=None, block_truncated=False)`](#znguardcallbackhandleron_blockraise-mask_secretstrue-raise_on_injectionnone-block_truncatedfalse)
+  - [`guard_langchain_tool(tool, on_block='raise', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`](#guard_langchain_tooltool-on_blockraise-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone)
+  - [`guarded_tool(on_block='raise', mask_secrets=True, fallback=None, check_result=True, block_truncated=False, framework=None)`](#guarded_toolon_blockraise-mask_secretstrue-fallbacknone-check_resulttrue-block_truncatedfalse-frameworknone)
+  - [`adk_tool_callbacks(on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`](#adk_tool_callbackson_blockreturn-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone)
+  - [`openai_agents_tool_guardrails(on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`](#openai_agents_tool_guardrailson_blockreturn-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone)
+  - [`guard_pydantic_ai_toolset(toolset, on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`](#guard_pydantic_ai_toolsettoolset-on_blockreturn-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone)
+  - [`ZnLlamaGuard(on_block='raise', mask_secrets=True, raise_on_violation=None, fallback=None)`](#znllamaguardon_blockraise-mask_secretstrue-raise_on_violationnone-fallbacknone)
+  - [`call_api(prompt, options=None, context=None) -> dict`](#call_apiprompt-optionsnone-contextnone---dict)
+
 ## Node.js (`zn-gate`)
 
 <!-- snippet-test -->
@@ -165,7 +216,8 @@ from zn_gate import get_evidence_stats, export_evidence_ledger
 - `on_block='raise'` raises `GuardBlockError`; `'return'` returns `fallback` (or the `Assessment` when `fallback` is `None`); `'custom'` calls `callback(assessment, function_name, payload)` and then raises `GuardBlockError`, unless the callback raises its own exception first. A blocked call never runs the function.
 - `on_block` must be `'raise'`, `'return'` or `'custom'`; any other value, or `'custom'` without a `callback`, raises `ValueError` when the decorator is created.
 - With `check_result=True`, a result too large to scan in full (over 4 MB) is blocked by default (rule `size:truncated`); set `ZN_ALLOW_TRUNCATED=1` to allow it. `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` forces the block and also covers arguments. The `self` or `cls` of a method is not checked.
-- Application objects passed to the function (a client, a session, a dependency container) are read as far as possible: unlike `check_tool_call`, the decorator does not block an argument because a plain object in it is nested too deep or cannot be read. `SimpleNamespace` and `argparse.Namespace` count as data, like dicts and dataclasses: nested deeper than ten levels they are blocked (rule `size:nesting`).
+- Application objects passed to the function (a client, a session, a dependency container) are read as far as possible: they are read attribute by attribute down to 32 levels, as a result is, and the text found there is checked; what is deeper than 32 levels blocks the call (rule `size:nesting`), while what cannot be read, or lies past 100,000 values, is left out. Data is checked strictly, like in `check_tool_call`: dicts, lists, `SimpleNamespace`, `argparse.Namespace`, dataclasses and data models nested deeper than ten levels block the call, and a container that cannot be read (its items raise) blocks it with rule `type:unscannable`. Framework run contexts (pydantic-ai `RunContext`, Google ADK and OpenAI Agents SDK tool contexts, LangChain callback managers and `RunnableConfig`) and logging objects (loggers, handlers, `LoggerAdapter`) are not checked, so pass those as before. Arguments bound with `functools.partial` are checked the same way.
+- A generator or async generator result is passed on chunk by chunk, each chunk checked together with the end of the previous one. With `mask_secrets=True` the text is masked as one stream, so a secret split across chunks is masked whole: the last 16 KiB of text are held back, as it arrived, until more text or the end of the stream (also when the function fails) arrives, and a secret that reaches into them keeps the text from its start held too. Each chunk the function yields still gives one chunk out, empty while its text is held. The held text is withheld when a chunk blocks.
 
 ### `GuardBlockError(assessment, target='', payload=None)`
 
@@ -193,7 +245,7 @@ except GuardBlockError as e:
 
 ### `check_tool_result(result: Any, block_truncated: bool = False, strict: bool | None = None, allow_truncated: bool = False) -> Assessment`
 
-- Dicts, lists, dataclasses, models, `SimpleNamespace` (for example from `json.loads(..., object_hook=...)`) and `argparse.Namespace` nested deeper than ten levels are blocked (rule `size:nesting`). Other objects are read up to 32 levels deep and blocked past that, and more than 100,000 values taken from them is blocked (rule `size:items`) instead of being skipped. The same applies to results checked by `@guard(check_result=True)`.
+- Dicts, lists, dataclasses, models, `SimpleNamespace` (for example from `json.loads(..., object_hook=...)`) and `argparse.Namespace` nested deeper than ten levels are blocked (rule `size:nesting`). Other objects are read up to 32 levels deep and blocked past that, and more than 100,000 attribute names and values taken from them (about 50,000 attributes) is blocked (rule `size:items`) instead of being skipped. An object reached through several references is counted once, and loggers are not read (handlers, which can hold captured records, are). The same applies to results checked by `@guard(check_result=True)`.
 
 - Inspects external tool return values for indirect injection payloads. Long strings are scanned in overlapping windows up to 4 MB; `Assessment.truncated` is `True` when a string was not scanned in full. Such output (over 4 MB) is blocked by default (rule `size:truncated`) because its middle was never checked; pass `allow_truncated=True` or set `ZN_ALLOW_TRUNCATED=1` to allow it marked `truncated`. `block_truncated=True` and `ZN_BLOCK_TRUNCATED=1` force the block. `@guard(check_result=True)` uses this check.
 
@@ -214,7 +266,7 @@ except GuardBlockError as e:
 
 ### `sanitize_tool_result(tool_or_result, content=None, mask_secrets=True, block_truncated=False, strict=None, allow_truncated=False)`
 
-- Two call forms, as in Node. `sanitize_tool_result(data)` redacts secrets in strings, lists, dicts and tuples and returns a **tuple** `(clean_data, detections)`, with detections shaped as for `redact_secrets`. The Node version returns `{ sanitized, detections }`.
+- Two call forms, as in Node. `sanitize_tool_result(data)` redacts secrets in strings, lists, dicts and tuples and returns a **tuple** `(clean_data, detections)`, with detections shaped as for `redact_secrets`. The Node version returns `{ sanitized, detections }`. Data nested deeper than ten levels, a container that contains itself or more than 100,000 values raises `SanitizeLimitError` (a `ValueError` whose `rule` is `size:nesting` or `size:items`); `@guard(mask_secrets=True)` blocks such a result with the same rule.
 - `sanitize_tool_result(tool_name, content)` scans the output and returns a dict `{ tool_name, safe_to_ingest, truncated, assessment, secrets_redacted, sanitized_content }` (typed as `SanitizedToolResult`), where `assessment` is an `Assessment`. Content that is not a string is checked string by string, as `check_tool_result` does, and as JSON text; `sanitized_content` is that JSON text, as in Node.
 
 ### `analyze(input_text, api_key=None, endpoint=None, timeout=None, local_only=False, long_input=None, **kwargs) -> dict`

@@ -1,5 +1,15 @@
 # zn Team on a developer machine
 
+| Command | Summary |
+|---|---|
+| `zn-gate team join` | Connects this machine to your organization with the join token your admin gave you. |
+| `zn-gate team status` | Shows the organization, the policy version and the state of the audit upload. |
+| `zn-gate team sync` | Downloads the policy and uploads the audit log now. |
+| `zn-gate team leave` | Disconnects this machine from the organization. |
+| `zn-gate team managed-config` | For administrators. Prints the managed configuration files to deploy so that the zn hooks run for every developer. |
+
+Options and exit codes are in the [command line reference](cli.md#team).
+
 zn Team lets an organization publish one policy for how its developers' AI
 agents may use secrets, and collect the audit records of that use. This page
 covers the zn-gate side: what runs on each machine, what the organization can
@@ -15,26 +25,27 @@ machine that stops reporting is visible.
 
 | Command | What it does |
 |---|---|
-| `zn team join <token>` | Connects this machine to your organization. The token (`znj_...`) comes from an organization admin. Needs the vault unlocked (`zn unlock`). |
-| `zn team status` | Organization, installation id, policy version and expiry, upload state. `--json` for scripts. Never shows the install token. |
-| `zn team sync` | Downloads the policy and uploads pending audit records now. This also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. |
-| `zn team leave` | Disconnects this machine. The organization's policy stops applying here. |
+| `zn team join <token>` | Connects this machine to your organization. The token (`znj_...`) comes from an organization admin. Needs the vault unlocked (`zn unlock`). The join counts as done only once the organization's first valid policy has been downloaded and applied. If the policy cannot be downloaded, or the organization has not published one yet, the command exits `1`: this machine is registered but `zn team status` shows the join as **pending** until `zn team sync` succeeds. |
+| `zn team status` | Organization, installation id, policy version and expiry, what the last policy version removed or loosened, upload state, and the result of the last sync (what failed, and when it last worked). If the server has not yet been told that you left, a "Revocation pending" line with the last error and the next step. `--json` for scripts (`join_pending`, `last_sync`, `policy.change`, `revocation_pending`). Never shows the install token. |
+| `zn team sync` | Downloads the policy and uploads pending audit records now. Exits `0` only when a valid policy is applied and no upload failed; offline, no policy, a refused policy, a removed machine or a failed upload exit `1` and say why. This also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. If you leave the organization or join another one while a sync is running, that sync is dropped and writes nothing. |
+| `zn team leave` | Disconnects this machine and tells the server (see [Leaving](#leaving)). The organization's policy stops applying here at once. It deletes the local copies of the policy and the upload state one by one; if one cannot be deleted (for example a locked file), the command exits `1` and names the file to delete by hand, because the hooks still read it. |
 | `zn team managed-config` | Prints the files an admin deploys with device management so zn-gate's hooks run on every machine. Writes nothing; see [Deploy zn-gate's hooks to every machine](#deploy-zn-gates-hooks-to-every-machine-managed-settings). |
 | `zn vault log export --otlp` | Writes the local audit log as OpenTelemetry logs (works without zn Team; see below). |
 
 `zn team join` and `zn team leave` are confirmed on the vault's own channel
 (the terminal of `zn unlock --foreground`, or a system dialog), not in the
 terminal where the command ran. An AI agent can type in that terminal; it
-cannot answer the vault's dialog. Before the dialog, zn-gate asks
-`api.usezn.com` which organization the token is for, without using up the
-token; the dialog then shows the organization name, who invited you (the
+cannot answer the vault's dialog. First the vault asks whether zn-gate may
+send the token to `api.usezn.com` to look up which organization it is for;
+nothing is sent before you agree, and the lookup does not use up the token.
+Then the dialog shows the organization name, who invited you (the
 display name they chose, if they set one), the server and the last characters
 of the join token. Check them against what your admin sent you. If you did not
 start the command yourself, choose Deny. If the organization you then join is
 not the one the dialog showed, zn-gate refuses it and does not connect this
 machine.
 
-An invalid, expired or used-up token stops before the dialog, and so does a
+An invalid, expired or used-up token stops before the second dialog, and so does a
 token of an organization without an active Team subscription. With
 `--api`, zn-gate does not contact the other server before you confirm, so
 the dialog cannot name the organization; it says so, and the name appears
@@ -42,6 +53,49 @@ after joining. The same happens if the check fails.
 
 `--api <https URL>` points `zn team join` at another server. The dialog warns
 when it is not `api.usezn.com`.
+
+`zn team join` sends only the audit records written **from the moment you join**.
+The records already in `~/.zn/audit.jsonl` (secret names, hosts, agents, tools
+and decisions from before) stay on your machine. To send them as well, run
+`zn team join <token> --include-history`: the dialog then says so in its own
+warning, and you can still choose Deny. History can only be added at the first
+join of an installation; to add it later, run `zn team leave` and join again
+with the flag. A machine that joined with an earlier zn-gate keeps sending
+everything, as it was agreed then.
+
+### Leaving
+
+`zn team leave` first asks the server to revoke this installation, using the
+installation's own install token (and nothing else: no id, no account), and
+only then deletes the local membership. The answer decides what is printed:
+
+- **The server revoked it** (or had already revoked it, or no longer accepts
+  the token because an admin removed the installation): the leave is
+  complete. The installation shows as left in the organization's activity log
+  and its token stops working.
+- **The server could not be asked or did not take it** (offline, a server
+  error, a rate limit, or an older server without this endpoint): this
+  machine still leaves at once. The organization's policy, detectors and
+  uploads stop applying here, and the command exits `0` and says clearly that
+  the server was **not told yet**. Until a retry works, the installation stays
+  on the organization's list of connected installations and its token still
+  works on the server.
+
+For that second case zn-gate keeps a small "revocation pending" record in
+the encrypted vault: the install token, the organization, the API address and
+the time. It is not a membership and gives the organization no control: no
+policy, no uploads, no detectors; the token is used for nothing else. It is
+retried on `zn team sync`, on `zn team leave` and every 15 minutes while the
+vault is unlocked, each time with the token of the installation that left
+(also after you join an organization again, when the new membership keeps its
+own token and is never affected). The record is removed when the server
+confirms (or answers that the token is no longer valid), and zn-gate gives up
+after **30 days**: from then on, ask an organization admin to remove the
+installation from the dashboard. `zn team status` shows the pending record
+(since when, the last error and when zn-gate stops trying); `--json` has it
+as `revocation_pending`. A server that answers 404 or 405 (an older API) is
+treated as "not supported yet", never as revoked. If the server asks to wait
+(HTTP 429), zn-gate waits for the time it gave.
 
 ## The organization policy
 
@@ -60,10 +114,19 @@ zn-gate applies a downloaded policy only if:
   time (the key id must match);
 - it is for this organization, it has not expired, and it was not issued in
   the future (five minutes of clock difference are tolerated);
-- its version is not lower than the last one accepted on this machine.
+- its version is not lower than the last one accepted on this machine, and a
+  policy with the same version as the one held has the same content (zn-gate
+  keeps a digest of each accepted policy, without its validity dates, and
+  refuses a second, different policy signed under the same version). The
+  service signs the same version again every day with new dates: that renewal
+  is accepted and extends the validity, while an older signature of the same
+  version cannot shorten it.
 
 The accepted policy is kept inside the encrypted vault. `~/.zn/org-policy.json`
-is a readable copy: editing or deleting it does not remove any restriction.
+and `~/.zn/team.json` are readable copies for the hooks and `zn team status`:
+editing or deleting them does not remove any restriction, and zn-gate puts
+them back from the vault (see
+[The readable copies and the hooks](#the-readable-copies-and-the-hooks)).
 
 ### What the organization can change on this machine
 
@@ -75,6 +138,35 @@ is a readable copy: editing or deleting it does not remove any restriction.
 
 So a stolen organization signing key cannot make zn-gate send a secret
 somewhere new without someone at the machine saying yes.
+
+### When the organization lifts a restriction
+
+A new policy version can also remove or loosen what the previous one
+restricted: unblock a secret, turn a block into a warning or drop it, widen a
+host, command or placement list, drop `proxy` mode, remove a custom detector.
+zn-gate applies it. Who may relax the restrictions on a managed machine is
+the organization's decision, and the machine cannot tell a change the
+organization meant from one it did not mean, so there is no local minimum
+and no local approval for it (an approval that the person at the machine can
+give would also let them lift the restrictions the organization wants to
+keep). What zn-gate does is make the change visible:
+
+- `zn team status` lists what the last version removed or loosened (up to 20
+  items; the rest are counted), also with the vault locked. `--json` has it
+  as `policy.change`.
+- The audit log gets one record per such version, with the reason
+  `org_policy_lifted:v3-v4:n2` (the two versions and the number of
+  changes). It is uploaded with the other records.
+- With Claude Code, the next hook message that checks a tool output or a
+  prompt says once that your organization's policy lifted N restrictions
+  and where to look. Other agents do not show this line: use
+  `zn team status`.
+
+The comparison covers the rules' secret names and their block, warning,
+`proxy`, host, command and placement settings, and the custom detectors. A
+restriction that moves to another rule that still covers it is not
+reported. If the policy held before did not verify, there is nothing to
+compare with and nothing is reported.
 
 **Restrictions apply to every agent.** zn-gate cannot prove which agent is
 calling (any program on the machine can start its tools and say it is some
@@ -153,11 +245,35 @@ patterns are skipped on the machine, and all custom detectors together get
 
 | Situation | What happens |
 |---|---|
-| No network, policy still valid (policies are valid for 7 days) | The policy keeps applying. Audit records wait in `~/.zn/audit.jsonl` and are uploaded later. |
+| No network, policy still valid (policies are valid for 7 days) | The policy keeps applying. Audit records wait in `~/.zn/audit.jsonl` and are uploaded later. The automatic sync keeps the reason it failed (`zn team status` shows it under "Last sync") and writes one audit record, then at most one more every 6 hours while it keeps failing. |
 | No network for longer than the policy's validity | Strict mode: the restrictions keep applying; anything the organization had opened is withdrawn until a fresh policy arrives. `zn team status` says so. |
-| A downloaded policy fails a check (signature, key, organization, expiry, older version) | It is refused and the last accepted policy stays. The refusal is recorded in the audit log. |
+| A downloaded policy fails a check (signature, key, organization, expiry, older version, same version with other content) | It is refused and the last accepted policy stays. The refusal is recorded in the audit log. |
 | An admin removes this machine | Uploads stop. `zn team status` shows "removed from org". The last policy applies until it expires, then strict mode. |
 | The vault is locked | Nothing is downloaded or uploaded until `zn unlock`. The last accepted policy still applies to every use of a secret, which needs the vault unlocked anyway. |
+| `~/.zn/team.json` or `~/.zn/org-policy.json` is deleted or edited | The vault puts them back (see below). |
+
+### The readable copies and the hooks
+
+The hooks do not open the vault to read the policy. They read
+`~/.zn/team.json` and `~/.zn/org-policy.json`, verify the policy again with
+the pinned key, and use its custom detectors. If either copy is missing, or
+the policy copy does not verify, the vault (when it is unlocked) puts both
+back from the policy it holds: on the next `zn team sync` (also when the
+server cannot be reached), on `zn team status`, and when a hook asks for the
+detectors. In the meantime the hook takes the detectors straight from the
+vault, so they stay on. While the vault is locked the hooks have only the
+readable copies, and a deleted copy comes back after `zn unlock`. The copies
+are put back only for the organization this machine is in now: a sync that
+started before you left, or before you joined another organization, cannot
+bring back a copy of the old one.
+
+If the vault holds a policy that does not verify (for example the
+organization's key changed under it), no custom detector can be applied.
+The same happens when the policy copy is missing and the vault is locked or
+does not answer within 1.5 seconds: the hook cannot get the detectors from
+anywhere. Claude Code then shows `zn: Team detectors not applied` once an
+hour, with the command to run (`zn team sync`), instead of leaving the
+detectors off without a word.
 
 ## What is sent
 
@@ -167,15 +283,23 @@ patterns are skipped on the machine, and all custom detectors together get
 - **Policy download:** the install token, the policy version already held
   and the policy features this zn-gate understands (header
   `X-ZN-Policy-Features: warn`).
-- **Audit upload:** the records of `~/.zn/audit.jsonl`, including the ones
-  written before joining: time, secret name, mode, agent, tool, command name,
+- **Audit upload:** the records of `~/.zn/audit.jsonl` written since you
+  joined (the earlier ones only if you joined with `--include-history`): time, secret name, mode, agent, tool, command name,
   host, decision and reason, with their sequence number and HMAC chain. Never
   secret values, hashes of values, full command lines, file paths, prompts
   or tool output. Batches of up to 500 records resume from the last record
-  the server confirmed.
+  the server confirmed: zn-gate moves forward only as far as the server's
+  answer says it stored, and an answer that does not add up (more records
+  than were sent, a position outside the batch) is treated as a failed
+  upload.
+
+- **Leaving:** one request to `POST /v1/org/install/leave` with the install
+  token and the header `X-ZN-Client: zn-gate/<version>`, no body. If it
+  fails, it is repeated as described under [Leaving](#leaving).
 
 The install token is kept in the encrypted vault and is sent only to the
-server you joined.
+server you joined. After you leave it stays in the vault only while a
+revocation is pending.
 
 ## Deploy zn-gate's hooks to every machine (managed settings)
 

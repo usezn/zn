@@ -2,24 +2,15 @@ name: zn CI
 
 # Pull requests into next run the checks the rulesets require (Node.js 18.x, 22.x and 24.x, Python 3.12, the
 # npm and Python package builds), all on Ubuntu, plus one lint job. The full matrix (every Node.js and
-# Python version, Windows and macOS) runs on pushes to main and next, on the daily schedule, on manual runs,
+# Python version, Windows and macOS) runs on pushes to main, next and release branches, on the daily schedule, on manual runs,
 # on pull requests into main and release branches, and on any pull request labelled full-ci. Its only macOS
 # job is Python 3.12.
 on:
   push:
-    branches: [ main, next ]
-    # Documentation-only pushes skip this workflow. Markdown under packages/, plugins/, skill/,
-    # bench/ and .github/ still runs it (the package and plugin checks read some of it): a stricter
-    # version of the split that .github/scripts/ci-scope.sh makes for pull requests.
-    paths:
-      - '**'
-      - '!docs/**'
-      - '!**/*.md'
-      - 'packages/**'
-      - 'plugins/**'
-      - 'skill/**'
-      - 'bench/**'
-      - '.github/**'
+    # release/** is here, and there is no paths filter, because tag-release.yml requires the checks of this
+    # workflow (and of the other workflows listed in .github/release-required-checks.txt) on the exact
+    # release commit: a documentation-only top commit, such as a changelog edit, must still get all of them.
+    branches: [ main, next, 'release/**' ]
   pull_request:
     branches: [ main, next, 'release/**' ]
     types: [ opened, synchronize, reopened, labeled, ready_for_review ]
@@ -84,10 +75,9 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version: ${{ matrix.node-version }}
           check-latest: true
-          cache: npm
-          cache-dependency-path: packages/zn-gate/package-lock.json
       - name: Install zn-gate dependencies
         if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate
@@ -286,6 +276,7 @@ jobs:
       - if: steps.scope.outputs.run == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version: 22
       - name: Install the eslint tooling
         id: eslint-tools
@@ -315,6 +306,11 @@ jobs:
         if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
         working-directory: packages/zn-gate-py
         run: python -m ruff check .
+      - name: Test the CI helper scripts
+        if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
+        run: |
+          python -m pytest .github/scripts/test_normalize_sdist.py .github/scripts/test_doc_snippets.py -q
+          python -m ruff check .github/scripts/test_normalize_sdist.py .github/scripts/test_doc_snippets.py
       - name: Run mypy
         if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
         working-directory: packages/zn-gate-py
@@ -330,6 +326,9 @@ jobs:
           src/zn_gate/__init__.py src/zn_gate/rules.py src/zn_gate/guard.py
           src/zn_gate/client.py src/zn_gate/evidence.py
           typing_check/check_public_api.py
+      - name: Test the PyPI license checker
+        if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
+        run: python -m pytest -q .github/scripts/test_license_check_py.py
 
   pack-node:
     name: npm package (pack, inspect, install)
@@ -358,9 +357,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: steps.scope.outputs.run == 'true'
         with:
+          package-manager-cache: false
           node-version: 22.x
-          cache: npm
-          cache-dependency-path: packages/zn-gate/package-lock.json
       - name: Install dependencies (bundled into the tarball)
         if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate

@@ -14,7 +14,7 @@ inputs:
   version:
     description: 'zn-gate version to install, as an exact version number (for example 1.6.0). Ranges and "latest" are not accepted. `audit` needs 1.6.0 or later.'
     required: false
-    default: '1.13.1'
+    default: '1.14.1'
   mode:
     description: 'scan (prompt-injection and secret scan of files, the behaviour of earlier releases), audit (audit of agent configs, hooks, MCP servers, plugins and skills), or both. Default scan.'
     required: false
@@ -31,6 +31,10 @@ inputs:
     description: 'Path to scan and audit, relative to the workspace. `audit` needs a directory; `scan` also accepts a single file.'
     required: false
     default: '.'
+  allow-partial:
+    description: 'Scan only: true keeps the step green when some files or folders were not read (2 MiB or larger, cannot be read, not a regular file, binary .key file); they are still listed. A scan that read no file at all still fails. Needs zn-gate 1.14.0 or later. Default false: the scan then fails with exit code 3.'
+    required: false
+    default: 'false'
   fail-on-threat:
     description: 'Whether to fail the CI step if any threat is detected (true/false). For audit, true fails on findings at or above `severity-threshold` (high by default); false reports only, unless `fail-on` is set. true or false, in any case; other values fail the step.'
     required: false
@@ -61,7 +65,7 @@ outputs:
     description: 'Path of the SARIF file (format sarif only); empty if no check produced a report or the file could not be written'
     value: ${{ steps.run.outputs.sarif-file }}
   scan-exit-code:
-    description: 'Exit code of zn-gate scan (0 clean, 1 findings, 2 error); empty if it did not run'
+    description: 'Exit code of zn-gate scan (0 clean, 1 findings, 2 error, 3 no file was read or a file or folder was not read; 3 needs zn-gate 1.14.0 or later); empty if it did not run'
     value: ${{ steps.run.outputs.scan-exit-code }}
   audit-exit-code:
     description: 'Exit code of zn audit (0 clean, 1 findings at or above fail-on, 2 error); empty if it did not run'
@@ -78,6 +82,7 @@ runs:
         ZN_MODE: ${{ inputs.mode }}
         ZN_FORMAT: ${{ inputs.format }}
         ZN_FAIL_ON_THREAT: ${{ inputs.fail-on-threat }}
+        ZN_ALLOW_PARTIAL: ${{ inputs.allow-partial }}
         ZN_FAIL_ON: ${{ inputs.fail-on }}
         ZN_SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
         ZN_AGENTS: ${{ inputs.agents }}
@@ -94,6 +99,7 @@ runs:
         case "$ZN_MODE" in scan|audit|both) ;; *) fail "'mode' must be scan, audit or both" ;; esac
         case "$ZN_FORMAT" in github|text|json|sarif) ;; *) fail "'format' must be github, text, json or sarif" ;; esac
         case "$(printf '%s' "$ZN_FAIL_ON_THREAT" | tr '[:upper:]' '[:lower:]')" in true|false) ;; *) fail "'fail-on-threat' must be true or false" ;; esac
+        case "$(printf '%s' "$ZN_ALLOW_PARTIAL" | tr '[:upper:]' '[:lower:]')" in true|false) ;; *) fail "'allow-partial' must be true or false" ;; esac
         case "$ZN_FAIL_ON" in ''|low|medium|high|critical|none) ;; *) fail "'fail-on' must be low, medium, high, critical or none" ;; esac
         case "$ZN_SEVERITY_THRESHOLD" in critical|high|medium|low) ;; *) fail "'severity-threshold' must be critical, high, medium or low" ;; esac
         [[ "$ZN_AGENTS" =~ ^[a-z0-9,-]*$ ]] || fail "'agents' must be a comma-separated list of agent names"
@@ -102,6 +108,12 @@ runs:
 
         run_scan=false; run_audit=false
         [ "$ZN_MODE" = audit ] || run_scan=true
+        # --allow-partial exists from 1.14.0; an older scan would stop with a usage error.
+        if [ "$run_scan" = true ] && [ "$(printf '%s' "$ZN_ALLOW_PARTIAL" | tr '[:upper:]' '[:lower:]')" = true ]; then
+          if [ "$major" -lt 1 ] || { [ "$major" -eq 1 ] && [ "$minor" -lt 14 ]; }; then
+            fail "'allow-partial' needs zn-gate 1.14.0 or later (version is $ZN_VERSION)"
+          fi
+        fi
         if [ "$ZN_MODE" != scan ]; then
           if [ "$major" -gt 1 ] || { [ "$major" -eq 1 ] && [ "$minor" -ge 6 ]; }; then
             run_audit=true
@@ -227,6 +239,7 @@ runs:
         ZN_PATH: ${{ inputs.path }}
         ZN_FORMAT: ${{ inputs.format }}
         ZN_FAIL_ON_THREAT: ${{ inputs.fail-on-threat }}
+        ZN_ALLOW_PARTIAL: ${{ inputs.allow-partial }}
         ZN_FAIL_ON: ${{ inputs.fail-on }}
         ZN_SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
         ZN_AGENTS: ${{ inputs.agents }}
@@ -392,6 +405,7 @@ runs:
           echo "::group::zn-gate scan"
           scan_args=(scan)
           if [ "$(printf '%s' "$ZN_FAIL_ON_THREAT" | tr '[:upper:]' '[:lower:]')" = "false" ]; then scan_args+=(--no-fail); fi
+          if [ "$(printf '%s' "$ZN_ALLOW_PARTIAL" | tr '[:upper:]' '[:lower:]')" = "true" ]; then scan_args+=(--allow-partial); fi
           # -I keeps files in the scanned workspace off the import path; -X utf8
           # lets the text report print on runners whose console code page is not
           # UTF-8 (Windows).
@@ -446,7 +460,8 @@ runs:
         sarif_out=""; merge_rc=0
         if [ "$ZN_FORMAT" = sarif ]; then
           # A scan that ended in an error may have printed partial JSON: leave it out.
-          case "$scan_rc" in 0|1) ;; *) scan_json="" ;; esac
+          # Exit 3 (incomplete coverage) is a complete report.
+          case "$scan_rc" in 0|1|3) ;; *) scan_json="" ;; esac
           [ -s "$audit_sarif" ] || audit_sarif=""
           if [ -z "$scan_json" ] && [ -z "$audit_sarif" ]; then
             echo "::warning title=zn-gate::no check produced a report, so no SARIF file was written"
@@ -467,11 +482,21 @@ runs:
           echo "audit-exit-code=$audit_rc"
         } >> "$GITHUB_OUTPUT"
 
-        # 2 (error) wins over 1 (findings); any other non-zero code counts as an error.
+        # 2 (error) wins over 3 (scan incomplete) and 3 over 1 (findings); any other
+        # non-zero code counts as an error.
         final=0
-        for rc in $scan_rc $audit_rc $merge_rc; do
+        for rc in $audit_rc $merge_rc; do
           if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then final=2
           elif [ "$rc" -eq 1 ] && [ "$final" -eq 0 ]; then final=1
           fi
         done
+        case "$scan_rc" in
+          ""|0) ;;
+          1) [ "$final" -ne 0 ] || final=1 ;;
+          3)
+            echo "::error title=zn-gate::The scan is incomplete (exit code 3): no file was read, or some files or folders were not read (see the list above). Make them readable or smaller, or set allow-partial: true to accept skipped files."
+            [ "$final" -eq 2 ] || final=3
+            ;;
+          *) final=2 ;;
+        esac
         exit "$final"

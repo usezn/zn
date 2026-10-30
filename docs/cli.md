@@ -1,6 +1,37 @@
 # Command line reference
 
-Every command of the `zn-gate` program, with its options and exit codes. For a first walk through, start with [First 5 minutes](first-5-minutes.md).
+Every command of the `zn-gate` program, with its options and exit codes. For a first walk through, start with [First 5 minutes](first-5-minutes.md). Words you do not know are explained in the [glossary](glossary.md).
+
+## Contents
+
+- [`init`](#init)
+- [`uninstall`](#uninstall)
+- [`check`](#check)
+- [`status`](#status)
+- [`test`](#test)
+- [`version`](#version)
+- [`connect`](#connect)
+- [`disconnect`](#disconnect)
+- [`scan`](#scan)
+- [`audit`](#audit)
+- [`reach`](#reach)
+- [`analyze`](#analyze)
+- [`pins`](#pins)
+- [`secret`](#secret)
+- [`env`](#env)
+- [`run`](#run)
+- [`unlock`](#unlock)
+- [`lock`](#lock)
+- [`vault`](#vault)
+- [`hooks`](#hooks)
+- [`hook`](#hook)
+- [`secrets-mcp`](#secrets-mcp)
+- [`mcp`](#mcp)
+- [`shield`](#shield)
+- [`evidence`](#evidence)
+- [`stats`](#stats)
+- [`report`](#report)
+- [`team`](#team)
 
 ## Program names
 
@@ -11,6 +42,8 @@ The package installs three names. They are the same program, so every command be
 - `zn-mcp`
 
 Without installing, use `npx -y zn-gate <command>`. This page writes `zn-gate` in examples.
+
+This page describes the npm package. The Python package (`pip install zn-gate`) has a smaller command line: see [The Python package](#the-python-package) at the end.
 
 `zn-gate --help` (or `-h`) prints the short help. `zn-gate version`, `zn-gate -V` and `zn-gate --version` print the version.
 
@@ -52,7 +85,7 @@ zn-gate init
 zn-gate init --wrap-mcp [--dry-run] [--shadow] [--revert]
 ```
 
-Without options, `init` is the guided setup: it finds the coding agents on this machine (Claude Code, Codex CLI, Cursor, OpenCode), shows what is missing and, in your own terminal, asks before each step. It takes no other arguments. When it runs without a terminal, or an AI agent runs it, it only prints the steps and changes nothing.
+Without options, `init` is the guided setup: it finds the coding agents on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app), shows what is missing and, in your own terminal, asks before each step. It takes no other arguments. When it runs without a terminal, or an AI agent runs it, it only prints the steps and changes nothing.
 
 With `--wrap-mcp` it finds the MCP servers in known agent configs and wraps them with `shield`. Backups are written first.
 
@@ -92,7 +125,7 @@ Shows that zn stops your agent from reading a fake secret, in a temporary folder
 
 Aliases: `doctor`.
 
-Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up.
+Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`.
 
 ### `status`
 
@@ -149,7 +182,7 @@ Exit codes: `0` the local setting was removed (or there was nothing to remove), 
 ### `scan`
 
 ```bash
-zn-gate scan [path] [--format text|json|github] [--all] [--include .rst,.xml] [--exclude fixtures,legacy] [--include-home]
+zn-gate scan [path] [--format text|json|github] [--all] [--include .rst,.xml] [--exclude fixtures,legacy] [--include-home] [--allow-partial]
 ```
 
 Looks through prompt templates, markdown, skills and configs for injection traps and secrets. `path` defaults to the current folder. Matched values are never printed.
@@ -159,10 +192,11 @@ Looks through prompt templates, markdown, skills and configs for injection traps
 - `--include`: more file extensions to scan.
 - `--exclude`: more folders to skip.
 - `--include-home`: also check your own MCP configs for passwords and keys written in plain text.
+- `--allow-partial`: exit `0` even when some files or folders were not read. They are still listed in the report. It does not apply when no file was read at all. In the Node version, put the path before the options (`scan ./docs --allow-partial`): `scan --allow-partial ./docs` scans the current folder.
 
-Exit codes: `0` nothing found, `1` something was found or the path does not exist, `2` an unknown `--format`.
+Exit codes: `0` nothing found and everything that matched was read, `1` something was found or the path does not exist, `2` an unknown `--format`, `3` the coverage is incomplete: no file was read, or a file or folder that should have been read was not. Findings win: when something was found the exit code is `1`, whether or not anything was skipped.
 
-A scan never reports a clean result for something it could not read. A folder it cannot open is listed under "Directories not scanned" (reason: cannot be read), in `skipped_dirs` for `--format json` and as a notice for `--format github`. If no file was read at all, the output says "No files were scanned" (a `warning` field in JSON) and the text report shows `NOTHING SCANNED` instead of `PASSED`. The exit code is still `0` in that case, because an empty folder is not an error in CI; a path that does not exist exits `1`. The Node (`npx zn-gate`) and Python (`pip install zn-gate`) versions give the same exit codes and the same JSON fields (`skipped_dirs`, `warning`) for these cases; the text report differs in its wording and in how it prints paths.
+A scan never reports a clean result for something it could not read. A folder it cannot open is listed under "Directories not scanned" (reason: cannot be read), in `skipped_dirs` for `--format json` and as a notice for `--format github`. If no file was read at all, the output says "No files were scanned" (a `warning` field in JSON) and the text report shows `NOTHING SCANNED` instead of `PASSED`. The exit code is `3` in that case, so a CI job cannot pass on a scan that looked at nothing; a path that does not exist exits `1`. The same exit code `3` applies when a file was skipped (2 MiB or larger, cannot be read, not a regular file, or a binary `.key` file) or a folder could not be opened, because the result does not cover everything that matched. Folders skipped by name (such as `node_modules`) do not count. Links found inside the folder are not followed and are not listed. Pass `--allow-partial` to accept skipped files and folders (exit `0`, still listed; `--format json` has `"incomplete": true`). Python also has `--no-fail`, which always exits `0`. The Node (`npx zn-gate`) and Python (`pip install zn-gate`) versions give the same exit codes and the same JSON fields (`skipped_dirs`, `warning`) for these cases; the text report differs in its wording and in how it prints paths.
 
 ### `audit`
 
@@ -216,6 +250,12 @@ Exit codes: `0` done, `2` wrong usage, no terminal, an agent running it, or the 
 
 #### `pins approve`
 
+```bash
+SERVER='paste-the-server-name-here'
+zn-gate pins approve "$SERVER"
+zn-gate pins approve --all
+```
+
 Accepts the changed or new tools of one server, or of every server with `--all`.
 
 ## Secrets and the vault
@@ -248,7 +288,7 @@ Stores a secret. You type the value at a hidden prompt, or use `--clipboard`. `-
 zn-gate secret list
 ```
 
-Lists the stored secrets: names and policy, never values.
+Lists the stored secrets: names and policy, never values. The vault must be unlocked first (`zn-gate unlock`); on a locked vault the command exits with an error.
 
 Aliases: `secret ls`.
 
@@ -258,7 +298,7 @@ Aliases: `secret ls`.
 zn-gate secret rm NAME
 ```
 
-Removes a secret.
+Removes a secret, together with the first-use approvals it had. A new value stored under the same name asks for approval again.
 
 Aliases: `secret remove`.
 
@@ -276,7 +316,7 @@ Adds allowed hosts or commands to a secret. At least one option is needed. `--re
 zn-gate secret approve NAME --command "psql"
 ```
 
-Approves the first use of a secret by a command that is already allowed. It is confirmed in the vault prompt.
+Approves the first use of a secret by a command that is already allowed. It is confirmed in the vault prompt. An approval belongs to the value it was given for: if you remove the secret or store a different value under the same name, zn asks again.
 
 #### `secret import`
 
@@ -304,6 +344,10 @@ Shows who used which secret where, without values, then checks the log chain. Sa
 
 #### `secret get`
 
+```bash
+zn-gate secret get API_TOKEN   # exits 77 and points you to `run`
+```
+
 There is no way to print a secret value: `secret get` exits `77` and points you to `run`, which uses the value without showing it.
 
 Aliases: `secret reveal`.
@@ -330,7 +374,7 @@ Moves the values of a `.env` file (default `.env`) into the vault and leaves mar
 zn-gate env unshadow FILE --backup ENVBAK_NAME
 ```
 
-Puts the original values back into the file from the encrypted copy that `env shadow` printed.
+Puts the original values back into the file from the encrypted copy that `env shadow` printed. The plain text leaves the vault only after you confirm in the vault's own prompt (a system dialog, or the `zn unlock --foreground` terminal), as for the first use of a command.
 
 ### `run`
 
@@ -365,12 +409,16 @@ Locks the vault now. Exit codes: `0` done (also when the vault was not unlocked)
 ### `vault`
 
 ```text
-zn-gate vault <status|log|verify|forget|team|reset>
+zn-gate vault <status|log|verify|forget|team|reset|purge>
 ```
 
 With no subcommand it is the same as `vault status`. Usage errors exit `2`: an unknown subcommand, or an option or word the subcommand does not take.
 
 #### `vault status`
+
+```bash
+zn-gate vault status
+```
 
 Shows whether the vault exists and is unlocked and, when it is, when it locks: after the idle time with no use, or at the end of the session at the latest (in your local time). Exit codes: `0` done, `2` wrong usage.
 
@@ -380,7 +428,7 @@ Shows whether the vault exists and is unlocked and, when it is, when it locks: a
 zn-gate vault log [--since 1h]
 ```
 
-Shows the audit log of secret use. Same as `secret log`. Exit codes follow the secrets commands above.
+Shows the audit log of secret use. Same as `secret log`. With the vault unlocked, the vault checks the whole log first (every signature, the chain and the last record it remembers). If the check fails, the log is not shown: the command prints the reason, exits `1` and the vault stores a warning (see `vault verify`). With the vault locked the chain cannot be checked, and the output says so. Exit codes follow the secrets commands above.
 
 #### `vault log export`
 
@@ -388,11 +436,15 @@ Shows the audit log of secret use. Same as `secret log`. Exit codes follow the s
 zn-gate vault log export --otlp [--since 7d] [--out file]
 ```
 
-Writes the audit log as OpenTelemetry logs (OTLP, JSON Lines) to the file, or to the screen. Needs no account. Exit codes: `0` done, `1` error, `2` without `--otlp`. [Details](team.md).
+Writes the audit log as OpenTelemetry logs (OTLP, JSON Lines) to the file, or to the screen. Needs no account. With the vault unlocked, the vault checks the whole log first and nothing is exported when the check fails (exit `1`, and the vault stores a warning, see `vault verify`). With the vault locked the chain cannot be checked: the export still runs and prints a warning that it is not a verified copy. Exit codes: `0` done, `1` error, `2` without `--otlp`. [Details](team.md).
 
 #### `vault verify`
 
-Checks the chain and signatures of the audit log. If the check fails, it says at which record, tells you not to delete or edit the log, and links the troubleshooting page. Exit codes: `0` correct, `1` broken, `2` wrong usage.
+```bash
+zn-gate vault verify
+```
+
+Checks the chain and signatures of the audit log. If the check fails, it says at which record, tells you not to delete or edit the log, and links the troubleshooting page. The vault also compares the last record with the one it remembers, before it writes anything new. If the log was cut, replaced or changed in any record while the vault was locked or running, the check fails (a failed check stores the warning too), and keeps failing after lock and unlock, until you accept the log as it is now with `zn-gate vault verify --acknowledge` (run it yourself in a terminal: it refuses when an agent runs it, and the vault asks you to confirm in its own dialog or terminal). Accepting does not erase the gap: a warning record is written to the log. Exit codes: `0` correct, `1` broken, `2` wrong usage.
 
 #### `vault forget`
 
@@ -408,9 +460,21 @@ Forgets the token map of a project (default: the current folder). The vault must
 zn-gate vault reset
 ```
 
-The way out when you lost the vault passphrase. It sets the old vault aside in a backup folder (`~/.zn/vault-backup-<date>`, still encrypted) and starts again with a new, empty vault the next time you run `unlock`. The values stored in the old vault are lost: nobody can read them without the old passphrase. It needs a person at a terminal, the vault must be locked, and you confirm by typing a phrase. It refuses on a machine that belongs to a zn Team organization. Exit codes: `0` done (or there was no vault), `1` refused or cancelled, `2` wrong usage.
+The way out when you lost the vault passphrase. It sets the old vault aside in a backup folder (`~/.zn/vault-backup-<date>`, still encrypted) and starts again with a new, empty vault the next time you run `unlock`. The values stored in the old vault are lost: nobody can read them without the old passphrase. It needs a person at a terminal, the vault must be locked, and you confirm by typing a phrase. It refuses on a machine that belongs to a zn Team organization. It never deletes the backup: to delete backups, use [`vault purge`](#vault-purge). Exit codes: `0` done (or there was no vault), `1` refused or cancelled, `2` wrong usage.
+
+#### `vault purge`
+
+```bash
+zn-gate vault purge [--yes]
+```
+
+Deletes the vault for good, with everything that can open or rebuild it. It first lists every file it will delete: the vault (secrets and first-use approvals), the token maps of your projects, the audit log, every `vault-backup-*` folder made by `vault reset`, and the session key, plus the vault key in your system keychain. Then you confirm by typing `purge my vault`, and it deletes them and checks again that none is left. If a file or the keychain entry cannot be removed, it says which one and exits `1`; it never reports the vault as purged while something remains. The vault must be locked, and it refuses on a machine that belongs to a zn Team organization. It needs a person at a terminal; a script can pass `--yes` to skip the typed phrase and the terminal, but an AI agent can never run it. Deleting cannot be undone. Exit codes: `0` purged (or there was no vault), `1` refused, cancelled or not fully purged, `2` wrong usage.
 
 #### `vault team`
+
+```bash
+zn-gate vault team
+```
 
 Prints that a shared team vault is planned and not available, and counts the request on this machine only (see `stats`). Nothing is sent.
 
@@ -421,13 +485,21 @@ zn-gate hooks install <agent> [--project] [--no-mcp]
 zn-gate hooks uninstall <agent> [--project] [--no-mcp]
 ```
 
-Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, use [`uninstall`](#uninstall)). `<agent>` is `claude-code`, `codex`, `cursor`, `opencode`, `antigravity`, `gemini` or `copilot` (`claude` is accepted for `claude-code`, `gemini-cli` for `gemini`). `--project` changes the settings of the current project instead of your user settings. `--no-mcp` leaves the `secrets` MCP server out. It needs an interactive terminal. An agent that is not in that list or a misspelled name is refused first, with the supported names, and exit code 64.
+Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, use [`uninstall`](#uninstall)). `<agent>` is `claude-code`, `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `gemini` or `copilot` (`claude` is accepted for `claude-code`, `gemini-cli` for `gemini`). `--project` changes the settings of the current project instead of your user settings. `--no-mcp` leaves the `secrets` MCP server out. It needs an interactive terminal. An agent that is not in that list or a misspelled name is refused first, with the supported names, and exit code 64.
 
 #### `hooks install`
 
-Adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. A backup of the settings is written first. With `--project`, the shared files run `zn` from the PATH rather than a path on your machine, so everyone who uses the project needs zn-gate installed globally; the install prints a note when `zn` is not on your PATH.
+```bash
+zn-gate hooks install claude-code --project
+```
+
+Adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. A backup of the settings is written first. With `--project`, the shared files run `zn` from the PATH rather than a path on your machine, so everyone who uses the project needs zn-gate installed globally; the install prints a note when `zn` is not on your PATH. For Claude Code, `--project` adds no MCP server (a shared `.mcp.json` could only name `zn`, looked up on the PATH): run `zn hooks install claude-code` for the `secrets` server, and a `secrets` entry that a 1.14.0 release candidate wrote to the project's `.mcp.json` is removed, with a backup.
 
 #### `hooks uninstall`
+
+```bash
+zn-gate hooks uninstall claude-code --project
+```
 
 Removes them again. The small launcher script under `~/.zn/hooks` is shared by every profile of the same agent on your machine (for example two Claude Code profiles with different `CLAUDE_CONFIG_DIR` folders), so `hooks uninstall` leaves it in place: deleting it would stop the hooks of the other profiles. [`uninstall`](#uninstall) removes it, and `zn-gate check` reports a hook whose launcher is missing.
 
@@ -496,21 +568,41 @@ What zn-gate did on this machine: local counts for the last `--days` days (1 to 
 
 #### `stats share`
 
+```bash
+zn-gate stats share
+```
+
 Controls the optional sharing of pseudonymous daily counts. It is off by default. Only you can turn it on, in your own terminal. Without a word after `share` it shows the status.
 
 #### `stats share on`
+
+```bash
+zn-gate stats share on
+```
 
 Explains what would be shared and asks you to confirm. Exit `1` if you do not confirm.
 
 #### `stats share off`
 
+```bash
+zn-gate stats share off
+```
+
 Turns sharing off.
 
 #### `stats share status`
 
+```bash
+zn-gate stats share status
+```
+
 Says whether sharing is on.
 
 #### `stats share show`
+
+```bash
+zn-gate stats share show
+```
 
 Shows exactly what would be sent, and where.
 
@@ -543,10 +635,11 @@ With no subcommand it is the same as `team status`. Exit codes: `0` done, `1` an
 ```bash
 JOIN_TOKEN='paste-your-join-token-here'
 zn-gate team join "$JOIN_TOKEN"
-# Optional: add --api https://api.example.com (another server) or --agent claude-code
+# Optional: add --api https://api.example.com (another server), --agent claude-code,
+# or --include-history to also send the audit records written before you joined
 ```
 
-Connects this machine to your organization with the join token your admin gave you.
+Connects this machine to your organization with the join token your admin gave you. It exits `0` only after the organization's first valid policy has been downloaded and applied. If that fails (offline, or no policy published yet) it exits `1`; the machine stays registered, `team status` shows the join as pending, and `team sync` finishes it. Only the audit records written from the join on are uploaded; `--include-history` adds the earlier ones, and only at the first join of an installation.
 
 #### `team status`
 
@@ -554,15 +647,23 @@ Connects this machine to your organization with the join token your admin gave y
 zn-gate team status [--json]
 ```
 
-Shows the organization, the policy version and the state of the audit upload.
+Shows the organization, the policy version, what the last policy version removed or loosened, the state of the audit upload, and a revocation that is still pending after `team leave`. See [zn Team](team.md#when-the-organization-lifts-a-restriction).
 
 #### `team sync`
 
-Downloads the policy and uploads the audit log now. Exit `1` when the policy is rejected or the machine was removed.
+```bash
+zn-gate team sync
+```
+
+Downloads the policy and uploads the audit log now. Exit `0` only when a valid policy is applied and no upload failed. Exit `1` when the machine is offline, the organization has no policy, the policy is refused, the machine was removed, or an upload failed; `team status` keeps the last reason. A sync that was running when you left the organization, or joined another one, is dropped and writes nothing.
 
 #### `team leave`
 
-Disconnects this machine from the organization.
+```bash
+zn-gate team leave
+```
+
+Disconnects this machine from the organization. It first tells the server to revoke this installation (with the installation's own token), then deletes the local copies of the policy and upload state. Exit `1` when one of those files cannot be deleted; the message names it. If the server cannot take the revocation now (offline, an error, a rate limit, or an older server), the machine still leaves at once and the command exits `0`, but it prints that the server was not told yet: zn-gate keeps the token in the vault only to retry on `team sync` and while the vault is unlocked, for up to 30 days, and `team status` shows the pending revocation. See [zn Team](team.md#leaving).
 
 #### `team managed-config`
 
@@ -571,3 +672,18 @@ zn-gate team managed-config [--agent claude-code|cursor|codex|all] [--os macos|l
 ```
 
 For administrators. Prints the managed configuration files you deploy with MDM or configuration management so that the zn hooks run for every developer. Nothing is written and nothing is read from the machine. `--agent` defaults to `all` and `--os` to this computer's system. `--managed-hooks-only` makes the agent run only managed hooks. `--exclusive-mcp` also prints the managed MCP file for Claude Code (it takes exclusive control of MCP servers). `--json` prints the files as JSON. zn-gate must be installed on each machine. Exit codes: `0` done, `2` wrong usage.
+
+## The Python package
+
+`pip install zn-gate` installs only the name `zn-gate` (not `zn` or `zn-mcp`). It is meant for agents you build yourself. It has six commands. `zn-gate version`, `zn-gate -V` and `zn-gate --version` print the version and the rules version.
+
+| Command | Options | What it does |
+|---|---|---|
+| `test "<text>"` | `--json` | Checks one piece of text against the rules. It does **not** run the self-test that `test` runs in the npm package. Exit `0` if nothing was flagged, `1` if the text was blocked or contains a secret. |
+| `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked. Without a text it prints the usage and exits `2` (the npm package exits `1`). |
+| `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude`, `--include-home` | Like `scan` in the npm package, without the `--all` and `--code` options. Exit `0` nothing found, `1` something was found or the path does not exist, `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. |
+| `evidence` | `--verify`, `--export`, `--format jsonl\|csv`, `--output file` | Counts, chain check and export, like the npm command. There is no `--ui`, no `--tail` and no `logs` or `export` alias. |
+| `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`. |
+| `stats` | `--days N`, `--json` | Local counts for the last `N` days (1 to 90, default 30). There is no `stats share`. Exit `0`, or `2` if `--days` is out of range. |
+
+The other commands on this page are only in the npm package. In the Python package they print a short note and exit `2`: `init`, `check`, `doctor`, `audit`, `hooks`, `run`, `secret`, `env`, `vault`, `unlock`, `lock`, `pins`, `mcp`, `shield`, `team`, `logs` and `export` point to `npx -y zn-gate init`, and `reach`, `report`, `connect` and `disconnect` point to `npx -y zn-gate <command>`. A command neither package knows exits `1`. To use the optional cloud check from Python, set `ZN_CLOUD=1` and `ZN_API_KEY` (or pass `--key` to `analyze`) instead of running `connect`.

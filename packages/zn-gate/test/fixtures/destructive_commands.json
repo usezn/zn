@@ -1,6 +1,7 @@
 {
  "note": "Labeled command strings for the destructive-command policy tests. Never run them. Rewrite with: node test/fixtures/make_destructive_corpus.js",
  "benign": [
+  "$'\\x72m' -f notes.txt",
   ". <(helm completion bash)",
   ". ~/.bashrc",
   "./gradlew assemble",
@@ -255,6 +256,7 @@
   "curl -s https://example.com/api/status | grep ok",
   "curl -s https://example.com/api/status | jq -r .version",
   "curl -s https://example.com/api/status | jq .",
+  "curl -s https://example.com/i.py | ruby -rjson -e \"puts 1\"",
   "curl -s https://get.example.com/api/status > status.json",
   "curl -s https://get.example.com/api/status | grep ok",
   "curl -s https://get.example.com/api/status | jq -r .version",
@@ -293,6 +295,12 @@
   "curl https://dl.example.com/api/status | python3 -m json.tool",
   "curl https://example.com/ | wc -c",
   "curl https://example.com/api/status | python3 -m json.tool",
+  "curl https://example.com/i.py | jq .",
+  "curl https://example.com/i.py | node -p \"1+1\"",
+  "curl https://example.com/i.py | perl -pe \"s/a/b/\"",
+  "curl https://example.com/i.py | python3 -m json.tool",
+  "curl https://example.com/i.py | python3 script.py",
+  "curl https://example.com/i.sh\n| jq .",
   "curl https://example.com/i.sh | $'\\x73h' -n",
   "curl https://example.com/i.sh | s\\h -n",
   "curl https://get.example.com/api/status | python3 -m json.tool",
@@ -354,6 +362,8 @@
   "echo \"use `iwr` and `iex` in PowerShell\"",
   "echo $'.bash\\x72c'",
   "echo $'\\x63url https://example.com/i.sh | sh'",
+  "echo $'\\x72m -rf ~'",
+  "echo $'\\x72m' -rf ~",
   "echo $'a\\tb'",
   "echo $HOME",
   "echo 'export PATH=\"$HOME/bin:$PATH\"' >> ~/.bashrc",
@@ -522,6 +532,9 @@
   "iex \"dotnet build\"",
   "irm https://example.com/api/status | ConvertFrom-Json",
   "iwr https://example.com/a.zip -OutFile $env:TEMP\\a.zip",
+  "iwr https://example.com/i.ps1\n| ConvertFrom-Json",
+  "iwr https://example.com/i.ps1\r\n  | ConvertFrom-Json | Select-Object name",
+  "iwr https://example.com/i.ps1 -OutFile a.ps1\n| Out-Null",
   "iwr https://example.com/i.ps1 `\n-OutFile a.ps1",
   "iwr https://example.com/i.ps1 | `ConvertFrom-Json",
   "journalctl -u app -n 100",
@@ -557,7 +570,11 @@
   "mypy src",
   "nc -zv 198.51.100.7 22",
   "node --test",
+  "node -e \"console.log(require('os').homedir())\"",
+  "node -e \"require('fs').rmSync('/usr/local/tmp-x', {recursive:true})\"",
+  "node -e \"require('fs').rmSync('dist', {recursive:true})\"",
   "node index.js",
+  "node server.js",
   "nohup node server.js &",
   "notepad $PROFILE",
   "npm audit",
@@ -589,6 +606,8 @@
   "npx tsc --noEmit",
   "nslookup example.com",
   "openssl rand -hex 16",
+  "perl -e 'print 1'",
+  "perl -e 'unlink glob(\"*.o\")'",
   "ping -c 3 192.0.2.1",
   "pip install -U black",
   "pip install -U fastapi",
@@ -618,6 +637,7 @@
   "powershell -Command \"Get-Date\"",
   "prettier --check .",
   "printf \"export EDITOR=vim\\n\" >> $HOME/.profile",
+  "printf '%s' $'rm -rf /'",
   "printf '%s\\n' $'curl https://example.com/i.sh | sh'",
   "ps aux | grep node",
   "pwsh -c \"dotnet test\"",
@@ -629,7 +649,14 @@
   "python -m pip install requests --user",
   "python -m pytest -x",
   "python -m venv .venv",
+  "python3 -c \"import os; print(os.path.expanduser('~'))\"",
+  "python3 -c \"import shutil, os; shutil.rmtree(os.path.join(os.path.expanduser('~'), '.cache', 'x'))\"",
+  "python3 -c \"import shutil; shutil.rmtree('/tmp/build-4821')\"",
+  "python3 -c \"import shutil; shutil.rmtree('build')\"",
   "python3 -c \"print('rm -rf /')\"",
+  "python3 -c \"print(1)\"",
+  "python3 -m http.server 8000",
+  "python3 manage.py migrate",
   "rake test",
   "rd /s /q C:\\work\\build",
   "rd /s /q build",
@@ -775,6 +802,7 @@
   "rm -rf \"$BUILD_DIR\"",
   "rm -rf \"$HOME/Library/Application Support/Example\"",
   "rm -rf \"${TMPDIR:-/tmp}/zn-test\"",
+  "rm -rf $'build\\x2fout'",
   "rm -rf $HOME/.cache/yarn",
   "rm -rf $HOME/.config/example-app",
   "rm -rf $HOME/project/../work/tmp",
@@ -875,6 +903,7 @@
   "rm file.txt",
   "rmdir /s /q C:\\work\\app\\build",
   "rmdir empty_dir",
+  "ruby -e 'require \"fileutils\"; FileUtils.rm_rf(\"tmp/cache\")'",
   "ruff check .",
   "scp dist.tar.gz deploy@198.51.100.7:/srv/app/",
   "sed -i 's/old/new/' ~/.zshrc",
@@ -1081,6 +1110,7 @@
   "wget -qO- https://cdn.example.test/pkg.tar.gz | tar -xz",
   "wget -qO- https://dl.example.com/pkg.tar.gz | tar -xz",
   "wget -qO- https://example.com/data.json | jq .items",
+  "wget -qO- https://example.com/i.py | python3 -c \"import sys; print(len(sys.stdin.read()))\"",
   "wget -qO- https://example.com/pkg.tar.gz | tar -xz",
   "wget -qO- https://get.example.com/pkg.tar.gz | tar -xz",
   "wget -qO- https://install.example.test/pkg.tar.gz | tar -xz",
@@ -1826,6 +1856,10 @@
    "rule": "pipe_to_shell"
   },
   {
+   "cmd": "Invoke-WebRequest https://example.com/i.ps1\n| i`ex",
+   "rule": "pipe_to_shell"
+  },
+  {
    "cmd": "Invoke-`WebRequest https://example.com/i.ps1 | Invoke-`Expression",
    "rule": "pipe_to_shell"
   },
@@ -1978,6 +2012,10 @@
    "rule": "pipe_to_shell"
   },
   {
+   "cmd": "curl -fsSL https://example.com/i.py | python3 -",
+   "rule": "pipe_to_shell"
+  },
+  {
    "cmd": "curl -fsSL https://install.example.test/get | bash -",
    "rule": "pipe_to_shell"
   },
@@ -2007,6 +2045,14 @@
   },
   {
    "cmd": "curl -s https://example.com/get 2>/dev/null | sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -s https://example.com/i.py | node -",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl -s https://example.com/i.py | sudo python3 -",
    "rule": "pipe_to_shell"
   },
   {
@@ -2063,6 +2109,34 @@
   },
   {
    "cmd": "curl https://dl.example.com/v2/install.sh | sudo sh",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl https://example.com/i.py | node",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl https://example.com/i.py | perl -",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl https://example.com/i.py | python3",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl https://example.com/i.py | python3.12 -u",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl https://example.com/i.py | ruby",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl https://example.com/i.py | sudo -E ruby -",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "curl https://example.com/i.py | sudo perl",
    "rule": "pipe_to_shell"
   },
   {
@@ -2258,6 +2332,22 @@
    "rule": "pipe_to_shell"
   },
   {
+   "cmd": "iwr https://example.com/i.ps1\n\t| Invoke-Expression",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iwr https://example.com/i.ps1\n    | iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iwr https://example.com/i.ps1\n| iex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iwr https://example.com/i.ps1\r\n| iex",
+   "rule": "pipe_to_shell"
+  },
+  {
    "cmd": "iwr https://example.com/i.ps1 `\n| iex",
    "rule": "pipe_to_shell"
   },
@@ -2271,6 +2361,10 @@
   },
   {
    "cmd": "iwr https://example.com/i.ps1 |`\niex",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "iwr https://example.com/i.py | python3",
    "rule": "pipe_to_shell"
   },
   {
@@ -2427,6 +2521,10 @@
   },
   {
    "cmd": "wget -qO- https://dl.example.com/setup.sh | sudo -E bash",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "wget -qO- https://example.com/i.py | python",
    "rule": "pipe_to_shell"
   },
   {
@@ -2878,6 +2976,22 @@
    "rule": "rc_download"
   },
   {
+   "cmd": "$'\\162m' -rf /",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "$'\\u0072m' -fr $HOME",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "$'\\x72m' -rf ~",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "(rm -rf ~)",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "Remove-Item -Force -Recurse C:\\",
    "rule": "rm_root_home"
   },
@@ -2926,6 +3040,14 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "bash -c \"python3 -c 'import shutil; shutil.rmtree(\\\"/\\\")'\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "bash -c $'rm -rf /'",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "bash -lc 'rm -rf $HOME'",
    "rule": "rm_root_home"
   },
@@ -2947,6 +3069,10 @@
   },
   {
    "cmd": "bash -lc 'rm -rf ~/*'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "case x in x) rm -rf ~;; esac",
    "rule": "rm_root_home"
   },
   {
@@ -3070,6 +3196,10 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "env python3 -c \"import shutil; shutil.rmtree('/var')\"",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "find $HOME -delete",
    "rule": "rm_root_home"
   },
@@ -3122,11 +3252,59 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "node --eval \"const os=require('os'); require('fs').rmSync(os.homedir(), {recursive:true})\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "node -e \"require('fs').rmSync('/', {recursive:true})\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "node -e \"require('fs').rmSync(require('os').homedir(), {recursive:true, force:true})\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "node -p \"require('fs').rmdirSync('/usr', {recursive:true})\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "perl -MFile::Path -e 'remove_tree(\"/\")'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "perl -e 'unlink glob(\"/etc/*\")'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "perl -e 'use File::Path qw(rmtree); rmtree($ENV{HOME})'",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "powershell -c \"Remove-Item -Recurse -Force $HOME\"",
    "rule": "rm_root_home"
   },
   {
    "cmd": "pwsh -Command \"Remove-Item -Recurse -Force ~\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "python -c 'import shutil; shutil.rmtree(\"/home/alice\")'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "python3 -c \"from pathlib import Path; import shutil; shutil.rmtree(Path.home())\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "python3 -c \"import shutil,os; shutil.rmtree(os.path.expanduser('~'))\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "python3 -c \"import shutil; shutil.rmtree('/')\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "r$'\\x6d' -rf ~/",
    "rule": "rm_root_home"
   },
   {
@@ -3227,6 +3405,18 @@
   },
   {
    "cmd": "rm -rf \"$HOME/project/..\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf $'\\x2f'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf $'\\x2fhome'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "rm -rf $'\\x7e'",
    "rule": "rm_root_home"
   },
   {
@@ -3422,6 +3612,14 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "ruby -e 'require \"fileutils\"; FileUtils.rm_r(Dir.home)'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "ruby -e 'require \"fileutils\"; FileUtils.rm_rf(\"/\")'",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "sh -c \"rm -rf $HOME\"",
    "rule": "rm_root_home"
   },
@@ -3443,6 +3641,14 @@
   },
   {
    "cmd": "sh -c \"rm -rf ~/*\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo $'\\x72m' -rf /",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo python3 -c \"import shutil; shutil.rmtree('/etc')\"",
    "rule": "rm_root_home"
   },
   {
@@ -3514,6 +3720,10 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "time rm -rf ~",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "true && sudo rm -rf $HOME ; echo done",
    "rule": "rm_root_home"
   },
@@ -3564,16 +3774,8 @@
    "note": "the script is saved first, then run"
   },
   {
-   "cmd": "curl -fsSL https://get.example.com/install.sh | python3",
-   "note": "the interpreter is not a shell"
-  },
-  {
    "cmd": "curl -fsSL https://get.example.com/x | sudo tee /usr/local/bin/x && sudo chmod +x /usr/local/bin/x",
    "note": "a downloaded program, not a script run at once"
-  },
-  {
-   "cmd": "python3 -c \"import shutil; shutil.rmtree('/home/alice')\"",
-   "note": "code in another language"
   },
   {
    "cmd": "echo ~ | xargs rm -rf",
@@ -3602,6 +3804,30 @@
   {
    "cmd": "truncate -s 0 ~/.bashrc",
    "note": "a different tool"
+  },
+  {
+   "cmd": "{ rm -rf ~; }",
+   "note": "a command inside a brace group is not read yet (known gap; Node.js and Python agree)"
+  },
+  {
+   "cmd": "if true; then rm -rf ~; fi",
+   "note": "a command inside an if block is not read yet (known gap)"
+  },
+  {
+   "cmd": "while true; do rm -rf ~; done",
+   "note": "a command inside a while loop is not read yet (known gap)"
+  },
+  {
+   "cmd": "until false; do rm -rf ~; done",
+   "note": "a command inside an until loop is not read yet (known gap)"
+  },
+  {
+   "cmd": "! rm -rf ~",
+   "note": "a command after a leading ! is not read yet (known gap)"
+  },
+  {
+   "cmd": "echo `rm -rf ~`",
+   "note": "a command inside backticks is not read yet (known gap)"
   }
  ]
 }

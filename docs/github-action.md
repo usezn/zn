@@ -69,6 +69,7 @@ The `version` input is the exact `zn-gate` version that gets installed; ranges a
 | `version` | set by the release | Exact `zn-gate` version to install. |
 | `path` | `.` | Path to check, relative to the workspace. `audit` needs a directory. |
 | `fail-on-threat` | `true` | Fail the step on findings. `false` reports only. |
+| `allow-partial` | `false` | Scan only: `true` keeps the step green when some files or folders were not read (2 MiB or larger, cannot be read, not a regular file, binary `.key` file). They are still listed. A scan that read no file at all still fails. Needs `zn-gate` 1.14.0 or later: with an older `version` the step stops with an error. |
 | `severity-threshold` | `high` | Audit only: lowest severity that fails the step when `fail-on-threat` is `true` (`critical`, `high`, `medium`, `low`). The scan has no severities: any finding fails. |
 | `fail-on` | empty | Audit only: lowest severity that fails the step (`low`, `medium`, `high`, `critical`, `none`). When set, it overrides `fail-on-threat` and `severity-threshold`. |
 | `agents` | empty (all) | Audit only: comma-separated agents to audit, as `zn audit --agents` takes them. |
@@ -82,7 +83,7 @@ Outputs:
 | Output | Meaning |
 |---|---|
 | `sarif-file` | Path of the SARIF file (`format: sarif` only); empty if none was written. |
-| `scan-exit-code` | Exit code of the scan: `0` clean, `1` findings, `2` error; empty if it did not run. |
+| `scan-exit-code` | Exit code of the scan: `0` clean, `1` findings, `2` error, `3` no file was read, or a file or folder was not read and `allow-partial` is not `true` (zn-gate 1.14.0 and later); empty if it did not run. The step then fails with its own message and, with `format: sarif`, the report is still written. |
 | `audit-exit-code` | Exit code of the audit: `0` clean, `1` findings at or above the threshold, `2` error; empty if it did not run. |
 
 ## What the scan does not read
@@ -94,6 +95,39 @@ The scan lists what it leaves out, so a gap never goes unnoticed. Files it does 
 With `format: sarif` and the upload step, the findings appear in your repository under **Security** > **Code scanning**, one alert per finding, with the rule ID, the file and the line, and the evidence with any secret value hidden. On a pull request, GitHub also annotates the changed lines. The audit and the scan are separate runs (categories `zn-gate/audit/` and `zn-gate/scan/`), so you can filter by tool. [audit.md](audit.md) lists each audit rule and how to fix it.
 
 Code scanning needs a public repository, or GitHub Code Security on a private one. Without it, use `format: github` (the default): the findings show as annotations in the workflow run and on the pull request, and no `security-events` permission is needed.
+
+## Pull request example with common inputs
+
+This workflow checks every pull request with both the audit and the scan. It fails the step on audit findings of severity `high` or above, and on any scan finding. It uses only inputs that `action.yml` defines, and needs no code scanning permissions because `format: github` shows findings as annotations.
+
+```yaml
+name: zn-gate
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  zn-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Audit agent configs and scan for secrets
+        uses: usezn/zn@746be20f3276ab0d589f2d6df941b5d31a5396d8 # v1.13.1
+        with:
+          version: '1.13.1'
+          mode: both
+          path: '.'
+          format: github
+          fail-on-threat: 'true'
+          severity-threshold: 'high'
+```
+
+See [Inputs](#inputs) for every option.
 
 ## Warn without failing the build
 

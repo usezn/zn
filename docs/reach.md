@@ -22,7 +22,7 @@ are left out.
 
 | Section | What it means |
 | --- | --- |
-| `AGENTS` | Claude Code, Codex CLI, Cursor and OpenCode, each marked as protected by zn, protected in one project only, not protected, or not found on this machine. |
+| `AGENTS` | Claude Code, Codex CLI, Cursor, OpenCode, Antigravity and ZCode desktop app, each marked as protected by zn, protected in one project only, not protected, or not found on this machine. |
 | `WHAT THEY CAN REACH` | Secrets in the `.env` files of the folder (names only), credential files in your home folder (that they exist), and environment variables with a secret-looking name. |
 | `MCP SERVERS` | Tools your agent can call that run a server from the agent configuration. Problems such as an unpinned version, a plain HTTP address or a secret written into the config. |
 | `YOUR AGENT SETTINGS` | Agent settings in your home folder that apply to every project. |
@@ -256,6 +256,27 @@ The SARIF file is written before the exit code is known, so the upload step
 - "Protected" means zn's hooks are set up for that agent. What each agent
   covers differs: in Cursor, for example, shell output and file contents are
   not scrubbed. See [what each agent supports](compat.md).
+
+## Common questions
+
+**Does reach change any file or send anything?**
+No. It is read only: it changes no file, starts no hook, opens no network
+connection and sends nothing anywhere. The only file it can write is the memory
+file, and only with `--remember`.
+
+**Does reach exit with an error when it finds a problem?**
+Not by default. `--fail-on` defaults to `none`, so the report always exits 0.
+Add `--fail-on high` (or `medium` or `low`) to exit with code 1 when a finding
+of at least that severity is found. Code 2 means a usage error or a failure
+while reach ran.
+
+**Why is a `.env` file in a sub-folder missing from the report?**
+Reach checks one folder and does not walk sub-folders for `.env` files. Run it
+in that folder, or use `npx -y zn-gate scan`.
+
+**Can I check another folder?**
+Yes. Pass it as `[path]`, for example `npx -y zn-gate reach ./my-app`. The
+default is the current folder, and the path must be a folder.
 
 ## If something fails
 

@@ -13,6 +13,7 @@ const { spawnSync } = require('child_process');
 const { tempDir } = require('./helpers/tmp');
 const { audit } = require('../lib/audit');
 const mcp = require('../lib/mcp-secrets');
+const { budget } = require('./helpers/time_budget');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 const SAMPLES = path.join(__dirname, 'fixtures', 'mcp_config_secret_samples.json');
@@ -216,11 +217,17 @@ test('text and github output never show the value', (t) => {
   assert.match(gh.stdout, /::error file=\.mcp\.json,line=5,title=Secret found \(secret%3Amcp_config\)::Next: /);
 });
 
-test('the next step is plain: the vault and a marker for env and arguments, an environment variable for headers', () => {
+test('the next step is plain: the vault and zn run --secrets for env and arguments, an environment variable for headers', () => {
   const env = mcp.mcpNextStep('environment variable', 'BRAVE_API_KEY');
   assert.match(env, /npx -y zn-gate secret set BRAVE_API_KEY/);
-  assert.match(env, /__ZN_BRAVE_API_KEY__/);
+  assert.match(env, /put run, --secrets, BRAVE_API_KEY, -- and the old command first in args/);
+  assert.match(env, /environment variable BRAVE_API_KEY/);
+  assert.doesNotMatch(env, /put __ZN_/);
   assert.match(env, /rotate/);
+  const arg = mcp.mcpNextStep('argument', 'api-key');
+  assert.match(arg, /put run, --secrets, MCP_API_KEY, -- and the old command first in args/);
+  assert.match(arg, /a __ZN_MCP_API_KEY__ marker written in args is not filled in, because arguments are visible to other processes/);
+  assert.match(arg, /rotate/);
   const header = mcp.mcpNextStep('header', 'Authorization');
   assert.match(header, /environment variable/);
   assert.match(header, /\$\{MCP_AUTHORIZATION\}/);
@@ -233,7 +240,7 @@ test('--include-home also checks the user own MCP configs, shown as ~/', (t) => 
   write(home, { '.cursor/mcp.json': MCP_JSON, '.codex/config.toml': expand('[mcp_servers.x.env]\nBRAVE_API_KEY = "{V}"\n') });
   const env = { HOME: home, USERPROFILE: home, CODEX_HOME: '', XDG_CONFIG_HOME: '', APPDATA: '' };
   const without = scanJson(empty, [], env);
-  assert.equal(without.status, 0);
+  assert.equal(without.status, 3); // no file was read
   const withHome = scanJson(empty, ['--include-home'], env);
   assert.equal(withHome.status, 1);
   noValue(withHome.out, 'home');
@@ -288,7 +295,7 @@ test('large and hostile files are read in linear time', () => {
   };
   for (const [name, text] of Object.entries(inputs)) {
     const took = ms(() => mcp.findMcpConfigSecrets(text));
-    assert.ok(took < 8000, `${name}: ${Math.round(took)} ms`);
+    assert.ok(took < budget(8000), `${name}: ${Math.round(took)} ms`);
   }
 });
 

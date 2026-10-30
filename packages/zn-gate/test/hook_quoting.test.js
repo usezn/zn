@@ -18,17 +18,20 @@ const sq = require('../lib/shell-quote');
 const cfg = require('../lib/agents/config-file');
 const claude = require('../lib/agents/claude-code');
 const runner = require('../lib/hooks/runner');
-const policy = require('../lib/hooks/policy');
 const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
 const { tempDir } = require('./helpers/tmp');
 const { runScript } = require('./helpers/shell');
+const { WIN, shellFor, fwd } = require('./helpers/git_bash');
 
 const POSIX = process.platform !== 'win32';
+// sh and bash: the ones of Git Bash on Windows (found the way the product finds it), skipped there only when it is missing.
+const SHELLS = shellFor('sh') && shellFor('bash');
+const needSh = !SHELLS && 'needs sh and bash (Git Bash on Windows)';
 const CANARY = 'zn-canary';
 
 // Directory names a user's install path could contain.
-const NAMES = [
+const ALL_NAMES = [
   'with space',
   "it's",
   'say "hi"',
@@ -44,6 +47,8 @@ const NAMES = [
   'é 中文 😀',
   '%PATH% !x! ^&|<>',
 ];
+// A Windows file name cannot hold these (nor end in a backslash or be split by one): the rest still reach the shell literally.
+const NAMES = WIN ? ALL_NAMES.filter((n) => !/[<>:"|?*\\/\x00-\x1f]/.test(n)) : ALL_NAMES;
 
 function canRun(bin) {
   const r = spawnSync(bin, ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { encoding: 'utf8' });
@@ -62,7 +67,7 @@ function fakeInstall(t, name) {
   fs.writeFileSync(node, '#!/bin/sh\nfor a in "$@"; do printf \'%s\\0\' "$a"; done > "$ZN_ARGV_OUT"\nprintf \'agent=%s\\0\' "$ZN_AGENT" >> "$ZN_ARGV_OUT"\ncat > /dev/null\n', { mode: 0o755 });
   const runnerJs = path.join(dir, 'runner.js');
   fs.writeFileSync(runnerJs, '');
-  return { root, dir, node, runnerJs, out: path.join(root, 'argv.out') };
+  return { root, dir, node, runnerJs, out: fwd(path.join(root, 'argv.out')) };
 }
 
 function readArgv(out) {
@@ -120,10 +125,10 @@ test('hook commands: single quotes for sh, older double-quoted commands still re
 
 test('Windows hook command: readable when plain, encoded when cmd.exe, PowerShell or bash would act on a character', () => {
   const plain = cfg.hookCommandWindows('codex', { nodePath: 'C:\\Program Files\\nodejs\\node.exe', runnerPath: "C:\\it's é\\runner.js" });
-  assert.equal(plain, 'powershell.exe -NoProfile -NonInteractive -Command "& \'C:/Program Files/nodejs/node.exe\' \'C:/it\'\'s é/runner.js\' codex"');
+  assert.equal(plain, 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -NonInteractive -Command "& \'C:/Program Files/nodejs/node.exe\' \'C:/it\'\'s é/runner.js\' codex"');
   for (const bad of ['%USERPROFILE%', '!x!', '$(calc)', '`calc`', '\u201Cq\u201D', 'a\nb']) {
     const cmd = cfg.hookCommandWindows('codex', { nodePath: 'C:\\' + bad + '\\node.exe', runnerPath: 'C:\\r\\runner.js' });
-    assert.match(cmd, /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/, bad);
+    assert.match(cmd, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe -NoProfile -NonInteractive -EncodedCommand [A-Za-z0-9+/=]+$/, bad);
     assert.equal(sq.windowsCommandScript(cmd), "& 'C:/" + bad + "/node.exe' 'C:/r/runner.js' codex");
   }
 });
@@ -168,7 +173,7 @@ test('install replaces, and uninstall removes, hooks written with double quotes 
   const win = JSON.parse(fs.readFileSync(cuFile, 'utf8')).hooks.beforeReadFile;
   assert.equal(win.length, 1);
   // Cursor on Windows now runs the fail-closed launcher as an encoded PowerShell command.
-  const m = /^powershell\.exe -NoProfile -NonInteractive -EncodedCommand ([A-Za-z0-9+/=]+)$/.exec(win[0].command);
+  const m = /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe -NoProfile -NonInteractive -EncodedCommand ([A-Za-z0-9+/=]+)$/.exec(win[0].command);
   assert.ok(m, 'an encoded PowerShell launcher');
   const script = Buffer.from(m[1], 'base64').toString('utf16le');
   assert.match(script, /'\/usr\/bin\/node' '\/new\/lib\/hooks\/runner\.js' cursor/);
@@ -179,7 +184,7 @@ test('install replaces, and uninstall removes, hooks written with double quotes 
 
 /* ------------------------ executed in a shell ------------------------ */
 
-test('hook commands run in sh and bash with every argument literal', { skip: !POSIX && 'needs sh' }, (t) => {
+test('hook commands run in sh and bash with every argument literal', { skip: needSh }, (t) => {
   for (const name of NAMES) {
     const f = fakeInstall(t, name);
     const commands = [
@@ -191,29 +196,13 @@ test('hook commands run in sh and bash with every argument literal', { skip: !PO
       // Codex runs hook commands with `$SHELL -lc`, Claude Code with `sh -c` (Git Bash on Windows).
       for (const [shell, flags] of [['sh', []], ['bash', []], ['bash', ['-l']]]) {
         const { argv } = runIn(t, shell, cmd, f, flags);
-        assert.deepEqual(argv, [f.runnerJs, id], shell + ' ' + JSON.stringify(name));
+        assert.deepEqual(argv, [fwd(f.runnerJs), id], shell + ' ' + JSON.stringify(name)); // the product writes C:/ paths on Windows
       }
     }
   }
 });
 
-test('a rewritten Bash command (zn run prefix) runs with literal paths', { skip: !POSIX && 'needs bash' }, async (t) => {
-  for (const name of NAMES) {
-    const f = fakeInstall(t, name);
-    const runJs = path.join(f.dir, 'run.js');
-    const raw = {
-      session_id: 's', cwd: f.root, permission_mode: 'default', hook_event_name: 'PreToolUse',
-      tool_name: 'Bash', tool_input: { command: 'psql __ZN_DB_PASSWORD__ -c "select 1"' }, tool_use_id: 't',
-    };
-    const res = await runner.handle(claude, raw, { engine: fakeEngine, vault: createFakeVault(), failMode: 'closed', nodePath: f.node, runJs });
-    const cmd = res.output.hookSpecificOutput.updatedInput.command;
-    const { argv, agent } = runIn(t, 'bash', cmd, f);
-    assert.deepEqual(argv, [runJs, '--', 'psql', '__ZN_DB_PASSWORD__', '-c', 'select 1'], JSON.stringify(name));
-    assert.equal(agent, 'claude-code');
-  }
-});
-
-test('the Monitor wrapper pipes into the scrubber with literal paths', { skip: !POSIX && 'needs bash' }, async (t) => {
+test('the Monitor wrapper pipes into the scrubber with literal paths', { skip: needSh }, async (t) => {
   for (const name of NAMES) {
     const f = fakeInstall(t, name);
     const raw = {
@@ -223,11 +212,11 @@ test('the Monitor wrapper pipes into the scrubber with literal paths', { skip: !
     const res = await runner.handle(claude, raw, { engine: fakeEngine, vault: createFakeVault(), failMode: 'closed', nodePath: f.node });
     const cmd = res.output.hookSpecificOutput.updatedInput.command;
     const { argv } = runIn(t, 'bash', cmd, f);
-    assert.deepEqual(argv, [path.resolve(__dirname, '..', 'lib', 'scrub', 'stream.js')], JSON.stringify(name));
+    assert.deepEqual(argv, [fwd(path.resolve(__dirname, '..', 'lib', 'scrub', 'stream.js'))], JSON.stringify(name));
   }
 });
 
-test('the Windows hook command reaches powershell.exe intact through sh and bash', { skip: !POSIX && 'needs sh' }, (t) => {
+test('the Windows hook command reaches powershell.exe intact through sh and bash', { skip: needSh }, (t) => {
   // A fake powershell.exe on PATH records the arguments it gets.
   const names = NAMES.filter((n) => !n.includes('\\'));
   for (const name of names) {
@@ -237,15 +226,17 @@ test('the Windows hook command reaches powershell.exe intact through sh and bash
     fs.copyFileSync(f.node, path.join(bin, 'powershell.exe'));
     fs.chmodSync(path.join(bin, 'powershell.exe'), 0o755);
     const cmd = cfg.hookCommandWindows('codex', { nodePath: f.node, runnerPath: f.runnerJs });
+    assert.ok(cmd.startsWith(sq.powershellExe() + ' '));
+    const viaPath = 'powershell.exe' + cmd.slice(sq.powershellExe().length);
     for (const shell of ['sh', 'bash']) {
-      const r = runScript(t, shell, cmd, { cwd: f.root, env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH, ZN_ARGV_OUT: f.out } });
+      const r = runScript(t, shell, viaPath, { cwd: f.root, env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH, ZN_ARGV_OUT: f.out } });
       assert.equal(r.status, 0, r.stderr);
       assert.ok(!fs.existsSync(path.join(f.root, CANARY)));
       const { argv } = readArgv(f.out);
       assert.deepEqual(argv.slice(0, 2), ['-NoProfile', '-NonInteractive']);
       const script = argv[2] === '-Command' ? argv[3] : Buffer.from(argv[3], 'base64').toString('utf16le');
       assert.equal(script, sq.windowsCommandScript(cmd), JSON.stringify(name));
-      assert.equal(script, '& ' + sq.powershellQuote(f.node) + ' ' + sq.powershellQuote(f.runnerJs) + ' codex');
+      assert.equal(script, '& ' + sq.powershellQuote(fwd(f.node)) + ' ' + sq.powershellQuote(fwd(f.runnerJs)) + ' codex');
     }
   }
 });
@@ -265,12 +256,6 @@ test('PowerShell: quoted paths and the PowerShell wrapper run literally in pwsh'
       assert.ok(!fs.existsSync(path.join(f.root, CANARY)));
       assert.deepEqual(readArgv(f.out).argv, [f.runnerJs, 'cursor']);
     }
-    // The PowerShell tool rewrite (zn run in front of a native command).
-    const runJs = path.join(f.dir, 'run.js');
-    const w = policy.wrapPowerShell("psql '__ZN_DB_PASSWORD__' -c 'select 1'", { nodePath: f.node, runJs, agent: 'claude-code' });
-    assert.ok(w.ok && w.wrapped, w.reason);
-    assert.deepEqual(runIn(t, 'pwsh', w.command, f).argv,
-      [runJs, '--agent', 'claude-code', '--', 'psql', '__ZN_DB_PASSWORD__', '-c', 'select 1'], JSON.stringify(name));
   }
 });
 
@@ -284,12 +269,7 @@ test('PowerShell reading an sh-quoted command runs nothing from the paths', { sk
     'typo’ $(New-Item ' + CANARY + ') ‘x', '@(New-Item ' + CANARY + ')'];
   for (const name of names) {
     const f = fakeInstall(t, name);
-    const raw = {
-      session_id: 's', cwd: f.root, permission_mode: 'default', hook_event_name: 'PreToolUse',
-      tool_name: 'Bash', tool_input: { command: 'psql __ZN_DB_PASSWORD__' }, tool_use_id: 't',
-    };
-    const res = await runner.handle(claude, raw, { engine: fakeEngine, vault: createFakeVault(), failMode: 'closed', nodePath: f.node, runJs: path.join(f.dir, 'run.js') });
-    const commands = [claude.hookCommand({ nodePath: f.node, runnerPath: f.runnerJs }), res.output.hookSpecificOutput.updatedInput.command];
+    const commands = [claude.hookCommand({ nodePath: f.node, runnerPath: f.runnerJs })];
     for (const cmd of commands) {
       runScript(t, 'pwsh', cmd, { cwd: f.root, env: { ...process.env, ZN_ARGV_OUT: f.out } });
       assert.ok(!fs.existsSync(path.join(f.root, CANARY)), 'nothing ran in pwsh for ' + JSON.stringify(cmd));

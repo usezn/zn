@@ -18,9 +18,18 @@ const plan = (opts) => realPlan({ nodeVersion: '22.0.0', ...opts });
 const { AGENT_ENV_VARS } = require('../lib/broker/tty');
 const policy = require('../lib/hooks/policy');
 const { tempDir } = require('./helpers/tmp');
+const { writePluginManifest } = require('./helpers/claude_plugin');
+const { WIN, gitBashExe } = require('./helpers/git_bash');
+
+// On Windows the zn-gate plugin of Claude Code runs in Git Bash. These tests run there with a Git Bash given the way Claude Code
+// documents (CLAUDE_CODE_GIT_BASH_PATH), and are skipped only when the computer has none; the Windows tests without Git Bash are below.
+const GIT_BASH = gitBashExe();
+const NEEDS_BASH = WIN && !GIT_BASH && 'the zn-gate plugin needs Git Bash on Windows, and this computer has none';
+const withBash = (m) => { if (WIN && GIT_BASH) m.env.CLAUDE_CODE_GIT_BASH_PATH = GIT_BASH; return m; };
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const VERSION = require('../package.json').version;
+const { budget } = require('./helpers/time_budget');
 const ZN = path.resolve('/opt/npm/bin/zn');
 const NPM = path.resolve('/opt/npm/bin/npm');
 
@@ -71,7 +80,7 @@ test('plan: from a temporary copy, one global install comes before the hooks, by
   const m = machine(t, ['codex', 'cursor']);
   const { items, setup } = await plan({ ...m, temporary: true, global: { npm: NPM } });
   assert.equal(setup.length, 1, 'a single npm step for every agent');
-  assert.deepEqual(setup[0].run, [NPM, ['install', '-g', 'zn-gate@' + VERSION]]);
+  assert.deepEqual(setup[0].run, [NPM, ['install', '-g', ..._internal.NPM_NETWORK_FLAGS, 'zn-gate@' + VERSION]]);
   const cx = items.find((i) => i.id === 'codex');
   assert.equal(cx.steps[0].needsGlobal, true);
 });
@@ -158,7 +167,7 @@ test('guide: from a temporary copy the global install runs first, then the hooks
   const ran = [];
   const run = (step) => { ran.push(step.run); return true; };
   await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN }, stdin: tty, write: out.write, run, confirm: async () => true });
-  assert.deepEqual(ran[0], [NPM, ['install', '-g', 'zn-gate@' + VERSION]]);
+  assert.deepEqual(ran[0], [NPM, ['install', '-g', ..._internal.NPM_NETWORK_FLAGS, 'zn-gate@' + VERSION]]);
   assert.deepEqual(ran[1], [ZN, ['hooks', 'install', 'codex']]);
 });
 
@@ -236,7 +245,7 @@ test('agent guard: many init words with an option at the end stay fast', () => {
   const cmd = 'zn init '.repeat(Math.floor(99 * 1024 / 8)) + ' --dry-run';
   const t0 = Date.now();
   policy.bashDenial(cmd);
-  assert.ok(Date.now() - t0 < 500, 'took ' + (Date.now() - t0) + ' ms');
+  assert.ok(Date.now() - t0 < budget(500), 'took ' + (Date.now() - t0) + ' ms');
 });
 
 test('plan: Claude Code set up with zn hooks is repaired with zn hooks, not with the plugin', async (t) => {
@@ -248,8 +257,8 @@ test('plan: Claude Code set up with zn hooks is repaired with zn hooks, not with
   assert.deepEqual(cc.steps.map(line), ['zn hooks install claude-code']);
 });
 
-test('plan: the plugin together with zn hooks gets one step that removes the hooks', async (t) => {
-  const m = machine(t, ['claude-code']);
+test('plan: the plugin together with zn hooks gets one step that removes the hooks', { skip: NEEDS_BASH }, async (t) => {
+  const m = withBash(machine(t, ['claude-code']));
   getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
   const root = path.join(m.home, '.claude', 'plugins', 'cache', 'usezn', 'zn-gate', '1.9.0');
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
@@ -258,10 +267,21 @@ test('plan: the plugin together with zn hooks gets one step that removes the hoo
     "process.stdout.write(r.stdout || ''); process.exit(r.status || 0);\n");
   fs.writeFileSync(path.join(m.home, '.claude', 'plugins', 'installed_plugins.json'),
     JSON.stringify({ version: 2, plugins: { 'zn-gate@usezn': [{ scope: 'user', installPath: root }] } }));
+  writePluginManifest(root);
   const { items } = await plan({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false });
   const cc = items.find((i) => i.id === 'claude-code');
   assert.deepEqual(cc.steps.map(line), ['zn hooks uninstall claude-code']);
   assert.match(cc.steps[0].label, /the zn-gate plugin stays/);
+});
+
+test('plan on Windows without Git Bash: the plugin cannot start there, so it is turned off and zn hooks stay', { skip: !WIN && 'Windows only' }, async (t) => {
+  // No CLAUDE_CODE_GIT_BASH_PATH and an empty PATH: Claude Code would run the plugin hook with Git Bash, and there is none.
+  const m = machine(t, ['claude-code']);
+  getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
+  pluginIn(m.home);
+  const { items } = await plan({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false });
+  const cc = items.find((i) => i.id === 'claude-code');
+  assert.deepEqual(cc.steps.map(line), ['claude plugin disable zn-gate@usezn']);
 });
 
 function pluginIn(home, enabled) {
@@ -272,6 +292,7 @@ function pluginIn(home, enabled) {
     "process.stdout.write(r.stdout || ''); process.exit(r.status || 0);\n");
   fs.writeFileSync(path.join(home, '.claude', 'plugins', 'installed_plugins.json'),
     JSON.stringify({ version: 2, plugins: { 'zn-gate@usezn': [{ scope: 'user', installPath: root }] } }));
+  writePluginManifest(root);
   if (enabled === false) {
     const file = path.join(home, '.claude', 'settings.json');
     let tree = {};
@@ -362,6 +383,7 @@ test('plan: a broken plugin next to zn hooks gets one step that turns the plugin
   fs.writeFileSync(path.join(root, 'scripts', 'zn-launch.js'), "process.stderr.write('zn plugin: zn-gate is not installed'); process.exit(2);\n");
   fs.writeFileSync(path.join(m.home, '.claude', 'plugins', 'installed_plugins.json'),
     JSON.stringify({ version: 2, plugins: { 'zn-gate@usezn': [{ scope: 'user', installPath: root }] } }));
+  writePluginManifest(root);
   const { items } = await plan({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false });
   const cc = items.find((i) => i.id === 'claude-code');
   assert.deepEqual(cc.steps.map(line), ['claude plugin disable zn-gate@usezn']);
@@ -373,6 +395,7 @@ function brokenPluginIn(home) {
   fs.writeFileSync(path.join(root, 'scripts', 'zn-launch.js'), "process.stderr.write('zn plugin: zn-gate is not installed'); process.exit(2);\n");
   fs.writeFileSync(path.join(home, '.claude', 'plugins', 'installed_plugins.json'),
     JSON.stringify({ version: 2, plugins: { 'zn-gate@usezn': [{ scope: 'user', installPath: root }] } }));
+  writePluginManifest(root);
 }
 
 const goneNode = (m) => getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: '/nonexistent/bin/node', runnerPath: RUNNER, mcp: false });
@@ -433,21 +456,22 @@ test('guide: after repairing the hooks next to a broken plugin, the plugin is tu
   }
 });
 
-test('plan: zn rules that do not block .env get the zn-gate repair, never the plugin install', async (t) => {
+// Windows without Git Bash: the plan for a plugin that cannot start there is the plugin install again (measured; not asserted: reinstalling cannot give it a Git Bash).
+test('plan: zn rules that do not block .env get the zn-gate repair, never the plugin install', { skip: NEEDS_BASH }, async (t) => {
   const runner = require('../lib/hooks/runner');
   const real = runner.handle;
   runner.handle = async () => ({ decision: { decision: 'allow' } });
   t.after(() => { runner.handle = real; });
-  const m = machine(t, ['claude-code']);
+  const m = withBash(machine(t, ['claude-code']));
   pluginIn(m.home);
   const { items } = await plan({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false });
   const cc = items.find((i) => i.id === 'claude-code');
   assert.deepEqual(cc.steps.map(line), ['install zn-gate again: run `npm install -g zn-gate` in your own terminal, then run `zn-gate check` again']);
   assert.equal(cc.steps[0].run, null);
   // Claude Code set up with zn hooks only, and a broken plugin next to broken hooks: the same single step.
-  const h = machine(t, ['claude-code']);
+  const h = withBash(machine(t, ['claude-code']));
   getAdapter('claude-code').install({ scope: 'user', home: h.home, env: h.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
-  const b = machine(t, ['claude-code']);
+  const b = withBash(machine(t, ['claude-code']));
   goneNode(b);
   brokenPluginIn(b.home);
   for (const mm of [h, b]) {
@@ -503,7 +527,7 @@ test('guide: npm failing with EACCES gives a clear next step, never sudo', posix
 test('guide: any other npm failure keeps the plain message', posixOnly, async (t) => {
   const m = machine(t, ['codex']);
   const out = capture();
-  const run = () => ({ ok: false, stderr: 'npm error code ENOTFOUND\n' });
+  const run = () => ({ ok: false, stderr: 'npm error code E404\n' });
   await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN }, stdin: tty, write: out.write, run, confirm: async () => true });
   assert.match(out.text(), /that did not finish\. Run it yourself: npm install -g zn-gate@/);
   assert.doesNotMatch(out.text(), /global folder/);
@@ -519,4 +543,98 @@ test('permissionFailure: a global folder that is not writable counts, a missing 
   assert.equal(permissionFailure('npm ERR! EPERM: operation not permitted', ''), true);
   assert.equal(permissionFailure('', path.join(tempDir(t, 'zn-prefix-'), 'does-not-exist')), false);
   assert.equal(permissionFailure('', tempDir(t, 'zn-prefix-')), false);
+});
+
+const NET_CODES = ['EAI_AGAIN', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNREFUSED', 'ENETUNREACH'];
+
+test('guide: npm failing to reach the registry says there is no internet, not a permission problem', posixOnly, async (t) => {
+  for (const code of NET_CODES) {
+    const m = machine(t, ['codex']);
+    const out = capture();
+    const run = () => ({ ok: false, stderr: 'npm error code ' + code + '\n' });
+    // An unwritable global folder (a system npm) must not hide the real cause.
+    await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN, prefix: '/' }, stdin: tty, write: out.write, run, confirm: async () => true });
+    assert.match(out.text(), /npm could not reach the registry. That can be no internet connection/, code);
+    assert.match(out.text(), /npm install -g zn-gate@/, code);
+    assert.doesNotMatch(out.text(), /global folder/, code);
+  }
+  const m = machine(t, ['codex']);
+  const out = capture();
+  await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN }, stdin: tty, write: out.write, run: () => ({ ok: false, stderr: '', timedOut: true }), confirm: async () => true });
+  assert.match(out.text(), /no internet connection/);
+});
+
+function stubNpm(t, stderr, exit) {
+  const dir = tempDir(t, 'zn-stub-npm-');
+  const file = path.join(dir, 'npm');
+  fs.writeFileSync(file, '#!/bin/sh\necho "$@" > "' + path.join(dir, 'args') + '"\necho "' + stderr + '" >&2\nexit ' + exit + '\n', { mode: 0o755 });
+  return { dir, file };
+}
+
+test('guide: a stub npm printing EAI_AGAIN gives the no-internet message, one printing EACCES the permission message', posixOnly, async (t) => {
+  const origWrite = process.stderr.write;
+  process.stderr.write = () => true; // the stub output is copied to stderr by runStep
+  t.after(() => { process.stderr.write = origWrite; });
+  const net = stubNpm(t, 'npm error code EAI_AGAIN', 1);
+  const m = machine(t, ['codex']);
+  const out = capture();
+  await guide({ ...m, temporary: true, global: { npm: net.file, version: null, zn: ZN, prefix: '/' }, stdin: tty, write: out.write, confirm: async () => true });
+  assert.match(out.text(), /npm could not reach the registry. That can be no internet connection/);
+  assert.doesNotMatch(out.text(), /global folder/);
+  const args = fs.readFileSync(path.join(net.dir, 'args'), 'utf8');
+  assert.match(args, /install -g .*--fetch-retries=1/);
+  assert.match(args, /--fetch-timeout=15000 zn-gate@/);
+
+  const perm = stubNpm(t, 'npm error code EACCES', 243);
+  const out2 = capture();
+  await guide({ ...m, temporary: true, global: { npm: perm.file, version: null, zn: ZN, prefix: '/usr/local' }, stdin: tty, write: out2.write, confirm: async () => true });
+  assert.match(out2.text(), /npm is not allowed to write to its global folder/);
+  assert.doesNotMatch(out2.text(), /no internet connection/);
+});
+
+test('guide: the npm install step is bounded: flags on the command and a timeout on the child', async (t) => {
+  const m = machine(t, ['codex']);
+  const { setup } = await plan({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN } });
+  assert.deepEqual(setup[0].run[1].slice(0, 2), ['install', '-g']);
+  for (const f of _internal.NPM_NETWORK_FLAGS) assert.ok(setup[0].run[1].includes(f), f);
+  assert.equal(setup[0].run[1].at(-1), 'zn-gate@' + VERSION);
+  assert.ok(setup[0].timeout > 0 && setup[0].timeout <= 300000);
+  assert.equal(setup[0].manual, 'npm install -g zn-gate@' + VERSION);
+});
+
+// npm.cmd in the layout Node.js installs on Windows: npm-cli.js under node_modules, and maybe node.exe next to it.
+function fakeNpmShim(t, { nodeExe = false, cliSource = '' } = {}) {
+  const dir = tempDir(t, 'zn-npm-shim-');
+  fs.writeFileSync(path.join(dir, 'npm.cmd'), '@echo off\r\nnode "%~dp0node_modules\\npm\\bin\\npm-cli.js" %*\r\n');
+  fs.mkdirSync(path.join(dir, 'node_modules', 'npm', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js'), cliSource || '');
+  if (nodeExe) fs.writeFileSync(path.join(dir, 'node.exe'), '');
+  return dir;
+}
+
+test('init: on Windows npm runs as npm-cli.js under its own node, without cmd.exe, so a timeout ends npm itself', (t) => {
+  const dir = fakeNpmShim(t);
+  const cli = path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  assert.deepEqual(_internal.npmCli(path.join(dir, 'npm.cmd'), 'win32'), [process.execPath, cli]);
+  assert.deepEqual(_internal.npmCli(path.join(dir, 'NPM.CMD'), 'win32'), [process.execPath, cli]);
+  fs.writeFileSync(path.join(dir, 'node.exe'), '');
+  assert.deepEqual(_internal.npmCli(path.join(dir, 'npm.cmd'), 'win32'), [path.join(dir, 'node.exe'), cli]);
+  // Anything else keeps the shim: another platform, another program, or a shim without npm-cli.js beside it.
+  assert.equal(_internal.npmCli(path.join(dir, 'npm.cmd'), 'linux'), null);
+  assert.equal(_internal.npmCli(path.join(dir, 'npx.cmd'), 'win32'), null);
+  fs.rmSync(cli);
+  assert.equal(_internal.npmCli(path.join(dir, 'npm.cmd'), 'win32'), null);
+});
+
+test('init: a slow npm on Windows is ended at the timeout and writes nothing after it', { skip: process.platform !== 'win32' && 'npm.cmd runs only on Windows' }, async (t) => {
+  const marker = path.join(tempDir(t, 'zn-npm-marker-'), 'still-running');
+  // npm that keeps going: it would write the marker after 4 s and wait 30 s.
+  const dir = fakeNpmShim(t, { cliSource: 'setTimeout(() => require("fs").writeFileSync(' + JSON.stringify(marker) + ', "x"), 4000); setTimeout(() => {}, 30000);\n' });
+  const started = Date.now();
+  const r = _internal.runStep({ run: [path.join(dir, 'npm.cmd'), ['install', '-g', 'zn-gate']], timeout: 1500 }, { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot });
+  assert.equal(r.timedOut, true);
+  assert.equal(r.ok, false);
+  assert.ok(Date.now() - started < 10000, 'runStep returned after ' + (Date.now() - started) + ' ms');
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+  assert.equal(fs.existsSync(marker), false, 'npm was still running after the timeout');
 });

@@ -19,6 +19,7 @@ const realEngine = require('../lib/scrub/engine');
 const { createFakeVault } = require('./helpers/fake_vault');
 const { generateAll } = require('./fixtures/fake_secrets');
 const { tempDir } = require('./helpers/tmp');
+const { budget } = require('./helpers/time_budget');
 
 const FAKE = generateAll(8360, { perType: 1, piiPerType: 1 });
 const EMAIL = FAKE.pii.find((p) => p.type === 'email').value;
@@ -252,11 +253,11 @@ test('config: egressAllowHosts skips listed hosts, exact or *.suffix', async (t)
 
 /* --------------------------- joined with other checks ------------------- */
 
-test('the egress ask joins the placeholder ask of the same command', async () => {
+test('a placeholder in the arguments is refused before the egress check asks about the same command', async () => {
   const res = await bash(`curl -H "Authorization: Bearer __ZN_API_TOKEN__" -d "mail=${EMAIL}" https://example.com/api`);
-  assert.equal(res.decision, 'ask');
-  assert.match(res.reason, /zn run/);
-  assert.match(res.reason, /email address in the body/);
+  assert.equal(res.decision, 'deny');
+  assert.match(res.reason, /marker in the arguments of a command is not filled in/);
+  assert.match(res.reason, /run --secrets NAME -- <command>/);
 });
 
 test('other denials win over the egress check', async () => {
@@ -310,7 +311,7 @@ test('policy: a long command and deep nesting do not hang or throw', () => {
   policy.egressParts(long);
   policy.egressParts("sh -c \"sh -c 'sh -c \\\"sh -c \\\\'curl https://example.com -d a\\\\'\\\"'\"");
   policy.egressParts("curl '" + 'x'.repeat(90000));
-  assert.ok(Date.now() - t0 < 3000, 'took ' + (Date.now() - t0) + ' ms');
+  assert.ok(Date.now() - t0 < budget(3000), 'took ' + (Date.now() - t0) + ' ms');
 });
 
 test('hook latency: the egress parse of a typical command stays under a millisecond or two', () => {
@@ -442,7 +443,7 @@ test('policy: decoding is linear in the size of the part', () => {
   const big = 'a%40b'.repeat(200000);
   const t0 = Date.now();
   policy.egressDecodedCopies(big);
-  assert.ok(Date.now() - t0 < 1500, 'took ' + (Date.now() - t0) + ' ms');
+  assert.ok(Date.now() - t0 < budget(1500), 'took ' + (Date.now() - t0) + ' ms');
 });
 
 test('egress asks: PowerShell backtick line continuation', async () => {
@@ -484,4 +485,22 @@ test('MCP attribution: data in plain arguments goes to the MCP server, data in h
   const header = await mcp({ url: 'https://example.com/a', headers: { 'X-User': EMAIL } });
   assert.equal(header.decision, 'ask');
   assert.match(header.reason, /to example\.com/);
+});
+
+test('advice: neither the question nor the refusal carries a $NAME or tells an agent to expand a variable into the command line', async (t) => {
+  const asked = await bash(`curl -d "mail=${EMAIL}" https://example.com/api`);
+  assert.equal(asked.decision, 'ask');
+  const refused = await bash(`curl -d "mail=${EMAIL}" https://example.com/api`, { home: homeWith(t, { egressCheck: 'deny' }) });
+  assert.equal(refused.decision, 'deny');
+  for (const r of [asked.reason, refused.reason]) {
+    assert.doesNotMatch(r, /\$\{?[A-Za-z_]/, 'no shell variable is written in the advice');
+    assert.match(r, /do not expand a shell variable into its arguments/);
+    assert.match(r, /secrets_http_request/);
+    assert.match(r, /proxy mode/);
+    assert.match(r, /run --secrets NAME -- <program that reads the variable>/);
+    assert.match(r, /environment variable/);
+    assert.doesNotMatch(r, /read it from an environment variable/);
+    assert.doesNotMatch(r, /pass any secret through an environment variable/);
+    assert.ok(!r.includes(EMAIL));
+  }
 });

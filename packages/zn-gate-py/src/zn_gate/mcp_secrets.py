@@ -461,7 +461,13 @@ def mcp_next_step(kind: str, name: str) -> str:
                 "your agent expects (for example ${" + use + "} in Claude Code, ${env:" + use + "} in Cursor and VS Code, "
                 "{env:" + use + "} in OpenCode), keep the real value in your own shell settings or a secret manager, "
                 "and rotate it if the file was ever committed or shared.")
-    return (f"Next: run npx -y zn-gate secret set {use} to store the value in the local vault (it asks for the value, "
-            f"so it is never typed on a command line), run zn secret allow {use} --command <the server's command> so zn run "
-            f"may use it, put __ZN_{use}__ in this file instead, start the server "
-            "through zn run (see docs/secrets.md), and rotate the value if the file was ever committed or shared.")
+    through = (f"Next: run npx -y zn-gate secret set {use} to store the value in the local vault (it asks for the value, "
+               f"so it is never typed on a command line), run zn secret allow {use} --command <the server's command> so zn run "
+               "may use it, take the value out of this file and start the server through zn run: set the server's command to zn "
+               f"and put run, --secrets, {use}, -- and the old command first in args, so the server gets the value as the "
+               f"environment variable {use}")
+    if kind == "environment variable":
+        return f"{through} (see docs/secrets.md), and rotate the value if the file was ever committed or shared."
+    return (f"{through} (a server that only takes it as a flag or a setting needs an option to read it from the environment; "
+            f"a __ZN_{use}__ marker written in args is not filled in, because arguments are visible to other processes; "
+            "see docs/secrets.md), and rotate the value if the file was ever committed or shared.")

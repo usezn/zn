@@ -7,7 +7,7 @@ name: Public facts
 # minute, so there is no paths filter and no skip step.
 on:
   push:
-    branches: [ main, next ]
+    branches: [ main, next, 'release/**' ]
   pull_request:
     branches: [ main, next, 'release/**' ]
   # The merge queue on next runs the required checks again on the queued commit.
@@ -40,9 +40,10 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          package-manager-cache: false
           node-version: 22
       - name: Test the checker
-        run: node --test .github/scripts/check-public-facts.test.mjs .github/scripts/check-rule-versions.test.mjs
+        run: node --test .github/scripts/check-public-facts.test.mjs .github/scripts/check-rule-versions.test.mjs .github/scripts/release-required-checks.test.mjs .github/scripts/npm-dist-tag-plan.test.mjs .github/scripts/license-check.test.mjs .github/scripts/prune-bundled-sources.test.mjs
       - name: Check the public facts
         env:
           # A release pull request (from or into a release/* branch of this repository) is opened

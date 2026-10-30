@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Google Antigravity adapter (App, CLI and IDE). Experimental.
+ * Google Antigravity adapter (App, CLI and IDE).
  *
  * Hook format (read 2026-10-18):
  *  - https://antigravity.google/docs/hooks
@@ -28,13 +28,18 @@
  * named is not documented either: names that start with "mcp" are treated as MCP calls.
  * A tool zn cannot classify gets "allow" (no opinion).
  *
+ * Observed on a real Antigravity (Windows, 2026-10-20): a PreToolUse hook that fails, prints nothing,
+ * prints text that is not JSON or prints {} (no "decision") gets every tool call denied, with an empty
+ * reason. So this adapter prints an explicit decision (allow or deny, with a reason) for every event it
+ * answers, including when zn itself fails.
  * Not documented (re-read 2026-10-20: the hooks page gives no exit-code or failure semantics, only the timeout):
  * what happens when a hook crashes, times out or cannot start; whether an organization can turn hooks off. So a
  * user install goes through the launcher of lib/agents/launcher.js, which answers a deny JSON itself when the
- * Node.js is gone (the one block Antigravity documents), and nothing is claimed for a timeout. PostToolUse can only return {}, so zn cannot rewrite or redact tool output here.
+ * Node.js is gone, and nothing is claimed for a timeout. PostToolUse can only return {}, so zn cannot rewrite or redact tool output here.
  */
 
 const fs = require('fs');
+const { spawnSync } = require('child_process');
 const { fileURLToPath } = require('url');
 const os = require('os');
 const path = require('path');
@@ -48,11 +53,13 @@ const HOOK_TIMEOUT_S = 15;
 const MATCHER = '*';
 
 const SHELL_TOOLS = new Set(['run_command']);
-const READ_TOOLS = new Set(['view_file', 'list_dir', 'find_by_name']);
-const WRITE_TOOLS = new Set(['write_to_file', 'replace_file_content', 'multi_replace_file_content']);
+// Real names seen in the IDE (read_file, write_file, edit_file, run_command) and in the CLI (view_file, write_to_file, ...).
+const READ_TOOLS = new Set(['read_file', 'view_file', 'list_dir', 'find_by_name']);
+const NAMES_ONLY_TOOLS = new Set(['list_dir', 'find_by_name']);
+const WRITE_TOOLS = new Set(['write_file', 'edit_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content']);
 const COMMAND_KEYS = ['CommandLine', 'commandLine', 'command_line', 'command', 'Command'];
 const PATH_KEY_RE = /path|file|target|uri|dir|source|destination/i;
-const NOT_PATH_KEY_RE = /content|text|instruction|description|query|pattern|code|chunk|summary|title/i;
+const NOT_PATH_KEY_RE = /content|text|instruction|description|query|pattern|code|chunk|summary|title|^target$/i; // edit_file's "Target" holds text, not a path
 const MAX_PATH_LEN = 4096;
 
 const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
@@ -268,7 +275,9 @@ function normalize(raw) {
   const base = { cwd, sessionId: raw.conversationId || null, raw };
   // The event name is not in Antigravity's stdin; if a caller adds one, anything but PreToolUse is ignored.
   const named = raw.hookEventName || raw.hook_event_name;
-  if (!call || (named && named !== 'PreToolUse')) return { ...base, event: null };
+  if (named && named !== 'PreToolUse') return { ...base, event: null, otherEvent: true };
+  // zn installs only PreToolUse: a payload without a tool call is a malformed one, and Antigravity must not get "allow" for it.
+  if (!call) return { ...base, event: 'pre_tool', toolName: '', tool: 'unreadable', input: { texts: [] }, unreadable: 'zn: could not read the tool call of this event, so zn cannot check it.' };
   const toolName = String(call.name || '');
   const ev = { ...base, event: 'pre_tool', toolName, rawArgs: args };
 
@@ -290,9 +299,9 @@ function normalize(raw) {
   const { paths, bad } = pathsOf(args);
   const input = { path: paths[0], paths, texts: [], ...(WRITE_TOOLS.has(toolName) ? { alsoReadCheck: true } : {}) };
   const searchDir = toolName === 'grep_search' ? (paths[0] ? path.resolve(cwd, paths[0]) : cwd) : null;
-  const kind = toolName === 'view_file' ? 'read' : toolName === 'grep_search' ? 'grep' : WRITE_TOOLS.has(toolName) ? 'write' : null;
+  const kind = (READ_TOOLS.has(toolName) && !NAMES_ONLY_TOOLS.has(toolName)) ? 'read' : NAMES_ONLY_TOOLS.has(toolName) ? 'read_names' : toolName === 'grep_search' ? 'grep' : WRITE_TOOLS.has(toolName) ? 'write' : null;
   if (kind) {
-    const e = { ...ev, tool: kind, input: searchDir ? { ...input, scanDir: searchDir } : input };
+    const e = { ...ev, tool: kind === 'read_names' ? 'read' : kind, input: searchDir ? { ...input, scanDir: searchDir } : input };
     if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
     else if ((kind === 'read' || kind === 'write') && !paths.length) e.unreadable = 'zn: could not read the file this call uses, so zn cannot check it. Name the file explicitly.';
     return e;
@@ -313,10 +322,15 @@ function out(decision, reason) {
   return o;
 }
 
+const UNREADABLE = 'zn: could not read this event, so it was blocked.';
+
 function respond(d) {
   const ev = d && d.event;
-  if (!ev) return null;
-  if (!ev.event) return {}; // any event that is not PreToolUse: Antigravity expects an object
+  // Antigravity denies the call, with an empty reason, when the hook prints nothing or {}: always answer with a decision.
+  if (!ev) return d && d.decision === 'deny' ? out('deny', d.message || UNREADABLE) : out('deny', UNREADABLE);
+  // An event that is named and is not PreToolUse (zn installs only PreToolUse): its documented answer is {}.
+  if (!ev.event && ev.otherEvent) return {};
+  if (!ev.event) return out('allow'); // not a tool call: nothing to check
   if (d.decision === 'deny') return out('deny', d.message || 'Blocked by zn');
   if (ev.unreadable) return out('deny', ev.unreadable);
   if (d.updatedInput && d.kind === 'wrap') {
@@ -369,14 +383,51 @@ function stripOurs(data) {
   return changed;
 }
 
+const SELF_CHECK_DECISIONS = new Set(['allow', 'auto_approve', 'deny', 'ask', 'force_ask', 'deny_unless_prior_grant']);
+const SELF_CHECK_EVENT = { conversationId: 'zn-self-check', workspacePaths: [os.tmpdir()], toolCall: { name: 'zn_self_check', args: {} }, stepIdx: 0 };
+
+/**
+ * Runs the hook command once with a harmless made-up PreToolUse event (a tool that names no file and no command)
+ * and checks that it answers with a valid decision. Antigravity denies every tool call when the hook cannot
+ * run or answers with anything else, so this is the one place to learn it before the agent does.
+ * Returns {ok, detail}.
+ */
+function selfCheck(command, opts = {}) {
+  const env = { ...(opts.env || process.env), ZN_STATS: 'off' };
+  const spawnOpts = { input: opts.input !== undefined ? opts.input : JSON.stringify(SELF_CHECK_EVENT), encoding: 'utf8', timeout: opts.timeoutMs || 20000, env, windowsHide: true };
+  // A command zn wrote is run the way Antigravity runs it: split on spaces, no shell (not where cmd.exe is needed).
+  const parts = opts.splitOnSpaces && process.platform !== 'win32' ? String(command).split(' ') : null;
+  // The first word (sh) from the absolute PATH entries only: install --project runs in the project folder.
+  const first = parts ? require('../exe').findProgram(parts[0], env) : null;
+  if (parts && !first) return { ok: false, detail: 'it could not be started (' + parts[0] + ' was not found on the PATH)' };
+  const r = parts ? spawnSync(first, parts.slice(1), spawnOpts) : spawnSync(command, { shell: true, ...spawnOpts });
+  // A hook that answers and exits before reading all its input makes the write fail with EPIPE (EOF on Windows) although it ran: its status and output are the answer.
+  const ranAndExited = r.error && (r.error.code === 'EPIPE' || r.error.code === 'EOF') && typeof r.status === 'number';
+  if (r.error && !ranAndExited) return { ok: false, detail: r.error.code === 'ETIMEDOUT' ? 'it did not answer within 20 seconds' : 'it could not be started (' + (r.error.code || 'error') + ')' };
+  const text = String(r.stdout || '').trim();
+  let parsed;
+  try { parsed = JSON.parse(text); } catch (_) { /* reported below */ }
+  if (!isObj(parsed) || !SELF_CHECK_DECISIONS.has(parsed.decision)) {
+    return { ok: false, detail: text ? 'it answered with something that is not a decision' : 'it printed nothing' + (r.status ? ' (exit code ' + r.status + ')' : '') };
+  }
+  if (parsed.decision !== 'allow') return { ok: false, detail: 'it answered "' + parsed.decision + '" to a harmless event' + (parsed.reason ? ': ' + String(parsed.reason).slice(0, 200) : '') };
+  return { ok: true, detail: 'it answered with a valid decision' };
+}
+
 /**
  * The hook command. A user install goes through zn's launcher (lib/agents/launcher.js): a Node.js that has gone
  * away makes the launcher answer a deny with the repair step, where a command that cannot start would block with
- * no text from zn (or not at all). A project install or a command given by the caller keeps the plain command.
+ * no text from zn (or not at all). A project install writes `sh -c` (PowerShell on Windows) around `zn hook
+ * antigravity` with the same deny answer when zn or node is missing. A command given by the caller stays as it is.
  */
 function commandFor(opts = {}) {
   const platform = opts.platform || process.platform;
-  if (opts.command || (opts.scope || 'user') === 'project') return cfg.hookCommand(id, opts);
+  if (opts.command) return cfg.hookCommand(id, opts);
+  // A project install is shared through the repository, so it names `zn` on the PATH instead of this machine's
+  // launcher, with its own guard: a missing zn or node ends in a deny that says how to repair it.
+  if ((opts.scope || 'user') === 'project') {
+    return platform === 'win32' ? launcher.windowsScriptCommand(launcher.projectWindowsScript(id)) : launcher.projectShCommand(id);
+  }
   const node = opts.nodePath || process.execPath;
   const runner = opts.runnerPath || cfg.runnerPath();
   if (platform === 'win32') {
@@ -385,12 +436,15 @@ function commandFor(opts = {}) {
   }
   // Antigravity splits the command on spaces and runs it with no shell, so a quote becomes part of the file name
   // and the hook never starts: the launcher path goes in unquoted. A path that would need quotes cannot be used.
-  if (!launcher.plainPathOk(launcher.launcherFile(id, opts))) return cfg.hookCommand(id, opts);
-  return launcher.launcherCommand(launcher.writeLauncher(id, node, runner, opts), 'PreToolUse', platform, { plain: true });
+  // No path without spaces: nothing that Antigravity can start can be written, so refuse instead of writing a hook that never runs.
+  const file = launcher.launcherFile(id, opts);
+  if (!launcher.plainPathOk(file)) throw new Error(launcher.spaceMessage(file));
+  return launcher.launcherCommand(launcher.writeLauncher(id, node, runner, { ...opts, deadlineS: launcher.launcherDeadlineS(HOOK_TIMEOUT_S), deadlineSoft: true }), 'PreToolUse', platform, { plain: true });
 }
 
 function install(opts = {}) {
   const file = hooksFile(opts);
+  const command = commandFor(opts); // may refuse (a launcher path Antigravity cannot start): before anything is written
   const data = cfg.readJson(file);
   const report = { settings: file, backup: cfg.backup(file), warnings: [] };
   if (report.backup && (opts.scope || 'user') === 'project') report.warnings.push('The backup ' + report.backup + ' sits inside the project: do not commit it.');
@@ -399,16 +453,26 @@ function install(opts = {}) {
   // Windows a quoted path such as C:/Program Files/... breaks the -Command form
   // and every tool call is blocked. -EncodedCommand has no space inside its
   // argument.
-  const command = commandFor(opts);
   // After the strip, a hook still called zn-gate is someone else's: zn never touches it (not even its enabled flag).
   let name = HOOK_NAME;
   while (data[name] !== undefined) name += '-zn';
   data[name] = { enabled: true, PreToolUse: [{ matcher: MATCHER, hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT_S }] }] };
   cfg.writeJson(file, data);
-  report.warnings.push('Antigravity support is experimental. zn checks tool calls before they run (PreToolUse): it blocks reads and writes of secret files and shell commands that handle secrets.');
-  if ((opts.scope || 'user') === 'project' && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook antigravity): every teammate who opens this project in Antigravity needs zn-gate installed, otherwise the hook cannot start and Antigravity may let the call through (a project install has no launcher).');
+  report.warnings.push('zn checks tool calls before they run (PreToolUse): it blocks reads and writes of secret files and shell commands that handle secrets.');
+  if ((opts.scope || 'user') === 'project' && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook antigravity): every teammate who opens this project in Antigravity needs zn-gate installed. Without it the hook answers a deny that says how to install it, so Antigravity blocks the call instead of running it unchecked. The command is written for this kind of machine (' + ((opts.platform || process.platform) === 'win32' ? 'Windows' : 'macOS and Linux') + '): a teammate on the other kind runs `zn hooks install antigravity --project` in their own copy of the project.');
   report.warnings.push('Antigravity hooks cannot rewrite or redact what a tool returns, so a value printed by a command or a file the agent is allowed to read reaches the model. Keep secrets in the vault.');
-  report.warnings.push('Antigravity does not document what happens when a hook fails or times out, so zn cannot promise that such a call is blocked. If the Node.js zn was installed with goes away, the launcher script answers a deny that says how to repair it; run `zn-gate check` to see that the hook works.');
+  report.warnings.push('Antigravity does not document what happens when a hook fails or times out. In our tests (Windows, October 2026) a hook that failed to start or answered with something that is not a decision made Antigravity deny every tool call; a timeout was not tested. If the Node.js zn was installed with goes away, the launcher script answers a deny that says how to repair it, and zn itself answers every event with an explicit decision. Run `zn-gate check` to see that the hook works.');
+  if (opts.selfCheck) {
+    report.selfCheck = selfCheck(command, { ...opts, splitOnSpaces: !opts.command });
+    if (!report.selfCheck.ok) {
+      const fix = (opts.scope || 'user') === 'project' && !opts.command
+        ? 'install zn-gate for your user (npm install -g zn-gate) so that `zn` is on your PATH, then run this command again'
+        : 'run `npx -y zn-gate check`, then `npm install -g zn-gate` and this command again; if it still fails, run `zn hooks uninstall antigravity` before you use Antigravity';
+      report.warnings.push('SELF-CHECK FAILED: the hook was started once with a harmless test event and ' + report.selfCheck.detail + '. Antigravity would deny every tool call. Next step: ' + fix + '.');
+    } else {
+      report.warnings.push('Self-check passed: the hook was started once with a harmless test event and ' + report.selfCheck.detail + '.');
+    }
+  }
   return report;
 }
 
@@ -446,6 +510,7 @@ module.exports = {
   uninstall,
   normalize,
   respond,
+  selfCheck,
   capabilities: { ask: 'all', rewriteInput: false, rewriteOutput: false },
   HOOK_NAME,
   hooksFile,
