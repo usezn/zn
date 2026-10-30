@@ -370,7 +370,7 @@ def history(home: Optional[str] = None, env: Optional[Dict[str, str]] = None, ma
     incomplete: List[Dict[str, str]] = []
     not_reached = 0
     time_limit_hit = False
-    by_agent = {a["id"]: a for a in agents}
+    by_agent: Dict[str, Dict[str, Any]] = {entry["id"]: entry for entry in agents}
     for f in plan:
         shown = display(home, f["abs"])
         if time_limit_hit or time.time() * 1000 > deadline:
@@ -380,9 +380,9 @@ def history(home: Optional[str] = None, env: Optional[Dict[str, str]] = None, ma
                 incomplete.append({"agent": f["agent"], "file": shown, "reason": "time-limit"})
             continue
         r = scan_file(f["abs"], deadline)
-        a = by_agent[f["agent"]]
-        a["files"] += 1
-        a["bytes"] += r["bytes"]
+        entry = by_agent[f["agent"]]
+        entry["files"] += 1
+        entry["bytes"] += r["bytes"]
         if not r["complete"]:
             if r["reason"] == "time-limit":
                 time_limit_hit = True
