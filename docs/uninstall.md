@@ -41,7 +41,7 @@ claude plugin uninstall zn-gate@usezn
 
 Or, inside Claude Code, type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
 
-### Hooks (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, or Claude Code without the plugin)
+### Hooks (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, Gemini CLI, Copilot CLI, or Claude Code without the plugin)
 
 ```bash
 npx -y zn-gate hooks uninstall claude-code
