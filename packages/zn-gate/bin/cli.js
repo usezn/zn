@@ -570,7 +570,7 @@ async function handleScan(targetPath, options) {
   const resolved = path.resolve(targetPath || '.');
   if (!fs.existsSync(resolved)) {
     process.stderr.write(`Error: Target path does not exist: ${resolved}\n`);
-    process.exit(1);
+    process.exit(2);
   }
 
   const format = options.formatGiven ? String(options.format).toLowerCase() : 'text';
@@ -1314,12 +1314,13 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     const textToAnalyze = textArgs.join(' ');
     if (!textToAnalyze) {
       process.stderr.write('Error: Please provide text to analyze: zn-gate analyze "<text>"\n');
-      process.exit(1);
+      process.exit(2);
     }
 
     const result = await analyze(textToAnalyze, options);
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
-    process.exit(isBlockVerdict(result.verdict) ? 2 : 0);
+    // Same table as the Python package: 0 allowed, 1 blocked, 2 wrong usage (docs/cli.md, Exit codes).
+    process.exit(isBlockVerdict(result.verdict) ? 1 : 0);
   }
 
   if (command === 'status') {
@@ -1385,7 +1386,7 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
   }
 
   process.stderr.write(`Unknown command: ${command}\nRun 'zn-gate --help' for usage.\n`);
-  process.exit(1);
+  process.exit(2);
 }
 
 main().catch((err) => {

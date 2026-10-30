@@ -48,8 +48,9 @@ def test_help_exits_0_in_both(flag):
     assert _py(flag).returncode == 0
 
 
-def test_unknown_command_exits_1_with_the_same_message():
+def test_unknown_command_exits_2_with_the_same_message():
+    # Same text and the same code (2, wrong usage): see "Exit codes" in docs/cli.md.
     node, py = _node("bogus"), _py("bogus")
-    assert node.returncode == py.returncode == 1
+    assert node.returncode == py.returncode == 2
     assert node.stderr == py.stderr
     assert "Unknown command: bogus" in py.stderr

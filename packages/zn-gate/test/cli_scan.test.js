@@ -393,13 +393,13 @@ test('scan of an empty folder or a missing path never says PASSED without readin
     assert.ok(!empty.stdout.includes('PASSED'), empty.stdout);
     assert.match(empty.stdout, /NOTHING SCANNED/);
     const missing = scanJson([path.join(dir, 'does-not-exist')]);
-    assert.strictEqual(missing.status, 1);
+    assert.strictEqual(missing.status, 2);
     assert.match(missing.stderr, /does not exist/);
     assert.ok(!missing.stdout.includes('PASSED'));
     // A file that cannot be listed as a folder (a path through a file): also an error, never clean.
     fs.writeFileSync(path.join(dir, 'f.txt'), 'x');
     const through = scanJson([path.join(dir, 'f.txt', 'child')]);
-    assert.strictEqual(through.status, 1);
+    assert.strictEqual(through.status, 2);
     assert.ok(!through.stdout.includes('PASSED'));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

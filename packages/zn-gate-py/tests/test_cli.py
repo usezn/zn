@@ -27,10 +27,11 @@ def _run(text: str):
 
 
 class TestCliTestCommand(unittest.TestCase):
-    def test_allowed_text_with_a_secret_shows_allow_and_the_alert(self):
+    def test_allowed_text_with_a_secret_says_secret_found_and_shows_the_alert(self):
         code, out = _run(f"AWS_ACCESS_KEY_ID={FAKE_AWS}")
         self.assertIn("Verdict: ALLOW", out)
-        self.assertIn("ALLOW |", out)
+        self.assertIn("SECRET FOUND |", out)
+        self.assertNotIn("ALLOW |", out)
         self.assertNotIn("BLOCK", out)
         self.assertIn("DLP Alert:", out)
         self.assertIn("1 secret detected", out)

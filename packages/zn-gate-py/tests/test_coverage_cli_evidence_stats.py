@@ -40,7 +40,7 @@ def _scan(path, fmt="text", **kw):
 # ---------------------------------------------------------------- scan: inputs
 
 def test_scan_missing_path(tmp_path, capsys):
-    assert _scan(tmp_path / "nope") == 1
+    assert _scan(tmp_path / "nope") == 2
     assert "target path not found" in capsys.readouterr().err
 
 
@@ -384,7 +384,7 @@ def test_cmd_analyze_json_and_block(capsys, monkeypatch):
     with mock.patch.object(cli, "analyze", return_value={"verdict": "block", "engine": "t"}) as m:
         ns = argparse.Namespace(text="t", key=None, stage=None, url=None, local_only=True,
                                 long_input=None, json=True)
-        assert cli.cmd_analyze(ns) == 2
+        assert cli.cmd_analyze(ns) == 1
     assert m.call_args.kwargs["stage"] == "v30" and m.call_args.kwargs["local_only"] is True
     assert json.loads(capsys.readouterr().out)["verdict"] == "block"
 

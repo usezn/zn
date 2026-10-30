@@ -19,7 +19,7 @@ function run(args) {
 }
 
 function assertShortError(r, command) {
-  assert.strictEqual(r.status, 1);
+  assert.strictEqual(r.status, 2);
   assert.strictEqual(r.stdout, '');
   assert.strictEqual(
     r.stderr,
@@ -28,7 +28,7 @@ function assertShortError(r, command) {
   assert.doesNotMatch(r.stderr, /\n\s+at |Error:|node:internal|\.js:\d+/);
 }
 
-test('an unknown command exits 1 with a message and a pointer to --help, no stack text', () => {
+test('an unknown command exits 2 with a message and a pointer to --help, no stack text', () => {
   assertShortError(run(['no-such-command']), 'no-such-command');
 });
 
