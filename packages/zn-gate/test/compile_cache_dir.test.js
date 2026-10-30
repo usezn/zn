@@ -85,3 +85,107 @@ test('enable returns null and creates nothing when ZN_NO_COMPILE_CACHE is set', 
     fs.rmSync(base, { recursive: true, force: true });
   }
 });
+
+// ---- a temporary HOME (no ZN_HOME): new, existing, foreign and unwritable folders ----
+
+const { spawnSync } = require('child_process');
+
+const isRoot = posix && typeof process.getuid === 'function' && process.getuid() === 0;
+
+// Run enable() in a child with HOME set, so the process-wide compile cache of the runner is not involved.
+function enableWithHome(home) {
+  const code = 'const r = require(' + JSON.stringify(require.resolve('../lib/compile-cache')) +
+    ').enable(); console.log(JSON.stringify(r));';
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  delete env.ZN_HOME;
+  delete env.ZN_NO_COMPILE_CACHE;
+  delete env.NODE_COMPILE_CACHE;
+  const res = spawnSync(process.execPath, ['-e', code], { encoding: 'utf8', env });
+  assert.strictEqual(res.status, 0, res.stderr);
+  return JSON.parse(res.stdout.trim());
+}
+
+const hasCompileCache = typeof require('module').enableCompileCache === 'function';
+
+test('cacheRoot follows a temporary HOME when ZN_HOME is not set', { skip: !posix }, () => {
+  const base = tmp();
+  try {
+    const code = 'console.log(require(' + JSON.stringify(require.resolve('../lib/compile-cache')) +
+      ').cacheRoot({}))';
+    const env = { ...process.env, HOME: base };
+    const res = spawnSync(process.execPath, ['-e', code], { encoding: 'utf8', env });
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.strictEqual(res.stdout.trim(), path.join(base, '.zn', 'cache', 'compile'));
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('enable in a new HOME creates private folders under ~/.zn', { skip: !posix || !hasCompileCache }, () => {
+  const base = tmp();
+  try {
+    const dir = enableWithHome(base);
+    assert.ok(dir, 'a cache directory is returned');
+    assert.strictEqual(fs.realpathSync(dir), fs.realpathSync(path.join(base, '.zn', 'cache', 'compile')));
+    for (const d of [path.join(base, '.zn'), path.join(base, '.zn', 'cache'), path.join(base, '.zn', 'cache', 'compile')]) {
+      assert.strictEqual(fs.statSync(d).mode & 0o077, 0, d + ' must be private');
+      assert.strictEqual(isPrivateDir(d), true);
+    }
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('enable reuses an existing private ~/.zn and keeps its files', { skip: !posix || !hasCompileCache }, () => {
+  const base = tmp();
+  try {
+    const zn = path.join(base, '.zn');
+    fs.mkdirSync(zn, { mode: 0o700 });
+    fs.writeFileSync(path.join(zn, 'keep.txt'), 'x');
+    const dir = enableWithHome(base);
+    assert.ok(dir);
+    assert.strictEqual(fs.readFileSync(path.join(zn, 'keep.txt'), 'utf8'), 'x');
+    // A second call finds the folders it made and still succeeds.
+    assert.strictEqual(enableWithHome(base), dir);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('enable is skipped when ~/.zn is open to other users', { skip: !posix }, () => {
+  const base = tmp();
+  try {
+    const zn = path.join(base, '.zn');
+    fs.mkdirSync(zn);
+    fs.chmodSync(zn, 0o775);
+    assert.strictEqual(enableWithHome(base), null);
+    assert.strictEqual(fs.existsSync(path.join(zn, 'cache')), false);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('a folder owned by another user is not private (needs root to set up)', { skip: !isRoot }, () => {
+  const base = tmp();
+  try {
+    const zn = path.join(base, '.zn');
+    fs.mkdirSync(zn, { mode: 0o700 });
+    fs.chownSync(zn, 65534, 65534);
+    assert.strictEqual(isPrivateDir(zn), false);
+    assert.strictEqual(enable({ ZN_HOME: zn }), null);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('enable is skipped when HOME cannot be written to', { skip: !posix || isRoot }, () => {
+  const base = tmp();
+  try {
+    fs.chmodSync(base, 0o500);
+    assert.strictEqual(enableWithHome(base), null);
+    assert.strictEqual(fs.existsSync(path.join(base, '.zn')), false);
+  } finally {
+    fs.chmodSync(base, 0o700);
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
