@@ -234,6 +234,17 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// The startup error for a Management API address that cannot be bound.
+fn bind_error(addr: &str, port: u16, e: &std::io::Error) -> anyhow::Error {
+    if e.kind() == std::io::ErrorKind::AddrInUse {
+        anyhow!(
+            "Port {port} is already in use, so the Management API cannot start on {addr}. Stop the program that uses it, or pick another port with --port <number> (or set ZN_PORT, or server.port in zn.json)."
+        )
+    } else {
+        anyhow!("Cannot start the Management API on {addr}: {e}")
+    }
+}
+
 async fn start_proxy(args: Args) -> Result<()> {
     log::info("Initializing High-Performance Security Engine...")?;
 
@@ -527,6 +538,13 @@ async fn start_proxy(args: Args) -> Result<()> {
             )
         })?;
 
+    // Bound before the task starts, so a port that is taken stops the gateway
+    // with a clear message instead of leaving it running without an API.
+    let addr = format!("{}:{}", bind_address, port);
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .map_err(|e| bind_error(&addr, port, &e))?;
+
     tokio::spawn(async move {
         let allowed_origins = api_state.config.security.allowed_origins.clone();
         let cors = build_cors_layer(&allowed_origins);
@@ -577,22 +595,14 @@ async fn start_proxy(args: Args) -> Result<()> {
             .layer(cors)
             .with_state(api_state);
 
-        let addr = format!("{}:{}", bind_address, port);
-        match tokio::net::TcpListener::bind(&addr).await {
-            Ok(listener) => {
-                log::info(format!("🛰️ Management API listening on {}", addr)).ok();
-                if let Err(e) = axum::serve(
-                    listener,
-                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-                )
-                .await
-                {
-                    tracing::error!("Management API server error: {}", e);
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to bind Management API to {}: {}", addr, e);
-            }
+        log::info(format!("🛰️ Management API listening on {}", addr)).ok();
+        if let Err(e) = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        {
+            tracing::error!("Management API server error: {}", e);
         }
     });
 
@@ -2371,6 +2381,20 @@ mod audit_isolation_tests {
         )
         .await;
         sse.into_response().into_body().into_data_stream()
+    }
+
+    #[tokio::test]
+    async fn a_port_that_is_in_use_gives_a_plain_startup_error() {
+        let taken = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = taken.local_addr().unwrap().port();
+        let addr = format!("127.0.0.1:{port}");
+        let e = tokio::net::TcpListener::bind(&addr).await.unwrap_err();
+        let msg = bind_error(&addr, port, &e).to_string();
+        assert!(
+            msg.contains(&format!("Port {port} is already in use")),
+            "{msg}"
+        );
+        assert!(msg.contains("--port") && msg.contains("ZN_PORT"), "{msg}");
     }
 
     #[test]
