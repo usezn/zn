@@ -164,6 +164,7 @@ add('cd build && rm -rf .', 'cd dist && rm -rf *', 'cd ~/projects/app && rm -rf 
   'cd / && rm -rf tmp/build-4821', 'cd /home/alice && rm -rf work/out', 'cd ~ && cd projects && rm -rf .', 'cd ~ && cd projects/app && find . -delete', 'cd ~ | rm -rf .',
   'cd ~ & rm -rf .', 'pushd ~/projects/app && rm -rf .', 'pushd build && rm -rf *', 'cd ~ && ls . && rm -rf build', 'cd "$BUILD_DIR" && rm -rf .', 'cd $PROJECT && find . -delete',
   'cd ~ && chmod -R u+rwX .cache', 'cd / && chmod -R 755 srv/app', 'Set-Location C:\\work\\app; Remove-Item -Recurse -Force .', 'sh -c "cd build && rm -rf ."', 'cd ~ && echo . | xargs ls');
+add('cd /d C:\\build && rd /s /q .', 'cd C:\\build\\ && rd /s /q .', 'cd /d C:\\build\\out && rd /s /q .', 'cd C:/Users/alice/work/ && rm -rf .');
 
 // Commands after a shell keyword or inside backticks that stay below a project folder, and text that only mentions the keywords.
 add('{ rm -rf ./build; }', 'if true; then rm -rf ./build; fi', 'while true; do rm -rf ./tmp; done', 'until false; do rm -rf ./tmp; done', '! rm -rf ./build',
@@ -218,6 +219,12 @@ for (const [a, b] of [['cd /home', 'rm -rf alice'], ['cd /', 'rm -rf etc'], ['cd
 addRisk('rm_root_home', 'cd / && Remove-Item -Recurse -Force .');
 addRisk('rm_root_home', 'cd C:\\Users\\alice; Remove-Item -Recurse -Force *');
 addRisk('rm_root_home', 'cd ~; rd /s /q .');
+addRisk('rm_root_home', 'cd /d C:\\Users\\alice && rd /s /q .');
+addRisk('rm_root_home', 'cd /D C:\\Users\\alice && rd /s /q .');
+addRisk('rm_root_home', 'chdir /d C:\\Windows && rd /s /q .');
+addRisk('rm_root_home', 'cd C:\\Windows\\ && rd /s /q .');
+addRisk('rm_root_home', 'cd C:/Users/alice/ && rm -rf .');
+addRisk('rm_root_home', 'cd /d C:\\ && rd /s /q Windows');
 addRisk('rm_root_home', '(cd ~ && rm -rf .)');
 // A command after a shell keyword ({, then, do, else, elif, !, if, while, until) is read like any other.
 for (const t of ['~', '/', '$HOME', '/etc', '/home/alice']) {

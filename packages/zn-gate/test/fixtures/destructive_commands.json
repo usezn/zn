@@ -60,6 +60,8 @@
   "cd / && chmod -R 755 srv/app",
   "cd / && ls",
   "cd / && rm -rf tmp/build-4821",
+  "cd /d C:\\build && rd /s /q .",
+  "cd /d C:\\build\\out && rd /s /q .",
   "cd /home/alice && ls",
   "cd /home/alice && rm -rf work/out",
   "cd /srv/app && rm --recursive --force .gradle .parcel-cache",
@@ -105,6 +107,8 @@
   "cd /tmp && find . -delete",
   "cd /tmp && rm -rf .",
   "cd /var/tmp && rm -rf *",
+  "cd C:/Users/alice/work/ && rm -rf .",
+  "cd C:\\build\\ && rd /s /q .",
   "cd build && rm -rf .",
   "cd dist && rm -rf *",
   "cd ~ & rm -rf .",
@@ -3400,6 +3404,10 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "cd /D C:\\Users\\alice && rd /s /q .",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "cd /Users/bob && rm -rf .",
    "rule": "rm_root_home"
   },
@@ -3409,6 +3417,14 @@
   },
   {
    "cmd": "cd /Users/bob; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /d C:\\ && rd /s /q Windows",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /d C:\\Users\\alice && rd /s /q .",
    "rule": "rm_root_home"
   },
   {
@@ -3644,11 +3660,19 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "cd C:/Users/alice/ && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "cd C:/Users/alice; rm -rf .",
    "rule": "rm_root_home"
   },
   {
    "cmd": "cd C:\\Users\\alice; Remove-Item -Recurse -Force *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd C:\\Windows\\ && rd /s /q .",
    "rule": "rm_root_home"
   },
   {
@@ -3761,6 +3785,10 @@
   },
   {
    "cmd": "cd; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "chdir /d C:\\Windows && rd /s /q .",
    "rule": "rm_root_home"
   },
   {

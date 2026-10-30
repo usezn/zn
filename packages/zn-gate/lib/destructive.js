@@ -134,6 +134,19 @@ const isPipe = (sep) => sep === '|' || sep === '|&';
 const CD_HEADS = new Set(['cd', 'chdir', 'pushd', 'set-location', 'sl', 'push-location']);
 const ANCHORED_RE = /^(?:[\\/~$%]|[A-Za-z]:)/;
 const NOT_CD = Symbol('not-cd');
+// A folder path longer than this (after "." and ".." are resolved) is not followed: the line is refused instead.
+const MAX_CWD_CHARS = 4096;
+const CWD_OVERFLOW = Symbol('cwd-overflow');
+
+/* One lexical pass over a folder path: backslashes become "/", repeated and trailing separators and "." segments go,
+   and ".." is resolved where the path starts at a known point. A bare root ("/", "C:/") keeps its separator. */
+function normCwd(p) {
+  // On Windows a folder written with a trailing backslash before a space reaches this point as a trailing space.
+  let t = String(p).replace(/\s+$/, '').replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/(?:\/\.)+(?=\/|$)/g, '');
+  t = resolveDots(t);
+  if (t.length > 1 && t.endsWith('/') && !/^[A-Za-z]:\/$/.test(t)) t = t.slice(0, -1);
+  return t || '/';
+}
 
 /* The working folder a cd or pushd leaves behind, as the path text to join relative words to: a string, or null when
    it cannot be known (cd -, a relative folder from an unknown place, popd). `cwd` is the folder before the command
@@ -143,22 +156,25 @@ function cdTarget(args, cwd) {
   const head = programName(args[0]);
   if (head === 'popd' || head === 'pop-location') return null;
   if (!CD_HEADS.has(head)) return NOT_CD;
-  let ops = args.slice(1).filter((w) => !/^-[A-Za-z]+$/.test(w) || w === '-');
+  // cmd.exe's /d (change the drive too) is an option, not the folder.
+  let ops = args.slice(1).filter((w) => (!/^-[A-Za-z]+$/.test(w) || w === '-') && !((head === 'cd' || head === 'chdir') && /^\/d$/i.test(w)));
   if (ops[0] === '--') ops = ops.slice(1);
   // A bare cd goes home; a bare pushd swaps directories, which is not known here.
   if (!ops.length) return head === 'pushd' || head === 'push-location' ? null : '~';
   const t = ops[0];
   if (t === '-') return null;
   // Anchored words (absolute, drive, home or variable) name the folder on their own; a relative word follows the old folder.
-  if (ANCHORED_RE.test(t)) return t;
-  return cwd === null || cwd === undefined ? null : cwd + '/' + t;
+  const to = ANCHORED_RE.test(t) ? t : cwd === null || cwd === undefined ? null : cwd + '/' + t;
+  if (to === null) return null;
+  const norm = normCwd(to);
+  return norm.length > MAX_CWD_CHARS ? CWD_OVERFLOW : norm;
 }
 
 /* A word read from the folder `cwd`: relative words are joined to it, anchored words are kept. */
 function fromCwd(cwd, word) {
   const w = String(word);
   if (!cwd || !w || ANCHORED_RE.test(w)) return w;
-  return cwd + '/' + w;
+  return cwd.replace(/[\\/]+$/, '') + '/' + w;
 }
 
 /* The text of every unquoted or double-quoted `...` command substitution of a command, joined into one text to be read
@@ -189,15 +205,22 @@ function backtickCode(text) {
    an anchored word wins, a relative one follows the earlier one. */
 function joinDir(prev, next) {
   if (!next) return prev;
-  if (prev === null || ANCHORED_RE.test(next)) return next;
-  return prev + '/' + next;
+  if (prev === CWD_OVERFLOW) return prev;
+  return capDir(prev === null || ANCHORED_RE.test(next) ? next : prev + '/' + next);
+}
+
+/* A folder path as text through the same one-pass normalisation as cd, or CWD_OVERFLOW when it is too long to follow. */
+function capDir(p) {
+  const norm = normCwd(p);
+  return norm.length > MAX_CWD_CHARS ? CWD_OVERFLOW : norm;
 }
 
 /* The folder a command runs in when it is wrapped in env -C / sudo -D: `dir` is read from the folder `known` (null = unknown). */
 function inDir(known, dir) {
   if (dir === null) return known;
-  if (ANCHORED_RE.test(dir)) return dir;
-  return known === null || known === undefined ? null : known + '/' + dir;
+  if (dir === CWD_OVERFLOW) return CWD_OVERFLOW;
+  if (ANCHORED_RE.test(dir)) return capDir(dir);
+  return known === null || known === undefined ? null : capDir(known + '/' + dir);
 }
 
 /* The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...) and shell keywords,
@@ -412,6 +435,7 @@ function checkSimple(words, depth, cwd, known = cwd) {
   const args = un.args;
   if (un.dir !== null) {
     known = inDir(known, un.dir);
+    if (known === CWD_OVERFLOW) return OVERFLOW;
     cwd = known !== null && dangerousPath(known) ? known : null;
   }
   if (!args.length) return null;
@@ -579,6 +603,7 @@ function checkSegments(segs, depth, known0 = null) {
     if (hit) return hit;
     if (seg.sep !== '|' && seg.sep !== '|&' && seg.sep !== '&') {
       const to = cdTarget(unwrap(seg.words), known);
+      if (to === CWD_OVERFLOW) return OVERFLOW;
       if (to !== NOT_CD) {
         known = to;
         cwd = known !== null && dangerousPath(known) ? known : null;
