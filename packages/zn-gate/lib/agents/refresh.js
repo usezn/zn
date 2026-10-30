@@ -40,6 +40,8 @@ function samePath(a, b, win) {
 
 // The options the launcher was written with, read back from it: its deadline and whether it runs the hook without a timer.
 function launcherOptions(text) {
+  const lean = /^ZN_DEADLINE_S=(\d+)$/m.exec(text);
+  if (lean) return { deadlineS: Number(lean[1]), lean: true };
   const d = /\/bin\/sleep (\d+) & ZN_SP=\$!/.exec(text);
   return d ? { deadlineS: Number(d[1]), deadlineSoft: text.includes('[ -x /bin/sleep ] || { zn_cap "$@"; return 0; }') } : {};
 }
@@ -84,6 +86,8 @@ function refreshLaunchers(opts = {}) {
       if (!same && !(gone && isGlobal)) continue;
       const useNode = isExecutableFile(n[1]) ? n[1] : node;
       const kept = launcherOptions(text);
+      // A launcher written by an older zn-gate on Windows moves to the lean one; elsewhere the kind it has stays.
+      if (win) kept.lean = true;
       const next = launcher.unixScript(id, portablePath(useNode, platform), portablePath(runner, platform), kept);
       if (next === text) continue;
       launcher.writeLauncher(id, useNode, runner, { env, home: opts.home, platform, ...kept });

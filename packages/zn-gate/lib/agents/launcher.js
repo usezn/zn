@@ -146,20 +146,10 @@ function launcherDeadlineS(hostTimeoutS) {
   return Math.max(1, Math.floor(hostTimeoutS) - 2);
 }
 
-/** The text of the launcher script. */
-function unixScript(agentId, nodePath, runnerPath, opts = {}) {
-  checkAgentId(agentId);
-  // deadlineS (whole seconds, only for agents that fail open on a timeout): the launcher answers by itself when the hook has
-  // not finished by then, so a hook stuck while it starts (before the runner arms its own watchdog) still blocks.
-  const deadlineS = Number.isInteger(opts.deadlineS) && opts.deadlineS > 0 ? opts.deadlineS : 0;
-  const sha = opts.runnerDigest === undefined ? runnerSha(runnerPath) : opts.runnerDigest;
-  if (typeof sha !== 'string' || !/^[0-9a-f]*$/.test(sha)) throw new Error('zn: bad runner digest');
+/** The lines of the zn_block shell function: what this agent gets for an event that cannot be run (a block, or only a warning). */
+function blockLines(agentId) {
   const changed = changedText(agentId);
   const changedWarn = changedWarnText(agentId);
-  const run = (...w) => (deadlineS ? 'zn_run ' : 'zn_cap ') + w.join(' ');
-  // Without a timer or private output a strict launcher (ZCode) does not run the hook and blocks; the others (the runner
-  // has its own deadline too) run it directly, still through zn_cap (private output and the confirmation check).
-  const noTimer = opts.deadlineSoft ? 'zn_cap "$@"' : 'ZN_RC=127';
   const reason = reasonText(agentId);
   const warn = warnText(agentId);
   const exitEvents = [...blockExit(agentId)];
@@ -172,18 +162,6 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
   const noAckWarn = noAckWarnText(agentId);
   const deny = (r) => 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: r } } }));
   return [
-    '#!/bin/sh',
-    '# Written by `zn hooks install ' + agentId + '`; replaced on every install. Do not edit.',
-    '# Runs the zn hook; if the Node.js or zn-gate it was installed with is gone, it blocks instead of letting the call run.',
-    'ZN_EVENT="${1:-}"',
-    'ZN_NODE=' + shQuote(nodePath),
-    'ZN_RUNNER=' + shQuote(runnerPath),
-    'ZN_SHA=' + shQuote(sha),
-    'ZN_VERIFY=' + shQuote(VERIFY_JS),
-    'ZN_RAN=; ZN_CHANGED=',
-    '# Removes private files by absolute path: the PATH of a hook can be empty, and a bare rm would leave them behind on every call.',
-    '# rm from the system folders only (NixOS and Guix keep it under /run/current-system); with none, the Node.js the hook was installed with removes them.',
-    'zn_rm() { for ZN_R in /bin/rm /usr/bin/rm /run/current-system/sw/bin/rm /run/current-system/profile/bin/rm; do [ -x "$ZN_R" ] && { "$ZN_R" -f -- "$@" 2>/dev/null; return 0; }; done; [ -x "$ZN_NODE" ] && "$ZN_NODE" -e \'for (const f of process.argv.slice(1)) { try { require("fs").unlinkSync(f); } catch (e) {} }\' -- "$@" 2>/dev/null; return 0; }',
     'zn_block() {',
     'case "$ZN_EVENT" in',
     '  ' + exitEvents.join('|') + ')',
@@ -203,6 +181,37 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     '    exit 0 ;;',
     'esac',
     '}',
+  ];
+}
+
+/** The text of the launcher script. */
+function unixScript(agentId, nodePath, runnerPath, opts = {}) {
+  checkAgentId(agentId);
+  // deadlineS (whole seconds, only for agents that fail open on a timeout): the launcher answers by itself when the hook has
+  // not finished by then, so a hook stuck while it starts (before the runner arms its own watchdog) still blocks.
+  const deadlineS = Number.isInteger(opts.deadlineS) && opts.deadlineS > 0 ? opts.deadlineS : 0;
+  const sha = opts.runnerDigest === undefined ? runnerSha(runnerPath) : opts.runnerDigest;
+  if (typeof sha !== 'string' || !/^[0-9a-f]*$/.test(sha)) throw new Error('zn: bad runner digest');
+  // opts.lean: the Windows launcher (leanScript). Every other call gets the script below, unchanged.
+  if (opts.lean) return leanScript(agentId, nodePath, runnerPath, sha, deadlineS);
+  const run = (...w) => (deadlineS ? 'zn_run ' : 'zn_cap ') + w.join(' ');
+  // Without a timer or private output a strict launcher (ZCode) does not run the hook and blocks; the others (the runner
+  // has its own deadline too) run it directly, still through zn_cap (private output and the confirmation check).
+  const noTimer = opts.deadlineSoft ? 'zn_cap "$@"' : 'ZN_RC=127';
+  return [
+    '#!/bin/sh',
+    '# Written by `zn hooks install ' + agentId + '`; replaced on every install. Do not edit.',
+    '# Runs the zn hook; if the Node.js or zn-gate it was installed with is gone, it blocks instead of letting the call run.',
+    'ZN_EVENT="${1:-}"',
+    'ZN_NODE=' + shQuote(nodePath),
+    'ZN_RUNNER=' + shQuote(runnerPath),
+    'ZN_SHA=' + shQuote(sha),
+    'ZN_VERIFY=' + shQuote(VERIFY_JS),
+    'ZN_RAN=; ZN_CHANGED=',
+    '# Removes private files by absolute path: the PATH of a hook can be empty, and a bare rm would leave them behind on every call.',
+    '# rm from the system folders only (NixOS and Guix keep it under /run/current-system); with none, the Node.js the hook was installed with removes them.',
+    'zn_rm() { for ZN_R in /bin/rm /usr/bin/rm /run/current-system/sw/bin/rm /run/current-system/profile/bin/rm; do [ -x "$ZN_R" ] && { "$ZN_R" -f -- "$@" 2>/dev/null; return 0; }; done; [ -x "$ZN_NODE" ] && "$ZN_NODE" -e \'for (const f of process.argv.slice(1)) { try { require("fs").unlinkSync(f); } catch (e) {} }\' -- "$@" 2>/dev/null; return 0; }',
+    ...blockLines(agentId),
     ...(deadlineS ? [
       'zn_term() {',
       '  [ -z "$ZN_P" ] || { kill -TERM -$ZN_P 2>/dev/null; kill -TERM $ZN_P 2>/dev/null; kill -KILL -$ZN_P 2>/dev/null; }',
@@ -307,6 +316,181 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
   ].join('\n');
 }
 
+/*
+ * The lean launcher (Windows only; every other system keeps unixScript's script byte for byte).
+ *
+ * Why: on Windows every process a hook call starts costs 10-50 ms (and Windows Defender scans each one), and the full launcher
+ * starts about 24 of them (mktemp x3, cat x2, perl, a timer subshell with sleep, rm, and a fork for every $(...)): 344 ms at
+ * the median and 544 ms at the 95th percentile, against 119 / 128 ms for `node runner.js` alone. The lean launcher is shell
+ * built-ins plus ONE `node` process; what the shell did with helper processes is done inside that node (LEAN_JS):
+ *  - integrity: the runner is read once and its SHA-256 compared with the one recorded at install time, as VERIFY_JS does; a
+ *    runner that differs is not run (exit 86, and the shell answers with the "zn-gate changed" block);
+ *  - deadline: a timer is armed as the very first step (before the runner is read or loaded). At the deadline it answers with the
+ *    block of the event (the same text the shell gave) and exits;
+ *  - private output: what the runner writes to stdout and stderr is held in memory (process.stdout.write and fs.writeSync on
+ *    fd 1 and 2 are replaced). Only when the run ends it is passed on: stdout for a status 0 with the confirmation, or 2;
+ *    stderr always. Any other status (a crash, an uncaught error) drops the held stdout and answers with the block of the event;
+ *  - confirmation: the runner confirms its whole answer was written by writing "ok" to the file named in ZN_HOOK_ACK. Here that
+ *    name is a value no file has, and the write to it (and only to it) is taken in memory, so nothing touches the disk;
+ *  - exit status: node never ends with 0 or 2 itself. It ends with 80 (answered, status 0) or 82 (answered, status 2), so a
+ *    node that is a stub, or something started before this code by NODE_OPTIONS, that ends with 0 is NOT taken as an answer.
+ *    The shell turns 80 into 0 and 82 into 2; 86 is the changed runner; anything else (a node that cannot start, a kill, a
+ *    crash outside this code) falls to the block of the shell, as before.
+ *
+ * What is NOT kept, on purpose (a reviewer decides):
+ *  - the timer starts when node starts. A hang while node itself starts (before the first line of LEAN_JS runs) is covered only by
+ *    the agent's own hook timeout, which for most agents lets the call run. The shell timer started before node.
+ *  - the timer is in the node process, so a runner that blocks the event loop with synchronous work never lets it fire; the shell
+ *    timer was a separate process and killed the runner's whole process group. The runner has its own supervisor timer in the
+ *    same process (it has the same limit), and it starts no child process, so no helper can hold the agent's pipes open.
+ *  - a TERM, HUP or INT sent to the shell is answered by the runner's own handlers (it has them for these signals), no longer by
+ *    a shell trap.
+ *  - the answer is written to the agent's pipe once, when the run ends, from inside node instead of by `cat` from a file.
+ */
+const LEAN_OK = 80; // node ends with LEAN_OK + 0 (answered, status 0) or LEAN_OK + 2 (answered, status 2)
+
+// Runs inside `node --input-type=commonjs -e`. Started as `node -e LEAN_JS <runner> <sha256> <agent> <event> <json config>`.
+// It is written as a function so it is readable and testable; its source text is what the script passes to node.
+function leanMain() {
+  const fs = require('fs');
+  const [f, h, agent, event, cfgText] = process.argv.slice(1);
+  let cfg;
+  try { cfg = JSON.parse(cfgText); } catch (e) { process.exit(1); }
+  const ow = fs.writeSync;
+  const wf = fs.writeFileSync;
+  const out = [];
+  const err = [];
+  let done = false;
+  let acked = false;
+  // Writes every chunk to the real fd; false when it could not (a closed pipe, or a pipe that stays full).
+  const put = (fd, list) => {
+    for (const b of list) {
+      let off = 0;
+      for (let tries = 0; off < b.length && tries < 1000; tries++) {
+        try { off += ow(fd, b, off); } catch (e) { if (!e || e.code !== 'EAGAIN') return false; }
+      }
+      if (off < b.length) return false;
+    }
+    return true;
+  };
+  // The block (or warning) of this event for a kind of failure: crash, noack or changed.
+  const say = (kind) => {
+    const m = cfg.m[cfg.ex.includes(event) ? 'ex' : cfg.js.includes(event) ? 'js' : 'ot'][kind];
+    const ok = (!m.o || put(1, [Buffer.from(m.o)])) && (!m.e || put(2, [Buffer.from(m.e)]));
+    process.exitCode = ok ? cfg.ok + m.c : 1;
+  };
+  const fire = () => {
+    if (done) return;
+    done = true;
+    try { put(2, err); say('crash'); } catch (e) { process.exitCode = 1; }
+    process.exit();
+  };
+  // 1. The deadline, before anything that could hang. unref: a runner that ends by itself must not wait for it.
+  if (cfg.ms > 0) setTimeout(fire, cfg.ms).unref();
+  // 2. Integrity: read once, check, run that same content.
+  let b;
+  try { b = fs.readFileSync(f); } catch (e) { process.exit(cfg.changed); }
+  if (!/^[0-9a-f]{64}$/.test(h || '') || require('crypto').createHash('sha256').update(b).digest('hex') !== h) process.exit(cfg.changed);
+  // 3. Private output and the in-memory confirmation.
+  const ACK = 'zn-ack-in-memory-' + process.pid + '-' + Date.now();
+  process.env.ZN_HOOK_ACK = ACK;
+  const hold = (list) => function (chunk, enc, cb) {
+    if (typeof enc === 'function') { cb = enc; enc = undefined; }
+    list.push(typeof chunk === 'string' ? Buffer.from(chunk, typeof enc === 'string' ? enc : 'utf8') : Buffer.from(chunk));
+    if (typeof cb === 'function') process.nextTick(cb);
+    return true;
+  };
+  process.stdout.write = hold(out);
+  process.stderr.write = hold(err);
+  fs.writeSync = function (fd, data, a, c) {
+    if (fd !== 1 && fd !== 2) return ow.apply(this, arguments);
+    const list = fd === 1 ? out : err;
+    if (typeof data === 'string') { const s = Buffer.from(data, typeof c === 'string' ? c : 'utf8'); list.push(s); return s.length; }
+    const o = a && typeof a === 'object' ? a : { offset: a, length: c };
+    const off = Number.isInteger(o.offset) ? o.offset : 0;
+    const len = Number.isInteger(o.length) ? o.length : data.length - off;
+    list.push(Buffer.from(data.subarray(off, off + len)));
+    return len;
+  };
+  fs.writeFileSync = function (file, data) {
+    if (file === ACK) { if (String(data) === 'ok') acked = true; return; }
+    return wf.apply(this, arguments);
+  };
+  process.on('exit', (code) => {
+    if (done) return;
+    done = true;
+    try {
+      const rc = Number(code);
+      if (rc === 0 && !acked) { put(2, err); say('noack'); }
+      else if (rc === 0 || rc === 2) process.exitCode = put(1, out) && put(2, err) ? cfg.ok + rc : 1;
+      else { put(2, err); say('crash'); }
+    } catch (e) { process.exitCode = 1; }
+  });
+  // 4. Run the runner as the main module with its own argv.
+  const M = require('module');
+  process.argv = [process.argv[0], f, agent];
+  const m = new M(f, null);
+  m.id = '.';
+  m.filename = f;
+  m.paths = M._nodeModulePaths(require('path').dirname(f));
+  process.mainModule = m;
+  M._cache[f] = m;
+  m._compile(b.toString('utf8'), f);
+  m.loaded = true;
+}
+// One line, no comments: the whole text is one argument of the node command.
+const LEAN_JS = '(' + leanMain.toString().split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('//')).join(' ') + ')()';
+
+// What the lean launcher answers, per kind of failure and kind of event: o = stdout, e = stderr, c = the status the agent gets.
+function leanBlocks(agentId) {
+  const kinds = {
+    crash: [crashText(agentId), crashWarnText()],
+    noack: [noAckText(agentId), noAckWarnText(agentId)],
+    changed: [changedText(agentId), changedWarnText(agentId)],
+  };
+  const m = { ex: {}, js: {}, ot: {} };
+  for (const [kind, [block, warn]] of Object.entries(kinds)) {
+    m.ex[kind] = DENY_STDOUT[agentId] ? { o: JSON.stringify(DENY_STDOUT[agentId](block)) + '\n', c: 0 } : { e: block + '\n', c: 2 };
+    m.js[kind] = { o: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: block } } }) + '\n', c: 0 };
+    m.ot[kind] = WARN_STDERR.has(agentId) ? { e: warn + '\n', c: 0 } : { o: JSON.stringify({ systemMessage: warn }) + '\n', c: 0 };
+  }
+  return m;
+}
+
+/** The lean launcher script (see above): shell built-ins and one node. */
+function leanScript(agentId, nodePath, runnerPath, sha, deadlineS) {
+  const cfg = { ms: deadlineS * 1000, ok: LEAN_OK, changed: CHANGED_RC, ex: [...blockExit(agentId)], js: [...blockJson(agentId)], m: leanBlocks(agentId) };
+  return [
+    '#!/bin/sh',
+    '# Written by `zn hooks install ' + agentId + '`; replaced on every install. Do not edit.',
+    '# Runs the zn hook; if the Node.js or zn-gate it was installed with is gone, it blocks instead of letting the call run.',
+    '# Windows launcher: shell built-ins and one node (which checks the runner, keeps the deadline and holds the output). See lib/agents/launcher.js.',
+    'ZN_EVENT="${1:-}"',
+    'ZN_NODE=' + shQuote(nodePath),
+    'ZN_RUNNER=' + shQuote(runnerPath),
+    'ZN_SHA=' + shQuote(sha),
+    'ZN_DEADLINE_S=' + deadlineS,
+    'ZN_VERIFY=' + shQuote(LEAN_JS),
+    'ZN_CFG=' + shQuote(JSON.stringify(cfg)),
+    'ZN_RAN=; ZN_CHANGED=',
+    ...blockLines(agentId),
+    '# node ends with ' + LEAN_OK + ' (answered, status 0), ' + (LEAN_OK + 2) + ' (answered, status 2) or ' + CHANGED_RC + ' (the runner changed: nothing of it ran). Any other status, including a 0',
+    '# or 2 from something that is not this code, is a failure and falls through to the block below. Not exec: a node that cannot start must still block.',
+    'if [ -x "$ZN_NODE" ] && [ -f "$ZN_RUNNER" ]; then',
+    '  ZN_RAN=1',
+    '  "$ZN_NODE" --input-type=commonjs -e "$ZN_VERIFY" "$ZN_RUNNER" "$ZN_SHA" ' + agentId + ' "$ZN_EVENT" "$ZN_CFG"',
+    '  case $? in',
+    '    ' + LEAN_OK + ') exit 0 ;;',
+    '    ' + (LEAN_OK + 2) + ') exit 2 ;;',
+    '    ' + CHANGED_RC + ') ZN_RAN=; ZN_CHANGED=1 ;;',
+    '  esac',
+    'fi',
+    '# Nothing is run from the PATH instead: an unverified `zn` could be any program.',
+    'zn_block',
+    '',
+  ].join('\n');
+}
+
 /** Writes the launcher (directory 0700, file 0755) and returns its path. */
 function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   const file = launcherFile(agentId, opts);
@@ -316,7 +500,7 @@ function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   else fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   // On Windows the script runs in Git Bash: write the paths with / so that `zn-gate check` can read them back.
   const platform = opts.platform || process.platform;
-  writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform), { deadlineS: opts.deadlineS, deadlineSoft: opts.deadlineSoft, runnerDigest: opts.runnerDigest }), 0o755);
+  writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform), { deadlineS: opts.deadlineS, deadlineSoft: opts.deadlineSoft, runnerDigest: opts.runnerDigest, lean: opts.lean !== undefined ? opts.lean : platform === 'win32' }), 0o755);
   // Windows: the folder cannot be held open, so check the chain again after the write, now with the launcher file itself (owner
   // and access list, counting what it inherited from the folder); a swap in between removes the file.
   if (platform === 'win32' && (opts.env || process.env).ZN_HOOK_DIR) {
@@ -1040,4 +1224,4 @@ function windowsScriptCommand(script, opts = {}) {
   return (opts.cmd ? q.CMD_POWERSHELL : q.powershellExe()) + ' -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { runnerSha, CHANGED_RC, launcherDeadlineS, parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, isProjectGuardExact, isProjectWindowsScriptExact, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, hookDirSuggestions, describeFsError, writableFix, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { runnerSha, CHANGED_RC, launcherDeadlineS, LEAN_OK, LEAN_JS, parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, isProjectGuardExact, isProjectWindowsScriptExact, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, hookDirSuggestions, describeFsError, writableFix, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON };
