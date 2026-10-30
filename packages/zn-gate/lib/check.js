@@ -395,14 +395,25 @@ function pluginManifest(root, rootVar, platform = process.platform) {
           words = shellWords(h.command);
         }
         if (!words.length) continue;
-        if (!byName) byName = unsafeStart(words, rootVar, h.type !== 'process');
-        if (!byName) byName = scriptOutside(root, fill(words[1]));
+        // ZCode's plugin ships a second entry for Windows: the system PowerShell by its full path with the exact inline
+        // command of lib/agents/zcode.js (pluginWindowsArgs), which runs scripts/zn-hook.ps1 of the plugin folder.
+        const zc = rootVar === 'ZCODE_PLUGIN_ROOT' ? require('./agents/zcode') : null;
+        const win = Boolean(zc) && h.type === 'process' && String(h.command).toLowerCase() === zc.PLUGIN_WIN_POWERSHELL.toLowerCase();
+        if (win) {
+          const want = zc.pluginWindowsArgs(event);
+          byName = h.command === zc.PLUGIN_WIN_POWERSHELL && words.length === want.length + 1 && want.every((a, i) => a === words[i + 1])
+            ? scriptOutside(root, path.join(root, 'scripts', 'zn-hook.ps1'))
+            : '`' + words.slice(0, 2).join(' ') + '`, which is not the Windows hook the plugin ships';
+        } else {
+          if (!byName) byName = unsafeStart(words, rootVar, h.type !== 'process');
+          if (!byName) byName = scriptOutside(root, fill(words[1]));
+        }
         if (!byName && h.type !== 'process' && platform === 'win32' && h.shell !== 'bash') {
           byName = 'the default Windows shell of Claude Code (no "shell": "bash"), where /bin/sh is not a full path';
         }
         // What decides whether the host runs the hook at all, and waits for its answer, for the PreToolUse check below.
         const off = h.enabled === false || h.disabled === true || g.enabled === false || g.disabled === true;
-        hooks.push({ event, file: fill(words[0]), args: words.slice(1).map(fill), byName, type: h.type, matcher: g.matcher, async: h.async === true || h.async === 'true' || Boolean(h.asyncRewake), off,
+        hooks.push({ event, file: fill(words[0]), args: words.slice(1).map(fill), byName, type: h.type, win, matcher: g.matcher, async: h.async === true || h.async === 'true' || Boolean(h.asyncRewake), off,
           command: h.command, words, shell: h.shell, onFailure: h.onFailure, timeout: h.timeout });
       }
     }
@@ -998,8 +1009,10 @@ async function checkAgent(spec, ctx) {
         // ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh PreToolUse, turned on, for every tool it is asked about.
         const manifest = pluginManifest(plugin.root, 'ZCODE_PLUGIN_ROOT');
         const pres = manifest ? manifest.hooks.filter((h) => h.event === 'PreToolUse') : [];
+        // Only the entry of this system counts: the PowerShell one on Windows, the /bin/sh one elsewhere (the other cannot start here).
+        const onWin = process.platform === 'win32';
         const pre = pres.find((h) => !h.byName && h.type === 'process' && !h.off && !h.async && matcherCovers(h.matcher, spec.tool) &&
-          h.words.length === ZCODE_PRE_WORDS.length && h.words.every((w, i) => w === ZCODE_PRE_WORDS[i]));
+          (onWin ? h.win : !h.win && h.words.length === ZCODE_PRE_WORDS.length && h.words.every((w, i) => w === ZCODE_PRE_WORDS[i])));
         const REINSTALL = 'install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again';
         const zfile = path.join(plugin.root, 'hooks', 'hooks.json');
         if (!pres.length) {
@@ -1009,13 +1022,14 @@ async function checkAgent(spec, ctx) {
           res.problem = bareProgramProblem(manifest.bare);
           res.fix = 'update the plugin: ' + REINSTALL;
         } else if (!pre) {
-          res.problem = 'the PreToolUse hook of the zn-gate plugin in ' + zfile + ' is not the hook the plugin ships (`' + ZCODE_PRE_WORDS.join(' ') + '`, turned on, for every tool), so ZCode runs no zn check before tool calls';
+          res.problem = 'the PreToolUse hook of the zn-gate plugin in ' + zfile + ' is not the hook the plugin ships (`' + (onWin ? 'powershell.exe ... scripts/zn-hook.ps1 PreToolUse' : ZCODE_PRE_WORDS.join(' ')) + '`, turned on, for every tool), so ZCode runs no zn check before tool calls';
           res.fix = REINSTALL;
         } else if (!fs.existsSync(pre.file)) {
           res.problem = 'the zn-gate plugin starts its hook with ' + pre.file + ', which is not on this computer, so the hook cannot start';
-          res.fix = 'the ZCode plugin needs a system with ' + pre.file + ' (Linux); elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again';
+          res.fix = 'the ZCode plugin needs a system with ' + pre.file + '; elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again';
         } else {
-          live = { file: pre.file, args: pre.args, env: ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}, plugin: true };
+          // ZCode gives a plugin's hooks the plugin folder in ZCODE_PLUGIN_ROOT (the Windows entry reads its script there).
+          live = { file: pre.file, args: pre.args, env: { ...(ctx.env && ctx.env.PATH ? { PATH: ctx.env.PATH } : {}), ZCODE_PLUGIN_ROOT: plugin.root }, plugin: true };
         }
       } else if (!userHooksOn) {
         // Turned off, and nothing else of zn's runs: ZCode is not protected.
