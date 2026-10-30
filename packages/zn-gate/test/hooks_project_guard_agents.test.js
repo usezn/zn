@@ -212,7 +212,7 @@ test('OpenCode: the project plugin fails closed by itself when `zn` cannot start
   try {
     const mod = await import(file);
     const hooks = await mod.ZnGate({ directory: dir });
-    await assert.rejects(() => hooks['tool.execute.before']({ tool: 'bash', sessionID: 's' }, { args: { command: 'ls' } }), /zn: the secret scrubber is not working \(zn was not found on the PATH\), so this call was blocked\. Run zn-gate check in a terminal, then zn hooks install opencode --project\.$/);
+    await assert.rejects(() => hooks['tool.execute.before']({ tool: 'bash', sessionID: 's' }, { args: { command: 'ls' } }), /zn: the secret scrubber is not working \(zn was not found on the PATH\), so this call was blocked\. Run zn-gate check in a terminal, then run zn hooks install opencode --project in that project's folder\.$/);
   } finally { process.env.PATH = oldPath; }
 });
 
