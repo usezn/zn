@@ -97,3 +97,8 @@ const report = verifyEvidenceLedger('./example-evidence.jsonl');
 ```
 
 The check detects accidental or partial edits; it is not tamper-proof against someone with write access to the file.
+
+## Next steps
+
+- [API reference](../api-reference.md): full signatures and options for every function used on this page.
+- [Destructive commands](../destructive-commands.md): see what the command checks block, and why.
