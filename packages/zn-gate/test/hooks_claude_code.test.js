@@ -19,6 +19,7 @@ const fakeEngine = require('./helpers/fake_engine');
 const { generateAll } = require('./fixtures/fake_secrets');
 const { tempDir } = require('./helpers/tmp');
 const { runScript } = require('./helpers/shell');
+const { budget } = require('./helpers/time_budget');
 
 const FAKE = generateAll(4242, { perType: 1, piiPerType: 1 });
 const fake = (type) => FAKE.secrets.find((s) => s.type === type);
@@ -829,7 +830,7 @@ test('Bash, PowerShell and Monitor commands over 100 KB are blocked before they 
     assert.equal(r.output.hookSpecificOutput.permissionDecision, 'deny', tool);
     assert.match(r.output.hookSpecificOutput.permissionDecisionReason, /too long for zn to check \(over 100 KB\)/, tool);
     assert.match(r.output.hookSpecificOutput.permissionDecisionReason, /do not resend it in parts/, tool);
-    assert.ok(ms < 50, tool + ' took ' + ms + ' ms');
+    assert.ok(ms < budget(50), tool + ' took ' + ms + ' ms');
   }
   // A normal command is unchanged.
   const ok = await run(preTool('Bash', { command: 'npm test', description: 'x' }, dir));

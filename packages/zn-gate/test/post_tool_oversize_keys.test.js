@@ -12,6 +12,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const runner = require('../lib/hooks/runner');
+const { budget } = require('./helpers/time_budget');
 
 const CAP = runner.POST_STDIN_CAP;
 const NOTICE = /output withheld because it is too large to check/;
@@ -216,7 +217,7 @@ test('topLevelKeys: 33 MiB with many keys and strings is scanned in one linear p
   const keys = runner.topLevelKeys(text);
   const ms = Date.now() - t;
   assert.equal(keys.hook_event_name, 'Real');
-  assert.ok(ms < 3000, 'scanned in ' + ms + ' ms');
+  assert.ok(ms < budget(3000), 'scanned in ' + ms + ' ms');
 });
 
 // Copilot CLI: its events have no event name (the result is a key of the event, after the arguments), and a

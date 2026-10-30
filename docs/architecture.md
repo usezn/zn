@@ -42,3 +42,10 @@ The local pieces:
    Each recorded assessment is hashed with SHA-256 and chained into `~/.zn/evidence.jsonl`, with canonical JSON in both the Node and Python implementations. The chain detects accidental or partial edits; it is not tamper-proof against someone with write access to the file, who can recompute it.
 
 See also: [What leaves your machine](../README.md#what-leaves-your-machine), the [threat model](threat-model.md) and the [glossary](glossary.md).
+
+## Read next
+
+- [Check that it works](check.md): run `zn-gate check` to confirm zn-gate is protecting your agent.
+- [zn-gate reach](reach.md): see on one screen what your coding agents can reach.
+- [See what zn-gate did this week](report.md): read the weekly `zn-gate report`.
+- [Remove zn-gate](uninstall.md): uninstall in one step or piece by piece.

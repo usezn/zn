@@ -24,7 +24,7 @@ const { cleanChange, describeChange } = require('./changes');
 const { exportAuditFile } = require('./otel');
 const store = require('../vault/store');
 const { createClient } = require('../vault/client');
-const { messageWithUnlockHint } = require('../errors');
+const { messageWithUnlockHint, fsErrorText } = require('../errors');
 const { znCommand } = require('../zn-command');
 
 const USAGE = 'usage: zn team join <token> | zn team join - | ZN_TEAM_JOIN_TOKEN=... zn team join [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
@@ -294,7 +294,7 @@ async function runLogExport(args) {
     warn();
     return 0;
   } catch (e) {
-    err('[zn] ' + (e && e.message ? e.message : e));
+    err('[zn] ' + (fsErrorText(e) || (e && e.message ? e.message : e)));
     return 1;
   }
 }
