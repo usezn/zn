@@ -535,7 +535,7 @@ test('guide: npm failing to reach the registry says there is no internet, not a 
     const run = () => ({ ok: false, stderr: 'npm error code ' + code + '\n' });
     // An unwritable global folder (a system npm) must not hide the real cause.
     await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN, prefix: '/' }, stdin: tty, write: out.write, run, confirm: async () => true });
-    assert.match(out.text(), /no internet connection: npm could not reach the registry/, code);
+    assert.match(out.text(), /npm could not reach the registry. That can be no internet connection/, code);
     assert.match(out.text(), /npm install -g zn-gate@/, code);
     assert.doesNotMatch(out.text(), /global folder/, code);
   }
@@ -560,7 +560,7 @@ test('guide: a stub npm printing EAI_AGAIN gives the no-internet message, one pr
   const m = machine(t, ['codex']);
   const out = capture();
   await guide({ ...m, temporary: true, global: { npm: net.file, version: null, zn: ZN, prefix: '/' }, stdin: tty, write: out.write, confirm: async () => true });
-  assert.match(out.text(), /no internet connection: npm could not reach the registry/);
+  assert.match(out.text(), /npm could not reach the registry. That can be no internet connection/);
   assert.doesNotMatch(out.text(), /global folder/);
   const args = fs.readFileSync(path.join(net.dir, 'args'), 'utf8');
   assert.match(args, /install -g .*--fetch-retries=1/);
