@@ -69,6 +69,10 @@ class ProductionGuardCorpus(unittest.TestCase):
             "xargs terraform destroy": "terraform_destroy",
             "echo example-prod | xargs -I{} kubectl delete ns {}": "kubectl_delete_namespace",
             "watch -n 5 terraform destroy": "terraform_destroy",
+            "watch 'terraform destroy'": "terraform_destroy",
+            "watch -n 5 'kubectl delete ns prod-example'": "kubectl_delete_namespace",
+            "watch -x terraform destroy": "terraform_destroy",
+            "watch --exec kubectl delete ns prod-example": "kubectl_delete_namespace",
         }
         for c, r in asks.items():
             self.assertEqual(rule(c), r, c)
@@ -78,6 +82,7 @@ class ProductionGuardCorpus(unittest.TestCase):
             "{ terraform plan; }", "{ kubectl delete pod web-1 -n example-prod; }", "( kubectl get ns )", "{ echo terraform destroy; }", "oc delete pod web-1", "oc get projects",
             "gcloud storage rm gs://example-prod-bucket/file.txt", "gcloud storage ls -r gs://example-prod-bucket", "aws s3 sync ./dist s3://example-prod-bucket",
             "aws s3 sync ./dist s3://example-prod-bucket --delete --dryrun", "xargs echo terraform destroy", "watch -n 5 df -h",
+            "watch 'kubectl get pods'", "watch -n 2 'ls -la'", "watch -x echo terraform destroy", "watch 'echo terraform destroy'",
         ]:
             self.assertIsNone(rule(c), c)
 

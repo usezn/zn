@@ -26,7 +26,7 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from . import destructive as _d
 
-PROD_GUARD_RULES_VERSION = "2026-10-30.5"
+PROD_GUARD_RULES_VERSION = "2026-10-30.6"
 
 _RULES: Dict[str, Tuple[str, str]] = {
     "sql_drop": ("DROP DATABASE, DROP TABLE or TRUNCATE sent to a database", "deletes a database, a table or all of its rows"),
@@ -466,14 +466,20 @@ def _command_args(words: List[str]) -> List[str]:
         if flags is None:
             break
         k = 1
+        exec_ = False
         while k < len(w) and w[k].startswith("-") and w[k] != "-":
             f = w[k]
             k += 1
             if f == "--":
                 break
+            if name == "watch" and (f == "--exec" or re.match(r"^-[A-Za-z]*x[A-Za-z]*\Z", f)):
+                exec_ = True
             if f in flags:
                 k += 1
         w = _d._unwrap(w[k:])
+        # watch without -x / --exec runs its arguments, joined by spaces, with sh -c: read them as a command line.
+        if name == "watch" and not exec_ and w:
+            return ["sh", "-c", " ".join(w)]
     return w
 
 

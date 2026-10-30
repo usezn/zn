@@ -70,6 +70,10 @@ test('brace groups, subshells, oc delete project, gcloud storage rm -r, aws s3 s
     'xargs terraform destroy': 'terraform_destroy',
     'echo example-prod | xargs -I{} kubectl delete ns {}': 'kubectl_delete_namespace',
     'watch -n 5 terraform destroy': 'terraform_destroy',
+    "watch 'terraform destroy'": 'terraform_destroy',
+    "watch -n 5 'kubectl delete ns prod-example'": 'kubectl_delete_namespace',
+    'watch -x terraform destroy': 'terraform_destroy',
+    'watch --exec kubectl delete ns prod-example': 'kubectl_delete_namespace',
   };
   for (const [c, r] of Object.entries(asks)) assert.equal(rule(c), r, c);
 });
@@ -79,6 +83,7 @@ test('the non-production twins of those commands stay allowed', () => {
     '{ terraform plan; }', '{ kubectl delete pod web-1 -n example-prod; }', '( kubectl get ns )', '{ echo terraform destroy; }', 'oc delete pod web-1', 'oc get projects',
     'gcloud storage rm gs://example-prod-bucket/file.txt', 'gcloud storage ls -r gs://example-prod-bucket', 'aws s3 sync ./dist s3://example-prod-bucket',
     'aws s3 sync ./dist s3://example-prod-bucket --delete --dryrun', 'xargs echo terraform destroy', 'watch -n 5 df -h',
+    "watch 'kubectl get pods'", "watch -n 2 'ls -la'", "watch -x echo terraform destroy", "watch 'echo terraform destroy'",
   ];
   for (const c of allowed) assert.equal(rule(c), null, c);
 });

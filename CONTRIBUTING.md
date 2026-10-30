@@ -45,22 +45,30 @@ When adding new detection rules:
 
 ## Rule Versions and the Snapshot
 
-Each rule layer has a version constant that must increase whenever the layer's rules change:
+Each rule layer has a version constant. A change to any file of a layer must come with a bump of that layer's constant, or the checks fail. The table shows which constant goes with which file.
 
-| Layer | Constant | Files covered by the snapshot |
-| --- | --- | --- |
-| Detection rules | `RULES_VERSION` | `lib/rules.js`, `lib/mcp-secrets.js` |
-| Scrubber types | `SCRUB_RULES_VERSION` | `lib/scrub/patterns.js`, `lib/scrub/exact.js` |
-| `zn audit` | `AUDIT_RULES_VERSION` | `lib/audit/rules.js`, `lib/audit/patterns.js` |
-| Hook policy | `POLICY_RULES_VERSION` | `lib/hooks/policy.js`, `lib/broker/files.js`, `lib/broker/markers.js`, `lib/broker/dotenv.js`, `lib/shell-quote.js`, `lib/destructive.js`, `lib/prod-guard.js` |
+| Layer | Constant | Files that need a bump | Python twin (same value) |
+| --- | --- | --- | --- |
+| Detection rules | `RULES_VERSION` | `lib/rules.js`, `lib/mcp-secrets.js` | `packages/zn-gate-py/src/zn_gate/rules.py` |
+| Scrubber types | `SCRUB_RULES_VERSION` | `lib/scrub/patterns.js`, `lib/scrub/exact.js` | none |
+| `zn audit` | `AUDIT_RULES_VERSION` | `lib/audit/rules.js`, `lib/audit/patterns.js` | none |
+| Hook policy | `POLICY_RULES_VERSION` | `lib/hooks/policy.js`, `lib/broker/files.js`, `lib/broker/markers.js`, `lib/broker/dotenv.js`, `lib/shell-quote.js`, `lib/destructive.js`, `lib/prod-guard.js` | none |
+| Production data guard | `PROD_GUARD_RULES_VERSION` | `lib/prod-guard.js` | `packages/zn-gate-py/src/zn_gate/prod_guard.py` |
+| Destructive commands | `COMMAND_RULES_VERSION` | `lib/destructive.js` | `packages/zn-gate-py/src/zn_gate/destructive.py` |
+
+`lib/destructive.js` is in two rows, so a change there bumps both `POLICY_RULES_VERSION` and `COMMAND_RULES_VERSION`. `lib/prod-guard.js` is likewise in two rows: a change there bumps both `POLICY_RULES_VERSION` and `PROD_GUARD_RULES_VERSION`.
+
+### Changing a rule
+
+1. Make the change and bump the constant of every layer you touched. The version format is `YYYY-MM-DD.N`: a date and an integer, for example `2026-10-31.1`. The new value must be greater than the value on `origin/next`. Dates compare as text and `N` compares as a number, so `2026-10-14.10` is newer than `2026-10-14.9`.
+2. Set the same value in the Python twin: `rules.py` for `RULES_VERSION`, `destructive.py` for `COMMAND_RULES_VERSION`. The Node and Python values must match.
+3. From the repository root, run `node packages/zn-gate/scripts/update-rules-snapshot.js`. It rewrites `packages/zn-gate/test/fixtures/rules_snapshot.json` and refuses to record a change whose version did not increase.
+4. From `packages/zn-gate`, run `npm run check:rules`. It runs only the snapshot test, in well under a second, so a missing bump or a stale snapshot shows up before the full test matrix. Run `npm test` before you push.
+5. Commit the updated snapshot with the change.
 
 The Python `rules.py` and `mcp_secrets.py` are not in the snapshot. The parity test (`test/rules_parity.test.js`) keeps `rules.py` equal to `rules.js`; `mcp_secrets.py` is kept equal to `lib/mcp-secrets.js` by the shared samples in `test/fixtures/mcp_config_secret_samples.json`, which both test suites run.
 
-When you change a layer:
-
-1. Bump its version in the format `YYYY-MM-DD.N`. The version must increase. Dates compare as text and `N` compares as a number, so `2026-10-14.10` is newer than `2026-10-14.9`; the suffix is a plain integer and is never compared as text. Adding or removing a file in a layer counts as a change.
-2. Run `node packages/zn-gate/scripts/update-rules-snapshot.js`. It rewrites `packages/zn-gate/test/fixtures/rules_snapshot.json` and refuses to record a change whose version did not increase.
-3. Commit the updated snapshot with the change. `npm test` in `packages/zn-gate` runs `test/rules_snapshot.test.js`. It fails on a changed file with the same or an older version, on a version that moved without a file change, and on rule ids that were added or removed.
+`npm test` runs `test/rules_snapshot.test.js`. It fails on a changed file with the same or an older version, on a version that moved without a file change, and on rule ids that were added or removed.
 
 On pull requests, CI also runs `node .github/scripts/check-rule-versions.mjs origin/<base>`. It compares every version constant with the one at the merge base and fails when a version is lower, when a layer's files changed with the same version, or when the Node and Python packages disagree on `RULES_VERSION` or `COMMAND_RULES_VERSION`.
 

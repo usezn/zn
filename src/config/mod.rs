@@ -752,13 +752,29 @@ impl ZnConfig {
             .map_err(|e| anyhow!("cannot write {}: {e}", path.display()))
     }
 
+    /// Parse the text of a settings file. `file` is only used in the error
+    /// message, which names the file and, when it can, the setting.
+    pub fn parse_text(file: &str, content: &str) -> Result<Self> {
+        serde_json::from_str(content).map_err(|e| anyhow!(config_parse_problem(file, content, &e)))
+    }
+
+    fn read_settings_file(path: &Path) -> Result<String> {
+        std::fs::read_to_string(path).map_err(|e| {
+            anyhow!(
+                "zn could not read the settings file {}: {}. Check that the file exists and that this user can read it.",
+                crate::user_errors::display_path(path),
+                crate::user_errors::plain_text(&e.to_string())
+            )
+        })
+    }
+
     /// Load configuration from file with environment variable overrides
     pub fn load(path: Option<&Path>) -> Result<Self> {
         let mut config = if let Some(p) = path {
             if p.exists() {
-                let content = std::fs::read_to_string(p)?;
+                let content = Self::read_settings_file(p)?;
                 if p.extension().map(|e| e == "json").unwrap_or(false) {
-                    serde_json::from_str(&content)?
+                    Self::parse_text(&crate::user_errors::display_path(p), &content)?
                 } else {
                     // Default to JSON if extension is unknown
                     serde_json::from_str(&content).unwrap_or_default()
@@ -771,9 +787,13 @@ impl ZnConfig {
             let config_options = ["zn.json", "zn.config.json", ".zn.json"];
             let mut found = None;
             for option in config_options {
-                if Path::new(option).exists() {
-                    let content = std::fs::read_to_string(option)?;
-                    found = Some(serde_json::from_str(&content)?);
+                let option_path = Path::new(option);
+                if option_path.exists() {
+                    let content = Self::read_settings_file(option_path)?;
+                    found = Some(Self::parse_text(
+                        &crate::user_errors::display_path(option_path),
+                        &content,
+                    )?);
                     break;
                 }
             }
@@ -1014,6 +1034,135 @@ impl ZnConfig {
     }
 }
 
+/// Plain wording for a value of the wrong type: serde's `u16` becomes
+/// "a whole number from 0 to 65535" and so on.
+fn plain_expected(want: &str) -> String {
+    match want.trim() {
+        "u8" => "a whole number from 0 to 255".to_string(),
+        "u16" => "a whole number from 0 to 65535".to_string(),
+        "u32" | "u64" | "u128" | "usize" => "a whole number, 0 or more".to_string(),
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" => "a whole number".to_string(),
+        "f32" | "f64" => "a number".to_string(),
+        "a boolean" | "bool" => "true or false".to_string(),
+        "a string" | "String" => "text in quotes".to_string(),
+        "a sequence" => "a list in [ ]".to_string(),
+        "a map" | "struct" => "a group of settings in { }".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Plain wording for the value that was found ("the text \"eighty\"").
+fn plain_found(got: &str) -> String {
+    let got = got.trim();
+    if let Some(rest) = got.strip_prefix("string ") {
+        return format!("the text {rest}");
+    }
+    if let Some(rest) = got
+        .strip_prefix("integer ")
+        .or_else(|| got.strip_prefix("floating point "))
+    {
+        return format!("the number {}", rest.trim_matches('`'));
+    }
+    if let Some(rest) = got.strip_prefix("boolean ") {
+        return format!("the value {}", rest.trim_matches('`'));
+    }
+    match got {
+        "null" | "unit value" => "an empty value (null)".to_string(),
+        "sequence" => "a list".to_string(),
+        "map" => "a group of settings".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// What is wrong with a value, from serde's message about it.
+fn plain_data_problem(msg: &str) -> String {
+    // serde appends the position: " at line 1 column 30".
+    let msg = match msg.rfind(" at line ") {
+        Some(i) => &msg[..i],
+        None => msg,
+    };
+    for prefix in ["invalid type: ", "invalid value: "] {
+        if let Some(rest) = msg.strip_prefix(prefix) {
+            if let Some((got, want)) = rest.split_once(", expected ") {
+                return format!(
+                    "it must be {}, but it is {}",
+                    plain_expected(want),
+                    plain_found(got)
+                );
+            }
+        }
+    }
+    if let Some(rest) = msg.strip_prefix("missing field `") {
+        return format!(
+            "the required setting `{}` is missing",
+            rest.trim_end_matches('`')
+        );
+    }
+    msg.to_string()
+}
+
+/// The setting that serde could not accept, as `section.key`, found by giving
+/// every setting of the file alone to the parser. None when it cannot be told.
+fn find_bad_setting(content: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(content).ok()?;
+    let top = value.as_object()?;
+    // The probe only means something when an empty file is a valid config.
+    serde_json::from_value::<ZnConfig>(serde_json::json!({})).ok()?;
+    let bad = |v: serde_json::Value| serde_json::from_value::<ZnConfig>(v).is_err();
+    for (key, val) in top {
+        if !bad(serde_json::json!({ key: val })) {
+            continue;
+        }
+        if let Some(inner) = val.as_object() {
+            for (key2, val2) in inner {
+                if bad(serde_json::json!({ key: { key2: val2 } })) {
+                    return Some(format!("{key}.{key2}"));
+                }
+            }
+        }
+        return Some(key.clone());
+    }
+    None
+}
+
+/// Plain-English text for a settings file that cannot be parsed: the file, the
+/// setting if it is known, the line, and what to do.
+pub fn config_parse_problem(file: &str, content: &str, err: &serde_json::Error) -> String {
+    use serde_json::error::Category;
+    let at = format!("line {}, column {}", err.line(), err.column());
+    let fix =
+        String::from("Fix the file, or move it away and run `zn init` to create a fresh zn.json.");
+    match err.classify() {
+        Category::Eof => format!(
+            "zn could not read the settings file {file}: the file ends too early ({at}). A closing }} or ] is probably missing. {fix}"
+        ),
+        Category::Syntax => format!(
+            "zn could not read the settings file {file}: it is not valid JSON at {at} ({}). Look for a missing comma or quote, or a comma after the last item. {fix}",
+            plain_serde_syntax(&err.to_string())
+        ),
+        Category::Data => {
+            let what = plain_data_problem(&err.to_string());
+            match find_bad_setting(content) {
+                Some(setting) => format!(
+                    "zn could not use the settings file {file}: the setting \"{setting}\" has a wrong value ({what}). Correct that value ({at}). {fix}"
+                ),
+                None => format!(
+                    "zn could not use the settings file {file}: a setting has a wrong value ({what}) near {at}. Correct that value. {fix}"
+                ),
+            }
+        }
+        Category::Io => format!("zn could not read the settings file {file}: {err}"),
+    }
+}
+
+/// serde's syntax message without its position suffix.
+fn plain_serde_syntax(msg: &str) -> String {
+    match msg.rfind(" at line ") {
+        Some(i) => msg[..i].to_string(),
+        None => msg.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod jwt_secret_tests {
     use super::*;
@@ -1168,5 +1317,59 @@ mod audit_payload_tests {
         if let Err(e) = cfg.validate() {
             assert!(!e.to_string().contains("store_payloads"), "{e}");
         }
+    }
+}
+
+#[cfg(test)]
+mod parse_message_tests {
+    use super::*;
+
+    fn problem(text: &str) -> String {
+        let err = serde_json::from_str::<ZnConfig>(text).expect_err("must not parse");
+        config_parse_problem("/work/zn.json", text, &err)
+    }
+
+    #[test]
+    fn truncated_file_names_the_file_and_the_next_step() {
+        let msg = problem("{\n");
+        assert!(msg.contains("/work/zn.json"), "{msg}");
+        assert!(msg.contains("ends too early"), "{msg}");
+        assert!(msg.contains("zn init"), "{msg}");
+        assert!(!msg.contains("EOF while parsing"), "{msg}");
+    }
+
+    #[test]
+    fn wrong_type_names_the_setting_in_plain_words() {
+        let msg = problem(r#"{"server": {"port": "eighty"}}"#);
+        assert!(msg.contains("/work/zn.json"), "{msg}");
+        assert!(msg.contains("\"server.port\""), "{msg}");
+        assert!(msg.contains("whole number from 0 to 65535"), "{msg}");
+        assert!(msg.contains("the text \"eighty\""), "{msg}");
+        assert!(!msg.contains("u16"), "{msg}");
+        assert!(msg.contains("zn init"), "{msg}");
+    }
+
+    #[test]
+    fn wrong_type_in_a_top_level_setting_is_named() {
+        let msg = problem(r#"{"environment": 5}"#);
+        assert!(msg.contains("\"environment\""), "{msg}");
+    }
+
+    #[test]
+    fn broken_syntax_points_at_the_line() {
+        let msg = problem("{\n  \"server\": {,}\n}");
+        assert!(msg.contains("not valid JSON at line 2"), "{msg}");
+        assert!(msg.contains("/work/zn.json"), "{msg}");
+    }
+
+    #[test]
+    fn load_reports_the_file_that_failed() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("bad.json");
+        std::fs::write(&file, "{\"server\": {\"port\": \"eighty\"}}").expect("write");
+        let err = ZnConfig::load(Some(&file)).expect_err("a bad file must not load");
+        let msg = err.to_string();
+        assert!(msg.contains("bad.json"), "{msg}");
+        assert!(msg.contains("server.port"), "{msg}");
     }
 }

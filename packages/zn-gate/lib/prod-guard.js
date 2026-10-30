@@ -35,7 +35,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const PROD_GUARD_RULES_VERSION = '2026-10-30.5';
+const PROD_GUARD_RULES_VERSION = '2026-10-30.6';
 
 const RULES = {
   sql_drop: { what: 'DROP DATABASE, DROP TABLE or TRUNCATE sent to a database', effect: 'deletes a database, a table or all of its rows' },
@@ -387,12 +387,16 @@ function commandArgs(words) {
     const valueFlags = name === 'xargs' ? XARGS_VALUE_FLAGS : (name === 'watch' ? WATCH_VALUE_FLAGS : null);
     if (!valueFlags) break;
     let k = 1;
+    let exec = false;
     while (k < w.length && w[k].startsWith('-') && w[k] !== '-') {
       const f = w[k++];
       if (f === '--') break;
+      if (name === 'watch' && (f === '--exec' || /^-[A-Za-z]*x[A-Za-z]*$/.test(f))) exec = true;
       if (valueFlags.has(f)) k++;
     }
     w = unwrap(w.slice(k));
+    // watch without -x / --exec runs its arguments, joined by spaces, with sh -c: read them as a command line.
+    if (name === 'watch' && !exec && w.length) return ['sh', '-c', w.join(' ')];
   }
   return w;
 }
