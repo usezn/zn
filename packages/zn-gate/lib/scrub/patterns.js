@@ -486,14 +486,12 @@ const PATTERNS = [
   { type: 'ANTHROPIC_KEY', hints: ['sk-ant-'], re: re(NB + 'sk-ant-[a-z]{3,8}\\d{2}-[A-Za-z0-9_-]{32,200}' + NA),
     check: (v) => !maskedBody(v.replace(/^sk-ant-[a-z]+\d{2}-/, '')) },
   /* A key with hyphens or underscores in the body (sk-test-..., sk-<name>_<id>): 40 to 200 characters. The body
-   * must look random. A plain body must hold lower case, upper case and digits, so a lower-case hyphenated slug
-   * (a blog post title) is not a key. A body that starts with a known provider form (Helicone, sp-, cp-, eu-, gov-,
-   * rl-, lf-, none-) only needs a digit and randomness: those keys are real secrets and must still be redacted. */
+   * must look random and hold a digit, so a lower-case hyphenated slug (a blog post title) is not a key. Case does
+   * not matter: sk-or-v1- plus hex and lower-case sk-/sk-proj- keys are real secrets. */
   { type: 'OPENAI_KEY', hints: ['sk-'], re: re(NB + 'sk-(?!ant-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + NA),
     check: (v) => {
       const body = v.replace(/^sk-(?:proj-|svcacct-|admin-|or-v1-)?/, '');
-      if (!looksRandom(body, 2, 3.5) || !/[0-9]/.test(body)) return false;
-      return /^(?:helicone|eu|cp|gov|rl|sp|lf|[Nn]one)-/.test(body) || (/[a-z]/.test(body) && /[A-Z]/.test(body));
+      return looksRandom(body, 2, 3.5) && /[0-9]/.test(body);
     } },
   /* Legacy DeepSeek-style key: `sk-` + 32 hex digits. The length and charset
    * are not stated in the provider's docs (checked 2026-10-14); the shape

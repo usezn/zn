@@ -1,8 +1,7 @@
 'use strict';
 
 // The OPENAI_KEY rule of the Node scrubber (lib/scrub/patterns.js) does not
-// redact a lower-case hyphenated slug as a key. A key with a plain body keeps
-// lower case, upper case and digits; the Helicone, sp-, cp-, eu-, gov-, rl-, lf-
+// redact a lower-case hyphenated slug as a key. A key needs a digit and a random body; the Helicone, sp-, cp-, eu-, gov-, rl-, lf-
 // and none- forms, and the other provider prefixes, still redact. Every value is
 // built at run time from a seeded PRNG with a public prefix: fake, never real.
 
@@ -48,6 +47,24 @@ test('a real-shaped OpenAI key with mixed case and digits is redacted', () => {
     const found = openaiTypes('OPENAI_API_KEY=' + v + '\n');
     assert.equal(found.length, 1, v.slice(0, 16) + ' not detected');
     assert.equal(found[0].end - found[0].start, v.length, v.slice(0, 16) + ' not fully covered');
+  }
+});
+
+// Real shapes with no upper case: OpenRouter (hex), lower-case letters and digits.
+test('lower-case and hex OpenAI-style keys are redacted', () => {
+  const lowerDigits = (n) => 'a1' + pick('abcdefghijklmnopqrstuvwxyz0123456789', n - 2);
+  const keys = [
+    'sk-or-v1-' + pick(HEX, 64),
+    'sk-proj-' + lowerDigits(60),
+    'sk-' + lowerDigits(48),
+    'sk-' + pick(HEX, 64),
+  ];
+  for (const v of keys) {
+    const found = openaiTypes('OPENAI_API_KEY=' + v + '\n');
+    assert.equal(found.length, 1, v.slice(0, 12) + ' not detected');
+    assert.equal(found[0].end - found[0].start, v.length, v.slice(0, 12) + ' not fully covered');
+    const span = coveredBy(v);
+    assert.ok(span && span.end - span.start === v.length, v.slice(0, 12) + ' not redacted by scan()');
   }
 });
 
