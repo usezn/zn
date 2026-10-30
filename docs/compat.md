@@ -50,8 +50,15 @@ zn's two MCP servers (`zn mcp` and the `secrets` server) support MCP protocol ve
 `2025-06-18`, `2025-03-26` and `2024-11-05`. They answer initialize with the version the client asks for, or with
 `2025-11-25` if the client asks for one they do not know (the client then decides). Tool annotations are sent from
 `2025-03-26`, tool titles from `2025-06-18`, JSON-RPC batches are accepted only in `2025-03-26` (added there, removed in `2025-06-18`), and an unknown tool is error `-32602` from `2025-06-18` on (`-32601` before).
-Checked on 2026-10-17 with Claude Code 2.1.302 (`claude mcp list`: both connected) and with the official
-TypeScript MCP SDK client whose newest version is `2025-11-25` (both servers connect and list their tools).
+The MCP specification's versioning page lists `2026-07-28` as the current version (stateless, no `initialize`
+request). zn's servers do not implement it yet. Tested on 2026-10-23 by sending `initialize` with
+`protocolVersion` `2026-07-28` to both servers: they answer with `2025-11-25`, and `tools/list` works afterwards.
+A `tools/list` request without a prior `initialize`, with or without the version in `_meta`, also lists the tools,
+but the servers do not read that version. A client that accepts the `2025-11-25` answer connects. A client that
+requires `2026-07-28` and gives up when the server answers with another version does not.
+Last checked against real clients on 2026-10-17 with Claude Code 2.1.302 (`claude mcp list`: both connected) and
+with the official TypeScript MCP SDK client whose newest version was then `2025-11-25` (both servers connect and
+list their tools). Not yet re-checked with Claude Code 2.1.309 or the latest SDK.
 
 In every agent, a shell command longer than 100 KB (counted in characters; this
 includes PowerShell and Claude Code's Monitor tool) is blocked, because zn
