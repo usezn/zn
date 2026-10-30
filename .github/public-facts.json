@@ -188,7 +188,7 @@
         "packages/zn-gate/package.json"
       ],
       "must": [
-        "while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app"
+        "while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot"
       ]
     },
     {
@@ -197,7 +197,7 @@
         "README.md"
       ],
       "must": [
-        "Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app"
+        "Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot"
       ]
     },
     {

@@ -92,6 +92,36 @@ function firstString(obj, keys) {
   return undefined;
 }
 
+// The text of a patch tool call (VS Code's apply_patch sends {input: "*** Begin Patch ..."}): the tool named
+// apply_patch, or any tool with a string argument that starts a patch. undefined = not a patch.
+const PATCH_KEYS = ['input', 'patch', 'patchText', 'command', 'text'];
+function patchTextOf(toolName, args) {
+  if (toolName === 'apply_patch') return firstString(args, PATCH_KEYS) || '';
+  for (const v of Object.values(args)) if (typeof v === 'string' && /^\*\*\* Begin Patch\b/m.test(v)) return v;
+  return undefined;
+}
+
+/** The write input of a patch: every file it adds, updates, deletes or moves to (the Codex parser), checked like a write. */
+function patchInput(text) {
+  const { patchScan, PATCH_SCAN_CAP } = require('./codex');
+  const tooLong = text.length > PATCH_SCAN_CAP;
+  const scan = tooLong ? { files: [], suspicious: false } : patchScan(text);
+  const files = scan.files;
+  return { path: files[0], paths: files, alsoReadCheck: true, tooLong, unparsed: !tooLong && (files.length === 0 || scan.suspicious), texts: [{ key: ['input'], value: text }] };
+}
+
+/** A command one level down (create_and_run_task sends {task: {command, args}}), with its string arguments. */
+function nestedCommand(args) {
+  for (const v of Object.values(args)) {
+    if (!isObj(v)) continue;
+    const c = firstString(v, COMMAND_KEYS);
+    if (c === undefined) continue;
+    const extra = Array.isArray(v.args) ? v.args.filter((x) => typeof x === 'string') : [];
+    return [c, ...extra].join(' ');
+  }
+  return undefined;
+}
+
 /** Every string argument whose key looks like a file or folder (content-like keys skipped), three levels deep. */
 function pathsOf(args) {
   const out = [];
@@ -172,7 +202,11 @@ function normalize(raw) {
   if (args === null) {
     return { ...ev, tool: toolName || 'unknown', input: { texts: [] }, ...(known ? { unreadable: unreadable('arguments') } : {}) };
   }
-  const cmd = firstString(args, COMMAND_KEYS);
+  if (!known) {
+    const patch = patchTextOf(toolName, args);
+    if (patch !== undefined) return { ...ev, tool: 'write', input: patchInput(patch) };
+  }
+  const cmd = firstString(args, COMMAND_KEYS) !== undefined ? firstString(args, COMMAND_KEYS) : (known ? undefined : nestedCommand(args));
   if (SHELL_TOOLS.has(toolName) || (!known && cmd !== undefined)) {
     const e = { ...ev, tool: toolName === 'powershell' ? 'powershell' : 'bash', input: { command: cmd || '', texts: [] } };
     if (cmd === undefined) e.unreadable = unreadable('command');
@@ -333,4 +367,7 @@ module.exports = {
   pathsOf,
   firstString,
   COMMAND_KEYS,
+  patchTextOf,
+  patchInput,
+  nestedCommand,
 };
