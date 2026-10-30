@@ -81,7 +81,7 @@ test('finds secrets in Claude Code and Codex histories and reports type and coun
   assert.ok(r.notes.some((n) => /already be rotated/.test(n)));
   assert.ok(r.notes.some((n) => /already sent to your model provider/.test(n)));
   const ids = r.agents.map((a) => a.id);
-  assert.deepEqual(ids, ['claude-code', 'codex', 'cursor', 'opencode']);
+  assert.deepEqual(ids, ['claude-code', 'codex', 'cursor', 'opencode', 'gemini-cli', 'copilot', 'antigravity', 'zcode']);
   assert.equal(r.agents.find((a) => a.id === 'cursor').reason, 'database');
 });
 
@@ -172,15 +172,57 @@ test('links are never followed out of the home folder', (t) => {
   assert.equal(r.agents.find((a) => a.id === 'codex').scanned, false);
 });
 
-test('a config folder named by the environment outside the home folder is ignored', (t) => {
+test('a config folder named by the environment inside the home folder is shown relative to home', (t) => {
   const { home, env } = machine(t);
-  const outside = tempDir(t, 'zn-hist-outside-');
-  put(outside, 'projects/p/s.jsonl', jsonl([{ text: AWS }]));
-  assert.deepEqual(history({ home, env: { ...env, CLAUDE_CONFIG_DIR: outside } }).findings, []);
   put(home, 'cfg/projects/p/s.jsonl', jsonl([{ text: AWS }]));
   const r = history({ home, env: { ...env, CLAUDE_CONFIG_DIR: path.join(home, 'cfg') } });
   assert.equal(r.findings.length, 1);
   assert.equal(r.findings[0].file, '~/cfg/projects/p/s.jsonl');
+});
+
+test('a config folder named by the environment is honoured wherever it points', (t) => {
+  const { home, env } = machine(t);
+  const outside = tempDir(t, 'zn-hist-outside-');
+  put(outside, 'projects/p/s.jsonl', jsonl([{ text: AWS }]));
+  put(outside, 'codexhome/sessions/2026/s.jsonl', jsonl([{ text: GITHUB }]));
+  const r = history({ home, env: { ...env, CLAUDE_CONFIG_DIR: outside, CODEX_HOME: path.join(outside, 'codexhome') } });
+  assert.equal(r.agents.find((a) => a.id === 'claude-code').scanned, true);
+  assert.equal(r.agents.find((a) => a.id === 'codex').scanned, true);
+  assert.deepEqual(r.findings.map((f) => f.agent + ' ' + f.type).sort(), ['claude-code AWS_KEY', 'codex GITHUB_TOKEN'].sort());
+  assert.ok(r.findings.every((f) => !f.file.includes(home) && !f.file.includes('\n')));
+  let text = '';
+  report(r, (s) => { text += s; });
+  assert.doesNotMatch(text, /no history found/);
+});
+
+test('a file below the depth limit is reported, naming the limit', (t) => {
+  const { home, env } = machine(t);
+  put(home, '.claude/projects/a/b/c/d/e/f/g/h/deep.jsonl', jsonl([{ text: AWS }]));
+  put(home, '.claude/projects/p/ok.jsonl', jsonl([{ text: 'clean' }]));
+  const r = history({ home, env });
+  const d = r.incomplete.filter((i) => i.reason === 'too-deep');
+  assert.equal(d.length, 1);
+  assert.equal(d[0].agent, 'claude-code');
+  assert.equal(d[0].limit, 6);
+  let text = '';
+  report(r, (s) => { text += s; });
+  assert.match(text, /NOT FULLY SCANNED/);
+  assert.match(text, /too deep.*6 levels/);
+  assert.doesNotMatch(text, /No secret found/);
+});
+
+test('the supported agents whose history is not read are listed as not scanned yet', (t) => {
+  const { home, env } = machine(t);
+  const r = history({ home, env });
+  assert.deepEqual(r.agents.map((a) => a.id), ['claude-code', 'codex', 'cursor', 'opencode', 'gemini-cli', 'copilot', 'antigravity', 'zcode']);
+  for (const id of ['gemini-cli', 'copilot', 'antigravity', 'zcode']) {
+    const a = r.agents.find((x) => x.id === id);
+    assert.equal(a.scanned, false);
+    assert.equal(a.reason, 'not-yet');
+  }
+  let text = '';
+  report(r, (s) => { text += s; });
+  for (const n of ['Gemini CLI', 'Copilot', 'Antigravity', 'ZCode']) assert.match(text, new RegExp(n + ' +not scanned yet'));
 });
 
 test('when the time limit is reached the files not fully scanned are listed', (t) => {

@@ -102,28 +102,35 @@ it needs no account.
 
 ### Where it looks
 
-Only files in your own home folder, and only these:
+Only files in your own home folder (and the folder you name with `CLAUDE_CONFIG_DIR` or `CODEX_HOME`), and only these:
 
 | Agent | Files |
 | --- | --- |
-| Claude Code | `~/.claude/projects/**/*.jsonl` (session transcripts) and `~/.claude/history.jsonl` (prompt history). `CLAUDE_CONFIG_DIR` is honoured when it points inside your home folder. |
-| Codex CLI | `~/.codex/sessions/**/*.jsonl` and `~/.codex/history.jsonl`. `CODEX_HOME` is honoured when it points inside your home folder. |
+| Claude Code | `~/.claude/projects/**/*.jsonl` (session transcripts) and `~/.claude/history.jsonl` (prompt history). `CLAUDE_CONFIG_DIR` is honoured wherever it points, also outside your home folder, because you chose that folder. |
+| Codex CLI | `~/.codex/sessions/**/*.jsonl` and `~/.codex/history.jsonl`. `CODEX_HOME` is honoured wherever it points, also outside your home folder. |
 | Cursor, OpenCode | Not scanned: they keep their history in a database, which this version does not read. The report says so. |
+| Gemini CLI, Copilot, Antigravity, ZCode | Not scanned yet: this version does not read their history. The report names each one, so an empty result is never a sign that nothing leaked there. |
 
 A link is never followed: a history file or folder that is a link is skipped
-and listed, so a link cannot make the scan read something outside your home
-folder.
+and listed, so a link cannot make the scan read something you did not point it
+at. Files that are skipped because of a limit are listed too, with the limit:
+a folder nested more than 6 levels below the history folder, or more than
+50000 history files for one agent.
 
 ### History: what it shows
 
 ```text
 zn-gate reach --history: did your coding agents keep a secret of yours in their session history?
-Read: the local history files of your agents in your home folder. Nothing was sent anywhere, nothing was changed, and no value is shown.
+Read: the local history files of your agents. Nothing was sent anywhere, nothing was changed, and no value is shown.
 
   Claude Code  42 files, 318 MB scanned
   Codex CLI    7 files, 12 MB scanned
   Cursor       not scanned: its history is a database, which this version does not read
   OpenCode     not scanned: its history is a database, which this version does not read
+  Gemini CLI   not scanned yet: this version does not read its history
+  Copilot      not scanned yet: this version does not read its history
+  Antigravity  not scanned yet: this version does not read its history
+  ZCode        not scanned yet: this version does not read its history
 
 CLAUDE CODE
   ~/.claude/projects/-home-me-app/3f2a.jsonl
@@ -191,7 +198,8 @@ meanings; a key is only added, never renamed or removed, within version 1.
       "action": "Rotate this AWS access key in the AWS console (IAM), then delete this session file if you do not need it." }
   ],
   "incomplete": [
-    { "agent": "claude-code", "file": "~/.claude/projects/-home-me-app/9c1d.jsonl", "reason": "time-limit" }
+    { "agent": "claude-code", "file": "~/.claude/projects/-home-me-app/9c1d.jsonl", "reason": "time-limit" },
+    { "agent": "claude-code", "file": "~/.claude/projects/a/b/c/d/e/f/g", "reason": "too-deep", "limit": 6 }
   ],
   "totals": { "files_scanned": 49, "bytes_scanned": 346030080, "files_with_secrets": 1, "secrets": 2, "files_not_reached": 0 },
   "time_limit_hit": false,
@@ -204,16 +212,22 @@ meanings; a key is only added, never renamed or removed, within version 1.
 }
 ```
 
-- `agents[].id`: `claude-code`, `codex`, `cursor`, `opencode`, always in this
-  order. `scanned` is `false` with `reason` `not-found` (no history folder) or
-  `database` (not readable by this version); otherwise `reason` is `null`.
+- `agents[].id`: `claude-code`, `codex`, `cursor`, `opencode`, `gemini-cli`,
+  `copilot`, `antigravity`, `zcode`, always in this order. `scanned` is `false`
+  with `reason` `not-found` (no history folder), `database` (a database, not
+  readable by this version) or `not-yet` (supported, but its history is not
+  read yet); otherwise `reason` is `null`.
   `files` and `bytes` are what was read.
 - `findings[]`: one entry per file and secret type, sorted by agent and then
   by `count`, highest first. `file` starts with `~/`. `type` matches
   `^[A-Z0-9_]+$`. `count` is the number of occurrences (an integer, 1 or
   more). `action` is plain text for people; scripts should rely on `type`.
-- `incomplete[]`: files not fully scanned. `reason` is `time-limit`,
-  `line-too-long`, `unreadable` or `symlink`. At most 200 are listed.
+- `incomplete[]`: files or folders not fully scanned. `reason` is `time-limit`,
+  `line-too-long`, `unreadable`, `symlink`, `too-deep` or `too-many-files`.
+  For the last two, `limit` is the limit that was hit (6 levels, 50000 files)
+  and `file` is the folder that was not read. `file` starts with `~/` when it
+  is inside your home folder, and is the full path otherwise (a config folder
+  you named outside it). At most 200 are listed.
 - `totals.files_not_reached`: files that were not started or were cut short
   because of the time limit.
 - No finding ever holds a value, a fragment or a hash.

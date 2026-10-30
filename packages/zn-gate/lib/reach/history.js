@@ -11,8 +11,9 @@
  * The result holds a closed vocabulary only: agent, file path, secret type, a count and an action. A value,
  * a part of a value, a prefix or a hash of a value never leaves the scanning function.
  *
- * Only the home folder of the current user is read, and no link is followed: a link at any level below the
- * home folder, or a history file that is a link, is skipped and listed.
+ * The home folder of the current user is read, plus the folder CLAUDE_CONFIG_DIR or CODEX_HOME names, wherever it
+ * points. No link is followed: a link at any level below the home folder, a config folder that is a link, or a
+ * history file that is a link, is skipped and listed.
  */
 
 const fs = require('fs');
@@ -43,9 +44,15 @@ const AGENTS = [
     trees: [{ dir: ['sessions'], ext: '.jsonl' }], files: [['history.jsonl']],
   },
 ];
+// Gemini CLI, Copilot, Antigravity and ZCode are supported by zn-gate, but this version does not read their
+// history yet: the report says so, so an empty result is never read as "nothing leaked".
 const NOT_SCANNED = [
   { id: 'cursor', name: 'Cursor', reason: 'database' },
   { id: 'opencode', name: 'OpenCode', reason: 'database' },
+  { id: 'gemini-cli', name: 'Gemini CLI', reason: 'not-yet' },
+  { id: 'copilot', name: 'Copilot', reason: 'not-yet' },
+  { id: 'antigravity', name: 'Antigravity', reason: 'not-yet' },
+  { id: 'zcode', name: 'ZCode', reason: 'not-yet' },
 ];
 
 // What to do about a secret of this type: closed text, never taken from the file.
@@ -98,25 +105,37 @@ function realDirBelow(base, parts) {
   return cur;
 }
 
-/** The agent's config folder as parts below home: the default, or the one the environment names if it is inside home. */
-function baseParts(agent, home, env) {
+/**
+ * The agent's config folder: the one the environment names, wherever it points (the user chose it), or the
+ * default below home. { parts } when it is below home (walked level by level, no link followed), { abs } when
+ * the environment names a folder outside home (the folder itself must be a real folder, not a link).
+ */
+function configDir(agent, home, env) {
   const named = env && env[agent.envDir];
   if (named && typeof named === 'string') {
-    const rel = path.relative(home, path.resolve(named));
-    if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) return rel.split(path.sep);
-    // A folder outside home is never read.
-    return null;
+    const abs = path.resolve(named);
+    const rel = path.relative(home, abs);
+    if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) return { parts: rel.split(path.sep) };
+    return { abs };
   }
-  return agent.defaultDir;
+  return { parts: agent.defaultDir };
 }
 
 function display(home, abs) {
-  const rel = path.relative(home, abs).split(path.sep).join('/');
-  return clean('~/' + rel);
+  const rel = path.relative(home, abs);
+  if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) return clean('~/' + rel.split(path.sep).join('/'));
+  return clean(abs);
 }
 
 function walk(dir, ext, depth, out, skipped, agent, home) {
-  if (depth > MAX_DEPTH || out.length >= MAX_FILES) return;
+  if (depth > MAX_DEPTH) {
+    skipped.push({ agent: agent.id, file: display(home, dir), reason: 'too-deep', limit: MAX_DEPTH });
+    return;
+  }
+  if (out.length >= MAX_FILES) {
+    skipped.push({ agent: agent.id, file: display(home, dir), reason: 'too-many-files', limit: MAX_FILES });
+    return;
+  }
   let entries;
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
   for (const e of entries) {
@@ -126,19 +145,30 @@ function walk(dir, ext, depth, out, skipped, agent, home) {
     if (!e.isFile() || !e.name.endsWith(ext)) continue;
     const st = lstatOrNull(abs);
     if (!st || !st.isFile()) continue;
+    if (out.length >= MAX_FILES) {
+      skipped.push({ agent: agent.id, file: display(home, dir), reason: 'too-many-files', limit: MAX_FILES });
+      return;
+    }
     out.push({ abs, size: st.size, mtime: st.mtimeMs });
-    if (out.length >= MAX_FILES) return;
   }
 }
 
 function collect(agent, home, env, skipped) {
-  const parts = baseParts(agent, home, env);
-  if (!parts) return { base: null, files: [] };
-  const base = realDirBelow(home, parts);
+  const c = configDir(agent, home, env);
+  let base;
+  let basePath;
+  if (c.parts) {
+    basePath = path.join(home, ...c.parts);
+    base = realDirBelow(home, c.parts);
+  } else {
+    basePath = c.abs;
+    const st0 = lstatOrNull(c.abs);
+    base = st0 && !st0.isSymbolicLink() && st0.isDirectory() ? c.abs : null;
+  }
   if (!base) {
     // The folder itself being a link is said, so a user is not told "nothing found" for a folder that exists.
-    const st = lstatOrNull(path.join(home, ...parts));
-    if (st && st.isSymbolicLink()) skipped.push({ agent: agent.id, file: display(home, path.join(home, ...parts)), reason: 'symlink' });
+    const st = lstatOrNull(basePath);
+    if (st && st.isSymbolicLink()) skipped.push({ agent: agent.id, file: display(home, basePath), reason: 'symlink' });
     return { base: null, files: [] };
   }
   const files = [];
@@ -330,6 +360,8 @@ function history(opts = {}) {
 function mb(n) { return (n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0) + ' MB'; }
 
 const REASONS = {
+  'too-deep': 'not scanned: it is nested too deep (the limit is {limit} levels below the history folder)',
+  'too-many-files': 'not scanned: there are too many history files (the limit is {limit} files per agent)',
   'time-limit': 'not fully scanned: the time limit was reached',
   'line-too-long': 'partly scanned: a line was too long to read',
   unreadable: 'not scanned: it could not be read',
@@ -340,11 +372,12 @@ function report(r, write) {
   const w = write || ((s) => process.stdout.write(s));
   const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
   w('\nzn-gate reach --history: did your coding agents keep a secret of yours in their session history?\n');
-  w('Read: the local history files of your agents in your home folder. Nothing was sent anywhere, nothing was changed, and no value is shown.\n\n');
+  w('Read: the local history files of your agents. Nothing was sent anywhere, nothing was changed, and no value is shown.\n\n');
   for (const a of r.agents) {
     const state = a.scanned ? plural(a.files, 'file') + ', ' + mb(a.bytes) + ' scanned'
       : a.reason === 'database' ? 'not scanned: its history is a database, which this version does not read'
-        : 'no history found';
+        : a.reason === 'not-yet' ? 'not scanned yet: this version does not read its history'
+          : 'no history found';
     w('  ' + a.name.padEnd(12) + ' ' + state + '\n');
   }
   w('\n');
@@ -362,7 +395,7 @@ function report(r, write) {
   }
   if (r.incomplete.length) {
     w('NOT FULLY SCANNED\n');
-    for (const i of r.incomplete) w('  ' + i.file + ': ' + (REASONS[i.reason] || i.reason) + '\n');
+    for (const i of r.incomplete) w('  ' + i.file + ': ' + (REASONS[i.reason] || i.reason).replace('{limit}', String(i.limit)) + '\n');
     if (r.totals.files_not_reached > r.incomplete.length) w('  and more files not reached\n');
     if (r.time_limit_hit) w('Run again with a larger --max-seconds to scan them (now ' + r.max_seconds + ').\n');
     w('\n');
