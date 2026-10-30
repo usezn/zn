@@ -125,6 +125,17 @@ pub struct ServerConfig {
     /// A larger frame closes the connection.
     #[serde(default = "default_ws_max_frame_bytes")]
     pub ws_max_frame_bytes: usize,
+
+    /// Seconds a management API connection may go without receiving a byte before it is closed
+    /// (default 900, 15 minutes; 0 means the default). It ends an SSE stream or WebSocket session
+    /// that nobody uses.
+    #[serde(default = "default_session_idle_timeout_secs")]
+    pub session_idle_timeout_secs: u64,
+
+    /// Seconds a write to a management API client may stay blocked (a client that does not read)
+    /// before the connection is closed (default 30; 0 means the default).
+    #[serde(default = "default_write_timeout_secs")]
+    pub write_timeout_secs: u64,
 }
 
 impl Default for ServerConfig {
@@ -135,6 +146,8 @@ impl Default for ServerConfig {
             channel_capacity: default_channel_capacity(),
             ws_max_message_bytes: default_ws_max_message_bytes(),
             ws_max_frame_bytes: default_ws_max_frame_bytes(),
+            session_idle_timeout_secs: default_session_idle_timeout_secs(),
+            write_timeout_secs: default_write_timeout_secs(),
         }
     }
 }
@@ -147,6 +160,12 @@ fn default_ws_max_message_bytes() -> usize {
 }
 fn default_ws_max_frame_bytes() -> usize {
     1024 * 1024
+}
+fn default_session_idle_timeout_secs() -> u64 {
+    900
+}
+fn default_write_timeout_secs() -> u64 {
+    30
 }
 fn default_bind_address() -> String {
     "127.0.0.1".to_string()

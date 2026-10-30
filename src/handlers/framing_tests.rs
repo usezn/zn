@@ -39,6 +39,7 @@ const TEST_LIMITS: ServeLimits = ServeLimits {
     header_read_timeout: Duration::from_millis(300),
     body_idle_timeout: Duration::from_millis(300),
     max_connections: 64,
+    ..ServeLimits::DEFAULT
 };
 
 async fn spawn_server() -> SocketAddr {
@@ -525,6 +526,7 @@ async fn connection_cap_holds() {
         header_read_timeout: Duration::from_secs(30),
         body_idle_timeout: Duration::from_secs(30),
         max_connections: 3,
+        ..ServeLimits::DEFAULT
     })
     .await;
     let mut held = Vec::new();
