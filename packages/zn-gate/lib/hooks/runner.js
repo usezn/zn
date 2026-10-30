@@ -228,6 +228,22 @@ function egressAllowOf(opts) {
   return Array.isArray(v) ? v.filter((h) => typeof h === 'string' && /^(?:\*\.)?[A-Za-z0-9.:-]{1,253}$/.test(h)).slice(0, 64) : [];
 }
 
+/*
+ * Scope guard (lib/scope/guard.js): off unless ~/.zn/config.json names a scope file, {"hooks": {"scopeFile": "<path>",
+ * "scopeSha256": "<hex>"}} (the hash pins the approved file). Once on, a call outside the scope, or one the guard cannot
+ * resolve, is refused, and so is every call when the file is missing or malformed. An error inside the guard refuses too.
+ */
+function scopeCheck(ev, opts, agentId) {
+  const hooks = readConfig(opts.home).hooks || {};
+  const scopeFile = opts.scopeFile || hooks.scopeFile;
+  if (typeof scopeFile !== 'string' || !scopeFile) return null;
+  try {
+    return require('../scope/guard').decide(ev, { scopeFile, scopeSha256: opts.scopeSha256 || hooks.scopeSha256, home: opts.home, agentId });
+  } catch (_) {
+    return { decision: 'deny', message: 'zn: the scope guard failed, so zn cannot tell whether this call is in scope.' };
+  }
+}
+
 // Reinstall the running version: `npm install -g zn-gate` alone could install an
 // older release without hooks.
 const { version: ZN_VERSION } = require('../../package.json');
@@ -512,6 +528,8 @@ async function decidePre(ev, d, agentId, opts) {
   const pathOpts = { cwd: ev.cwd, home: opts.home };
   const input = ev.input || {};
   const tool = ev.tool;
+  const scopeDecision = scopeCheck(ev, opts, agentId);
+  if (scopeDecision) return scopeDecision;
 
   if (tool === 'read' || tool === 'lsp' || (tool === 'grep' && input.path)) {
     // An adapter that finds several paths in one call lists them all in input.paths.
