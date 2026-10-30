@@ -150,6 +150,7 @@ async function syncCmd() {
   if (r.upload) out('Audit upload: ' + r.upload.status + ', ' + (r.upload.uploaded || 0) + ' sent, ' + (r.upload.pending > 0 ? r.upload.pending : 0) + ' pending');
   if (r.revocations && r.revocations.pending) out('Revocation: the server has not taken the earlier leave yet (' + r.revocations.pending + ' pending); see `zn team status`.');
   else if (r.revocations && r.revocations.done) out('Revocation: the server has now been told that the earlier installation left.');
+  if (r.upload && r.upload.status === 'error' && r.upload.error) out('Nothing was uploaded: ' + r.upload.error);
   if (r.upload && r.upload.status === 'tampered') out('Nothing was uploaded: ' + r.upload.error + '. Keep a copy of the audit log, look into the change, then run `' + znCommand('vault verify --acknowledge') + '` in your own terminal.');
   // Exit 0 only with a valid policy applied and no failed upload.
   const o = syncOutcome(r);
