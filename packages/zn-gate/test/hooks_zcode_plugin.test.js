@@ -424,6 +424,17 @@ test('zn-gate check reads the two-entry manifest for the system it runs on: both
   assert.equal(_internal.zcodeRelevant(read(tamperedPs), false).bare, null, 'a changed PowerShell entry is not judged on macOS and Linux');
   assert.ok(_internal.zcodeRelevant(read(tamperedPs), true).bare, 'a changed PowerShell entry is judged on Windows');
   for (const win of [true]) assert.ok(_internal.zcodeRelevant(read(otherWinPath), win).bare, "another program at a Windows path is not the shipped hook");
+  // Any other form of the system PowerShell entry is flagged: extra flags, -EncodedCommand, another command in the text, a script outside the folder.
+  const variants = {
+    execPolicy: (h) => { h.args = ['-ExecutionPolicy', 'Bypass'].concat(h.args); },
+    encoded: (h) => { h.args = ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from('& ./x.ps1', 'utf16le').toString('base64')]; },
+    extraCommand: (h) => { h.args = h.args.slice(0, 3).concat(h.args[3] + '; Remove-Item x'); },
+    outside: (h) => { h.args = h.args.slice(0, 3).concat(h.args[3].replace("'/scripts/zn-hook.ps1'", "'/../x.ps1'")); },
+    extraFlag: (h) => { h.args = h.args.slice(0, 2).concat(['-WindowStyle', 'Hidden'], h.args.slice(2)); },
+  };
+  for (const [name, fn] of Object.entries(variants)) {
+    assert.ok(_internal.zcodeRelevant(read(change(1, fn)), true).bare, name + ': a changed PowerShell entry is flagged on Windows');
+  }
   // A Windows path of another program is not "by name", and is not accepted either.
   const j = JSON.parse(real);
   j.hooks.PreToolUse[0].hooks[0].command = 'C:\\Windows\\System32\\cmd.exe';
