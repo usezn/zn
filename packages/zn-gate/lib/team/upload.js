@@ -16,7 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { FIELDS } = require('../vault/audit');
+const { FIELDS, forEachLine } = require('../vault/audit');
 
 const LOCK_TTL_MS = 10 * 60 * 1000;
 const MAX_RESYNCS = 3;
@@ -80,32 +80,51 @@ function isRecord(r) {
 }
 
 /*
- * Returns the parsed records in file order. Unparseable lines are skipped.
- * gapAt is the index of the first record whose seq is not previous + 1
- * (-1 when there is none); records from that index on are never sent.
- * Records up to `after` (a sequence number) are left out: they came before
- * the machine joined and were not consented to be shared.
+ * Reads the log in chunks (never as one string, so a log of any size works) and
+ * keeps in memory only what an upload needs:
+ *   window   the first `cap` records after headSeq that come before any gap, in file order
+ *   headRec  the record with seq === headSeq (null when there is none)
+ *   lastSeq  the highest seq seen
+ *   gap      true when some record's seq is not the previous one + 1
+ *   pending  how many records have seq > headSeq
+ * Unparseable lines are skipped. Records up to `after` (a sequence number) are
+ * left out: they came before the machine joined and were not consented to be
+ * shared. A log that does not exist is empty; any other read error is thrown.
  */
-function readRecords(auditFile, after) {
-  let text;
-  try {
-    text = fs.readFileSync(auditFile, 'utf8');
-  } catch (err) {
-    if (err.code === 'ENOENT') return { records: [], gapAt: -1 };
-    throw err;
-  }
-  const records = [];
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
+function scanLog(auditFile, after, headSeq, cap, chunk) {
+  const out = { window: [], headRec: null, lastSeq: 0, gap: false, pending: 0 };
+  let prevSeq = 0;
+  let first = true;
+  forEachLine(auditFile, (line) => {
+    if (line === null || !line.trim()) return false;
     let rec;
-    try { rec = JSON.parse(line); } catch (err) { continue; }
-    if (isRecord(rec) && rec.seq > (after || 0)) records.push(rec);
-  }
-  let gapAt = -1;
-  for (let i = 1; i < records.length; i++) {
-    if (records[i].seq !== records[i - 1].seq + 1) { gapAt = i; break; }
-  }
-  return { records, gapAt };
+    try { rec = JSON.parse(line); } catch (err) { return false; }
+    if (!isRecord(rec) || rec.seq <= (after || 0)) return false;
+    if (!first && rec.seq !== prevSeq + 1) out.gap = true;
+    first = false;
+    prevSeq = rec.seq;
+    if (rec.seq > out.lastSeq) out.lastSeq = rec.seq;
+    if (rec.seq === headSeq) out.headRec = rec;
+    if (rec.seq > headSeq) {
+      out.pending += 1;
+      if (!out.gap && out.window.length < cap) out.window.push(rec);
+    }
+    return false;
+  }, chunk);
+  return out;
+}
+
+/* The record with this seq anywhere in the log, or null (a streaming scan; used only to resync). */
+function findRecord(auditFile, seq, chunk) {
+  let found = null;
+  forEachLine(auditFile, (line) => {
+    if (line === null || !line.trim()) return false;
+    let rec;
+    try { rec = JSON.parse(line); } catch (err) { return false; }
+    if (isRecord(rec) && rec.seq === seq) found = rec;
+    return false;
+  }, chunk);
+  return found;
 }
 
 /* Only the fields the server accepts, in the order the chain is computed in. */
@@ -117,10 +136,6 @@ function toEvent(rec) {
   ev.prev = rec.prev;
   ev.mac = rec.mac;
   return ev;
-}
-
-function countPending(records, head) {
-  return records.filter((r) => !head || r.seq > head.seq).length;
 }
 
 /* ------------------------------------------------------------------ */
@@ -196,6 +211,7 @@ function checkOptions(opts) {
     version: opts.version || undefined,
     batchSize,
     maxBatches,
+    chunk: opts.chunk,
     now,
     // Called before each batch; true stops the upload (the vault was locked).
     shouldStop: typeof opts.shouldStop === 'function' ? opts.shouldStop : () => false,
@@ -261,7 +277,7 @@ function confirmedUpTo(batch, body) {
 
 function pendingOf(o, head) {
   try {
-    return countPending(readRecords(o.auditFile, head ? 0 : o.startAfterSeq).records, head);
+    return scanLog(o.auditFile, head ? 0 : o.startAfterSeq, head ? head.seq : 0, 0, o.chunk).pending;
   } catch (err) {
     return -1;
   }
@@ -278,19 +294,17 @@ async function fail(o, ctx, status, text) {
 
 async function sync(o, ctx) {
   // Without a confirmed head, the upload starts after the join (o.startAfterSeq), not at the first record.
-  const { records, gapAt } = readRecords(o.auditFile, ctx.head ? 0 : o.startAfterSeq);
-  const bySeq = new Map();
-  let lastSeq = 0;
-  for (const r of records) {
-    bySeq.set(r.seq, r);
-    if (r.seq > lastSeq) lastSeq = r.seq;
-  }
-  // Records after a local gap are never sent.
-  const sendable = gapAt >= 0 ? records.slice(0, gapAt) : records;
+  const cap = o.maxBatches * o.batchSize;
+  const load = () => scanLog(o.auditFile, ctx.head ? 0 : o.startAfterSeq, ctx.head ? ctx.head.seq : 0, cap, o.chunk);
+  let scan = load();
+  let scanHead = ctx.head;
+  // Records after a local gap are never sent: the window stops at the gap.
+  let sendable = scan.window;
+  const lastSeq = scan.lastSeq;
 
   let outcome = null; // {status, text} when the upload stops before it finishes
   if (ctx.head) {
-    const local = bySeq.get(ctx.head.seq);
+    const local = scan.headRec;
     if (local && local.mac !== ctx.head.mac) {
       outcome = { status: 'diverged', text: TEXT_DIVERGED };
     } else if (!local && lastSeq < ctx.head.seq) {
@@ -326,12 +340,16 @@ async function sync(o, ctx) {
           break;
         }
         const exp = err.body.expected;
-        const target = bySeq.get(exp.seq - 1);
+        const target = findRecord(o.auditFile, exp.seq - 1, o.chunk);
         if (!target || target.mac !== exp.prev) {
           outcome = { status: 'diverged', text: TEXT_DIVERGED };
           break;
         }
         ctx.head = { seq: target.seq, mac: target.mac };
+        // The window now has to start at the new head.
+        scan = load();
+        scanHead = ctx.head;
+        sendable = scan.window;
         continue;
       }
       outcome = apiFailure(status);
@@ -367,14 +385,14 @@ async function sync(o, ctx) {
   if (outcome) {
     status = outcome.status;
     text = outcome.text;
-  } else if (gapAt >= 0) {
+  } else if (scan.gap) {
     status = 'local_gap';
     text = TEXT_LOCAL_GAP;
   } else {
     status = batches > 0 ? 'ok' : 'nothing';
   }
 
-  const pending = countPending(records, ctx.head);
+  const pending = scanHead === ctx.head || (scanHead && ctx.head && scanHead.seq === ctx.head.seq) ? scan.pending : pendingOf(o, ctx.head);
   if (o.isCurrent && !(await o.isCurrent())) ctx.stale = true;
   if (!ctx.stale) {
     const wrote = await guarded(o, () => writeState(o.stateFile, { head: ctx.head, last_upload: ctx.lastUpload, last_status: status, last_error: text }));
@@ -419,7 +437,7 @@ function pendingCount(opts) {
   const o = opts || {};
   const head = readState(o.stateFile).head;
   const after = Number.isInteger(o.startAfterSeq) && o.startAfterSeq > 0 ? o.startAfterSeq : 0;
-  return countPending(readRecords(o.auditFile, head ? 0 : after).records, head);
+  return scanLog(o.auditFile, head ? 0 : after, head ? head.seq : 0, 0, o.chunk).pending;
 }
 
 module.exports = { uploadPending, pendingCount };
