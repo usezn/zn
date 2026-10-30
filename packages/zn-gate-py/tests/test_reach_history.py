@@ -238,6 +238,10 @@ def test_json_equals_the_npm_package(machine):
     put(home, ".claude/projects/-proj-b/m.jsonl", jsonl([{"text": "kept __ZN_REDACTED_AWS_KEY__ and __ZN_GITHUB_TOKEN_3__"}]), 1_700_000_050)
     py = json.loads(zn(env, "reach", "--history", "--json").stdout)
     node_env = {k: v for k, v in env.items() if k != "PYTHONPATH"}
+    # Windows: node needs SYSTEMROOT (and a TEMP folder) to start; the stripped test env has neither.
+    for k in ("SYSTEMROOT", "SystemRoot", "TEMP", "TMP"):
+        if k in os.environ:
+            node_env[k] = os.environ[k]
     node = subprocess.run(["node", _NODE_CLI, "reach", "--history", "--json"], capture_output=True, text=True, env=node_env, timeout=120)
     assert node.returncode == 0, node.stderr
     js = json.loads(node.stdout)
