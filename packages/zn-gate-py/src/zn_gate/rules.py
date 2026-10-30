@@ -1414,17 +1414,16 @@ _OPENAI_PREFIX_RE = _rc(r'sk-(?:proj-|svcacct-|admin-|or-v1-)?')
 
 def _openai_scrub_body(v: str) -> bool:
     body = _OPENAI_PREFIX_RE.sub('', v, count=1)
-    return (_pv_random(body, 2, 3.5) and _LOWER_RE.search(body) is not None
-            and _UPPER_RE.search(body) is not None and _DIGIT_RE.search(body) is not None)
+    return _pv_random(body, 2, 3.5) and _DIGIT_RE.search(body) is not None
 
 
 _AWS_WORDS_RE = _rc(r'aws|secret[_ -]?access[_ -]?key|SecretAccessKey', re.IGNORECASE | re.ASCII)
 _SECRET_WORD_RE = _rc(r'secret', re.IGNORECASE | re.ASCII)
 
 SCRUB_FIRST_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
-    # A key with hyphens or underscores in the body (sk-test-..., sk-<name>_<id>): 40 to 200 characters. Stricter
-    # than the scrubber: the body must hold lower case, upper case and digits (see _openai_scrub_body), so a
-    # slug is not a key, and the Helicone, sp-, cp- and similar forms stay with the shared rule above.
+    # A key with hyphens or underscores in the body (sk-test-..., sk-<name>_<id>): 40 to 200 characters. Same
+    # check as the scrubber (see _openai_scrub_body): the body must look random and hold a digit, in any case,
+    # and the Helicone, sp-, cp- and similar forms stay with the shared rule above.
     ("secret:openai_key#scrub", _rc(_TB + r'sk-(?!ant-|helicone-|(?:eu|cp|gov|rl|sp|lf|[Nn]one)-|(?!svcacct-)[a-z0-9]{7}-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + _TA), "[REDACTED_OPENAI_KEY]"),
     # GitHub tokens of up to 255 characters, and fine-grained tokens longer than 82.
     ("secret:github_token#scrub", _rc(_TB + r'gh[pousr]_[A-Za-z0-9]{36,255}' + _TA), "[REDACTED_GITHUB_TOKEN]"),

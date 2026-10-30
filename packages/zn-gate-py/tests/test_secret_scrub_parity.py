@@ -87,6 +87,8 @@ tok("openai plain 28", "sk-" + r(28))
 tok("openai hex 32", "sk-" + r(32, HEX))
 tok("openai hyphenated body 40+", "sk-" + "test-" + r(8) + "-" + r(30))
 tok("openai underscored body 40+", "sk-" + r(20) + "_" + r(25))
+tok("openai lower with underscore", "sk-" + r(24, LOWER_DIGITS) + "_" + r(24, LOWER_DIGITS))
+tok("openai svcacct lower with hyphens", "sk-" + "svcacct-" + r(14, LOWER_DIGITS) + "-" + r(14, LOWER_DIGITS) + "-" + r(14, LOWER_DIGITS))
 tok("openai T3Blb marker", "sk-" + r(20) + "T3Blb" + "kFJ" + r(20))
 tok("openai low entropy 48", "sk-" + "a" * 48)
 # AWS
