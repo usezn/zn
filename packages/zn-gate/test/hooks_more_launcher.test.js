@@ -184,7 +184,7 @@ test('antigravity: the Windows launcher is an encoded PowerShell script that pri
   assert.ok(m, script);
   const out = JSON.parse(m[1]);
   assert.equal(out.decision, 'deny');
-  assert.match(out.reason, /zn hooks install antigravity/);
+  assert.match(out.reason, /zn\.cmd hooks install antigravity/);
   assert.match(out.reason, /npm install -g zn-gate/);
   assert.match(script, /exit 0 # zn hook antigravity$/);
   const home = tempDir(t, 'zn-b96-win-');
