@@ -132,6 +132,9 @@ test('verify with the published versions rejects a latest moved back below the n
   assert.equal(verify('1.14.1', 'latest', '1.14.0', { latest: '1.14.1' }, ['1.14.0', '1.14.1', '1.15.0-rc.1']), true);
   assert.throws(() => verify('1.15.0-rc.2', 'next', '1.15.0', { latest: '1.14.1', next: '1.15.0-rc.2' }, versions), /moved backward|1.15.0 is published/);
   assert.throws(() => verify('1.14.1', 'latest', '1.14.0', { latest: '1.14.1' }, 42), /not a list/);
+  assert.throws(() => verify('1.14.1', 'latest', '1.14.0', { latest: '1.14.1' }, 'x'), /not a list/);
+  assert.throws(() => verify('1.14.1', 'latest', '1.14.0', { latest: '1.14.1' }, ''), /not a list/);
+  assert.throws(() => verify('1.14.1', 'latest', '1.14.0', { latest: '1.14.1' }, ['1.13.0']), /not among the published versions/);
 });
 
 test('a saved plan must match the released commit when one is given', () => {

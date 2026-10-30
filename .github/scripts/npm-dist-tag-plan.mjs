@@ -93,14 +93,20 @@ export function verify(version, tag, latestBefore, tags, versions = null) {
     // A stage approved late can move "latest" back to an older final that was planned as latest before a newer
     // final came out: latest must never be below the newest final version on npm.
     // npm prints a plain string, not a list, when a package has only one version.
-    if (typeof versions === 'string') versions = [versions];
-    if (!Array.isArray(versions) || versions.some((x) => typeof x !== 'string')) throw new Error('the published versions are not a list (or a single version string) of strings');
+    // A single version string is accepted only if it is a version; the list must contain the version being checked.
+    const notList = 'the published versions are not a list (or a single version string) of strings';
+    if (typeof versions === 'string') {
+      if (!parse(versions)) throw new Error(notList);
+      versions = [versions];
+    }
+    if (!Array.isArray(versions) || versions.some((x) => typeof x !== 'string')) throw new Error(notList);
     const finals = versions.filter((x) => parse(x) && !parse(x).pre.length);
     const newest = finals.reduce((m, x) => (m === null || compare(x, m) > 0 ? x : m), null);
     if (newest !== null) {
       if (!tags.latest || !parse(tags.latest)) throw new Error(`latest is missing or invalid (${tags.latest})`);
       if (compare(tags.latest, newest) < 0) throw new Error(`latest is ${tags.latest}, but ${newest} is published: latest moved backward`);
     }
+    if (!versions.includes(version)) throw new Error(`${version} is not among the published versions`);
   }
   if (!parse(version)) throw new Error(`${version} is not a valid semver version`);
   if (!tag) throw new Error('no dist-tag given');
