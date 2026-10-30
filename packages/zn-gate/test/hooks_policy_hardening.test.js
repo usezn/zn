@@ -18,6 +18,7 @@ const { createSecretsServer } = require('../lib/broker/mcp');
 const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
 const { generateAll } = require('./fixtures/fake_secrets');
+const { budget } = require('./helpers/time_budget');
 
 const FAKE = generateAll(7171, { perType: 1, piiPerType: 1 });
 const NPM = FAKE.secrets.find((s) => s.type === 'npm_access_token').value;
@@ -297,7 +298,7 @@ test('a shell command over 100 KB is refused at once; one just under the limit g
   const deny = policy.bashDenial(tooLong);
   const ms = Number(process.hrtime.bigint() - start) / 1e6;
   assert.equal(deny, 'zn: this command is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.');
-  assert.ok(ms < 50, 'took ' + ms + ' ms');
+  assert.ok(ms < budget(50), 'took ' + ms + ' ms');
   // Exactly at the limit and just under it: the normal check runs.
   assert.equal(policy.bashDenial('echo ' + 'a'.repeat(cap - 5)), null);
   const head = 'cat ~/.aws/credentials ';
@@ -381,7 +382,7 @@ test('a long patch sent as a shell command is refused quickly, naming a secret f
   const big = "apply_patch <<'PATCH'\n*** Begin Patch\n" + body + "*** End Patch\nPATCH";
   assert.ok(big.length < policy.SHELL_SCAN_CAP);
   const { ms, result: m } = fastestMs(() => policy.bashDenial(big, { cwd: dir, home: dir }));
-  assert.ok(ms < 1500, 'too slow: ' + ms + ' ms');
+  assert.ok(ms < budget(1500), 'too slow: ' + ms + ' ms');
   assert.match(m, /sent as a shell command, which zn cannot check file by file/);
   // A secret file among the first files is still named.
   const named = policy.bashDenial("apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: .env\n@@\n+X=1\n" + body + "*** End Patch\nPATCH", { cwd: dir, home: dir });
@@ -608,7 +609,7 @@ test('a command with many paths after several cd is refused within the time budg
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
   assert.ok(deny, 'refused');
   assert.match(deny, /too many paths|holds plain-text secrets/);
-  assert.ok(ms < 8000, 'checked in ' + ms + ' ms');
+  assert.ok(ms < budget(8000), 'checked in ' + ms + ' ms');
 });
 
 test('a Python virtualenv named .env is a folder, not a secret file', (t) => {
@@ -758,7 +759,7 @@ test('a 100 KB here-document read as data is checked in milliseconds', (t) => {
   const cmd = "cat > generated.js <<'EOF'\n" + body + 'EOF';
   const { ms, result: deny } = fastestCpuMs(() => policy.bashDenial(cmd, o));
   assert.equal(deny, null, 'the body is data, so the command is allowed');
-  assert.ok(ms < 25, 'checked in ' + ms + ' ms');
+  assert.ok(ms < budget(25), 'checked in ' + ms + ' ms');
 });
 
 test('10 000 here-document operators on one line are checked within the time budget', (t) => {
@@ -771,7 +772,7 @@ test('10 000 here-document operators on one line are checked within the time bud
   const deny = policy.bashDenial(cmd, o);
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
   assert.equal(deny, null, 'the bodies are data, so the command is allowed');
-  assert.ok(ms < 1500, 'checked in ' + ms + ' ms');
+  assert.ok(ms < budget(1500), 'checked in ' + ms + ' ms');
 });
 
 test('50 000 parentheses on one line are checked within the time budget', (t) => {
@@ -785,7 +786,7 @@ test('50 000 parentheses on one line are checked within the time budget', (t) =>
   const t0 = process.hrtime.bigint();
   policy.bashDenial(cmd, o);
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.ok(ms < 1500, 'checked in ' + ms + ' ms');
+  assert.ok(ms < budget(1500), 'checked in ' + ms + ' ms');
 });
 
 test('thousands of cd in one command are followed within the time budget', (t) => {
@@ -799,7 +800,7 @@ test('thousands of cd in one command are followed within the time budget', (t) =
     const deny = policy.bashDenial(cmd, o);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
     assert.ok(deny, unit + ': a .env read after cd it cannot follow is refused');
-    assert.ok(ms < 5000, unit + ' took ' + ms + ' ms');
+    assert.ok(ms < budget(5000), unit + ' took ' + ms + ' ms');
   }
 });
 
@@ -880,7 +881,7 @@ test('many distinct key file globs and words after several cd are decided within
     const deny = policy.bashDenial(cmd, o);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
     assert.ok(deny, shape + ': refused');
-    assert.ok(ms < 5000, shape + ' took ' + ms + ' ms');
+    assert.ok(ms < budget(5000), shape + ' took ' + ms + ' ms');
   }
 });
 
@@ -931,7 +932,7 @@ test('many nested shell code strings are decided within the time budget', (t) =>
   const t0 = process.hrtime.bigint();
   const deny = policy.bashDenial(cmd, o);
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.ok(ms < 3500, 'took ' + ms + ' ms');
+  assert.ok(ms < budget(3500), 'took ' + ms + ' ms');
   assert.ok(deny === null || /too many|nests/.test(deny), String(deny));
 });
 

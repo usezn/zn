@@ -57,6 +57,21 @@ breakdown of where the time goes.
 
 OpenCode is not in the table: its zn plugin runs inside the OpenCode process, so no hook process is started.
 
+## How to read these numbers
+
+- **Agent** is the coding agent that starts the hook: Claude Code, Codex CLI or Cursor.
+- **Event** is the moment the hook runs. `PreToolUse` and `beforeShellExecution` run before a shell command;
+  `PostToolUse` and `postToolUse` run after a tool, with its output. A size such as 1 KB, 100 KB or
+  1000 KB is the size of that output, and "with 2 secrets" means two fake secrets are in it.
+- **p50** is the median: half of the 40 runs of the case were faster than this, half were slower. It is the
+  usual wait.
+- **p95** is the 38th of the 40 sorted times, so only 2 runs were slower. It is the wait on a slow run.
+- All times are in milliseconds (ms); 1000 ms is one second.
+
+For example, a p50 of 54 and a p95 of 56.1 mean the hook usually takes about 54 ms, and nearly always under
+57 ms. Compare a row with the 24 ms that a bare `node -e ""` takes in the same run: that is the part of the
+wait that is Node.js starting, not zn. See [How it is measured](#how-it-is-measured) above for the full method.
+
 ## The budget in CI
 
 The `Hook latency` workflow runs this benchmark on every pull request that changes the hook code. Each case

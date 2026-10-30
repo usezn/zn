@@ -20,6 +20,8 @@
 
 Everything runs on your machine; no account or API key is needed. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. With a Node.js older than 18, the `zn-gate` and `zn` commands stop and say how to install it.
 
+**On Alpine Linux, install Node.js with the package manager.** The Node.js builds on nodejs.org do not run on Alpine, so run `apk add nodejs npm` instead. Use Alpine 3.21 or later: 3.21 and 3.22 ship Node.js 22, 3.23 and later ship Node.js 24. Alpine 3.20 ships Node.js 20.15, which is too old for the Claude Code plugin. The `npm` package is in the community repository, so if `npm` is not found, make sure the community repository is listed in `/etc/apk/repositories`.
+
 **Getting started: four steps, one command each.** Run them in your own terminal.
 
 1. `npx -y zn-gate reach` shows what your coding agents can reach on this machine: secrets in your `.env` files (by name only), credential files and MCP servers. It is read only and sends nothing. Details in [docs/reach.md](https://github.com/usezn/zn/blob/main/docs/reach.md).
@@ -85,6 +87,15 @@ Start a new Claude Code session. Claude Code is then blocked from reading `.env`
 npm install -g zn-gate
 zn hooks install codex           # or: cursor, opencode
 ```
+
+If `npm install -g` fails with `EACCES` (common with Node.js from your Linux distribution, such as `dnf` or `apk`, and with Node.js from nodejs.org on macOS), do not use `sudo`. Give npm a folder in your home directory, then run the install again:
+
+```bash
+mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.bashrc   # ~/.zshrc on macOS, ~/.profile if you have no .bashrc
+```
+
+Open a new terminal so the new PATH applies.
 
 In Codex, approve the new hooks with `/hooks`. In Cursor, shell output and file contents are not scrubbed. What each agent supports: [docs/compat.md](https://github.com/usezn/zn/blob/main/docs/compat.md).
 
@@ -294,6 +305,8 @@ CONFIDENTIAL_INTERNAL_PROJECT_[A-Z0-9]+
 ```
 
 Each non-comment line is a pattern (matched without regard to case) unless it starts with `path:`, `secret:` or is the word `strict`. In `zn.config.json` the same patterns go in `bannedPatterns` and the paths in `forbiddenPaths`.
+
+These files are read by this npm package (CLI, agent hooks and the Node.js library). The Python package does not read them: there, use `strict=True` or `ZN_STRICT=1`.
 
 Patterns run in time proportional to the text, so a project file cannot make the hooks hang. That is why only this syntax is accepted: literal characters, `.`, classes such as `[a-z]` or `[^x]`, `\d \w \s`, `\b`, `^`, `$`, groups `( )` and `(?: )`, alternation `|`, and the quantifiers `?`, `*`, `+` and `{n}`, `{n,}`, `{n,m}` (counts up to 100). A pattern can be at most 500 steps long once its counts are expanded (for example `a{100}` is 100 steps), and all the patterns of a file together at most 600 steps, so that checking a long text stays fast; a file can hold at most 100 patterns and a pattern at most 500 characters. Matching ignores case for ASCII letters (a-z); letters of other scripts are matched as written. Backreferences, lookahead, lookbehind, named groups, `\p{...}` and a quantifier on a group that already contains one (such as `(a+)+`) are rejected.
 

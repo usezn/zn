@@ -16,6 +16,7 @@ const runner = require('../lib/hooks/runner');
 const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
 const { tempDir } = require('./helpers/tmp');
+const { budget } = require('./helpers/time_budget');
 
 const agy = getAdapter('antigravity');
 const HOME = process.env.HOME || '/home/u';
@@ -455,7 +456,7 @@ test('a long chain of cd stays linear: it finishes fast and asks past the cap, n
   const ms = Date.now() - t0;
   assert.equal(many.decision, 'force_ask');
   assert.match(many.reason, /changes folders too many times/);
-  assert.ok(ms < 1000, 'took ' + ms + ' ms');
+  assert.ok(ms < budget(1000), 'took ' + ms + ' ms');
   // a chain with a search path that is not a recursive search is not blocked by the cap
   assert.equal((await shell(chain(40, 'ls'))).decision, 'allow');
   // exactly at the cap (32 cd = 64 candidate folders) the search is still followed: clean folder allows
@@ -506,7 +507,7 @@ test('a very long line is not allowed unread, and an unknown cd folder or a ~ pa
   assert.equal((await shell(longLine)).decision, 'force_ask');
   assert.equal((await shell('cd d0 && '.repeat(260) + 'cd config && grep -rn AWS .')).decision, 'force_ask');
   assert.equal((await shell(':;'.repeat(600))).decision, 'force_ask');
-  assert.ok(Date.now() - t0 < 1000, 'took ' + (Date.now() - t0) + ' ms');
+  assert.ok(Date.now() - t0 < budget(1000), 'took ' + (Date.now() - t0) + ' ms');
   assert.equal((await shell(':;'.repeat(100) + ' grep -rn AWS config')).decision, 'force_ask'); // still read, and config holds .env
   assert.equal((await shell(':;'.repeat(100) + ' ls')).decision, 'allow');
   // a cd to a variable or a substitution leaves the folder unknown: the next recursive search asks

@@ -165,6 +165,7 @@ for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]
     assert.deepEqual(JSON.parse(r.stdout), { hookSpecificOutput: { permissionDecision: 'deny' } });
   });
 
+  // The home of the runner on Windows comes from USERPROFILE, not HOME: without it the runner looked in another home, saw no zn state and allowed the read (the launcher then exited 0 with no output, which is not a launcher gap).
   test('posix launcher (' + name + '): the Daybreak case: the real runner cannot write its answer (EPIPE), so the launcher blocks instead of accepting status 0', { skip: skipUnlessPosixSh(EPIPE_ON_WINDOWS) }, async (t) => {
     const dir = tempDir(t, 'zn-ov-real-');
     const file = path.join(dir, 'launcher.sh');
@@ -172,7 +173,7 @@ for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]
     const home = tempDir(t, 'zn-ov-home-');
     fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
     const r = await new Promise((resolve) => {
-      const child = spawn('/bin/sh', [file, 'PreToolUse'], { env: { PATH: process.env.PATH, HOME: home, ZN_STATS: 'off' }, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawn('/bin/sh', [file, 'PreToolUse'], { env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home, ZN_STATS: 'off' }, stdio: ['pipe', 'pipe', 'pipe'] });
       child.stdout.destroy();
       let stderr = '';
       child.stderr.on('data', (b) => { stderr += b; });
@@ -259,7 +260,7 @@ for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]
     const home = tempDir(t, 'zn-ov-home-');
     fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
     const run = (closeRead) => new Promise((resolve) => {
-      const child = spawn('/bin/sh', [file, 'PreToolUse'], { env: { PATH: bin + ':/usr/bin:/bin', HOME: home, ZN_STATS: 'off' }, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = spawn('/bin/sh', [file, 'PreToolUse'], { env: { PATH: bin + ':/usr/bin:/bin', HOME: home, USERPROFILE: home, ZN_STATS: 'off' }, stdio: ['pipe', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
       if (closeRead) child.stdout.destroy();
@@ -391,6 +392,7 @@ for (const [mode, opts, edit] of MODES) {
   }
 }
 
+// POSIX only: Node cannot send TERM on Windows (child.kill is TerminateProcess, so the launcher's trap never runs). A TERM sent from inside Git Bash does reach it (measured on Windows: the launcher blocks with exit 2).
 test('posix launcher, no deadline: a TERM while the hook runs answers with the block and removes the private files', { skip: skipUnlessPosixSh(TERM_ON_WINDOWS) }, async (t) => {
   const tmp = tempDir(t, 'zn-ov-clean-term-');
   const file = writeScript(t, 'claude-code', "setTimeout(() => { require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); }, 800);\n");
@@ -449,6 +451,7 @@ for (const [mode, opts, edit] of MODES) {
   });
 }
 
+// POSIX only: Node cannot send TERM on Windows (child.kill is TerminateProcess, so the launcher's trap never runs). A TERM sent from inside Git Bash does reach it (measured on Windows: the launcher blocks with exit 2).
 test('posix launcher with a deadline: a TERM with `.` first on the PATH runs no planted command', { skip: skipUnlessPosixSh(TERM_ON_WINDOWS) }, async (t) => {
   const { proj, mark } = plantProject(t);
   const tmp = tempDir(t, 'zn-ov-planted-term-');

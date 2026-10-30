@@ -17,6 +17,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Remove zn-gate](uninstall.md) | Uninstall in one step or piece by piece, run from your own terminal | Everyone |
 | [First project walkthrough](examples/first-project-walkthrough.md) | One example project from install to uninstall, with fake values | Newcomers |
 | [Command line reference](cli.md) | Every command, option and exit code | Everyone |
+| [Exit codes](exit-codes.md) | The exit code of every command, on one page | Everyone |
 | [Command cheat sheet](commands-cheatsheet.md) | Every command, its main flags and one example, on one page | Everyone |
 
 ## Everyday use
@@ -29,6 +30,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Reach](reach.md) | What the coding agents on your machine can reach (secrets by name, credential files, MCP servers) | Everyone |
 | [Report](report.md) | A weekly summary of what zn-gate blocked and hid | Everyone |
 | [Examples: stats and report](examples/stats-and-report.md) | Worked examples of `stats` and `report` with sample output | Everyone |
+| [Example: Node.js API](examples/node-api.md) | Install and one short example per call of the Node.js API, with fake values | Developers |
 | [Audit](audit.md) | Review a repository's agent configuration before you open it | Developers, reviewers |
 | [Connect](connect.md) | Turn on the optional cloud check, and turn it off | Anyone who opts in |
 | [Agent compatibility](compat.md) | What the scrubber can do in each agent | Everyone choosing or configuring an agent |
