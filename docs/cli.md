@@ -218,9 +218,10 @@ Exit codes: `0` nothing at or above `--fail-on`, `1` findings at or above it, `2
 
 ```bash
 zn-gate reach [path] [--json | --sarif] [--fail-on high|medium|low|none] [--remember]
+zn-gate reach --history [--json] [--max-seconds N]
 ```
 
-Shows what your coding agents can reach from a folder: secrets (names only), credential files and MCP servers. Read only, nothing is sent. [What it shows](reach.md).
+Shows what your coding agents can reach from a folder: secrets (names only), credential files and MCP servers. Read only, nothing is sent. [What it shows](reach.md). With `--history` it instead scans the local session histories of Claude Code and Codex for secrets they kept, and prints agent, file, secret type, count and the action to take, never a value. [History](reach.md#history-did-your-agents-keep-a-secret-of-yours).
 
 - `--fail-on`: default `none`, so it is a report.
 - `--remember`: keep this run's counts for the next run.

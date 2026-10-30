@@ -83,6 +83,155 @@ dropped. Any text from a repository that reaches the report (file names,
 titles, command lines) is passed through the same redaction as `zn audit`, and
 control characters are replaced, so a file name cannot change your terminal.
 
+## History: did your agents keep a secret of yours?
+
+```bash
+npx -y zn-gate reach --history
+npx -y zn-gate reach --history --json
+```
+
+Coding agents save your conversations on your disk, in plain text, and a key
+you pasted or a tool printed can sit there for weeks. `reach --history` reads
+those local history files and tells you which kinds of secret they hold, how
+many times, in which file, and what to do about it. It is for the "have my
+agents already seen my keys?" question, and it works on your whole home
+folder, not on one project, so it takes no folder.
+
+It is read only and offline. It writes no file, not even the evidence log, and
+it needs no account.
+
+### Where it looks
+
+Only files in your own home folder (and the folder you name with `CLAUDE_CONFIG_DIR` or `CODEX_HOME`), and only these:
+
+| Agent | Files |
+| --- | --- |
+| Claude Code | `~/.claude/projects/**/*.jsonl` (session transcripts) and `~/.claude/history.jsonl` (prompt history). `CLAUDE_CONFIG_DIR` is honoured wherever it points, also outside your home folder, because you chose that folder. |
+| Codex CLI | `~/.codex/sessions/**/*.jsonl` and `~/.codex/history.jsonl`. `CODEX_HOME` is honoured wherever it points, also outside your home folder. |
+| Cursor, OpenCode | Not scanned: they keep their history in a database, which this version does not read. The report says so. |
+| Gemini CLI, Copilot, Antigravity, ZCode | Not scanned yet: this version does not read their history. The report names each one, so an empty result is never a sign that nothing leaked there. |
+
+A link is never followed: a history file or folder that is a link is skipped
+and listed, so a link cannot make the scan read something you did not point it
+at. Files that are skipped because of a limit are listed too, with the limit:
+a folder nested more than 6 levels below the history folder, or more than
+50000 history files for one agent.
+
+### History: what it shows
+
+```text
+zn-gate reach --history: did your coding agents keep a secret of yours in their session history?
+Read: the local history files of your agents. Nothing was sent anywhere, nothing was changed, and no value is shown.
+
+  Claude Code  42 files, 318 MB scanned
+  Codex CLI    7 files, 12 MB scanned
+  Cursor       not scanned: its history is a database, which this version does not read
+  OpenCode     not scanned: its history is a database, which this version does not read
+  Gemini CLI   not scanned yet: this version does not read its history
+  Copilot      not scanned yet: this version does not read its history
+  Antigravity  not scanned yet: this version does not read its history
+  ZCode        not scanned yet: this version does not read its history
+
+CLAUDE CODE
+  ~/.claude/projects/-home-me-app/3f2a.jsonl
+    2 x AWS_KEY
+    Do this: Rotate this AWS access key in the AWS console (IAM), then delete this session file if you do not need it.
+
+2 secrets in 1 file.
+
+A key listed here may already be rotated. Check before you rotate.
+zn-gate cannot see what was already sent to your model provider.
+```
+
+The output has a closed vocabulary: the agent, the path of the file, the
+secret type (the same type names zn uses for markers, such as `AWS_KEY` or
+`GITHUB_TOKEN`), how many times it appears, and the action. It never shows a
+value, a part of a value, a prefix or a hash of one. Only secrets are
+counted, not personal data, and a value that zn already replaced with a marker
+(`__ZN_...__`) is not counted.
+
+It uses the same secret patterns as the scrubber. A pattern can match
+something that is not a live key, and a key can be already rotated: check
+before you rotate.
+
+### What it cannot tell you
+
+zn-gate reads your disk. It cannot see what was already sent to the company
+that runs your model, and it cannot delete anything there. Rotating a key
+makes the copy in a history file harmless. Deleting the session file removes
+the local copy only.
+
+### Big histories and the time limit
+
+Files are read in streaming mode, one line at a time, so a history of several
+hundred MB does not fill memory (a 300 MB file takes a few seconds). The scan
+stops after `--max-seconds` seconds (default 120, at most 3600), newest files
+first. When it stops, the report lists the files that were not fully scanned
+and never says that nothing was found. A line longer than 32 MB is skipped and
+its file is listed as partly scanned.
+
+### History: flags
+
+| Flag | Meaning |
+| --- | --- |
+| `--history` | Scan the agent histories instead of a folder. It cannot be combined with a folder, `--sarif`, `--fail-on` or `--remember`. |
+| `--json` | Print the result as JSON (schema below). |
+| `--max-seconds N` | Time limit, a whole number from 1 to 3600. Default 120. |
+
+Exit codes: `0` when the report was printed (also when secrets were found:
+read `totals.secrets`), `2` for a usage error or a failure.
+
+### JSON schema
+
+`--json` prints one object. Version 1 of this schema keeps these keys and
+meanings; a key is only added, never renamed or removed, within version 1.
+
+```json
+{
+  "tool": "zn-gate reach --history",
+  "version": 1,
+  "agents": [
+    { "id": "claude-code", "name": "Claude Code", "scanned": true, "reason": null, "files": 42, "bytes": 333447168 }
+  ],
+  "findings": [
+    { "agent": "claude-code", "file": "~/.claude/projects/-home-me-app/3f2a.jsonl", "type": "AWS_KEY", "count": 2,
+      "action": "Rotate this AWS access key in the AWS console (IAM), then delete this session file if you do not need it." }
+  ],
+  "incomplete": [
+    { "agent": "claude-code", "file": "~/.claude/projects/-home-me-app/9c1d.jsonl", "reason": "time-limit" },
+    { "agent": "claude-code", "file": "~/.claude/projects/a/b/c/d/e/f/g", "reason": "too-deep", "limit": 6 }
+  ],
+  "totals": { "files_scanned": 49, "bytes_scanned": 346030080, "files_with_secrets": 1, "secrets": 2, "files_not_reached": 0 },
+  "time_limit_hit": false,
+  "max_seconds": 120,
+  "elapsed_ms": 6100,
+  "notes": [
+    "A key listed here may already be rotated. Check before you rotate.",
+    "zn-gate cannot see what was already sent to your model provider."
+  ]
+}
+```
+
+- `agents[].id`: `claude-code`, `codex`, `cursor`, `opencode`, `gemini-cli`,
+  `copilot`, `antigravity`, `zcode`, always in this order. `scanned` is `false`
+  with `reason` `not-found` (no history folder), `database` (a database, not
+  readable by this version) or `not-yet` (supported, but its history is not
+  read yet); otherwise `reason` is `null`.
+  `files` and `bytes` are what was read.
+- `findings[]`: one entry per file and secret type, sorted by agent and then
+  by `count`, highest first. `file` starts with `~/`. `type` matches
+  `^[A-Z0-9_]+$`. `count` is the number of occurrences (an integer, 1 or
+  more). `action` is plain text for people; scripts should rely on `type`.
+- `incomplete[]`: files or folders not fully scanned. `reason` is `time-limit`,
+  `line-too-long`, `unreadable`, `symlink`, `too-deep` or `too-many-files`.
+  For the last two, `limit` is the limit that was hit (6 levels, 50000 files)
+  and `file` is the folder that was not read. `file` starts with `~/` when it
+  is inside your home folder, and is the full path otherwise (a config folder
+  you named outside it). At most 200 are listed.
+- `totals.files_not_reached`: files that were not started or were cut short
+  because of the time limit.
+- No finding ever holds a value, a fragment or a hash.
+
 ## Flags
 
 | Flag | Meaning |
@@ -92,6 +241,7 @@ control characters are replaced, so a file name cannot change your terminal.
 | `--sarif` | Print the report as SARIF 2.1.0 for code scanning. |
 | `--fail-on high\|medium\|low\|none` | Exit with code 1 when a finding of at least this severity is found. Default `none`: the report always exits 0. `info` findings never count. |
 | `--remember` | Keep this run's counts, so the next run can say what they were. See below. |
+| `--history` | Scan the local session histories of your agents instead of a folder. See [History](#history-did-your-agents-keep-a-secret-of-yours). |
 | `-h`, `--help` | Show the usage. |
 
 `--json` and `--sarif` cannot be used together.
