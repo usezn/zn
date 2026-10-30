@@ -129,3 +129,52 @@ updates:
     groups:
       lint-tooling:
         patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: "/.github/npm-cli"
+    target-branch: next
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      npm-cli:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # Example projects: grouped minor/patch updates, low limit so they do not
+  # crowd the PR queue.
+  - package-ecosystem: npm
+    directories:
+      - "/examples/langchain-js"
+      - "/examples/mastra-agent"
+      - "/examples/openai-agents-js"
+      - "/examples/vercel-ai-sdk"
+    target-branch: next
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      examples-npm:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directories:
+      - "/examples/ag2-agent"
+      - "/examples/crewai-agent"
+      - "/examples/dspy-agent"
+      - "/examples/google-adk-agent"
+      - "/examples/haystack-agent"
+      - "/examples/llamaindex-agent"
+      - "/examples/openai-agents-sdk"
+      - "/examples/pydantic-ai-agent"
+      - "/examples/semantic-kernel-agent"
+      - "/examples/smolagents-agent"
+    target-branch: next
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      examples-pip:
+        patterns: ["*"]
+        update-types: [minor, patch]
