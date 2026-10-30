@@ -281,7 +281,9 @@ function permissionAdvice({ prefix, env, todo, shell }) {
  */
 async function guide(opts = {}) {
   const env = opts.env || process.env;
-  const w = opts.write || ((s) => process.stdout.write(s));
+  const { winCommandText } = require('./zn-command');
+  const out = opts.write || ((s) => process.stdout.write(s));
+  const w = (s) => out(winCommandText(s));
   const tty = require('./broker/tty');
   const stdin = opts.stdin || process.stdin;
   const agent = tty.agentDetected(env, opts);
