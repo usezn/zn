@@ -309,6 +309,7 @@ We only publish numbers we can reproduce, with the method next to them.
 - `ZN_API_KEY`: API key from [usezn.com/dashboard](https://usezn.com/dashboard/). No effect without `ZN_CLOUD=1`.
 - `ZN_LOCAL_ONLY`: `true` forces local-only.
 - `ZN_STRICT`: `1` also blocks the rules that only warn by default (same as `evaluate(text, strict=True)`; also `check_tool_call`, `check_tool_result` and `sanitize_tool_result` take `strict=True`).
+- Project files: this package does not read `.znrules` or `zn.config.json`. Custom rules and the `strict` setting in those files apply only to the npm package (its CLI, agent hooks and Node.js library). In Python, turn strict mode on with `strict=True` or `ZN_STRICT=1`.
 - `ZN_STAGE` / `ZN_API_URL`: cloud endpoint selection.
 - `NO_COLOR` (any non-empty value) or `TERM=dumb`: the command line output leaves out its symbols; the status words (ALLOW, BLOCK, clean, ...) stay.
 
