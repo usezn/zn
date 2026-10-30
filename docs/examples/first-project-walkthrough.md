@@ -6,6 +6,8 @@ Run every command in your own terminal, not through your agent.
 
 ## 1. Install
 
+Undo: remove zn-gate in step 6, or see [Remove zn-gate](../uninstall.md).
+
 ```bash
 cd ~/projects/example-shop
 npx -y zn-gate init
@@ -15,6 +17,8 @@ npx -y zn-gate init
 
 ## 2. Check that it works
 
+Undo: nothing to undo; `check` deletes its temporary folder itself.
+
 ```bash
 npx -y zn-gate check
 ```
@@ -22,6 +26,8 @@ npx -y zn-gate check
 It makes a temporary folder with a fake key in a `.env` file, asks your agent's hook to read it, and deletes the folder. `OK` next to your agent means it is protected. More: [check](../check.md).
 
 ## 3. Move a `.env` file into the vault
+
+Undo: put the values back with `env unshadow` in step 6.
 
 Say `~/projects/example-shop/.env` holds this fake value:
 
@@ -41,6 +47,8 @@ The real values go into the encrypted vault and `.env` keeps markers such as `__
 
 ## 4. Work with your agent
 
+Undo: nothing to undo here; to stop zn from watching your agent, remove it in step 6.
+
 - If your agent tries to read a secret file such as `.env`, zn blocks it and the message says what to do next.
 - If a command uses a marker, for example one that sends `__ZN_EXAMPLE_TOKEN__` to `https://example.com/api`, zn asks you to approve it first. Read the command and approve it only if it is what you expected.
 - A warning (an `advisory`) goes to your agent, not to your screen, and does not block anything unless you turn on strict mode.
@@ -49,6 +57,8 @@ Full examples of each message: [First 5 minutes](../first-5-minutes.md#3-what-yo
 
 ## 5. Look before you remove
 
+Undo: nothing to undo; `--dry-run` changes nothing.
+
 To list what zn-gate set up without changing anything:
 
 ```bash
@@ -56,6 +66,8 @@ npx -y zn-gate uninstall --dry-run
 ```
 
 ## 6. Put the values back and uninstall
+
+Undo: deleting the vault cannot be undone, so answer no to that question if unsure; see [Remove zn-gate](../uninstall.md#your-env-files-and-the-vault).
 
 Put the real values back into `.env` first, with the name of the encrypted copy that `env shadow` printed in step 3:
 
