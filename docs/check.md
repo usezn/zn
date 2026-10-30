@@ -12,7 +12,7 @@ npx -y zn-gate check
 
 zn-gate makes a temporary folder with two files: a `.env` file that holds a fake key (`ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key`) and an ordinary `README.txt`. For each agent set up for your user, it asks zn's hook to let the agent read each file, the same way your agent asks. An agent counts as protected only when the `.env` file is blocked and the ordinary file is allowed.
 
-- **Claude Code**: zn-gate checks the zn-gate plugin, or the hooks of `zn hooks install claude-code`. It also notices when the plugin is turned off and when a Claude Code setting turns hooks off. If your hooks were installed by an older zn-gate and lack the check for typed skills and commands, it suggests running `zn hooks install claude-code` again.
+- **Claude Code**: zn-gate checks the zn-gate plugin, or the hooks of `zn hooks install claude-code`. It also notices when the plugin is turned off and when a Claude Code setting turns hooks off. If your hooks were installed by an older zn-gate and lack the check for typed skills and commands, it suggests running `zn hooks install claude-code` again. When the plugin is a different version from the zn-gate command, it adds a note that says which one to update: the plugin (`claude plugin update zn-gate@usezn`) when it is older, or the command (`npm install -g zn-gate@latest`) when it is older. This alone does not make Claude Code NOT protected.
 - **Codex CLI and Cursor**: zn-gate checks the hooks of `zn hooks install`. A zn-gate plugin for Cursor is reported as **NOT protected** and is never run (see [Cursor plugin](#cursor-plugin)).
 - **What it runs**: for Claude Code, Codex CLI and Cursor it runs the hook that is installed, exactly as your agent would. For the Claude Code plugin, that is the PreToolUse command of the plugin's `hooks/hooks.json`, run the way Claude Code runs it (see [Claude Code plugin](#claude-code-plugin)). On Windows, a hook installed as `zn hook <agent>` is not started; zn-gate checks zn's rules for it instead and says so in the output. A hook that cannot start, or that blocks every file because part of zn is missing, is reported as **NOT protected**.
 - **OpenCode**: zn-gate checks zn's rules. The zn plugin runs inside OpenCode, so it is not started here.
@@ -438,6 +438,22 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
   ```
 
   `<file>` is `.github/copilot/settings.json` or `.github/copilot/settings.local.json` in the folder where you ran the check. Remove the setting, or ask whoever owns the repository.
+
+- **A note about your own Copilot settings.** It appears under an **OK** line, not as NOT protected:
+
+  ```text
+  your Copilot user settings have "disableAllHooks" turned on; the docs do not say whether that skips hook files, so check that zn still runs
+  ```
+
+  Your own Copilot settings file sets `disableAllHooks` to `true`. GitHub's documentation does not say whether that also skips hook files, so zn-gate cannot tell. If you did not set it on purpose, remove the line from that file, then run `zn-gate check` again.
+
+- **A warning when you install.** `zn hooks install copilot` prints this when zn's own hooks file had `disableAllHooks` turned on:
+
+  ```text
+  "disableAllHooks" was true in this file and was removed: it switched every hook of the file off.
+  ```
+
+  The install turned your protection back on. Nothing else to do. The other messages zn-gate prints are explained in [Troubleshooting](troubleshooting.md#block-and-warn-reasons-by-family).
 
 ### zn-gate could not finish the check
 
