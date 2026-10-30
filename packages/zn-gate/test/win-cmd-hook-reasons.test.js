@@ -50,3 +50,21 @@ test('antigravity install on win32: the install warnings name zn-gate.cmd check'
   assert.ok(posixText.includes('Run `zn-gate check` to see that the hook works.'));
   assert.ok(!posixText.includes('.cmd'));
 });
+
+// Prose stays as it is: win32 and linux launcher texts differ only between backticks.
+test('launcher texts on win32 differ from linux only inside backticks, for every agent', () => {
+  const spans = (s) => s.replace(/`[^`\n]+`/g, '``');
+  const ids = ['claude-code', 'codex', 'cursor', 'opencode', 'antigravity', 'zcode', 'copilot', 'gemini'];
+  let checked = 0;
+  for (const id of ids) {
+    let win; let lin;
+    try {
+      win = launcher.unixScript(id, '/usr/bin/node', '/x/runner.js', { platform: 'win32', runnerDigest: '' });
+      lin = launcher.unixScript(id, '/usr/bin/node', '/x/runner.js', { platform: 'linux', runnerDigest: '' });
+    } catch (e) { continue; }
+    assert.equal(spans(win), spans(lin), id + ': a sentence outside backticks changed on win32');
+    assert.match(win, /`[^`\n]*\.cmd[^`\n]*`/, id + ': a command in backticks names .cmd');
+    checked++;
+  }
+  assert.ok(checked >= 6);
+});
