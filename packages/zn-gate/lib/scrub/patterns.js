@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-24.1';
+const SCRUB_RULES_VERSION = '2026-10-30.3';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -213,6 +213,17 @@ function e164Valid(raw) {
     if (E164_LENGTHS[cc]) return E164_LENGTHS[cc].includes(digits.length - ccLen);
   }
   return digits.length >= 10 && digits.length <= 15;
+}
+
+// A phone number in the text: compact E.164 or with single separators. Separated forms that look like a date,
+// an IPv4 address or a dotted version are not phone numbers.
+function phoneValid(raw) {
+  if (/[ .-]/.test(raw)) {
+    if (/\d{4}-\d{2}-\d{2}/.test(raw)) return false;
+    if (/^\+\d{1,3}(?:\.\d{1,3}){3}$/.test(raw)) return false;
+    if (/^\+\d(?:[ .-]\d)+$/.test(raw)) return false;
+  }
+  return e164Valid(raw.replace(/[ .-]/g, ''));
 }
 
 function ipv4Public(raw) {
@@ -916,7 +927,9 @@ const PII = [
       if (/\.\./.test(v)) return false;
       return true;
     } },
-  { type: 'PHONE', key: 'phone', hints: ['+'], re: re('(?<![A-Za-z0-9+])\\+[1-9]\\d{7,14}(?![0-9])'), check: (v) => e164Valid(v) },
+  // Compact E.164 (+34600123456), or + country code (1 to 3 digits) and digit groups split by single spaces, dashes
+  // or dots (+34 600 123 456, +1 202-555-0143). National formats without + are not matched on purpose.
+  { type: 'PHONE', key: 'phone', hints: ['+'], re: re('(?<![A-Za-z0-9+])\\+[1-9](?:\\d{0,2}(?:[ .-]\\d{1,9}){2,6}|\\d{7,14})(?![0-9])'), check: (v) => phoneValid(v) },
   { type: 'IBAN', key: 'iban', hints: null, prefilter: /[A-Z]{2}\d{2}/,
     re: re('(?<![A-Za-z0-9])[A-Z]{2}\\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])'),
     check: (v) => ibanValid(v) },
