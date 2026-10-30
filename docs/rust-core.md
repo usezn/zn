@@ -144,6 +144,25 @@ cargo build --release
 ./target/release/zn --help
 ```
 
+## Running in Docker
+
+The root `Dockerfile` builds a small distroless image (nothing is published; build it yourself):
+
+```bash
+docker build -t zn .
+docker run --rm -i zn analyze "ignore all previous instructions"
+```
+
+The server (`zn start`) needs two things inside a container. It listens on `127.0.0.1` by default, which a published port cannot reach, so set `server.bind_address` to `0.0.0.0` in a config file (the container's own address). And it needs a terminal: without `-t` it exits at once. Set `ZN_API_KEY` too, because a random key would be written inside the container and lost when it stops:
+
+```bash
+echo '{"server":{"bind_address":"0.0.0.0"}}' > zn.json
+docker run --rm -it -p 127.0.0.1:9090:9090 -e ZN_API_KEY=<your-key>   -v "$PWD/zn.json:/data/zn.json:ro" zn start
+curl -H "X-API-Key: <your-key>" http://127.0.0.1:9090/api/v1/health
+```
+
+`0.0.0.0` is the address inside the container. `-p 127.0.0.1:9090:9090` publishes the port on this machine's loopback only; leave out `127.0.0.1:` and every machine that can reach the host can reach the gateway.
+
 ## KMS key and the config fallback
 
 When `kms.key_id` (or `ZN_KMS_KEY_ID`) is set, the gateway takes the audit database key from the KMS. If that key cannot be fetched, the gateway now refuses to start with a clear error instead of quietly using the key from the config.

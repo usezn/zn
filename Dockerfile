@@ -3,7 +3,13 @@
 #
 # Build:  docker build -t zn .
 # Smoke:  docker run --rm -i zn analyze "ignore all previous instructions"
-# Server: docker run --rm -p 9090:9090 zn start
+# Server: the gateway listens on 127.0.0.1 by default, which a published port cannot
+#         reach, and `start` needs a terminal (-t) or it exits at once. Set the bind
+#         address in a config file and choose an API key:
+#           echo '{"server":{"bind_address":"0.0.0.0"}}' > zn.json
+#           docker run --rm -it -p 127.0.0.1:9090:9090 -e ZN_API_KEY=<your-key> #             -v "$PWD/zn.json:/data/zn.json:ro" zn start
+#         0.0.0.0 is the address inside the container; -p 127.0.0.1:9090:9090 keeps
+#         the port reachable from this machine only.
 
 # --- Stage 1: build ----------------------------------------------------------
 # Base images are pinned by multi-arch index digest; Dependabot (docker) updates the digests.
@@ -31,7 +37,9 @@ COPY src ./src
 RUN cargo build --locked --release
 
 # --- Stage 2: runtime --------------------------------------------------------
-FROM gcr.io/distroless/cc-debian12@sha256:e5d81ddde149641e2a9ba55be4545bc125c67de07508b03ba4c22e6eb0ded5aa
+# Debian 13 (trixie) distroless: the Debian 12 images are no longer rebuilt, so they keep
+# an unpatched libssl3. The binary is built on bookworm (older glibc) and runs unchanged here.
+FROM gcr.io/distroless/cc-debian13@sha256:d74d144baa124dd9defd01d71872bb56c49d4441dba6153ccf790364f97e64b1
 
 COPY --from=builder /build/target/release/zn /zn
 
