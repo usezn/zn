@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-30.1';
+const POLICY_RULES_VERSION = '2026-10-31.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1379,6 +1379,67 @@ const LINK_WRAPPERS = new Set(['env', 'sudo', 'doas', 'command', 'exec', 'nohup'
  * The options are read only from that command's own words. A link made some other way (an interpreter) is not seen here;
  * a link that already exists is followed instead (physicalDotDot, cdBasesOf).
  */
+/* Shell words that can stand before a command in the same simple command (then curl ..., ! curl ...). */
+const PROGRAM_KEYWORDS = new Set(['then', 'do', 'else', '!', '{', 'if', 'while', 'until', 'elif']);
+
+/* The program a simple command runs: the first word that is not an assignment, a shell keyword or a wrapper (sudo, env,
+   nohup, timeout 5, stdbuf -o0...: the shared GIT_WRAPPERS table, with their options and values skipped by skipWrapper).
+   Returns {name, at} (the lower-case name without .exe, and its index in `group`) or null. */
+function programOfGroup(group) {
+  let k = 0;
+  for (let guard = 0; guard < 64 && k < group.length; guard++) {
+    const t = String(group[k].text).replace(/^\(+/, '');
+    if (!t || ASSIGNMENT_RE.test(t) || PROGRAM_KEYWORDS.has(t)) { k++; continue; }
+    const name = programName(t.replace(/^[\\]+/, ''));
+    if (Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, name)) { k = skipWrapper(group, k, name); continue; }
+    return { name, at: k };
+  }
+  return null;
+}
+
+/* The words after `curl` in a command are marked (`curl`), and the one after --data-urlencode or --variable (`urlencode`):
+   they may name a file to send as `@file`, `name=@file`, `name=<file` or `name@file`. */
+function markCurlWords(readings) {
+  for (const r of readings) {
+    let i = 0;
+    while (i < r.length) {
+      let j = i;
+      while (j < r.length && r[j].seq === r[i].seq) j++;
+      const group = r.slice(i, j);
+      const prog = programOfGroup(group);
+      if (prog && prog.name === 'curl') {
+        for (let m = prog.at + 1; m < group.length; m++) {
+          group[m].curl = true;
+          if (group[m - 1] && (group[m - 1].text === '--data-urlencode' || group[m - 1].text === '--variable')) group[m].urlencode = true;
+        }
+      }
+      i = j;
+    }
+  }
+}
+
+/* The file a curl data or form value reads: @file, name=@file and name=<file (and name@file after --data-urlencode),
+   without the ;type= and ;filename= parameters of a form field. null when the value is plain data. */
+function curlFileOf(value, urlencode) {
+  let v = String(value);
+  const named = /^[^=@<;'"]*=([@<].*)$/.exec(v);
+  if (named) v = named[1];
+  else if (urlencode) {
+    const m = /^[^=@]*@(.+)$/.exec(v);
+    if (m) v = '@' + m[1];
+  }
+  if (v[0] !== '@' && v[0] !== '<') return null;
+  v = v.slice(1);
+  if (v[0] === '"') {
+    const end = v.indexOf('"', 1);
+    v = v.slice(1, end > 0 ? end : undefined);
+  } else {
+    const semi = v.indexOf(';');
+    if (semi >= 0) v = v.slice(0, semi);
+  }
+  return v || null;
+}
+
 function markLinkWords(readings) {
   for (const r of readings) {
     let i = 0;
@@ -2404,6 +2465,7 @@ function bashDenialOf(cmd, opts = {}) {
   opts.cdBases = cdBasesOf(readings, opts);
   opts.elsewhere = new Map();
   markLinkWords(readings);
+  markCurlWords(readings);
   const mentionsAgents = /\.agents/i.test(text);
   const makesLink = words.some((x) => x.link === true);
   if (overBudget(opts.budget, 0)) return TOO_SLOW_MESSAGE;
@@ -2429,12 +2491,20 @@ function bashDenialOf(cmd, opts = {}) {
       const eq = text.indexOf('=');
       // git log -L<range>:<file> names a file after the colon.
       const lineRange = w.git ? /^-L[^:]*:(.+)$/.exec(text) : null;
+      // curl -d@.env, -sd@.env, -Ff=@.env: the value is glued to the option letter.
+      const glued = w.curl && eq < 0 && !text.startsWith('--') ? /^-[A-Za-z]*?[dF](.+)$/.exec(text) : null;
       if (lineRange) text = lineRange[1];
+      else if (glued) text = glued[1];
       else if (eq < 0) continue;
       else text = text.slice(eq + 1);
     } else if (NAME_VALUE_RE.test(text)) {
       // name=value carries a path too (dd if=.env, ENV_FILE=.env).
       text = text.slice(text.indexOf('=') + 1);
+    }
+    // curl -d @.env, --json @.env, -F f=@.env, -F f=<.env: the file is sent as the body of the request.
+    if (w.curl && text) {
+      const file = curlFileOf(text, w.urlencode === true);
+      if (file) text = file;
     }
     if (!text) continue;
     // A git pathspec with magic names the path after it.
