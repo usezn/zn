@@ -45,6 +45,7 @@ const { SCRUB_RULES_VERSION } = require('../lib/scrub/patterns');
 const { AUDIT_RULES_VERSION } = require('../lib/audit/rules');
 const { styles, sym, ruleLine } = require('../lib/term');
 const mcpSecrets = require('../lib/mcp-secrets');
+const { fsErrorText, humanError } = require('../lib/errors');
 const { pruneInfo, SCAN_DIRS } = require('../lib/prune');
 const { safeText } = require('../lib/audit/report');
 // Colors are decided once per run: NO_COLOR, TERM=dumb or a stdout that is not a terminal turn them off.
@@ -1067,7 +1068,12 @@ ${ruleLine(process.env, 60)}\n`);
       const res = exportEvidenceLedger(EVIDENCE_FILE, format);
       if (!res.valid) process.stderr.write(`Tamper detected: ${res.error}\n${recoveryHint()}\n`);
       if (options.output) {
-        fs.writeFileSync(options.output, res.content, 'utf8');
+        try {
+          fs.writeFileSync(options.output, res.content, 'utf8');
+        } catch (err) {
+          process.stderr.write((fsErrorText(err, options.output) || humanError(err)) + '\n');
+          process.exit(1);
+        }
         process.stdout.write(`Exported ${res.total} audit records to ${options.output} (Integrity: ${res.valid ? 'VALID' : 'TAMPERED'}).\n`);
       } else {
         process.stdout.write(res.content);
@@ -1271,6 +1277,6 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
 }
 
 main().catch((err) => {
-  process.stderr.write(`[zn-gate] Fatal error: ${err.message}\n`);
+  process.stderr.write(humanError(err) + '\n');
   process.exit(1);
 });
