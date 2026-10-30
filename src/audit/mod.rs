@@ -15,6 +15,9 @@ mod kat_tests;
 #[cfg(test)]
 mod entry_vault_tests;
 
+#[cfg(test)]
+mod failure_tests;
+
 use crate::metrics;
 use aes_gcm::{
     aead::{Aead, KeyInit, Payload},
