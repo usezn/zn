@@ -1,7 +1,8 @@
 name: Dependency and license review
 
-# Informational for now: every job only reports (job summary and warnings) and
-# none of them can fail the workflow. They are not meant to be required checks.
+# Informational for now: every job except the cargo deny bans and sources step
+# only reports (job summary and warnings). That step fails on a banned crate or
+# an unknown registry or git source. None of them are meant to be required checks.
 # Known vulnerabilities in the Rust tree stay with `cargo audit` in rust.yml;
 # this workflow adds the review of new dependencies in a pull request and the
 # license checks.
@@ -85,11 +86,10 @@ jobs:
           comment-summary-in-pr: never
 
   cargo-deny:
-    name: cargo deny (licenses and bans, informational)
+    name: cargo deny (bans and sources block, licenses informational)
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
@@ -102,31 +102,31 @@ jobs:
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: cargo-deny@0.20.2
-      - name: cargo deny
+      # Licenses stay informational: findings become a warning and a summary.
+      - name: cargo deny licenses (informational)
         run: |
           set +e
-          cargo deny --locked check --hide-inclusion-graph licenses bans sources > deny-report.txt 2>&1
+          cargo deny --locked check --hide-inclusion-graph licenses > deny-licenses.txt 2>&1
           status=$?
           set -e
           {
-            echo "### cargo deny (licenses, bans, sources)"
+            echo "### cargo deny (licenses, informational)"
             echo
             echo "Exit status: $status. Rules and allowed licenses: \`deny.toml\`."
             echo
-            echo "Findings by kind:"
-            echo '```text'
-            grep -E '^(error|warning)' deny-report.txt | sed -E "s/ '[^']*'$//; s/ [0-9]+ duplicate/ N duplicate/" | sort | uniq -c | sort -rn
-            echo '```'
-            echo
             echo "Licenses outside the allowlist:"
             echo '```text'
-            grep -E -A6 '^error\[rejected\]' deny-report.txt | grep -E 'Cargo.toml:|license =' | sed -E 's#.*/([^/]+)/Cargo.toml:.*#\1#; s#.*license = #  #' | paste -d' ' - -
+            grep -E -A6 '^error\[rejected\]' deny-licenses.txt | grep -E 'Cargo.toml:|license =' | sed -E 's#.*/([^/]+)/Cargo.toml:.*#\1#; s#.*license = #  #' | paste -d' ' - -
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          cat deny-report.txt
+          cat deny-licenses.txt
           if [ "$status" -ne 0 ]; then
-            echo "::warning title=cargo deny::licenses, bans or sources need a look; see the job summary"
+            echo "::warning title=cargo deny licenses::licenses outside the allowlist; see the job summary"
           fi
+      # Bans and sources block: a banned crate or an unknown registry or git source fails the job.
+      # Advisories are not checked here (deny.toml leaves them out); cargo audit in rust.yml covers them.
+      - name: cargo deny bans and sources (blocking)
+        run: cargo deny --locked check --hide-inclusion-graph bans sources
 
   npm-licenses:
     name: npm licenses (zn-gate, informational)
