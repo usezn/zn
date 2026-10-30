@@ -71,7 +71,8 @@ def test_long_cd_chain_is_followed_in_one_pass_and_fails_closed_above_the_cap():
     deep = check_command("cd ~ && " + "cd subfolder && " * 13000 + "ls")
     assert deep.verdict == "block" and deep.rule == "destructive:too_many_commands"
     deep_var = check_command("cd $WORK && " + "cd a && cd .. && " * 9000 + "rm -rf .")
-    assert deep_var.verdict == "block"
+    # A folder named by a variable is not followed past its own name; the same chain stays allowed, like cd "$BUILD_DIR" && rm -rf .
+    assert deep_var.verdict == "allow"
     assert time.time() - t0 < 30
 
 
@@ -81,3 +82,27 @@ def test_cmd_exe_cd_d_and_trailing_separator_are_followed():
         assert check_command(c).verdict == "block", c
     for c in ["cd /d C:\\build && rd /s /q .", "cd C:\\build\\ && rd /s /q .", "cd /d C:\\build\\out && rd /s /q ."]:
         assert check_command(c).verdict == "allow", c
+
+
+def test_the_cost_of_a_cd_does_not_depend_on_the_length_of_the_folder():
+    import time
+    t0 = time.time()
+    folder = "/" + "abcdefgh/" * 450
+    cmd = "cd " + folder + " && " + "cd b && cd .. && " * 11000 + "rm -rf ."
+    assert len(cmd) < 200000
+    assert check_command(cmd).verdict == "allow"
+    assert time.time() - t0 < 3
+
+
+def test_a_relative_target_that_climbs_out_of_a_known_folder_is_judged_from_there():
+    for c in ["cd ~/projects && rm -rf ../*", "cd ~/projects && find .. -delete", "cd C:\\Users\\alice\\projects && rd /s /q ..",
+              "cd ~/projects/app && rm -rf ../.."]:
+        assert check_command(c).verdict == "block", c
+    for c in ["cd ~/projects/app && rm -rf ../build", "cd ~/projects && rm -rf ../projects/old", "cd C:\\Users\\alice\\projects && rd /s /q ..\\build"]:
+        assert check_command(c).verdict == "allow", c
+
+
+def test_a_folder_that_steps_above_home_or_a_drive_root_stays_protected():
+    for c in ["cd ~/../.. && cd home/bob && rm -rf .", "cd ~ && cd ../.. && cd home/bob && rm -rf .", "cd ~/../.. && cd Users/bob && rd /s /q .",
+              "cd %USERPROFILE%\\..\\.. && cd Windows\\System32 && rd /s /q ."]:
+        assert check_command(c).verdict == "block", c

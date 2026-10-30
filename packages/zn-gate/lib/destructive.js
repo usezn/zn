@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-30.1';
+const COMMAND_RULES_VERSION = '2026-10-30.6';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -135,20 +135,60 @@ const NOT_CD = Symbol('not-cd');
 // A folder path longer than this (after "." and ".." are resolved) is not followed: the line is refused instead.
 const MAX_CWD_CHARS = 4096;
 const CWD_OVERFLOW = Symbol('cwd-overflow');
+// A folder that stepped above the home folder or a drive root is unknown, and treated as protected for the rest of the line.
+const CWD_LOST = Symbol('cwd-lost');
 
-/* One lexical pass over a folder path: backslashes become "/", repeated and trailing separators and "." segments go,
-   and ".." is resolved where the path starts at a known point. A bare root ("/", "C:/") keeps its separator. */
-function normCwd(p) {
-  // On Windows a folder written with a trailing backslash before a space reaches this point as a trailing space.
-  let t = String(p).replace(/\s+$/, '').replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/(?:\/\.)+(?=\/|$)/g, '');
-  t = resolveDots(t);
-  if (t.length > 1 && t.endsWith('/') && !/^[A-Za-z]:\/$/.test(t)) t = t.slice(0, -1);
-  return t || '/';
+/* The folder a line has reached is kept as an immutable chain: an anchor (the root, a drive, a home word) and the
+   segments below it, newest first. A cd adds or drops one segment, so the cost of a step does not depend on how long
+   the folder is. kind is 'root', 'drive', 'home' or 'other' (a variable or ~user the line cannot see through). */
+function folderRoot(kind, a) { return { kind, a, up: null, seg: '', n: 0, len: a.length }; }
+
+/* One step from folder `f` (a chain, CWD_LOST or null): a segment name, "." or "..". Returns the new folder, CWD_LOST,
+   null (unknown) or CWD_OVERFLOW. */
+function folderStep(f, seg) {
+  if (f === null || f === CWD_LOST || f === CWD_OVERFLOW) return f;
+  if (seg === '' || seg === '.') return f;
+  if (seg === '..') {
+    if (f.n > 0) return f.up;
+    if (f.kind === 'home') return CWD_LOST;
+    return f.kind === 'other' ? null : f;
+  }
+  const len = f.len + seg.length + 1;
+  if (len > MAX_CWD_CHARS) return CWD_OVERFLOW;
+  return { kind: f.kind, a: f.a, up: f, seg, n: f.n + 1, len };
 }
 
-/* The working folder a cd or pushd leaves behind, as the path text to join relative words to: a string, or null when
-   it cannot be known (cd -, a relative folder from an unknown place, popd). `cwd` is the folder before the command
-   (null = unknown). Returns NOT_CD when the words are not a directory change. */
+function folderWalk(f, path) {
+  for (const seg of path.split('/')) {
+    f = folderStep(f, seg);
+    if (f === null || f === CWD_LOST || f === CWD_OVERFLOW) return f;
+  }
+  return f;
+}
+
+/* The folder an anchored word names (absolute, drive, home or variable). */
+function folderOf(word) {
+  const t = String(word).replace(/\s+$/, '').replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+  const drive = /^[A-Za-z]:(?:\/|$)/.exec(t);
+  if (t.startsWith('/')) return folderWalk(folderRoot('root', '/'), t.slice(1));
+  if (drive) return folderWalk(folderRoot('drive', t.slice(0, 2) + '/'), t.slice(drive[0].length));
+  const first = t.split('/')[0];
+  return folderWalk(folderRoot(HOME_WORDS.has(first.toLowerCase()) ? 'home' : 'other', first + '/'), t.slice(first.length + 1));
+}
+
+/* The text of the last `m` segments of folder `f`, as a path; when segments are left out it starts at a made-up anchor. */
+function folderText(f, m) {
+  const segs = [];
+  let g = f;
+  for (let i = 0; i < m && g.n > 0; i++, g = g.up) segs.push(g.seg);
+  segs.reverse();
+  const base = g.n > 0 ? '/__' : g.kind === 'root' ? '' : g.a.replace(/\/$/, '');
+  return base + (segs.length ? '/' + segs.join('/') : '');
+}
+
+/* The working folder a cd or pushd leaves behind: a folder chain, CWD_LOST, or null when it cannot be known (cd -, a
+   relative folder from an unknown place, popd). `cwd` is the folder before the command (null = unknown). Returns NOT_CD
+   when the words are not a directory change. */
 function cdTarget(args, cwd) {
   if (!args.length) return NOT_CD;
   const head = programName(args[0]);
@@ -158,21 +198,24 @@ function cdTarget(args, cwd) {
   let ops = args.slice(1).filter((w) => (!/^-[A-Za-z]+$/.test(w) || w === '-') && !((head === 'cd' || head === 'chdir') && /^\/d$/i.test(w)));
   if (ops[0] === '--') ops = ops.slice(1);
   // A bare cd goes home; a bare pushd swaps directories, which is not known here.
-  if (!ops.length) return head === 'pushd' || head === 'push-location' ? null : '~';
+  if (!ops.length) return head === 'pushd' || head === 'push-location' ? null : folderOf('~');
   const t = ops[0];
   if (t === '-') return null;
   // Anchored words (absolute, drive, home or variable) name the folder on their own; a relative word follows the old folder.
-  const to = ANCHORED_RE.test(t) ? t : cwd === null || cwd === undefined ? null : cwd + '/' + t;
-  if (to === null) return null;
-  const norm = normCwd(to);
-  return norm.length > MAX_CWD_CHARS ? CWD_OVERFLOW : norm;
+  if (ANCHORED_RE.test(t)) return folderOf(t);
+  if (cwd === null || cwd === undefined) return null;
+  return folderWalk(cwd, String(t).replace(/\s+$/, '').replace(/\\/g, '/'));
 }
 
-/* A word read from the folder `cwd`: relative words are joined to it, anchored words are kept. */
+/* A word read from the folder `cwd`: relative words are joined to it, anchored words are kept. Only as many trailing
+   segments of the folder as the word's ".." can reach (plus four) are written out: a protected folder is at most three
+   segments deep, so the rest cannot change the answer. */
 function fromCwd(cwd, word) {
   const w = String(word);
   if (!cwd || !w || ANCHORED_RE.test(w)) return w;
-  return cwd.replace(/[\\/]+$/, '') + '/' + w;
+  if (cwd === CWD_LOST) return '/';
+  const ups = w.split(/[\\/]/).filter((s) => s === '..').length;
+  return folderText(cwd, ups + 4) + '/' + w;
 }
 
 /* The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...). */
@@ -517,22 +560,17 @@ function checkPipeline(pipe) {
 let ENABLED = null;
 function on(rule) { return ENABLED === null || ENABLED.has(rule); }
 
-/* `cwd0` is the folder a cd or pushd earlier in the same command line moved to, kept only while it is a protected one
-   (home, the root, a system folder). A cd inside a pipeline or a background command runs in a subshell and does not count. */
+/* `cwd0` is the folder a cd or pushd earlier in the same command line moved to (null = unknown). A cd inside a pipeline or a background command runs in a subshell and does not count. */
 function checkSegments(segs, depth, cwd0 = null) {
   let pipe = [];
-  let known = cwd0; // the folder as text, or null when unknown
-  let cwd = cwd0; // the same, only while it is protected
+  let known = cwd0; // the folder reached so far: a chain, CWD_LOST, or null when unknown
   for (const seg of segs) {
-    const hit = checkSimple(seg.words, depth, cwd);
+    const hit = checkSimple(seg.words, depth, known);
     if (hit) return hit;
     if (seg.sep !== '|' && seg.sep !== '|&' && seg.sep !== '&') {
       const to = cdTarget(unwrap(seg.words), known);
       if (to === CWD_OVERFLOW) return OVERFLOW;
-      if (to !== NOT_CD) {
-        known = to;
-        cwd = known !== null && dangerousPath(known) ? known : null;
-      }
+      if (to !== NOT_CD) known = to;
     }
     pipe.push(seg);
     if (!isPipe(seg.sep)) {

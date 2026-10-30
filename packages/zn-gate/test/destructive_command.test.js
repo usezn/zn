@@ -238,7 +238,8 @@ test('a long chain of cd is followed in one pass and fails closed above the fold
   assert.equal(deep.verdict, 'block');
   assert.equal(deep.rule, 'destructive:too_many_commands');
   const deepVar = checkCommand('cd $WORK && ' + 'cd a && cd .. && '.repeat(9000) + 'rm -rf .');
-  assert.equal(deepVar.verdict, 'block');
+  // A folder named by a variable is not followed past its own name; the same chain stays allowed, like cd "$BUILD_DIR" && rm -rf .
+  assert.equal(deepVar.verdict, 'allow');
   assert.ok(Date.now() - t0 < 30000, 'took ' + (Date.now() - t0) + ' ms');
 });
 
@@ -249,5 +250,33 @@ test('cmd.exe cd /d and a trailing separator are followed', () => {
   }
   for (const c of ['cd /d C:\\build && rd /s /q .', 'cd C:\\build\\ && rd /s /q .', 'cd /d C:\\build\\out && rd /s /q .']) {
     assert.equal(checkCommand(c).verdict, 'allow', c);
+  }
+});
+
+test('the cost of a cd does not depend on the length of the folder it is in', () => {
+  const t0 = Date.now();
+  // A folder near the length cap, then 11,000 pairs of cd down and up: each step must stay constant size.
+  const folder = '/' + 'abcdefgh/'.repeat(450);
+  const cmd = 'cd ' + folder + ' && ' + 'cd b && cd .. && '.repeat(11000) + 'rm -rf .';
+  assert.ok(cmd.length < 200000);
+  const res = checkCommand(cmd);
+  assert.equal(res.verdict, 'allow');
+  assert.ok(Date.now() - t0 < 1500, 'took ' + (Date.now() - t0) + ' ms');
+});
+
+test('a relative target that climbs out of a known folder is judged from there', () => {
+  for (const c of ['cd ~/projects && rm -rf ../*', 'cd ~/projects && find .. -delete', 'cd C:\\Users\\alice\\projects && rd /s /q ..',
+    'cd ~/projects/app && rm -rf ../..']) {
+    assert.equal(checkCommand(c).verdict, 'block', c);
+  }
+  for (const c of ['cd ~/projects/app && rm -rf ../build', 'cd ~/projects && rm -rf ../projects/old', 'cd C:\\Users\\alice\\projects && rd /s /q ..\\build']) {
+    assert.equal(checkCommand(c).verdict, 'allow', c);
+  }
+});
+
+test('a folder that steps above home or a drive root stays protected', () => {
+  for (const c of ['cd ~/../.. && cd home/bob && rm -rf .', 'cd ~ && cd ../.. && cd home/bob && rm -rf .', 'cd ~/../.. && cd Users/bob && rd /s /q .',
+    'cd %USERPROFILE%\\..\\.. && cd Windows\\System32 && rd /s /q .']) {
+    assert.equal(checkCommand(c).verdict, 'block', c);
   }
 });

@@ -107,6 +107,7 @@
   "cd /tmp && rm -rf .",
   "cd /var/tmp && rm -rf *",
   "cd C:/Users/alice/work/ && rm -rf .",
+  "cd C:\\Users\\alice\\projects && rd /s /q ..\\build",
   "cd C:\\build\\ && rd /s /q .",
   "cd build && rm -rf .",
   "cd dist && rm -rf *",
@@ -123,8 +124,12 @@
   "cd ~ && rm -rf .cache",
   "cd ~ && rm -rf projects/old-app/build",
   "cd ~ | rm -rf .",
+  "cd ~/projects && rm -rf ../projects/old",
+  "cd ~/projects/app && cd .. && rm -rf old-build",
   "cd ~/projects/app && find . -delete",
+  "cd ~/projects/app && find ../build -delete",
   "cd ~/projects/app && rm -rf .",
+  "cd ~/projects/app && rm -rf ../build",
   "chgrp -R staff ./shared",
   "chmod +x script.sh",
   "chmod -R 755 ./dist",
@@ -3164,6 +3169,10 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "cd %USERPROFILE%\\..\\.. && cd Windows\\System32 && rd /s /q .",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "cd && find -delete",
    "rule": "rm_root_home"
   },
@@ -3552,11 +3561,19 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "cd C:\\Users\\alice\\projects && rd /s /q ..",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "cd C:\\Windows\\ && rd /s /q .",
    "rule": "rm_root_home"
   },
   {
    "cmd": "cd || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && cd ../.. && cd home/bob && rm -rf .",
    "rule": "rm_root_home"
   },
   {
@@ -3612,6 +3629,14 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "cd ~/../.. && cd Users/bob && rd /s /q .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/../.. && cd home/bob && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "cd ~/projects && cd .. && rm -rf .",
    "rule": "rm_root_home"
   },
@@ -3624,6 +3649,14 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "cd ~/projects && find .. -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && rm -rf ../*",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "cd ~/projects/.. && rm -rf .",
    "rule": "rm_root_home"
   },
@@ -3633,6 +3666,10 @@
   },
   {
    "cmd": "cd ~/projects/..; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects/app && rm -rf ../..",
    "rule": "rm_root_home"
   },
   {

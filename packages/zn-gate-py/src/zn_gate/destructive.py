@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-30.1"
+COMMAND_RULES_VERSION = "2026-10-30.6"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -563,23 +563,84 @@ _NOT_CD = object()
 # A folder path longer than this (after "." and ".." are resolved) is not followed: the line is refused instead.
 _MAX_CWD_CHARS = 4096
 _CWD_OVERFLOW = object()
+# A folder that stepped above the home folder or a drive root is unknown, and treated as protected for the rest of the line.
+_CWD_LOST = object()
 
 
-def _norm_cwd(p: str) -> str:
-    """One lexical pass over a folder path: backslashes become "/", repeated and trailing separators and "." segments go,
-    and ".." is resolved where the path starts at a known point. A bare root ("/", "C:/") keeps its separator."""
-    # On Windows a folder written with a trailing backslash before a space reaches this point as a trailing space.
-    t = re.sub(r"(?:/\.)+(?=/|\Z)", "", re.sub(r"/{2,}", "/", p.rstrip().replace("\\", "/")))
-    t = _resolve_dots(t)
-    if len(t) > 1 and t.endswith("/") and not re.match(r"^[A-Za-z]:/\Z", t):
-        t = t[:-1]
-    return t or "/"
+class _Folder:
+    """The folder a line has reached, kept as an immutable chain: an anchor (the root, a drive, a home word) and the
+    segments below it, newest first. A cd adds or drops one segment, so the cost of a step does not depend on how long
+    the folder is. kind is "root", "drive", "home" or "other" (a variable or ~user the line cannot see through)."""
+
+    __slots__ = ("kind", "a", "up", "seg", "n", "len")
+
+    def __init__(self, kind: str, a: str, up: Any = None, seg: str = "", n: int = 0, length: int = 0) -> None:
+        self.kind = kind
+        self.a = a
+        self.up = up
+        self.seg = seg
+        self.n = n
+        self.len = length or len(a)
 
 
-def _cd_target(args: List[str], cwd: Optional[str]) -> Any:
-    """The working folder a cd or pushd leaves behind, as the path text to join relative words to: a string, or None
-    when it cannot be known (cd -, a relative folder from an unknown place, popd). Returns _NOT_CD when the words are
-    not a directory change."""
+def _folder_step(f: Any, seg: str) -> Any:
+    """One step from folder f (a _Folder, _CWD_LOST or None): a segment name, "." or "..". Returns the new folder,
+    _CWD_LOST, None (unknown) or _CWD_OVERFLOW."""
+    if f is None or f is _CWD_LOST or f is _CWD_OVERFLOW:
+        return f
+    if seg in ("", "."):
+        return f
+    if seg == "..":
+        if f.n > 0:
+            return f.up
+        if f.kind == "home":
+            return _CWD_LOST
+        return None if f.kind == "other" else f
+    length = f.len + len(seg) + 1
+    if length > _MAX_CWD_CHARS:
+        return _CWD_OVERFLOW
+    return _Folder(f.kind, f.a, f, seg, f.n + 1, length)
+
+
+def _folder_walk(f: Any, path: str) -> Any:
+    for seg in path.split("/"):
+        f = _folder_step(f, seg)
+        if f is None or f is _CWD_LOST or f is _CWD_OVERFLOW:
+            return f
+    return f
+
+
+def _folder_of(word: str) -> Any:
+    """The folder an anchored word names (absolute, drive, home or variable)."""
+    t = re.sub(r"/{2,}", "/", str(word).rstrip().replace("\\", "/"))
+    drive = re.match(r"^[A-Za-z]:(?:/|\Z)", t)
+    if t.startswith("/"):
+        return _folder_walk(_Folder("root", "/"), t[1:])
+    if drive:
+        return _folder_walk(_Folder("drive", t[:2] + "/"), t[drive.end():])
+    first = t.split("/")[0]
+    kind = "home" if first.lower() in _HOME_WORDS else "other"
+    return _folder_walk(_Folder(kind, first + "/"), t[len(first) + 1:])
+
+
+def _folder_text(f: Any, m: int) -> str:
+    """The text of the last m segments of folder f, as a path; when segments are left out it starts at a made-up anchor."""
+    segs = []
+    g = f
+    i = 0
+    while i < m and g.n > 0:
+        segs.append(g.seg)
+        g = g.up
+        i += 1
+    segs.reverse()
+    base = "/__" if g.n > 0 else ("" if g.kind == "root" else g.a.rstrip("/"))
+    return base + ("/" + "/".join(segs) if segs else "")
+
+
+def _cd_target(args: List[str], cwd: Any) -> Any:
+    """The working folder a cd or pushd leaves behind: a _Folder, _CWD_LOST, or None when it cannot be known (cd -, a
+    relative folder from an unknown place, popd). cwd is the folder before the command (None = unknown). Returns
+    _NOT_CD when the words are not a directory change."""
     if not args:
         return _NOT_CD
     head = _program_name(args[0])
@@ -596,26 +657,31 @@ def _cd_target(args: List[str], cwd: Optional[str]) -> Any:
         ops = ops[1:]
     # A bare cd goes home; a bare pushd swaps directories, which is not known here.
     if not ops:
-        return None if head in ("pushd", "push-location") else "~"
+        return None if head in ("pushd", "push-location") else _folder_of("~")
     t = ops[0]
     if t == "-":
         return None
     # Anchored words (absolute, drive, home or variable) name the folder on their own; a relative word follows the old folder.
-    to = t if _ANCHORED_RE.match(t) else (None if cwd is None else cwd + "/" + t)
-    if to is None:
+    if _ANCHORED_RE.match(t):
+        return _folder_of(t)
+    if cwd is None:
         return None
-    norm = _norm_cwd(to)
-    return _CWD_OVERFLOW if len(norm) > _MAX_CWD_CHARS else norm
+    return _folder_walk(cwd, t.rstrip().replace("\\", "/"))
 
 
-def _from_cwd(cwd: Optional[str], word: str) -> str:
-    """A word read from the folder cwd: relative words are joined to it, anchored words are kept."""
+def _from_cwd(cwd: Any, word: str) -> str:
+    """A word read from the folder cwd: relative words are joined to it, anchored words are kept. Only as many trailing
+    segments of the folder as the word's ".." can reach (plus four) are written out: a protected folder is at most three
+    segments deep, so the rest cannot change the answer."""
     if not cwd or not word or _ANCHORED_RE.match(word):
         return word
-    return cwd.rstrip("/\\") + "/" + word
+    if cwd is _CWD_LOST:
+        return "/"
+    ups = sum(1 for s in re.split(r"[\\/]", word) if s == "..")
+    return _folder_text(cwd, ups + 4) + "/" + word
 
 
-def _check_simple(words: List[str], depth: int, cwd: Optional[str] = None) -> Optional[str]:
+def _check_simple(words: List[str], depth: int, cwd: Any = None) -> Optional[str]:
     args = _unwrap(words)
     if not args:
         return None
@@ -801,15 +867,13 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
 
 
 def _check_segments(
-    segs: List[Tuple[List[str], Optional[str]]], depth: int, cwd0: Optional[str] = None
+    segs: List[Tuple[List[str], Optional[str]]], depth: int, cwd0: Any = None
 ) -> Optional[str]:
-    """cwd0 is the folder a cd or pushd earlier in the same command line moved to, kept only while it is a protected one
-    (home, the root, a system folder). A cd inside a pipeline or a background command runs in a subshell and does not count."""
+    """cwd0 is the folder a cd or pushd earlier in the same command line moved to (None = unknown). A cd inside a pipeline or a background command runs in a subshell and does not count."""
     pipe: List[Tuple[List[str], Optional[str]]] = []
-    known = cwd0  # the folder as text, or None when unknown
-    cwd = cwd0  # the same, only while it is protected
+    known = cwd0  # the folder reached so far: a _Folder, _CWD_LOST, or None when unknown
     for words, sep in segs:
-        hit = _check_simple(words, depth, cwd)
+        hit = _check_simple(words, depth, known)
         if hit:
             return hit
         if sep not in ("|", "|&", "&"):
@@ -818,7 +882,6 @@ def _check_segments(
                 return _OVERFLOW
             if to is not _NOT_CD:
                 known = to
-                cwd = known if known is not None and _dangerous_path(known) else None
         pipe.append((words, sep))
         if not _is_pipe(sep):
             hit2 = _check_pipeline(pipe)
@@ -828,7 +891,7 @@ def _check_segments(
     return _check_pipeline(pipe) if pipe else None
 
 
-def _analyze(cmd: str, depth: int = 0, cwd: Optional[str] = None) -> Optional[str]:
+def _analyze(cmd: str, depth: int = 0, cwd: Any = None) -> Optional[str]:
     text = str(cmd)
     if len(text) > _MAX_CHARS:
         return _OVERFLOW

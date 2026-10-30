@@ -164,7 +164,8 @@ add('cd build && rm -rf .', 'cd dist && rm -rf *', 'cd ~/projects/app && rm -rf 
   'cd / && rm -rf tmp/build-4821', 'cd /home/alice && rm -rf work/out', 'cd ~ && cd projects && rm -rf .', 'cd ~ && cd projects/app && find . -delete', 'cd ~ | rm -rf .',
   'cd ~ & rm -rf .', 'pushd ~/projects/app && rm -rf .', 'pushd build && rm -rf *', 'cd ~ && ls . && rm -rf build', 'cd "$BUILD_DIR" && rm -rf .', 'cd $PROJECT && find . -delete',
   'cd ~ && chmod -R u+rwX .cache', 'cd / && chmod -R 755 srv/app', 'Set-Location C:\\work\\app; Remove-Item -Recurse -Force .', 'sh -c "cd build && rm -rf ."', 'cd ~ && echo . | xargs ls');
-add('cd /d C:\\build && rd /s /q .', 'cd C:\\build\\ && rd /s /q .', 'cd /d C:\\build\\out && rd /s /q .', 'cd C:/Users/alice/work/ && rm -rf .');
+add('cd ~/projects/app && rm -rf ../build', 'cd ~/projects/app && find ../build -delete', 'cd ~/projects && rm -rf ../projects/old', 'cd C:\\Users\\alice\\projects && rd /s /q ..\\build',
+  'cd ~/projects/app && cd .. && rm -rf old-build', 'cd /d C:\\build && rd /s /q .', 'cd C:\\build\\ && rd /s /q .', 'cd /d C:\\build\\out && rd /s /q .', 'cd C:/Users/alice/work/ && rm -rf .');
 
 /* ------------------------------ risky ------------------------------ */
 const risky = [];
@@ -214,6 +215,10 @@ addRisk('rm_root_home', 'cd C:\\Windows\\ && rd /s /q .');
 addRisk('rm_root_home', 'cd C:/Users/alice/ && rm -rf .');
 addRisk('rm_root_home', 'cd /d C:\\ && rd /s /q Windows');
 addRisk('rm_root_home', '(cd ~ && rm -rf .)');
+// A relative target that climbs out of a known folder below home, and a folder that steps above home or a drive root.
+for (const c of ['cd ~/projects && rm -rf ../*', 'cd ~/projects && find .. -delete', 'cd C:\\Users\\alice\\projects && rd /s /q ..', 'cd ~/projects/app && rm -rf ../..',
+  'cd ~/../.. && cd home/bob && rm -rf .', 'cd ~ && cd ../.. && cd home/bob && rm -rf .', 'cd ~/../.. && cd Users/bob && rd /s /q .',
+  'cd %USERPROFILE%\\..\\.. && cd Windows\\System32 && rd /s /q .']) addRisk('rm_root_home', c);
 // "." and ".." segments that resolve to the home folder or the root (lexically; example paths only).
 for (const t of ['/home/alice/..', '/home/alice/../..', '/home/alice/project/../..', '/home/alice/./project/../', '/Users/bob/project/..', '/usr/..', '/usr/../*', '/etc/../etc/..', '/..', '/../..', '/home/../', '/tmp/../',
   '~/project/..', '~/./', '~/..', '$HOME/project/..', '"$HOME/project/.."', '${HOME}/a/b/../..', '$HOME/../alice', '//home//alice//project//..', 'C:/Users/alice/project/..', 'C:/Users/alice/..', 'C:/..', 'C:\\Users\\alice\\project\\..']) {
