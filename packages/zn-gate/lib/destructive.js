@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-30.4';
+const COMMAND_RULES_VERSION = '2026-10-30.5';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -48,6 +48,7 @@ const MAX_CHARS = 200 * 1024;
 const QUOTE_SCAN_MAX = 20000;
 
 const ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const shellVars = require('./shell-vars');
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'ash', 'mksh', 'rbash']);
 const POWERSHELLS = new Set(['pwsh', 'powershell']);
 const DOWNLOADERS = new Set(['curl', 'wget', 'iwr', 'irm', 'invoke-webrequest', 'invoke-restmethod', 'aria2c', 'fetch']);
@@ -462,6 +463,8 @@ function checkSimple(words, depth, cwd, known = cwd) {
     const k = rest.findIndex((w) => /^\/[ck]$/i.test(w));
     if (k >= 0) code = rest.slice(k + 1).join(' ');
   }
+  // The code is a download in a substitution (X="$(curl URL)"; sh -c "$X"): the same as sh -c "$(curl URL)".
+  if (code !== null && (SHELLS.has(head) || head === 'su' || head === 'eval') && /^\s*(?:\$\(|`)/.test(code) && SHELL_RUNS_DOWNLOAD_RE.test('sh -c "' + code + '"') && on('pipe_to_shell')) return 'pipe_to_shell';
   if (code !== null && depth < MAX_DEPTH) {
     const hit = analyze(code, depth + 1, known);
     if (hit) return hit;
@@ -604,7 +607,12 @@ function checkSegments(segs, depth, known0 = null) {
   let pipe = [];
   let known = known0; // the folder as text, or null when unknown
   let cwd = known !== null && dangerousPath(known) ? known : null; // the same, only while it is protected
-  for (const seg of segs) {
+  const vars = shellVars.newScope();
+  for (let seg of segs) {
+    // Literal variables assigned earlier on the line are filled in (X=curl; $X url | sh).
+    const words = shellVars.applyWords(vars, seg.words, seg.sep);
+    if (vars.overflow) return OVERFLOW;
+    if (words !== seg.words) seg = { words, sep: seg.sep };
     const hit = checkSimple(seg.words, depth, cwd, known);
     if (hit) return hit;
     if (seg.sep !== '|' && seg.sep !== '|&' && seg.sep !== '&') {

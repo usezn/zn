@@ -211,7 +211,7 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-30.6",
+      "version": "2026-10-30.8",
       "ids": [
         "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
@@ -241,12 +241,13 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "1bed676e16ae288a07b488c20d009144b3691a3ce1ff048fec40a65d1c529cb3",
+        "lib/hooks/policy.js": "1cf236a9310f318c638af679f9ded86f49691286f4abcc23fdd6270b80ffb365",
         "lib/broker/files.js": "61d2808cadf534094cdc3a9ac686149e8f4e3477dc7bd7890f5d91a2f72f604f",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
         "lib/shell-quote.js": "91cf4832cf68d4a367854f0c6e982c349afad2934e634f743d33aaf7c71c7471",
-        "lib/destructive.js": "d0e1b12496fa31a401a22006d0d90cb901342370d42be18f03f098bde43dcb02"
+        "lib/destructive.js": "d790fb823382c9a868c2cc319fdc46380757dafe5b525271a807d0225cee67f5",
+        "lib/shell-vars.js": "dda7b10b16db524bf0dfce7ee7dfeac960bf7b4c192fb12b1a5c0ec533db27a1"
       }
     }
   }

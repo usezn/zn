@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-30.4"
+COMMAND_RULES_VERSION = "2026-10-30.5"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -324,6 +324,95 @@ def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], O
 
 def _is_pipe(sep: Optional[str]) -> bool:
     return sep in ("|", "|&")
+
+
+# Literal variables assigned earlier on the same command line (X=curl; $X URL | sh, S=sh; curl URL | $S,
+# T=~/.bashrc; curl URL >> $T, export X=curl). Nothing is evaluated: a value is text copied from an earlier assignment,
+# and a variable not assigned on the line stays as it is. Linear and capped.
+_MAX_ASSIGNMENTS = 256  # one more and the line is refused
+_MAX_VALUE = 8192  # a longer value is not kept (the variable stays unknown)
+_MAX_EXPANDED = 256 * 1024  # total text added by substitutions; past it the rest stays unresolved
+_VAR_ASSIGN_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)\Z")
+_VAR_REF_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+_VAR_SOLE_REF_RE = re.compile(r"^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))\Z")
+_DECLARERS = frozenset(("export", "declare", "typeset", "readonly", "local"))
+
+
+def _join_backticks(words: List[str]) -> List[str]:
+    """An assignment whose value is a `...` substitution is split into words by the tokenizer (X=`curl URL`): the words
+    up to the closing backtick are joined into the value again. One pass."""
+    out: List[str] = []
+    changed = False
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if _VAR_ASSIGN_RE.match(w) and w.count("`") % 2 == 1:
+            changed = True
+            while i + 1 < len(words) and w.count("`") % 2 == 1:
+                i += 1
+                w += " " + words[i]
+        out.append(w)
+        i += 1
+    return out if changed else words
+
+
+class _Vars:
+    __slots__ = ("vars", "assignments", "expanded", "overflow")
+
+    def __init__(self) -> None:
+        self.vars: Dict[str, str] = {}
+        self.assignments = 0
+        self.expanded = 0
+        self.overflow = False
+
+    def substitute(self, word: str) -> str:
+        if not self.vars or "$" not in word:
+            return word
+
+        def fill(m: "re.Match[str]") -> str:
+            v = self.vars.get(m.group(1) or m.group(2))
+            if v is None:
+                return m.group(0)
+            self.expanded += len(v)
+            return m.group(0) if self.expanded > _MAX_EXPANDED else v
+
+        return _VAR_REF_RE.sub(fill, word)
+
+    def apply(self, words: List[str], sep: Optional[str]) -> List[str]:
+        """The words of one simple command with the known variables filled in, and any assignment it makes recorded.
+        An assignment in a pipe or a background command runs in a subshell and is not recorded."""
+        out = words
+        if self.vars:
+            out = [self.substitute(w) for w in words]
+            # A command word that is just a variable ($X url, | $S) is split on blanks, as an unquoted expansion is.
+            if words:
+                m = _VAR_SOLE_REF_RE.match(words[0])
+                if m and (m.group(1) or m.group(2)) in self.vars:
+                    out = out[0].split() + out[1:]
+        if sep in ("|", "|&", "&"):
+            return out
+        out = _join_backticks(out)
+        i = 0
+        if out and out[0] in _DECLARERS:
+            i = 1
+            while i < len(out) and re.match(r"^-[A-Za-z]+\Z", out[i]):
+                i += 1
+        if i >= len(out):
+            return out
+        if not all(_VAR_ASSIGN_RE.match(w) for w in out[i:]):
+            return out
+        for w in out[i:]:
+            m = _VAR_ASSIGN_RE.match(w)
+            assert m is not None
+            self.assignments += 1
+            if self.assignments > _MAX_ASSIGNMENTS:
+                self.overflow = True
+                return out
+            if len(m.group(2)) > _MAX_VALUE:
+                self.vars.pop(m.group(1), None)
+            else:
+                self.vars[m.group(1)] = m.group(2)
+        return out
 
 
 # Words that start a command without being one: a group, the branches of if / while / until / for, and negation.
@@ -751,6 +840,14 @@ def _check_simple(words: List[str], depth: int, cwd: Optional[str] = None, known
         k = next((j for j, w in enumerate(rest) if re.match(r"^/[ck]\Z", w, re.I)), -1)
         if k >= 0:
             code = " ".join(rest[k + 1:])
+    # The code is a download in a substitution (X="$(curl URL)"; sh -c "$X"): the same as sh -c "$(curl URL)".
+    if (
+        code is not None
+        and (head in _SHELLS or head in ("su", "eval"))
+        and re.match(r"^\s*(?:\$\(|`)", code)
+        and _SHELL_RUNS_DOWNLOAD_RE.search('sh -c "' + code + '"')
+    ):
+        return "pipe_to_shell"
     if code is not None and depth < _MAX_DEPTH:
         hit = _analyze(code, depth + 1, known)
         if hit:
@@ -923,7 +1020,12 @@ def _check_segments(
     pipe: List[Tuple[List[str], Optional[str]]] = []
     known = known0  # the folder as text, or None when unknown
     cwd = known if known is not None and _dangerous_path(known) else None  # the same, only while it is protected
+    var_scope = _Vars()
     for words, sep in segs:
+        # Literal variables assigned earlier on the line are filled in (X=curl; $X url | sh).
+        words = var_scope.apply(words, sep)
+        if var_scope.overflow:
+            return _OVERFLOW
         hit = _check_simple(words, depth, cwd, known)
         if hit:
             return hit
