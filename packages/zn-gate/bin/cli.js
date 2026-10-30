@@ -239,11 +239,14 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   secret import FILE  Copy the secret values of a .env file into the vault
   secret adopt TOKEN  Store a value the scrubber detected (e.g. AWS_KEY_1) as a named secret
   env shadow [FILE]   Move .env values into the vault and leave markers in the file
+  env unshadow FILE --backup NAME
+                      Put the original values back into FILE from the encrypted copy that env shadow printed
   run -- <command>    Run a command with secrets in its environment (allowed commands only)
                       and its output masked [--secrets A,B to set env vars]
+                      -s is a short form of --secrets; --agent ID names the agent in the audit log
                       (a marker in the command's arguments is refused, never filled in)
   secret log          Show the local audit log of secret use [--since 1h] (same as vault log)
-  hooks install <agent> [--project]
+  hooks install <agent> [--project] [--no-mcp]
                       Install zn's hooks for ${require('../lib/agents').listAdapters().join(', ')}
                       (zn-gate init picks the right setup for each agent)
   hooks uninstall <agent> [--project]
@@ -256,6 +259,7 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   connect             Optional: turn on the cloud check for analyze_prompt. Opens usezn.com,
                       you paste an analysis-only API key at a hidden prompt; it is kept in your system
                       keychain or the zn vault, never in a file. Your own terminal only
+                      With --reconnect, replace the key that is already saved.
   disconnect          Remove that key from this computer, and ask whether to revoke it on
                       usezn.com too (default no) [--revoke | --no-revoke]. Your own terminal only
   reach [path]        Show what your coding agents can reach: secrets (names only),
@@ -285,20 +289,25 @@ OPTIONS:
 
 VAULT (local, encrypted with age; the key stays in the OS keychain):
   unlock              Unlock the vault for this session [--ttl 8h] [--idle 30m]
+                      [--backend NAME]: macos, windows, libsecret or passphrase
                       (first run creates it; --passphrase-stdin without a keychain)
   lock                Lock the vault now
   vault status        Show whether the vault exists and is unlocked
   vault log           Show the audit log of secret use [--since 1h]; checks the chain when unlocked
   vault verify        Verify the HMAC-chained audit log of secret use
+                      --acknowledge accepts the log as it is now (your own terminal only)
   vault forget [dir]  Forget the token map of a project (vault locked)
   vault reset         Lost the passphrase? Set the old vault aside and start empty (your terminal only)
   vault purge         Delete the vault, every backup and the token maps for good [--yes] (your terminal only)
   vault log export --otlp
                       Export the audit log as OpenTelemetry logs (OTLP/JSON Lines)
                       [--since 7d] [--out FILE]
+  vault team          Shows that a shared team vault is planned, not available yet
 
 TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
   team join <token>   Connect this machine to your organization (confirmed outside the agent)
+                      options: --api URL (another server), --agent ID (claude-code, codex, ...),
+                      --include-history (also sends the audit records written before you joined)
   team status         Organization, policy version and upload state [--json]
   team sync           Download the policy and upload the audit log now
   team leave          Disconnect this machine (confirmed outside the agent)
@@ -894,6 +903,57 @@ async function runReachCommand(rest) {
   return zr.failed(r, failOn) ? 1 : 0;
 }
 
+// Options of scan and analyze. Any other option that starts with "--" is refused with exit 2: it is named and
+// the options the command takes are listed. Everything after a bare "--" is positional text, and so is anything
+// that does not start with "--" (analyze text may start with "-").
+const CLOUD_VALUE_OPTIONS = ['--key', '--stage', '--url', '--long-input'];
+const CLOUD_FLAG_OPTIONS = ['--local-only', '--verbose'];
+const COMMAND_OPTIONS = {
+  scan: {
+    value: ['--format', '--include', '--exclude', ...CLOUD_VALUE_OPTIONS],
+    flag: ['--code', '--all', '--allow-partial', '--include-home', ...CLOUD_FLAG_OPTIONS],
+    listed: ['--format', '--include', '--exclude', '--code', '--all', '--allow-partial', '--include-home'],
+  },
+  analyze: {
+    value: CLOUD_VALUE_OPTIONS,
+    flag: CLOUD_FLAG_OPTIONS,
+    listed: CLOUD_VALUE_OPTIONS.concat(CLOUD_FLAG_OPTIONS),
+  },
+};
+
+// The problem with an option of scan or analyze, or null when every option is one the command takes.
+function optionProblem(command, args) {
+  const spec = COMMAND_OPTIONS[command];
+  for (let i = 1; i < args.length; i++) {
+    const tok = args[i];
+    if (tok === '--') break;
+    if (!tok.startsWith('--')) continue;
+    const name = tok.split('=')[0];
+    const shown = tok.replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
+    const takesValue = spec.value.includes(name);
+    if (!takesValue && !spec.flag.includes(name)) {
+      let msg = 'unknown option "' + shown + '". The options of zn-gate ' + command + ' are ' + spec.listed.join(', ') + '.';
+      if (command === 'analyze') msg += ' To analyze text that starts with "--", put "--" before it: zn-gate analyze -- "<text>".';
+      return msg;
+    }
+    if (tok !== name) {
+      return takesValue ? '"' + shown + '": give the value as the next argument, as ' + name + ' VALUE.' : name + ' takes no value.';
+    }
+    if (takesValue) i++;
+  }
+  return null;
+}
+
+// The folder that scan audits: the first argument that is not an option or an option's value; "." when none.
+function scanTargetOf(args) {
+  for (let i = 1; i < args.length; i++) {
+    if (args[i] === '--') return args[i + 1] || '.';
+    if (!args[i].startsWith('--')) return args[i];
+    if (COMMAND_OPTIONS.scan.value.includes(args[i])) i++;
+  }
+  return '.';
+}
+
 async function main() {
   const args = process.argv.slice(2);
   if (args[0] === 'audit') {
@@ -938,6 +998,15 @@ async function main() {
   if (args.includes('-V') || args.includes('--version') || args[0] === 'version' || args[0] === '-v') {
     process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION}; scrub rules: ${SCRUB_RULES_VERSION}; audit rules: ${AUDIT_RULES_VERSION})\n`);
     process.exit(0);
+  }
+
+  if (args[0] === 'scan' || args[0] === 'analyze') {
+    const problem = optionProblem(args[0], args);
+    if (problem) {
+      process.stderr.write('zn-gate: ' + problem + '\n');
+      process.exitCode = 2;
+      return;
+    }
   }
 
   // Parse options
@@ -1062,7 +1131,7 @@ ${ruleLine(process.env, 60)}\n`);
   }
 
   if (command === 'scan') {
-    const targetPath = args[1] && !args[1].startsWith('--') ? args[1] : '.';
+    const targetPath = scanTargetOf(args);
     await handleScan(targetPath, options);
     return;
   }
@@ -1070,6 +1139,12 @@ ${ruleLine(process.env, 60)}\n`);
   if (command === 'evidence' || command === 'logs' || command === 'export') {
     if (command === 'export' || options.export) {
       const format = (options.format || 'jsonl').toLowerCase();
+      if (format !== 'jsonl' && format !== 'csv') {
+        const shown = String(options.format).replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
+        process.stderr.write(`zn-gate: unknown --format "${shown}". The valid formats are jsonl and csv.\n`);
+        process.exitCode = 2;
+        return;
+      }
       const res = exportEvidenceLedger(EVIDENCE_FILE, format);
       if (!res.valid) process.stderr.write(`Tamper detected: ${res.error}\n${recoveryHint()}\n`);
       if (options.output) {
@@ -1197,7 +1272,8 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
   }
 
   if (command === 'analyze') {
-    const textArgs = args.filter((a, idx) => {
+    const dashAt = args.indexOf('--');
+    const textArgs = dashAt !== -1 ? args.slice(dashAt + 1) : args.filter((a, idx) => {
       if (idx === 0) return false;
       if (a.startsWith('--')) return false;
       if (idx > 0 && args[idx - 1].startsWith('--') && args[idx - 1] !== '--local-only' && args[idx - 1] !== '--verbose') return false;
