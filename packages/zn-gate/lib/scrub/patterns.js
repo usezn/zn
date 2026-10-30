@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-30.1';
+const SCRUB_RULES_VERSION = '2026-10-30.2';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -485,13 +485,15 @@ function findQuotedKv(text, out) {
 const PATTERNS = [
   { type: 'ANTHROPIC_KEY', hints: ['sk-ant-'], re: re(NB + 'sk-ant-[a-z]{3,8}\\d{2}-[A-Za-z0-9_-]{32,200}' + NA),
     check: (v) => !maskedBody(v.replace(/^sk-ant-[a-z]+\d{2}-/, '')) },
-  /* A key with hyphens or underscores in the body (sk-test-..., sk-<name>_<id>): 40 to 200 characters. Stricter
-   * than the old form: the body must hold lower case, upper case and digits, so a slug is not a key, and the
-   * Helicone, sp-, cp- and similar forms are left to the shared rules (same as the Python scrubber). */
-  { type: 'OPENAI_KEY', hints: ['sk-'], re: re(NB + 'sk-(?!ant-|helicone-|(?:eu|cp|gov|rl|sp|lf|[Nn]one)-|(?!svcacct-)[a-z0-9]{7}-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + NA),
+  /* A key with hyphens or underscores in the body (sk-test-..., sk-<name>_<id>): 40 to 200 characters. The body
+   * must look random. A plain body must hold lower case, upper case and digits, so a lower-case hyphenated slug
+   * (a blog post title) is not a key. A body that starts with a known provider form (Helicone, sp-, cp-, eu-, gov-,
+   * rl-, lf-, none-) only needs a digit and randomness: those keys are real secrets and must still be redacted. */
+  { type: 'OPENAI_KEY', hints: ['sk-'], re: re(NB + 'sk-(?!ant-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + NA),
     check: (v) => {
       const body = v.replace(/^sk-(?:proj-|svcacct-|admin-|or-v1-)?/, '');
-      return looksRandom(body, 2, 3.5) && /[a-z]/.test(body) && /[A-Z]/.test(body) && /[0-9]/.test(body);
+      if (!looksRandom(body, 2, 3.5) || !/[0-9]/.test(body)) return false;
+      return /^(?:helicone|eu|cp|gov|rl|sp|lf|[Nn]one)-/.test(body) || (/[a-z]/.test(body) && /[A-Z]/.test(body));
     } },
   /* Legacy DeepSeek-style key: `sk-` + 32 hex digits. The length and charset
    * are not stated in the provider's docs (checked 2026-10-14); the shape
