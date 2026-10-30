@@ -290,6 +290,8 @@ addRisk('rm_root_home', 'cd ~/projects && env -C .. sh -c "rm -rf ."');
 for (const c of ['cd ~/projects && rm -rf ../*', 'cd ~/projects && find .. -delete', 'cd C:\\Users\\alice\\projects && rd /s /q ..', 'cd ~/projects/app && rm -rf ../..',
   'cd ~/../.. && cd home/bob && rm -rf .', 'cd ~ && cd ../.. && cd home/bob && rm -rf .', 'cd ~/../.. && cd Users/bob && rd /s /q .',
   'cd %USERPROFILE%\\..\\.. && cd Windows\\System32 && rd /s /q .']) addRisk('rm_root_home', c);
+// A command after a shell keyword ({, then, do, else, !) or inside backticks is read like any other.
+for (const c of ['{ rm -rf ~; }', 'if true; then rm -rf ~; fi', 'while true; do rm -rf ~; done', 'until false; do rm -rf ~; done', '! rm -rf ~', 'echo `rm -rf ~`']) addRisk('rm_root_home', c);
 // A backtick substitution, and the folder of env -C / sudo -D, start from the folder the line has reached.
 for (const c of ['cd ~ && echo `rm -rf .`', 'cd ~/projects && echo `rm -rf ../*`', 'cd ~ && echo "`rm -rf .`"', 'env -C ~/projects rm -rf ../*',
   'sudo -D ~/projects find .. -delete', 'env -C ~/../.. env -C home/bob rm -rf .', 'sudo -D ~/../.. env -C home/bob rm -rf .']) addRisk('rm_root_home', c);
@@ -429,6 +431,11 @@ add('python3 -c "print(1)"', "python3 -c \"import shutil; shutil.rmtree('build')
   "node -e \"require('fs').rmSync('/usr/local/tmp-x', {recursive:true})\"", "perl -e 'unlink glob(\"*.o\")'", "ruby -e 'require \"fileutils\"; FileUtils.rm_rf(\"tmp/cache\")'",
   'curl ' + U2 + ' | python3 script.py', 'curl ' + U2 + ' | node -p "1+1"', 'curl ' + U2 + ' | perl -pe "s/a/b/"', 'curl -s ' + U2 + ' | ruby -rjson -e "puts 1"',
   'wget -qO- ' + U2 + ' | python3 -c "import sys; print(len(sys.stdin.read()))"', 'python3 -m http.server 8000', 'python3 manage.py migrate', 'node server.js');
+
+// Shell grouping words: a command after `case ... )`, a `(` or `time` is read; the same keywords as Node.js and Python agree.
+addRisk('rm_root_home', '(rm -rf ~)');
+addRisk('rm_root_home', 'time rm -rf ~');
+addRisk('rm_root_home', 'case x in x) rm -rf ~;; esac');
 
 /* ---------------------- shapes the policy does not read ---------------------- */
 const notCovered = [

@@ -86,6 +86,15 @@ npm install -g zn-gate
 zn hooks install codex           # or: cursor, opencode
 ```
 
+If `npm install -g` fails with `EACCES` (common with Node.js from your Linux distribution, such as `dnf` or `apk`, and with Node.js from nodejs.org on macOS), do not use `sudo`. Give npm a folder in your home directory, then run the install again:
+
+```bash
+mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.bashrc   # ~/.zshrc on macOS, ~/.profile if you have no .bashrc
+```
+
+Open a new terminal so the new PATH applies.
+
 In Codex, approve the new hooks with `/hooks`. In Cursor, shell output and file contents are not scrubbed. What each agent supports: [docs/compat.md](https://github.com/usezn/zn/blob/main/docs/compat.md).
 
 **Other editors** (VS Code, Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/).
@@ -294,6 +303,8 @@ CONFIDENTIAL_INTERNAL_PROJECT_[A-Z0-9]+
 ```
 
 Each non-comment line is a pattern (matched without regard to case) unless it starts with `path:`, `secret:` or is the word `strict`. In `zn.config.json` the same patterns go in `bannedPatterns` and the paths in `forbiddenPaths`.
+
+These files are read by this npm package (CLI, agent hooks and the Node.js library). The Python package does not read them: there, use `strict=True` or `ZN_STRICT=1`.
 
 Patterns run in time proportional to the text, so a project file cannot make the hooks hang. That is why only this syntax is accepted: literal characters, `.`, classes such as `[a-z]` or `[^x]`, `\d \w \s`, `\b`, `^`, `$`, groups `( )` and `(?: )`, alternation `|`, and the quantifiers `?`, `*`, `+` and `{n}`, `{n,}`, `{n,m}` (counts up to 100). A pattern can be at most 500 steps long once its counts are expanded (for example `a{100}` is 100 steps), and all the patterns of a file together at most 600 steps, so that checking a long text stays fast; a file can hold at most 100 patterns and a pattern at most 500 characters. Matching ignores case for ASCII letters (a-z); letters of other scripts are matched as written. Backreferences, lookahead, lookbehind, named groups, `\p{...}` and a quantifier on a group that already contains one (such as `(a+)+`) are rejected.
 

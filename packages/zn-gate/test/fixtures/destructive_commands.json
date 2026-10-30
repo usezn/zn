@@ -3137,6 +3137,10 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "(rm -rf ~)",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 rm -rf ~",
    "rule": "rm_root_home"
   },
@@ -3242,6 +3246,10 @@
   },
   {
    "cmd": "bash -lc 'rm -rf ~/*'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "case x in x) rm -rf ~;; esac",
    "rule": "rm_root_home"
   },
   {
@@ -5198,6 +5206,10 @@
   },
   {
    "cmd": "time rm -rf -- ${HOME}",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "time rm -rf ~",
    "rule": "rm_root_home"
   },
   {
