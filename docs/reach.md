@@ -100,6 +100,10 @@ folder, not on one project, so it takes no folder.
 It is read only and offline. It writes no file, not even the evidence log, and
 it needs no account.
 
+The Python package has the same command (`zn-gate reach --history`), with the
+same report, flags, exit codes and `--json` schema. The rest of `reach` is only
+in the npm package.
+
 ### Where it looks
 
 Only files in your own home folder (and the folder you name with `CLAUDE_CONFIG_DIR` or `CODEX_HOME`), and only these:
