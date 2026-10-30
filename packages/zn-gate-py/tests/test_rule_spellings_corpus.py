@@ -1,10 +1,10 @@
-"""audit RF30-4: the Python policy against the shared spelling corpus of the Node tests (audit RF30-3).
+"""The Python policy against the shared spelling corpus of the Node tests.
 
 The corpus is packages/zn-gate/test/fixtures/rule_spellings_corpus.json. `expect` is what a POSIX shell really does
 with the text. Cases the Python rules do not catch yet are listed in KNOWN_GAPS and run as xfail (non-strict): they stay
 visible, and a fix shows up as XPASS. The egress cases (a request that carries a secret) exist in the Node hooks only,
 so they are skipped here. Only fake example.com URLs and fake paths.
-ZN_CORPUS_REPORT=<file.json> writes the verdict of every case (id -> verdict) for the audit table.
+ZN_CORPUS_REPORT=<file.json> writes the verdict of every case (id -> verdict).
 """
 import json
 import os
@@ -54,7 +54,7 @@ def _write_report():
 
 
 @pytest.mark.parametrize('case', [
-    pytest.param(c, id=c['id'], marks=[pytest.mark.xfail(reason='audit RF30-4: allowed but a shell runs the dangerous command', strict=False)] if c['id'] in KNOWN_GAPS else [])
+    pytest.param(c, id=c['id'], marks=[pytest.mark.xfail(reason='known gap: allowed, but a shell runs the dangerous command', strict=False)] if c['id'] in KNOWN_GAPS else [])
     for c in CASES
 ])
 def test_spelling(case):

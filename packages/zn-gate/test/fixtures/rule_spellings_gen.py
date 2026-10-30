@@ -1,11 +1,11 @@
-"""Generates packages/zn-gate/test/fixtures/rule_spellings_corpus.json (audit RF30-3 / RF30-4).
+"""Generates packages/zn-gate/test/fixtures/rule_spellings_corpus.json.
 
 Every command uses fake example.com URLs and fake paths. `expect` is what a POSIX shell would really do:
   block  the dangerous command really runs (download piped to a shell, download written to a shell startup file)
   either the command fails at run time (builtin curl), so allowing or blocking are both fine
   allow  nothing dangerous runs, or the rules are narrow by design and have no shape for it
   ask    egress check: a request that carries a (fake) secret must stop and ask the user
-Run: python3 gen_corpus.py <output.json>
+Run: python3 rule_spellings_gen.py <output.json>
 """
 import json
 import sys
