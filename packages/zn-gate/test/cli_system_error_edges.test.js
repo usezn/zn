@@ -29,6 +29,22 @@ test('a path of 260 characters or more on Windows is called too long, not "does 
   assert.match(fsErrorText(Object.assign(new Error('x'), { code: 'ENOENT', path: long }), null, {}, 'linux'), /does not exist/);
 });
 
+test('a permission error on a long path keeps the permission text; the 260 sentence is for Windows only', () => {
+  const long = 'C:\\Users\\example-user\\' + 'a'.repeat(250) + '\\settings.json';
+  for (const code of ['EACCES', 'EPERM']) {
+    const text = fsErrorText(Object.assign(new Error(code), { code, path: long }), null, {}, 'win32');
+    assert.match(text, /not allowed to read or change/, code);
+    assert.doesNotMatch(text, /too long/, code);
+  }
+  const win = fsErrorText(Object.assign(new Error('x'), { code: 'ENAMETOOLONG', path: long }), null, {}, 'win32');
+  assert.match(win, /Windows stops at about 260 characters/);
+  for (const platform of ['linux', 'darwin']) {
+    const text = fsErrorText(Object.assign(new Error('x'), { code: 'ENAMETOOLONG', path: '/home/example-user/' + 'a'.repeat(300) }), null, {}, platform);
+    assert.match(text, /is too long\. Move the folder/, platform);
+    assert.doesNotMatch(text, /Windows|260/, platform);
+  }
+});
+
 test('an agent folder that cannot be read is not reported as "not installed"', posixOnly, (t) => {
   if (typeof process.getuid === 'function' && process.getuid() === 0) return t.skip('root can read everything');
   const home = tempDir(t, 'zn-edge-home-');
