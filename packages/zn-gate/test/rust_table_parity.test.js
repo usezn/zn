@@ -53,6 +53,15 @@ for (const [key, constName] of [
   });
 }
 
+test('forget rule: object and data-noun words equal the shared fixture', () => {
+  const src = INJECTION_RULES.find((r) => r.id === 'pi:forget').pattern.source;
+  const obj = /forget\\s\+\(\?:about\\s\+\)\?\(\?:([A-Za-z|]+)\)/.exec(src);
+  const data = /\(\?:the\\s\+\)\?\(\?:([A-Za-z|?]+)\)/.exec(src);
+  assert.ok(obj && data, 'pi:forget source shape changed');
+  assert.deepEqual(expand(obj[1].split('|')), expand(tables.forget_rule.object));
+  assert.deepEqual(expand(data[1].split('|')), expand(tables.forget_rule.data_noun_not_blocked));
+});
+
 test('injection rule ids equal the shared fixture', () => {
   assert.deepEqual(INJECTION_RULES.map((r) => r.id), tables.node_rule_ids);
   for (const id of tables.rust_only_rule_ids) assert.ok(!tables.node_rule_ids.includes(id), id);
