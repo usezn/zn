@@ -4424,6 +4424,10 @@
    "rule": "git_force_push_protected"
   },
   {
+   "cmd": "git -C /srv/app push --mirror origin",
+   "rule": "git_force_push_protected"
+  },
+  {
    "cmd": "git -C /srv/app push -f origin main",
    "rule": "git_force_push_protected"
   },
@@ -4708,6 +4712,18 @@
    "rule": "git_force_push_protected"
   },
   {
+   "cmd": "git push --mirror origin",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --mirror=origin",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --no-verify --mirror origin",
+   "rule": "git_force_push_protected"
+  },
+  {
    "cmd": "git push --no-verify -f origin main",
    "rule": "git_force_push_protected"
   },
@@ -4784,6 +4800,10 @@
    "rule": "git_force_push_protected"
   },
   {
+   "cmd": "git push -v --mirror origin",
+   "rule": "git_force_push_protected"
+  },
+  {
    "cmd": "git push origin +HEAD:master",
    "rule": "git_force_push_protected"
   },
@@ -4793,6 +4813,10 @@
   },
   {
    "cmd": "git push origin +release/3.1",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin --mirror",
    "rule": "git_force_push_protected"
   },
   {

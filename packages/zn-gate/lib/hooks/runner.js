@@ -629,13 +629,13 @@ async function decidePre(ev, d, agentId, opts) {
     // The question comes first in the message; it is never a soft ask, so an agent that cannot ask blocks the command.
     const withProd = (r) => (prod ? { ...r, decision: 'ask', soft: false, confirm: true, message: prod.hit.message + (r.message ? ' ' + r.message : '') } : r);
     if (input.scanAsk) {
-      return { decision: 'ask', message: input.scanAsk === 'long'
+      return withProd({ decision: 'ask', message: input.scanAsk === 'long'
         ? 'zn: this command changes folders too many times before a recursive search, so zn cannot tell which folders it covers, and matching lines are not hidden in this agent. Approve only if the search is safe, or split the command.'
-        : 'zn: this recursive search names a folder through a variable or a substitution, so zn cannot tell which folder it covers, and matching lines are not hidden in this agent. Approve only if the search is safe, or name the folder directly.' };
+        : 'zn: this recursive search names a folder through a variable or a substitution, so zn cannot tell which folder it covers, and matching lines are not hidden in this agent. Approve only if the search is safe, or name the folder directly.' });
     }
     if (Array.isArray(input.scanDirs) && input.scanDirs.length) {
       const ask = searchFolderAsk(input.scanDirs, pathOpts);
-      if (ask) return ask;
+      if (ask) return withProd(ask);
     }
 
     const egressMode = egressModeOf(opts);

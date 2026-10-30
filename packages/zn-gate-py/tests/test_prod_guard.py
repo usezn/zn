@@ -32,6 +32,16 @@ def make_repo(head, origin_head=None):
 
 
 class ProductionGuardCorpus(unittest.TestCase):
+    def test_git_push_mirror_is_asked_without_force(self):
+        for c in ["git push --mirror origin", "git push origin --mirror", "git push --mirror", "git push --mirror=origin", "git push -v --mirror origin",
+                  "git push --no-verify --mirror origin", "git push --mirror --force origin", "git -C /srv/app push --mirror origin",
+                  "cd /srv/app && git push origin --mirror"]:
+            self.assertEqual(rule(c), "git_force_push_protected", c)
+        self.assertIn("all branches, protected ones included", check_production_data("git push --mirror origin").message)
+        self.assertIsNone(rule("git push origin mirror"))
+        self.assertIsNone(rule("git push --all origin"))
+        self.assertIsNone(rule("git push --dry-run origin main"))
+
     def test_corpus_size_and_rules(self):
         self.assertGreaterEqual(len(CORPUS["prod_benign"]), 100)
         self.assertGreaterEqual(len(CORPUS["prod_risky"]), 300)

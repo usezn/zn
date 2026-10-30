@@ -116,6 +116,18 @@ test('git push: a branch name decides; protected are main, master, release/* and
   assert.match(checkProductionData('git push --force --all').message, /all branches, protected ones included/);
 });
 
+test('git push --mirror overwrites and deletes every remote ref, so it is asked without --force', () => {
+  for (const c of ['git push --mirror origin', 'git push origin --mirror', 'git push --mirror', 'git push --mirror=origin', 'git push -v --mirror origin',
+    'git push --no-verify --mirror origin', 'git push --mirror --force origin', 'git -C /srv/app push --mirror origin', 'cd /srv/app && git push origin --mirror']) {
+    assert.equal(rule(c), 'git_force_push_protected', c);
+  }
+  assert.match(checkProductionData('git push --mirror origin').message, /all branches, protected ones included/);
+  // not a mirror push: still allowed
+  assert.equal(rule('git push origin mirror'), null);
+  assert.equal(rule('git push --all origin'), null);
+  assert.equal(rule('git push --dry-run origin main'), null);
+});
+
 function makeRepo(t, { head, originHead }) {
   const root = tempDir(t, 'zn-prodguard-');
   const git = path.join(root, '.git');

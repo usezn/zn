@@ -265,7 +265,8 @@ function gitForcePush(rest, cwd) {
     if (w === '--') { pos.push(...args.slice(k + 1)); break; }
     if (w.startsWith('--')) {
       if (flagIs(w, '--force') || flagIs(w, '--force-with-lease') || flagIs(w, '--force-if-includes')) force = true;
-      else if (w === '--all' || w === '--mirror') all = true;
+      else if (flagIs(w, '--mirror')) { force = true; all = true; } // --mirror deletes and overwrites remote refs: as a force push
+      else if (w === '--all') all = true;
       else if (PUSH_VALUE_FLAGS.has(w)) k++;
       continue;
     }

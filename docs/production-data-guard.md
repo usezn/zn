@@ -66,6 +66,8 @@ The guard reads command text only. These are **not** covered, and the guard lets
 - **Commands that run somewhere else.** `ssh host "terraform destroy"`, a command inside a container, or one that a CI job runs.
 - **A program named by a variable** set earlier on the same line, or a command built at run time.
 - **A push that names no branch**, when the repository files cannot be read. With no branch name, `git push --force` pushes the current branch; the guard reads the current branch and the default branch from the repository's files (`.git/HEAD` and `refs/remotes/<remote>/HEAD`) and does not run `git`. If they cannot be read, for example in a folder that is not a repository, it allows the command. The default branch is known only when the repository recorded it (a normal `git clone` does).
+- **Deleting a protected branch.** `git push origin :main` and `git push --delete origin main` are not read; only force pushes are. (`git push --mirror` is read as a force push to all branches.)
+- **Other cluster and wrapper forms.** `oc delete project`, `xargs terraform destroy`, and a command nested in more than three `sh -c` layers.
 - **A folder changed earlier in the same command.** `cd other-repo && git push --force` is read against the folder the agent started in.
 
 For those, use least-privilege credentials, separate accounts or projects for production, backups you have restored at least once, branch protection on the server and your agent's own permission prompts. The guard adds a cheap last check for the most common mistakes; it does not make a command safe.

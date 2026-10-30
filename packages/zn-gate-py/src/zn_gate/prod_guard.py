@@ -313,7 +313,10 @@ def _git_force_push(rest: List[str], cwd: Optional[str]) -> Optional[str]:
         if w.startswith("--"):
             if _flag_is(w, "--force") or _flag_is(w, "--force-with-lease") or _flag_is(w, "--force-if-includes"):
                 force = True
-            elif w in ("--all", "--mirror"):
+            elif w == "--mirror" or w.startswith("--mirror="):
+                force = True  # --mirror deletes and overwrites remote refs: as a force push
+                everything = True
+            elif w == "--all":
                 everything = True
             elif w in _PUSH_VALUE_FLAGS:
                 k += 1

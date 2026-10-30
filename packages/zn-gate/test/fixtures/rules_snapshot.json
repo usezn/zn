@@ -247,7 +247,7 @@
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
         "lib/shell-quote.js": "91cf4832cf68d4a367854f0c6e982c349afad2934e634f743d33aaf7c71c7471",
         "lib/destructive.js": "72c0b6806ddb82ecf26ac5af9564bb946e96a90e370bc567a87fd2d7d0713fe4",
-        "lib/prod-guard.js": "c758fae46dfbb8cbd7e46f5be4b1492f6b33b1c8ef1e54d596745422571ffe6d"
+        "lib/prod-guard.js": "2d1b2c0b191a02facccc9e7c96bbf53015b53692abb090a8f0522b1840a9cc0a"
       }
     }
   }

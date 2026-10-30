@@ -435,7 +435,7 @@ for (const flag of ['--force', '-f', '--force-with-lease', '--force-with-lease=m
   }
 }
 pRisk('git_force_push_protected', 'git push origin +main', 'git push origin +HEAD:master', 'git push origin +release/3.1', 'git push -fu origin main', 'git push -uf origin master', 'git push --force --all',
-  'git push --mirror --force origin', 'git push --force origin feature-x main', 'git push --no-verify -f origin main', 'sudo git push -f origin main');
+  'git push --mirror --force origin', 'git push --mirror origin', 'git push origin --mirror', 'git push --mirror=origin', 'git push -v --mirror origin', 'git push --no-verify --mirror origin', 'git -C /srv/app push --mirror origin', 'git push --force origin feature-x main', 'git push --no-verify -f origin main', 'sudo git push -f origin main');
 
 // Benign look-alikes: they must stay allowed.
 pAdd("psql -c \"SELECT * FROM users WHERE name = 'DROP TABLE'\"", "psql -d prod-db-example -c \"SELECT 'TRUNCATE TABLE users'\"", 'psql -c "select 1"', 'psql -c "SELECT count(*) FROM orders"',
