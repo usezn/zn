@@ -71,16 +71,20 @@ jobs:
         run: |
           $git = 'C:\Program Files\Git'
           if (-not (Test-Path "$git\usr\bin\sh.exe")) { throw "Git for Windows is not at $git" }
-          # A program started as /bin/sh is looked up in the root of the current drive, which is the drive of the workspace.
-          $drive = Split-Path -Qualifier $env:GITHUB_WORKSPACE
-          if (-not (Test-Path "$drive\bin")) {
-            cmd /c mklink /D "$drive\bin" "$git\usr\bin"
-            if ($LASTEXITCODE -ne 0) { throw "could not link $drive\bin" }
+          # A program started as /bin/sh is looked up in the root of a drive: the tests start it from the workspace (this
+          # drive) and from temporary folders (the temp drive), and the lookup follows the working directory of the new
+          # process. So the link goes on each of those drives, and on C:.
+          $drives = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:TEMP, 'C:\') | Where-Object { $_ } | ForEach-Object { Split-Path -Qualifier $_ } | Sort-Object -Unique
+          foreach ($drive in $drives) {
+            if (-not (Test-Path "$drive\bin")) {
+              cmd /c mklink /D "$drive\bin" "$git\usr\bin"
+              if ($LASTEXITCODE -ne 0) { throw "could not link $drive\bin" }
+            }
           }
           # Appended, not prepended: the Windows tools keep their place before the Git for Windows ones.
           "Path=$env:Path;$git\usr\bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          node -e "process.exit(require('child_process').spawnSync('/bin/sh', ['-c', 'exit 0']).status === 0 ? 0 : 1)"
-          if ($LASTEXITCODE -ne 0) { throw "/bin/sh does not start from $drive" }
+          node -e "const cp = require('child_process'); const ok = (cwd) => cp.spawnSync('/bin/sh', ['-c', 'exit 0'], { cwd }).status === 0; process.exit(ok(process.cwd()) && ok(require('os').tmpdir()) ? 0 : 1)"
+          if ($LASTEXITCODE -ne 0) { throw "/bin/sh does not start from the workspace or the temp folder" }
       - name: Check that the launcher tests will run
         # Fails when no POSIX sh starts, so the launcher tests cannot be skipped without anyone noticing.
         working-directory: packages/zn-gate
