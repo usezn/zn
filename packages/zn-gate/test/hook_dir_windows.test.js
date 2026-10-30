@@ -294,7 +294,7 @@ test('writeFileAtomic: the temporary file has an unpredictable name and is opene
 // ---- real ACLs (Windows only) -----------------------------------------------------------------------------------
 const real = { skip: process.platform !== 'win32' };
 // By full path, so a whoami or icacls from Git for Windows earlier on the PATH is never the one that runs.
-const SYS32 = (name) => path.join(process.env.SystemRoot || 'C:\Windows', 'System32', name);
+const SYS32 = (name) => path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', name);
 const icacls = (...args) => {
   const r = spawnSync(SYS32('icacls.exe'), args, { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
