@@ -124,9 +124,7 @@ test('validation: the file itself, on the system this runs on', { skip: !posix }
     const mine = path.join(shm, 'zn-b2121-' + process.pid);
     fs.mkdirSync(mine, { mode: 0o755 });
     t.after(() => fs.rmSync(mine, { recursive: true, force: true }));
-    fs.writeFileSync(path.join(mine, 'zn'), '#!/bin/sh
-exit 0
-', { mode: 0o755 });
+    fs.writeFileSync(path.join(mine, 'zn'), '#!/bin/sh'+String.fromCharCode(10)+'exit 0'+String.fromCharCode(10), { mode: 0o755 });
     assert.throws(() => mc.checkZnPath(path.join(mine, 'zn'), HOST_OS), /not owned by root/);
   }
   // A system program passes.
