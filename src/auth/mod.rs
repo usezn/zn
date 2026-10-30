@@ -166,7 +166,7 @@ fn unauthorized_response(detail: &str) -> Response {
     let body = serde_json::json!({
         "error": "unauthorized",
         "message": format!(
-            "{detail} Send your API key in the header \"Authorization: Bearer <your API key>\" (the header \"X-API-Key: <your API key>\" also works). The key is the value of ZN_API_KEY, or the one zn saved in zn-superadmin-key.txt when it generated it."
+            "{detail} Send your API key in the header \"Authorization: Bearer <your API key>\" (the header \"X-API-Key: <your API key>\" also works)."
         ),
         "expected_header": "Authorization: Bearer <your API key>",
     });
@@ -268,7 +268,7 @@ pub async fn api_key_auth(mut request: Request, next: Next) -> Result<Response, 
         }
         None => {
             tracing::warn!(
-                "Rejected request to {}: no API key was sent (expected the header Authorization: Bearer <key>, or X-API-Key)",
+                "Rejected request to {}: no API key was sent (expected the header Authorization: Bearer <key>, or X-API-Key; the key is ZN_API_KEY or the one saved in zn-superadmin-key.txt)",
                 request.uri().path()
             );
             Ok(unauthorized_response("No API key was sent."))
@@ -894,6 +894,9 @@ mod unauthorized_body_tests {
             .as_str()
             .unwrap()
             .contains("No API key was sent"));
+        let text = body.to_string();
+        assert!(!text.contains("zn-superadmin-key"));
+        assert!(!text.contains("ZN_API_KEY"));
     }
 
     #[tokio::test]
@@ -910,5 +913,7 @@ mod unauthorized_body_tests {
         assert!(text.contains("not valid"));
         assert!(text.contains("Authorization: Bearer"));
         assert!(!text.contains("wrong-secret-value"));
+        assert!(!text.contains("zn-superadmin-key"));
+        assert!(!text.contains("ZN_API_KEY"));
     }
 }
