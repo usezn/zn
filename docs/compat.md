@@ -537,6 +537,6 @@ Hermes Agent and the Cursor CLI. GitHub Copilot CLI and Gemini CLI have experime
 HTTP from `zn run` (for `curl`, `gh` or SDKs) is planned for a later release.
 
 Devin CLI is not supported. It also reads the Claude Code hooks in `.claude/settings.json`, so a
-`zn hooks install claude-code` there runs inside Devin too, but Devin names its tools `exec`, `read`,
-`write` and `edit`. zn still checks prompts, `read` and MCP tools, but it does **not** check the shell
-commands or the file writes Devin makes. Do not rely on the Claude Code install to protect Devin.
+`zn hooks install claude-code` there runs inside Devin too, but Devin names its tools differently
+(`exec`, `read`, `write`, `edit`), so zn does **not** check its shell commands or file writes. Do not
+rely on the Claude Code install to protect Devin. (Windsurf, also called Devin Desktop, has its own page.)
