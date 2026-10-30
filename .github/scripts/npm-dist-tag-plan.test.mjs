@@ -131,7 +131,10 @@ test('verify with the published versions rejects a latest moved back below the n
   assert.equal(verify('1.14.1', 'latest', '1.14.0', { latest: '1.15.0' }, versions), true);
   assert.equal(verify('1.14.1', 'latest', '1.14.0', { latest: '1.14.1' }, ['1.14.0', '1.14.1', '1.15.0-rc.1']), true);
   assert.throws(() => verify('1.15.0-rc.2', 'next', '1.15.0', { latest: '1.14.1', next: '1.15.0-rc.2' }, versions), /moved backward|1.15.0 is published/);
+  assert.throws(() => verify('1.14.1', 'latest', '1.14.0', { latest: '1.14.1' }, 42), /not a list/);
   assert.throws(() => verify('1.14.1', 'latest', '1.14.0', { latest: '1.14.1' }, 'x'), /not a list/);
+  assert.throws(() => verify('1.14.1', 'latest', '1.14.0', { latest: '1.14.1' }, ''), /not a list/);
+  assert.throws(() => verify('1.14.1', 'latest', '1.14.0', { latest: '1.14.1' }, ['1.13.0']), /not among the published versions/);
 });
 
 test('a saved plan must match the released commit when one is given', () => {
@@ -150,4 +153,15 @@ test('a saved plan must match the released commit when one is given', () => {
   writeFileSync(tags, JSON.stringify({ latest: '1.14.1' }));
   writeFileSync(vers, JSON.stringify(['1.14.0', '1.14.1', '1.15.0']));
   assert.equal(spawnSync(process.execPath, [script, 'verify', '1.14.1', 'latest', '1.14.0', tags, vers], { encoding: 'utf8' }).status, 1);
+});
+
+test('verify accepts the plain string npm prints when a package has one version', () => {
+  assert.equal(verify('1.14.1', 'latest', '', { latest: '1.14.1' }, '1.14.1'), true);
+  assert.throws(() => verify('1.14.1', 'latest', '', { latest: '1.14.0' }, '1.14.1'), /moved backward/);
+  assert.throws(() => verify('1.14.1', 'latest', '', { latest: '1.14.1' }, 5), /not a list/);
+});
+
+test('stagedPlan checks the commit only, not which job wrote the plan', () => {
+  const saved = { version: '1.14.1', tag: 'latest', latest_before: '1.14.0', sha: 'a'.repeat(40) };
+  assert.deepEqual(stagedPlan('1.14.1', { ...saved, job: 'other' }, 'a'.repeat(40)), { tag: 'latest', latestBefore: '1.14.0' });
 });
