@@ -239,8 +239,21 @@ function networkFailure(stderr, timedOut) {
 
 function networkAdvice(manual) {
   return [
-    '  that did not finish: npm could not reach the registry. That can be no internet connection, a VPN or proxy that blocks it, or a company registry that is down.',
+    '  that did not finish. npm could not reach the registry.',
+    '  The cause may be no internet connection, a VPN or proxy that blocks it, or a company registry that is down.',
     '  Check your connection (and your VPN or proxy), then run it again:',
+    '    ' + manual,
+    ''
+  ].join(String.fromCharCode(10)) + String.fromCharCode(10);
+}
+
+/* The install ran past its time limit and was stopped: the network may only be slow, and the install may be half done. */
+function timeoutAdvice(manual, ms) {
+  return [
+    '  that was stopped: the install took longer than ' + Math.round((ms || NPM_INSTALL_TIMEOUT_MS) / 1000) + ' seconds.',
+    '  Your connection may just be slow. The install may be incomplete, so check what is there with:',
+    '    npm ls -g zn-gate',
+    '  Then run it again:',
     '    ' + manual,
     ''
   ].join(String.fromCharCode(10)) + String.fromCharCode(10);
@@ -328,7 +341,8 @@ async function guide(opts = {}) {
     if (!(await ask(`${s.label}: run \`${s.shown || s.manual}\`?`))) { w(`  skipped. You can run it later: ${s.manual}\n`); skipped++; break; }
     const res = run(s, env);
     if (!(res === true || (res && res.ok))) {
-      if (s.run && networkFailure(res && res.stderr, res && res.timedOut)) w(networkAdvice(s.manual));
+      if (s.run && res && res.timedOut) w(timeoutAdvice(s.manual, s.timeout));
+      else if (s.run && networkFailure(res && res.stderr, false)) w(networkAdvice(s.manual));
       else if (s.run && permissionFailure(res && res.stderr, globalPrefix(opts, s))) w(permissionAdvice({ prefix: globalPrefix(opts, s), env, todo, shell: opts.shell }));
       else w(`  that did not finish. Run it yourself: ${s.manual}\n`);
       skipped++; break;
@@ -365,4 +379,4 @@ async function guide(opts = {}) {
   return skipped ? 1 : code;
 }
 
-module.exports = { guide, plan, fromTemporaryCopy, _internal: { networkFailure, NPM_NETWORK_FLAGS, permissionFailure, permissionAdvice, findProgram, globalInstall, cmp, runStep, spawnProgram, npmCli } };
+module.exports = { guide, plan, fromTemporaryCopy, _internal: { networkFailure, timeoutAdvice, NPM_NETWORK_FLAGS, permissionFailure, permissionAdvice, findProgram, globalInstall, cmp, runStep, spawnProgram, npmCli } };
