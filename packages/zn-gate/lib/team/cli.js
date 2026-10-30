@@ -25,6 +25,8 @@ const { exportAuditFile } = require('./otel');
 const store = require('../vault/store');
 const { createClient } = require('../vault/client');
 const { messageWithUnlockHint } = require('../errors');
+const { isVerbose } = require('../verbose');
+const messages = require('../messages');
 const { znCommand } = require('../zn-command');
 
 const USAGE = 'usage: zn team join <token> | zn team join - | ZN_TEAM_JOIN_TOKEN=... zn team join [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
@@ -33,6 +35,13 @@ const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE
 
 const out = (s) => process.stdout.write(s + '\n');
 const err = (s) => process.stderr.write(s + '\n');
+
+/* A failure for the command line: the plain text first; a "details:" line (HTTP status, internal code) only with ZN_VERBOSE=1. */
+function printError(e) {
+  const [main, detail] = messageWithUnlockHint(e).split('\ndetails: ');
+  err('[zn] ' + main);
+  if (detail && isVerbose()) err('[zn] details: ' + detail);
+}
 
 function flag(args, name) {
   const i = args.indexOf(name);
@@ -85,7 +94,7 @@ async function joinTokenFrom(args, io) {
 async function joinCmd(args, io) {
   const got = await joinTokenFrom(args, io || {});
   if (got.error) { err('[zn] ' + got.error); return 2; }
-  if (!got.token) { err(USAGE); return 2; }
+  if (!got.token) { err('[zn] ' + messages.TEAM_JOIN_NO_TOKEN); return 2; }
   const token = got.token;
   if (got.via === 'argument') {
     err('[zn] Note: a join token given as an argument stays in your shell history and is visible in the process list. Next time use `zn team join -` (token on standard input) or set ' + JOIN_TOKEN_ENV + '.');
@@ -94,12 +103,15 @@ async function joinCmd(args, io) {
   const joinArgs = { join_token: token, api_base: flag(args, '--api'), agent: flag(args, '--agent') };
   if (args.includes('--include-history')) joinArgs.include_history = true;
   const r = await withClient((c) => c.teamJoin(joinArgs));
-  out('Joined ' + (r.org_name ? r.org_name + ' (' + r.org + ')' : r.org) + '. Installation ' + r.install_id + '.');
+  const orgLabel = r.org_name ? r.org_name + ' (' + r.org + ')' : r.org;
+  out('Joined ' + orgLabel + '. Installation ' + r.install_id + '.');
   // The join is complete only when the organization's first valid policy is applied.
   let why;
   try {
     const s = await withClient((c) => c.teamSync({}));
     const pol = s.policy || {};
+    // The organization simply has no policy yet: nothing for this user to fix and nothing failed, so exit 0.
+    if (pol.status === 'none') { out(messages.teamJoinNoPolicyYet()); return 0; }
     out('Policy: ' + (pol.status === 'updated' ? 'version ' + pol.version : pol.status) + '.');
     if (syncOutcome(s).policyOk) return 0;
     why = syncOutcome({ policy: pol }).problems[0];
@@ -156,7 +168,7 @@ async function statusCmd(args) {
   }
   out('Organization: ' + (res.org_name ? res.org_name + ' (' + res.org + ')' : res.org));
   out('Installation: ' + res.install_id + ' via ' + res.api_base);
-  if (res.revoked_at) out('REMOVED FROM ORG on ' + res.revoked_at + ': this machine no longer reports; the cached policy applies until it expires, then strict mode.');
+  if (res.revoked_at) out('REMOVED FROM ORG on ' + res.revoked_at + '. ' + messages.TEAM_REMOVED + ' Note: the cached policy still applies until it expires, then strict mode.');
   out('Policy:       ' + describePolicy(st));
   if (change) { const lines = describeChange(change); out('Policy change: ' + lines[0]); for (const l of lines.slice(1)) out(l); }
   out('Audit upload: ' + (pending == null ? 'unknown' : pending + ' records pending') +
@@ -164,7 +176,9 @@ async function statusCmd(args) {
   const ls = res.last_sync;
   if (ls) {
     out('Last sync:    ' + (ls.ok ? 'ok, ' + ls.at : 'FAILED ' + ls.at + ': ' + (ls.problems.join('; ') || 'unknown') +
-      (ls.last_ok_at ? ' (last success ' + ls.last_ok_at + ')' : ' (never succeeded)') + '; run `zn team sync` to retry'));
+      (ls.last_ok_at ? ' (last success ' + ls.last_ok_at + ')' : ' (never succeeded)') +
+      // A removed installation cannot sync again: retrying would not help.
+      (res.revoked_at ? '' : '; run `zn team sync` to retry')));
   }
   for (const l of describeRevocations(res.revocation_pending)) out(l);
   for (const l of describeDropped(res.revocations_dropped)) out(l);
@@ -196,14 +210,22 @@ function describeDropped(d) {
 async function syncCmd() {
   const r = await withClient((c) => c.teamSync({}));
   const pol = r.policy || {};
-  out('Policy: ' + (pol.status === 'updated' || pol.status === 'current' ? pol.status + ' (version ' + pol.version + ')' : pol.status + (pol.error ? ': ' + pol.error : '')));
-  if (r.upload) out('Audit upload: ' + r.upload.status + ', ' + (r.upload.uploaded || 0) + ' sent, ' + (r.upload.pending > 0 ? r.upload.pending : 0) + ' pending');
+  const o = syncOutcome(r);
+  // The three failures with one plain cause and one next step: removed, offline, organization inactive.
+  const inactive = Boolean(r.upload) && r.upload.status === 'inactive';
+  const special = pol.status === 'revoked' ? 'revoked' : inactive ? 'inactive' : pol.status === 'offline' && !(r.upload && r.upload.status === 'tampered') ? 'offline' : null;
+  if (!special) out('Policy: ' + (pol.status === 'updated' || pol.status === 'current' ? pol.status + ' (version ' + pol.version + ')' : pol.status + (pol.error ? ': ' + pol.error : '')));
+  if (r.upload && !special) out('Audit upload: ' + r.upload.status + ', ' + (r.upload.uploaded || 0) + ' sent, ' + (r.upload.pending > 0 ? r.upload.pending : 0) + ' pending');
   if (r.revocations && r.revocations.pending) out('Revocation: the server has not taken the earlier leave yet (' + r.revocations.pending + ' pending); see `zn team status`.');
   else if (r.revocations && r.revocations.done) out('Revocation: the server has now been told that the earlier installation left.');
   if (r.upload && r.upload.status === 'tampered') out('Nothing was uploaded: ' + r.upload.error + '. Keep a copy of the audit log, look into the change, then run `' + znCommand('vault verify --acknowledge') + '` in your own terminal.');
   // Exit 0 only with a valid policy applied and no failed upload.
-  const o = syncOutcome(r);
-  if (!o.ok) err('[zn] sync incomplete: ' + o.problems.join('; '));
+  if (special === 'revoked') err('[zn] ' + messages.TEAM_REMOVED);
+  else if (special === 'inactive') err('[zn] ' + messages.teamSyncInactive(r.upload.pending));
+  else if (special === 'offline') {
+    err('[zn] ' + messages.teamSyncNoNetwork().split('\ndetails: ')[0]);
+    if (isVerbose() && pol.error) err('[zn] details: ' + pol.error);
+  } else if (!o.ok) err('[zn] sync incomplete: ' + o.problems.join('; '));
   return o.ok ? 0 : 1;
 }
 
@@ -242,10 +264,10 @@ async function runTeamCommand(args, io) {
     if (sub === 'sync') return await syncCmd();
     if (sub === 'leave') return await leaveCmd();
     if (sub === 'managed-config') return require('./managed-config').run(args.slice(2));
-    err(USAGE);
+    err('[zn] ' + messages.teamNotACommand(sub));
     return 2;
   } catch (e) {
-    err('[zn] ' + messageWithUnlockHint(e));
+    printError(e);
     return 1;
   }
 }

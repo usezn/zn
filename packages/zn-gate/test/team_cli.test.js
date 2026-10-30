@@ -59,18 +59,18 @@ const rawKey = crypto.generateKeyPairSync('ed25519').publicKey.export({ format: 
 const PIN = { alg: 'Ed25519', kid: policy.kidOf(rawKey), key: rawKey };
 const JOINED = { joined: true, org: 'org_Example12345678', org_name: 'Example Org', install_id: 'inst-0001', api_base: 'https://team.example.com', revoked_at: null };
 
-test('join without a token, or with a flag in its place, prints the usage and exits 2', async () => {
+test('join without a token, or with a flag in its place, says no token was given and exits 2', async () => {
   for (const args of [['team', 'join'], ['team', 'join', '--api', 'https://team.example.com']]) {
     const r = await capture(() => runTeamCommand(args));
     assert.strictEqual(r.code, 2);
-    assert.match(r.stderr, /^usage: zn team join <token>/);
+    assert.match(r.stderr, /^\[zn\] No join token given\. .*zn team join <token>/);
   }
 });
 
-test('an unknown subcommand prints the usage and exits 2', async () => {
+test('an unknown subcommand says it is not a command and exits 2', async () => {
   const r = await capture(() => runTeamCommand(['team', 'frobnicate']));
   assert.strictEqual(r.code, 2);
-  assert.match(r.stderr, /usage: zn team join/);
+  assert.match(r.stderr, /^\[zn\] 'zn team frobnicate' is not a zn command\. Commands: zn team join <token>/);
 });
 
 test('join passes the options through and reports the policy that came with it', async () => {
@@ -85,15 +85,14 @@ test('join passes the options through and reports the policy that came with it',
   assert.ok(closed >= 2, 'every client is closed');
 });
 
-test('join to an organization without a name shows the id; an organization with no policy yet leaves the join unfinished (exit 1)', async () => {
+test('join to an organization without a name shows the id; an organization with no policy yet is a finished join (exit 0)', async () => {
   fake.teamJoin = async () => ({ org: 'org_Example12345678', install_id: 'inst-0002' });
   fake.teamSync = async () => ({ policy: { status: 'none' } });
   const r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'b'.repeat(32) } }));
-  assert.strictEqual(r.code, 1);
+  assert.strictEqual(r.code, 0);
   assert.match(r.stdout, /^Joined org_Example12345678\. Installation inst-0002\./);
-  assert.match(r.stdout, /Policy: none\./);
-  assert.match(r.stderr, /^\[zn\] The join is not finished: this machine is registered, but no valid policy is applied yet \(the organization has not published a policy yet\)\./);
-  assert.match(r.stderr, /`zn team status` shows it as pending; run `zn team sync` to retry/);
+  assert.match(r.stdout, /Your admin has not published a policy yet/);
+  assert.strictEqual(r.stderr, '');
 });
 
 test('join with a policy that is already current (a reconnect) is complete', async () => {
@@ -235,8 +234,8 @@ test('sync reports the policy and the upload, and rejection or revocation exit 1
   fake.teamSync = async () => ({ policy: { status: 'offline', error: 'ZN_TEAM_NETWORK' }, upload: { status: 'offline', uploaded: 0, pending: 2 } });
   r = await capture(() => runTeamCommand(['team', 'sync']));
   assert.strictEqual(r.code, 1, 'offline is a failure: nothing was synced');
-  assert.match(r.stdout, /Policy: offline: ZN_TEAM_NETWORK/);
-  assert.strictEqual(r.stderr, '[zn] sync incomplete: could not reach the server (ZN_TEAM_NETWORK); audit upload failed (offline, 2 records pending)\n');
+  assert.ok(!/ZN_TEAM_NETWORK/.test(r.stdout));
+  assert.strictEqual(r.stderr, '[zn] Could not reach the zn server. Nothing was changed. Check your internet connection and run again: zn team sync\n');
   fake.teamSync = async () => ({ policy: { status: 'rejected', error: 'policy version rollback' } });
   r = await capture(() => runTeamCommand(['team', 'sync']));
   assert.strictEqual(r.code, 1);
@@ -246,7 +245,7 @@ test('sync reports the policy and the upload, and rejection or revocation exit 1
   fake.teamSync = async () => ({ policy: { status: 'revoked' } });
   r = await capture(() => runTeamCommand(['team', 'sync']));
   assert.strictEqual(r.code, 1);
-  assert.match(r.stderr, /this machine was removed from the organization/);
+  assert.match(r.stderr, /An admin removed this machine from the organization/);
 });
 
 test('sync exits 1 without a valid applied policy or with a failed upload, and 0 only when both are fine', async () => {
@@ -258,7 +257,7 @@ test('sync exits 1 without a valid applied policy or with a failed upload, and 0
     [{ policy: { status: 'current', version: 3 }, upload: { status: 'error', uploaded: 0, pending: 4 } }, 1, /audit upload failed \(error, 4 records pending\)/],
     [{ policy: { status: 'updated', version: 3 }, upload: { status: 'diverged', pending: 1 } }, 1, /audit upload failed \(diverged, 1 records pending\)/],
     [{ policy: { status: 'updated', version: 3 }, upload: { status: 'local_gap', pending: 0 } }, 1, /audit upload failed \(local_gap\)/],
-    [{ policy: { status: 'updated', version: 3 }, upload: { status: 'inactive', pending: 0 } }, 1, /audit upload failed \(inactive\)/],
+    [{ policy: { status: 'updated', version: 3 }, upload: { status: 'inactive', pending: 0 } }, 1, /not active on zn right now/],
     [{ policy: { status: 'updated', version: 3 }, upload: { status: 'ok', uploaded: 2, pending: 0 } }, 0, null],
     [{ policy: { status: 'current', version: 3 }, upload: { status: 'nothing', pending: 0 } }, 0, null],
     [{ policy: { status: 'current', version: 3 }, upload: { status: 'busy', pending: 5 } }, 0, null],
@@ -274,11 +273,11 @@ test('sync exits 1 without a valid applied policy or with a failed upload, and 0
 });
 
 test('status shows a pending join and the last failed sync with its cause; --json carries both', async () => {
-  const failed = { at: '2026-10-23T10:00:00.000Z', ok: false, last_ok_at: '2026-10-22T09:00:00.000Z', problems: ['could not reach the server (ZN_TEAM_NETWORK)'] };
+  const failed = { at: '2026-10-23T10:00:00.000Z', ok: false, last_ok_at: '2026-10-22T09:00:00.000Z', problems: ['could not reach the zn server'] };
   fake.teamInfo = async () => ({ ...JOINED, policy: { state: 'none' }, last_sync: failed });
   let r = await capture(() => runTeamCommand(['team', 'status']));
   assert.match(r.stdout, /Policy:       none received yet \(PENDING: the organization policy is not applied; run `zn team sync`\)/);
-  assert.match(r.stdout, /Last sync:    FAILED 2026-10-23T10:00:00\.000Z: could not reach the server \(ZN_TEAM_NETWORK\) \(last success 2026-10-22T09:00:00\.000Z\); run `zn team sync` to retry/);
+  assert.match(r.stdout, /Last sync:    FAILED 2026-10-23T10:00:00\.000Z: could not reach the zn server \(last success 2026-10-22T09:00:00\.000Z\); run `zn team sync` to retry/);
   r = await capture(() => runTeamCommand(['team', 'status', '--json']));
   const j = JSON.parse(r.stdout);
   assert.strictEqual(j.join_pending, true);

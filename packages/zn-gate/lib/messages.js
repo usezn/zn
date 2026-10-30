@@ -286,6 +286,52 @@ const TEAM_NOT_ASKED = 'the organization policy does not ask for this, so nothin
 
 const TEAM_INVALID_ORG_KEY = 'the server sent an invalid organization key, so this machine was not connected. Ask your administrator.';
 
+/* A message with a technical line that the command line shows only with ZN_VERBOSE=1 (see printError in team/cli.js). */
+function withDetails(text, detail) {
+  return detail ? text + '\ndetails: ' + detail : text;
+}
+
+const TEAM_JOIN_TOKEN_REJECTED = 'This join token is expired, already used or not valid, so this machine was not connected. ' +
+  'Ask your organization admin for a new invitation, then run: zn team join <new token>';
+
+function teamJoinTokenRejected(detail) {
+  return withDetails(TEAM_JOIN_TOKEN_REJECTED, detail);
+}
+
+function teamJoinNoNetwork(detail) {
+  return withDetails('Could not reach the zn server, so this machine was not connected. ' +
+    'Check your internet connection and run the same command again: zn team join <token>', detail);
+}
+
+const TEAM_JOIN_NO_TOKEN = 'No join token given. Your organization admin sends you a token that starts with znj_. ' +
+  'Run: zn team join <token> (or `zn team join -` to paste it, or set ZN_TEAM_JOIN_TOKEN). All options: zn team --help';
+
+function teamJoinNoPolicyYet() {
+  return 'Your admin has not published a policy yet, so no restrictions apply for now. ' +
+    'This is expected: zn checks again by itself; to check now run: zn team sync';
+}
+
+const TEAM_REMOVED = 'An admin removed this machine from the organization, so it no longer gets the policy. ' +
+  'To disconnect it run: zn team leave. To join again, ask your admin for a new token and run: zn team join <token>';
+
+function teamSyncNoNetwork(detail) {
+  return withDetails('Could not reach the zn server. Nothing was changed. Check your internet connection and run again: zn team sync', detail);
+}
+
+function teamSyncInactive(pending) {
+  const kept = pending > 0
+    ? 'Nothing is lost: ' + pending + ' audit record' + (pending === 1 ? ' stays' : 's stay') + ' on this machine and ' + (pending === 1 ? 'is' : 'are') + ' sent when it is active again. '
+    : 'Nothing is lost. ';
+  return 'Your organization is not active on zn right now: ask your organization admin. ' + kept + 'Once it is active, run: zn team sync';
+}
+
+function teamNotACommand(sub) {
+  if (sub === 'login') return "'zn team login' is not a zn command. To connect this machine run: zn team join <token>. To export the audit log run: zn vault log export --otlp";
+  if (sub === 'export') return "'zn team export' is not a zn command. To export the audit log run: zn vault log export --otlp. To connect this machine run: zn team join <token>";
+  const shown = String(sub).slice(0, 30).replace(/[\u0000-\u001f\u007f]/g, ' ');
+  return "'zn team " + shown + "' is not a zn command. Commands: zn team join <token>, zn team status, zn team sync, zn team leave. All options: zn team --help";
+}
+
 function teamJoinFailed(why) {
   return 'join failed (' + why + '). This machine was not connected.';
 }
@@ -300,6 +346,7 @@ module.exports = {
   connectFullAccess, connectUnverified, connectSaveFailed, revokeNotReached, connectNoStore, environmentRefusal, isNetworkFailure,
   PINS_USAGE_APPROVE, pinsAgentRefusal, PINS_NEEDS_TERMINAL, PINS_NOT_APPROVED, pinsError,
   TEAM_INVALID_JOIN_TOKEN, TEAM_INVALID_REQUEST, TEAM_NOTHING_TO_APPROVE, TEAM_NOT_ASKED, TEAM_INVALID_ORG_KEY,
-  teamJoinFailed,
+  teamJoinFailed, TEAM_JOIN_TOKEN_REJECTED, teamJoinTokenRejected, teamJoinNoNetwork, TEAM_JOIN_NO_TOKEN, teamJoinNoPolicyYet,
+  TEAM_REMOVED, teamSyncNoNetwork, teamSyncInactive, teamNotACommand,
   DISCONNECT_UNLOCK_FIRST, disconnectVaultNotRemoved, disconnectKeychainLeft, TROUBLESHOOTING_URL, vaultDamaged,
 };
