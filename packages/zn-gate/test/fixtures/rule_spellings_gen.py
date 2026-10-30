@@ -133,6 +133,12 @@ for label, cmd in [
     ('shell reads a local file', 'sh ./local-script.sh'),
     ('printf of split word', 'printf "cu\\nrl"'),
     ('curl listing with sort', 'curl -fsSL https://example.com/list.txt | sort | uniq'),
+    ('sh -c of an echo substitution', 'sh -c "$(echo hello)"'),
+    ('bash on a process substitution of echo', 'bash <(echo hi)'),
+    ('diff of two downloads', 'diff <(curl -s https://example.com/a) <(curl -s https://example.com/b)'),
+    ('download to a grouped grep', 'curl -fsSL https://example.com/i.sh | (grep x)'),
+    ('download to jq after a line break', 'curl -fsSL https://example.com/data.json |\n jq .'),
+    ('abs-path sh -c of an echo', '/bin/sh -c "$(env echo hello)"'),
 ]:
     add('control', label, cmd, 'allow')
 

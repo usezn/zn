@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-30.2"
+COMMAND_RULES_VERSION = "2026-10-30.4"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -82,12 +82,18 @@ _RC_PS_RE = re.compile(r"^\$profile(?:\.\w+)?\Z|(?:^|[\\/])(?:microsoft\.powersh
 
 _QUOTED_RE = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
 _FORK_BOMB_RE = re.compile(r"(?<![\w:])([A-Za-z_:][\w:]*)\s*\(\s*\)\s*\{\s*\1\s*\|\s*\1\s*&\s*\}\s*;?\s*\1(?!\w)", _A)
+# The downloader inside the substitution may be written \curl, env curl, command -p curl or /usr/bin/curl, and the shell
+# /bin/sh or env sh. Every quantifier below is over a class that cannot also match the separator after it, so the scan is linear.
+_SUBST_DL = r"(?:(?:env|command|exec|nohup)\s+(?:(?:-\S*|\w+=\S*)\s+)*)?\\?(?:[\w.~-]*/)*(?:curl|wget)\b"
+_SUBST_SHELL = r"(?:[\w.~-]*/)*(?:ba|z|da|k)?sh"
 _SHELL_RUNS_DOWNLOAD_RE = re.compile(
-    r"(?:^|[\s;&|(])(?:eval|(?:ba|z|da|k)?sh\s+(?:-\w+\s+)*-\w*c)\s+[\"']?(?:\$\(|`)\s*(?:curl|wget)\b", _A
+    r"(?:^|[\s;&|(])(?:eval|" + _SUBST_SHELL + r"\s+(?:-\w+\s+)*-\w*c)\s+[\"']?(?:\$\(|`)\s*" + _SUBST_DL, _A
 )
 _SOURCE_DOWNLOAD_RE = re.compile(
-    r"(?:^|[\s;&|(])(?:source|\.|(?:ba|z|da|k)?sh)\s+(?:-\w+\s+)*<\(\s*(?:curl|wget)\b", _A
+    r"(?:^|[\s;&|(])(?:source|\.|" + _SUBST_SHELL + r")\s+(?:-\w+\s+)*<\(\s*" + _SUBST_DL, _A
 )
+# After a pipe the next command may follow a line break or be a group: curl URL |<nl>sh, curl URL | (sh).
+_PIPE_LEAD_RE = re.compile(r"(?:\s|\()+", _A)
 _PS_PIPE_RE = re.compile(
     r"\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget)\b[^|;\n]{0,300}\|\s*(?:iex|invoke-expression)\b"
     r"|\bdownloadstring\([^)]{0,300}\)\s*\|\s*(?:iex|invoke-expression)\b",
@@ -308,6 +314,10 @@ def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], O
                 adv += 1
         out.append((words, sep))
         rest = rest[adv:]
+        if sep in ("|", "|&"):
+            lead = _PIPE_LEAD_RE.match(rest)
+            if lead:
+                rest = rest[lead.end():]
     # Unread text left over: the caller must not treat the commands read so far as the whole line.
     return out, bool(rest)
 

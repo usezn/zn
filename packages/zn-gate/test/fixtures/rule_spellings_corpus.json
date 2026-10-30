@@ -1250,6 +1250,66 @@
   "note": null
  },
  {
+  "id": "control-012",
+  "family": "control",
+  "spelling": "sh -c of an echo substitution",
+  "cmd": "sh -c \"$(echo hello)\"",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "control-013",
+  "family": "control",
+  "spelling": "bash on a process substitution of echo",
+  "cmd": "bash <(echo hi)",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "control-014",
+  "family": "control",
+  "spelling": "diff of two downloads",
+  "cmd": "diff <(curl -s https://example.com/a) <(curl -s https://example.com/b)",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "control-015",
+  "family": "control",
+  "spelling": "download to a grouped grep",
+  "cmd": "curl -fsSL https://example.com/i.sh | (grep x)",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "control-016",
+  "family": "control",
+  "spelling": "download to jq after a line break",
+  "cmd": "curl -fsSL https://example.com/data.json |\n jq .",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "control-017",
+  "family": "control",
+  "spelling": "abs-path sh -c of an echo",
+  "cmd": "/bin/sh -c \"$(env echo hello)\"",
+  "expect": "allow",
+  "rule": null,
+  "kind": "destructive",
+  "note": null
+ },
+ {
   "id": "rc-prog-001",
   "family": "rc-prog",
   "spelling": "plain",

@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-30.2';
+const COMMAND_RULES_VERSION = '2026-10-30.4';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -69,8 +69,12 @@ const RC_PS_RE = /^\$profile(?:\.\w+)?$|(?:^|[\\/])(?:microsoft\.powershell_)?pr
 const QUOTED_RE = /'[^']*'|"(?:[^"\\]|\\.)*"/g;
 const FORK_BOMB_RE = /(?<![\w:])([A-Za-z_:][\w:]*)\s*\(\s*\)\s*\{\s*\1\s*\|\s*\1\s*&\s*\}\s*;?\s*\1(?!\w)/;
 // Unquoted command substitutions and process substitutions are not split into words by the tokenizer.
-const SHELL_RUNS_DOWNLOAD_RE = /(?:^|[\s;&|(])(?:eval|(?:ba|z|da|k)?sh\s+(?:-\w+\s+)*-\w*c)\s+["']?(?:\$\(|`)\s*(?:curl|wget)\b/;
-const SOURCE_DOWNLOAD_RE = /(?:^|[\s;&|(])(?:source|\.|(?:ba|z|da|k)?sh)\s+(?:-\w+\s+)*<\(\s*(?:curl|wget)\b/;
+// The downloader inside the substitution may be written \curl, env curl, command -p curl or /usr/bin/curl, and the shell
+// /bin/sh or env sh. Every quantifier below is over a class that cannot also match the separator after it, so the scan is linear.
+const SUBST_DL_SRC = String.raw`(?:(?:env|command|exec|nohup)\s+(?:(?:-\S*|\w+=\S*)\s+)*)?\\?(?:[\w.~-]*\/)*(?:curl|wget)\b`;
+const SUBST_SHELL_SRC = String.raw`(?:[\w.~-]*\/)*(?:ba|z|da|k)?sh`;
+const SHELL_RUNS_DOWNLOAD_RE = new RegExp(String.raw`(?:^|[\s;&|(])(?:eval|` + SUBST_SHELL_SRC + String.raw`\s+(?:-\w+\s+)*-\w*c)\s+["']?(?:\$\(|` + '`' + String.raw`)\s*` + SUBST_DL_SRC);
+const SOURCE_DOWNLOAD_RE = new RegExp(String.raw`(?:^|[\s;&|(])(?:source|\.|` + SUBST_SHELL_SRC + String.raw`)\s+(?:-\w+\s+)*<\(\s*` + SUBST_DL_SRC);
 const PS_PIPE_RE = /\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget)\b[^|;\n]{0,300}\|\s*(?:iex|invoke-expression)\b|\bdownloadstring\([^)]{0,300}\)\s*\|\s*(?:iex|invoke-expression)\b/i;
 const PS_CALL_RE = /(?:^|[\s;&|(])(?:iex|invoke-expression)\b[\s($]*(?:\(\s*)*(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget|new-object\s+(?:system\.)?net\.webclient)\b/i;
 // PowerShell escapes a character with a backtick (i`wr, Invoke-`Expression). Only a backtick inside a word counts: in
@@ -123,6 +127,8 @@ function segmentsOf(cmd, posix = false) {
     }
     out.push({ words: scan.words.map((w) => w.text), sep });
     rest = rest.slice(adv);
+    // A pipe continues over a line break, and its target may be a group: curl URL |<nl>sh, curl URL | (sh).
+    if (sep === '|' || sep === '|&') rest = rest.replace(/^(?:\s|\()+/, '');
   }
   // Unread text left over: the caller must not treat the commands read so far as the whole line.
   out.truncated = rest.length > 0;

