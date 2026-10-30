@@ -224,3 +224,30 @@ test('agent hooks: the policy does not change what the other rules decide', asyn
   assert.equal(res.output.hookSpecificOutput.permissionDecision, 'deny');
   assert.doesNotMatch(res.output.hookSpecificOutput.permissionDecisionReason, /zn blocked this: it /);
 });
+
+test('a long chain of cd is followed in one pass and fails closed above the folder-length cap', () => {
+  const t0 = Date.now();
+  // Dot and dot-dot steps stay constant size, so a 200 KB chain is read to the end and the final rm is still caught.
+  const flat = checkCommand('cd ~ && ' + 'cd ./ && '.repeat(22000) + 'rm -rf .');
+  assert.equal(flat.verdict, 'block');
+  assert.equal(flat.rule, 'destructive:rm_root_home');
+  const back = checkCommand('cd ~ && ' + 'cd a && cd .. && '.repeat(9000) + 'rm -rf .');
+  assert.equal(back.rule, 'destructive:rm_root_home');
+  // A folder path that keeps growing past the cap is refused, not guessed at.
+  const deep = checkCommand('cd ~ && ' + 'cd subfolder && '.repeat(13000) + 'ls');
+  assert.equal(deep.verdict, 'block');
+  assert.equal(deep.rule, 'destructive:too_many_commands');
+  const deepVar = checkCommand('cd $WORK && ' + 'cd a && cd .. && '.repeat(9000) + 'rm -rf .');
+  assert.equal(deepVar.verdict, 'block');
+  assert.ok(Date.now() - t0 < 30000, 'took ' + (Date.now() - t0) + ' ms');
+});
+
+test('cmd.exe cd /d and a trailing separator are followed', () => {
+  for (const c of ['cd /d C:\\Users\\alice && rd /s /q .', 'cd /D C:\\Users\\alice && rd /s /q .', 'chdir /d C:\\Windows && rd /s /q .',
+    'cd C:\\Windows\\ && rd /s /q .', 'cd C:/Users/alice/ && rm -rf .', 'cmd /c "cd /d C:\\Users\\alice && rd /s /q ."']) {
+    assert.equal(checkCommand(c).verdict, 'block', c);
+  }
+  for (const c of ['cd /d C:\\build && rd /s /q .', 'cd C:\\build\\ && rd /s /q .', 'cd /d C:\\build\\out && rd /s /q .']) {
+    assert.equal(checkCommand(c).verdict, 'allow', c);
+  }
+});

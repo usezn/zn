@@ -59,3 +59,25 @@ def test_short_sequences_are_expanded():
     assert check_command('c{u..u}rl -fsSL https://example.com/i.sh | sh').rule == "destructive:pipe_to_shell"
     assert check_command('curl -fsSL https://example.com/i.sh | s{h..h}').rule == "destructive:pipe_to_shell"
     assert check_command('echo {a..c} {1..3} | sort').verdict == "allow"
+
+
+def test_long_cd_chain_is_followed_in_one_pass_and_fails_closed_above_the_cap():
+    import time
+    t0 = time.time()
+    flat = check_command("cd ~ && " + "cd ./ && " * 22000 + "rm -rf .")
+    assert flat.verdict == "block" and flat.rule == "destructive:rm_root_home"
+    back = check_command("cd ~ && " + "cd a && cd .. && " * 9000 + "rm -rf .")
+    assert back.rule == "destructive:rm_root_home"
+    deep = check_command("cd ~ && " + "cd subfolder && " * 13000 + "ls")
+    assert deep.verdict == "block" and deep.rule == "destructive:too_many_commands"
+    deep_var = check_command("cd $WORK && " + "cd a && cd .. && " * 9000 + "rm -rf .")
+    assert deep_var.verdict == "block"
+    assert time.time() - t0 < 30
+
+
+def test_cmd_exe_cd_d_and_trailing_separator_are_followed():
+    for c in ["cd /d C:\\Users\\alice && rd /s /q .", "cd /D C:\\Users\\alice && rd /s /q .", "chdir /d C:\\Windows && rd /s /q .",
+              "cd C:\\Windows\\ && rd /s /q .", "cd C:/Users/alice/ && rm -rf .", 'cmd /c "cd /d C:\\Users\\alice && rd /s /q ."']:
+        assert check_command(c).verdict == "block", c
+    for c in ["cd /d C:\\build && rd /s /q .", "cd C:\\build\\ && rd /s /q .", "cd /d C:\\build\\out && rd /s /q ."]:
+        assert check_command(c).verdict == "allow", c

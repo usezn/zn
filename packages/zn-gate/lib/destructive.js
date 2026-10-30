@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-23.10';
+const COMMAND_RULES_VERSION = '2026-10-30.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -132,6 +132,19 @@ const isPipe = (sep) => sep === '|' || sep === '|&';
 const CD_HEADS = new Set(['cd', 'chdir', 'pushd', 'set-location', 'sl', 'push-location']);
 const ANCHORED_RE = /^(?:[\\/~$%]|[A-Za-z]:)/;
 const NOT_CD = Symbol('not-cd');
+// A folder path longer than this (after "." and ".." are resolved) is not followed: the line is refused instead.
+const MAX_CWD_CHARS = 4096;
+const CWD_OVERFLOW = Symbol('cwd-overflow');
+
+/* One lexical pass over a folder path: backslashes become "/", repeated and trailing separators and "." segments go,
+   and ".." is resolved where the path starts at a known point. A bare root ("/", "C:/") keeps its separator. */
+function normCwd(p) {
+  // On Windows a folder written with a trailing backslash before a space reaches this point as a trailing space.
+  let t = String(p).replace(/\s+$/, '').replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/(?:\/\.)+(?=\/|$)/g, '');
+  t = resolveDots(t);
+  if (t.length > 1 && t.endsWith('/') && !/^[A-Za-z]:\/$/.test(t)) t = t.slice(0, -1);
+  return t || '/';
+}
 
 /* The working folder a cd or pushd leaves behind, as the path text to join relative words to: a string, or null when
    it cannot be known (cd -, a relative folder from an unknown place, popd). `cwd` is the folder before the command
@@ -141,22 +154,25 @@ function cdTarget(args, cwd) {
   const head = programName(args[0]);
   if (head === 'popd' || head === 'pop-location') return null;
   if (!CD_HEADS.has(head)) return NOT_CD;
-  let ops = args.slice(1).filter((w) => !/^-[A-Za-z]+$/.test(w) || w === '-');
+  // cmd.exe's /d (change the drive too) is an option, not the folder.
+  let ops = args.slice(1).filter((w) => (!/^-[A-Za-z]+$/.test(w) || w === '-') && !((head === 'cd' || head === 'chdir') && /^\/d$/i.test(w)));
   if (ops[0] === '--') ops = ops.slice(1);
   // A bare cd goes home; a bare pushd swaps directories, which is not known here.
   if (!ops.length) return head === 'pushd' || head === 'push-location' ? null : '~';
   const t = ops[0];
   if (t === '-') return null;
   // Anchored words (absolute, drive, home or variable) name the folder on their own; a relative word follows the old folder.
-  if (ANCHORED_RE.test(t)) return t;
-  return cwd === null || cwd === undefined ? null : cwd + '/' + t;
+  const to = ANCHORED_RE.test(t) ? t : cwd === null || cwd === undefined ? null : cwd + '/' + t;
+  if (to === null) return null;
+  const norm = normCwd(to);
+  return norm.length > MAX_CWD_CHARS ? CWD_OVERFLOW : norm;
 }
 
 /* A word read from the folder `cwd`: relative words are joined to it, anchored words are kept. */
 function fromCwd(cwd, word) {
   const w = String(word);
   if (!cwd || !w || ANCHORED_RE.test(w)) return w;
-  return cwd + '/' + w;
+  return cwd.replace(/[\\/]+$/, '') + '/' + w;
 }
 
 /* The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...). */
@@ -512,6 +528,7 @@ function checkSegments(segs, depth, cwd0 = null) {
     if (hit) return hit;
     if (seg.sep !== '|' && seg.sep !== '|&' && seg.sep !== '&') {
       const to = cdTarget(unwrap(seg.words), known);
+      if (to === CWD_OVERFLOW) return OVERFLOW;
       if (to !== NOT_CD) {
         known = to;
         cwd = known !== null && dangerousPath(known) ? known : null;

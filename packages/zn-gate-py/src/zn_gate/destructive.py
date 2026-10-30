@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-23.10"
+COMMAND_RULES_VERSION = "2026-10-30.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -560,6 +560,20 @@ def _reads_script_from_stdin(kind: str, rest: List[str]) -> bool:
 _CD_HEADS = frozenset(("cd", "chdir", "pushd", "set-location", "sl", "push-location"))
 _ANCHORED_RE = re.compile(r"^(?:[\\/~$%]|[A-Za-z]:)")
 _NOT_CD = object()
+# A folder path longer than this (after "." and ".." are resolved) is not followed: the line is refused instead.
+_MAX_CWD_CHARS = 4096
+_CWD_OVERFLOW = object()
+
+
+def _norm_cwd(p: str) -> str:
+    """One lexical pass over a folder path: backslashes become "/", repeated and trailing separators and "." segments go,
+    and ".." is resolved where the path starts at a known point. A bare root ("/", "C:/") keeps its separator."""
+    # On Windows a folder written with a trailing backslash before a space reaches this point as a trailing space.
+    t = re.sub(r"(?:/\.)+(?=/|\Z)", "", re.sub(r"/{2,}", "/", p.rstrip().replace("\\", "/")))
+    t = _resolve_dots(t)
+    if len(t) > 1 and t.endswith("/") and not re.match(r"^[A-Za-z]:/\Z", t):
+        t = t[:-1]
+    return t or "/"
 
 
 def _cd_target(args: List[str], cwd: Optional[str]) -> Any:
@@ -573,7 +587,11 @@ def _cd_target(args: List[str], cwd: Optional[str]) -> Any:
         return None
     if head not in _CD_HEADS:
         return _NOT_CD
-    ops = [w for w in args[1:] if not re.match(r"^-[A-Za-z]+\Z", w) or w == "-"]
+    # cmd.exe's /d (change the drive too) is an option, not the folder.
+    ops = [
+        w for w in args[1:]
+        if (not re.match(r"^-[A-Za-z]+\Z", w) or w == "-") and not (head in ("cd", "chdir") and w.lower() == "/d")
+    ]
     if ops and ops[0] == "--":
         ops = ops[1:]
     # A bare cd goes home; a bare pushd swaps directories, which is not known here.
@@ -583,16 +601,18 @@ def _cd_target(args: List[str], cwd: Optional[str]) -> Any:
     if t == "-":
         return None
     # Anchored words (absolute, drive, home or variable) name the folder on their own; a relative word follows the old folder.
-    if _ANCHORED_RE.match(t):
-        return t
-    return None if cwd is None else cwd + "/" + t
+    to = t if _ANCHORED_RE.match(t) else (None if cwd is None else cwd + "/" + t)
+    if to is None:
+        return None
+    norm = _norm_cwd(to)
+    return _CWD_OVERFLOW if len(norm) > _MAX_CWD_CHARS else norm
 
 
 def _from_cwd(cwd: Optional[str], word: str) -> str:
     """A word read from the folder cwd: relative words are joined to it, anchored words are kept."""
     if not cwd or not word or _ANCHORED_RE.match(word):
         return word
-    return cwd + "/" + word
+    return cwd.rstrip("/\\") + "/" + word
 
 
 def _check_simple(words: List[str], depth: int, cwd: Optional[str] = None) -> Optional[str]:
@@ -794,6 +814,8 @@ def _check_segments(
             return hit
         if sep not in ("|", "|&", "&"):
             to = _cd_target(_unwrap(words), known)
+            if to is _CWD_OVERFLOW:
+                return _OVERFLOW
             if to is not _NOT_CD:
                 known = to
                 cwd = known if known is not None and _dangerous_path(known) else None
