@@ -238,11 +238,14 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   secret import FILE  Copy the secret values of a .env file into the vault
   secret adopt TOKEN  Store a value the scrubber detected (e.g. AWS_KEY_1) as a named secret
   env shadow [FILE]   Move .env values into the vault and leave markers in the file
+  env unshadow FILE --backup NAME
+                      Put the original values back into FILE from the encrypted copy that env shadow printed
   run -- <command>    Run a command with secrets in its environment (allowed commands only)
                       and its output masked [--secrets A,B to set env vars]
+                      -s is a short form of --secrets; --agent ID names the agent in the audit log
                       (a marker in the command's arguments is refused, never filled in)
   secret log          Show the local audit log of secret use [--since 1h] (same as vault log)
-  hooks install <agent> [--project]
+  hooks install <agent> [--project] [--no-mcp]
                       Install zn's hooks for ${require('../lib/agents').listAdapters().join(', ')}
                       (zn-gate init picks the right setup for each agent)
   hooks uninstall <agent> [--project]
@@ -255,6 +258,7 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   connect             Optional: turn on the cloud check for analyze_prompt. Opens usezn.com,
                       you paste an analysis-only API key at a hidden prompt; it is kept in your system
                       keychain or the zn vault, never in a file. Your own terminal only
+                      With --reconnect, replace the key that is already saved.
   disconnect          Remove that key from this computer, and ask whether to revoke it on
                       usezn.com too (default no) [--revoke | --no-revoke]. Your own terminal only
   reach [path]        Show what your coding agents can reach: secrets (names only),
@@ -284,20 +288,25 @@ OPTIONS:
 
 VAULT (local, encrypted with age; the key stays in the OS keychain):
   unlock              Unlock the vault for this session [--ttl 8h] [--idle 30m]
+                      [--backend NAME]: macos, windows, libsecret or passphrase
                       (first run creates it; --passphrase-stdin without a keychain)
   lock                Lock the vault now
   vault status        Show whether the vault exists and is unlocked
   vault log           Show the audit log of secret use [--since 1h]; checks the chain when unlocked
   vault verify        Verify the HMAC-chained audit log of secret use
+                      --acknowledge accepts the log as it is now (your own terminal only)
   vault forget [dir]  Forget the token map of a project (vault locked)
   vault reset         Lost the passphrase? Set the old vault aside and start empty (your terminal only)
   vault purge         Delete the vault, every backup and the token maps for good [--yes] (your terminal only)
   vault log export --otlp
                       Export the audit log as OpenTelemetry logs (OTLP/JSON Lines)
                       [--since 7d] [--out FILE]
+  vault team          Shows that a shared team vault is planned, not available yet
 
 TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
   team join <token>   Connect this machine to your organization (confirmed outside the agent)
+                      options: --api URL (another server), --agent ID (claude-code, codex, ...),
+                      --include-history (also sends the audit records written before you joined)
   team status         Organization, policy version and upload state [--json]
   team sync           Download the policy and upload the audit log now
   team leave          Disconnect this machine (confirmed outside the agent)
