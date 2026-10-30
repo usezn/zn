@@ -21,6 +21,9 @@
  *   fork_bomb        the classic shell fork bomb
  *   rc_download     a download written into a shell startup file
  *
+ * A cd or pushd earlier in the same command line is followed: after `cd ~ && find . -delete` the "." is the home folder.
+ * A cd made by an earlier tool call, or inside a subshell or a pipeline, is not seen.
+ *
  * The command is split with the hook policy's own tokenizer (scanFirstCommand),
  * so quotes and escapes read the same as in the rest of the policy.
  */
@@ -125,6 +128,36 @@ function segmentsOf(cmd, posix = false) {
 }
 
 const isPipe = (sep) => sep === '|' || sep === '|&';
+
+const CD_HEADS = new Set(['cd', 'chdir', 'pushd', 'set-location', 'sl', 'push-location']);
+const ANCHORED_RE = /^(?:[\\/~$%]|[A-Za-z]:)/;
+const NOT_CD = Symbol('not-cd');
+
+/* The working folder a cd or pushd leaves behind, as the path text to join relative words to: a string, or null when
+   it cannot be known (cd -, a relative folder from an unknown place, popd). `cwd` is the folder before the command
+   (null = unknown). Returns NOT_CD when the words are not a directory change. */
+function cdTarget(args, cwd) {
+  if (!args.length) return NOT_CD;
+  const head = programName(args[0]);
+  if (head === 'popd' || head === 'pop-location') return null;
+  if (!CD_HEADS.has(head)) return NOT_CD;
+  let ops = args.slice(1).filter((w) => !/^-[A-Za-z]+$/.test(w) || w === '-');
+  if (ops[0] === '--') ops = ops.slice(1);
+  // A bare cd goes home; a bare pushd swaps directories, which is not known here.
+  if (!ops.length) return head === 'pushd' || head === 'push-location' ? null : '~';
+  const t = ops[0];
+  if (t === '-') return null;
+  // Anchored words (absolute, drive, home or variable) name the folder on their own; a relative word follows the old folder.
+  if (ANCHORED_RE.test(t)) return t;
+  return cwd === null || cwd === undefined ? null : cwd + '/' + t;
+}
+
+/* A word read from the folder `cwd`: relative words are joined to it, anchored words are kept. */
+function fromCwd(cwd, word) {
+  const w = String(word);
+  if (!cwd || !w || ANCHORED_RE.test(w)) return w;
+  return cwd + '/' + w;
+}
 
 /* The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...). */
 function unwrap(args) {
@@ -313,7 +346,7 @@ function readsScriptFromStdin(kind, rest) {
   return true;
 }
 
-function checkSimple(words, depth) {
+function checkSimple(words, depth, cwd) {
   const args = unwrap(words);
   if (!args.length) return null;
   const head = programName(args[0]);
@@ -334,7 +367,7 @@ function checkSimple(words, depth) {
     if (k >= 0) code = rest.slice(k + 1).join(' ');
   }
   if (code !== null && depth < MAX_DEPTH) {
-    const hit = analyze(code, depth + 1);
+    const hit = analyze(code, depth + 1, cwd);
     if (hit) return hit;
   }
 
@@ -343,21 +376,23 @@ function checkSimple(words, depth) {
   if (kind && on('rm_root_home') && interpreterCode(kind, rest).some((c) => codeDeletesProtected(c))) return 'rm_root_home';
 
   if (RM_HEADS.has(head)) {
-    if ((rest.some((w) => recursiveFlag(w, head)) && operands(rest, head).some((w) => dangerousPath(w))) && on('rm_root_home')) return 'rm_root_home';
+    if ((rest.some((w) => recursiveFlag(w, head)) && operands(rest, head).some((w) => dangerousPath(fromCwd(cwd, w)))) && on('rm_root_home')) return 'rm_root_home';
   }
   if (head === 'find') {
     const paths = [];
     for (const w of rest) { if (w.startsWith('-') || w === '(' || w === '!') break; paths.push(w); }
+    // After a cd to a protected folder, a find with no path starts at ".".
+    if (cwd && !paths.length) paths.push('.');
     const del = rest.includes('-delete') || rest.some((w, i) => w === '-exec' && /^(?:rm|shred)$/.test(programName(rest[i + 1] || '')));
     // With a test (-name, -type, -mtime ...) find removes only some files; with none it removes everything below the path.
     const filtered = rest.some((w) => FIND_TESTS.test(w));
-    if ((del && !filtered && paths.some((w) => dangerousPath(w))) && on('rm_root_home')) return 'rm_root_home';
+    if ((del && !filtered && paths.some((w) => dangerousPath(fromCwd(cwd, w)))) && on('rm_root_home')) return 'rm_root_home';
   }
   if (head === 'chmod' || head === 'chown' || head === 'chgrp') {
     if (rest.some((w) => /^-[A-Za-z]*R[A-Za-z]*$/.test(w) || w === '--recursive')) {
       const ops = operands(rest, head);
       const mode = ops[0] || '';
-      const targets = ops.slice(1).map(dangerousPath).filter(Boolean);
+      const targets = ops.slice(1).map((w) => dangerousPath(fromCwd(cwd, w))).filter(Boolean);
       if ((targets.includes('root') || targets.includes('system')) && on('perm_root')) return 'perm_root';
       if ((head === 'chmod' && targets.includes('home') && worldWritable(mode)) && on('perm_root')) return 'perm_root';
     }
@@ -466,11 +501,22 @@ function checkPipeline(pipe) {
 let ENABLED = null;
 function on(rule) { return ENABLED === null || ENABLED.has(rule); }
 
-function checkSegments(segs, depth) {
+/* `cwd0` is the folder a cd or pushd earlier in the same command line moved to, kept only while it is a protected one
+   (home, the root, a system folder). A cd inside a pipeline or a background command runs in a subshell and does not count. */
+function checkSegments(segs, depth, cwd0 = null) {
   let pipe = [];
+  let known = cwd0; // the folder as text, or null when unknown
+  let cwd = cwd0; // the same, only while it is protected
   for (const seg of segs) {
-    const hit = checkSimple(seg.words, depth);
+    const hit = checkSimple(seg.words, depth, cwd);
     if (hit) return hit;
+    if (seg.sep !== '|' && seg.sep !== '|&' && seg.sep !== '&') {
+      const to = cdTarget(unwrap(seg.words), known);
+      if (to !== NOT_CD) {
+        known = to;
+        cwd = known !== null && dangerousPath(known) ? known : null;
+      }
+    }
     pipe.push(seg);
     if (!isPipe(seg.sep)) {
       const hit2 = checkPipeline(pipe);
@@ -481,7 +527,7 @@ function checkSegments(segs, depth) {
   return pipe.length ? checkPipeline(pipe) : null;
 }
 
-function analyze(cmd, depth = 0) {
+function analyze(cmd, depth = 0, cwd = null) {
   const text = String(cmd);
   if (text.length > MAX_CHARS) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
   // Text inside quotes is data (echo "a fork bomb is :(){ :|:& };:"); the code a shell runs from a string is checked
@@ -497,19 +543,19 @@ function analyze(cmd, depth = 0) {
   if ((SHELL_RUNS_DOWNLOAD_RE.test(text) || SOURCE_DOWNLOAD_RE.test(bare) || PS_PIPE_RE.test(psBare) || PS_CALL_RE.test(psBare)) && on('pipe_to_shell')) return 'pipe_to_shell';
   if ((PS_DISK_RE.test(bare)) && on('disk_overwrite')) return 'disk_overwrite';
   const segs = segmentsOf(text);
-  const hit = checkSegments(segs, depth);
+  const hit = checkSegments(segs, depth, cwd);
   if (hit) return hit;
   // POSIX reading: an unquoted backslash escapes the next character and is removed (r\m, cu\rl, .bash\rc). The Windows
   // reading above keeps it as a path separator and runs first, so this one only adds blocks: any rule it hits counts.
   if (text.includes('\\')) {
-    const posixHit = checkSegments(segmentsOf(text, true), depth);
+    const posixHit = checkSegments(segmentsOf(text, true), depth, cwd);
     if (posixHit) return posixHit;
   }
   // ANSI-C quoting: bash reads $'\x63url' as curl. The words are decoded the way bash does, then read again; as above,
   // this reading only adds a block, and only for the rules that name a program, a file or a path ($'\x73h',
   // $'.bash\x72c', $'\x72m' -rf $'\x7e').
   if (text.includes("$'")) {
-    const ansiHit = checkSegments(segmentsOf(require('./hooks/policy')._decodeAnsiC(text), true), depth);
+    const ansiHit = checkSegments(segmentsOf(require('./hooks/policy')._decodeAnsiC(text), true), depth, cwd);
     if (ansiHit === 'pipe_to_shell' || ansiHit === 'rc_download' || ansiHit === 'rm_root_home') return ansiHit;
   }
   // Fail closed: never allow a line whose tail was not read.

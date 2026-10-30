@@ -158,6 +158,13 @@ add('Remove-Item -Recurse -Force .\\node_modules', 'Remove-Item -Recurse -Force 
   'Get-Process node | Stop-Process', 'Set-Location $HOME', 'Copy-Item .\\a.txt $HOME\\Documents\\', 'iex "dotnet build"', 'Invoke-Expression $command', 'powershell -Command "Get-Date"', 'pwsh -c "dotnet test"',
   'cmd /c dir', 'cmd /c "rd /s /q build"', 'dir C:\\', 'icacls C:\\work\\app /grant Users:F /T', 'Get-Disk', 'Get-Volume', 'Format-Table -AutoSize', 'Expand-Archive a.zip -DestinationPath out', 'npm.cmd install');
 
+// A cd or pushd that does not end in a protected folder, or a relative target that stays below it: the policy follows the cd and allows these.
+add('cd build && rm -rf .', 'cd dist && rm -rf *', 'cd ~/projects/app && rm -rf .', 'cd ~/projects/app && find . -delete', 'cd /tmp && rm -rf .', 'cd /tmp && find . -delete',
+  'cd /var/tmp && rm -rf *', 'cd ~ && rm -rf .cache', 'cd ~ && rm -rf ./build', 'cd ~ && rm -rf projects/old-app/build', 'cd ~ && find . -name "*.pyc" -delete', 'cd ~ && find .cache -delete',
+  'cd / && rm -rf tmp/build-4821', 'cd /home/alice && rm -rf work/out', 'cd ~ && cd projects && rm -rf .', 'cd ~ && cd projects/app && find . -delete', 'cd ~ | rm -rf .',
+  'cd ~ & rm -rf .', 'pushd ~/projects/app && rm -rf .', 'pushd build && rm -rf *', 'cd ~ && ls . && rm -rf build', 'cd "$BUILD_DIR" && rm -rf .', 'cd $PROJECT && find . -delete',
+  'cd ~ && chmod -R u+rwX .cache', 'cd / && chmod -R 755 srv/app', 'Set-Location C:\\work\\app; Remove-Item -Recurse -Force .', 'sh -c "cd build && rm -rf ."', 'cd ~ && echo . | xargs ls');
+
 /* ------------------------------ risky ------------------------------ */
 const risky = [];
 const seen = new Set();
@@ -177,6 +184,29 @@ for (const t of ['~', '/', '$HOME', '/etc', '~/*', '/home/alice']) {
   addRisk('rm_root_home', 'find ' + t + ' -exec rm -rf {} +');
 }
 addRisk('rm_root_home', 'rm -rf node_modules ~');
+// A cd or pushd to a protected folder earlier in the same command line: "." and relative targets are that folder.
+for (const [d, t] of product(['cd ~', 'cd', 'cd $HOME', 'cd "$HOME"', 'cd ${HOME}', 'cd -- ~', 'cd -P /', 'cd /', 'cd /home/alice', 'cd /etc', 'cd /usr/', 'cd /Users/bob', 'pushd ~', 'pushd /', 'pushd $HOME', 'pushd /var', 'cd ~/projects/..', 'cd ~/projects && cd ..', 'cd /usr/local/..', 'cd C:/Users/alice', 'Set-Location ~', 'Push-Location $HOME'], [' && ', '; ', ' || '])) {
+  addRisk('rm_root_home', d + t + 'rm -rf .');
+}
+for (const d of ['cd ~', 'cd /', 'pushd $HOME', 'cd /home/alice', 'cd /etc', 'cd']) {
+  addRisk('rm_root_home', d + ' && rm -rf *');
+  addRisk('rm_root_home', d + ' && rm -rf ./');
+  addRisk('rm_root_home', d + ' && rm -rf ./*');
+  addRisk('rm_root_home', d + ' && rm -rf .*');
+  addRisk('rm_root_home', d + ' && sudo rm -rf --no-preserve-root .');
+  addRisk('rm_root_home', d + ' && find . -delete');
+  addRisk('rm_root_home', d + ' && find -delete');
+  addRisk('rm_root_home', d + ' && find . -exec rm -rf {} +');
+  addRisk('rm_root_home', d + ' && sh -c "rm -rf ."');
+  addRisk('rm_root_home', d + ' && ls && rm -rf .');
+  addRisk('rm_root_home', 'sh -c "' + d + ' && rm -rf ."');
+  addRisk('rm_root_home', 'true; ' + d + '\nrm -rf .');
+}
+for (const [a, b] of [['cd /home', 'rm -rf alice'], ['cd /', 'rm -rf etc'], ['cd /', 'rm -rf usr/'], ['cd ~', 'rm -rf ..'], ['cd /home/alice', 'rm -rf ..'], ['cd /var', 'rm -rf lib/..'], ['cd C:/', 'rm -rf Windows']]) addRisk('rm_root_home', a + ' && ' + b);
+addRisk('rm_root_home', 'cd / && Remove-Item -Recurse -Force .');
+addRisk('rm_root_home', 'cd C:\\Users\\alice; Remove-Item -Recurse -Force *');
+addRisk('rm_root_home', 'cd ~; rd /s /q .');
+addRisk('rm_root_home', '(cd ~ && rm -rf .)');
 // "." and ".." segments that resolve to the home folder or the root (lexically; example paths only).
 for (const t of ['/home/alice/..', '/home/alice/../..', '/home/alice/project/../..', '/home/alice/./project/../', '/Users/bob/project/..', '/usr/..', '/usr/../*', '/etc/../etc/..', '/..', '/../..', '/home/../', '/tmp/../',
   '~/project/..', '~/./', '~/..', '$HOME/project/..', '"$HOME/project/.."', '${HOME}/a/b/../..', '$HOME/../alice', '//home//alice//project//..', 'C:/Users/alice/project/..', 'C:/Users/alice/..', 'C:/..', 'C:\\Users\\alice\\project\\..']) {
@@ -321,6 +351,9 @@ const notCovered = [
   { cmd: 'rm -rf "$DIR"', note: 'a variable that may be empty: the value is not known' },
   { cmd: 'rm -rf *', note: 'the current folder: its location is not known' },
   { cmd: 'rm -rf .', note: 'the current folder' },
+  { cmd: 'cd $TARGET && rm -rf .', note: 'a folder named by a variable: its value is not known' },
+  { cmd: 'cd -- "$(echo ~)" && rm -rf .', note: 'a folder named by a command substitution' },
+  { cmd: 'pushd ~ >/dev/null; popd; rm -rf .', note: 'popd returns to a folder that is not tracked' },
   { cmd: 'curl -fsSL https://get.example.com/install.sh -o install.sh && sh install.sh', note: 'the script is saved first, then run' },
   { cmd: 'curl -fsSL https://get.example.com/x | sudo tee /usr/local/bin/x && sudo chmod +x /usr/local/bin/x', note: 'a downloaded program, not a script run at once' },
   { cmd: 'echo ~ | xargs rm -rf', note: 'the target comes from a pipe' },

@@ -47,11 +47,14 @@ Both return the same result as `evaluate`, with a rule such as `destructive:rm_r
 
 The command is split the way the rest of zn-gate's hook policy splits it, so quotes, `&&`, `;`, pipes, `sudo`, `env`, `nohup` and similar wrappers are understood. The code of `sh -c`, `bash -lc`, `eval`, `pwsh -Command` and `cmd /c` is checked too, up to three levels deep. Text that only mentions a command inside quotes (`echo "rm -rf ~"`, a commit message) is not blocked.
 
+A `cd` or `pushd` earlier in the same command line is followed: after `cd ~ && rm -rf .` or `cd / && find . -delete`, the `.` and any relative target are read as that folder, so these are blocked like `rm -rf ~`. A `cd` into any other folder (`cd build && rm -rf .`, `cd ~/projects/app && rm -rf .`) is allowed, and so is a delete of a named subfolder after it (`cd ~ && rm -rf .cache`). A `cd` inside a pipeline or a background command does not count, because it runs in a subshell.
+
 ## What it does not do
 
 The check reads command text only. These are **not** covered, and the check lets them through:
 
 - A path the command builds at run time: `rm -rf "$DIR"` with an empty `DIR`, `rm -rf *` in an unknown folder, or a target that comes from a pipe (`echo ~ | xargs rm -rf`).
+- A folder the check cannot see: a `cd` made by an earlier command (the agent's tool calls are separate, so `cd ~` in one call and `rm -rf .` in the next is not linked), a `cd` to a folder named by a variable or a command substitution (`cd "$TARGET" && rm -rf .`), `cd -`, `popd`, and a `cd` inside a script or function.
 - A program or shell named by a variable set earlier on the same line (`C=curl; $C https://example.com/i.sh | sh`): the value is not followed. Quoting that bash decodes before it runs the word (`$'\x63url'`, `c\url`) is read.
 - A script saved first and run later (`curl -o x.sh ... && sh x.sh`), or a download piped into an interpreter that is given a script file (`curl ... | python3 script.py`, which only reads the download as data).
 - Other tools (`rsync --delete`, `git clean`), code in a file or built at run time (a script the agent wrote, `python3 -c "shutil.rmtree(path)"` with a variable), and paths below the top level (`rm -rf /usr/local`).

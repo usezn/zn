@@ -24,7 +24,7 @@ The Node.js and Python versions give the same answer on the shared test corpus
 from __future__ import annotations
 
 import re
-from typing import Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tuple
+from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tuple
 
 from .rules import Assessment
 
@@ -557,7 +557,45 @@ def _reads_script_from_stdin(kind: str, rest: List[str]) -> bool:
     return True
 
 
-def _check_simple(words: List[str], depth: int) -> Optional[str]:
+_CD_HEADS = frozenset(("cd", "chdir", "pushd", "set-location", "sl", "push-location"))
+_ANCHORED_RE = re.compile(r"^(?:[\\/~$%]|[A-Za-z]:)")
+_NOT_CD = object()
+
+
+def _cd_target(args: List[str], cwd: Optional[str]) -> Any:
+    """The working folder a cd or pushd leaves behind, as the path text to join relative words to: a string, or None
+    when it cannot be known (cd -, a relative folder from an unknown place, popd). Returns _NOT_CD when the words are
+    not a directory change."""
+    if not args:
+        return _NOT_CD
+    head = _program_name(args[0])
+    if head in ("popd", "pop-location"):
+        return None
+    if head not in _CD_HEADS:
+        return _NOT_CD
+    ops = [w for w in args[1:] if not re.match(r"^-[A-Za-z]+\Z", w) or w == "-"]
+    if ops and ops[0] == "--":
+        ops = ops[1:]
+    # A bare cd goes home; a bare pushd swaps directories, which is not known here.
+    if not ops:
+        return None if head in ("pushd", "push-location") else "~"
+    t = ops[0]
+    if t == "-":
+        return None
+    # Anchored words (absolute, drive, home or variable) name the folder on their own; a relative word follows the old folder.
+    if _ANCHORED_RE.match(t):
+        return t
+    return None if cwd is None else cwd + "/" + t
+
+
+def _from_cwd(cwd: Optional[str], word: str) -> str:
+    """A word read from the folder cwd: relative words are joined to it, anchored words are kept."""
+    if not cwd or not word or _ANCHORED_RE.match(word):
+        return word
+    return cwd + "/" + word
+
+
+def _check_simple(words: List[str], depth: int, cwd: Optional[str] = None) -> Optional[str]:
     args = _unwrap(words)
     if not args:
         return None
@@ -580,7 +618,7 @@ def _check_simple(words: List[str], depth: int) -> Optional[str]:
         if k >= 0:
             code = " ".join(rest[k + 1:])
     if code is not None and depth < _MAX_DEPTH:
-        hit = _analyze(code, depth + 1)
+        hit = _analyze(code, depth + 1, cwd)
         if hit:
             return hit
 
@@ -590,7 +628,7 @@ def _check_simple(words: List[str], depth: int) -> Optional[str]:
         return "rm_root_home"
 
     if head in _RM_HEADS:
-        if any(_recursive_flag(w, head) for w in rest) and any(_dangerous_path(w) for w in _operands(rest, head)):
+        if any(_recursive_flag(w, head) for w in rest) and any(_dangerous_path(_from_cwd(cwd, w)) for w in _operands(rest, head)):
             return "rm_root_home"
     if head == "find":
         paths: List[str] = []
@@ -598,18 +636,21 @@ def _check_simple(words: List[str], depth: int) -> Optional[str]:
             if w.startswith("-") or w == "(" or w == "!":
                 break
             paths.append(w)
+        # After a cd to a protected folder, a find with no path starts at ".".
+        if cwd and not paths:
+            paths.append(".")
         delete = "-delete" in rest or any(
             w == "-exec" and re.match(r"^(?:rm|shred)\Z", _program_name(rest[j + 1] if j + 1 < len(rest) else ""))
             for j, w in enumerate(rest)
         )
         filtered = any(_FIND_TESTS.match(w) for w in rest)
-        if delete and not filtered and any(_dangerous_path(w) for w in paths):
+        if delete and not filtered and any(_dangerous_path(_from_cwd(cwd, w)) for w in paths):
             return "rm_root_home"
     if head in ("chmod", "chown", "chgrp"):
         if any(re.match(r"^-[A-Za-z]*R[A-Za-z]*\Z", w) or w == "--recursive" for w in rest):
             ops = _operands(rest, head)
             mode = ops[0] if ops else ""
-            targets = [d for d in (_dangerous_path(w) for w in ops[1:]) if d]
+            targets = [d for d in (_dangerous_path(_from_cwd(cwd, w)) for w in ops[1:]) if d]
             if "root" in targets or "system" in targets:
                 return "perm_root"
             if head == "chmod" and "home" in targets and _world_writable(mode):
@@ -739,12 +780,23 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
     return None
 
 
-def _check_segments(segs: List[Tuple[List[str], Optional[str]]], depth: int) -> Optional[str]:
+def _check_segments(
+    segs: List[Tuple[List[str], Optional[str]]], depth: int, cwd0: Optional[str] = None
+) -> Optional[str]:
+    """cwd0 is the folder a cd or pushd earlier in the same command line moved to, kept only while it is a protected one
+    (home, the root, a system folder). A cd inside a pipeline or a background command runs in a subshell and does not count."""
     pipe: List[Tuple[List[str], Optional[str]]] = []
+    known = cwd0  # the folder as text, or None when unknown
+    cwd = cwd0  # the same, only while it is protected
     for words, sep in segs:
-        hit = _check_simple(words, depth)
+        hit = _check_simple(words, depth, cwd)
         if hit:
             return hit
+        if sep not in ("|", "|&", "&"):
+            to = _cd_target(_unwrap(words), known)
+            if to is not _NOT_CD:
+                known = to
+                cwd = known if known is not None and _dangerous_path(known) else None
         pipe.append((words, sep))
         if not _is_pipe(sep):
             hit2 = _check_pipeline(pipe)
@@ -754,7 +806,7 @@ def _check_segments(segs: List[Tuple[List[str], Optional[str]]], depth: int) -> 
     return _check_pipeline(pipe) if pipe else None
 
 
-def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
+def _analyze(cmd: str, depth: int = 0, cwd: Optional[str] = None) -> Optional[str]:
     text = str(cmd)
     if len(text) > _MAX_CHARS:
         return _OVERFLOW
@@ -777,20 +829,20 @@ def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
     if _PS_DISK_RE.search(bare):
         return "disk_overwrite"
     segs, truncated = _segments_of(text)
-    hit = _check_segments(segs, depth)
+    hit = _check_segments(segs, depth, cwd)
     if hit:
         return hit
     # POSIX reading: an unquoted backslash escapes the next character and is removed (r\m, cu\rl, .bash\rc). The Windows
     # reading above keeps it as a path separator and runs first, so this one only adds blocks: any rule it hits counts.
     if "\\" in text:
-        posix_hit = _check_segments(_segments_of(text, True)[0], depth)
+        posix_hit = _check_segments(_segments_of(text, True)[0], depth, cwd)
         if posix_hit:
             return posix_hit
     # ANSI-C quoting: bash reads $'\x63url' as curl. The words are decoded the way bash does, then read again; as above,
     # this reading only adds a block, and only for the rules that name a program, a file or a path ($'\x73h',
     # $'.bash\x72c', $'\x72m' -rf $'\x7e').
     if "$'" in text:
-        ansi_hit = _check_segments(_segments_of(_decode_ansi_c(text), True)[0], depth)
+        ansi_hit = _check_segments(_segments_of(_decode_ansi_c(text), True)[0], depth, cwd)
         if ansi_hit in ("pipe_to_shell", "rc_download", "rm_root_home"):
             return ansi_hit
     # Fail closed: never allow a line whose tail was not read.
