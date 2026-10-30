@@ -205,11 +205,17 @@ test('destructive: keywords, backticks and env -C / sudo -D chains of any length
     ['{ '.repeat(2000) + 'rm -rf ./build', 'allow'],
     ['`a`; '.repeat(30000) + 'rm -rf ./build', 'allow'],
     ['`a`; '.repeat(30000) + '`rm -rf ~`', 'block'],
+    // Backticks after a changed folder are read from it, up to a limit; past it the line is refused.
+    ['cd ~/a; `a`; '.repeat(10000) + 'rm -rf ./build', 'block'],
+    ['cd ~/a; `a`; '.repeat(20) + 'rm -rf ./build', 'allow'],
     ['echo ' + '`echo '.repeat(2000) + 'hi' + '`'.repeat(2000), 'allow'],
     ['echo `' + 'a '.repeat(90000), 'allow'],
-    ['env -C a '.repeat(20000) + 'rm -rf .', 'allow'],
+    ['env -C a '.repeat(10) + 'rm -rf .', 'allow'],
+    // More wrappers than the limit are refused, not followed.
+    ['env -C a '.repeat(20000) + 'rm -rf .', 'block'],
     ['env -C / '.repeat(20) + 'rm -rf .', 'block'],
-    ['sudo -D x '.repeat(20000) + 'rm -rf .', 'allow'],
+    ['sudo -D x '.repeat(10) + 'rm -rf .', 'allow'],
+    ['sudo -D x '.repeat(20000) + 'rm -rf .', 'block'],
     ['sh -c "$(' + 'a/'.repeat(90000) + 'x)"', 'allow'],
     ['bash <(env ' + '-i '.repeat(60000) + 'curl x)', 'block'],
     ['curl x |' + '\n'.repeat(100000) + 'sh', 'block'],
@@ -287,7 +293,8 @@ test('a long chain of cd is followed in one pass and fails closed above the fold
   assert.equal(deep.verdict, 'block');
   assert.equal(deep.rule, 'destructive:too_many_commands');
   const deepVar = checkCommand('cd $WORK && ' + 'cd a && cd .. && '.repeat(9000) + 'rm -rf .');
-  assert.equal(deepVar.verdict, 'block');
+  // A folder named by a variable is not followed past its own name; the same chain stays allowed, like cd "$BUILD_DIR" && rm -rf .
+  assert.equal(deepVar.verdict, 'allow');
   assert.ok(Date.now() - t0 < 30000, 'took ' + (Date.now() - t0) + ' ms');
 });
 
@@ -297,6 +304,66 @@ test('cmd.exe cd /d and a trailing separator are followed', () => {
     assert.equal(checkCommand(c).verdict, 'block', c);
   }
   for (const c of ['cd /d C:\\build && rd /s /q .', 'cd C:\\build\\ && rd /s /q .', 'cd /d C:\\build\\out && rd /s /q .']) {
+    assert.equal(checkCommand(c).verdict, 'allow', c);
+  }
+});
+
+test('the cost of a cd does not depend on the length of the folder it is in', () => {
+  const t0 = Date.now();
+  // A folder near the length cap, then 11,000 pairs of cd down and up: each step must stay constant size.
+  const folder = '/' + 'abcdefgh/'.repeat(450);
+  const cmd = 'cd ' + folder + ' && ' + 'cd b && cd .. && '.repeat(11000) + 'rm -rf .';
+  assert.ok(cmd.length < 200000);
+  const res = checkCommand(cmd);
+  assert.equal(res.verdict, 'allow');
+  assert.ok(Date.now() - t0 < 1500, 'took ' + (Date.now() - t0) + ' ms');
+});
+
+test('a relative target that climbs out of a known folder is judged from there', () => {
+  for (const c of ['cd ~/projects && rm -rf ../*', 'cd ~/projects && find .. -delete', 'cd C:\\Users\\alice\\projects && rd /s /q ..',
+    'cd ~/projects/app && rm -rf ../..']) {
+    assert.equal(checkCommand(c).verdict, 'block', c);
+  }
+  for (const c of ['cd ~/projects/app && rm -rf ../build', 'cd ~/projects && rm -rf ../projects/old', 'cd C:\\Users\\alice\\projects && rd /s /q ..\\build']) {
+    assert.equal(checkCommand(c).verdict, 'allow', c);
+  }
+});
+
+test('a folder that steps above home or a drive root stays protected', () => {
+  for (const c of ['cd ~/../.. && cd home/bob && rm -rf .', 'cd ~ && cd ../.. && cd home/bob && rm -rf .', 'cd ~/../.. && cd Users/bob && rd /s /q .',
+    'cd %USERPROFILE%\\..\\.. && cd Windows\\System32 && rd /s /q .']) {
+    assert.equal(checkCommand(c).verdict, 'block', c);
+  }
+});
+
+test('more wrappers than can be followed are refused, not read as a program', () => {
+  for (const w of ['env ', 'sudo ', 'nice ', 'command ', 'env -C ~ ']) {
+    for (const n of [33, 40]) {
+      const res = checkCommand(w.repeat(n) + 'rm -rf ~');
+      assert.equal(res.verdict, 'block', w + n);
+      assert.equal(res.rule, 'destructive:too_many_commands', w + n);
+    }
+  }
+  // Up to the limit the command is read: the delete is named.
+  assert.equal(checkCommand('env '.repeat(16) + 'rm -rf ~').rule, 'destructive:rm_root_home');
+  assert.equal(checkCommand('env '.repeat(40) + 'echo hello').rule, 'destructive:too_many_commands');
+});
+
+test('a backtick substitution starts in the folder the line has reached', () => {
+  for (const c of ['cd ~ && echo `rm -rf .`', 'cd ~/projects && echo `rm -rf ../*`', 'cd ~ && echo "`rm -rf .`"']) {
+    assert.equal(checkCommand(c).verdict, 'block', c);
+  }
+  for (const c of ['cd ~/projects/app && echo `rm -rf .`', "cd ~ && echo '`rm -rf .`'"]) {
+    assert.equal(checkCommand(c).verdict, 'allow', c);
+  }
+});
+
+test('the folder of env -C and sudo -D is followed like a cd', () => {
+  for (const c of ['env -C ~/projects rm -rf ../*', 'sudo -D ~/projects find .. -delete', 'env -C ~/../.. env -C home/bob rm -rf .',
+    'sudo -D ~/../.. env -C home/bob rm -rf .', 'env -C ~ env -C projects/.. rm -rf .']) {
+    assert.equal(checkCommand(c).verdict, 'block', c);
+  }
+  for (const c of ['env -C ~/projects rm -rf ../build', 'sudo -D ~/projects/app find ../build -delete', 'env -C ~ env -C projects rm -rf .']) {
     assert.equal(checkCommand(c).verdict, 'allow', c);
   }
 });

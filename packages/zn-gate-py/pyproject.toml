@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "zn-gate"
 version = "1.14.1"
-description = "The local security layer for Python AI agents (LangChain, CrewAI, LlamaIndex, plain tool calling): prompt-injection checks and secret redaction, zero dependencies."
+description = "The local security layer for Python AI agents (LangChain, CrewAI, LlamaIndex, plain tool calling): prompt-injection checks and secret redaction, zero dependencies. No account, and nothing is sent by default."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
