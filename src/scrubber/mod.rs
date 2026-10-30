@@ -1352,7 +1352,15 @@ mod tests {
         {
             let start = thread_cpu_time();
             work();
-            thread_cpu_time().saturating_sub(start)
+            let used = thread_cpu_time().saturating_sub(start);
+            // GetThreadTimes only advances once per scheduler tick (about
+            // 15.6 ms), so a short run can read as 0 and the 16x bound would
+            // then fail on a linear algorithm. Adding one tick on Windows
+            // keeps the reading at or above the real CPU time; unix keeps the
+            // exact nanosecond clock and the check there is unchanged.
+            #[cfg(windows)]
+            let used = used + std::time::Duration::from_micros(15_625);
+            used
         }
         #[cfg(not(any(unix, windows)))]
         {
