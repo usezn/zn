@@ -358,8 +358,11 @@ function pluginVersionNote(root, own = require('../package.json').version) {
   const v = manifest && typeof manifest.version === 'string' ? manifest.version : '';
   if (!v || v === own) return '';
   const both = 'the zn-gate plugin is version ' + v + ' and the zn-gate command is ' + own;
-  if (/-/.test(own)) return both;
-  if (require('./init-guide')._internal.cmp(v, own) < 0) {
+  // A pre-release on either side, or versions that compare equal in another spelling (1.14 and 1.14.0, build metadata):
+  // no update changes anything, so only show both versions.
+  const c = require('./init-guide')._internal.cmp(v, own);
+  if (/-/.test(own) || /-/.test(v) || c === 0) return both;
+  if (c < 0) {
     return both + ', so Claude Code\'s tool calls follow the rules of zn-gate ' + v + '. To match them, run `claude plugin update zn-gate@usezn` in your own terminal and start a new Claude Code session';
   }
   return both + ', so this check runs older rules than the plugin. To match them, run `npm install -g zn-gate@latest` (or `npx -y zn-gate@latest check`) in your own terminal';

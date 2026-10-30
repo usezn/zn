@@ -1062,3 +1062,22 @@ test('check: with a pre-release zn-gate command, a plugin of another version get
   assert.match(pluginVersionNote(root, '1.14.0'), /npm install -g zn-gate@latest/);
   assert.equal(pluginVersionNote(root, '1.14.1'), '');
 });
+
+test('check: a plugin version that equals the command version in another spelling gets both versions and no advice', (t) => {
+  const { pluginVersionNote } = require('../lib/check')._internal;
+  const root = tempDir(t, 'zn-check-plugin-spelling-');
+  fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+  const both = (v, own) => 'the zn-gate plugin is version ' + v + ' and the zn-gate command is ' + own;
+  for (const [v, own] of [['1.14', '1.14.0'], ['1.14.1+b', '1.14.1'], ['1.14.0', '1.14']]) {
+    fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'zn-gate', version: v }));
+    assert.equal(pluginVersionNote(root, own), both(v, own));
+  }
+});
+
+test('check: a pre-release plugin newer than a stable command gets both versions and no advice', (t) => {
+  const { pluginVersionNote } = require('../lib/check')._internal;
+  const root = tempDir(t, 'zn-check-plugin-prerelease-');
+  fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'zn-gate', version: '1.15.0-rc.1' }));
+  assert.equal(pluginVersionNote(root, '1.14.1'), 'the zn-gate plugin is version 1.15.0-rc.1 and the zn-gate command is 1.14.1');
+});
