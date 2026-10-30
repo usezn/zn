@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-29.4
+RULES_VERSION: 2026-10-30.2
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -608,8 +608,6 @@ def normalize_input(text: str) -> Tuple[str, str]:
     return normalized, stripped
 
 
-# Default policy by tiers (same list as ADVISORY_BY_DEFAULT in rules.js). A
-# match of these heuristic rules is an advisory unless strict mode is on
 _ENV_FLAG_WARNED: Set[Tuple[str, str]] = set()
 
 
@@ -627,6 +625,8 @@ def env_flag(name: str) -> bool:
     return False
 
 
+# Default policy by tiers (same list as ADVISORY_BY_DEFAULT in rules.js). A
+# match of these heuristic rules is an advisory unless strict mode is on
 # (strict=True, or ZN_STRICT=1 in the environment).
 ADVISORY_BY_DEFAULT = frozenset([
     'pi:identity_override',
