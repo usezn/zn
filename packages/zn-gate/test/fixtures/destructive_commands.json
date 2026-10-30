@@ -108,6 +108,7 @@
   "cd /tmp && rm -rf .",
   "cd /var/tmp && rm -rf *",
   "cd C:/Users/alice/work/ && rm -rf .",
+  "cd C:\\Users\\alice\\projects && rd /s /q ..\\build",
   "cd C:\\build\\ && rd /s /q .",
   "cd build && rm -rf .",
   "cd dist && rm -rf *",
@@ -115,6 +116,7 @@
   "cd ~ && cd projects && rm -rf .",
   "cd ~ && cd projects/app && find . -delete",
   "cd ~ && chmod -R u+rwX .cache",
+  "cd ~ && echo '`rm -rf .`'",
   "cd ~ && echo . | xargs ls",
   "cd ~ && find . -name \"*.pyc\" -delete",
   "cd ~ && find .cache -delete",
@@ -126,11 +128,16 @@
   "cd ~ | rm -rf .",
   "cd ~/projects && env -C ../other rm -rf .",
   "cd ~/projects && env -C app rm -rf .",
+  "cd ~/projects && rm -rf ../projects/old",
   "cd ~/projects && sh -c \"cd .. && ls .\"",
   "cd ~/projects && sh -c \"cd app && rm -rf .\"",
   "cd ~/projects && sh -c \"rm -rf build\"",
+  "cd ~/projects/app && cd .. && rm -rf old-build",
+  "cd ~/projects/app && echo `rm -rf .`",
   "cd ~/projects/app && find . -delete",
+  "cd ~/projects/app && find ../build -delete",
   "cd ~/projects/app && rm -rf .",
+  "cd ~/projects/app && rm -rf ../build",
   "cd ~/projects/app && sh -c \"cd ../lib && rm -rf .\"",
   "chgrp -R staff ./shared",
   "chmod +x script.sh",
@@ -425,6 +432,7 @@
   "env -C ~ ls -la",
   "env -C ~ rm -rf .cache",
   "env -C ~ sh -c \"rm -rf .cache\"",
+  "env -C ~/projects rm -rf ../build",
   "env -C ~/projects/app find . -delete",
   "env -C ~/projects/app rm -rf .",
   "env -C ~/projects/app sh -c \"rm -rf .\"",
@@ -987,6 +995,7 @@
   "sudo -D /srv/app chmod -R 755 .",
   "sudo -D /tmp/build rm -rf .",
   "sudo -D ~/projects rm -rf build",
+  "sudo -D ~/projects/app find ../build -delete",
   "sudo -u postgres psql -c \"select 1\"",
   "sudo apt-get remove -y example-pkg",
   "sudo apt-get update && sudo apt-get install -y build-essential",
@@ -3128,6 +3137,10 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "(rm -rf ~)",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 rm -rf ~",
    "rule": "rm_root_home"
   },
@@ -3236,6 +3249,10 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "case x in x) rm -rf ~;; esac",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "cd \"$HOME\" && rm -rf .",
    "rule": "rm_root_home"
   },
@@ -3269,6 +3286,10 @@
   },
   {
    "cmd": "cd ${HOME}; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd %USERPROFILE%\\..\\.. && cd Windows\\System32 && rd /s /q .",
    "rule": "rm_root_home"
   },
   {
@@ -3672,11 +3693,27 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "cd C:\\Users\\alice\\projects && rd /s /q ..",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "cd C:\\Windows\\ && rd /s /q .",
    "rule": "rm_root_home"
   },
   {
    "cmd": "cd || rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && cd ../.. && cd home/bob && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && echo \"`rm -rf .`\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~ && echo `rm -rf .`",
    "rule": "rm_root_home"
   },
   {
@@ -3732,6 +3769,14 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "cd ~/../.. && cd Users/bob && rd /s /q .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/../.. && cd home/bob && rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "cd ~/projects && bash -c \"sh -c \\\"cd .. && rm -rf .\\\"\"",
    "rule": "rm_root_home"
   },
@@ -3748,6 +3793,10 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "cd ~/projects && echo `rm -rf ../*`",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "cd ~/projects && env -C .. rm -rf .",
    "rule": "rm_root_home"
   },
@@ -3757,6 +3806,14 @@
   },
   {
    "cmd": "cd ~/projects && eval \"cd .. && rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && find .. -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && rm -rf ../*",
    "rule": "rm_root_home"
   },
   {
@@ -3773,6 +3830,10 @@
   },
   {
    "cmd": "cd ~/projects/..; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects/app && rm -rf ../..",
    "rule": "rm_root_home"
   },
   {
@@ -4037,6 +4098,14 @@
   },
   {
    "cmd": "env -C ~ sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C ~/../.. env -C home/bob rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C ~/projects rm -rf ../*",
    "rule": "rm_root_home"
   },
   {
@@ -4988,6 +5057,14 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "sudo -D ~/../.. env -C home/bob rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D ~/projects find .. -delete",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "sudo -D$HOME rm -rf .",
    "rule": "rm_root_home"
   },
@@ -5129,6 +5206,10 @@
   },
   {
    "cmd": "time rm -rf -- ${HOME}",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "time rm -rf ~",
    "rule": "rm_root_home"
   },
   {

@@ -164,7 +164,8 @@ add('cd build && rm -rf .', 'cd dist && rm -rf *', 'cd ~/projects/app && rm -rf 
   'cd / && rm -rf tmp/build-4821', 'cd /home/alice && rm -rf work/out', 'cd ~ && cd projects && rm -rf .', 'cd ~ && cd projects/app && find . -delete', 'cd ~ | rm -rf .',
   'cd ~ & rm -rf .', 'pushd ~/projects/app && rm -rf .', 'pushd build && rm -rf *', 'cd ~ && ls . && rm -rf build', 'cd "$BUILD_DIR" && rm -rf .', 'cd $PROJECT && find . -delete',
   'cd ~ && chmod -R u+rwX .cache', 'cd / && chmod -R 755 srv/app', 'Set-Location C:\\work\\app; Remove-Item -Recurse -Force .', 'sh -c "cd build && rm -rf ."', 'cd ~ && echo . | xargs ls');
-add('cd /d C:\\build && rd /s /q .', 'cd C:\\build\\ && rd /s /q .', 'cd /d C:\\build\\out && rd /s /q .', 'cd C:/Users/alice/work/ && rm -rf .');
+add('cd ~/projects/app && rm -rf ../build', 'cd ~/projects/app && find ../build -delete', 'cd ~/projects && rm -rf ../projects/old', 'cd C:\\Users\\alice\\projects && rd /s /q ..\\build',
+  'cd ~/projects/app && cd .. && rm -rf old-build', 'cd /d C:\\build && rd /s /q .', 'cd C:\\build\\ && rd /s /q .', 'cd /d C:\\build\\out && rd /s /q .', 'cd C:/Users/alice/work/ && rm -rf .');
 
 // Commands after a shell keyword or inside backticks that stay below a project folder, and text that only mentions the keywords.
 add('{ rm -rf ./build; }', 'if true; then rm -rf ./build; fi', 'while true; do rm -rf ./tmp; done', 'until false; do rm -rf ./tmp; done', '! rm -rf ./build',
@@ -177,6 +178,8 @@ add('env -C ~/projects/app rm -rf .', 'env --chdir=build rm -rf .', 'sudo -D /tm
   'env -C ~/projects/app sh -c "rm -rf ."', 'env -C ~ sh -c "rm -rf .cache"', 'sudo --chdir=/var/tmp/build rm -rf .', 'env -C ~/projects/app find . -delete', 'sudo -D /srv/app chmod -R 755 .',
   'cd ~/projects && sh -c "cd app && rm -rf ."', 'cd ~/projects && env -C app rm -rf .', 'cd ~/projects && sh -c "rm -rf build"', 'cd ~/projects/app && sh -c "cd ../lib && rm -rf ."',
   'cd ~/projects && sh -c "cd .. && ls ."', 'cd ~/projects && env -C ../other rm -rf .', 'env -C / true && rm -rf ./build');
+
+add('cd ~/projects/app && echo `rm -rf .`', "cd ~ && echo '`rm -rf .`'", 'env -C ~/projects rm -rf ../build', 'sudo -D ~/projects/app find ../build -delete');
 
 /* ------------------------------ risky ------------------------------ */
 const risky = [];
@@ -283,6 +286,15 @@ addRisk('rm_root_home', 'cd /usr/local && bash -lc "cd ../.. && rm -rf ."');
 addRisk('rm_root_home', 'cd ~/projects && eval "cd .. && rm -rf ."');
 addRisk('rm_root_home', 'cd ~/projects && bash -c "sh -c \\"cd .. && rm -rf .\\""');
 addRisk('rm_root_home', 'cd ~/projects && env -C .. sh -c "rm -rf ."');
+// A relative target that climbs out of a known folder below home, and a folder that steps above home or a drive root.
+for (const c of ['cd ~/projects && rm -rf ../*', 'cd ~/projects && find .. -delete', 'cd C:\\Users\\alice\\projects && rd /s /q ..', 'cd ~/projects/app && rm -rf ../..',
+  'cd ~/../.. && cd home/bob && rm -rf .', 'cd ~ && cd ../.. && cd home/bob && rm -rf .', 'cd ~/../.. && cd Users/bob && rd /s /q .',
+  'cd %USERPROFILE%\\..\\.. && cd Windows\\System32 && rd /s /q .']) addRisk('rm_root_home', c);
+// A command after a shell keyword ({, then, do, else, !) or inside backticks is read like any other.
+for (const c of ['{ rm -rf ~; }', 'if true; then rm -rf ~; fi', 'while true; do rm -rf ~; done', 'until false; do rm -rf ~; done', '! rm -rf ~', 'echo `rm -rf ~`']) addRisk('rm_root_home', c);
+// A backtick substitution, and the folder of env -C / sudo -D, start from the folder the line has reached.
+for (const c of ['cd ~ && echo `rm -rf .`', 'cd ~/projects && echo `rm -rf ../*`', 'cd ~ && echo "`rm -rf .`"', 'env -C ~/projects rm -rf ../*',
+  'sudo -D ~/projects find .. -delete', 'env -C ~/../.. env -C home/bob rm -rf .', 'sudo -D ~/../.. env -C home/bob rm -rf .']) addRisk('rm_root_home', c);
 // "." and ".." segments that resolve to the home folder or the root (lexically; example paths only).
 for (const t of ['/home/alice/..', '/home/alice/../..', '/home/alice/project/../..', '/home/alice/./project/../', '/Users/bob/project/..', '/usr/..', '/usr/../*', '/etc/../etc/..', '/..', '/../..', '/home/../', '/tmp/../',
   '~/project/..', '~/./', '~/..', '$HOME/project/..', '"$HOME/project/.."', '${HOME}/a/b/../..', '$HOME/../alice', '//home//alice//project//..', 'C:/Users/alice/project/..', 'C:/Users/alice/..', 'C:/..', 'C:\\Users\\alice\\project\\..']) {
@@ -419,6 +431,11 @@ add('python3 -c "print(1)"', "python3 -c \"import shutil; shutil.rmtree('build')
   "node -e \"require('fs').rmSync('/usr/local/tmp-x', {recursive:true})\"", "perl -e 'unlink glob(\"*.o\")'", "ruby -e 'require \"fileutils\"; FileUtils.rm_rf(\"tmp/cache\")'",
   'curl ' + U2 + ' | python3 script.py', 'curl ' + U2 + ' | node -p "1+1"', 'curl ' + U2 + ' | perl -pe "s/a/b/"', 'curl -s ' + U2 + ' | ruby -rjson -e "puts 1"',
   'wget -qO- ' + U2 + ' | python3 -c "import sys; print(len(sys.stdin.read()))"', 'python3 -m http.server 8000', 'python3 manage.py migrate', 'node server.js');
+
+// Shell grouping words: a command after `case ... )`, a `(` or `time` is read; the same keywords as Node.js and Python agree.
+addRisk('rm_root_home', '(rm -rf ~)');
+addRisk('rm_root_home', 'time rm -rf ~');
+addRisk('rm_root_home', 'case x in x) rm -rf ~;; esac');
 
 /* ---------------------- shapes the policy does not read ---------------------- */
 const notCovered = [

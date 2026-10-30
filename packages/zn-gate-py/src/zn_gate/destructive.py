@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-30.4"
+COMMAND_RULES_VERSION = "2026-10-30.12"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -293,12 +293,19 @@ def _decode_ansi_c(cmd: str) -> str:
     return _ANSI_C_RE.sub(word, cmd).replace('$"', '"')
 
 
+class _Segs(list):
+    """The simple commands of a line as (words, sep) pairs; raws holds the text of each one that has a backtick (else '')."""
+
+    raws: List[str]
+
+
 def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], Optional[str]]], bool]:
     rest = re.sub(r"(\d*[<>]+)&(\d+|-)", r"\1_\2", str(cmd), flags=_A)
     rest = re.sub(r"&>>?", ">", rest)
     # A drive root C:\ before a space is a path, not an escaped space.
     rest = re.sub(r"(^|[\s\"'])([A-Za-z]:)\\(?=\s|\Z)", r"\1\2/", rest)
-    out: List[Tuple[List[str], Optional[str]]] = []
+    out = _Segs()
+    out.raws = []
     guard = 0
     while rest and guard < _MAX_SEGMENTS:
         guard += 1
@@ -313,6 +320,8 @@ def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], O
                 sep = "|&"
                 adv += 1
         out.append((words, sep))
+        raw = rest[:end]
+        out.raws.append(raw if "`" in raw else "")
         rest = rest[adv:]
         if sep in ("|", "|&"):
             lead = _PIPE_LEAD_RE.match(rest)
@@ -362,42 +371,35 @@ def _backtick_code(text: str) -> str:
     return "\n".join(bodies)
 
 
-def _cap_dir(p: str) -> Any:
-    """A folder path as text through the same one-pass normalisation as cd, or _CWD_OVERFLOW when it is too long to follow."""
-    norm = _norm_cwd(p)
-    return _CWD_OVERFLOW if len(norm) > _MAX_CWD_CHARS else norm
+def _in_dir(known: Any, dirs: List[str]) -> Any:
+    """The folder a command runs in when it is wrapped in env -C / sudo -D: dirs are the words of its chdir options in
+    order, each read from the folder before it (an anchored word wins, a relative one follows the earlier one); known is
+    the folder before the command (None = unknown)."""
+    for d in dirs:
+        if known is _CWD_OVERFLOW:
+            return known
+        known = _folder_of(d) if _ANCHORED_RE.match(d) else _folder_rel(known, d)
+    return known
 
 
-def _join_dir(prev: Any, nxt: Optional[str]) -> Any:
-    """The folder a chdir option sets (env -C, sudo -D), as written, joined to the one set before it by another wrapper:
-    an anchored word wins, a relative one follows the earlier one."""
-    if not nxt:
-        return prev
-    if prev is _CWD_OVERFLOW:
-        return prev
-    if prev is None or _ANCHORED_RE.match(nxt):
-        return _cap_dir(nxt)
-    return _cap_dir(prev + "/" + nxt)
+def _add_dir(dirs: List[str], w: Optional[str]) -> None:
+    if w:
+        dirs.append(w)
 
 
-def _in_dir(known: Any, d: Any) -> Any:
-    """The folder a command runs in when it is wrapped in env -C / sudo -D: d is read from the folder known (None = unknown)."""
-    if d is None:
-        return known
-    if d is _CWD_OVERFLOW:
-        return _CWD_OVERFLOW
-    if _ANCHORED_RE.match(d):
-        return _cap_dir(d)
-    return None if known is None else _cap_dir(known + "/" + d)
+# Programs that only run another command: more than 32 of them in a row is refused, not read.
+_WRAPPERS = frozenset(("sudo", "doas", "env", "command", "exec", "nohup", "time", "builtin", "setsid", "nice", "ionice", "timeout"))
 
 
-def _unwrap_dir(args: List[str]) -> Tuple[List[str], Optional[str]]:
+def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool]:
     """The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...) and shell
-    keywords, with the folder an env -C / --chdir or sudo -D / --chdir option moves to (None when there is none)."""
+    keywords, with the words of the env -C / --chdir and sudo -D / --chdir options and whether more wrappers than can be
+    followed were met (the line is then refused)."""
     i = 0
     guard = 0
-    chdir: Optional[str] = None
-    while guard < 32 and i < len(args):
+    chdir: List[str] = []
+    overflow = False
+    while i < len(args):
         guard += 1
         # Assignments and keywords can repeat without limit (! ! ! rm -rf ~): they are skipped, not counted as wrappers.
         while i < len(args) and (_ASSIGN_RE.match(args[i]) or args[i] in _SHELL_KEYWORDS):
@@ -406,20 +408,24 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], Optional[str]]:
             break
         a = args[i]
         name = _program_name(a)
+        # The guard is used up and the next word is still a wrapper: the rest cannot be read, so the line is refused.
+        if guard > 32:
+            overflow = name in _WRAPPERS
+            break
         if name in ("sudo", "doas"):
             i += 1
             while i < len(args) and args[i].startswith("-"):
                 f = args[i]
                 i += 1
                 if f in ("-D", "--chdir"):
-                    chdir = _join_dir(chdir, args[i] if i < len(args) else None)
+                    _add_dir(chdir, args[i] if i < len(args) else None)
                     i += 1
                     continue
                 if re.match(r"^-D.", f):
-                    chdir = _join_dir(chdir, f[2:])
+                    _add_dir(chdir, f[2:])
                     continue
                 if f.startswith("--chdir="):
-                    chdir = _join_dir(chdir, f[8:])
+                    _add_dir(chdir, f[8:])
                     continue
                 if f in _SUDO_ARG_FLAGS:
                     i += 1
@@ -432,14 +438,14 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], Optional[str]]:
                 if not f.startswith("-"):
                     continue
                 if f == "--chdir" or re.match(r"^-[A-Za-z]*C\Z", f):
-                    chdir = _join_dir(chdir, args[i] if i < len(args) else None)
+                    _add_dir(chdir, args[i] if i < len(args) else None)
                     i += 1
                     continue
                 if f.startswith("--chdir="):
-                    chdir = _join_dir(chdir, f[8:])
+                    _add_dir(chdir, f[8:])
                     continue
                 if re.match(r"^-C.", f):
-                    chdir = _join_dir(chdir, f[2:])
+                    _add_dir(chdir, f[2:])
                     continue
                 if f in ("-u", "-S"):
                     i += 1
@@ -464,7 +470,7 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], Optional[str]]:
             i += 1
             continue
         break
-    return args[i:], chdir
+    return args[i:], chdir, overflow
 
 
 def _unwrap(args: List[str]) -> List[str]:
@@ -670,23 +676,84 @@ _NOT_CD = object()
 # A folder path longer than this (after "." and ".." are resolved) is not followed: the line is refused instead.
 _MAX_CWD_CHARS = 4096
 _CWD_OVERFLOW = object()
+# A folder that stepped above the home folder or a drive root is unknown, and treated as protected for the rest of the line.
+_CWD_LOST = object()
 
 
-def _norm_cwd(p: str) -> str:
-    """One lexical pass over a folder path: backslashes become "/", repeated and trailing separators and "." segments go,
-    and ".." is resolved where the path starts at a known point. A bare root ("/", "C:/") keeps its separator."""
-    # On Windows a folder written with a trailing backslash before a space reaches this point as a trailing space.
-    t = re.sub(r"(?:/\.)+(?=/|\Z)", "", re.sub(r"/{2,}", "/", p.rstrip().replace("\\", "/")))
-    t = _resolve_dots(t)
-    if len(t) > 1 and t.endswith("/") and not re.match(r"^[A-Za-z]:/\Z", t):
-        t = t[:-1]
-    return t or "/"
+class _Folder:
+    """The folder a line has reached, kept as an immutable chain: an anchor (the root, a drive, a home word) and the
+    segments below it, newest first. A cd adds or drops one segment, so the cost of a step does not depend on how long
+    the folder is. kind is "root", "drive", "home" or "other" (a variable or ~user the line cannot see through)."""
+
+    __slots__ = ("kind", "a", "up", "seg", "n", "len")
+
+    def __init__(self, kind: str, a: str, up: Any = None, seg: str = "", n: int = 0, length: int = 0) -> None:
+        self.kind = kind
+        self.a = a
+        self.up = up
+        self.seg = seg
+        self.n = n
+        self.len = length or len(a)
 
 
-def _cd_target(args: List[str], cwd: Optional[str]) -> Any:
-    """The working folder a cd or pushd leaves behind, as the path text to join relative words to: a string, or None
-    when it cannot be known (cd -, a relative folder from an unknown place, popd). Returns _NOT_CD when the words are
-    not a directory change."""
+def _folder_step(f: Any, seg: str) -> Any:
+    """One step from folder f (a _Folder, _CWD_LOST or None): a segment name, "." or "..". Returns the new folder,
+    _CWD_LOST, None (unknown) or _CWD_OVERFLOW."""
+    if f is None or f is _CWD_LOST or f is _CWD_OVERFLOW:
+        return f
+    if seg in ("", "."):
+        return f
+    if seg == "..":
+        if f.n > 0:
+            return f.up
+        if f.kind == "home":
+            return _CWD_LOST
+        return None if f.kind == "other" else f
+    length = f.len + len(seg) + 1
+    if length > _MAX_CWD_CHARS:
+        return _CWD_OVERFLOW
+    return _Folder(f.kind, f.a, f, seg, f.n + 1, length)
+
+
+def _folder_walk(f: Any, path: str) -> Any:
+    for seg in path.split("/"):
+        f = _folder_step(f, seg)
+        if f is None or f is _CWD_LOST or f is _CWD_OVERFLOW:
+            return f
+    return f
+
+
+def _folder_of(word: str) -> Any:
+    """The folder an anchored word names (absolute, drive, home or variable)."""
+    t = re.sub(r"/{2,}", "/", str(word).rstrip().replace("\\", "/"))
+    drive = re.match(r"^[A-Za-z]:(?:/|\Z)", t)
+    if t.startswith("/"):
+        return _folder_walk(_Folder("root", "/"), t[1:])
+    if drive:
+        return _folder_walk(_Folder("drive", t[:2] + "/"), t[drive.end():])
+    first = t.split("/")[0]
+    kind = "home" if first.lower() in _HOME_WORDS else "other"
+    return _folder_walk(_Folder(kind, first + "/"), t[len(first) + 1:])
+
+
+def _folder_text(f: Any, m: int) -> str:
+    """The text of the last m segments of folder f, as a path; when segments are left out it starts at a made-up anchor."""
+    segs = []
+    g = f
+    i = 0
+    while i < m and g.n > 0:
+        segs.append(g.seg)
+        g = g.up
+        i += 1
+    segs.reverse()
+    base = "/__" if g.n > 0 else ("" if g.kind == "root" else g.a.rstrip("/"))
+    return base + ("/" + "/".join(segs) if segs else "")
+
+
+def _cd_target(args: List[str], cwd: Any) -> Any:
+    """The working folder a cd or pushd leaves behind: a _Folder, _CWD_LOST, or None when it cannot be known (cd -, a
+    relative folder from an unknown place, popd). cwd is the folder before the command (None = unknown). Returns
+    _NOT_CD when the words are not a directory change."""
     if not args:
         return _NOT_CD
     head = _program_name(args[0])
@@ -703,34 +770,43 @@ def _cd_target(args: List[str], cwd: Optional[str]) -> Any:
         ops = ops[1:]
     # A bare cd goes home; a bare pushd swaps directories, which is not known here.
     if not ops:
-        return None if head in ("pushd", "push-location") else "~"
+        return None if head in ("pushd", "push-location") else _folder_of("~")
     t = ops[0]
     if t == "-":
         return None
     # Anchored words (absolute, drive, home or variable) name the folder on their own; a relative word follows the old folder.
-    to = t if _ANCHORED_RE.match(t) else (None if cwd is None else cwd + "/" + t)
-    if to is None:
+    if _ANCHORED_RE.match(t):
+        return _folder_of(t)
+    return _folder_rel(cwd, t)
+
+
+def _folder_rel(cwd: Any, w: str) -> Any:
+    """A relative folder word followed from the folder cwd (None = unknown)."""
+    if cwd is None:
         return None
-    norm = _norm_cwd(to)
-    return _CWD_OVERFLOW if len(norm) > _MAX_CWD_CHARS else norm
+    return _folder_walk(cwd, w.rstrip().replace("\\", "/"))
 
 
-def _from_cwd(cwd: Optional[str], word: str) -> str:
-    """A word read from the folder cwd: relative words are joined to it, anchored words are kept."""
+def _from_cwd(cwd: Any, word: str) -> str:
+    """A word read from the folder cwd: relative words are joined to it, anchored words are kept. Only as many trailing
+    segments of the folder as the word's ".." can reach (plus four) are written out: a protected folder is at most three
+    segments deep, so the rest cannot change the answer."""
     if not cwd or not word or _ANCHORED_RE.match(word):
         return word
-    return cwd.rstrip("/\\") + "/" + word
+    if cwd is _CWD_LOST:
+        return "/"
+    ups = sum(1 for s in re.split(r"[\\/]", word) if s == "..")
+    return _folder_text(cwd, ups + 4) + "/" + word
 
 
-def _check_simple(words: List[str], depth: int, cwd: Optional[str] = None, known: Optional[str] = None) -> Optional[str]:
-    args, chdir = _unwrap_dir(words)
-    if known is None:
-        known = cwd
-    if chdir is not None:
+def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[str]:
+    args, chdir, overflow = _unwrap_dir(words)
+    if overflow:
+        return _OVERFLOW
+    if chdir:
         known = _in_dir(known, chdir)
         if known is _CWD_OVERFLOW:
             return _OVERFLOW
-        cwd = known if known is not None and _dangerous_path(known) else None
     if not args:
         return None
     head = _program_name(args[0])
@@ -762,7 +838,7 @@ def _check_simple(words: List[str], depth: int, cwd: Optional[str] = None, known
         return "rm_root_home"
 
     if head in _RM_HEADS:
-        if any(_recursive_flag(w, head) for w in rest) and any(_dangerous_path(_from_cwd(cwd, w)) for w in _operands(rest, head)):
+        if any(_recursive_flag(w, head) for w in rest) and any(_dangerous_path(_from_cwd(known, w)) for w in _operands(rest, head)):
             return "rm_root_home"
     if head == "find":
         paths: List[str] = []
@@ -771,20 +847,20 @@ def _check_simple(words: List[str], depth: int, cwd: Optional[str] = None, known
                 break
             paths.append(w)
         # After a cd to a protected folder, a find with no path starts at ".".
-        if cwd and not paths:
+        if known and not paths:
             paths.append(".")
         delete = "-delete" in rest or any(
             w == "-exec" and re.match(r"^(?:rm|shred)\Z", _program_name(rest[j + 1] if j + 1 < len(rest) else ""))
             for j, w in enumerate(rest)
         )
         filtered = any(_FIND_TESTS.match(w) for w in rest)
-        if delete and not filtered and any(_dangerous_path(_from_cwd(cwd, w)) for w in paths):
+        if delete and not filtered and any(_dangerous_path(_from_cwd(known, w)) for w in paths):
             return "rm_root_home"
     if head in ("chmod", "chown", "chgrp"):
         if any(re.match(r"^-[A-Za-z]*R[A-Za-z]*\Z", w) or w == "--recursive" for w in rest):
             ops = _operands(rest, head)
             mode = ops[0] if ops else ""
-            targets = [d for d in (_dangerous_path(_from_cwd(cwd, w)) for w in ops[1:]) if d]
+            targets = [d for d in (_dangerous_path(_from_cwd(known, w)) for w in ops[1:]) if d]
             if "root" in targets or "system" in targets:
                 return "perm_root"
             if head == "chmod" and "home" in targets and _world_writable(mode):
@@ -914,26 +990,38 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
     return None
 
 
+# Most backtick substitutions read from a changed folder in one command line; past it the line is refused.
+_MAX_TICK_READS = 200
+
+
 def _check_segments(
-    segs: List[Tuple[List[str], Optional[str]]], depth: int, known0: Optional[str] = None
+    segs: List[Tuple[List[str], Optional[str]]], depth: int, cwd0: Any = None
 ) -> Optional[str]:
-    """known0 is the folder a cd or pushd earlier in the same command line (or the shell that runs this one) moved to, as
-    text, or None when unknown. Relative targets are read from it only while it is a protected one (home, the root, a
-    system folder). A cd inside a pipeline or a background command runs in a subshell and does not count."""
+    """cwd0 is the folder a cd or pushd earlier in the same command line moved to (None = unknown). A cd inside a pipeline or a background command runs in a subshell and does not count."""
     pipe: List[Tuple[List[str], Optional[str]]] = []
-    known = known0  # the folder as text, or None when unknown
-    cwd = known if known is not None and _dangerous_path(known) else None  # the same, only while it is protected
-    for words, sep in segs:
-        hit = _check_simple(words, depth, cwd, known)
+    known = cwd0  # the folder reached so far: a _Folder, _CWD_LOST, or None when unknown
+    raws = getattr(segs, "raws", None)
+    ticks = 0
+    for idx, (words, sep) in enumerate(segs):
+        hit = _check_simple(words, depth, known)
         if hit:
             return hit
+        # A command substitution in backticks starts in the folder the line has reached, like $( ) and sh -c. While the folder
+        # is still the one the line started in, the whole-line reading in _analyze() has already covered it.
+        if raws and raws[idx] and known is not cwd0 and depth < _MAX_DEPTH:
+            ticks += 1
+            if ticks > _MAX_TICK_READS:
+                return _OVERFLOW
+            inner = _backtick_code(raws[idx])
+            inner_hit = _analyze(inner, depth + 1, known) if inner else None
+            if inner_hit:
+                return inner_hit
         if sep not in ("|", "|&", "&"):
             to = _cd_target(_unwrap(words), known)
             if to is _CWD_OVERFLOW:
                 return _OVERFLOW
             if to is not _NOT_CD:
                 known = to
-                cwd = known if known is not None and _dangerous_path(known) else None
         pipe.append((words, sep))
         if not _is_pipe(sep):
             hit2 = _check_pipeline(pipe)
@@ -943,7 +1031,7 @@ def _check_segments(
     return _check_pipeline(pipe) if pipe else None
 
 
-def _analyze(cmd: str, depth: int = 0, known: Optional[str] = None) -> Optional[str]:
+def _analyze(cmd: str, depth: int = 0, known: Any = None) -> Optional[str]:
     text = str(cmd)
     if len(text) > _MAX_CHARS:
         return _OVERFLOW
