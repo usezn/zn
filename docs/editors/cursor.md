@@ -14,10 +14,10 @@ There is no zn-gate plugin for Cursor since zn-gate 1.14.0: use `zn hooks instal
    zn hooks install cursor
    ```
 
-   On a Mac, if you see `EACCES`, follow npm's guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally). On Windows, if PowerShell says running scripts is disabled, type `zn.cmd hooks install cursor` instead (not yet verified).
+   On a Mac, if you see `EACCES`, follow npm's guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally). On Windows, if PowerShell says running scripts is disabled, type `zn.cmd hooks install cursor` instead. That workaround was verified on Windows Server 2022 (PowerShell 5.1, default Restricted policy).
 3. **Restart Cursor.**
 
-Status: these steps follow Cursor's documentation; we have not run them end to end in Cursor yet (Cursor has no command-line mode with hooks that we can test automatically), and not at all on Windows.
+Status: these steps follow Cursor's documentation; we have not run them end to end in Cursor yet (Cursor has no command-line mode with hooks that we can test automatically). Windows: hooks verified on Windows Server 2022 (PowerShell 5.1), where they block reads of `.env` files; the Cursor app itself not yet tested.
 
 Once it works, Cursor's agent is blocked from reading `.env` files with real values and common credential files (file reads and most shell commands), a secret zn-gate recognizes in your chat message is blocked before it is sent, and secrets it recognizes are removed from MCP tool results.
 
