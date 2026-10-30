@@ -171,6 +171,30 @@ test('lean: a runner that runs past the deadline is blocked at the deadline, wit
   assert.match(JSON.parse(p.stdout).systemMessage, /its hook failed/);
 });
 
+const BUSY = "const t = Date.now(); while (Date.now() - t < 5000) {} " + ACK + "process.stdout.write('LATE');";
+
+test('lean: a runner that blocks its own thread past the deadline is blocked at the deadline, like the full launcher', { skip: !posix }, (t) => {
+  const lean = setup(t, BUSY, { deadlineS: 2 });
+  const full = setup(t, BUSY, { deadlineS: 2, lean: false });
+  for (const [event, status] of [['PreToolUse', 2], ['PostToolUse', 0]]) {
+    const a = run(lean.file, event);
+    const b = run(full.file, event);
+    assert.ok(a.ms >= 1800 && a.ms < 4500, 'lean answered at about the deadline, not after the 5 s block: ' + a.ms);
+    assert.ok(b.ms >= 1800 && b.ms < 4500, 'full answered at about the deadline: ' + b.ms);
+    assert.equal(a.status, status);
+    assert.equal(a.status, b.status);
+    assert.equal(a.stdout, b.stdout);
+    assert.doesNotMatch(a.stdout, /LATE/);
+    assert.match(a.stderr + a.stdout, /its hook failed/);
+  }
+});
+
+test('lean: the runner reads its stdin in the worker and a normal call is unchanged', { skip: !posix }, (t) => {
+  const { file } = setup(t, "let d = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (c) => { d += c; }); process.stdin.on('end', () => { " + ACK + "process.stdout.write('GOT:' + d + ':' + process.argv.slice(2).join(',')); });", { deadlineS: 20 });
+  const r = run(file, 'PreToolUse', '{"a":1}');
+  assert.deepEqual([r.status, r.stdout], [0, 'GOT:{"a":1}:claude-code']);
+});
+
 test('lean: the deadline timer does not hold back a runner that ends by itself', { skip: !posix }, (t) => {
   const { file } = setup(t, ACK + "process.stdout.write('FAST');", { deadlineS: 20 });
   const r = run(file, 'PreToolUse');

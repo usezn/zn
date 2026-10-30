@@ -325,8 +325,9 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
  * built-ins plus ONE `node` process; what the shell did with helper processes is done inside that node (LEAN_JS):
  *  - integrity: the runner is read once and its SHA-256 compared with the one recorded at install time, as VERIFY_JS does; a
  *    runner that differs is not run (exit 86, and the shell answers with the "zn-gate changed" block);
- *  - deadline: a timer is armed as the very first step (before the runner is read or loaded). At the deadline it answers with the
- *    block of the event (the same text the shell gave) and exits;
+ *  - deadline: the runner runs in a worker thread and the main thread keeps the timer, armed as the very first step (before the
+ *    runner is read or loaded). At the deadline the main thread answers with the block of the event (the same text the shell gave)
+ *    and ends the process, which ends the worker, even when the runner blocks its own thread with synchronous work;
  *  - private output: what the runner writes to stdout and stderr is held in memory (process.stdout.write and fs.writeSync on
  *    fd 1 and 2 are replaced). Only when the run ends it is passed on: stdout for a status 0 with the confirmation, or 2;
  *    stderr always. Any other status (a crash, an uncaught error) drops the held stdout and answers with the block of the event;
@@ -340,11 +341,11 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
  * What is NOT kept, on purpose (a reviewer decides):
  *  - the timer starts when node starts. A hang while node itself starts (before the first line of LEAN_JS runs) is covered only by
  *    the agent's own hook timeout, which for most agents lets the call run. The shell timer started before node.
- *  - the timer is in the node process, so a runner that blocks the event loop with synchronous work never lets it fire; the shell
- *    timer was a separate process and killed the runner's whole process group. The runner has its own supervisor timer in the
- *    same process (it has the same limit), and it starts no child process, so no helper can hold the agent's pipes open.
- *  - a TERM, HUP or INT sent to the shell is answered by the runner's own handlers (it has them for these signals), no longer by
- *    a shell trap.
+ *  - at the deadline what the runner had written to stderr so far is dropped (it lives in the worker, which is blocked); the block
+ *    text is still written. A child process the runner started is not killed as a group by the shell timer any more; the runner
+ *    starts none that holds the agent's pipes (spawnSync with pipes, a daemon with stdio ignored).
+ *  - a TERM, HUP or INT reaches the main thread, which answers with the block (as the shell trap did); the runner's own signal
+ *    handlers do not run in a worker thread.
  *  - the answer is written to the agent's pipe once, when the run ends, from inside node instead of by `cat` from a file.
  */
 const LEAN_OK = 80; // node ends with LEAN_OK + 0 (answered, status 0) or LEAN_OK + 2 (answered, status 2)
@@ -357,11 +358,7 @@ function leanMain() {
   let cfg;
   try { cfg = JSON.parse(cfgText); } catch (e) { process.exit(1); }
   const ow = fs.writeSync;
-  const wf = fs.writeFileSync;
-  const out = [];
-  const err = [];
   let done = false;
-  let acked = false;
   // Writes every chunk to the real fd; false when it could not (a closed pipe, or a pipe that stays full).
   const put = (fd, list) => {
     for (const b of list) {
@@ -379,64 +376,103 @@ function leanMain() {
     const ok = (!m.o || put(1, [Buffer.from(m.o)])) && (!m.e || put(2, [Buffer.from(m.e)]));
     process.exitCode = ok ? cfg.ok + m.c : 1;
   };
+  // The deadline, a signal, or a worker that fails: this thread answers with the block and ends the process, which ends the worker.
   const fire = () => {
     if (done) return;
     done = true;
-    try { put(2, err); say('crash'); } catch (e) { process.exitCode = 1; }
+    try { say('crash'); } catch (e) { process.exitCode = 1; }
     process.exit();
   };
-  // 1. The deadline, before anything that could hang. unref: a runner that ends by itself must not wait for it.
+  // 1. The deadline, before anything that could hang, in THIS thread: the runner runs in a worker thread, so a runner that blocks
+  // its own thread with synchronous work cannot stop this timer. unref: a runner that ends by itself must not wait for it.
   if (cfg.ms > 0) setTimeout(fire, cfg.ms).unref();
+  for (const s of ['SIGTERM', 'SIGHUP', 'SIGINT']) { try { process.on(s, fire); } catch (e) { } }
   // 2. Integrity: read once, check, run that same content.
   let b;
   try { b = fs.readFileSync(f); } catch (e) { process.exit(cfg.changed); }
   if (!/^[0-9a-f]{64}$/.test(h || '') || require('crypto').createHash('sha256').update(b).digest('hex') !== h) process.exit(cfg.changed);
-  // 3. Private output and the in-memory confirmation.
-  const ACK = 'zn-ack-in-memory-' + process.pid + '-' + Date.now();
-  process.env.ZN_HOOK_ACK = ACK;
-  const hold = (list) => function (chunk, enc, cb) {
-    if (typeof enc === 'function') { cb = enc; enc = undefined; }
-    list.push(typeof chunk === 'string' ? Buffer.from(chunk, typeof enc === 'string' ? enc : 'utf8') : Buffer.from(chunk));
-    if (typeof cb === 'function') process.nextTick(cb);
-    return true;
+  // 3. The runner, in a worker thread: private output, the in-memory confirmation, and the runner as the main module.
+  const W = function () {
+    const wt = require('worker_threads');
+    const fs = require('fs');
+    const [f, agent, text] = wt.workerData;
+    const ow = fs.writeSync;
+    const wf = fs.writeFileSync;
+    const out = [];
+    const err = [];
+    let acked = false;
+    const ACK = 'zn-ack-in-memory-' + process.pid + '-' + Date.now();
+    process.env.ZN_HOOK_ACK = ACK;
+    const hold = (list) => function (chunk, enc, cb) {
+      if (typeof enc === 'function') { cb = enc; enc = undefined; }
+      list.push(typeof chunk === 'string' ? Buffer.from(chunk, typeof enc === 'string' ? enc : 'utf8') : Buffer.from(chunk));
+      if (typeof cb === 'function') process.nextTick(cb);
+      return true;
+    };
+    process.stdout.write = hold(out);
+    process.stderr.write = hold(err);
+    fs.writeSync = function (fd, data, a, c) {
+      if (fd !== 1 && fd !== 2) return ow.apply(this, arguments);
+      const list = fd === 1 ? out : err;
+      if (typeof data === 'string') { const s = Buffer.from(data, typeof c === 'string' ? c : 'utf8'); list.push(s); return s.length; }
+      const o = a && typeof a === 'object' ? a : { offset: a, length: c };
+      const off = Number.isInteger(o.offset) ? o.offset : 0;
+      const len = Number.isInteger(o.length) ? o.length : data.length - off;
+      list.push(Buffer.from(data.subarray(off, off + len)));
+      return len;
+    };
+    fs.writeFileSync = function (file, data) {
+      if (file === ACK) { if (String(data) === 'ok') acked = true; return; }
+      return wf.apply(this, arguments);
+    };
+    // stdin: the main thread reads the real one and sends the chunks here; the stream exists only if the runner asks for it, so a
+    // runner that never reads stdin ends without waiting for it.
+    let si = null;
+    Object.defineProperty(process, 'stdin', { configurable: true, get() {
+      if (!si) {
+        si = new (require('stream').Readable)({ read() { } });
+        wt.parentPort.on('message', (c) => { if (c === null) { si.push(null); wt.parentPort.unref(); } else si.push(Buffer.from(c)); });
+      }
+      return si;
+    } });
+    process.on('exit', (code) => {
+      try { wt.parentPort.postMessage({ rc: Number(code), acked, out, err }); } catch (e) { }
+    });
+    const M = require('module');
+    process.argv = [process.argv[0], f, agent];
+    const m = new M(f, null);
+    m.id = '.';
+    m.filename = f;
+    m.paths = M._nodeModulePaths(require('path').dirname(f));
+    process.mainModule = m;
+    M._cache[f] = m;
+    m._compile(text, f);
+    m.loaded = true;
   };
-  process.stdout.write = hold(out);
-  process.stderr.write = hold(err);
-  fs.writeSync = function (fd, data, a, c) {
-    if (fd !== 1 && fd !== 2) return ow.apply(this, arguments);
-    const list = fd === 1 ? out : err;
-    if (typeof data === 'string') { const s = Buffer.from(data, typeof c === 'string' ? c : 'utf8'); list.push(s); return s.length; }
-    const o = a && typeof a === 'object' ? a : { offset: a, length: c };
-    const off = Number.isInteger(o.offset) ? o.offset : 0;
-    const len = Number.isInteger(o.length) ? o.length : data.length - off;
-    list.push(Buffer.from(data.subarray(off, off + len)));
-    return len;
-  };
-  fs.writeFileSync = function (file, data) {
-    if (file === ACK) { if (String(data) === 'ok') acked = true; return; }
-    return wf.apply(this, arguments);
-  };
-  process.on('exit', (code) => {
+  let res = null;
+  const finish = () => {
     if (done) return;
     done = true;
     try {
-      const rc = Number(code);
-      if (rc === 0 && !acked) { put(2, err); say('noack'); }
-      else if (rc === 0 || rc === 2) process.exitCode = put(1, out) && put(2, err) ? cfg.ok + rc : 1;
-      else { put(2, err); say('crash'); }
+      const m = res;
+      const list = (x) => (Array.isArray(x) ? x : []).map((u) => Buffer.from(u));
+      if (!m) say('crash');
+      else if (m.rc === 0 && !m.acked) { put(2, list(m.err)); say('noack'); }
+      else if (m.rc === 0 || m.rc === 2) process.exitCode = put(1, list(m.out)) && put(2, list(m.err)) ? cfg.ok + m.rc : 1;
+      else { put(2, list(m.err)); say('crash'); }
     } catch (e) { process.exitCode = 1; }
-  });
-  // 4. Run the runner as the main module with its own argv.
-  const M = require('module');
-  process.argv = [process.argv[0], f, agent];
-  const m = new M(f, null);
-  m.id = '.';
-  m.filename = f;
-  m.paths = M._nodeModulePaths(require('path').dirname(f));
-  process.mainModule = m;
-  M._cache[f] = m;
-  m._compile(b.toString('utf8'), f);
-  m.loaded = true;
+    process.exit();
+  };
+  let w;
+  try {
+    w = new (require('worker_threads').Worker)('(' + W.toString() + ')()', { eval: true, workerData: [f, agent, b.toString('utf8')] });
+  } catch (e) { fire(); return; }
+  w.on('message', (m) => { res = m; });
+  w.on('error', () => { res = null; finish(); });
+  w.on('exit', finish);
+  process.stdin.on('error', () => { });
+  process.stdin.on('data', (c) => { if (!done) w.postMessage(c); });
+  process.stdin.on('end', () => { if (!done) w.postMessage(null); });
 }
 // One line, no comments: the whole text is one argument of the node command.
 const LEAN_JS = '(' + leanMain.toString().split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('//')).join(' ') + ')()';
