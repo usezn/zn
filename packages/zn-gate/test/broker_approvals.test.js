@@ -125,3 +125,25 @@ test('a corrupt or truncated vault file is refused by the real daemon, so no app
   srv = await start();
   await srv.close();
 });
+
+test('a store that cannot be written reports the failure and approves nothing', async (t) => {
+  const home = tempDir(t, 'zn-appr-home-');
+  const savedHome = process.env.HOME;
+  process.env.HOME = home;
+  t.after(() => { if (savedHome === undefined) delete process.env.HOME; else process.env.HOME = savedHome; });
+
+  const recorded = new Set();
+  const vault = {
+    async isApproved(s, c) { return recorded.has(s + '\0' + c); },
+    async recordApproval() { throw Object.assign(new Error('EACCES: permission denied, write'), { code: 'EACCES' }); },
+  };
+  const store = approvalStore({ vault });
+  await assert.rejects(store.recordApproval('DEMO_TOKEN', 'node'), (e) => e.code === 'EACCES');
+  assert.equal(await store.isApproved('DEMO_TOKEN', 'node'), false);
+
+  // The vault-less store has no file fallback: it writes nothing under HOME.
+  const none = approvalStore();
+  await assert.rejects(none.recordApproval('DEMO_TOKEN', 'node'), (e) => e.code === 'ZN_LOCKED');
+  assert.equal(await none.isApproved('DEMO_TOKEN', 'node'), false);
+  assert.deepEqual(fs.readdirSync(home), []);
+});

@@ -1050,9 +1050,10 @@ mod tests {
         let out = Scrubber::scrub(&long);
         assert_eq!(out.len(), long.len());
         let many = r#"password=""#.repeat(50_000);
-        let start = std::time::Instant::now();
-        let _ = Scrubber::scrub(&many);
-        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        let took = time_of(&|| {
+            let _ = Scrubber::scrub(&many);
+        });
+        assert!(took < std::time::Duration::from_secs(5), "{took:?}");
         assert!(
             Scrubber::detect_pii_types(r#"{"password":"abcdefgh ijk lmn"}"#)
                 .contains(&"api_key_or_secret")
@@ -1303,28 +1304,61 @@ mod tests {
         assert!(!Scrubber::scrub("A123-45-6789").contains("[SSN_REDACTED]"));
     }
 
-    /// Best of three runs of `work(size)`, so a scheduling hiccup on a busy
-    /// machine cannot inflate the measurement.
+    /// CPU time used by this thread. Tests run in parallel, so wall time also
+    /// counts the time this thread waits for a CPU; its own CPU time does not.
+    #[cfg(unix)]
+    fn thread_cpu_time() -> std::time::Duration {
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: clock_gettime only writes the timespec it is given.
+        let rc = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+        assert_eq!(rc, 0, "clock_gettime(CLOCK_THREAD_CPUTIME_ID)");
+        std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
+    }
+
+    /// How long `work` takes: this thread's CPU time on unix, wall time elsewhere.
+    fn time_of(work: &dyn Fn()) -> std::time::Duration {
+        #[cfg(unix)]
+        {
+            let start = thread_cpu_time();
+            work();
+            thread_cpu_time().saturating_sub(start)
+        }
+        #[cfg(not(unix))]
+        {
+            let start = std::time::Instant::now();
+            work();
+            start.elapsed()
+        }
+    }
+
+    /// Best of three runs of `work(size)`, so a hiccup on a busy machine
+    /// cannot inflate the measurement.
     fn best_of_three(work: &dyn Fn(usize), size: usize) -> std::time::Duration {
         (0..3)
-            .map(|_| {
-                let start = std::time::Instant::now();
-                work(size);
-                start.elapsed()
-            })
+            .map(|_| time_of(&|| work(size)))
             .min()
             .expect("three runs")
     }
 
-    /// Time must grow about linearly: quadrupling the input may cost at most
-    /// 8x (a quadratic algorithm costs 16x), plus a small allowance for
-    /// noise. Relative, so the machine's speed does not matter.
+    /// The rule: 8x the input may cost at most 16x the time (a quadratic
+    /// algorithm costs 64x), plus 50 ms for noise on very short runs.
+    fn scales_linearly(small: std::time::Duration, large: std::time::Duration) -> bool {
+        large < small * 16 + std::time::Duration::from_millis(50)
+    }
+
+    /// Time must grow about linearly with the input. Relative, so the
+    /// machine's speed does not matter. One untimed run comes first, so the
+    /// first timing is not taken with cold caches.
     fn assert_scales_linearly(work: &dyn Fn(usize), size: usize) {
-        let small = best_of_three(work, size / 4);
+        work(size / 8);
+        let small = best_of_three(work, size / 8);
         let large = best_of_three(work, size);
         assert!(
-            large < small * 8 + std::time::Duration::from_millis(50),
-            "4x the input took {large:?} against {small:?}"
+            scales_linearly(small, large),
+            "8x the input took {large:?} against {small:?}"
         );
         // Only a hang guard; the ratio above is the real check.
         assert!(large < std::time::Duration::from_secs(30), "{large:?}");
@@ -1351,20 +1385,18 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "4x the input took")]
     fn test_scaling_check_rejects_quadratic_time() {
-        // Proves the check above can fail: a deliberately quadratic loop.
-        let quadratic = |n: usize| {
-            let n = n / 32;
-            let mut acc = 0usize;
-            for i in 0..n {
-                for j in 0..n {
-                    acc = std::hint::black_box(acc.wrapping_add(i ^ j));
-                }
-            }
-            std::hint::black_box(acc);
-        };
-        assert_scales_linearly(&quadratic, 1 << 19);
+        // The rule above on fixed durations, so this cannot depend on load:
+        // linear growth passes, quadratic growth fails, and the 50 ms floor
+        // only matters for very short runs.
+        let ms = std::time::Duration::from_millis;
+        assert!(scales_linearly(ms(100), ms(800))); // 8x: linear
+        assert!(scales_linearly(ms(100), ms(1_600))); // 16x: at the edge, still linear
+        assert!(!scales_linearly(ms(100), ms(6_400))); // 64x: quadratic
+        assert!(!scales_linearly(ms(100), ms(1_700))); // past 16x + 50 ms
+        assert!(scales_linearly(ms(1), ms(60))); // tiny runs: within the floor
+        assert!(!scales_linearly(ms(1), ms(70))); // 16 ms + 50 ms is the limit
+        assert!(!scales_linearly(ms(0), ms(64))); // nothing measured for the small run
     }
 
     #[test]
