@@ -279,6 +279,9 @@ pub struct McpPool {
     connections: Mutex<HashMap<String, ConnectionSlot>>,
     /// Optional Result Cache
     cache: Option<Arc<crate::engine::cache::ResultCache>>,
+    /// Servers that were left out (not allowed, cannot start or unreachable),
+    /// with the reason. A tool call for one of them is refused, not allowed.
+    skipped: std::sync::Mutex<HashMap<String, String>>,
 }
 
 impl McpPool {
@@ -288,7 +291,48 @@ impl McpPool {
             configs,
             connections: Mutex::new(HashMap::new()),
             cache: None,
+            skipped: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Record that a server is left out, and why.
+    pub fn mark_skipped(&self, name: &str, reason: &str) {
+        if let Ok(mut skipped) = self.skipped.lock() {
+            skipped.insert(name.to_string(), reason.to_string());
+        }
+    }
+
+    /// The servers that were left out, as (name, reason), sorted by name.
+    pub fn skipped_servers(&self) -> Vec<(String, String)> {
+        let mut list: Vec<(String, String)> = self
+            .skipped
+            .lock()
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+        list.sort();
+        list
+    }
+
+    /// If `tool` belongs to a server that was left out, that server and the
+    /// reason. The server is read from the tool name: `mcp__<server>__<tool>`,
+    /// or `<server>` followed by `__`, `.`, `/` or `:`.
+    pub fn skip_reason_for_tool(&self, tool: &str) -> Option<(String, String)> {
+        let skipped = self.skipped.lock().ok()?;
+        if skipped.is_empty() {
+            return None;
+        }
+        let mut candidates: Vec<&str> = Vec::new();
+        if let Some(rest) = tool.strip_prefix("mcp__") {
+            candidates.extend(rest.split("__").next());
+        }
+        for sep in ["__", ".", "/", ":"] {
+            if let Some((server, _)) = tool.split_once(sep) {
+                candidates.push(server);
+            }
+        }
+        candidates
+            .into_iter()
+            .find_map(|c| skipped.get(c).map(|r| (c.to_string(), r.clone())))
     }
 
     /// Set the result cache for the pool
@@ -327,6 +371,7 @@ impl McpPool {
 
     /// Load MCP configurations from a JSON file
     fn from_config_file(path: &str) -> Result<Self> {
+        let mut skipped: Vec<(String, String)> = Vec::new();
         let content = std::fs::read_to_string(path)
             .map_err(|e| anyhow!("Failed to read MCP config file '{}': {}", path, e))?;
 
@@ -351,12 +396,17 @@ impl McpPool {
                         "Skipping MCP server '{}': missing both 'command' and 'url'",
                         name
                     );
+                    skipped.push((
+                        name.clone(),
+                        "its entry has neither 'command' nor 'url'".to_string(),
+                    ));
                     continue;
                 }
 
                 if let Some(ref cmd) = command {
                     if let Err(e) = validate_command(cmd) {
                         warn!("Skipping MCP server '{}': {}", name, e);
+                        skipped.push((name.clone(), e.to_string()));
                         continue;
                     }
                 }
@@ -394,7 +444,11 @@ impl McpPool {
             }
         }
 
-        Ok(Self::new(configs))
+        let pool = Self::new(configs);
+        for (name, reason) in skipped {
+            pool.mark_skipped(&name, &reason);
+        }
+        Ok(pool)
     }
 
     /// Send a request to an MCP server, connecting if necessary.
@@ -422,12 +476,12 @@ impl McpPool {
             Some(conn) => {
                 if !conn.is_alive().await {
                     info!("MCP '{}' connection died, reconnecting", name);
-                    *guard = Some(McpConnection::connect(name, &config).await?);
+                    *guard = Some(self.connect_or_skip(name, &config).await?);
                 }
             }
             None => {
                 info!("Establishing new MCP connection: {}", name);
-                *guard = Some(McpConnection::connect(name, &config).await?);
+                *guard = Some(self.connect_or_skip(name, &config).await?);
             }
         }
         let conn = guard
@@ -451,6 +505,17 @@ impl McpPool {
         }
 
         Ok(response)
+    }
+
+    /// Connect; when that fails, remember the server as skipped with the reason.
+    async fn connect_or_skip(&self, name: &str, config: &McpServerConfig) -> Result<McpConnection> {
+        match McpConnection::connect(name, config).await {
+            Ok(conn) => Ok(conn),
+            Err(e) => {
+                self.mark_skipped(name, &format!("it could not be started or reached: {e}"));
+                Err(e)
+            }
+        }
     }
 
     /// Get a list of configured MCP server names
@@ -519,6 +584,34 @@ impl McpPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn servers_that_are_not_allowed_are_recorded_with_a_reason() {
+        let dir = std::env::temp_dir().join(format!("zn-mcp-skip-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("mcp_servers.json");
+        std::fs::write(
+            &file,
+            r#"{"mcpServers":{"bad":{"command":"rm"},"empty":{},"good":{"command":"node"}}}"#,
+        )
+        .unwrap();
+        let pool = McpPool::from_config_file(file.to_str().unwrap()).unwrap();
+        let skipped = pool.skipped_servers();
+        let names: Vec<&str> = skipped.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["bad", "empty"]);
+        assert!(
+            skipped[0].1.contains("not in the allowed list"),
+            "{:?}",
+            skipped
+        );
+        assert_eq!(pool.list_mcps(), vec!["good".to_string()]);
+
+        let (server, _) = pool.skip_reason_for_tool("mcp__bad__run").unwrap();
+        assert_eq!(server, "bad");
+        assert!(pool.skip_reason_for_tool("bad.run").is_some());
+        assert!(pool.skip_reason_for_tool("mcp__good__run").is_none());
+        assert!(pool.skip_reason_for_tool("other_tool").is_none());
+    }
 
     #[test]
     fn test_validate_command_allowed() {

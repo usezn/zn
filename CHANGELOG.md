@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- An MCP server that is not allowed, cannot be started or cannot be reached is now named in the log with the reason, and a tool call for one of its tools returns an error saying the server was skipped instead of being allowed.
 - When the Management API port is already in use, zn now stops with a message that says so and how to pick another port (--port or ZN_PORT) instead of printing Ready and running without an API.
 
 ## [1.14.1] - 2026-10-28

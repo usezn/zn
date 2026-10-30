@@ -491,6 +491,11 @@ async fn start_proxy(args: Args) -> Result<()> {
         zn_config.caching.clone(),
     ));
     let pool = Arc::new(pool.with_cache(Arc::clone(&cache)));
+    for (server, reason) in pool.skipped_servers() {
+        log::warning(format!(
+            "MCP server '{server}' was skipped: {reason}. Tool calls for it will be refused."
+        ))?;
+    }
     let zn_config = Arc::new(zn_config);
 
     // Management Server State
@@ -990,6 +995,22 @@ async fn process_mcp_message(
             // neither ban another tenant's agent ids nor share a ban with it.
             let agent_id_str = bounded_agent_id(agent_id.as_deref());
             let rep_key = reputation_key(&memory_namespace, &agent_id_str);
+
+            // A tool of an MCP server that was left out is refused with the
+            // reason, never reported as allowed.
+            if let Some((server, reason)) = state.pool.skip_reason_for_tool(&tool_name) {
+                log::warning(format!(
+                    "Tool call '{tool_name}' refused: MCP server '{server}' was skipped ({reason})"
+                ))
+                .ok();
+                return Ok(Some(jsonrpc_error_response(
+                    id,
+                    jsonrpc_error::POLICY_DENIED,
+                    &format!(
+                        "Tool call '{tool_name}' was not forwarded: MCP server '{server}' was skipped ({reason})"
+                    ),
+                )));
+            }
 
             // 🎯 OCR GUARD: detect malicious text embedded in images (prompt
             // injection, credentials, destructive commands) on the RAW input,
@@ -2395,6 +2416,27 @@ mod audit_isolation_tests {
             "{msg}"
         );
         assert!(msg.contains("--port") && msg.contains("ZN_PORT"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn a_tool_of_a_skipped_server_is_refused_with_the_reason() {
+        let (state, _dir) = test_state(None);
+        state
+            .pool
+            .mark_skipped("bad", "command 'rm' is not in the allowed list");
+        let out = process_mcp_message(&frame("mcp__bad__run"), &state, None)
+            .await
+            .unwrap()
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let msg = v["error"]["message"].as_str().unwrap();
+        assert!(msg.contains("'bad'") && msg.contains("skipped"), "{msg}");
+        assert!(msg.contains("not in the allowed list"), "{msg}");
+        let ok = process_mcp_message(&frame("other_tool"), &state, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!ok.contains("\"error\""), "{ok}");
     }
 
     #[test]
