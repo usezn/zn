@@ -1081,3 +1081,11 @@ test('check: a pre-release plugin newer than a stable command gets both versions
   fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'zn-gate', version: '1.15.0-rc.1' }));
   assert.equal(pluginVersionNote(root, '1.14.1'), 'the zn-gate plugin is version 1.15.0-rc.1 and the zn-gate command is 1.14.1');
 });
+
+test('check: a pre-release plugin older than a stable command keeps the plugin update advice', (t) => {
+  const { pluginVersionNote } = require('../lib/check')._internal;
+  const root = tempDir(t, 'zn-check-plugin-older-rc-');
+  fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'zn-gate', version: '1.14.0-rc.1' }));
+  assert.match(pluginVersionNote(root, '1.14.1'), /claude plugin update zn-gate@usezn/);
+});
