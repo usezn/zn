@@ -114,7 +114,7 @@ A link is never followed: a history file or folder that is a link is skipped
 and listed, so a link cannot make the scan read something outside your home
 folder.
 
-### What it shows
+### History: what it shows
 
 ```text
 zn-gate reach --history: did your coding agents keep a secret of yours in their session history?
@@ -163,7 +163,7 @@ first. When it stops, the report lists the files that were not fully scanned
 and never says that nothing was found. A line longer than 32 MB is skipped and
 its file is listed as partly scanned.
 
-### Flags
+### History: flags
 
 | Flag | Meaning |
 | --- | --- |
