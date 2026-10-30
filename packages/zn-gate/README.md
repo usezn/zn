@@ -306,7 +306,7 @@ CONFIDENTIAL_INTERNAL_PROJECT_[A-Z0-9]+
 
 Each non-comment line is a pattern (matched without regard to case) unless it starts with `path:`, `secret:` or is the word `strict`. In `zn.config.json` the same patterns go in `bannedPatterns` and the paths in `forbiddenPaths`.
 
-These files are read by this npm package (CLI, agent hooks and the Node.js library). The Python package does not read them: there, use `strict=True` or `ZN_STRICT=1`. Where the rules apply, and what an invalid file does, is set out in [Where custom rules apply](#where-custom-rules-apply).
+These files are read by this npm package (the CLI, the shield and the Node.js library). The agent hooks use them only for the Claude Code output note described below. The Python package does not read them: there, use `strict=True` or `ZN_STRICT=1`. Where the rules apply, and what an invalid file does, is set out in [Where custom rules apply](#where-custom-rules-apply).
 
 Patterns run in time proportional to the text, so a project file cannot make the hooks hang. That is why only this syntax is accepted: literal characters, `.`, classes such as `[a-z]` or `[^x]`, `\d \w \s`, `\b`, `^`, `$`, groups `( )` and `(?: )`, alternation `|`, and the quantifiers `?`, `*`, `+` and `{n}`, `{n,}`, `{n,m}` (counts up to 100). A pattern can be at most 500 steps long once its counts are expanded (for example `a{100}` is 100 steps), and all the patterns of a file together at most 600 steps, so that checking a long text stays fast; a file can hold at most 100 patterns and a pattern at most 500 characters. Matching ignores case for ASCII letters (a-z); letters of other scripts are matched as written. Backreferences, lookahead, lookbehind, named groups, `\p{...}` and a quantifier on a group that already contains one (such as `(a+)+`) are rejected.
 
@@ -314,11 +314,11 @@ If a rules file cannot be read, is not valid JSON, or holds a pattern that is no
 
 ### Where custom rules apply
 
-Custom rules apply to MCP calls that go through the shield, and to code that uses the guard. They do not apply to the shell hook.
+Custom rules apply to MCP calls that go through the shield, and to code that uses the guard. They do not apply in the agent hooks: not to shell commands, file reads, prompts or MCP calls that a hook sees.
 
 - **MCP calls through `zn-gate shield`.** The shield checks the tool descriptions, the arguments the agent sends, and what the tool returns. A matching rule blocks that call or that result.
-- **The guard in your code.** `checkToolCall` and `guardTool` check the text in the tool arguments. `guardTool` also checks the result when you set `checkResult`. A match throws a `GuardBlockError` by default.
-- **Not the shell hook.** The agent hooks check shell commands and file paths with their own built-in policy. A custom rule does not block a shell command there. In Claude Code only, a match in the output of a web fetch, an MCP call or a shell command adds a note for the agent. The note tells the agent to treat that text as data and not to follow it. The output is not blocked for this reason.
+- **The guard in your code.** `checkToolCall` and `guardTool` check the text in the tool arguments. `guardTool` also checks the result when you set `checkResult`. `guardTool` throws a `GuardBlockError` by default; `checkToolCall` does not throw and returns a result with `allowed: false`.
+- **Not the agent hooks.** The agent hooks check shell commands and file paths with their own built-in policy. A custom rule does not block a shell command, a file read, a prompt or an MCP call there. In Claude Code only, a match in the output of a web fetch, an MCP call or a shell command adds a note for the agent. The note tells the agent to treat that text as data and not to follow it. The output is not blocked for this reason.
 
 If both files exist, zn-gate reads `.znrules` and ignores `zn.config.json`.
 
