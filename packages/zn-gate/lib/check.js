@@ -331,8 +331,8 @@ function spawnHook(file, args, input, env, cwd, timeout = HOOK_TIMEOUT_MS) {
     input: JSON.stringify(input), encoding: 'utf8', timeout, cwd,
     env: { ...process.env, ZN_STATS: 'off', ...env }, windowsHide: true,
   });
-  // A hook that answers and exits before reading all its input makes the write fail with EPIPE although it ran: its status and output are the answer.
-  const ranAndExited = r.error && r.error.code === 'EPIPE' && typeof r.status === 'number';
+  // A hook that answers and exits before reading all its input makes the write fail with EPIPE (EOF on Windows) although it ran: its status and output are the answer.
+  const ranAndExited = r.error && (r.error.code === 'EPIPE' || r.error.code === 'EOF') && typeof r.status === 'number';
   if (r.error && !ranAndExited) return { ran: false, why: r.error.code || r.error.message };
   return { ran: true, decision: decisionOf(r.stdout, r.status), stdout: r.stdout, status: r.status };
 }
