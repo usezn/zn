@@ -4,7 +4,7 @@ Set up zn-gate in Cursor in two minutes, then the technical details: the MCP ser
 
 There is no zn-gate plugin for Cursor since zn-gate 1.14.0: use `zn hooks install cursor` below. The plugin's hooks started `node` by name, so an absolute `PATH` entry that points into the project (its `node_modules/.bin`, a folder added by direnv) could run a `node` of the project's own in place of the real one, and Cursor has no hook setting that names the program by its full path on macOS and Linux and still works on Windows. If you added the zn-gate plugin in Cursor, remove it there (Customize) and run `zn hooks install cursor`: Cursor's documentation does not say what happens to an installed plugin that is no longer in its repository.
 
-## Quick start (no coding needed)
+## Install (no coding needed)
 
 1. **Check that Node.js is installed.** In Cursor, open **Terminal → New Terminal**, paste `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/), then close and reopen Cursor.
 2. **Install zn-gate and turn on its protection for Cursor.** Paste each line in the same terminal and press Enter after each one:
@@ -78,6 +78,31 @@ Every result of a wrapped server is checked for prompt injection, and secrets zn
 - `preToolUse` checks writes and deletes on a best-effort basis: Cursor does not document the input of every tool.
 
 Per-agent details and how each agent compares: [compat.md](../compat.md).
+
+## Verify
+
+Run `npx -y zn-gate check` in your own terminal. It makes a temporary folder with a fake `.env` file and an ordinary file, asks zn's hook to let the agent read each one, and reports whether the Cursor hook blocked the `.env` file and allowed the other. Nothing is sent over the network and no setting changes. See [Check that it works](../check.md).
+
+This checks the hooks. To check the MCP server too, restart Cursor and ask the agent to call `zn_status`.
+
+## Uninstall
+
+In your own terminal:
+
+```bash
+zn hooks uninstall cursor
+```
+
+If you installed the hooks for one project only, add `--project` and run it from that project's folder. A backup of the settings file is written first. To remove the MCP server, delete the `zn-gate` entry from the MCP settings file you edited in Install. If you ran `npx -y zn-gate init --wrap-mcp`, `npx -y zn-gate init --revert` puts back each MCP settings file as it was saved before wrapping. See [Remove zn-gate](../uninstall.md).
+
+## Troubleshooting
+
+- **`node: command not found`, or Node.js is too old** (zn-gate needs 18 or later): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
+- **"running scripts is disabled on this system" on Windows:** see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+- **The zn-gate tools do not appear in Cursor:** check that the settings file is valid and that the `zn-gate` entry sits inside the existing server section, then restart Cursor.
+- **A command says it needs you at your own terminal:** see [It needs you at your own terminal](../troubleshooting.md#4-it-needs-you-at-your-own-terminal).
+
+All messages: [Troubleshooting](../troubleshooting.md).
 
 ## Cursor documentation
 

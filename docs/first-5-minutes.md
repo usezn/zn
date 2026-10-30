@@ -16,7 +16,7 @@ npx -y zn-gate init
 
 Want to look first? `npx -y zn-gate reach` lists what your agents can reach (secret names, credential files, MCP servers). It changes nothing and sends nothing. See [reach](reach.md).
 
-## 2. Check that it works
+## 2. Check that it worked
 
 `init` ends with this check. You can run it any time:
 
@@ -46,6 +46,15 @@ The test folder was deleted.
 ```
 
 `OK` means that agent is protected. A line that starts with `-` means zn is not set up for that agent, or the agent is not on your machine. A line with `NOT protected` says why and what to run. More in [check.md](check.md).
+
+Two more commands from the [command line reference](cli.md) help if you want to be sure:
+
+```bash
+npx -y zn-gate status
+npx -y zn-gate test
+```
+
+`status` shows the version and the rules version. `test` runs zn's built-in examples on your machine, without the network, and exits with `0` when all of them pass. If `check` says `NOT protected`, or `test` reports a failed example, run `npx -y zn-gate init` again and then repeat the check.
 
 ## 3. What you will see while you work
 
