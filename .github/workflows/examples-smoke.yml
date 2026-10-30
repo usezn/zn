@@ -45,7 +45,7 @@ jobs:
   smoke:
     name: Package smoke (examples on Python 3.12 and Node.js 22, MCP in node:22-slim)
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 15
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
