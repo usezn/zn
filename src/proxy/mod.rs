@@ -61,11 +61,12 @@ fn validate_command(command: &str) -> Result<()> {
         Ok(())
     } else {
         warn!("Blocked MCP command not in whitelist: {}", command);
-        Err(anyhow!(
-            "Command '{}' is not in the allowed list. Allowed: {:?}",
+        Err(anyhow!(crate::user_errors::mcp_command_not_allowed(
+            "this server",
             command,
-            ALLOWED_COMMANDS
-        ))
+            ALLOWED_COMMANDS,
+            None
+        )))
     }
 }
 
@@ -112,7 +113,12 @@ impl McpConnection {
                     Err(e) => {
                         if attempts >= max_attempts {
                             error!(mcp = %name, "Failed to connect after {} attempts: {}", max_attempts, e);
-                            return Err(anyhow!("Failed to connect to WS MCP '{}': {}", name, e));
+                            return Err(anyhow!(crate::user_errors::mcp_not_reached(
+                                name,
+                                url,
+                                max_attempts,
+                                &e.to_string()
+                            )));
                         }
                         warn!(mcp = %name, "Connection failed: {}. Retrying in {:?}...", e, delay);
                         tokio::time::sleep(delay).await;
@@ -122,7 +128,14 @@ impl McpConnection {
             }
         } else if let Some(command) = &config.command {
             // Validate command before spawning
-            validate_command(command)?;
+            validate_command(command).map_err(|_| {
+                anyhow!(crate::user_errors::mcp_command_not_allowed(
+                    name,
+                    command,
+                    ALLOWED_COMMANDS,
+                    None
+                ))
+            })?;
 
             info!(mcp = %name, command = %command, "Spawning MCP server");
 
@@ -142,9 +155,13 @@ impl McpConnection {
                 }
             }
 
-            let mut child = cmd
-                .spawn()
-                .map_err(|e| anyhow!("Failed to spawn MCP '{}': {}", name, e))?;
+            let mut child = cmd.spawn().map_err(|e| {
+                anyhow!(crate::user_errors::mcp_not_started(
+                    name,
+                    command,
+                    &e.to_string()
+                ))
+            })?;
 
             let stdin = child
                 .stdin
@@ -279,6 +296,9 @@ pub struct McpPool {
     connections: Mutex<HashMap<String, ConnectionSlot>>,
     /// Optional Result Cache
     cache: Option<Arc<crate::engine::cache::ResultCache>>,
+    /// Plain-English warnings from loading the servers file (servers that were
+    /// skipped, a file that could not be read). The caller shows them.
+    notices: Vec<String>,
 }
 
 impl McpPool {
@@ -288,7 +308,13 @@ impl McpPool {
             configs,
             connections: Mutex::new(HashMap::new()),
             cache: None,
+            notices: Vec::new(),
         }
+    }
+
+    /// Warnings found while loading the servers file, for the user to see.
+    pub fn notices(&self) -> &[String] {
+        &self.notices
     }
 
     /// Set the result cache for the pool
@@ -307,6 +333,7 @@ impl McpPool {
             format!("{}/.config/claude/mcp_servers.json", home),
         ];
 
+        let mut notices = Vec::new();
         for path in &search_paths {
             let path_obj = Path::new(path);
             if path_obj.exists() {
@@ -315,25 +342,41 @@ impl McpPool {
                     Ok(pool) => return Ok(pool),
                     Err(e) => {
                         warn!("Failed to load MCP config from {}: {}", path, e);
+                        notices.push(e.to_string());
                         continue;
                     }
                 }
             }
         }
 
-        info!("No MCP configuration found, using empty pool");
-        Ok(Self::new(HashMap::new()))
+        info!("No MCP servers loaded, using an empty pool");
+        let mut pool = Self::new(HashMap::new());
+        pool.notices = notices;
+        Ok(pool)
     }
 
     /// Load MCP configurations from a JSON file
     fn from_config_file(path: &str) -> Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| anyhow!("Failed to read MCP config file '{}': {}", path, e))?;
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            anyhow!(crate::user_errors::mcp_file_unreadable(
+                path,
+                &crate::user_errors::plain_text(&e.to_string())
+            ))
+        })?;
 
-        let value: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| anyhow!("Failed to parse MCP config file '{}': {}", path, e))?;
+        let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
+            let at = format!("line {}, column {}", e.line(), e.column());
+            let reason = match e.classify() {
+                serde_json::error::Category::Eof => {
+                    format!("the file ends too early ({at}); a closing }} or ] is probably missing")
+                }
+                _ => format!("it is not valid JSON at {at}"),
+            };
+            anyhow!(crate::user_errors::mcp_file_unreadable(path, &reason))
+        })?;
 
         let mut configs = HashMap::new();
+        let mut notices = Vec::new();
 
         if let Some(servers) = value.get("mcpServers").and_then(|v| v.as_object()) {
             for (name, server) in servers {
@@ -351,12 +394,19 @@ impl McpPool {
                         "Skipping MCP server '{}': missing both 'command' and 'url'",
                         name
                     );
+                    notices.push(crate::user_errors::mcp_server_incomplete(name, Some(path)));
                     continue;
                 }
 
                 if let Some(ref cmd) = command {
-                    if let Err(e) = validate_command(cmd) {
-                        warn!("Skipping MCP server '{}': {}", name, e);
+                    if validate_command(cmd).is_err() {
+                        warn!("Skipping MCP server '{}': command not allowed", name);
+                        notices.push(crate::user_errors::mcp_command_not_allowed(
+                            name,
+                            cmd,
+                            ALLOWED_COMMANDS,
+                            Some(path),
+                        ));
                         continue;
                     }
                 }
@@ -394,7 +444,9 @@ impl McpPool {
             }
         }
 
-        Ok(Self::new(configs))
+        let mut pool = Self::new(configs);
+        pool.notices = notices;
+        Ok(pool)
     }
 
     /// Send a request to an MCP server, connecting if necessary.
@@ -769,6 +821,39 @@ Content-Length: 0
             elapsed < std::time::Duration::from_secs(5),
             "health_check waited for the busy server: {:?}",
             elapsed
+        );
+    }
+
+    #[test]
+    fn a_server_with_a_disallowed_command_is_skipped_with_a_notice() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("mcp_servers.json");
+        std::fs::write(
+            &file,
+            r#"{"mcpServers": {"demo": {"command": "/nonexistent/zn-demo-server"}, "ok": {"command": "npx"}, "empty": {}}}"#,
+        )
+        .expect("write");
+        let pool = McpPool::from_config_file(file.to_str().expect("utf8")).expect("loads");
+        assert_eq!(pool.list_mcps(), vec!["ok".to_string()]);
+        let all = pool.notices().join("\n");
+        assert!(all.contains("\"demo\" was skipped"), "{all}");
+        assert!(all.contains("/nonexistent/zn-demo-server"), "{all}");
+        assert!(all.contains("node, npx"), "{all}");
+        assert!(all.contains("\"empty\" was skipped"), "{all}");
+    }
+
+    #[test]
+    fn a_broken_servers_file_is_reported_not_hidden() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("mcp_servers.json");
+        std::fs::write(&file, "{").expect("write");
+        let err = McpPool::from_config_file(file.to_str().expect("utf8"))
+            .err()
+            .expect("must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("mcp_servers.json") && msg.contains("ends too early"),
+            "{msg}"
         );
     }
 }

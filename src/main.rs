@@ -249,7 +249,11 @@ async fn start_proxy(args: Args) -> Result<()> {
     log::info("Initializing High-Performance Security Engine...")?;
 
     // Load configuration
-    let mut zn_config = ZnConfig::load(args.config.as_ref().map(std::path::Path::new))?;
+    let (mut zn_config, config_notices) =
+        ZnConfig::load_with_notices(args.config.as_ref().map(std::path::Path::new))?;
+    for notice in &config_notices {
+        log::warning(notice)?;
+    }
 
     // Apply CLI overrides
     if let Some(port) = args.port {
@@ -496,6 +500,12 @@ async fn start_proxy(args: Args) -> Result<()> {
         );
         McpPool::new(std::collections::HashMap::new())
     });
+    for notice in pool.notices() {
+        log::warning(notice)?;
+    }
+    if !pool.list_mcps().is_empty() {
+        log::warning(zn::user_errors::mcp_not_forwarded(pool.list_mcps().len()))?;
+    }
     let cache = Arc::new(zn::engine::cache::ResultCache::new(
         zn_config.caching.clone(),
     ));
@@ -666,7 +676,10 @@ struct AnalyzerPipeline {
 
 async fn build_pipeline() -> Result<AnalyzerPipeline> {
     // Load configuration (defaults + env vars)
-    let config = ZnConfig::load(None)?;
+    let (config, config_notices) = ZnConfig::load_with_notices(None)?;
+    for notice in &config_notices {
+        eprintln!("Warning: {notice}");
+    }
 
     // Initialize engine with defaults
     let engine_config = ZnEngineConfig {
