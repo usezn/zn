@@ -104,7 +104,21 @@ function makeTeamOps(ctx) {
     }
   }
 
+  /* The membership marker in keychain.json (org id, no secret): readable with the vault locked, so the reset,
+   * purge and uninstall guards do not depend on the two readable copies. Best effort; healed by writeCopies. */
+  function markMembership(org) {
+    try {
+      const keychain = require('../vault/keychain');
+      const m = keychain.readMeta(state.opts);
+      if (!m || (m.team_org || null) === (org || null)) return;
+      const next = Object.assign({}, m);
+      if (org) next.team_org = org; else delete next.team_org;
+      keychain.writeMeta(next, state.opts);
+    } catch (err) { /* the marker is a second guard, not the source of truth */ }
+  }
+
   function writeCopies(t, strict) {
+    markMembership(t.org);
     try {
       const disk = policy.readTeam(state.opts);
       if (!disk || !sameJson(disk, Object.assign({ v: 1 }, teamRecord(t)))) policy.writeTeam(teamRecord(t), state.opts);
@@ -392,6 +406,7 @@ function makeTeamOps(ctx) {
         };
         writeAudit({ mode: 'set', decision: 'allow', reason: current ? 'team_rejoined' : 'team_joined' });
         await state.saveSecrets();
+        markMembership(s.team.org);
         mirror(s.team);
         return { org: res.org, org_name: orgName, install_id: installId, api_base: base };
       });
@@ -426,6 +441,7 @@ function makeTeamOps(ctx) {
         if (!s.team) return { left: null, pending_files: removeLocalCopies() };
         if (!sameMembership(s.team, snap)) throw znError(CODES.POLICY_DENIED, 'the organization membership changed while leaving; run `zn team leave` again');
         delete s.team;
+        markMembership(null);
         s.teamGen = (Number.isInteger(s.teamGen) ? s.teamGen : 0) + 1;
         delete s.orgApprovals;
         writeAudit({ mode: 'remove', decision: 'allow', reason: 'team_left' });
