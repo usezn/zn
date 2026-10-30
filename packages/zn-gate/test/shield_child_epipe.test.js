@@ -44,3 +44,46 @@ test('the program exit code is passed on when it exits early with an error code'
   assert.doesNotMatch(r.stderr, /EPIPE|Unhandled 'error' event/, r.stderr);
   assert.equal(r.code, 3);
 });
+
+test('any other error on the server input stops the shield with exit 1 and stops the server', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-shield-stdin-'));
+  t.after(() => {
+    // Never leave the fake server behind, whatever the result.
+    try { process.kill(Number(fs.readFileSync(path.join(home, 'pid'), 'utf8')), 'SIGKILL'); } catch (_) { /* gone */ }
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+  // Preload: after the server starts, make its input report an error that is not EPIPE.
+  const preload = path.join(home, 'preload.js');
+  fs.writeFileSync(preload, `
+    const cp = require('child_process');
+    const real = cp.spawn;
+    cp.spawn = function (...a) {
+      const c = real.apply(this, a);
+      if (c.stdin) {
+        require('fs').writeFileSync(${JSON.stringify(path.join(home, 'pid'))}, String(c.pid));
+        setTimeout(() => c.stdin.emit('error', Object.assign(new Error('simulated input failure'), { code: 'EIO' })), 300);
+      }
+      return c;
+    };
+  `);
+  const r = await new Promise((resolve) => {
+    const p = spawn(process.execPath, [cli, 'shield', '--', process.execPath, '-e', 'setInterval(() => {}, 1000)'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, HOME: home, USERPROFILE: home, ZN_HOME: '', NODE_OPTIONS: `--require ${preload}` },
+    });
+    let stderr = '';
+    p.stderr.on('data', (d) => { stderr += d; });
+    p.stdout.resume();
+    // Without the fix the shield keeps running: give up after 8 s.
+    const timer = setTimeout(() => p.kill('SIGKILL'), 8000);
+    p.on('exit', (code, signal) => { clearTimeout(timer); resolve({ code, signal, stderr }); });
+  });
+  assert.equal(r.signal, null, 'the shield kept running: ' + r.stderr);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /Could not send input to the server: simulated input failure/);
+  const pid = Number(fs.readFileSync(path.join(home, 'pid'), 'utf8'));
+  await new Promise((res) => setTimeout(res, 300));
+  let alive = true;
+  try { process.kill(pid, 0); } catch (_) { alive = false; }
+  assert.equal(alive, false, 'the server was left running');
+});

@@ -265,7 +265,10 @@ function startMcpShield(command, args, options = {}) {
       process.stdin.pause();
       return;
     }
-    process.stderr.write(`[zn-shield] Could not send input to the server: ${err && err.message ? err.message : err}\n`);
+    // Any other error means requests can no longer reach the server: stop, do not keep running with a dead input.
+    process.stderr.write(`[zn-shield] Could not send input to the server: ${err && err.message ? err.message : err}. Stopping the shield and the server.\n`);
+    try { child.kill(); } catch (_) { /* already gone */ }
+    process.exit(1);
   });
 
   child.on('exit', (code, signal) => {
