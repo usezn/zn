@@ -75,6 +75,23 @@ const LAUNCHER_DEADLINE_S = HOOK_TIMEOUT_S - 2;
 // Matchers: "*" (or none) matches every tool; a name list is only letters, digits, underscores and "|"; anything else is a regex.
 const PRE_MATCHER = '*';
 const PERMISSION_MATCHER = '*';
+
+/* The plugin's hooks.json (plugins/zcode/hooks/hooks.json) has no field for a platform: ZCode starts what an entry names and
+ * a hook that cannot start lets the call run. So every event has two "process" entries: /bin/sh on a script, which only
+ * macOS and Linux have, and, for Windows, the system PowerShell by its full path with a small inline command that reads
+ * scripts/zn-hook.ps1 from the plugin folder (ZCODE_PLUGIN_ROOT) and runs it as a script block (no execution policy applies
+ * to it). On each system the entry of the other one cannot start and is skipped. The inline command is built here, so
+ * the manifest, `zn-gate check` and the tests all read the same text. It has no double quote and no apostrophe in its
+ * messages: ZCode starts the process with no shell and Windows puts the arguments on one command line. */
+const PLUGIN_WIN_POWERSHELL = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
+function pluginWindowsArgs(event) {
+  const blocks = event !== 'PostToolUse';
+  const msg = blocks
+    ? 'zn: the plugin launcher (scripts/zn-hook.ps1) could not run. This call was blocked because zn could not check it. Ask the user to fix it, or to turn off the zn-gate plugin in ZCode (Settings, Plugins).'
+    : 'zn is NOT protecting this session: the plugin launcher (scripts/zn-hook.ps1) could not run.';
+  const script = "try { & ([scriptblock]::Create([IO.File]::ReadAllText($env:ZCODE_PLUGIN_ROOT + '/scripts/zn-hook.ps1'))) '" + event + "' } catch { [Console]::Error.WriteLine('" + msg + "'); exit " + (blocks ? 2 : 0) + ' }; exit ' + (blocks ? 2 : 0);
+  return ['-NoProfile', '-NonInteractive', '-Command', script];
+}
 // Tools whose output can hold a secret: the built-in ones that print file or command text, and every MCP tool.
 const POST_MATCHER = '^(Bash|Read|Grep|WebFetch)$|^mcp__.*';
 const EVENTS = ['PreToolUse', 'PermissionRequest', 'UserPromptSubmit', 'PostToolUse'];
@@ -624,6 +641,8 @@ module.exports = {
   HOOK_TIMEOUT_S,
   HOOK_TIMEOUT_MS,
   LAUNCHER_DEADLINE_S,
+  PLUGIN_WIN_POWERSHELL,
+  pluginWindowsArgs,
   HOOK_STATUS,
   PRE_MATCHER,
   POST_MATCHER,

@@ -41,7 +41,16 @@ try {
     for (const [event, group] of Object.entries(theirs)) {
       assert.strictEqual(mine[event].length, 1, event);
       assert.strictEqual(mine[event][0].matcher, group.matcher, event + ' matcher');
-      assert.strictEqual(mine[event][0].hooks.length, 1);
+      // Two entries: /bin/sh for macOS and Linux, then the system PowerShell for Windows (the manifest has no platform field,
+      // and on each system the other entry cannot start).
+      assert.strictEqual(mine[event][0].hooks.length, 2);
+      const w = mine[event][0].hooks[1];
+      assert.strictEqual(w.type, 'process', event + ': no shell between ZCode and PowerShell');
+      assert.strictEqual(w.command, adapter.PLUGIN_WIN_POWERSHELL, event + ': PowerShell by its full path');
+      assert.deepStrictEqual(w.args, adapter.pluginWindowsArgs(event));
+      assert.strictEqual(w.timeoutMs, adapter.HOOK_TIMEOUT_MS, event + ' Windows timeout');
+      assert.strictEqual(w.statusMessage, adapter.HOOK_STATUS);
+      assert.ok(!('onFailure' in w) && !('async' in w) && !('enabled' in w), event + ': a key ZCode does not document or one that turns the hook off');
       const h = mine[event][0].hooks[0];
       assert.strictEqual(h.type, 'process', event + ': no shell between ZCode and sh');
       // By its full path: ZCode looks a bare name up on its PATH, where a relative or empty entry finds the project's files.
@@ -55,7 +64,7 @@ try {
 
   test('hooks.json uses only events and tool names ZCode documents', () => {
     const text = fs.readFileSync(path.join(ZC, 'hooks', 'hooks.json'), 'utf8');
-    for (const word of ['onFailure', 'UserPromptExpansion', 'PowerShell', 'MultiEdit', 'NotebookEdit', 'claude-code', 'SessionStart', 'Stop']) {
+    for (const word of ['onFailure', 'UserPromptExpansion', 'MultiEdit', 'NotebookEdit', 'claude-code', 'SessionStart', 'Stop']) {
       assert.ok(!text.includes(word), word + ' must not appear');
     }
     const post = json('hooks/hooks.json').hooks.PostToolUse[0].matcher;
@@ -172,6 +181,132 @@ try {
       if (['/usr/local/bin/node', '/opt/homebrew/bin/node', '/usr/bin/node'].some((f) => fs.existsSync(f))) return; // found in a usual folder
       const r = spawnSync('/bin/sh', [parentShell('/bin/sh'), path.join(d, 'scripts', 'zn-hook.sh'), 'PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: '/nonexistent', HOME: '/nonexistent' } });
       assert.strictEqual(r.status, 2);
+    });
+  }
+
+  if (!posix) {
+    // The Windows entry of hooks.json, started the way ZCode starts a process hook (no shell, the program and arguments of the
+    // manifest, ZCODE_PLUGIN_ROOT set to the plugin folder), against a plugin folder with the real zn-hook.ps1 and a stub
+    // zn-launch.js. The real Node.js runs the stub; no planted file can be mistaken for it.
+    const PS1 = path.join(ZC, 'scripts', 'zn-hook.ps1');
+    const nodeDir = path.dirname(process.execPath);
+    const stubLaunch = "let d = '';\nprocess.stdin.on('data', (c) => { d += c; });\nprocess.stdin.on('end', () => {\n  if (process.env.ZN_STUB_HANG === 'launch') { setTimeout(() => {}, 300000); return; }\n  process.stdout.write((process.env.ZN_STUB_OUT || '') + (process.env.ZN_STUB_ECHO ? d : ''));\n  process.exit(Number(process.env.ZN_STUB_RC || 0));\n});\n";
+    function wfixture(name, { launcher = true, deadline = 28, ps1 = true } = {}) {
+      const dir = path.join(tmp, name);
+      fs.mkdirSync(path.join(dir, 'scripts'), { recursive: true });
+      if (launcher) fs.writeFileSync(path.join(dir, 'scripts', 'zn-launch.js'), stubLaunch);
+      if (ps1) {
+        const text = fs.readFileSync(PS1, 'utf8');
+        assert.ok(text.includes('$Deadline = 28'));
+        // Test copy only: the shipped script has no setting for the deadline.
+        fs.writeFileSync(path.join(dir, 'scripts', 'zn-hook.ps1'), text.replace('$Deadline = 28', '$Deadline = ' + deadline));
+      }
+      return dir;
+    }
+    function wrun(dir, event, env = {}, opts = {}) {
+      const entry = json('hooks/hooks.json').hooks[event][0].hooks[1];
+      const t0 = Date.now();
+      const r = spawnSync(entry.command, entry.args, {
+        input: opts.input !== undefined ? opts.input : '{"hook_event_name":"' + event + '"}', encoding: 'utf8', timeout: 60000, cwd: opts.cwd || dir, windowsHide: true,
+        env: { SystemRoot: process.env.SystemRoot, SYSTEMROOT: process.env.SystemRoot, ProgramFiles: process.env.ProgramFiles, USERPROFILE: path.join(dir, 'home'), PATH: nodeDir + ';' + process.env.SystemRoot + '\\System32', ZCODE_PLUGIN_ROOT: dir, ...env },
+      });
+      return { r, ms: Date.now() - t0 };
+    }
+
+    test('the Windows hook passes the launcher answer and exit code 0 or 2 through', () => {
+      const d = wfixture('w-pass');
+      const a = wrun(d, 'PreToolUse', { ZN_STUB_OUT: '{"x":1}', ZN_STUB_RC: '0' }).r;
+      assert.strictEqual(a.status, 0, a.stderr);
+      assert.strictEqual(a.stdout, '{"x":1}');
+      assert.strictEqual(wrun(d, 'PreToolUse', { ZN_STUB_RC: '2' }).r.status, 2);
+      // The event JSON reaches the launcher.
+      const e = wrun(d, 'PreToolUse', { ZN_STUB_ECHO: '1' }).r;
+      assert.strictEqual(e.stdout, '{"hook_event_name":"PreToolUse"}');
+    });
+
+    test('the Windows hook blocks (exit 2) a blocking event when the launcher fails, and only warns on PostToolUse', () => {
+      const d = wfixture('w-fail');
+      for (const event of ['PreToolUse', 'PermissionRequest', 'UserPromptSubmit']) {
+        const r = wrun(d, event, { ZN_STUB_RC: '1' }).r;
+        assert.strictEqual(r.status, 2, event + ' ' + r.stderr);
+        assert.ok(/^zn: the hook ended with exit code 1/.test(r.stderr), r.stderr);
+      }
+      const p = wrun(d, 'PostToolUse', { ZN_STUB_RC: '1' }).r;
+      assert.strictEqual(p.status, 0, p.stderr);
+      assert.ok(/NOT protecting this session/.test(p.stderr), p.stderr);
+      assert.strictEqual(wrun(d, 'PreToolUse', { ZN_STUB_RC: '139' }).r.status, 2);
+    });
+
+    test('the Windows hook blocks when scripts/zn-launch.js is missing, when zn-hook.ps1 is missing, and when ZCODE_PLUGIN_ROOT is not set', () => {
+      const r = wrun(wfixture('w-nolaunch', { launcher: false }), 'PreToolUse').r;
+      assert.strictEqual(r.status, 2, r.stderr);
+      assert.ok(/launcher \(scripts\/zn-launch\.js\) is missing/.test(r.stderr), r.stderr);
+      const noPs1 = wrun(wfixture('w-nops1', { ps1: false }), 'PreToolUse').r;
+      assert.strictEqual(noPs1.status, 2, noPs1.stderr);
+      assert.ok(/^zn: the plugin launcher \(scripts\/zn-hook\.ps1\) could not run/.test(noPs1.stderr), noPs1.stderr);
+      assert.strictEqual(wrun(wfixture('w-nops1b', { ps1: false }), 'PostToolUse').r.status, 0);
+      const noRoot = wrun(wfixture('w-noroot'), 'PreToolUse', { ZCODE_PLUGIN_ROOT: '' }).r;
+      assert.strictEqual(noRoot.status, 2, noRoot.stderr);
+    });
+
+    test('the Windows hook runs under a Restricted execution policy and with an apostrophe or a space in the plugin folder', () => {
+      const d = wfixture("w-it's a folder");
+      const r = wrun(d, 'PreToolUse', { ZN_STUB_OUT: '{"y":2}' }).r;
+      assert.strictEqual(r.status, 0, r.stderr);
+      assert.strictEqual(r.stdout, '{"y":2}');
+    });
+
+    test('the Windows hook blocks when there is no Node.js 20.19 or later at all, and warns only on PostToolUse', () => {
+      const d = wfixture('w-nonode');
+      // No PATH entry has a node.exe; a Node.js in a usual install folder would be found (and is a fine answer).
+      if (['ProgramFiles', 'ProgramFiles(x86)', 'LOCALAPPDATA'].some((v) => process.env[v] && fs.existsSync(path.join(process.env[v], v === 'LOCALAPPDATA' ? 'Programs' : '', 'nodejs', 'node.exe')))) return;
+      const r = wrun(d, 'PreToolUse', { PATH: process.env.SystemRoot + '\\System32', ProgramFiles: '', 'ProgramFiles(x86)': '' }).r;
+      assert.strictEqual(r.status, 2, r.stderr);
+      assert.ok(/no Node\.js 20\.19 or later was found/.test(r.stderr), r.stderr);
+      assert.strictEqual(wrun(d, 'PostToolUse', { PATH: process.env.SystemRoot + '\\System32', ProgramFiles: '', 'ProgramFiles(x86)': '' }).r.status, 0);
+    });
+
+    test('the Windows hook never starts a node.exe from a relative or empty PATH entry, or from a folder inside the project', () => {
+      const d = wfixture('w-planted');
+      const work = path.join(tmp, 'w-planted-work');
+      const marker = path.join(tmp, 'w-planted-ran.txt');
+      // Every node that starts records the program it is (NODE_OPTIONS), so a copy of node.exe planted in the project shows.
+      const rec = path.join(tmp, 'w-planted-rec.js');
+      fs.writeFileSync(rec, 'require("fs").appendFileSync(' + JSON.stringify(marker) + ', process.execPath + "\\n");\n');
+      const bin = path.join(work, 'bin');
+      const nm = path.join(work, 'node_modules', '.bin');
+      for (const dir of [work, bin, nm, path.join(work, '.git')]) fs.mkdirSync(dir, { recursive: true });
+      for (const dir of [work, bin, nm]) fs.copyFileSync(process.execPath, path.join(dir, 'node.exe'));
+      const real = nodeDir;
+      const sys = process.env.SystemRoot + '\\System32';
+      for (const PATH of ['.;' + real + ';' + sys, 'bin;' + real + ';' + sys, ';' + real + ';' + sys, bin + ';' + real + ';' + sys, nm + ';' + real + ';' + sys, real + ';' + bin]) {
+        fs.rmSync(marker, { force: true });
+        const r = wrun(d, 'PreToolUse', { PATH, ZN_STUB_OUT: '{"decision":"allow"}', NODE_OPTIONS: '--require ' + rec.split('\\').join('/') }, { cwd: work }).r;
+        assert.strictEqual(r.status, 0, PATH + ': ' + r.stderr);
+        assert.strictEqual(r.stdout, '{"decision":"allow"}', PATH);
+        const ran = fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8') : '';
+        assert.ok(ran.length > 0, PATH + ': the node.exe run was not recorded');
+        assert.ok(!ran.toLowerCase().includes(work.toLowerCase()), PATH + ': a node.exe planted in the project ran: ' + ran);
+      }
+    });
+
+    for (const hang of ['launch']) {
+      test('the Windows hook blocks at the deadline when Node.js hangs in the ' + hang + ' (and only warns on PostToolUse)', () => {
+        const d = wfixture('w-hang-' + hang, { deadline: 3 });
+        const { r, ms } = wrun(d, 'PreToolUse', { ZN_STUB_HANG: hang });
+        assert.strictEqual(r.status, 2, r.stderr);
+        assert.ok(/^zn: the hook did not finish starting within 3 seconds/.test(r.stderr), r.stderr);
+        assert.ok(ms >= 2500 && ms < 20000, 'answered at the deadline, not before and not long after: ' + ms + ' ms');
+        const p = wrun(d, 'PostToolUse', { ZN_STUB_HANG: hang });
+        assert.strictEqual(p.r.status, 0);
+        assert.ok(/NOT protecting this session/.test(p.r.stderr), p.r.stderr);
+      });
+    }
+
+    test('zn-hook.ps1 has a start deadline under ZCode\'s 30 second hook timeout', () => {
+      const m = /^\$Deadline = (\d+)$/m.exec(fs.readFileSync(PS1, 'utf8'));
+      assert.ok(m, 'Deadline is set');
+      assert.strictEqual(Number(m[1]), adapter.LAUNCHER_DEADLINE_S);
     });
   }
 
