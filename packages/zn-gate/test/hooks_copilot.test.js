@@ -337,7 +337,8 @@ test('zn-gate check says when the project Claude Code hooks also reach Copilot (
   assert.doesNotMatch(note, /chat\.useClaudeHooks/);
   assert.match(note, /Copilot \(VS Code and Copilot CLI\)/);
   assert.match(note, /zn hooks uninstall claude-code --project/);
-  assert.match(note, /zn hooks uninstall copilot/);
+  assert.match(note, /Keep the Copilot hook/);
+  assert.doesNotMatch(note, /zn hooks uninstall copilot/);
 });
 
 test('the install report states the documented Copilot limits (prompt hook ignored, timeout fails open, VS Code not run in the app)', (t) => {

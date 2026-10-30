@@ -330,4 +330,7 @@ module.exports = {
   capabilities: { ask: 'interactive', rewriteInput: false, rewriteOutput: true },
   hooksFile,
   copilotHome,
+  pathsOf,
+  firstString,
+  COMMAND_KEYS,
 };

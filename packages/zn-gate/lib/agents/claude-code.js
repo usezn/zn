@@ -131,6 +131,21 @@ function mcpInfo(server, tool, event, cwd) {
   return info;
 }
 
+const KNOWN_TOOLS = new Set(Object.values(TOOL_MAP));
+
+/* A tool name zn does not know (Copilot in VS Code sends its own names, such as view, read_file or run_in_terminal,
+   through the Claude-format hook). If its input carries a command, it gets the shell checks; if it names files, every
+   path gets the read and write checks, as in the Copilot adapter. A tool with neither gets no opinion. */
+function unknownToolEvent(base, toolName, ti) {
+  const { pathsOf, firstString, COMMAND_KEYS } = require('./copilot');
+  const cmd = firstString(ti, COMMAND_KEYS);
+  if (cmd !== undefined) return { ...base, tool: 'bash', toolName, input: { command: cmd, texts: [] } };
+  const { paths, bad } = pathsOf(ti);
+  if (bad) return { ...base, tool: 'write', toolName, input: { paths, unparsed: true, texts: [] } };
+  if (paths.length) return { ...base, tool: 'fileaccess', toolName, input: { path: paths[0], paths, texts: [] } };
+  return null;
+}
+
 function normalize(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const name = raw.hook_event_name;
@@ -146,6 +161,10 @@ function normalize(raw) {
   const mcp = /^mcp__(.+?)__(.+)$/.exec(toolName);
   const tool = mcp ? 'mcp' : (TOOL_MAP[toolName] || toolName.toLowerCase());
   const ti = raw.tool_input && typeof raw.tool_input === 'object' ? raw.tool_input : {};
+  if (!mcp && event === 'pre_tool' && !TOOL_MAP[toolName] && !KNOWN_TOOLS.has(tool)) {
+    const generic = unknownToolEvent(base, toolName, ti);
+    if (generic) return generic;
+  }
   const input = {
     command: typeof ti.command === 'string' ? ti.command : undefined,
     path: ti.file_path || ti.notebook_path || ti.filePath || ti.path || undefined,
