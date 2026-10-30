@@ -1,6 +1,6 @@
-"""Plain-words errors in the Python CLI: export write failures (B-2242), and the next step
+"""Plain-words errors in the Python CLI: export write failures, and the next step
 in the empty-export, unreadable-file and missing-path messages, `test` on a path, and
-`analyze` output (B-2246)."""
+`analyze` output."""
 
 import argparse
 import contextlib
@@ -37,7 +37,7 @@ def _scan_ns(path):
                               include=None, exclude=None)
 
 
-# ---- B-2242: export write failures
+# ---- export write failures
 
 def test_export_into_missing_folder_is_a_plain_message(tmp_path):
     target = tmp_path / "no-such-folder" / "out.jsonl"
@@ -74,7 +74,7 @@ def test_successful_export_to_a_file_is_unchanged(tmp_path):
     assert "Exported 1 records" in out and err == ""
 
 
-# ---- B-2246: next steps and empty export
+# ---- next steps and empty export
 
 def test_empty_export_to_stdout_says_what_to_do_next():
     code, out, err = _export(None, EMPTY)
@@ -133,7 +133,7 @@ def test_test_on_plain_text_prints_no_note():
     assert err.getvalue() == ""
 
 
-# ---- B-2246: analyze prints JSON, and the flag is accepted
+# ---- analyze prints JSON, and the flag is accepted
 
 @pytest.mark.parametrize("flags", [{}, {"json": True}, {"json": False}])
 def test_analyze_always_prints_json(flags):
