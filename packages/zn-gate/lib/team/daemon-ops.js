@@ -480,15 +480,37 @@ function makeTeamOps(ctx) {
      * the custom detectors of the policy held in the vault, and what the last version lifted.
      * It also puts the copies back. Never the token.
      */
-    async teamHookInfo() {
+    async teamHookInfo(args) {
       const t = await team();
       if (!t) return { joined: false };
+      // The hook says which pinned key id its readable team.json carries. The pin held in the vault is the
+      // one that counts: a different one means team.json was replaced, and that is written to the audit log.
+      const seen = args && typeof args === 'object' && typeof args.seen_kid === 'string' ? args.seen_kid.slice(0, 64) : null;
+      const pinMismatch = seen !== null && seen !== t.pin.kid;
+      if (pinMismatch) writeAudit({ mode: 'set', decision: 'error', reason: 'team_pin_mismatch' });
       await ensureCopies(membership(t));
       const st = await policyState();
+      const shown = t.policy && Number.isSafeInteger(t.policy.change_shown) ? t.policy.change_shown : null;
       return {
-        joined: true, org: t.org, state: st.state, version: st.version || null,
+        joined: true, org: t.org, kid: t.pin.kid, state: st.state, version: st.version || null,
         detectors: detectorsOf(st), change: changes.cleanChange(t.policy && t.policy.change),
+        change_shown: shown, pin_mismatch: pinMismatch,
       };
+    },
+
+    /**
+     * teamChangeShown(to) -> true when recorded. The hook showed the person the "your organization lifted a
+     * restriction" line for the policy change that ends at version `to`; the vault remembers it, so a file in
+     * ~/.zn cannot mark a change as already shown.
+     */
+    async teamChangeShown(to) {
+      if (!Number.isSafeInteger(to)) return false;
+      const r = await updateTeam((tt) => {
+        if (!tt.policy || !tt.policy.change || tt.policy.change.to !== to) return false;
+        tt.policy.change_shown = to;
+        return true;
+      });
+      return Boolean(r && r.value);
     },
 
     /**
@@ -539,6 +561,7 @@ function makeTeamOps(ctx) {
               const isNew = !prevPolicy || prevPolicy.version !== v.policy.version;
               const change = isNew ? (prevPolicy ? changes.changeRecord(prevPolicy, v.policy, rec.fetched_at) : null) : ((tt.policy && tt.policy.change) || null);
               if (change) rec.change = change; else delete rec.change;
+              if (!isNew && tt.policy && Number.isSafeInteger(tt.policy.change_shown)) rec.change_shown = tt.policy.change_shown;
               tt.policy = rec;
               return { ok: true, isNew, lifted: isNew ? change : null };
             }, snap, (tt, res) => {
