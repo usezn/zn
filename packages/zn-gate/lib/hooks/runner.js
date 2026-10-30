@@ -678,7 +678,7 @@ async function decidePre(ev, d, agentId, opts) {
         updates.push({ key: t.key, value: res.text });
         restored += res.restored.length;
       }
-      if (res && res.withheld) withheld.push(...res.withheld);
+      if (res && res.withheld) for (const x of res.withheld) withheld.push(x);
       if (res && Array.isArray(res.notices)) for (const n of res.notices) notices.add(n);
     }
     // Secrets the organization policy blocks: the file keeps the marker.

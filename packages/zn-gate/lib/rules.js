@@ -1742,7 +1742,7 @@ function sanitizeToolResult(toolOrResult, content, options = {}) {
     if (typeof val === 'string') {
       const res = redactSecrets(val);
       if (res.detections.length > 0) {
-        detections.push(...res.detections);
+        for (const d of res.detections) detections.push(d);
       }
       return res.sanitized;
     } else if (Array.isArray(val)) {
