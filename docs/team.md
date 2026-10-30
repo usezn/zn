@@ -307,6 +307,7 @@ zn team managed-config --agent all --os all --json
 | `--agent claude-code\|cursor\|codex\|all` | Which agent to print for. Default: `all`. |
 | `--os macos\|linux\|windows\|all` | Which operating system's path to print. Default: the system you run it on. |
 | `--managed-hooks-only` | Also run only managed hooks (Claude Code and Codex). Off by default: see the warning below. |
+| `--zn-path PATH` | Run zn at this exact absolute path on every machine instead of the first `zn` on the developer's PATH. Needs one `--os`. Recommended: see "What the managed install protects" below. |
 | `--exclusive-mcp` | Claude Code only: also print a `managed-mcp.json` with zn's `secrets` server. Off by default: see the warning below. |
 | `--json` | Machine-readable output (`{"schema": 1, "files": [...]}`), for scripts and for generating your own guide. |
 
@@ -329,6 +330,31 @@ If one of these files already exists on your machines, merge the printed entries
 The formats come from each vendor's documentation, read on 2026-10-19: [Claude Code managed settings](https://code.claude.com/docs/en/managed-settings) and [managed MCP](https://code.claude.com/docs/en/managed-mcp), [Cursor hooks](https://cursor.com/docs/hooks), and [Codex managed configuration](https://learn.chatgpt.com/docs/enterprise/managed-configuration). Run the command again after you update zn-gate, and check the vendor pages if an agent rejects a file.
 
 After a machine has the policy, `zn hooks install` for that agent warns if a managed policy leaves zn's hooks out.
+
+### What the managed install protects
+
+Without `--zn-path`, the managed hook starts whichever `zn` comes first on the developer's PATH. A developer, or an agent running as that developer, can put a program named `zn` in an earlier folder on the PATH, and if it always says "allowed" the managed hook allows everything. No settings file is edited, so nothing looks different. To close this, give the hook the exact location of zn:
+
+```bash
+zn team managed-config --agent claude-code --os linux --zn-path /usr/local/bin/zn
+```
+
+The hook then runs only that file and never searches the PATH for zn. The command refuses the path if it is not absolute, if it does not exist or cannot run on the machine where you run the command, or if it is in a folder a developer can write to (their home folder, a temporary folder, the folder you run the command in, or any folder others can write to). For another system than the one you are on (for example `--os windows` from a Mac) it can only check the shape of the path, so check it on a real machine of that kind. Install zn-gate in a folder only administrators can write to, such as `/usr/local/bin`, and put Node.js in the same folder or in another folder only administrators can write to. The hook puts the folder of zn first on the PATH, so the Node.js next to it is used.
+
+With a fixed path, the managed install prevents:
+
+- a developer switching zn's hooks off by editing a file in their home folder or in a project;
+- a fake `zn` earlier on the PATH replacing the managed hook;
+- a fake `node` earlier on the PATH, when Node.js is installed next to zn.
+
+It does not prevent:
+
+- a developer who is a local administrator (or can use `sudo`): they can edit the managed files, replace the program at that path or uninstall zn-gate;
+- a modified zn-gate or Node.js at that path: zn does not check that the file is the real one, so protect that folder as you protect any system program;
+- a developer who runs the agent without the managed configuration, for example from another account or on a machine your device management does not reach;
+- the hook failing for a reason of its own: if zn or Node.js is missing, the hook blocks the action instead of allowing it, but it cannot make a machine report that it has no managed install.
+
+Without `--zn-path`, the files keep working as before, and the printed notes remind you of this limit. zn-gate is a guardrail on a developer's machine, not device management.
 
 ## Export the audit log to OpenTelemetry
 

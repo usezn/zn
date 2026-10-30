@@ -365,6 +365,9 @@ const ZF = "$env:NoDefaultCurrentDirectoryInExePath = '1'; $env:PATH = (($env:PA
   "function zf($x) { foreach ($d in ($env:PATH -split ';')) { try { if ($d) { $c = [System.IO.Path]::Combine($d, $x); if ([System.IO.File]::Exists($c)) { return $c } } } catch {} }; return $null }; ";
 
 const IFS = '${IFS}';
+// A zn path an administrator pins in a managed hook: plain characters only, so it can sit inside the script's quotes.
+const PINNED_SH_PATH = /^\/[A-Za-z0-9_.\/ +@:-]+$/;
+const PINNED_WIN_PATH = /^[A-Za-z]:\x5c[A-Za-z0-9_.\x5c +@()-]+$/;
 const SH_SAFE_TEXT = /^[^'"\\%$\n\r]+$/;
 
 function projectTexts(agentId) {
@@ -425,8 +428,9 @@ const PROJECT_TRUST = [
  * through a shell gets the same guard, so a `zn` or Node.js that is gone ends in that agent's own blocking answer instead of
  * exit 127, which the agents run through as a non-blocking error.
  */
-function projectShCommand(agentId, event) {
+function projectShCommand(agentId, event, opts = {}) {
   checkAgentId(agentId);
+  if (opts.znPath !== undefined) return projectShCommandPinned(agentId, event, opts.znPath);
   if (event !== undefined && !/^[A-Za-z]+$/.test(String(event))) throw new Error('zn: bad event name');
   // An agent that runs the command through a shell (every one but Antigravity) gets the readable script in single quotes: the
   // ${IFS} form below is for a command split on spaces with no shell, and a shell such as zsh does not split an unquoted ${IFS}.
@@ -471,9 +475,30 @@ function projectShCommand(agentId, event) {
   return 'sh -c ' + script;
 }
 
+/**
+ * The same hook with zn at a fixed absolute path (an administrator's `--zn-path`), so a `zn` earlier on the user's PATH is never
+ * run. The folder of that zn goes first on the PATH, so the Node.js installed next to it is the one the hook finds.
+ */
+function projectShCommandPinned(agentId, event, znPath) {
+  if (agentId === 'antigravity') throw new Error('zn: a pinned zn path is not supported for this agent');
+  if (!PINNED_SH_PATH.test(znPath) || znPath.includes('..')) throw new Error('zn: unsafe zn path for the hook');
+  const crash = projectAnswer(agentId, event, 'crash', false);
+  const missing = projectAnswer(agentId, event, 'missing', false);
+  const say = (a) => [
+    ...(a.stdout ? ["echo '" + a.stdout + "'"] : []),
+    ...(a.stderr ? ["echo '" + a.stderr + "' >&2"] : []),
+    'exit ' + a.exit,
+  ].join('; ');
+  const script = 'Z="' + znPath + '"; PATH="${Z%/*}:$PATH"; export PATH; N=$(command -v node); R=missing; ' +
+    'if [ -x "$Z" ] && [ -n "$N" ] && [ "${N#/}" != "$N" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
+    'if [ "$R" = ran ]; then ' + say(crash) + '; fi; ' + say(missing);
+  return 'sh -c ' + shQuote(script);
+}
+
 /** The PowerShell text of the same project hook (for windowsScriptCommand). Ends with the comment that isOurs() reads. */
-function projectWindowsScript(agentId, event) {
+function projectWindowsScript(agentId, event, opts = {}) {
   checkAgentId(agentId);
+  if (opts.znPath !== undefined) return projectWindowsScriptPinned(agentId, event, opts.znPath);
   if (event !== undefined && !/^[A-Za-z]+$/.test(String(event))) throw new Error('zn: bad event name');
   const say = (a) => [
     ...(a.stdout ? ["[Console]::Out.WriteLine('" + a.stdout + "')"] : []),
@@ -488,6 +513,21 @@ function projectWindowsScript(agentId, event) {
     'if ($zt -eq 1) { ' + say(crash) + ' } else { ' + say(missing) + ' }; # zn hook ' + agentId;
 }
 
+function projectWindowsScriptPinned(agentId, event, znPath) {
+  if (!PINNED_WIN_PATH.test(znPath) || znPath.includes('..')) throw new Error('zn: unsafe zn path for the hook');
+  const say = (a) => [
+    ...(a.stdout ? ["[Console]::Out.WriteLine('" + a.stdout + "')"] : []),
+    ...(a.stderr ? ["[Console]::Error.WriteLine('" + a.stderr + "')"] : []),
+  ].join('; ') + '; exit ' + a.exit;
+  const crash = projectAnswer(agentId, event, 'crash', true);
+  const missing = projectAnswer(agentId, event, 'missing', true);
+  const leave = 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit ' + (crash.exit === 0 ? '0' : '$LASTEXITCODE') + ' }';
+  const dir = znPath.slice(0, znPath.lastIndexOf('\\'));
+  return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF + "$env:PATH = '" + dir + ";' + $env:PATH; " +
+    "if (([System.IO.File]::Exists('" + znPath + "')) -and ((zf 'node.exe') -or (zf 'node.cmd'))) { $zt=1; & '" + znPath + "' hook " + agentId + '; ' + leave + ' }; ' +
+    'if ($zt -eq 1) { ' + say(crash) + ' } else { ' + say(missing) + ' }; # zn hook ' + agentId;
+}
+
 /** Whether a command is the POSIX project hook of this agent as written by projectShCommand. */
 function isProjectGuard(command, agentId) {
   try {
@@ -495,6 +535,8 @@ function isProjectGuard(command, agentId) {
     if (command === projectShCommand(agentId)) return true;
     // A later zn-gate may word the deny differently: recognize the guard by its structure (start and the hook call).
     if (command.startsWith("sh -c 'Z=$(command -v zn); N=$(command -v node); ") && command.includes('"$Z" hook ' + agentId + '; C=$?;')) return true;
+    // The same guard with zn at a fixed path (managed-config --zn-path).
+    if (command.startsWith("sh -c 'Z=\"/") && command.includes('"$Z" hook ' + agentId + '; C=$?;')) return true;
     return command.startsWith('sh -c :;Z=$(' + ['command', '-v', 'zn'].join(IFS) + ')') && command.includes(IFS + 'hook' + IFS + agentId + ';');
   } catch (_) { return false; }
 }
@@ -504,7 +546,7 @@ function isProjectWindowsScript(script, agentId) {
   try {
     if (typeof script !== 'string') return false;
     if (script === projectWindowsScript(agentId)) return true;
-    return script.startsWith("$ProgressPreference='SilentlyContinue'; $zt=0; ") && (script.includes('& zn.cmd hook ' + agentId + ';') || script.includes("& (zf 'zn.cmd') hook " + agentId + ';')) && script.endsWith('# zn hook ' + agentId);
+    return script.startsWith("$ProgressPreference='SilentlyContinue'; $zt=0; ") && (script.includes('& zn.cmd hook ' + agentId + ';') || script.includes("& (zf 'zn.cmd') hook " + agentId + ';') || new RegExp("& '[A-Za-z]:\\x5c[^']+' hook " + agentId + ';').test(script)) && script.endsWith('# zn hook ' + agentId);
   } catch (_) { return false; }
 }
 
@@ -1040,4 +1082,4 @@ function windowsScriptCommand(script, opts = {}) {
   return (opts.cmd ? q.CMD_POWERSHELL : q.powershellExe()) + ' -NoProfile -NonInteractive -EncodedCommand ' + Buffer.from(script, 'utf16le').toString('base64');
 }
 
-module.exports = { runnerSha, CHANGED_RC, launcherDeadlineS, parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, isProjectGuardExact, isProjectWindowsScriptExact, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, hookDirSuggestions, describeFsError, writableFix, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON };
+module.exports = { PINNED_SH_PATH, PINNED_WIN_PATH, runnerSha, CHANGED_RC, launcherDeadlineS, parseWinAcls, WIN_ACL_SCRIPT, WIN_PRIVATE_SCRIPT, projectShCommand, projectWindowsScript, isProjectGuard, isProjectWindowsScript, isProjectGuardExact, isProjectWindowsScriptExact, blockExit, blockJson, windowsScriptCommand, launcherDir, launcherFile, unixScript, writeLauncher, launcherCommand, plainPathOk, spaceMessage, unsafeDirMessage, hookDirSuggestions, describeFsError, writableFix, ensureSafeHookDir, readWinAcls, setWinPrivate, winProblem, windowsScript, BLOCK_EXIT, BLOCK_JSON };

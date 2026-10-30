@@ -7,11 +7,11 @@
  * on the options.
  *
  *   zn team managed-config [--agent claude-code|cursor|codex|all] [--os macos|linux|windows|all]
- *                          [--managed-hooks-only] [--exclusive-mcp] [--json]
+ *                          [--managed-hooks-only] [--exclusive-mcp] [--zn-path ABSOLUTE_PATH] [--json]
  *
  * The hook commands are the ones `zn hooks install --scope project` writes
  * (`zn hook <agent>`, see lib/agents/config-file.js hookCommand), so each
- * machine needs zn-gate installed with `zn` on the PATH, and the policy check
+ * machine needs zn-gate installed with `zn` on the PATH (or at the --zn-path), and the policy check
  * of `zn hooks install` (lib/agents/managed-policy.js) recognizes them as zn's.
  *
  * Formats, read 2026-10-19 (re-read for this command):
@@ -52,6 +52,10 @@ const codex = require('../agents/codex');
 const launcher = require('../agents/launcher');
 const { managedDir } = require('../agents/managed-policy');
 
+const fs = require('fs');
+const os_ = require('os');
+const path = require('path');
+
 const READ_DATE = '2026-10-19';
 const AGENTS = ['claude-code', 'cursor', 'codex'];
 const OSES = ['macos', 'linux', 'windows'];
@@ -64,14 +68,62 @@ const DOCS = {
   codex: 'https://learn.chatgpt.com/docs/enterprise/managed-configuration',
 };
 
-const USAGE = 'usage: zn team managed-config [--agent claude-code|cursor|codex|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
+const USAGE = 'usage: zn team managed-config [--agent claude-code|cursor|codex|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--zn-path ABSOLUTE_PATH] [--json]';
 const INSTALL_NOTE = 'zn-gate must be installed on each machine with `zn` on the PATH (npm install -g zn-gate).';
+const PIN_ADVICE = 'The hook runs the first `zn` on the developer\'s PATH, so a program named zn that a developer puts earlier on the PATH replaces it. To close that, pass --zn-path with the absolute path of zn on your machines, in a folder only administrators can write to.';
+const pinNote = (zn) => (zn ? 'The hooks run zn at exactly ' + zn.path + ' and never search the PATH for it; zn-gate must be installed there on every machine, and Node.js should be in the same folder or in a folder only administrators can write to. ' + (zn.checked ? 'This path was checked on this computer.' : 'This path was not checked on this computer because it is for another system: check it there.') : PIN_ADVICE);
 
 // The hooks run `zn` from the PATH inside zn's start guard, as a project install writes them (launcher.projectShCommand):
 // a missing zn or Node.js blocks, and neither zn, node nor powershell.exe can come from the folder the agent runs in.
 // On Windows, Codex runs command_windows through cmd.exe, so it names powershell.exe through %SystemRoot%.
-const shGuard = (agent) => (event) => launcher.projectShCommand(agent, event);
-const winGuard = (agent, opts) => (event) => launcher.windowsScriptCommand(launcher.projectWindowsScript(agent, event), opts);
+// zn: the validated --zn-path ({path, os}) or undefined. Claude Code on Windows runs sh (Git Bash), so a drive path becomes /c/dir/zn.cmd there.
+const shPath = (zn) => (zn.os === 'windows' ? '/' + zn.path[0].toLowerCase() + zn.path.slice(2).split(String.fromCharCode(92)).join('/') : zn.path);
+const shGuard = (agent, zn) => (event) => launcher.projectShCommand(agent, event, zn ? { znPath: shPath(zn) } : {});
+const winGuard = (agent, zn, opts) => (event) => launcher.windowsScriptCommand(launcher.projectWindowsScript(agent, event, zn ? { znPath: zn.path } : {}), opts);
+
+/* The first folder a user can write to that holds p (the project folder, home, a temp folder), or undefined. */
+function userWritable(p, hostWin) {
+  const norm = (x) => (hostWin ? path.resolve(x).toLowerCase() : path.resolve(x));
+  const under = (x, dir) => { const a = norm(x); const b = norm(dir); return a === b || a.startsWith(b.endsWith(path.sep) ? b : b + path.sep); };
+  const zones = [os_.homedir(), os_.tmpdir(), '/tmp', '/var/tmp'];
+  const cwd = process.cwd();
+  if (path.dirname(cwd) !== cwd) zones.push(cwd);
+  return zones.find((z) => z && path.dirname(path.resolve(z)) !== path.resolve(z) && under(p, z));
+}
+
+/**
+ * Checks --zn-path for one target system and returns {path, os, checked}; throws a message the administrator can act on.
+ * The shape is always checked. The file itself (exists, runs, not in a folder a user can write) is checked only when the
+ * target system is the one this runs on; for another system the path cannot be looked at from here.
+ */
+function checkZnPath(p, os) {
+  const win = os === 'windows';
+  if (typeof p !== 'string' || !p) throw new Error('--zn-path needs a value');
+  const shapeOk = win ? launcher.PINNED_WIN_PATH.test(p) && /[.](cmd|exe)$/i.test(p) : launcher.PINNED_SH_PATH.test(p);
+  if (!shapeOk || p.includes('..')) {
+    throw new Error('--zn-path must be an absolute path to the zn program on the target system, with no "..": ' +
+      (win ? 'a drive path ending in zn.cmd or zn.exe, using letters, digits, spaces and . _ + @ ( ) -' : 'for example /usr/local/bin/zn, using letters, digits, spaces and . _ + @ : -'));
+  }
+  if (os !== osDefault()) return { path: p, os, checked: false };
+  let real;
+  try { real = fs.realpathSync(p); } catch (_) { throw new Error('--zn-path ' + p + ' does not exist on this computer. Install zn-gate there first, or run this on a machine that has it.'); }
+  let st;
+  try { st = fs.statSync(real); } catch (_) { throw new Error('--zn-path ' + p + ' cannot be read'); }
+  if (!st.isFile()) throw new Error('--zn-path ' + p + ' is not a file');
+  if (!win) { try { fs.accessSync(real, fs.constants.X_OK); } catch (_) { throw new Error('--zn-path ' + p + ' is not executable'); } }
+  const bad = userWritable(p, win) || userWritable(real, win);
+  if (bad) throw new Error('--zn-path ' + p + ' is inside ' + bad + ', a folder a user can write to, so a developer or an agent could replace it. Install zn-gate in a folder only administrators can write to, such as /usr/local/bin or C:' + String.fromCharCode(92) + 'Program Files.');
+  if (!win) {
+    for (const start of [p, real]) {
+      for (let x = start; ; x = path.dirname(x)) {
+        const sx = fs.statSync(x);
+        if ((sx.mode & 0o022) && !(sx.isDirectory() && (sx.mode & 0o1000))) throw new Error('--zn-path ' + p + ': ' + x + ' can be written by users other than its owner (group or world write), so it could be replaced. Fix its permissions or choose another install folder.');
+        if (path.dirname(x) === x) break;
+      }
+    }
+  }
+  return { path: p, os, checked: true };
+}
 
 function osDefault() {
   return process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux';
@@ -96,7 +148,7 @@ function codexToml(opts) {
     timeout: codex.HOOK_TIMEOUT_S,
     statusMessage: codex.HOOK_STATUS,
   };
-  const handler = (event) => ({ ...h, command: shGuard('codex')(event), commandWindows: winGuard('codex', { cmd: true })(event) });
+  const handler = (event) => ({ ...h, command: shGuard('codex', opts.zn)(event), commandWindows: winGuard('codex', opts.zn, { cmd: true })(event) });
   for (const [event, group] of Object.entries(codex.hookGroups(handler))) {
     lines.push('', '[[hooks.' + event + ']]');
     if (group.matcher !== undefined) lines.push('matcher = ' + t(group.matcher));
@@ -112,7 +164,7 @@ function claudeFiles(os, opts) {
   const dir = managedDir(PLATFORM[os]);
   // ourHooks gives one matcher group per event; settings hold a list of groups per event.
   // Claude Code runs hook commands through sh (Git Bash on Windows), so every OS gets the sh guard.
-  const settings = { hooks: Object.fromEntries(Object.entries(claude.ourHooks(shGuard('claude-code'))).map(([e, g]) => [e, [g]])) };
+  const settings = { hooks: Object.fromEntries(Object.entries(claude.ourHooks(shGuard('claude-code', opts.zn))).map(([e, g]) => [e, [g]])) };
   if (opts.managedHooksOnly) settings.allowManagedHooksOnly = true;
   const files = [{
     file: join(os, dir, 'managed-settings.json'),
@@ -121,18 +173,19 @@ function claudeFiles(os, opts) {
     notes: [
       'If this file already exists, merge the "hooks" entries into it, or save this as managed-settings.d/50-zn.json in the same folder: Claude Code merges the files in that folder with managed-settings.json.',
       INSTALL_NOTE,
+      pinNote(opts.zn),
       opts.managedHooksOnly
         ? 'allowManagedHooksOnly is on: Claude Code runs only managed hooks, so developers\' own user, project and plugin hooks stop running. Put any hooks you still want in managed settings.'
         : 'allowManagedHooksOnly is off, so developers keep their own hooks. Add --managed-hooks-only to run only managed hooks.',
       'An MDM profile (macOS) or the Windows registry can carry the same settings; Claude Code selects one managed source, and `claude doctor` shows which.',
-      'To allow zn\'s MCP server under an existing allowedMcpServers list, add { "serverCommand": ["zn", "secrets-mcp", "--agent", "claude-code"] }. managedMcpServers cannot carry it: it accepts only https http/sse entries with no command.',
+      'To allow zn\'s MCP server under an existing allowedMcpServers list, add { "serverCommand": [' + JSON.stringify(opts.zn ? opts.zn.path : 'zn') + ', "secrets-mcp", "--agent", "claude-code"] }. managedMcpServers cannot carry it: it accepts only https http/sse entries with no command.',
     ],
   }];
   if (opts.exclusiveMcp) {
     files.push({
       file: join(os, dir, 'managed-mcp.json'),
       format: 'json',
-      content: json({ mcpServers: { secrets: { type: 'stdio', command: 'zn', args: ['secrets-mcp', '--agent', 'claude-code'] } } }),
+      content: json({ mcpServers: { secrets: { type: 'stdio', command: opts.zn ? opts.zn.path : 'zn', args: ['secrets-mcp', '--agent', 'claude-code'] } } }),
       notes: [
         'WARNING: managed-mcp.json takes exclusive control of MCP. Claude Code then loads only the servers in this file (plus managedMcpServers), and developers cannot add others. Add every server your organization approves to this file before you deploy it.',
       ],
@@ -143,12 +196,13 @@ function claudeFiles(os, opts) {
 
 function cursorFiles(os, opts) {
   // Cursor wraps hook commands in PowerShell on Windows: the PowerShell form of the guard there.
-  const entries = cursor.hookEntries(os === 'windows' ? winGuard('cursor') : shGuard('cursor'));
+  const entries = cursor.hookEntries(os === 'windows' ? winGuard('cursor', opts.zn) : shGuard('cursor', opts.zn));
   const notes = [
     'If this file already exists, merge the "hooks" entries into it.',
     'failClosed is on for beforeReadFile and beforeSubmitPrompt: if the hook crashes, times out or prints nothing, Cursor blocks the read or the prompt.',
     'The enterprise file ranks above team, project and user hooks. Cursor documents no setting that stops a developer from adding hooks of their own, and none that deploys zn\'s MCP server.',
     INSTALL_NOTE,
+    pinNote(opts.zn),
   ];
   if (opts.managedHooksOnly || opts.exclusiveMcp) notes.push('--managed-hooks-only and --exclusive-mcp change nothing for Cursor.');
   return [{
@@ -169,6 +223,7 @@ function codexFiles(os, opts) {
       ? 'allow_managed_hooks_only is on: Codex skips user, project, session and plugin hooks, so developers\' own hooks stop running.'
       : 'allow_managed_hooks_only is off, so developers keep their own hooks. Add --managed-hooks-only to run only managed hooks.',
     INSTALL_NOTE,
+    pinNote(opts.zn),
     'No [mcp_servers] entry is printed: in requirements.toml that table is an approved list matched by command or URL. If you use it, add zn\'s "secrets" server to it yourself.',
   ];
   if (opts.exclusiveMcp) notes.push('--exclusive-mcp changes nothing for Codex.');
@@ -189,12 +244,14 @@ const BUILDERS = { 'claude-code': claudeFiles, cursor: cursorFiles, codex: codex
 function build(opts = {}) {
   const agents = !opts.agent || opts.agent === 'all' ? AGENTS : [opts.agent];
   const oses = !opts.os || opts.os === 'all' ? OSES : [opts.os];
+  if (opts.znPath !== undefined && oses.length !== 1) throw new Error('--zn-path is the path on one system: also pass --os macos, --os linux or --os windows');
   const out = [];
   for (const agent of agents) {
     if (!BUILDERS[agent]) throw new Error('unknown agent "' + agent + '" (choose claude-code, cursor, codex or all)');
     for (const os of oses) {
       if (!PLATFORM[os]) throw new Error('unknown os "' + os + '" (choose macos, linux, windows or all)');
-      for (const f of BUILDERS[agent](os, opts)) out.push({ agent, os, ...f, docs: DOCS[agent], read: READ_DATE });
+      const zn = opts.znPath === undefined ? undefined : checkZnPath(opts.znPath, os);
+      for (const f of BUILDERS[agent](os, { ...opts, zn })) out.push({ agent, os, ...f, docs: DOCS[agent], read: READ_DATE });
     }
   }
   return out;
@@ -212,6 +269,7 @@ function parseArgs(args) {
     else if (a === '--os') o.os = val();
     else if (a === '--managed-hooks-only') o.managedHooksOnly = true;
     else if (a === '--exclusive-mcp') o.exclusiveMcp = true;
+    else if (a === '--zn-path') o.znPath = val();
     else if (a === '--json') o.json = true;
     else throw new Error('unknown option ' + a);
   }
@@ -250,4 +308,4 @@ function run(args, io = {}) {
   return 0;
 }
 
-module.exports = { run, build, AGENTS, OSES, READ_DATE };
+module.exports = { run, build, checkZnPath, AGENTS, OSES, READ_DATE };
