@@ -45,7 +45,7 @@ async function capture(fn) {
 
 const run = (args, io) => capture(() => runTeamCommand(args, io || { env: {} }));
 
-test('B-2489: join without a token says what is missing and where it comes from, not the usage line', async () => {
+test('join without a token says what is missing and where it comes from, not the usage line', async () => {
   const r = await run(['team', 'join'], { env: {} });
   assert.strictEqual(r.code, 2);
   assert.match(r.stderr, /^\[zn\] No join token given\. Your organization admin sends you a token that starts with znj_\. Run: zn team join <token>/);
@@ -53,7 +53,7 @@ test('B-2489: join without a token says what is missing and where it comes from,
   assert.strictEqual(r.stderr.trim().split('\n').length, 1);
 });
 
-test('B-2490: a token the server refuses: plain next step, no HTTP code unless ZN_VERBOSE=1', async () => {
+test('a token the server refuses: plain next step, no HTTP code unless ZN_VERBOSE=1', async () => {
   fake.teamJoin = async () => {
     throw new Error('This join token is expired, already used or not valid, so this machine was not connected. Ask your organization admin for a new invitation, then run: zn team join <new token>\ndetails: HTTP 403: This join token is invalid, expired or used up');
   };
@@ -67,7 +67,7 @@ test('B-2490: a token the server refuses: plain next step, no HTTP code unless Z
   assert.match(r.stderr, /\n\[zn\] details: HTTP 403: /);
 });
 
-test('B-2491: join with no network: cause and next step, no internal code unless ZN_VERBOSE=1', async () => {
+test('join with no network: cause and next step, no internal code unless ZN_VERBOSE=1', async () => {
   fake.teamJoin = async () => {
     throw new Error('Could not reach the zn server, so this machine was not connected. Check your internet connection and run the same command again: zn team join <token>\ndetails: ZN_TEAM_NETWORK');
   };
@@ -77,18 +77,17 @@ test('B-2491: join with no network: cause and next step, no internal code unless
   assert.ok(!/ZN_TEAM_NETWORK/.test(r.stderr));
 });
 
-test('B-2492: join before the admin published a policy is a success (exit 0) with an expected-state message', async () => {
+test('join before the admin published a policy exits 1 (the join stays pending) with an expected-state message', async () => {
   fake.teamJoin = async () => ({ org: 'org_Example12345678', org_name: 'Example Org', install_id: 'inst-0002' });
   fake.teamSync = async () => ({ policy: { status: 'none' } });
   const r = await run(['team', 'join'], { env: ENV });
-  assert.strictEqual(r.code, 0);
-  assert.match(r.stdout, /^Joined Example Org \(org_Example12345678\)\. Installation inst-0002\.\n/);
-  assert.match(r.stdout, /Your admin has not published a policy yet, so no restrictions apply for now\. This is expected: zn checks again by itself; to check now run: zn team sync\n$/);
-  assert.strictEqual(r.stderr, '');
-  assert.ok(!/not finished/.test(r.stdout));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stdout, /^Joined Example Org \(org_Example12345678\)\. Installation inst-0002\.\n$/);
+  assert.match(r.stderr, /^\[zn\] Your admin has not published a policy yet, so no restrictions apply for now\. This is expected: zn checks again by itself; to check now run: zn team sync\n$/);
+  assert.ok(!/not finished/.test(r.stderr));
 });
 
-test('B-2493: a removed installation is told to leave or rejoin, never to retry a sync', async () => {
+test('a removed installation is told to leave or rejoin, never to retry a sync', async () => {
   fake.teamInfo = async () => ({ ...JOINED, revoked_at: '2026-10-29T10:00:00.000Z', policy: { state: 'none' },
     last_sync: { at: '2026-10-29T11:00:00.000Z', ok: false, last_ok_at: null, problems: ['this machine was removed from the organization'] } });
   let r = await run(['team', 'status']);
@@ -103,7 +102,7 @@ test('B-2493: a removed installation is told to leave or rejoin, never to retry 
   assert.ok(!/Policy: revoked/.test(r.stdout));
 });
 
-test('B-2494: sync with no network: no internal code on stdout or stderr, next step given', async () => {
+test('sync with no network: no internal code on stdout or stderr, next step given', async () => {
   fake.teamSync = async () => ({ policy: { status: 'offline', error: 'ZN_TEAM_NETWORK' }, upload: { status: 'offline', uploaded: 0, pending: 1 } });
   let r = await run(['team', 'sync']);
   assert.strictEqual(r.code, 1);
@@ -114,7 +113,7 @@ test('B-2494: sync with no network: no internal code on stdout or stderr, next s
   assert.match(r.stderr, /\[zn\] details: ZN_TEAM_NETWORK/);
 });
 
-test('B-2495: sync with an inactive organization says so and does not blame a missing policy', async () => {
+test('sync with an inactive organization says so and does not blame a missing policy', async () => {
   fake.teamSync = async () => ({ policy: { status: 'none' }, upload: { status: 'inactive', uploaded: 0, pending: 3 } });
   const r = await run(['team', 'sync']);
   assert.strictEqual(r.code, 1);
@@ -123,7 +122,7 @@ test('B-2495: sync with an inactive organization says so and does not blame a mi
   assert.ok(!/inactive/.test(r.stdout));
 });
 
-test('B-2496: `zn team login` and `zn team export` say they are not commands and point to the real ones', async () => {
+test('`zn team login` and `zn team export` say they are not commands and point to the real ones', async () => {
   let r = await run(['team', 'login']);
   assert.strictEqual(r.code, 2);
   assert.strictEqual(r.stderr, "[zn] 'zn team login' is not a zn command. To connect this machine run: zn team join <token>. To export the audit log run: zn vault log export --otlp\n");
@@ -131,4 +130,18 @@ test('B-2496: `zn team login` and `zn team export` say they are not commands and
   assert.strictEqual(r.code, 2);
   assert.match(r.stderr, /^\[zn\] 'zn team export' is not a zn command\. To export the audit log run: zn vault log export --otlp\./);
   assert.ok(!/usage:/.test(r.stderr));
+});
+
+test('a join token typed as a subcommand is never echoed', async () => {
+  const fakeToken = 'znj_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE';
+  const r = await run(['team', fakeToken]);
+  assert.strictEqual(r.code, 2);
+  assert.match(r.stderr, /That looks like a join token\. Run: zn team join <token>/);
+  for (const text of [r.stdout, r.stderr]) {
+    for (let i = 0; i + 4 <= fakeToken.length; i++) {
+      const piece = fakeToken.slice(i, i + 4);
+      if (piece === 'znj_' ) assert.ok(!text.includes(piece), 'token prefix leaked');
+      else assert.ok(!text.includes(piece), 'token fragment leaked: ' + piece);
+    }
+  }
 });

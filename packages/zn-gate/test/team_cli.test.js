@@ -85,14 +85,13 @@ test('join passes the options through and reports the policy that came with it',
   assert.ok(closed >= 2, 'every client is closed');
 });
 
-test('join to an organization without a name shows the id; an organization with no policy yet is a finished join (exit 0)', async () => {
+test('join to an organization without a name shows the id; an organization with no policy yet leaves the join unfinished (exit 1)', async () => {
   fake.teamJoin = async () => ({ org: 'org_Example12345678', install_id: 'inst-0002' });
   fake.teamSync = async () => ({ policy: { status: 'none' } });
   const r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'b'.repeat(32) } }));
-  assert.strictEqual(r.code, 0);
+  assert.strictEqual(r.code, 1);
   assert.match(r.stdout, /^Joined org_Example12345678\. Installation inst-0002\./);
-  assert.match(r.stdout, /Your admin has not published a policy yet/);
-  assert.strictEqual(r.stderr, '');
+  assert.match(r.stderr, /Your admin has not published a policy yet/);
 });
 
 test('join with a policy that is already current (a reconnect) is complete', async () => {

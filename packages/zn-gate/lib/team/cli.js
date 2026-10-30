@@ -110,8 +110,8 @@ async function joinCmd(args, io) {
   try {
     const s = await withClient((c) => c.teamSync({}));
     const pol = s.policy || {};
-    // The organization simply has no policy yet: nothing for this user to fix and nothing failed, so exit 0.
-    if (pol.status === 'none') { out(messages.teamJoinNoPolicyYet()); return 0; }
+    // No policy published yet is expected, but the join stays pending, so it exits 1 (see docs/cli.md).
+    if (pol.status === 'none') { err('[zn] ' + messages.teamJoinNoPolicyYet()); return 1; }
     out('Policy: ' + (pol.status === 'updated' ? 'version ' + pol.version : pol.status) + '.');
     if (syncOutcome(s).policyOk) return 0;
     why = syncOutcome({ policy: pol }).problems[0];

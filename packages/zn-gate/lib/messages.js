@@ -328,7 +328,9 @@ function teamSyncInactive(pending) {
 function teamNotACommand(sub) {
   if (sub === 'login') return "'zn team login' is not a zn command. To connect this machine run: zn team join <token>. To export the audit log run: zn vault log export --otlp";
   if (sub === 'export') return "'zn team export' is not a zn command. To export the audit log run: zn vault log export --otlp. To connect this machine run: zn team join <token>";
-  const shown = String(sub).slice(0, 30).replace(/[\u0000-\u001f\u007f]/g, ' ');
+  // Never echo anything that looks like a join token (a forgotten 'join'), nor a very long word.
+  if (/^znj_/i.test(String(sub).trim())) return "That looks like a join token. Run: zn team join <token>";
+  const shown = String(sub).length > 20 ? 'that' : String(sub).replace(/[\u0000-\u001f\u007f]/g, ' ');
   return "'zn team " + shown + "' is not a zn command. Commands: zn team join <token>, zn team status, zn team sync, zn team leave. All options: zn team --help";
 }
 
