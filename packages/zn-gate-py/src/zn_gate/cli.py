@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import errno
 import json
 import os
 import stat
@@ -174,8 +175,19 @@ def _lead(symbol: str, stream: Any = None) -> str:
     return f"{icon} " if icon else ""
 
 
+def _is_existing_path(text: str) -> bool:
+    """True when the text names a file or folder that exists. zn-gate test never reads it."""
+    try:
+        return bool(text) and "\n" not in text and os.path.exists(text)
+    except (OSError, ValueError):
+        return False
+
+
 def cmd_test(args: argparse.Namespace) -> int:
     text = args.text
+    if _is_existing_path(text):
+        print(f"Note: zn-gate test checks the text you typed, not the file at {text}. "
+              f"To check a file, run: zn-gate scan {text}", file=sys.stderr)
     t0 = time.perf_counter()
     assessment = evaluate(text)
     clean_text, findings = _dlp_redact(text)
@@ -227,10 +239,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     elapsed_ms = (time.perf_counter() - t0) * 1000
     res["latency_ms"] = round(elapsed_ms, 2)
 
-    if getattr(args, "json", True):
-        print(json.dumps(res, indent=2))
-    else:
-        print(f"Verdict: {res.get('verdict')} | Engine: {res.get('engine')} | Latency: {elapsed_ms:.2f}ms")
+    print(json.dumps(res, indent=2))
 
     return 2 if res.get("verdict") == "block" else 0
 
@@ -506,7 +515,7 @@ def _prune_info(name: str, parent: str) -> Optional[Dict[str, Any]]:
 def cmd_scan(args: argparse.Namespace) -> int:
     target_path = Path(args.path)
     if not target_path.exists():
-        print(f"Error: target path not found: {target_path}", file=sys.stderr)
+        print(f"Error: target path not found: {target_path}. Check the spelling and the folder you run zn-gate from, then try again.", file=sys.stderr)
         return 1
 
     files_to_scan: List[Path] = []
@@ -663,6 +672,9 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
                 print(f"  {_safe_text(sd['dir'])} ({_safe_text(sd['reason'])})")
             if len(skipped_dirs) > 20:
                 print(f"  ... and {len(skipped_dirs) - 20} more")
+        if any(r.get("reason") == "cannot be read" for r in [*skipped, *skipped_dirs]):
+            print("Next step: give your account read access to the items marked 'cannot be read' "
+                  "(or leave them out of the scan), then scan again.")
         if not all_violations and nothing:
             print()
             return
@@ -685,6 +697,34 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
             print()
 
 
+def _fs_error_text(err: OSError, path: object) -> str:
+    """A file system error in plain words, with the next step (same wording as the Node CLI's fsErrorText)."""
+    p = str(path)
+    code = errno.errorcode.get(err.errno or 0, "")
+    if code in ("EACCES", "EPERM"):
+        return (f"Your account is not allowed to read or change {p}. "
+                "Check who owns it and its permissions, then try again.")
+    if code == "ENOENT":
+        return (f"{p} does not exist, or a folder on its path is missing. "
+                "Create the folder first, or choose another --output path, then try again.")
+    if code == "ENOTDIR":
+        return (f"A part of the path {p} is a file where a folder should be. "
+                "Move or remove that file, then try again.")
+    if code == "EISDIR":
+        return f"{p} is a folder where a file should be. Choose a file name, then try again."
+    if code == "ENOSPC":
+        return f"The disk that holds {p} is full. Free some space, then try again."
+    if code == "EDQUOT":
+        return f"Your disk quota is used up, so {p} cannot be written. Free some space, then try again."
+    if code == "EROFS":
+        return f"{p} is on a read-only disk. Choose a path on a writable disk, then try again."
+    if code == "ENAMETOOLONG":
+        return f"The path {p} is too long. Choose a shorter path, then try again."
+    if code == "ELOOP":
+        return f"The links in the path {p} lead in a circle. Choose another path, then try again."
+    return f"{p} could not be written ({err.strerror or err}). Choose another path, then try again."
+
+
 def cmd_evidence(args: argparse.Namespace) -> int:
     if getattr(args, "verify", False):
         res = verify_evidence_ledger()
@@ -704,10 +744,17 @@ def cmd_evidence(args: argparse.Namespace) -> int:
             print(f"{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
             print(recovery_hint(), file=sys.stderr)
         if getattr(args, "output", None):
-            Path(args.output).write_text(out_content, encoding="utf-8")
+            try:
+                Path(args.output).write_text(out_content, encoding="utf-8")
+            except OSError as err:
+                print(f"Error: the export was not saved. {_fs_error_text(err, args.output)}", file=sys.stderr)
+                return 1
             print(f"Exported {res.get('total')} records to {args.output} (Integrity: {'VALID' if res.get('valid') else 'TAMPERED'}).")
         else:
             print(out_content)
+        if not res.get("total") and res.get("valid"):
+            print("Note: there are no evidence records yet, so the export is empty. "
+                  "Run a check first, for example: zn-gate test \"some text\", then export again.", file=sys.stderr)
         return 0
 
     stats = get_evidence_stats()
@@ -820,7 +867,7 @@ def build_parser() -> argparse.ArgumentParser:
     analyze_parser.add_argument("--url", help="Custom API endpoint URL")
     analyze_parser.add_argument("--local-only", action="store_true", help="Force local deterministic rules only")
     analyze_parser.add_argument("--long-input", choices=["windows", "off"], help="Long texts sent to the cloud: overlapping 512-token windows (default) or the first 512 tokens only")
-    analyze_parser.add_argument("--json", action="store_true", default=True, help="Output results as JSON")
+    analyze_parser.add_argument("--json", action="store_true", help="Output as JSON (the only output format; accepted so existing scripts keep working)")
 
     # scan command
     scan_parser = subparsers.add_parser("scan", help="Scan directory or files for injection traps & secret leaks")

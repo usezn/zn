@@ -1364,7 +1364,9 @@ async function check(opts = {}) {
 
 /** Plain-language report; returns the exit code (0 when every agent set up is protected). */
 function report({ results, removed, warnings }, write) {
-  const w = write || ((s) => process.stdout.write(s));
+  const { winCommandText } = require('./zn-command');
+  const out = write || ((s) => process.stdout.write(s));
+  const w = (s) => out(winCommandText(s));
   w('\nzn-gate check: does zn stop your coding agent from reading a secret?\n\n');
   w('zn made a test folder with a fake key in a .env file and an ordinary file next to it, then asked\n');
   w('each agent\'s zn hook whether the agent may read them. This is what happened:\n\n');
