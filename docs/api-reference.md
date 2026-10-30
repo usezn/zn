@@ -66,7 +66,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 ### `evaluate(text, options)`
 
 - Synchronous in-memory deterministic rule evaluation. Never touches the network.
-- Options: `strict` (boolean; also blocks the heuristic rules that are advisories by default; `ZN_STRICT=1` does the same).
+- Options: `strict` (boolean; also blocks the heuristic rules that are advisories by default; `ZN_STRICT=1` does the same). Any other value (`true`, `yes`) leaves it off and prints one warning on stderr.
 - Inputs over 256 KB are scanned whole, in overlapping windows. An input over 4 MB is blocked with rule `size:oversize` (and `truncated: true`).
 - Returns: `{ verdict: 'allow' | 'block', confidence: number, rule: string, reason: string | null, engine: string, rules_version: string }`, plus `truncated: true` when the input was blocked for its size and `advisory: { rule, reason }` when an advisory rule matched on an allowed input.
 - `evaluate` is also exported by `zn-gate/lib/client`.
