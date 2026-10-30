@@ -3,8 +3,8 @@ name: Package lint
 # Lints what gets published: publint and Are the Types Wrong? (attw) on the npm tarball of
 # packages/zn-gate (the output of npm pack), and check-wheel-contents on the wheel built from
 # packages/zn-gate-py. The Node tools are pinned by exact version; check-wheel-contents is installed
-# from .github/package-lint-requirements.txt with hashes. attw reports only for now: the npm package
-# ships no TypeScript declarations yet, so it would fail. Once they land, drop continue-on-error.
+# from .github/package-lint-requirements.txt with hashes. attw blocks: the npm package ships
+# TypeScript declarations and attw passes on the tarball.
 on:
   pull_request:
     branches: [ main, next, 'release/**' ]
@@ -75,9 +75,7 @@ jobs:
       - name: publint
         # --strict also fails on warnings, not only errors.
         run: npx --yes "publint@${PUBLINT_VERSION}" --strict "$RUNNER_TEMP"/pack/zn-gate-*.tgz # zizmor: ignore[adhoc-packages] exact version, run on the tarball built above
-      - name: attw (report only)
-        # The package has no TypeScript declarations yet, so this reports "no types".
-        continue-on-error: true
+      - name: attw
         run: npx --yes "@arethetypeswrong/cli@${ATTW_VERSION}" "$RUNNER_TEMP"/pack/zn-gate-*.tgz # zizmor: ignore[adhoc-packages] exact version, run on the tarball built above
       - name: Install the Python tools (hash pinned)
         run: |
