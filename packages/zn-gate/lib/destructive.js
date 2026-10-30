@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-30.14';
+const COMMAND_RULES_VERSION = '2026-10-30.16';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -280,10 +280,19 @@ const WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'exec', 'nohup', 'ti
 function unwrapDir(args) {
   let i = 0;
   const dirs = [];
+  const splits = [];
   let overflow = false;
   for (let guard = 0; i < args.length; guard++) {
     // Assignments and keywords can repeat without limit (! ! ! rm -rf ~): they are skipped, not counted as wrappers.
-    while (i < args.length && (ASSIGN_RE.test(args[i]) || SHELL_KEYWORDS.has(args[i]))) i++;
+    // So are the words that only introduce a command: function NAME { ...; } (the body is read like any other commands,
+    // called or not) and coproc [NAME] { ...; } / coproc CMD (the command runs as a background job).
+    while (i < args.length) {
+      const w = args[i];
+      if (ASSIGN_RE.test(w) || SHELL_KEYWORDS.has(w)) i++;
+      else if (w === 'function' && i + 1 < args.length) i += 2;
+      else if (w === 'coproc') i += i + 2 < args.length && SHELL_KEYWORDS.has(args[i + 2]) ? 2 : 1;
+      else break;
+    }
     if (i >= args.length) break;
     const a = args[i];
     const name = programName(a);
@@ -308,7 +317,11 @@ function unwrapDir(args) {
         if (f === '--chdir' || /^-[A-Za-z]*C$/.test(f)) { addDir(dirs, args[i++]); continue; }
         if (f.startsWith('--chdir=')) { addDir(dirs, f.slice(8)); continue; }
         if (/^-C./.test(f)) { addDir(dirs, f.slice(2)); continue; }
-        if (f === '-u' || f === '-S') i++;
+        // env -S "cmd args": the string is split into words and run as the command line.
+        if (f === '--split-string' || /^-[A-Za-z]*S$/.test(f)) { if (i < args.length) splits.push(args[i]); i++; continue; }
+        if (f.startsWith('--split-string=')) { splits.push(f.slice(15)); continue; }
+        if (/^-S./.test(f)) { splits.push(f.slice(2)); continue; }
+        if (f === '-u') i++;
       }
       continue;
     }
@@ -320,7 +333,7 @@ function unwrapDir(args) {
     }
     break;
   }
-  return { args: args.slice(i), dir: dirs.length ? dirs : null, overflow };
+  return { args: args.slice(i), dir: dirs.length ? dirs : null, splits, overflow };
 }
 
 /* The words of a command after wrappers and shell keywords. */
@@ -482,6 +495,13 @@ function checkSimple(words, depth, known) {
   if (un.dir !== null) {
     known = inDir(known, un.dir);
     if (known === CWD_OVERFLOW) return OVERFLOW;
+  }
+  // env -S "rm -rf ~": the split strings (env joins their words in order) are a command line of its own, followed by the
+  // words after them. One reading for all of them, so the cost does not multiply with the number of -S options.
+  if (un.splits.length && depth < MAX_DEPTH) {
+    const tail = args.map((w) => "'" + w.replace(/'/g, "'\\''") + "'").join(' ');
+    const hit = analyze(un.splits.join(' ') + ' ' + tail, depth + 1, known);
+    if (hit) return hit;
   }
   if (!args.length) return null;
   const head = programName(args[0]);

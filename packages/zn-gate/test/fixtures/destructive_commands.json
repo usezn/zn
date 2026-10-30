@@ -162,6 +162,9 @@
   "cmd /c dir",
   "code ~/.zshrc",
   "composer install",
+  "coproc NAME { ls; }",
+  "coproc ls",
+  "coproc { sleep 1; }",
   "cp -r src/ dist/",
   "cp /etc/hosts ~/hosts.bak",
   "cp dotfiles/.zshrc ~/.zshrc",
@@ -427,6 +430,7 @@
   "echo use `iwr` | cat",
   "echo ~",
   "env --chdir=build rm -rf .",
+  "env --split-string=\"ls -la\"",
   "env -C / ls .",
   "env -C / true && rm -rf ./build",
   "env -C ~ ls -la",
@@ -436,6 +440,9 @@
   "env -C ~/projects/app find . -delete",
   "env -C ~/projects/app rm -rf .",
   "env -C ~/projects/app sh -c \"rm -rf .\"",
+  "env -S \"ls -la\"",
+  "env -S \"rm -rf ./build\"",
+  "env -S 'echo hi'",
   "env CI=1 rm --recursive --force .gradle build",
   "env CI=1 rm --recursive --force .tox build",
   "env CI=1 rm --recursive --force .turbo .venv",
@@ -487,6 +494,7 @@
   "eval \"$(ssh-agent -s)\"",
   "exec zsh -l",
   "export FOO=bar && node app.js",
+  "f() { ls; }; f",
   "fdisk -l /dev/sda",
   "find . -name \"*.pyc\" -delete",
   "find . -name \"*.tmp\" | xargs rm",
@@ -501,6 +509,9 @@
   "find ~/projects -name .DS_Store -delete",
   "flutter pub get",
   "for i in 1 2; do rm -rf ./out$i; done",
+  "function f { ls; }; f",
+  "function f { rm -rf ./build; }; f",
+  "function f() { ls -la; }; f",
   "gcloud compute instances list",
   "git add -A && git commit -m \"wip\"",
   "git bisect start",
@@ -3865,6 +3876,66 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "coproc NAME { rm -rf $HOME; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc NAME { rm -rf /; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc NAME { rm -rf /etc; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc NAME { rm -rf /home/alice; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc NAME { rm -rf ~; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc rm -rf $HOME",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc rm -rf /",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc rm -rf /etc",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc rm -rf /home/alice",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc rm -rf ~",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc { rm -rf $HOME; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc { rm -rf /; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc { rm -rf /etc; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc { rm -rf /home/alice; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "coproc { rm -rf ~; }",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "del /s /q C:\\*",
    "rule": "rm_root_home"
   },
@@ -3982,6 +4053,26 @@
   },
   {
    "cmd": "env --chdir=~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-string=\"rm -rf $HOME\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-string=\"rm -rf /\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-string=\"rm -rf /etc\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-string=\"rm -rf /home/alice\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --split-string=\"rm -rf ~\"",
    "rule": "rm_root_home"
   },
   {
@@ -4145,6 +4236,46 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "env -S \"rm -rf $HOME\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S \"rm -rf /\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S \"rm -rf /etc\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S \"rm -rf /home/alice\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S \"rm -rf ~\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S 'rm -rf $HOME'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S 'rm -rf /'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S 'rm -rf /etc'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S 'rm -rf /home/alice'",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -S 'rm -rf ~'",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "env -iC $HOME rm -rf .",
    "rule": "rm_root_home"
   },
@@ -4241,6 +4372,46 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "f() { rm -rf $HOME; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f() { rm -rf /; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f() { rm -rf /etc; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f() { rm -rf /home/alice; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f() { rm -rf ~; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f(){ echo start; rm -rf $HOME; echo end; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f(){ echo start; rm -rf /; echo end; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f(){ echo start; rm -rf /etc; echo end; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f(){ echo start; rm -rf /home/alice; echo end; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "f(){ echo start; rm -rf ~; echo end; }; f",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "find $HOME -delete",
    "rule": "rm_root_home"
   },
@@ -4310,6 +4481,66 @@
   },
   {
    "cmd": "for i in 1 2; do rm -rf ~; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf $HOME; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf $HOME; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf /; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf /; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf /etc; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf /etc; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf /home/alice; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf /home/alice; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf ~; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f { rm -rf ~; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f() { rm -rf $HOME; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f() { rm -rf /; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f() { rm -rf /etc; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f() { rm -rf /home/alice; }; f",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "function f() { rm -rf ~; }; f",
    "rule": "rm_root_home"
   },
   {

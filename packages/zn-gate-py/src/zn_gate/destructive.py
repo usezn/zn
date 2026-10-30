@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-30.14"
+COMMAND_RULES_VERSION = "2026-10-30.16"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -532,19 +532,30 @@ def _add_dir(dirs: List[str], w: Optional[str]) -> None:
 _WRAPPER_CAP_NAMES = frozenset(("sudo", "doas", "env", "command", "exec", "nohup", "time", "builtin", "setsid", "nice", "ionice", "timeout"))
 
 
-def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool]:
+def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str]]:
     """The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...) and shell
     keywords, with the words of the env -C / --chdir and sudo -D / --chdir options and whether more wrappers than can be
-    followed were met (the line is then refused)."""
+    followed were met (the line is then refused), and the strings of env -S / --split-string."""
     i = 0
     guard = 0
     chdir: List[str] = []
+    splits: List[str] = []
     overflow = False
     while i < len(args):
         guard += 1
         # Assignments and keywords can repeat without limit (! ! ! rm -rf ~): they are skipped, not counted as wrappers.
-        while i < len(args) and (_ASSIGN_RE.match(args[i]) or args[i] in _SHELL_KEYWORDS):
-            i += 1
+        # So are the words that only introduce a command: function NAME { ...; } (the body is read like any other
+        # commands, called or not) and coproc [NAME] { ...; } / coproc CMD (the command runs as a background job).
+        while i < len(args):
+            w = args[i]
+            if _ASSIGN_RE.match(w) or w in _SHELL_KEYWORDS:
+                i += 1
+            elif w == "function" and i + 1 < len(args):
+                i += 2
+            elif w == "coproc":
+                i += 2 if i + 2 < len(args) and args[i + 2] in _SHELL_KEYWORDS else 1
+            else:
+                break
         if i >= len(args):
             break
         a = args[i]
@@ -588,7 +599,19 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool]:
                 if re.match(r"^-C.", f):
                     _add_dir(chdir, f[2:])
                     continue
-                if f in ("-u", "-S"):
+                # env -S "cmd args": the string is split into words and run as the command line.
+                if f == "--split-string" or re.match(r"^-[A-Za-z]*S\Z", f):
+                    if i < len(args):
+                        splits.append(args[i])
+                    i += 1
+                    continue
+                if f.startswith("--split-string="):
+                    splits.append(f[15:])
+                    continue
+                if re.match(r"^-S.", f):
+                    splits.append(f[2:])
+                    continue
+                if f == "-u":
                     i += 1
             continue
         # Every other wrapper of the shared list (nohup, nice, ionice, timeout, stdbuf, command, exec, xargs, busybox ...).
@@ -596,7 +619,7 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool]:
             i = _skip_wrapper(args, i, name)
             continue
         break
-    return args[i:], chdir, overflow
+    return args[i:], chdir, overflow, splits
 
 
 def _unwrap(args: List[str]) -> List[str]:
@@ -926,13 +949,20 @@ def _from_cwd(cwd: Any, word: str) -> str:
 
 
 def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[str]:
-    args, chdir, overflow = _unwrap_dir(words)
+    args, chdir, overflow, splits = _unwrap_dir(words)
     if overflow:
         return _OVERFLOW
     if chdir:
         known = _in_dir(known, chdir)
         if known is _CWD_OVERFLOW:
             return _OVERFLOW
+    # env -S "rm -rf ~": the split strings (env joins their words in order) are a command line of its own, followed by
+    # the words after them. One reading for all of them, so the cost does not multiply with the number of -S options.
+    if splits and depth < _MAX_DEPTH:
+        tail = " ".join("'" + w.replace("'", "'\\''") + "'" for w in args)
+        hit = _analyze(" ".join(splits) + " " + tail, depth + 1, known)
+        if hit:
+            return hit
     if not args:
         return None
     head = _program_name(args[0])
@@ -1099,7 +1129,7 @@ def _segment_dir(known: Any, d: Optional[List[str]]) -> Any:
 def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None) -> Optional[str]:
     heads = []
     for words, _sep in pipe:
-        a, d, _ovf = _unwrap_dir(_strip_redirects(words))
+        a, d, _ovf, _spl = _unwrap_dir(_strip_redirects(words))
         alts = _brace_alts(a[0]) if a else [""]
         names = [_program_name(x) for x in (alts if alts is not None else [str(a[0])])]
         heads.append((a, names[0], names, alts is None, _segment_dir(known, d)))
