@@ -1,9 +1,29 @@
 'use strict';
 
 /**
- * GitHub Copilot CLI adapter. Experimental.
+ * GitHub Copilot adapter: Copilot in VS Code and GitHub Copilot CLI. Supported.
  *
- * Hook format (docs read 2026-10-19):
+ * VS Code documents that "VS Code, the GitHub Copilot app, and GitHub Copilot CLI share this harness and its hook
+ * format" (https://code.visualstudio.com/docs/copilot/customization/hooks, section "Copilot harness"; read 2026-10-30,
+ * hooks in VS Code are in Preview). The same page lists what that harness loads: "User hook files in ~/.copilot/hooks/, or
+ * $COPILOT_HOME/hooks/ when COPILOT_HOME is set" and ".github/hooks/*.json at the repository root", with "version": 1,
+ * "type": "command", the platform commands "bash" / "powershell" and "timeoutSec", and the events preToolUse and
+ * postToolUse. The files zn writes are exactly those. Evidence level: documented, and run end to end only with Copilot
+ * CLI 1.0.98; not tested in the VS Code app itself.
+ *
+ * Limits that VS Code and GitHub document, and that no hook format can lift:
+ *  - "Timeouts are fail-open for every event, including preToolUse and admin-deployed policy hooks"
+ *    (https://docs.github.com/en/copilot/reference/hooks-reference, "Exit codes"). zn does not wait for it: its own
+ *    supervisor (runner armSupervisor) answers with a deny 4 s before timeoutSec, so only a hook that is stopped before it
+ *    could start its timer (a machine so loaded that Node.js does not start in 11 s) is let through.
+ *  - "Command and HTTP config-file userPromptSubmitted hooks have their output dropped, including modifiedPrompt"
+ *    (same page, "userPromptSubmitted"): a typed prompt cannot be blocked from a hook file in VS Code or the CLI.
+ *  - The Copilot harness also reads the repository .claude/settings(.local).json ("Cross-tool .claude/settings.json ...
+ *    files in the repository are also read"; VS Code: "Claude settings files require chat.useClaudeHooks") and runs
+ *    "Applicable hooks from multiple sources ... together", so zn set up for Claude Code with --project runs twice.
+ *    `zn-gate check` says so.
+ *
+ * Hook format (docs read 2026-10-19 and 2026-10-30):
  *  - https://docs.github.com/en/copilot/reference/hooks-reference
  *  - https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-byok-models (custom model endpoint)
  *
@@ -21,7 +41,7 @@
  *  Empty output means "no opinion" (default behaviour), so zn never prints "allow".
  *  stdout of postToolUse: {modifiedResult: {resultType: "success", textResultForLlm}, additionalContext}.
  *  Exit codes: 0 = parse stdout; 2 = deny for preToolUse (a warning for the other events); any other non-zero =
- *  fail-closed for preToolUse and fail-open for the others. A TIMEOUT (default 30 s) always fails OPEN.
+ *  fail-closed for preToolUse and fail-open for the others. A TIMEOUT (default 30 s) always fails OPEN: zn answers first (see above).
  *
  *  Events: preToolUse is checked and can deny (zn also asks for confirmation when it needs one; Copilot turns
  *  "ask" into a deny in the cloud agent and in autopilot). postToolUse replaces secret values in the result of
@@ -266,10 +286,11 @@ function install(opts = {}) {
     data.hooks[event] = [...list, handlerFor(event)];
   }
   cfg.writeJson(file, data);
-  report.warnings.push('GitHub Copilot CLI support is experimental. zn checks tool calls before they run (preToolUse): it blocks reads and writes of secret files and shell commands that handle secrets, and it replaces secret values in the results of read-type and shell tools (postToolUse).');
+  report.warnings.push('GitHub Copilot (VS Code and Copilot CLI) reads this file. zn checks tool calls before they run (preToolUse): it blocks reads and writes of secret files and shell commands that handle secrets, and it replaces secret values in the results of read-type and shell tools (postToolUse).');
   report.warnings.push('Copilot keeps its own session log (events.jsonl) with the original tool output on this machine: zn replaces secret values in what goes to the model, not in that local log.');
-  report.warnings.push('Copilot does not let a command hook block a typed prompt, so a secret pasted into a prompt is not stopped.');
-  report.warnings.push('Copilot lets a call through when a hook times out (30 s by default; zn asks for ' + HOOK_TIMEOUT_S + ' s), and its machine policy files (/etc/github-copilot/policy.d, or the Windows policy folder) are loaded in addition to this one.');
+  report.warnings.push('Copilot drops the output of a command hook for a typed prompt (userPromptSubmitted), in VS Code and in Copilot CLI, so a secret pasted into a prompt is not stopped.');
+  report.warnings.push('The hooks follow the VS Code and GitHub documentation; they were run end to end with Copilot CLI, not inside the VS Code app.');
+  report.warnings.push('Copilot lets a call through when a hook times out (30 s by default; zn asks for ' + HOOK_TIMEOUT_S + ' s and blocks the call itself 4 s earlier), and its machine policy files (/etc/github-copilot/policy.d, or the Windows policy folder) are loaded in addition to this one.');
   if (project && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook copilot): every teammate who opens this project in Copilot CLI needs zn-gate installed, otherwise the hook cannot start. Copilot also asks each person to trust the folder before it runs repository hooks.');
   return report;
 }

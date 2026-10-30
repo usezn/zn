@@ -131,7 +131,7 @@ const AGENTS = [
     request: (dir, file) => ({ conversationId: 'zn-check', workspacePaths: [dir], toolCall: { name: 'view_file', args: { AbsolutePath: file } }, stepIdx: 0 }),
   },
   {
-    id: 'copilot', name: 'Copilot CLI (experimental)', event: 'preToolUse', tool: 'view',
+    id: 'copilot', name: 'GitHub Copilot (VS Code, CLI)', event: 'preToolUse', tool: 'view',
     fix: 'run `zn hooks install copilot` in your own terminal',
     file: (a, o) => a.hooksFile(o), project: (dir) => path.join(dir, '.github', 'hooks', 'zn-gate.json'),
     request: (dir, file) => ({ sessionId: 'zn-check', timestamp: 0, cwd: dir, toolName: 'view', toolArgs: { path: file } }),
@@ -878,8 +878,21 @@ function copilotSwitchedOff(userFile, ctx, adapter) {
   }
   const user = readJson(path.join(adapter.copilotHome({ home: ctx.home, env: ctx.env }), 'settings.json'));
   if (user && user.disableAllHooks === true) out.notes.push('your Copilot user settings have "disableAllHooks" turned on; the docs do not say whether that skips hook files, so check that zn still runs');
-  out.notes.push('Copilot also loads machine policy hooks (/etc/github-copilot/policy.d) and skips a hook that takes longer than its timeout; zn cannot see either from here');
+  out.notes.push('Copilot also loads machine policy hooks (/etc/github-copilot/policy.d) and skips a hook that takes longer than its timeout (zn answers by itself 4 seconds before that); zn cannot see the policy hooks from here');
   return out;
+}
+
+/* The zn hooks of Claude Code in this project's .claude/settings(.local).json: the file name, or ''. Copilot's harness
+   (VS Code with chat.useClaudeHooks on, and Copilot CLI) also reads these files, so a call can be checked twice. */
+function claudeProjectHooksFile(cwd) {
+  for (const name of ['settings.json', 'settings.local.json']) {
+    const f = path.join(cwd, '.claude', name);
+    const text = require('./audit')._internal.readBounded(f, 256 * 1024, false).text;
+    let tree = null;
+    try { tree = text ? JSON.parse(text.replace(/^﻿/, '')) : null; } catch (_) { tree = null; }
+    if (hookEntries(tree, 'claude-code').some((e) => parseCommand(e.command, 'claude-code'))) return f;
+  }
+  return '';
 }
 
 async function checkAgent(spec, ctx) {
@@ -1159,6 +1172,11 @@ async function checkAgent(spec, ctx) {
     const off = copilotSwitchedOff(userFile, ctx, adapter);
     if (off.problem) { res.problem = off.problem; res.fix = off.fix; }
     res.notes.push(...off.notes);
+    // Copilot's harness also reads the Claude Code hooks of the project, and runs every hook it finds: zn would check each call twice.
+    const claudeFile = claudeProjectHooksFile(ctx.cwd);
+    if (claudeFile) {
+      res.notes.push('zn is also set up for Claude Code in ' + claudeFile + ', and Copilot (VS Code with chat.useClaudeHooks on, and Copilot CLI) reads that file too, so every call can be checked twice (same answer, double the time). Keep one: if you do not use Claude Code in this project, run `zn hooks uninstall claude-code --project` in your own terminal; if you do, run `zn hooks uninstall copilot` (and `zn hooks uninstall copilot --project` if you installed it there) instead');
+    }
   }
   if (spec.id === 'antigravity' && installed && res.where === userFile) {
     // Antigravity says what "allow" means ("delegating to the next hook or default policy") but not in which order hooks
