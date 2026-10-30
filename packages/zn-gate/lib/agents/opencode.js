@@ -168,7 +168,9 @@ function pluginSource(opts = {}) {
   const launch = project ? 'const NODE = "zn";\nconst RUNNER = null;' : `const NODE = ${node};\nconst RUNNER = ${runner};`;
   const argv = project ? '["hook", "opencode"]' : '[RUNNER, "opencode"]';
   // The repair step a blocked call names: check what is wrong, then install the hook again (the same scope).
-  const repair = JSON.stringify('Run zn-gate check in a terminal, then zn hooks install opencode' + (project ? ' --project' : '') + '.');
+  const repair = JSON.stringify(project
+    ? 'Run zn-gate check in a terminal, then run zn hooks install opencode --project in that project\'s folder.'
+    : 'Run zn-gate check in a terminal, then zn hooks install opencode.');
   // On Windows `zn` is zn.cmd, which spawn runs only through a shell. The
   // arguments are fixed strings, so the shell adds no input of its own; and
   // neither `zn` nor the `node` it starts may come from the folder OpenCode
@@ -199,6 +201,7 @@ function projectEnv() {
 // which blocks reads of secret files, puts commands that use stored secrets
 // through \`zn run\`, and replaces secret values in tool output with __ZN_ tokens.
 import { spawn } from "node:child_process";
+import { statSync } from "node:fs";
 
 ${launch}
 ${projectEnvSource}const TIMEOUT_MS = ${HOOK_TIMEOUT_S * 1000};
@@ -211,10 +214,19 @@ const SHELL = String(process.env.SHELL || "").replace(/\\\\/g, "/").split("/").p
 
 // Why the hook could not answer, in plain words: a spawn error names the missing program, not a raw ENOENT.
 const REPAIR = ${repair};
+// A spawn also fails with ENOENT when the folder OpenCode was started from was deleted (on Linux and macOS it still answers a stat, with no links left); then the fix is not to reinstall anything.
+function folderGone() {
+  try { return statSync(".").nlink === 0; } catch (_) { return true; }
+}
 function why(m) {
+  if (/ENOENT/.test(m) && folderGone()) return "the folder OpenCode was started from no longer exists";
   if (/ENOENT/.test(m)) return NODE === "zn" ? "zn was not found on the PATH" : "the Node.js it was installed with was not found";
   if (/EACCES|EPERM/.test(m)) return "the hook could not be started (permission denied)";
   return m;
+}
+
+function repairFor(m) {
+  return /ENOENT/.test(m) && folderGone() ? "Close OpenCode and start it again from a folder that exists." : REPAIR;
 }
 
 // Copy scrubbed string leaves from src into target, in place.
@@ -261,7 +273,7 @@ export const ZnGate = async ({ directory }) => ({
   "tool.execute.before": async (input, output) => {
     const r = await runHook({ hook: "tool.execute.before", tool: input.tool, sessionID: input.sessionID, cwd: directory, args: output.args, shell: SHELL, platform: process.platform });
     if (r.action === "deny") throw new Error(r.message);
-    if (r.action === "error") throw new Error("zn: the secret scrubber is not working (" + why(r.message) + "), so this call was blocked. " + REPAIR);
+    if (r.action === "error") throw new Error("zn: the secret scrubber is not working (" + why(r.message) + "), so this call was blocked. " + repairFor(r.message));
     if (r.action === "args" && r.args) for (const [k, v] of Object.entries(r.args)) output.args[k] = v;
   },
   "tool.execute.after": async (input, output) => {
@@ -289,7 +301,7 @@ export const ZnGate = async ({ directory }) => ({
     if (!prompt) return;
     const r = await runHook({ hook: "chat.message", sessionID: input.sessionID, cwd: directory, prompt });
     if (r.action === "deny") throw new Error(r.message);
-    if (r.action === "error") throw new Error("zn: the secret scrubber is not working (" + why(r.message) + "), so this message was not sent. " + REPAIR);
+    if (r.action === "error") throw new Error("zn: the secret scrubber is not working (" + why(r.message) + "), so this message was not sent. " + repairFor(r.message));
   },
 });
 `;
