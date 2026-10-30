@@ -277,6 +277,30 @@ test('zn-gate check: a manifest whose program is not on this computer, or with n
   assert.match(r.problem, /has no PreToolUse hook/);
 });
 
+// The same manifest edits judged as on Windows, whatever system runs the tests: an entry that starts with "/" and is not the
+// safe /bin/sh form is not skipped because the Windows entry is fine.
+test('zn-gate check: on Windows, a changed /bin/sh entry is judged too, not hidden behind the PowerShell entry', async (t) => {
+  const check = require('../lib/check');
+  const real = Object.getOwnPropertyDescriptor(process, 'platform');
+  const cwd = tempDir(t, 'zn-zcp-w32-cwd-');
+  const run = async (hooks) => {
+    const home = tempDir(t, 'zn-zcp-w32-');
+    installPlugin(home, { hooks });
+    writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } } });
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try { return (await check.check({ home, cwd, env: { ...process.env, HOME: home, PATH: SYSPATH }, live: false })).results.find((r) => r.id === 'zcode'); } finally { Object.defineProperty(process, 'platform', real); }
+  };
+  let r = await run((h) => h.split('"command": "/bin/sh"').join('"command": "/nonexistent/zn-test/sh"'));
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /not a system shell running a script inside the plugin folder/);
+  r = await run((h) => { const j = JSON.parse(h); for (const g of Object.values(j.hooks)) for (const e of g) for (const x of e.hooks) { x.args = ['sh', ...x.args]; x.command = '/usr/bin/env'; } return JSON.stringify(j); });
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /`env`, which looks the program/);
+  r = await run((h) => { const j = JSON.parse(h); delete j.hooks.PreToolUse; return JSON.stringify(j); });
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /has no PreToolUse hook/);
+});
+
 // The reproduction of the 1.14.0 review: with a relative or empty PATH entry, the host's own lookup of the first
 // program in the manifest picked a planted `sh`, and a shell picked a planted `node`. The real plugin manifest and
 // script, started the way ZCode starts a process hook (no shell, the project as working folder), run nothing planted.

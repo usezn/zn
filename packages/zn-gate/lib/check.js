@@ -423,10 +423,13 @@ function pluginManifest(root, rootVar, platform = process.platform) {
 
 /* The hooks of a ZCode plugin manifest that can run on this system, and the first of them that starts a program by name or
    in a form zn does not ship (bare). Every event lists a /bin/sh hook (macOS, Linux) and a PowerShell hook (Windows); the one
-   of the other system cannot start here and is not judged, so a manifest is read only where it runs. A program by name is
-   refused on every system. */
+   of the other system cannot start here and is not judged (on Windows, only the /bin/sh entry is skipped),
+   so a manifest is read only where it runs. A program by name is refused on every system. */
 function zcodeRelevant(manifest, win) {
-  const hooks = manifest ? manifest.hooks.filter((h) => (win ? !String(h.file).startsWith('/') : !WIN_ABS.test(String(h.file)))) : [];
+  // Only the entry the plugin ships for the other system is left out. On Windows that is the /bin/sh entry (whatever
+  // script it runs); any other entry that starts with "/" (a program by name, `env`, another shell or path) is judged here
+  // too, so it cannot hide behind the Windows entry. A PowerShell entry is left out on the other systems.
+  const hooks = manifest ? manifest.hooks.filter((h) => (win ? !(String(h.file).startsWith('/') && h.file === '/bin/sh') : !WIN_ABS.test(String(h.file)))) : [];
   return { hooks, bare: hooks.find((h) => h.byName) || null };
 }
 
