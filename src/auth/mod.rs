@@ -18,7 +18,7 @@ use axum::{
     extract::Request,
     http::{header, StatusCode},
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
 };
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
@@ -159,6 +159,25 @@ pub fn super_admin_context() -> TenantContext {
     }
 }
 
+/// A 401 with a JSON body that says what to send, so a person or a script that
+/// gets it knows what to fix. `detail` names why the request was refused; it
+/// never holds the key that was sent.
+fn unauthorized_response(detail: &str) -> Response {
+    let body = serde_json::json!({
+        "error": "unauthorized",
+        "message": format!(
+            "{detail} Send your API key in the header \"Authorization: Bearer <your API key>\" (the header \"X-API-Key: <your API key>\" also works). The key is the value of ZN_API_KEY, or the one zn saved in zn-superadmin-key.txt when it generated it."
+        ),
+        "expected_header": "Authorization: Bearer <your API key>",
+    });
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::WWW_AUTHENTICATE, "Bearer")],
+        axum::Json(body),
+    )
+        .into_response()
+}
+
 /// Authentication middleware supporting API Keys, JWTs, and Multi-Tenancy
 pub async fn api_key_auth(mut request: Request, next: Next) -> Result<Response, StatusCode> {
     // Get auth config from request extensions
@@ -179,11 +198,13 @@ pub async fn api_key_auth(mut request: Request, next: Next) -> Result<Response, 
     }
 
     // Extract authorization token
-    let auth_header = request
-        .headers()
-        .get("X-API-Key")
-        .or_else(|| request.headers().get(header::AUTHORIZATION))
-        .and_then(|v| v.to_str().ok());
+    let (auth_header, sent_in) = match request.headers().get("X-API-Key") {
+        Some(v) => (v.to_str().ok(), "the X-API-Key header"),
+        None => match request.headers().get(header::AUTHORIZATION) {
+            Some(v) => (v.to_str().ok(), "the Authorization header"),
+            None => (None, "the query string"),
+        },
+    };
 
     let token = match auth_header {
         Some(header_val) => Some(strip_bearer(header_val).to_string()),
@@ -236,12 +257,21 @@ pub async fn api_key_auth(mut request: Request, next: Next) -> Result<Response, 
                 }
             }
 
-            tracing::warn!("Failed authentication attempt with token provided");
-            Err(StatusCode::UNAUTHORIZED)
+            tracing::warn!(
+                "Rejected request to {}: the API key sent in {} is not valid",
+                request.uri().path(),
+                sent_in
+            );
+            Ok(unauthorized_response(
+                "The API key that was sent is not valid.",
+            ))
         }
         None => {
-            tracing::warn!("No authentication provided for protected resource");
-            Err(StatusCode::UNAUTHORIZED)
+            tracing::warn!(
+                "Rejected request to {}: no API key was sent (expected the header Authorization: Bearer <key>, or X-API-Key)",
+                request.uri().path()
+            );
+            Ok(unauthorized_response("No API key was sent."))
         }
     }
 }
@@ -816,5 +846,69 @@ mod tests {
         let url = serve_config(None).await;
         assert_eq!(call(&url, bearer(LEGACY_KEY)).await.0, 500);
         assert_eq!(call(&url, None).await.0, 500);
+    }
+}
+
+#[cfg(test)]
+mod unauthorized_body_tests {
+    use super::*;
+    use axum::{routing::get, Extension, Router};
+
+    async fn serve() -> String {
+        let app = Router::new()
+            .route("/ping", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn(api_key_auth))
+            .layer(Extension(Arc::new(AuthConfig::new(
+                Some("right-key-for-tests".to_string()),
+                None,
+            ))));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}/ping")
+    }
+
+    async fn rejected(req: reqwest::RequestBuilder) -> serde_json::Value {
+        let resp = req.send().await.unwrap();
+        assert_eq!(resp.status().as_u16(), 401);
+        assert_eq!(
+            resp.headers()
+                .get("www-authenticate")
+                .map(|v| v.to_str().unwrap()),
+            Some("Bearer")
+        );
+        resp.json().await.expect("the 401 body is JSON")
+    }
+
+    #[tokio::test]
+    async fn a_missing_key_gets_a_json_body_naming_the_header() {
+        let url = serve().await;
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let body = rejected(client.get(&url)).await;
+        assert_eq!(body["error"], "unauthorized");
+        assert_eq!(
+            body["expected_header"],
+            "Authorization: Bearer <your API key>"
+        );
+        assert!(body["message"]
+            .as_str()
+            .unwrap()
+            .contains("No API key was sent"));
+    }
+
+    #[tokio::test]
+    async fn a_wrong_key_gets_the_same_hint_and_is_never_echoed() {
+        let url = serve().await;
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let body = rejected(
+            client
+                .get(&url)
+                .header("Authorization", "Bearer wrong-secret-value"),
+        )
+        .await;
+        let text = body.to_string();
+        assert!(text.contains("not valid"));
+        assert!(text.contains("Authorization: Bearer"));
+        assert!(!text.contains("wrong-secret-value"));
     }
 }
