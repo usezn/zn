@@ -24,7 +24,7 @@ const { cleanChange, describeChange } = require('./changes');
 const { exportAuditFile } = require('./otel');
 const store = require('../vault/store');
 const { createClient } = require('../vault/client');
-const { messageWithUnlockHint } = require('../errors');
+const { messageWithUnlockHint, fsErrorText } = require('../errors');
 const { isVerbose } = require('../verbose');
 const messages = require('../messages');
 const { znCommand } = require('../zn-command');
@@ -316,7 +316,7 @@ async function runLogExport(args) {
     warn();
     return 0;
   } catch (e) {
-    err('[zn] ' + (e && e.message ? e.message : e));
+    err('[zn] ' + (fsErrorText(e) || (e && e.message ? e.message : e)));
     return 1;
   }
 }
