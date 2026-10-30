@@ -156,6 +156,17 @@ test('elided values are not flagged', () => {
   assert.ok(!flagged('API_KEY=' + V + '…'));
 });
 
+test('elided Bearer tokens are not flagged; a full one still is (B-1948)', () => {
+  const tok = ['ab', 'c1', '23', 'q7w8e9r0'].join('');   // 14 chars, digits: a full token is masked
+  assert.deepEqual(names('Authorization: Bearer ' + tok), ['AUTHORIZATION']);
+  assert.deepEqual(values('Authorization: Bearer ' + tok + '.'), [tok]);
+  assert.ok(!flagged('Authorization: Bearer ' + tok + '...'), 'three dots');
+  assert.ok(!flagged('Authorization: Bearer ' + tok + '…'), 'ellipsis character');
+  assert.ok(!flagged('Authorization: Bearer ' + tok + '...)'), 'three dots then punctuation');
+  assert.ok(!flagged('Authorization: Bearer ' + tok + '….'), 'ellipsis then a full stop');
+  assert.ok(!flagged('use "Authorization: Bearer abc123..." in the header'), 'example from the task');
+});
+
 test('Unicode values are not flagged; neighbouring ASCII ones still are', () => {
   assert.ok(!flagged('API_KEY=клюя1234secret'));
   assert.ok(!flagged('API_KEY=pässwörd12345'));
