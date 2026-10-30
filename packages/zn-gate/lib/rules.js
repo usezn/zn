@@ -7,10 +7,10 @@ const path = require('path');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-27.2
+ * RULES_VERSION: 2026-10-29.4
  */
 
-const RULES_VERSION = '2026-10-28.1';
+const RULES_VERSION = '2026-10-29.4';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such

@@ -19,11 +19,19 @@ them.
 The hook launchers of `zn hooks install` keep the SHA-256 of zn-gate's hook
 runner and run it only while it matches. An update with npm rewrites them by
 itself (an install step of the package). If your update does not run install
-scripts (`npm install --ignore-scripts`, or pnpm and bun, which skip them by
-default), run `zn hooks install <agent>` again for each agent: until then the
-hooks block tool calls and say so. The same goes if you installed or updated
-with `sudo`: run `zn hooks install <agent>` again as yourself (without `sudo`)
-after the update.
+scripts, the launchers are not refreshed, and what happens depends on how you
+installed zn-gate:
+
+- **pnpm** (`pnpm add -g zn-gate@<newer>`) skips install scripts. The old
+  version's folder stays on disk, so the hooks keep working but run the runner
+  of the previous version, with its older rules, until you run
+  `zn hooks install <agent>` again. `zn-gate check` still says **OK** and adds a
+  note that names the older version.
+- **bun** and `npm install --ignore-scripts` skip them too. The runner changed,
+  so the hooks block tool calls and say so until you run
+  `zn hooks install <agent>` again for each agent.
+
+If you installed or updated with `sudo`, run `zn hooks install <agent>` again as yourself (without `sudo`) after the update.
 
 If `zn-gate check` says an agent is not protected, it also prints the command
 that fixes it.

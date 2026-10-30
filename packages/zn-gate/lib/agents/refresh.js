@@ -18,7 +18,8 @@
  * inline PowerShell, with no launcher file. A launcher folder that belongs to another user (`sudo npm i -g` with the
  * user's HOME) is left alone.
  * Under `sudo` the user's launchers are not refreshed; one line on stderr says to run `zn hooks install <agent>`
- * again as that user.
+ * again as that user. npm 7 and later hide the output of install scripts unless the install runs with
+ * `--foreground-scripts`, so that line is seen only then.
  * With `npm install --ignore-scripts` this does not run; `zn hooks install <agent>` is then the fix.
  */
 
@@ -101,7 +102,7 @@ function ranWithSudo(opts) {
   return uid === 0 && typeof env.SUDO_USER === 'string' && env.SUDO_USER !== '' && env.SUDO_USER !== 'root';
 }
 
-/** The postinstall entry: quiet (one line on stderr after a sudo install), and never throws. */
+/** The postinstall entry: quiet (one line on stderr after a sudo install, shown only with `--foreground-scripts`), and never throws. */
 function main(opts = {}) {
   try {
     const done = refreshLaunchers(opts);

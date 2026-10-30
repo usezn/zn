@@ -1018,3 +1018,93 @@ test('check: from the home folder, or a dotfiles home with git, a Node.js only i
     }
   }
 });
+
+// pnpm skips the install step and leaves the previous version's folder: the hooks keep running its runner.
+function pnpmRunner(t, version, { withPackage = true } = {}) {
+  const root = tempDir(t, 'zn-check-pnpm-');
+  const pkgDir = path.join(root, '.pnpm', 'zn-gate@' + (version || 'x'), 'node_modules', 'zn-gate');
+  fs.mkdirSync(path.join(pkgDir, 'lib', 'hooks'), { recursive: true });
+  if (withPackage) fs.writeFileSync(path.join(pkgDir, 'package.json'), JSON.stringify({ name: 'zn-gate', version }));
+  // It does what the running zn-gate does.
+  const runner = path.join(pkgDir, 'lib', 'hooks', 'runner.js');
+  fs.writeFileSync(runner, 'require(' + JSON.stringify(RUNNER) + ').main(process.argv.slice(2));\n');
+  return runner;
+}
+
+function homeWithRunner(t, runnerPath) {
+  const home = tempDir(t, 'zn-check-home-');
+  const env = { HOME: home, PATH: process.env.PATH };
+  getAdapter('claude-code').install({ scope: 'user', home, env, nodePath: process.execPath, runnerPath, mcp: false });
+  return { home, env, cwd: tempDir(t, 'zn-check-cwd-') };
+}
+
+test('check: a hook that runs an older zn-gate (a leftover pnpm folder) gets a note, not a failure', async (t) => {
+  const ctx = homeWithRunner(t, pnpmRunner(t, '1.0.0'));
+  const r = byId(await check(ctx), 'claude-code');
+  assert.equal(r.state, 'protected', r.problem);
+  const current = require('../package.json').version;
+  assert.ok(r.notes.includes('the hooks run zn-gate 1.0.0, older than this zn-gate ' + current + ': run `zn hooks install claude-code` to use the new one'), JSON.stringify(r.notes));
+});
+
+test('check: a hook that runs the same version from another folder gets no note', async (t) => {
+  const ctx = homeWithRunner(t, pnpmRunner(t, require('../package.json').version));
+  const r = byId(await check(ctx), 'claude-code');
+  assert.equal(r.state, 'protected', r.problem);
+  assert.equal(r.notes.some((n) => /older than this zn-gate/.test(n)), false, JSON.stringify(r.notes));
+});
+
+test('check: no note when the version of the recorded runner cannot be read', async (t) => {
+  const ctx = homeWithRunner(t, pnpmRunner(t, '1.0.0', { withPackage: false }));
+  const r = byId(await check(ctx), 'claude-code');
+  assert.equal(r.state, 'protected', r.problem);
+  assert.equal(r.notes.some((n) => /older than this zn-gate/.test(n)), false, JSON.stringify(r.notes));
+});
+
+test('check: the hook of the running zn-gate gets no note', async (t) => {
+  const r = byId(await check(homeWithHooks(t, ['claude-code'])), 'claude-code');
+  assert.equal(r.notes.some((n) => /older than this zn-gate/.test(n)), false);
+});
+
+test('check: a Claude Code plugin of another version than zn-gate gets a note with the update command', async (t) => {
+  const own = require('../package.json').version;
+  // [plugin.json body, expected note: null for none, else a regex the note must match]
+  const cases = [
+    [{ version: '1.0.0' }, /claude plugin update zn-gate@usezn/],
+    [{ version: '999.0.0' }, /npm install -g zn-gate@latest/],
+    [{ version: own }, null],
+    [null, null],
+    ['{ not json', null],
+  ];
+  for (const [body, expected] of cases) {
+    const home = tempDir(t, 'zn-check-plugin-version-');
+    const root = fakePlugin(home, launcher());
+    if (body) {
+      fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+      fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), typeof body === 'string' ? body : JSON.stringify({ name: 'zn-gate', ...body }));
+    }
+    const res = await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: false });
+    const r = byId(res, 'claude-code');
+    const note = r.notes.find((n) => /plugin is version/.test(n));
+    if (!expected) {
+      assert.equal(note, undefined, `plugin ${JSON.stringify(body)}: ${note}`);
+      continue;
+    }
+    assert.ok(note, r.notes.join(' | '));
+    assert.ok(note.includes('version ' + body.version + ' and the zn-gate command is ' + own), note);
+    assert.match(note, expected);
+    // A note, not a fault: the version alone never makes the plugin NOT protected.
+    assert.equal(r.problem || '', '', r.problem);
+    assert.ok(textOf(res).s.includes('(the zn-gate plugin is version ' + body.version), 'note printed');
+  }
+});
+
+test('check: with a pre-release zn-gate command, a plugin of another version gets both versions and no advice', (t) => {
+  const { pluginVersionNote } = require('../lib/check')._internal;
+  const root = tempDir(t, 'zn-check-plugin-rc-');
+  fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'zn-gate', version: '1.14.1' }));
+  assert.equal(pluginVersionNote(root, '1.15.0-rc.1'), 'the zn-gate plugin is version 1.14.1 and the zn-gate command is 1.15.0-rc.1');
+  assert.match(pluginVersionNote(root, '1.15.0'), /claude plugin update/);
+  assert.match(pluginVersionNote(root, '1.14.0'), /npm install -g zn-gate@latest/);
+  assert.equal(pluginVersionNote(root, '1.14.1'), '');
+});
