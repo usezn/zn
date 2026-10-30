@@ -1,0 +1,1 @@
+- `zn-gate shield`: when the wrapped MCP server exits before reading all its input, the shield no longer prints an EPIPE stack trace; it exits with the server's own exit code.
