@@ -49,6 +49,8 @@ The command is split the way the rest of zn-gate's hook policy splits it, so quo
 
 A `cd` or `pushd` earlier in the same command line is followed: after `cd ~ && rm -rf .` or `cd / && find . -delete`, the `.` and any relative target are read as that folder, so these are blocked like `rm -rf ~`. A `cd` into any other folder (`cd build && rm -rf .`, `cd ~/projects/app && rm -rf .`) is allowed, and so is a delete of a named subfolder after it (`cd ~ && rm -rf .cache`). A `cd` inside a pipeline or a background command does not count, because it runs in a subshell.
 
+A command that follows a shell keyword is read like any other: inside `{ ...; }`, after `then`, `do`, `else`, `elif`, `if`, `while`, `until` and `!`, and inside backticks. `{ rm -rf ~; }`, `if true; then rm -rf ~; fi`, `while true; do rm -rf ~; done`, `! rm -rf ~` and ``echo `rm -rf ~` `` are blocked like `rm -rf ~`; the same commands on a project folder (`if true; then rm -rf ./build; fi`) are allowed.
+
 ## What it does not do
 
 The check reads command text only. These are **not** covered, and the check lets them through:

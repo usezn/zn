@@ -1,0 +1,2 @@
+### Security
+- The destructive-command check now reads the command that follows a shell keyword or sits inside backticks. `{ rm -rf ~; }`, `if true; then rm -rf ~; fi`, `while true; do rm -rf ~; done`, `until false; do rm -rf ~; done`, `! rm -rf ~` and ``echo `rm -rf ~` `` were allowed before and are blocked now, like `rm -rf ~`. The same commands on a project folder (`if true; then rm -rf ./build; fi`) stay allowed.

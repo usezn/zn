@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-23.10';
+const COMMAND_RULES_VERSION = '2026-10-30.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -55,6 +55,8 @@ const RM_HEADS = new Set(['rm', 'remove-item', 'ri', 'del', 'erase', 'rd', 'rmdi
 const CMD_HEADS = new Set(['rd', 'rmdir', 'del', 'erase']);
 const DISK_TOOLS = /^(?:mkfs(?:\.[a-z0-9]+)?|mke2fs|mkswap|wipefs|shred|blkdiscard)$/;
 const FIND_TESTS = /^-(?:i?name|i?path|i?wholename|i?regex|type|[acm]time|[acm]min|newer\w*|size|user|group|perm|empty|links|inum|samefile|executable|readable|writable|uid|gid)$/;
+// Words that start a command without being one: a group, the branches of if / while / until / for, and negation.
+const SHELL_KEYWORDS = new Set(['{', 'then', 'do', 'else', 'elif', 'if', 'while', 'until', '!']);
 const SUDO_ARG_FLAGS = new Set(['-u', '-g', '-h', '-p', '-C', '-T', '-r', '-t', '-U', '-D', '-R']);
 
 const SYSTEM_DIRS = new Set(['/bin', '/boot', '/dev', '/etc', '/home', '/lib', '/lib32', '/lib64', '/opt', '/proc', '/root',
@@ -159,12 +161,37 @@ function fromCwd(cwd, word) {
   return cwd + '/' + w;
 }
 
+/* The text of every unquoted or double-quoted `...` command substitution of a command, joined into one text to be read
+   as commands, or '' when there is none. An escaped backtick inside one is a nested substitution. One pass over the text. */
+function backtickCode(text) {
+  const bodies = [];
+  let quote = '';
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quote === "'") { if (ch === "'") quote = ''; continue; }
+    if (ch === '\\') { i++; continue; }
+    if (ch === '"') { quote = quote === '"' ? '' : '"'; continue; }
+    if (ch === "'" && quote === '') { quote = "'"; continue; }
+    if (ch !== '`') continue;
+    let body = '';
+    let j = i + 1;
+    for (; j < text.length && text[j] !== '`'; j++) {
+      if (text[j] === '\\' && j + 1 < text.length && (text[j + 1] === '`' || text[j + 1] === '\\')) j++;
+      body += text[j];
+    }
+    bodies.push(body);
+    i = j;
+  }
+  return bodies.join('\n');
+}
+
 /* The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...). */
 function unwrap(args) {
   let i = 0;
-  for (let guard = 0; guard < 8 && i < args.length; guard++) {
+  for (let guard = 0; guard < 32 && i < args.length; guard++) {
     const a = args[i];
     if (ASSIGN_RE.test(a)) { i++; continue; }
+    if (SHELL_KEYWORDS.has(a)) { i++; continue; }
     const name = programName(a);
     if (name === 'sudo' || name === 'doas') {
       i++;
@@ -545,6 +572,12 @@ function analyze(cmd, depth = 0, cwd = null) {
   const segs = segmentsOf(text);
   const hit = checkSegments(segs, depth, cwd);
   if (hit) return hit;
+  // A command substitution in backticks runs its text as commands (echo `rm -rf ~`); read them like a sh -c string.
+  if (depth < MAX_DEPTH && text.includes('`')) {
+    const inner = backtickCode(text);
+    const innerHit = inner ? analyze(inner, depth + 1, cwd) : null;
+    if (innerHit) return innerHit;
+  }
   // POSIX reading: an unquoted backslash escapes the next character and is removed (r\m, cu\rl, .bash\rc). The Windows
   // reading above keeps it as a path separator and runs first, so this one only adds blocks: any rule it hits counts.
   if (text.includes('\\')) {

@@ -165,6 +165,12 @@ add('cd build && rm -rf .', 'cd dist && rm -rf *', 'cd ~/projects/app && rm -rf 
   'cd ~ & rm -rf .', 'pushd ~/projects/app && rm -rf .', 'pushd build && rm -rf *', 'cd ~ && ls . && rm -rf build', 'cd "$BUILD_DIR" && rm -rf .', 'cd $PROJECT && find . -delete',
   'cd ~ && chmod -R u+rwX .cache', 'cd / && chmod -R 755 srv/app', 'Set-Location C:\\work\\app; Remove-Item -Recurse -Force .', 'sh -c "cd build && rm -rf ."', 'cd ~ && echo . | xargs ls');
 
+// Commands after a shell keyword or inside backticks that stay below a project folder, and text that only mentions the keywords.
+add('{ rm -rf ./build; }', 'if true; then rm -rf ./build; fi', 'while true; do rm -rf ./tmp; done', 'until false; do rm -rf ./tmp; done', '! rm -rf ./build',
+  'if false; then echo a; else rm -rf ./build; fi', 'if false; then echo a; elif rm -rf ./build; then echo b; fi', 'for i in 1 2; do rm -rf ./out$i; done',
+  'if true; then cd build && rm -rf .; fi', '{ cd ~ && rm -rf .cache; }', 'if test -d ~; then ls ~; fi', 'if true; then echo then rm -rf ~; fi', 'echo do rm -rf ~',
+  'echo `date`', 'x=`ls ~`', 'echo "`pwd`"', 'echo `rm -rf ./build`', 'echo `cd build && rm -rf .`', "echo '`rm -rf ~`'", 'echo \\`rm -rf ~\\`', 'echo `echo hi`; rm -rf ./build');
+
 /* ------------------------------ risky ------------------------------ */
 const risky = [];
 const seen = new Set();
@@ -207,6 +213,37 @@ addRisk('rm_root_home', 'cd / && Remove-Item -Recurse -Force .');
 addRisk('rm_root_home', 'cd C:\\Users\\alice; Remove-Item -Recurse -Force *');
 addRisk('rm_root_home', 'cd ~; rd /s /q .');
 addRisk('rm_root_home', '(cd ~ && rm -rf .)');
+// A command after a shell keyword ({, then, do, else, elif, !, if, while, until) is read like any other.
+for (const t of ['~', '/', '$HOME', '/etc', '/home/alice']) {
+  addRisk('rm_root_home', '{ rm -rf ' + t + '; }');
+  addRisk('rm_root_home', 'if true; then rm -rf ' + t + '; fi');
+  addRisk('rm_root_home', 'while true; do rm -rf ' + t + '; done');
+  addRisk('rm_root_home', 'until false; do rm -rf ' + t + '; done');
+  addRisk('rm_root_home', '! rm -rf ' + t);
+  addRisk('rm_root_home', 'if false; then echo a; else rm -rf ' + t + '; fi');
+  addRisk('rm_root_home', 'if false; then echo a; elif rm -rf ' + t + '; then echo b; fi');
+  addRisk('rm_root_home', 'if rm -rf ' + t + '; then echo done; fi');
+  addRisk('rm_root_home', 'for i in 1 2; do rm -rf ' + t + '; done');
+  addRisk('rm_root_home', 'if true; then\n  rm -rf ' + t + '\nfi');
+  addRisk('rm_root_home', 'while true\ndo\n  rm -rf ' + t + '\ndone');
+  addRisk('rm_root_home', 'true && { rm -rf ' + t + '; }');
+  addRisk('rm_root_home', '! ! rm -rf ' + t);
+  addRisk('rm_root_home', 'sudo ! rm -rf ' + t);
+}
+addRisk('rm_root_home', '{ cd ~; rm -rf .; }');
+addRisk('rm_root_home', 'if true; then cd / && find . -delete; fi');
+addRisk('perm_root', 'if true; then chmod -R 777 /; fi');
+addRisk('disk_overwrite', 'if true; then dd if=/dev/zero of=/dev/sda; fi');
+// A command in backticks runs like any other.
+for (const t of ['~', '/', '$HOME', '/etc', '/home/alice']) {
+  addRisk('rm_root_home', 'echo `rm -rf ' + t + '`');
+  addRisk('rm_root_home', 'x=`rm -rf ' + t + '`');
+  addRisk('rm_root_home', 'echo "`rm -rf ' + t + '`"');
+  addRisk('rm_root_home', 'echo `ls` `rm -rf ' + t + '`');
+}
+addRisk('rm_root_home', 'echo `cd ~; rm -rf .`');
+addRisk('rm_root_home', 'echo `echo \\`rm -rf ~\\``');
+addRisk('disk_overwrite', 'echo `dd if=/dev/zero of=/dev/sda`');
 // "." and ".." segments that resolve to the home folder or the root (lexically; example paths only).
 for (const t of ['/home/alice/..', '/home/alice/../..', '/home/alice/project/../..', '/home/alice/./project/../', '/Users/bob/project/..', '/usr/..', '/usr/../*', '/etc/../etc/..', '/..', '/../..', '/home/../', '/tmp/../',
   '~/project/..', '~/./', '~/..', '$HOME/project/..', '"$HOME/project/.."', '${HOME}/a/b/../..', '$HOME/../alice', '//home//alice//project//..', 'C:/Users/alice/project/..', 'C:/Users/alice/..', 'C:/..', 'C:\\Users\\alice\\project\\..']) {

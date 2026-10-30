@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-23.10"
+COMMAND_RULES_VERSION = "2026-10-30.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -316,13 +316,52 @@ def _is_pipe(sep: Optional[str]) -> bool:
     return sep in ("|", "|&")
 
 
+# Words that start a command without being one: a group, the branches of if / while / until / for, and negation.
+_SHELL_KEYWORDS = frozenset(("{", "then", "do", "else", "elif", "if", "while", "until", "!"))
+
+
+def _backtick_code(text: str) -> str:
+    """The text of every unquoted or double-quoted `...` command substitution of a command, joined into one text to be
+    read as commands, or "" when there is none. An escaped backtick inside one is a nested substitution."""
+    bodies: List[str] = []
+    quote = ""
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if quote == "'":
+            if ch == "'":
+                quote = ""
+        elif ch == "\\":
+            i += 1
+        elif ch == '"':
+            quote = "" if quote == '"' else '"'
+        elif ch == "'" and quote == "":
+            quote = "'"
+        elif ch == "`":
+            body: List[str] = []
+            j = i + 1
+            while j < n and text[j] != "`":
+                if text[j] == "\\" and j + 1 < n and text[j + 1] in ("`", "\\"):
+                    j += 1
+                body.append(text[j])
+                j += 1
+            bodies.append("".join(body))
+            i = j
+        i += 1
+    return "\n".join(bodies)
+
+
 def _unwrap(args: List[str]) -> List[str]:
     i = 0
     guard = 0
-    while guard < 8 and i < len(args):
+    while guard < 32 and i < len(args):
         guard += 1
         a = args[i]
         if _ASSIGN_RE.match(a):
+            i += 1
+            continue
+        if a in _SHELL_KEYWORDS:
             i += 1
             continue
         name = _program_name(a)
@@ -832,6 +871,12 @@ def _analyze(cmd: str, depth: int = 0, cwd: Optional[str] = None) -> Optional[st
     hit = _check_segments(segs, depth, cwd)
     if hit:
         return hit
+    # A command substitution in backticks runs its text as commands (echo `rm -rf ~`); read them like a sh -c string.
+    if depth < _MAX_DEPTH and "`" in text:
+        inner = _backtick_code(text)
+        inner_hit = _analyze(inner, depth + 1, cwd) if inner else None
+        if inner_hit:
+            return inner_hit
     # POSIX reading: an unquoted backslash escapes the next character and is removed (r\m, cu\rl, .bash\rc). The Windows
     # reading above keeps it as a path separator and runs first, so this one only adds blocks: any rule it hits counts.
     if "\\" in text:
