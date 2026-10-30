@@ -500,7 +500,15 @@ function hooksUsage() {
   return 'usage: zn hooks install|uninstall ' + require('../agents').listAdapters().join('|') + ' [--project] [--no-mcp]';
 }
 
+const HOOKS_OPTIONS = ['--project', '--no-mcp'];
+
 async function hooks(args, io) {
+  // Checked before parseFlags, which would read an unknown option as one that needs a value.
+  for (const a of args) {
+    if (a.startsWith('-') && !HOOKS_OPTIONS.includes(a.split('=')[0])) {
+      throw deps.znError('ZN_USAGE', 'unknown option "' + a.slice(0, 40) + '". The options of zn hooks are ' + HOOKS_OPTIONS.join(' and ') + '.');
+    }
+  }
   const { flags, positional } = parseFlags(args, { bool: ['project', 'no-mcp'] });
   const [action, agentId] = positional;
   if (!['install', 'uninstall'].includes(action) || !agentId) {
