@@ -80,6 +80,10 @@ libc = "0.2.189"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
 
+[dev-dependencies]
+# Property tests for the scrubber (tests/scrubber_properties.rs). Test-only: the shipped binary does not depend on it.
+proptest = { version = "1", default-features = false, features = ["std"] }
+
 [package.metadata.cargo-machete]
 # schemars is used through the rmcp::schemars derive, which expands to schemars:: paths,
 # so the crate must be a direct dependency even though no source line names it.
