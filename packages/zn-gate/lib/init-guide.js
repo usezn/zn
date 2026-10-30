@@ -181,7 +181,7 @@ async function plan(opts = {}) {
     if (glob.version && cmp(glob.version, VERSION) >= 0) {
       // A global install that is the same or newer is used as it is: never downgrade it.
     } else if (glob.npm) {
-      setup.push({ label: 'install zn-gate ' + VERSION + ' for your user' + (glob.version ? ' (you have ' + glob.version + ')' : ''), run: [glob.npm, ['install', '-g', ...NPM_NETWORK_FLAGS, 'zn-gate@' + VERSION]], timeout: NPM_INSTALL_TIMEOUT_MS, manual: 'npm install -g zn-gate@' + VERSION });
+      setup.push({ label: 'install zn-gate ' + VERSION + ' for your user' + (glob.version ? ' (you have ' + glob.version + ')' : ''), run: [glob.npm, ['install', '-g', ...NPM_NETWORK_FLAGS, 'zn-gate@' + VERSION]], timeout: NPM_INSTALL_TIMEOUT_MS, manual: 'npm install -g zn-gate@' + VERSION, shown: 'npm install -g ' + NPM_NETWORK_FLAGS.join(' ') + ' zn-gate@' + VERSION });
     } else {
       setup.push({ label: 'install zn-gate for your user', run: null, manual: 'npm install -g zn-gate' });
     }
@@ -225,8 +225,8 @@ function networkFailure(stderr, timedOut) {
 
 function networkAdvice(manual) {
   return [
-    '  that did not finish: no internet connection: npm could not reach the registry.',
-    '  Nothing was installed. Connect to the internet (check your VPN or proxy), then run it again:',
+    '  that did not finish: npm could not reach the registry. That can be no internet connection, a VPN or proxy that blocks it, or a company registry that is down.',
+    '  Check your connection (and your VPN or proxy), then run it again:',
     '    ' + manual,
     ''
   ].join(String.fromCharCode(10)) + String.fromCharCode(10);
@@ -311,7 +311,7 @@ async function guide(opts = {}) {
   let globalReady = !setup.length;
   for (const s of setup) {
     if (!s.run) { w(`First, ${s.label}: ${s.manual}\n`); skipped++; break; }
-    if (!(await ask(`${s.label}: run \`${s.manual}\`?`))) { w(`  skipped. You can run it later: ${s.manual}\n`); skipped++; break; }
+    if (!(await ask(`${s.label}: run \`${s.shown || s.manual}\`?`))) { w(`  skipped. You can run it later: ${s.manual}\n`); skipped++; break; }
     const res = run(s, env);
     if (!(res === true || (res && res.ok))) {
       if (s.run && networkFailure(res && res.stderr, res && res.timedOut)) w(networkAdvice(s.manual));

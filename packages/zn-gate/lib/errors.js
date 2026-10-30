@@ -37,7 +37,7 @@ const FS_ERRORS = {
   ENOSPC: (p) => 'The disk that holds ' + p + ' is full. Free some space, then try again.',
   EDQUOT: (p) => 'Your disk quota is used up, so ' + p + ' cannot be written. Free some space, then try again.',
   EROFS: (p) => p + ' is on a read-only disk.',
-  ENAMETOOLONG: (p) => 'The path ' + p + ' is too long. Move the folder to a shorter path, then try again.',
+  ENAMETOOLONG: (p) => 'The folder path ' + p + ' is too long (Windows stops at about 260 characters). Move the folder to a shorter path, then try again.',
   ELOOP: (p) => 'The links in the path ' + p + ' lead in a circle.',
 };
 
@@ -52,11 +52,15 @@ function shownPath(p) {
 
 /* The plain text of a file system error (EACCES, ENOENT, ENOSPC...), or null for any other error. `file` names the
  * path when the error does not carry one. The code is added only with ZN_VERBOSE=1 or DEBUG=zn. */
-function fsErrorText(err, file, env = process.env) {
-  const make = err && typeof err.code === 'string' ? FS_ERRORS[err.code] : null;
+function fsErrorText(err, file, env = process.env, platform = process.platform) {
+  let code = err && typeof err.code === 'string' ? err.code : '';
+  const shown = shownPath((err && err.path) || file || 'a file');
+  // Windows answers a path of 260 characters or more with "not found" or "invalid argument", not with ENAMETOOLONG.
+  if (platform === 'win32' && shown.length >= 260 && ['ENOENT', 'EINVAL', 'EPERM', 'EACCES'].includes(code)) code = 'ENAMETOOLONG';
+  const make = FS_ERRORS[code];
   if (!make) return null;
-  const text = make(shownPath(err.path || file || 'a file'));
-  return require('./verbose').isVerbose(env) ? '[' + err.code + '] ' + text : text;
+  const text = make(shown);
+  return require('./verbose').isVerbose(env) ? '[' + code + '] ' + text : text;
 }
 
 /* The text a person sees for an error: what happened, then the detail. The

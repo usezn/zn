@@ -1048,6 +1048,11 @@ ${ruleLine(process.env, 60)}\n`);
 
     const notFound = scanned.filter(e => !e.exists);
     for (const nf of notFound) {
+      if (nf.unreadable) {
+        process.stdout.write(`  ${sym(process.env, '!', col.yellow)}${nf.name.padEnd(20)} [Cannot be read]\n`);
+        process.stdout.write(`    ${sym(process.env, '↳', col.yellow)}${col.yellow(nf.unreadable + ' zn did not change it.')}\n`);
+        continue;
+      }
       process.stdout.write(`  ${sym(process.env, '○', col.gray)}${nf.name.padEnd(20)} [Not installed/configured]\n`);
     }
 
