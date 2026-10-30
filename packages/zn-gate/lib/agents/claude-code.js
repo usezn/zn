@@ -660,10 +660,10 @@ function isInstalledSecretsServer(s, opts = {}) {
   const places = require('../exe').projectPlaces(opts.cwd || process.cwd(), opts.env || process.env, win);
   const inside = (p, d) => { const rel = path.relative(d, p); return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)); };
   if (places.some((d) => inside(node, d) || inside(cli, d))) return false;
-  // Nothing in the entry may change what that Node.js loads: no NODE_OPTIONS or NODE_PATH, no LD_PRELOAD, LD_LIBRARY_PATH or DYLD_* (they load code into any program), and no folder to run in
+  // Nothing in the entry may change what that Node.js loads: no NODE_OPTIONS or NODE_PATH, no LD_PRELOAD, LD_AUDIT, LD_LIBRARY_PATH, DYLD_* or OPENSSL_CONF (they load code into any program), and no folder to run in
   // that is inside the project.
   const env = s.env && typeof s.env === 'object' ? Object.keys(s.env) : [];
-  if (env.some((k) => /^(?:NODE_(?:OPTIONS|PATH)|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_.*)$/i.test(k))) return false;
+  if (env.some((k) => /^(?:NODE_(?:OPTIONS|PATH)|LD_(?:PRELOAD|LIBRARY_PATH|AUDIT)|DYLD_.*|OPENSSL_CONF)$/i.test(k))) return false;
   if (s.cwd !== undefined) {
     if (typeof s.cwd !== 'string' || !path.isAbsolute(s.cwd)) return false;
     const where = realOf(s.cwd) || (win ? path.resolve(s.cwd).toLowerCase() : path.resolve(s.cwd));
