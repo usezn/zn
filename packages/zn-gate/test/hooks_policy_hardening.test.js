@@ -759,7 +759,11 @@ test('a 100 KB here-document read as data is checked in milliseconds', (t) => {
   const cmd = "cat > generated.js <<'EOF'\n" + body + 'EOF';
   const { ms, result: deny } = fastestCpuMs(() => policy.bashDenial(cmd, o));
   assert.equal(deny, null, 'the body is data, so the command is allowed');
-  assert.ok(ms < budget(25), 'checked in ' + ms + ' ms');
+  // Windows runners measured 32 ms of CPU time for the same check (the CPU clock there ticks in about 16 ms steps, and
+  // the runner CPU is slower), so the budget is 100 ms there. A check that rescans the body, which is what this test
+  // guards against, takes seconds on 100 KB, so both budgets still catch it.
+  const limit = process.platform === 'win32' ? 100 : 25;
+  assert.ok(ms < budget(limit), 'checked in ' + ms + ' ms');
 });
 
 test('10 000 here-document operators on one line are checked within the time budget', (t) => {
