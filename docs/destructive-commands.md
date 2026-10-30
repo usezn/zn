@@ -56,9 +56,14 @@ The check reads command text only. These are **not** covered, and the check lets
 - A script saved first and run later (`curl -o x.sh ... && sh x.sh`), or a download piped into an interpreter that is given a script file (`curl ... | python3 script.py`, which only reads the download as data).
 - Other tools (`rsync --delete`, `git clean`), code in a file or built at run time (a script the agent wrote, `python3 -c "shutil.rmtree(path)"` with a variable), and paths below the top level (`rm -rf /usr/local`).
 - Commands that run inside a container (`docker run ... rm -rf /`) or on another machine (`ssh host "rm -rf /"`).
+- A function defined and called on one line, such as `f() { ls; }; f`. A destructive command as the body of such a function is not blocked.
+- `coproc`, such as `coproc ls`, or a group after it, such as `coproc { ls; }`. A destructive command after `coproc` is not blocked.
+- `env -S` with a split command line, such as `env -S "ls -la"`. A destructive command given to `env -S`, in double or single quotes, is not blocked.
 - Anything an agent does by writing a file and then running it.
 
 For those, use a sandbox, a container or your agent's own permission prompts. This check adds a cheap last barrier for the most common catastrophic mistakes.
+
+Untrusted code should run in a sandbox, such as a container or a virtual machine, not on your own machine. This check does not contain code that you do not trust.
 
 ## How well it works
 
