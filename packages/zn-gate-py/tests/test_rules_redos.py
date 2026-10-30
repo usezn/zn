@@ -120,6 +120,25 @@ def time_ms(fn, *args):
     return best
 
 
+def cpu_ms(fn, *args):
+    """Fastest of RUNS runs, measured as CPU time of this process.
+
+    Used for the 256 KB evaluate budget. Wall-clock time on shared CI runners
+    includes stalls while another job holds the core, which the rule never
+    caused, so the 2000 ms budget failed without any slower code. CPU time
+    leaves those stalls out. A catastrophic backtrack burns CPU, so it still
+    shows up and the budget keeps catching what it is for. process_time has
+    coarse resolution on Windows (about 16 ms), which is negligible against
+    a 2000 ms budget.
+    """
+    best = float('inf')
+    for _ in range(RUNS):
+        t0 = time.process_time()
+        fn(*args)
+        best = min(best, (time.process_time() - t0) * 1000)
+    return best
+
+
 def rule_tester(rule_id, pattern):
     tester = R.RULE_TESTERS.get(rule_id)
     return tester if tester else pattern.search
@@ -174,8 +193,8 @@ class TestLinearTime(unittest.TestCase):
     def test_evaluate_256k_worst_cases(self):
         for unit in ['A', 'A\n', '\n', '\r\n', ' ', '/*', '忽略', 'забудь ', '<a x=', '<a', '![](http://a?key=', '-eyJ']:
             s = fill(unit, 256 * 1024)
-            ms = time_ms(evaluate, s)
-            self.assertLess(ms, EVALUATE_256K_MS, f"evaluate took {ms:.1f} ms on {unit!r} x 256 KB")
+            ms = cpu_ms(evaluate, s)
+            self.assertLess(ms, EVALUATE_256K_MS, f"evaluate took {ms:.1f} ms CPU on {unit!r} x 256 KB")
 
 
 class TestLargeInputs(unittest.TestCase):
