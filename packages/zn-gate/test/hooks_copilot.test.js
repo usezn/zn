@@ -334,7 +334,8 @@ test('zn-gate check says when the project Claude Code hooks also reach Copilot (
   assert.equal(after.state, 'protected');
   const note = after.notes.find((n) => /checked twice/.test(n));
   assert.ok(note, JSON.stringify(after.notes));
-  assert.match(note, /chat\.useClaudeHooks/);
+  assert.doesNotMatch(note, /chat\.useClaudeHooks/);
+  assert.match(note, /Copilot \(VS Code and Copilot CLI\)/);
   assert.match(note, /zn hooks uninstall claude-code --project/);
   assert.match(note, /zn hooks uninstall copilot/);
 });

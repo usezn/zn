@@ -883,13 +883,13 @@ function copilotSwitchedOff(userFile, ctx, adapter) {
 }
 
 /* The zn hooks of Claude Code in this project's .claude/settings(.local).json: the file name, or ''. Copilot's harness
-   (VS Code with chat.useClaudeHooks on, and Copilot CLI) also reads these files, so a call can be checked twice. */
+   (VS Code and Copilot CLI, no setting needed) also reads these files, so a call can be checked twice. */
 function claudeProjectHooksFile(cwd) {
   for (const name of ['settings.json', 'settings.local.json']) {
     const f = path.join(cwd, '.claude', name);
     const text = require('./audit')._internal.readBounded(f, 256 * 1024, false).text;
     let tree = null;
-    try { tree = text ? JSON.parse(text.replace(/^﻿/, '')) : null; } catch (_) { tree = null; }
+    try { tree = text ? JSON.parse(text.replace(/^\uFEFF/, '')) : null; } catch (_) { tree = null; }
     if (hookEntries(tree, 'claude-code').some((e) => parseCommand(e.command, 'claude-code'))) return f;
   }
   return '';
@@ -1175,7 +1175,7 @@ async function checkAgent(spec, ctx) {
     // Copilot's harness also reads the Claude Code hooks of the project, and runs every hook it finds: zn would check each call twice.
     const claudeFile = claudeProjectHooksFile(ctx.cwd);
     if (claudeFile) {
-      res.notes.push('zn is also set up for Claude Code in ' + claudeFile + ', and Copilot (VS Code with chat.useClaudeHooks on, and Copilot CLI) reads that file too, so every call can be checked twice (same answer, double the time). Keep one: if you do not use Claude Code in this project, run `zn hooks uninstall claude-code --project` in your own terminal; if you do, run `zn hooks uninstall copilot` (and `zn hooks uninstall copilot --project` if you installed it there) instead');
+      res.notes.push('zn is also set up for Claude Code in ' + claudeFile + ', and Copilot (VS Code and Copilot CLI) reads that file too whenever it holds zn hooks, with no setting needed, so every call can be checked twice (same answer, double the time). Keep one: if you do not use Claude Code in this project, run `zn hooks uninstall claude-code --project` in your own terminal; if you do, run `zn hooks uninstall copilot` (and `zn hooks uninstall copilot --project` if you installed it there) instead');
     }
   }
   if (spec.id === 'antigravity' && installed && res.where === userFile) {

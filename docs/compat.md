@@ -252,12 +252,16 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     errored)").
   - **The project's Claude Code hooks may run next to zn's.** Copilot also
     reads the repository's `.claude/settings.json` and
-    `.claude/settings.local.json` (Copilot CLI always; VS Code when
-    `chat.useClaudeHooks` is on), and "applicable hooks from multiple sources run
-    together". With `zn hooks install claude-code --project` and Copilot set up
-    too, one shell call runs zn twice: both answer the same, and the check takes
-    about twice as long (measured here: 91 ms and 101 ms, two Node.js starts, for
-    one `cat .env` call, instead of one). Not a protection gap; `zn-gate check`
+    `.claude/settings.local.json` with no setting needed ("Cross-tool
+    `.claude/settings.json` and `.claude/settings.local.json` files in the
+    repository are also read", GitHub's hooks reference; VS Code: the Copilot
+    harness is shared by VS Code, the GitHub Copilot app and Copilot CLI, and
+    "applicable hooks from multiple sources run together"). `chat.useClaudeHooks`
+    belongs to VS Code's older Local harness, not to this one. With
+    `zn hooks install claude-code --project` and Copilot set up too, one shell
+    call runs zn twice: both answer the same, and the check takes about twice as
+    long (measured with Copilot CLI, not in the VS Code app: 91 ms and 101 ms,
+    two Node.js starts, for one `cat .env` call, instead of one). Not a protection gap; `zn-gate check`
     says so and names the command that keeps one of them. Hooks in your user
     `~/.claude/settings.json` are not read by Copilot.
   - VS Code also has an older "Local" hook harness; its discovery and payloads
@@ -568,5 +572,5 @@ A tool that an adapter reports only as a generic file access (some Gemini CLI, C
 
 ## Not covered yet
 
-Hermes Agent and the Cursor CLI. GitHub Copilot CLI and Gemini CLI have experimental hooks (see their entries above). A proxy for outgoing
+Hermes Agent and the Cursor CLI. Gemini CLI has experimental hooks (see its entry above). A proxy for outgoing
 HTTP from `zn run` (for `curl`, `gh` or SDKs) is planned for a later release.

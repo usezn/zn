@@ -19,7 +19,7 @@
  *  - "Command and HTTP config-file userPromptSubmitted hooks have their output dropped, including modifiedPrompt"
  *    (same page, "userPromptSubmitted"): a typed prompt cannot be blocked from a hook file in VS Code or the CLI.
  *  - The Copilot harness also reads the repository .claude/settings(.local).json ("Cross-tool .claude/settings.json ...
- *    files in the repository are also read"; VS Code: "Claude settings files require chat.useClaudeHooks") and runs
+ *    files in the repository are also read"; no setting needed: chat.useClaudeHooks is for VS Code's older Local harness) and runs
  *    "Applicable hooks from multiple sources ... together", so zn set up for Claude Code with --project runs twice.
  *    `zn-gate check` says so.
  *

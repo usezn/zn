@@ -3,3 +3,4 @@
 
 ### Added
 - `zn-gate check` warns when the project's `.claude/settings.json` also holds zn's Claude Code hooks, because Copilot reads that file too and every call would be checked twice, and names the command that keeps one of them.
+- The setting `chat.useClaudeHooks` belongs to VS Code's older Local hook harness; the Copilot harness reads the repository's `.claude/settings(.local).json` without it. The docs and the `zn-gate check` note no longer say the double run depends on that setting. GitHub Copilot is now listed as the seventh supported agent (Gemini CLI stays experimental) in the READMEs, the editors page, the disclosure and the issue templates.
