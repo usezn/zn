@@ -1,0 +1,2 @@
+### Fixed
+- OpenCode: when a call is blocked because the hook could not start, zn-gate now tells apart a missing `zn` or Node.js from a folder OpenCode was started in that no longer exists. In the second case the message says to restart OpenCode from a folder that exists, not to reinstall. For a project install, the repair step now says to run `zn hooks install opencode --project` in that project's folder.
