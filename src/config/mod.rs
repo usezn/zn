@@ -752,28 +752,29 @@ impl ZnConfig {
             .map_err(|e| anyhow!("cannot write {}: {e}", path.display()))
     }
 
-    /// Load configuration from file with environment variable overrides
+    /// Load configuration from file with environment variable overrides.
+    ///
+    /// A file named with `--config` must exist and parse as JSON, otherwise
+    /// loading fails and names the file. Without `--config`, the first of
+    /// `zn.json`, `zn.config.json` and `.zn.json` that exists is used, and
+    /// the defaults apply when none does. Keys that zn does not know are
+    /// reported on stderr and otherwise ignored, so a newer file still loads.
     pub fn load(path: Option<&Path>) -> Result<Self> {
         let mut config = if let Some(p) = path {
-            if p.exists() {
-                let content = std::fs::read_to_string(p)?;
-                if p.extension().map(|e| e == "json").unwrap_or(false) {
-                    serde_json::from_str(&content)?
-                } else {
-                    // Default to JSON if extension is unknown
-                    serde_json::from_str(&content).unwrap_or_default()
-                }
-            } else {
-                Self::default()
+            if !p.exists() {
+                return Err(anyhow!(
+                    "Config file '{}' does not exist. Check the --config path, or leave --config out to use the defaults.",
+                    p.display()
+                ));
             }
+            Self::read_config_file(p)?
         } else {
             // Try to load from default locations
             let config_options = ["zn.json", "zn.config.json", ".zn.json"];
             let mut found = None;
             for option in config_options {
                 if Path::new(option).exists() {
-                    let content = std::fs::read_to_string(option)?;
-                    found = Some(serde_json::from_str(&content)?);
+                    found = Some(Self::read_config_file(Path::new(option))?);
                     break;
                 }
             }
@@ -781,21 +782,70 @@ impl ZnConfig {
         };
 
         // Override with environment variables
-        config.apply_env_overrides();
+        config.apply_env_overrides()?;
 
         Ok(config)
     }
 
+    /// Read and parse one config file, naming it in every error and warning.
+    fn read_config_file(p: &Path) -> Result<Self> {
+        let content = std::fs::read_to_string(p)
+            .map_err(|e| anyhow!("Cannot read config file '{}': {e}", p.display()))?;
+        let value: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|e| anyhow!("Config file '{}' is not valid JSON: {e}", p.display()))?;
+        for key in Self::unknown_keys(&value) {
+            eprintln!(
+                "Warning: unknown key '{key}' in config file '{}' (ignored).",
+                p.display()
+            );
+        }
+        serde_json::from_value(value)
+            .map_err(|e| anyhow!("Config file '{}' is not valid: {e}", p.display()))
+    }
+
+    /// Keys in a parsed config file that zn does not know, as dotted paths.
+    /// Sections that hold free-form maps are not descended into.
+    fn unknown_keys(file: &serde_json::Value) -> Vec<String> {
+        fn walk(
+            file: &serde_json::Value,
+            known: &serde_json::Value,
+            prefix: &str,
+            out: &mut Vec<String>,
+        ) {
+            let (Some(file), Some(known)) = (file.as_object(), known.as_object()) else {
+                return;
+            };
+            for (key, value) in file {
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                match known.get(key) {
+                    None => out.push(path),
+                    // An empty known object is a free-form map: any key is fine.
+                    Some(k) if k.as_object().is_some_and(|o| !o.is_empty()) => {
+                        walk(value, k, &path, out)
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        let mut out = Vec::new();
+        if let Ok(known) = serde_json::to_value(Self::default()) {
+            walk(file, &known, "", &mut out);
+        }
+        out
+    }
+
     /// Apply environment variable overrides
-    fn apply_env_overrides(&mut self) {
+    fn apply_env_overrides(&mut self) -> Result<()> {
         if let Ok(env) = std::env::var("ZN_ENV") {
             self.environment = env;
         }
 
         if let Ok(port) = std::env::var("ZN_PORT") {
-            if let Ok(p) = port.parse() {
-                self.server.port = p;
-            }
+            self.server.port = parse_port_env(&port)?;
         }
 
         // A blank key (for example `ZN_API_KEY=` from an unset compose
@@ -927,6 +977,8 @@ impl ZnConfig {
         if let Ok(nn_audit) = std::env::var("ZN_NEAREST_NEIGHBOR_AUDIT") {
             self.guardrails.nearest_neighbor_audit = nn_audit.parse().unwrap_or(true);
         }
+
+        Ok(())
     }
 
     /// Validate configuration
@@ -1010,6 +1062,76 @@ impl ZnConfig {
             4 => 0.4, // strict
             5 => 0.3, // paranoid
             _ => 0.5,
+        }
+    }
+}
+
+/// Parse `ZN_PORT`: a port number from 1 to 65535.
+fn parse_port_env(value: &str) -> Result<u16> {
+    match value.trim().parse::<u16>() {
+        Ok(p) if p > 0 => Ok(p),
+        _ => Err(anyhow!(
+            "ZN_PORT is '{value}', but it must be a port number from 1 to 65535. Fix or unset ZN_PORT."
+        )),
+    }
+}
+
+#[cfg(test)]
+mod load_error_tests {
+    use super::*;
+
+    fn temp_file(name: &str, content: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("zn-cfg-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("zn.json");
+        std::fs::write(&p, content).unwrap();
+        p
+    }
+
+    #[test]
+    fn a_missing_explicit_config_file_fails_and_names_it() {
+        let p = std::env::temp_dir().join("zn-cfg-does-not-exist.json");
+        let e = ZnConfig::load(Some(&p)).unwrap_err().to_string();
+        assert!(e.contains("zn-cfg-does-not-exist.json"), "{e}");
+    }
+
+    #[test]
+    fn a_config_file_that_is_not_json_fails_and_names_it() {
+        for (name, ext_file) in [("a", "zn.json"), ("b", "zn.conf")] {
+            let p = temp_file(name, "port = 1");
+            let q = p.with_file_name(ext_file);
+            std::fs::rename(&p, &q).unwrap();
+            let e = ZnConfig::load(Some(&q)).unwrap_err().to_string();
+            assert!(e.contains(ext_file) && e.contains("not valid JSON"), "{e}");
+        }
+    }
+
+    #[test]
+    fn unknown_keys_are_listed_but_do_not_fail_the_load() {
+        let v: serde_json::Value = serde_json::from_str(
+            r#"{"environment":"production","colour":1,"server":{"port":9000,"prot":1}}"#,
+        )
+        .unwrap();
+        let mut keys = ZnConfig::unknown_keys(&v);
+        keys.sort();
+        assert_eq!(keys, vec!["colour".to_string(), "server.prot".to_string()]);
+        let p = temp_file("c", &v.to_string());
+        let c = ZnConfig::read_config_file(&p).unwrap();
+        assert_eq!(c.server.port, 9000);
+    }
+
+    #[test]
+    fn known_keys_of_the_default_config_are_not_reported() {
+        let v = serde_json::to_value(ZnConfig::default()).unwrap();
+        assert!(ZnConfig::unknown_keys(&v).is_empty());
+    }
+
+    #[test]
+    fn zn_port_must_be_a_port_number() {
+        assert_eq!(parse_port_env("8080").unwrap(), 8080);
+        for bad in ["", "abc", "0", "70000", "-1"] {
+            let e = parse_port_env(bad).unwrap_err().to_string();
+            assert!(e.contains("ZN_PORT"), "{e}");
         }
     }
 }
