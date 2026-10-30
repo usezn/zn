@@ -171,6 +171,12 @@ add('{ rm -rf ./build; }', 'if true; then rm -rf ./build; fi', 'while true; do r
   'if true; then cd build && rm -rf .; fi', '{ cd ~ && rm -rf .cache; }', 'if test -d ~; then ls ~; fi', 'if true; then echo then rm -rf ~; fi', 'echo do rm -rf ~',
   'echo `date`', 'x=`ls ~`', 'echo "`pwd`"', 'echo `rm -rf ./build`', 'echo `cd build && rm -rf .`', "echo '`rm -rf ~`'", 'echo \\`rm -rf ~\\`', 'echo `echo hi`; rm -rf ./build');
 
+// A folder change that is not a cd (env -C, env --chdir, sudo -D, sudo --chdir) and a nested shell that starts in the folder reached so far: project folders stay allowed.
+add('env -C ~/projects/app rm -rf .', 'env --chdir=build rm -rf .', 'sudo -D /tmp/build rm -rf .', 'sudo -D ~/projects rm -rf build', 'env -C / ls .', 'env -C ~ rm -rf .cache', 'env -C ~ ls -la',
+  'env -C ~/projects/app sh -c "rm -rf ."', 'env -C ~ sh -c "rm -rf .cache"', 'sudo --chdir=/var/tmp/build rm -rf .', 'env -C ~/projects/app find . -delete', 'sudo -D /srv/app chmod -R 755 .',
+  'cd ~/projects && sh -c "cd app && rm -rf ."', 'cd ~/projects && env -C app rm -rf .', 'cd ~/projects && sh -c "rm -rf build"', 'cd ~/projects/app && sh -c "cd ../lib && rm -rf ."',
+  'cd ~/projects && sh -c "cd .. && ls ."', 'cd ~/projects && env -C ../other rm -rf .', 'env -C / true && rm -rf ./build');
+
 /* ------------------------------ risky ------------------------------ */
 const risky = [];
 const seen = new Set();
@@ -230,6 +236,8 @@ for (const t of ['~', '/', '$HOME', '/etc', '/home/alice']) {
   addRisk('rm_root_home', '! ! rm -rf ' + t);
   addRisk('rm_root_home', 'sudo ! rm -rf ' + t);
 }
+addRisk('rm_root_home', '! '.repeat(40) + 'rm -rf ~');
+addRisk('rm_root_home', 'A=1 '.repeat(40) + 'rm -rf ~');
 addRisk('rm_root_home', '{ cd ~; rm -rf .; }');
 addRisk('rm_root_home', 'if true; then cd / && find . -delete; fi');
 addRisk('perm_root', 'if true; then chmod -R 777 /; fi');
@@ -244,6 +252,30 @@ for (const t of ['~', '/', '$HOME', '/etc', '/home/alice']) {
 addRisk('rm_root_home', 'echo `cd ~; rm -rf .`');
 addRisk('rm_root_home', 'echo `echo \\`rm -rf ~\\``');
 addRisk('disk_overwrite', 'echo `dd if=/dev/zero of=/dev/sda`');
+// env -C / --chdir and sudo -D / --chdir move the command to that folder: "." and relative targets are that folder.
+for (const d of ['~', '/', '$HOME', '/etc', '/home/alice', '/usr/']) {
+  for (const w of ['env -C ' + d, 'env --chdir=' + d, 'env --chdir ' + d, 'env -iC ' + d, 'env -C' + d, 'env FOO=1 -C ' + d, 'sudo -D ' + d, 'sudo --chdir=' + d, 'sudo --chdir ' + d, 'sudo -u root -D ' + d, 'sudo -D' + d, 'sudo env -C ' + d, 'env -C ' + d + ' nice']) {
+    addRisk('rm_root_home', w + ' rm -rf .');
+  }
+  addRisk('rm_root_home', 'env -C ' + d + ' rm -rf *');
+  addRisk('rm_root_home', 'env -C ' + d + ' find . -delete');
+  addRisk('rm_root_home', 'sudo -D ' + d + ' find -delete');
+  addRisk('rm_root_home', 'env -C ' + d + ' sh -c "rm -rf ."');
+  addRisk('rm_root_home', 'sudo -D ' + d + ' bash -c "rm -rf *"');
+}
+addRisk('perm_root', 'sudo -D / chmod -R 777 .');
+addRisk('perm_root', 'env -C /etc chmod -R 777 .');
+addRisk('rm_root_home', 'env -C ~/projects/.. rm -rf .');
+addRisk('rm_root_home', 'env -C /home/alice/work/../.. rm -rf .');
+addRisk('rm_root_home', 'cd ~/projects && env -C .. rm -rf .');
+addRisk('rm_root_home', 'cd /usr/local && sudo -D ../.. rm -rf .');
+// A nested shell starts in the folder the command line has reached, protected or not.
+addRisk('rm_root_home', 'cd ~/projects && sh -c "cd .. && rm -rf ."');
+addRisk('rm_root_home', 'cd /home/alice/work && sh -c "cd ../.. && rm -rf ."');
+addRisk('rm_root_home', 'cd /usr/local && bash -lc "cd ../.. && rm -rf ."');
+addRisk('rm_root_home', 'cd ~/projects && eval "cd .. && rm -rf ."');
+addRisk('rm_root_home', 'cd ~/projects && bash -c "sh -c \\"cd .. && rm -rf .\\""');
+addRisk('rm_root_home', 'cd ~/projects && env -C .. sh -c "rm -rf ."');
 // "." and ".." segments that resolve to the home folder or the root (lexically; example paths only).
 for (const t of ['/home/alice/..', '/home/alice/../..', '/home/alice/project/../..', '/home/alice/./project/../', '/Users/bob/project/..', '/usr/..', '/usr/../*', '/etc/../etc/..', '/..', '/../..', '/home/../', '/tmp/../',
   '~/project/..', '~/./', '~/..', '$HOME/project/..', '"$HOME/project/.."', '${HOME}/a/b/../..', '$HOME/../alice', '//home//alice//project//..', 'C:/Users/alice/project/..', 'C:/Users/alice/..', 'C:/..', 'C:\\Users\\alice\\project\\..']) {

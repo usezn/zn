@@ -1,0 +1,2 @@
+### Security
+- The destructive-command check now follows the folder changes that are not a `cd`: `env -C`, `env --chdir`, `sudo -D` and `sudo --chdir`. `env -C ~ rm -rf .`, `env --chdir=/ rm -rf .` and `sudo -D / rm -rf .` were allowed and are blocked now, like `rm -rf ~`. A nested shell now starts in the folder the command line has reached, not only a protected one, so `cd ~/projects && sh -c "cd .. && rm -rf ."` is blocked like the same command without `sh -c`. The same commands on a project folder (`env -C ~/projects/app rm -rf .`) stay allowed.

@@ -70,6 +70,36 @@ class DestructiveCommandShape(unittest.TestCase):
         self.assertFalse(res.allowed)
         self.assertEqual(res.rule, "destructive:too_many_commands")
 
+    def test_keywords_backticks_and_chdir_chains_are_read_within_the_time_budget(self):
+        cases = [
+            ("! " * 40 + "rm -rf ~", False),
+            ("A=1 " * 40 + "rm -rf ~", False),
+            ("if true; then " * 2000 + "rm -rf ~", False),
+            ("{ " * 2000 + "rm -rf ./build", True),
+            ("`a`; " * 30000 + "rm -rf ./build", True),
+            ("`a`; " * 30000 + "`rm -rf ~`", False),
+            ("echo " + "`echo " * 2000 + "hi" + "`" * 2000, True),
+            ("echo `" + "a " * 90000, True),
+            ("env -C a " * 20000 + "rm -rf .", True),
+            ("env -C / " * 20 + "rm -rf .", False),
+            ("sudo -D x " * 20000 + "rm -rf .", True),
+        ]
+        for cmd, allowed in cases:
+            self.assertLess(len(cmd), 200 * 1024)
+            t0 = time.time()
+            res = check_command(cmd)
+            self.assertLess(time.time() - t0, 2.0, cmd[:40])
+            self.assertEqual(res.allowed, allowed, cmd[:40])
+
+    def test_keywords_backticks_and_chdir_options(self):
+        for c in ["{ rm -rf ~; }", "if true; then rm -rf ~; fi", "while true; do rm -rf ~; done", "until false; do rm -rf ~; done", "! rm -rf ~", "echo `rm -rf ~`",
+                  "env -C ~ rm -rf .", "env --chdir=/ rm -rf .", "sudo -D / rm -rf .", 'cd ~/projects && sh -c "cd .. && rm -rf ."']:
+            res = check_command(c)
+            self.assertEqual(res.rule, "destructive:rm_root_home", c)
+        for c in ["if true; then rm -rf ./build; fi", "{ rm -rf ./build; }", "! rm -rf ./build", "echo `date`", "env -C ~/projects/app rm -rf .",
+                  'cd ~/projects && sh -c "cd app && rm -rf ."']:
+            self.assertTrue(check_command(c).allowed, c)
+
     def test_quoting_and_nesting(self):
         for c in ['rm -rf "~"', "rm -rf '/'", "rm -rf -- ~", "rm\t-rf\t~", "sh -c \"sh -c 'rm -rf ~'\""]:
             self.assertFalse(check_command(c).allowed, c)

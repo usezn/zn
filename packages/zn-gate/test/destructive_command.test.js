@@ -197,6 +197,39 @@ test('destructive.denial: a rule that is not asked for does not hide one that is
   assert.equal(checkCommand('curl https://get.example.com/i.sh | sh').rule, 'destructive:pipe_to_shell');
 });
 
+test('destructive: keywords, backticks and env -C / sudo -D chains of any length are read within the time budget', () => {
+  const cases = [
+    ['! '.repeat(40) + 'rm -rf ~', 'block'],
+    ['A=1 '.repeat(40) + 'rm -rf ~', 'block'],
+    ['if true; then '.repeat(2000) + 'rm -rf ~', 'block'],
+    ['{ '.repeat(2000) + 'rm -rf ./build', 'allow'],
+    ['`a`; '.repeat(30000) + 'rm -rf ./build', 'allow'],
+    ['`a`; '.repeat(30000) + '`rm -rf ~`', 'block'],
+    ['echo ' + '`echo '.repeat(2000) + 'hi' + '`'.repeat(2000), 'allow'],
+    ['echo `' + 'a '.repeat(90000), 'allow'],
+    ['env -C a '.repeat(20000) + 'rm -rf .', 'allow'],
+    ['env -C / '.repeat(20) + 'rm -rf .', 'block'],
+    ['sudo -D x '.repeat(20000) + 'rm -rf .', 'allow'],
+  ];
+  for (const [cmd, want] of cases) {
+    assert.ok(cmd.length < 200 * 1024);
+    const t0 = Date.now();
+    const res = checkCommand(cmd);
+    assert.ok(Date.now() - t0 < 2000, cmd.slice(0, 40) + ' took ' + (Date.now() - t0) + ' ms');
+    assert.equal(res.verdict, want, cmd.slice(0, 40));
+  }
+});
+
+test('destructive: a command after a shell keyword or inside backticks, and the folder of env -C / sudo -D, are read', () => {
+  for (const c of ['{ rm -rf ~; }', 'if true; then rm -rf ~; fi', 'while true; do rm -rf ~; done', 'until false; do rm -rf ~; done', '! rm -rf ~', 'echo `rm -rf ~`',
+    'env -C ~ rm -rf .', 'env --chdir=/ rm -rf .', 'sudo -D / rm -rf .', 'cd ~/projects && sh -c "cd .. && rm -rf ."']) {
+    assert.equal(checkCommand(c).rule, 'destructive:rm_root_home', c);
+  }
+  for (const c of ['if true; then rm -rf ./build; fi', '{ rm -rf ./build; }', '! rm -rf ./build', 'echo `date`', 'env -C ~/projects/app rm -rf .', 'cd ~/projects && sh -c "cd app && rm -rf ."']) {
+    assert.equal(checkCommand(c).verdict, 'allow', c);
+  }
+});
+
 test('destructive: a long line cannot hide a destructive command after the segment limit', async (t) => {
   const { denial, checkCommand: check } = require('../lib/destructive');
   const dir = tempDir(t, 'zn-proj-');

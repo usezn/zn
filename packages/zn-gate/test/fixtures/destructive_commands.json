@@ -120,8 +120,14 @@
   "cd ~ && rm -rf .cache",
   "cd ~ && rm -rf projects/old-app/build",
   "cd ~ | rm -rf .",
+  "cd ~/projects && env -C ../other rm -rf .",
+  "cd ~/projects && env -C app rm -rf .",
+  "cd ~/projects && sh -c \"cd .. && ls .\"",
+  "cd ~/projects && sh -c \"cd app && rm -rf .\"",
+  "cd ~/projects && sh -c \"rm -rf build\"",
   "cd ~/projects/app && find . -delete",
   "cd ~/projects/app && rm -rf .",
+  "cd ~/projects/app && sh -c \"cd ../lib && rm -rf .\"",
   "chgrp -R staff ./shared",
   "chmod +x script.sh",
   "chmod -R 755 ./dist",
@@ -409,6 +415,15 @@
   "echo test > /dev/tty",
   "echo use `iwr` | cat",
   "echo ~",
+  "env --chdir=build rm -rf .",
+  "env -C / ls .",
+  "env -C / true && rm -rf ./build",
+  "env -C ~ ls -la",
+  "env -C ~ rm -rf .cache",
+  "env -C ~ sh -c \"rm -rf .cache\"",
+  "env -C ~/projects/app find . -delete",
+  "env -C ~/projects/app rm -rf .",
+  "env -C ~/projects/app sh -c \"rm -rf .\"",
   "env CI=1 rm --recursive --force .gradle build",
   "env CI=1 rm --recursive --force .tox build",
   "env CI=1 rm --recursive --force .turbo .venv",
@@ -964,6 +979,10 @@
   "source ~/.zshrc",
   "ssh deploy@203.0.113.5 \"systemctl restart app\"",
   "stat -c %a file",
+  "sudo --chdir=/var/tmp/build rm -rf .",
+  "sudo -D /srv/app chmod -R 755 .",
+  "sudo -D /tmp/build rm -rf .",
+  "sudo -D ~/projects rm -rf build",
   "sudo -u postgres psql -c \"select 1\"",
   "sudo apt-get remove -y example-pkg",
   "sudo apt-get update && sudo apt-get install -y build-essential",
@@ -1689,7 +1708,15 @@
    "rule": "perm_root"
   },
   {
+   "cmd": "env -C /etc chmod -R 777 .",
+   "rule": "perm_root"
+  },
+  {
    "cmd": "if true; then chmod -R 777 /; fi",
+   "rule": "perm_root"
+  },
+  {
+   "cmd": "sudo -D / chmod -R 777 .",
    "rule": "perm_root"
   },
   {
@@ -3037,6 +3064,10 @@
    "rule": "rc_download"
   },
   {
+   "cmd": "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! rm -rf ~",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "! ! rm -rf $HOME",
    "rule": "rm_root_home"
   },
@@ -3090,6 +3121,10 @@
   },
   {
    "cmd": "(cd ~ && rm -rf .)",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 A=1 rm -rf ~",
    "rule": "rm_root_home"
   },
   {
@@ -3485,6 +3520,10 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "cd /home/alice/work && sh -c \"cd ../.. && rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "cd /home/alice; rm -rf .",
    "rule": "rm_root_home"
   },
@@ -3566,6 +3605,14 @@
   },
   {
    "cmd": "cd /usr/; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /usr/local && bash -lc \"cd ../.. && rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd /usr/local && sudo -D ../.. rm -rf .",
    "rule": "rm_root_home"
   },
   {
@@ -3661,6 +3708,10 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "cd ~/projects && bash -c \"sh -c \\\"cd .. && rm -rf .\\\"\"",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "cd ~/projects && cd .. && rm -rf .",
    "rule": "rm_root_home"
   },
@@ -3670,6 +3721,22 @@
   },
   {
    "cmd": "cd ~/projects && cd ..; rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && env -C .. rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && env -C .. sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && eval \"cd .. && rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "cd ~/projects && sh -c \"cd .. && rm -rf .\"",
    "rule": "rm_root_home"
   },
   {
@@ -3773,6 +3840,230 @@
    "rule": "rm_root_home"
   },
   {
+   "cmd": "env --chdir $HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir / rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir /etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir /home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir /usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir ~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir=$HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir=/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir=/etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir=/home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir=/usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env --chdir=~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C $HOME find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C $HOME nice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C $HOME rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C $HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C $HOME sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C / find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C / nice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C / rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C / rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C / sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /etc find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /etc nice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /etc rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /etc sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /home/alice find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /home/alice nice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /home/alice rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /home/alice sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /home/alice/work/../.. rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /usr/ find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /usr/ nice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /usr/ rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C /usr/ sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C ~ find . -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C ~ nice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C ~ rm -rf *",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C ~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C ~ sh -c \"rm -rf .\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C ~/projects/.. rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C$HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C/etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C/home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C/usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -C~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iC $HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iC / rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iC /etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iC /home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iC /usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env -iC ~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "env CI=1 rm -Rf /System",
    "rule": "rm_root_home"
   },
@@ -3814,6 +4105,30 @@
   },
   {
    "cmd": "env CI=1 rm -rfv /home",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env FOO=1 -C $HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env FOO=1 -C / rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env FOO=1 -C /etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env FOO=1 -C /home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env FOO=1 -C /usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "env FOO=1 -C ~ rm -rf .",
    "rule": "rm_root_home"
   },
   {
@@ -4522,6 +4837,198 @@
   },
   {
    "cmd": "sudo $'\\x72m' -rf /",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir $HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir / rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir /etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir /home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir /usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir ~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir=$HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir=/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir=/etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir=/home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir=/usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo --chdir=~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D $HOME bash -c \"rm -rf *\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D $HOME find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D $HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D / bash -c \"rm -rf *\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D / find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D / rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /etc bash -c \"rm -rf *\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /etc find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /home/alice bash -c \"rm -rf *\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /home/alice find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /usr/ bash -c \"rm -rf *\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /usr/ find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D /usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D ~ bash -c \"rm -rf *\"",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D ~ find -delete",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D ~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D$HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D/etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D/home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D/usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -D~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -u root -D $HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -u root -D / rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -u root -D /etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -u root -D /home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -u root -D /usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo -u root -D ~ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo env -C $HOME rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo env -C / rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo env -C /etc rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo env -C /home/alice rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo env -C /usr/ rm -rf .",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "sudo env -C ~ rm -rf .",
    "rule": "rm_root_home"
   },
   {

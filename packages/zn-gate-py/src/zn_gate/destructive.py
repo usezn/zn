@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-30.1"
+COMMAND_RULES_VERSION = "2026-10-30.2"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -352,24 +352,55 @@ def _backtick_code(text: str) -> str:
     return "\n".join(bodies)
 
 
-def _unwrap(args: List[str]) -> List[str]:
+def _join_dir(prev: Optional[str], nxt: Optional[str]) -> Optional[str]:
+    """The folder a chdir option sets (env -C, sudo -D), as written, joined to the one set before it by another wrapper:
+    an anchored word wins, a relative one follows the earlier one."""
+    if not nxt:
+        return prev
+    if prev is None or _ANCHORED_RE.match(nxt):
+        return nxt
+    return prev + "/" + nxt
+
+
+def _in_dir(known: Optional[str], d: Optional[str]) -> Optional[str]:
+    """The folder a command runs in when it is wrapped in env -C / sudo -D: d is read from the folder known (None = unknown)."""
+    if d is None:
+        return known
+    if _ANCHORED_RE.match(d):
+        return d
+    return None if known is None else known + "/" + d
+
+
+def _unwrap_dir(args: List[str]) -> Tuple[List[str], Optional[str]]:
+    """The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...) and shell
+    keywords, with the folder an env -C / --chdir or sudo -D / --chdir option moves to (None when there is none)."""
     i = 0
     guard = 0
+    chdir: Optional[str] = None
     while guard < 32 and i < len(args):
         guard += 1
+        # Assignments and keywords can repeat without limit (! ! ! rm -rf ~): they are skipped, not counted as wrappers.
+        while i < len(args) and (_ASSIGN_RE.match(args[i]) or args[i] in _SHELL_KEYWORDS):
+            i += 1
+        if i >= len(args):
+            break
         a = args[i]
-        if _ASSIGN_RE.match(a):
-            i += 1
-            continue
-        if a in _SHELL_KEYWORDS:
-            i += 1
-            continue
         name = _program_name(a)
         if name in ("sudo", "doas"):
             i += 1
             while i < len(args) and args[i].startswith("-"):
                 f = args[i]
                 i += 1
+                if f in ("-D", "--chdir"):
+                    chdir = _join_dir(chdir, args[i] if i < len(args) else None)
+                    i += 1
+                    continue
+                if re.match(r"^-D.", f):
+                    chdir = _join_dir(chdir, f[2:])
+                    continue
+                if f.startswith("--chdir="):
+                    chdir = _join_dir(chdir, f[8:])
+                    continue
                 if f in _SUDO_ARG_FLAGS:
                     i += 1
             continue
@@ -378,7 +409,19 @@ def _unwrap(args: List[str]) -> List[str]:
             while i < len(args) and (args[i].startswith("-") or _ASSIGN_RE.match(args[i])):
                 f = args[i]
                 i += 1
-                if f in ("-u", "-C", "-S"):
+                if not f.startswith("-"):
+                    continue
+                if f == "--chdir" or re.match(r"^-[A-Za-z]*C\Z", f):
+                    chdir = _join_dir(chdir, args[i] if i < len(args) else None)
+                    i += 1
+                    continue
+                if f.startswith("--chdir="):
+                    chdir = _join_dir(chdir, f[8:])
+                    continue
+                if re.match(r"^-C.", f):
+                    chdir = _join_dir(chdir, f[2:])
+                    continue
+                if f in ("-u", "-S"):
                     i += 1
             continue
         if name in ("command", "exec", "nohup", "time", "builtin", "setsid"):
@@ -401,7 +444,12 @@ def _unwrap(args: List[str]) -> List[str]:
             i += 1
             continue
         break
-    return args[i:]
+    return args[i:], chdir
+
+
+def _unwrap(args: List[str]) -> List[str]:
+    """The words of a command after wrappers and shell keywords."""
+    return _unwrap_dir(args)[0]
 
 
 def _resolve_dots(t: str) -> str:
@@ -634,8 +682,13 @@ def _from_cwd(cwd: Optional[str], word: str) -> str:
     return cwd + "/" + word
 
 
-def _check_simple(words: List[str], depth: int, cwd: Optional[str] = None) -> Optional[str]:
-    args = _unwrap(words)
+def _check_simple(words: List[str], depth: int, cwd: Optional[str] = None, known: Optional[str] = None) -> Optional[str]:
+    args, chdir = _unwrap_dir(words)
+    if known is None:
+        known = cwd
+    if chdir is not None:
+        known = _in_dir(known, chdir)
+        cwd = known if known is not None and _dangerous_path(known) else None
     if not args:
         return None
     head = _program_name(args[0])
@@ -657,7 +710,7 @@ def _check_simple(words: List[str], depth: int, cwd: Optional[str] = None) -> Op
         if k >= 0:
             code = " ".join(rest[k + 1:])
     if code is not None and depth < _MAX_DEPTH:
-        hit = _analyze(code, depth + 1, cwd)
+        hit = _analyze(code, depth + 1, known)
         if hit:
             return hit
 
@@ -820,15 +873,16 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
 
 
 def _check_segments(
-    segs: List[Tuple[List[str], Optional[str]]], depth: int, cwd0: Optional[str] = None
+    segs: List[Tuple[List[str], Optional[str]]], depth: int, known0: Optional[str] = None
 ) -> Optional[str]:
-    """cwd0 is the folder a cd or pushd earlier in the same command line moved to, kept only while it is a protected one
-    (home, the root, a system folder). A cd inside a pipeline or a background command runs in a subshell and does not count."""
+    """known0 is the folder a cd or pushd earlier in the same command line (or the shell that runs this one) moved to, as
+    text, or None when unknown. Relative targets are read from it only while it is a protected one (home, the root, a
+    system folder). A cd inside a pipeline or a background command runs in a subshell and does not count."""
     pipe: List[Tuple[List[str], Optional[str]]] = []
-    known = cwd0  # the folder as text, or None when unknown
-    cwd = cwd0  # the same, only while it is protected
+    known = known0  # the folder as text, or None when unknown
+    cwd = known if known is not None and _dangerous_path(known) else None  # the same, only while it is protected
     for words, sep in segs:
-        hit = _check_simple(words, depth, cwd)
+        hit = _check_simple(words, depth, cwd, known)
         if hit:
             return hit
         if sep not in ("|", "|&", "&"):
@@ -845,7 +899,7 @@ def _check_segments(
     return _check_pipeline(pipe) if pipe else None
 
 
-def _analyze(cmd: str, depth: int = 0, cwd: Optional[str] = None) -> Optional[str]:
+def _analyze(cmd: str, depth: int = 0, known: Optional[str] = None) -> Optional[str]:
     text = str(cmd)
     if len(text) > _MAX_CHARS:
         return _OVERFLOW
@@ -868,26 +922,26 @@ def _analyze(cmd: str, depth: int = 0, cwd: Optional[str] = None) -> Optional[st
     if _PS_DISK_RE.search(bare):
         return "disk_overwrite"
     segs, truncated = _segments_of(text)
-    hit = _check_segments(segs, depth, cwd)
+    hit = _check_segments(segs, depth, known)
     if hit:
         return hit
     # A command substitution in backticks runs its text as commands (echo `rm -rf ~`); read them like a sh -c string.
     if depth < _MAX_DEPTH and "`" in text:
         inner = _backtick_code(text)
-        inner_hit = _analyze(inner, depth + 1, cwd) if inner else None
+        inner_hit = _analyze(inner, depth + 1, known) if inner else None
         if inner_hit:
             return inner_hit
     # POSIX reading: an unquoted backslash escapes the next character and is removed (r\m, cu\rl, .bash\rc). The Windows
     # reading above keeps it as a path separator and runs first, so this one only adds blocks: any rule it hits counts.
     if "\\" in text:
-        posix_hit = _check_segments(_segments_of(text, True)[0], depth, cwd)
+        posix_hit = _check_segments(_segments_of(text, True)[0], depth, known)
         if posix_hit:
             return posix_hit
     # ANSI-C quoting: bash reads $'\x63url' as curl. The words are decoded the way bash does, then read again; as above,
     # this reading only adds a block, and only for the rules that name a program, a file or a path ($'\x73h',
     # $'.bash\x72c', $'\x72m' -rf $'\x7e').
     if "$'" in text:
-        ansi_hit = _check_segments(_segments_of(_decode_ansi_c(text), True)[0], depth, cwd)
+        ansi_hit = _check_segments(_segments_of(_decode_ansi_c(text), True)[0], depth, known)
         if ansi_hit in ("pipe_to_shell", "rc_download", "rm_root_home"):
             return ansi_hit
     # Fail closed: never allow a line whose tail was not read.
