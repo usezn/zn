@@ -241,6 +241,10 @@ async function runLogExport(args) {
     // The vault verified these exact bytes; the export read the file again. A different answer means the log changed in between.
     const sameBytes = (res) => {
       if (unverified || (res.fileSha256 === r.sha256 && res.fileBytes === r.bytes)) return;
+      // A vault started by an older version answers without the hash of what it checked.
+      if (r.sha256 === undefined) {
+        throw new Error('Not exported: the running vault is from an older version of zn-gate and cannot confirm which bytes it verified. Run `' + znCommand('lock') + '`, then `' + znCommand('unlock') + '`, and export again. Nothing from this run should be used.');
+      }
       throw new Error('Not exported: the audit log changed after the vault verified it (a new record may have been written), so this copy is not the verified log. Nothing from this run should be used; run the export again.');
     };
     const warn = () => {

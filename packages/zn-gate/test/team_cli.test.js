@@ -548,6 +548,30 @@ test('log export --out on an existing 0644 file leaves a 0600 file', async () =>
   assert.strictEqual(fs.statSync(out).mode & 0o777, 0o600);
 });
 
+test('log export with an unlocked vault and no audit log yet exports 0 records', async () => {
+  const auditFile = store.paths().auditFile;
+  fs.rmSync(auditFile, { force: true });
+  fake.isUnlocked = async () => true;
+  fake.auditExport = async () => ({ ok: true, records: 0, sha256: crypto.createHash('sha256').update('').digest('hex'), bytes: 0 });
+  const out = path.join(HOME, 'empty-out.jsonl');
+  const r = await capture(() => runLogExport(['--otlp', '--out', out]));
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stderr, /^Exported 0 records to /);
+  assert.ok(fs.existsSync(out));
+});
+
+test('log export with a vault from an older version (no sha256) says to lock and unlock', async () => {
+  writeAudit([rec(1, new Date().toISOString())]);
+  fake.isUnlocked = async () => true;
+  fake.auditExport = async () => ({ ok: true, records: 1 });
+  const out = path.join(HOME, 'old-daemon-out.jsonl');
+  const r = await capture(() => runLogExport(['--otlp', '--out', out]));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /older version of zn-gate/);
+  assert.match(r.stderr, /lock/);
+  assert.ok(!fs.existsSync(out));
+});
+
 test('log export with an unlocked vault: the file must be the one that was verified', async () => {
   writeAudit([rec(1, new Date().toISOString())]);
   const auditFile = store.paths().auditFile;

@@ -203,3 +203,17 @@ test('verify reports the sha256 and size of the bytes it checked; the export rep
   fs.appendFileSync(file, '{"x":1}\n');
   assert.notStrictEqual(otel.exportAuditStream({ auditFile: file }, () => {}).fileSha256, sha);
 });
+
+test('verify with hash on a missing log reports the empty input', (t) => {
+  const dir = tempDir(t, 'zn-stream-');
+  const file = path.join(dir, 'audit.jsonl');
+  const v = audit.verify({ file, key: KEY, hash: true });
+  assert.strictEqual(v.ok, true);
+  assert.strictEqual(v.records, 0);
+  assert.strictEqual(v.sha256, crypto.createHash('sha256').update('').digest('hex'));
+  assert.strictEqual(v.bytes, 0);
+  const otel = require('../lib/team/otel');
+  const x = otel.exportAuditStream({ auditFile: file }, () => {});
+  assert.strictEqual(x.fileSha256, v.sha256);
+  assert.strictEqual(x.fileBytes, 0);
+});

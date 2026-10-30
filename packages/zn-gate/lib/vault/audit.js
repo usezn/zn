@@ -238,7 +238,9 @@ function verify(opts) {
     return false;
   }, { chunkSize: o.chunkSize, maxLine: o.maxLine, onChunk: (b, n) => { fileHash.update(b.subarray(0, n)); fileBytes += n; } });
   if (!exists) {
-    return cp ? { ok: false, records: 0, error: 'log truncated (vault expects ' + cp.seq + ' records)' } : { ok: true, records: 0 };
+    if (cp) return { ok: false, records: 0, error: 'log truncated (vault expects ' + cp.seq + ' records)' };
+    // No log yet (a vault that has not written a record): with opts.hash the checked bytes are the empty input.
+    return o.hash === true ? { ok: true, records: 0, sha256: fileHash.digest('hex'), bytes: 0 } : { ok: true, records: 0 };
   }
   if (failure) return failure;
   if (cp && seq < cp.seq) {
