@@ -71,7 +71,15 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   its hook is blocking tool calls and prompts: zn-gate changed since the hooks were installed (<path> no longer matches the launcher), so zn will not run it
   ```
 
-  `npm update -g zn-gate` refreshes the launchers by itself (a short install step), so you normally never see this after an update. You see it if the file was edited, or if the update ran with `--ignore-scripts`. Run `zn hooks install <agent>` again in your own terminal to record the new files.
+  `npm update -g zn-gate` refreshes the launchers by itself (a short install step), so you normally never see this after an update. You see it if the file was edited, or if the update ran with `--ignore-scripts` or with bun (which skip it). Run `zn hooks install <agent>` again in your own terminal to record the new files.
+
+  pnpm also skips the install step but keeps the previous version's folder, so there the hooks keep running the previous version's runner (with its older rules) and the check stays **OK**, with a note on that agent's line:
+
+  ```text
+  the hooks run zn-gate <old version>, older than this zn-gate <version>: run `zn hooks install <agent>` to use the new one
+  ```
+
+  Run `zn hooks install <agent>` again in your own terminal to switch to the new version.
 
   The first form usually happens after you removed or upgraded Node.js with a version manager such as nvm: the old Node.js took its copy of zn-gate with it. The repair is:
 

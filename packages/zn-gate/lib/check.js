@@ -703,6 +703,24 @@ function bare(s) {
 
 const RULES_FIX = 'install zn-gate again: run `npm install -g zn-gate` in your own terminal, then run `zn-gate check` again';
 const PLUGIN_REINSTALL = 'install the plugin again: run `claude plugin uninstall zn-gate@usezn`, then `claude plugin install zn-gate@usezn`, in your own terminal, then run `zn-gate check` again';
+/* The version of the zn-gate whose runner a launcher recorded, when it is not the zn-gate running this check (for
+   example a versioned `.pnpm/zn-gate@1.0.0` folder that pnpm left behind): that version, else ''. */
+function olderRunnerVersion(runner) {
+  try {
+    const real = (p) => fs.realpathSync(p);
+    if (real(runner) === real(path.join(__dirname, 'hooks', 'runner.js'))) return '';
+    let version = '';
+    for (let dir = path.dirname(real(runner)), i = 0; i < 6; i++, dir = path.dirname(dir)) {
+      let pkg = null;
+      try { pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')); } catch (err) { /* not here */ }
+      if (pkg && pkg.name === 'zn-gate') { version = typeof pkg.version === 'string' ? pkg.version : ''; break; }
+    }
+    if (!/^\d+\.\d+\.\d+/.test(version)) return '';
+    const current = require('../package.json').version;
+    return require('./init-guide')._internal.cmp(version, current) < 0 ? version : '';
+  } catch (err) { return ''; }
+}
+
 const REINSTALL = (id) => 'install zn-gate again for the Node.js you use now: run `npm install -g zn-gate`, then `zn hooks install ' + id + '`, in your own terminal';
 
 /* Absolute path of `name`, searched only in absolute PATH entries; null when there is none. */
@@ -785,6 +803,8 @@ function cliHooks(spec, ctx, userFile, given) {
       out.problem = 'its hook cannot start: its ' + (isFile(cmd.node) ? 'zn-gate files (' + cmd.runner + ')' : 'Node.js (' + cmd.node + ')') + ' is no longer there, so zn now blocks the tool calls and prompts instead of checking them';
       out.fix = REINSTALL(spec.id);
     } else {
+      const older = recorded ? olderRunnerVersion(cmd.runner) : '';
+      if (older) out.notes.push('the hooks run zn-gate ' + older + ', older than this zn-gate ' + require('../package.json').version + ': run `zn hooks install ' + spec.id + '` to use the new one');
       if (viaPath) out.notes.push('the Node.js zn was installed with is gone; the hook now runs `zn` from your PATH. Run `zn hooks install ' + spec.id + '` to set it up again');
       // Run it with the PATH check was given, which is what decides whether `zn` and `node` are found.
       // Windows cannot run a .sh file directly; Claude Code runs it with sh (Git Bash) there.
