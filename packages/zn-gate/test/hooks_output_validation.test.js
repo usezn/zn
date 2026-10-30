@@ -20,7 +20,9 @@ const { tempDir } = require('./helpers/tmp');
 const ROOT = path.resolve(__dirname, '..');
 const CLI = path.join(ROOT, 'bin', 'cli.js');
 const RUNNER = path.join(ROOT, 'lib', 'hooks', 'runner.js');
-const posix = process.platform !== 'win32';
+const EPIPE_ON_WINDOWS = 'fails on Windows today: the launcher does not block the call when the answer of the runner cannot be written (EPIPE); not fixed yet';
+const TERM_ON_WINDOWS = 'fails on Windows today: a TERM sent to the launcher does not get the block answer and the cleanup this test expects; not fixed yet';
+const { hasPosixSh: posix, skipUnlessPosixSh } = require('./helpers/posix_sh');
 
 // A Claude Code PreToolUse event that zn answers with a deny on stdout: reading zn's own config file.
 function denyEvent(home) {
@@ -163,7 +165,7 @@ for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]
     assert.deepEqual(JSON.parse(r.stdout), { hookSpecificOutput: { permissionDecision: 'deny' } });
   });
 
-  test('posix launcher (' + name + '): the Daybreak case: the real runner cannot write its answer (EPIPE), so the launcher blocks instead of accepting status 0', { skip: !posix }, async (t) => {
+  test('posix launcher (' + name + '): the Daybreak case: the real runner cannot write its answer (EPIPE), so the launcher blocks instead of accepting status 0', { skip: skipUnlessPosixSh(EPIPE_ON_WINDOWS) }, async (t) => {
     const dir = tempDir(t, 'zn-ov-real-');
     const file = path.join(dir, 'launcher.sh');
     fs.writeFileSync(file, launcher.unixScript('claude-code', process.execPath, RUNNER, opts), { mode: 0o755 });
@@ -245,7 +247,7 @@ test('windows (real PowerShell): a runner that prints "{" and exits 0 does not c
 });
 
 for (const [name, opts] of [['plain', {}], ['with a deadline', { deadlineS: 5 }]]) {
-  test('posix launcher (' + name + '): the Daybreak case through the real runner: EPIPE on the answer is blocked, not accepted as status 0', { skip: !posix }, async (t) => {
+  test('posix launcher (' + name + '): the Daybreak case through the real runner: EPIPE on the answer is blocked, not accepted as status 0', { skip: skipUnlessPosixSh(EPIPE_ON_WINDOWS) }, async (t) => {
     const dir = tempDir(t, 'zn-ov-cli-');
     const bin = path.join(dir, 'bin');
     fs.mkdirSync(bin);
@@ -389,7 +391,7 @@ for (const [mode, opts, edit] of MODES) {
   }
 }
 
-test('posix launcher, no deadline: a TERM while the hook runs answers with the block and removes the private files', { skip: !posix }, async (t) => {
+test('posix launcher, no deadline: a TERM while the hook runs answers with the block and removes the private files', { skip: skipUnlessPosixSh(TERM_ON_WINDOWS) }, async (t) => {
   const tmp = tempDir(t, 'zn-ov-clean-term-');
   const file = writeScript(t, 'claude-code', "setTimeout(() => { require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); }, 800);\n");
   const child = spawn('/bin/sh', [file, 'PreToolUse'], { env: { PATH: '', HOME: '/nonexistent', TMPDIR: tmp }, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -447,7 +449,7 @@ for (const [mode, opts, edit] of MODES) {
   });
 }
 
-test('posix launcher with a deadline: a TERM with `.` first on the PATH runs no planted command', { skip: !posix }, async (t) => {
+test('posix launcher with a deadline: a TERM with `.` first on the PATH runs no planted command', { skip: skipUnlessPosixSh(TERM_ON_WINDOWS) }, async (t) => {
   const { proj, mark } = plantProject(t);
   const tmp = tempDir(t, 'zn-ov-planted-term-');
   const file = writeScript(t, 'claude-code', 'process.stdin.resume(); setInterval(() => {}, 1000);\n', { deadlineS: 30 });
