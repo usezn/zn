@@ -66,16 +66,16 @@ class TestCliInputSources(unittest.TestCase):
         self.assertEqual(report["total_threats"], 1)
         self.assertNotIn("�", report["threats"][0]["content"])
 
-    def test_missing_file_gives_one_line_and_exit_one(self):
+    def test_missing_file_gives_one_line_and_exit_two(self):
         proc = _run(["scan", "missing.txt"], self.dir)
-        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(proc.returncode, 2)
         self.assertEqual(proc.stdout, b"")
         lines = proc.stderr.decode("utf-8").splitlines()
         self.assertEqual(lines, ["Error: target path not found: missing.txt"])
 
     def test_dash_is_a_file_name_not_standard_input(self):
         proc = _run(["scan", "-"], self.dir, stdin=INJECTION + b"\n")
-        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(proc.returncode, 2)
         self.assertEqual(proc.stdout, b"")
         self.assertEqual(proc.stderr.decode("utf-8").splitlines(),
                          ["Error: target path not found: -"])

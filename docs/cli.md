@@ -648,11 +648,22 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 
 | Command | Options | What it does |
 |---|---|---|
-| `test "<text>"` | `--json` | Checks one piece of text against the rules. It does **not** run the self-test that `test` runs in the npm package. Exit `0` if nothing was flagged, `1` if the text was blocked or contains a secret. |
-| `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked. Without a text it prints the usage and exits `2` (the npm package exits `1`). |
-| `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude`, `--include-home` | Like `scan` in the npm package, without the `--all` and `--code` options. Exit `0` nothing found, `1` something was found or the path does not exist, `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. |
+| `test "<text>"` | `--json` | Checks one piece of text against the rules. It does **not** run the self-test that `test` runs in the npm package. Exit `0` if nothing was flagged, `1` if the text was blocked or contains a secret. For a secret the first line says `SECRET FOUND` (not `ALLOW`) and the verdict line reads `ALLOW (no prompt injection found)`; the JSON `verdict` stays `allow` and `secrets_detected` counts the secrets. |
+| `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `1` blocked (the npm package exits `2` for a block). Without a text it prints the usage and exits `2` (the npm package exits `1`). |
+| `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude`, `--include-home` | Like `scan` in the npm package, without the `--all` and `--code` options. Exit `0` nothing found, `1` something was found, `2` wrong usage (an option or `--format` it does not know, or a path that does not exist), `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. |
 | `evidence` | `--verify`, `--export`, `--format jsonl\|csv`, `--output file` | Counts, chain check and export, like the npm command. There is no `--ui`, no `--tail` and no `logs` or `export` alias. |
 | `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`. |
 | `stats` | `--days N`, `--json` | Local counts for the last `N` days (1 to 90, default 30). There is no `stats share`. Exit `0`, or `2` if `--days` is out of range. |
 
-The other commands on this page are only in the npm package. In the Python package they print a short note and exit `2`: `init`, `check`, `doctor`, `audit`, `hooks`, `run`, `secret`, `env`, `vault`, `unlock`, `lock`, `pins`, `mcp`, `shield`, `team`, `logs` and `export` point to `npx -y zn-gate init`, and `reach`, `report`, `connect` and `disconnect` point to `npx -y zn-gate <command>`. A command neither package knows exits `1`. To use the optional cloud check from Python, set `ZN_CLOUD=1` and `ZN_API_KEY` (or pass `--key` to `analyze`) instead of running `connect`.
+Exit codes of the Python package. One table for every command:
+
+| Code | Meaning |
+|---|---|
+| `0` | Done, nothing flagged. Also `version`, `status`, `evidence`, `--help` and a call with no command. |
+| `1` | Something was flagged: `test` blocked the text or found a secret, `analyze` blocked it, `scan` found something, or `evidence --verify` found a broken chain. |
+| `2` | Wrong usage: a command or option it does not know, a missing text, a value out of range (`--days`, `--long-input`, `--format`), a path for `scan` that does not exist, or an npm-only command. |
+| `3` | `scan` only: the coverage is incomplete (no file was read, or a file or folder could not be read). |
+
+Where Python differs from the npm package: `analyze` exits `1` for a block (npm `2`), an unknown command exits `2` (npm `1`) and `scan` of a path that does not exist exits `2` (npm `1`). Python never exits `2` for a block, so `2` always means "fix the command line".
+
+The other commands on this page are only in the npm package. In the Python package they print a short note and exit `2`: `init`, `check`, `doctor`, `audit`, `hooks`, `run`, `secret`, `env`, `vault`, `unlock`, `lock`, `pins`, `mcp`, `shield`, `team`, `logs` and `export` point to `npx -y zn-gate init`, and `reach`, `report`, `connect` and `disconnect` point to `npx -y zn-gate <command>`. A command the package does not know exits `2`, like an unknown option (the npm package exits `1` for an unknown command). To use the optional cloud check from Python, set `ZN_CLOUD=1` and `ZN_API_KEY` (or pass `--key` to `analyze`) instead of running `connect`.

@@ -1,0 +1,3 @@
+### Changed
+- Python command line (`pip install zn-gate`): one exit-code table for every command: `0` nothing flagged, `1` flagged, `2` wrong usage, `3` scan coverage incomplete. Three codes change, which matters for scripts and CI: `analyze` of a blocked prompt exits `1` (was `2`); an unknown command exits `2` (was `1`); `scan` of a path that does not exist exits `2` (was `1`, the same as "secret found"). Nothing else changes: `test` still exits `1` for a block or a secret, and `scan` still exits `3` when no file was read.
+- `zn-gate test` on text that holds a secret now starts with `SECRET FOUND` instead of `ALLOW`, because it exits `1`. The verdict line says `ALLOW (no prompt injection found)` and the JSON `verdict` is still `allow`.

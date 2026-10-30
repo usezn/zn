@@ -52,6 +52,13 @@ _MAX_HOME_MCP_BYTES = 64 * 1024 * 1024
 _UTF16_BOMS = (b"\xff\xfe", b"\xfe\xff")
 
 
+# Exit codes of the Python command line (documented in docs/cli.md).
+EXIT_OK = 0          # done, nothing flagged
+EXIT_FINDING = 1     # the text was blocked or has a secret, or the scan found something
+EXIT_USAGE = 2       # wrong usage: unknown command or option, bad value, path not found
+EXIT_INCOMPLETE = 3  # scan: the coverage is incomplete (no file read, or files skipped)
+
+
 def _decode_scan_text(raw: bytes) -> str:
     """File contents as text. UTF-16 files with a byte order mark (common on
     Windows: PowerShell output, some editors) are decoded as UTF-16."""
@@ -176,8 +183,18 @@ def cmd_test(args: argparse.Namespace) -> int:
         # The icon follows the injection verdict only. A secret found by the
         # DLP filter is reported on its own line and does not turn an ALLOW
         # into a BLOCK.
-        status_icon = f"{_lead(SHIELD)}ALLOW" if assessment.allowed else f"{_lead(ALERT)}BLOCK"
-        print(f"\n{status_icon} | Verdict: {assessment.verdict.upper()} (latency: {latency_us:.1f}µs)")
+        # A secret in an allowed text is a finding (exit 1), so the headline
+        # says so instead of ALLOW; the verdict line keeps the injection result.
+        if not assessment.allowed:
+            status_icon = f"{_lead(ALERT)}BLOCK"
+            verdict_note = ""
+        elif findings:
+            status_icon = f"{_lead(ALERT)}SECRET FOUND"
+            verdict_note = " (no prompt injection found)"
+        else:
+            status_icon = f"{_lead(SHIELD)}ALLOW"
+            verdict_note = ""
+        print(f"\n{status_icon} | Verdict: {assessment.verdict.upper()}{verdict_note} (latency: {latency_us:.1f}µs)")
         print(f"Rule:       {assessment.rule}")
         if assessment.reason:
             print(f"Reason:     {assessment.reason}")
@@ -192,7 +209,7 @@ def cmd_test(args: argparse.Namespace) -> int:
 
     # Exit code: 0 only when nothing was flagged (no block and no secret), so
     # the command can be used as a check in scripts.
-    return 0 if (assessment.allowed and not findings) else 1
+    return EXIT_OK if (assessment.allowed and not findings) else EXIT_FINDING
 
 
 def cmd_analyze(args: argparse.Namespace) -> int:
@@ -215,7 +232,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     else:
         print(f"Verdict: {res.get('verdict')} | Engine: {res.get('engine')} | Latency: {elapsed_ms:.2f}ms")
 
-    return 2 if res.get("verdict") == "block" else 0
+    return EXIT_FINDING if res.get("verdict") == "block" else EXIT_OK
 
 
 def _skip_reason(file_path: Path, mcp_only: bool = False, follow: bool = False) -> Optional[str]:
@@ -490,7 +507,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     target_path = Path(args.path)
     if not target_path.exists():
         print(f"Error: target path not found: {target_path}", file=sys.stderr)
-        return 1
+        return EXIT_USAGE
 
     files_to_scan: List[Path] = []
     skip_dirs = _SCAN_SKIP_DIRS
@@ -840,7 +857,7 @@ def main() -> int:
     parser = build_parser()
     if first is not None and not first.startswith("-") and first not in known_commands(parser) and first not in NPM_ONLY_COMMANDS:
         sys.stderr.write(f"Unknown command: {first}\nRun 'zn-gate --help' for usage.\n")
-        return 1
+        return EXIT_USAGE
     if len(sys.argv) > 1 and sys.argv[1] in NPM_ONLY_COMMANDS:
         sys.stderr.write(npm_only_message(sys.argv[1]))
         return 2

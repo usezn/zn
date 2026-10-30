@@ -31,15 +31,15 @@ def test_version_command_matches_flag(monkeypatch, capsys):
     assert capsys.readouterr().out.strip() == printed
 
 
-def test_unknown_command_exits_1(monkeypatch, capsys):
-    assert _run(monkeypatch, "bogus") == 1
+def test_unknown_command_exits_2(monkeypatch, capsys):
+    assert _run(monkeypatch, "bogus") == 2
     err = capsys.readouterr().err
     assert "Unknown command: bogus" in err
     assert "zn-gate --help" in err
 
 
-def test_scan_missing_path_exits_1(monkeypatch, tmp_path, capsys):
-    assert _run(monkeypatch, "scan", str(tmp_path / "nope")) == 1
+def test_scan_missing_path_exits_2(monkeypatch, tmp_path, capsys):
+    assert _run(monkeypatch, "scan", str(tmp_path / "nope")) == 2
 
 
 @pytest.mark.parametrize("flag", ["-v", "-V"])
