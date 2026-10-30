@@ -126,7 +126,9 @@ function textsOf(tool, input) {
 // `ours` is set only for a call to zn's own server, verified from the MCP configuration (znMcpServerKind).
 function mcpInfo(server, tool, event, cwd) {
   const info = { server, tool };
-  const ours = event === 'pre_tool' ? znMcpServerKind(server, cwd) : null;
+  // zn's tools never contain "__". A tool name that does is ambiguous (a project server named secrets__x
+  // parses as server secrets, tool x__...), so it is never zn's own server: fail closed.
+  const ours = event === 'pre_tool' && !String(tool).includes('__') ? znMcpServerKind(server, cwd) : null;
   if (ours) info.ours = ours;
   return info;
 }

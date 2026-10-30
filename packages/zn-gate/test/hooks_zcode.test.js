@@ -247,6 +247,7 @@ test('the secrets MCP server is zn\'s own only when the user config registers zn
   write(home, { mcp: { servers: { secrets: { type: 'stdio', command: 'zn', args: ['secrets-mcp'], enabled: false } } } });
   assert.equal(ev().ours, undefined, 'a disabled server is not what ran');
   assert.equal(zc.normalize(pre('mcp__other__secrets_list', {})).mcp.ours, undefined);
+  assert.equal(zc.normalize(pre('mcp__secrets__x__secrets_list', {})).mcp.ours, undefined, 'a server named secrets__x is not the zn one');
 });
 
 test('PostToolUse: a notice for a secret in the output, nothing for clean output; the output is never rewritten', async () => {

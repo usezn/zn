@@ -156,7 +156,8 @@ function normalize(raw) {
   const { pathsOf } = require('./gemini');
   if (mcp) {
     const mp = pathsOf(args);
-    const ours = znMcpServerIsOurs(mcp[1]);
+    // zn's tools never contain "__": a name that does is ambiguous (server secrets__x), so never zn's own.
+    const ours = mcp[2].includes('__') ? null : znMcpServerIsOurs(mcp[1]);
     const e = { ...ev, tool: 'mcp', mcp: { server: mcp[1], tool: mcp[2], ...(ours ? { ours } : {}) }, input: { args: rawInput === undefined || rawInput === null ? {} : rawInput, paths: mp.paths, texts: [] } };
     if (mp.bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
     return e;
