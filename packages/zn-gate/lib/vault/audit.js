@@ -8,6 +8,13 @@
  *   prev = mac of the previous record (64 zeros for the first one)
  *   mac  = HMAC(key, JSON of every other field, in this order)
  *
+ * Segments. When the active log passes a size limit, the daemon appends a
+ * final record (decision "rotate", reason "segment:<n>") and renames the file
+ * to audit.<n>.jsonl; the next record, in a new audit.jsonl, continues the
+ * chain (prev = mac of the rotate record, seq + 1). Closed segments are never
+ * deleted by zn. A chain check, an export and an upload walk the segments in
+ * order and then the active file.
+ *
  * Metadata only. Fields are whitelisted and format-checked; anything else
  * is dropped. Values never enter the log, and neither do hashes of values
  * (a hash of a low-entropy value is reversible). As a last guard, any field
@@ -72,8 +79,11 @@ function forEachLine(file, fn, opts) {
   const o = opts || {};
   const chunkSize = Number.isInteger(o.chunkSize) && o.chunkSize > 0 ? o.chunkSize : 1024 * 1024;
   const maxLine = Number.isInteger(o.maxLine) && o.maxLine > 0 ? o.maxLine : 4 * 1024 * 1024;
-  let fd;
-  try { fd = fs.openSync(file, 'r'); } catch (err) { if (err.code === 'ENOENT') return false; throw err; }
+  const own = o.fd === undefined;
+  let fd = o.fd;
+  if (own) {
+    try { fd = fs.openSync(file, 'r'); } catch (err) { if (err.code === 'ENOENT') return false; throw err; }
+  }
   try {
     const buf = Buffer.allocUnsafe(chunkSize);
     let parts = [];
@@ -107,8 +117,123 @@ function forEachLine(file, fn, opts) {
     if (partLen > 0 || tooLong) emit(tooLong ? Buffer.alloc(0) : Buffer.concat(parts));
     return true;
   } finally {
-    fs.closeSync(fd);
+    if (own) fs.closeSync(fd);
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Segments                                                            */
+/* ------------------------------------------------------------------ */
+
+const DEFAULT_SEGMENT_BYTES = 128 * 1024 * 1024;
+
+function splitName(file) {
+  const ext = path.extname(file);
+  return { dir: path.dirname(file), ext, stem: path.basename(file, ext) };
+}
+
+/* n when `name` is a closed segment of this log (audit.<n>.jsonl, n canonical and >= 1), else null. */
+function segmentNumber(file, name) {
+  const { ext, stem } = splitName(file);
+  if (!name.startsWith(stem + '.') || !name.endsWith(ext)) return null;
+  const mid = name.slice(stem.length + 1, name.length - ext.length);
+  if (!/^[1-9]\d{0,8}$/.test(mid)) return null;
+  return Number(mid);
+}
+
+function segmentPath(file, n) {
+  const { dir, ext, stem } = splitName(file);
+  return path.join(dir, stem + '.' + n + ext);
+}
+
+/* The closed segments of this log that are regular files: [{n, file}] in order. A link is never one. */
+function segments(file) {
+  let names;
+  try { names = fs.readdirSync(splitName(file).dir); } catch (err) { if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return []; throw err; }
+  const out = [];
+  for (const name of names) {
+    const n = segmentNumber(file, name);
+    if (n === null) continue;
+    const f = path.join(splitName(file).dir, name);
+    let st;
+    try { st = fs.lstatSync(f); } catch (err) { continue; }
+    if (st.isFile()) out.push({ n, file: f });
+  }
+  return out.sort((a, b) => a.n - b.n);
+}
+
+/* Every file of the log, oldest first: the closed segments, then the active one ({n: null}). */
+function logFiles(file) {
+  return segments(file).map((s) => ({ n: s.n, file: s.file })).concat([{ n: null, file }]);
+}
+
+function isRotate(rec) {
+  return !!rec && rec.decision === 'rotate' && typeof rec.reason === 'string' && /^segment:[1-9]\d{0,8}$/.test(rec.reason);
+}
+
+/*
+ * walkLog(file, onLine, onFileEnd, opts) -> boolean (false when no part of the log exists)
+ * Calls onLine(line, lineNo, {n}) for every non-empty line of the segments in
+ * order and then of the active file (lineNo counts across all of them; n is the
+ * segment number, null for the active file). onLine returns true to stop.
+ * onFileEnd({n}) runs after each file that was read to its end. opts.fromSeq
+ * skips closed segments whose last record is older than that sequence number.
+ * The active file is opened before the segments are listed again, so a rotation
+ * that happens while another process reads still gives it every record once.
+ */
+function walkLog(file, onLine, onFileEnd, opts) {
+  const o = opts || {};
+  let list;
+  let afd = null;
+  for (let attempt = 0; ; attempt++) {
+    list = segments(file);
+    try { afd = fs.openSync(file, 'r'); } catch (err) { if (err.code !== 'ENOENT') throw err; afd = null; }
+    if (segments(file).length === list.length || attempt >= 4) break;
+    if (afd !== null) { fs.closeSync(afd); afd = null; }
+  }
+  try {
+    let any = false;
+    let lineNo = 0;
+    const items = list.map((s) => ({ n: s.n, file: s.file, fd: undefined })).concat([{ n: null, file, fd: afd }]);
+    for (const it of items) {
+      if (it.n === null && afd === null) continue;
+      if (it.n !== null && Number.isInteger(o.fromSeq) && o.fromSeq > 1) {
+        let last = null;
+        try { last = lastRecord(it.file); } catch (err) { last = null; }
+        if (last && Number.isInteger(last.seq) && last.seq < o.fromSeq) { any = true; continue; }
+      }
+      const fo = { chunkSize: o.chunkSize, maxLine: o.maxLine };
+      if (it.fd !== undefined) fo.fd = it.fd;
+      let stopped = false;
+      const base = lineNo;
+      const ex = forEachLine(it.file, (text, ln) => {
+        lineNo = base + ln;
+        stopped = onLine(text, lineNo, { n: it.n }) === true;
+        return stopped;
+      }, fo);
+      if (!ex) continue;
+      any = true;
+      if (stopped) return true;
+      if (onFileEnd && onFileEnd({ n: it.n }) === true) return true;
+    }
+    return any;
+  } finally {
+    if (afd !== null) fs.closeSync(afd);
+  }
+}
+
+/* Same as forEachLine, over the whole log (closed segments, then the active file). */
+function forEachLogLine(file, fn, opts) {
+  return walkLog(file, fn, null, opts);
+}
+
+/* The newest record of the whole log: the active file's, or (no active file yet, as after a crash
+ * between the rename and the first new record) the last record of the newest closed segment. */
+function tailRecord(file) {
+  const a = lastRecord(file);
+  if (a) return a;
+  const segs = segments(file);
+  return segs.length ? lastRecord(segs[segs.length - 1].file) : null;
 }
 
 /* Last record of the log (reads only the tail of the file). */
@@ -149,10 +274,12 @@ function append(event, opts) {
   const key = Buffer.isBuffer(o.key) ? o.key : Buffer.from(String(o.key || ''), 'hex');
   if (key.length < 32) throw new Error('audit key missing');
   const file = o.file;
-  const last = lastRecord(file);
+  const last = tailRecord(file);
+  // The rotate record is built here only: sanitize never lets a caller write the "rotate" decision.
+  const fields = o.rotateSegment ? { decision: 'rotate', reason: 'segment:' + o.rotateSegment } : sanitize(event, o.knownValues);
   const record = Object.assign(
     { v: 1, seq: last ? last.seq + 1 : 1, ts: new Date().toISOString() },
-    sanitize(event, o.knownValues),
+    fields,
     { prev: last ? last.mac : GENESIS },
   );
   record.mac = macOf(key, record);
@@ -171,6 +298,40 @@ function append(event, opts) {
 }
 
 /**
+ * rotate({file, key, maxBytes}) -> the rotate record, or null when nothing was done
+ * Called by the daemon (the only writer) before it appends. When the active
+ * file has reached maxBytes it appends the rotate record and renames the file
+ * to audit.<n>.jsonl, n being one more than the newest closed segment. When the
+ * file already ends with a rotate record (a crash between the two steps) it
+ * only finishes the rename. A target that already exists is never overwritten.
+ * maxBytes missing or not a positive integer: no rotation.
+ */
+function rotate(opts) {
+  const o = opts || {};
+  const file = o.file;
+  if (!Number.isInteger(o.maxBytes) || o.maxBytes < 1) return null;
+  let st;
+  try { st = fs.statSync(file); } catch (err) { if (err.code === 'ENOENT') return null; throw err; }
+  if (!st.isFile() || st.size === 0) return null;
+  const segs = segments(file);
+  const next = (segs.length ? segs[segs.length - 1].n : 0) + 1;
+  let rec = lastRecord(file);
+  if (isRotate(rec)) {
+    if (rec.reason !== 'segment:' + next) throw new Error('the audit log ends with an unexpected rotate record');
+  } else {
+    if (st.size < o.maxBytes) return null;
+    rec = append({}, { file, key: o.key, rotateSegment: next });
+  }
+  const target = segmentPath(file, next);
+  if (fs.existsSync(target)) throw new Error('the audit log segment ' + path.basename(target) + ' already exists');
+  fs.renameSync(file, target);
+  if (process.platform !== 'win32') {
+    try { const d = fs.openSync(path.dirname(file), 'r'); try { fs.fsyncSync(d); } finally { fs.closeSync(d); } } catch (err) { /* best effort */ }
+  }
+  return rec;
+}
+
+/**
  * checkHead(file, head) -> {ok, found?, reason?}
  * The daemon is the only writer, so the last record in the file must be the
  * one it remembers (sequence number and MAC). A different tail means the log
@@ -179,7 +340,7 @@ function append(event, opts) {
 function checkHead(file, head) {
   if (!head) return { ok: true };
   let last;
-  try { last = lastRecord(file); } catch (err) {
+  try { last = tailRecord(file); } catch (err) {
     return { ok: false, found: null, reason: 'the last record of the log cannot be read' };
   }
   if (!last) return { ok: false, found: null, reason: 'the log is empty or missing, but the vault expects ' + head.seq + ' records' };
@@ -213,7 +374,8 @@ function verify(opts) {
   let count = 0;
   let failure = null;
   const fail = (line, error) => { failure = { ok: false, records: line - 1, line, error }; return true; };
-  const exists = forEachLine(o.file, (text, line) => {
+  let fileLast = null; // the last record of the file being read
+  const exists = walkLog(o.file, (text, line) => {
     let rec;
     try { rec = JSON.parse(text); } catch (err) { rec = undefined; }
     if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return fail(line, 'unparseable record');
@@ -227,8 +389,17 @@ function verify(opts) {
     prev = mac;
     seq = rec.seq;
     count = line;
+    fileLast = rec;
     if (cp && seq === cp.seq && mac !== cp.mac) {
       return fail(line, 'log differs from the vault checkpoint (record ' + seq + ' has a different MAC)');
+    }
+    return false;
+  }, (ctx) => {
+    // A closed segment ends with its own rotate record, so its number is vouched for by the MAC.
+    const last = fileLast;
+    fileLast = null;
+    if (ctx.n !== null && !(isRotate(last) && last.reason === 'segment:' + ctx.n)) {
+      return fail(count + 1, 'segment ' + ctx.n + ' does not end with its rotate record');
     }
     return false;
   }, { chunkSize: o.chunkSize, maxLine: o.maxLine });
@@ -265,7 +436,7 @@ function read(opts) {
   const from = parseSince(o.since);
   const limit = Number(o.limit) > 0 ? Number(o.limit) : 0;
   let out = [];
-  forEachLine(file, (line) => {
+  forEachLogLine(file, (line) => {
     if (line === null) return false;
     let rec;
     try { rec = JSON.parse(line); } catch (err) { return false; }
@@ -281,4 +452,7 @@ function read(opts) {
   return limit ? out.slice(-limit) : out;
 }
 
-module.exports = { append, verify, checkHead, read, sanitize, lastRecord, forEachLine, FIELDS, GENESIS };
+module.exports = {
+  append, verify, checkHead, read, sanitize, lastRecord, tailRecord, forEachLine, forEachLogLine,
+  rotate, segments, logFiles, segmentNumber, segmentPath, isRotate, DEFAULT_SEGMENT_BYTES, FIELDS, GENESIS,
+};

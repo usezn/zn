@@ -38,7 +38,7 @@ const KIND = {
 
 function kindOf(rel) {
   const base = path.basename(rel);
-  if (rel === 'audit.jsonl') return 'audit log';
+  if (rel === 'audit.jsonl' || /^audit\.[1-9]\d{0,8}\.jsonl$/.test(rel)) return 'audit log';
   if (KIND[base]) return KIND[base];
   if (/^[0-9a-f]{32}\.age$/.test(base)) return 'token map of a project';
   return 'file';
@@ -96,6 +96,16 @@ function targets(opts) {
   }
   const auditSt = lstatOf(p.auditFile);
   if (auditSt && auditSt.isSymbolicLink()) files.push({ path: p.auditFile, kind: LINK_KIND });
+  // Closed audit log segments (audit.<n>.jsonl): a link in their place is deleted as a link too.
+  try {
+    const audit = require('./audit');
+    for (const n of fs.readdirSync(p.home)) {
+      if (audit.segmentNumber(p.auditFile, n) === null) continue;
+      const f = path.join(p.home, n);
+      const st = lstatOf(f);
+      if (st && st.isSymbolicLink()) files.push({ path: f, kind: LINK_KIND });
+    }
+  } catch (err) { /* no zn folder */ }
   const dirs = [];
   let names = [];
   try { names = fs.readdirSync(p.home); } catch (err) { /* no zn folder */ }

@@ -218,6 +218,8 @@ async function readEncrypted(file, identity) {
 function hasPriorState(opts) {
   const p = paths(opts);
   try { if (fs.statSync(p.auditFile).size > 0) return true; } catch (err) { /* none */ }
+  // A crash between closing a segment and writing the next record leaves segments and no active file.
+  try { if (require('./audit').segments(p.auditFile).length > 0) return true; } catch (err) { /* none */ }
   try { return fs.readdirSync(p.vaultDir).some((n) => PROJECT_FILE_RE.test(n)); } catch (err) { return false; }
 }
 

@@ -16,7 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { FIELDS, forEachLine } = require('../vault/audit');
+const { FIELDS, forEachLogLine } = require('../vault/audit');
 
 const LOCK_TTL_MS = 10 * 60 * 1000;
 const MAX_RESYNCS = 3;
@@ -95,7 +95,9 @@ function scanLog(auditFile, after, headSeq, cap, chunk) {
   const out = { window: [], headRec: null, lastSeq: 0, gap: false, pending: 0 };
   let prevSeq = 0;
   let first = true;
-  forEachLine(auditFile, (line) => {
+  // Closed segments that end before the head (or before the join) hold nothing an upload needs.
+  const fromSeq = headSeq > 0 ? headSeq : (after || 0) + 1;
+  forEachLogLine(auditFile, (line) => {
     if (line === null || !line.trim()) return false;
     let rec;
     try { rec = JSON.parse(line); } catch (err) { return false; }
@@ -110,20 +112,20 @@ function scanLog(auditFile, after, headSeq, cap, chunk) {
       if (!out.gap && out.window.length < cap) out.window.push(rec);
     }
     return false;
-  }, chunk);
+  }, Object.assign({}, chunk, { fromSeq }));
   return out;
 }
 
 /* The record with this seq anywhere in the log, or null (a streaming scan; used only to resync). */
 function findRecord(auditFile, seq, chunk) {
   let found = null;
-  forEachLine(auditFile, (line) => {
+  forEachLogLine(auditFile, (line) => {
     if (line === null || !line.trim()) return false;
     let rec;
     try { rec = JSON.parse(line); } catch (err) { return false; }
     if (isRecord(rec) && rec.seq === seq) found = rec;
     return false;
-  }, chunk);
+  }, Object.assign({}, chunk, { fromSeq: seq }));
   return found;
 }
 

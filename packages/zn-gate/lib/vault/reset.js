@@ -49,6 +49,8 @@ function vaultFiles(opts) {
   try { if (fs.lstatSync(p.vaultDir).isDirectory()) names = fs.readdirSync(p.vaultDir); } catch (err) { /* no vault folder, or a link: never followed */ }
   for (const n of names) if (VAULT_FILES.includes(n) || PROJECT_FILE_RE.test(n)) add(path.join(p.vaultDir, n), path.join('vault', n));
   add(p.auditFile, 'audit.jsonl');
+  // Closed segments of the audit log (audit.<n>.jsonl) go with it.
+  try { for (const s of require('./audit').segments(p.auditFile)) add(s.file, path.basename(s.file)); } catch (err) { /* none */ }
   return found;
 }
 

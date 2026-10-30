@@ -352,7 +352,9 @@ service:
 ```
 
 Each record is a `zn.gate.decision` event. `deny`, `warn`, `withhold` and
-`ask:no` have severity `WARN`, `error` has `ERROR`, the others `INFO`. The
+`ask:no` have severity `WARN`, `error` has `ERROR`, the others `INFO`. When the
+local log is closed as a segment (see [Audit log size and segments](secrets.md#audit-log-size-and-segments)), the
+record that closes it has the decision `rotate`; the export and the upload go through all segments. The
 HMAC chain travels with it (`zn.audit.seq`, `zn.audit.prev`,
 `zn.audit.mac`), so a gap or a reordered record stays visible after the
 export. The mapping is the same as the export

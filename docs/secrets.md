@@ -283,6 +283,21 @@ example costs nothing.
 | `zn vault purge` | Deletes the vault for good: it lists every file (vault, token maps, audit log, all backups, session key), asks you to type `purge my vault`, deletes them and checks that none is left. Your own terminal only (`--yes` for a script); cannot be undone |
 | `zn hooks uninstall <agent>` | Remove the hooks. For Claude Code it also removes zn's own `secrets` MCP server, and keeps any other server with that name |
 
+### Audit log size and segments
+
+The audit log is `~/.zn/audit.jsonl`. When it reaches 128 MiB, zn closes it as a
+segment: it writes one last record (decision `rotate`), renames the file to
+`~/.zn/audit.1.jsonl` (then `audit.2.jsonl`, and so on) and goes on in a new
+`audit.jsonl`. The hash chain continues across the files, so `zn vault verify`,
+`zn vault log`, the OpenTelemetry export and the Team upload read every segment
+in order and nothing is lost. zn never deletes a segment by itself: they are the
+history the chain vouches for, and a segment that is deleted, edited or renamed
+makes `zn vault verify` fail. Do not remove them by hand; `zn vault reset`,
+`zn vault purge` and the vault part of `zn-gate uninstall` delete all of them. To
+free disk space, copy the segments somewhere safe first, then run `zn vault reset`.
+A log that has been closed as a segment needs a zn-gate newer than 1.14.1 to be read:
+an older version reports the new `audit.jsonl` as a broken chain.
+
 If the vault is locked, the hooks still redact what they can recognise, but
 with markers that cannot be restored (`__ZN_REDACTED_AWS_KEY__`), and remind
 you to run `zn unlock`.

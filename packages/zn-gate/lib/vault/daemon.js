@@ -334,10 +334,24 @@ function recordTamper(state, reason, found) {
  * and the checkpoint is the same; any append by the daemon drops it, so the
  * next check reads the whole log again. */
 function logSignature(file) {
-  try {
-    const st = fs.statSync(file);
-    return [st.size, st.mtimeMs, st.ctimeMs, st.ino].join(':');
-  } catch (err) { return 'none'; }
+  // Every file of the log counts: a closed segment that is edited changes the signature too.
+  const one = (f) => {
+    try {
+      const st = fs.statSync(f);
+      return [st.size, st.mtimeMs, st.ctimeMs, st.ino].join(':');
+    } catch (err) { return 'none'; }
+  };
+  try { return audit.logFiles(file).map((x) => one(x.file)).join('|'); } catch (err) { return 'none'; }
+}
+
+/* Size at which the active audit log is closed as a segment: the audit.maxBytes option (tests), else
+ * ZN_AUDIT_SEGMENT_BYTES (at least 4096), else 128 MiB. */
+function segmentLimit(state) {
+  const v = state.opts && state.opts.auditMaxBytes;
+  if (Number.isInteger(v) && v > 0) return v;
+  const e = Number(process.env.ZN_AUDIT_SEGMENT_BYTES);
+  if (Number.isInteger(e) && e >= 4096) return e;
+  return audit.DEFAULT_SEGMENT_BYTES;
 }
 
 function headKey(secrets) {
@@ -404,6 +418,10 @@ function appendChecked(state, event, extra) {
   }
   if (state.opts && typeof state.opts._afterChainCheck === 'function') state.opts._afterChainCheck(); // test seam
   state.dirtySecrets = true;
+  // A log past its size limit is closed as a segment first (a final rotate record, then the rename), so the
+  // record below opens the next one. The checkpoint moves to the rotate record like to any other record.
+  const rot = audit.rotate({ file, key: Buffer.from(secrets.auditKey, 'hex'), maxBytes: segmentLimit(state) });
+  if (rot && !secrets.auditTamper) secrets.auditHead = { seq: rot.seq, mac: rot.mac };
   const rec = audit.append(event, Object.assign({ file, key: Buffer.from(secrets.auditKey, 'hex') }, extra));
   if (!secrets.auditTamper) secrets.auditHead = { seq: rec.seq, mac: rec.mac };
   // Never vouch for the file from a stat taken after our own write: a change made as the file grew
@@ -1037,7 +1055,7 @@ function makeOps(state, ctl) {
         if (!chain.ok) {
           throw znError(CODES.POLICY_DENIED, 'the audit log does not verify on its own (' + chain.error + '), so it cannot be accepted. Next step: keep a copy of ~/.zn/audit.jsonl as evidence; to start a new log on purpose, see zn vault reset.');
         }
-        const last = audit.lastRecord(auditFile);
+        const last = audit.tailRecord(auditFile);
         cur.auditHead = last ? { seq: last.seq, mac: last.mac } : null;
         delete cur.auditTamper;
         state.chainCache = null;
@@ -1267,7 +1285,7 @@ async function serve(opts) {
       if (pre.ok && !state.secrets.auditTamper) {
         // The log verifies and carries the checkpoint record. Records after it were written
         // before a crash or a restored secrets.age could save the newer checkpoint: adopt them.
-        const tail = audit.lastRecord(state.paths.auditFile);
+        const tail = audit.tailRecord(state.paths.auditFile);
         const prior = state.secrets.auditHead;
         if (tail && prior && Number.isInteger(tail.seq) && tail.seq > prior.seq) adoptedRecords = tail.seq - prior.seq;
         if (tail) state.secrets.auditHead = { seq: tail.seq, mac: tail.mac };

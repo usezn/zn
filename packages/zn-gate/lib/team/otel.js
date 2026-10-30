@@ -27,7 +27,7 @@
 
 const fs = require('fs');
 const crypto = require('crypto');
-const { forEachLine } = require('../vault/audit');
+const { forEachLogLine } = require('../vault/audit');
 
 const SCOPE_NAME = 'usezn.evidence';
 const SCOPE_VERSION = '1';
@@ -52,7 +52,7 @@ const RE = {
   orgId: /^[A-Za-z0-9_-]{1,64}$/,
 };
 const GATE_MODES = new Set(['proxy', 'env', 'file', 'named', 'detected', 'resolve', 'set', 'remove', 'unlock', 'lock', 'expire', 'other', '[redacted]']);
-const GATE_DECISIONS = new Set(['allow', 'deny', 'warn', 'ask', 'ask:yes', 'ask:no', 'restore', 'withhold', 'error', 'other', '[redacted]']);
+const GATE_DECISIONS = new Set(['allow', 'deny', 'warn', 'ask', 'ask:yes', 'ask:no', 'restore', 'withhold', 'error', 'other', 'rotate', '[redacted]']);
 
 function ok(re, v, masked) {
   return typeof v === 'string' && (re.test(v) || (masked && MASKED.has(v))) ? v : null;
@@ -195,7 +195,7 @@ function exportAuditStream(opts, write) {
   const file = o.auditFile || require('../vault/store').paths(o).auditFile;
   const from = parseSince(o.since);
   const seqOf = (r) => (Number.isSafeInteger(r.seq) ? r.seq : 0);
-  const each = (fn) => forEachLine(file, (line) => {
+  const each = (fn) => forEachLogLine(file, (line) => {
     if (line === null || !line.trim()) return false;
     let rec;
     try { rec = JSON.parse(line); } catch (err) { return false; }
