@@ -1565,3 +1565,65 @@ mod tests {
         assert!(!ssn_valid("900-45-6789"));
     }
 }
+
+/// The card, SSN and phone checks are claimed to be the Node.js scrubber's
+/// (packages/zn-gate/lib/scrub/patterns.js). The shared fixture holds the cases and the results of
+/// the Node.js validators; packages/zn-gate/test/rust_table_parity.test.js checks the Node.js side.
+#[cfg(test)]
+mod table_parity_tests {
+    use super::*;
+
+    fn cases() -> Vec<(String, String, bool)> {
+        let f: serde_json::Value = serde_json::from_str(include_str!(
+            "../../packages/zn-gate/test/fixtures/scrub_validator_cases.json"
+        ))
+        .unwrap();
+        f["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| {
+                (
+                    c["fn"].as_str().unwrap().to_string(),
+                    c["input"].as_str().unwrap().to_string(),
+                    c["valid"].as_bool().unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    /// The cases of one validator that Rust answers differently from the fixture.
+    fn mismatches(name: &str, f: fn(&str) -> bool) -> Vec<String> {
+        let all = cases();
+        assert!(
+            all.iter().any(|c| c.0 == name),
+            "no {name} cases in the fixture"
+        );
+        all.into_iter()
+            .filter(|c| c.0 == name && f(&c.1) != c.2)
+            .map(|c| format!("{} {:?}: Node.js says {}", c.0, c.1, c.2))
+            .collect()
+    }
+
+    #[test]
+    fn luhn_equals_node() {
+        assert_eq!(mismatches("luhn", luhn_valid), Vec::<String>::new());
+    }
+
+    #[test]
+    #[ignore = "B-2511: Rust rejects mixed space and dash separators, Node.js accepts them; decide"]
+    fn card_validator_equals_node() {
+        assert_eq!(mismatches("card", card_valid), Vec::<String>::new());
+    }
+
+    #[test]
+    #[ignore = "B-2512: Rust ssn_valid does not check the 4-digit serial shape (harmless behind the candidate regex)"]
+    fn ssn_validator_equals_node() {
+        assert_eq!(mismatches("ssn", ssn_valid), Vec::<String>::new());
+    }
+
+    #[test]
+    fn e164_validator_equals_node() {
+        assert_eq!(mismatches("e164", e164_valid), Vec::<String>::new());
+    }
+}

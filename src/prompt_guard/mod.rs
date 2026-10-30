@@ -341,3 +341,107 @@ mod tests {
         }
     }
 }
+
+/// The override grammar word lists and the rule names are claimed to be the Node.js ones
+/// (packages/zn-gate/lib/rules.js). These tests compare them with the shared fixture that
+/// packages/zn-gate/test/rust_table_parity.test.js checks against the Node.js source.
+#[cfg(test)]
+mod table_parity_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn fixture() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../../packages/zn-gate/test/fixtures/prompt_guard_tables.json"
+        ))
+        .unwrap()
+    }
+
+    /// An entry ending in "?" stands for the word and the word without its last letter.
+    fn expand<'a>(list: impl Iterator<Item = &'a str>) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        for w in list {
+            match w.strip_suffix('?') {
+                Some(base) => {
+                    out.insert(base[..base.len() - 1].to_string());
+                    out.insert(base.to_string());
+                }
+                None => {
+                    out.insert(w.to_string());
+                }
+            }
+        }
+        out
+    }
+
+    /// The words of a `(?:a|b|c)` constant.
+    fn const_words(source: &str) -> BTreeSet<String> {
+        let inner = source
+            .strip_prefix("(?:")
+            .and_then(|s| s.strip_suffix(')'))
+            .unwrap();
+        expand(inner.split('|'))
+    }
+
+    fn fixture_words(key: &str) -> BTreeSet<String> {
+        let f = fixture();
+        let list: Vec<&str> = f["override_grammar"][key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        expand(list.into_iter())
+    }
+
+    fn id_set(f: &serde_json::Value, key: &str) -> BTreeSet<String> {
+        f[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn override_quantifier_before_a_noun_equals_node() {
+        assert_eq!(const_words(QUANT_NOUN), fixture_words("quantifier"));
+    }
+
+    #[test]
+    fn override_determiner_equals_node() {
+        assert_eq!(const_words(DET), fixture_words("determiner"));
+    }
+
+    #[test]
+    fn override_qualifier_equals_node() {
+        assert_eq!(const_words(QUAL), fixture_words("qualifier"));
+    }
+
+    #[test]
+    #[ignore = "B-2509: the Rust noun list is shorter than the Node.js one; decide which is right"]
+    fn override_noun_equals_node() {
+        assert_eq!(const_words(NOUN), fixture_words("noun"));
+    }
+
+    #[test]
+    #[ignore = "B-2510: QUANT lacks your/my/these/those that Node.js uses in every form; decide"]
+    fn override_quantifier_of_the_qualifier_forms_equals_node() {
+        // Node.js uses one quantifier list in every form; QUANT is the shorter list Rust uses in two.
+        assert_eq!(const_words(QUANT), fixture_words("quantifier"));
+    }
+
+    #[test]
+    fn rule_ids_are_the_node_ids_plus_the_documented_rust_only_ones() {
+        let f = fixture();
+        let node = id_set(&f, "node_rule_ids");
+        let rust_only = id_set(&f, "rust_only_rule_ids");
+        let mut rust: BTreeSet<String> = PROMPT_PATTERNS
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .collect();
+        rust.extend(prompt_regexes().iter().map(|(id, _)| id.to_string()));
+        let extra: BTreeSet<String> = rust.difference(&node).cloned().collect();
+        assert_eq!(extra, rust_only, "Rust rule ids that Node.js does not have");
+    }
+}

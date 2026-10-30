@@ -1,0 +1,16 @@
+{
+  "_comment": "The word lists of the override rules (ignore / disregard / forget ... instructions) and the rule ids, as the Node.js rules define them (packages/zn-gate/lib/rules.js). An entry ending in a question mark means the word with and without its last letter. The Rust prompt guard (src/prompt_guard/mod.rs) claims the same grammar and names. Each language has a test that its own table equals this one.",
+  "override_grammar": {
+    "quantifier": ["all", "any", "every", "each", "your", "my", "these", "those"],
+    "determiner": ["the", "your", "my", "these", "those", "our", "its", "their"],
+    "qualifier": ["previous", "prior", "above", "earlier", "preceding", "foregoing", "original", "initial", "existing", "system", "safety", "security", "former", "developer"],
+    "noun": ["instructions?", "prompts?", "rules", "guidelines?", "directives?", "guidance", "restrictions?", "guardrails?", "context", "constraints?", "commands?", "policies", "programming", "orders", "limitations?", "directions", "requests?", "tasks?"]
+  },
+  "node_rule_ids": [
+    "pi:ignore_previous", "pi:disregard", "pi:forget", "pi:identity_override", "pi:new_instructions", "pi:system_tag",
+    "pi:system_bracket", "pi:act_as", "pi:pretend", "pi:roleplay", "pi:jailbreak", "pi:bypass", "pi:override",
+    "pi:template_boundary", "pi:multi_es", "pi:multi_pt", "pi:multi_fr", "pi:multi_de", "pi:multi_ru", "pi:multi_zh",
+    "pi:identity_request", "pi:identity_request_multi"
+  ],
+  "rust_only_rule_ids": ["pi:fake_turn", "pi:mode_switch", "pi:unrestricted"]
+}
