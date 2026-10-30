@@ -7,6 +7,10 @@ name: Windows checks for Windows-specific code
 # - on pull requests into next, main and release branches that touch code with Windows-specific paths
 #   (command quoting, launching programs, the keychain, the broker, agent setup) or any test;
 # - in the merge queue.
+#
+# The tests of the hook launchers (shell scripts that Claude Code starts with Git Bash) run here too: the job links
+# Git for Windows' usr/bin as C:\bin and puts it on the PATH, so /bin/sh and sh start. On a Windows machine
+# without that layout the same tests are skipped (test/helpers/posix_sh.js).
 
 on:
   push:
@@ -26,6 +30,8 @@ on:
       - 'packages/zn-gate/test/**'
       - 'plugins/tools/**'
       - '.github/workflows/windows-paths.yml'
+      - '.github/windows-skip-baseline.txt'
+  workflow_dispatch:
   # The merge queue always runs it: one Windows job on the LTS version is the Windows sample of the queue.
   merge_group:
     types: [ checks_requested ]
@@ -60,12 +66,44 @@ jobs:
         with:
           node-version: 22.x
           package-manager-cache: false
+      - name: Set up Git Bash for the launcher tests
+        shell: pwsh
+        run: |
+          $git = 'C:\Program Files\Git'
+          if (-not (Test-Path "$git\usr\bin\sh.exe")) { throw "Git for Windows is not at $git" }
+          cmd /c mklink /D C:\bin "$git\usr\bin"
+          if ($LASTEXITCODE -ne 0) { throw 'could not link C:\bin' }
+          & C:\bin\sh.exe -c 'exit 0'
+          if ($LASTEXITCODE -ne 0) { throw '/bin/sh does not start' }
+          # Appended, not prepended: the Windows tools keep their place before the Git for Windows ones.
+          "Path=$env:Path;$git\usr\bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Check that sh starts from the PATH
+        shell: pwsh
+        run: |
+          sh -c 'echo sh-ok'
+          if ($LASTEXITCODE -ne 0) { throw 'sh is not on the PATH' }
       - name: Install zn-gate dependencies
         working-directory: packages/zn-gate
         run: npm ci --ignore-scripts
       - name: zn-gate unit tests
+        # Bash, so that a failing npm test fails the step through the pipe. The tests skipped on Windows are counted
+        # from the node --test summary and compared with .github/windows-skip-baseline.txt: a new skip fails the job,
+        # fewer skips do not.
+        shell: bash
         working-directory: packages/zn-gate
-        run: npm test
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee "$RUNNER_TEMP/unit.log"
+          count=$(grep -E '^(#|ℹ) skipped [0-9]+' "$RUNNER_TEMP/unit.log" | awk '{ s += $3 } END { print s + 0 }')
+          found=$(grep -c -E '^(#|ℹ) skipped [0-9]+' "$RUNNER_TEMP/unit.log" || true)
+          base=$(grep -v '^#' ../../.github/windows-skip-baseline.txt | tr -d '[:space:]')
+          echo "Tests skipped on Windows: $count (baseline $base)"
+          echo "Tests skipped on Windows: $count (baseline $base)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$found" = 0 ]; then echo 'No skipped-test summary found in the test output.'; exit 1; fi
+          if [ "$count" -gt "$base" ]; then
+            echo "More tests are skipped on Windows than the baseline allows ($count > $base). Run them, or skip them with a reason and raise the baseline in .github/windows-skip-baseline.txt."
+            exit 1
+          fi
       - name: Vault tests (Windows Credential Manager)
         working-directory: packages/zn-gate
         env:

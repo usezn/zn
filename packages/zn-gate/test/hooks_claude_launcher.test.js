@@ -22,7 +22,7 @@ const { tempDir } = require('./helpers/tmp');
 
 const claude = getAdapter('claude-code');
 const RUNNER = path.resolve(__dirname, '..', 'lib', 'hooks', 'runner.js');
-const posix = process.platform !== 'win32';
+const { hasPosixSh: posix, skipUnlessPosixSh } = require('./helpers/posix_sh');
 const GONE = '/nonexistent/node-gone/bin/node';
 const REINSTALL = 'install zn-gate again for the Node.js you use now: run `npm install -g zn-gate`, then `zn hooks install claude-code`, in your own terminal';
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'UserPromptExpansion'];
@@ -45,7 +45,7 @@ function breakNode(file) {
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^ZN_NODE=.*$/m, "ZN_NODE='" + GONE + "'"));
 }
 
-test('claude-code install: a user install writes the launcher and one command per event', { skip: !posix }, (t) => {
+test('claude-code install: a user install writes the launcher and one command per event', { skip: skipUnlessPosixSh('fails on Windows today: the test expects the POSIX form of the launcher command and the file mode 0755, which differ there; not adapted yet') }, (t) => {
   const { data, file, home } = setup(t, process.execPath);
   assert.ok(file.startsWith(path.join(home, '.zn', 'hooks')), 'the launcher stays inside the temporary home');
   assert.equal(fs.statSync(file).mode & 0o777, 0o755);
