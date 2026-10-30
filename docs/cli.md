@@ -609,7 +609,7 @@ zn-gate team join -
 # or --include-history to also send the audit records written before you joined
 ```
 
-Where the join token comes from: an argument (`team join <token>`), standard input (`team join -`, reads one line) or the `ZN_TEAM_JOIN_TOKEN` environment variable. An argument wins over the environment variable; `-` means standard input. A token typed as an argument stays in your shell history and is visible in the process list, so zn prints a one-line note when you do that. The token is never printed.
+The three forms: `zn team join <token>`, `zn team join -` and `ZN_TEAM_JOIN_TOKEN=... zn team join`. Where the join token comes from: an argument (`team join <token>`), standard input (`team join -`, reads one line) or the `ZN_TEAM_JOIN_TOKEN` environment variable. An argument wins over the environment variable; `-` means standard input. A token typed as an argument stays in your shell history and is visible in the process list, so zn prints a one-line note when you do that. The token is never printed.
 
 Connects this machine to your organization with the join token your admin gave you. It exits `0` only after the organization's first valid policy has been downloaded and applied. If that fails (offline, or no policy published yet) it exits `1`; the machine stays registered, `team status` shows the join as pending, and `team sync` finishes it. Only the audit records written from the join on are uploaded; `--include-history` adds the earlier ones, and only at the first join of an installation.
 

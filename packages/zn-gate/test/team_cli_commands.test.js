@@ -45,7 +45,7 @@ async function capture(fn) {
   }
 }
 
-const USAGE_START = 'usage: zn team join <token> [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config';
+const USAGE_START = 'usage: zn team join <token> | zn team join - | ZN_TEAM_JOIN_TOKEN=... zn team join [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config';
 
 test('--help and -h print the usage on stdout and exit 0, wherever they appear', async () => {
   for (const args of [['team', '--help'], ['team', '-h'], ['team', 'join', '--help'], ['team', 'sync', '-h'], ['team', 'bogus', '--help'], ['team', 'status', '--json', '-h']]) {

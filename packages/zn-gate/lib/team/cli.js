@@ -27,7 +27,7 @@ const { createClient } = require('../vault/client');
 const { messageWithUnlockHint } = require('../errors');
 const { znCommand } = require('../zn-command');
 
-const USAGE = 'usage: zn team join <token> [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
+const USAGE = 'usage: zn team join <token> | zn team join - | ZN_TEAM_JOIN_TOKEN=... zn team join [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
 const JOIN_TOKEN_ENV = 'ZN_TEAM_JOIN_TOKEN';
 const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE]';
 
@@ -85,7 +85,7 @@ async function joinTokenFrom(args, io) {
 async function joinCmd(args, io) {
   const got = await joinTokenFrom(args, io || {});
   if (got.error) { err('[zn] ' + got.error); return 2; }
-  if (!got.token) { err(USAGE); err('The token can also come from standard input (zn team join -) or from the ' + JOIN_TOKEN_ENV + ' environment variable.'); return 2; }
+  if (!got.token) { err(USAGE); return 2; }
   const token = got.token;
   if (got.via === 'argument') {
     err('[zn] Note: a join token given as an argument stays in your shell history and is visible in the process list. Next time use `zn team join -` (token on standard input) or set ' + JOIN_TOKEN_ENV + '.');
