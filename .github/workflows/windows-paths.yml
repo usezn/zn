@@ -81,11 +81,14 @@ jobs:
           "Path=$env:Path;$git\usr\bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           node -e "process.exit(require('child_process').spawnSync('/bin/sh', ['-c', 'exit 0']).status === 0 ? 0 : 1)"
           if ($LASTEXITCODE -ne 0) { throw "/bin/sh does not start from $drive" }
-      - name: Check that sh starts from the PATH
-        shell: pwsh
+      - name: Check that the launcher tests will run
+        # Fails when no POSIX sh starts, so the launcher tests cannot be skipped without anyone noticing.
+        working-directory: packages/zn-gate
         run: |
           sh -c 'echo sh-ok'
           if ($LASTEXITCODE -ne 0) { throw 'sh is not on the PATH' }
+          node -e "process.exit(require('./test/helpers/posix_sh.js').hasPosixSh ? 0 : 1)"
+          if ($LASTEXITCODE -ne 0) { throw 'hasPosixSh is false: the launcher tests would be skipped' }
       - name: Install zn-gate dependencies
         working-directory: packages/zn-gate
         run: npm ci --ignore-scripts
