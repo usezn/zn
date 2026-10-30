@@ -1,0 +1,2 @@
+### Security
+- The pre-tool check now reads `@file` in the value of curl's `-d`, `--data`, `--data-binary`, `--data-raw`, `--data-urlencode`, `--json`, `-F` and `--form` (also `name=@file`, `name=<file` and the form without a space, as in `-d@.env`) as a file that is sent. A `.env` file with values, a credential file or a private key named that way is refused, the same as when it is given to `-T`, `--upload-file` or `wget --post-file`. Plain data such as `-d 'a@b.com'`, `-F 'email=me@example.com'` or `-d @payload.json` stays allowed.
