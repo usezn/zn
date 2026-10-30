@@ -340,7 +340,7 @@ test('zn-gate check: a ZCode hook with a non-system sh, a pattern, or a script l
   fs.writeFileSync(path.join(project, 'evil.sh'), planted, { mode: 0o755 });
   const swapCmd = (cmd) => (h) => h.split('"command": "/bin/sh"').join('"command": ' + JSON.stringify(cmd));
   const cases = [
-    [swapCmd(path.join(project, 'sh')), null, posix ? /not a system shell running a script inside the plugin folder/ : /by name/],
+    [swapCmd(path.join(project, 'sh')), null, /not a system shell running a script inside the plugin folder/],
     [swapCmd('/*/sh'), null, /a pattern the shell or the host expands/],
     [(h) => h.split('scripts/zn-hook.sh').join('scripts/link.sh'), 'link', /not a file inside the plugin folder/],
   ];
@@ -390,4 +390,55 @@ test('zn-gate check: only the PreToolUse hook the ZCode plugin ships counts; a d
     }
   }
   assert.equal(fs.existsSync(marker), false, 'zn-gate check ran the decoy script');
+});
+
+// The real two-entry hooks.json (a /bin/sh hook and a PowerShell hook for every event): each system judges only the entry that can start on it.
+test('zn-gate check reads the two-entry manifest for the system it runs on: both systems find it protected, a changed entry of that system is not', async (t) => {
+  const { _internal } = require('../lib/check');
+  const home = tempDir(t, 'zn-zcp-two-');
+  const root = installPlugin(home);
+  const read = (hooks) => {
+    fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooks);
+    return _internal.pluginManifest(root, 'ZCODE_PLUGIN_ROOT');
+  };
+  const real = fs.readFileSync(REPO_HOOKS, 'utf8');
+  for (const win of [false, true]) {
+    const m = _internal.zcodeRelevant(read(real), win);
+    assert.equal(m.bare, null, 'win=' + win + ': ' + (m.bare && m.bare.byName));
+    const pre = m.hooks.filter((h) => h.event === 'PreToolUse' && !h.byName);
+    assert.equal(pre.length, 1, 'win=' + win);
+    assert.equal(pre[0].win, win);
+    assert.equal(m.hooks.length, 4, 'one hook per event for this system');
+  }
+  // A changed entry is judged on its own system and ignored on the other.
+  const change = (index, fn) => {
+    const j = JSON.parse(real);
+    for (const groups of Object.values(j.hooks)) for (const g of groups) fn(g.hooks[index]);
+    return JSON.stringify(j);
+  };
+  const tamperedSh = change(0, (h) => { h.args = ['${ZCODE_PLUGIN_ROOT}/scripts/other.sh', h.args[1]]; });
+  const tamperedPs = change(1, (h) => { h.args = h.args.slice(0, 3).concat(h.args[3].replace('zn-hook.ps1', 'other.ps1')); });
+  const otherWinPath = change(1, (h) => { h.command = 'C:/Temp/powershell.exe'; });
+  assert.equal(_internal.zcodeRelevant(read(tamperedSh), true).bare, null, 'a changed sh entry is not judged on Windows');
+  assert.ok(_internal.zcodeRelevant(read(tamperedSh), false).bare, 'a changed sh entry is judged on macOS and Linux');
+  assert.equal(_internal.zcodeRelevant(read(tamperedPs), false).bare, null, 'a changed PowerShell entry is not judged on macOS and Linux');
+  assert.ok(_internal.zcodeRelevant(read(tamperedPs), true).bare, 'a changed PowerShell entry is judged on Windows');
+  for (const win of [true]) assert.ok(_internal.zcodeRelevant(read(otherWinPath), win).bare, "another program at a Windows path is not the shipped hook");
+  // A Windows path of another program is not "by name", and is not accepted either.
+  const j = JSON.parse(real);
+  j.hooks.PreToolUse[0].hooks[0].command = 'C:\\Windows\\System32\\cmd.exe';
+  const m = _internal.zcodeRelevant(read(JSON.stringify(j)), true);
+  assert.match(m.bare.byName, /not a system shell running a script inside the plugin folder/);
+  // The same through check on this system.
+  const cwd = tempDir(t, 'zn-zcp-two-cwd-');
+  fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), real);
+  writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } } });
+  let r = await zcodeCheck(home, cwd, SYSPATH);
+  assert.equal(r.state, 'protected', r.problem);
+  fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), posix ? tamperedPs : tamperedSh);
+  r = await zcodeCheck(home, cwd, SYSPATH);
+  assert.equal(r.state, 'protected', 'the entry of the other system is not judged: ' + r.problem);
+  fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), posix ? tamperedSh : tamperedPs);
+  r = await zcodeCheck(home, cwd, SYSPATH);
+  assert.equal(r.state, 'not-protected');
 });
