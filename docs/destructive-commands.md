@@ -57,6 +57,10 @@ The check reads command text only. These are **not** covered, and the check lets
 - Other tools (`rsync --delete`, `git clean`), code in a file or built at run time (a script the agent wrote, `python3 -c "shutil.rmtree(path)"` with a variable), and paths below the top level (`rm -rf /usr/local`).
 - Commands that run inside a container (`docker run ... rm -rf /`) or on another machine (`ssh host "rm -rf /"`).
 - Anything an agent does by writing a file and then running it.
+- A command that comes right after a shell keyword or a block opener. Commands after `{`, `then`, `else`, `do` and `!`, and commands inside backticks, are not read: `{ rm -rf ~; }`, `if true; then rm -rf ~; fi`, `while true; do rm -rf ~; done`, `! rm -rf ~` and `` echo `rm -rf ~` `` pass, while the same command inside `( )`, `$( )`, after `time`, or after `case ... )` is read.
+- A change of folder. The check does not follow where the command runs, so a relative target such as `.` is judged without knowing the folder: `cd ~ && rm -rf .`, `env -C ~ rm -rf .`, `env --chdir=/ rm -rf .` and `sudo -D / rm -rf .` pass, also inside `sh -c "..."`.
+
+We are working on both gaps (the commands after keywords and the changes of folder); they are not fixed in the released versions yet.
 
 For those, use a sandbox, a container or your agent's own permission prompts. This check adds a cheap last barrier for the most common catastrophic mistakes.
 
