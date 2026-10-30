@@ -2,7 +2,7 @@
 /**
  * zn Team on this machine:
  *
- *   zn team join <znj_token> [--api https://...] [--agent claude-code|codex|...] [--include-history]
+ *   zn team join <znj_token> | - | (ZN_TEAM_JOIN_TOKEN) [--api https://...] [--agent claude-code|codex|...] [--include-history]
  *   zn team status [--json]
  *   zn team sync                      download the policy now and upload the audit log
  *   zn team leave
@@ -16,6 +16,7 @@
  */
 
 const fs = require('fs');
+const readline = require('readline');
 const policy = require('./policy');
 const { pendingCount } = require('./upload');
 const { syncOutcome } = require('./sync-outcome');
@@ -27,6 +28,7 @@ const { messageWithUnlockHint } = require('../errors');
 const { znCommand } = require('../zn-command');
 
 const USAGE = 'usage: zn team join <token> [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
+const JOIN_TOKEN_ENV = 'ZN_TEAM_JOIN_TOKEN';
 const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE]';
 
 const out = (s) => process.stdout.write(s + '\n');
@@ -50,9 +52,44 @@ function describePolicy(p) {
   return base;
 }
 
-async function joinCmd(args) {
-  const token = args[2];
-  if (!token || token.startsWith('--')) { err(USAGE); return 2; }
+/* First non-empty line of standard input, trimmed. Never echoed. */
+function readStdinToken() {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, terminal: false });
+    let done = false;
+    const finish = (v) => { if (done) return; done = true; rl.close(); resolve(v); };
+    if (process.stdin.isTTY) err('Paste the join token and press Enter:');
+    rl.on('line', (l) => { if (l.trim()) finish(l.trim()); });
+    rl.on('close', () => finish(''));
+    rl.on('error', () => finish(''));
+  });
+}
+
+/*
+ * Where the join token comes from. Precedence: an argument beats the environment; the argument `-` means "read one
+ * line from standard input" (it is the explicit choice, so a script with no terminal and no input never blocks);
+ * with no argument, ZN_TEAM_JOIN_TOKEN. A token given as an argument stays in the shell history and in `ps`, so zn
+ * says so (the token is never printed). Returns { token, via } or { error }.
+ */
+async function joinTokenFrom(args, io) {
+  const arg = args[2];
+  if (arg && arg !== '-' && !arg.startsWith('--')) return { token: arg, via: 'argument' };
+  if (arg === '-') {
+    const t = await (io.readStdin || readStdinToken)();
+    return t ? { token: t, via: 'stdin' } : { error: 'no join token on standard input. Pipe it in, for example: printf %s "$TOKEN" | zn team join -' };
+  }
+  const env = String((io.env || process.env)[JOIN_TOKEN_ENV] || '').trim();
+  return env ? { token: env, via: 'env' } : {};
+}
+
+async function joinCmd(args, io) {
+  const got = await joinTokenFrom(args, io || {});
+  if (got.error) { err('[zn] ' + got.error); return 2; }
+  if (!got.token) { err(USAGE); err('The token can also come from standard input (zn team join -) or from the ' + JOIN_TOKEN_ENV + ' environment variable.'); return 2; }
+  const token = got.token;
+  if (got.via === 'argument') {
+    err('[zn] Note: a join token given as an argument stays in your shell history and is visible in the process list. Next time use `zn team join -` (token on standard input) or set ' + JOIN_TOKEN_ENV + '.');
+  }
   // Audit records written before joining stay on this machine unless this flag asks to send them too.
   const joinArgs = { join_token: token, api_base: flag(args, '--api'), agent: flag(args, '--agent') };
   if (args.includes('--include-history')) joinArgs.include_history = true;
@@ -196,11 +233,11 @@ async function leaveCmd() {
 }
 
 /** Returns the process exit code. */
-async function runTeamCommand(args) {
+async function runTeamCommand(args, io) {
   try {
     const sub = args[1];
     if (args.slice(1).some((a) => a === '-h' || a === '--help')) { out(USAGE); return 0; }
-    if (sub === 'join') return await joinCmd(args);
+    if (sub === 'join') return await joinCmd(args, io);
     if (sub === 'status' || sub === undefined) return await statusCmd(args);
     if (sub === 'sync') return await syncCmd();
     if (sub === 'leave') return await leaveCmd();

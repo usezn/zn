@@ -41,6 +41,7 @@ The commands that start a long-running server (`mcp`, `shield`, `secrets-mcp`) e
 | `ZN_STAGE` or `--stage <v30\|prod>` | Cloud stage. Default `v30`. |
 | `ZN_API_URL` or `--url <url>` | Use another cloud address. |
 | `--long-input <windows\|off>` | How long texts are sent to the cloud check: in overlapping windows (default, up to 20), or only the first 512 tokens. Any other value exits `2`. |
+| `ZN_TEAM_JOIN_TOKEN` | The join token for `team join` when you give none as an argument and no `-`. Keeps the token out of your shell history. An argument wins over it. |
 | `ZN_STATS=off` | Turns off the local counts shown by `stats` and `report`. |
 | `ZN_VERBOSE=1` or `--verbose` | Prints debug messages to the error output. |
 | `NO_COLOR` | Turns off colors. |
@@ -602,11 +603,13 @@ With no subcommand it is the same as `team status`. Exit codes: `0` done, `1` an
 #### `team join`
 
 ```bash
-JOIN_TOKEN='paste-your-join-token-here'
-zn-gate team join "$JOIN_TOKEN"
+zn-gate team join -
+# Paste the join token and press Enter. Or set ZN_TEAM_JOIN_TOKEN and run: zn-gate team join
 # Optional: add --api https://api.example.com (another server), --agent claude-code,
 # or --include-history to also send the audit records written before you joined
 ```
+
+Where the join token comes from: an argument (`team join <token>`), standard input (`team join -`, reads one line) or the `ZN_TEAM_JOIN_TOKEN` environment variable. An argument wins over the environment variable; `-` means standard input. A token typed as an argument stays in your shell history and is visible in the process list, so zn prints a one-line note when you do that. The token is never printed.
 
 Connects this machine to your organization with the join token your admin gave you. It exits `0` only after the organization's first valid policy has been downloaded and applied. If that fails (offline, or no policy published yet) it exits `1`; the machine stays registered, `team status` shows the join as pending, and `team sync` finishes it. Only the audit records written from the join on are uploaded; `--include-history` adds the earlier ones, and only at the first join of an installation.
 
