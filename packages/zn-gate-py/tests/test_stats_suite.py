@@ -171,3 +171,39 @@ def test_events_are_passed_through_as_a_copy(home):
     d.mkdir()
     (d / "stats.json").write_text(json.dumps({"days": {}, "events": {"shared": 2}}))
     assert stats.summary(now=TODAY)["events"] == {"shared": 2}
+
+
+def _snapshot(root):
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*"))
+
+
+def test_zn_home_wins_over_home_when_both_are_set(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    zn_home = tmp_path / "zn-home"
+    fake_home.mkdir()
+    zn_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+    monkeypatch.setenv("ZN_HOME", str(zn_home))
+    assert stats.stats_file() == str(zn_home / "stats.json")
+    day = {TODAY.isoformat(): {"hook:codex": entry(checked=3)}}
+    (zn_home / "stats.json").write_text(json.dumps({"version": 1, "days": day, "events": {}}))
+    # a file under HOME/.zn must be ignored while ZN_HOME is set
+    (fake_home / ".zn").mkdir()
+    other = {TODAY.isoformat(): {"hook:codex": entry(checked=99)}}
+    (fake_home / ".zn" / "stats.json").write_text(json.dumps({"version": 1, "days": other, "events": {}}))
+    assert stats.summary(days=1, now=TODAY)["total"]["checked"] == 3
+
+
+def test_stats_reading_does_not_write_anything(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    zn_home = tmp_path / "zn-home"
+    fake_home.mkdir()
+    zn_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+    monkeypatch.setenv("ZN_HOME", str(zn_home))
+    before = _snapshot(tmp_path)
+    stats.summary(now=TODAY)
+    assert _snapshot(tmp_path) == before
+    assert not (fake_home / ".zn").exists()
