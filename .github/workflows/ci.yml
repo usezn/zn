@@ -237,6 +237,7 @@ jobs:
         # One wall-clock test is left out here (tracing slows it past its limit); the required job runs it untraced.
         working-directory: packages/zn-gate-py
         run: |
+          set -o pipefail
           python -m pytest tests/ -v --deselect tests/test_cli.py::TestCliScanCommand::test_many_key_blocks_scan_in_linear_time --cov=zn_gate --cov-report=term --cov-report=xml:"$RUNNER_TEMP/coverage-python.xml" 2>&1 | tee "$RUNNER_TEMP/coverage-python.log"
           {
             echo '### zn-gate (Python) coverage'
