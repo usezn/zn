@@ -614,7 +614,7 @@ _ENV_FLAG_WARNED: Set[Tuple[str, str]] = set()
 
 
 def env_flag(name: str) -> bool:
-    """True when the hardening flag `name` (ZN_STRICT, ZN_BLOCK_TRUNCATED) is set to "1", the only value that turns it
+    """True when the hardening flag `name` (ZN_STRICT, ZN_BLOCK_TRUNCATED, ZN_ALLOW_TRUNCATED) is set to "1", the only value that turns it
     on. Any other value (true, yes, on...) leaves it off, so it is said once in the log rather than ignored silently."""
     value = os.environ.get(name)
     if value == "1":
@@ -623,7 +623,8 @@ def env_flag(name: str) -> bool:
         _ENV_FLAG_WARNED.add((name, value))
         import logging
         logging.getLogger("zn_gate").warning(
-            "zn_gate: %s is set to %r, but only %s=1 turns it on, so it is off", name, value[:20], name)
+            "zn_gate: %s is set to %r, but only %s=1 turns it on, so it is off "
+            "(accepted values: 1 to turn it on; unset, empty or 0 to leave it off)", name, value[:20], name)
     return False
 
 
@@ -1875,7 +1876,7 @@ def truncated_blocks(block_truncated: bool = False, allow_truncated: bool = Fals
     """
     if block_truncated or env_flag('ZN_BLOCK_TRUNCATED'):
         return True
-    return not (allow_truncated or os.environ.get('ZN_ALLOW_TRUNCATED') == '1')
+    return not (allow_truncated or env_flag('ZN_ALLOW_TRUNCATED'))
 
 
 def scan_windows(text: str, strict: Optional[bool] = None) -> Assessment:
