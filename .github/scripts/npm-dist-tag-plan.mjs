@@ -92,7 +92,9 @@ export function verify(version, tag, latestBefore, tags, versions = null) {
   if (versions !== null) {
     // A stage approved late can move "latest" back to an older final that was planned as latest before a newer
     // final came out: latest must never be below the newest final version on npm.
-    if (!Array.isArray(versions) || versions.some((x) => typeof x !== 'string')) throw new Error('the published versions are not a list of strings');
+    // npm prints a plain string, not a list, when a package has only one version.
+    if (typeof versions === 'string') versions = [versions];
+    if (!Array.isArray(versions) || versions.some((x) => typeof x !== 'string')) throw new Error('the published versions are not a list (or a single version string) of strings');
     const finals = versions.filter((x) => parse(x) && !parse(x).pre.length);
     const newest = finals.reduce((m, x) => (m === null || compare(x, m) > 0 ? x : m), null);
     if (newest !== null) {
@@ -122,7 +124,9 @@ export function stagedPlan(version, saved, sha = '') {
   if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('the saved dist-tag plan is not an object');
   const { version: pv, tag, latest_before: lb } = saved;
   if (pv !== version) throw new Error(`the saved dist-tag plan is for ${pv}, not ${version}`);
-  // The plan must come from the job that staged this commit, not from another job of the run.
+  // Only the commit is checked: the plan must be for the same commit as this run. It is not bound to the
+  // job that wrote it; the artifact comes from this same workflow run (same repository, same run id), which
+  // is the trust boundary here.
   if (sha && saved.sha !== sha) throw new Error(`the saved dist-tag plan is for commit ${saved.sha}, not ${sha}`);
   const allowed = v.pre.length ? [PRERELEASE_TAGS[v.pre[0]]] : ['latest', `release-${v.major}.${v.minor}`];
   if (typeof tag !== 'string' || !allowed.includes(tag)) throw new Error(`the saved dist-tag ${tag} does not fit ${version}`);
