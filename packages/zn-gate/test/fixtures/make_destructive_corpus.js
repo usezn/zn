@@ -437,6 +437,14 @@ for (const flag of ['--force', '-f', '--force-with-lease', '--force-with-lease=m
 pRisk('git_force_push_protected', 'git push origin +main', 'git push origin +HEAD:master', 'git push origin +release/3.1', 'git push -fu origin main', 'git push -uf origin master', 'git push --force --all',
   'git push --mirror --force origin', 'git push --mirror origin', 'git push origin --mirror', 'git push --mirror=origin', 'git push -v --mirror origin', 'git push --no-verify --mirror origin', 'git -C /srv/app push --mirror origin', 'git push --force origin feature-x main', 'git push --no-verify -f origin main', 'sudo git push -f origin main');
 
+// git: deleting a protected branch on a remote (--delete, -d or an empty source before the colon).
+for (const b of ['main', 'master', 'release/1.2', 'release/2.0.x']) {
+  pRisk('git_delete_protected_branch',
+    'git push origin --delete ' + b, 'git push --delete origin ' + b, 'git push origin -d ' + b, 'git push -d origin ' + b, 'git push origin :' + b,
+    'git push origin :refs/heads/' + b, 'git push upstream --delete refs/heads/' + b, 'git push origin --delete feature-x ' + b, 'git push origin :feature-x :' + b,
+    'git -C /srv/app push origin --delete ' + b, 'cd /srv/app && git push origin :' + b, 'sudo git push origin -d ' + b);
+}
+
 // Benign look-alikes: they must stay allowed.
 pAdd("psql -c \"SELECT * FROM users WHERE name = 'DROP TABLE'\"", "psql -d prod-db-example -c \"SELECT 'TRUNCATE TABLE users'\"", 'psql -c "select 1"', 'psql -c "SELECT count(*) FROM orders"',
   'psql -c "-- DROP TABLE users\nSELECT 1"', 'psql -c "/* DROP DATABASE prod-db-example */ SELECT 1"', 'psql -c "SELECT truncate(1.5)"', 'mysql -e "SELECT TRUNCATE(3.14159, 2)"',
@@ -461,7 +469,9 @@ pAdd("psql -c \"SELECT * FROM users WHERE name = 'DROP TABLE'\"", "psql -d prod-
   'git push --force origin feature/login', 'git push -f origin fix/typo', 'git push --force-with-lease origin my-branch', 'git push --force origin feature-x:feature-y', 'git push origin main', 'git push origin master', 'git push -u origin main',
   'git push origin release/1.2', 'git push', 'git push origin', 'git push --force-with-lease=feature:abc123 origin feature', 'git push origin +feature-x', 'git push -u origin feature/billing-example', 'git push origin --delete old-branch',
   'git push --tags', 'git push --force origin refs/heads/feature-z', 'git push --force origin HEAD:refs/heads/dev-example', 'git fetch --force origin main', 'git branch -f main origin/main', 'git checkout -f main', 'git pull --force origin main',
-  'echo git push --force origin main', 'git commit -m "never git push --force origin main"', 'git log --oneline main', 'git push --dry-run origin main');
+  'echo git push --force origin main', 'git commit -m "never git push --force origin main"', 'git log --oneline main', 'git push --dry-run origin main',
+  'git push origin --delete feature-x', 'git push origin -d feature/login', 'git push origin :feature-x', 'git push origin --delete feature-x fix/typo', 'git push origin --delete tag-main',
+  'git push origin --delete refs/tags/main', 'git push origin HEAD:main', 'git push origin --delete mainline', 'git push origin :release', 'git push origin --delete hotfix/release/1');
 
 // Shapes the guard does not read (documented): it allows them.
 const prodNotCovered = [

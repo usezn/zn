@@ -3891,7 +3891,17 @@
   "git push -u origin main",
   "git push origin",
   "git push origin +feature-x",
+  "git push origin --delete feature-x",
+  "git push origin --delete feature-x fix/typo",
+  "git push origin --delete hotfix/release/1",
+  "git push origin --delete mainline",
   "git push origin --delete old-branch",
+  "git push origin --delete refs/tags/main",
+  "git push origin --delete tag-main",
+  "git push origin -d feature/login",
+  "git push origin :feature-x",
+  "git push origin :release",
+  "git push origin HEAD:main",
   "git push origin main",
   "git push origin master",
   "git push origin release/1.2",
@@ -4278,6 +4288,198 @@
   {
    "cmd": "gcloud storage buckets delete gs://prod-db-example",
    "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "cd /srv/app && git push origin :main",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "cd /srv/app && git push origin :master",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "cd /srv/app && git push origin :release/1.2",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "cd /srv/app && git push origin :release/2.0.x",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git -C /srv/app push origin --delete main",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git -C /srv/app push origin --delete master",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git -C /srv/app push origin --delete release/1.2",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git -C /srv/app push origin --delete release/2.0.x",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push --delete origin main",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push --delete origin master",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push --delete origin release/1.2",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push --delete origin release/2.0.x",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push -d origin main",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push -d origin master",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push -d origin release/1.2",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push -d origin release/2.0.x",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin --delete feature-x main",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin --delete feature-x master",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin --delete feature-x release/1.2",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin --delete feature-x release/2.0.x",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin --delete main",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin --delete master",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin --delete release/1.2",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin --delete release/2.0.x",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin -d main",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin -d master",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin -d release/1.2",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin -d release/2.0.x",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin :feature-x :main",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin :feature-x :master",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin :feature-x :release/1.2",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin :feature-x :release/2.0.x",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin :main",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin :master",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin :refs/heads/main",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin :refs/heads/master",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin :refs/heads/release/1.2",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin :refs/heads/release/2.0.x",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin :release/1.2",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push origin :release/2.0.x",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push upstream --delete refs/heads/main",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push upstream --delete refs/heads/master",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push upstream --delete refs/heads/release/1.2",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "git push upstream --delete refs/heads/release/2.0.x",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "sudo git push origin -d main",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "sudo git push origin -d master",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "sudo git push origin -d release/1.2",
+   "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "sudo git push origin -d release/2.0.x",
+   "rule": "git_delete_protected_branch"
   },
   {
    "cmd": "cd /srv/app && git push --force origin main",

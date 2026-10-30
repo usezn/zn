@@ -26,7 +26,7 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from . import destructive as _d
 
-PROD_GUARD_RULES_VERSION = "2026-10-30.3"
+PROD_GUARD_RULES_VERSION = "2026-10-30.4"
 
 _RULES: Dict[str, Tuple[str, str]] = {
     "sql_drop": ("DROP DATABASE, DROP TABLE or TRUNCATE sent to a database", "deletes a database, a table or all of its rows"),
@@ -40,6 +40,7 @@ _RULES: Dict[str, Tuple[str, str]] = {
     "aws_rds_delete": ("aws rds delete-*", "deletes a database instance, cluster or snapshot"),
     "gcloud_delete": ("gcloud delete of a project, a Cloud SQL instance or database, a storage bucket or a cluster", "deletes it and what it holds"),
     "git_force_push_protected": ("a force push to a protected branch", "rewrites shared history that other people rely on"),
+    "git_delete_protected_branch": ("deleting a protected branch on a remote", "removes a shared branch that other people rely on"),
 }
 RULES = ["prod:" + k for k in _RULES]
 
@@ -303,6 +304,7 @@ def _git_force_push(rest: List[str], cwd: Optional[str]) -> Optional[str]:
     args = rest[i + 1:]
     force = False
     everything = False
+    delete = False
     pos: List[str] = []
     k = 0
     while k < len(args):
@@ -318,11 +320,15 @@ def _git_force_push(rest: List[str], cwd: Optional[str]) -> Optional[str]:
                 everything = True
             elif w == "--all":
                 everything = True
+            elif w == "--delete":
+                delete = True
             elif w in _PUSH_VALUE_FLAGS:
                 k += 1
         elif w.startswith("-") and len(w) > 1:
             if re.match(r"^-[A-Za-z]+\Z", w, _A) and "f" in w:
                 force = True
+            if re.match(r"^-[A-Za-z]+\Z", w, _A) and "d" in w:
+                delete = True
             if w == "-o":
                 k += 1
         else:
@@ -331,10 +337,24 @@ def _git_force_push(rest: List[str], cwd: Optional[str]) -> Optional[str]:
     remote = pos[0] if pos else None
     refs = pos[1:]
     plus = any(r.startswith("+") for r in refs)
-    if not force and not plus:
-        return None
     where = os.path.join(cwd, dir_flag) if (dir_flag and cwd) else cwd
     current, default = _repo_branches(where, remote)
+    # A delete: every ref after --delete / -d, or a ref with an empty source (":main"). "+:main" is read as a force push below.
+    for r in refs:
+        if delete:
+            name = r[1:] if r.startswith("+") else r
+        elif r.startswith(":"):
+            name = r[1:]
+        else:
+            continue
+        colon = name.find(":")
+        if colon >= 0:
+            name = name[colon + 1:]
+        name = name[len("refs/heads/"):] if name.startswith("refs/heads/") else name
+        if name and _is_protected(name, default):
+            return "delete:" + name
+    if not force and not plus:
+        return None
     if everything:
         return "all branches"
     branches: List[str] = []
@@ -475,6 +495,8 @@ def _check_simple(words: List[str], depth: int, cwd: Optional[str], docs: List[s
         return (r, None) if r else None
     if head == "git":
         b = _git_force_push(rest, cwd)
+        if b and b.startswith("delete:"):
+            return ("git_delete_protected_branch", b[len("delete:"):])
         return ("git_force_push_protected", b) if b else None
     return None
 

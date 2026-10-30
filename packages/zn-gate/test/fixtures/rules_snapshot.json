@@ -211,7 +211,7 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-30.18",
+      "version": "2026-10-30.19",
       "ids": [
         "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
@@ -241,13 +241,13 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "2f366f7700af98f92306032eca509bc21caa65f32620e3f64c437848c43d046d",
+        "lib/hooks/policy.js": "de1a0d583f2d460a0f253803cd9ff20f3527465d08c835acd55ac8db6f918d34",
         "lib/broker/files.js": "61d2808cadf534094cdc3a9ac686149e8f4e3477dc7bd7890f5d91a2f72f604f",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
         "lib/shell-quote.js": "91cf4832cf68d4a367854f0c6e982c349afad2934e634f743d33aaf7c71c7471",
         "lib/destructive.js": "72c0b6806ddb82ecf26ac5af9564bb946e96a90e370bc567a87fd2d7d0713fe4",
-        "lib/prod-guard.js": "2d1b2c0b191a02facccc9e7c96bbf53015b53692abb090a8f0522b1840a9cc0a"
+        "lib/prod-guard.js": "278775aebc1334837f940ba2df71c11d111a1ce1304b848cd27576b820117c00"
       }
     }
   }

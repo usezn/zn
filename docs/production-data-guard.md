@@ -18,6 +18,7 @@ It is a guardrail against a model's mistake or a bad suggestion. It reads the te
 | `aws_rds_delete` | `aws rds delete-*` (instances, clusters, snapshots) | `aws rds delete-db-instance --db-instance-identifier prod-db-example` |
 | `gcloud_delete` | `gcloud` delete of a project, a Cloud SQL instance or database, a storage bucket or a container cluster | `gcloud sql instances delete prod-db-example` |
 | `git_force_push_protected` | `git push` with `--force`, `-f`, `--force-with-lease` or a `+ref` to `main`, `master`, `release/*`, or the repository's default branch when it can be read from the repository files | `git push --force origin main` |
+| `git_delete_protected_branch` | `git push` that deletes `main`, `master`, `release/*`, or the repository's default branch on a remote: `--delete`, `-d`, or a ref with nothing before the colon (`:main`, `:refs/heads/main`), alone or among several refs | `git push origin --delete main` |
 
 Names in the examples are made up. The guard also reads a command inside `sh -c "..."`, `bash -c`, `eval`, `pwsh -Command` and `cmd /c`, behind `sudo` or `env`, and in a script given to a shell through a here-document.
 
@@ -66,7 +67,6 @@ The guard reads command text only. These are **not** covered, and the guard lets
 - **Commands that run somewhere else.** `ssh host "terraform destroy"`, a command inside a container, or one that a CI job runs.
 - **A program named by a variable** set earlier on the same line, or a command built at run time.
 - **A push that names no branch**, when the repository files cannot be read. With no branch name, `git push --force` pushes the current branch; the guard reads the current branch and the default branch from the repository's files (`.git/HEAD` and `refs/remotes/<remote>/HEAD`) and does not run `git`. If they cannot be read, for example in a folder that is not a repository, it allows the command. The default branch is known only when the repository recorded it (a normal `git clone` does).
-- **Deleting a protected branch.** `git push origin :main` and `git push --delete origin main` are not read; only force pushes are. (`git push --mirror` is read as a force push to all branches.)
 - **Other cluster and wrapper forms.** `oc delete project`, `xargs terraform destroy`, and a command nested in more than three `sh -c` layers.
 - **A folder changed earlier in the same command.** `cd other-repo && git push --force` is read against the folder the agent started in.
 

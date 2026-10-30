@@ -42,6 +42,18 @@ class ProductionGuardCorpus(unittest.TestCase):
         self.assertIsNone(rule("git push --all origin"))
         self.assertIsNone(rule("git push --dry-run origin main"))
 
+    def test_deleting_a_protected_branch_is_asked(self):
+        for c in ["git push origin --delete main", "git push --delete origin master", "git push origin -d main", "git push -d origin release/1.2", "git push origin :main",
+                  "git push origin :refs/heads/main", "git push origin --delete feature-x main", "git push origin :feature-x :master", "git push origin --delete refs/heads/main",
+                  "git -C /srv/app push origin --delete main", "cd /srv/app && git push origin :release/2.0", "sudo git push origin -d main"]:
+            self.assertEqual(rule(c), "git_delete_protected_branch", c)
+        self.assertIn("deleting the protected branch main", check_production_data("git push origin --delete main").message)
+        for c in ["git push origin --delete feature-x", "git push origin -d feature-x", "git push origin :feature-x", "git push origin --delete feature-x fix/typo", "git push origin main",
+                  "git push origin HEAD:main", "git push origin --delete refs/tags/main", "git push origin :release"]:
+            self.assertIsNone(rule(c), c)
+        self.assertEqual(rule("git push origin +:main"), "git_force_push_protected")
+        self.assertEqual(rule("git push --force origin HEAD:main"), "git_force_push_protected")
+
     def test_corpus_size_and_rules(self):
         self.assertGreaterEqual(len(CORPUS["prod_benign"]), 100)
         self.assertGreaterEqual(len(CORPUS["prod_risky"]), 300)

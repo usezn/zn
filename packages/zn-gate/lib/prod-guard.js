@@ -23,6 +23,8 @@
  *   gcloud_delete             gcloud projects | sql instances | sql databases | storage buckets | container clusters delete
  *   git_force_push_protected  git push --force, -f, --force-with-lease or +ref to main, master, release/* or the
  *                             repository's default branch
+ *   git_delete_protected_branch  git push --delete, -d or :branch (an empty source) naming main, master, release/* or
+ *                             the repository's default branch
  *
  * The command is split with the destructive-command module's reader, so quotes, `&&`, `;`, pipes, `sudo`, `env` and
  * `sh -c` code are understood. Every scan is linear in the size of the command.
@@ -31,7 +33,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const PROD_GUARD_RULES_VERSION = '2026-10-30.3';
+const PROD_GUARD_RULES_VERSION = '2026-10-30.4';
 
 const RULES = {
   sql_drop: { what: 'DROP DATABASE, DROP TABLE or TRUNCATE sent to a database', effect: 'deletes a database, a table or all of its rows' },
@@ -42,6 +44,7 @@ const RULES = {
   aws_rds_delete: { what: 'aws rds delete-*', effect: 'deletes a database instance, cluster or snapshot' },
   gcloud_delete: { what: 'gcloud delete of a project, a Cloud SQL instance or database, a storage bucket or a cluster', effect: 'deletes it and what it holds' },
   git_force_push_protected: { what: 'a force push to a protected branch', effect: 'rewrites shared history that other people rely on' },
+  git_delete_protected_branch: { what: 'deleting a protected branch on a remote', effect: 'removes a shared branch that other people rely on' },
 };
 
 const MAX_DEPTH = 3;
@@ -259,6 +262,7 @@ function gitForcePush(rest, cwd) {
   const args = rest.slice(i + 1);
   let force = false;
   let all = false;
+  let del = false;
   const pos = [];
   for (let k = 0; k < args.length; k++) {
     const w = args[k];
@@ -267,11 +271,13 @@ function gitForcePush(rest, cwd) {
       if (flagIs(w, '--force') || flagIs(w, '--force-with-lease') || flagIs(w, '--force-if-includes')) force = true;
       else if (flagIs(w, '--mirror')) { force = true; all = true; } // --mirror deletes and overwrites remote refs: as a force push
       else if (w === '--all') all = true;
+      else if (w === '--delete') del = true;
       else if (PUSH_VALUE_FLAGS.has(w)) k++;
       continue;
     }
     if (w.startsWith('-') && w.length > 1) {
       if (/^-[A-Za-z]+$/.test(w) && w.includes('f')) force = true;
+      if (/^-[A-Za-z]+$/.test(w) && w.includes('d')) del = true;
       if (w === '-o') k++;
       continue;
     }
@@ -280,9 +286,20 @@ function gitForcePush(rest, cwd) {
   const remote = pos[0];
   const refs = pos.slice(1);
   const plus = refs.some((r) => r.startsWith('+'));
-  if (!force && !plus) return null;
   const where = dirFlag && cwd ? path.resolve(cwd, dirFlag) : cwd;
   const { current, def } = repoBranches(where, remote);
+  // A delete: every ref after --delete / -d, or a ref with an empty source (":main", ":refs/heads/main"). "+:main" is read as a force push below.
+  for (const r of refs) {
+    let name = null;
+    if (del) name = r.replace(/^\+/, '');
+    else if (r.startsWith(':')) name = r.slice(1);
+    if (name === null) continue;
+    const colon = name.indexOf(':');
+    if (colon >= 0) name = name.slice(colon + 1);
+    name = name.replace(/^refs\/heads\//, '');
+    if (name && isProtected(name, def)) return { branch: name, del: true };
+  }
+  if (!force && !plus) return null;
   const branches = [];
   if (all) return { branch: 'all branches' };
   if (!refs.length) { if (current) branches.push(current); }
@@ -404,7 +421,7 @@ function checkSimple(words, depth, ctx, docs, pipeText) {
   }
   if (head === 'git') {
     const r = gitForcePush(rest, ctx.cwd);
-    return r ? { rule: 'git_force_push_protected', detail: r.branch } : null;
+    return r ? { rule: r.del ? 'git_delete_protected_branch' : 'git_force_push_protected', detail: r.branch } : null;
   }
   return null;
 }

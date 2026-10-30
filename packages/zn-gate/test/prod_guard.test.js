@@ -128,6 +128,23 @@ test('git push --mirror overwrites and deletes every remote ref, so it is asked 
   assert.equal(rule('git push --dry-run origin main'), null);
 });
 
+test('deleting a protected branch on a remote is asked, in every form', () => {
+  for (const c of ['git push origin --delete main', 'git push --delete origin master', 'git push origin -d main', 'git push -d origin release/1.2', 'git push origin :main',
+    'git push origin :refs/heads/main', 'git push origin --delete feature-x main', 'git push origin :feature-x :master', 'git push origin --delete refs/heads/main',
+    'git -C /srv/app push origin --delete main', 'cd /srv/app && git push origin :release/2.0', 'sudo git push origin -d main']) {
+    assert.equal(rule(c), 'git_delete_protected_branch', c);
+  }
+  assert.match(checkProductionData('git push origin --delete main').message, /deleting the protected branch main/);
+  // a non-protected branch can be deleted
+  for (const c of ['git push origin --delete feature-x', 'git push origin -d feature-x', 'git push origin :feature-x', 'git push origin --delete feature-x fix/typo', 'git push origin main',
+    'git push origin HEAD:main', 'git push origin --delete refs/tags/main', 'git push origin :release']) {
+    assert.equal(rule(c), null, c);
+  }
+  // +:main and HEAD:main are not read as a delete: a force is still a force push
+  assert.equal(rule('git push origin +:main'), 'git_force_push_protected');
+  assert.equal(rule('git push --force origin HEAD:main'), 'git_force_push_protected');
+});
+
 function makeRepo(t, { head, originHead }) {
   const root = tempDir(t, 'zn-prodguard-');
   const git = path.join(root, '.git');
