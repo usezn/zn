@@ -976,6 +976,8 @@ async function checkAgent(spec, ctx) {
         const run = claudePluginRun(CLAUDE_PRE_COMMAND, realRoot, ctx, preHook.timeout);
         if (!run) {
           res.problem = 'Git Bash was not found, and Claude Code runs the hooks of the zn-gate plugin with it on Windows ("shell": "bash"), so the hook cannot start';
+          // The plan must not offer to install the plugin again: that cannot give it a Git Bash.
+          res.needsGitBash = true;
           res.fix = 'install Git for Windows (or set CLAUDE_CODE_GIT_BASH_PATH to its bash.exe), or use zn\'s hooks instead: run `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`, all in your own terminal, then run `zn-gate check` again';
           res.pluginFault = true;
         } else {

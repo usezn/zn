@@ -158,6 +158,10 @@ async function plan(opts = {}) {
       } else if (!hooksVerb && r.via === 'both') {
         // Something other than the plugin (a Claude Code setting that stops all hooks, zn's rules): neither set is touched.
         item.steps.push({ label: 'first do this yourself', run: null, manual: r.fix });
+      } else if (!hooksVerb && r.needsGitBash) {
+        // The plugin is installed but Claude Code has no Git Bash to start its hook with (Windows): installing the plugin again
+        // cannot give it one. Git for Windows (or CLAUDE_CODE_GIT_BASH_PATH) comes first, or zn's own hooks instead; the fix says both.
+        item.steps.push({ label: 'first do this yourself', run: null, manual: r.fix });
       } else if (!hooksVerb && r.pluginOff) {
         // Installed but turned off: installing it again would not turn it on.
         const claude = opts.claude !== undefined ? opts.claude : findProgram('claude', env);
