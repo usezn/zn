@@ -6,7 +6,7 @@ Finds a command that deletes a database, cloud storage or infrastructure, or for
                             clickhouse-client, usql or mongosh (-c, -e, --eval, an argument, a here-document or a here-string;
                             mongosh dropDatabase() and collection drop())
   terraform_destroy         terraform / tofu / terragrunt destroy, and apply -destroy
-  kubectl_delete_namespace  kubectl / oc delete namespace
+  kubectl_delete_namespace  kubectl / oc delete namespace, and oc delete project
   kubectl_delete_all        kubectl / oc delete ... --all
   aws_s3_delete             aws s3 rm --recursive, aws s3 rb, aws s3api delete-bucket and delete-objects
   aws_rds_delete            aws rds delete-*
@@ -26,12 +26,12 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from . import destructive as _d
 
-PROD_GUARD_RULES_VERSION = "2026-10-30.4"
+PROD_GUARD_RULES_VERSION = "2026-10-30.5"
 
 _RULES: Dict[str, Tuple[str, str]] = {
     "sql_drop": ("DROP DATABASE, DROP TABLE or TRUNCATE sent to a database", "deletes a database, a table or all of its rows"),
     "terraform_destroy": ("terraform destroy (or apply -destroy)", "deletes every resource the configuration manages"),
-    "kubectl_delete_namespace": ("kubectl delete namespace", "deletes the namespace and everything in it"),
+    "kubectl_delete_namespace": ("kubectl delete namespace (or oc delete project)", "deletes the namespace and everything in it"),
     "kubectl_delete_all": ("kubectl delete --all", "deletes every object of that kind that the command selects"),
     "aws_s3_delete": (
         "a recursive or bucket-level delete in S3 (aws s3 rm --recursive, s3 rb, s3api delete-bucket or delete-objects)",
@@ -60,6 +60,9 @@ _AWS_VALUE_FLAGS = {"--profile", "--region", "--endpoint-url", "--output", "--qu
 _KUBECTL_VALUE_FLAGS = {"-n", "--namespace", "--context", "--cluster", "--user", "--kubeconfig", "-s", "--server", "--token", "--as", "--as-group", "--request-timeout"}
 _GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
 _PUSH_VALUE_FLAGS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
+# xargs and watch run the command they are given. Options that take a value as the next word.
+_XARGS_VALUE_FLAGS = {"-I", "-n", "-P", "-d", "-E", "-L", "-s", "-a", "--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-lines", "--max-chars", "--process-slot-var"}
+_WATCH_VALUE_FLAGS = {"-n", "--interval"}
 _GCLOUD_PATHS = [
     ["projects", "delete"], ["sql", "instances", "delete"], ["sql", "databases", "delete"],
     ["storage", "buckets", "delete"], ["container", "clusters", "delete"],
@@ -378,7 +381,7 @@ def _git_force_push(rest: List[str], cwd: Optional[str]) -> Optional[str]:
     return None
 
 
-def _kubectl_delete(rest: List[str]) -> Optional[str]:
+def _kubectl_delete(head: str, rest: List[str]) -> Optional[str]:
     i = 0
     while i < len(rest) and (rest[i].startswith("-") or (i > 0 and rest[i - 1] in _KUBECTL_VALUE_FLAGS)):
         i += 1
@@ -389,6 +392,8 @@ def _kubectl_delete(rest: List[str]) -> Optional[str]:
     while k < len(args) and (args[k].startswith("-") or (k > 0 and args[k - 1] in _KUBECTL_VALUE_FLAGS)):
         k += 1
     kind = (args[k] if k < len(args) else "").lower()
+    if head == "oc" and re.match(r"^projects?(?:/|\Z)", kind, _A):
+        return "kubectl_delete_namespace"
     if re.match(r"^(?:namespaces?|ns)(?:/|\Z)", kind, _A) or any(re.match(r"^(?:namespaces?|ns)\Z", x, _A) for x in kind.split(",")):
         return "kubectl_delete_namespace"
     if any(w in ("--all", "--all=true") for w in args):
@@ -414,6 +419,8 @@ def _aws_delete(rest: List[str]) -> Optional[str]:
             return "aws_s3_delete"
         if op == "rm" and "--recursive" in rest and "--dryrun" not in rest:
             return "aws_s3_delete"
+        if op == "sync" and "--delete" in rest and "--dryrun" not in rest:
+            return "aws_s3_delete"
     if service == "s3api" and op in ("delete-bucket", "delete-objects"):
         return "aws_s3_delete"
     if service == "rds" and isinstance(op, str) and op.startswith("delete-"):
@@ -423,6 +430,10 @@ def _aws_delete(rest: List[str]) -> Optional[str]:
 
 def _gcloud_delete(rest: List[str]) -> Optional[str]:
     pos = [w for w in rest if not w.startswith("-")]
+    # gcloud storage rm of a whole tree (-r, -R, --recursive); no name check, like aws s3 rm --recursive.
+    for i in range(len(pos) - 1):
+        if pos[i] == "storage" and pos[i + 1] == "rm" and any(w in ("-r", "-R") or _flag_is(w, "--recursive") for w in rest):
+            return "gcloud_delete"
     for p in _GCLOUD_PATHS:
         for i in range(len(pos) - len(p) + 1):
             if pos[i:i + len(p)] == p:
@@ -440,8 +451,34 @@ def _terraform_destroy(head: str, rest: List[str]) -> Optional[str]:
     return None
 
 
+def _command_args(words: List[str]) -> List[str]:
+    """The command a simple command runs, once the words that only run it are taken off: the "{" that opens a brace
+    group (a ( subshell is already a separate command), sudo, env and the like, and xargs / watch with their options."""
+    i = 0
+    while i < len(words) and words[i] == "{":
+        i += 1
+    w = _d._unwrap(words[i:])
+    for _ in range(3):
+        if not w:
+            break
+        name = _d._program_name(w[0])
+        flags = _XARGS_VALUE_FLAGS if name == "xargs" else (_WATCH_VALUE_FLAGS if name == "watch" else None)
+        if flags is None:
+            break
+        k = 1
+        while k < len(w) and w[k].startswith("-") and w[k] != "-":
+            f = w[k]
+            k += 1
+            if f == "--":
+                break
+            if f in flags:
+                k += 1
+        w = _d._unwrap(w[k:])
+    return w
+
+
 def _check_simple(words: List[str], depth: int, cwd: Optional[str], docs: List[str], pipe_text: List[str]) -> Optional[Tuple[str, Optional[str]]]:
-    args = _d._unwrap(words)
+    args = _command_args(words)
     if not args:
         return None
     head = _d._program_name(args[0])
@@ -485,7 +522,7 @@ def _check_simple(words: List[str], depth: int, cwd: Optional[str], docs: List[s
         r = _terraform_destroy(head, rest)
         return (r, None) if r else None
     if head in ("kubectl", "oc"):
-        r = _kubectl_delete(rest)
+        r = _kubectl_delete(head, rest)
         return (r, None) if r else None
     if head == "aws":
         r = _aws_delete(rest)
@@ -512,7 +549,7 @@ def _check_segments(segs, depth: int, cwd: Optional[str], docs: List[str]):
         hit = _check_simple(words, depth, cwd, seg_docs, pipe_text)
         if hit:
             return hit
-        args = _d._unwrap(words)
+        args = _command_args(words)
         head = _d._program_name(args[0]) if args else ""
         if head in _ECHO_HEADS:
             pipe_text.append(" ".join(args[1:]))

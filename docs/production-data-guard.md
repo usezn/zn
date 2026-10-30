@@ -12,11 +12,11 @@ It is a guardrail against a model's mistake or a bad suggestion. It reads the te
 | --- | --- | --- |
 | `sql_drop` | `DROP DATABASE`, `DROP SCHEMA`, `DROP TABLE` and `TRUNCATE` sent through a SQL client: `psql` (`-c`, `--command`), `mysql` and `mariadb` (`-e`, `--execute`), `sqlite3` (an argument), `sqlcmd`, `clickhouse-client`, `usql`, and `mongosh` (`--eval` with `dropDatabase()` or a collection `drop()`). Also SQL given on standard input in the same command line: a here-document (`<<EOF`), a here-string (`<<<`), or `echo` and `printf` piped to the client. | `psql -c "DROP DATABASE prod-db-example"`, `mysql -e "TRUNCATE orders"`, `psql prod-db-example <<EOF` followed by `DROP TABLE users;` |
 | `terraform_destroy` | `terraform destroy`, `terraform apply -destroy`, and the same with `tofu` and `terragrunt` | `terraform destroy -auto-approve` |
-| `kubectl_delete_namespace` | `kubectl delete namespace` (or `ns`), also with `oc` | `kubectl delete namespace prod-example` |
+| `kubectl_delete_namespace` | `kubectl delete namespace` (or `ns`), also with `oc`, and `oc delete project` | `kubectl delete namespace prod-example`, `oc delete project example-prod` |
 | `kubectl_delete_all` | `kubectl delete` with `--all` | `kubectl delete pods --all -n prod-example` |
-| `aws_s3_delete` | `aws s3 rm --recursive`, `aws s3 rb`, `aws s3api delete-bucket`, `aws s3api delete-objects` | `aws s3 rm s3://example-bucket --recursive` |
+| `aws_s3_delete` | `aws s3 rm --recursive`, `aws s3 rb`, `aws s3 sync --delete`, `aws s3api delete-bucket`, `aws s3api delete-objects` | `aws s3 rm s3://example-bucket --recursive`, `aws s3 sync ./empty s3://example-bucket --delete` |
 | `aws_rds_delete` | `aws rds delete-*` (instances, clusters, snapshots) | `aws rds delete-db-instance --db-instance-identifier prod-db-example` |
-| `gcloud_delete` | `gcloud` delete of a project, a Cloud SQL instance or database, a storage bucket or a container cluster | `gcloud sql instances delete prod-db-example` |
+| `gcloud_delete` | `gcloud` delete of a project, a Cloud SQL instance or database, a storage bucket or a container cluster, and `gcloud storage rm` with `-r`, `-R` or `--recursive` (any bucket: like `aws s3 rm --recursive`, the guard does not judge the name) | `gcloud sql instances delete prod-db-example`, `gcloud storage rm -r gs://example-prod-bucket` |
 | `git_force_push_protected` | `git push` with `--force`, `-f`, `--force-with-lease` or a `+ref` to `main`, `master`, `release/*`, or the repository's default branch when it can be read from the repository files | `git push --force origin main` |
 | `git_delete_protected_branch` | `git push` that deletes `main`, `master`, `release/*`, or the repository's default branch on a remote: `--delete`, `-d`, or a ref with nothing before the colon (`:main`, `:refs/heads/main`), alone or among several refs | `git push origin --delete main` |
 
@@ -53,6 +53,8 @@ Set `hooks.productionDataGuard` in `~/.zn/config.json`:
 {"hooks": {"productionDataGuard": "deny"}}
 ```
 
+The guard also reads through the ways a shell runs one command inside another: a brace group (`{ terraform destroy; }`), a subshell (`( kubectl delete ns prod-example )`), `sudo`, `env`, `xargs` and `watch` (`echo prod-example | xargs kubectl delete namespace`, `watch terraform destroy`), and `sh -c` code.
+
 Strict mode (`{"hooks": {"strict": true}}` or `ZN_STRICT=1`) blocks these commands too. `ZN_PROD_GUARD=deny` makes the guard stricter from the environment. The environment can only raise the level, never lower it: a project an agent works in can set environment variables, so turning the guard off is only possible from the config file, which the agent's file tools cannot write.
 
 The guard applies to the shell tools (Bash, PowerShell and monitors).
@@ -63,11 +65,12 @@ The guard reads command text only. These are **not** covered, and the guard lets
 
 - **Scripts and programs.** A script the agent wrote and then runs (`python3 reset_db.py`, `./cleanup.sh`, a Makefile target), SQL in a file (`psql -f drop_all.sql`, `psql db < drop_all.sql`), and code that calls a database driver or a cloud SDK (`python3 -c "... cursor.execute('DROP TABLE users')"`). The code inside the file or program is not read.
 - **REST and API calls made with a token that was found.** A `curl -X DELETE https://api.example.com/...` with a bearer token, an SDK call, or any request an agent sends with credentials it found on the machine. The guard does not judge network requests; the [egress check](egress-check.md) only looks for personal data and literal secrets in them.
+- **A wildcard instead of a flag.** `gcloud storage rm gs://example-prod-bucket/**` empties a bucket without `-r` and is not read.
 - **Other tools and other cloud services.** Only the commands in the table above. For example `aws dynamodb delete-table`, `gsutil rm -r`, `redis-cli FLUSHALL`, `kubectl delete pv` and `helm uninstall` are not read.
 - **Commands that run somewhere else.** `ssh host "terraform destroy"`, a command inside a container, or one that a CI job runs.
 - **A program named by a variable** set earlier on the same line, or a command built at run time.
 - **A push that names no branch**, when the repository files cannot be read. With no branch name, `git push --force` pushes the current branch; the guard reads the current branch and the default branch from the repository's files (`.git/HEAD` and `refs/remotes/<remote>/HEAD`) and does not run `git`. If they cannot be read, for example in a folder that is not a repository, it allows the command. The default branch is known only when the repository recorded it (a normal `git clone` does).
-- **Other cluster and wrapper forms.** `oc delete project`, `xargs terraform destroy`, and a command nested in more than three `sh -c` layers.
+- **Other wrapper forms.** A command nested in more than three `sh -c` layers, and `if`, `while` or `for` bodies on one line (`if true; then terraform destroy; fi`).
 - **A folder changed earlier in the same command.** `cd other-repo && git push --force` is read against the folder the agent started in.
 
 For those, use least-privilege credentials, separate accounts or projects for production, backups you have restored at least once, branch protection on the server and your agent's own permission prompts. The guard adds a cheap last check for the most common mistakes; it does not make a command safe.

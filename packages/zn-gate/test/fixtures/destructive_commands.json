@@ -3831,6 +3831,9 @@
   }
  ],
  "prod_benign": [
+  "( cd infra-example && terraform plan )",
+  "( kubectl delete pod web-1 )",
+  "( kubectl get ns )",
   "aws --profile prod-example s3 ls",
   "aws ec2 describe-instances",
   "aws rds create-db-snapshot --db-instance-identifier prod-db-example --db-snapshot-identifier snap-example",
@@ -3845,6 +3848,10 @@
   "aws s3 rm s3://example-bucket/file.txt",
   "aws s3 rm s3://example-bucket/path/file.txt --quiet",
   "aws s3 sync ./dist s3://example-bucket/",
+  "aws s3 sync ./dist s3://example-bucket/ --acl private",
+  "aws s3 sync ./dist s3://example-prod-bucket",
+  "aws s3 sync ./dist s3://example-prod-bucket --delete --dryrun",
+  "aws s3 sync s3://example-a s3://example-b --exclude \"*.log\"",
   "aws s3api delete-object --bucket example-bucket --key file.txt",
   "aws s3api head-bucket --bucket example-bucket",
   "aws s3api list-objects-v2 --bucket example-bucket",
@@ -3854,6 +3861,9 @@
   "cat notes.txt | grep -i \"drop table\"",
   "echo \"DROP TABLE users\" > notes.txt",
   "echo DROP TABLE users | grep TABLE",
+  "echo a.log | xargs rm",
+  "echo example-test | xargs -I{} kubectl delete pod {}",
+  "echo example-test | xargs kubectl get ns",
   "echo git push --force origin main",
   "echo terraform destroy",
   "gcloud --project example-project sql instances describe prod-db-example",
@@ -3869,6 +3879,10 @@
   "gcloud sql instances list",
   "gcloud storage buckets describe gs://example-bucket",
   "gcloud storage buckets list",
+  "gcloud storage cp -r ./out gs://example-prod-bucket",
+  "gcloud storage ls -r gs://example-prod-bucket",
+  "gcloud storage ls gs://example-prod-bucket",
+  "gcloud storage rm gs://example-prod-bucket/file.txt",
   "git branch -f main origin/main",
   "git checkout -f main",
   "git commit -m \"document terraform destroy\"",
@@ -3932,6 +3946,10 @@
   "mysql -e \"UPDATE t SET note = 'drop table later' WHERE id = 1\"",
   "mysql prod-db-example <<EOF\nSELECT 'TRUNCATE TABLE orders';\nEOF",
   "oc delete pod web-1",
+  "oc delete route web-example",
+  "oc get projects",
+  "oc new-project example-test",
+  "oc project example-prod",
   "pg_dump prod-db-example > backup.sql",
   "psql -c \"-- DROP TABLE users\nSELECT 1\"",
   "psql -c \"/* DROP DATABASE prod-db-example */ SELECT 1\"",
@@ -3962,7 +3980,15 @@
   "terraform workspace select staging-example",
   "terragrunt plan",
   "terragrunt run-all plan",
-  "tofu plan -destroy"
+  "tofu plan -destroy",
+  "watch kubectl get pods -n prod-example",
+  "xargs echo terraform destroy",
+  "{ echo done; }",
+  "{ echo terraform destroy; }",
+  "{ git push origin feature-x; }",
+  "{ kubectl delete pod web-1 -n prod-example; }",
+  "{ terraform plan -destroy; }",
+  "{ terraform plan; }"
  ],
  "prod_risky": [
   {
@@ -4134,6 +4160,14 @@
    "rule": "aws_s3_delete"
   },
   {
+   "cmd": "aws s3 sync ./empty-example s3://example-prod --delete",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 sync s3://example-a s3://example-prod --delete --exclude \"*.log\"",
+   "rule": "aws_s3_delete"
+  },
+  {
    "cmd": "aws s3api delete-bucket --bucket example-bucket",
    "rule": "aws_s3_delete"
   },
@@ -4158,6 +4192,10 @@
    "rule": "aws_s3_delete"
   },
   {
+   "cmd": "echo example-prod | xargs -I{} aws s3 rb s3://{}",
+   "rule": "aws_s3_delete"
+  },
+  {
    "cmd": "sudo aws s3 rm s3://example-bucket --recursive",
    "rule": "aws_s3_delete"
   },
@@ -4170,6 +4208,18 @@
    "rule": "aws_s3_delete"
   },
   {
+   "cmd": "{ aws s3 rb s3://example-prod; }",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "{ aws s3 sync ./empty-example s3://example-prod --delete; }",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "( gcloud storage rm --recursive gs://example-prod-bucket )",
+   "rule": "gcloud_delete"
+  },
+  {
    "cmd": "gcloud --project example-project container clusters delete example-project",
    "rule": "gcloud_delete"
   },
@@ -4179,6 +4229,10 @@
   },
   {
    "cmd": "gcloud --project example-project container clusters delete prod-db-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud --project example-project storage rm --recursive gs://example-prod-bucket",
    "rule": "gcloud_delete"
   },
   {
@@ -4203,6 +4257,10 @@
   },
   {
    "cmd": "gcloud alpha storage buckets delete gs://prod-db-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud alpha storage rm -r gs://example-prod-bucket",
    "rule": "gcloud_delete"
   },
   {
@@ -4287,6 +4345,26 @@
   },
   {
    "cmd": "gcloud storage buckets delete gs://prod-db-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud storage rm --recursive gs://example-prod-bucket",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud storage rm -R gs://example-prod-bucket/data",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud storage rm -r gs://example-prod-bucket",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud storage rm gs://example-prod-bucket/data -r",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "{ gcloud storage rm -r gs://example-prod-bucket; }",
    "rule": "gcloud_delete"
   },
   {
@@ -4480,6 +4558,10 @@
   {
    "cmd": "sudo git push origin -d release/2.0.x",
    "rule": "git_delete_protected_branch"
+  },
+  {
+   "cmd": "( git push -f origin master )",
+   "rule": "git_force_push_protected"
   },
   {
    "cmd": "cd /srv/app && git push --force origin main",
@@ -5106,6 +5188,10 @@
    "rule": "git_force_push_protected"
   },
   {
+   "cmd": "{ git push --force origin main; }",
+   "rule": "git_force_push_protected"
+  },
+  {
    "cmd": "kubectl --context prod-example delete statefulsets --all -n payments-example",
    "rule": "kubectl_delete_all"
   },
@@ -5202,6 +5288,26 @@
    "rule": "kubectl_delete_all"
   },
   {
+   "cmd": "xargs kubectl delete pods --all",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "{ kubectl delete pods --all -n prod-example; }",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "( kubectl delete ns prod-example )",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "echo prod-example | xargs -I{} kubectl delete ns {}",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "echo prod-example | xargs kubectl delete namespace",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
    "cmd": "kubectl --context prod-example delete namespace payments-example",
    "rule": "kubectl_delete_namespace"
   },
@@ -5286,6 +5392,10 @@
    "rule": "kubectl_delete_namespace"
   },
   {
+   "cmd": "oc -n example-prod delete project example-prod",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
    "cmd": "oc delete namespace payments-example",
    "rule": "kubectl_delete_namespace"
   },
@@ -5295,6 +5405,18 @@
   },
   {
    "cmd": "oc delete namespace staging-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "oc delete project example-prod",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "oc delete project/example-prod",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "oc delete projects example-prod other-example",
    "rule": "kubectl_delete_namespace"
   },
   {
@@ -5308,6 +5430,22 @@
   {
    "cmd": "sudo kubectl delete ns staging-example",
    "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "true && { kubectl delete ns payments-example; } 2>&1",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "{ kubectl delete namespace prod-example; }",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "{ oc delete project example-prod; }",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "( mysql -e \"DROP TABLE users\" prod-db-example )",
+   "rule": "sql_drop"
   },
   {
    "cmd": "bash -c \"mysql -e 'TRUNCATE audit_log'\"",
@@ -5770,6 +5908,14 @@
    "rule": "sql_drop"
   },
   {
+   "cmd": "{ psql -c \"DROP DATABASE prod-db-example\"; }",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "( terraform destroy )",
+   "rule": "terraform_destroy"
+  },
+  {
    "cmd": "/usr/local/bin/terraform destroy",
    "rule": "terraform_destroy"
   },
@@ -5783,6 +5929,14 @@
   },
   {
    "cmd": "cd infra && terraform destroy -auto-approve",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "cd infra-example && { terraform destroy; }",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "echo infra-example | xargs -n 1 terraform destroy",
    "rule": "terraform_destroy"
   },
   {
@@ -5920,6 +6074,34 @@
   {
    "cmd": "tofu destroy",
    "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "watch -n 5 terraform destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "watch terraform destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "xargs terraform destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "{ ( tofu destroy ); }",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "{ terraform destroy -auto-approve; }",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "{ terraform destroy; }",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "{ { terraform apply -destroy; }; }",
+   "rule": "terraform_destroy"
   }
  ],
  "prod_not_covered": [
@@ -5970,6 +6152,14 @@
   {
    "cmd": "gsutil rm -r gs://example-bucket",
    "note": "a cloud command outside the listed ones"
+  },
+  {
+   "cmd": "if true; then terraform destroy; fi",
+   "note": "the body of an if, while or for on one line is not read"
+  },
+  {
+   "cmd": "gcloud storage rm gs://example-prod-bucket/**",
+   "note": "a wildcard that empties a bucket without -r"
   }
  ]
 }

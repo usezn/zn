@@ -473,6 +473,25 @@ pAdd("psql -c \"SELECT * FROM users WHERE name = 'DROP TABLE'\"", "psql -d prod-
   'git push origin --delete feature-x', 'git push origin -d feature/login', 'git push origin :feature-x', 'git push origin --delete feature-x fix/typo', 'git push origin --delete tag-main',
   'git push origin --delete refs/tags/main', 'git push origin HEAD:main', 'git push origin --delete mainline', 'git push origin :release', 'git push origin --delete hotfix/release/1');
 
+// Brace groups and subshells, oc delete project, gcloud storage rm -r, aws s3 sync --delete, xargs and watch.
+pRisk('terraform_destroy', '{ terraform destroy; }', '{ terraform destroy -auto-approve; }', 'cd infra-example && { terraform destroy; }', '( terraform destroy )', '{ ( tofu destroy ); }', '{ { terraform apply -destroy; }; }',
+  'xargs terraform destroy', 'watch terraform destroy', 'watch -n 5 terraform destroy', 'echo infra-example | xargs -n 1 terraform destroy');
+pRisk('kubectl_delete_namespace', '( kubectl delete ns prod-example )', '{ kubectl delete namespace prod-example; }', 'true && { kubectl delete ns payments-example; } 2>&1', 'oc delete project example-prod', 'oc delete projects example-prod other-example',
+  'oc delete project/example-prod', 'oc -n example-prod delete project example-prod', '{ oc delete project example-prod; }', 'echo prod-example | xargs kubectl delete namespace', 'echo prod-example | xargs -I{} kubectl delete ns {}');
+pRisk('kubectl_delete_all', '{ kubectl delete pods --all -n prod-example; }', 'xargs kubectl delete pods --all');
+pRisk('aws_s3_delete', '{ aws s3 rb s3://example-prod; }', 'aws s3 sync ./empty-example s3://example-prod --delete', 'aws s3 sync s3://example-a s3://example-prod --delete --exclude "*.log"', '{ aws s3 sync ./empty-example s3://example-prod --delete; }',
+  'echo example-prod | xargs -I{} aws s3 rb s3://{}');
+pRisk('gcloud_delete', 'gcloud storage rm -r gs://example-prod-bucket', 'gcloud storage rm --recursive gs://example-prod-bucket', 'gcloud storage rm -R gs://example-prod-bucket/data', 'gcloud storage rm gs://example-prod-bucket/data -r',
+  'gcloud alpha storage rm -r gs://example-prod-bucket', '{ gcloud storage rm -r gs://example-prod-bucket; }', '( gcloud storage rm --recursive gs://example-prod-bucket )', 'gcloud --project example-project storage rm --recursive gs://example-prod-bucket');
+pRisk('git_force_push_protected', '{ git push --force origin main; }', '( git push -f origin master )');
+pRisk('sql_drop', '{ psql -c "DROP DATABASE prod-db-example"; }', '( mysql -e "DROP TABLE users" prod-db-example )');
+pAdd('{ terraform plan; }', '{ terraform plan -destroy; }', '( kubectl get ns )', '{ kubectl delete pod web-1 -n prod-example; }', '( kubectl delete pod web-1 )', '{ echo terraform destroy; }', '{ git push origin feature-x; }',
+  'oc get projects', 'oc project example-prod', 'oc new-project example-test', 'oc delete route web-example', 'xargs echo terraform destroy', 'watch kubectl get pods -n prod-example',
+  'echo example-test | xargs kubectl get ns', 'echo example-test | xargs -I{} kubectl delete pod {}', 'echo a.log | xargs rm',
+  'gcloud storage rm gs://example-prod-bucket/file.txt', 'gcloud storage ls -r gs://example-prod-bucket', 'gcloud storage cp -r ./out gs://example-prod-bucket', 'gcloud storage ls gs://example-prod-bucket',
+  'aws s3 sync ./dist s3://example-prod-bucket', 'aws s3 sync ./dist s3://example-prod-bucket --delete --dryrun', 'aws s3 sync s3://example-a s3://example-b --exclude "*.log"', 'aws s3 sync ./dist s3://example-bucket/ --acl private',
+  '{ echo done; }', '( cd infra-example && terraform plan )');
+
 // Shapes the guard does not read (documented): it allows them.
 const prodNotCovered = [
   { cmd: 'psql -f drop_all.sql prod-db-example', note: 'SQL in a file: the file is not read' },
@@ -487,6 +506,8 @@ const prodNotCovered = [
   { cmd: 'DB_CMD=psql; $DB_CMD -c "DROP TABLE users"', note: 'a program named by a variable' },
   { cmd: 'git push', note: 'no branch named and the repository is not known to the check' },
   { cmd: 'gsutil rm -r gs://example-bucket', note: 'a cloud command outside the listed ones' },
+  { cmd: 'if true; then terraform destroy; fi', note: 'the body of an if, while or for on one line is not read' },
+  { cmd: 'gcloud storage rm gs://example-prod-bucket/**', note: 'a wildcard that empties a bucket without -r' },
 ];
 
 const out = {

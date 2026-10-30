@@ -54,6 +54,33 @@ class ProductionGuardCorpus(unittest.TestCase):
         self.assertEqual(rule("git push origin +:main"), "git_force_push_protected")
         self.assertEqual(rule("git push --force origin HEAD:main"), "git_force_push_protected")
 
+    def test_new_forms_are_asked_about(self):
+        asks = {
+            "{ terraform destroy; }": "terraform_destroy",
+            "( kubectl delete ns example-prod )": "kubectl_delete_namespace",
+            "{ { terraform destroy; }; }": "terraform_destroy",
+            "echo hi && { kubectl delete ns example-prod; } 2>&1": "kubectl_delete_namespace",
+            "{ git push --force origin main; }": "git_force_push_protected",
+            "oc delete project example-prod": "kubectl_delete_namespace",
+            "gcloud storage rm -r gs://example-prod-bucket": "gcloud_delete",
+            "gcloud storage rm --recursive gs://example-prod-bucket": "gcloud_delete",
+            "{ gcloud storage rm -r gs://example-prod-bucket; }": "gcloud_delete",
+            "aws s3 sync ./empty s3://example-prod --delete": "aws_s3_delete",
+            "xargs terraform destroy": "terraform_destroy",
+            "echo example-prod | xargs -I{} kubectl delete ns {}": "kubectl_delete_namespace",
+            "watch -n 5 terraform destroy": "terraform_destroy",
+        }
+        for c, r in asks.items():
+            self.assertEqual(rule(c), r, c)
+
+    def test_new_forms_non_production_twins_stay_allowed(self):
+        for c in [
+            "{ terraform plan; }", "{ kubectl delete pod web-1 -n example-prod; }", "( kubectl get ns )", "{ echo terraform destroy; }", "oc delete pod web-1", "oc get projects",
+            "gcloud storage rm gs://example-prod-bucket/file.txt", "gcloud storage ls -r gs://example-prod-bucket", "aws s3 sync ./dist s3://example-prod-bucket",
+            "aws s3 sync ./dist s3://example-prod-bucket --delete --dryrun", "xargs echo terraform destroy", "watch -n 5 df -h",
+        ]:
+            self.assertIsNone(rule(c), c)
+
     def test_corpus_size_and_rules(self):
         self.assertGreaterEqual(len(CORPUS["prod_benign"]), 100)
         self.assertGreaterEqual(len(CORPUS["prod_risky"]), 300)

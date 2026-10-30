@@ -55,6 +55,34 @@ test('the look-alikes named in the spec stay allowed', () => {
   for (const c of allowed) assert.equal(rule(c), null, c);
 });
 
+test('brace groups, subshells, oc delete project, gcloud storage rm -r, aws s3 sync --delete, xargs and watch are asked about', () => {
+  const asks = {
+    '{ terraform destroy; }': 'terraform_destroy',
+    '( kubectl delete ns example-prod )': 'kubectl_delete_namespace',
+    '{ { terraform destroy; }; }': 'terraform_destroy',
+    'echo hi && { kubectl delete ns example-prod; } 2>&1': 'kubectl_delete_namespace',
+    '{ git push --force origin main; }': 'git_force_push_protected',
+    'oc delete project example-prod': 'kubectl_delete_namespace',
+    'gcloud storage rm -r gs://example-prod-bucket': 'gcloud_delete',
+    'gcloud storage rm --recursive gs://example-prod-bucket': 'gcloud_delete',
+    '{ gcloud storage rm -r gs://example-prod-bucket; }': 'gcloud_delete',
+    'aws s3 sync ./empty s3://example-prod --delete': 'aws_s3_delete',
+    'xargs terraform destroy': 'terraform_destroy',
+    'echo example-prod | xargs -I{} kubectl delete ns {}': 'kubectl_delete_namespace',
+    'watch -n 5 terraform destroy': 'terraform_destroy',
+  };
+  for (const [c, r] of Object.entries(asks)) assert.equal(rule(c), r, c);
+});
+
+test('the non-production twins of those commands stay allowed', () => {
+  const allowed = [
+    '{ terraform plan; }', '{ kubectl delete pod web-1 -n example-prod; }', '( kubectl get ns )', '{ echo terraform destroy; }', 'oc delete pod web-1', 'oc get projects',
+    'gcloud storage rm gs://example-prod-bucket/file.txt', 'gcloud storage ls -r gs://example-prod-bucket', 'aws s3 sync ./dist s3://example-prod-bucket',
+    'aws s3 sync ./dist s3://example-prod-bucket --delete --dryrun', 'xargs echo terraform destroy', 'watch -n 5 df -h',
+  ];
+  for (const c of allowed) assert.equal(rule(c), null, c);
+});
+
 test('the answer has the reason, the next step and the command named', () => {
   const r = checkProductionData('terraform destroy -auto-approve');
   assert.equal(r.id, 'prod:terraform_destroy');

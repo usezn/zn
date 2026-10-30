@@ -16,33 +16,35 @@
  *                             sqlcmd, clickhouse-client, usql or mongosh (-c, -e, --eval, an argument, a here-document
  *                             or a here-string; mongosh dropDatabase() and collection drop())
  *   terraform_destroy         terraform / tofu / terragrunt destroy, and apply -destroy
- *   kubectl_delete_namespace  kubectl / oc delete namespace
+ *   kubectl_delete_namespace  kubectl / oc delete namespace, and oc delete project
  *   kubectl_delete_all        kubectl / oc delete ... --all
- *   aws_s3_delete             aws s3 rm --recursive, aws s3 rb, aws s3api delete-bucket and delete-objects
+ *   aws_s3_delete             aws s3 rm --recursive, aws s3 rb, aws s3 sync --delete, aws s3api delete-bucket and
+ *                             delete-objects
  *   aws_rds_delete            aws rds delete-*
- *   gcloud_delete             gcloud projects | sql instances | sql databases | storage buckets | container clusters delete
+ *   gcloud_delete             gcloud projects | sql instances | sql databases | storage buckets | container clusters delete,
+ *                             and gcloud storage rm -r / --recursive
  *   git_force_push_protected  git push --force, -f, --force-with-lease or +ref to main, master, release/* or the
  *                             repository's default branch
  *   git_delete_protected_branch  git push --delete, -d or :branch (an empty source) naming main, master, release/* or
  *                             the repository's default branch
  *
- * The command is split with the destructive-command module's reader, so quotes, `&&`, `;`, pipes, `sudo`, `env` and
- * `sh -c` code are understood. Every scan is linear in the size of the command.
+ * The command is split with the destructive-command module's reader, so quotes, `&&`, `;`, pipes, `sudo`, `env`,
+ * `sh -c` code, subshells ( ... ), brace groups { ...; }, `xargs` and `watch` are understood. Every scan is linear in the size of the command.
  */
 
 const fs = require('fs');
 const path = require('path');
 
-const PROD_GUARD_RULES_VERSION = '2026-10-30.4';
+const PROD_GUARD_RULES_VERSION = '2026-10-30.5';
 
 const RULES = {
   sql_drop: { what: 'DROP DATABASE, DROP TABLE or TRUNCATE sent to a database', effect: 'deletes a database, a table or all of its rows' },
   terraform_destroy: { what: 'terraform destroy (or apply -destroy)', effect: 'deletes every resource the configuration manages' },
-  kubectl_delete_namespace: { what: 'kubectl delete namespace', effect: 'deletes the namespace and everything in it' },
+  kubectl_delete_namespace: { what: 'kubectl delete namespace (or oc delete project)', effect: 'deletes the namespace and everything in it' },
   kubectl_delete_all: { what: 'kubectl delete --all', effect: 'deletes every object of that kind that the command selects' },
-  aws_s3_delete: { what: 'a recursive or bucket-level delete in S3 (aws s3 rm --recursive, s3 rb, s3api delete-bucket or delete-objects)', effect: 'deletes objects or a whole bucket' },
+  aws_s3_delete: { what: 'a recursive or bucket-level delete in S3 (aws s3 rm --recursive, s3 rb, s3 sync --delete, s3api delete-bucket or delete-objects)', effect: 'deletes objects or a whole bucket' },
   aws_rds_delete: { what: 'aws rds delete-*', effect: 'deletes a database instance, cluster or snapshot' },
-  gcloud_delete: { what: 'gcloud delete of a project, a Cloud SQL instance or database, a storage bucket or a cluster', effect: 'deletes it and what it holds' },
+  gcloud_delete: { what: 'gcloud delete of a project, a Cloud SQL instance or database, a storage bucket (or a recursive storage rm) or a cluster', effect: 'deletes it and what it holds' },
   git_force_push_protected: { what: 'a force push to a protected branch', effect: 'rewrites shared history that other people rely on' },
   git_delete_protected_branch: { what: 'deleting a protected branch on a remote', effect: 'removes a shared branch that other people rely on' },
 };
@@ -63,6 +65,9 @@ const AWS_VALUE_FLAGS = new Set(['--profile', '--region', '--endpoint-url', '--o
 const KUBECTL_VALUE_FLAGS = new Set(['-n', '--namespace', '--context', '--cluster', '--user', '--kubeconfig', '-s', '--server', '--token', '--as', '--as-group', '--request-timeout']);
 const GIT_VALUE_FLAGS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path']);
 const PUSH_VALUE_FLAGS = new Set(['-o', '--push-option', '--repo', '--receive-pack', '--exec']);
+// xargs and watch run the command they are given. Options that take a value as the next word.
+const XARGS_VALUE_FLAGS = new Set(['-I', '-n', '-P', '-d', '-E', '-L', '-s', '-a', '--arg-file', '--delimiter', '--max-args', '--max-procs', '--max-lines', '--max-chars', '--process-slot-var']);
+const WATCH_VALUE_FLAGS = new Set(['-n', '--interval']);
 const GCLOUD_PATHS = [
   ['projects', 'delete'], ['sql', 'instances', 'delete'], ['sql', 'databases', 'delete'],
   ['storage', 'buckets', 'delete'], ['container', 'clusters', 'delete'],
@@ -315,7 +320,7 @@ function gitForcePush(rest, cwd) {
   return null;
 }
 
-function kubectlDelete(rest) {
+function kubectlDelete(head, rest) {
   let i = 0;
   while (i < rest.length && (rest[i].startsWith('-') || KUBECTL_VALUE_FLAGS.has(rest[i - 1]))) i++;
   if (rest[i] !== 'delete') return null;
@@ -323,6 +328,7 @@ function kubectlDelete(rest) {
   let k = 0;
   while (k < args.length && (args[k].startsWith('-') || KUBECTL_VALUE_FLAGS.has(args[k - 1]))) k++;
   const kind = (args[k] || '').toLowerCase();
+  if (head === 'oc' && /^projects?(?:\/|$)/.test(kind)) return 'kubectl_delete_namespace';
   if (/^(?:namespaces?|ns)(?:\/|$)/.test(kind) || kind.split(',').some((x) => /^(?:namespaces?|ns)$/.test(x))) return 'kubectl_delete_namespace';
   if (args.some((w) => w === '--all' || w === '--all=true')) return 'kubectl_delete_all';
   return null;
@@ -339,6 +345,7 @@ function awsDelete(rest) {
   if (service === 's3') {
     if (op === 'rb') return 'aws_s3_delete';
     if (op === 'rm' && rest.includes('--recursive') && !rest.includes('--dryrun')) return 'aws_s3_delete';
+    if (op === 'sync' && rest.includes('--delete') && !rest.includes('--dryrun')) return 'aws_s3_delete';
   }
   if (service === 's3api' && (op === 'delete-bucket' || op === 'delete-objects')) return 'aws_s3_delete';
   if (service === 'rds' && typeof op === 'string' && op.startsWith('delete-')) return 'aws_rds_delete';
@@ -347,6 +354,10 @@ function awsDelete(rest) {
 
 function gcloudDelete(rest) {
   const pos = rest.filter((w) => !w.startsWith('-'));
+  // gcloud storage rm of a whole tree (-r, -R, --recursive); no name check, like aws s3 rm --recursive.
+  for (let i = 0; i + 1 < pos.length; i++) {
+    if (pos[i] === 'storage' && pos[i + 1] === 'rm' && rest.some((w) => w === '-r' || w === '-R' || flagIs(w, '--recursive'))) return 'gcloud_delete';
+  }
   for (const p of GCLOUD_PATHS) {
     for (let i = 0; i + p.length <= pos.length; i++) {
       if (p.every((x, k) => pos[i + k] === x)) return 'gcloud_delete';
@@ -363,9 +374,32 @@ function terraformDestroy(head, rest) {
   return null;
 }
 
-function checkSimple(words, depth, ctx, docs, pipeText) {
+/* The command a simple command runs, once the words that only run it are taken off: the "{" that opens a brace group
+   (a ( subshell is already a separate command), sudo, env and the like, and xargs / watch with their options. */
+function commandArgs(words) {
   const { unwrap, programName } = internals();
-  const args = unwrap(words);
+  let w = words;
+  let i = 0;
+  while (i < w.length && w[i] === '{') i++;
+  w = unwrap(w.slice(i));
+  for (let round = 0; round < 3 && w.length; round++) {
+    const name = programName(w[0]);
+    const valueFlags = name === 'xargs' ? XARGS_VALUE_FLAGS : (name === 'watch' ? WATCH_VALUE_FLAGS : null);
+    if (!valueFlags) break;
+    let k = 1;
+    while (k < w.length && w[k].startsWith('-') && w[k] !== '-') {
+      const f = w[k++];
+      if (f === '--') break;
+      if (valueFlags.has(f)) k++;
+    }
+    w = unwrap(w.slice(k));
+  }
+  return w;
+}
+
+function checkSimple(words, depth, ctx, docs, pipeText) {
+  const { programName } = internals();
+  const args = commandArgs(words);
   if (!args.length) return null;
   const head = programName(args[0]);
   const rest = args.slice(1);
@@ -408,7 +442,7 @@ function checkSimple(words, depth, ctx, docs, pipeText) {
     return r ? { rule: r } : null;
   }
   if (head === 'kubectl' || head === 'oc') {
-    const r = kubectlDelete(rest);
+    const r = kubectlDelete(head, rest);
     return r ? { rule: r } : null;
   }
   if (head === 'aws') {
@@ -432,13 +466,13 @@ const isDocWord = (w) => w.startsWith('<<') && !w.startsWith('<<<');
 
 /* A here-document goes to the commands that open one (the docs of different lines are not told apart). */
 function checkSegments(segs, depth, ctx, docs) {
-  const { programName, unwrap } = internals();
+  const { programName } = internals();
   let pipeText = [];
   for (const seg of segs) {
     const segDocs = seg.words.some(isDocWord) ? docs : [];
     const hit = checkSimple(seg.words, depth, ctx, segDocs, pipeText);
     if (hit) return hit;
-    const args = unwrap(seg.words);
+    const args = commandArgs(seg.words);
     const head = args.length ? programName(args[0]) : '';
     if (ECHO_HEADS.has(head)) pipeText.push(args.slice(1).join(' '));
     if (head === 'cat') for (const d of segDocs) pipeText.push(d.body);
