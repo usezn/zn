@@ -50,6 +50,7 @@ const policy = require('./policy');
 const markers = require('../broker/markers');
 const { gitStatusOf } = require('../broker/files');
 const deps = require('../deps');
+const { envFlag } = require('../env-flag');
 const { shQuote, SH_QUOTE_ESCAPE, portablePath } = require('../shell-quote');
 const { znCommand } = require('../zn-command');
 const { hasUnsafeText } = require('../safe-text');
@@ -194,7 +195,7 @@ function destructiveRulesOf(opts) {
  */
 function instructionWritesOf(opts) {
   if (opts.instructionWrites) return ['ask', 'deny', 'off'].includes(opts.instructionWrites) ? opts.instructionWrites : 'ask';
-  if (process.env.ZN_STRICT === '1') return 'deny';
+  if (envFlag('ZN_STRICT')) return 'deny';
   const hooks = readConfig(opts.home).hooks || {};
   const v = hooks.agentInstructionWrites;
   if (v === false || ['off', 'allow'].includes(String(v).toLowerCase())) return 'off';
@@ -579,8 +580,6 @@ async function decidePre(ev, d, agentId, opts) {
   if (tool === 'mcp' && ev.input && ev.input.args !== undefined) {
     let res = await decideMcp(ev, d, agentId);
     if (res.decision === 'deny') return res;
-    // zn's own MCP server checks text on this computer: its arguments are not a network request.
-    if (ev.mcp && ev.mcp.ours === 'analyze') return res;
     const mode = egressModeOf(opts);
     // Personal data in the arguments follows the egress settings: with the check off nobody is asked, and when the
     // call is a network request whose arguments the egress check read in full, it decides (local and allow-listed
@@ -864,8 +863,7 @@ async function decideMcp(ev, d, agentId) {
     }
   }
   if (kinds.size === 0) {
-    // zn's own detector server (the plugin's) analyses the text the user asked about: no question for it.
-    if (piiKinds.size === 0 || (ev.mcp && ev.mcp.ours === 'analyze')) return { decision: 'allow' };
+    if (piiKinds.size === 0) return { decision: 'allow' };
     // Personal data is not always wrong to send: the user decides (never a deny).
     return {
       decision: 'ask',

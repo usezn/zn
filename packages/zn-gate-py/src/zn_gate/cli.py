@@ -20,8 +20,25 @@ from . import __version__
 from .rules import RULES_VERSION, evaluate, mask_token_runs
 from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact, redact_scan_secrets as _scan_redact
 from . import mcp_secrets as _mcp
-from .client import analyze, is_cloud_enabled, resolve_endpoint
 from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
+
+
+# The cloud client loads urllib, http.client and ssl. These wrappers import it
+# on first use, so the local commands never pay for it. The names stay in this
+# module, so callers and tests that patch zn_gate.cli.analyze keep working.
+def analyze(*args: Any, **kwargs: Any) -> Any:
+    from .client import analyze as _analyze
+    return _analyze(*args, **kwargs)
+
+
+def is_cloud_enabled(*args: Any, **kwargs: Any) -> Any:
+    from .client import is_cloud_enabled as _is_cloud_enabled
+    return _is_cloud_enabled(*args, **kwargs)
+
+
+def resolve_endpoint(*args: Any, **kwargs: Any) -> Any:
+    from .client import resolve_endpoint as _resolve_endpoint
+    return _resolve_endpoint(*args, **kwargs)
 
 # Secrets that span several lines (a PEM private key block). The line-by-line
 # scan never sees BEGIN and END together, so these run on the whole file.
@@ -781,7 +798,9 @@ def build_parser() -> argparse.ArgumentParser:
     """The argument parser. Its sub-commands are the commands this package knows."""
     parser = argparse.ArgumentParser(
         prog="zn-gate",
-        description="zn deterministic guardrail engine for AI agents and LLM tool calling."
+        description="zn deterministic guardrail engine for AI agents and LLM tool calling.",
+        epilog="Also: reach --history  which secrets your coding agents kept in their session history "
+               "(types and counts, never values) [--json] [--max-seconds N]",
     )
     # -v and -V print the version too, as in the npm package.
     parser.add_argument("-v", "-V", "--version", action="version", version=f"zn-gate {__version__} (rules: {RULES_VERSION})")
@@ -839,6 +858,10 @@ def known_commands(parser: argparse.ArgumentParser) -> frozenset[str]:
 def main() -> int:
     _configure_output_streams()
     first = sys.argv[1] if len(sys.argv) > 1 else None
+    if first == "reach" and any(a in ("--history", "-h", "--help") or a.startswith("--max-seconds") for a in sys.argv[2:]):
+        # The one part of reach that is in this package: the history of your agents (the rest is npm only).
+        from .reach_history import run as run_reach_history
+        return run_reach_history(sys.argv[2:])
     if first in NPM_ONLY_SIMPLE_COMMANDS:
         sys.stderr.write(npm_only_simple_message(first))
         return 2
