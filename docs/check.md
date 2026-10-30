@@ -118,7 +118,8 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   ```text
   the zn-gate plugin has no PreToolUse hook in <plugin folder>/hooks/hooks.json, so ZCode runs no zn check before tool calls
-  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`/bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh PreToolUse` on macOS and Linux, `powershell.exe ... scripts/zn-hook.ps1 PreToolUse` on Windows, turned on, for every tool), so ZCode runs no zn check before tool calls
+  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`/bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
+  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`powershell.exe ... scripts/zn-hook.ps1 PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
   install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again
   ```
 
