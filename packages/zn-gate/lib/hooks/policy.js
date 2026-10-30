@@ -1435,6 +1435,126 @@ function curlFileOf(value, urlencode) {
   return v || null;
 }
 
+/* ---- archive, copy and sync commands: a folder as operand ---- */
+
+// Programs that read whole folders to pack, copy or send them. cp, rsync and scp name the destination last.
+const ARCHIVE_PROGRAMS = new Set(['tar', 'bsdtar', 'gtar', 'zip', '7z', '7za', '7zr', '7zz', 'cp', 'rsync', 'scp']);
+const COPY_PROGRAMS = new Set(['cp', 'rsync', 'scp']);
+// What is looked at inside a folder before a command packs it: how many entries, how deep, and for how long. Past the
+// limit the folder is allowed (a whole project tree is not a secret), so what is found first is what is closest to the top.
+const DIR_WALK_ENTRIES = 3000;
+const DIR_WALK_DEPTH = 6;
+const DIR_WALK_MS = 1000;
+// Folders that only hold packages or caches, not skipped for what they protect but to keep the look short.
+const DIR_WALK_SKIP = new Set(['node_modules', '.git', '.cache', '.npm', '.cargo', '.rustup', '.nvm', '.venv', 'venv', '__pycache__', '.gradle', '.m2']);
+// host:path is a remote file; a drive letter (C:\x, C:/x) is a local path.
+const REMOTE_OPERAND_RE = /^[^/\\:]+:/;
+const DRIVE_OPERAND_RE = /^[A-Za-z]:[/\\]/;
+
+/* The words of the archive, copy and sync commands that may name a folder to pack, copy or send: [{text, bases}], where
+   `bases` are the folders the command moves to first (tar -C). Reading an archive (tar -x, tar -t, 7z x) is not packing it. */
+function archiveOperands(readings) {
+  const out = [];
+  for (const r of readings) {
+    let i = 0;
+    while (i < r.length) {
+      let j = i;
+      while (j < r.length && r[j].seq === r[i].seq) j++;
+      const group = r.slice(i, j);
+      i = j;
+      const prog = programOfGroup(group);
+      if (!prog || !ARCHIVE_PROGRAMS.has(prog.name)) continue;
+      const args = group.slice(prog.at + 1).filter((x) => !x.redirectTarget && x.text !== '');
+      const bases = [];
+      let operands = [];
+      if (prog.name === 'tar' || prog.name === 'bsdtar' || prog.name === 'gtar') {
+        const modes = args.map((x) => x.text).filter((t, k) => (k === 0 && /^-?[A-Za-z]+$/.test(t)) || /^-[A-Za-z]+$/.test(t));
+        if (modes.some((t) => /[xt]/.test(t) && !/[cru]/.test(t)) || args.some((x) => /^--(?:extract|get|list|diff|compare)$/.test(x.text))) continue;
+        for (let k = 0; k < args.length; k++) {
+          const t = args[k].text;
+          if (t === '-C' || t === '--directory') { if (args[k + 1]) bases.push(args[++k].text); continue; }
+          if (t.startsWith('--directory=')) { bases.push(t.slice(12)); continue; }
+          if (/^-[A-Za-z]*[fTXIKL]$/.test(t) || /^--(?:file|files-from|exclude-from|use-compress-program|transform|exclude)$/.test(t)) { k++; continue; }
+          if (!t.startsWith('-')) operands.push(t);
+        }
+      } else {
+        operands = args.map((x) => x.text).filter((t) => !t.startsWith('-') || t === '-');
+        if (prog.name === 'zip') operands = operands.slice(1);
+        else if (prog.name.startsWith('7z')) {
+          if (/^[xelt]$/.test(operands[0] || '')) continue;
+          operands = operands.slice(1);
+        } else if (COPY_PROGRAMS.has(prog.name) && operands.length >= 2) operands = operands.slice(0, -1);
+      }
+      for (const t of operands) {
+        if (t === '-' || (REMOTE_OPERAND_RE.test(t) && !DRIVE_OPERAND_RE.test(t))) continue;
+        out.push({ text: t, bases });
+      }
+    }
+  }
+  return out;
+}
+
+/* Looks inside a folder, level by level, for a file the path guard protects (a .env with values, a credential file, a
+   private key). Returns {file, deny} for the first one found, or null. */
+function protectedInFolder(dir, opts, ctx, state) {
+  const queue = [[dir, 0]];
+  for (let q = 0; q < queue.length; q++) {
+    const [at, depth] = queue[q];
+    let entries;
+    try { entries = fs.readdirSync(at, { withFileTypes: true }); } catch (_) { continue; }
+    for (const e of entries) {
+      if (++state.entries > DIR_WALK_ENTRIES || Date.now() > state.until) return null;
+      const p = path.join(at, e.name);
+      const c = classifyPath(p, { ...opts, ctx });
+      // Reading the agent settings is allowed, so packing them is too.
+      if (c && c.kind !== 'agent_config') {
+        const deny = denialOf(c, p, opts);
+        if (deny) return { file: p, deny };
+      }
+      if (e.isDirectory() && depth < DIR_WALK_DEPTH && !DIR_WALK_SKIP.has(e.name)) queue.push([p, depth + 1]);
+    }
+  }
+  return null;
+}
+
+/* The deny message when an operand of tar, zip, 7z, cp, rsync or scp is a folder that is protected or holds protected
+   files, judged by the same classifier as a file named on its own. null when none does. */
+function archiveDirDenial(operands, opts) {
+  const ctx = opts.ctx || contextOf(opts);
+  const env = opts.env || ctx.env;
+  const cwd = path.resolve(opts.cwd || process.cwd());
+  const places = [cwd];
+  for (const d of (opts.cdBases && opts.cdBases.dirs) || []) if (!places.includes(d)) places.push(d);
+  const state = { entries: 0, until: Date.now() + DIR_WALK_MS };
+  const seen = new Set();
+  for (const op of operands) {
+    const expanded = expandEnv(expandHome(op.text, ctx.home), env).text;
+    // A path that is still built while the command runs, or is a pattern, cannot be looked at here.
+    if (!expanded || /[$`*?[]/.test(expanded) || expanded.startsWith('//')) continue;
+    let roots;
+    if (path.isAbsolute(expanded)) roots = [expanded];
+    else {
+      const moved = op.bases.map((b) => path.resolve(cwd, expandEnv(expandHome(b, ctx.home), env).text));
+      roots = [...moved, ...places].map((b) => path.resolve(b, expanded));
+    }
+    for (const abs of roots) {
+      let real;
+      try {
+        if (!fs.statSync(abs).isDirectory()) continue;
+        real = fs.realpathSync(abs);
+      } catch (_) { continue; }
+      if (seen.has(real)) continue;
+      seen.add(real);
+      const hit = protectedInFolder(real, opts, ctx, state);
+      if (hit) {
+        return 'zn: this command packs, copies or sends the folder ' + op.text + ', which holds ' + slash(path.relative(real, hit.file)) +
+          ', a file zn protects. ' + hit.deny.replace(/^zn: /, '');
+      }
+    }
+  }
+  return null;
+}
+
 function markLinkWords(readings) {
   for (const r of readings) {
     let i = 0;
@@ -2461,6 +2581,7 @@ function bashDenialOf(cmd, opts = {}) {
   opts.elsewhere = new Map();
   markLinkWords(readings);
   markCurlWords(readings);
+  const archiveOps = archiveOperands(readings);
   const mentionsAgents = /\.agents/i.test(text);
   const makesLink = words.some((x) => x.link === true);
   if (overBudget(opts.budget, 0)) return TOO_SLOW_MESSAGE;
@@ -2551,6 +2672,10 @@ function bashDenialOf(cmd, opts = {}) {
     if (!deny && (c.kind === 'dotenv' || c.kind === 'keyfile')) deny = dotenvElsewhereDenial(text, opts, c.kind);
     if (deny && /[*?[]/.test(text)) { globDeny = globDeny || deny; continue; }
     if (deny) return deny;
+  }
+  if (archiveOps.length) {
+    const dirDeny = archiveDirDenial(archiveOps, opts);
+    if (dirDeny) return dirDeny;
   }
   if (!globDeny && opts.instructionNotice && !opts.instructionNotice.hit) opts.instructionNotice.hit = instructionWriteInWords(readings, opts);
   return globDeny;
