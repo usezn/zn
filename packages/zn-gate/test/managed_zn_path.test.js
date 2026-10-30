@@ -118,6 +118,17 @@ test('validation: the file itself, on the system this runs on', { skip: !posix }
   const link = path.join(dir, 'link');
   fs.symlinkSync(plain, link);
   assert.throws(() => mc.checkZnPath(link, HOST_OS), /folder a user can write to/);
+  // A file the current user owns is refused even outside the home, temp and project folders (like Homebrew in /opt/homebrew).
+  const shm = '/dev/shm';
+  if (process.getuid && process.getuid() !== 0 && fs.existsSync(shm)) {
+    const mine = path.join(shm, 'zn-b2121-' + process.pid);
+    fs.mkdirSync(mine, { mode: 0o755 });
+    t.after(() => fs.rmSync(mine, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(mine, 'zn'), '#!/bin/sh
+exit 0
+', { mode: 0o755 });
+    assert.throws(() => mc.checkZnPath(path.join(mine, 'zn'), HOST_OS), /not owned by root/);
+  }
   // A system program passes.
   if (REAL) assert.deepEqual(mc.checkZnPath(REAL, HOST_OS), { path: REAL, os: HOST_OS, checked: true });
 });
