@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-30.5"
+COMMAND_RULES_VERSION = "2026-10-30.8"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -200,6 +200,7 @@ def _scan_first(s: str, posix: bool = False) -> Tuple[int, List[str], Optional[s
     quote: Optional[str] = None
     i = 0
     n = len(s)
+    raw_gt = -1  # index of the last unquoted, unescaped '>' that went into the word
     while i < n:
         ch = s[i]
         if quote == "'":
@@ -252,6 +253,12 @@ def _scan_first(s: str, posix: bool = False) -> Tuple[int, List[str], Optional[s
             cur.append(ch)
             i += 1
             continue
+        # `>|` is one redirection (it overrides noclobber), not a `>` followed by a pipe. Same rule as scanFirstCommand
+        # in lib/hooks/policy.js: `>>|` is still split (bash rejects it, Node allows it).
+        if ch == "|" and raw_gt == i - 1 and cur is not None and not "".join(cur).endswith(">>"):
+            cur.append(ch)
+            i += 1
+            continue
         if ch in ";&|\n()":
             if cur is not None:
                 words.append("".join(cur))
@@ -265,6 +272,8 @@ def _scan_first(s: str, posix: bool = False) -> Tuple[int, List[str], Optional[s
         if cur is None:
             cur = []
         cur.append(ch)
+        if ch == ">":
+            raw_gt = i
         i += 1
     if cur is not None:
         words.append("".join(cur))
