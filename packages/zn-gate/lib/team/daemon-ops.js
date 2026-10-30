@@ -26,7 +26,7 @@ const { uploadPending } = require('./upload');
 const { syncOutcome } = require('./sync-outcome');
 const { CODES, znError } = require('../errors');
 const messages = require('../messages');
-const { INVISIBLE } = require('../vault/confirm');
+const { INVISIBLE_ANY_RE } = require('../vault/confirm');
 
 const VERSION = require('../../package.json').version;
 const DEFAULT_API = 'https://api.usezn.com';
@@ -39,8 +39,7 @@ const MAX_PENDING_REVOCATIONS = 8;
 
 const osName = () => (['linux', 'darwin', 'win32'].includes(process.platform) ? process.platform : 'other');
 /* Text from the server shown in dialogs and in `zn team status`: printable only (same invisible set as the dialogs). */
-const INVISIBLE_RE = new RegExp('[' + INVISIBLE + ']', 'g');
-const printable = (s, max) => (typeof s === 'string' ? s.replace(INVISIBLE_RE, '').trim().slice(0, max) : null);
+const printable = (s, max) => (typeof s === 'string' ? Array.from(s.replace(INVISIBLE_ANY_RE, '').trim()).slice(0, max).join('') : null);
 
 function makeTeamOps(ctx) {
   const { state, writeAudit, confirmOutOfBand } = ctx;
@@ -708,4 +707,4 @@ function makeTeamOps(ctx) {
   return ops;
 }
 
-module.exports = { makeTeamOps, DEFAULT_API };
+module.exports = { makeTeamOps, DEFAULT_API, printable };
