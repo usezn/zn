@@ -120,6 +120,7 @@ function checkZnPath(p, os, flag = '--zn-path') {
     for (const start of [p, real]) {
       for (let x = start; ; x = path.dirname(x)) {
         const sx = fs.statSync(x);
+        if (sx.uid !== 0) throw new Error(flag + ' ' + p + ': ' + x + ' is not owned by root, so its owner could replace what runs there. Install zn-gate in a path owned by root all the way up, for example /usr/local/bin with sudo. A package manager that installs for your own user (Homebrew in /opt/homebrew, nvm, a user-level npm prefix) does not qualify.');
         if ((sx.mode & 0o022) && !(sx.isDirectory() && (sx.mode & 0o1000))) throw new Error(flag + ' ' + p + ': ' + x + ' can be written by users other than its owner (group or world write), so it could be replaced. Fix its permissions or choose another install folder.');
         if (path.dirname(x) === x) break;
       }
