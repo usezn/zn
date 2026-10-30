@@ -294,7 +294,8 @@ VAULT (local, encrypted with age; the key stays in the OS keychain):
   vault purge         Delete the vault, every backup and the token maps for good [--yes] (your terminal only)
   vault log export --otlp
                       Export the audit log as OpenTelemetry logs (OTLP/JSON Lines)
-                      [--since 7d] [--out FILE]
+                      [--since 7d] [--out FILE] [--unverified]
+                      (with the vault locked, the chain cannot be checked: --unverified exports a copy that is NOT verified)
 
 TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
   team join <token>   Connect this machine to your organization (confirmed outside the agent)

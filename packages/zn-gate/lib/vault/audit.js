@@ -67,6 +67,8 @@ function macOf(key, record) {
  * ~512 MiB throws ERR_STRING_TOO_LONG). A line longer than maxLine bytes
  * (default 4 MiB; the daemon never writes one) is handed over as null.
  * fn returns true to stop early. Read errors other than ENOENT are thrown.
+ * opts.onChunk(buffer, length), when given, sees every raw chunk as it is read
+ * (used to hash the exact bytes that were read).
  */
 function forEachLine(file, fn, opts) {
   const o = opts || {};
@@ -88,6 +90,7 @@ function forEachLine(file, fn, opts) {
     for (;;) {
       const n = fs.readSync(fd, buf, 0, chunkSize, null);
       if (n === 0) break;
+      if (typeof o.onChunk === 'function') o.onChunk(buf, n);
       let start = 0;
       for (;;) {
         const nl = buf.indexOf(0x0a, start);
@@ -212,6 +215,8 @@ function verify(opts) {
   let seq = 0;
   let count = 0;
   let failure = null;
+  const fileHash = crypto.createHash('sha256');
+  let fileBytes = 0;
   const fail = (line, error) => { failure = { ok: false, records: line - 1, line, error }; return true; };
   const exists = forEachLine(o.file, (text, line) => {
     let rec;
@@ -231,7 +236,7 @@ function verify(opts) {
       return fail(line, 'log differs from the vault checkpoint (record ' + seq + ' has a different MAC)');
     }
     return false;
-  }, { chunkSize: o.chunkSize, maxLine: o.maxLine });
+  }, { chunkSize: o.chunkSize, maxLine: o.maxLine, onChunk: (b, n) => { fileHash.update(b.subarray(0, n)); fileBytes += n; } });
   if (!exists) {
     return cp ? { ok: false, records: 0, error: 'log truncated (vault expects ' + cp.seq + ' records)' } : { ok: true, records: 0 };
   }
@@ -239,7 +244,8 @@ function verify(opts) {
   if (cp && seq < cp.seq) {
     return { ok: false, records: count, error: 'log truncated (vault expects ' + cp.seq + ' records)' };
   }
-  return { ok: true, records: count };
+  // With opts.hash: also the sha256 and size of the exact bytes that were checked (a caller that reads the file later can tell whether it changed).
+  return o.hash === true ? { ok: true, records: count, sha256: fileHash.digest('hex'), bytes: fileBytes } : { ok: true, records: count };
 }
 
 function parseSince(since) {

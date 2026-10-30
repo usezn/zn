@@ -19,13 +19,13 @@ const HELP = {
     'Locks the vault now. Secrets stay unavailable to commands until zn unlock runs again.',
   ],
   vault: [
-    'usage: zn vault status | log [--since 1h] | verify | forget [dir] | log export --otlp',
+    'usage: zn vault status | log [--since 1h] | verify | forget [dir] | log export --otlp [--unverified]',
     'Shows and checks the local vault.',
     '  status               whether the vault exists and is unlocked',
     '  log [--since 1h]     who used which secret, and where (no values); also: zn secret log',
     '  verify               check the chain and the MACs of the audit log',
     '  forget [dir]         forget the token map of a project (the vault must be locked)',
-    '  log export --otlp    export the audit log as OpenTelemetry logs [--since 7d] [--out FILE]',
+    '  log export --otlp    export the audit log as OpenTelemetry logs [--since 7d] [--out FILE] [--unverified]',
   ],
   'env shadow': [
     'usage: zn env shadow [FILE] [--all] [--keys A,B] [--dry-run] [--force] [--mode proxy|env|file] [--host H] [--command C]',

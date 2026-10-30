@@ -1,6 +1,6 @@
 'use strict';
 /*
- * B-2122: the audit log is read in chunks, never as one string. A string over
+ * The audit log is read in chunks, never as one string. A string over
  * ~512 MiB throws ERR_STRING_TOO_LONG, which used to break upload and verify for
  * good and was then stored as tampering. These tests use a ~50 MB log and prove
  * the point by making any whole-file read of it fail, so they do not need 565 MB.
@@ -88,7 +88,7 @@ test('large log: verify, pendingCount and uploadPending never read the whole fil
   forbidWholeRead(t, file);
 
   const v = audit.verify({ file, key: KEY, checkpoint: last });
-  assert.deepStrictEqual(v, { ok: true, records: N });
+  assert.strictEqual(v.ok, true); assert.strictEqual(v.records, N);
   assert.strictEqual(audit.read({ file, limit: 3 }).length, 3);
   assert.deepStrictEqual(audit.read({ file, limit: 3 }).map((e) => e.seq), [N - 2, N - 1, N]);
 
@@ -114,7 +114,7 @@ test('large log: chunk size does not change the answer (tiny chunks)', (t) => {
   const file = path.join(dir, 'audit.jsonl');
   const last = writeLog(file, 300);
   for (const chunkSize of [5, 97, 1 << 20]) {
-    assert.deepStrictEqual(audit.verify({ file, key: KEY, checkpoint: last, chunkSize }), { ok: true, records: 300 }, 'chunk ' + chunkSize);
+    { const vr = audit.verify({ file, key: KEY, checkpoint: last, chunkSize }); assert.strictEqual(vr.ok, true); assert.strictEqual(vr.records, 300); }
   }
   // A changed record in the middle is still found with small chunks.
   const l = fs.readFileSync(file, 'utf8').split('\n');
@@ -185,4 +185,21 @@ test('daemon: a read error is reported as a read error and stores no tamper mark
   const again = await c.auditVerify();
   assert.strictEqual(again.ok, true, JSON.stringify(again));
   assert.notStrictEqual(again.tampered, true);
+});
+
+test('verify reports the sha256 and size of the bytes it checked; the export reports those of the bytes it read', (t) => {
+  const dir = tempDir(t, 'zn-stream-');
+  const file = path.join(dir, 'audit.jsonl');
+  const last = writeLog(file, 700);
+  const bytes = fs.readFileSync(file);
+  const sha = crypto.createHash('sha256').update(bytes).digest('hex');
+  const v = audit.verify({ file, key: KEY, checkpoint: last, chunkSize: 4096, hash: true });
+  assert.strictEqual(v.sha256, sha);
+  assert.strictEqual(v.bytes, bytes.length);
+  const otel = require('../lib/team/otel');
+  const x = otel.exportAuditStream({ auditFile: file, chunk: { chunkSize: 1000 } }, () => {});
+  assert.strictEqual(x.fileSha256, sha);
+  assert.strictEqual(x.fileBytes, bytes.length);
+  fs.appendFileSync(file, '{"x":1}\n');
+  assert.notStrictEqual(otel.exportAuditStream({ auditFile: file }, () => {}).fileSha256, sha);
 });

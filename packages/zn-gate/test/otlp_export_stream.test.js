@@ -1,6 +1,6 @@
 'use strict';
 /*
- * B-2197: the OTLP export reads the audit log in chunks and writes its output
+ * The OTLP export reads the audit log in chunks and writes its output
  * piece by piece. The output is the same as before (auditToOtlpJsonLines over
  * every valid record, ordered by seq), and a read error is an error, not tampering.
  */

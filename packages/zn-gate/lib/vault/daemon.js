@@ -370,7 +370,7 @@ function chainStatus(state, opts) {
   state.chainCache = null;
   let r;
   try {
-    r = audit.verify({ file, key: Buffer.from(secrets.auditKey, 'hex'), checkpoint: secrets.auditHead });
+    r = audit.verify({ file, key: Buffer.from(secrets.auditKey, 'hex'), checkpoint: secrets.auditHead, hash: true });
   } catch (err) {
     // An IO error is not evidence of tampering: report it, keep the checkpoint, store no mark.
     return { ok: false, records: 0, readError: true, error: readErrorText(err) };
@@ -1010,8 +1010,8 @@ function makeOps(state, ctl) {
       const c = chainStatus(state);
       if (!c.ok) return { ok: false, tampered: c.tampered === true, error: c.error, line: c.line };
       const a = args && typeof args === 'object' ? args : {};
-      // verifyOnly: the caller streams the file itself; the content is not built here (a big log would not fit one message).
-      if (a.verifyOnly === true) return { ok: true, records: c.records };
+      // verifyOnly: the caller streams the file itself; the content is not built here (a big log would not fit one message). sha256 and bytes are those of the log bytes that were verified, so the caller can tell whether the file changed afterwards.
+      if (a.verifyOnly === true) return { ok: true, records: c.records, sha256: c.sha256, bytes: c.bytes };
       const r = require('../team/otel').exportAuditFile({ auditFile, since: a.since, installId: a.installId, orgId: a.orgId });
       return Object.assign({ ok: true }, r);
     },

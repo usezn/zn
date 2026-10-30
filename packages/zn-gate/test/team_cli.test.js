@@ -547,3 +547,25 @@ test('log export --out on an existing 0644 file leaves a 0600 file', async () =>
   assert.strictEqual(r.code, 0);
   assert.strictEqual(fs.statSync(out).mode & 0o777, 0o600);
 });
+
+test('log export with an unlocked vault: the file must be the one that was verified', async () => {
+  writeAudit([rec(1, new Date().toISOString())]);
+  const auditFile = store.paths().auditFile;
+  const bytes = fs.readFileSync(auditFile);
+  const sha = crypto.createHash('sha256').update(bytes).digest('hex');
+  fake.isUnlocked = async () => true;
+  const out = path.join(HOME, 'verified-out.jsonl');
+  fake.auditExport = async () => ({ ok: true, records: 1, sha256: sha, bytes: bytes.length });
+  let r = await capture(() => runLogExport(['--otlp', '--out', out]));
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.ok(fs.existsSync(out));
+  assert.doesNotMatch(r.stderr, /NOT verified/);
+  // A record written after the check: the export aborts and leaves nothing.
+  fs.rmSync(out);
+  fs.appendFileSync(auditFile, JSON.stringify(rec(2, new Date().toISOString())) + '\n');
+  r = await capture(() => runLogExport(['--otlp', '--out', out]));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /changed after the vault verified it/);
+  assert.ok(!fs.existsSync(out));
+  assert.deepStrictEqual(fs.readdirSync(HOME).filter((n) => n.endsWith('.tmp')), []);
+});

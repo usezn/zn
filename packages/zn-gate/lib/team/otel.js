@@ -182,7 +182,8 @@ function parseSince(since) {
 }
 
 /**
- * exportAuditStream({auditFile, since, installId, orgId, chunk}, write) -> {records, sha256}
+ * exportAuditStream({auditFile, since, installId, orgId, chunk}, write) -> {records, sha256, fileSha256, fileBytes}
+ * fileSha256 and fileBytes describe the raw log bytes read for the output (not the output).
  * Same output as exportAuditFile, but the log is read in chunks and the output
  * is handed to write(text) piece by piece (one OTLP line at a time), so a log
  * of any size is never held in one string. A log that is already in seq order
@@ -195,7 +196,9 @@ function exportAuditStream(opts, write) {
   const file = o.auditFile || require('../vault/store').paths(o).auditFile;
   const from = parseSince(o.since);
   const seqOf = (r) => (Number.isSafeInteger(r.seq) ? r.seq : 0);
-  const each = (fn) => forEachLine(file, (line) => {
+  const fileHash = crypto.createHash('sha256');
+  let fileBytes = 0;
+  const each = (fn, hashing) => forEachLine(file, (line) => {
     if (line === null || !line.trim()) return false;
     let rec;
     try { rec = JSON.parse(line); } catch (err) { return false; }
@@ -205,7 +208,7 @@ function exportAuditStream(opts, write) {
     if (from !== null && t < from) return false;
     fn(rec);
     return false;
-  }, o.chunk);
+  }, Object.assign({}, o.chunk, hashing ? { onChunk: (b, n) => { fileHash.update(b.subarray(0, n)); fileBytes += n; } } : {}));
 
   let sorted = true;
   let prev = -Infinity;
@@ -227,15 +230,15 @@ function exportAuditStream(opts, write) {
   };
   const add = (rec) => { batch.push(gateRecordToLog(rec)); records += 1; if (batch.length === RECORDS_PER_LINE) flush(); };
   if (sorted) {
-    each(add);
+    each(add, true);
   } else {
     const all = [];
-    each((rec) => all.push(rec));
+    each((rec) => all.push(rec), true);
     all.sort((a, b) => seqOf(a) - seqOf(b));
     for (const rec of all) add(rec);
   }
   flush();
-  return { records, sha256: any ? hash.digest('hex') : crypto.createHash('sha256').update('', 'utf8').digest('hex') };
+  return { records, sha256: any ? hash.digest('hex') : crypto.createHash('sha256').update('', 'utf8').digest('hex'), fileSha256: fileHash.digest('hex'), fileBytes };
 }
 
 /**

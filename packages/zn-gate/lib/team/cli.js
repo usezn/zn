@@ -238,6 +238,11 @@ async function runLogExport(args) {
       err('[zn] Not exported: the vault is locked or unreachable, so the audit log chain cannot be verified. Unlock it (`' + znCommand('unlock') + '`) and export again, or add --unverified to export a copy that is NOT verified.');
       return 1;
     }
+    // The vault verified these exact bytes; the export read the file again. A different answer means the log changed in between.
+    const sameBytes = (res) => {
+      if (unverified || (res.fileSha256 === r.sha256 && res.fileBytes === r.bytes)) return;
+      throw new Error('Not exported: the audit log changed after the vault verified it (a new record may have been written), so this copy is not the verified log. Nothing from this run should be used; run the export again.');
+    };
     const warn = () => {
       if (unverified) err('[zn] Warning: the vault is locked or unreachable, so the audit log chain was NOT verified. Unlock it (`' + znCommand('unlock') + '`) and export again for a verified copy.');
     };
@@ -256,6 +261,7 @@ async function runLogExport(args) {
       let res;
       try {
         res = exportAuditStream(opts, (s) => fs.writeSync(fd, s));
+        sameBytes(res);
         fs.closeSync(fd);
         fs.renameSync(tmp, file);
       } catch (e) {
@@ -266,7 +272,7 @@ async function runLogExport(args) {
       err('Exported ' + res.records + ' records to ' + file + ' (OTLP/JSON Lines, sha256 ' + res.sha256 + ').');
     } else {
       // Pipes and files are written synchronously by Node on POSIX, so the output is not queued in memory.
-      exportAuditStream(opts, (text) => { process.stdout.write(text); });
+      sameBytes(exportAuditStream(opts, (text) => { process.stdout.write(text); }));
     }
     warn();
     return 0;

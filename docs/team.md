@@ -357,3 +357,11 @@ HMAC chain travels with it (`zn.audit.seq`, `zn.audit.prev`,
 `zn.audit.mac`), so a gap or a reordered record stays visible after the
 export. The mapping is the same as the export
 from the zn dashboard. No account is needed for the local export.
+
+With the vault unlocked, the vault checks the whole chain first and the export
+then confirms that the file it reads is byte for byte the one that was checked;
+if a record was written in between, nothing is exported and the command asks
+you to run it again. With the vault locked the chain cannot be checked, so the
+export is refused unless you add `--unverified`, and then it warns that the copy
+is not verified. `--out` writes a new private file and refuses a symbolic link or
+a folder.
