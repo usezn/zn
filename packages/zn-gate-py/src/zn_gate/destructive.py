@@ -415,6 +415,49 @@ class _Vars:
         return out
 
 
+# The wrappers that only run the next command, with the short options of each that take a value. One list for the
+# download-and-run rule (here) and the egress check (Node only); it is the same table as the Node policy's.
+_WRAPPERS = {
+    "sudo": "ugphCDrtUTR", "doas": "uC", "env": "uCS", "command": "", "nohup": "", "time": "fo", "builtin": "", "exec": "a",
+    "nice": "n", "timeout": "sk", "xargs": "IinLPdEsa", "setsid": "", "ionice": "cnpPu", "stdbuf": "ioe", "busybox": "",
+    "chrt": "", "taskset": "c", "chroot": "ug", "runuser": "ugGsT", "unbuffer": "", "strace": "eopsuEaOSbPIX",
+    "ltrace": "eopsunal", "nsenter": "tSG", "flock": "wE",
+}
+# Wrappers that take positional arguments before the command: chrt <priority>, taskset <mask> (not with -c), chroot <newroot>, flock <lock>.
+_WRAPPER_POSITIONAL = {"chrt": 1, "taskset": 1, "chroot": 1, "flock": 1}
+_WRAPPER_LONG_VALUE = frozenset((
+    "--user", "--group", "--chdir", "--unset", "--max-args", "--max-procs", "--replace", "--delimiter", "--arg-file", "--eof",
+    "--signal", "--kill-after", "--split-string", "--cpu-list", "--host", "--prompt", "--close-from", "--role", "--type",
+))
+
+
+def _skip_wrapper(words: List[str], k: int, name: str) -> int:
+    """The index of the word after a wrapper and its options (and the values some take), env's assignments and timeout's duration."""
+    value_opts = _WRAPPERS[name]
+    saw_c = False
+    k += 1
+    while k < len(words):
+        t = words[k]
+        if t == "--":
+            k += 1
+            break
+        if t.startswith("--") and len(t) > 2:
+            k += 2 if "=" not in t and t in _WRAPPER_LONG_VALUE else 1
+            continue
+        if t.startswith("-") and len(t) > 1:
+            if t == "-c":
+                saw_c = True
+            k += 2 if re.match(r"^-[A-Za-z]+\Z", t) and t[-1] in value_opts else 1
+            continue
+        if _ASSIGN_RE.match(t) or (name == "timeout" and re.match(r"^[0-9.]+[smhd]?\Z", t)):
+            k += 1
+            continue
+        break
+    if name in _WRAPPER_POSITIONAL and k < len(words) and not (name == "taskset" and saw_c):
+        k += _WRAPPER_POSITIONAL[name]
+    return k
+
+
 # Words that start a command without being one: a group, the branches of if / while / until / for, and negation.
 _SHELL_KEYWORDS = frozenset(("{", "then", "do", "else", "elif", "if", "while", "until", "!"))
 
@@ -533,24 +576,9 @@ def _unwrap_dir(args: List[str]) -> Tuple[List[str], Optional[str]]:
                 if f in ("-u", "-S"):
                     i += 1
             continue
-        if name in ("command", "exec", "nohup", "time", "builtin", "setsid"):
-            i += 1
-            while i < len(args) and args[i].startswith("-"):
-                i += 1
-            continue
-        if name in ("nice", "ionice"):
-            i += 1
-            while i < len(args) and args[i].startswith("-"):
-                f = args[i]
-                i += 1
-                if f in ("-n", "-c"):
-                    i += 1
-            continue
-        if name == "timeout":
-            i += 1
-            while i < len(args) and args[i].startswith("-"):
-                i += 1
-            i += 1
+        # Every other wrapper of the shared list (nohup, nice, ionice, timeout, stdbuf, command, exec, xargs, busybox ...).
+        if name in _WRAPPERS:
+            i = _skip_wrapper(args, i, name)
             continue
         break
     return args[i:], chdir

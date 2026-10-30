@@ -264,20 +264,10 @@ function unwrapDir(args) {
       }
       continue;
     }
-    if (name === 'command' || name === 'exec' || name === 'nohup' || name === 'time' || name === 'builtin' || name === 'setsid') {
-      i++;
-      while (i < args.length && args[i].startsWith('-')) i++;
-      continue;
-    }
-    if (name === 'nice' || name === 'ionice') {
-      i++;
-      while (i < args.length && args[i].startsWith('-')) { const f = args[i++]; if (f === '-n' || f === '-c') i++; }
-      continue;
-    }
-    if (name === 'timeout') {
-      i++;
-      while (i < args.length && args[i].startsWith('-')) i++;
-      i++; // the duration
+    // Every other wrapper of the shared list (nohup, nice, ionice, timeout, stdbuf, command, exec, xargs, busybox ...).
+    const P = require('./hooks/policy');
+    if (P.WRAPPER_NAMES.has(name)) {
+      i = P.skipWrapper(args, i, name);
       continue;
     }
     break;

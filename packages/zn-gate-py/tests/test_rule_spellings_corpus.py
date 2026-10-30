@@ -20,12 +20,12 @@ with open(_PATH, encoding='utf-8') as fh:
     CASES = [c for c in json.load(fh) if c['kind'] == 'destructive']
 
 KNOWN_GAPS = {
-    'pts-prog-008', 'pts-prog-010', 'pts-prog-011', 'pts-prog-025', 'pts-shell-010',
-    'pts-shell-022', 'pts-subst-013', 'pts-subst-014', 'pts-subst-015', 'pts-subst-020',
-    'pts-subst-021', 'pts-subst-022', 'pts-subst-023', 'pts-subst-024', 'pts-subst-025',
-    'rc-prog-008', 'rc-prog-010', 'rc-prog-011', 'rc-prog-025', 'rc-target-011', 'rc-target-012',
-    'rc-target-025', 'rc-target-029', 'rc-target-036', 'rc-target-037', 'rc-target-044',
-    'rc-target-047', 'rc-target-048', 'rc-target-049', 'rc-target-050', 'rc-target-051',
+    'pts-prog-008', 'pts-prog-010', 'pts-prog-011', 'pts-shell-010', 'pts-shell-022',
+    'pts-subst-013', 'pts-subst-014', 'pts-subst-015', 'pts-subst-020', 'pts-subst-021',
+    'pts-subst-022', 'pts-subst-023', 'pts-subst-024', 'pts-subst-025', 'rc-prog-008',
+    'rc-prog-010', 'rc-prog-011', 'rc-target-011', 'rc-target-012', 'rc-target-025',
+    'rc-target-029', 'rc-target-036', 'rc-target-037', 'rc-target-044', 'rc-target-047',
+    'rc-target-048', 'rc-target-049', 'rc-target-050', 'rc-target-051',
 }
 
 REPORT = {}

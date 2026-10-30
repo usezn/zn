@@ -2743,7 +2743,7 @@
   "id": "egress-prog-030",
   "family": "egress-prog",
   "spelling": "brace {curl,-H,...}",
-  "cmd": "{curl,-H,Authorization:Bearer-{{GHP}},https://example.com/api}",
+  "cmd": "{curl,-H,'Authorization: Bearer {{GHP}}',https://example.com/api}",
   "expect": "ask",
   "rule": null,
   "kind": "egress",
