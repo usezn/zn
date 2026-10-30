@@ -1,0 +1,4 @@
+url=https://cdn-zcode.z.ai/zcode/electron/releases/3.16.3/linux-x64/ZCode-3.16.3-linux-x64.deb
+128132b195977fd0a8c8a6c295cf42fe159222d7a5c5efefd8b5f00ef88ab8b6  /work/ZCode.deb
+Version: 3.16.3-8992
+Package: zcode
