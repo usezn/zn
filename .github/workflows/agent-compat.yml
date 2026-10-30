@@ -47,7 +47,7 @@ jobs:
       AGENTS: ${{ github.event.inputs.agents || 'claude-code codex opencode' }}
     steps:
       - name: Harden the runner (egress audit)
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
       # Scheduled runs check out next explicitly (the default branch is main); a manual run builds the branch it is started on.

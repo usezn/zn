@@ -66,7 +66,7 @@ jobs:
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
       - name: Check the tag name
@@ -211,7 +211,7 @@ jobs:
       # its endpoints in the step-security insights, switch to egress-policy: block with allowed-endpoints.
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
       - name: Download the signed release files
@@ -229,7 +229,7 @@ jobs:
           cp "release/zn_gate-${PY_VERSION}.tar.gz" "release/zn_gate-${PY_VERSION}-py3-none-any.whl" dist/
           ls -l dist
       - name: Publish with PyPI trusted publishing
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           packages-dir: dist/
           attestations: true
@@ -263,7 +263,7 @@ jobs:
       # its endpoints in the step-security insights, switch to egress-policy: block with allowed-endpoints.
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
       # Only the dist-tag script, from the commit being released (the code that is published anyway).
@@ -539,7 +539,7 @@ jobs:
       # its endpoints in the step-security insights, switch to egress-policy: block with allowed-endpoints.
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
