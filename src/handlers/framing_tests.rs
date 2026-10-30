@@ -194,7 +194,7 @@ async fn non_numeric_and_signed_content_length_are_400() {
 }
 
 #[tokio::test]
-#[ignore = "B-1258: hyper accepts Content-Length plus Transfer-Encoding: chunked (chunked wins) and answers 200"]
+#[ignore = "hyper accepts Content-Length plus Transfer-Encoding: chunked (chunked wins) and answers 200"]
 async fn content_length_plus_chunked_is_rejected() {
     let addr = spawn_server().await;
     let l = BODY.len();
@@ -253,7 +253,7 @@ async fn http10_without_host_gets_a_clean_answer() {
 }
 
 #[tokio::test]
-#[ignore = "B-282: the management API has no Host header check; hyper answers an HTTP/1.1 request without Host with 200"]
+#[ignore = "the management API has no Host header check; hyper answers an HTTP/1.1 request without Host with 200"]
 async fn http11_without_host_is_400() {
     let addr = spawn_server().await;
     let p = probe(addr, b"GET /api/v1/health HTTP/1.1\r\n\r\n".to_vec(), BOUND).await;
