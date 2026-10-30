@@ -25,7 +25,6 @@
  * the same bytes and the same SHA-256.
  */
 
-const fs = require('fs');
 const crypto = require('crypto');
 const { forEachLogLine } = require('../vault/audit');
 
