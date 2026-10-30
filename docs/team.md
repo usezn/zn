@@ -308,6 +308,7 @@ zn team managed-config --agent all --os all --json
 | `--os macos\|linux\|windows\|all` | Which operating system's path to print. Default: the system you run it on. |
 | `--managed-hooks-only` | Also run only managed hooks (Claude Code and Codex). Off by default: see the warning below. |
 | `--zn-path PATH` | Run zn at this exact absolute path on every machine instead of the first `zn` on the developer's PATH. Needs one `--os`. Recommended: see "What the managed install protects" below. |
+| `--node-path PATH` | With `--zn-path`: also run Node.js only from this exact absolute path (`.../node`, or `...\node.exe` on Windows), checked like `--zn-path`. Refused without `--zn-path`. |
 | `--exclusive-mcp` | Claude Code only: also print a `managed-mcp.json` with zn's `secrets` server. Off by default: see the warning below. |
 | `--json` | Machine-readable output (`{"schema": 1, "files": [...]}`), for scripts and for generating your own guide. |
 
@@ -339,13 +340,13 @@ Without `--zn-path`, the managed hook starts whichever `zn` comes first on the d
 zn team managed-config --agent claude-code --os linux --zn-path /usr/local/bin/zn
 ```
 
-The hook then runs only that file and never searches the PATH for zn. The command refuses the path if it is not absolute, if it does not exist or cannot run on the machine where you run the command, or if it is in a folder a developer can write to (their home folder, a temporary folder, the folder you run the command in, or any folder others can write to). For another system than the one you are on (for example `--os windows` from a Mac) it can only check the shape of the path, so check it on a real machine of that kind. Install zn-gate in a folder only administrators can write to, such as `/usr/local/bin`, and put Node.js in the same folder or in another folder only administrators can write to. The hook puts the folder of zn first on the PATH, so the Node.js next to it is used.
+The hook then runs only that file and never searches the PATH for zn. The command refuses the path if it is not absolute, if it does not exist or cannot run on the machine where you run the command, or if it is in a folder a developer can write to (their home folder, a temporary folder, the folder you run the command in, or any folder others can write to). For another system than the one you are on (for example `--os windows` from a Mac) it can only check the shape of the path, so check it on a real machine of that kind. Install zn-gate in a folder only administrators can write to, such as `/usr/local/bin`, and put Node.js in the same folder or in another folder only administrators can write to. The hook puts the folder of zn first on the PATH, so the Node.js next to it is used. If Node.js is not next to zn (for example zn in `/usr/local/bin` and Node.js under `/opt`), add `--node-path /opt/node/bin/node` (your own admin-only path): the hook then puts that folder first and runs only if `node` is exactly that file, so a fake `node` anywhere else on the PATH is never used. `--node-path` is refused without `--zn-path`, because with zn still taken from the PATH a fake zn would replace the hook before node matters.
 
 With a fixed path, the managed install prevents:
 
 - a developer switching zn's hooks off by editing a file in their home folder or in a project;
 - a fake `zn` earlier on the PATH replacing the managed hook;
-- a fake `node` earlier on the PATH, when Node.js is installed next to zn.
+- a fake `node` earlier on the PATH, when Node.js is installed next to zn or you pass `--node-path`. With only `--zn-path` and Node.js elsewhere, the first `node` on the PATH is still used.
 
 It does not prevent:
 

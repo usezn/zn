@@ -68,18 +68,18 @@ const DOCS = {
   codex: 'https://learn.chatgpt.com/docs/enterprise/managed-configuration',
 };
 
-const USAGE = 'usage: zn team managed-config [--agent claude-code|cursor|codex|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--zn-path ABSOLUTE_PATH] [--json]';
+const USAGE = 'usage: zn team managed-config [--agent claude-code|cursor|codex|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--zn-path ABSOLUTE_PATH [--node-path ABSOLUTE_PATH]] [--json]';
 const INSTALL_NOTE = 'zn-gate must be installed on each machine with `zn` on the PATH (npm install -g zn-gate).';
 const PIN_ADVICE = 'The hook runs the first `zn` on the developer\'s PATH, so a program named zn that a developer puts earlier on the PATH replaces it. To close that, pass --zn-path with the absolute path of zn on your machines, in a folder only administrators can write to.';
-const pinNote = (zn) => (zn ? 'The hooks run zn at exactly ' + zn.path + ' and never search the PATH for it; zn-gate must be installed there on every machine, and Node.js should be in the same folder or in a folder only administrators can write to. ' + (zn.checked ? 'This path was checked on this computer.' : 'This path was not checked on this computer because it is for another system: check it there.') : PIN_ADVICE);
+const pinNote = (zn) => (zn ? 'The hooks run zn at exactly ' + zn.path + ' and never search the PATH for it; zn-gate must be installed there on every machine, and ' + (zn.node ? 'Node.js is run only from exactly ' + zn.node.path + ' (a node earlier on the PATH is refused; it must be installed there on every machine). ' : 'Node.js is still the first node on the developer\'s PATH unless it sits next to zn: pass --node-path to pin it too. ') + (zn.checked ? 'This path was checked on this computer.' : 'This path was not checked on this computer because it is for another system: check it there.') : PIN_ADVICE);
 
 // The hooks run `zn` from the PATH inside zn's start guard, as a project install writes them (launcher.projectShCommand):
 // a missing zn or Node.js blocks, and neither zn, node nor powershell.exe can come from the folder the agent runs in.
 // On Windows, Codex runs command_windows through cmd.exe, so it names powershell.exe through %SystemRoot%.
 // zn: the validated --zn-path ({path, os}) or undefined. Claude Code on Windows runs sh (Git Bash), so a drive path becomes /c/dir/zn.cmd there.
 const shPath = (zn) => (zn.os === 'windows' ? '/' + zn.path[0].toLowerCase() + zn.path.slice(2).split(String.fromCharCode(92)).join('/') : zn.path);
-const shGuard = (agent, zn) => (event) => launcher.projectShCommand(agent, event, zn ? { znPath: shPath(zn) } : {});
-const winGuard = (agent, zn, opts) => (event) => launcher.windowsScriptCommand(launcher.projectWindowsScript(agent, event, zn ? { znPath: zn.path } : {}), opts);
+const shGuard = (agent, zn) => (event) => launcher.projectShCommand(agent, event, zn ? { znPath: shPath(zn), ...(zn.node ? { nodePath: shPath(zn.node) } : {}) } : {});
+const winGuard = (agent, zn, opts) => (event) => launcher.windowsScriptCommand(launcher.projectWindowsScript(agent, event, zn ? { znPath: zn.path, ...(zn.node ? { nodePath: zn.node.path } : {}) } : {}), opts);
 
 /* The first folder a user can write to that holds p (the project folder, home, a temp folder), or undefined. */
 function userWritable(p, hostWin) {
@@ -96,28 +96,31 @@ function userWritable(p, hostWin) {
  * The shape is always checked. The file itself (exists, runs, not in a folder a user can write) is checked only when the
  * target system is the one this runs on; for another system the path cannot be looked at from here.
  */
-function checkZnPath(p, os) {
+function checkZnPath(p, os, flag = '--zn-path') {
   const win = os === 'windows';
-  if (typeof p !== 'string' || !p) throw new Error('--zn-path needs a value');
-  const shapeOk = win ? launcher.PINNED_WIN_PATH.test(p) && /[.](cmd|exe)$/i.test(p) : launcher.PINNED_SH_PATH.test(p);
+  const node = flag === '--node-path';
+  if (typeof p !== 'string' || !p) throw new Error(flag + ' needs a value');
+  const shapeOk = node
+    ? (win ? launcher.PINNED_WIN_PATH.test(p) && /\x5cnode\.exe$/i.test(p) : launcher.PINNED_SH_PATH.test(p) && /\/node$/.test(p))
+    : (win ? launcher.PINNED_WIN_PATH.test(p) && /[.](cmd|exe)$/i.test(p) : launcher.PINNED_SH_PATH.test(p));
   if (!shapeOk || p.includes('..')) {
-    throw new Error('--zn-path must be an absolute path to the zn program on the target system, with no "..": ' +
-      (win ? 'a drive path ending in zn.cmd or zn.exe, using letters, digits, spaces and . _ + @ ( ) -' : 'for example /usr/local/bin/zn, using letters, digits, spaces and . _ + @ : -'));
+    throw new Error(flag + ' must be an absolute path to the ' + (node ? 'node program' : 'zn program') + ' on the target system, with no "..": ' +
+      (win ? 'a drive path ending in ' + (node ? 'node.exe' : 'zn.cmd or zn.exe') + ', using letters, digits, spaces and . _ + @ ( ) -' : 'for example ' + (node ? '/usr/local/bin/node' : '/usr/local/bin/zn') + ', using letters, digits, spaces and . _ + @ : -'));
   }
   if (os !== osDefault()) return { path: p, os, checked: false };
   let real;
-  try { real = fs.realpathSync(p); } catch (_) { throw new Error('--zn-path ' + p + ' does not exist on this computer. Install zn-gate there first, or run this on a machine that has it.'); }
+  try { real = fs.realpathSync(p); } catch (_) { throw new Error(flag + ' ' + p + ' does not exist on this computer. Install zn-gate there first, or run this on a machine that has it.'); }
   let st;
-  try { st = fs.statSync(real); } catch (_) { throw new Error('--zn-path ' + p + ' cannot be read'); }
-  if (!st.isFile()) throw new Error('--zn-path ' + p + ' is not a file');
-  if (!win) { try { fs.accessSync(real, fs.constants.X_OK); } catch (_) { throw new Error('--zn-path ' + p + ' is not executable'); } }
+  try { st = fs.statSync(real); } catch (_) { throw new Error(flag + ' ' + p + ' cannot be read'); }
+  if (!st.isFile()) throw new Error(flag + ' ' + p + ' is not a file');
+  if (!win) { try { fs.accessSync(real, fs.constants.X_OK); } catch (_) { throw new Error(flag + ' ' + p + ' is not executable'); } }
   const bad = userWritable(p, win) || userWritable(real, win);
-  if (bad) throw new Error('--zn-path ' + p + ' is inside ' + bad + ', a folder a user can write to, so a developer or an agent could replace it. Install zn-gate in a folder only administrators can write to, such as /usr/local/bin or C:' + String.fromCharCode(92) + 'Program Files.');
+  if (bad) throw new Error(flag + ' ' + p + ' is inside ' + bad + ', a folder a user can write to, so a developer or an agent could replace it. Install zn-gate in a folder only administrators can write to, such as /usr/local/bin or C:' + String.fromCharCode(92) + 'Program Files.');
   if (!win) {
     for (const start of [p, real]) {
       for (let x = start; ; x = path.dirname(x)) {
         const sx = fs.statSync(x);
-        if ((sx.mode & 0o022) && !(sx.isDirectory() && (sx.mode & 0o1000))) throw new Error('--zn-path ' + p + ': ' + x + ' can be written by users other than its owner (group or world write), so it could be replaced. Fix its permissions or choose another install folder.');
+        if ((sx.mode & 0o022) && !(sx.isDirectory() && (sx.mode & 0o1000))) throw new Error(flag + ' ' + p + ': ' + x + ' can be written by users other than its owner (group or world write), so it could be replaced. Fix its permissions or choose another install folder.');
         if (path.dirname(x) === x) break;
       }
     }
@@ -244,13 +247,15 @@ const BUILDERS = { 'claude-code': claudeFiles, cursor: cursorFiles, codex: codex
 function build(opts = {}) {
   const agents = !opts.agent || opts.agent === 'all' ? AGENTS : [opts.agent];
   const oses = !opts.os || opts.os === 'all' ? OSES : [opts.os];
-  if (opts.znPath !== undefined && oses.length !== 1) throw new Error('--zn-path is the path on one system: also pass --os macos, --os linux or --os windows');
+  if (opts.nodePath !== undefined && opts.znPath === undefined) throw new Error('--node-path needs --zn-path too: with zn still found on the PATH, a fake zn would replace the hook before node matters');
+  if ((opts.znPath !== undefined || opts.nodePath !== undefined) && oses.length !== 1) throw new Error('--zn-path and --node-path are paths on one system: also pass --os macos, --os linux or --os windows');
   const out = [];
   for (const agent of agents) {
     if (!BUILDERS[agent]) throw new Error('unknown agent "' + agent + '" (choose claude-code, cursor, codex or all)');
     for (const os of oses) {
       if (!PLATFORM[os]) throw new Error('unknown os "' + os + '" (choose macos, linux, windows or all)');
       const zn = opts.znPath === undefined ? undefined : checkZnPath(opts.znPath, os);
+      if (zn && opts.nodePath !== undefined) zn.node = checkZnPath(opts.nodePath, os, '--node-path');
       for (const f of BUILDERS[agent](os, { ...opts, zn })) out.push({ agent, os, ...f, docs: DOCS[agent], read: READ_DATE });
     }
   }
@@ -270,6 +275,7 @@ function parseArgs(args) {
     else if (a === '--managed-hooks-only') o.managedHooksOnly = true;
     else if (a === '--exclusive-mcp') o.exclusiveMcp = true;
     else if (a === '--zn-path') o.znPath = val();
+    else if (a === '--node-path') o.nodePath = val();
     else if (a === '--json') o.json = true;
     else throw new Error('unknown option ' + a);
   }

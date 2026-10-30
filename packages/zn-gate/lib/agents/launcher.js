@@ -430,7 +430,7 @@ const PROJECT_TRUST = [
  */
 function projectShCommand(agentId, event, opts = {}) {
   checkAgentId(agentId);
-  if (opts.znPath !== undefined) return projectShCommandPinned(agentId, event, opts.znPath);
+  if (opts.znPath !== undefined) return projectShCommandPinned(agentId, event, opts.znPath, opts.nodePath);
   if (event !== undefined && !/^[A-Za-z]+$/.test(String(event))) throw new Error('zn: bad event name');
   // An agent that runs the command through a shell (every one but Antigravity) gets the readable script in single quotes: the
   // ${IFS} form below is for a command split on spaces with no shell, and a shell such as zsh does not split an unquoted ${IFS}.
@@ -479,9 +479,11 @@ function projectShCommand(agentId, event, opts = {}) {
  * The same hook with zn at a fixed absolute path (an administrator's `--zn-path`), so a `zn` earlier on the user's PATH is never
  * run. The folder of that zn goes first on the PATH, so the Node.js installed next to it is the one the hook finds.
  */
-function projectShCommandPinned(agentId, event, znPath) {
+function projectShCommandPinned(agentId, event, znPath, nodePath) {
   if (agentId === 'antigravity') throw new Error('zn: a pinned zn path is not supported for this agent');
   if (!PINNED_SH_PATH.test(znPath) || znPath.includes('..')) throw new Error('zn: unsafe zn path for the hook');
+  const pinNode = nodePath !== undefined;
+  if (pinNode && (!PINNED_SH_PATH.test(nodePath) || nodePath.includes('..') || !/\/node([.]exe)?$/i.test(nodePath))) throw new Error('zn: unsafe node path for the hook');
   const crash = projectAnswer(agentId, event, 'crash', false);
   const missing = projectAnswer(agentId, event, 'missing', false);
   const say = (a) => [
@@ -489,8 +491,11 @@ function projectShCommandPinned(agentId, event, znPath) {
     ...(a.stderr ? ["echo '" + a.stderr + "' >&2"] : []),
     'exit ' + a.exit,
   ].join('; ');
-  const script = 'Z="' + znPath + '"; PATH="${Z%/*}:$PATH"; export PATH; N=$(command -v node); R=missing; ' +
-    'if [ -x "$Z" ] && [ -n "$N" ] && [ "${N#/}" != "$N" ]; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
+  // With a pinned node its folder goes first on the PATH (so zn's own `#!/usr/bin/env node` finds it) and the hook runs only
+  // when `node` resolves to exactly that file: a fake node anywhere else on the PATH cannot be picked.
+  const script = 'Z="' + znPath + '"; ' + (pinNode ? 'X="' + nodePath + '"; PATH="${X%/*}:${Z%/*}:$PATH"; ' : 'PATH="${Z%/*}:$PATH"; ') +
+    'export PATH; N=$(command -v node); R=missing; ' +
+    'if [ -x "$Z" ] && [ -n "$N" ] && [ "${N#/}" != "$N" ]' + (pinNode ? ' && [ -x "$X" ] && [ "${N%.exe}" = "${X%.exe}" ]' : '') + '; then R=ran; "$Z" hook ' + agentId + '; C=$?; [ "$C" = 0 ] && exit 0; [ "$C" = 2 ] && exit 2; fi; ' +
     'if [ "$R" = ran ]; then ' + say(crash) + '; fi; ' + say(missing);
   return 'sh -c ' + shQuote(script);
 }
@@ -498,7 +503,7 @@ function projectShCommandPinned(agentId, event, znPath) {
 /** The PowerShell text of the same project hook (for windowsScriptCommand). Ends with the comment that isOurs() reads. */
 function projectWindowsScript(agentId, event, opts = {}) {
   checkAgentId(agentId);
-  if (opts.znPath !== undefined) return projectWindowsScriptPinned(agentId, event, opts.znPath);
+  if (opts.znPath !== undefined) return projectWindowsScriptPinned(agentId, event, opts.znPath, opts.nodePath);
   if (event !== undefined && !/^[A-Za-z]+$/.test(String(event))) throw new Error('zn: bad event name');
   const say = (a) => [
     ...(a.stdout ? ["[Console]::Out.WriteLine('" + a.stdout + "')"] : []),
@@ -513,8 +518,10 @@ function projectWindowsScript(agentId, event, opts = {}) {
     'if ($zt -eq 1) { ' + say(crash) + ' } else { ' + say(missing) + ' }; # zn hook ' + agentId;
 }
 
-function projectWindowsScriptPinned(agentId, event, znPath) {
+function projectWindowsScriptPinned(agentId, event, znPath, nodePath) {
   if (!PINNED_WIN_PATH.test(znPath) || znPath.includes('..')) throw new Error('zn: unsafe zn path for the hook');
+  const pinNode = nodePath !== undefined;
+  if (pinNode && (!PINNED_WIN_PATH.test(nodePath) || nodePath.includes('..') || !/\x5cnode\.exe$/i.test(nodePath))) throw new Error('zn: unsafe node path for the hook');
   const say = (a) => [
     ...(a.stdout ? ["[Console]::Out.WriteLine('" + a.stdout + "')"] : []),
     ...(a.stderr ? ["[Console]::Error.WriteLine('" + a.stderr + "')"] : []),
@@ -523,8 +530,9 @@ function projectWindowsScriptPinned(agentId, event, znPath) {
   const missing = projectAnswer(agentId, event, 'missing', true);
   const leave = 'if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 2) { exit ' + (crash.exit === 0 ? '0' : '$LASTEXITCODE') + ' }';
   const dir = znPath.slice(0, znPath.lastIndexOf('\\'));
-  return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF + "$env:PATH = '" + dir + ";' + $env:PATH; " +
-    "if (([System.IO.File]::Exists('" + znPath + "')) -and ((zf 'node.exe') -or (zf 'node.cmd'))) { $zt=1; & '" + znPath + "' hook " + agentId + '; ' + leave + ' }; ' +
+  const nodeDir = pinNode ? nodePath.slice(0, nodePath.lastIndexOf('\x5c')) : '';
+  return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF + "$env:PATH = '" + (pinNode ? nodeDir + ';' : '') + dir + ";' + $env:PATH; " +
+    "if (([System.IO.File]::Exists('" + znPath + "')) -and " + (pinNode ? "([System.IO.File]::Exists('" + nodePath + "')) -and ((zf 'node.exe') -eq '" + nodePath + "')" : "((zf 'node.exe') -or (zf 'node.cmd'))") + ") { $zt=1; & '" + znPath + "' hook " + agentId + '; ' + leave + ' }; ' +
     'if ($zt -eq 1) { ' + say(crash) + ' } else { ' + say(missing) + ' }; # zn hook ' + agentId;
 }
 
