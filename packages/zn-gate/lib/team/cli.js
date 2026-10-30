@@ -27,7 +27,7 @@ const { messageWithUnlockHint } = require('../errors');
 const { znCommand } = require('../zn-command');
 
 const USAGE = 'usage: zn team join <token> [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
-const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE]';
+const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE] [--unverified]';
 
 const out = (s) => process.stdout.write(s + '\n');
 const err = (s) => process.stderr.write(s + '\n');
@@ -233,11 +233,23 @@ async function runLogExport(args) {
       }
     } finally { probe.close(); }
     const unverified = !r;
+    // A copy that was not verified is only made when asked for: it could be a log that was changed.
+    if (unverified && !args.includes('--unverified')) {
+      err('[zn] Not exported: the vault is locked or unreachable, so the audit log chain cannot be verified. Unlock it (`' + znCommand('unlock') + '`) and export again, or add --unverified to export a copy that is NOT verified.');
+      return 1;
+    }
     const warn = () => {
       if (unverified) err('[zn] Warning: the vault is locked or unreachable, so the audit log chain was NOT verified. Unlock it (`' + znCommand('unlock') + '`) and export again for a verified copy.');
     };
     const file = flag(args, '--out');
     if (file) {
+      // --out is never a link or a folder: a link would send the audit to whatever it points at.
+      let existing = null;
+      try { existing = fs.lstatSync(file); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+      if (existing && !existing.isFile()) {
+        err('[zn] Not exported: ' + file + ' is ' + (existing.isSymbolicLink() ? 'a symbolic link' : 'not a regular file') + '. Choose a path that is a new file or a regular file.');
+        return 1;
+      }
       // Written piece by piece to a temporary file and moved into place when complete: a read error leaves no partial export.
       const tmp = file + '.' + process.pid + '.tmp';
       const fd = fs.openSync(tmp, 'wx', 0o600);
