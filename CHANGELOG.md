@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Windows: a protected file named with an 8.3 short name behind a namespace or device prefix (`\\?\`, `\\.\`, `//?/`) or an admin share (`\\localhost\C$\`, `\\?\UNC\localhost\C$\`) is now refused by shell commands such as `type` and by file reads. The prefix is replaced by the drive before the path is checked.
+
 ## [1.14.1] - 2026-10-28
 
 zn-gate 1.14.1 is the first 1.14 release on npm. 1.14.0 was published on PyPI but never reached npm, and npm does not let a version number be used again, so npm users get everything in the 1.14.0 section below together with this release. The npm package now declares that it is a dual-use security tool and ships a `DISCLOSURE` file that explains what it does to other programs' configuration, to Windows file permissions and to the vault. On Windows, the vault no longer starts `whoami.exe` and `icacls.exe`, and zn-gate no longer passes an execution policy argument to PowerShell. A program from the `node_modules` folder of your home folder is no longer started, and in Claude Code a user-scope `secrets` server entry that sets `NODE_OPTIONS` or `NODE_PATH` is no longer taken as zn's. The Python package changes only in its version number. Update with `npm install -g zn-gate` or `pip install -U zn-gate`, and report problems at https://github.com/usezn/zn/issues.
