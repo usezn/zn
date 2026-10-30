@@ -1269,7 +1269,10 @@ test('vault call: a user-scope entry that sets NODE_OPTIONS, NODE_PATH or a fold
   assert.equal(kind(ZN_SECRETS), 'secrets');
   assert.equal(kind({ ...ZN_SECRETS, env: { NODE_OPTIONS: '--require ./x.js' } }), null);
   assert.equal(kind({ ...ZN_SECRETS, env: { node_path: path.join(dir, 'lib') } }), null);
-  assert.equal(kind({ ...ZN_SECRETS, env: { ZN_EXAMPLE: '1' } }), 'secrets');
+  for (const k of ['LD_PRELOAD', 'ld_library_path', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'dyld_framework_path']) {
+    assert.equal(kind({ ...ZN_SECRETS, env: { [k]: '/opt/example/lib.so' } }), null, k);
+  }
+  assert.equal(kind({ ...ZN_SECRETS, env: { ZN_EXAMPLE: '1', LDAP_EXAMPLE: '1' } }), 'secrets');
   assert.equal(kind({ ...ZN_SECRETS, cwd: dir }), null);
   assert.equal(kind({ ...ZN_SECRETS, cwd: 'relative' }), null);
   assert.equal(kind({ ...ZN_SECRETS, cwd: path.dirname(process.execPath) }), 'secrets');
