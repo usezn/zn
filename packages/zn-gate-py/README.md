@@ -97,7 +97,7 @@ print(r.verdict)           # allow
 **Galvanize: prompt-injection detection**
 
 - Today, local: `evaluate`, `check_tool_call`, `check_tool_result` and `@guard` run a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64.
-- Today, optional cloud: `analyze()` can also query the Galvanize 2 classifier ([open weights](https://huggingface.co/usezn/Galvanize-2), Apache-2.0), only with `ZN_CLOUD=1` and `ZN_API_KEY`.
+- Today, optional cloud: `analyze()` can also query the Galvanize 3 classifier ([announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=pypi&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), has open weights under Apache-2.0), only with `ZN_CLOUD=1` and `ZN_API_KEY`.
 - Roadmap: running Galvanize locally.
 
 **Scan: audit what your agent is about to trust**
@@ -280,8 +280,14 @@ Records go to `~/.zn/evidence.jsonl`, hash-chained with SHA-256, with a secret-r
 ```bash
 zn-gate scan ./prompts          # audit prompts, skills and configs (exit 1 on findings)
 zn-gate analyze "some prompt"   # local check; cloud only with ZN_CLOUD=1 + key
+zn-gate test "some text"        # check one text against the rules (exit 1 if flagged)
+zn-gate evidence --verify       # check the local evidence log (also --export, --format jsonl|csv, --output FILE)
+zn-gate stats --days 7          # local counts of what zn-gate did (also --json)
 zn-gate status                  # engine and what leaves the machine
+zn-gate --version
 ```
+
+Options worth knowing: `scan` takes `--format text|json|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude` and `--include-home`; `analyze` takes `--local-only`, `--key`, `--stage`, `--url` and `--long-input windows|off`. Run `zn-gate <command> --help` for the full list. The commands of the npm package (`init`, `hooks`, `secret`, `vault`, `shield`, `team` and the rest) are not in this package: they print a note and exit `2`. Full list of differences: [Command line reference](https://github.com/usezn/zn/blob/main/docs/cli.md#the-python-package).
 
 More runnable examples are in [examples/](https://github.com/usezn/zn/tree/main/examples), including [a Haystack agent with a guarded tool](https://github.com/usezn/zn/tree/main/examples/haystack-agent) and [a smolagents agent with a guarded tool](https://github.com/usezn/zn/tree/main/examples/smolagents-agent).
 
@@ -294,7 +300,7 @@ A DSPy ReAct agent whose tools are guarded by zn-gate is in [examples/dspy-agent
 We only publish numbers we can reproduce, with the method next to them.
 
 - **Latency:** the measured table by input size is in the [npm package README](https://github.com/usezn/zn/blob/main/packages/zn-gate/README.md#performance-local-rules-engine-no-network) (Node engine, with hardware and script). For the Python engine, run `python3 bench/bench_python.py` from the [repository](https://github.com/usezn/zn).
-- **Accuracy:** the engine is a deterministic signature and normalization layer, not a semantic classifier. On whole source files it can flag ordinary code comments; 1.5.0 reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. These rules have no published detection rate; held-out results for the optional cloud classifier, Galvanize 2, are on its [model card](https://huggingface.co/usezn/Galvanize-2); they do not measure these local rules.
+- **Accuracy:** the engine is a deterministic signature and normalization layer, not a semantic classifier. On whole source files it can flag ordinary code comments; 1.5.0 reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. These rules have no published detection rate; results for the optional cloud classifier, Galvanize 3, are in its [announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=pypi&utm_medium=readme&utm_campaign=galvanize-3); they do not measure these local rules.
 - **Not a sandbox:** zn-gate checks the text and calls that reach it. It does not restrict what a program does. What it covers in each coding agent depends on that agent's hooks: see the [agent compatibility table](https://github.com/usezn/zn/blob/main/docs/compat.md).
 
 ## Configuration

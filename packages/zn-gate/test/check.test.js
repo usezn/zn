@@ -1064,3 +1064,47 @@ test('check: the hook of the running zn-gate gets no note', async (t) => {
   const r = byId(await check(homeWithHooks(t, ['claude-code'])), 'claude-code');
   assert.equal(r.notes.some((n) => /older than this zn-gate/.test(n)), false);
 });
+
+test('check: a Claude Code plugin of another version than zn-gate gets a note with the update command', async (t) => {
+  const own = require('../package.json').version;
+  // [plugin.json body, expected note: null for none, else a regex the note must match]
+  const cases = [
+    [{ version: '1.0.0' }, /claude plugin update zn-gate@usezn/],
+    [{ version: '999.0.0' }, /npm install -g zn-gate@latest/],
+    [{ version: own }, null],
+    [null, null],
+    ['{ not json', null],
+  ];
+  for (const [body, expected] of cases) {
+    const home = tempDir(t, 'zn-check-plugin-version-');
+    const root = fakePlugin(home, launcher());
+    if (body) {
+      fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+      fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), typeof body === 'string' ? body : JSON.stringify({ name: 'zn-gate', ...body }));
+    }
+    const res = await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: false });
+    const r = byId(res, 'claude-code');
+    const note = r.notes.find((n) => /plugin is version/.test(n));
+    if (!expected) {
+      assert.equal(note, undefined, `plugin ${JSON.stringify(body)}: ${note}`);
+      continue;
+    }
+    assert.ok(note, r.notes.join(' | '));
+    assert.ok(note.includes('version ' + body.version + ' and the zn-gate command is ' + own), note);
+    assert.match(note, expected);
+    // A note, not a fault: the version alone never makes the plugin NOT protected.
+    assert.equal(r.problem || '', '', r.problem);
+    assert.ok(textOf(res).s.includes('(the zn-gate plugin is version ' + body.version), 'note printed');
+  }
+});
+
+test('check: with a pre-release zn-gate command, a plugin of another version gets both versions and no advice', (t) => {
+  const { pluginVersionNote } = require('../lib/check')._internal;
+  const root = tempDir(t, 'zn-check-plugin-rc-');
+  fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'zn-gate', version: '1.14.1' }));
+  assert.equal(pluginVersionNote(root, '1.15.0-rc.1'), 'the zn-gate plugin is version 1.14.1 and the zn-gate command is 1.15.0-rc.1');
+  assert.match(pluginVersionNote(root, '1.15.0'), /claude plugin update/);
+  assert.match(pluginVersionNote(root, '1.14.0'), /npm install -g zn-gate@latest/);
+  assert.equal(pluginVersionNote(root, '1.14.1'), '');
+});
