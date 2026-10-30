@@ -876,7 +876,7 @@ function hookTimeout(ctx, own) {
 /* Runs an installed hook with the two requests: '' when it blocks .env and allows the ordinary file, else the problem. */
 function runLive(spec, ctx, live) {
   const a = spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.envFile), live.env, ctx.dir, hookTimeout(ctx, live.timeout));
-  const b = a.ran ? spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.readme), live.env, ctx.dir, live.timeout) : a;
+  const b = a.ran ? spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.readme), live.env, ctx.dir, hookTimeout(ctx, live.timeout)) : a;
   if (!a.ran) return 'its hook cannot start (' + a.why + ')';
   if (a.decision !== 'deny') return 'the installed hook did not block the read of .env';
   if (b.decision === 'deny') return 'the installed hook blocks everything, ordinary files too, so part of zn is missing or broken';
@@ -1423,4 +1423,4 @@ function report({ results, removed, warnings }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
+module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
