@@ -1,7 +1,11 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-27.2
+RULES_VERSION: 2026-10-29.4
 Zero external dependencies. Pure Python stdlib.
+
+The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
+methods the rules call (search, match, finditer, sub...), not re.Pattern objects, and they are internal,
+not public API. Do not pass them to re.* functions or isinstance(x, re.Pattern).
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-10-29.1"
+RULES_VERSION = "2026-10-30.2"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -56,23 +60,62 @@ _HOMOGLYPH_TABLE = {ord(k): v for k, v in HOMOGLYPH_MAP.items()}
 # identical (tests/test_rules_parity.py compares them) and the JavaScript "i"
 # flag maps to re.IGNORECASE. Every pattern runs in linear time: no unbounded
 # lazy wildcards, and repeated character classes are bounded.
-ZERO_WIDTH_RE = re.compile(r'[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F\u061C\u180E\u200E\u200F\u115F\u1160\u3164\uFFA0]')
-INVISIBLE_ASTRAL_RE = re.compile(r'[\U000E0000-\U000E007F\U000E0100-\U000E01EF]')
+class _LazyPattern:
+    """A regex that is compiled on first use and then behaves as the compiled pattern.
+
+    Importing this module defines a few hundred patterns; compiling them all up
+    front cost about a third of the import time even though most calls never
+    reach most of them. `pattern` is available at once; any other attribute
+    (`search`, `sub`, `flags`, ...) compiles the pattern and is then served
+    straight from the instance, so later calls cost the same as a real compiled
+    pattern.
+    """
+
+    __slots__ = ("pattern", "_flags", "_compiled", "__dict__")
+
+    def __init__(self, pattern: str, flags: int = 0) -> None:
+        self.pattern = pattern
+        self._flags = flags
+        self._compiled: Optional["re.Pattern[str]"] = None
+
+    def _compile(self) -> "re.Pattern[str]":
+        compiled = self._compiled
+        if compiled is None:
+            compiled = self._compiled = re.compile(self.pattern, self._flags)
+        return compiled
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("__"):
+            raise AttributeError(name)
+        value = getattr(self._compile(), name)
+        self.__dict__[name] = value
+        return value
+
+    def __repr__(self) -> str:
+        return "_LazyPattern(%r, %r)" % (self.pattern, self._flags)
+
+
+def _rc(pattern: str, flags: int = 0) -> "re.Pattern[str]":
+    return cast("re.Pattern[str]", _LazyPattern(pattern, flags))
+
+
+ZERO_WIDTH_RE = _rc(r'[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F\u061C\u180E\u200E\u200F\u115F\u1160\u3164\uFFA0]')
+INVISIBLE_ASTRAL_RE = _rc(r'[\U000E0000-\U000E007F\U000E0100-\U000E01EF]')
 # Line breaks are joined only in texts up to this size (see MAX_WRAP_VIEW_CHARS in rules.js).
 MAX_WRAP_VIEW_CHARS = 1 << 20
 # A line break inside a wrapped token (see WRAP_BREAK_RE in rules.js).
-WRAP_BREAK_RE = re.compile(r'(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=[ \t]*(?:\r?\n|$)))')
-NON_ASCII_RE = re.compile(r'[^\x00-\x7f]')
-ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07')
+WRAP_BREAK_RE = _rc(r'(?<=[A-Za-z0-9_\-+/=]{10})[ \t]*\r?\n[ \t]*(?=[A-Za-z0-9_\-+/=]{10})(?![A-Za-z_][A-Za-z0-9_]*[ \t]*[=:](?!=[ \t]*(?:\r?\n|$)))')
+NON_ASCII_RE = _rc(r'[^\x00-\x7f]')
+ANSI_ESCAPE_RE = _rc(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*\x07')
 # Hard caps for the Base64 smuggling check: above either one the command is blocked.
 MAX_B64_PAYLOADS = 16
 MAX_B64_DECODED_BYTES = 128 * 1024
 # The payload is group 2 (echo/printf pipe, quoted or not, with options) or group 4 (here-string).
-B64_EXEC_RE = re.compile(r'''(?:echo|printf(?:\s+(?:'%s'|"%s"|%s))?)(?:\s+-[A-Za-z]{1,3})*\s+(["']?)([A-Za-z0-9+/=]{16,})\1\s*\|\s*(?:base64\s+-(?:di?|id|-decode)|openssl\s+(?:base64|enc)(?:\s+(?:-[A-Za-z0-9]+|-(?![A-Za-z0-9])))*?\s+-d(?![A-Za-z0-9_]))|base64\s+-(?:di?|id|-decode)\s*<<<\s*(["']?)([A-Za-z0-9+/=]{16,})\3''', re.IGNORECASE)
+B64_EXEC_RE = _rc(r'''(?:echo|printf(?:\s+(?:'%s'|"%s"|%s))?)(?:\s+-[A-Za-z]{1,3})*\s+(["']?)([A-Za-z0-9+/=]{16,})\1\s*\|\s*(?:base64\s+-(?:di?|id|-decode)|openssl\s+(?:base64|enc)(?:\s+(?:-[A-Za-z0-9]+|-(?![A-Za-z0-9])))*?\s+-d(?![A-Za-z0-9_]))|base64\s+-(?:di?|id|-decode)\s*<<<\s*(["']?)([A-Za-z0-9+/=]{16,})\3''', re.IGNORECASE)
 # Maximal whitespace runs; only runs that contain a line break are joined.
 # A pattern anchored on the line break (such as [^\S\r\n]*[\r\n]) would rescan
 # a long run of spaces from every position.
-WHITESPACE_RUN_RE = re.compile(r'\s+')
+WHITESPACE_RUN_RE = _rc(r'\s+')
 _JOIN_EXTRA_LEFT = frozenset('_<|/.-')
 _JOIN_EXTRA_RIGHT = frozenset('_>|/.-')
 
@@ -109,16 +152,16 @@ def _override_rule_source(verb: str) -> str:
 # verb, which is slow on a long run of verbs. _near_match() scans the verbs and
 # the objects once each and compares their positions.
 NEAR_MAX_GAP = 80
-RU_FORGET_RE = re.compile(r'забудь\s+', re.IGNORECASE)
-RU_FORGET_OBJECT_RE = re.compile(r'все|инструкции', re.IGNORECASE)
-RU_IGNORE_RE = re.compile(r'игнорируй\s+', re.IGNORECASE)
-RU_IGNORE_OBJECT_RE = re.compile(r'все|предыдущие', re.IGNORECASE)
-RU_PHRASE_RE = re.compile(r'действуй\s+как|ты\s+теперь|найди\s+пароли', re.IGNORECASE)
-ZH_IGNORE_RE = re.compile(r'忽略')
-ZH_IGNORE_OBJECT_RE = re.compile(r'指示|指令|提示')
-ZH_FORGET_RE = re.compile(r'忘记')
-ZH_FORGET_OBJECT_RE = re.compile(r'指示|指令|一切')
-ZH_PHRASE_RE = re.compile(r'你现在是|初始提示词')
+RU_FORGET_RE = _rc(r'забудь\s+', re.IGNORECASE)
+RU_FORGET_OBJECT_RE = _rc(r'все|инструкции', re.IGNORECASE)
+RU_IGNORE_RE = _rc(r'игнорируй\s+', re.IGNORECASE)
+RU_IGNORE_OBJECT_RE = _rc(r'все|предыдущие', re.IGNORECASE)
+RU_PHRASE_RE = _rc(r'действуй\s+как|ты\s+теперь|найди\s+пароли', re.IGNORECASE)
+ZH_IGNORE_RE = _rc(r'忽略')
+ZH_IGNORE_OBJECT_RE = _rc(r'指示|指令|提示')
+ZH_FORGET_RE = _rc(r'忘记')
+ZH_FORGET_OBJECT_RE = _rc(r'指示|指令|一切')
+ZH_PHRASE_RE = _rc(r'你现在是|初始提示词')
 
 
 def _near_match(text: str, verb_re: re.Pattern[str], object_re: re.Pattern[str]) -> bool:
@@ -148,34 +191,34 @@ def _test_multi_zh(text: str) -> bool:
 
 
 INJECTION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
-    ('pi:ignore_previous', re.compile(_override_rule_source('ignore'), re.IGNORECASE), 'Override prior instructions'),
-    ('pi:disregard', re.compile(_override_rule_source('disregard'), re.IGNORECASE), 'Disregard instructions'),
-    ('pi:forget', re.compile(r"""(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))""", re.IGNORECASE), 'Forget-context attack'),
-    ('pi:identity_override', re.compile(r'you\s+are\s+now', re.IGNORECASE), 'Identity override'),
-    ('pi:new_instructions', re.compile(r'new\s+instructions?:', re.IGNORECASE), 'Instruction replacement'),
-    ('pi:system_tag', re.compile(r"""(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system(?![A-Za-z0-9_])[^<>]*>""", re.IGNORECASE), 'Fake system tag'),
-    ('pi:system_bracket', re.compile(r'\[system\]', re.IGNORECASE), 'Bracketed system tag'),
-    ('pi:act_as', re.compile(r"""(?:(?<![A-Za-z0-9_])you\s+(?:(?:will|must|should|shall|now)\s+|are\s+to\s+)?|(?:^|[.!?\r\n\u2028\u2029])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])please\s+|(?<![A-Za-z0-9_])now\s+|(?<![A-Za-z0-9_])from\s+now\s+on,?\s+(?:you\s+)?)(?=act(?![A-Za-z0-9_]))act\s+as\s+(?:if\s+you(?![A-Za-z0-9_])|an?\s+(?:[a-z-]+\s+){0,3}?(?:ai|assistant|chatbot|bot|model|llm|gpt|persona|character|version|mode|jailbroken|unrestricted|unfiltered|uncensored|evil|malicious|rogue|harmful|unethical|amoral|hacker|dan)(?![A-Za-z0-9_])|my(?![A-Za-z0-9_])|though\s+you(?![A-Za-z0-9_]))""", re.IGNORECASE), 'Role hijack (act as)'),
-    ('pi:pretend', re.compile(r'pretend\s+(you|to\s+be)', re.IGNORECASE), 'Role hijack (pretend)'),
-    ('pi:roleplay', re.compile(r'roleplay\s+as', re.IGNORECASE), 'Role hijack (roleplay)'),
-    ('pi:jailbreak', re.compile(r'(?<![A-Za-z0-9_])jailbreak(?![A-Za-z0-9_])', re.IGNORECASE), 'Explicit jailbreak term'),
-    ('pi:bypass', re.compile(r'bypass\s+(your|the|all)', re.IGNORECASE), 'Guardrail bypass attempt'),
-    ('pi:override', re.compile(r'(?<![A-Za-z0-9_])override\s+(?:all\s+|your\s+|the\s+)?(?:system|policy|safety|rules|instructions|guidelines|restrictions)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])system\s+override\s*:', re.IGNORECASE), 'Policy override attempt'),
-    ('pi:template_boundary', re.compile(r'\[INST\]|\[\/INST\]|<<<SYS>>>|<\/<<SYS>>>|<\|im_start\|>|<\|im_end\|>', re.IGNORECASE), 'Chat template boundary injection'),
-    ('pi:multi_es', re.compile(r'ignora\s+(todas\s+las\s+)?(instrucciones|anteriores|previas)|olvida\s+(todo|las\s+instrucciones)|act[uú]a\s+como|ahora\s+eres', re.IGNORECASE), 'Multilingual prompt injection (Spanish)'),
-    ('pi:multi_pt', re.compile(r'ignor(?:e|a|em|ar)\s+(?:(?:todas|todos|qualquer|quaisquer|cualquier)\s+)?(?:(?:as|os|las|los|suas|seus|sus|tus|estas|estes|essas|esses)\s+)?(?:instru[cç][oõ]es|instrucciones|regras|reglas|diretrizes|directrices|orienta[cç][oõ]es|ordens|[oó]rdenes|comandos|restri[cç][oõ]es|restricciones|mensagens|anteriores|pr[eé]vias)|ignore\s+(?:tudo|qualquer|quaisquer)(?![A-Za-z0-9_])|ignora\s+(?:todo|tudo|cualquier)(?![A-Za-z0-9_])', re.IGNORECASE), 'Multilingual prompt injection (Portuguese)'),
-    ('pi:multi_fr', re.compile(r'ignore[rz]?\s+(toutes\s+les\s+)?instructions|oublie[rz]?\s+tout|agis\s+comme|tu\s+es\s+maintenant', re.IGNORECASE), 'Multilingual prompt injection (French)'),
-    ('pi:multi_de', re.compile(r'ignoriere\s+(alle\s+)?(anweisungen|instruktionen)|vergiss\s+(alles|jede)|du\s+bist\s+jetzt|handle\s+als', re.IGNORECASE), 'Multilingual prompt injection (German)'),
-    ('pi:multi_ru', re.compile(r'забудь\s+[^\n]{0,80}?(все|инструкции)|игнорируй\s+[^\n]{0,80}?(все|предыдущие)|действуй\s+как|ты\s+теперь|найди\s+пароли', re.IGNORECASE), 'Multilingual prompt injection (Russian)'),
-    ('pi:multi_zh', re.compile(r'忽略[^\n]{0,80}?(指示|指令|提示)|忘记[^\n]{0,80}?(指示|指令|一切)|你现在是|初始提示词'), 'Multilingual prompt injection (Chinese)'),
-    ('pi:identity_request', re.compile(r"""(?<![A-Za-z0-9_])(?<!never\s)(?<!not\s)(?<!n't\s)(?<!n\u2019t\s)(?<!avoid\s)(?:run|execute|invoke|call)\s{1,4}[\x60\x27\x22]{0,2}(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))(?![A-Za-z0-9_.-])[^\n]{0,100}?(?:\n[^\n]{0,100}?)?(?<![A-Za-z0-9_])(?:include|add|put|attach|append|insert|embed|send|pass|forward|submit|post|write|place|share|transmit|inject|encode|set)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|request\s{1,4}(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:in|into|inside|within|with|to|on)\s{1,4}(?:an?|the|your|every|each|any|all|subsequent|following|outgoing|next)\s{1,4}(?:(?:http|outgoing|network|api|subsequent|following)\s{1,4}){0,2}(?:requests?|calls?))|(?<![A-Za-z0-9_])(?<!never\s)(?<!not\s)(?<!n't\s)(?<!n\u2019t\s)(?<!avoid\s)(?:include|add|put|attach|append|insert|embed|send|pass|forward|submit|post|write|place|share|transmit|inject|encode|set)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:output|result|value)\s{1,4}of\s{1,4}[\x60\x27\x22]{0,2}(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))(?![A-Za-z0-9_.-])|[\x60\x27\x22]{0,2}(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))[\x60\x27\x22]{0,2}\s{1,4}(?:output|result))(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|request\s{1,4}(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:in|into|inside|within|with|to|on)\s{1,4}(?:an?|the|your|every|each|any|all|subsequent|following|outgoing|next)\s{1,4}(?:(?:http|outgoing|network|api|subsequent|following)\s{1,4}){0,2}(?:requests?|calls?))|(?<![A-Za-z0-9_])(?<!never\s)(?<!not\s)(?<!n't\s)(?<!n\u2019t\s)(?<!avoid\s)(?:include|add|put|attach|append|insert|embed|set|send|pass|forward|submit|post|write|specify|provide|supply|encode|inject|place|share|transmit|reveal|disclose|expose)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:the|your)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)\s{1,4}(?:(?:full|real|login|primary)\s{1,4})?(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|phone(?:\s{1,4}number)?)|their\s{1,4}(?:(?:primary|login|account|real)\s{1,4})?e-?mail(?:\s{1,4}address(?:es)?)?(?=[^\n]{0,80}?(?:(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|next\s{1,4}(?:http\s{1,4})?(?:request|call)))(?!(?:(?!(?<![A-Za-z0-9_])x-[a-z0-9-]|next\s)[^\n]){0,80}?(?:user-agent|mailto|(?<![A-Za-z0-9_])from\s{1,4}h[a-z]{3,5}|(?:request\s{1,4})?(?:body|payload)|(?<![A-Za-z0-9_])form(?![A-Za-z0-9_])))|(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder))[\x27’]s\s{1,4}(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)|(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)\s{1,4}(?:of|for)\s{1,4}(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder)))(?![A-Za-z0-9_])[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))|(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:the|your)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)\s{1,4}(?:(?:full|real|login|primary)\s{1,4})?(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|phone(?:\s{1,4}number)?)|their\s{1,4}(?:(?:primary|login|account|real)\s{1,4})?e-?mail(?:\s{1,4}address(?:es)?)?(?=[^\n]{0,80}?(?:(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|next\s{1,4}(?:http\s{1,4})?(?:request|call)))(?!(?:(?!(?<![A-Za-z0-9_])x-[a-z0-9-]|next\s)[^\n]){0,80}?(?:user-agent|mailto|(?<![A-Za-z0-9_])from\s{1,4}h[a-z]{3,5}|(?:request\s{1,4})?(?:body|payload)|(?<![A-Za-z0-9_])form(?![A-Za-z0-9_])))|(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder))[\x27’]s\s{1,4}(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)|(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)\s{1,4}(?:of|for)\s{1,4}(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder)))(?![A-Za-z0-9_]))|(?<![A-Za-z0-9_])(?:(?:identify|reveal|disclose|state|report|announce)\s{1,4}(?:to\s{1,4}(?:me|us|this\s{1,4}[a-z]{3,10})\s{1,4})?(?:who\s{1,4})?your\s{1,4}(?:user|operator|owner|human|principal)(?:\s{1,4}is)?(?![A-Za-z0-9_])|(?:tell|inform)\s{1,4}(?:me|us)\s{1,4}who\s{1,4}(?:your|the)\s{1,4}(?:user|operator|owner|human|principal)\s{1,4}is(?![A-Za-z0-9_])|(?:tell|state|say|reveal|report)[^\n]{0,20}?who\s{1,4}you(?:\s{1,4}are|\s{0,4}[\x27’]re)\s{1,4}(?:working|acting)\s{1,4}for(?![A-Za-z0-9_]))""", re.IGNORECASE), "Tool result asks the agent to identify its user or put the user identity in a request"),
-    ('pi:identity_request_multi', re.compile(r"""(?<![A-Za-z0-9_])(?:ejecuta|ejecute|corre|lanza)\s{1,4}[\x60\x27\x22]{0,2}(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))(?![A-Za-z0-9_.-])[^\n]{0,100}?(?:\n[^\n]{0,100}?)?(?<![A-Za-z0-9_])(?:incluye|incluya|a[ñn]ade|a[ñn]ada|agrega|agregue|pon|ponga|env[ií]a|env[ií]e|adjunta|adjunte|inserta|pasa)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)|(?<![A-Za-z0-9_])(?:incluye|incluya|incluyas|añade|añada|agrega|agregue|pon|ponga|envía|envia|envíe|adjunta|adjunte|inserta|pasa|indica|comparte|revela)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)|(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario)))|(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?<![A-Za-z0-9_])(?:incluye|incluya|incluyas|añade|añada|agrega|agregue|pon|ponga|envía|envia|envíe|adjunta|adjunte|inserta|pasa|indica|comparte|revela)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario))|(?<![A-Za-z0-9_])(?:inclua|inclui|adicione|adiciona|coloque|coloca|envie|envia|anexe|insira|passe|compartilhe|revele)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio)))|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?<![A-Za-z0-9_])(?:inclua|inclui|adicione|adiciona|coloque|coloca|envie|envia|anexe|insira|passe|compartilhe|revele)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio))|(?<![A-Za-z0-9_])(?:inclus|incluez|ajoute|ajoutez|mets|mettez|envoie|envoyez|joins|joignez|insère|insérez|transmets|transmettez|partage|partagez|révèle|révélez)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire)))|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?<![A-Za-z0-9_])(?:inclus|incluez|ajoute|ajoutez|mets|mettez|envoie|envoyez|joins|joignez|insère|insérez|transmets|transmettez|partage|partagez|révèle|révélez)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire))|(?<![A-Za-z0-9_])(?:füge|fuege|sende|schicke|übergib|uebergib|setze|gib|teile|nenne|hänge|binde)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)))|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?<![A-Za-z0-9_])(?:füge|fuege|sende|schicke|übergib|uebergib|setze|gib|teile|nenne|hänge|binde)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators))|(?:добавь|добавьте|включи|включите|отправь|отправьте|передай|передайте|укажи|укажите|вставь|вставьте)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)))|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:добавь|добавьте|включи|включите|отправь|отправьте|передай|передайте|укажи|укажите|вставь|вставьте)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*))|(?:添加|加入|包含|附上|发送|传递|提供|填写|放入|带上|附加)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者)))|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:添加|加入|包含|附上|发送|传递|提供|填写|放入|带上|附加)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者))""", re.IGNORECASE), "Tool result asks the agent to identify its user or put the user identity in a request (non-English)"),
+    ('pi:ignore_previous', _rc(_override_rule_source('ignore'), re.IGNORECASE), 'Override prior instructions'),
+    ('pi:disregard', _rc(_override_rule_source('disregard'), re.IGNORECASE), 'Disregard instructions'),
+    ('pi:forget', _rc(r"""(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))""", re.IGNORECASE), 'Forget-context attack'),
+    ('pi:identity_override', _rc(r'you\s+are\s+now', re.IGNORECASE), 'Identity override'),
+    ('pi:new_instructions', _rc(r'new\s+instructions?:', re.IGNORECASE), 'Instruction replacement'),
+    ('pi:system_tag', _rc(r"""(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system(?![A-Za-z0-9_])[^<>]*>""", re.IGNORECASE), 'Fake system tag'),
+    ('pi:system_bracket', _rc(r'\[system\]', re.IGNORECASE), 'Bracketed system tag'),
+    ('pi:act_as', _rc(r"""(?:(?<![A-Za-z0-9_])you\s+(?:(?:will|must|should|shall|now)\s+|are\s+to\s+)?|(?:^|[.!?\r\n\u2028\u2029])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])please\s+|(?<![A-Za-z0-9_])now\s+|(?<![A-Za-z0-9_])from\s+now\s+on,?\s+(?:you\s+)?)(?=act(?![A-Za-z0-9_]))act\s+as\s+(?:if\s+you(?![A-Za-z0-9_])|an?\s+(?:[a-z-]+\s+){0,3}?(?:ai|assistant|chatbot|bot|model|llm|gpt|persona|character|version|mode|jailbroken|unrestricted|unfiltered|uncensored|evil|malicious|rogue|harmful|unethical|amoral|hacker|dan)(?![A-Za-z0-9_])|my(?![A-Za-z0-9_])|though\s+you(?![A-Za-z0-9_]))""", re.IGNORECASE), 'Role hijack (act as)'),
+    ('pi:pretend', _rc(r'pretend\s+(you|to\s+be)', re.IGNORECASE), 'Role hijack (pretend)'),
+    ('pi:roleplay', _rc(r'roleplay\s+as', re.IGNORECASE), 'Role hijack (roleplay)'),
+    ('pi:jailbreak', _rc(r'(?<![A-Za-z0-9_])jailbreak(?![A-Za-z0-9_])', re.IGNORECASE), 'Explicit jailbreak term'),
+    ('pi:bypass', _rc(r'bypass\s+(your|the|all)', re.IGNORECASE), 'Guardrail bypass attempt'),
+    ('pi:override', _rc(r'(?<![A-Za-z0-9_])override\s+(?:all\s+|your\s+|the\s+)?(?:system|policy|safety|rules|instructions|guidelines|restrictions)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])system\s+override\s*:', re.IGNORECASE), 'Policy override attempt'),
+    ('pi:template_boundary', _rc(r'\[INST\]|\[\/INST\]|<<<SYS>>>|<\/<<SYS>>>|<\|im_start\|>|<\|im_end\|>', re.IGNORECASE), 'Chat template boundary injection'),
+    ('pi:multi_es', _rc(r'ignora\s+(todas\s+las\s+)?(instrucciones|anteriores|previas)|olvida\s+(todo|las\s+instrucciones)|act[uú]a\s+como|ahora\s+eres', re.IGNORECASE), 'Multilingual prompt injection (Spanish)'),
+    ('pi:multi_pt', _rc(r'ignor(?:e|a|em|ar)\s+(?:(?:todas|todos|qualquer|quaisquer|cualquier)\s+)?(?:(?:as|os|las|los|suas|seus|sus|tus|estas|estes|essas|esses)\s+)?(?:instru[cç][oõ]es|instrucciones|regras|reglas|diretrizes|directrices|orienta[cç][oõ]es|ordens|[oó]rdenes|comandos|restri[cç][oõ]es|restricciones|mensagens|anteriores|pr[eé]vias)|ignore\s+(?:tudo|qualquer|quaisquer)(?![A-Za-z0-9_])|ignora\s+(?:todo|tudo|cualquier)(?![A-Za-z0-9_])', re.IGNORECASE), 'Multilingual prompt injection (Portuguese)'),
+    ('pi:multi_fr', _rc(r'ignore[rz]?\s+(toutes\s+les\s+)?instructions|oublie[rz]?\s+tout|agis\s+comme|tu\s+es\s+maintenant', re.IGNORECASE), 'Multilingual prompt injection (French)'),
+    ('pi:multi_de', _rc(r'ignoriere\s+(alle\s+)?(anweisungen|instruktionen)|vergiss\s+(alles|jede)|du\s+bist\s+jetzt|handle\s+als', re.IGNORECASE), 'Multilingual prompt injection (German)'),
+    ('pi:multi_ru', _rc(r'забудь\s+[^\n]{0,80}?(все|инструкции)|игнорируй\s+[^\n]{0,80}?(все|предыдущие)|действуй\s+как|ты\s+теперь|найди\s+пароли', re.IGNORECASE), 'Multilingual prompt injection (Russian)'),
+    ('pi:multi_zh', _rc(r'忽略[^\n]{0,80}?(指示|指令|提示)|忘记[^\n]{0,80}?(指示|指令|一切)|你现在是|初始提示词'), 'Multilingual prompt injection (Chinese)'),
+    ('pi:identity_request', _rc(r"""(?<![A-Za-z0-9_])(?<!never\s)(?<!not\s)(?<!n't\s)(?<!n\u2019t\s)(?<!avoid\s)(?:run|execute|invoke|call)\s{1,4}[\x60\x27\x22]{0,2}(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))(?![A-Za-z0-9_.-])[^\n]{0,100}?(?:\n[^\n]{0,100}?)?(?<![A-Za-z0-9_])(?:include|add|put|attach|append|insert|embed|send|pass|forward|submit|post|write|place|share|transmit|inject|encode|set)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|request\s{1,4}(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:in|into|inside|within|with|to|on)\s{1,4}(?:an?|the|your|every|each|any|all|subsequent|following|outgoing|next)\s{1,4}(?:(?:http|outgoing|network|api|subsequent|following)\s{1,4}){0,2}(?:requests?|calls?))|(?<![A-Za-z0-9_])(?<!never\s)(?<!not\s)(?<!n't\s)(?<!n\u2019t\s)(?<!avoid\s)(?:include|add|put|attach|append|insert|embed|send|pass|forward|submit|post|write|place|share|transmit|inject|encode|set)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:output|result|value)\s{1,4}of\s{1,4}[\x60\x27\x22]{0,2}(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))(?![A-Za-z0-9_.-])|[\x60\x27\x22]{0,2}(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))[\x60\x27\x22]{0,2}\s{1,4}(?:output|result))(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|request\s{1,4}(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:in|into|inside|within|with|to|on)\s{1,4}(?:an?|the|your|every|each|any|all|subsequent|following|outgoing|next)\s{1,4}(?:(?:http|outgoing|network|api|subsequent|following)\s{1,4}){0,2}(?:requests?|calls?))|(?<![A-Za-z0-9_])(?<!never\s)(?<!not\s)(?<!n't\s)(?<!n\u2019t\s)(?<!avoid\s)(?:include|add|put|attach|append|insert|embed|set|send|pass|forward|submit|post|write|specify|provide|supply|encode|inject|place|share|transmit|reveal|disclose|expose)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:the|your)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)\s{1,4}(?:(?:full|real|login|primary)\s{1,4})?(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|phone(?:\s{1,4}number)?)|their\s{1,4}(?:(?:primary|login|account|real)\s{1,4})?e-?mail(?:\s{1,4}address(?:es)?)?(?=[^\n]{0,80}?(?:(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|next\s{1,4}(?:http\s{1,4})?(?:request|call)))(?!(?:(?!(?<![A-Za-z0-9_])x-[a-z0-9-]|next\s)[^\n]){0,80}?(?:user-agent|mailto|(?<![A-Za-z0-9_])from\s{1,4}h[a-z]{3,5}|(?:request\s{1,4})?(?:body|payload)|(?<![A-Za-z0-9_])form(?![A-Za-z0-9_])))|(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder))[\x27’]s\s{1,4}(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)|(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)\s{1,4}(?:of|for)\s{1,4}(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder)))(?![A-Za-z0-9_])[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))|(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:the|your)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)\s{1,4}(?:(?:full|real|login|primary)\s{1,4})?(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|phone(?:\s{1,4}number)?)|their\s{1,4}(?:(?:primary|login|account|real)\s{1,4})?e-?mail(?:\s{1,4}address(?:es)?)?(?=[^\n]{0,80}?(?:(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|next\s{1,4}(?:http\s{1,4})?(?:request|call)))(?!(?:(?!(?<![A-Za-z0-9_])x-[a-z0-9-]|next\s)[^\n]){0,80}?(?:user-agent|mailto|(?<![A-Za-z0-9_])from\s{1,4}h[a-z]{3,5}|(?:request\s{1,4})?(?:body|payload)|(?<![A-Za-z0-9_])form(?![A-Za-z0-9_])))|(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder))[\x27’]s\s{1,4}(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)|(?:(?:full|real|first|last|login|primary|account|email|e-mail)\s{1,4}){0,2}(?:names?|e-?mail(?:\s{1,4}address(?:es)?)?|usernames?|user\s{0,2}ids?|accounts?|api[\s-]{0,2}keys?|access\s{1,4}tokens?|tokens?|credentials?|passwords?|logins?|identity|identifier|phone(?:\s{1,4}number)?|address|keys?|secrets?)\s{1,4}(?:of|for)\s{1,4}(?:(?:your|the)\s{1,4}(?:end\s{1,4})?(?:user|operator|owner|human|principal)|your\s{1,4}(?:end\s{1,4})?(?:customer|account\s{1,4}holder)))(?![A-Za-z0-9_]))|(?<![A-Za-z0-9_])(?:(?:identify|reveal|disclose|state|report|announce)\s{1,4}(?:to\s{1,4}(?:me|us|this\s{1,4}[a-z]{3,10})\s{1,4})?(?:who\s{1,4})?your\s{1,4}(?:user|operator|owner|human|principal)(?:\s{1,4}is)?(?![A-Za-z0-9_])|(?:tell|inform)\s{1,4}(?:me|us)\s{1,4}who\s{1,4}(?:your|the)\s{1,4}(?:user|operator|owner|human|principal)\s{1,4}is(?![A-Za-z0-9_])|(?:tell|state|say|reveal|report)[^\n]{0,20}?who\s{1,4}you(?:\s{1,4}are|\s{0,4}[\x27’]re)\s{1,4}(?:working|acting)\s{1,4}for(?![A-Za-z0-9_]))""", re.IGNORECASE), "Tool result asks the agent to identify its user or put the user identity in a request"),
+    ('pi:identity_request_multi', _rc(r"""(?<![A-Za-z0-9_])(?:ejecuta|ejecute|corre|lanza)\s{1,4}[\x60\x27\x22]{0,2}(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))(?![A-Za-z0-9_.-])[^\n]{0,100}?(?:\n[^\n]{0,100}?)?(?<![A-Za-z0-9_])(?:incluye|incluya|a[ñn]ade|a[ñn]ada|agrega|agregue|pon|ponga|env[ií]a|env[ií]e|adjunta|adjunte|inserta|pasa)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)|(?<![A-Za-z0-9_])(?:incluye|incluya|incluyas|añade|añada|agrega|agregue|pon|ponga|envía|envia|envíe|adjunta|adjunte|inserta|pasa|indica|comparte|revela)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)|(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario)))|(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?<![A-Za-z0-9_])(?:incluye|incluya|incluyas|añade|añada|agrega|agregue|pon|ponga|envía|envia|envíe|adjunta|adjunte|inserta|pasa|indica|comparte|revela)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:usuario|operador|due[ñn]o|propietario)[^\n]{0,30}?(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)|(?:correo(?:\s{1,4}electr[oó]nico)?|e-?mail|nombre(?:\s{1,4}completo)?|cuenta|clave(?:\s{1,4}de\s{1,4}api)?|token|credenciales|contrase[ñn]a|identidad)[^\n]{0,30}?(?:usuario|operador|due[ñn]o|propietario))|(?<![A-Za-z0-9_])(?:inclua|inclui|adicione|adiciona|coloque|coloca|envie|envia|anexe|insira|passe|compartilhe|revele)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio)))|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?<![A-Za-z0-9_])(?:inclua|inclui|adicione|adiciona|coloque|coloca|envie|envia|anexe|insira|passe|compartilhe|revele)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:usu[aá]rio|operador|dono|propriet[aá]rio)[^\n]{0,30}?(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)|(?:e-?mail|nome(?:\s{1,4}completo)?|conta|chave(?:\s{1,4}de\s{1,4}api)?|token|credenciais|senha|identidade)[^\n]{0,30}?(?:usu[aá]rio|operador|dono|propriet[aá]rio))|(?<![A-Za-z0-9_])(?:inclus|incluez|ajoute|ajoutez|mets|mettez|envoie|envoyez|joins|joignez|insère|insérez|transmets|transmettez|partage|partagez|révèle|révélez)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire)))|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?<![A-Za-z0-9_])(?:inclus|incluez|ajoute|ajoutez|mets|mettez|envoie|envoyez|joins|joignez|insère|insérez|transmets|transmettez|partage|partagez|révèle|révélez)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:utilisateur|opérateur|propriétaire)[^\n]{0,30}?(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)|(?:e-?mail|courriel|adresse\s{1,4}e-?mail|nom(?:\s{1,4}complet)?|compte|clé(?:\s{1,4}d\x27api)?|jeton|identifiants?|mot\s{1,4}de\s{1,4}passe|identité)[^\n]{0,30}?(?:utilisateur|opérateur|propriétaire))|(?<![A-Za-z0-9_])(?:füge|fuege|sende|schicke|übergib|uebergib|setze|gib|teile|nenne|hänge|binde)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)))|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?<![A-Za-z0-9_])(?:füge|fuege|sende|schicke|übergib|uebergib|setze|gib|teile|nenne|hänge|binde)(?![A-Za-z0-9_])[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)[^\n]{0,30}?(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)|(?:e-?mail(?:-adresse)?|name|vollständigen\s{1,4}namen|konto|api-?schlüssel|schlüssel|token|zugangsdaten|passwort|identität|benutzernamen?)[^\n]{0,30}?(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators))|(?:добавь|добавьте|включи|включите|отправь|отправьте|передай|передайте|укажи|укажите|вставь|вставьте)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)))|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:добавь|добавьте|включи|включите|отправь|отправьте|передай|передайте|укажи|укажите|вставь|вставьте)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)[^\n]{0,30}?(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)|(?:почт[а-яё]+|email|e-mail|имя|имени|логин[а-яё]*|аккаунт[а-яё]*|ключ[а-яё]*|токен[а-яё]*|парол[а-яё]+|учётн[а-яё]+\s{1,4}запис[а-яё]+)[^\n]{0,30}?(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*))|(?:添加|加入|包含|附上|发送|传递|提供|填写|放入|带上|附加)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者))[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)[^\n]{0,80}?(?:\n[^\n]{0,80}?)?(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者)))|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:添加|加入|包含|附上|发送|传递|提供|填写|放入|带上|附加)[^\n]{0,60}?(?:\n[^\n]{0,60}?)?(?:(?:用户|使用者|操作者|主人|所有者)[^\n]{0,30}?(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)|(?:邮箱|电子邮件|电子邮箱|姓名|名字|用户名|账号|帐号|账户|密钥|令牌|凭据|凭证|身份|密码)[^\n]{0,30}?(?:用户|使用者|操作者|主人|所有者))""", re.IGNORECASE), "Tool result asks the agent to identify its user or put the user identity in a request (non-English)"),
 ]
 
 EVASION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'evasion:bidi_override',
-        re.compile(r'[\u202A-\u202E\u2066-\u2069]'),
+        _rc(r'[\u202A-\u202E\u2066-\u2069]'),
         'Unicode bidirectional override (Trojan Source evasion attempt)',
     ),
 ]
@@ -187,22 +230,22 @@ EVASION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
 # tag only when that run is closed by ">". (A single regex with a lazy
 # [\s\S]*? tail, or an attribute run that may cross "<", re-scans the rest of
 # the input from every candidate and is super-linear on crafted markup.)
-OPEN_TAG_RE = re.compile(r'<[a-z0-9]+(?![A-Za-z0-9_])([^<>]*)(>?)', re.IGNORECASE)
+OPEN_TAG_RE = _rc(r'<[a-z0-9]+(?![A-Za-z0-9_])([^<>]*)(>?)', re.IGNORECASE)
 # What a style attribute must say to hide an element. Spaces are the ASCII ones (the CSS and HTML
 # separators), so Node and Python read the same text the same way.
-HIDDEN_ATTR_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:display[\t\n\f\r ]*:[\t\n\f\r ]*none|visibility[\t\n\f\r ]*:[\t\n\f\r ]*hidden|opacity[\t\n\f\r ]*:[\t\n\f\r ]*0(?:\.0+)?(?![0-9.])|font-size[\t\n\f\r ]*:[\t\n\f\r ]*0(?:px)?(?![0-9.])|color[\t\n\f\r ]*:[\t\n\f\r ]*transparent|text-indent[\t\n\f\r ]*:[\t\n\f\r ]*-[0-9]{3,}px)', re.IGNORECASE)
+HIDDEN_ATTR_RE = _rc(r'(?<![A-Za-z0-9_-])(?:display[\t\n\f\r ]*:[\t\n\f\r ]*none|visibility[\t\n\f\r ]*:[\t\n\f\r ]*hidden|opacity[\t\n\f\r ]*:[\t\n\f\r ]*0(?:\.0+)?(?![0-9.])|font-size[\t\n\f\r ]*:[\t\n\f\r ]*0(?:px)?(?![0-9.])|color[\t\n\f\r ]*:[\t\n\f\r ]*transparent|text-indent[\t\n\f\r ]*:[\t\n\f\r ]*-[0-9]{3,}px)', re.IGNORECASE)
 # An element of at most 1px, or with a clip that leaves nothing visible, or with no height and
 # its overflow cut off, is hidden in the way screen-reader-only text is.
-TINY_WIDTH_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:max-)?width[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))', re.IGNORECASE)
-TINY_HEIGHT_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:max-)?height[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))', re.IGNORECASE)
-OVERFLOW_HIDDEN_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])overflow(?:-[xy])?[\t\n\f\r ]*:[\t\n\f\r ]*hidden(?![A-Za-z0-9_-])', re.IGNORECASE)
-CLIP_CSS_RE = re.compile(r'(?<![A-Za-z0-9_-])(?:clip[\t\n\f\r ]*:[\t\n\f\r ]*rect\([\t\n\f\r ]*(?:0|1px)|clip-path[\t\n\f\r ]*:[\t\n\f\r ]*inset\([\t\n\f\r ]*(?:50|100)%)', re.IGNORECASE)
+TINY_WIDTH_CSS_RE = _rc(r'(?<![A-Za-z0-9_-])(?:max-)?width[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))', re.IGNORECASE)
+TINY_HEIGHT_CSS_RE = _rc(r'(?<![A-Za-z0-9_-])(?:max-)?height[\t\n\f\r ]*:[\t\n\f\r ]*(?:0(?:\.0+)?(?:[a-z]+|%)?(?![0-9.])|(?:0(?:\.[0-9]+)?|1(?:\.0+)?)(?:px)?(?![0-9.a-z%]))', re.IGNORECASE)
+OVERFLOW_HIDDEN_CSS_RE = _rc(r'(?<![A-Za-z0-9_-])overflow(?:-[xy])?[\t\n\f\r ]*:[\t\n\f\r ]*hidden(?![A-Za-z0-9_-])', re.IGNORECASE)
+CLIP_CSS_RE = _rc(r'(?<![A-Za-z0-9_-])(?:clip[\t\n\f\r ]*:[\t\n\f\r ]*rect\([\t\n\f\r ]*(?:0|1px)|clip-path[\t\n\f\r ]*:[\t\n\f\r ]*inset\([\t\n\f\r ]*(?:50|100)%)', re.IGNORECASE)
 # One attribute: name, then an optional value (double-quoted, single-quoted
 # or bare). An unterminated quote runs to the end of the run, so every
 # character is read once.
-ATTR_RE = re.compile(r'''([^\t\n\f\r "'<>\/=]+)(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"?|'([^']*)'?|([^\t\n\f\r "'<>=`]*)))?''')
+ATTR_RE = _rc(r'''([^\t\n\f\r "'<>\/=]+)(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"?|'([^']*)'?|([^\t\n\f\r "'<>=`]*)))?''')
 # The classes that hide an element in the common frameworks (a token of the class list).
-CLASS_HIDDEN_RE = re.compile(r'(?:^|[\t\n\f\r ])(?:hidden|visually-hidden|sr-only|d-none|invisible|is-hidden)(?=[\t\n\f\r ]|$)', re.IGNORECASE)
+CLASS_HIDDEN_RE = _rc(r'(?:^|[\t\n\f\r ])(?:hidden|visually-hidden|sr-only|d-none|invisible|is-hidden)(?=[\t\n\f\r ]|$)', re.IGNORECASE)
 _ASCII_SPACE = '\t\n\f\r '
 
 
@@ -229,7 +272,7 @@ def _attrs_hide(attrs: str) -> bool:
         if name == 'style' and _style_hides(value):
             return True
     return False
-HIDDEN_PAYLOAD_RE = re.compile(r'ignore|system|instruction|prompt|bypass|override|exfil|leak', re.IGNORECASE)
+HIDDEN_PAYLOAD_RE = _rc(r'ignore|system|instruction|prompt|bypass|override|exfil|leak', re.IGNORECASE)
 
 
 # The payload must be in the text of the hidden element itself: its content
@@ -237,8 +280,8 @@ HIDDEN_PAYLOAD_RE = re.compile(r'ignore|system|instruction|prompt|bypass|overrid
 # HIDDEN_TEXT_CHARS characters after the opening tag. Text after the element
 # does not count.
 HIDDEN_TEXT_CHARS = 4096
-TAG_RE = re.compile(r'<(/?)([a-z0-9]+)(?![A-Za-z0-9_])[^<>]*>', re.IGNORECASE)
-_TAG_NAME_RE = re.compile(r'<([a-z0-9]+)', re.IGNORECASE)
+TAG_RE = _rc(r'<(/?)([a-z0-9]+)(?![A-Za-z0-9_])[^<>]*>', re.IGNORECASE)
+_TAG_NAME_RE = _rc(r'<([a-z0-9]+)', re.IGNORECASE)
 
 
 def _hidden_element_text(text: str, start: int, name: str) -> Tuple[str, int]:
@@ -293,7 +336,7 @@ def _test_hidden_tag_anywhere(text: str) -> bool:
 INDIRECT_INJECTION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'indirect:html_comment',
-        re.compile(r'<!--\s*(?:system|instruction|prompt|override|command)\s*:', re.IGNORECASE),
+        _rc(r'<!--\s*(?:system|instruction|prompt|override|command)\s*:', re.IGNORECASE),
         'Hidden instruction in HTML comment',
     ),
     (
@@ -309,9 +352,9 @@ INDIRECT_INJECTION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
 # once, so the scan is linear; the URL is then checked in code. Patterns that
 # chain a lazy URL with a "[^)]*\)" tail re-scan the rest of the input from
 # every "![" when no ")" follows.
-MD_IMAGE_RE = re.compile(r'!\[[^\]]*(?:\]\(([^\s)]*))?', re.IGNORECASE)
-MD_URL_SCHEME_RE = re.compile(r'^https?:\/\/[^?&]', re.IGNORECASE)
-MD_URL_SECRET_PARAM_RE = re.compile(r'[?&](?:key|token|pass|secret|cred|data|val|leak|exfil)=', re.IGNORECASE)
+MD_IMAGE_RE = _rc(r'!\[[^\]]*(?:\]\(([^\s)]*))?', re.IGNORECASE)
+MD_URL_SCHEME_RE = _rc(r'^https?:\/\/[^?&]', re.IGNORECASE)
+MD_URL_SECRET_PARAM_RE = _rc(r'[?&](?:key|token|pass|secret|cred|data|val|leak|exfil)=', re.IGNORECASE)
 
 
 def _test_markdown_image(text: str) -> bool:
@@ -336,12 +379,12 @@ def _test_markdown_image(text: str) -> bool:
 # that), so a text the pattern would match is never skipped.
 IDENTITY_PREFILTERS: Dict[str, Tuple[re.Pattern[str], ...]] = {
     'pi:identity_request': (
-        re.compile(r"""(?:user|operator|owner|human|principal)|customer|account\s{1,4}holder|who|(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))|their\s{1,4}(?:(?:primary|login|account|real)\s{1,4})?e-?mail(?:\s{1,4}address(?:es)?)?""", re.IGNORECASE),
-        re.compile(r"""(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))|who|your\s{1,4}(?:user|operator|owner|human|principal)|(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|request\s{1,4}(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:in|into|inside|within|with|to|on)\s{1,4}(?:an?|the|your|every|each|any|all|subsequent|following|outgoing|next)\s{1,4}(?:(?:http|outgoing|network|api|subsequent|following)\s{1,4}){0,2}(?:requests?|calls?))""", re.IGNORECASE),
+        _rc(r"""(?:user|operator|owner|human|principal)|customer|account\s{1,4}holder|who|(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))|their\s{1,4}(?:(?:primary|login|account|real)\s{1,4})?e-?mail(?:\s{1,4}address(?:es)?)?""", re.IGNORECASE),
+        _rc(r"""(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|(?:request\s{1,4})?(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:subsequent|following|every|each|outgoing)\s{1,4}(?:http\s{1,4})?(?:requests?|calls?|fetch(?:es)?))|who|your\s{1,4}(?:user|operator|owner|human|principal)|(?:(?:http\s{1,4}|request\s{1,4}|custom\s{1,4}|response\s{1,4})?headers?|(?<![A-Za-z0-9_])x-[a-z0-9-]{1,40}|url\s{1,4}param(?:eter)?s?|query\s{1,4}(?:string|param(?:eter)?s?)|\?[a-z_]{1,20}=|cookies?|form\s{1,4}(?:fields?|inputs?|data)|request\s{1,4}(?:body|payload)|next\s{1,4}(?:request|call|message)|(?:in|into|inside|within|with|to|on)\s{1,4}(?:an?|the|your|every|each|any|all|subsequent|following|outgoing|next)\s{1,4}(?:(?:http|outgoing|network|api|subsequent|following)\s{1,4}){0,2}(?:requests?|calls?))""", re.IGNORECASE),
     ),
     'pi:identity_request_multi': (
-        re.compile(r"""(?:usuario|operador|due[ñn]o|propietario)|(?:usu[aá]rio|operador|dono|propriet[aá]rio)|(?:utilisateur|opérateur|propriétaire)|(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)|(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)|(?:用户|使用者|操作者|主人|所有者)|(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))""", re.IGNORECASE),
-        re.compile(r"""(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)""", re.IGNORECASE),
+        _rc(r"""(?:usuario|operador|due[ñn]o|propietario)|(?:usu[aá]rio|operador|dono|propriet[aá]rio)|(?:utilisateur|opérateur|propriétaire)|(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)|(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)|(?:用户|使用者|操作者|主人|所有者)|(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))""", re.IGNORECASE),
+        _rc(r"""(?:cabecera|encabezado|header|par[aá]metro|cookie|formulario|campo|(?:siguiente|pr[oó]xima)\s{1,4}(?:petici[oó]n|solicitud)|url)|(?:cabe[cç]alho|header|par[aâ]metro|cookie|formul[aá]rio|campo|pr[oó]xima\s{1,4}requisi[cç][aã]o|url)|(?:en-t[eê]te|header|param[eè]tre|cookie|formulaire|champ|prochaine\s{1,4}requ[eê]te|url)|(?:header|kopfzeile|parameter|cookie|formular|feld|nächste\s{1,4}anfrage|url)|(?:заголов[а-яё]+|header|параметр[а-яё]*|cookie|куки|форм[а-яё]+|поле|следующ[а-яё]+\s{1,4}запрос[а-яё]*|url)|(?:请求头|头部|标头|header|参数|cookie|表单|字段|下一个请求|下一次请求|下个请求|url|查询字符串)""", re.IGNORECASE),
     ),
 }
 _IDENTITY_PATTERNS: Dict[str, re.Pattern[str]] = {
@@ -367,8 +410,8 @@ RULE_TESTERS: Dict[str, Any] = {
 }
 
 EXFIL_VERB_SOURCE = r'(?<![A-Za-z0-9_])(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)(?![A-Za-z0-9_])'
-EXFIL_VERBS = re.compile(EXFIL_VERB_SOURCE, re.IGNORECASE)
-CRED_OBJECTS = re.compile(r"""(?<![A-Za-z0-9_])(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)(?![A-Za-z0-9_])|(?:^|\s|['"`])\.env(?:\.[a-z0-9]+)?(?![A-Za-z0-9_])""", re.IGNORECASE)
+EXFIL_VERBS = _rc(EXFIL_VERB_SOURCE, re.IGNORECASE)
+CRED_OBJECTS = _rc(r"""(?<![A-Za-z0-9_])(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)(?![A-Za-z0-9_])|(?:^|\s|['"`])\.env(?:\.[a-z0-9]+)?(?![A-Za-z0-9_])""", re.IGNORECASE)
 
 # The verb must start a clause (an instruction, not a description such as
 # "this library reads tokens from ...") or be followed by "me"/"us", and the
@@ -377,7 +420,7 @@ CRED_OBJECTS = re.compile(r"""(?<![A-Za-z0-9_])(passwords?|api[_ -]?keys?|secret
 # itself, so a run of blank lines is read once.
 EXFIL_CLAUSE_CHARS = 80
 EXFIL_CLAUSE_PREFIX = r"""(?:^|[.!?;:\r\n\u2028\u2029])[ \t]*(?:[\"'`(\[*-][ \t]*)?|(?<![A-Za-z0-9_])(?:please|now|then|and|also|just|first|immediately|go\s+ahead\s+and|(?:can|could|would|will)\s+you|(?:want|need|ask)\s+you\s+to|you\s+(?:must|should|will|need\s+to|have\s+to))\s+"""
-EXFIL_CLAUSE_RE = re.compile(
+EXFIL_CLAUSE_RE = _rc(
     r'(?:(?:' + EXFIL_CLAUSE_PREFIX + r')' + EXFIL_VERB_SOURCE + r'|' + EXFIL_VERB_SOURCE + r'(?=\s+(?:me|us)(?![A-Za-z0-9_])))'
     + r'[^.!?;\r\n]{0,' + str(EXFIL_CLAUSE_CHARS) + r'}?(?:' + CRED_OBJECTS.pattern + r')',
     re.IGNORECASE,
@@ -387,17 +430,20 @@ EXFIL_CLAUSE_RE = re.compile(
 # text (documentation, code, role-play requests), so a match does not block:
 # the verdict stays "allow" and the result carries `advisory` with the rule.
 # A blocking rule always wins over an advisory.
+_ADVISORY_ACT_AS = _rc(r'act\s+as\s+(?:if|a)', re.IGNORECASE)
+_ADVISORY_FORGET = _rc(r'forget\s+(?:about\s+)?(?:everything|all|your)', re.IGNORECASE)
+
 ADVISORY_RULES: List[Tuple[str, Any, str]] = [
     ('exfil:credentials', lambda t: EXFIL_VERBS.search(t) is not None and CRED_OBJECTS.search(t) is not None, 'Mentions reading or sending credentials'),
-    ('pi:act_as', re.compile(r'act\s+as\s+(?:if|a)', re.IGNORECASE).search, 'Role-play request (act as)'),
-    ('pi:forget', re.compile(r'forget\s+(?:about\s+)?(?:everything|all|your)', re.IGNORECASE).search, 'Asks to forget context'),
+    ('pi:act_as', lambda t: _ADVISORY_ACT_AS.search(t), 'Role-play request (act as)'),
+    ('pi:forget', lambda t: _ADVISORY_FORGET.search(t), 'Asks to forget context'),
     ('indirect:hidden_tag', _test_hidden_tag_anywhere, 'Hidden element in markup followed by instruction-like words'),
 ]
 
 SENSITIVE_PATH_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'path:sensitive_file',
-        re.compile(r"""(?:^|[\s"'`(\[@])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
+        _rc(r"""(?:^|[\s"'`(\[@])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
         'Targeting sensitive system credentials or environment file',
     ),
 ]
@@ -619,8 +665,8 @@ def _b64_decode_lenient(data: str) -> bytes:
 # A run of two or more empty or whitespace-only lines becomes one empty line before any rule runs, so text
 # that follows a long padding run is read in the same scan window as the text before it (same class as
 # collapseBlankRuns in rules.js; whitespace listed explicitly, not \s, so both packages agree).
-_BLANK_RUN_TEST = re.compile(r'\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n')
-_BLANK_SPACE = re.compile(r'[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*')
+_BLANK_RUN_TEST = _rc(r'\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*\n')
+_BLANK_SPACE = _rc(r'[ \t\r\f\v\u0085\u00a0\u00ad\u1680\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*')
 
 
 def _collapse_blank_runs(text: str) -> str:
@@ -800,30 +846,30 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
 # -------------------------------------------------------------------------
 SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     # A body may not contain another BEGIN header: linear on repeated headers without END.
-    ("secret:private_key", re.compile(r"""-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"""), "[REDACTED_PRIVATE_KEY]"),
-    ("secret:anthropic_key", re.compile(r'(?<![A-Za-z0-9_])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_ANTHROPIC_KEY]"),
+    ("secret:private_key", _rc(r"""-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----(?:(?!-----BEGIN )[\s\S])*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"""), "[REDACTED_PRIVATE_KEY]"),
+    ("secret:anthropic_key", _rc(r'(?<![A-Za-z0-9_])(sk-ant-[A-Za-z0-9_-]{30,})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_ANTHROPIC_KEY]"),
     # A key without a known prefix ends at the first character that is not a letter or digit.
-    ("secret:openai_key", re.compile(r"""(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))|helicone-(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])|(?=(?:eu|cp|gov|rl)-|[a-z0-9]{7}-)(?=[a-z-]{0,46}[0-9])(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])(?!-[a-z0-9])|sp-[A-Za-z0-9]{28,}(?![A-Za-z0-9])|[A-Za-z0-9]{28,}(?![A-Za-z0-9])|(?:(?!sk-)[A-Za-z0-9_-]){1,200}?T3BlbkFJ[A-Za-z0-9_-]{20,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))))"""), "[REDACTED_OPENAI_KEY]"),
-    ("secret:aws_access_key", re.compile(r'(?<![A-Za-z0-9_])(AKIA[0-9A-Z]{16})(?![A-Za-z0-9_])'), "[REDACTED_AWS_KEY]"),
-    ("secret:aws_secret_key", re.compile(r"""((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Ww][Ss]_[Kk][Ee][Yy])\s*[:=]\s*['"]?)([A-Za-z0-9/+=]{40})(['"]?)"""), r'\1[REDACTED_AWS_SECRET]\3'),
-    ("secret:github_token", re.compile(r'(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9_])'), "[REDACTED_GITHUB_TOKEN]"),
-    ("secret:db_url_password", re.compile(r'((?:[Pp][Oo][Ss][Tt][Gg][Rr][Ee][Ss](?:[Qq][Ll])?|[Mm][Yy][Ss][Qq][Ll]|[Mm][Oo][Nn][Gg][Oo][Dd][Bb](?:\+[Ss][Rr][Vv])?|[Rr][Ee][Dd][Ii][Ss]|[Aa][Mm][Qq][Pp])(?:\+[A-Za-z0-9_]+)?:\/\/[^:\s\/]+:)(?!(?:\$\{(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)\}|\$[A-Z_][A-Z0-9_]*|%[A-Z_][A-Z0-9_]*%|<[A-Za-z][A-Za-z_-]{0,63}>|\{\{\s*[A-Za-z_][A-Za-z_.]*\s*\}\})@)([^@\s\/]+)(@)'), r'\1[REDACTED_DB_PASSWORD]\3'),
+    ("secret:openai_key", _rc(r"""(?<![A-Za-z0-9_])(sk-(?:(?:proj|svcacct|admin|[Nn]one|or-v1|lf)-[A-Za-z0-9_-]{28,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))|helicone-(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])|(?=(?:eu|cp|gov|rl)-|[a-z0-9]{7}-)(?=[a-z-]{0,46}[0-9])(?:(?:eu|cp|gov|rl)-){0,4}[a-z0-9]{7}(?:-[a-z0-9]{7}){3}(?![a-z0-9])(?!-[a-z0-9])|sp-[A-Za-z0-9]{28,}(?![A-Za-z0-9])|[A-Za-z0-9]{28,}(?![A-Za-z0-9])|(?:(?!sk-)[A-Za-z0-9_-]){1,200}?T3BlbkFJ[A-Za-z0-9_-]{20,}(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))))"""), "[REDACTED_OPENAI_KEY]"),
+    ("secret:aws_access_key", _rc(r'(?<![A-Za-z0-9_])(AKIA[0-9A-Z]{16})(?![A-Za-z0-9_])'), "[REDACTED_AWS_KEY]"),
+    ("secret:aws_secret_key", _rc(r"""((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Ww][Ss]_[Kk][Ee][Yy])\s*[:=]\s*['"]?)([A-Za-z0-9/+=]{40})(['"]?)"""), r'\1[REDACTED_AWS_SECRET]\3'),
+    ("secret:github_token", _rc(r'(?<![A-Za-z0-9_])((?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,40}|github_pat_[A-Za-z0-9_]{82})(?![A-Za-z0-9_])'), "[REDACTED_GITHUB_TOKEN]"),
+    ("secret:db_url_password", _rc(r'((?:[Pp][Oo][Ss][Tt][Gg][Rr][Ee][Ss](?:[Qq][Ll])?|[Mm][Yy][Ss][Qq][Ll]|[Mm][Oo][Nn][Gg][Oo][Dd][Bb](?:\+[Ss][Rr][Vv])?|[Rr][Ee][Dd][Ii][Ss]|[Aa][Mm][Qq][Pp])(?:\+[A-Za-z0-9_]+)?:\/\/[^:\s\/]+:)(?!(?:\$\{(?:[A-Z_][A-Z0-9_]*|[a-z_][a-z0-9_]*)\}|\$[A-Z_][A-Z0-9_]*|%[A-Z_][A-Z0-9_]*%|<[A-Za-z][A-Za-z_-]{0,63}>|\{\{\s*[A-Za-z_][A-Za-z_.]*\s*\}\})@)([^@\s\/]+)(@)'), r'\1[REDACTED_DB_PASSWORD]\3'),
     # The lookahead + backreference pairs act as atomic groups, so a long run of
     # "-eyJ" cannot make the engine retry every split point, and the lookbehind
     # allows a single start per token. Only used when the
     # text contains ".eyJ" (see SECRET_PATTERN_REQUIRES).
-    ("secret:jwt_token", re.compile(r'(?<![A-Za-z0-9_-])(eyJ(?=([A-Za-z0-9_-]{10,512}))\2\.eyJ(?=([A-Za-z0-9_=-]{10,8192}))\3\.[A-Za-z0-9_.+/=-]{10,4096})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_JWT]"),
+    ("secret:jwt_token", _rc(r'(?<![A-Za-z0-9_-])(eyJ(?=([A-Za-z0-9_-]{10,512}))\2\.eyJ(?=([A-Za-z0-9_=-]{10,8192}))\3\.[A-Za-z0-9_.+/=-]{10,4096})(?:(?<=[A-Za-z0-9_])(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?=[A-Za-z0-9_]))'), "[REDACTED_JWT]"),
     # Credential assignments. A name right after "${" is a shell reference, and
     # after "$" (PHP, PowerShell, Perl) only "=" assigns: "$NAME:" is a reference
     # followed by text. The value (group 2) is checked with _is_non_secret_value.
-    ("secret:env_credential", re.compile(r"""(?=[A-Za-z0-9_])(?<![A-Za-z0-9_])(?<!\$\{)(?:(?<!\$)|(?=[A-Za-z0-9_]+\s*=))((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]_[Kk][Ee][Yy]|[Aa][Pp][Ii]_[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh]_[Tt][Oo][Kk][Ee][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]_[Kk][Ee][Yy]|[Dd][Aa][Tt][Aa][Bb][Aa][Ss][Ee]_[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])["']?\s*[:=]\s*['"]?)([^\s'"]{12,})(['"]?)"""), r'\1[REDACTED_SECRET]\3'),
+    ("secret:env_credential", _rc(r"""(?=[A-Za-z0-9_])(?<![A-Za-z0-9_])(?<!\$\{)(?:(?<!\$)|(?=[A-Za-z0-9_]+\s*=))((?:[Aa][Ww][Ss]_[Ss][Ee][Cc][Rr][Ee][Tt]_[Aa][Cc][Cc][Ee][Ss][Ss]_[Kk][Ee][Yy]|[Ss][Ee][Cc][Rr][Ee][Tt]_[Kk][Ee][Yy]|[Aa][Pp][Ii]_[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh]_[Tt][Oo][Kk][Ee][Nn]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee]_[Kk][Ee][Yy]|[Dd][Aa][Tt][Aa][Bb][Aa][Ss][Ee]_[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])["']?\s*[:=]\s*['"]?)([^\s'"]{12,})(['"]?)"""), r'\1[REDACTED_SECRET]\3'),
     # Environment-style names with a prefix: OPENAI_API_KEY=, "DB_PASSWORD": "...",
     # `ENV X_TOKEN value` in a Dockerfile, $X_SECRET = '...' in PHP. Upper case
     # only, so code such as `token = response.json()` is left alone.
-    ("secret:prefixed_credential", re.compile(r"""(?=[A-Z0-9])(?<![A-Za-z0-9_])(?<!\$\{)(?:(?<!\$)|(?=[A-Za-z0-9_]+[ \t]*=))((?:ENV[ \t]+(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)[ \t]+|(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)["']?[ \t]*[:=][ \t]*)['"]?)([^\s'"]{12,})(['"]?)"""), r'\1[REDACTED_SECRET]\3'),
+    ("secret:prefixed_credential", _rc(r"""(?=[A-Z0-9])(?<![A-Za-z0-9_])(?<!\$\{)(?:(?<!\$)|(?=[A-Za-z0-9_]+[ \t]*=))((?:ENV[ \t]+(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)[ \t]+|(?:[A-Z0-9]+_)+(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD)["']?[ \t]*[:=][ \t]*)['"]?)([^\s'"]{12,})(['"]?)"""), r'\1[REDACTED_SECRET]\3'),
     # The default of a shell or Compose reference, ${DB_PASSWORD:-<value>}: only
     # redacted when it looks machine-generated (most defaults are for development).
-    ("secret:credential_default", re.compile(r"""(\$\{(?:[A-Z0-9]+_)*(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD):?[-=])([^\s'"{}$]{12,})(\})"""), r'\1[REDACTED_SECRET]\3'),
+    ("secret:credential_default", _rc(r"""(\$\{(?:[A-Z0-9]+_)*(?:API_KEY|APIKEY|SECRET_ACCESS_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|CREDENTIALS|SECRET|TOKEN|PASSWORD|PASSWD|PASS|PWD):?[-=])([^\s'"{}$]{12,})(\})"""), r'\1[REDACTED_SECRET]\3'),
 ]
 
 # Substrings a text must contain before the pattern is run at all.
@@ -835,8 +881,8 @@ SECRET_PATTERN_REQUIRES: Dict[str, str] = {
 # A text without a match for one of these cannot match the credential patterns,
 # which are then not run at all.
 SECRET_PATTERN_PREFILTERS: Dict[str, re.Pattern[str]] = {
-    "secret:env_credential": re.compile(r"""_[Kk][Ee][Yy]|_[Tt][Oo][Kk][Ee][Nn]|_[Pp][Aa][Ss][Ss]"""),
-    "secret:prefixed_credential": re.compile(r"""KEY|TOKEN|SECRET|PASS|PWD|CREDENTIALS"""),
+    "secret:env_credential": _rc(r"""_[Kk][Ee][Yy]|_[Tt][Oo][Kk][Ee][Nn]|_[Pp][Aa][Ss][Ss]"""),
+    "secret:prefixed_credential": _rc(r"""KEY|TOKEN|SECRET|PASS|PWD|CREDENTIALS"""),
 }
 
 # ---------------------------------------------------------------------------
@@ -849,46 +895,46 @@ MAX_FILTERED_VALUE = 512
 # that, credential matches are redacted without the checks, which bounds
 # their cost on crafted input.
 MAX_FILTERED_CHARS = 32 * 1024
-CREDENTIAL_URL_RE = re.compile(r"""^[A-Za-z][A-Za-z0-9+.-]*:\/\/(?:[^\/@:\s]*:([^\/@\s]*)@)?""")
-CREDENTIAL_STORE_RE = re.compile(r"""^(?:arn:|vault:|secretref:|@Microsoft\.KeyVault\(|projects\/[^\/]+\/secrets\/)""")
-CREDENTIAL_CODE_ROOT_RE = re.compile(r"""^(?:process\.env[.\[]|import\.meta\.env[.\[]|os\.environ|os\.getenv\(|getenv\(|settings\.|config\.|secrets\.|std::env::|env::var|ENV(?:\[|\.fetch\()|\$ENV\{|System\.getenv\(|Deno\.env\.|Bun\.env\.|\[Environment\]::|\([A-Z][a-z]+-[A-Z])""")
-CREDENTIAL_PLACEHOLDER_RE = re.compile(r"""^(?:%\([A-Za-z_]*\)s|<[^<>]*>|\{\{[^{}]*\}\}|\$\{[^{}]*\}|#\{[^{}]*\}|\*+|!(?:Ref|Sub|GetAtt|ImportValue|Join|Select|Split|FindInMap|If|Base64|Cidr|GetAZs|Equals|And|Or|Not|Condition|Transform)|([A-Za-z0-9])(?:\1|[-_.:])*)$""")
-CREDENTIAL_REFERENCE_NAME_RE = re.compile(r"""^(?:[A-Z][A-Z0-9_]*|[a-z][a-z0-9_.-]*|[A-Za-z][a-z]+(?:[A-Z][a-z]+)*[0-9]*)$""")
-CREDENTIAL_REFERENCE_RE = re.compile(r"""^(?:\$\$?([A-Za-z_][A-Za-z0-9_]*)|\$env:([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%|@([A-Za-z0-9_.-]+)@|\[([^\[\]]*)\])$""")
-CREDENTIAL_PLACEHOLDER_MARK_RE = re.compile(r"""<[^<>]*>|^[<{\[]|^\$\(|^(?:0123456789|1234567890|[Aa][Bb][Cc][Dd][Ee][Ff]|[Qq][Ww][Ee][Rr][Tt][Yy])|([A-Za-z0-9])\1{7,}""")
+CREDENTIAL_URL_RE = _rc(r"""^[A-Za-z][A-Za-z0-9+.-]*:\/\/(?:[^\/@:\s]*:([^\/@\s]*)@)?""")
+CREDENTIAL_STORE_RE = _rc(r"""^(?:arn:|vault:|secretref:|@Microsoft\.KeyVault\(|projects\/[^\/]+\/secrets\/)""")
+CREDENTIAL_CODE_ROOT_RE = _rc(r"""^(?:process\.env[.\[]|import\.meta\.env[.\[]|os\.environ|os\.getenv\(|getenv\(|settings\.|config\.|secrets\.|std::env::|env::var|ENV(?:\[|\.fetch\()|\$ENV\{|System\.getenv\(|Deno\.env\.|Bun\.env\.|\[Environment\]::|\([A-Z][a-z]+-[A-Z])""")
+CREDENTIAL_PLACEHOLDER_RE = _rc(r"""^(?:%\([A-Za-z_]*\)s|<[^<>]*>|\{\{[^{}]*\}\}|\$\{[^{}]*\}|#\{[^{}]*\}|\*+|!(?:Ref|Sub|GetAtt|ImportValue|Join|Select|Split|FindInMap|If|Base64|Cidr|GetAZs|Equals|And|Or|Not|Condition|Transform)|([A-Za-z0-9])(?:\1|[-_.:])*)$""")
+CREDENTIAL_REFERENCE_NAME_RE = _rc(r"""^(?:[A-Z][A-Z0-9_]*|[a-z][a-z0-9_.-]*|[A-Za-z][a-z]+(?:[A-Z][a-z]+)*[0-9]*)$""")
+CREDENTIAL_REFERENCE_RE = _rc(r"""^(?:\$\$?([A-Za-z_][A-Za-z0-9_]*)|\$env:([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%|@([A-Za-z0-9_.-]+)@|\[([^\[\]]*)\])$""")
+CREDENTIAL_PLACEHOLDER_MARK_RE = _rc(r"""<[^<>]*>|^[<{\[]|^\$\(|^(?:0123456789|1234567890|[Aa][Bb][Cc][Dd][Ee][Ff]|[Qq][Ww][Ee][Rr][Tt][Yy])|([A-Za-z0-9])\1{7,}""")
 CREDENTIAL_PLACEHOLDER_MARKS = ('xxxx', '***', '...', '${', '#{', '{{', 'deadbeef')
 # re.ASCII keeps case folding to ASCII letters, as in JavaScript.
-CREDENTIAL_PLACEHOLDER_WORDS = re.compile(r"""(?<![A-Za-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|redacted|dummy|sample|foobar|hunter2|todo|insert|replace|mypass|pass(?:word)?123|fake|mock|tests?|testing|demo|stub|fixme|not[_-]?set|unset|set[_-]me|change[_-]this)(?![A-Za-z])""", re.IGNORECASE | re.ASCII)
+CREDENTIAL_PLACEHOLDER_WORDS = _rc(r"""(?<![A-Za-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|redacted|dummy|sample|foobar|hunter2|todo|insert|replace|mypass|pass(?:word)?123|fake|mock|tests?|testing|demo|stub|fixme|not[_-]?set|unset|set[_-]me|change[_-]this)(?![A-Za-z])""", re.IGNORECASE | re.ASCII)
 # The same pattern without IGNORECASE, applied to the value with ASCII letters
 # lower-cased: same result, several times faster in Python's re.
-_PLACEHOLDER_WORDS_LOWER = re.compile(CREDENTIAL_PLACEHOLDER_WORDS.pattern)
+_PLACEHOLDER_WORDS_LOWER = _rc(CREDENTIAL_PLACEHOLDER_WORDS.pattern)
 _ASCII_LOWER = str.maketrans('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
-CREDENTIAL_CODE_RE = re.compile(r"""^[(!&*@:]*([A-Za-z_$][A-Za-z0-9_$]*(?:(?:\?\.|\.|::|->)[A-Za-z_$][A-Za-z0-9_$]*)*)(?:((?:->[(\[{]|!?[(\[])(?:[A-Za-z0-9_$.:=(\[{!?&|,]|[)\]}](?![A-Za-z0-9_$]))*)|!|[)\]]*)$""")
-CREDENTIAL_DOTTED_WORDS_RE = re.compile(r"""^[a-z]+(?:\.[a-z]+){2,}$""")
-CREDENTIAL_IDENTIFIER_RE = re.compile(r"""^(?:_*[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+_*|[a-z][a-z0-9]*(?:_[a-z0-9]+)+|[A-Z]+)$""")
-CREDENTIAL_PATH_RE = re.compile(r"""^(?:(?:~|\.{1,2})?\/|[A-Za-z]:[\\\/]|\\\\)[^+=]*$|^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$""")
-CREDENTIAL_FILE_EXT_RE = re.compile(r"""\.[A-Za-z][A-Za-z0-9]{0,4}$""")
-CREDENTIAL_FILE_NAME_RE = re.compile(r"""^[A-Za-z0-9_][A-Za-z0-9_.-]*\.(?:json|ya?ml|pem|p8|p12|pfx|key|keystore|jks|crt|cer|der|txt|ini|toml|conf|cfg|xml|properties|env|gpg|asc|ppk|pub|kdbx)$""")
-CREDENTIAL_HOST_NAME_RE = re.compile(r"""^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)*\.(?:com|net|org|io|dev|app|cloud|internal|local|svc|co|ai|sh)$""")
-CREDENTIAL_SLUG_RE = re.compile(r"""^[a-z0-9]+(?:[-.][a-z0-9]+)+$""")
-CREDENTIAL_SLUG_SHORT_WORD_RE = re.compile(r"""(?:^|[-.])(?:[a-z0-9]{1,3}|[a-z]*[0-9][a-z0-9]*)(?:[-.]|$)""")
-CREDENTIAL_OBJECT_NAME_RE = re.compile(r"""_(?:SECRET|CREDENTIALS)(?![A-Za-z0-9_])""")
-CREDENTIAL_LETTERS_RE = re.compile(r"""^[A-Za-z]+(?:[-_.][A-Za-z]+)*$""")
-CREDENTIAL_DESCRIPTIVE_WORDS = re.compile(r"""(?:^|-)(?:keys?|tokens?|secrets?|pass|passwords?|passwd|pwd|api|apikey|auth|credentials?|access|private|here|value|string|my|your|default|dev|development|local|prod|production|staging|none|null|empty|required|some|generated|random|change|replace|set|use|put|enter|fill|ask|get|see|from|the|not|check|contact|generate|read|find|fake|mock|tests?|dummy|example|sample|placeholder|todo)(?:-|$)|secret|passw|token|apikey|changeme|example|placeholder|dummy""")
-CREDENTIAL_HEX_RE = re.compile(r"""^[0-9A-Fa-f]{32,}$""")
-WORD_TOKEN_RE = re.compile(r"""[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+""")
-_DIGIT_RE = re.compile(r'[0-9]')
-_LOWER_RE = re.compile(r'[a-z]')
-_UPPER_RE = re.compile(r'[A-Z]')
-_SYMBOL_RE = re.compile(r'[^A-Za-z0-9]')
-_CHAIN_SPLIT_RE = re.compile(r'\?\.|\.|::|->')
-_CHAIN_SEP_RE = re.compile(r'\.|::|->')
-_PATH_SPLIT_RE = re.compile(r'[\\\/]')
-_PATH_ROOT_RE = re.compile(r'^[~.\/\\]|^[A-Za-z]:')
-_URL_PASSWORD_REF_RE = re.compile(r'^[$%<{]')
-_HEX_LETTER_RE = re.compile(r'[A-Fa-f]')
-_SLUG_SPLIT_RE = re.compile(r'[-.]')
-_REF_SPLIT_RE = re.compile(r'[-_.]')
+CREDENTIAL_CODE_RE = _rc(r"""^[(!&*@:]*([A-Za-z_$][A-Za-z0-9_$]*(?:(?:\?\.|\.|::|->)[A-Za-z_$][A-Za-z0-9_$]*)*)(?:((?:->[(\[{]|!?[(\[])(?:[A-Za-z0-9_$.:=(\[{!?&|,]|[)\]}](?![A-Za-z0-9_$]))*)|!|[)\]]*)$""")
+CREDENTIAL_DOTTED_WORDS_RE = _rc(r"""^[a-z]+(?:\.[a-z]+){2,}$""")
+CREDENTIAL_IDENTIFIER_RE = _rc(r"""^(?:_*[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+_*|[a-z][a-z0-9]*(?:_[a-z0-9]+)+|[A-Z]+)$""")
+CREDENTIAL_PATH_RE = _rc(r"""^(?:(?:~|\.{1,2})?\/|[A-Za-z]:[\\\/]|\\\\)[^+=]*$|^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+$""")
+CREDENTIAL_FILE_EXT_RE = _rc(r"""\.[A-Za-z][A-Za-z0-9]{0,4}$""")
+CREDENTIAL_FILE_NAME_RE = _rc(r"""^[A-Za-z0-9_][A-Za-z0-9_.-]*\.(?:json|ya?ml|pem|p8|p12|pfx|key|keystore|jks|crt|cer|der|txt|ini|toml|conf|cfg|xml|properties|env|gpg|asc|ppk|pub|kdbx)$""")
+CREDENTIAL_HOST_NAME_RE = _rc(r"""^[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)*\.(?:com|net|org|io|dev|app|cloud|internal|local|svc|co|ai|sh)$""")
+CREDENTIAL_SLUG_RE = _rc(r"""^[a-z0-9]+(?:[-.][a-z0-9]+)+$""")
+CREDENTIAL_SLUG_SHORT_WORD_RE = _rc(r"""(?:^|[-.])(?:[a-z0-9]{1,3}|[a-z]*[0-9][a-z0-9]*)(?:[-.]|$)""")
+CREDENTIAL_OBJECT_NAME_RE = _rc(r"""_(?:SECRET|CREDENTIALS)(?![A-Za-z0-9_])""")
+CREDENTIAL_LETTERS_RE = _rc(r"""^[A-Za-z]+(?:[-_.][A-Za-z]+)*$""")
+CREDENTIAL_DESCRIPTIVE_WORDS = _rc(r"""(?:^|-)(?:keys?|tokens?|secrets?|pass|passwords?|passwd|pwd|api|apikey|auth|credentials?|access|private|here|value|string|my|your|default|dev|development|local|prod|production|staging|none|null|empty|required|some|generated|random|change|replace|set|use|put|enter|fill|ask|get|see|from|the|not|check|contact|generate|read|find|fake|mock|tests?|dummy|example|sample|placeholder|todo)(?:-|$)|secret|passw|token|apikey|changeme|example|placeholder|dummy""")
+CREDENTIAL_HEX_RE = _rc(r"""^[0-9A-Fa-f]{32,}$""")
+WORD_TOKEN_RE = _rc(r"""[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+""")
+_DIGIT_RE = _rc(r'[0-9]')
+_LOWER_RE = _rc(r'[a-z]')
+_UPPER_RE = _rc(r'[A-Z]')
+_SYMBOL_RE = _rc(r'[^A-Za-z0-9]')
+_CHAIN_SPLIT_RE = _rc(r'\?\.|\.|::|->')
+_CHAIN_SEP_RE = _rc(r'\.|::|->')
+_PATH_SPLIT_RE = _rc(r'[\\\/]')
+_PATH_ROOT_RE = _rc(r'^[~.\/\\]|^[A-Za-z]:')
+_URL_PASSWORD_REF_RE = _rc(r'^[$%<{]')
+_HEX_LETTER_RE = _rc(r'[A-Fa-f]')
+_SLUG_SPLIT_RE = _rc(r'[-.]')
+_REF_SPLIT_RE = _rc(r'[-_.]')
 _DESCRIPTIVE_HINTS = ('key', 'token', 'secret', 'pass', 'pwd', 'api', 'auth', 'credential', 'access', 'private',
                       'here', 'value', 'string', 'my', 'your', 'default', 'dev', 'local', 'prod', 'staging', 'none',
                       'null', 'empty', 'required', 'some', 'generated', 'random', 'change', 'replace', 'set', 'use',
@@ -1072,7 +1118,7 @@ _TB = r'(?<![A-Za-z0-9_-])'    # start of a token
 _TA = r'(?![A-Za-z0-9_-])'     # end of a token
 _ALNUM_B = r'(?<![A-Za-z0-9])'
 _ALNUM_A = r'(?![A-Za-z0-9])'
-_TOKEN_ALPHA_RE = re.compile(r'[A-Za-z]')
+_TOKEN_ALPHA_RE = _rc(r'[A-Za-z]')
 
 
 def _pv_shannon(s: str) -> float:
@@ -1094,15 +1140,15 @@ def _pv_random(s: str, classes: int = 2, bits: float = 3.0) -> bool:
     return found >= classes and _pv_shannon(s) >= bits
 
 
-_PV_PLACEHOLDER_RE = re.compile(
+_PV_PLACEHOLDER_RE = _rc(
     r'x{3,}|\*{3,}|\.{3,}|-+|_+|<[^>]*>|\$\{?[^}]*\}?|\{\{?[^}]*\}?\}|%\(?[a-z_]*\)?s|:[a-z_]+|\[[^\]]*\]',
     re.IGNORECASE | re.ASCII)
-_PV_PLACEHOLDER_WORDS = re.compile(
+_PV_PLACEHOLDER_WORDS = _rc(
     r'(?:^|[^a-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|'
     r'redacted|dummy|sample|foobar|hunter2|xxxx|todo|insert|replace|mypass|pass(?:word)?123)(?:[^a-z]|$)',
     re.IGNORECASE | re.ASCII)
-_PV_PLACEHOLDER_SEQ = re.compile(r'0123456789|1234567890|abcdef|qwerty', re.IGNORECASE | re.ASCII)
-_PV_POLAR_PREFIX = re.compile(r'polar_(?:oat|pat|(?:at|rt)_[uo]|ci|cs)_')
+_PV_PLACEHOLDER_SEQ = _rc(r'0123456789|1234567890|abcdef|qwerty', re.IGNORECASE | re.ASCII)
+_PV_POLAR_PREFIX = _rc(r'polar_(?:oat|pat|(?:at|rt)_[uo]|ci|cs)_')
 
 
 def _pv_placeholder(s: str) -> bool:
@@ -1152,74 +1198,74 @@ def _pv_bearer_not_secret(token: str, prefix: str) -> bool:
 
 
 PROVIDER_SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
-    ("secret:aws_key_id", re.compile(_ALNUM_B + r'(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}' + _ALNUM_A), "[REDACTED_AWS_KEY]"),
-    ("secret:gitlab_token", re.compile(_TB + r'gl(?:pat|dt|rt|ptt|cbt|ft|soat)-[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_GITLAB_TOKEN]"),
-    ("secret:slack_token", re.compile(_TB + r'(?:xox[abeprs]-[0-9]{6,}-[A-Za-z0-9-]{8,}|xapp-[0-9]-[A-Z0-9]{6,}-[0-9]{6,}-[a-f0-9]{32,})' + _TA), "[REDACTED_SLACK_TOKEN]"),
-    ("secret:slack_webhook", re.compile(r'https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]{20,}'), "[REDACTED_SLACK_WEBHOOK]"),
-    ("secret:discord_webhook", re.compile(r'https://(?:ptb\.|canary\.)?discord(?:app)?\.com/api/webhooks/[0-9]{15,20}/[A-Za-z0-9_-]{60,}'), "[REDACTED_DISCORD_WEBHOOK]"),
-    ("secret:stripe_key", re.compile(_TB + r'(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{20,247}' + _TA), "[REDACTED_STRIPE_KEY]"),
-    ("secret:stripe_webhook_secret", re.compile(_TB + r'whsec_[A-Za-z0-9+/]{32,}' + _TA), "[REDACTED_STRIPE_WEBHOOK_SECRET]"),
-    ("secret:google_api_key", re.compile(_TB + r'AIza[0-9A-Za-z_-]{35}' + _TA), "[REDACTED_GOOGLE_API_KEY]"),
-    ("secret:google_oauth_secret", re.compile(_TB + r'GOCSPX-[A-Za-z0-9_-]{28}' + _TA), "[REDACTED_GOOGLE_OAUTH_SECRET]"),
-    ("secret:hf_token", re.compile(_TB + r'hf_[A-Za-z0-9]{34,40}' + _TA), "[REDACTED_HF_TOKEN]"),
-    ("secret:npm_token", re.compile(_TB + r'npm_[A-Za-z0-9]{36}' + _TA), "[REDACTED_NPM_TOKEN]"),
-    ("secret:pypi_token", re.compile(_TB + r'pypi-AgE[A-Za-z0-9_-]{50,}' + _TA), "[REDACTED_PYPI_TOKEN]"),
-    ("secret:sendgrid_key", re.compile(_TB + r'SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}' + _TA), "[REDACTED_SENDGRID_KEY]"),
-    ("secret:twilio_key", re.compile(_ALNUM_B + r'SK(?:[0-9a-f]{32}|[0-9A-F]{32})' + _ALNUM_A), "[REDACTED_TWILIO_KEY]"),
-    ("secret:mailgun_key", re.compile(_TB + r'key-[0-9a-f]{32}' + _TA), "[REDACTED_MAILGUN_KEY]"),
-    ("secret:shopify_token", re.compile(_TB + r'shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}' + _TA), "[REDACTED_SHOPIFY_TOKEN]"),
-    ("secret:digitalocean_token", re.compile(_TB + r'do[opr]_v1_[a-f0-9]{64}' + _TA), "[REDACTED_DIGITALOCEAN_TOKEN]"),
-    ("secret:linear_key", re.compile(_TB + r'lin_api_[A-Za-z0-9]{40}' + _TA), "[REDACTED_LINEAR_KEY]"),
-    ("secret:telegram_bot_token", re.compile(_ALNUM_B + r'[0-9]{8,10}:AA[A-Za-z0-9_-]{33}' + _TA), "[REDACTED_TELEGRAM_BOT_TOKEN]"),
-    ("secret:azure_storage_key", re.compile(r'(AccountKey=)([A-Za-z0-9+/]{86}==)'), r'\1[REDACTED_AZURE_STORAGE_KEY]'),
-    ("secret:databricks_token", re.compile(_TB + r'dapi[a-f0-9]{32}(?:-[0-9])?' + _TA), "[REDACTED_DATABRICKS_TOKEN]"),
-    ("secret:vault_token", re.compile(_TB + r'hv[sb]\.[A-Za-z0-9_-]{24,}' + _TA), "[REDACTED_VAULT_TOKEN]"),
-    ("secret:doppler_token", re.compile(_TB + r'dp\.(?:st|pt|sa|scim|audit|ct)\.[A-Za-z0-9_.-]{40,}' + _TA), "[REDACTED_DOPPLER_TOKEN]"),
-    ("secret:newrelic_key", re.compile(_TB + r'NR(?:AK|II)-[A-Z0-9]{27}' + _TA), "[REDACTED_NEWRELIC_KEY]"),
-    ("secret:groq_key", re.compile(_TB + r'gsk_[A-Za-z0-9]{52}' + _TA), "[REDACTED_GROQ_KEY]"),
-    ("secret:xai_key", re.compile(_TB + r'xai-[A-Za-z0-9]{80}' + _TA), "[REDACTED_XAI_KEY]"),
-    ("secret:dockerhub_pat", re.compile(_TB + r'dckr_(?:pat|oat)_[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_DOCKERHUB_PAT]"),
-    ("secret:tavily_key", re.compile(_TB + r'tvly-[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_TAVILY_KEY]"),
-    ("secret:firecrawl_key", re.compile(_TB + r'fc-[A-Za-z0-9]{20,}' + _TA), "[REDACTED_FIRECRAWL_KEY]"),
-    ("secret:polar_token", re.compile(_TB + r'polar_(?:oat|pat|(?:at|rt)_[uo]|ci|cs)_[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_POLAR_TOKEN]"),
-    ("secret:replicate_token", re.compile(_TB + r'r8_[A-Za-z0-9]{37}' + _TA), "[REDACTED_REPLICATE_TOKEN]"),
-    ("secret:supabase_pat", re.compile(_TB + r'sbp_[A-Za-z0-9_-]{30,}' + _TA), "[REDACTED_SUPABASE_PAT]"),
-    ("secret:square_token", re.compile(_TB + r'(?:EAAA[A-Za-z0-9_-]{60}|sq0atp-[A-Za-z0-9_-]{22}|sq0csp-[A-Za-z0-9_-]{43})' + _TA),
+    ("secret:aws_key_id", _rc(_ALNUM_B + r'(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}' + _ALNUM_A), "[REDACTED_AWS_KEY]"),
+    ("secret:gitlab_token", _rc(_TB + r'gl(?:pat|dt|rt|ptt|cbt|ft|soat)-[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_GITLAB_TOKEN]"),
+    ("secret:slack_token", _rc(_TB + r'(?:xox[abeprs]-[0-9]{6,}-[A-Za-z0-9-]{8,}|xapp-[0-9]-[A-Z0-9]{6,}-[0-9]{6,}-[a-f0-9]{32,})' + _TA), "[REDACTED_SLACK_TOKEN]"),
+    ("secret:slack_webhook", _rc(r'https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]{20,}'), "[REDACTED_SLACK_WEBHOOK]"),
+    ("secret:discord_webhook", _rc(r'https://(?:ptb\.|canary\.)?discord(?:app)?\.com/api/webhooks/[0-9]{15,20}/[A-Za-z0-9_-]{60,}'), "[REDACTED_DISCORD_WEBHOOK]"),
+    ("secret:stripe_key", _rc(_TB + r'(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{20,247}' + _TA), "[REDACTED_STRIPE_KEY]"),
+    ("secret:stripe_webhook_secret", _rc(_TB + r'whsec_[A-Za-z0-9+/]{32,}' + _TA), "[REDACTED_STRIPE_WEBHOOK_SECRET]"),
+    ("secret:google_api_key", _rc(_TB + r'AIza[0-9A-Za-z_-]{35}' + _TA), "[REDACTED_GOOGLE_API_KEY]"),
+    ("secret:google_oauth_secret", _rc(_TB + r'GOCSPX-[A-Za-z0-9_-]{28}' + _TA), "[REDACTED_GOOGLE_OAUTH_SECRET]"),
+    ("secret:hf_token", _rc(_TB + r'hf_[A-Za-z0-9]{34,40}' + _TA), "[REDACTED_HF_TOKEN]"),
+    ("secret:npm_token", _rc(_TB + r'npm_[A-Za-z0-9]{36}' + _TA), "[REDACTED_NPM_TOKEN]"),
+    ("secret:pypi_token", _rc(_TB + r'pypi-AgE[A-Za-z0-9_-]{50,}' + _TA), "[REDACTED_PYPI_TOKEN]"),
+    ("secret:sendgrid_key", _rc(_TB + r'SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}' + _TA), "[REDACTED_SENDGRID_KEY]"),
+    ("secret:twilio_key", _rc(_ALNUM_B + r'SK(?:[0-9a-f]{32}|[0-9A-F]{32})' + _ALNUM_A), "[REDACTED_TWILIO_KEY]"),
+    ("secret:mailgun_key", _rc(_TB + r'key-[0-9a-f]{32}' + _TA), "[REDACTED_MAILGUN_KEY]"),
+    ("secret:shopify_token", _rc(_TB + r'shp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}' + _TA), "[REDACTED_SHOPIFY_TOKEN]"),
+    ("secret:digitalocean_token", _rc(_TB + r'do[opr]_v1_[a-f0-9]{64}' + _TA), "[REDACTED_DIGITALOCEAN_TOKEN]"),
+    ("secret:linear_key", _rc(_TB + r'lin_api_[A-Za-z0-9]{40}' + _TA), "[REDACTED_LINEAR_KEY]"),
+    ("secret:telegram_bot_token", _rc(_ALNUM_B + r'[0-9]{8,10}:AA[A-Za-z0-9_-]{33}' + _TA), "[REDACTED_TELEGRAM_BOT_TOKEN]"),
+    ("secret:azure_storage_key", _rc(r'(AccountKey=)([A-Za-z0-9+/]{86}==)'), r'\1[REDACTED_AZURE_STORAGE_KEY]'),
+    ("secret:databricks_token", _rc(_TB + r'dapi[a-f0-9]{32}(?:-[0-9])?' + _TA), "[REDACTED_DATABRICKS_TOKEN]"),
+    ("secret:vault_token", _rc(_TB + r'hv[sb]\.[A-Za-z0-9_-]{24,}' + _TA), "[REDACTED_VAULT_TOKEN]"),
+    ("secret:doppler_token", _rc(_TB + r'dp\.(?:st|pt|sa|scim|audit|ct)\.[A-Za-z0-9_.-]{40,}' + _TA), "[REDACTED_DOPPLER_TOKEN]"),
+    ("secret:newrelic_key", _rc(_TB + r'NR(?:AK|II)-[A-Z0-9]{27}' + _TA), "[REDACTED_NEWRELIC_KEY]"),
+    ("secret:groq_key", _rc(_TB + r'gsk_[A-Za-z0-9]{52}' + _TA), "[REDACTED_GROQ_KEY]"),
+    ("secret:xai_key", _rc(_TB + r'xai-[A-Za-z0-9]{80}' + _TA), "[REDACTED_XAI_KEY]"),
+    ("secret:dockerhub_pat", _rc(_TB + r'dckr_(?:pat|oat)_[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_DOCKERHUB_PAT]"),
+    ("secret:tavily_key", _rc(_TB + r'tvly-[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_TAVILY_KEY]"),
+    ("secret:firecrawl_key", _rc(_TB + r'fc-[A-Za-z0-9]{20,}' + _TA), "[REDACTED_FIRECRAWL_KEY]"),
+    ("secret:polar_token", _rc(_TB + r'polar_(?:oat|pat|(?:at|rt)_[uo]|ci|cs)_[A-Za-z0-9_-]{20,}' + _TA), "[REDACTED_POLAR_TOKEN]"),
+    ("secret:replicate_token", _rc(_TB + r'r8_[A-Za-z0-9]{37}' + _TA), "[REDACTED_REPLICATE_TOKEN]"),
+    ("secret:supabase_pat", _rc(_TB + r'sbp_[A-Za-z0-9_-]{30,}' + _TA), "[REDACTED_SUPABASE_PAT]"),
+    ("secret:square_token", _rc(_TB + r'(?:EAAA[A-Za-z0-9_-]{60}|sq0atp-[A-Za-z0-9_-]{22}|sq0csp-[A-Za-z0-9_-]{43})' + _TA),
      "[REDACTED_SQUARE_TOKEN]"),
-    ("secret:discord_bot_token", re.compile(_TB + r'[MNO][A-Za-z0-9_-]{22,26}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}' + _TA),
+    ("secret:discord_bot_token", _rc(_TB + r'[MNO][A-Za-z0-9_-]{22,26}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}' + _TA),
      "[REDACTED_DISCORD_BOT_TOKEN]"),
     # Provider formats from gitleaks v8.30.1 (MIT License, Copyright (c) 2019 Zachary Rice; notice at the end of this file).
-    ("secret:onepassword_sa_token", re.compile(_TB + r'ops_eyJ[A-Za-z0-9+/]{250,}={0,3}' + _TA), "[REDACTED_ONEPASSWORD_SA_TOKEN]"),
-    ("secret:age_secret_key", re.compile(_TB + r'AGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58}' + _TA), "[REDACTED_AGE_SECRET_KEY]"),
-    ("secret:alibaba_key_id", re.compile(_TB + r'LTAI[A-Za-z0-9]{20}' + _TA), "[REDACTED_ALIBABA_KEY_ID]"),
-    ("secret:artifactory_key", re.compile(_TB + r'AKCp[A-Za-z0-9]{69}' + _TA), "[REDACTED_ARTIFACTORY_KEY]"),
-    ("secret:cloudflare_origin_ca_key", re.compile(_TB + r'v1\.0-[a-f0-9]{24}-[a-f0-9]{146}' + _TA), "[REDACTED_CLOUDFLARE_ORIGIN_CA_KEY]"),
-    ("secret:dynatrace_token", re.compile(_TB + r'dt0c01\.[A-Za-z0-9]{24}\.[A-Za-z0-9]{64}' + _TA), "[REDACTED_DYNATRACE_TOKEN]"),
-    ("secret:easypost_key", re.compile(_TB + r'EZ(?:AK|TK)[A-Za-z0-9]{54}' + _TA), "[REDACTED_EASYPOST_KEY]"),
-    ("secret:flyio_token", re.compile(_TB + r'(?:fo1_[A-Za-z0-9_-]{43}|fm1[ar]_[A-Za-z0-9+/]{100,}={0,3}|fm2_[A-Za-z0-9+/]{100,}={0,3})' + _TA), "[REDACTED_FLYIO_TOKEN]"),
-    ("secret:grafana_token", re.compile(_TB + r'(?:glc_[A-Za-z0-9+/]{32,400}={0,3}|glsa_[A-Za-z0-9]{32}_[A-Fa-f0-9]{8})' + _TA), "[REDACTED_GRAFANA_TOKEN]"),
-    ("secret:terraform_cloud_token", re.compile(_TB + r'[a-z0-9]{14}\.atlasv1\.[A-Za-z0-9_=-]{60,70}' + _TA), "[REDACTED_TERRAFORM_CLOUD_TOKEN]"),
-    ("secret:heroku_key_v2", re.compile(_TB + r'HRKU-AA[A-Za-z0-9_-]{58}' + _TA), "[REDACTED_HEROKU_KEY_V2]"),
-    ("secret:notion_token", re.compile(_TB + r'ntn_[0-9]{11}[A-Za-z0-9]{35}' + _TA), "[REDACTED_NOTION_TOKEN]"),
-    ("secret:perplexity_key", re.compile(_TB + r'pplx-[A-Za-z0-9]{48}' + _TA), "[REDACTED_PERPLEXITY_KEY]"),
-    ("secret:planetscale_token", re.compile(_TB + r'pscale_(?:tkn|oauth|pw)_[A-Za-z0-9_=.-]{32,64}' + _TA), "[REDACTED_PLANETSCALE_TOKEN]"),
-    ("secret:postman_key", re.compile(_TB + r'PMAK-[A-Fa-f0-9]{24}-[A-Fa-f0-9]{34}' + _TA), "[REDACTED_POSTMAN_KEY]"),
-    ("secret:prefect_key", re.compile(_TB + r'pnu_[A-Za-z0-9]{36}' + _TA), "[REDACTED_PREFECT_KEY]"),
-    ("secret:pulumi_token", re.compile(_TB + r'pul-[a-f0-9]{40}' + _TA), "[REDACTED_PULUMI_TOKEN]"),
-    ("secret:readme_key", re.compile(_TB + r'rdme_[a-z0-9]{70}' + _TA), "[REDACTED_README_KEY]"),
-    ("secret:rubygems_key", re.compile(_TB + r'rubygems_[a-f0-9]{48}' + _TA), "[REDACTED_RUBYGEMS_KEY]"),
-    ("secret:brevo_key", re.compile(_TB + r'xkeysib-[a-f0-9]{64}-[A-Za-z0-9]{16}' + _TA), "[REDACTED_BREVO_KEY]"),
-    ("secret:sentry_user_token", re.compile(_TB + r'sntryu_[a-f0-9]{64}' + _TA), "[REDACTED_SENTRY_USER_TOKEN]"),
-    ("secret:shippo_key", re.compile(_TB + r'shippo_(?:live|test)_[a-fA-F0-9]{40}' + _TA), "[REDACTED_SHIPPO_KEY]"),
-    ("secret:openshift_token", re.compile(_TB + r'sha256~[A-Za-z0-9_-]{43}' + _TA), "[REDACTED_OPENSHIFT_TOKEN]"),
-    ("secret:teams_webhook", re.compile(_TB + r'https://[a-z0-9]+\.webhook\.office\.com/webhookb2/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}@[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}/IncomingWebhook/[a-z0-9]{32}/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}' + _TA), "[REDACTED_TEAMS_WEBHOOK]"),
-    ("secret:azure_ad_client_secret", re.compile(r'(?<![A-Za-z0-9_~.-])[A-Za-z0-9_~.]{3}[0-9]Q~[A-Za-z0-9_~.-]{30,33}[A-Za-z0-9_~-](?![A-Za-z0-9_~-])(?!\.[A-Za-z0-9_~-])'), "[REDACTED_AZURE_AD_CLIENT_SECRET]"),
+    ("secret:onepassword_sa_token", _rc(_TB + r'ops_eyJ[A-Za-z0-9+/]{250,}={0,3}' + _TA), "[REDACTED_ONEPASSWORD_SA_TOKEN]"),
+    ("secret:age_secret_key", _rc(_TB + r'AGE-SECRET-KEY-1[QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L]{58}' + _TA), "[REDACTED_AGE_SECRET_KEY]"),
+    ("secret:alibaba_key_id", _rc(_TB + r'LTAI[A-Za-z0-9]{20}' + _TA), "[REDACTED_ALIBABA_KEY_ID]"),
+    ("secret:artifactory_key", _rc(_TB + r'AKCp[A-Za-z0-9]{69}' + _TA), "[REDACTED_ARTIFACTORY_KEY]"),
+    ("secret:cloudflare_origin_ca_key", _rc(_TB + r'v1\.0-[a-f0-9]{24}-[a-f0-9]{146}' + _TA), "[REDACTED_CLOUDFLARE_ORIGIN_CA_KEY]"),
+    ("secret:dynatrace_token", _rc(_TB + r'dt0c01\.[A-Za-z0-9]{24}\.[A-Za-z0-9]{64}' + _TA), "[REDACTED_DYNATRACE_TOKEN]"),
+    ("secret:easypost_key", _rc(_TB + r'EZ(?:AK|TK)[A-Za-z0-9]{54}' + _TA), "[REDACTED_EASYPOST_KEY]"),
+    ("secret:flyio_token", _rc(_TB + r'(?:fo1_[A-Za-z0-9_-]{43}|fm1[ar]_[A-Za-z0-9+/]{100,}={0,3}|fm2_[A-Za-z0-9+/]{100,}={0,3})' + _TA), "[REDACTED_FLYIO_TOKEN]"),
+    ("secret:grafana_token", _rc(_TB + r'(?:glc_[A-Za-z0-9+/]{32,400}={0,3}|glsa_[A-Za-z0-9]{32}_[A-Fa-f0-9]{8})' + _TA), "[REDACTED_GRAFANA_TOKEN]"),
+    ("secret:terraform_cloud_token", _rc(_TB + r'[a-z0-9]{14}\.atlasv1\.[A-Za-z0-9_=-]{60,70}' + _TA), "[REDACTED_TERRAFORM_CLOUD_TOKEN]"),
+    ("secret:heroku_key_v2", _rc(_TB + r'HRKU-AA[A-Za-z0-9_-]{58}' + _TA), "[REDACTED_HEROKU_KEY_V2]"),
+    ("secret:notion_token", _rc(_TB + r'ntn_[0-9]{11}[A-Za-z0-9]{35}' + _TA), "[REDACTED_NOTION_TOKEN]"),
+    ("secret:perplexity_key", _rc(_TB + r'pplx-[A-Za-z0-9]{48}' + _TA), "[REDACTED_PERPLEXITY_KEY]"),
+    ("secret:planetscale_token", _rc(_TB + r'pscale_(?:tkn|oauth|pw)_[A-Za-z0-9_=.-]{32,64}' + _TA), "[REDACTED_PLANETSCALE_TOKEN]"),
+    ("secret:postman_key", _rc(_TB + r'PMAK-[A-Fa-f0-9]{24}-[A-Fa-f0-9]{34}' + _TA), "[REDACTED_POSTMAN_KEY]"),
+    ("secret:prefect_key", _rc(_TB + r'pnu_[A-Za-z0-9]{36}' + _TA), "[REDACTED_PREFECT_KEY]"),
+    ("secret:pulumi_token", _rc(_TB + r'pul-[a-f0-9]{40}' + _TA), "[REDACTED_PULUMI_TOKEN]"),
+    ("secret:readme_key", _rc(_TB + r'rdme_[a-z0-9]{70}' + _TA), "[REDACTED_README_KEY]"),
+    ("secret:rubygems_key", _rc(_TB + r'rubygems_[a-f0-9]{48}' + _TA), "[REDACTED_RUBYGEMS_KEY]"),
+    ("secret:brevo_key", _rc(_TB + r'xkeysib-[a-f0-9]{64}-[A-Za-z0-9]{16}' + _TA), "[REDACTED_BREVO_KEY]"),
+    ("secret:sentry_user_token", _rc(_TB + r'sntryu_[a-f0-9]{64}' + _TA), "[REDACTED_SENTRY_USER_TOKEN]"),
+    ("secret:shippo_key", _rc(_TB + r'shippo_(?:live|test)_[a-fA-F0-9]{40}' + _TA), "[REDACTED_SHIPPO_KEY]"),
+    ("secret:openshift_token", _rc(_TB + r'sha256~[A-Za-z0-9_-]{43}' + _TA), "[REDACTED_OPENSHIFT_TOKEN]"),
+    ("secret:teams_webhook", _rc(_TB + r'https://[a-z0-9]+\.webhook\.office\.com/webhookb2/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}@[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}/IncomingWebhook/[a-z0-9]{32}/[a-z0-9]{8}-(?:[a-z0-9]{4}-){3}[a-z0-9]{12}' + _TA), "[REDACTED_TEAMS_WEBHOOK]"),
+    ("secret:azure_ad_client_secret", _rc(r'(?<![A-Za-z0-9_~.-])[A-Za-z0-9_~.]{3}[0-9]Q~[A-Za-z0-9_~.-]{30,33}[A-Za-z0-9_~-](?![A-Za-z0-9_~-])(?!\.[A-Za-z0-9_~-])'), "[REDACTED_AZURE_AD_CLIENT_SECRET]"),
     # Password segment of scheme://user:password@host (any scheme, as DB_PASSWORD in patterns.js).
     # ASCII word boundary like the scrubber: a scheme after CJK or accented letters is still a URL.
-    ("secret:url_password", re.compile(r"((?<![A-Za-z0-9_])[a-zA-Z][a-zA-Z0-9+._-]{1,40}://[^\s:@/?#'\"`<>]{0,128}:)([^\s@/?#'\"`<>]{1,256})(@(?:[A-Za-z0-9.-]+|\[[0-9a-fA-F:]+\]))"), r'\1[REDACTED_URL_PASSWORD]\3'),
+    ("secret:url_password", _rc(r"((?<![A-Za-z0-9_])[a-zA-Z][a-zA-Z0-9+._-]{1,40}://[^\s:@/?#'\"`<>]{0,128}:)([^\s@/?#'\"`<>]{1,256})(@(?:[A-Za-z0-9.-]+|\[[0-9a-fA-F:]+\]))"), r'\1[REDACTED_URL_PASSWORD]\3'),
     # Authorization header with a bearer token (BEARER_TOKEN in patterns.js). zn's
     # own __ZN_<NAME>__ markers are not secrets (_pv_bearer_not_secret).
-    ("secret:bearer_token", re.compile(r'(Authorization[ \t]*:[ \t]*Bearer[ \t]+)([A-Za-z0-9._~+/=-]{20,})', re.IGNORECASE | re.ASCII), r'\1[REDACTED_BEARER_TOKEN]'),
+    ("secret:bearer_token", _rc(r'(Authorization[ \t]*:[ \t]*Bearer[ \t]+)([A-Za-z0-9._~+/=-]{20,})', re.IGNORECASE | re.ASCII), r'\1[REDACTED_BEARER_TOKEN]'),
 ]
 
 # Whole-match checks (patterns.js `check`), keyed by rule id.
@@ -1358,9 +1404,9 @@ PROVIDER_HINTS: Dict[str, Tuple[str, ...]] = {
 # the text those already redacted.
 # ---------------------------------------------------------------------------
 SCAN_SECRET_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
-    ("secret:cli_credential_flag", re.compile(r"""(?<![A-Za-z0-9_-])(--(?:api[-_]?key|password|passwd|token|secret|access[-_]token|auth[-_]token|client[-_]secret)=["']?)([^\s'"]{8,512})[^\s'"]*(["']?)"""), r'\1[REDACTED_SECRET]\3'),
+    ("secret:cli_credential_flag", _rc(r"""(?<![A-Za-z0-9_-])(--(?:api[-_]?key|password|passwd|token|secret|access[-_]token|auth[-_]token|client[-_]secret)=["']?)([^\s'"]{8,512})[^\s'"]*(["']?)"""), r'\1[REDACTED_SECRET]\3'),
     # The name is at most 40 characters before the keyword, so each start costs a bounded amount.
-    ("secret:credential_assignment", re.compile(r"""(?<![A-Za-z0-9_$])(\$?[A-Za-z0-9_]{0,40}?(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy])["']?[ \t]*(?::=|=>|=|:)[ \t]*["'])([^\s'"]{8,512})(["'])"""), r'\1[REDACTED_SECRET]\3'),
+    ("secret:credential_assignment", _rc(r"""(?<![A-Za-z0-9_$])(\$?[A-Za-z0-9_]{0,40}?(?:[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy])["']?[ \t]*(?::=|=>|=|:)[ \t]*["'])([^\s'"]{8,512})(["'])"""), r'\1[REDACTED_SECRET]\3'),
 ]
 
 SCAN_SECRET_VALUE_FILTERS = {
@@ -1370,8 +1416,8 @@ SCAN_SECRET_VALUE_FILTERS = {
 }
 
 SCAN_SECRET_PREFILTERS: Dict[str, re.Pattern[str]] = {
-    "secret:cli_credential_flag": re.compile(r"""--(?:api|pass|token|secret|access|auth|client)"""),
-    "secret:credential_assignment": re.compile(r"""[Pp][Aa][Ss][Ss][Ww]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy]"""),
+    "secret:cli_credential_flag": _rc(r"""--(?:api|pass|token|secret|access|auth|client)"""),
+    "secret:credential_assignment": _rc(r"""[Pp][Aa][Ss][Ss][Ww]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|[Kk][Ee][Yy]"""),
 }
 
 
@@ -1392,32 +1438,32 @@ SCAN_SECRET_PREFILTERS: Dict[str, re.Pattern[str]] = {
 # quote inside _KV_MAX_VALUE characters are left alone. One pass over the
 # text, and each opener reads at most _KV_MAX_VALUE characters.
 # ---------------------------------------------------------------------------
-_KV_OPEN_RE = re.compile(
+_KV_OPEN_RE = _rc(
     r"""(password|passwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?token)"""
     r"""(\\{0,2}["'])?[ \t]{0,16}(?:=>|:=|=|:)[ \t]{0,16}(\\{0,2}["'])?""",
     re.IGNORECASE | re.ASCII)
-_KV_PREFILTER_RE = re.compile(r"""pass|secret|token|api[_-]?key|access[_-]?key|private[_-]?key""", re.IGNORECASE | re.ASCII)
+_KV_PREFILTER_RE = _rc(r"""pass|secret|token|api[_-]?key|access[_-]?key|private[_-]?key""", re.IGNORECASE | re.ASCII)
 _KV_MAX_VALUE = 4096
 _KV_MIN_VALUE = 8
-_KV_NUMBER_RE = re.compile(r"""-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?""")
-_KV_MASK_RE = re.compile(r"""-?([0-9])\1+""")
-_KV_WORD_CHAR_RE = re.compile(r"""[A-Za-z0-9_.-]""")
-_KV_WORD_RUN_RE = re.compile(r"""[A-Za-z0-9_.-]*""")
-_KV_BACKSLASH_RE = re.compile(r"""\\""")
-_KV_BACKSLASH_RUN_RE = re.compile(r"""\\+""")
-_KV_DQUOTE_SPECIAL_RE = re.compile(r"""["\\]""")
+_KV_NUMBER_RE = _rc(r"""-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?""")
+_KV_MASK_RE = _rc(r"""-?([0-9])\1+""")
+_KV_WORD_CHAR_RE = _rc(r"""[A-Za-z0-9_.-]""")
+_KV_WORD_RUN_RE = _rc(r"""[A-Za-z0-9_.-]*""")
+_KV_BACKSLASH_RE = _rc(r"""\\""")
+_KV_BACKSLASH_RUN_RE = _rc(r"""\\+""")
+_KV_DQUOTE_SPECIAL_RE = _rc(r"""["\\]""")
 # JavaScript's \s: the same set of characters as in the Node.js scrubber.
 _KV_SPACE = '\t\n\x0b\x0c\r \xa0  -     　﻿'
-_KV_SPACE_RE = re.compile('[' + _KV_SPACE + ']')
-_KV_AUTH_WORD_RE = re.compile('(?:bearer|basic|token)[' + _KV_SPACE + ']+', re.IGNORECASE | re.ASCII)
+_KV_SPACE_RE = _rc('[' + _KV_SPACE + ']')
+_KV_AUTH_WORD_RE = _rc('(?:bearer|basic|token)[' + _KV_SPACE + ']+', re.IGNORECASE | re.ASCII)
 # A placeholder, or a reference after an auth scheme word ("Bearer ${TOKEN}").
-_KV_PLACEHOLDER_RE = re.compile(
+_KV_PLACEHOLDER_RE = _rc(
     r"""(?:x{3,}|\*{3,}|\.{3,}|-+|_+|<[^>]*>|\$\{?[^}]*\}?|\{\{?[^}]*\}?\}|%\(?[a-z_]*\)?s|:[a-z_]+|\[[^\]]*\])""",
     re.IGNORECASE | re.ASCII)
-_KV_PLACEHOLDER_WORDS_RE = re.compile(
+_KV_PLACEHOLDER_WORDS_RE = _rc(
     r"""(?:^|[^a-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|redacted|dummy|sample|foobar|hunter2|xxxx|todo|insert|replace|mypass|pass(?:word)?123)(?:[^a-z]|$)""",
     re.IGNORECASE | re.ASCII)
-_KV_REPEAT_RE = re.compile('([^\n\r  ])\\1+')
+_KV_REPEAT_RE = _rc('([^\n\r  ])\\1+')
 QUOTED_CREDENTIAL_RULE = "secret:quoted_credential"
 _KV_REPLACEMENT = "[REDACTED_SECRET]"
 
@@ -1745,13 +1791,13 @@ def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern[str], str]]) ->
 # holds both a letter and a digit is masked, so a credential format the table
 # above does not know does not reach a terminal, a CI log or the ledger. A UUID
 # is kept (an identifier, not a credential); a 64-hex digest is masked.
-_TOKEN_RUN_RE = re.compile(r'[A-Za-z0-9_\-+/=]{24,}')
-_UUID_FULL_RE = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
-_UUID_RE = re.compile(r'(?<![0-9A-Za-z])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Za-z])')
-_RUN_SEP_RE = re.compile(r'[-_/]+')
+_TOKEN_RUN_RE = _rc(r'[A-Za-z0-9_\-+/=]{24,}')
+_UUID_FULL_RE = _rc(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
+_UUID_RE = _rc(r'(?<![0-9A-Za-z])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Za-z])')
+_RUN_SEP_RE = _rc(r'[-_/]+')
 # One part of an identifier: a word (lower, Capitalized or camelCase) with an
 # optional short number, or a short number.
-_WORDY_PART_RE = re.compile(r'(?:[A-Z]+\d{0,4}|[A-Za-z][a-z]*(?:[A-Z][a-z]+)*[A-Z]?\d{0,4}|\d{1,4})?')
+_WORDY_PART_RE = _rc(r'(?:[A-Z]+\d{0,4}|[A-Za-z][a-z]*(?:[A-Z][a-z]+)*[A-Z]?\d{0,4}|\d{1,4})?')
 
 
 def _wordy_run(run: str) -> bool:
@@ -1794,7 +1840,7 @@ MAX_TOOL_RESULT_SCAN_CHARS = 4 * 1024 * 1024
 MIN_INVISIBLE_CHECK_CHARS = 64 * 1024
 MAX_INVISIBLE_CHARS = 200000
 INVISIBLE_BLOCK_REASON = 'Output is mostly invisible characters'
-_SUBDIVISION_FLAG_RE = re.compile('\U0001F3F4[\U000E0030-\U000E0039\U000E0061-\U000E007A]{2,7}\U000E007F')
+_SUBDIVISION_FLAG_RE = _rc('\U0001F3F4[\U000E0030-\U000E0039\U000E0061-\U000E007A]{2,7}\U000E007F')
 
 
 def too_invisible(strings: Any) -> bool:
