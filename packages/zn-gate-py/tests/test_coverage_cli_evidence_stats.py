@@ -408,6 +408,11 @@ def test_cmd_status_local_and_cloud(capsys, monkeypatch):
     with mock.patch.object(cli, "is_cloud_enabled", return_value=False):
         cli.cmd_status(argparse.Namespace())
     assert "unused: cloud requires ZN_CLOUD=1" in capsys.readouterr().out
+    monkeypatch.setenv("ZN_LOCAL_ONLY", "true")
+    with mock.patch.object(cli, "is_cloud_enabled", return_value=False):
+        cli.cmd_status(argparse.Namespace())
+    assert "unused: ZN_LOCAL_ONLY=true overrides ZN_CLOUD=1" in capsys.readouterr().out
+    monkeypatch.delenv("ZN_LOCAL_ONLY")
     with mock.patch.object(cli, "is_cloud_enabled", return_value=True), \
          mock.patch.object(cli, "resolve_endpoint", return_value="https://api.example.invalid/v30"):
         cli.cmd_status(argparse.Namespace())
