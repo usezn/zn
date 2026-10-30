@@ -260,8 +260,9 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
     belongs to VS Code's older Local harness, not to this one. With
     `zn hooks install claude-code --project` and Copilot set up too, one shell
     call runs zn twice: both answer the same, and the check takes about twice as
-    long (measured with Copilot CLI, not in the VS Code app: 91 ms and 101 ms,
-    two Node.js starts, for one `cat .env` call, instead of one). Not a protection gap; `zn-gate check`
+    long (measured by running both installed hooks the way the documented harness
+    starts them, with a fake `.env`; not in VS Code or Copilot CLI: 91 ms and
+    101 ms, two Node.js starts, for one `cat .env` call, instead of one). Not a protection gap; `zn-gate check`
     says so and names the command that keeps one of them. Hooks in your user
     `~/.claude/settings.json` are not read by Copilot.
   - VS Code also has an older "Local" hook harness; its discovery and payloads

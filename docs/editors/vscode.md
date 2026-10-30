@@ -66,7 +66,7 @@ zn-gate has not run inside the VS Code app: the sections above are what the docu
 
 ### If zn-gate also protects Claude Code in the same project
 
-If the project holds zn-gate's Claude Code hooks (`zn hooks install claude-code --project` wrote `.claude/settings.json`), the Copilot harness (VS Code and Copilot CLI) can run both files for the same tool call, with no setting needed. Both give the same answer, and the check takes about twice as long (measured with Copilot CLI, not in the VS Code app: two Node.js starts, 91 ms and 101 ms for one call). `zn-gate check` says so. To keep one: if you do not use Claude Code in this project, run `zn hooks uninstall claude-code --project`; if you do, run `zn hooks uninstall copilot` (and `zn hooks uninstall copilot --project` if you installed it there).
+If the project holds zn-gate's Claude Code hooks (`zn hooks install claude-code --project` wrote `.claude/settings.json`), the Copilot harness (VS Code and Copilot CLI) can run both files for the same tool call, with no setting needed. Both give the same answer, and the check takes about twice as long (measured by running both installed hooks the way the documented harness starts them; not in VS Code or Copilot CLI: two Node.js starts, 91 ms and 101 ms for one call). `zn-gate check` says so. To keep one: if you do not use Claude Code in this project, run `zn hooks uninstall claude-code --project`; if you do, run `zn hooks uninstall copilot` (and `zn hooks uninstall copilot --project` if you installed it there).
 
 ## Technical reference
 

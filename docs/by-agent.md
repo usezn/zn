@@ -14,6 +14,7 @@ The hooks need zn-gate 1.5 or later from npm (`npm install -g zn-gate`).
 | Codex CLI | `zn hooks install codex`, then trust it in `/hooks` | `npx -y zn-gate check` | `zn hooks uninstall codex` |
 | OpenCode | `zn hooks install opencode` | `npx -y zn-gate check` (checks zn's rules; the plugin runs inside OpenCode) | `zn hooks uninstall opencode` |
 | [Cursor](editors/cursor.md) | `zn hooks install cursor` | `npx -y zn-gate check` | `zn hooks uninstall cursor` |
+| [GitHub Copilot (VS Code, CLI)](editors/vscode.md) | `zn hooks install copilot` | `npx -y zn-gate check` | `zn hooks uninstall copilot` |
 | [Google Antigravity](editors/antigravity.md) (experimental) | `zn hooks install antigravity` | `npx -y zn-gate check` | `zn hooks uninstall antigravity` |
 
 Add `--project` to the install and uninstall commands to work on one project only; run them from that project's folder. A backup of the settings file is written first. More: [Remove zn-gate](uninstall.md#piece-by-piece).
@@ -24,7 +25,6 @@ zn-gate does not install hooks for these yet. You add the zn-gate MCP server to 
 
 | Agent | Install | Verify | Uninstall |
 | - | - | - | - |
-| [VS Code (GitHub Copilot)](editors/vscode.md) | [Install steps](editors/vscode.md#install-no-coding-needed) | [Verify](editors/vscode.md#verify) | [Uninstall](editors/vscode.md#uninstall) |
 | [Windsurf (Devin Desktop)](editors/windsurf.md) | [Install steps](editors/windsurf.md#install-no-coding-needed) | [Verify](editors/windsurf.md#verify) | [Uninstall](editors/windsurf.md#uninstall) |
 | [Cline](editors/cline.md) | [Install steps](editors/cline.md#install-no-coding-needed) | [Verify](editors/cline.md#verify) | [Uninstall](editors/cline.md#uninstall) |
 | [Zed](editors/zed.md) | [Install steps](editors/zed.md#install-no-coding-needed) | [Verify](editors/zed.md#verify) | [Uninstall](editors/zed.md#uninstall) |
