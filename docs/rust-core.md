@@ -8,6 +8,8 @@ The Rust gateway reads `ZN_API_KEY` as the key for its own management API. It ne
 
 On first start, with an empty database, the gateway seeds a default organisation with a super-admin key: `ZN_API_KEY` if it is set, otherwise a random key. A random key is written to `zn-superadmin-key.txt` next to the audit database (`zn.db` by default), readable only by your user (mode 0600 on Unix; on Windows the file inherits the permissions of its directory). Copy it somewhere safe, then delete the file. The key is never printed, so it does not end up in terminal scrollback or container logs; earlier versions printed a generated key to stdout. If the file cannot be written, the gateway does not start and seeds nothing.
 
+The gateway's rules do not cover shell commands the way the [destructive-command check](destructive-commands.md) of `zn-gate` does. Its restricted-command rule blocks any call that contains the word `rm`, `dd`, `chmod`, `chown`, `mkfs`, `format`, `shutdown` or `reboot`, whatever the target, so it also blocks harmless commands such as `rm -rf ./build`. It has no rule for a download piped into a shell, a download written over a shell startup file, a fork bomb, or writing to a disk device with a redirect (`cat /dev/zero > /dev/sda`). Do not rely on it to stop destructive commands: use `zn-gate`.
+
 > For agent protection (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, LangChain, CrewAI), use `zn-gate` (Node.js) or `zn-gate` on PyPI (Python). They need no compilation.
 
 ## Hardening (October 2026)
