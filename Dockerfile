@@ -6,7 +6,8 @@
 # Server: docker run --rm -p 9090:9090 zn start
 
 # --- Stage 1: build ----------------------------------------------------------
-FROM rust:1-bookworm AS builder
+# Base images are pinned by multi-arch index digest; Dependabot (docker) updates the digests.
+FROM rust:1-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b AS builder
 
 # Pinned protoc (matches the version the project is verified against).
 # candle-onnx's build script (prost-build) compiles the ONNX protobuf schema;
@@ -30,7 +31,7 @@ COPY src ./src
 RUN cargo build --locked --release
 
 # --- Stage 2: runtime --------------------------------------------------------
-FROM gcr.io/distroless/cc-debian12
+FROM gcr.io/distroless/cc-debian12@sha256:e5d81ddde149641e2a9ba55be4545bc125c67de07508b03ba4c22e6eb0ded5aa
 
 COPY --from=builder /build/target/release/zn /zn
 
