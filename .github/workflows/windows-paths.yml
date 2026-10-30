@@ -71,12 +71,16 @@ jobs:
         run: |
           $git = 'C:\Program Files\Git'
           if (-not (Test-Path "$git\usr\bin\sh.exe")) { throw "Git for Windows is not at $git" }
-          cmd /c mklink /D C:\bin "$git\usr\bin"
-          if ($LASTEXITCODE -ne 0) { throw 'could not link C:\bin' }
-          & C:\bin\sh.exe -c 'exit 0'
-          if ($LASTEXITCODE -ne 0) { throw '/bin/sh does not start' }
+          # A program started as /bin/sh is looked up in the root of the current drive, which is the drive of the workspace.
+          $drive = Split-Path -Qualifier $env:GITHUB_WORKSPACE
+          if (-not (Test-Path "$drive\bin")) {
+            cmd /c mklink /D "$drive\bin" "$git\usr\bin"
+            if ($LASTEXITCODE -ne 0) { throw "could not link $drive\bin" }
+          }
           # Appended, not prepended: the Windows tools keep their place before the Git for Windows ones.
           "Path=$env:Path;$git\usr\bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          node -e "process.exit(require('child_process').spawnSync('/bin/sh', ['-c', 'exit 0']).status === 0 ? 0 : 1)"
+          if ($LASTEXITCODE -ne 0) { throw "/bin/sh does not start from $drive" }
       - name: Check that sh starts from the PATH
         shell: pwsh
         run: |
@@ -86,17 +90,21 @@ jobs:
         working-directory: packages/zn-gate
         run: npm ci --ignore-scripts
       - name: zn-gate unit tests
-        # Bash, so that a failing npm test fails the step through the pipe. The tests skipped on Windows are counted
-        # from the node --test summary and compared with .github/windows-skip-baseline.txt: a new skip fails the job,
-        # fewer skips do not.
-        shell: bash
+        # PowerShell, so that the tests see the Windows tools (whoami, icacls) first. The output is also kept in a file
+        # for the next step. The step fails on the exit code of npm test.
         working-directory: packages/zn-gate
         run: |
-          set -o pipefail
-          npm test 2>&1 | tee "$RUNNER_TEMP/unit.log"
-          count=$(grep -E '^(#|ℹ) skipped [0-9]+' "$RUNNER_TEMP/unit.log" | awk '{ s += $3 } END { print s + 0 }')
-          found=$(grep -c -E '^(#|ℹ) skipped [0-9]+' "$RUNNER_TEMP/unit.log" || true)
-          base=$(grep -v '^#' ../../.github/windows-skip-baseline.txt | tr -d '[:space:]')
+          npm test | Tee-Object -FilePath "$env:RUNNER_TEMP\unit.log"
+          exit $LASTEXITCODE
+      - name: Count the tests skipped on Windows
+        # Counted from the node --test summaries and compared with .github/windows-skip-baseline.txt: a new skip fails
+        # the job, fewer skips do not.
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/unit.log"
+          count=$(grep -a -E '^(#|ℹ) skipped [0-9]+' "$log" | awk '{ s += $3 } END { print s + 0 }')
+          found=$(grep -a -c -E '^(#|ℹ) skipped [0-9]+' "$log" || true)
+          base=$(grep -v '^#' .github/windows-skip-baseline.txt | tr -d '[:space:]')
           echo "Tests skipped on Windows: $count (baseline $base)"
           echo "Tests skipped on Windows: $count (baseline $base)" >> "$GITHUB_STEP_SUMMARY"
           case "$base" in ''|*[!0-9]*) echo 'The baseline in .github/windows-skip-baseline.txt is not a number.'; exit 1;; esac
