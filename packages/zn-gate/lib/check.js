@@ -351,16 +351,17 @@ function claudePlugin(home, env) {
 }
 
 /* A note when the plugin in `root` is not the version of this zn-gate, or ''. The plugin runs its own pinned copy of
-   zn-gate, so Claude Code's tool calls follow the rules of the plugin's version. Which one to update depends on which is
+   zn-gate, so Claude Code is protected by the rules of the plugin's version. Which one to update depends on which is
    older; a pre-release command (an rc being tried) only shows both versions. */
 function pluginVersionNote(root, own = require('../package.json').version) {
-  const manifest = readJson(path.join(root, '.claude-plugin', 'plugin.json'));
-  const v = manifest && typeof manifest.version === 'string' ? manifest.version : '';
+  // The launcher runs the version pinned in scripts/zn-gate.lock.json; plugin.json is only the fallback.
+  const versionIn = (file) => { const j = readJson(file); return j && typeof j.version === 'string' ? j.version : ''; };
+  const v = versionIn(path.join(root, 'scripts', 'zn-gate.lock.json')) || versionIn(path.join(root, '.claude-plugin', 'plugin.json'));
   if (!v || v === own) return '';
   const both = 'the zn-gate plugin is version ' + v + ' and the zn-gate command is ' + own;
   if (/-/.test(own)) return both;
   if (require('./init-guide')._internal.cmp(v, own) < 0) {
-    return both + ', so Claude Code\'s tool calls follow the rules of zn-gate ' + v + '. To match them, run `claude plugin update zn-gate@usezn` in your own terminal and start a new Claude Code session';
+    return both + ', so Claude Code is protected by the rules of zn-gate ' + v + '. To match them, run `claude plugin update zn-gate@usezn` in your own terminal and start a new Claude Code session';
   }
   return both + ', so this check runs older rules than the plugin. To match them, run `npm install -g zn-gate@latest` (or `npx -y zn-gate@latest check`) in your own terminal';
 }
