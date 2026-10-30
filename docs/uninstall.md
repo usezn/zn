@@ -1,6 +1,6 @@
 # Remove zn-gate
 
-You can remove zn-gate in one step, or piece by piece. Either way, run the commands yourself, in your own terminal: zn-gate refuses to uninstall when an AI agent or a script runs it, and your agent is not allowed to run it for you.
+You can remove zn-gate in one step, or piece by piece. Either way, run the commands yourself, in your own terminal (the window where you type commands): zn-gate refuses to uninstall when an AI agent or a script runs it, and your agent is not allowed to run it for you.
 
 None of this changes your code.
 
@@ -14,11 +14,11 @@ npx -y zn-gate uninstall
 
 What it does:
 
-1. **It looks first.** It finds what zn-gate set up for your user and for the folder you are in: the Claude Code plugin, zn's hooks for each agent, and MCP servers that `init --wrap-mcp` wrapped. It prints the list with the file paths. Only the hooks of the folder you are in are found: if you used `--project` in several projects, run it again from each project folder.
+1. **It looks first.** It finds what zn-gate set up for your user and for the folder you are in: the Claude Code plugin (zn-gate's add-on for Claude Code), zn's hooks for each agent (small checks the agent runs around its tool use), and MCP servers that `init --wrap-mcp` wrapped (an MCP server is an extra tool your agent can call; wrapping makes it start through zn's checking layer). It prints the list with the file paths. Only the hooks of the folder you are in are found: if you used `--project` in several projects, run it again from each project folder.
 2. **It asks in your terminal.** Nothing is removed until you answer yes to "Remove what is listed above?".
-3. **It removes what it listed.** For wrapped MCP servers it puts back the copy of the config saved before wrapping (changes you made to that file since are lost), then looks again and lists any server that is still wrapped, with the manual step. Hooks and the plugin are removed as the manual steps below do. If a step cannot be done, it says so and prints what to run yourself: for example, a wrapped MCP server with no saved copy is left as it is (remove the "zn-gate shield" wrapper by hand), and if the `claude` command is not found, the plugin is not removed and the command to remove it is printed.
-4. **It keeps your vault.** The vault holds your stored secrets. It is only deleted if you answer yes to a second, separate question, and the default is no. That second yes deletes the vault files (and the local audit log, `audit.jsonl`, which sits next to them) and then the vault key in your system keychain. If a file cannot be removed, the key is kept so what is left still opens, and uninstall says which files remain. Before it asks, it lists everything the second yes deletes: the vault files, every `vault-backup-*` folder, the token maps, the session key and the audit log. It also deletes every `vault-backup-*` folder (the encrypted copies made by `zn vault reset`), the token maps and the session key, then checks that none is left; if one cannot be removed, or the keychain entry stays, uninstall says so instead of reporting the vault as deleted. The rest of the `.zn` folder stays: your settings. The vault is kept, not deleted, if it is unlocked (run `zn-gate lock`, then run uninstall again) or if the computer is managed by a zn Team organization. Deleting it cannot be undone.
-5. **It tells you if something is left.** If any step failed, it exits with code `1` (see [exit codes](cli.md#uninstall)); `0` means everything listed was removed.
+3. **It removes what it listed.** For wrapped MCP servers it puts back the copy of the settings file saved before wrapping (changes you made to that file since are lost), then looks again and lists any server that is still wrapped, with the manual step. Hooks and the plugin are removed as the manual steps below do. If a step cannot be done, it says so and prints what to run yourself: for example, a wrapped MCP server with no saved copy is left as it is (remove the "zn-gate shield" wrapper by hand), and if the `claude` command is not found, the plugin is not removed and the command to remove it is printed.
+4. **It keeps your vault.** The vault holds your stored secrets in encrypted form. It is only deleted if you answer yes to a second, separate question, and the default is no. That second yes deletes the vault files (and the local audit log, `audit.jsonl`, the record of what zn decided, which sits next to them) and then the vault key in your system keychain (the password store of your operating system). If a file cannot be removed, the key is kept so what is left still opens, and uninstall says which files remain. Before it asks, it lists everything the second yes deletes: the vault files, every `vault-backup-*` folder, the token maps (lists of which marker stands for which value), the session key (a key zn keeps while the vault is unlocked) and the audit log. It also deletes every `vault-backup-*` folder (the encrypted copies made by `zn vault reset`), the token maps and the session key, then checks that none is left; if one cannot be removed, or the keychain entry stays, uninstall says so instead of reporting the vault as deleted. The rest of the `.zn` folder (zn's own folder inside your home folder) stays: your settings. The vault is kept, not deleted, if it is unlocked (run `zn-gate lock`, then run uninstall again) or if the computer is managed by a zn Team organization (zn's optional service for organizations). Deleting it cannot be undone.
+5. **It tells you if something is left.** If any step failed, it ends with exit code `1`, the number a command returns when it finishes (see [exit codes](cli.md#uninstall)); `0` means everything listed was removed.
 6. **It ends with `zn-gate check`**, so you see that zn-gate is off, and prints the last step: `npm uninstall -g zn-gate`, which removes the program itself.
 
 To see the list without changing anything, add `--dry-run`:
@@ -27,7 +27,7 @@ To see the list without changing anything, add `--dry-run`:
 npx -y zn-gate uninstall --dry-run
 ```
 
-Your `.env` files are never edited by `uninstall`. If you moved their values into the vault with `env shadow`, they hold markers such as `__ZN_API_KEY__`. Put the real values back before you delete the vault: see [Your `.env` files and the vault](#your-env-files-and-the-vault).
+Your `.env` files (project files that hold secrets) are never edited by `uninstall`. If you moved their values into the vault with `env shadow`, they hold markers (stand-ins for the real values) such as `__ZN_API_KEY__`. Put the real values back before you delete the vault: see [Your `.env` files and the vault](#your-env-files-and-the-vault).
 
 ## What each command removes and leaves
 
@@ -37,7 +37,7 @@ This is a summary of the sections below. Each command is run in your own termina
 | --- | --- | --- |
 | `npx -y zn-gate uninstall` | What it lists and you confirm: the Claude Code plugin, zn's hooks for each agent, and wrapped MCP servers (restored from the saved copy). | Your code and your `.env` files. The vault, unless you answer yes to the second question. The rest of the `.zn` folder (settings and `vault-backup-*` folders). The program itself (`npm uninstall -g zn-gate`). |
 | `claude plugin uninstall zn-gate@usezn` | The Claude Code plugin. | Hooks, wrapped MCP servers, the vault and the program. |
-| `npx -y zn-gate hooks uninstall claude-code` | zn's hooks for that agent (for Claude Code, also zn's own `secrets` MCP server unless you add `--no-mcp`). A backup of the settings file is written first. | The plugin, wrapped MCP servers, the vault and the program. |
+| `npx -y zn-gate hooks uninstall claude-code` | zn's hooks for that agent (for Claude Code, also zn's own `secrets` MCP server, the tool that sends web requests with a stored secret, unless you add `--no-mcp`). A backup of the settings file is written first. | The plugin, wrapped MCP servers, the vault and the program. |
 | `npx -y zn-gate init --revert` | The MCP wrapping: each MCP settings file is put back as it was saved before wrapping. | The plugin, hooks, the vault and the program. Later changes to those MCP files are lost. |
 | `npm uninstall -g zn-gate` | The program itself. | The `.zn` folder with the vault and settings. |
 
@@ -83,11 +83,13 @@ zn-gate keeps the vault and its settings in a `.zn` folder in your home folder. 
 
 ### The program itself
 
+`npm` is the installer that comes with Node.js, and `-g` means it was installed for the whole computer.
+
 ```bash
 npm uninstall -g zn-gate
 ```
 
-If you also installed the Python package, `pip uninstall zn-gate` removes it.
+If you also installed the Python package, `pip uninstall zn-gate` (pip is Python's installer) removes it.
 
 ## Check that it is off
 

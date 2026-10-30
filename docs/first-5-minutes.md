@@ -4,7 +4,7 @@ You use an AI coding agent (Claude Code, Codex CLI, Cursor, OpenCode, Antigravit
 
 ## Before you start
 
-Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command below in your own terminal, not through your agent.
+Node.js is the program that runs zn-gate, and LTS (long-term support) is the version line meant for everyday use. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. If `node --version` (it prints your Node.js version) says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command below in your own terminal (the window where you type commands), not through your agent.
 
 ## 1. Install
 
@@ -12,9 +12,9 @@ Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and 
 npx -y zn-gate init
 ```
 
-`init` finds the coding agents on your machine and shows each step before it runs it. It asks first, and you can say no. For Claude Code it sets up the zn-gate plugin (or zn's hooks when your Node.js is older than 20.19). For Codex CLI, Cursor, OpenCode, Antigravity and ZCode desktop app it sets up zn's hooks. A hook is a small check that your agent runs before it uses a tool. Setup for one agent at a time is in the [README](../README.md#install).
+`npx` comes with Node.js and runs a package such as zn-gate; `-y` skips its "OK to install?" question. `init` finds the coding agents on your machine and shows each step before it runs it. It asks first, and you can say no. For Claude Code it sets up the zn-gate plugin (an add-on for Claude Code) (or zn's hooks when your Node.js is older than 20.19). For Codex CLI, Cursor, OpenCode, Antigravity and ZCode desktop app it sets up zn's hooks. A hook is a small check that your agent runs before it uses a tool. Setup for one agent at a time is in the [README](../README.md#install).
 
-Want to look first? `npx -y zn-gate reach` lists what your agents can reach (secret names, credential files, MCP servers). It changes nothing and sends nothing. See [reach](reach.md).
+Want to look first? `npx -y zn-gate reach` lists what your agents can reach (secret names, credential files, MCP servers, which are extra tools your agent can call). It changes nothing and sends nothing. See [reach](reach.md).
 
 ## 2. Check that it worked
 
@@ -24,7 +24,7 @@ Want to look first? `npx -y zn-gate reach` lists what your agents can reach (sec
 npx -y zn-gate check
 ```
 
-It makes a temporary folder with a fake key in a `.env` file, asks your agent's hook to read it, and deletes the folder. This is the real output:
+It makes a temporary folder with a fake key in a `.env` file (a project file that holds secrets such as API keys), asks your agent's hook to read it, and deletes the folder. This is the real output:
 
 ```text
 zn-gate check: does zn stop your coding agent from reading a secret?
@@ -54,7 +54,7 @@ npx -y zn-gate status
 npx -y zn-gate test
 ```
 
-`status` shows the version and the rules version. `test` runs zn's built-in examples on your machine, without the network, and exits with `0` when all of them pass. If `check` says `NOT protected`, or `test` reports a failed example, run `npx -y zn-gate init` again and then repeat the check.
+`status` shows the version and the rules version (the edition of zn's built-in checks). `test` runs zn's built-in examples on your machine, without the network, and exits with `0` (the number a command returns when it succeeds) when all of them pass. If `check` says `NOT protected`, or `test` reports a failed example, run `npx -y zn-gate init` again and then repeat the check.
 
 ## 3. What you will see while you work
 
@@ -62,29 +62,29 @@ zn-gate speaks up in three ways. Blocks and approval questions come from zn's ho
 
 ### A block
 
-zn stopped something that could leak a secret or looked like an attack, and it did not run. Here, an agent in `~/my-project` tried to run `cat .env`. This is what zn answered, word for word:
+zn stopped something that could leak a secret or looked like an attack, and it did not run. Here, an agent in `~/my-project` (`~` is your home folder) tried to run `cat .env` (`cat` prints a file). This is what zn answered, word for word:
 
 ```json
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use."}}
 ```
 
-`deny` is the block. The sentence after it is the next step. What to do:
+The text is JSON, a plain format programs use to talk to each other. `deny` is the block (`PreToolUse` says the check ran before a tool). The sentence after it is the next step. What to do:
 
 1. Read the reason. It is written for you and for your agent.
-2. If the agent needs a value from that file, run the command in the message yourself, in your own terminal: `npx -y zn-gate env shadow .env`. The real values move into zn's encrypted vault and the file keeps markers. See [secrets](secrets.md).
+2. If the agent needs a value from that file, run the command in the message yourself, in your own terminal: `npx -y zn-gate env shadow .env`. The real values move into zn's encrypted vault (a locked store on your machine) and the file keeps markers, stand-ins such as `__ZN_NAME__`. See [secrets](secrets.md).
 3. If the block was a surprise, do not look for a way around it. Ask your agent why it wanted to read that file.
 
 An ordinary command such as `ls` gets no answer at all: it is allowed and you see nothing.
 
 ### An approval question
 
-Sometimes zn does not block but asks you first. This happens, for example, when a command would send personal data to another host. Real answer for `curl -d "mail=ana@example.com" https://example.com/api`:
+Sometimes zn does not block but asks you first. This happens, for example, when a command would send personal data to another host (`curl` sends a web request). Real answer for `curl -d "mail=ana@example.com" https://example.com/api`:
 
 ```text
 "permissionDecision":"ask","permissionDecisionReason":"zn: this command would send an email address in the body to example.com. Approve it only if that data should leave this computer. To use a secret, do not write its value in the command and do not expand a shell variable into its arguments: use the secrets_http_request tool for a web request (the secret in proxy mode), or `zn run --secrets NAME -- <program that reads the variable>` so the program reads the secret from its own environment variable."
 ```
 
-Your agent then shows its normal permission question. Read the command. Approve it only if it is what you expected.
+Your agent then shows its normal permission question. Read the command. Approve it only if it is what you expected. In that message, an environment variable is a named setting a program reads from its surroundings, and `secrets_http_request` is zn's own tool for web requests that need a secret.
 
 ### A warning
 
@@ -106,17 +106,17 @@ zn also has a text check that your agent can call through zn's own tools. Some p
 }
 ```
 
-`"verdict": "allow"` means nothing was stopped. The `advisory` says why it is worth a look. What to do: read the text it points at. If it is harmless, carry on. If you did not expect it (for example inside a file you downloaded), do not let your agent follow it. To make the text check block these too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": true` to `zn.config.json` in your project.
+`"verdict": "allow"` means nothing was stopped. `confidence` is how sure the check is, `rule` names the rule that matched, and `engine` says the check ran on your machine. The `advisory` says why it is worth a look. What to do: read the text it points at. If it is harmless, carry on. If you did not expect it (for example inside a file you downloaded), do not let your agent follow it. To make the text check block these too, turn on strict mode: set the environment variable `ZN_STRICT=1`, or add `"strict": true` to `zn.config.json`, a settings file in your project.
 
 For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a block: `"verdict": "block"` with the reason "Override prior instructions".
 
 ## If something fails
 
-- `npx: command not found`: install the LTS version of [Node.js](https://nodejs.org/), open a new terminal and run the command again.
-- "running scripts is disabled on this system" on Windows: use `npx.cmd` instead of `npx`, or see the PowerShell note in the [README](../README.md#install).
+- `npx: command not found` (your terminal cannot find the program): install the LTS version of [Node.js](https://nodejs.org/), open a new terminal and run the command again.
+- "running scripts is disabled on this system" on Windows (PowerShell, one of Windows' terminals, blocks it by default): use `npx.cmd` instead of `npx`, or see the PowerShell note in the [README](../README.md#install).
 - `init` only prints steps and changes nothing: an AI agent or a script ran it. Run it yourself in your own terminal.
 - `check` says `NOT protected`: the line says what to run.
-- zn blocked something you need: use `npx -y zn-gate env shadow .env` for secrets, or ask in [Discussions](https://github.com/usezn/zn/discussions).
+- zn blocked something you need: use `npx -y zn-gate env shadow .env` for secrets, or ask in [Discussions](https://github.com/usezn/zn/discussions) (zn's forum on GitHub).
 - Another message? The [troubleshooting guide](troubleshooting.md) explains the ten most common ones.
 
 ## Remove zn-gate
@@ -125,9 +125,9 @@ To remove everything in one step, run `npx -y zn-gate uninstall` in your own ter
 
 - **Hooks** (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, or Claude Code without the plugin): `npx -y zn-gate hooks uninstall claude-code`. Use `codex`, `cursor`, `opencode`, `antigravity` or `zcode` for the others, and add `--project` if you installed them for one project only. A backup of the settings file is written first.
 - **Claude Code plugin**: run `claude plugin uninstall zn-gate@usezn`, or in Claude Code type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
-- **Wrapped MCP servers** (from `init --wrap-mcp`): `npx -y zn-gate init --revert` puts back each MCP settings file as it was saved just before zn wrapped it. Changes you made to those files later, such as MCP servers you added, are lost, so add them again afterwards. It only undoes MCP wrapping, not hooks.
-- **The program itself**, if you installed it with `npm install -g zn-gate`: `npm uninstall -g zn-gate`.
-- **The Python package**, if you installed it with `pip install zn-gate`: `pip uninstall zn-gate`.
+- **Wrapped MCP servers** (from `init --wrap-mcp`, which makes an MCP server start through zn's checking layer): `npx -y zn-gate init --revert` puts back each MCP settings file as it was saved just before zn wrapped it. Changes you made to those files later, such as MCP servers you added, are lost, so add them again afterwards. It only undoes MCP wrapping, not hooks.
+- **The program itself**, if you installed it with `npm install -g zn-gate` (`-g` installs it for the whole computer): `npm uninstall -g zn-gate`.
+- **The Python package**, if you installed it with `pip install zn-gate` (pip installs Python packages): `pip uninstall zn-gate`.
 - **`.env` files you moved into the vault** keep markers such as `__ZN_API_KEY__`. `env shadow` tells you how to put the real values back. Do that before you remove zn-gate.
 - **zn's own folder**: zn keeps its vault, settings and counters in a `.zn` folder in your home folder, and removing zn-gate leaves it there. Delete it only after you have put your `.env` values back, because the vault holds them.
 

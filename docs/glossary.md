@@ -8,6 +8,34 @@ Short meanings of words used in the zn-gate docs.
 
 **Node.js**: the program that runs zn-gate's npm commands. `npx` comes with it. You can get it at [nodejs.org](https://nodejs.org/).
 
+**npm and npx**: `npm` installs programs written for Node.js. `npx` downloads one and runs it without installing it first (`-y` skips its "OK to install?" question). Both come with Node.js.
+
+**pip**: the installer for Python packages. You use it only for the Python version of zn-gate.
+
+**PATH**: the list of folders your terminal searches when you type a program's name. If the program is not in one of them, the terminal says "command not found".
+
+**Environment variable**: a named setting that a program reads from its surroundings, such as `ZN_STRICT=1`.
+
+**Shell**: the program inside the terminal that reads what you type and runs it, such as bash, zsh or PowerShell.
+
+**LTS**: long-term support. The Node.js version line meant for everyday use, which keeps getting fixes.
+
+**JSON**: a plain-text format for data, written with braces and quotes. Programs read it; you rarely need to.
+
+**Git**: the tool that tracks changes to the files of a project. A "git-ignored" file is one git does not track.
+
+**Certificate (TLS)**: how a website proves it is really that site. TLS is the standard that makes a connection private and checks that certificate.
+
+**Rotate** (a secret): create a new value and stop using the old one.
+
+**Strict mode**: a setting that makes zn-gate's text check block things it would otherwise only warn about (`ZN_STRICT=1`).
+
+**Advisory**: a short warning that zn-gate adds to a result without blocking anything.
+
+**Home folder** (`~`): your personal folder on the computer. zn-gate keeps its own files in `~/.zn`.
+
+**Session key**: a key zn keeps while your vault is unlocked, so that only your user account can talk to the vault.
+
 **Secret**: a value that gives access to something, such as an API key, a token or a password.
 
 **`.env` file**: a file in a project that holds secrets and other settings for your app.
