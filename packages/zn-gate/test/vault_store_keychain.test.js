@@ -268,6 +268,27 @@ test('pruneStale never deletes maps when the clock is far in the future or behin
   assert.equal(fs.existsSync(a) && fs.existsSync(b), true);
 });
 
+test('pruneStale keeps maps when the clock is 45 or 365 days ahead, and prunes again once it is normal', (t) => {
+  const home = tmpHome(t);
+  store.ensureLayout({ home });
+  const f = store.projectFile('/work/a', { home });
+  fs.writeFileSync(f, 'x');
+  assert.equal(store.pruneStale({ home }), 0); // a normal run records the time
+  const realNow = Date.now;
+  try {
+    for (const d of [45, 365]) {
+      Date.now = () => realNow() + d * 86400000;
+      assert.equal(store.pruneStale({ home }), 0);
+      assert.equal(fs.existsSync(f), true);
+    }
+    Date.now = realNow;
+    const past = new Date(realNow() - 40 * 86400000);
+    fs.utimesSync(f, past, past);
+    assert.equal(store.pruneStale({ home }), 1);
+  } finally { Date.now = realNow; }
+  assert.equal(fs.existsSync(f), false);
+});
+
 test('forgetProject reports whether a map existed; touch never throws', (t) => {
   const home = tmpHome(t);
   store.ensureLayout({ home });
