@@ -10,9 +10,10 @@ The result holds a closed vocabulary only: agent, file path, secret type, a coun
 and an action. A value, a part of a value, a prefix or a hash of a value never
 leaves the scanning function.
 
-Only the home folder of the current user is read, and no link is followed: a link
-at any level below the home folder, or a history file that is a link, is skipped
-and listed.
+The home folder of the current user is read, plus the folder CLAUDE_CONFIG_DIR or
+CODEX_HOME names, wherever it points. No link is followed: a link at any level below
+the home folder, a config folder that is a link, or a history file that is a link,
+is skipped and listed.
 """
 from __future__ import annotations
 
@@ -43,9 +44,15 @@ AGENTS = [
     {"id": "codex", "name": "Codex CLI", "env_dir": "CODEX_HOME", "default_dir": [".codex"],
      "trees": [{"dir": ["sessions"], "ext": ".jsonl"}], "files": [["history.jsonl"]]},
 ]
+# Gemini CLI, Copilot, Antigravity and ZCode are supported by zn-gate, but this version does not read their
+# history yet: the report says so, so an empty result is never read as "nothing leaked".
 NOT_SCANNED = [
     {"id": "cursor", "name": "Cursor", "reason": "database"},
     {"id": "opencode", "name": "OpenCode", "reason": "database"},
+    {"id": "gemini-cli", "name": "Gemini CLI", "reason": "not-yet"},
+    {"id": "copilot", "name": "Copilot", "reason": "not-yet"},
+    {"id": "antigravity", "name": "Antigravity", "reason": "not-yet"},
+    {"id": "zcode", "name": "ZCode", "reason": "not-yet"},
 ]
 
 # What to do about a secret of this type: closed text, never taken from the file.
@@ -135,30 +142,46 @@ def real_dir_below(base: str, parts: List[str]) -> Optional[str]:
     return cur
 
 
-def base_parts(agent: Dict[str, Any], home: str, env: Dict[str, str]) -> Optional[List[str]]:
-    """The agent's config folder as parts below home: the default, or the one the environment names if it is
-    inside home."""
+def _inside(home: str, absolute: str) -> Optional[List[str]]:
+    """The parts of `absolute` below home, or None when it is home itself or is not below it."""
+    try:
+        rel = os.path.relpath(absolute, home)
+    except ValueError:
+        return None
+    if rel and rel != "." and not rel.startswith("..") and not os.path.isabs(rel):
+        return rel.split(os.sep)
+    return None
+
+
+def config_dir(agent: Dict[str, Any], home: str, env: Dict[str, str]) -> Tuple[Optional[List[str]], Optional[str]]:
+    """The agent's config folder: the one the environment names, wherever it points (the user chose it), or the
+    default below home. Returns (parts, None) when it is below home (walked level by level, no link followed)
+    or (None, absolute) when the environment names a folder outside home (the folder itself must be a real
+    folder, not a link)."""
     named = env.get(agent["env_dir"]) if env else None
     if named and isinstance(named, str):
-        try:
-            rel = os.path.relpath(os.path.abspath(named), home)
-        except ValueError:
-            return None
-        if rel and rel != "." and not rel.startswith("..") and not os.path.isabs(rel):
-            return rel.split(os.sep)
-        # A folder outside home (or home itself) is never read.
-        return None
-    return list(agent["default_dir"])
+        absolute = os.path.abspath(named)
+        parts = _inside(home, absolute)
+        if parts:
+            return parts, None
+        return None, absolute
+    return list(agent["default_dir"]), None
 
 
 def display(home: str, absolute: str) -> str:
-    rel = os.path.relpath(absolute, home).replace(os.sep, "/")
-    return clean("~/" + rel)
+    parts = _inside(home, absolute)
+    if parts:
+        return clean("~/" + "/".join(parts))
+    return clean(absolute)
 
 
-def _walk(directory: str, ext: str, depth: int, out: List[Dict[str, Any]], skipped: List[Dict[str, str]],
+def _walk(directory: str, ext: str, depth: int, out: List[Dict[str, Any]], skipped: List[Dict[str, Any]],
           agent: Dict[str, Any], home: str) -> None:
-    if depth > MAX_DEPTH or len(out) >= MAX_FILES:
+    if depth > MAX_DEPTH:
+        skipped.append({"agent": agent["id"], "file": display(home, directory), "reason": "too-deep", "limit": MAX_DEPTH})
+        return
+    if len(out) >= MAX_FILES:
+        skipped.append({"agent": agent["id"], "file": display(home, directory), "reason": "too-many-files", "limit": MAX_FILES})
         return
     try:
         entries = sorted(os.scandir(directory), key=lambda e: e.name)
@@ -177,20 +200,25 @@ def _walk(directory: str, ext: str, depth: int, out: List[Dict[str, Any]], skipp
         st = _lstat(absolute)
         if st is None or not stat.S_ISREG(st.st_mode):
             continue
-        out.append({"abs": absolute, "size": st.st_size, "mtime": st.st_mtime_ns / 1e6})
         if len(out) >= MAX_FILES:
+            skipped.append({"agent": agent["id"], "file": display(home, directory), "reason": "too-many-files", "limit": MAX_FILES})
             return
+        out.append({"abs": absolute, "size": st.st_size, "mtime": st.st_mtime_ns / 1e6})
 
 
 def collect(agent: Dict[str, Any], home: str, env: Dict[str, str],
-            skipped: List[Dict[str, str]]) -> Tuple[Optional[str], List[Dict[str, Any]]]:
-    parts = base_parts(agent, home, env)
-    if not parts:
-        return None, []
-    base = real_dir_below(home, parts)
+            skipped: List[Dict[str, Any]]) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+    parts, outside = config_dir(agent, home, env)
+    base: Optional[str]
+    if parts:
+        full = os.path.join(home, *parts)
+        base = real_dir_below(home, parts)
+    else:
+        full = outside or ""
+        st0 = _lstat(full)
+        base = full if st0 is not None and not stat.S_ISLNK(st0.st_mode) and stat.S_ISDIR(st0.st_mode) else None
     if not base:
         # The folder itself being a link is said, so a user is not told "nothing found" for a folder that exists.
-        full = os.path.join(home, *parts)
         st = _lstat(full)
         if st is not None and stat.S_ISLNK(st.st_mode):
             skipped.append({"agent": agent["id"], "file": display(home, full), "reason": "symlink"})
@@ -352,7 +380,7 @@ def history(home: Optional[str] = None, env: Optional[Dict[str, str]] = None, ma
     started = time.time() * 1000
     deadline = started + (_max_ms if _max_ms is not None else max_s * 1000)  # _max_ms: tests only
 
-    skipped: List[Dict[str, str]] = []
+    skipped: List[Dict[str, Any]] = []
     plan: List[Dict[str, Any]] = []
     agents: List[Dict[str, Any]] = []
     for a in AGENTS:
@@ -367,7 +395,7 @@ def history(home: Optional[str] = None, env: Optional[Dict[str, str]] = None, ma
         agents.append({"id": n["id"], "name": n["name"], "scanned": False, "reason": n["reason"], "files": 0, "bytes": 0})
 
     findings: List[Dict[str, Any]] = []
-    incomplete: List[Dict[str, str]] = []
+    incomplete: List[Dict[str, Any]] = []
     not_reached = 0
     time_limit_hit = False
     by_agent: Dict[str, Dict[str, Any]] = {entry["id"]: entry for entry in agents}
@@ -428,6 +456,8 @@ def _mb(n: int) -> str:
 
 
 REASONS = {
+    "too-deep": "not scanned: it is nested too deep (the limit is {limit} levels below the history folder)",
+    "too-many-files": "not scanned: there are too many history files (the limit is {limit} files per agent)",
     "time-limit": "not fully scanned: the time limit was reached",
     "line-too-long": "partly scanned: a line was too long to read",
     "unreadable": "not scanned: it could not be read",
@@ -442,12 +472,14 @@ def report(r: Dict[str, Any], write: Optional[Callable[[str], Any]] = None) -> i
         return str(n) + " " + word + ("" if n == 1 else "s")
 
     w("\nzn-gate reach --history: did your coding agents keep a secret of yours in their session history?\n")
-    w("Read: the local history files of your agents in your home folder. Nothing was sent anywhere, nothing was changed, and no value is shown.\n\n")
+    w("Read: the local history files of your agents. Nothing was sent anywhere, nothing was changed, and no value is shown.\n\n")
     for a in r["agents"]:
         if a["scanned"]:
             state = plural(a["files"], "file") + ", " + _mb(a["bytes"]) + " scanned"
         elif a["reason"] == "database":
             state = "not scanned: its history is a database, which this version does not read"
+        elif a["reason"] == "not-yet":
+            state = "not scanned yet: this version does not read its history"
         else:
             state = "no history found"
         w("  " + a["name"].ljust(12) + " " + state + "\n")
@@ -470,7 +502,7 @@ def report(r: Dict[str, Any], write: Optional[Callable[[str], Any]] = None) -> i
     if r["incomplete"]:
         w("NOT FULLY SCANNED\n")
         for i in r["incomplete"]:
-            w("  " + i["file"] + ": " + REASONS.get(i["reason"], i["reason"]) + "\n")
+            w("  " + i["file"] + ": " + REASONS.get(i["reason"], i["reason"]).replace("{limit}", str(i.get("limit"))) + "\n")
         if r["totals"]["files_not_reached"] > len(r["incomplete"]):
             w("  and more files not reached\n")
         if r["time_limit_hit"]:

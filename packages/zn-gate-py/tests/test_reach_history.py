@@ -4,6 +4,7 @@ All values below are obviously fake and are put together at run time.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -91,7 +92,7 @@ def test_finds_secrets_and_reports_type_and_count_only(machine):
                            "secrets": 5, "files_not_reached": 0}
     assert r["time_limit_hit"] is False
     assert r["incomplete"] == []
-    assert [a["id"] for a in r["agents"]] == ["claude-code", "codex", "cursor", "opencode"]
+    assert [a["id"] for a in r["agents"]] == ["claude-code", "codex", "cursor", "opencode", "gemini-cli", "copilot", "antigravity", "zcode"]
     assert next(a for a in r["agents"] if a["id"] == "cursor")["reason"] == "database"
 
 
@@ -182,14 +183,89 @@ def test_links_are_never_followed_out_of_home(machine, tmp_path):
     assert next(a for a in r["agents"] if a["id"] == "codex")["scanned"] is False
 
 
-def test_a_config_folder_outside_home_is_ignored(machine, tmp_path):
+def test_a_config_folder_inside_home_is_shown_relative_to_home(machine):
     home, env = machine
-    outside = tmp_path / "outside"
-    put(outside, "projects/p/s.jsonl", jsonl([{"text": AWS}]))
-    assert history(home=home, env={**env, "CLAUDE_CONFIG_DIR": str(outside)})["findings"] == []
     put(home, "cfg/projects/p/s.jsonl", jsonl([{"text": AWS}]))
     r = history(home=home, env={**env, "CLAUDE_CONFIG_DIR": os.path.join(home, "cfg")})
     assert [f["file"] for f in r["findings"]] == ["~/cfg/projects/p/s.jsonl"]
+
+
+def test_a_config_folder_named_by_the_environment_is_honoured_wherever_it_points(machine, tmp_path):
+    home, env = machine
+    outside = tmp_path / "outside"
+    put(outside, "projects/p/s.jsonl", jsonl([{"text": AWS}]))
+    put(outside, "codexhome/sessions/2026/s.jsonl", jsonl([{"text": GITHUB}]))
+    r = history(home=home, env={**env, "CLAUDE_CONFIG_DIR": str(outside), "CODEX_HOME": str(outside / "codexhome")})
+    assert next(a for a in r["agents"] if a["id"] == "claude-code")["scanned"] is True
+    assert next(a for a in r["agents"] if a["id"] == "codex")["scanned"] is True
+    assert sorted(f["agent"] + " " + f["type"] for f in r["findings"]) == ["claude-code AWS_KEY", "codex GITHUB_TOKEN"]
+    assert all(home not in f["file"] and "\n" not in f["file"] for f in r["findings"])
+    out = []
+    report(r, out.append)
+    assert "no history found" not in "".join(out)
+
+
+def test_a_file_below_the_depth_limit_is_reported_naming_the_limit(machine):
+    home, env = machine
+    put(home, ".claude/projects/a/b/c/d/e/f/g/h/deep.jsonl", jsonl([{"text": AWS}]))
+    put(home, ".claude/projects/p/ok.jsonl", jsonl([{"text": "clean"}]))
+    r = history(home=home, env=env)
+    deep = [i for i in r["incomplete"] if i["reason"] == "too-deep"]
+    assert len(deep) == 1 and deep[0]["agent"] == "claude-code" and deep[0]["limit"] == 6
+    out = []
+    report(r, out.append)
+    text = "".join(out)
+    assert "NOT FULLY SCANNED" in text
+    assert "too deep" in text and "6 levels" in text
+    assert "No secret found" not in text
+
+
+def test_too_many_files_is_reported_naming_the_limit(machine, monkeypatch):
+    home, env = machine
+    monkeypatch.setattr(reach_history, "MAX_FILES", 2)
+    for n in range(4):
+        put(home, ".claude/projects/p/s%d.jsonl" % n, jsonl([{"text": "clean"}]))
+    r = history(home=home, env=env)
+    assert any(i["reason"] == "too-many-files" and i["limit"] == 2 for i in r["incomplete"])
+
+
+def test_agents_whose_history_is_not_read_are_listed_as_not_scanned_yet(machine):
+    home, env = machine
+    r = history(home=home, env=env)
+    assert [a["id"] for a in r["agents"]] == ["claude-code", "codex", "cursor", "opencode", "gemini-cli", "copilot", "antigravity", "zcode"]
+    for i in ("gemini-cli", "copilot", "antigravity", "zcode"):
+        a = next(x for x in r["agents"] if x["id"] == i)
+        assert a["scanned"] is False and a["reason"] == "not-yet"
+    out = []
+    report(r, out.append)
+    text = "".join(out)
+    for n in ("Gemini CLI", "Copilot", "Antigravity", "ZCode"):
+        assert re.search(n + r" +not scanned yet", text)
+
+
+@pytest.mark.skipif(shutil.which("node") is None or not os.path.exists(_NODE_CLI), reason="the npm package is not in this checkout")
+def test_json_equals_the_npm_package_with_outside_config_and_deep_files(machine, tmp_path):
+    home, env = machine
+    outside = tmp_path / "outside"
+    put(outside, "projects/p/s.jsonl", jsonl([{"text": AWS}]))
+    put(outside, "projects/a/b/c/d/e/f/g/h/deep.jsonl", jsonl([{"text": AWS}]))
+    put(home, ".codex/sessions/2026/s.jsonl", jsonl([{"text": GITHUB}]))
+    env = {**env, "CLAUDE_CONFIG_DIR": str(outside)}
+    py = json.loads(zn(env, "reach", "--history", "--json").stdout)
+    node_env = {k: v for k, v in env.items() if k != "PYTHONPATH"}
+    for k in ("SYSTEMROOT", "SystemRoot", "TEMP", "TMP"):
+        if k in os.environ:
+            node_env[k] = os.environ[k]
+    node = subprocess.run(["node", _NODE_CLI, "reach", "--history", "--json"], capture_output=True, text=True, env=node_env, timeout=120)
+    assert node.returncode == 0, node.stderr
+    js = json.loads(node.stdout)
+    py.pop("elapsed_ms")
+    js.pop("elapsed_ms")
+    assert py == js
+    assert any(i["reason"] == "too-deep" for i in py["incomplete"])
+    pt = zn(env, "reach", "--history").stdout
+    nt = subprocess.run(["node", _NODE_CLI, "reach", "--history"], capture_output=True, text=True, env=node_env, timeout=120).stdout
+    assert pt == nt
 
 
 def test_time_limit_lists_the_files_not_reached(machine):
