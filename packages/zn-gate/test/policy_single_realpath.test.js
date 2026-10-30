@@ -28,7 +28,7 @@ function countRealpaths(fn) {
 }
 
 function tree(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-single-'));
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-single-')));
   fs.mkdirSync(path.join(dir, 'real'));
   fs.symlinkSync(path.join(dir, 'real'), path.join(dir, 'link'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
