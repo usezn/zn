@@ -29,6 +29,7 @@ const withBash = (m) => { if (WIN && GIT_BASH) m.env.CLAUDE_CODE_GIT_BASH_PATH =
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const VERSION = require('../package.json').version;
+const { budget } = require('./helpers/time_budget');
 const ZN = path.resolve('/opt/npm/bin/zn');
 const NPM = path.resolve('/opt/npm/bin/npm');
 
@@ -244,7 +245,7 @@ test('agent guard: many init words with an option at the end stay fast', () => {
   const cmd = 'zn init '.repeat(Math.floor(99 * 1024 / 8)) + ' --dry-run';
   const t0 = Date.now();
   policy.bashDenial(cmd);
-  assert.ok(Date.now() - t0 < 500, 'took ' + (Date.now() - t0) + ' ms');
+  assert.ok(Date.now() - t0 < budget(500), 'took ' + (Date.now() - t0) + ' ms');
 });
 
 test('plan: Claude Code set up with zn hooks is repaired with zn hooks, not with the plugin', async (t) => {
