@@ -343,13 +343,155 @@ const notCovered = [
   { cmd: 'echo `rm -rf ~`', note: 'a command inside backticks is not read yet (known gap)' },
 ];
 
+/* ---------------------- production data guard (lib/prod-guard.js, zn_gate/prod_guard.py) ---------------------- */
+// Commands that delete a database, cloud storage or infrastructure, or force-push to a protected branch. Names are fictional.
+// Not run: they are strings for a classifier. A "risky" one must be found under its rule; a "benign" one (a look-alike) must not.
+const prodBenign = new Set();
+const prodRisky = [];
+const pAdd = (...cmds) => cmds.forEach((c) => prodBenign.add(c));
+const pRisk = (rule, ...cmds) => cmds.forEach((c) => prodRisky.push({ cmd: c, rule }));
+const P_DBS = ['prod-db-example', 'orders_example', 'app_example', 'analytics-example', 'billing_example'];
+const P_TABLES = ['users', 'orders', 'public.events', 'audit_log', 'sessions'];
+const P_PREFIX = ['', '', 'sudo ', 'env PGPASSWORD=example ', 'time ', 'cd /srv/app && '];
+const P_HOSTS = ['db.example.com', 'db.example.test', '192.0.2.10', '198.51.100.7', '203.0.113.5'];
+
+// SQL clients: -c, -e, an argument, a here-document, a here-string, a pipe.
+for (const db of P_DBS) {
+  const h = pick(P_HOSTS);
+  pRisk('sql_drop',
+    pick(P_PREFIX) + 'psql -h ' + h + ' -U app -c "DROP DATABASE ' + db + '"',
+    pick(P_PREFIX) + 'psql -d ' + db + " -c 'drop table " + pick(P_TABLES) + ";'",
+    pick(P_PREFIX) + 'psql ' + db + ' -Atc "TRUNCATE TABLE ' + pick(P_TABLES) + '"',
+    pick(P_PREFIX) + 'psql --command="DROP SCHEMA public CASCADE" ' + db,
+    pick(P_PREFIX) + 'mysql -h ' + h + ' -u root -e "DROP DATABASE ' + db + '"',
+    pick(P_PREFIX) + 'mysql -uroot --execute="TRUNCATE ' + pick(P_TABLES) + '" ' + db,
+    pick(P_PREFIX) + 'mariadb -e "drop table if exists ' + pick(P_TABLES) + '" ' + db,
+    pick(P_PREFIX) + 'sqlite3 ' + db + '.sqlite "DROP TABLE ' + pick(P_TABLES) + ';"',
+    pick(P_PREFIX) + 'sqlcmd -S ' + h + ' -Q "DROP DATABASE ' + db + '"',
+    pick(P_PREFIX) + 'clickhouse-client --query "TRUNCATE TABLE ' + pick(P_TABLES) + '"',
+    pick(P_PREFIX) + 'mongosh "mongodb://' + h + '/' + db + '" --eval "db.dropDatabase()"',
+    pick(P_PREFIX) + "mongosh --eval 'db." + pick(['users', 'orders', 'events']) + ".drop()' " + db,
+    pick(P_PREFIX) + 'psql ' + db + ' <<< "DROP TABLE ' + pick(P_TABLES) + ';"',
+    'echo "DROP DATABASE ' + db + ';" | psql ' + db,
+    "printf 'TRUNCATE TABLE " + pick(P_TABLES) + ";' | mysql " + db,
+    'psql ' + db + ' <<EOF\nBEGIN;\nDROP TABLE ' + pick(P_TABLES) + ';\nCOMMIT;\nEOF',
+    'psql ' + db + " <<'SQL'\nTRUNCATE " + pick(P_TABLES) + ";\nSQL",
+    'mysql ' + db + ' <<-EOT\n\tDROP DATABASE ' + db + ';\nEOT',
+    'cat <<EOF | psql ' + db + '\nDROP TABLE ' + pick(P_TABLES) + ';\nEOF',
+    'sqlite3 ' + db + '.sqlite <<EOF\n-- clean up\nDROP TABLE ' + pick(P_TABLES) + ';\nEOF',
+    "sudo bash -c 'psql -c \"DROP DATABASE " + db + "\"'",
+    'bash -c "mysql -e \'TRUNCATE ' + pick(P_TABLES) + "'\"",
+    'mongosh <<EOF\nuse ' + db + '\ndb.dropDatabase()\nEOF');
+}
+
+// terraform, tofu, terragrunt.
+for (const dir of ['', ' -chdir=infra', ' -chdir=envs/prod-example']) {
+  pRisk('terraform_destroy',
+    'terraform' + dir + ' destroy', 'terraform' + dir + ' destroy -auto-approve', 'terraform' + dir + ' apply -destroy', 'terraform' + dir + ' apply -auto-approve -destroy',
+    'terraform' + dir + ' apply --destroy', 'terraform' + dir + ' destroy -target=aws_db_instance.prod_db_example', 'tofu' + dir + ' destroy', 'tofu' + dir + ' apply -destroy',
+    'sudo terraform' + dir + ' destroy -auto-approve', 'env TF_IN_AUTOMATION=1 terraform' + dir + ' destroy');
+}
+pRisk('terraform_destroy', 'terragrunt destroy', 'terragrunt run-all destroy', 'terragrunt apply -destroy', 'cd infra && terraform destroy -auto-approve',
+  'bash -c "terraform destroy -auto-approve"', 'bash <<EOF\ncd infra\nterraform destroy\nEOF', 'terraform init && terraform destroy', '/usr/local/bin/terraform destroy');
+
+// kubectl.
+for (const ns of ['prod-example', 'payments-example', 'staging-example']) {
+  pRisk('kubectl_delete_namespace',
+    'kubectl delete namespace ' + ns, 'kubectl delete ns ' + ns, 'kubectl delete namespaces ' + ns + ' other-example', 'kubectl delete namespace/' + ns, 'kubectl --context prod-example delete namespace ' + ns,
+    'kubectl -n ' + ns + ' delete namespace ' + ns, 'sudo kubectl delete ns ' + ns, 'oc delete namespace ' + ns, 'kubectl delete ns ' + ns + ' --wait=false');
+  pRisk('kubectl_delete_all',
+    'kubectl delete pods --all -n ' + ns, 'kubectl delete deployments --all --namespace=' + ns, 'kubectl -n ' + ns + ' delete pvc --all', 'kubectl delete all --all -n ' + ns,
+    'kubectl delete pods,svc --all -n ' + ns, 'kubectl delete jobs --all=true -n ' + ns, 'kubectl --context prod-example delete statefulsets --all -n ' + ns, 'oc delete pods --all -n ' + ns);
+}
+
+// aws.
+for (const b of ['example-bucket', 'prod-assets-example', 'logs-example']) {
+  pRisk('aws_s3_delete',
+    'aws s3 rm s3://' + b + ' --recursive', 'aws s3 rm s3://' + b + '/data/ --recursive', 'aws s3 rm --recursive s3://' + b, 'aws --profile prod-example s3 rm s3://' + b + ' --recursive',
+    'aws s3 rm s3://' + b + ' --recursive --exclude "*" --include "tmp/*"', 'aws s3 rb s3://' + b, 'aws s3 rb s3://' + b + ' --force', 'aws s3api delete-bucket --bucket ' + b,
+    'aws --region us-east-1 s3api delete-bucket --bucket ' + b, 'aws s3api delete-objects --bucket ' + b + ' --delete file://delete.json', 'sudo aws s3 rm s3://' + b + ' --recursive');
+}
+for (const id of ['prod-db-example', 'orders-example', 'analytics-example']) {
+  pRisk('aws_rds_delete',
+    'aws rds delete-db-instance --db-instance-identifier ' + id + ' --skip-final-snapshot', 'aws rds delete-db-cluster --db-cluster-identifier ' + id, 'aws rds delete-db-snapshot --db-snapshot-identifier ' + id,
+    'aws --profile prod-example rds delete-db-instance --db-instance-identifier ' + id, 'aws rds delete-db-cluster-snapshot --db-cluster-snapshot-identifier ' + id,
+    'aws rds delete-db-instance --db-instance-identifier ' + id + ' --final-db-snapshot-identifier ' + id + '-final');
+}
+
+// gcloud.
+for (const n of ['prod-db-example', 'orders-example', 'example-project']) {
+  pRisk('gcloud_delete',
+    'gcloud projects delete ' + n, 'gcloud sql instances delete ' + n, 'gcloud sql instances delete ' + n + ' --quiet', 'gcloud sql databases delete ' + n + ' --instance=prod-db-example',
+    'gcloud storage buckets delete gs://' + n, 'gcloud container clusters delete ' + n + ' --zone us-central1-a', 'gcloud --project example-project container clusters delete ' + n,
+    'gcloud beta sql instances delete ' + n, 'gcloud --project=example-project sql instances delete ' + n, 'gcloud alpha storage buckets delete gs://' + n);
+}
+
+// git: a force push to main, master, release/* (explicit branch names; a push with no branch name needs the repository, see the tests).
+for (const flag of ['--force', '-f', '--force-with-lease', '--force-with-lease=main', '--force-if-includes']) {
+  for (const b of ['main', 'master', 'release/1.2', 'release/2.0.x']) {
+    pRisk('git_force_push_protected',
+      'git push ' + flag + ' origin ' + b, 'git push origin ' + b + ' ' + flag, 'git push ' + flag + ' origin HEAD:' + b, 'git push ' + flag + ' origin HEAD:refs/heads/' + b,
+      'git push ' + flag + ' upstream feature-x:' + b, 'git -C /srv/app push ' + flag + ' origin ' + b, 'cd /srv/app && git push ' + flag + ' origin ' + b);
+  }
+}
+pRisk('git_force_push_protected', 'git push origin +main', 'git push origin +HEAD:master', 'git push origin +release/3.1', 'git push -fu origin main', 'git push -uf origin master', 'git push --force --all',
+  'git push --mirror --force origin', 'git push --force origin feature-x main', 'git push --no-verify -f origin main', 'sudo git push -f origin main');
+
+// Benign look-alikes: they must stay allowed.
+pAdd("psql -c \"SELECT * FROM users WHERE name = 'DROP TABLE'\"", "psql -d prod-db-example -c \"SELECT 'TRUNCATE TABLE users'\"", 'psql -c "select 1"', 'psql -c "SELECT count(*) FROM orders"',
+  'psql -c "-- DROP TABLE users\nSELECT 1"', 'psql -c "/* DROP DATABASE prod-db-example */ SELECT 1"', 'psql -c "SELECT truncate(1.5)"', 'mysql -e "SELECT TRUNCATE(3.14159, 2)"',
+  'mysql -e "SHOW TABLES"', 'mysql -e "SELECT * FROM drop_events"', 'mysql -e "UPDATE t SET note = \'drop table later\' WHERE id = 1"', 'sqlite3 app.sqlite ".tables"', 'sqlite3 app.sqlite "SELECT * FROM users;"',
+  'psql prod-db-example < dump.sql', 'psql -f schema.sql prod-db-example', 'psql -c "\\dt"', 'pg_dump prod-db-example > backup.sql', 'mongosh --eval "db.users.find()"', "mongosh --eval \"print('db.dropDatabase()')\"",
+  'mongosh --eval "db.stats()"', 'echo "DROP TABLE users" > notes.txt', 'echo DROP TABLE users | grep TABLE', 'cat notes.txt | grep -i "drop table"', 'grep -rn "DROP TABLE" migrations/',
+  'git commit -m "drop table users from the schema"', 'psql prod-db-example <<EOF\nSELECT * FROM users;\nEOF', "psql prod-db-example <<'SQL'\nSELECT count(*) FROM orders; -- no DROP TABLE here\nSQL",
+  "mysql prod-db-example <<EOF\nSELECT 'TRUNCATE TABLE orders';\nEOF", 'cat <<EOF > notes.txt\nDROP TABLE users;\nEOF', 'cat <<EOF | psql prod-db-example\nSELECT 1;\nEOF', 'python3 -c "print(\'DROP TABLE users\')"',
+  'terraform plan', 'terraform plan -destroy', 'terraform plan -destroy -out=tfplan', 'terraform apply', 'terraform apply -auto-approve', 'terraform apply tfplan', 'terraform init', 'terraform validate',
+  'terraform fmt -check', 'terraform state list', 'terraform output', 'terraform workspace select staging-example', 'tofu plan -destroy', 'terragrunt plan', 'terragrunt run-all plan', 'echo terraform destroy',
+  'git commit -m "document terraform destroy"', 'grep -rn "terraform destroy" docs/',
+  'kubectl delete pod web-1', 'kubectl delete pod web-1 -n prod-example', 'kubectl delete deployment web -n staging-example', 'kubectl delete -f manifest.yaml', 'kubectl delete job migrate-1 --namespace=prod-example',
+  'kubectl delete pods -l app=web -n staging-example', 'kubectl get namespaces', 'kubectl get ns', 'kubectl describe namespace prod-example', 'kubectl create namespace staging-example', 'kubectl get pods --all-namespaces',
+  'kubectl get pods -A', 'kubectl delete secret example-secret -n staging-example', 'kubectl -n prod-example delete pod web-1', 'kubectl --context staging-example delete pod web-1', 'oc delete pod web-1', 'kubectl delete deployment namespace-controller -n staging-example',
+  'aws s3 rm s3://example-bucket/file.txt', 'aws s3 rm s3://example-bucket/path/file.txt --quiet', 'aws s3 rm s3://example-bucket --recursive --dryrun', 'aws s3 ls', 'aws s3 ls s3://example-bucket --recursive',
+  'aws s3 cp file.txt s3://example-bucket/', 'aws s3 sync ./dist s3://example-bucket/', 'aws s3 mb s3://example-bucket-new', 'aws s3api delete-object --bucket example-bucket --key file.txt', 'aws s3api list-objects-v2 --bucket example-bucket',
+  'aws s3api head-bucket --bucket example-bucket', 'aws rds describe-db-instances', 'aws rds describe-db-instances --db-instance-identifier prod-db-example', 'aws rds create-db-snapshot --db-instance-identifier prod-db-example --db-snapshot-identifier snap-example',
+  'aws rds modify-db-instance --db-instance-identifier prod-db-example --backup-retention-period 7', 'aws ec2 describe-instances', 'aws sts get-caller-identity', 'aws --profile prod-example s3 ls',
+  'gcloud sql instances describe prod-db-example', 'gcloud sql instances list', 'gcloud projects describe example-project', 'gcloud projects list', 'gcloud storage buckets describe gs://example-bucket', 'gcloud storage buckets list',
+  'gcloud container clusters describe orders-example --zone us-central1-a', 'gcloud container clusters get-credentials orders-example --zone us-central1-a', 'gcloud container clusters list', 'gcloud config set project example-project',
+  'gcloud compute instances list', 'gcloud sql databases list --instance=prod-db-example', 'gcloud --project example-project sql instances describe prod-db-example',
+  'git push --force origin feature/login', 'git push -f origin fix/typo', 'git push --force-with-lease origin my-branch', 'git push --force origin feature-x:feature-y', 'git push origin main', 'git push origin master', 'git push -u origin main',
+  'git push origin release/1.2', 'git push', 'git push origin', 'git push --force-with-lease=feature:abc123 origin feature', 'git push origin +feature-x', 'git push -u origin feature/billing-example', 'git push origin --delete old-branch',
+  'git push --tags', 'git push --force origin refs/heads/feature-z', 'git push --force origin HEAD:refs/heads/dev-example', 'git fetch --force origin main', 'git branch -f main origin/main', 'git checkout -f main', 'git pull --force origin main',
+  'echo git push --force origin main', 'git commit -m "never git push --force origin main"', 'git log --oneline main', 'git push --dry-run origin main');
+
+// Shapes the guard does not read (documented): it allows them.
+const prodNotCovered = [
+  { cmd: 'psql -f drop_all.sql prod-db-example', note: 'SQL in a file: the file is not read' },
+  { cmd: 'psql prod-db-example < drop_all.sql', note: 'SQL in a file redirected to the client' },
+  { cmd: 'python3 reset_db.py', note: 'a script or program: its code is not read' },
+  { cmd: 'python3 -c "import psycopg2; psycopg2.connect(\'dbname=example\').cursor().execute(\'DROP TABLE users\')"', note: 'a database driver called from code' },
+  { cmd: 'curl -X DELETE https://api.example.com/v1/projects/example-project -H "Authorization: Bearer example-token"', note: 'a REST call made with a token that was found' },
+  { cmd: 'aws dynamodb delete-table --table-name example-table', note: 'a cloud command outside the listed ones' },
+  { cmd: 'redis-cli FLUSHALL', note: 'a data store outside the listed ones' },
+  { cmd: 'ssh deploy@203.0.113.5 "terraform destroy"', note: 'the command runs on another machine' },
+  { cmd: 'kubectl delete pv example-pv', note: 'a kubectl delete outside namespaces and --all' },
+  { cmd: 'DB_CMD=psql; $DB_CMD -c "DROP TABLE users"', note: 'a program named by a variable' },
+  { cmd: 'git push', note: 'no branch named and the repository is not known to the check' },
+  { cmd: 'gsutil rm -r gs://example-bucket', note: 'a cloud command outside the listed ones' },
+];
+
 const out = {
   note: 'Labeled command strings for the destructive-command policy tests. Never run them. Rewrite with: node test/fixtures/make_destructive_corpus.js',
   benign: Array.from(benign).sort(),
   risky: risky.sort((a, b) => (a.rule + a.cmd < b.rule + b.cmd ? -1 : 1)),
   not_covered: notCovered,
+  prod_benign: Array.from(prodBenign).sort(),
+  prod_risky: prodRisky.sort((a, b) => (a.rule + a.cmd < b.rule + b.cmd ? -1 : 1)),
+  prod_not_covered: prodNotCovered,
 };
 fs.writeFileSync(path.join(__dirname, 'destructive_commands.json'), JSON.stringify(out, null, 1) + '\n');
 const byRule = {};
 for (const r of out.risky) byRule[r.rule] = (byRule[r.rule] || 0) + 1;
+const prodByRule = {};
+for (const r of out.prod_risky) prodByRule[r.rule] = (prodByRule[r.rule] || 0) + 1;
+console.log('prod_benign', out.prod_benign.length, 'prod_risky', out.prod_risky.length, JSON.stringify(prodByRule), 'prod_not_covered', out.prod_not_covered.length);
 console.log('benign', out.benign.length, 'risky', out.risky.length, JSON.stringify(byRule), 'not_covered', out.not_covered.length);

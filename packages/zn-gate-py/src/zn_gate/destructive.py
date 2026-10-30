@@ -28,7 +28,7 @@ from typing import Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-29.5"
+COMMAND_RULES_VERSION = "2026-10-30.15"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",

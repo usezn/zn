@@ -77,6 +77,7 @@ const LAYERS = {
       'lib/broker/dotenv.js',
       'lib/shell-quote.js',
       'lib/destructive.js',
+      'lib/prod-guard.js',
     ],
     versionFile: 'lib/hooks/policy.js',
     versionConst: 'POLICY_RULES_VERSION',

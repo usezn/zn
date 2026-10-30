@@ -3829,5 +3829,1921 @@
    "cmd": "echo `rm -rf ~`",
    "note": "a command inside backticks is not read yet (known gap)"
   }
+ ],
+ "prod_benign": [
+  "aws --profile prod-example s3 ls",
+  "aws ec2 describe-instances",
+  "aws rds create-db-snapshot --db-instance-identifier prod-db-example --db-snapshot-identifier snap-example",
+  "aws rds describe-db-instances",
+  "aws rds describe-db-instances --db-instance-identifier prod-db-example",
+  "aws rds modify-db-instance --db-instance-identifier prod-db-example --backup-retention-period 7",
+  "aws s3 cp file.txt s3://example-bucket/",
+  "aws s3 ls",
+  "aws s3 ls s3://example-bucket --recursive",
+  "aws s3 mb s3://example-bucket-new",
+  "aws s3 rm s3://example-bucket --recursive --dryrun",
+  "aws s3 rm s3://example-bucket/file.txt",
+  "aws s3 rm s3://example-bucket/path/file.txt --quiet",
+  "aws s3 sync ./dist s3://example-bucket/",
+  "aws s3api delete-object --bucket example-bucket --key file.txt",
+  "aws s3api head-bucket --bucket example-bucket",
+  "aws s3api list-objects-v2 --bucket example-bucket",
+  "aws sts get-caller-identity",
+  "cat <<EOF > notes.txt\nDROP TABLE users;\nEOF",
+  "cat <<EOF | psql prod-db-example\nSELECT 1;\nEOF",
+  "cat notes.txt | grep -i \"drop table\"",
+  "echo \"DROP TABLE users\" > notes.txt",
+  "echo DROP TABLE users | grep TABLE",
+  "echo git push --force origin main",
+  "echo terraform destroy",
+  "gcloud --project example-project sql instances describe prod-db-example",
+  "gcloud compute instances list",
+  "gcloud config set project example-project",
+  "gcloud container clusters describe orders-example --zone us-central1-a",
+  "gcloud container clusters get-credentials orders-example --zone us-central1-a",
+  "gcloud container clusters list",
+  "gcloud projects describe example-project",
+  "gcloud projects list",
+  "gcloud sql databases list --instance=prod-db-example",
+  "gcloud sql instances describe prod-db-example",
+  "gcloud sql instances list",
+  "gcloud storage buckets describe gs://example-bucket",
+  "gcloud storage buckets list",
+  "git branch -f main origin/main",
+  "git checkout -f main",
+  "git commit -m \"document terraform destroy\"",
+  "git commit -m \"drop table users from the schema\"",
+  "git commit -m \"never git push --force origin main\"",
+  "git fetch --force origin main",
+  "git log --oneline main",
+  "git pull --force origin main",
+  "git push",
+  "git push --dry-run origin main",
+  "git push --force origin HEAD:refs/heads/dev-example",
+  "git push --force origin feature-x:feature-y",
+  "git push --force origin feature/login",
+  "git push --force origin refs/heads/feature-z",
+  "git push --force-with-lease origin my-branch",
+  "git push --force-with-lease=feature:abc123 origin feature",
+  "git push --tags",
+  "git push -f origin fix/typo",
+  "git push -u origin feature/billing-example",
+  "git push -u origin main",
+  "git push origin",
+  "git push origin +feature-x",
+  "git push origin --delete old-branch",
+  "git push origin main",
+  "git push origin master",
+  "git push origin release/1.2",
+  "grep -rn \"DROP TABLE\" migrations/",
+  "grep -rn \"terraform destroy\" docs/",
+  "kubectl --context staging-example delete pod web-1",
+  "kubectl -n prod-example delete pod web-1",
+  "kubectl create namespace staging-example",
+  "kubectl delete -f manifest.yaml",
+  "kubectl delete deployment namespace-controller -n staging-example",
+  "kubectl delete deployment web -n staging-example",
+  "kubectl delete job migrate-1 --namespace=prod-example",
+  "kubectl delete pod web-1",
+  "kubectl delete pod web-1 -n prod-example",
+  "kubectl delete pods -l app=web -n staging-example",
+  "kubectl delete secret example-secret -n staging-example",
+  "kubectl describe namespace prod-example",
+  "kubectl get namespaces",
+  "kubectl get ns",
+  "kubectl get pods --all-namespaces",
+  "kubectl get pods -A",
+  "mongosh --eval \"db.stats()\"",
+  "mongosh --eval \"db.users.find()\"",
+  "mongosh --eval \"print('db.dropDatabase()')\"",
+  "mysql -e \"SELECT * FROM drop_events\"",
+  "mysql -e \"SELECT TRUNCATE(3.14159, 2)\"",
+  "mysql -e \"SHOW TABLES\"",
+  "mysql -e \"UPDATE t SET note = 'drop table later' WHERE id = 1\"",
+  "mysql prod-db-example <<EOF\nSELECT 'TRUNCATE TABLE orders';\nEOF",
+  "oc delete pod web-1",
+  "pg_dump prod-db-example > backup.sql",
+  "psql -c \"-- DROP TABLE users\nSELECT 1\"",
+  "psql -c \"/* DROP DATABASE prod-db-example */ SELECT 1\"",
+  "psql -c \"SELECT * FROM users WHERE name = 'DROP TABLE'\"",
+  "psql -c \"SELECT count(*) FROM orders\"",
+  "psql -c \"SELECT truncate(1.5)\"",
+  "psql -c \"\\dt\"",
+  "psql -c \"select 1\"",
+  "psql -d prod-db-example -c \"SELECT 'TRUNCATE TABLE users'\"",
+  "psql -f schema.sql prod-db-example",
+  "psql prod-db-example < dump.sql",
+  "psql prod-db-example <<'SQL'\nSELECT count(*) FROM orders; -- no DROP TABLE here\nSQL",
+  "psql prod-db-example <<EOF\nSELECT * FROM users;\nEOF",
+  "python3 -c \"print('DROP TABLE users')\"",
+  "sqlite3 app.sqlite \".tables\"",
+  "sqlite3 app.sqlite \"SELECT * FROM users;\"",
+  "terraform apply",
+  "terraform apply -auto-approve",
+  "terraform apply tfplan",
+  "terraform fmt -check",
+  "terraform init",
+  "terraform output",
+  "terraform plan",
+  "terraform plan -destroy",
+  "terraform plan -destroy -out=tfplan",
+  "terraform state list",
+  "terraform validate",
+  "terraform workspace select staging-example",
+  "terragrunt plan",
+  "terragrunt run-all plan",
+  "tofu plan -destroy"
+ ],
+ "prod_risky": [
+  {
+   "cmd": "aws --profile prod-example rds delete-db-instance --db-instance-identifier analytics-example",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws --profile prod-example rds delete-db-instance --db-instance-identifier orders-example",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws --profile prod-example rds delete-db-instance --db-instance-identifier prod-db-example",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws rds delete-db-cluster --db-cluster-identifier analytics-example",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws rds delete-db-cluster --db-cluster-identifier orders-example",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws rds delete-db-cluster --db-cluster-identifier prod-db-example",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws rds delete-db-cluster-snapshot --db-cluster-snapshot-identifier analytics-example",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws rds delete-db-cluster-snapshot --db-cluster-snapshot-identifier orders-example",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws rds delete-db-cluster-snapshot --db-cluster-snapshot-identifier prod-db-example",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws rds delete-db-instance --db-instance-identifier analytics-example --final-db-snapshot-identifier analytics-example-final",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws rds delete-db-instance --db-instance-identifier analytics-example --skip-final-snapshot",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws rds delete-db-instance --db-instance-identifier orders-example --final-db-snapshot-identifier orders-example-final",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws rds delete-db-instance --db-instance-identifier orders-example --skip-final-snapshot",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws rds delete-db-instance --db-instance-identifier prod-db-example --final-db-snapshot-identifier prod-db-example-final",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws rds delete-db-instance --db-instance-identifier prod-db-example --skip-final-snapshot",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws rds delete-db-snapshot --db-snapshot-identifier analytics-example",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws rds delete-db-snapshot --db-snapshot-identifier orders-example",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws rds delete-db-snapshot --db-snapshot-identifier prod-db-example",
+   "rule": "aws_rds_delete"
+  },
+  {
+   "cmd": "aws --profile prod-example s3 rm s3://example-bucket --recursive",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws --profile prod-example s3 rm s3://logs-example --recursive",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws --profile prod-example s3 rm s3://prod-assets-example --recursive",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws --region us-east-1 s3api delete-bucket --bucket example-bucket",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws --region us-east-1 s3api delete-bucket --bucket logs-example",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws --region us-east-1 s3api delete-bucket --bucket prod-assets-example",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rb s3://example-bucket",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rb s3://example-bucket --force",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rb s3://logs-example",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rb s3://logs-example --force",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rb s3://prod-assets-example",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rb s3://prod-assets-example --force",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rm --recursive s3://example-bucket",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rm --recursive s3://logs-example",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rm --recursive s3://prod-assets-example",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rm s3://example-bucket --recursive",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rm s3://example-bucket --recursive --exclude \"*\" --include \"tmp/*\"",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rm s3://example-bucket/data/ --recursive",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rm s3://logs-example --recursive",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rm s3://logs-example --recursive --exclude \"*\" --include \"tmp/*\"",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rm s3://logs-example/data/ --recursive",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rm s3://prod-assets-example --recursive",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rm s3://prod-assets-example --recursive --exclude \"*\" --include \"tmp/*\"",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3 rm s3://prod-assets-example/data/ --recursive",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3api delete-bucket --bucket example-bucket",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3api delete-bucket --bucket logs-example",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3api delete-bucket --bucket prod-assets-example",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3api delete-objects --bucket example-bucket --delete file://delete.json",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3api delete-objects --bucket logs-example --delete file://delete.json",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "aws s3api delete-objects --bucket prod-assets-example --delete file://delete.json",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "sudo aws s3 rm s3://example-bucket --recursive",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "sudo aws s3 rm s3://logs-example --recursive",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "sudo aws s3 rm s3://prod-assets-example --recursive",
+   "rule": "aws_s3_delete"
+  },
+  {
+   "cmd": "gcloud --project example-project container clusters delete example-project",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud --project example-project container clusters delete orders-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud --project example-project container clusters delete prod-db-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud --project=example-project sql instances delete example-project",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud --project=example-project sql instances delete orders-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud --project=example-project sql instances delete prod-db-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud alpha storage buckets delete gs://example-project",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud alpha storage buckets delete gs://orders-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud alpha storage buckets delete gs://prod-db-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud beta sql instances delete example-project",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud beta sql instances delete orders-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud beta sql instances delete prod-db-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud container clusters delete example-project --zone us-central1-a",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud container clusters delete orders-example --zone us-central1-a",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud container clusters delete prod-db-example --zone us-central1-a",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud projects delete example-project",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud projects delete orders-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud projects delete prod-db-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud sql databases delete example-project --instance=prod-db-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud sql databases delete orders-example --instance=prod-db-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud sql databases delete prod-db-example --instance=prod-db-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud sql instances delete example-project",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud sql instances delete example-project --quiet",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud sql instances delete orders-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud sql instances delete orders-example --quiet",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud sql instances delete prod-db-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud sql instances delete prod-db-example --quiet",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud storage buckets delete gs://example-project",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud storage buckets delete gs://orders-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "gcloud storage buckets delete gs://prod-db-example",
+   "rule": "gcloud_delete"
+  },
+  {
+   "cmd": "cd /srv/app && git push --force origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push --force origin master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push --force origin release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push --force origin release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push --force-if-includes origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push --force-if-includes origin master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push --force-if-includes origin release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push --force-if-includes origin release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push --force-with-lease origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push --force-with-lease origin master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push --force-with-lease origin release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push --force-with-lease origin release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push --force-with-lease=main origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push --force-with-lease=main origin master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push --force-with-lease=main origin release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push --force-with-lease=main origin release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push -f origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push -f origin master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push -f origin release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "cd /srv/app && git push -f origin release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push --force origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push --force origin master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push --force origin release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push --force origin release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push --force-if-includes origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push --force-if-includes origin master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push --force-if-includes origin release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push --force-if-includes origin release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push --force-with-lease origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push --force-with-lease origin master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push --force-with-lease origin release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push --force-with-lease origin release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push --force-with-lease=main origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push --force-with-lease=main origin master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push --force-with-lease=main origin release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push --force-with-lease=main origin release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push -f origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push -f origin master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push -f origin release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git -C /srv/app push -f origin release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force --all",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force origin HEAD:main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force origin HEAD:master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force origin HEAD:refs/heads/main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force origin HEAD:refs/heads/master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force origin HEAD:refs/heads/release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force origin HEAD:refs/heads/release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force origin HEAD:release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force origin HEAD:release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force origin feature-x main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force origin master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force origin release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force origin release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force upstream feature-x:main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force upstream feature-x:master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force upstream feature-x:release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force upstream feature-x:release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-if-includes origin HEAD:main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-if-includes origin HEAD:master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-if-includes origin HEAD:refs/heads/main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-if-includes origin HEAD:refs/heads/master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-if-includes origin HEAD:refs/heads/release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-if-includes origin HEAD:refs/heads/release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-if-includes origin HEAD:release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-if-includes origin HEAD:release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-if-includes origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-if-includes origin master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-if-includes origin release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-if-includes origin release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-if-includes upstream feature-x:main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-if-includes upstream feature-x:master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-if-includes upstream feature-x:release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-if-includes upstream feature-x:release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease origin HEAD:main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease origin HEAD:master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease origin HEAD:refs/heads/main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease origin HEAD:refs/heads/master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease origin HEAD:refs/heads/release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease origin HEAD:refs/heads/release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease origin HEAD:release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease origin HEAD:release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease origin master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease origin release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease origin release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease upstream feature-x:main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease upstream feature-x:master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease upstream feature-x:release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease upstream feature-x:release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease=main origin HEAD:main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease=main origin HEAD:master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease=main origin HEAD:refs/heads/main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease=main origin HEAD:refs/heads/master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease=main origin HEAD:refs/heads/release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease=main origin HEAD:refs/heads/release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease=main origin HEAD:release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease=main origin HEAD:release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease=main origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease=main origin master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease=main origin release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease=main origin release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease=main upstream feature-x:main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease=main upstream feature-x:master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease=main upstream feature-x:release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --force-with-lease=main upstream feature-x:release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --mirror --force origin",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push --no-verify -f origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -f origin HEAD:main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -f origin HEAD:master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -f origin HEAD:refs/heads/main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -f origin HEAD:refs/heads/master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -f origin HEAD:refs/heads/release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -f origin HEAD:refs/heads/release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -f origin HEAD:release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -f origin HEAD:release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -f origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -f origin master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -f origin release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -f origin release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -f upstream feature-x:main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -f upstream feature-x:master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -f upstream feature-x:release/1.2",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -f upstream feature-x:release/2.0.x",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -fu origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push -uf origin master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin +HEAD:master",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin +main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin +release/3.1",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin main --force",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin main --force-if-includes",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin main --force-with-lease",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin main --force-with-lease=main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin main -f",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin master --force",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin master --force-if-includes",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin master --force-with-lease",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin master --force-with-lease=main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin master -f",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin release/1.2 --force",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin release/1.2 --force-if-includes",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin release/1.2 --force-with-lease",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin release/1.2 --force-with-lease=main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin release/1.2 -f",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin release/2.0.x --force",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin release/2.0.x --force-if-includes",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin release/2.0.x --force-with-lease",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin release/2.0.x --force-with-lease=main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "git push origin release/2.0.x -f",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "sudo git push -f origin main",
+   "rule": "git_force_push_protected"
+  },
+  {
+   "cmd": "kubectl --context prod-example delete statefulsets --all -n payments-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl --context prod-example delete statefulsets --all -n prod-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl --context prod-example delete statefulsets --all -n staging-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl -n payments-example delete pvc --all",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl -n prod-example delete pvc --all",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl -n staging-example delete pvc --all",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl delete all --all -n payments-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl delete all --all -n prod-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl delete all --all -n staging-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl delete deployments --all --namespace=payments-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl delete deployments --all --namespace=prod-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl delete deployments --all --namespace=staging-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl delete jobs --all=true -n payments-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl delete jobs --all=true -n prod-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl delete jobs --all=true -n staging-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl delete pods --all -n payments-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl delete pods --all -n prod-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl delete pods --all -n staging-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl delete pods,svc --all -n payments-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl delete pods,svc --all -n prod-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl delete pods,svc --all -n staging-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "oc delete pods --all -n payments-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "oc delete pods --all -n prod-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "oc delete pods --all -n staging-example",
+   "rule": "kubectl_delete_all"
+  },
+  {
+   "cmd": "kubectl --context prod-example delete namespace payments-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl --context prod-example delete namespace prod-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl --context prod-example delete namespace staging-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl -n payments-example delete namespace payments-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl -n prod-example delete namespace prod-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl -n staging-example delete namespace staging-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl delete namespace payments-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl delete namespace prod-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl delete namespace staging-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl delete namespace/payments-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl delete namespace/prod-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl delete namespace/staging-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl delete namespaces payments-example other-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl delete namespaces prod-example other-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl delete namespaces staging-example other-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl delete ns payments-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl delete ns payments-example --wait=false",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl delete ns prod-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl delete ns prod-example --wait=false",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl delete ns staging-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "kubectl delete ns staging-example --wait=false",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "oc delete namespace payments-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "oc delete namespace prod-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "oc delete namespace staging-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "sudo kubectl delete ns payments-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "sudo kubectl delete ns prod-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "sudo kubectl delete ns staging-example",
+   "rule": "kubectl_delete_namespace"
+  },
+  {
+   "cmd": "bash -c \"mysql -e 'TRUNCATE audit_log'\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "bash -c \"mysql -e 'TRUNCATE audit_log'\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "bash -c \"mysql -e 'TRUNCATE orders'\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "bash -c \"mysql -e 'TRUNCATE public.events'\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "bash -c \"mysql -e 'TRUNCATE public.events'\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "cat <<EOF | psql analytics-example\nDROP TABLE users;\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "cat <<EOF | psql app_example\nDROP TABLE audit_log;\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "cat <<EOF | psql billing_example\nDROP TABLE public.events;\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "cat <<EOF | psql orders_example\nDROP TABLE sessions;\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "cat <<EOF | psql prod-db-example\nDROP TABLE audit_log;\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "cd /srv/app && clickhouse-client --query \"TRUNCATE TABLE audit_log\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "cd /srv/app && clickhouse-client --query \"TRUNCATE TABLE audit_log\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "cd /srv/app && clickhouse-client --query \"TRUNCATE TABLE audit_log\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "cd /srv/app && mongosh \"mongodb://192.0.2.10/prod-db-example\" --eval \"db.dropDatabase()\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "cd /srv/app && mongosh \"mongodb://db.example.test/orders_example\" --eval \"db.dropDatabase()\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "cd /srv/app && psql -h db.example.test -U app -c \"DROP DATABASE analytics-example\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "clickhouse-client --query \"TRUNCATE TABLE users\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "echo \"DROP DATABASE analytics-example;\" | psql analytics-example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "echo \"DROP DATABASE app_example;\" | psql app_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "echo \"DROP DATABASE billing_example;\" | psql billing_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "echo \"DROP DATABASE orders_example;\" | psql orders_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "echo \"DROP DATABASE prod-db-example;\" | psql prod-db-example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "env PGPASSWORD=example clickhouse-client --query \"TRUNCATE TABLE orders\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "env PGPASSWORD=example mongosh \"mongodb://db.example.com/billing_example\" --eval \"db.dropDatabase()\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "env PGPASSWORD=example mysql -h 192.0.2.10 -u root -e \"DROP DATABASE prod-db-example\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "env PGPASSWORD=example mysql -h db.example.com -u root -e \"DROP DATABASE app_example\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "env PGPASSWORD=example mysql -h db.example.test -u root -e \"DROP DATABASE analytics-example\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "env PGPASSWORD=example psql -h 192.0.2.10 -U app -c \"DROP DATABASE prod-db-example\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "env PGPASSWORD=example psql -h db.example.com -U app -c \"DROP DATABASE app_example\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mariadb -e \"drop table if exists orders\" orders_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mongosh \"mongodb://db.example.com/app_example\" --eval \"db.dropDatabase()\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mongosh \"mongodb://db.example.test/analytics-example\" --eval \"db.dropDatabase()\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mongosh --eval 'db.users.drop()' orders_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mongosh <<EOF\nuse analytics-example\ndb.dropDatabase()\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mongosh <<EOF\nuse app_example\ndb.dropDatabase()\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mongosh <<EOF\nuse billing_example\ndb.dropDatabase()\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mongosh <<EOF\nuse orders_example\ndb.dropDatabase()\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mongosh <<EOF\nuse prod-db-example\ndb.dropDatabase()\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mysql -h db.example.com -u root -e \"DROP DATABASE billing_example\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mysql -h db.example.test -u root -e \"DROP DATABASE orders_example\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mysql -uroot --execute=\"TRUNCATE audit_log\" prod-db-example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mysql -uroot --execute=\"TRUNCATE public.events\" billing_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mysql analytics-example <<-EOT\n\tDROP DATABASE analytics-example;\nEOT",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mysql app_example <<-EOT\n\tDROP DATABASE app_example;\nEOT",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mysql billing_example <<-EOT\n\tDROP DATABASE billing_example;\nEOT",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mysql orders_example <<-EOT\n\tDROP DATABASE orders_example;\nEOT",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "mysql prod-db-example <<-EOT\n\tDROP DATABASE prod-db-example;\nEOT",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "printf 'TRUNCATE TABLE audit_log;' | mysql analytics-example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "printf 'TRUNCATE TABLE audit_log;' | mysql billing_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "printf 'TRUNCATE TABLE public.events;' | mysql app_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "printf 'TRUNCATE TABLE users;' | mysql orders_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "printf 'TRUNCATE TABLE users;' | mysql prod-db-example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql --command=\"DROP SCHEMA public CASCADE\" analytics-example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql --command=\"DROP SCHEMA public CASCADE\" app_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql --command=\"DROP SCHEMA public CASCADE\" prod-db-example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql -d analytics-example -c 'drop table users;'",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql -d app_example -c 'drop table audit_log;'",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql -d orders_example -c 'drop table sessions;'",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql -h db.example.com -U app -c \"DROP DATABASE billing_example\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql -h db.example.test -U app -c \"DROP DATABASE orders_example\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql analytics-example <<'SQL'\nTRUNCATE public.events;\nSQL",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql analytics-example <<< \"DROP TABLE sessions;\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql analytics-example <<EOF\nBEGIN;\nDROP TABLE audit_log;\nCOMMIT;\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql app_example <<'SQL'\nTRUNCATE public.events;\nSQL",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql app_example <<EOF\nBEGIN;\nDROP TABLE sessions;\nCOMMIT;\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql billing_example <<'SQL'\nTRUNCATE users;\nSQL",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql billing_example <<< \"DROP TABLE audit_log;\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql billing_example <<EOF\nBEGIN;\nDROP TABLE orders;\nCOMMIT;\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql orders_example <<'SQL'\nTRUNCATE public.events;\nSQL",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql orders_example <<EOF\nBEGIN;\nDROP TABLE users;\nCOMMIT;\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql prod-db-example -Atc \"TRUNCATE TABLE orders\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql prod-db-example <<'SQL'\nTRUNCATE orders;\nSQL",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql prod-db-example <<< \"DROP TABLE public.events;\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "psql prod-db-example <<EOF\nBEGIN;\nDROP TABLE orders;\nCOMMIT;\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sqlcmd -S 192.0.2.10 -Q \"DROP DATABASE prod-db-example\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sqlcmd -S db.example.test -Q \"DROP DATABASE analytics-example\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sqlite3 analytics-example.sqlite <<EOF\n-- clean up\nDROP TABLE audit_log;\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sqlite3 app_example.sqlite \"DROP TABLE public.events;\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sqlite3 app_example.sqlite <<EOF\n-- clean up\nDROP TABLE orders;\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sqlite3 billing_example.sqlite <<EOF\n-- clean up\nDROP TABLE public.events;\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sqlite3 orders_example.sqlite <<EOF\n-- clean up\nDROP TABLE sessions;\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sqlite3 prod-db-example.sqlite <<EOF\n-- clean up\nDROP TABLE sessions;\nEOF",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo bash -c 'psql -c \"DROP DATABASE analytics-example\"'",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo bash -c 'psql -c \"DROP DATABASE app_example\"'",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo bash -c 'psql -c \"DROP DATABASE billing_example\"'",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo bash -c 'psql -c \"DROP DATABASE orders_example\"'",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo bash -c 'psql -c \"DROP DATABASE prod-db-example\"'",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo mariadb -e \"drop table if exists audit_log\" prod-db-example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo mariadb -e \"drop table if exists public.events\" app_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo mysql -uroot --execute=\"TRUNCATE orders\" app_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo psql --command=\"DROP SCHEMA public CASCADE\" billing_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo psql --command=\"DROP SCHEMA public CASCADE\" orders_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo psql -d billing_example -c 'drop table public.events;'",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo psql analytics-example -Atc \"TRUNCATE TABLE audit_log\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo psql app_example -Atc \"TRUNCATE TABLE public.events\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo psql billing_example -Atc \"TRUNCATE TABLE public.events\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo psql orders_example <<< \"DROP TABLE audit_log;\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo sqlcmd -S db.example.com -Q \"DROP DATABASE app_example\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo sqlcmd -S db.example.test -Q \"DROP DATABASE orders_example\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo sqlite3 billing_example.sqlite \"DROP TABLE public.events;\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "sudo sqlite3 orders_example.sqlite \"DROP TABLE users;\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "time mariadb -e \"drop table if exists audit_log\" billing_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "time mariadb -e \"drop table if exists users\" analytics-example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "time mongosh --eval 'db.events.drop()' app_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "time mongosh --eval 'db.events.drop()' billing_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "time mongosh --eval 'db.orders.drop()' prod-db-example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "time mongosh --eval 'db.users.drop()' analytics-example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "time mysql -uroot --execute=\"TRUNCATE sessions\" orders_example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "time mysql -uroot --execute=\"TRUNCATE users\" analytics-example",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "time psql -d prod-db-example -c 'drop table audit_log;'",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "time psql app_example <<< \"DROP TABLE users;\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "time psql orders_example -Atc \"TRUNCATE TABLE public.events\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "time sqlcmd -S db.example.com -Q \"DROP DATABASE billing_example\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "time sqlite3 analytics-example.sqlite \"DROP TABLE public.events;\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "time sqlite3 prod-db-example.sqlite \"DROP TABLE orders;\"",
+   "rule": "sql_drop"
+  },
+  {
+   "cmd": "/usr/local/bin/terraform destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "bash -c \"terraform destroy -auto-approve\"",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "bash <<EOF\ncd infra\nterraform destroy\nEOF",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "cd infra && terraform destroy -auto-approve",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "env TF_IN_AUTOMATION=1 terraform -chdir=envs/prod-example destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "env TF_IN_AUTOMATION=1 terraform -chdir=infra destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "env TF_IN_AUTOMATION=1 terraform destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "sudo terraform -chdir=envs/prod-example destroy -auto-approve",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "sudo terraform -chdir=infra destroy -auto-approve",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "sudo terraform destroy -auto-approve",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform -chdir=envs/prod-example apply --destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform -chdir=envs/prod-example apply -auto-approve -destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform -chdir=envs/prod-example apply -destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform -chdir=envs/prod-example destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform -chdir=envs/prod-example destroy -auto-approve",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform -chdir=envs/prod-example destroy -target=aws_db_instance.prod_db_example",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform -chdir=infra apply --destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform -chdir=infra apply -auto-approve -destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform -chdir=infra apply -destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform -chdir=infra destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform -chdir=infra destroy -auto-approve",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform -chdir=infra destroy -target=aws_db_instance.prod_db_example",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform apply --destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform apply -auto-approve -destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform apply -destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform destroy -auto-approve",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform destroy -target=aws_db_instance.prod_db_example",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terraform init && terraform destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terragrunt apply -destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terragrunt destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "terragrunt run-all destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "tofu -chdir=envs/prod-example apply -destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "tofu -chdir=envs/prod-example destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "tofu -chdir=infra apply -destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "tofu -chdir=infra destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "tofu apply -destroy",
+   "rule": "terraform_destroy"
+  },
+  {
+   "cmd": "tofu destroy",
+   "rule": "terraform_destroy"
+  }
+ ],
+ "prod_not_covered": [
+  {
+   "cmd": "psql -f drop_all.sql prod-db-example",
+   "note": "SQL in a file: the file is not read"
+  },
+  {
+   "cmd": "psql prod-db-example < drop_all.sql",
+   "note": "SQL in a file redirected to the client"
+  },
+  {
+   "cmd": "python3 reset_db.py",
+   "note": "a script or program: its code is not read"
+  },
+  {
+   "cmd": "python3 -c \"import psycopg2; psycopg2.connect('dbname=example').cursor().execute('DROP TABLE users')\"",
+   "note": "a database driver called from code"
+  },
+  {
+   "cmd": "curl -X DELETE https://api.example.com/v1/projects/example-project -H \"Authorization: Bearer example-token\"",
+   "note": "a REST call made with a token that was found"
+  },
+  {
+   "cmd": "aws dynamodb delete-table --table-name example-table",
+   "note": "a cloud command outside the listed ones"
+  },
+  {
+   "cmd": "redis-cli FLUSHALL",
+   "note": "a data store outside the listed ones"
+  },
+  {
+   "cmd": "ssh deploy@203.0.113.5 \"terraform destroy\"",
+   "note": "the command runs on another machine"
+  },
+  {
+   "cmd": "kubectl delete pv example-pv",
+   "note": "a kubectl delete outside namespaces and --all"
+  },
+  {
+   "cmd": "DB_CMD=psql; $DB_CMD -c \"DROP TABLE users\"",
+   "note": "a program named by a variable"
+  },
+  {
+   "cmd": "git push",
+   "note": "no branch named and the repository is not known to the check"
+  },
+  {
+   "cmd": "gsutil rm -r gs://example-bucket",
+   "note": "a cloud command outside the listed ones"
+  }
  ]
 }

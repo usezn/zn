@@ -203,6 +203,33 @@ function instructionWritesOf(opts) {
 }
 
 /*
+ * Production data guard (lib/prod-guard.js): a command that deletes a database, cloud storage or infrastructure, or
+ * force-pushes to a protected branch, asks the user first. Returns "ask" (the default), "deny" or "off".
+ *
+ * ~/.zn/config.json, {"hooks": {"productionDataGuard": ...}}: "ask", "deny", or "off" (also false or "allow").
+ * Strict mode ({"hooks": {"strict": true}} or ZN_STRICT=1) refuses these commands. ZN_PROD_GUARD=deny raises the level
+ * from the environment; the environment cannot lower it, because the project an agent works in can set it. In an agent
+ * that cannot show a question (Codex CLI and others) an "ask" is a block with the reason and the next step.
+ */
+function productionGuardModeOf(opts) {
+  if (opts.productionGuard) return ['ask', 'deny', 'off'].includes(opts.productionGuard) ? opts.productionGuard : 'ask';
+  if (process.env.ZN_STRICT === '1' || String(process.env.ZN_PROD_GUARD).toLowerCase() === 'deny') return 'deny';
+  const hooks = readConfig(opts.home).hooks || {};
+  const v = hooks.productionDataGuard;
+  if (v === false || ['off', 'allow'].includes(String(v).toLowerCase())) return 'off';
+  if (String(v).toLowerCase() === 'deny' || hooks.strict === true) return 'deny';
+  return 'ask';
+}
+
+/* The guard's finding for a shell command, with the mode that applies; null when nothing is found or the guard is off. */
+function productionGuardOf(opts, command, cwd) {
+  const mode = productionGuardModeOf(opts);
+  if (mode === 'off') return null;
+  const hit = require('../prod-guard').checkProductionData(command, { cwd });
+  return hit ? { mode, hit } : null;
+}
+
+/*
  * Egress check (pre-tool): a network request that carries personal data or a literal secret in its headers, credentials,
  * query string or body asks the user first. Network requests are curl, wget, Invoke-WebRequest and its aliases, inline
  * python or node code that opens a URL, the WebFetch tool and MCP calls with a URL or headers (see policy.egressParts).
@@ -597,6 +624,10 @@ async function decidePre(ev, d, agentId, opts) {
     const instructionNotice = instructionMode === 'off' ? undefined : {};
     const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts), instructionNotice });
     if (deny) return { decision: 'deny', message: deny };
+    const prod = productionGuardOf(opts, original, ev.cwd);
+    if (prod && prod.mode === 'deny') return { decision: 'deny', message: prod.hit.deny };
+    // The question comes first in the message; it is never a soft ask, so an agent that cannot ask blocks the command.
+    const withProd = (r) => (prod ? { ...r, decision: 'ask', soft: false, confirm: true, message: prod.hit.message + (r.message ? ' ' + r.message : '') } : r);
     if (input.scanAsk) {
       return { decision: 'ask', message: input.scanAsk === 'long'
         ? 'zn: this command changes folders too many times before a recursive search, so zn cannot tell which folders it covers, and matching lines are not hidden in this agent. Approve only if the search is safe, or split the command.'
@@ -614,10 +645,11 @@ async function decidePre(ev, d, agentId, opts) {
     // The command writes a file the agent reads as standing instructions: ask (a deny in strict mode).
     const instruction = instructionNotice && instructionNotice.hit;
     if (instruction && instructionMode === 'deny') return { decision: 'deny', message: instruction.deny };
-    const withInstruction = (r) => {
+    const withInstructionOnly = (r) => {
       if (!instruction) return r;
       return r.decision === 'ask' ? { ...r, soft: false, confirm: true, message: (r.message ? r.message + ' ' : '') + instruction.ask } : { decision: 'ask', message: instruction.ask };
     };
+    const withInstruction = (r) => withProd(withInstructionOnly(r));
 
     let command = original;
     const notes = [];
@@ -766,6 +798,8 @@ function decideMonitor(ev, pathOpts, opts) {
   if (!original.trim()) return { decision: 'allow' };
   const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts) });
   if (deny) return { decision: 'deny', message: deny };
+  const prod = productionGuardOf(opts, original, ev.cwd);
+  if (prod) return prod.mode === 'deny' ? { decision: 'deny', message: prod.hit.deny } : { decision: 'ask', confirm: true, message: prod.hit.message };
   if (markers.findMarkers(original).length) {
     return { decision: 'deny', message: 'zn: a monitor cannot use secret placeholders (such as __ZN_NAME__). Next step: give the program the secret as an environment variable with `' + znCommand('run --secrets NAME -- <command>') + '` instead.' };
   }
