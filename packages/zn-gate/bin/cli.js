@@ -1073,6 +1073,12 @@ ${ruleLine(process.env, 60)}\n`);
   if (command === 'evidence' || command === 'logs' || command === 'export') {
     if (command === 'export' || options.export) {
       const format = (options.format || 'jsonl').toLowerCase();
+      if (format !== 'jsonl' && format !== 'csv') {
+        const shown = String(options.format).replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
+        process.stderr.write(`zn-gate: unknown --format "${shown}". The valid formats are jsonl and csv.\n`);
+        process.exitCode = 2;
+        return;
+      }
       const res = exportEvidenceLedger(EVIDENCE_FILE, format);
       if (!res.valid) process.stderr.write(`Tamper detected: ${res.error}\n${recoveryHint()}\n`);
       if (options.output) {
