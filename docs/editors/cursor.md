@@ -6,7 +6,7 @@ There is no zn-gate plugin for Cursor since zn-gate 1.14.0: use `zn hooks instal
 
 ## Install (no coding needed)
 
-1. **Check that Node.js is installed.** In Cursor, open **Terminal → New Terminal**, paste `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/), then close and reopen Cursor.
+1. **Check that Node.js is installed.** In Cursor, open **Terminal → New Terminal**, paste `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/), then close and reopen Cursor.
 2. **Install zn-gate and turn on its protection for Cursor.** Paste each line in the same terminal and press Enter after each one:
 
    ```bash
