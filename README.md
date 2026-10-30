@@ -182,7 +182,7 @@ A short summary of the last 7 days on this computer: blocked actions, secrets hi
 npx -y zn-gate connect
 ```
 
-Optional, and you do it yourself in your own terminal (an agent cannot). It opens usezn.com so you can create an analysis-only API key (it cannot read your usage or manage keys), then asks you to paste it at a hidden prompt. A full-access key is refused. The key is kept in your system keychain (or the zn vault when there is no keychain), never written to a file, and zn's hooks refuse the direct ways for your agent to read it. After that, the text you or your agent send through `analyze_prompt`, with detected secrets removed first, is also checked by the Galvanize 2 classifier at usezn.com. Until you run it, nothing is sent. `zn-gate disconnect` removes the key from this computer and asks whether to revoke it on usezn.com too (default no). [How it works](docs/connect.md).
+Optional, and you do it yourself in your own terminal (an agent cannot). It opens usezn.com so you can create an analysis-only API key (it cannot read your usage or manage keys), then asks you to paste it at a hidden prompt. A full-access key is refused. The key is kept in your system keychain (or the zn vault when there is no keychain), never written to a file, and zn's hooks refuse the direct ways for your agent to read it. After that, the text you or your agent send through `analyze_prompt`, with detected secrets removed first, is also checked by the Galvanize 3 classifier at usezn.com. Until you run it, nothing is sent. `zn-gate disconnect` removes the key from this computer and asks whether to revoke it on usezn.com too (default no). [How it works](docs/connect.md).
 
 ## Check that it works
 
@@ -226,7 +226,7 @@ Where zn-gate sits in a tool call, as an MCP server or as the `shield` proxy aro
 ### Galvanize: prompt-injection detection
 
 - **Today, local:** a deterministic rules engine (signatures plus normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64) checks prompts, tool arguments, tool output and MCP tool descriptions.
-- **Today, optional cloud check:** the Galvanize 2 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-2), Apache-2.0) can also check prompts sent to `analyze_prompt`, only if you set `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed from the prompt on your machine before it is sent; personal data is not removed on this path, and a secret zn-gate does not recognize is sent with the text.
+- **Today, optional cloud check:** the Galvanize 3 classifier ([announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=github&utm_medium=readme&utm_campaign=galvanize-3); its weights are not published, and the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), has open weights under Apache-2.0) can also check prompts sent to `analyze_prompt`, only if you set `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed from the prompt on your machine before it is sent; personal data is not removed on this path, and a secret zn-gate does not recognize is sent with the text.
 - **Roadmap:** running Galvanize locally inside zn-gate.
 
 ### Scan: audit what your agent is about to trust
@@ -248,7 +248,7 @@ By default nothing is sent. If you set `ZN_CLOUD=1` and an API key, run `zn-gate
 
 **Nothing, by default.**
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/data-flow-animated-dark.svg"><img alt="Flow diagram. The agent, zn-gate and the tools or MCP servers run on your machine, and tool calls and prompts go through zn-gate. Tool output comes back redacted. Nothing leaves the machine by default. Only with ZN_CLOUD=1 and ZN_API_KEY set (or the Claude Code plugin's API key option), prompts with detected secrets removed go to api.usezn.com, the Galvanize 2 classifier." src="docs/diagrams/data-flow-animated-light.svg" width="800"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/data-flow-animated-dark.svg"><img alt="Flow diagram. The agent, zn-gate and the tools or MCP servers run on your machine, and tool calls and prompts go through zn-gate. Tool output comes back redacted. Nothing leaves the machine by default. Only with ZN_CLOUD=1 and ZN_API_KEY set (or the Claude Code plugin's API key option), prompts with detected secrets removed go to api.usezn.com, the Galvanize 3 classifier." src="docs/diagrams/data-flow-animated-light.svg" width="800"></picture>
 
 | Data | Evaluated | Sent anywhere? |
 |---|---|---|
@@ -273,7 +273,7 @@ We only publish numbers we can reproduce, with the method next to them.
 - **Self-test:** 51 curated vectors pass. That is a smoke test, not a detection or false-positive rate.
 - **Known limitation:** on whole source files, the rules can flag ordinary code comments. Version 1.5.0 reduces these on code and documentation, at the cost of letting some loosely worded override attempts through the local rules. To check it on your own source files, run `zn-gate scan --code <path>`; for the MCP servers you wrap, `--shadow` logs detections without blocking.
 - **Known limitation:** credentials under prefixed upper-case variable names (`OPENAI_API_KEY=`, `MY_APP_DB_PASSWORD=`, `export X_SECRET=`) are redacted in env files, JSON, YAML, Dockerfile and shell forms, and placeholders such as `YOUR_KEY` or `${VAR}` are left alone (tested in the npm and PyPI packages). Lower-case or dotted names such as `openai_api_key=` or `my.app.db.password=` are not redacted by the prompt and tool-result rules.
-- **Detection rates:** on a private held-out set of 3,309 examples, Galvanize 2 has 83.4% recall at a 0.81% false positive rate (serving threshold 0.662); these numbers are for the cloud classifier only. They do not measure the local rules engine and are not protection that zn-gate gives you offline; the local engine has no detection rate, only the self-test and latency above. Method, per-language results, known weak spots and a reproducible benchmark are in the [model card](https://huggingface.co/usezn/Galvanize-2) and the [announcement](https://usezn.com/blog/introducing-galvanize-2/). It is one layer of defense, not a guarantee.
+- **Detection rates:** on a multilingual set of 3,309 examples, Galvanize 3 has 89.6% recall at a 0.6% false positive rate, and it flags 2.9% of 658 long legitimate documents; these numbers are for the cloud classifier only. They do not measure the local rules engine and are not protection that zn-gate gives you offline; the local engine has no detection rate, only the self-test and latency above. The set was not used for training; it was used to choose between candidate models. Method and the comparison with nine open detectors are in the [announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=github&utm_medium=readme&utm_campaign=galvanize-3). The previous model, Galvanize 2, has open weights and its own results on its [model card](https://huggingface.co/usezn/Galvanize-2). It is one layer of defense, not a guarantee.
 
 ## What zn-gate is not
 
@@ -330,10 +330,10 @@ jobs:
           persist-credentials: false
       - name: Scan AI agent prompts and tools
         # Pin the action to a full commit SHA; the comment names the release.
-        uses: usezn/zn@746be20f3276ab0d589f2d6df941b5d31a5396d8 # v1.13.1
+        uses: usezn/zn@2afcaa17c7d1cb8fb5ded21f5f849ce8eba2bc5e # v1.14.1
         with:
-          version: '1.13.1'
-          package-sha256: '7fab55ba5c01790c06582144b7f991dc03698039813fdb1556986f6327bed0a1'
+          version: '1.14.1'
+          package-sha256: '5ae5bae2625cad5fc1d0ca6d88a0d32f0e26310ef285d8adf48ddf68cb6983ba'
           path: '.'
           fail-on-threat: 'true'
           format: 'github'
@@ -365,9 +365,9 @@ jobs:
         id: zn
         # Pin to the full commit SHA of an Action release v1.10.0 or later.
         # The zn-gate package version is set by version below.
-        uses: usezn/zn@746be20f3276ab0d589f2d6df941b5d31a5396d8 # v1.13.1
+        uses: usezn/zn@2afcaa17c7d1cb8fb5ded21f5f849ce8eba2bc5e # v1.14.1
         with:
-          version: '1.13.1'
+          version: '1.14.1'
           mode: 'both'
           format: 'sarif'
           severity-threshold: 'medium'   # stricter than the default (high)
@@ -382,7 +382,7 @@ The `mode`, `agents`, `fail-on`, `severity-threshold`, `sarif-file` and `npm-int
 
 | Input | Default | Description |
 |---|---|---|
-| `version` | `1.14.0` | Exact `zn-gate` version to install. Ranges and `latest` are refused. `audit` needs 1.6.0 or later. |
+| `version` | `1.14.1` | Exact `zn-gate` version to install. Ranges and `latest` are refused. `audit` needs 1.6.0 or later. |
 | `mode` | `scan` | `scan`, `audit` or `both`. |
 | `path` | `.` | File or directory to scan. `audit` needs a directory: with `both` a file skips the audit with a warning; with `audit` the step fails. |
 | `allow-partial` | `false` | Scan only: `true` keeps the step green when some files or folders were not read (2 MiB or larger, cannot be read, not a regular file, binary `.key` file); they are still listed. A scan that read no file at all still fails. Needs zn-gate 1.14.0 or later (an older `version` stops with an error). |
@@ -413,7 +413,7 @@ Permissions: the action itself needs only `contents: read`; add `security-events
 
 ### pre-commit
 
-Run both checks before each commit with the [pre-commit](https://pre-commit.com) framework (needs Node.js 18 or later; ids `zn-gate-scan` and `zn-audit`). The hooks file ships from release 1.14.0, so `rev` must be a release tag of 1.14.0 or later: earlier tags have no `.pre-commit-hooks.yaml` and pre-commit fails with `InvalidManifestError`. Add `repos: [{repo: https://github.com/usezn/zn, rev: v1.14.0, hooks: [{id: zn-gate-scan}, {id: zn-audit}]}]` to `.pre-commit-config.yaml`. Each tag's hooks run the exact zn-gate version of that tag (`npx --yes zn-gate@1.14.0 ...`), so the `rev` you pin decides which version runs on every commit. The scan hook reads the whole repository, so a file of 2 MiB or more makes it exit 3; to accept skipped files, add `args: [--allow-partial]` to the `zn-gate-scan` hook.
+Run both checks before each commit with the [pre-commit](https://pre-commit.com) framework (needs Node.js 18 or later; ids `zn-gate-scan` and `zn-audit`). The hooks file ships from release 1.14.0, so `rev` must be a release tag of 1.14.0 or later: earlier tags have no `.pre-commit-hooks.yaml` and pre-commit fails with `InvalidManifestError`. Add `repos: [{repo: https://github.com/usezn/zn, rev: v1.14.1, hooks: [{id: zn-gate-scan}, {id: zn-audit}]}]` to `.pre-commit-config.yaml`. Each tag's hooks run the exact zn-gate version of that tag (`npx --yes zn-gate@1.14.1 ...`), so the `rev` you pin decides which version runs on every commit. The scan hook reads the whole repository, so a file of 2 MiB or more makes it exit 3; to accept skipped files, add `args: [--allow-partial]` to the `zn-gate-scan` hook.
 
 ### Repository layout
 

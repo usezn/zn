@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 from typing import Any, Optional
 
-from ..guard import GuardBlockError, block_message, validate_on_block
+from ..guard import GuardBlockError, block_message, validate_on_block, warn_ignored
 from ..rules import evaluate, sanitize_tool_result
 
 
@@ -48,6 +48,7 @@ class ZnLlamaGuard:
                 if self.fallback is not None:
                     return self.fallback
                 return block_message(assessment, "llamaindex:query")
+            warn_ignored(assessment, "llamaindex:query")
         return query_str
 
     def on_query_start(self, query_str: str) -> str:

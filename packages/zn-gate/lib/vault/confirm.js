@@ -181,7 +181,7 @@ function guiCommand(req, opts = {}) {
     const encoded = Buffer.from(WIN_SCRIPT, 'utf16le').toString('base64');
     return {
       file: ps,
-      args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
+      args: ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
       env: { PSModulePath: require('../exe').systemPsModulePath(ps), ZN_CONFIRM_TEXT: text, ZN_CONFIRM_TITLE: title, ZN_CONFIRM_SECONDS: String(seconds) },
     };
   }

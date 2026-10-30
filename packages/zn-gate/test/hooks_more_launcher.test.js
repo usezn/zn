@@ -164,7 +164,7 @@ test('antigravity: a hook that starts and then fails is also a deny JSON; the re
   const env = { HOME: home, ZN_HOME: path.join(home, '.zn'), PATH: process.env.PATH };
   getAdapter('antigravity').install({ env, home, nodePath: process.execPath, runnerPath: broken, mcp: false });
   const file = launcher.launcherFile('antigravity', { env, home });
-  const r = run(file, 'PreToolUse', tempDir(t, 'zn-b96-bin-'));
+  const r = run(file, 'PreToolUse', tempDir(t, "zn-b96-bin-") + ":/usr/bin:/bin");
   assert.equal(r.status, 0);
   const out = JSON.parse(r.stdout);
   assert.equal(out.decision, 'deny');
@@ -219,12 +219,12 @@ test('a hook that starts and then fails is blocked, not passed through, and zn o
     const env = { HOME: home, ZN_HOME: path.join(home, '.zn'), PATH: process.env.PATH };
     getAdapter(id).install({ env, home, nodePath: process.execPath, runnerPath: broken, mcp: false });
     const file = launcher.launcherFile(id, { env, home });
-    const r = run(file, block, bin);
+    const r = run(file, block, bin + ":/usr/bin:/bin");
     assert.equal(r.status, 2, id + ' ' + block + ': ' + r.stderr);
     assert.match(r.stderr, /its hook failed, so this was blocked.*zn-gate check/);
     assert.equal(fs.existsSync(mark), false, 'zn on PATH must not run after the recorded hook failed');
     if (warn) {
-      const w = run(file, warn, bin);
+      const w = run(file, warn, bin + ":/usr/bin:/bin");
       assert.equal(w.status, 0);
       assert.match(w.stderr, /its hook failed/);
     }
