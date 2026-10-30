@@ -6,7 +6,7 @@ The examples use a made-up project folder, `/home/user/example-project`.
 
 ## Zed
 
-### Connect
+### Connect in Zed
 
 1. In a terminal, run `node --version`. You need 18 or later.
 2. In Zed, open the Command Palette and run **zed: open settings file**.
@@ -24,19 +24,19 @@ The examples use a made-up project folder, `/home/user/example-project`.
    }
    ```
 
-### Check
+### Check in Zed
 
 Restart Zed and ask the agent to call `zn_status`, or look for `analyze_prompt`, `check_tool_call` and `check_tool_result` in the list of MCP tools. If they are listed, the server is running.
 
 Do not use `zn-gate check` for this. It checks hooks, and zn-gate does not install hooks for Zed.
 
-### Remove
+### Remove from Zed
 
 Open the same settings file, delete the `zn-gate` entry, save, and restart Zed. If you wrapped another server with `zn-gate shield`, put back its original command. To remove the program itself, run `npm uninstall -g zn-gate` if you installed it globally.
 
 ## JetBrains editor
 
-### Connect
+### Connect in JetBrains
 
 1. In the editor's terminal, in `/home/user/example-project`, run `node --version`. You need 18 or later.
 2. Open **Settings → Tools → AI Assistant → Model Context Protocol (MCP)** and click **Add** (+).
@@ -53,11 +53,11 @@ Open the same settings file, delete the `zn-gate` entry, save, and restart Zed. 
    }
    ```
 
-### Check
+### Check in JetBrains
 
 Restart the IDE and ask the agent to call `zn_status`, or look for the three zn-gate tools in the list of MCP tools. As in Zed, `zn-gate check` does not test this setup, because zn-gate does not install hooks for JetBrains AI Assistant.
 
-### Remove
+### Remove from JetBrains
 
 Open the MCP settings you edited, delete the `zn-gate` entry, save, and restart the IDE. Put back the original command of any server you wrapped with `zn-gate shield`. To remove the program itself, run `npm uninstall -g zn-gate` if you installed it globally.
 
