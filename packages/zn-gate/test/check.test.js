@@ -15,6 +15,7 @@ const { check: realCheck, report } = require('../lib/check');
 // supports it is injected (the check for older versions is in init_plugin_node.test.js).
 const check = (opts) => realCheck({ nodeVersion: '22.0.0', ...opts });
 const { tempDir } = require('./helpers/tmp');
+const { hookTimeoutMs } = require('./helpers/time_budget');
 const { pluginHooks, writePluginManifest } = require('./helpers/claude_plugin');
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
@@ -25,7 +26,7 @@ function homeWithHooks(t, agents) {
   for (const id of agents) {
     getAdapter(id).install({ scope: 'user', home, env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
   }
-  return { home, env, cwd: tempDir(t, 'zn-check-cwd-') };
+  return { home, env, cwd: tempDir(t, 'zn-check-cwd-'), hookTimeoutMs: hookTimeoutMs() };
 }
 
 function textOf(res) {
