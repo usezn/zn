@@ -95,7 +95,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        # Pull requests test Ubuntu only; Windows and macOS run on pushes, the merge queue and the schedule.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["windows-latest", "macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:

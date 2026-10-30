@@ -117,8 +117,9 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         run: node bench/bench_node.js
 
-  # Pull requests into next run Python 3.12 on Ubuntu only. Older and newer Python versions, Windows and
-  # macOS run on the push to next; label a pull request full-ci to run them before the merge.
+  # Pull requests run Ubuntu only: Python 3.12 into next, Python 3.12 and 3.10 (the oldest supported) into main
+  # and release branches. The full Python matrix, Windows and macOS run on pushes, the merge queue and the daily
+  # schedule; label a pull request full-ci to run them before the merge.
   test-python:
     name: Python ${{ matrix.python-version }} tests & benchmarks (${{ matrix.os }})
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
@@ -132,7 +133,7 @@ jobs:
         # report is the python-coverage job): it is in both lists. The
         # list depends only on the event (never on another job), so every job name is known when the
         # run starts.
-        include: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.12"}]') }}
+        include: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]' || (github.event_name == 'pull_request' && (github.base_ref == 'main' || startsWith(github.base_ref, 'release/'))) && '[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.12"}]') }}
     defaults:
       run:
         shell: bash
