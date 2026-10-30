@@ -7,17 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('child_process');
 
-const fs = require('fs');
-const path = require('path');
-
-const { referencedSecrets } = require('../lib/broker/run');
-
-// cmdQuote is not exported from lib/broker/run.js, so it is loaded from the source text. The match must
-// succeed: if the function is renamed or moved, this test fails instead of passing on nothing.
-const RUN_SRC = fs.readFileSync(path.resolve(__dirname, '..', 'lib', 'broker', 'run.js'), 'utf8');
-const CMD_QUOTE_SRC = /^function cmdQuote\(arg\) \{\n[\s\S]*?\n\}/m.exec(RUN_SRC);
-assert.ok(CMD_QUOTE_SRC, 'cmdQuote not found in lib/broker/run.js');
-const cmdQuote = new Function(CMD_QUOTE_SRC[0] + '\nreturn cmdQuote;')();
+const { referencedSecrets, cmdQuote } = require('../lib/broker/run');
 
 test('cmdQuote: plain words, spaces and empty strings are wrapped in double quotes', () => {
   assert.equal(cmdQuote('plain'), '"plain"');
@@ -39,10 +29,18 @@ test('cmdQuote: newlines and tabs stay inside the quotes as they are', () => {
   assert.equal(cmdQuote('a\r\nb'), '"a\r\nb"');
 });
 
-test('cmdQuote: Windows backslashes are not escaped (cmd.exe does not treat them as escapes)', () => {
+test('cmdQuote: backslashes inside an argument are left alone', () => {
   assert.equal(cmdQuote('C:\\Program Files\\zn\\bin'), '"C:\\Program Files\\zn\\bin"');
   assert.equal(cmdQuote('\\\\server\\share'), '"\\\\server\\share"');
-  assert.equal(cmdQuote('dir\\"'), '"dir\\"""');
+});
+
+test('cmdQuote: backslashes before a double quote or the closing quote are doubled (MSVCRT rules)', () => {
+  assert.equal(cmdQuote('C:\\dir\\'), '"C:\\dir\\\\"');
+  assert.equal(cmdQuote('a\\\\'), '"a\\\\\\\\"');
+  assert.equal(cmdQuote('x y\\'), '"x y\\\\"');
+  assert.equal(cmdQuote('\\'), '"\\\\"');
+  assert.equal(cmdQuote('dir\\"'), '"dir\\\\"""');
+  assert.equal(cmdQuote('a\\\\"b'), '"a\\\\\\\\""b"');
 });
 
 test('cmdQuote: non-string arguments are converted with String()', () => {
