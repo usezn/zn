@@ -2,6 +2,37 @@
 
 Every command of the `zn-gate` program, with its options and exit codes. For a first walk through, start with [First 5 minutes](first-5-minutes.md). Words you do not know are explained in the [glossary](glossary.md).
 
+## Contents
+
+- [`init`](#init)
+- [`uninstall`](#uninstall)
+- [`check`](#check)
+- [`status`](#status)
+- [`test`](#test)
+- [`version`](#version)
+- [`connect`](#connect)
+- [`disconnect`](#disconnect)
+- [`scan`](#scan)
+- [`audit`](#audit)
+- [`reach`](#reach)
+- [`analyze`](#analyze)
+- [`pins`](#pins)
+- [`secret`](#secret)
+- [`env`](#env)
+- [`run`](#run)
+- [`unlock`](#unlock)
+- [`lock`](#lock)
+- [`vault`](#vault)
+- [`hooks`](#hooks)
+- [`hook`](#hook)
+- [`secrets-mcp`](#secrets-mcp)
+- [`mcp`](#mcp)
+- [`shield`](#shield)
+- [`evidence`](#evidence)
+- [`stats`](#stats)
+- [`report`](#report)
+- [`team`](#team)
+
 ## Program names
 
 The package installs three names. They are the same program, so every command below works with any of them:

@@ -17,6 +17,9 @@
  * Windows is refreshed too: Claude Code runs this sh launcher there (Git Bash); the other agents' Windows hooks are
  * inline PowerShell, with no launcher file. A launcher folder that belongs to another user (`sudo npm i -g` with the
  * user's HOME) is left alone.
+ * Under `sudo` the user's launchers are not refreshed; one line on stderr says to run `zn hooks install <agent>`
+ * again as that user. npm 7 and later hide the output of install scripts unless the install runs with
+ * `--foreground-scripts`, so that line is seen only then.
  * With `npm install --ignore-scripts` this does not run; `zn hooks install <agent>` is then the fix.
  */
 
@@ -90,11 +93,21 @@ function refreshLaunchers(opts = {}) {
   return done;
 }
 
-/** The postinstall entry: quiet, and never throws. */
+const SUDO_NOTICE = 'zn-gate: installed with sudo, so your hook launchers were not refreshed. Run `zn hooks install <agent>` again as yourself (without sudo), or your agent\'s hooks will block tool calls.\n';
+
+// Root through sudo: the launchers of the person who ran sudo are not ours to write, so say what to run.
+function ranWithSudo(opts) {
+  const env = opts.env || process.env;
+  const uid = opts.uid !== undefined ? opts.uid : (typeof process.getuid === 'function' ? process.getuid() : null);
+  return uid === 0 && typeof env.SUDO_USER === 'string' && env.SUDO_USER !== '' && env.SUDO_USER !== 'root';
+}
+
+/** The postinstall entry: quiet (one line on stderr after a sudo install, shown only with `--foreground-scripts`), and never throws. */
 function main(opts = {}) {
   try {
     const done = refreshLaunchers(opts);
     if (done.length) (opts.out || ((s) => process.stdout.write(s)))('zn-gate: refreshed hook launchers for ' + done.join(', ') + '\n');
+    else if (ranWithSudo(opts)) (opts.err || ((s) => process.stderr.write(s)))(SUDO_NOTICE);
   } catch (_) { /* never fail the install */ }
 }
 

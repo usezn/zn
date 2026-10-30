@@ -1,5 +1,15 @@
 # zn Team on a developer machine
 
+| Command | Summary |
+|---|---|
+| `zn-gate team join` | Connects this machine to your organization with the join token your admin gave you. |
+| `zn-gate team status` | Shows the organization, the policy version and the state of the audit upload. |
+| `zn-gate team sync` | Downloads the policy and uploads the audit log now. |
+| `zn-gate team leave` | Disconnects this machine from the organization. |
+| `zn-gate team managed-config` | For administrators. Prints the managed configuration files to deploy so that the zn hooks run for every developer. |
+
+Options and exit codes are in the [command line reference](cli.md#team).
+
 zn Team lets an organization publish one policy for how its developers' AI
 agents may use secrets, and collect the audit records of that use. This page
 covers the zn-gate side: what runs on each machine, what the organization can
