@@ -17,6 +17,9 @@ const { tempDir } = require('./helpers/tmp');
 
 const zc = getAdapter('zcode');
 const posix = process.platform !== 'win32';
+// The plugin's hooks.json starts its hook with /bin/sh by its full path (so no planted sh can run). Windows has no /bin/sh, so check reports
+// the plugin there as not protected, and these tests cannot expect 'protected' (a product limit of the plugin on Windows, not of the tests).
+const NO_BIN_SH = !posix && 'the ZCode plugin starts /bin/sh, which Windows does not have: check reports it as not protected there';
 const ID = 'zn-gate@usezn';
 // The plugin's real manifest in this repository.
 const REPO_HOOKS = path.join(__dirname, '..', '..', '..', 'plugins', 'zcode', 'hooks', 'hooks.json');
@@ -91,7 +94,7 @@ test('pluginState: absent, installed and on, switched off, plugins off, not ours
   assert.equal(zc.pluginState({ home: broken }).root, null);
 });
 
-test('zn-gate check: the plugin alone protects ZCode, with hooks.enabled false, not set or true', { skip: !posix }, async (t) => {
+test('zn-gate check: the plugin alone protects ZCode, with hooks.enabled false, not set or true', { skip: NO_BIN_SH }, async (t) => {
   const check = require('../lib/check');
   const home = tempDir(t, 'zn-zcp-only-');
   const cwd = tempDir(t, 'zn-zcp-only-cwd-');
@@ -110,7 +113,7 @@ test('zn-gate check: the plugin alone protects ZCode, with hooks.enabled false, 
   assert.notEqual((await find(false)).state, 'not-set-up');
 });
 
-test('zn-gate check: a plugin that is turned off, with nothing else of zn running, is NOT protected', { skip: !posix }, async (t) => {
+test('zn-gate check: a plugin that is turned off, with nothing else of zn running, is NOT protected', async (t) => {
   const check = require('../lib/check');
   const home = tempDir(t, 'zn-zcp-off-');
   const cwd = tempDir(t, 'zn-zcp-off-cwd-');
@@ -129,7 +132,7 @@ test('zn-gate check: a plugin that is turned off, with nothing else of zn runnin
   assert.match(r.problem, /plugins are turned off in ZCode/);
 });
 
-test('zn-gate check: plugin and zn hooks both on is protected, with a note about the double run', { skip: !posix }, async (t) => {
+test('zn-gate check: plugin and zn hooks both on is protected, with a note about the double run', { skip: NO_BIN_SH }, async (t) => {
   const check = require('../lib/check');
   const home = tempDir(t, 'zn-zcp-both-');
   const cwd = tempDir(t, 'zn-zcp-both-cwd-');
@@ -143,7 +146,7 @@ test('zn-gate check: plugin and zn hooks both on is protected, with a note about
   assert.ok(r.notes.some((n) => /checked twice/.test(n) && /hooks uninstall zcode/.test(n)), JSON.stringify(r.notes));
 });
 
-test('zn-gate check: plugin off with zn hooks on is protected by the hooks (and hooks.enabled false is still reported)', { skip: !posix }, async (t) => {
+test('zn-gate check: plugin off with zn hooks on is protected by the hooks (and hooks.enabled false is still reported)', async (t) => {
   const check = require('../lib/check');
   const home = tempDir(t, 'zn-zcp-hk-');
   const cwd = tempDir(t, 'zn-zcp-hk-cwd-');
@@ -211,7 +214,7 @@ test('the ZCode plugin manifest starts every hook with the shell by its full pat
   }
 });
 
-test('zn-gate check runs the plugin hook as ZCode starts it (the program named in hooks.json), never a planted one', { skip: !posix }, async (t) => {
+test('zn-gate check runs the plugin hook as ZCode starts it (the program named in hooks.json), never a planted one', { skip: NO_BIN_SH }, async (t) => {
   const home = tempDir(t, 'zn-zcp-sh-');
   const { cwd, marker } = plantPrograms(t);
   installPlugin(home);
@@ -227,7 +230,7 @@ test('zn-gate check runs the plugin hook as ZCode starts it (the program named i
   }
 });
 
-test('zn-gate check: a plugin manifest that starts its hook by name is NOT protected, whatever the PATH', { skip: !posix }, async (t) => {
+test('zn-gate check: a plugin manifest that starts its hook by name is NOT protected, whatever the PATH', { skip: NO_BIN_SH }, async (t) => {
   const home = tempDir(t, 'zn-zcp-bare-');
   const { cwd, marker } = plantPrograms(t);
   // The manifest of the 1.14.0 release candidates: `sh` by name.
@@ -245,7 +248,7 @@ test('zn-gate check: a plugin manifest that starts its hook by name is NOT prote
   }
 });
 
-test('zn-gate check: a manifest whose program is not on this computer, or with no PreToolUse hook, is NOT protected', { skip: !posix }, async (t) => {
+test('zn-gate check: a manifest whose program is not on this computer, or with no PreToolUse hook, is NOT protected', async (t) => {
   const home = tempDir(t, 'zn-zcp-gone-');
   const cwd = tempDir(t, 'zn-zcp-gone-cwd-');
   installPlugin(home, { hooks: (h) => h.split('"command": "/bin/sh"').join('"command": "/nonexistent/zn-test/sh"') });
@@ -270,7 +273,7 @@ test('zn-gate check: a manifest whose program is not on this computer, or with n
 // The reproduction of the 1.14.0 review: with a relative or empty PATH entry, the host's own lookup of the first
 // program in the manifest picked a planted `sh`, and a shell picked a planted `node`. The real plugin manifest and
 // script, started the way ZCode starts a process hook (no shell, the project as working folder), run nothing planted.
-test('the ZCode plugin hook, started as ZCode starts it, runs no planted sh or node (relative or empty PATH entry)', { skip: !posix }, (t) => {
+test('the ZCode plugin hook, started as ZCode starts it, runs no planted sh or node (relative or empty PATH entry)', { skip: NO_BIN_SH }, (t) => {
   const { spawnSync } = require('child_process');
   const pluginRoot = path.join(__dirname, '..', '..', '..', 'plugins', 'zcode');
   const pre = JSON.parse(fs.readFileSync(REPO_HOOKS, 'utf8')).hooks.PreToolUse[0].hooks[0];
@@ -291,7 +294,7 @@ test('the ZCode plugin hook, started as ZCode starts it, runs no planted sh or n
   assert.match(fs.readFileSync(marker, 'utf8'), /^sh$/m, 'the lookup by name did not pick the planted sh');
 });
 
-test('zn-gate check: a ZCode process hook counts only as an absolute sh or node on a script inside the plugin folder', { skip: !posix }, async (t) => {
+test('zn-gate check: a ZCode process hook counts only as an absolute sh or node on a script inside the plugin folder', async (t) => {
   const cwd = tempDir(t, 'zn-zcp-wl-cwd-');
   const swap = (cmd, args) => (h) => {
     const j = JSON.parse(h);
@@ -318,7 +321,7 @@ test('zn-gate check: a ZCode process hook counts only as an absolute sh or node 
   }
 });
 
-test('zn-gate check: a ZCode hook with a non-system sh, a pattern, or a script linked out of the plugin is NOT protected and does not run', { skip: !posix }, async (t) => {
+test('zn-gate check: a ZCode hook with a non-system sh, a pattern, or a script linked out of the plugin is NOT protected and does not run', { skip: NO_BIN_SH }, async (t) => {
   const project = tempDir(t, 'zn-zcp-strict-proj-');
   const marker = path.join(project, 'ran.txt');
   const planted = '#!/bin/sh\necho ran >> ' + JSON.stringify(marker) + '\nexit 0\n';
@@ -342,7 +345,7 @@ test('zn-gate check: a ZCode hook with a non-system sh, a pattern, or a script l
   assert.equal(fs.existsSync(marker), false, 'a program or script named by a refused manifest ran');
 });
 
-test('zn-gate check: only the PreToolUse hook the ZCode plugin ships counts; a decoy script in the plugin is NOT protected and does not run', { skip: !posix }, async (t) => {
+test('zn-gate check: only the PreToolUse hook the ZCode plugin ships counts; a decoy script in the plugin is NOT protected and does not run', async (t) => {
   const cwd = tempDir(t, 'zn-zcp-decoy-cwd-');
   const marker = path.join(cwd, 'noop-ran.txt');
   const preArgs = (args) => (h) => {
