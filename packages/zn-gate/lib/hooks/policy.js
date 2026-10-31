@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-29.6';
+const POLICY_RULES_VERSION = '2026-10-31.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -172,6 +172,50 @@ function shortNameGlob(text) {
     return '{,.}' + m[1] + '*' + (m[2] ? '.' + m[2] + '*' : '');
   }).join('');
   return found ? { glob: out, lastShort } : null;
+}
+// Windows namespace prefixes and admin shares name the same file as the plain drive path: `\\?\C:\x`, `\\.\C:\x`,
+// `\??\C:\x`, `//?/C:/x`, `\\?\UNC\localhost\C$\x` and `\\localhost\C$\x` all open C:\x. A shell reads `\\` as one
+// backslash, so the text a hook sees is often `\?\C:\x` or `\localhost\C$\x`. Left in place the prefix makes the 8.3
+// short-name check read `?` as a wildcard and misplaces the folder, so it is replaced by the drive before the path is
+// classified. Only on win32.
+const NS_UNC_RE = /^[\\/]{1,2}(?:\?\??|\.)[\\/]UNC[\\/]+/i;
+const NS_DRIVE_RE = /^[\\/]{1,2}(?:\?\??|\.)[\\/]+(?=[A-Za-z]:(?:[\\/]|$))/;
+// What is left after stripNamespacePrefix when zn cannot map the prefix to a drive: another namespace or device form
+// (`\\?\Volume{GUID}\`, `\\?\GLOBALROOT\Device\HarddiskVolume3\`, `\\.\HarddiskVolume3\`) or an admin share on a host
+// name zn does not know as this machine.
+const NS_LEFT_RE = /^[\\/]{1,2}(?:\?\??|\.)(?:[\\/]|$)/;
+const SHARE_LEFT_RE = /^[\\/]{1,2}[^\\/]+[\\/]+[A-Za-z]\$(?:[\\/]|$)/;
+const SHORT_TILDE_RE = /~\d/;
+let adminShareCache = null;
+/** Admin share prefix (`\\localhost\C$`, `\\<this host>[.domain]\C$`, `\\<one of its IPv4 addresses>\C$`), built once. */
+function adminShareRegExp() {
+  if (adminShareCache) return adminShareCache;
+  const hosts = ['localhost', '127.0.0.1', '[::1]'];
+  try { hosts.push(os.hostname()); } catch (_) { /* no host name */ }
+  try {
+    for (const list of Object.values(os.networkInterfaces() || {})) {
+      for (const a of list || []) if (a && a.family !== 'IPv6' && a.family !== 6 && a.address) hosts.push(a.address);
+    }
+  } catch (_) { /* no interfaces */ }
+  const names = [...new Set(hosts.filter(Boolean))].map((h) => h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  // A host name may be written with its domain (`\\pc.corp.example\C$`).
+  adminShareCache = new RegExp('^[\\\\/]{1,2}(?:' + names.join('|') + ')(?:\\.[^\\\\/$]+)?[\\\\/]+([A-Za-z])\\$(?=[\\\\/]|$)', 'i');
+  return adminShareCache;
+}
+function stripNamespacePrefix(text) {
+  if (process.platform !== 'win32' || typeof text !== 'string' || !/^[\\/]/.test(text)) return text;
+  let t = text;
+  const unc = NS_UNC_RE.exec(t);
+  if (unc) t = '\\\\' + t.slice(unc[0].length);
+  else t = t.replace(NS_DRIVE_RE, '');
+  const share = adminShareRegExp().exec(t);
+  if (share) t = share[1] + ':' + t.slice(share[0].length);
+  return t;
+}
+/** On win32, a short name behind a prefix zn could not map to a drive cannot be checked, so it is refused. */
+function unmappableShortName(text) {
+  if (process.platform !== 'win32' || typeof text !== 'string') return false;
+  return (NS_LEFT_RE.test(text) || SHARE_LEFT_RE.test(text)) && SHORT_TILDE_RE.test(text);
 }
 /** The pattern, ignoring case where the platform does. */
 const ci = (re) => (caseInsensitive() && !re.flags.includes('i') ? new RegExp(re.source, re.flags + 'i') : re);
@@ -389,7 +433,7 @@ function classifyResolved(abs, ctx) {
 function resolvedOf(p, opts = {}) {
   const home = opts.home || os.homedir();
   const cwd = opts.cwd || process.cwd();
-  return path.resolve(cwd, stripStreams(expandEnv(expandHome(p, home), opts.env || process.env).text));
+  return path.resolve(cwd, stripNamespacePrefix(stripStreams(expandEnv(expandHome(p, home), opts.env || process.env).text)));
 }
 
 /**
@@ -431,7 +475,7 @@ function classifyPath(p, opts = {}) {
   if (expanded.agentVar) {
     return { kind: 'agent_config', reason: 'the path comes from $' + expanded.agentVar + ', the agent configuration location' };
   }
-  expanded.text = stripStreams(expanded.text);
+  expanded.text = stripNamespacePrefix(stripStreams(expanded.text));
   const abs = path.resolve(ctx.cwd, expanded.text);
   const candidates = new Set([abs, realTargetOf(abs), nativeTargetOf(abs)]);
   // ag/../hooks.json, with ag a link to .agents/skills, names .agents/hooks.json: ".." is applied to where the link leads.
@@ -440,6 +484,9 @@ function classifyPath(p, opts = {}) {
   for (const candidate of candidates) {
     const c = classifyResolved(candidate, ctx);
     if (c) return c;
+  }
+  if (unmappableShortName(expanded.text)) {
+    return { kind: 'credential', reason: 'zn cannot check a path written this way: a short (8.3) name behind a Windows namespace, device or share prefix' };
   }
   // A short name hides the long one: it counts as protected when it could stand for a protected file or folder.
   const short = shortNameGlob(expanded.text);
@@ -3162,6 +3209,7 @@ function egressLabel(part, start) {
 module.exports = {
   POLICY_RULES_VERSION,
   classifyPath,
+  _stripNamespacePrefix: stripNamespacePrefix,
   classifyWord,
   globClass,
   globRegExp,
