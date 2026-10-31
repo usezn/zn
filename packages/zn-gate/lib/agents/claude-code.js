@@ -76,6 +76,7 @@ const { claudeCodePolicyWarnings } = require('./managed-policy');
 const cfg = require('./config-file');
 const { hooksOf } = cfg;
 const launcher = require('./launcher');
+const { isSecretsToolName } = require('../broker/secrets-tools');
 
 const id = 'claude-code';
 
@@ -126,7 +127,9 @@ function textsOf(tool, input) {
 // `ours` is set only for a call to zn's own server, verified from the MCP configuration (znMcpServerKind).
 function mcpInfo(server, tool, event, cwd) {
   const info = { server, tool };
-  const ours = event === 'pre_tool' ? znMcpServerKind(server, cwd) : null;
+  // Only an exact tool of zn's server counts: a server named secrets_ or secrets__x sends mcp__secrets___... or
+  // mcp__secrets__x__..., which parse as server secrets with a tool zn does not have. Those fail closed.
+  const ours = event === 'pre_tool' && isSecretsToolName(tool) ? znMcpServerKind(server, cwd) : null;
   if (ours) info.ours = ours;
   return info;
 }
