@@ -345,10 +345,10 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
  * What is NOT kept, on purpose (a reviewer decides):
  *  - the timer starts when node starts. A hang while node itself starts (before the first line of LEAN_JS runs) is covered only by
  *    the agent's own hook timeout, which for most agents lets the call run. The shell timer started before node.
- *  - at the deadline what the runner had written to stderr so far is dropped (it lives in the worker, which is blocked); the block
- *    text is still written. A child process the runner started is not killed as a group by the shell timer any more; the runner
+ *  - at the deadline what the runner had written to stderr so far is dropped (it lives in the worker, which is blocked); node is
+ *    killed and the shell wrapper writes the block text. A child process the runner started is not killed as a group by the shell timer any more; the runner
  *    starts none that holds the agent's pipes (spawnSync with pipes, a daemon with stdio ignored).
- *  - a TERM, HUP or INT reaches the main thread, which answers with the block (as the shell trap did); the runner's own signal
+ *  - a TERM, HUP or INT reaches the main thread, which kills the process so the shell wrapper answers with the block; the runner's own signal
  *    handlers do not run in a worker thread.
  *  - the answer is written to the agent's pipe once, when the run ends, from inside node instead of by `cat` from a file.
  */
@@ -380,12 +380,16 @@ function leanMain() {
     const ok = (!m.o || put(1, [Buffer.from(m.o)])) && (!m.e || put(2, [Buffer.from(m.e)]));
     process.exitCode = ok ? cfg.ok + m.c : 1;
   };
-  // The deadline, a signal, or a worker that fails: this thread answers with the block and ends the process, which ends the worker.
+  // The deadline, a signal, or a worker that cannot start: write nothing and kill this process at once. process.exit() would stop
+  // and join the worker thread, and that cannot interrupt native code (a spawnSync with no timeout, such as runner.js gitStatusOf
+  // -> broker/files.js, or keychain.js with its 60 s; a blocking read of a FIFO), so node would end only when that call returns,
+  // after the agent's own hook timeout. A kill ends node now, with a status that is not 80, 82 or 86, and the shell wrapper
+  // writes the same block (zn_block). On Windows this is TerminateProcess.
   const fire = () => {
     if (done) return;
     done = true;
-    try { say('crash'); } catch (e) { process.exitCode = 1; }
-    process.exit();
+    try { process.kill(process.pid, 'SIGKILL'); } catch (e) { }
+    process.exit(1);
   };
   // 1. The deadline, before anything that could hang, in THIS thread: the runner runs in a worker thread, so a runner that blocks
   // its own thread with synchronous work cannot stop this timer. unref: a runner that ends by itself must not wait for it.

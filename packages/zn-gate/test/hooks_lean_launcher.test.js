@@ -26,7 +26,7 @@ const AGENTS = ['claude-code', 'cursor', 'gemini', 'antigravity', 'zcode', 'code
 
 // Writes a launcher for a fake runner in a temporary folder; returns what a test needs.
 function setup(t, runnerSource, o = {}) {
-  const dir = tempDir(t, 'zn-b2342-');
+  const dir = tempDir(t, 'zn-lean-');
   const runner = path.join(dir, 'runner.js');
   fs.writeFileSync(runner, runnerSource);
   const agent = o.agent || 'claude-code';
@@ -67,14 +67,14 @@ test('the POSIX launchers are byte for byte what they were before the lean launc
 test('writeLauncher writes the lean launcher on win32 only; every other platform keeps the full one', (t) => {
   const kinds = {};
   for (const platform of ['win32', 'linux', 'darwin']) {
-    const home = tempDir(t, 'zn-b2342-w-');
+    const home = tempDir(t, 'zn-lean-w-');
     const env = { ZN_HOME: path.join(home, '.zn') };
     const file = launcher.writeLauncher('claude-code', process.execPath, REAL_RUNNER, { env, home, platform, deadlineS: 13, deadlineSoft: true });
     kinds[platform] = /^ZN_DEADLINE_S=13$/m.test(fs.readFileSync(file, 'utf8')) ? 'lean' : 'full';
   }
   assert.deepEqual(kinds, { win32: 'lean', linux: 'full', darwin: 'full' });
   // The caller can still force either one (tests do).
-  const home = tempDir(t, 'zn-b2342-w-');
+  const home = tempDir(t, 'zn-lean-w-');
   const env = { ZN_HOME: path.join(home, '.zn') };
   const file = launcher.writeLauncher('claude-code', process.execPath, REAL_RUNNER, { env, home, platform: 'win32', lean: false, deadlineS: 13 });
   assert.match(fs.readFileSync(file, 'utf8'), /\/bin\/sleep 13 & ZN_SP=/);
@@ -189,6 +189,35 @@ test('lean: a runner that blocks its own thread past the deadline is blocked at 
   }
 });
 
+// A runner stuck in native code (a spawnSync with no timeout, a blocking FIFO read) cannot be stopped by process.exit() from the
+// main thread: the process must be killed at the deadline so that the shell wrapper writes the block.
+test('lean: a runner stuck in a blocking child process (spawnSync) is blocked near the deadline', { skip: !posix }, (t) => {
+  const stub = "require('child_process').spawnSync('sleep', ['8']); " + ACK + "process.stdout.write('LATE');";
+  const { file } = setup(t, stub, { deadlineS: 2 });
+  for (const [event, status] of [['PreToolUse', 2], ['PostToolUse', 0]]) {
+    const r = run(file, event);
+    assert.ok(r.ms >= 1800 && r.ms < 6000, 'answered at about the deadline, not after the 8 s block: ' + r.ms);
+    assert.equal(r.status, status);
+    assert.doesNotMatch(r.stdout, /LATE/);
+    assert.match(r.stderr + r.stdout, /its hook failed/);
+  }
+});
+
+test('lean: a runner stuck in a blocking read of a FIFO is blocked near the deadline', { skip: !posix }, (t) => {
+  const { file, dir } = setup(t, '', { deadlineS: 2 });
+  const fifo = path.join(dir, 'pipe');
+  const mk = spawnSync('mkfifo', [fifo]);
+  if (mk.status !== 0) { t.skip('mkfifo is not available'); return; }
+  fs.writeFileSync(path.join(dir, 'runner.js'), "require('fs').readFileSync(" + JSON.stringify(fifo) + "); " + ACK + "process.stdout.write('LATE');");
+  const digest = crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, 'runner.js'))).digest('hex');
+  const text = launcher.unixScript('claude-code', process.execPath, path.join(dir, 'runner.js'), { deadlineS: 2, deadlineSoft: true, runnerDigest: digest, lean: true });
+  fs.writeFileSync(file, text, { mode: 0o755 });
+  const r = run(file, 'PreToolUse');
+  assert.ok(r.ms >= 1800 && r.ms < 8000, 'answered at about the deadline, not at the test timeout: ' + r.ms);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr + r.stdout, /its hook failed/);
+});
+
 test('lean: the runner reads its stdin in the worker and a normal call is unchanged', { skip: !posix }, (t) => {
   const { file } = setup(t, "let d = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (c) => { d += c; }); process.stdin.on('end', () => { " + ACK + "process.stdout.write('GOT:' + d + ':' + process.argv.slice(2).join(',')); });", { deadlineS: 20 });
   const r = run(file, 'PreToolUse', '{"a":1}');
@@ -244,7 +273,7 @@ test('lean: a Node.js that is gone blocks with the "gone" reason, nothing is run
 
 test('lean: a "node" that cannot start, or that ends with 0 or 2 by itself, is a failure, not an answer', { skip: !posix }, (t) => {
   for (const body of ['#!/bin/sh\nexit 0\n', '#!/bin/sh\nexit 2\n', '#!/bin/sh\nexit 127\n', '#!/bin/sh\nkill -9 $$\n', 'not a program\n']) {
-    const dir = tempDir(t, 'zn-b2342-stub-');
+    const dir = tempDir(t, 'zn-lean-stub-');
     const stub = path.join(dir, 'node');
     fs.writeFileSync(stub, body, { mode: 0o755 });
     const { file } = setup(t, ACK + "process.stdout.write('REAL');", { node: stub });
@@ -316,14 +345,14 @@ test('lean and full launchers agree when Node.js is gone', { skip: !posix }, (t)
 });
 
 test('lean: the real runner answers the same as running it directly, also for a blocked call', { skip: !posix }, (t) => {
-  const home = tempDir(t, 'zn-b2342-h-');
-  const cwd = tempDir(t, 'zn-b2342-cwd-');
+  const home = tempDir(t, 'zn-lean-h-');
+  const cwd = tempDir(t, 'zn-lean-cwd-');
   const env = { PATH: process.env.PATH, HOME: home, ZN_HOME: path.join(home, '.zn'), ZN_STATS: 'off', ZN_NO_TELEMETRY: '1' };
   const digest = launcher.runnerSha(REAL_RUNNER);
   const file = path.join(home, 'zn-hook-claude-code.sh');
   fs.writeFileSync(file, launcher.unixScript('claude-code', process.execPath, REAL_RUNNER, { deadlineS: 13, deadlineSoft: true, runnerDigest: digest, lean: true }), { mode: 0o755 });
   for (const command of ['ls -la', 'cat ~/.ssh/id_rsa']) {
-    const input = JSON.stringify({ session_id: 'b2342', cwd, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, tool_use_id: 'toolu_1' });
+    const input = JSON.stringify({ session_id: 'lean-launcher', cwd, hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, tool_use_id: 'toolu_1' });
     const direct = spawnSync(process.execPath, [REAL_RUNNER, 'claude-code'], { input, encoding: 'utf8', env, cwd });
     const viaLean = spawnSync('/bin/sh', [file, 'PreToolUse'], { input, encoding: 'utf8', env, cwd });
     assert.equal(viaLean.status, direct.status, command + ' status: ' + viaLean.stderr);
@@ -337,9 +366,9 @@ test('lean: the real runner answers the same as running it directly, also for a 
 // ---- refresh and the adapters keep it -------------------------------------------------------------------------------------
 
 test('refresh moves a full launcher to the lean one on Windows and keeps its deadline; the lean one is stable', { skip: !posix }, (t) => {
-  const home = tempDir(t, 'zn-b2342-r-');
+  const home = tempDir(t, 'zn-lean-r-');
   const env = { ZN_HOME: path.join(home, '.zn') };
-  const runner = path.join(tempDir(t, 'zn-b2342-pkg-'), 'runner.js');
+  const runner = path.join(tempDir(t, 'zn-lean-pkg-'), 'runner.js');
   fs.writeFileSync(runner, ACK);
   const file = launcher.writeLauncher('claude-code', process.execPath, runner, { env, home, platform: 'linux', deadlineS: 9, deadlineSoft: true, runnerDigest: '00'.repeat(32) });
   assert.match(fs.readFileSync(file, 'utf8'), /\/bin\/sleep 9 & ZN_SP=/);
@@ -355,7 +384,7 @@ test('refresh moves a full launcher to the lean one on Windows and keeps its dea
 });
 
 test('the Claude Code install on win32 writes the lean launcher and `zn-gate check` can read its node and runner back', { skip: !posix }, (t) => {
-  const home = tempDir(t, 'zn-b2342-i-');
+  const home = tempDir(t, 'zn-lean-i-');
   const env = { HOME: home, CLAUDE_CONFIG_DIR: path.join(home, '.claude'), ZN_HOME: path.join(home, '.zn'), PATH: process.env.PATH };
   getAdapter('claude-code').install({ env, home, platform: 'win32', nodePath: 'C:\\Program Files\\nodejs\\node.exe', runnerPath: 'C:\\zn\\lib\\hooks\\runner.js', mcp: false });
   const text = fs.readFileSync(launcher.launcherFile('claude-code', { env, home }), 'utf8');
