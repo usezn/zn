@@ -117,16 +117,17 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   ```text
   the zn-gate plugin starts its hook with /bin/sh, which is not on this computer, so the hook cannot start
-  the ZCode plugin needs a system with /bin/sh (Linux); elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again
+  the ZCode plugin needs a system with /bin/sh (macOS, Linux) or Windows PowerShell; elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again
   ```
 
-  The ZCode plugin starts its hooks with `/bin/sh`, so it works on Linux. On other systems, use `zn hooks install zcode` instead.
+  The ZCode plugin has two hooks for every event: one starts `/bin/sh` (macOS and Linux) and one starts the Windows PowerShell by its full path (`C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`, Windows). On each system only the matching one can start. If your Windows folder is not `C:/Windows`, or the program is missing, use `zn hooks install zcode` instead.
 
 - **The ZCode plugin has no PreToolUse hook.**
 
   ```text
   the zn-gate plugin has no PreToolUse hook in <plugin folder>/hooks/hooks.json, so ZCode runs no zn check before tool calls
   the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`/bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
+  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`powershell.exe ... scripts/zn-hook.ps1 PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
   install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again
   ```
 

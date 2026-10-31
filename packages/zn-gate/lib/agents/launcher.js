@@ -39,6 +39,7 @@ const os = require('os');
 const path = require('path');
 const { writeFileAtomic } = require('../broker/files');
 const { shQuote, portablePath } = require('../shell-quote');
+const { winCommandText } = require('../zn-command');
 
 // Events where exit 2 with a reason on stderr is the documented block.
 const BLOCK_EXIT = new Set(['PreToolUse', 'UserPromptSubmit']);
@@ -147,19 +148,21 @@ function launcherDeadlineS(hostTimeoutS) {
 }
 
 /** The lines of the zn_block shell function: what this agent gets for an event that cannot be run (a block, or only a warning). */
-function blockLines(agentId) {
-  const changed = changedText(agentId);
-  const changedWarn = changedWarnText(agentId);
-  const reason = reasonText(agentId);
-  const warn = warnText(agentId);
+function blockLines(agentId, platform = process.platform) {
+  // The next-step commands in these texts are written for the shell the person uses (see zn-command.js).
+  const T = (s) => winCommandText(s, platform);
+  const changed = T(changedText(agentId));
+  const changedWarn = T(changedWarnText(agentId));
+  const reason = T(reasonText(agentId));
+  const warn = T(warnText(agentId));
   const exitEvents = [...blockExit(agentId)];
   const jsonEvents = [...blockJson(agentId)];
-  const crash = crashText(agentId);
-  const crashWarn = crashWarnText();
+  const crash = T(crashText(agentId));
+  const crashWarn = T(crashWarnText());
   const pick = (ifRan, ifGone, ifNoAck, ifChanged) => (ifNoAck ? 'if [ -n "$ZN_NOACK" ]; then ' + ifNoAck + '; elif ' : 'if ') +
     (ifChanged ? '[ -n "$ZN_CHANGED" ]; then ' + ifChanged + '; elif ' : '') + '[ -n "$ZN_RAN" ]; then ' + ifRan + '; else ' + ifGone + '; fi';
-  const noAck = noAckText(agentId);
-  const noAckWarn = noAckWarnText(agentId);
+  const noAck = T(noAckText(agentId));
+  const noAckWarn = T(noAckWarnText(agentId));
   const deny = (r) => 'printf ' + shQuote('%s\\n') + ' ' + shQuote(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'deny', message: r } } }));
   return [
     'zn_block() {',
@@ -193,7 +196,8 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
   const sha = opts.runnerDigest === undefined ? runnerSha(runnerPath) : opts.runnerDigest;
   if (typeof sha !== 'string' || !/^[0-9a-f]*$/.test(sha)) throw new Error('zn: bad runner digest');
   // opts.lean: the Windows launcher (leanScript). Every other call gets the script below, unchanged.
-  if (opts.lean) return leanScript(agentId, nodePath, runnerPath, sha, deadlineS);
+  const platform = opts.platform || process.platform;
+  if (opts.lean) return leanScript(agentId, nodePath, runnerPath, sha, deadlineS, platform);
   const run = (...w) => (deadlineS ? 'zn_run ' : 'zn_cap ') + w.join(' ');
   // Without a timer or private output a strict launcher (ZCode) does not run the hook and blocks; the others (the runner
   // has its own deadline too) run it directly, still through zn_cap (private output and the confirmation check).
@@ -211,7 +215,7 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     '# Removes private files by absolute path: the PATH of a hook can be empty, and a bare rm would leave them behind on every call.',
     '# rm from the system folders only (NixOS and Guix keep it under /run/current-system); with none, the Node.js the hook was installed with removes them.',
     'zn_rm() { for ZN_R in /bin/rm /usr/bin/rm /run/current-system/sw/bin/rm /run/current-system/profile/bin/rm; do [ -x "$ZN_R" ] && { "$ZN_R" -f -- "$@" 2>/dev/null; return 0; }; done; [ -x "$ZN_NODE" ] && "$ZN_NODE" -e \'for (const f of process.argv.slice(1)) { try { require("fs").unlinkSync(f); } catch (e) {} }\' -- "$@" 2>/dev/null; return 0; }',
-    ...blockLines(agentId),
+    ...blockLines(agentId, platform),
     ...(deadlineS ? [
       'zn_term() {',
       '  [ -z "$ZN_P" ] || { kill -TERM -$ZN_P 2>/dev/null; kill -TERM $ZN_P 2>/dev/null; kill -KILL -$ZN_P 2>/dev/null; }',
@@ -478,11 +482,12 @@ function leanMain() {
 const LEAN_JS = '(' + leanMain.toString().split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('//')).join(' ') + ')()';
 
 // What the lean launcher answers, per kind of failure and kind of event: o = stdout, e = stderr, c = the status the agent gets.
-function leanBlocks(agentId) {
+function leanBlocks(agentId, platform = process.platform) {
+  const T = (s) => winCommandText(s, platform);
   const kinds = {
-    crash: [crashText(agentId), crashWarnText()],
-    noack: [noAckText(agentId), noAckWarnText(agentId)],
-    changed: [changedText(agentId), changedWarnText(agentId)],
+    crash: [T(crashText(agentId)), T(crashWarnText())],
+    noack: [T(noAckText(agentId)), T(noAckWarnText(agentId))],
+    changed: [T(changedText(agentId)), T(changedWarnText(agentId))],
   };
   const m = { ex: {}, js: {}, ot: {} };
   for (const [kind, [block, warn]] of Object.entries(kinds)) {
@@ -494,8 +499,8 @@ function leanBlocks(agentId) {
 }
 
 /** The lean launcher script (see above): shell built-ins and one node. */
-function leanScript(agentId, nodePath, runnerPath, sha, deadlineS) {
-  const cfg = { ms: deadlineS * 1000, ok: LEAN_OK, changed: CHANGED_RC, ex: [...blockExit(agentId)], js: [...blockJson(agentId)], m: leanBlocks(agentId) };
+function leanScript(agentId, nodePath, runnerPath, sha, deadlineS, platform = process.platform) {
+  const cfg = { ms: deadlineS * 1000, ok: LEAN_OK, changed: CHANGED_RC, ex: [...blockExit(agentId)], js: [...blockJson(agentId)], m: leanBlocks(agentId, platform) };
   return [
     '#!/bin/sh',
     '# Written by `zn hooks install ' + agentId + '`; replaced on every install. Do not edit.',
@@ -509,7 +514,7 @@ function leanScript(agentId, nodePath, runnerPath, sha, deadlineS) {
     'ZN_VERIFY=' + shQuote(LEAN_JS),
     'ZN_CFG=' + shQuote(JSON.stringify(cfg)),
     'ZN_RAN=; ZN_CHANGED=',
-    ...blockLines(agentId),
+    ...blockLines(agentId, platform),
     '# node ends with ' + LEAN_OK + ' (answered, status 0), ' + (LEAN_OK + 2) + ' (answered, status 2) or ' + CHANGED_RC + ' (the runner changed: nothing of it ran). Any other status, including a 0',
     '# or 2 from something that is not this code, is a failure and falls through to the block below. Not exec: a node that cannot start must still block.',
     'if [ -x "$ZN_NODE" ] && [ -f "$ZN_RUNNER" ]; then',
@@ -536,7 +541,7 @@ function writeLauncher(agentId, nodePath, runnerPath, opts = {}) {
   else fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   // On Windows the script runs in Git Bash: write the paths with / so that `zn-gate check` can read them back.
   const platform = opts.platform || process.platform;
-  writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform), { deadlineS: opts.deadlineS, deadlineSoft: opts.deadlineSoft, runnerDigest: opts.runnerDigest, lean: opts.lean !== undefined ? opts.lean : platform === 'win32' }), 0o755);
+  writeFileAtomic(file, unixScript(agentId, portablePath(nodePath, platform), portablePath(runnerPath, platform), { deadlineS: opts.deadlineS, deadlineSoft: opts.deadlineSoft, runnerDigest: opts.runnerDigest, platform, lean: opts.lean !== undefined ? opts.lean : platform === 'win32' }), 0o755);
   // Windows: the folder cannot be held open, so check the chain again after the write, now with the launcher file itself (owner
   // and access list, counting what it inherited from the folder); a swap in between removes the file.
   if (platform === 'win32' && (opts.env || process.env).ZN_HOOK_DIR) {
@@ -1183,7 +1188,7 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
   const n = portablePath(nodePath, 'win32');
   const r = portablePath(runnerPath, 'win32');
   if (/['‘’‚‛\u0000-\u001f]/.test(n + r)) return null;
-  const reason = reasonText(agentId);
+  const reason = winCommandText(reasonText(agentId), 'win32');
   const DENY_JSON = {
     antigravity: (r) => ({ decision: 'deny', reason: r }),
     cursor: (r) => ({ permission: 'deny', continue: false, user_message: r, agent_message: r }),
@@ -1206,7 +1211,7 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
   else tail = "[Console]::Out.WriteLine('" + JSON.stringify({ systemMessage: warn }) + "'); exit 0";
   return 'zd; ' + tail;
   };
-  const tail = tailOf(reason, warnText(agentId));
+  const tail = tailOf(reason, winCommandText(warnText(agentId), 'win32'));
   // Only 0 (done) and 2 (blocked) leave early: a crash, an empty $LASTEXITCODE (a script the execution policy
   // refused) or any other code falls through to the block. zn.cmd, not zn.ps1, which Restricted refuses to run.
   // A 0 counts only when the hook confirmed (zk: the ack file holds ok) that its whole answer was written.
@@ -1228,7 +1233,7 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
     return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF + zr +
       "if ([System.IO.File]::Exists('" + n + "') -and [System.IO.File]::Exists('" + r + "')) { $zt=1; $rc = zr '\"" + n + "\"' '\"" + r + "\" " + agentId + "'; " + zleave + ' }; ' +
       "if (($zt -eq 0) -and (zf 'zn.cmd') -and ((zf 'node.exe') -or (zf 'node.cmd'))) { $zt=1; $rc = zr (zf 'zn.cmd') 'hook " + agentId + "'; " + zleave + ' }; ' +
-      'if ($zt -eq 1) { ' + tailOf(crashText(agentId), crashWarnText()) + ' }; ' + tail + ' # zn hook ' + agentId;
+      'if ($zt -eq 1) { ' + tailOf(winCommandText(crashText(agentId), 'win32'), winCommandText(crashWarnText(), 'win32')) + ' }; ' + tail + ' # zn hook ' + agentId;
   }
   return "$ProgressPreference='SilentlyContinue'; $zt=0; " + ZF +
     "if ([System.IO.File]::Exists('" + n + "') -and [System.IO.File]::Exists('" + r + "')) { $zt=1; & '" + n + "' '" + r + "' " + agentId + '; ' + leave + ' }; ' +

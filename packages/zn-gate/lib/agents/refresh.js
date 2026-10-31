@@ -88,7 +88,7 @@ function refreshLaunchers(opts = {}) {
       const kept = launcherOptions(text);
       // A launcher written by an older zn-gate on Windows moves to the lean one; elsewhere the kind it has stays.
       if (win) kept.lean = true;
-      const next = launcher.unixScript(id, portablePath(useNode, platform), portablePath(runner, platform), kept);
+      const next = launcher.unixScript(id, portablePath(useNode, platform), portablePath(runner, platform), { ...kept, platform });
       if (next === text) continue;
       launcher.writeLauncher(id, useNode, runner, { env, home: opts.home, platform, ...kept });
       done.push(id);

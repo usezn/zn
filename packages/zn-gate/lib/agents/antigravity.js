@@ -46,6 +46,7 @@ const path = require('path');
 const cfg = require('./config-file');
 const launcher = require('./launcher');
 const policy = require('../hooks/policy');
+const { winCommandText } = require('../zn-command');
 
 const id = 'antigravity';
 const HOOK_NAME = 'zn-gate';
@@ -461,14 +462,14 @@ function install(opts = {}) {
   report.warnings.push('zn checks tool calls before they run (PreToolUse): it blocks reads and writes of secret files and shell commands that handle secrets.');
   if ((opts.scope || 'user') === 'project' && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook antigravity): every teammate who opens this project in Antigravity needs zn-gate installed. Without it the hook answers a deny that says how to install it, so Antigravity blocks the call instead of running it unchecked. The command is written for this kind of machine (' + ((opts.platform || process.platform) === 'win32' ? 'Windows' : 'macOS and Linux') + '): a teammate on the other kind runs `zn hooks install antigravity --project` in their own copy of the project.');
   report.warnings.push('Antigravity hooks cannot rewrite or redact what a tool returns, so a value printed by a command or a file the agent is allowed to read reaches the model. Keep secrets in the vault.');
-  report.warnings.push('Antigravity does not document what happens when a hook fails or times out. In our tests (Windows, October 2026) a hook that failed to start or answered with something that is not a decision made Antigravity deny every tool call; a timeout was not tested. If the Node.js zn was installed with goes away, the launcher script answers a deny that says how to repair it, and zn itself answers every event with an explicit decision. Run `zn-gate check` to see that the hook works.');
+  report.warnings.push(winCommandText('Antigravity does not document what happens when a hook fails or times out. In our tests (Windows, October 2026) a hook that failed to start or answered with something that is not a decision made Antigravity deny every tool call; a timeout was not tested. If the Node.js zn was installed with goes away, the launcher script answers a deny that says how to repair it, and zn itself answers every event with an explicit decision. Run `zn-gate check` to see that the hook works.', opts.platform || process.platform));
   if (opts.selfCheck) {
     report.selfCheck = selfCheck(command, { ...opts, splitOnSpaces: !opts.command });
     if (!report.selfCheck.ok) {
       const fix = (opts.scope || 'user') === 'project' && !opts.command
         ? 'install zn-gate for your user (npm install -g zn-gate) so that `zn` is on your PATH, then run this command again'
         : 'run `npx -y zn-gate check`, then `npm install -g zn-gate` and this command again; if it still fails, run `zn hooks uninstall antigravity` before you use Antigravity';
-      report.warnings.push('SELF-CHECK FAILED: the hook was started once with a harmless test event and ' + report.selfCheck.detail + '. Antigravity would deny every tool call. Next step: ' + fix + '.');
+      report.warnings.push('SELF-CHECK FAILED: the hook was started once with a harmless test event and ' + report.selfCheck.detail + '. Antigravity would deny every tool call. Next step: ' + winCommandText(fix, opts.platform || process.platform) + '.');
     } else {
       report.warnings.push('Self-check passed: the hook was started once with a harmless test event and ' + report.selfCheck.detail + '.');
     }
