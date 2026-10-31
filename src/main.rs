@@ -560,6 +560,7 @@ async fn start_proxy(args: Args) -> Result<()> {
     tokio::spawn(async move {
         let allowed_origins = api_state.config.security.allowed_origins.clone();
         let cors = build_cors_layer(&allowed_origins);
+        let serve_limits = zn::http_limits::ServeLimits::from_server(&api_state.config.server);
 
         let governor_layer = GovernorLayer::new(std::sync::Arc::new(governor_conf));
 
@@ -611,14 +612,9 @@ async fn start_proxy(args: Args) -> Result<()> {
         match tokio::net::TcpListener::bind(&addr).await {
             Ok(listener) => {
                 log::info(format!("🛰️ Management API listening on {}", addr)).ok();
-                if let Err(e) = axum::serve(
-                    listener,
-                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-                )
-                .await
-                {
-                    tracing::error!("Management API server error: {}", e);
-                }
+                // Header and body timeouts, a connection cap that keeps room for served clients, and a
+                // write timeout and idle time for streams (axum::serve has none of these).
+                zn::http_limits::serve_limited(listener, app, serve_limits).await;
             }
             Err(e) => {
                 tracing::error!("Failed to bind Management API to {}: {}", addr, e);
