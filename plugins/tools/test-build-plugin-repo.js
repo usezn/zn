@@ -176,9 +176,13 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       await rejects({ ...BASE, 'lib/compile-cache.js': "const mod = require('module');\nmod.enableCompileCache();\nf(...mod);\n" }, /module. built-in/);
       // The reviewed VERIFY_JS statement of lib/agents/launcher.js (a program for node -e), byte for byte, is allowed.
       {
-        const real = fs.readFileSync(path.resolve(__dirname, '..', '..', 'packages', 'zn-gate', 'lib', 'agents', 'launcher.js'), 'utf8');
+        // A CRLF checkout (Windows runners) is read with LF line ends, as the published tarball has them.
+        const real = fs.readFileSync(path.resolve(__dirname, '..', '..', 'packages', 'zn-gate', 'lib', 'agents', 'launcher.js'), 'utf8').replace(/\r\n/g, '\n');
         const a = real.indexOf('const VERIFY_JS = ');
-        const stmt = real.slice(a, real.indexOf('";\n', a) + 3);
+        const end = real.indexOf('";\n', a);
+        assert.ok(a >= 0 && end > a, 'the VERIFY_JS statement of launcher.js was not found');
+        const stmt = real.slice(a, end + 3);
+        assert.ok(stmt.startsWith('const VERIFY_JS = ') && stmt.length > 100, 'the VERIFY_JS statement is empty');
         await build({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt + 'module.exports = { VERIFY_JS };\n' });
         // one byte changed, the statement in another file, a second use next to it, or the statement twice: refused
         await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt.replace('m.loaded=true', 'm.loaded=!0') }, /module. built-in|mainModule/);
