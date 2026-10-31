@@ -1735,6 +1735,7 @@ function shellCodeOf(cmd, pi, st) {
 }
 
 const INLINE_FLAG = { python: /^-[A-Za-z]*c$/, python3: /^-[A-Za-z]*c$/, py: /^-[A-Za-z]*c$/, node: /^-[A-Za-z]*[ep]$/, nodejs: /^-[A-Za-z]*[ep]$/, ruby: /^-[A-Za-z]*e$/, perl: /^-[A-Za-z]*[eE]$/, php: /^-[A-Za-z]*r$/, lua: /^-e$/, deno: /^eval$/, bun: /^(?:-e|--eval|-p)$/ };
+const INTERP_RE = /^(?:python[0-9.]*|py|node|nodejs|ruby|perl|php|lua|deno|bun)$/;
 const texts0 = (cmd, pi) => cmd.words.slice(pi).map((w) => plainText(w));
 
 function runCommand(cmds, ci, st, mode) {
@@ -1854,6 +1855,23 @@ function runCommand(cmds, ci, st, mode) {
   // The words of the command, evaluated: resolved text goes to the path check, partly unknown words are judged.
   let spec = Object.prototype.hasOwnProperty.call(DUMP, head) ? DUMP[head] : null;
   if (!spec && INLINE_FLAG[head] && texts0(cmd, pi).some((t) => t !== null && (INLINE_FLAG[head].test(t) || t === '--eval' || t === '--print'))) spec = { inline: INLINE_FLAG[head], val: new Map([['--eval', 1], ['--print', 1]]) };
+  // An interpreter whose code comes on standard input (script operand -, /dev/stdin, /dev/fd/N, <( )) or that runs a module (-m)
+  // is read like inline code: the names it is given as operands must be known.
+  if (!spec && INTERP_RE.test(head)) {
+    const tx = texts0(cmd, pi);
+    const modFlag = /^python[0-9.]*$|^py$/.test(head) && tx.some((t) => t !== null && /^-[A-Za-z]*m$/.test(t));
+    let firstOp = -1;
+    for (let k = pi + 1; k < ws.length; k++) {
+      const t = plainText(ws[k]);
+      if (t !== null && t.startsWith('-') && t !== '-') { if (/^-[A-Za-z]*m$/.test(t)) break; continue; }
+      firstOp = k; break;
+    }
+    const fw = firstOp >= 0 ? ws[firstOp] : null;
+    const ft = fw ? plainText(fw) : null;
+    const stdinScript = fw && ((ft !== null && (ft === '-' || /^\/(?:dev\/(?:stdin|fd\/\d+)|proc\/self\/fd\/\d+)$/.test(ft))) || (fw.parts.length === 1 && fw.parts[0].t === 'proc'));
+    if (modFlag) spec = { val: new Map([['-m', 1]]) };
+    else if (stdinScript) spec = { first: true };
+  }
   if (!spec && head === 'git' && texts0(cmd, pi).includes('--no-index')) spec = { val: new Map([['-C', 1], ['-c', 1]]) };
   let operandKeys = null;
   if (spec) {
