@@ -1,0 +1,6 @@
+# The most tests the Windows job (windows-paths.yml, "zn-gate unit tests") may skip: the sum of the "skipped"
+# lines that node --test prints in the output of npm test. The job fails above this number and only prints it below.
+# When tests stop being skipped on Windows, lower the number to the one the job prints. Raise it only for a
+# test that cannot run on Windows, and give that test a skip reason.
+# The value was measured on a Windows VM, not on the GitHub runner: adjust it with the first real run of the job.
+348

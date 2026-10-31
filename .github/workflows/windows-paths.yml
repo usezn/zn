@@ -7,6 +7,10 @@ name: Windows checks for Windows-specific code
 # - on pull requests into next, main and release branches that touch code with Windows-specific paths
 #   (command quoting, launching programs, the keychain, the broker, agent setup) or any test;
 # - in the merge queue.
+#
+# The tests of the hook launchers (shell scripts that Claude Code starts with Git Bash) run here too: the job links
+# Git for Windows' usr/bin as C:\bin and puts it on the PATH, so /bin/sh and sh start. On a Windows machine
+# without that layout the same tests are skipped (test/helpers/posix_sh.js).
 
 on:
   push:
@@ -26,6 +30,8 @@ on:
       - 'packages/zn-gate/test/**'
       - 'plugins/tools/**'
       - '.github/workflows/windows-paths.yml'
+      - '.github/windows-skip-baseline.txt'
+  workflow_dispatch:
   # The merge queue always runs it: one Windows job on the LTS version is the Windows sample of the queue.
   merge_group:
     types: [ checks_requested ]
@@ -60,12 +66,60 @@ jobs:
         with:
           node-version: 22.x
           package-manager-cache: false
+      - name: Set up Git Bash for the launcher tests
+        shell: pwsh
+        run: |
+          $git = 'C:\Program Files\Git'
+          if (-not (Test-Path "$git\usr\bin\sh.exe")) { throw "Git for Windows is not at $git" }
+          # A program started as /bin/sh is looked up in the root of a drive: the tests start it from the workspace (this
+          # drive) and from temporary folders (the temp drive), and the lookup follows the working directory of the new
+          # process. So the link goes on each of those drives, and on C:.
+          $drives = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:TEMP, 'C:\') | Where-Object { $_ } | ForEach-Object { Split-Path -Qualifier $_ } | Sort-Object -Unique
+          foreach ($drive in $drives) {
+            if (-not (Test-Path "$drive\bin")) {
+              cmd /c mklink /D "$drive\bin" "$git\usr\bin"
+              if ($LASTEXITCODE -ne 0) { throw "could not link $drive\bin" }
+            }
+          }
+          # Appended, not prepended: the Windows tools keep their place before the Git for Windows ones.
+          "Path=$env:Path;$git\usr\bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          node -e "const cp = require('child_process'); const ok = (cwd) => cp.spawnSync('/bin/sh', ['-c', 'exit 0'], { cwd }).status === 0; process.exit(ok(process.cwd()) && ok(require('os').tmpdir()) ? 0 : 1)"
+          if ($LASTEXITCODE -ne 0) { throw "/bin/sh does not start from the workspace or the temp folder" }
+      - name: Check that the launcher tests will run
+        # Fails when no POSIX sh starts, so the launcher tests cannot be skipped without anyone noticing.
+        working-directory: packages/zn-gate
+        run: |
+          sh -c 'echo sh-ok'
+          if ($LASTEXITCODE -ne 0) { throw 'sh is not on the PATH' }
+          node -e "process.exit(require('./test/helpers/posix_sh.js').hasPosixSh ? 0 : 1)"
+          if ($LASTEXITCODE -ne 0) { throw 'hasPosixSh is false: the launcher tests would be skipped' }
       - name: Install zn-gate dependencies
         working-directory: packages/zn-gate
         run: npm ci --ignore-scripts
       - name: zn-gate unit tests
+        # PowerShell, so that the tests see the Windows tools (whoami, icacls) first. The output is also kept in a file
+        # for the next step. The step fails on the exit code of npm test.
         working-directory: packages/zn-gate
-        run: npm test
+        run: |
+          npm test | Tee-Object -FilePath "$env:RUNNER_TEMP\unit.log"
+          exit $LASTEXITCODE
+      - name: Count the tests skipped on Windows
+        # Counted from the node --test summaries and compared with .github/windows-skip-baseline.txt: a new skip fails
+        # the job, fewer skips do not.
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/unit.log"
+          count=$(grep -a -E '^(#|ℹ) skipped [0-9]+' "$log" | awk '{ s += $3 } END { print s + 0 }')
+          found=$(grep -a -c -E '^(#|ℹ) skipped [0-9]+' "$log" || true)
+          base=$(grep -v '^#' .github/windows-skip-baseline.txt | tr -d '[:space:]')
+          echo "Tests skipped on Windows: $count (baseline $base)"
+          echo "Tests skipped on Windows: $count (baseline $base)" >> "$GITHUB_STEP_SUMMARY"
+          case "$base" in ''|*[!0-9]*) echo 'The baseline in .github/windows-skip-baseline.txt is not a number.'; exit 1;; esac
+          if [ "$found" = 0 ]; then echo 'No skipped-test summary found in the test output.'; exit 1; fi
+          if [ "$count" -gt "$base" ]; then
+            echo "More tests are skipped on Windows than the baseline allows ($count > $base). Run them, or skip them with a reason and raise the baseline in .github/windows-skip-baseline.txt."
+            exit 1
+          fi
       - name: Vault tests (Windows Credential Manager)
         working-directory: packages/zn-gate
         env:

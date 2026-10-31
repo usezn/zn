@@ -293,15 +293,17 @@ test('writeFileAtomic: the temporary file has an unpredictable name and is opene
 
 // ---- real ACLs (Windows only) -----------------------------------------------------------------------------------
 const real = { skip: process.platform !== 'win32' };
+// By full path, so a whoami or icacls from Git for Windows earlier on the PATH is never the one that runs.
+const SYS32 = (name) => path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', name);
 const icacls = (...args) => {
-  const r = spawnSync('icacls.exe', args, { encoding: 'utf8' });
+  const r = spawnSync(SYS32('icacls.exe'), args, { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stdout + r.stderr);
 };
 
 // The temp folder of some accounts (SYSTEM: C:/Windows/Temp) lets Users create files and passes that on to subfolders, so the
 // test folder is first made private to the account running the test.
 const privateRoot = (root) => {
-  const who = spawnSync('whoami.exe', ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8' }).stdout.trim().split(',')[1].replace(/"/g, '');
+  const who = spawnSync(SYS32('whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8' }).stdout.trim().split(',')[1].replace(/"/g, '');
   icacls(root, '/inheritance:r', '/grant', '*' + who + ':(OI)(CI)F');
   return root;
 };
@@ -312,7 +314,7 @@ test('real Windows: a new ZN_HOOK_DIR folder is owner-only; Users getting write 
   const dir = path.join(root, 'a', 'hooks');
   launcher.ensureSafeHookDir(dir, 'win32', o);
   launcher.ensureSafeHookDir(dir, 'win32', o); // second time, now it exists
-  const acl = require('child_process').spawnSync('icacls.exe', [dir], { encoding: 'utf8' }).stdout;
+  const acl = require('child_process').spawnSync(SYS32('icacls.exe'), [dir], { encoding: 'utf8' }).stdout;
   assert.doesNotMatch(acl, /BUILTIN.Users|Everyone|Authenticated Users/);
   icacls(dir, '/grant', '*S-1-5-32-545:(OI)(CI)M');
   assert.throws(() => launcher.ensureSafeHookDir(dir, 'win32', o), /can be changed by other users/);

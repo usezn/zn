@@ -20,7 +20,7 @@ const { tempDir } = require('./helpers/tmp');
 
 const claude = getAdapter('claude-code');
 const RUNNER = path.resolve(__dirname, '..', 'lib', 'hooks', 'runner.js');
-const posix = process.platform !== 'win32';
+const { hasPosixSh: posix } = require('./helpers/posix_sh');
 
 function profiles(t) {
   const home = tempDir(t, 'zn-b1091-');

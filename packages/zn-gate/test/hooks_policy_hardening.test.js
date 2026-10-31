@@ -358,6 +358,21 @@ function fastestMs(fn, runs = 5) {
   return { ms: best, result };
 }
 
+// CPU time instead of wall-clock time, for a budget that a shared CI runner can break without any slower code: a stall
+// while another job holds the core is wall-clock time the check never used. A check that backtracks burns CPU, so the
+// budget still catches it. The CPU clock is coarse on Windows (about 16 ms), so the fastest of the runs is used.
+function fastestCpuMs(fn, runs = 5) {
+  let result = fn();
+  let best = Infinity;
+  for (let i = 0; i < runs; i++) {
+    const c0 = process.cpuUsage();
+    result = fn();
+    const c = process.cpuUsage(c0);
+    best = Math.min(best, (c.user + c.system) / 1000);
+  }
+  return { ms: best, result };
+}
+
 test('a long patch sent as a shell command is refused quickly, naming a secret file among its first files', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-ap-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -742,9 +757,13 @@ test('a 100 KB here-document read as data is checked in milliseconds', (t) => {
   let body = '';
   while (body.length + line.length < 100 * 1024 - 64) body += line;
   const cmd = "cat > generated.js <<'EOF'\n" + body + 'EOF';
-  const { ms, result: deny } = fastestMs(() => policy.bashDenial(cmd, o));
+  const { ms, result: deny } = fastestCpuMs(() => policy.bashDenial(cmd, o));
   assert.equal(deny, null, 'the body is data, so the command is allowed');
-  assert.ok(ms < budget(25), 'checked in ' + ms + ' ms');
+  // Windows runners measured 32 ms of CPU time for the same check (the CPU clock there ticks in about 16 ms steps, and
+  // the runner CPU is slower), so the budget is 100 ms there. A check that rescans the body, which is what this test
+  // guards against, takes seconds on 100 KB, so both budgets still catch it.
+  const limit = process.platform === 'win32' ? 100 : 25;
+  assert.ok(ms < budget(limit), 'checked in ' + ms + ' ms');
 });
 
 test('10 000 here-document operators on one line are checked within the time budget', (t) => {
