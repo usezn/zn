@@ -298,6 +298,13 @@ function scanEnvironments(customEnvList = null) {
   for (const env of envs) {
     const exists = fs.existsSync(env.filePath);
     let servers = [];
+    // existsSync says false for a folder it may not enter: tell "not there" from "cannot be read".
+    let unreadable = '';
+    if (!exists) {
+      try { fs.lstatSync(env.filePath); } catch (e) {
+        if (e && (e.code === 'EACCES' || e.code === 'EPERM')) unreadable = require('./errors').fsErrorText(e, env.filePath) || '';
+      }
+    }
 
     if (exists) {
       try {
@@ -312,6 +319,7 @@ function scanEnvironments(customEnvList = null) {
     results.push({
       ...env,
       exists,
+      unreadable,
       servers,
       serverCount: valid.length,
       allShielded: valid.length > 0 && valid.filter((s) => !s.remote).every((s) => s.shielded),

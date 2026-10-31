@@ -21,10 +21,12 @@ The zn-gate plugin for the ZCode desktop app, run against the official app 3.16.
 
 ## Not covered
 
-Windows (the plugin's hook is a POSIX shell script, so the plugin does not support it yet), macOS, hooks inside subagents, and the public marketplace listing.
+macOS, hooks inside subagents, and the public marketplace listing. Windows is covered by [results-windows/](results-windows/results.md) (official app 3.16.3.8992 on Windows Server 2022, the app's own headless runtime, no window): the PowerShell hook starts, blocks the `.env` and `~/.aws/credentials` reads, lets an ordinary command run and blocks when no Node.js can be found. `zn-gate check` does not yet report the plugin as protected there (nor on Linux, since the plugin got its PowerShell hook): it reads the PowerShell command as started by name. The Windows window of the app (Settings, Plugins) was not driven.
 
 ## Files
 
 - `results/`: the case table (`results.md`, `results.json`), the config and plugin files after each step, the `zn-gate check` outputs, and one `result.json` and `scenario.json` per case.
 - `gui/`: screenshots of the app, the config files after the GUI install and after turning the plugin off, and the tool results the model received in each task.
+- `results-windows/`: the Windows run and the Linux rerun on the PowerShell-hook branch (`results.md`, `results.json`, `windows/`, `linux/`).
+- `kit-windows/`: the scripts of the Windows run (`entry.ps1`, `e2epw.py`, `zc_helpers_win.py`, `mcp_echo.py`); it also uses `fake_provider.py` and `hook_recorder.py` of `kit/`.
 - `kit/`: the scripts that ran it (`e2ep.py` and `zc_helpers.py`, the fake provider, the hook recorder, the MCP echo server, `entry.sh`, the GUI steps).

@@ -45,6 +45,7 @@ const { SCRUB_RULES_VERSION } = require('../lib/scrub/patterns');
 const { AUDIT_RULES_VERSION } = require('../lib/audit/rules');
 const { styles, sym, ruleLine } = require('../lib/term');
 const mcpSecrets = require('../lib/mcp-secrets');
+const { fsErrorText, humanError } = require('../lib/errors');
 const { pruneInfo, SCAN_DIRS } = require('../lib/prune');
 const { safeText } = require('../lib/audit/report');
 // Colors are decided once per run: NO_COLOR, TERM=dumb or a stdout that is not a terminal turn them off.
@@ -238,11 +239,14 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   secret import FILE  Copy the secret values of a .env file into the vault
   secret adopt TOKEN  Store a value the scrubber detected (e.g. AWS_KEY_1) as a named secret
   env shadow [FILE]   Move .env values into the vault and leave markers in the file
+  env unshadow FILE --backup NAME
+                      Put the original values back into FILE from the encrypted copy that env shadow printed
   run -- <command>    Run a command with secrets in its environment (allowed commands only)
                       and its output masked [--secrets A,B to set env vars]
+                      -s is a short form of --secrets; --agent ID names the agent in the audit log
                       (a marker in the command's arguments is refused, never filled in)
   secret log          Show the local audit log of secret use [--since 1h] (same as vault log)
-  hooks install <agent> [--project]
+  hooks install <agent> [--project] [--no-mcp]
                       Install zn's hooks for ${require('../lib/agents').listAdapters().join(', ')}
                       (zn-gate init picks the right setup for each agent)
   hooks uninstall <agent> [--project]
@@ -255,11 +259,14 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   connect             Optional: turn on the cloud check for analyze_prompt. Opens usezn.com,
                       you paste an analysis-only API key at a hidden prompt; it is kept in your system
                       keychain or the zn vault, never in a file. Your own terminal only
+                      With --reconnect, replace the key that is already saved.
   disconnect          Remove that key from this computer, and ask whether to revoke it on
                       usezn.com too (default no) [--revoke | --no-revoke]. Your own terminal only
   reach [path]        Show what your coding agents can reach: secrets (names only),
                       credential files, MCP servers [--json | --sarif]
                       [--fail-on high|medium|low|none] [--remember]. Read only, nothing is sent
+                      reach --history: which secrets your agents kept in their session
+                      history (types and counts, never values) [--json] [--max-seconds N]
   secrets-mcp         Run the "secrets" MCP server (stdio)
   hook <agent>        Hook entry point used by agents (reads the event on stdin)
 
@@ -284,20 +291,25 @@ OPTIONS:
 
 VAULT (local, encrypted with age; the key stays in the OS keychain):
   unlock              Unlock the vault for this session [--ttl 8h] [--idle 30m]
+                      [--backend NAME]: macos, windows, libsecret or passphrase
                       (first run creates it; --passphrase-stdin without a keychain)
   lock                Lock the vault now
   vault status        Show whether the vault exists and is unlocked
   vault log           Show the audit log of secret use [--since 1h]; checks the chain when unlocked
   vault verify        Verify the HMAC-chained audit log of secret use
+                      --acknowledge accepts the log as it is now (your own terminal only)
   vault forget [dir]  Forget the token map of a project (vault locked)
   vault reset         Lost the passphrase? Set the old vault aside and start empty (your terminal only)
   vault purge         Delete the vault, every backup and the token maps for good [--yes] (your terminal only)
   vault log export --otlp
                       Export the audit log as OpenTelemetry logs (OTLP/JSON Lines)
                       [--since 7d] [--out FILE]
+  vault team          Shows that a shared team vault is planned, not available yet
 
 TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
   team join <token>   Connect this machine to your organization (confirmed outside the agent)
+                      options: --api URL (another server), --agent ID (claude-code, codex, ...),
+                      --include-history (also sends the audit records written before you joined)
   team status         Organization, policy version and upload state [--json]
   team sync           Download the policy and upload the audit log now
   team leave          Disconnect this machine (confirmed outside the agent)
@@ -841,7 +853,7 @@ async function runBrokerCommand(command, rest) {
   process.exitCode = await require('../lib/broker/cli').dispatch(command, rest);
 }
 
-const REACH_USAGE = 'usage: zn-gate reach [path] [--json | --sarif] [--fail-on high|medium|low|none] [--remember]';
+const REACH_USAGE = 'usage: zn-gate reach [path] [--json | --sarif] [--fail-on high|medium|low|none] [--remember]\n       zn-gate reach --history [--json] [--max-seconds N]';
 
 /*
  * zn-gate reach [path] [--json | --sarif] [--fail-on high|medium|low|none]: read only, nothing sent.
@@ -853,12 +865,22 @@ async function runReachCommand(rest) {
   let format = 'text';
   let failOn = 'none';
   let remember = false;
+  let historyMode = false;
+  let maxSeconds = null;
   const usage = (msg) => { process.stderr.write('zn-gate reach: ' + msg + '\n' + REACH_USAGE + '\n'); return 2; };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === '-h' || a === '--help') { process.stdout.write(REACH_USAGE + '\nShows what the coding agents on this machine can reach. Read only: nothing is changed or sent.\n'); return 0; }
     // --remember keeps this run's counts in ~/.zn/reach-last.json for the next one; without it nothing is written.
     if (a === '--remember') { remember = true; continue; }
+    // --history: scan the local session histories of the agents for secrets (types and counts only).
+    if (a === '--history') { historyMode = true; continue; }
+    if (a === '--max-seconds' || a.startsWith('--max-seconds=')) {
+      const v = a === '--max-seconds' ? rest[++i] : a.slice('--max-seconds='.length);
+      if (!/^\d{1,4}$/.test(String(v)) || +v < 1 || +v > 3600) return usage('--max-seconds must be a whole number from 1 to 3600');
+      maxSeconds = +v;
+      continue;
+    }
     if (a === '--json' || a === '--sarif') {
       if (format !== 'text') return usage('choose one of --json and --sarif');
       format = a.slice(2);
@@ -874,6 +896,22 @@ async function runReachCommand(rest) {
     if (target !== null) return usage('only one folder at a time');
     target = a;
   }
+  if (historyMode) {
+    if (target !== null || remember || failOn !== 'none' || format === 'sarif') return usage('--history reads your home folder: it takes only --json and --max-seconds');
+    process.env.ZN_STATS = 'off';
+    const zh = require('../lib/reach/history');
+    let h;
+    try {
+      h = zh.history({ maxSeconds: maxSeconds || undefined });
+    } catch (err) {
+      process.stderr.write('zn-gate reach: could not finish: ' + String((err && err.message) || err).slice(0, 300) + '\n');
+      return 2;
+    }
+    if (format === 'json') process.stdout.write(JSON.stringify(h, null, 2) + '\n');
+    else zh.report(h);
+    return 0;
+  }
+  if (maxSeconds !== null) return usage('--max-seconds goes with --history');
   const root = path.resolve(target || '.');
   let st = null;
   try { st = fs.statSync(root); } catch (_) { st = null; }
@@ -891,6 +929,57 @@ async function runReachCommand(rest) {
   else if (format === 'sarif') process.stdout.write(require('../lib/reach/sarif').toSarif(r, { toolVersion: VERSION }));
   else zr.report(r);
   return zr.failed(r, failOn) ? 1 : 0;
+}
+
+// Options of scan and analyze. Any other option that starts with "--" is refused with exit 2: it is named and
+// the options the command takes are listed. Everything after a bare "--" is positional text, and so is anything
+// that does not start with "--" (analyze text may start with "-").
+const CLOUD_VALUE_OPTIONS = ['--key', '--stage', '--url', '--long-input'];
+const CLOUD_FLAG_OPTIONS = ['--local-only', '--verbose'];
+const COMMAND_OPTIONS = {
+  scan: {
+    value: ['--format', '--include', '--exclude', ...CLOUD_VALUE_OPTIONS],
+    flag: ['--code', '--all', '--allow-partial', '--include-home', ...CLOUD_FLAG_OPTIONS],
+    listed: ['--format', '--include', '--exclude', '--code', '--all', '--allow-partial', '--include-home'],
+  },
+  analyze: {
+    value: CLOUD_VALUE_OPTIONS,
+    flag: CLOUD_FLAG_OPTIONS,
+    listed: CLOUD_VALUE_OPTIONS.concat(CLOUD_FLAG_OPTIONS),
+  },
+};
+
+// The problem with an option of scan or analyze, or null when every option is one the command takes.
+function optionProblem(command, args) {
+  const spec = COMMAND_OPTIONS[command];
+  for (let i = 1; i < args.length; i++) {
+    const tok = args[i];
+    if (tok === '--') break;
+    if (!tok.startsWith('--')) continue;
+    const name = tok.split('=')[0];
+    const shown = tok.replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
+    const takesValue = spec.value.includes(name);
+    if (!takesValue && !spec.flag.includes(name)) {
+      let msg = 'unknown option "' + shown + '". The options of zn-gate ' + command + ' are ' + spec.listed.join(', ') + '.';
+      if (command === 'analyze') msg += ' To analyze text that starts with "--", put "--" before it: zn-gate analyze -- "<text>".';
+      return msg;
+    }
+    if (tok !== name) {
+      return takesValue ? '"' + shown + '": give the value as the next argument, as ' + name + ' VALUE.' : name + ' takes no value.';
+    }
+    if (takesValue) i++;
+  }
+  return null;
+}
+
+// The folder that scan audits: the first argument that is not an option or an option's value; "." when none.
+function scanTargetOf(args) {
+  for (let i = 1; i < args.length; i++) {
+    if (args[i] === '--') return args[i + 1] || '.';
+    if (!args[i].startsWith('--')) return args[i];
+    if (COMMAND_OPTIONS.scan.value.includes(args[i])) i++;
+  }
+  return '.';
 }
 
 async function main() {
@@ -937,6 +1026,15 @@ async function main() {
   if (args.includes('-V') || args.includes('--version') || args[0] === 'version' || args[0] === '-v') {
     process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION}; scrub rules: ${SCRUB_RULES_VERSION}; audit rules: ${AUDIT_RULES_VERSION})\n`);
     process.exit(0);
+  }
+
+  if (args[0] === 'scan' || args[0] === 'analyze') {
+    const problem = optionProblem(args[0], args);
+    if (problem) {
+      process.stderr.write('zn-gate: ' + problem + '\n');
+      process.exitCode = 2;
+      return;
+    }
   }
 
   // Parse options
@@ -1047,6 +1145,11 @@ ${ruleLine(process.env, 60)}\n`);
 
     const notFound = scanned.filter(e => !e.exists);
     for (const nf of notFound) {
+      if (nf.unreadable) {
+        process.stdout.write(`  ${sym(process.env, '!', col.yellow)}${nf.name.padEnd(20)} [Cannot be read]\n`);
+        process.stdout.write(`    ${sym(process.env, '↳', col.yellow)}${col.yellow(nf.unreadable + ' zn did not change it.')}\n`);
+        continue;
+      }
       process.stdout.write(`  ${sym(process.env, '○', col.gray)}${nf.name.padEnd(20)} [Not installed/configured]\n`);
     }
 
@@ -1056,7 +1159,7 @@ ${ruleLine(process.env, 60)}\n`);
   }
 
   if (command === 'scan') {
-    const targetPath = args[1] && !args[1].startsWith('--') ? args[1] : '.';
+    const targetPath = scanTargetOf(args);
     await handleScan(targetPath, options);
     return;
   }
@@ -1064,10 +1167,21 @@ ${ruleLine(process.env, 60)}\n`);
   if (command === 'evidence' || command === 'logs' || command === 'export') {
     if (command === 'export' || options.export) {
       const format = (options.format || 'jsonl').toLowerCase();
+      if (format !== 'jsonl' && format !== 'csv') {
+        const shown = String(options.format).replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
+        process.stderr.write(`zn-gate: unknown --format "${shown}". The valid formats are jsonl and csv.\n`);
+        process.exitCode = 2;
+        return;
+      }
       const res = exportEvidenceLedger(EVIDENCE_FILE, format);
       if (!res.valid) process.stderr.write(`Tamper detected: ${res.error}\n${recoveryHint()}\n`);
       if (options.output) {
-        fs.writeFileSync(options.output, res.content, 'utf8');
+        try {
+          fs.writeFileSync(options.output, res.content, 'utf8');
+        } catch (err) {
+          process.stderr.write((fsErrorText(err, options.output) || humanError(err)) + '\n');
+          process.exit(1);
+        }
         process.stdout.write(`Exported ${res.total} audit records to ${options.output} (Integrity: ${res.valid ? 'VALID' : 'TAMPERED'}).\n`);
       } else {
         process.stdout.write(res.content);
@@ -1186,7 +1300,8 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
   }
 
   if (command === 'analyze') {
-    const textArgs = args.filter((a, idx) => {
+    const dashAt = args.indexOf('--');
+    const textArgs = dashAt !== -1 ? args.slice(dashAt + 1) : args.filter((a, idx) => {
       if (idx === 0) return false;
       if (a.startsWith('--')) return false;
       if (idx > 0 && args[idx - 1].startsWith('--') && args[idx - 1] !== '--local-only' && args[idx - 1] !== '--verbose') return false;
@@ -1271,6 +1386,6 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
 }
 
 main().catch((err) => {
-  process.stderr.write(`[zn-gate] Fatal error: ${err.message}\n`);
+  process.stderr.write(humanError(err) + '\n');
   process.exit(1);
 });

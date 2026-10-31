@@ -5,7 +5,8 @@
 # Always true outside pull requests and the merge queue (pushes, tags, schedule, manual runs). For a
 # pull request or a merge queue group (compared with its base commit), true
 # when any changed file is something cargo reads: src/, Cargo.toml, Cargo.lock, .cargo/, build.rs,
-# benches/, tests/, rust-toolchain files, or this workflow and script.
+# benches/, tests/, rust-toolchain files, this workflow and script, or a file a Rust test reads from the
+# Node.js package (the invisible-character table and its shared fixture: src/engine/rules.rs must match them).
 # Any error while listing the files means true: when in doubt, run the checks.
 set -uo pipefail
 
@@ -22,7 +23,7 @@ files="$(git diff --no-renames --name-only "$BASE_SHA" HEAD 2>/dev/null)" || out
 needed=false
 while IFS= read -r f; do
   case "$f" in
-    src/*|Cargo.toml|Cargo.lock|.cargo/*|build.rs|benches/*|tests/*|rust-toolchain|rust-toolchain.toml|.github/workflows/rust.yml|.github/scripts/rust-scope.sh)
+    packages/zn-gate/lib/invisible.js|packages/zn-gate/test/fixtures/invisible_chars.json|src/*|Cargo.toml|Cargo.lock|.cargo/*|build.rs|benches/*|tests/*|rust-toolchain|rust-toolchain.toml|.github/workflows/rust.yml|.github/scripts/rust-scope.sh)
       needed=true; echo "needs the Rust checks: $f"; break ;;
   esac
 done <<< "$files"

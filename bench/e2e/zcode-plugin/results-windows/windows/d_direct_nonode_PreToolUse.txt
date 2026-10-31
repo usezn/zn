@@ -1,0 +1,6 @@
+rc=2
+--stdout--
+
+--stderr--
+zn: no Node.js 20.19 or later was found for the hook (looked in the PATH, the usual install folders and the app itself). This call was blocked because zn could not check it. Ask the user to fix it, or to turn off the zn-gate plugin in ZCode (Settings, Plugins).
+

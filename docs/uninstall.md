@@ -29,6 +29,18 @@ npx -y zn-gate uninstall --dry-run
 
 Your `.env` files are never edited by `uninstall`. If you moved their values into the vault with `env shadow`, they hold markers such as `__ZN_API_KEY__`. Put the real values back before you delete the vault: see [Your `.env` files and the vault](#your-env-files-and-the-vault).
 
+## What each command removes and leaves
+
+This is a summary of the sections below. Each command is run in your own terminal.
+
+| Command | Removes | Leaves |
+| --- | --- | --- |
+| `npx -y zn-gate uninstall` | What it lists and you confirm: the Claude Code plugin, zn's hooks for each agent, and wrapped MCP servers (restored from the saved copy). | Your code and your `.env` files. The vault, unless you answer yes to the second question. The rest of the `.zn` folder (settings and `vault-backup-*` folders). The program itself (`npm uninstall -g zn-gate`). |
+| `claude plugin uninstall zn-gate@usezn` | The Claude Code plugin. | Hooks, wrapped MCP servers, the vault and the program. |
+| `npx -y zn-gate hooks uninstall claude-code` | zn's hooks for that agent (for Claude Code, also zn's own `secrets` MCP server unless you add `--no-mcp`). A backup of the settings file is written first. | The plugin, wrapped MCP servers, the vault and the program. |
+| `npx -y zn-gate init --revert` | The MCP wrapping: each MCP settings file is put back as it was saved before wrapping. | The plugin, hooks, the vault and the program. Later changes to those MCP files are lost. |
+| `npm uninstall -g zn-gate` | The program itself. | The `.zn` folder with the vault and settings. |
+
 ## Piece by piece
 
 Use this if you want to remove only one part. Each command is run in your own terminal.
@@ -41,7 +53,7 @@ claude plugin uninstall zn-gate@usezn
 
 Or, inside Claude Code, type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
 
-### Hooks (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, or Claude Code without the plugin)
+### Hooks (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, Gemini CLI, Copilot CLI, or Claude Code without the plugin)
 
 ```bash
 npx -y zn-gate hooks uninstall claude-code

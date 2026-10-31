@@ -274,6 +274,7 @@ for (const f of ['hooks/hooks.json', 'com.openai/hooks.json']) {
 // shared). Every hook runs scripts/zn-hook.sh with its own event name; the script runs the launcher in "hook zcode" mode.
 {
   const ZC = 'plugins/zcode';
+  const zcodeAdapter = require(path.join(ROOT, 'packages', 'zn-gate', 'lib', 'agents', 'zcode.js'));
   const zhooks = (json(ZC + '/hooks/hooks.json').hooks) || {};
   const EVENTS = ['PermissionRequest', 'PostToolUse', 'PreToolUse', 'UserPromptSubmit'];
   if (JSON.stringify(Object.keys(zhooks).sort()) !== JSON.stringify(EVENTS)) fail(ZC + '/hooks/hooks.json: events must be exactly ' + EVENTS.join(', '));
@@ -281,10 +282,15 @@ for (const f of ['hooks/hooks.json', 'com.openai/hooks.json']) {
     for (const g of groups) {
       for (const h of g.hooks || []) {
         const args = JSON.stringify(h.args);
-        if (h.type !== 'process' || h.command !== '/bin/sh' || args !== JSON.stringify(['${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh', event])) {
-          fail(ZC + '/hooks/hooks.json: ' + event + ' hook must be a process hook: /bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh ' + event);
+        const sh = h.command === '/bin/sh' && args === JSON.stringify(['${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh', event]);
+        const ps = h.command === zcodeAdapter.PLUGIN_WIN_POWERSHELL && args === JSON.stringify(zcodeAdapter.pluginWindowsArgs(event));
+        if (h.type !== 'process' || !(sh || ps)) {
+          fail(ZC + '/hooks/hooks.json: ' + event + ' hook must be a process hook: /bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh ' + event + ', or the PowerShell entry for Windows (lib/agents/zcode.js pluginWindowsArgs)');
         }
         if (h.onFailure !== undefined || h.async !== undefined) fail(ZC + '/hooks/hooks.json: ' + event + ' hook must not set onFailure or async');
+      }
+      if ((g.hooks || []).length !== 2 || g.hooks[0].command !== '/bin/sh' || g.hooks[1].command !== zcodeAdapter.PLUGIN_WIN_POWERSHELL) {
+        fail(ZC + '/hooks/hooks.json: ' + event + ' must have exactly two hooks, the /bin/sh one and then the PowerShell one for Windows');
       }
     }
   }
@@ -297,6 +303,7 @@ for (const f of ['hooks/hooks.json', 'com.openai/hooks.json']) {
   const entry = (mk.plugins || [])[0] || {};
   if ((mk.plugins || []).length !== 1 || entry.name !== 'zn-gate' || entry.source !== './zn-gate') fail(ZC + '/marketplace.json: one plugin, zn-gate, with source ./zn-gate');
   if (!fs.readFileSync(path.join(ROOT, ZC, 'scripts', 'zn-hook.sh'), 'utf8').includes('hook zcode')) fail(ZC + '/scripts/zn-hook.sh: must run the launcher in "hook zcode" mode');
+  if (!fs.readFileSync(path.join(ROOT, ZC, 'scripts', 'zn-hook.ps1'), 'utf8').includes('hook zcode')) fail(ZC + '/scripts/zn-hook.ps1: must run the launcher in "hook zcode" mode');
 }
 
 /* ------------------------------- links ------------------------------- */
