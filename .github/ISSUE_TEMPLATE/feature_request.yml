@@ -36,7 +36,7 @@ body:
         - Antigravity
         - ZCode desktop app
         - Gemini CLI (experimental)
-        - Copilot CLI (experimental)
+        - GitHub Copilot (VS Code, CLI)
         - Other MCP client
         - Not applicable
     validations:

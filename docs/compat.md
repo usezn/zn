@@ -11,6 +11,7 @@ Terms such as hook, matcher and scrubber are explained in the [glossary](glossar
 - **Antigravity:** tested end to end with the official `agy` CLI 1.4.7 on Linux. 13 of the 15 scenarios gave a result and none failed. The model refused to delete the home folder, so that check was run on the installed hook directly; another plugin's hook did not always run next to zn's, while zn's hook always ran and its deny always applied.
 - **Claude Code, Codex CLI and OpenCode:** end-to-end runs with the agent itself, with 0 secret values sent to the model provider (see the table below). Codex CLI 0.163.0 and OpenCode 1.19.3 also ran end to end on Windows Server 2022.
 - **Gemini CLI 0.64.0 and GitHub Copilot CLI 1.0.98:** end-to-end runs against a scripted model provider, with 0 secret values sent. On Windows Server 2022 (PowerShell 5.1) the Gemini CLI hooks were verified to block reads of `.env` files.
+- **GitHub Copilot in VS Code:** documented, not tested in the app. VS Code's documentation says VS Code, the GitHub Copilot app and Copilot CLI share one hook harness and format, and lists the two folders zn writes to; the end-to-end run above is with Copilot CLI, not inside VS Code (details in the Copilot entry below and on the [VS Code page](editors/vscode.md)).
 - **Cursor:** no end-to-end run, because Cursor has no CLI with hooks to drive. On Windows Server 2022 (PowerShell 5.1) its hooks were verified to block reads of `.env` files; the Cursor app itself has not been tested.
 - **Clean install and Windows smoke test:** a clean install on Linux ran the hooks of Claude Code, Codex CLI and Cursor. A smoke test on Windows, as an administrator and as a standard user, ran the hooks of all eight agents.
 - **Desktop apps:** the Claude desktop app, the Cursor app, the Antigravity app and IDE, and the OpenCode desktop app have not been tested end to end yet. Anthropic's documentation says the Claude desktop app uses the same hooks as the Claude Code CLI, and Google's documentation lists the same hook files for the Antigravity app, IDE and CLI, so the hooks zn installs apply there too.
@@ -33,6 +34,8 @@ ZCode desktop app: its hooks live in the user file the app documents (`~/.zcode/
 | `secrets` MCP server | Yes (registered on install) | Yes (snippet printed) | Yes (snippet printed) | Yes (snippet printed) | Not installed by the hooks; you can add the MCP server (see the [Antigravity page](editors/antigravity.md)) | Yes (registered on install) |
 | Windows | Yes, including the PowerShell tool (Claude Code 2.1.299 or later: before it, without Git for Windows, `PreToolUse` let calls through when it could not run) | The hook command was run by hand from PowerShell and from cmd.exe. The end-to-end run also passed on Windows Server 2022 with Codex 0.163.0 and PowerShell, 0 values sent to the provider ([evidence](../bench/e2e/windows/); one run, not in CI) | Hooks verified on Windows Server 2022 (PowerShell 5.1): they block reads of `.env` files. The Cursor app itself not yet tested | End-to-end run on Windows Server 2022 with OpenCode 1.19.3 ([evidence](../bench/e2e/windows/); one run, not in CI), 0 values sent to the provider. With PowerShell, OpenCode's default shell there, a command with a marker failed instead of running in that run (the wrapping was then written for bash only; the PowerShell wrapping added since is covered by unit tests but not re-run end to end); with Git Bash (`SHELL` set) it runs | Checked by hand on a real Windows machine with the Antigravity IDE and CLI (October 2026); no automated end-to-end run | The ZCode desktop app 3.16.3 installs and runs, and the end-to-end run with zn passed on Windows (through the agent the app ships, with hooks set in the app's user config file; the app window itself was not driven). The PowerShell launcher the install writes was run on Windows Server 2022 (Windows PowerShell 5.1, Node.js 22, as administrator and as a standard user): a hook that hangs is stopped at the deadline and blocked, and a normal answer passes through |
 | End-to-end run, 0 values sent to the provider | **Yes** | **Yes** | Not run (no CLI with hooks to drive) | **Yes** | Run with `agy` 1.4.7 on Linux: 13 of 15 scenarios gave a result, none failed (see "What has been tested") | **Yes** on Linux and Windows (ZCode desktop app 3.16.3) |
+
+GitHub Copilot (VS Code and Copilot CLI) is the seventh supported agent and has no column in this table: what it covers, what it does not and what was tested are in the [GitHub Copilot notes](#why-the-differences) below and on the [VS Code page](editors/vscode.md).
 
 If the launcher script itself cannot start (it was deleted, it is no longer executable, or its folder cannot be read), no zn code runs, so the agent's own rules decide. Claude Code blocks the call, with its own message and none from zn, because the hooks carry `onFailure: "block"`. Codex, Gemini CLI and ZCode report a hook failure and run the call. Cursor runs shell commands, MCP calls and `preToolUse`, and blocks file reads and prompts (`failClosed`). Antigravity does not document it. `zn-gate check` reports a launcher it cannot read; run `zn hooks install <agent>` again to write it.
 
@@ -222,21 +225,60 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
 - **Trust and updates (Codex).** Installing zn-gate as a Codex plugin would not skip the `/hooks` review: Codex ignores a plugin's hooks until you review and trust them, and it asks again after every plugin update. zn installs its hooks with `zn hooks install codex` instead, and you trust them in `/hooks`.
 - **Ways Codex turns zn's hooks off.** `async`, a `[hooks.state]` entry with `enabled = false` for one of zn's hooks, `[features] hooks = false`, and `allow_managed_hooks_only = true` in your organization's requirements (when zn's hooks are not among the managed ones) each stop zn's hooks from protecting anything, and Codex says nothing. `zn-gate check` reports all four as not protected and says what to change. It reads `hooks.state` only in your own `config.toml`; a setting passed on the Codex command line with `-c` is not seen. The Python package has no `check` command.
 - **Settings that turn hooks off.** zn reads the settings files only: the managed settings of Claude Code (`managed-settings.json` and `managed-settings.d/` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode`) and of Codex (`requirements.toml` and `managed_config.toml` in `/etc/codex`, or `requirements.toml` in `%ProgramData%\OpenAI\Codex` and `managed_config.toml` in your Codex folder on Windows), the enterprise `hooks.json` of Cursor (`/etc/cursor/hooks.json`, `/Library/Application Support/Cursor/hooks.json` or `C:\ProgramData\Cursor\hooks.json`), and your own settings. zn also recognises its own hooks in those same managed files (Cursor: the enterprise `hooks.json`; Codex: `[[hooks.<Event>]]` in `requirements.toml`), so `zn-gate check` and `zn-gate status` report an agent set up by your administrator as installed (managed) and name the file. A policy sent through MDM or the agent's cloud is not seen. When such a setting stops every hook, the session-start reminder that zn adds for Codex does not appear either, so `zn-gate check` is where you see it. Cursor runs the hooks of every source, so its enterprise file cannot turn zn's hooks off; zn only warns when zn's hook there lacks `failClosed` on `beforeReadFile` or `beforeSubmitPrompt`, or when the file has hooks without zn's. Hooks set in Cursor's team dashboard are not seen.
-- **Copilot CLI** (experimental: `zn hooks install copilot [--project]`;
-  `zn-gate check` and `zn-gate init` list it as "Copilot CLI (experimental)").
-  Covered: `preToolUse` blocks reads and writes of secret files by path,
-  shell commands that handle secrets, and edits of Copilot's own hook and
+- **GitHub Copilot: VS Code and Copilot CLI** (`zn hooks install copilot [--project]`;
+  `zn-gate check` and `zn-gate init` list it as "GitHub Copilot (VS Code, CLI)").
+  What the official documentation says, read 2026-10-30: VS Code's page on
+  hooks (<https://code.visualstudio.com/docs/copilot/customization/hooks>, in
+  Preview there) says "VS Code, the GitHub Copilot app, and GitHub Copilot CLI
+  share this harness and its hook format", that it loads "User hook files in
+  `~/.copilot/hooks/`, or `$COPILOT_HOME/hooks/`" and "`.github/hooks/*.json`
+  at the repository root", and that a command hook can use `bash` / `powershell`
+  commands and `timeoutSec`. Those are the files and the format zn writes. The
+  event names, exit codes and timeout rules are in GitHub's hooks reference
+  (<https://docs.github.com/en/copilot/reference/hooks-reference>).
+  Evidence: documented for VS Code, **not tested in the VS Code app**; run end
+  to end with Copilot CLI 1.0.98 against a scripted model provider: 0 secret
+  values sent. Covered: `preToolUse` blocks reads and writes of secret files by
+  path, shell commands that handle secrets, and edits of Copilot's own hook and
   settings files; `postToolUse` replaces secret values in the results of
   read-type and shell tools (successful results only). zn writes its own
   `zn-gate.json` in `~/.copilot/hooks/` (or `$COPILOT_HOME/hooks/` when you set
-  a custom Copilot folder) and, with `--project`, in `.github/hooks/`. Checked
-  end to end with Copilot CLI 1.0.98 against a scripted model provider: 0 secret
-  values sent. Not covered, and limits:
-  - Copilot's `userPromptSubmitted` hook cannot block or rewrite a typed
-    prompt, so a pasted secret is not blocked.
-  - A hook that takes longer than its timeout lets the call through (Copilot
-    fails open there); zn blocks the call itself 4 seconds earlier. Machine policy hooks in `/etc/github-copilot/policy.d`
-    run in addition and are not seen by zn.
+  a custom Copilot folder) and, with `--project`, in `.github/hooks/`. Not
+  covered, and limits:
+  - **A typed prompt cannot be blocked.** Copilot's `userPromptSubmitted` event
+    exists, but GitHub says "Command and HTTP config-file `userPromptSubmitted`
+    hooks have their output dropped" (VS Code: "command-hook output is ignored
+    for `userPromptSubmitted`"). A secret pasted into the chat is not stopped,
+    and zn installs no prompt hook.
+  - **A hook that times out lets the call through, by Copilot's design.**
+    GitHub: "Timeouts are fail-open for every event, including `preToolUse`".
+    No setting in the hook format changes that. zn does not rely on it: it
+    sets `timeoutSec` to 15 and answers a check that is still running after 11
+    seconds with a deny (exit code 2). What is left open is a hook that never
+    got to start its own timer, for example when Node.js does not start in 11
+    seconds. A hook that cannot start or exits with another code is a deny for
+    `preToolUse`, per the same reference ("Denied by preToolUse hook (hook
+    errored)").
+  - **The project's Claude Code hooks may run next to zn's.** Copilot also
+    reads the repository's `.claude/settings.json` and
+    `.claude/settings.local.json` with no setting needed ("Cross-tool
+    `.claude/settings.json` and `.claude/settings.local.json` files in the
+    repository are also read", GitHub's hooks reference; VS Code: the Copilot
+    harness is shared by VS Code, the GitHub Copilot app and Copilot CLI, and
+    "applicable hooks from multiple sources run together"). `chat.useClaudeHooks`
+    belongs to VS Code's older Local harness, not to this one. With
+    `zn hooks install claude-code --project` and Copilot set up too, one shell
+    call runs zn twice: both answer the same, and the check takes about twice as
+    long (measured by running both installed hooks the way the documented harness
+    starts them, with a fake `.env`; not in VS Code or Copilot CLI: 91 ms and
+    101 ms, two Node.js starts, for one `cat .env` call, instead of one). Not a protection gap; `zn-gate check`
+    says so and names the command that keeps one of them. Hooks in your user
+    `~/.claude/settings.json` are not read by Copilot.
+  - VS Code also has an older "Local" hook harness; its discovery and payloads
+    are described in a separate reference that zn has not checked, so zn
+    documents the Copilot harness (the default one in the docs) only.
+  - Machine policy hooks in `/etc/github-copilot/policy.d` run in addition and
+    are not seen by zn.
   - MCP tools Copilot does not name as read or shell tools are not checked and
     their output is not scrubbed. The docs do not list the argument names of
     each tool, so zn refuses a known tool whose arguments it cannot read.
@@ -546,5 +588,5 @@ A tool that an adapter reports only as a generic file access (some Gemini CLI, C
 
 ## Not covered yet
 
-Hermes Agent and the Cursor CLI. GitHub Copilot CLI and Gemini CLI have experimental hooks (see their entries above). A proxy for outgoing
+Hermes Agent and the Cursor CLI. Gemini CLI has experimental hooks (see its entry above). A proxy for outgoing
 HTTP from `zn run` (for `curl`, `gh` or SDKs) is planned for a later release.
