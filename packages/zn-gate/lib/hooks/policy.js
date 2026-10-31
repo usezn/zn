@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.20';
+const POLICY_RULES_VERSION = '2026-10-31.23';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2421,6 +2421,80 @@ function gitConfigParameterPairs(value) {
   return pairs;
 }
 
+/* One git configuration key and its value, read by the kind of the key (gitKeyKind). Returns a deny message, or null;
+   a value that is code is added to `codes`. A key that is not a program key passes. `value` null = not readable. */
+function gitConfigJudge(key, value, label, codes) {
+  const kind = gitKeyKind(key);
+  if (!kind) return null;
+  if (value === null) return GIT_ENV_MESSAGE('git configuration ' + label + ' whose value zn cannot read');
+  const v = String(value);
+  if (kind === 'refuse') {
+    if (/^core\.fsmonitor$/i.test(key.trim()) && /^(?:true|false|yes|no|on|off|0|1|)$/i.test(v.trim())) return null;
+    if (/^protocol\.ext\.allow$/i.test(key.trim()) && /^never$/i.test(v.trim())) return null;
+    return GIT_ENV_MESSAGE('git configuration ' + key.trim().slice(0, 40));
+  }
+  let code = v.trim();
+  if (kind === 'bool' && /^(?:true|false|yes|no|on|off|0|1|)$/i.test(code)) return null;
+  if (kind === 'bang') { if (!code.startsWith('!')) return null; code = code.slice(1); }
+  if (kind === 'helper') {
+    if (!code.startsWith('!')) return /[\\/]/.test(code) ? GIT_ENV_MESSAGE('a credential helper path') : null;
+    code = code.slice(1);
+  }
+  if (code) codes.push(code);
+  return null;
+}
+
+// A literal reading of a word (home and environment variables expanded), or null when it still holds a substitution.
+function gitLiteral(v, home, env) {
+  const x = expandEnv(expandHome(String(v), home), env).text;
+  return /\$\{?[A-Za-z_(]|`|%[A-Za-z_][A-Za-z0-9_]*%/.test(x) ? null : x;
+}
+
+/* git -c KEY=VALUE, git -c KEY (true) and git --config-env=KEY=ENVVAR in the global options of a git command: the same
+   keys as the GIT_CONFIG_* variables. A value taken from the environment cannot be read, so a program key is refused. */
+function gitDashCScan(readings, opts) {
+  const home = opts.home || os.homedir();
+  const env = opts.env || process.env;
+  const codes = [];
+  let seen = 0;
+  const judge = (arg, fromEnv) => {
+    if (++seen > 256) return TOO_MANY_MESSAGE;
+    const eq = arg.indexOf('=');
+    const rawKey = eq < 0 ? arg : arg.slice(0, eq);
+    const key = gitLiteral(rawKey, home, env);
+    if (key === null) return GIT_ENV_MESSAGE('a git configuration key zn cannot read');
+    let value;
+    if (fromEnv) value = null;
+    else if (eq < 0) value = 'true';
+    else value = gitLiteral(arg.slice(eq + 1), home, env);
+    return gitConfigJudge(key, value, key.slice(0, 40), codes);
+  };
+  for (const r of readings) {
+    let start = 0;
+    while (start < r.length) {
+      let end = start;
+      while (end < r.length && r[end].seq === r[start].seq) end++;
+      const w = r.slice(start, end);
+      start = end;
+      const gi = gitStart(w);
+      if (gi < 0) continue;
+      for (let k = gi + 1; k < w.length; k++) {
+        const t = w[k].text;
+        let d = null;
+        if (t === '-c' || t === '--config-env') {
+          if (k + 1 >= w.length) break;
+          d = judge(w[k + 1].text, t === '--config-env');
+          k++;
+        } else if (t.startsWith('--config-env=')) d = judge(t.slice(13), true);
+        else if (GIT_VALUE_OPTS.has(t)) { k++; continue; } else if (t.startsWith('-')) continue;
+        else break;
+        if (d) return { deny: d, codes: [] };
+      }
+    }
+  }
+  return { deny: null, codes };
+}
+
 function gitEnvScan(readings, text, opts) {
   const home = opts.home || os.homedir();
   const env = opts.env || process.env;
@@ -2462,26 +2536,7 @@ function gitEnvScan(readings, text, opts) {
     const x = expandEnv(expandHome(String(v), home), env).text;
     return /\$\{?[A-Za-z_(]|`|%[A-Za-z_][A-Za-z0-9_]*%/.test(x) ? null : x;
   };
-  const judgeKey = (key, value, label) => {
-    const kind = gitKeyKind(key);
-    if (!kind) return null;
-    if (value === null) return GIT_ENV_MESSAGE('git configuration ' + label + ' whose value zn cannot read');
-    const v = String(value);
-    if (kind === 'refuse') {
-      if (/^core\.fsmonitor$/i.test(key.trim()) && /^(?:true|false|yes|no|on|off|0|1|)$/i.test(v.trim())) return null;
-      if (/^protocol\.ext\.allow$/i.test(key.trim()) && /^never$/i.test(v.trim())) return null;
-      return GIT_ENV_MESSAGE('git configuration ' + key.trim().slice(0, 40));
-    }
-    let code = v.trim();
-    if (kind === 'bool' && /^(?:true|false|yes|no|on|off|0|1|)$/i.test(code)) return null;
-    if (kind === 'bang') { if (!code.startsWith('!')) return null; code = code.slice(1); }
-    if (kind === 'helper') {
-      if (!code.startsWith('!')) return /[\\/]/.test(code) ? GIT_ENV_MESSAGE('a credential helper path') : null;
-      code = code.slice(1);
-    }
-    if (code) codes.push(code);
-    return null;
-  };
+  const judgeKey = (key, value, label) => gitConfigJudge(key, value, label, codes);
   for (const [name, raw] of found) {
     if (!GIT_ENV_NAME_RE.test(name)) continue;
     const up = name.toUpperCase();
@@ -2568,6 +2623,12 @@ function bashDenialOf(cmd, opts = {}) {
     const ge = gitEnvScan(readings, text, opts);
     if (ge.deny) return ge.deny;
     for (const c of ge.codes) codes.add(c);
+  }
+  // git -c KEY=VALUE and git --config-env=KEY=ENVVAR on the command line: the same keys as the GIT_CONFIG_* variables.
+  if (/git/i.test(text) && /-c|--config-env/.test(text)) {
+    const gc = gitDashCScan(readings, opts);
+    if (gc.deny) return gc.deny;
+    for (const c of gc.codes) codes.add(c);
   }
   if (codes.size) {
     if (depth >= SHELL_CODE_DEPTH) return TOO_NESTED_MESSAGE;
