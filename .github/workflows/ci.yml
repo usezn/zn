@@ -240,9 +240,11 @@ jobs:
           python -m pip install --require-hashes -r .github/ci-test-requirements.txt
           python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
       - name: Run pytest with deprecation and resource warnings as errors
+        # pytest reports a file or socket closed by the garbage collector as PytestUnraisableExceptionWarning, not as a
+        # ResourceWarning, so that category is an error too: without it an unclosed file does not fail the job.
         if: steps.scope.outputs.run == 'true'
         working-directory: packages/zn-gate-py
-        run: python -W error::DeprecationWarning -W error::ResourceWarning -m pytest tests/ -q -W error::DeprecationWarning -W error::ResourceWarning
+        run: python -W error::DeprecationWarning -W error::ResourceWarning -m pytest tests/ -q -W error::DeprecationWarning -W error::ResourceWarning -W error::pytest.PytestUnraisableExceptionWarning
 
   # The coverage report for the Python package, off the pull request path: "Python 3.12 tests & benchmarks
   # (ubuntu-latest)" above is a required check and runs plain pytest, so the tracing slowdown and the
