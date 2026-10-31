@@ -71,3 +71,10 @@ More detail is in the [threat model](../threat-model.md) and in [agent compatibi
 
 - Hooks in ZCode: <https://zcode.z.ai/en/docs/hooks>
 - MCP in ZCode: <https://zcode.z.ai/en/docs/mcp-services>
+
+## See also
+
+- [Editors and coding agents](README.md)
+- [Install, verify and uninstall by agent](../by-agent.md)
+- [Remove zn-gate](../uninstall.md)
+- [Troubleshooting](../troubleshooting.md)
