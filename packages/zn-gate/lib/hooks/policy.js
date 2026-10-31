@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.7';
+const POLICY_RULES_VERSION = '2026-10-31.8';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1414,7 +1414,7 @@ function markCurlWords(readings) {
           group[m].curl = true;
           if (group[m - 1] && CURL_NAME_AT_FILE_OPTS.has(group[m - 1].text)) group[m].urlencode = true;
           // -T, a short-option cluster that ends in T (-sT, -vsT) or --upload-file: the next word is the file to upload.
-          if (group[m - 1] && (/^-[A-Za-z]*T$/.test(group[m - 1].text) || group[m - 1].text === '--upload-file')) group[m].upload = true;
+          if (group[m - 1] && (/^-[A-Za-z0-9#:]*T$/.test(group[m - 1].text) || group[m - 1].text === '--upload-file')) group[m].upload = true;
         }
       }
       i = j;
@@ -1508,6 +1508,20 @@ function braceNames(text) {
   }
 }
 
+/* The text printf, echo -e or $'..' would produce from a word: \n \t \r \v \f, octal (\012, \0NN) and hex (\xNN)
+   escapes decoded; a decoded control or space character becomes a space, so a configuration written on one line with
+   escapes (printf 'silent\nupload-file .env') splits into its real lines. Only used to find extra file names to check. */
+function decodeEscapes(text) {
+  return String(text).replace(/\\(x[0-9A-Fa-f]{1,2}|0[0-7]{0,3}|[1-7][0-7]{0,2}|[nrtvfab\\])/g, (m, e) => {
+    let ch;
+    if (e[0] === 'x') ch = String.fromCharCode(parseInt(e.slice(1), 16));
+    else if (/^[0-7]/.test(e)) ch = String.fromCharCode(parseInt(e, 8) & 255);
+    else if (e === '\\') ch = '\\';
+    else ch = ' ';
+    return ch <= ' ' ? ' ' : ch;
+  });
+}
+
 /* Upload lines in a word with spaces, as in a curl configuration fed with -K - (printf 'upload-file .env' | curl -K -):
    upload-file, --upload-file or -T, with the value after a space, = or :, or glued (-T.env, upload-file=".env"). */
 function uploadNamesOf(text) {
@@ -1515,7 +1529,7 @@ function uploadNamesOf(text) {
   const out = [];
   const clean = (v) => String(v).replace(/^["']+/, '').replace(/(?:\\[nrt])+$/, '').replace(/["']+$/, '');
   for (let i = 0; i < pieces.length; i++) {
-    const m = /^["']?(?:--upload-file|upload-file|-T)(?:[=:])?(.*)$/.exec(pieces[i]);
+    const m = /^["']?(?:--upload-file|upload-file|-[A-Za-z0-9#:]*?T)(?:[=:])?(.*)$/.exec(pieces[i]);
     if (!m) continue;
     let v = m[1];
     let k = i + 1;
@@ -1553,7 +1567,14 @@ function atFileWords(words) {
     const text = String(w.text);
     // A word with spaces (a curl configuration fed on stdin: upload-file .env, -T .env) or an upload-file= line holds
     // upload names: each one is read through its {..} glob, failing closed past the cap.
-    if (/\s/.test(text.trim()) || /^["']?(?:--)?upload-file[=:]/.test(text)) add(w, uploadNamesOf(text), true);
+    // Every word, as written and with its printf/echo escapes decoded: upload lines anywhere in it (a curl configuration
+    // fed on stdin), and @file references in the decoded text.
+    const decoded = decodeEscapes(text);
+    add(w, uploadNamesOf(text), true);
+    if (decoded !== text) {
+      add(w, uploadNamesOf(decoded), true);
+      add(w, atFilesOf(decoded));
+    }
     if (text.startsWith('--')) {
       const eq = text.indexOf('=');
       if (eq > 0) {
@@ -1564,7 +1585,7 @@ function atFileWords(words) {
       continue;
     }
     if (text.startsWith('-')) {
-      const glued = w.curl ? /^-[A-Za-z]*?([dFTH])(.+)$/.exec(text) : null;
+      const glued = w.curl ? /^-[A-Za-z0-9#:]*?([dFTH])(.+)$/.exec(text) : null;
       if (glued) {
         if (glued[1] === 'T') add(w, [glued[2]], true);
         else add(w, atFilesOf(glued[2]));
@@ -2639,7 +2660,7 @@ function bashDenialOf(cmd, opts = {}) {
       // git log -L<range>:<file> names a file after the colon.
       const lineRange = w.git ? /^-L[^:]*:(.+)$/.exec(text) : null;
       // curl -d@.env, -sd@.env, -Ff=@.env: the value is glued to the option letter.
-      const glued = w.curl && eq < 0 && !text.startsWith('--') ? /^-[A-Za-z]*?[dFTH](.+)$/.exec(text) : null;
+      const glued = w.curl && eq < 0 && !text.startsWith('--') ? /^-[A-Za-z0-9#:]*?[dFTH](.+)$/.exec(text) : null;
       if (lineRange) text = lineRange[1];
       else if (glued) text = glued[1];
       else if (eq < 0) continue;
