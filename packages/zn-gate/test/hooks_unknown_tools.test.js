@@ -2,7 +2,7 @@
 
 process.env.ZN_STATS = 'off';
 
-// B-2404: Copilot (VS Code) sends its own tool names through the Claude Code hook. A name zn does not know must still
+// Copilot (VS Code) sends its own tool names through the Claude Code hook. A name zn does not know must still
 // get the read, write and shell checks when its input names a file or carries a command.
 
 const test = require('node:test');
@@ -27,34 +27,34 @@ const denied = (r) => r.output && r.output.hookSpecificOutput && r.output.hookSp
 
 for (const name of ['view', 'read_file', 'readFile']) {
   test('Copilot tool ' + name + ' on a secret file is blocked in the Claude Code hook', async (t) => {
-    const dir = tempDir(t, 'zn-b2404-');
+    const dir = tempDir(t, 'zn-unknown-tools-');
     const r = await run(pre(name, { path: AWS }, dir));
     assert.ok(denied(r), JSON.stringify(r.output));
   });
 }
 
 test('an unknown tool with filePath or an array of paths is checked', async (t) => {
-  const dir = tempDir(t, 'zn-b2404-');
+  const dir = tempDir(t, 'zn-unknown-tools-');
   assert.ok(denied(await run(pre('open_document', { filePath: AWS }, dir))));
   assert.ok(denied(await run(pre('multi_open', { files: [path.join(dir, 'a.txt'), AWS] }, dir))));
 });
 
 for (const name of ['run_in_terminal', 'runInTerminal']) {
   test('Copilot tool ' + name + ' with a secret read is blocked', async (t) => {
-    const dir = tempDir(t, 'zn-b2404-');
+    const dir = tempDir(t, 'zn-unknown-tools-');
     const r = await run(pre(name, { command: 'cat ' + AWS }, dir));
     assert.ok(denied(r), JSON.stringify(r.output));
   });
 }
 
 test('run_in_terminal with a destructive command is blocked', async (t) => {
-  const dir = tempDir(t, 'zn-b2404-');
+  const dir = tempDir(t, 'zn-unknown-tools-');
   const r = await run(pre('run_in_terminal', { command: 'rm -rf ~' }, dir));
   assert.ok(denied(r), JSON.stringify(r.output));
 });
 
 test('benign calls of unknown tools pass with no opinion', async (t) => {
-  const dir = tempDir(t, 'zn-b2404-');
+  const dir = tempDir(t, 'zn-unknown-tools-');
   assert.equal((await run(pre('read_file', { path: path.join(dir, 'src.js') }, dir))).output, null);
   assert.equal((await run(pre('run_in_terminal', { command: 'npm test' }, dir))).output, null);
   assert.equal((await run(pre('some_new_tool', { query: 'hello', limit: 3 }, dir))).output, null);
@@ -75,12 +75,12 @@ const copilotDenied = (r) => Boolean(r.output && r.output.permissionDecision && 
 
 for (const file of ['.github/hooks/zn-gate.json', '.claude/settings.json', AWS]) {
   test('apply_patch on ' + path.basename(file) + ' is blocked in the Claude Code hook', async (t) => {
-    const dir = tempDir(t, 'zn-b2404-');
+    const dir = tempDir(t, 'zn-unknown-tools-');
     const r = await run(pre('apply_patch', { input: patchOf(file), explanation: 'x' }, dir));
     assert.ok(denied(r) || (r.output && r.output.hookSpecificOutput.permissionDecision === 'ask'), JSON.stringify(r.output));
   });
   test('apply_patch on ' + path.basename(file) + ' is blocked in the Copilot hook', async (t) => {
-    const dir = tempDir(t, 'zn-b2404-');
+    const dir = tempDir(t, 'zn-unknown-tools-');
     const r = await runCopilot({ cwd: dir, toolName: 'apply_patch', toolArgs: { input: patchOf(file) } });
     assert.ok(copilotDenied(r), JSON.stringify(r.output));
   });
@@ -93,13 +93,13 @@ test('a patch with Delete File and Move to headers names those files too', () =>
 });
 
 test('a benign patch on src/x.js passes with no opinion in both adapters', async (t) => {
-  const dir = tempDir(t, 'zn-b2404-');
+  const dir = tempDir(t, 'zn-unknown-tools-');
   assert.equal((await run(pre('apply_patch', { input: patchOf('src/x.js') }, dir))).output, null);
   assert.equal((await runCopilot({ cwd: dir, toolName: 'apply_patch', toolArgs: { input: patchOf('src/x.js') } })).output, null);
 });
 
 test('create_and_run_task is judged like a shell command in both adapters', async (t) => {
-  const dir = tempDir(t, 'zn-b2404-');
+  const dir = tempDir(t, 'zn-unknown-tools-');
   const bad = { workspaceFolder: dir, task: { label: 'x', type: 'shell', command: 'cat', args: [AWS] } };
   assert.ok(denied(await run(pre('create_and_run_task', bad, dir))));
   assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: bad })));
@@ -111,8 +111,24 @@ test('create_and_run_task is judged like a shell command in both adapters', asyn
   assert.equal((await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: ok })).output, null);
 });
 
+test('task.args are quoted like VS Code runs them: bash -c with a destructive or protected command is judged', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  const cases = [
+    { command: 'bash', args: ['-c', 'rm -rf ~'] },
+    { command: 'sh', args: ['-c', 'cat ' + AWS] },
+  ];
+  for (const task of cases) {
+    const input = { workspaceFolder: dir, task: Object.assign({ label: 'x', type: 'shell' }, task) };
+    assert.ok(denied(await run(pre('create_and_run_task', input, dir))), JSON.stringify(task));
+    assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: input })), JSON.stringify(task));
+  }
+  const ok = { workspaceFolder: dir, task: { label: 'x', type: 'shell', command: 'bash', args: ['-c', 'echo hello'] } };
+  assert.equal((await run(pre('create_and_run_task', ok, dir))).output, null);
+  assert.equal((await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: ok })).output, null);
+});
+
 test('real Claude Code tools with a command field (SlashCommand, Skill) keep benign forms passing', async (t) => {
-  const dir = tempDir(t, 'zn-b2404-');
+  const dir = tempDir(t, 'zn-unknown-tools-');
   assert.equal((await run(pre('SlashCommand', { command: '/review' }, dir))).output, null);
   assert.equal((await run(pre('Skill', { command: 'pdf' }, dir))).output, null);
 });

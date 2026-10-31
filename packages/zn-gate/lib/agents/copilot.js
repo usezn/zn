@@ -69,6 +69,7 @@ const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
 const launcher = require('./launcher');
+const { shQuote } = require('../shell-quote');
 
 const id = 'copilot';
 const FILE_NAME = 'zn-gate.json';
@@ -117,7 +118,7 @@ function nestedCommand(args) {
     const c = firstString(v, COMMAND_KEYS);
     if (c === undefined) continue;
     const extra = Array.isArray(v.args) ? v.args.filter((x) => typeof x === 'string') : [];
-    return [c, ...extra].join(' ');
+    return [c, ...extra.map((x) => shQuote(x))].join(' ');
   }
   return undefined;
 }
