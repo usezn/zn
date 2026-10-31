@@ -212,7 +212,7 @@ test('re-join while a revocation is pending: the OLD record is retried with the 
   cloud.publishPolicy({ rules: [] });
   const s = await m.o.teamSync({ upload: false });
   assert.strictEqual(s.policy.status, 'updated');
-  assert.deepStrictEqual(s.revocations, { tried: 1, done: 1, pending: 0, abandoned: 0 });
+  assert.deepStrictEqual(s.revocations, { tried: 1, done: 1, pending: 0 });
   assert.strictEqual(serverInstall(oldId).revoked, true, 'the old installation was revoked with its own token');
   assert.notStrictEqual(serverInstall(again.install_id).revoked, true, 'the new membership is untouched');
   assert.strictEqual(m.secrets.team.install_token, newToken, 'and still in the vault');

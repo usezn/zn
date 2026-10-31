@@ -243,11 +243,11 @@ function makeTeamOps(ctx) {
   }
 
   /*
-   * Tell the server about every pending revocation that is due. {tried, done, pending, abandoned}. Network calls
+   * Tell the server about every pending revocation that is due. {tried, done, pending}. Network calls
    * are made outside the serialised section. `skip` is a record that was just tried.
    */
   async function retryRevocations(skip) {
-    const sum = { tried: 0, done: 0, pending: 0, abandoned: 0 };
+    const sum = { tried: 0, done: 0, pending: 0 };
     const s0 = await state.loadSecrets();
     for (const rec of pendingList(s0).map((r) => ({ ...r }))) {
       if (isClosed()) break;
@@ -274,7 +274,7 @@ function makeTeamOps(ctx) {
   }
 
   const retrySafe = () => retryRevocations().catch(() => null);
-  const worthSaying = (sum) => Boolean(sum && (sum.done || sum.pending || sum.abandoned));
+  const worthSaying = (sum) => Boolean(sum && (sum.done || sum.pending));
 
   const ops = {
     /**
@@ -719,8 +719,7 @@ function makeTeamOps(ctx) {
         const left = pendingList(s)[0];
         err.message += '. ' + (sum.pending
           ? 'The server has not yet been told that installation ' + (left ? left.install_id : '') + ' left (retried now, still pending; see zn team status)'
-          : sum.done ? 'The revocation of the installation left earlier was completed'
-            : 'zn stopped retrying the revocation of the installation left earlier: ask an organization admin to remove it from the dashboard');
+          : 'The revocation of the installation left earlier was completed');
       }
       throw err;
     }
