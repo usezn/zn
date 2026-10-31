@@ -7154,6 +7154,8 @@ dependencies = [
  "ed25519-dalek",
  "futures",
  "hex",
+ "hyper",
+ "hyper-util",
  "jsonwebtoken",
  "lazy_static",
  "libc",

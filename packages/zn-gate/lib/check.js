@@ -137,7 +137,7 @@ const AGENTS = [
     request: (dir, file) => ({ sessionId: 'zn-check', timestamp: 0, cwd: dir, toolName: 'view', toolArgs: { path: file } }),
   },
   {
-    id: 'gemini', name: 'Gemini CLI', event: 'BeforeTool', tool: 'read_file',
+    id: 'gemini', name: 'Gemini CLI (experimental)', event: 'BeforeTool', tool: 'read_file',
     fix: 'run `zn hooks install gemini` in your own terminal',
     file: (a, o) => a.settingsFile(o), project: (dir) => path.join(dir, '.gemini', 'settings.json'),
     request: (dir, file) => ({ hook_event_name: 'BeforeTool', session_id: 'zn-check', cwd: dir, tool_name: 'read_file', tool_input: { file_path: file } }),

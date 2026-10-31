@@ -328,7 +328,7 @@ jobs:
           typing_check/check_public_api.py
       - name: Test the PyPI license checker
         if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
-        run: python -m pytest -q .github/scripts/test_license_check_py.py
+        run: python -m pytest -q .github/scripts/test_license_check_py.py .github/scripts/test_check_license_allowlist.py
 
   pack-node:
     name: npm package (pack, inspect, install)
