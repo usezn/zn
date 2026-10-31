@@ -2,7 +2,7 @@
 /**
  * zn Team on this machine:
  *
- *   zn team join <znj_token> [--api https://...] [--agent claude-code|codex|...] [--include-history]
+ *   zn team join <znj_token> | - | (ZN_TEAM_JOIN_TOKEN) [--api https://...] [--agent claude-code|codex|...] [--include-history]
  *   zn team status [--json]
  *   zn team sync                      download the policy now and upload the audit log
  *   zn team leave
@@ -16,6 +16,7 @@
  */
 
 const fs = require('fs');
+const readline = require('readline');
 const policy = require('./policy');
 const { pendingCount } = require('./upload');
 const { syncOutcome } = require('./sync-outcome');
@@ -26,7 +27,8 @@ const { createClient } = require('../vault/client');
 const { messageWithUnlockHint, fsErrorText } = require('../errors');
 const { znCommand } = require('../zn-command');
 
-const USAGE = 'usage: zn team join <token> [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
+const USAGE = 'usage: zn team join <token> | zn team join - | ZN_TEAM_JOIN_TOKEN=... zn team join [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
+const JOIN_TOKEN_ENV = 'ZN_TEAM_JOIN_TOKEN';
 const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE]';
 
 const out = (s) => process.stdout.write(s + '\n');
@@ -50,9 +52,44 @@ function describePolicy(p) {
   return base;
 }
 
-async function joinCmd(args) {
-  const token = args[2];
-  if (!token || token.startsWith('--')) { err(USAGE); return 2; }
+/* First non-empty line of standard input, trimmed. Never echoed. */
+function readStdinToken() {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, terminal: false });
+    let done = false;
+    const finish = (v) => { if (done) return; done = true; rl.close(); resolve(v); };
+    if (process.stdin.isTTY) err('Paste the join token and press Enter:');
+    rl.on('line', (l) => { if (l.trim()) finish(l.trim()); });
+    rl.on('close', () => finish(''));
+    rl.on('error', () => finish(''));
+  });
+}
+
+/*
+ * Where the join token comes from. Precedence: an argument beats the environment; the argument `-` means "read one
+ * line from standard input" (it is the explicit choice, so a script with no terminal and no input never blocks);
+ * with no argument, ZN_TEAM_JOIN_TOKEN. A token given as an argument stays in the shell history and in `ps`, so zn
+ * says so (the token is never printed). Returns { token, via } or { error }.
+ */
+async function joinTokenFrom(args, io) {
+  const arg = args[2];
+  if (arg && arg !== '-' && !arg.startsWith('--')) return { token: arg, via: 'argument' };
+  if (arg === '-') {
+    const t = await (io.readStdin || readStdinToken)();
+    return t ? { token: t, via: 'stdin' } : { error: 'no join token on standard input. Pipe it in, for example: printf %s "$TOKEN" | zn team join -' };
+  }
+  const env = String((io.env || process.env)[JOIN_TOKEN_ENV] || '').trim();
+  return env ? { token: env, via: 'env' } : {};
+}
+
+async function joinCmd(args, io) {
+  const got = await joinTokenFrom(args, io || {});
+  if (got.error) { err('[zn] ' + got.error); return 2; }
+  if (!got.token) { err(USAGE); return 2; }
+  const token = got.token;
+  if (got.via === 'argument') {
+    err('[zn] Note: a join token given as an argument stays in your shell history and is visible in the process list. Next time use `zn team join -` (token on standard input) or set ' + JOIN_TOKEN_ENV + '.');
+  }
   // Audit records written before joining stay on this machine unless this flag asks to send them too.
   const joinArgs = { join_token: token, api_base: flag(args, '--api'), agent: flag(args, '--agent') };
   if (args.includes('--include-history')) joinArgs.include_history = true;
@@ -107,11 +144,14 @@ async function statusCmd(args) {
     last_sync: (info && info.last_sync) || null,
     // The server was not told yet that an installation left: kept in the vault and retried.
     revocation_pending: (info && Array.isArray(info.revocations)) ? info.revocations : [],
+    // Pending revocations that were dropped because more than 8 were waiting: the server was never told about them.
+    revocations_dropped: (info && info.revocations_dropped) || null,
   };
   if (json) { out(JSON.stringify(res, null, 2)); return 0; }
   if (!joined) {
     out('Not in a zn organization. Join with: zn team join <token> (from your organization admin).');
     for (const l of describeRevocations(res.revocation_pending)) out(l);
+    for (const l of describeDropped(res.revocations_dropped)) out(l);
     return 0;
   }
   out('Organization: ' + (res.org_name ? res.org_name + ' (' + res.org + ')' : res.org));
@@ -127,6 +167,7 @@ async function statusCmd(args) {
       (ls.last_ok_at ? ' (last success ' + ls.last_ok_at + ')' : ' (never succeeded)') + '; run `zn team sync` to retry'));
   }
   for (const l of describeRevocations(res.revocation_pending)) out(l);
+  for (const l of describeDropped(res.revocations_dropped)) out(l);
   if (!info) out('The vault is locked: policy downloads and uploads resume after `' + znCommand('unlock') + '`.');
   return 0;
 }
@@ -141,6 +182,15 @@ function describeRevocations(list) {
       (r.give_up_at ? ' until ' + r.give_up_at + ', when it stops; an admin can then remove the installation from the dashboard' : '') + '.');
   }
   return lines;
+}
+
+/* Warning for `zn team status` when pending revocations were dropped to make room (at most 8 are kept). */
+function describeDropped(d) {
+  if (!d || !(d.count > 0)) return [];
+  return [
+    'WARNING: ' + d.count + ' pending revocation' + (d.count === 1 ? ' was' : 's were') + ' dropped (last on ' + d.last_at + (d.last_install_id ? ', installation ' + d.last_install_id : '') + '): more than 8 installations left while the server could not be reached.',
+    '  The server was never told about ' + (d.count === 1 ? 'it' : 'them') + ', so ' + (d.count === 1 ? 'that installation token' : 'those installation tokens') + ' still work there. Ask an admin to remove ' + (d.count === 1 ? 'it' : 'them') + ' from the dashboard.',
+  ];
 }
 
 async function syncCmd() {
@@ -183,11 +233,11 @@ async function leaveCmd() {
 }
 
 /** Returns the process exit code. */
-async function runTeamCommand(args) {
+async function runTeamCommand(args, io) {
   try {
     const sub = args[1];
     if (args.slice(1).some((a) => a === '-h' || a === '--help')) { out(USAGE); return 0; }
-    if (sub === 'join') return await joinCmd(args);
+    if (sub === 'join') return await joinCmd(args, io);
     if (sub === 'status' || sub === undefined) return await statusCmd(args);
     if (sub === 'sync') return await syncCmd();
     if (sub === 'leave') return await leaveCmd();
