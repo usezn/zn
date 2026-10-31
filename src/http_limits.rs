@@ -7,9 +7,10 @@
 //!
 //! - **Header and body timeouts**: a slow request is cut.
 //! - **Connection cap, with room for real clients**: at the cap, a new connection takes the place of the
-//!   oldest connection that has not yet had a request answered successfully (a socket that only connected,
-//!   or whose requests were all refused). A client that has been served is never evicted, so idle sockets
-//!   cannot keep the dashboard out.
+//!   oldest idle connection, preferring one that has not yet had a request answered successfully (a socket
+//!   that only connected, or whose requests were all refused). A connection that is answering a request is
+//!   never evicted; a served connection that is merely idle (keep-alive) can be, so idle sockets cannot
+//!   keep the dashboard out, however they got their first 200.
 //! - **Write timeout and idle time**: a peer that stops reading is cut after `write_timeout`, and a
 //!   connection that has sent nothing for `session_idle_timeout` is closed. The second one is what ends an
 //!   SSE stream or a WebSocket session nobody uses; the browser reconnects on its own.
@@ -107,12 +108,22 @@ async fn body_idle_timeout(State(idle): State<Duration>, req: Request, next: Nex
     next.run(req).await
 }
 
-/// The connections that have not yet been served a request, oldest first. These are the ones a new
-/// connection may take the place of when the cap is reached.
+/// One open connection, as the cap sees it.
+struct Entry {
+    notify: Arc<Notify>,
+    /// Requests being answered right now, response body included. While it is above zero the connection
+    /// is never evicted.
+    in_flight: u32,
+    /// A request of this connection has ended in a success.
+    served: bool,
+}
+
+/// The open connections, oldest first. When the cap is reached, a new connection takes the place of one
+/// of the idle ones.
 #[derive(Default)]
 struct Registry {
     next_id: u64,
-    unproven: BTreeMap<u64, Arc<Notify>>,
+    conns: BTreeMap<u64, Entry>,
 }
 
 type SharedRegistry = Arc<Mutex<Registry>>;
@@ -121,14 +132,21 @@ fn lock(reg: &SharedRegistry) -> std::sync::MutexGuard<'_, Registry> {
     reg.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Tell the oldest unproven connection to close. Returns false when there is none.
+/// Tell the oldest idle connection to close: the oldest one never served if there is one, else the oldest
+/// served one. A connection with a request in flight is never picked. Returns false when none is idle.
 fn evict_oldest(reg: &SharedRegistry) -> bool {
     let mut g = lock(reg);
-    let Some(id) = g.unproven.keys().next().copied() else {
+    let pick = |served: bool| {
+        g.conns
+            .iter()
+            .find(|(_, e)| e.in_flight == 0 && e.served == served)
+            .map(|(id, _)| *id)
+    };
+    let Some(id) = pick(false).or_else(|| pick(true)) else {
         return false;
     };
-    if let Some(n) = g.unproven.remove(&id) {
-        n.notify_one();
+    if let Some(e) = g.conns.remove(&id) {
+        e.notify.notify_one();
     }
     true
 }
@@ -144,7 +162,7 @@ struct Unregister(ConnTag);
 
 impl Drop for Unregister {
     fn drop(&mut self) {
-        lock(&self.0.registry).unproven.remove(&self.0.id);
+        lock(&self.0.registry).conns.remove(&self.0.id);
     }
 }
 
@@ -153,7 +171,14 @@ fn register(reg: &SharedRegistry) -> (ConnTag, Arc<Notify>, Unregister) {
     let mut g = lock(reg);
     let id = g.next_id;
     g.next_id += 1;
-    g.unproven.insert(id, Arc::clone(&notify));
+    g.conns.insert(
+        id,
+        Entry {
+            notify: Arc::clone(&notify),
+            in_flight: 0,
+            served: false,
+        },
+    );
     let tag = ConnTag {
         id,
         registry: Arc::clone(reg),
@@ -161,18 +186,78 @@ fn register(reg: &SharedRegistry) -> (ConnTag, Arc<Notify>, Unregister) {
     (tag.clone(), notify, Unregister(tag))
 }
 
-/// A connection counts as served once one of its requests ends in a 2xx, 3xx or 101. Authentication
-/// runs inside this layer, so a refused (401, 403), rate-limited (429) or malformed request does not
-/// count, and the connection stays open to eviction.
-async fn mark_served(tag: Option<Extension<ConnTag>>, req: Request, next: Next) -> Response {
-    let response = next.run(req).await;
-    if let Some(Extension(tag)) = tag {
-        let s = response.status();
-        if s.is_success() || s.is_redirection() || s == StatusCode::SWITCHING_PROTOCOLS {
-            lock(&tag.registry).unproven.remove(&tag.id);
+/// Marks a request as in flight until dropped (the response body is dropped with it).
+struct InFlight(ConnTag);
+
+impl InFlight {
+    fn start(tag: &ConnTag) -> Self {
+        if let Some(e) = lock(&tag.registry).conns.get_mut(&tag.id) {
+            e.in_flight += 1;
+        }
+        Self(tag.clone())
+    }
+}
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        if let Some(e) = lock(&self.0.registry).conns.get_mut(&self.0.id) {
+            e.in_flight = e.in_flight.saturating_sub(1);
         }
     }
-    response
+}
+
+/// Keeps a connection safe from eviction while one of its requests is being answered, and notes when a
+/// request ends in a 2xx, 3xx or 101 (a served connection is evicted only after the ones never served).
+/// Authentication runs inside this layer, so a refused (401, 403), rate-limited (429) or malformed
+/// request does not count as served.
+async fn mark_served(tag: Option<Extension<ConnTag>>, req: Request, next: Next) -> Response {
+    let Some(Extension(tag)) = tag else {
+        return next.run(req).await;
+    };
+    let guard = InFlight::start(&tag);
+    let response = next.run(req).await;
+    let s = response.status();
+    if s.is_success() || s.is_redirection() || s == StatusCode::SWITCHING_PROTOCOLS {
+        if let Some(e) = lock(&tag.registry).conns.get_mut(&tag.id) {
+            e.served = true;
+        }
+    }
+    // The guard moves into the body, so a streamed response (SSE) counts as in flight until it ends.
+    let (parts, body) = response.into_parts();
+    Response::from_parts(
+        parts,
+        Body::new(GuardedBody {
+            inner: body,
+            _guard: guard,
+        }),
+    )
+}
+
+/// A response body that holds the in-flight guard until it is dropped. It forwards the size hint, so a
+/// fixed-length response keeps its Content-Length instead of turning into a chunked one.
+struct GuardedBody {
+    inner: Body,
+    _guard: InFlight,
+}
+
+impl hyper::body::Body for GuardedBody {
+    type Data = axum::body::Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        Pin::new(&mut self.get_mut().inner).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.inner.size_hint()
+    }
 }
 
 fn timed_out(what: &str) -> io::Error {
@@ -316,17 +401,19 @@ pub async fn serve_limited(listener: TcpListener, app: Router, limits: ServeLimi
                 continue;
             }
         };
-        // At the cap, make room by closing the oldest connection that has not been served yet; if every
-        // connection has been served, wait for one to end. The new socket is held here meanwhile.
+        // At the cap, make room by closing the oldest idle connection (never one answering a request). If
+        // every connection is busy, wait and try again. The new socket is held here meanwhile.
         let permit = match Arc::clone(&slots).try_acquire_owned() {
             Ok(p) => p,
-            Err(_) => {
+            Err(_) => loop {
                 evict_oldest(&registry);
-                match Arc::clone(&slots).acquire_owned().await {
-                    Ok(p) => p,
-                    Err(_) => return,
+                let wait = Arc::clone(&slots).acquire_owned();
+                match tokio::time::timeout(Duration::from_millis(200), wait).await {
+                    Ok(Ok(p)) => break p,
+                    Ok(Err(_)) => return,
+                    Err(_) => continue,
                 }
-            }
+            },
         };
         let (tag, evicted, unregister) = register(&registry);
         let service = TowerToHyperService::new(
@@ -371,6 +458,10 @@ mod tests {
 
     const BOUND: Duration = Duration::from_secs(3);
     const GET_HEALTH: &[u8] = b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    const GET_SLOW: &[u8] = b"GET /slow HTTP/1.1
+Host: localhost
+
+";
     const GET_DENIED: &[u8] = b"GET /denied HTTP/1.1\r\nHost: localhost\r\n\r\n";
 
     async fn ws_echo(ws: WebSocketUpgrade) -> impl IntoResponse {
@@ -393,6 +484,13 @@ mod tests {
     async fn spawn(limits: ServeLimits) -> SocketAddr {
         let app = Router::new()
             .route("/health", get(|| async { "OK" }))
+            .route(
+                "/slow",
+                get(|| async {
+                    tokio::time::sleep(Duration::from_millis(600)).await;
+                    "slow-done"
+                }),
+            )
             .route("/denied", get(|| async { StatusCode::UNAUTHORIZED }))
             .route("/ws", get(ws_echo))
             .route("/flood", get(flood));
@@ -446,7 +544,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_served_client_is_never_evicted_and_refused_ones_are() {
+    async fn refused_connections_are_evicted_before_served_ones() {
         let addr = spawn(ServeLimits {
             header_read_timeout: Duration::from_secs(60),
             max_connections: 3,
@@ -471,6 +569,56 @@ mod tests {
         assert!(closed_by_server(&mut refused_a).await);
         // The served connection is still open and answers.
         assert_eq!(request(&mut served, GET_HEALTH).await, "HTTP/1.1 200 OK");
+    }
+
+    #[tokio::test]
+    async fn idle_keepalive_connections_that_were_served_cannot_fill_the_cap() {
+        let addr = spawn(ServeLimits {
+            header_read_timeout: Duration::from_secs(60),
+            max_connections: 3,
+            ..ServeLimits::DEFAULT
+        })
+        .await;
+        // Every slot is taken by a connection that already got a 200 and now sits idle (keep-alive).
+        let mut served = Vec::new();
+        for _ in 0..3 {
+            let mut c = TcpStream::connect(addr).await.unwrap();
+            assert_eq!(request(&mut c, GET_HEALTH).await, "HTTP/1.1 200 OK");
+            served.push(c);
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+        let mut real = TcpStream::connect(addr).await.unwrap();
+        assert_eq!(request(&mut real, GET_HEALTH).await, "HTTP/1.1 200 OK");
+        // The oldest idle connection is the one that made room.
+        assert!(closed_by_server(&mut served[0]).await);
+    }
+
+    #[tokio::test]
+    async fn a_request_in_flight_is_never_evicted() {
+        let addr = spawn(ServeLimits {
+            header_read_timeout: Duration::from_secs(60),
+            max_connections: 1,
+            ..ServeLimits::DEFAULT
+        })
+        .await;
+        let mut busy = TcpStream::connect(addr).await.unwrap();
+        busy.write_all(GET_SLOW).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // A second client arrives while the slow request is still being handled.
+        let second = tokio::spawn(async move {
+            let mut c = TcpStream::connect(addr).await.unwrap();
+            request(&mut c, GET_HEALTH).await
+        });
+        let mut buf = [0u8; 1024];
+        let n = tokio::time::timeout(BOUND, busy.read(&mut buf))
+            .await
+            .expect("the in-flight request was cut")
+            .unwrap();
+        let text = String::from_utf8_lossy(&buf[..n]).to_string();
+        assert!(text.starts_with("HTTP/1.1 200 OK"), "got: {text}");
+        assert!(text.contains("slow-done"), "the response was cut: {text}");
+        // Once the slow request ended, the newcomer takes the slot.
+        assert_eq!(second.await.unwrap(), "HTTP/1.1 200 OK");
     }
 
     #[tokio::test]
