@@ -33,9 +33,11 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request, or to next, cancels the run still going for it. Runs for main, release branches,
+# the merge queue and the schedule always complete (each has its own group).
 concurrency:
-  group: windows-paths-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: windows-paths-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.

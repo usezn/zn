@@ -12,9 +12,11 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request, or to next, cancels the run still going for it. Runs for main, release branches,
+# the merge queue and the schedule always complete (each has its own group).
 concurrency:
-  group: unused-deps-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: unused-deps-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
 # Both jobs only report for now: they never fail the workflow, and neither is a required check.
 jobs:
