@@ -32,7 +32,15 @@
       "cat $HOME/.ssh/id_rsa",
       "type \"C:\\Users\\John Doe\\.ssh\\id_rsa\"",
       "type C:\\Users\\a\u0085b\\.ssh\\id_rsa",
-      "type C:\\Users\\a\u001cb\\.ssh\\id_rsa"
+      "type C:\\Users\\a\u001cb\\.ssh\\id_rsa",
+      "cat ./.env",
+      "cat \"./.env\"",
+      "cat app/.env",
+      "cat ./.env.local",
+      "cat ../.env",
+      "cat /srv/app/.env",
+      "head -3 ./.env.production",
+      "cat .env"
     ],
     "benign": [
       "cat .env.example",
@@ -170,5 +178,13 @@
         "12"
       ]
     ]
-  }
+  },
+  "env_template_allow": [
+    "cat .env.example",
+    "cat ./.env.example",
+    "cat .env.sample",
+    "head -5 .env.template",
+    "cat app/.env.example",
+    "cat .env.local.example"
+  ]
 }
