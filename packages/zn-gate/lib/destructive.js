@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-31.4';
+const COMMAND_RULES_VERSION = '2026-10-31.5';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -254,6 +254,41 @@ function backtickCode(text) {
       body += text[j];
     }
     bodies.push(body);
+    i = j;
+  }
+  return bodies.join('\n');
+}
+
+/* The text of every `$( ... )` command substitution of a command that Bash would expand (unquoted or inside double
+   quotes, not inside single quotes or after a backslash), joined into one text to be read as commands, or '' when there
+   is none. A `$(( ... ))` is arithmetic, not a command: its own text is skipped, but a `$( )` inside it is still read.
+   Only the outer substitutions are taken here: a nested one is found when the body is read again. One pass. */
+function dollarParenCode(text) {
+  const bodies = [];
+  let quote = '';
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quote === "'") { if (ch === "'") quote = ''; continue; }
+    if (ch === '\\') { i++; continue; }
+    if (ch === '"') { quote = quote === '"' ? '' : '"'; continue; }
+    if (ch === "'" && quote === '') { quote = "'"; continue; }
+    if (ch !== '$' || text[i + 1] !== '(') continue;
+    if (text[i + 2] === '(') { i += 2; continue; }
+    // Find the closing parenthesis: quotes and escapes inside the body hide parentheses.
+    let depth = 1;
+    let q = '';
+    let j = i + 2;
+    for (; j < text.length; j++) {
+      const c = text[j];
+      if (q === "'") { if (c === "'") q = ''; continue; }
+      if (c === '\\') { j++; continue; }
+      if (c === '"') { q = q === '"' ? '' : '"'; continue; }
+      if (c === "'" && q === '') { q = "'"; continue; }
+      if (q === '"') continue;
+      if (c === '(') depth++;
+      else if (c === ')' && --depth === 0) break;
+    }
+    bodies.push(text.slice(i + 2, j));
     i = j;
   }
   return bodies.join('\n');
@@ -768,6 +803,12 @@ function analyze(cmd, depth = 0, known = null) {
   // A command substitution in backticks runs its text as commands (echo `rm -rf ~`); read them like a sh -c string.
   if (depth < MAX_DEPTH && text.includes('`')) {
     const inner = backtickCode(text);
+    const innerHit = inner ? analyze(inner, depth + 1, known) : null;
+    if (innerHit) return innerHit;
+  }
+  // A command substitution $( ) runs its text as commands even inside double quotes (echo "$(rm -rf ~)"); read them too.
+  if (depth < MAX_DEPTH && text.includes('$(')) {
+    const inner = dollarParenCode(text);
     const innerHit = inner ? analyze(inner, depth + 1, known) : null;
     if (innerHit) return innerHit;
   }

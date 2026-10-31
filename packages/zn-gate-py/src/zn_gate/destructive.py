@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-31.4"
+COMMAND_RULES_VERSION = "2026-10-31.5"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -479,6 +479,59 @@ def _skip_wrapper(words: List[str], k: int, name: str) -> int:
 
 # Words that start a command without being one: a group, the branches of if / while / until / for, and negation.
 _SHELL_KEYWORDS = frozenset(("{", "then", "do", "else", "elif", "if", "while", "until", "!"))
+
+
+def _dollar_paren_code(text: str) -> str:
+    """The text of every `$( ... )` command substitution of a command that Bash would expand (unquoted or inside double
+    quotes, not inside single quotes or after a backslash), joined into one text to be read as commands, or "" when there
+    is none. A `$(( ... ))` is arithmetic, not a command: its own text is skipped, but a `$( )` inside it is still read.
+    Only the outer substitutions are taken here: a nested one is found when the body is read again. One pass."""
+    bodies: List[str] = []
+    quote = ""
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if quote == "'":
+            if ch == "'":
+                quote = ""
+        elif ch == "\\":
+            i += 1
+        elif ch == '"':
+            quote = "" if quote == '"' else '"'
+        elif ch == "'" and quote == "":
+            quote = "'"
+        elif ch == "$" and text[i + 1:i + 2] == "(":
+            if text[i + 2:i + 3] == "(":
+                i += 2
+            else:
+                depth = 1
+                q = ""
+                j = i + 2
+                while j < n:
+                    c = text[j]
+                    if q == "'":
+                        if c == "'":
+                            q = ""
+                    elif c == "\\":
+                        j += 1
+                    elif c == '"':
+                        q = "" if q == '"' else '"'
+                    elif c == "'" and q == "":
+                        q = "'"
+                    elif q == '"':
+                        pass
+                    elif c == "(":
+                        depth += 1
+                    elif c == ")":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    j += 1
+                bodies.append(text[i + 2:j])
+                i = j
+        i += 1
+    return "\n".join(bodies)
 
 
 def _backtick_code(text: str) -> str:
@@ -1278,6 +1331,12 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None) -> Optional[str]:
     # A command substitution in backticks runs its text as commands (echo `rm -rf ~`); read them like a sh -c string.
     if depth < _MAX_DEPTH and "`" in text:
         inner = _backtick_code(text)
+        inner_hit = _analyze(inner, depth + 1, known) if inner else None
+        if inner_hit:
+            return inner_hit
+    # A command substitution $( ) runs its text as commands even inside double quotes (echo "$(rm -rf ~)"); read them too.
+    if depth < _MAX_DEPTH and "$(" in text:
+        inner = _dollar_paren_code(text)
         inner_hit = _analyze(inner, depth + 1, known) if inner else None
         if inner_hit:
             return inner_hit

@@ -1,0 +1,2 @@
+### Fixed
+- The destructive-command check now reads the body of a `$( )` command substitution inside double quotes as a command. `echo "$(rm -rf ~)"` was allowed because the delete was only an argument of `echo`, but Bash runs it. `checkCommand()` and `check_command()` give the same answers; `$(( ))` arithmetic, text in single quotes and an escaped `\$(` are still not read as commands. The rules version is `2026-10-31.5`.
