@@ -17,7 +17,7 @@ them.
 3. Run `zn-gate check`. Every agent that is set up should say **OK**.
 
 The hook launchers of `zn hooks install` keep the SHA-256 of zn-gate's hook
-runner and run it only while it matches. An update with npm rewrites them by
+runner and run it only while it matches. `npm update -g zn-gate` rewrites them by
 itself (an install step of the package). If your update does not run install
 scripts (`npm install --ignore-scripts`, or pnpm and bun, which skip them by
 default), run `zn hooks install <agent>` again for each agent: until then the
