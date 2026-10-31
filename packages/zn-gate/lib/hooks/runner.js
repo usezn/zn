@@ -373,13 +373,34 @@ async function orgDetectorsFor(opts, vault) {
     let change = null;
     let org = st.org || null;
     let missing = false;
+    let trusted = false;
+    let shown = null;
+    let pinMismatch = false;
+    const canAsk = Boolean(vault) && typeof vault.teamHookInfo === 'function';
     // The organization is known on this machine (team.json, or only a policy copy is left) but its policy
     // is not readable here: the state is 'none'. That is the file-deleted case and must not be silent.
     const copyLost = st.state === 'none' && (Boolean(st.org) || Boolean(team.readCache(popts)));
     if (st.state === 'active' || st.state === 'expired') {
-      orgDetectors = compile(detectorsOf(st));
-      change = st.change;
-    } else if (vault && typeof vault.teamHookInfo === 'function') {
+      // team.json and org-policy.json are plain files: a process of the same user can write a pair that is
+      // consistent with itself (its own key in team.json, a policy signed by that key). The pin that counts is
+      // the one the vault holds, so when the vault answers it is compared with the one in team.json. A
+      // different pin, or a newer version in the vault, means the readable copies are not trusted: the policy
+      // held in the vault is used instead (the last verified one), and the mismatch is audited by the vault.
+      // A locked vault cannot be asked: the readable copies are all there is, as before.
+      const tj = team.readTeam(popts);
+      const r = canAsk && tj ? await withinMs(vault.teamHookInfo({ seen_kid: tj.policy_public_key.kid }), 1500) : null;
+      const confirmed = Boolean(r && r.joined && typeof r.kid === 'string');
+      pinMismatch = confirmed && (r.pin_mismatch === true || r.kid !== tj.policy_public_key.kid || (typeof r.org === 'string' && r.org !== st.org));
+      const behind = confirmed && !pinMismatch && Number.isSafeInteger(r.version) && r.version > st.version;
+      if (pinMismatch || behind) {
+        org = r.org || org;
+        if (r.state === 'active' || r.state === 'expired') orgDetectors = compile(Array.isArray(r.detectors) ? r.detectors : []);
+        else missing = r.state === 'invalid';
+      } else {
+        orgDetectors = compile(detectorsOf(st));
+      }
+      if (confirmed) { trusted = true; change = r.change; shown = Number.isSafeInteger(r.change_shown) ? r.change_shown : null; } else change = st.change;
+    } else if (canAsk) {
       const r = await withinMs(vault.teamHookInfo(), 1500);
       if (r && r.joined) {
         org = r.org || org;
@@ -389,11 +410,15 @@ async function orgDetectorsFor(opts, vault) {
     } else if (st.state === 'invalid' || copyLost) {
       missing = true;
     }
-    if (change || missing) {
-      teamNotes = require('../team/changes').takeNotices({
-        home: team.paths(popts).home, org, change, detectorsMissing: missing,
+    if (change || missing || pinMismatch) {
+      const changes = require('../team/changes');
+      teamNotes = changes.takeNotices({
+        home: team.paths(popts).home, org, change, detectorsMissing: missing, trusted, shown,
         statusCommand: znCommand('team status'), syncCommand: znCommand('team sync'),
       });
+      if (pinMismatch) teamNotes.push('zn: the organization key in ~/.zn/team.json did not match the one in your vault, so zn used the policy held in the vault and put the files back. If you did not change it yourself, check ' + znCommand('team status') + '.');
+      const c = trusted ? changes.cleanChange(change) : null;
+      if (c && c.to !== shown && typeof vault.teamChangeShown === 'function') await withinMs(vault.teamChangeShown(c.to), 1500);
     }
   } catch (_) { /* custom detectors only add redactions: nothing to apply */ }
   return orgDetectors;
