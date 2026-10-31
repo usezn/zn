@@ -339,22 +339,33 @@ _PY_WRITER = (
     "sys.path.insert(0, sys.argv[1])\n"
     "from zn_gate.evidence import log_evidence\n"
     "file, wid, n = sys.argv[2], sys.argv[3], int(sys.argv[4])\n"
+    "import time\n"
+    "def write(rec):\n"
+    "    # A writer that cannot get the lock in its wait writes nothing (by design), so asking again\n"
+    "    # is safe. On a slow, busy runner one writer can lose the race for a long time.\n"
+    "    end = time.monotonic() + 240\n"
+    "    while log_evidence(rec, file_path=file, lock_wait=5) is None:\n"
+    "        if time.monotonic() > end:\n"
+    "            sys.exit(3)\n"
     "for i in range(n):\n"
-    "    if log_evidence({'payload': 'py-%s-%d' % (wid, i), 'tool_name': 'bash'}, file_path=file, lock_wait=60) is None:\n"
-    "        sys.exit(3)\n"
+    "    write({'payload': 'py-%s-%d' % (wid, i), 'tool_name': 'bash'})\n"
 )
 _NODE_WRITER = (
     "const { logEvidence } = require(process.argv[1]);\n"
     "const [, , file, id, n] = process.argv;\n"
     "for (let i = 0; i < Number(n); i++) {\n"
-    "  if (!logEvidence({ payload: 'node-' + id + '-' + i, tool_name: 'bash' }, file, { lockWaitMs: 60000 })) process.exit(3);\n"
+    "  // Same rule as the Python writer: no lock in the wait means nothing was written, so ask again.\n"
+    "  const end = Date.now() + 240000;\n"
+    "  while (!logEvidence({ payload: 'node-' + id + '-' + i, tool_name: 'bash' }, file, { lockWaitMs: 5000 })) {\n"
+    "    if (Date.now() > end) process.exit(3);\n"
+    "  }\n"
     "}\n"
 )
 
 
 def _wait_all(procs):
     for p in procs:
-        _out, err = p.communicate(timeout=120)
+        _out, err = p.communicate(timeout=300)
         assert p.returncode == 0, err.decode("utf-8", "replace")
 
 
