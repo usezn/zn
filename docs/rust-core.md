@@ -20,6 +20,8 @@ A review of an older snapshot of this gateway found issues that only affect some
 - **Sanitized images are forwarded.** With `visual_pii_redaction` on, an allowed tool call now carries the sanitized arguments (metadata stripped), the same ones that were checked and stored in the audit vault, instead of the original frame, in the place they were read from (the rebuilt frame may list its keys in another order). If the frame cannot be rebuilt, the call is refused.
 - **Bounded WebSocket messages.** `/mcp/ws` closes a connection whose message or frame is over 1 MiB (the library default was 64 MiB).
 - **WebSocket limits are configurable.** The limits are the `server.ws_max_message_bytes` (default 1048576, 1 MiB) and `server.ws_max_frame_bytes` (default 1048576, 1 MiB) settings; a message or frame over its limit closes the connection.
+- **Idle and stuck connections are closed.** A management API connection that sends nothing for `server.session_idle_timeout_secs` (default 900, 15 minutes) is closed, which ends an unused SSE stream or WebSocket session; browsers reconnect on their own. A client that stops reading is cut after `server.write_timeout_secs` (default 30). A value of 0 keeps the default.
+- **Idle sockets cannot lock out the dashboard.** The management API serves at most 256 connections at once. When the limit is reached, a new connection takes the place of the oldest one that has not yet had a request answered successfully; a client that has been served is never closed to make room.
 - **Consensus actions expire.** A proposed action that is not approved within `consensus.pending_ttl_secs` seconds (default 900, 15 minutes; 0 means the default) can no longer be approved and is removed.
 - **Query-string credentials only for SSE and WebSocket.** The `api_key` and `token` query parameters are accepted only on `/api/v1/events` and `/mcp/ws`, where a browser client cannot send headers; on every other route a credential must come in a header.
 
@@ -149,3 +151,5 @@ cargo build --release
 When `kms.key_id` (or `ZN_KMS_KEY_ID`) is set, the gateway takes the audit database key from the KMS. If that key cannot be fetched, the gateway now refuses to start with a clear error instead of quietly using the key from the config.
 
 To keep the old behaviour on purpose, set `kms.allow_config_fallback = true` (or `ZN_KMS_ALLOW_CONFIG_FALLBACK=true`). The gateway then starts with the config key and logs a warning on every start. The option is off by default. Without `kms.key_id`, nothing changes: the key from the config is used.
+
+The gateway reads at most 16 MiB per line, from its own input and from each upstream MCP server over stdio; a longer line is dropped and answered with a JSON-RPC error.

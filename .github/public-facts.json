@@ -115,7 +115,7 @@
   },
   "examplesVersion": {
     "_comment": "The release the examples pin: always one that is published on npm and PyPI. It moves after a release is published (requirements in the PyPI form, 1.14.0rc1 for 1.14.0-rc.1).",
-    "value": "1.14.0-rc.2",
+    "value": "1.14.1",
     "files": [
       {
         "file": "examples/ag2-agent/requirements.txt",

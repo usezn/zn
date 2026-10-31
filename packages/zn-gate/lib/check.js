@@ -33,6 +33,7 @@ const { nodeAdvice } = require('./node-support');
 
 const FAKE_LINE = 'ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key\n';
 const HOOK_TIMEOUT_MS = 15000;
+const HOOK_TIMEOUT_CEILING_MS = 120000;
 const PLUGIN_ID = 'zn-gate@usezn';
 // The PreToolUse hooks the zn-gate plugins ship (plugins/zn-gate/hooks/hooks.json, plugins/zcode/hooks/hooks.json).
 // A plugin counts only when its manifest holds this exact hook, and zn-gate check runs that command as the agent does.
@@ -137,7 +138,7 @@ const AGENTS = [
     request: (dir, file) => ({ sessionId: 'zn-check', timestamp: 0, cwd: dir, toolName: 'view', toolArgs: { path: file } }),
   },
   {
-    id: 'gemini', name: 'Gemini CLI', event: 'BeforeTool', tool: 'read_file',
+    id: 'gemini', name: 'Gemini CLI (experimental)', event: 'BeforeTool', tool: 'read_file',
     fix: 'run `zn hooks install gemini` in your own terminal',
     file: (a, o) => a.settingsFile(o), project: (dir) => path.join(dir, '.gemini', 'settings.json'),
     request: (dir, file) => ({ hook_event_name: 'BeforeTool', session_id: 'zn-check', cwd: dir, tool_name: 'read_file', tool_input: { file_path: file } }),
@@ -895,10 +896,16 @@ function modifiedProjectGuard(spec, text) {
   } catch (_) { return false; }
 }
 
+/* The time a hook gets to start. The agents kill a hook at 15 s, so that is the default; only a test on a slow machine passes a longer one (opts.hookTimeoutMs), never above 120 s. */
+function hookTimeout(ctx, own) {
+  const t = ctx && ctx.hookTimeoutMs;
+  return typeof t === 'number' && t > 0 ? Math.min(HOOK_TIMEOUT_CEILING_MS, Math.max(t, own || 0)) : own;
+}
+
 /* Runs an installed hook with the two requests: '' when it blocks .env and allows the ordinary file, else the problem. */
 function runLive(spec, ctx, live) {
-  const a = spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.envFile), live.env, ctx.dir, live.timeout);
-  const b = a.ran ? spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.readme), live.env, ctx.dir, live.timeout) : a;
+  const a = spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.envFile), live.env, ctx.dir, hookTimeout(ctx, live.timeout));
+  const b = a.ran ? spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.readme), live.env, ctx.dir, hookTimeout(ctx, live.timeout)) : a;
   if (!a.ran) return 'its hook cannot start (' + a.why + ')';
   if (a.decision !== 'deny') return 'the installed hook did not block the read of .env';
   if (b.decision === 'deny') return 'the installed hook blocks everything, ordinary files too, so part of zn is missing or broken';
@@ -1022,7 +1029,7 @@ async function checkAgent(spec, ctx) {
           // The plugin's SessionStart command, the same script with "check": only for the launcher's own message about
           // the plugin itself (for example a Node.js it does not support). It never makes the plugin count as protected.
           const checkRun = claudePluginRun(CLAUDE_CHECK_COMMAND, realRoot, ctx, 15);
-          const pre = ctx.live ? spawnHook(checkRun.file, checkRun.args, {}, checkRun.env, ctx.dir, checkRun.timeout) : { ran: false };
+          const pre = ctx.live ? spawnHook(checkRun.file, checkRun.args, {}, checkRun.env, ctx.dir, hookTimeout(ctx, checkRun.timeout)) : { ran: false };
           const sys = pre.ran && /"systemMessage"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(pre.stdout || '');
           if (!res.problem && sys) { res.problem = bare(oneLine(JSON.parse('"' + sys[1] + '"'), 300)); res.pluginFault = true; }
           live = { ...run, plugin: true };
@@ -1375,7 +1382,7 @@ async function check(opts = {}) {
     return { results, removed: true, warnings: nodeWarnings(opts, env) };
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-check-'));
-  const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, claudePolicy: opts.claudePolicy, cursorPolicy: opts.cursorPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
+  const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, claudePolicy: opts.claudePolicy, cursorPolicy: opts.cursorPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode, hookTimeoutMs: opts.hookTimeoutMs };
   const results = [];
   try {
     fs.writeFileSync(path.join(dir, '.gitignore'), '.env\n');
@@ -1453,4 +1460,4 @@ function report({ results, removed, warnings }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, zcodeRelevant, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
+module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
