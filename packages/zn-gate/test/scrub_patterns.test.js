@@ -575,3 +575,19 @@ test('phone numbers: national formats and look-alikes stay unflagged', () => {
     assert.ok(!P.findPii(t, {}).some((s) => s.type === 'PHONE'), t);
   }
 });
+
+test('phone numbers: no-break spaces and double spaces between the groups are still redacted', () => {
+  for (const t of ['+34\u00a0600123456', '+34\u202f600123456', '+34\u2007600123456', '+34  600123456', '+34  600 123 456',
+    '+34\u00a0600\u00a0123\u00a0456', '+34\u202f600\u202f123\u202f456', '+44\u00a020\u00a07946\u00a00958']) {
+    const spans = P.findPii('call ' + t + ' now', {});
+    assert.deepStrictEqual(spans.map((x) => x.type), ['PHONE'], JSON.stringify(t));
+    assert.strictEqual(spans[0].end - spans[0].start, t.length, JSON.stringify(t));
+  }
+});
+
+test('phone numbers: look-alikes with no-break or double spaces stay unflagged', () => {
+  for (const t of ['+34\u00a02026', '+34  2026', '+1  2  3', '+1\u00a02\u00a03', 'x+1  2 3', '+2\u00a01234567', '+999  123456789',
+    '+34\u00a060012345', '+34  6001234567', '+2026-10-30\u00a012:00', '+1  2026-10-30', 'sum +3  5 and 12']) {
+    assert.ok(!P.findPii(t, {}).some((x) => x.type === 'PHONE'), JSON.stringify(t));
+  }
+});
