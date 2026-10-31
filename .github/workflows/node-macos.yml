@@ -1,43 +1,13 @@
 name: zn-gate Node.js on macOS
 
 # Runs the whole zn-gate Node.js test suite on macOS with Node.js 22, including the vault tests against
-# the native macOS Keychain. Pull requests and pushes to main and next run it only when they change code
-# with macOS-specific behaviour (the paths below: Keychain, hooks, agent setup, launching programs, file
-# system scans and links, the CLI). It also runs every day and on manual runs. macOS runners are the
-# scarcest ones, so every other change leaves it out.
+# the native macOS Keychain. Pull requests do not run it: macOS runners are the scarcest ones and kept every
+# pull request waiting. It runs in the merge queue, on pushes to main, next and release branches that change
+# code with macOS-specific behaviour (the paths below: Keychain, hooks, agent setup, launching programs, file
+# system scans and links, the CLI), every day and on manual runs.
 on:
   push:
-    branches: [ main, next ]
-    paths:
-      - 'packages/zn-gate/lib/vault/**'
-      - 'packages/zn-gate/lib/hooks/**'
-      - 'packages/zn-gate/lib/agents/**'
-      - 'packages/zn-gate/lib/broker/**'
-      - 'packages/zn-gate/lib/team/**'
-      - 'packages/zn-gate/lib/audit/**'
-      - 'packages/zn-gate/lib/reach/**'
-      - 'packages/zn-gate/lib/scrub/**'
-      - 'packages/zn-gate/lib/check.js'
-      - 'packages/zn-gate/lib/client.js'
-      - 'packages/zn-gate/lib/cloud-key.js'
-      - 'packages/zn-gate/lib/connect-cli.js'
-      - 'packages/zn-gate/lib/errors.js'
-      - 'packages/zn-gate/lib/exe.js'
-      - 'packages/zn-gate/lib/init.js'
-      - 'packages/zn-gate/lib/init-guide.js'
-      - 'packages/zn-gate/lib/mcp-secrets.js'
-      - 'packages/zn-gate/lib/shell-quote.js'
-      - 'packages/zn-gate/lib/stats-share.js'
-      - 'packages/zn-gate/bin/**'
-      - 'packages/zn-gate/test/**/*keychain*'
-      - 'packages/zn-gate/test/**/*vault*'
-      - 'packages/zn-gate/test/**/*scan*'
-      - 'packages/zn-gate/package.json'
-      - 'packages/zn-gate/package-lock.json'
-      - '.github/workflows/node-macos.yml'
-  pull_request:
     branches: [ main, next, 'release/**' ]
-    types: [ opened, synchronize, reopened, ready_for_review ]
     paths:
       - 'packages/zn-gate/lib/vault/**'
       - 'packages/zn-gate/lib/hooks/**'
@@ -76,10 +46,10 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request, or to next, cancels the run still going for it. Runs for main always complete.
+# A new push to next cancels the run still going for it. Other runs always complete.
 concurrency:
-  group: node-macos-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: node-macos-${{ (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/next' }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.
@@ -104,8 +74,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.x
-          cache: npm
-          cache-dependency-path: packages/zn-gate/package-lock.json
+          # No npm cache: this workflow runs on release branches, and a cache restored there could be poisoned by an
+          # earlier run (zizmor cache-poisoning). The install is small.
+          package-manager-cache: false
       - name: Install zn-gate dependencies
         working-directory: packages/zn-gate
         run: npm ci --ignore-scripts
