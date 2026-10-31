@@ -76,6 +76,38 @@ fn forget_base() -> String {
     format!(r"(?i-u)\bforget\s+(?:about\s+)?{FORGET_OBJECT}\b")
 }
 
+// The instruction forms of `pi:forget`: "forget the previous instructions", "forget previous
+// instructions", "forget the instructions". Same words as the second branch of the Node.js
+// rule. A negation right before the verb ("don't forget the instructions in the README") is
+// ordinary text; the Node.js rule writes that as lookbehinds, here `forget_negated` checks
+// the text before the match.
+const FORGET_INSTR_DET: &str = r"(?:the|my|these|those|our|its|their)";
+const FORGET_INSTR_QUAL: &str = r"(?:previous|prior|above|earlier|preceding|foregoing|original|initial|existing|system|safety|security|former|developer)";
+const FORGET_INSTR_NOUN: &str = r"(?:instructions?|guidelines?|directives?|guardrails?|directions)";
+
+/// The part of the instruction forms that a regex set can express.
+fn forget_instruction_base() -> String {
+    format!(
+        r"(?i-u)\bforget\s+(?:(?:{FORGET_INSTR_DET}\s+)?(?:{FORGET_INSTR_QUAL}\s+){{1,2}}{FORGET_INSTR_NOUN}|(?:the\s+)?(?:instructions|guardrails|directives))\b"
+    )
+}
+
+/// True when the text before a "forget ..." match ends with a negation word.
+fn forget_negated(before: &str) -> bool {
+    let b = before.to_ascii_lowercase();
+    ["n't ", "n\u{2019}t ", "not ", "never ", "ever ", "dont "]
+        .iter()
+        .any(|w| b.ends_with(w))
+}
+
+/// Whether some "forget ..." in the input is an instruction form of `pi:forget` and is not negated.
+fn forget_instruction_matches(input: &str) -> bool {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(&forget_instruction_base()).unwrap())
+        .find_iter(input)
+        .any(|m| !forget_negated(&input[..m.start()]))
+}
+
 /// True when the text after a "forget ..." match starts with a data noun (the Node.js negative lookahead).
 fn forget_data_follows(tail: &str) -> bool {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
@@ -132,6 +164,8 @@ fn prompt_regexes() -> &'static [(&'static str, String)] {
         }
         // Only a prefilter: `first_regex_match` confirms it with `forget_matches`.
         v.push(("pi:forget", forget_base()));
+        // Also a prefilter, confirmed with `forget_instruction_matches`.
+        v.push(("pi:forget", forget_instruction_base()));
         // "ignore your system prompt": a prompt only with a qualifier.
         for (id, verb) in [("pi:ignore_previous", "ignore"), ("pi:disregard", "disregard")] {
             v.push((
@@ -175,9 +209,18 @@ fn get_regex_set() -> &'static RegexSet {
 /// only when the Node.js lookahead (no data noun after it) also holds.
 fn first_regex_match(input: &str) -> Option<usize> {
     let forget = forget_base();
+    let instruction = forget_instruction_base();
     get_regex_set().matches(input).iter().find(|&idx| {
         let (id, re) = &prompt_regexes()[idx];
-        !(*id == "pi:forget" && *re == forget) || forget_matches(input)
+        if *id != "pi:forget" {
+            true
+        } else if *re == forget {
+            forget_matches(input)
+        } else if *re == instruction {
+            forget_instruction_matches(input)
+        } else {
+            true
+        }
     })
 }
 
@@ -312,6 +355,26 @@ mod tests {
             "Forget the previous requests in the queue.",
             "Forget the system context of the old session.",
         ] {
+            assert!(!contains_prompt_injection(input), "{input}");
+        }
+    }
+
+    #[test]
+    fn forget_the_instructions_forms_block_and_the_benign_twins_do_not() {
+        // The same cases as the Node.js and Python tests (forget_instruction_cases.json).
+        let f: serde_json::Value = serde_json::from_str(include_str!(
+            "../../packages/zn-gate/test/fixtures/forget_instruction_cases.json"
+        ))
+        .unwrap();
+        let attacks = f["attacks"].as_array().unwrap();
+        let benign = f["benign"].as_array().unwrap();
+        assert!(attacks.len() > 5 && benign.len() > 5);
+        for a in attacks {
+            let input = a.as_str().unwrap();
+            assert_eq!(rule(input).as_deref(), Some("pi:forget"), "{input}");
+        }
+        for b in benign {
+            let input = b.as_str().unwrap();
             assert!(!contains_prompt_injection(input), "{input}");
         }
     }
