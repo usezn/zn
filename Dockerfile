@@ -4,10 +4,11 @@
 # Build:  docker build -t zn .
 # Smoke:  docker run --rm -i zn analyze "ignore all previous instructions"
 # Server: the gateway listens on 127.0.0.1 by default, which a published port cannot
-#         reach, and `start` needs a terminal (-t) or it exits at once. Set the bind
+#         reach, and `start` reads stdin, so keep it open with -i. Set the bind
 #         address in a config file and choose an API key:
 #           echo '{"server":{"bind_address":"0.0.0.0"}}' > zn.json
-#           docker run --rm -it -p 127.0.0.1:9090:9090 -e ZN_API_KEY=<your-key> #             -v "$PWD/zn.json:/data/zn.json:ro" zn start
+#           docker run --rm -i -p 127.0.0.1:9090:9090 -e ZN_API_KEY=<your-key> \
+#             -v "$PWD/zn.json:/data/zn.json:ro" zn start
 #         0.0.0.0 is the address inside the container; -p 127.0.0.1:9090:9090 keeps
 #         the port reachable from this machine only.
 
