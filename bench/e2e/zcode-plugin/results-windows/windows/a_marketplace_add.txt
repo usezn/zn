@@ -1,0 +1,7 @@
+$ C:/ZCodeApp/ZCode.exe C:\ZCodeApp\resources\glm\zcode.cjs plugins marketplace add C:/work/market
+rc=0
+--stdout--
+Added marketplace usezn (1 plugins)
+
+--stderr--
+
