@@ -75,6 +75,14 @@ built at run time) is not seen, and an agent that cannot ask (see
 [compat.md](compat.md#agent-memory-and-instruction-files)) gets a block with the
 reason instead of a question. You can turn it off with `hooks.agentInstructionWrites`.
 
+- **Commands whose arguments are built when they run.** zn reads the command as it is written. An argument that a
+  program only gets when the command runs (the output of `$(...)` or backticks, `xargs`, `eval`, `bash -c` with built
+  text, shell functions, `read` or `printf -v` into a variable, arrays, `IFS` changes, `${var/x/y}` substitutions) is
+  not known to zn, for curl as for any other command. For curl, zn refuses the forms it cannot read (options read from
+  standard input or a pipe, an upload name built at run time), but other programs and other ways to build arguments
+  can still name a protected file. Keep secrets out of plain-text files (`zn-gate env shadow .env`) so that there is
+  nothing to send.
+
 ## Google Antigravity
 
 Antigravity is a supported agent. Its hooks have limits the other agents do not have, listed below.
