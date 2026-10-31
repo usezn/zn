@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.3';
+const POLICY_RULES_VERSION = '2026-10-31.5';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1394,7 +1394,9 @@ function programOfGroup(group) {
     if (Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, name)) { k = skipWrapper(group, k, name); continue; }
     return { name, at: k };
   }
-  return null;
+  // The guard ran out with words left (dozens of assignments or wrappers): the program is unknown, so every word is
+  // read as curl's would be (fail closed).
+  return k < group.length ? { name: 'curl', at: -1 } : null;
 }
 
 /* The words after `curl` in a command are marked (`curl`), and the one after --data-urlencode or --variable (`urlencode`):
@@ -1410,7 +1412,7 @@ function markCurlWords(readings) {
       if (prog && prog.name === 'curl') {
         for (let m = prog.at + 1; m < group.length; m++) {
           group[m].curl = true;
-          if (group[m - 1] && (group[m - 1].text === '--data-urlencode' || group[m - 1].text === '--variable')) group[m].urlencode = true;
+          if (group[m - 1] && CURL_NAME_AT_FILE_OPTS.has(group[m - 1].text)) group[m].urlencode = true;
         }
       }
       i = j;
@@ -1438,6 +1440,67 @@ function curlFileOf(value, urlencode) {
     if (semi >= 0) v = v.slice(0, semi);
   }
   return v || null;
+}
+
+/* curl options whose value may be name@file (the file's content is sent). */
+const CURL_NAME_AT_FILE_OPTS = new Set(['--data-urlencode', '--url-query', '--variable']);
+
+/* The files a word can make a program read and send, whatever the program: @file and @a,b (curl -d, -F with a list,
+   gh -F, httpie), name=@file, name:=@file, name=<file, name@file (curl --data-urlencode/--url-query/--variable,
+   httpie, xh) and a {a,b} list (curl -T {a,b}). A form field's ;type= and ;filename= are dropped. The result is only
+   refused when it names a protected path, so an e-mail address or @scope/pkg stays allowed. */
+function atFilesOf(text) {
+  const t = String(text);
+  const out = [];
+  const push = (raw) => {
+    let v = String(raw);
+    if (v[0] === '"' || v[0] === "'") {
+      const end = v.indexOf(v[0], 1);
+      v = v.slice(1, end > 0 ? end : undefined);
+    } else {
+      const semi = v.indexOf(';');
+      if (semi >= 0) v = v.slice(0, semi);
+    }
+    if (v && v !== '-') out.push(v);
+  };
+  const list = (raw) => { for (const part of String(raw).split(',')) push(part); };
+  let m;
+  if ((m = /^[@<](.+)$/.exec(t))) list(m[1]);
+  else if ((m = /^[^=@<\s]*?(?::=@|=@|=<)(.+)$/.exec(t))) list(m[1]);
+  else if ((m = /^[A-Za-z0-9_.+-]+@([^@\s]+)$/.exec(t))) push(m[1]);
+  if ((m = /^\{([^{}]+)\}$/.exec(t))) list(m[1]);
+  return out;
+}
+
+/* Extra words to classify, one per file a word may send (see atFilesOf), read as a read of that file. Long options
+   carry it after = (--data-urlencode=k@.env); curl's short options can carry it glued (-d@.env, -Ff=@.env, -T.env,
+   -sT{.env}, -H@file). */
+function atFileWords(words) {
+  const extra = [];
+  const add = (w, files) => {
+    for (const f of files) if (f !== w.text) extra.push({ text: f, head: 'cat', redirectTarget: false, seq: w.seq, atFile: true });
+  };
+  for (const w of words) {
+    const text = String(w.text);
+    if (text.startsWith('--')) {
+      const eq = text.indexOf('=');
+      if (eq > 0) add(w, atFilesOf(text.slice(eq + 1)));
+      continue;
+    }
+    if (text.startsWith('-')) {
+      const glued = w.curl ? /^-[A-Za-z]*?([dFTH])(.+)$/.exec(text) : null;
+      if (glued) {
+        const v = glued[2];
+        if (glued[1] === 'T') {
+          const brace = /^\{([^{}]+)\}$/.exec(v);
+          add(w, brace ? brace[1].split(',').filter(Boolean) : [v]);
+        } else add(w, atFilesOf(v));
+      }
+      continue;
+    }
+    add(w, atFilesOf(text));
+  }
+  return extra;
 }
 
 function markLinkWords(readings) {
@@ -2466,6 +2529,7 @@ function bashDenialOf(cmd, opts = {}) {
   opts.elsewhere = new Map();
   markLinkWords(readings);
   markCurlWords(readings);
+  words.push(...atFileWords(words));
   const mentionsAgents = /\.agents/i.test(text);
   const makesLink = words.some((x) => x.link === true);
   if (overBudget(opts.budget, 0)) return TOO_SLOW_MESSAGE;
@@ -2487,12 +2551,14 @@ function bashDenialOf(cmd, opts = {}) {
   for (const w of words) {
     // --flag=value carries a path too (--kubeconfig=~/.kube/config).
     let text = w.text;
-    if (text.startsWith('-')) {
+    if (w.atFile) {
+      // A file named by @file and its kin (atFileWords): classified as it is.
+    } else if (text.startsWith('-')) {
       const eq = text.indexOf('=');
       // git log -L<range>:<file> names a file after the colon.
       const lineRange = w.git ? /^-L[^:]*:(.+)$/.exec(text) : null;
       // curl -d@.env, -sd@.env, -Ff=@.env: the value is glued to the option letter.
-      const glued = w.curl && eq < 0 && !text.startsWith('--') ? /^-[A-Za-z]*?[dF](.+)$/.exec(text) : null;
+      const glued = w.curl && eq < 0 && !text.startsWith('--') ? /^-[A-Za-z]*?[dFTH](.+)$/.exec(text) : null;
       if (lineRange) text = lineRange[1];
       else if (glued) text = glued[1];
       else if (eq < 0) continue;
@@ -2502,7 +2568,7 @@ function bashDenialOf(cmd, opts = {}) {
       text = text.slice(text.indexOf('=') + 1);
     }
     // curl -d @.env, --json @.env, -F f=@.env, -F f=<.env: the file is sent as the body of the request.
-    if (w.curl && text) {
+    if (w.curl && text && !w.atFile) {
       const file = curlFileOf(text, w.urlencode === true);
       if (file) text = file;
     }
