@@ -107,13 +107,15 @@ test('Node and Python must agree on rules and command versions', () => {
 });
 
 test('the production data guard needs its own bump in each package', () => {
+  // prod-guard.js is also one of the policy layer's files, so a change there needs both bumps.
   const node = run({}, {}, ['packages/zn-gate/lib/prod-guard.js']);
-  assert.equal(node.length, 1);
-  assert.match(node[0], /prod-guard\.js/);
+  assert.equal(node.length, 2);
+  assert.ok(node.some((m) => /PROD_GUARD_RULES_VERSION in packages\/zn-gate\/lib\/prod-guard\.js/.test(m)), node.join('\n'));
+  assert.ok(node.some((m) => /POLICY_RULES_VERSION/.test(m)), node.join('\n'));
   const py = run({}, {}, ['packages/zn-gate-py/src/zn_gate/prod_guard.py']);
   assert.equal(py.length, 1);
   assert.match(py[0], /prod_guard\.py/);
-  const both = run({ 'node:PROD_GUARD_RULES_VERSION': '2026-10-22.6', 'py:PROD_GUARD_RULES_VERSION': '2026-10-22.6' }, {},
+  const both = run({ 'node:PROD_GUARD_RULES_VERSION': '2026-10-22.6', 'py:PROD_GUARD_RULES_VERSION': '2026-10-22.6', 'node:POLICY_RULES_VERSION': '2026-10-22.6' }, {},
     ['packages/zn-gate/lib/prod-guard.js', 'packages/zn-gate-py/src/zn_gate/prod_guard.py']);
   assert.deepEqual(both, []);
 });
