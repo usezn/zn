@@ -299,6 +299,10 @@ pub struct McpPool {
     /// Plain-English warnings from loading the servers file (servers that were
     /// skipped, a file that could not be read). The caller shows them.
     notices: Vec<String>,
+    /// Servers left out when the file was loaded (command not allowed, or
+    /// neither a command nor a url), with the reason. A tool call for one of
+    /// them is refused instead of being passed on as allowed.
+    skipped: HashMap<String, String>,
 }
 
 impl McpPool {
@@ -309,12 +313,51 @@ impl McpPool {
             connections: Mutex::new(HashMap::new()),
             cache: None,
             notices: Vec::new(),
+            skipped: HashMap::new(),
         }
     }
 
     /// Warnings found while loading the servers file, for the user to see.
     pub fn notices(&self) -> &[String] {
         &self.notices
+    }
+
+    /// The same pool, with these servers recorded as skipped (name -> reason).
+    pub fn with_skipped(mut self, skipped: HashMap<String, String>) -> Self {
+        self.skipped = skipped;
+        self
+    }
+
+    /// The servers that were left out, as (name, reason), sorted by name.
+    pub fn skipped_servers(&self) -> Vec<(String, String)> {
+        let mut list: Vec<(String, String)> = self
+            .skipped
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        list.sort();
+        list
+    }
+
+    /// If `tool` belongs to a server that was left out, that server and the
+    /// reason. The server is read from the tool name: `mcp__<server>__<tool>`,
+    /// or `<server>` followed by `__`, `.`, `/` or `:`.
+    pub fn skip_reason_for_tool(&self, tool: &str) -> Option<(String, String)> {
+        if self.skipped.is_empty() {
+            return None;
+        }
+        let mut candidates: Vec<&str> = Vec::new();
+        if let Some(rest) = tool.strip_prefix("mcp__") {
+            candidates.extend(rest.split("__").next());
+        }
+        for sep in ["__", ".", "/", ":"] {
+            if let Some((server, _)) = tool.split_once(sep) {
+                candidates.push(server);
+            }
+        }
+        candidates
+            .into_iter()
+            .find_map(|c| self.skipped.get(c).map(|r| (c.to_string(), r.clone())))
     }
 
     /// Set the result cache for the pool
@@ -377,6 +420,7 @@ impl McpPool {
 
         let mut configs = HashMap::new();
         let mut notices = Vec::new();
+        let mut skipped = HashMap::new();
 
         if let Some(servers) = value.get("mcpServers").and_then(|v| v.as_object()) {
             for (name, server) in servers {
@@ -395,6 +439,10 @@ impl McpPool {
                         name
                     );
                     notices.push(crate::user_errors::mcp_server_incomplete(name, Some(path)));
+                    skipped.insert(
+                        name.clone(),
+                        "it has neither a \"command\" nor a \"url\"".to_string(),
+                    );
                     continue;
                 }
 
@@ -407,6 +455,8 @@ impl McpPool {
                             ALLOWED_COMMANDS,
                             Some(path),
                         ));
+                        skipped
+                            .insert(name.clone(), format!("\"{cmd}\" is not an allowed command"));
                         continue;
                     }
                 }
@@ -444,7 +494,7 @@ impl McpPool {
             }
         }
 
-        let mut pool = Self::new(configs);
+        let mut pool = Self::new(configs).with_skipped(skipped);
         pool.notices = notices;
         Ok(pool)
     }
@@ -822,6 +872,35 @@ Content-Length: 0
             "health_check waited for the busy server: {:?}",
             elapsed
         );
+    }
+
+    #[test]
+    fn skipped_servers_are_recorded_with_a_reason_and_matched_by_tool_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("mcp_servers.json");
+        std::fs::write(
+            &file,
+            r#"{"mcpServers":{"bad":{"command":"rm"},"empty":{},"good":{"command":"node"}}}"#,
+        )
+        .unwrap();
+        let pool = McpPool::from_config_file(file.to_str().unwrap()).unwrap();
+        let skipped = pool.skipped_servers();
+        let names: Vec<&str> = skipped.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["bad", "empty"]);
+        assert!(
+            skipped[0].1.contains("not an allowed command"),
+            "{:?}",
+            skipped
+        );
+        assert_eq!(pool.list_mcps(), vec!["good".to_string()]);
+        let (server, _) = pool.skip_reason_for_tool("mcp__bad__run").unwrap();
+        assert_eq!(server, "bad");
+        assert!(pool.skip_reason_for_tool("bad.run").is_some());
+        assert!(pool.skip_reason_for_tool("mcp__good__run").is_none());
+        assert!(pool.skip_reason_for_tool("other_tool").is_none());
+        // A server that is only unreachable is never recorded: nothing here
+        // connects, and the list comes from the file alone.
+        assert!(pool.skip_reason_for_tool("good.run").is_none());
     }
 
     #[test]

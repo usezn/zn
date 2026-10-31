@@ -245,6 +245,17 @@ async fn run_dashboard(args: &Args) -> Result<()> {
     tui::TuiApp::run(args.api_key.clone(), port).await
 }
 
+/// The startup error for a Management API address that cannot be bound.
+fn bind_error(addr: &str, port: u16, e: &std::io::Error) -> anyhow::Error {
+    if e.kind() == std::io::ErrorKind::AddrInUse {
+        anyhow!(
+            "Port {port} is already in use, so the Management API cannot start on {addr}. Stop the program that uses it, or pick another port with --port <number> (or set ZN_PORT, or server.port in zn.json)."
+        )
+    } else {
+        anyhow!("Cannot start the Management API on {addr}: {e}")
+    }
+}
+
 async fn start_proxy(args: Args) -> Result<()> {
     log::info("Initializing High-Performance Security Engine...")?;
 
@@ -503,6 +514,14 @@ async fn start_proxy(args: Args) -> Result<()> {
     for notice in pool.notices() {
         log::warning(notice)?;
     }
+    let skipped = pool.skipped_servers();
+    if !skipped.is_empty() {
+        let names: Vec<String> = skipped.iter().map(|(n, _)| format!("\"{n}\"")).collect();
+        log::warning(format!(
+            "Tool calls for the skipped MCP server(s) {} will be refused.",
+            names.join(", ")
+        ))?;
+    }
     if !pool.list_mcps().is_empty() {
         log::warning(zn::user_errors::mcp_not_forwarded(pool.list_mcps().len()))?;
     }
@@ -557,6 +576,13 @@ async fn start_proxy(args: Args) -> Result<()> {
             )
         })?;
 
+    // Bound before the task starts, so a port that is taken stops the gateway
+    // with a clear message instead of leaving it running without an API.
+    let addr = format!("{}:{}", bind_address, port);
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .map_err(|e| bind_error(&addr, port, &e))?;
+
     tokio::spawn(async move {
         let allowed_origins = api_state.config.security.allowed_origins.clone();
         let cors = build_cors_layer(&allowed_origins);
@@ -607,22 +633,14 @@ async fn start_proxy(args: Args) -> Result<()> {
             .layer(cors)
             .with_state(api_state);
 
-        let addr = format!("{}:{}", bind_address, port);
-        match tokio::net::TcpListener::bind(&addr).await {
-            Ok(listener) => {
-                log::info(format!("🛰️ Management API listening on {}", addr)).ok();
-                if let Err(e) = axum::serve(
-                    listener,
-                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-                )
-                .await
-                {
-                    tracing::error!("Management API server error: {}", e);
-                }
-            }
-            Err(e) => {
-                tracing::error!("Failed to bind Management API to {}: {}", addr, e);
-            }
+        log::info(format!("🛰️ Management API listening on {}", addr)).ok();
+        if let Err(e) = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        {
+            tracing::error!("Management API server error: {}", e);
         }
     });
 
@@ -1029,6 +1047,22 @@ async fn process_mcp_message(
             // neither ban another tenant's agent ids nor share a ban with it.
             let agent_id_str = bounded_agent_id(agent_id.as_deref());
             let rep_key = reputation_key(&memory_namespace, &agent_id_str);
+
+            // A tool of an MCP server that was left out when the servers file
+            // was loaded is refused with the reason, never passed on as allowed.
+            if let Some((server, reason)) = state.pool.skip_reason_for_tool(&tool_name) {
+                log::warning(format!(
+                    "Tool call '{tool_name}' refused: MCP server '{server}' was skipped ({reason})"
+                ))
+                .ok();
+                return Ok(Some(jsonrpc_error_response(
+                    id,
+                    jsonrpc_error::POLICY_DENIED,
+                    &format!(
+                        "Tool call '{tool_name}' was not forwarded: MCP server '{server}' was skipped ({reason})"
+                    ),
+                )));
+            }
 
             // 🎯 OCR GUARD: detect malicious text embedded in images (prompt
             // injection, credentials, destructive commands) on the RAW input,
@@ -2351,6 +2385,44 @@ mod audit_isolation_tests {
             "params": { "name": tool, "arguments": { "query": "hello" } }
         })
         .to_string()
+    }
+
+    #[tokio::test]
+    async fn a_tool_of_a_skipped_server_is_refused_with_the_reason() {
+        let (mut state, _dir) = test_state(None);
+        let mut skipped = std::collections::HashMap::new();
+        skipped.insert(
+            "bad".to_string(),
+            "\"rm\" is not an allowed command".to_string(),
+        );
+        state.pool = Arc::new(McpPool::new(std::collections::HashMap::new()).with_skipped(skipped));
+        let out = process_mcp_message(&frame("mcp__bad__run"), &state, None)
+            .await
+            .unwrap()
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let msg = v["error"]["message"].as_str().unwrap();
+        assert!(msg.contains("'bad'") && msg.contains("skipped"), "{msg}");
+        assert!(msg.contains("not an allowed command"), "{msg}");
+        let ok = process_mcp_message(&frame("other_tool"), &state, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!ok.contains("\"error\""), "{ok}");
+    }
+
+    #[tokio::test]
+    async fn a_port_that_is_in_use_gives_a_plain_startup_error() {
+        let taken = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = taken.local_addr().unwrap().port();
+        let addr = format!("127.0.0.1:{port}");
+        let e = tokio::net::TcpListener::bind(&addr).await.unwrap_err();
+        let msg = bind_error(&addr, port, &e).to_string();
+        assert!(
+            msg.contains(&format!("Port {port} is already in use")),
+            "{msg}"
+        );
+        assert!(msg.contains("--port") && msg.contains("ZN_PORT"), "{msg}");
     }
 
     fn tenant(namespace: &str, role: TenantRole) -> TenantContext {
