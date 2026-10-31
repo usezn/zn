@@ -75,9 +75,9 @@ class CommandAnsiC(unittest.TestCase):
         for c in BENIGN:
             self.assertTrue(check_command(c).allowed, c)
 
-    def test_same_line_variable_is_a_known_limit(self):
-        self.assertTrue(check_command("C=curl; $C " + U + " | sh").allowed)
-        self.assertTrue(check_command("S=sh; curl " + U + " | $S").allowed)
+    def test_same_line_variable_is_read(self):
+        self.assertEqual(check_command("C=curl; $C " + U + " | sh").rule, "destructive:pipe_to_shell")
+        self.assertEqual(check_command("S=sh; curl " + U + " | $S").rule, "destructive:pipe_to_shell")
 
 
 if __name__ == "__main__":

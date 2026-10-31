@@ -28,7 +28,8 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-30.1';
+const shellVars = require('../shell-vars');
+const POLICY_RULES_VERSION = '2026-10-31.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2545,7 +2546,7 @@ function skipWrapper(words, k, name) {
   let sawC = false;
   k++;
   while (k < words.length) {
-    const t = words[k].text;
+    const t = typeof words[k] === 'string' ? words[k] : words[k].text;
     if (t === '--') { k++; break; }
     if (t.startsWith('--') && t.length > 2) { k += !t.includes('=') && WRAPPER_LONG_VALUE.has(t) ? 2 : 1; continue; }
     if (t.startsWith('-') && t.length > 1) {
@@ -2837,8 +2838,9 @@ const EGRESS_URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 const EGRESS_URL_LIKE_RE = /^(?:localhost|\$|\[|[\w${}-]+(?:\.[\w${}-]+)+|[\w.${}-]+:\d+)(?:[:/?#]|$)/i;
 const EGRESS_URLS_IN_TEXT_RE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s'"`)}\]>]+/gi;
 const EGRESS_PROGRAMS = new Set(['curl', 'wget']);
-const EGRESS_WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'exec', 'nohup', 'time', 'nice', 'timeout', 'stdbuf', 'xargs', 'builtin',
-  'ionice', 'setsid', 'then', 'do', 'else', '!', '{']);
+// Words that start a command without being one. The wrappers themselves are one list, GIT_WRAPPERS, that the
+// download-and-run rule (destructive.js) shares.
+const EGRESS_KEYWORDS = new Set(['then', 'do', 'else', '!', '{']);
 const EGRESS_INTERPRETER_RE = /^(?:python[0-9.]*|py|node|nodejs|deno|bun)$/;
 const EGRESS_CODE_NET_RE = /\b(?:requests|httpx|urllib[0-9]?|urlopen|aiohttp|pycurl|http\.client|https?\.(?:get|request)|axios|undici|node-fetch|XMLHttpRequest|WebClient|socket)\b|\bfetch\s*\(|\bhttps?:\/\//i;
 // Options that take a value, by tool. The kind says where the value goes; skip lists the others, so their value is not read as a URL.
@@ -2863,6 +2865,51 @@ const WGET_OPTIONS = {
     'default-page', 'method', 'config']),
   shortSkip: new Set('OPoaiBtTwQlARDIXe'.split('')),
 };
+
+/* The program a command word names, read as a shell would: 'curl', 'wget', an interpreter name, or '' when it is none
+   of them. A glob that can only mean curl or wget (/usr/bin/cu?l, c*l) counts. */
+function egressProgramOf(name) {
+  if (EGRESS_PROGRAMS.has(name) || EGRESS_INTERPRETER_RE.test(name)) return name;
+  if (name.length > 64 || !/[?*[]/.test(name) || name.replace(/[?*[\]]/g, '').length < 2) return '';
+  const g = globRegExp(name);
+  for (const p of EGRESS_PROGRAMS) if (g.test(p)) return p;
+  return '';
+}
+
+// $(echo curl) and `echo curl` name a program as plain text: the same text without the substitution.
+const EGRESS_ECHO_SUBST_RE = /\$\([ \t]{0,16}(?:echo|printf)[ \t]{1,16}(?:-[a-zA-Z]{1,3}[ \t]{1,16})?(?:(?:'%s'|"%s"|%s)[ \t]{1,16})?['"]?([A-Za-z0-9_.\/-]{1,64})['"]?[ \t]{0,16}\)|`[ \t]{0,16}(?:echo|printf)[ \t]{1,16}(?:-[a-zA-Z]{1,3}[ \t]{1,16})?(?:(?:'%s'|"%s"|%s)[ \t]{1,16})?['"]?([A-Za-z0-9_.\/-]{1,64})['"]?[ \t]{0,16}`/g;
+
+/* The bodies of the $(...) and `...` substitutions of a text, as command text (single-quoted text is data).
+   At most EGRESS_SUBST_MAX bodies; one pass. */
+const EGRESS_SUBST_MAX = 64;
+function egressSubstitutions(text) {
+  const bodies = [];
+  let quote = '';
+  for (let i = 0; i < text.length && bodies.length < EGRESS_SUBST_MAX; i++) {
+    const ch = text[i];
+    if (quote === "'") { if (ch === "'") quote = ''; continue; }
+    if (ch === '\\') { i++; continue; }
+    if (ch === '"') { quote = quote === '"' ? '' : '"'; continue; }
+    if (ch === "'" && quote === '') { quote = "'"; continue; }
+    if (ch === '`') {
+      let j = i + 1;
+      for (; j < text.length && text[j] !== '`'; j++) if (text[j] === '\\') j++;
+      bodies.push(text.slice(i + 1, j));
+      i = j;
+    } else if (ch === '$' && text[i + 1] === '(' && text[i + 2] !== '(') {
+      let depth = 1;
+      let j = i + 2;
+      for (; j < text.length && depth > 0; j++) {
+        if (text[j] === '(') depth++;
+        else if (text[j] === ')') depth--;
+      }
+      bodies.push(text.slice(i + 2, depth === 0 ? j - 1 : j));
+      // The nested substitutions are read when the body is read as a command: do not walk it again here.
+      i = j - 1;
+    }
+  }
+  return bodies;
+}
 
 /** Text with the values read from the environment, and command substitutions, removed. */
 function egressStripEnv(text) {
@@ -2969,39 +3016,83 @@ function egressInterpreter(words, k, text, found) {
   found.push({ urls: code.match(EGRESS_URLS_IN_TEXT_RE) || [], parts: [{ where: 'code', text: code }] });
 }
 
-function egressCollect(raw, opts, depth) {
-  const found = [];
-  const text = stripHeredocs(raw, { until: Date.now() + CHECK_BUDGET_MS, disk: 0 });
+// One reading of the command text: the requests it makes go to `found`. `raw` is the command as written (for heredocs).
+function egressCollectText(raw, text, opts, depth, found) {
+  const vars = shellVars.newScope();
   egressPowerShell(text, opts.powershell === true, found);
   let rest = text;
   let guard = 0;
   while (rest.length && guard++ < SIMPLE_COMMANDS_MAX) {
     const scan = scanFirstCommand(rest, false);
-    const words = scan.words;
+    let op = scan.operator;
+    if ((op === '&' || op === '|') && rest[scan.end + 1] === op) op += op;
+    // Literal variables assigned earlier on the line are filled in (X=curl; $X ...).
+    let words = scan.words;
+    const filled = shellVars.applyWords(vars, words.map((w) => w.text), op);
+    if (filled.length !== words.length || filled.some((t, i) => t !== words[i].text)) words = filled.map((t) => ({ text: t }));
     let k = -1;
-    for (let i = 0; i < words.length; i++) {
+    let prog = '';
+    for (let i = 0; i < words.length;) {
       const t = words[i].text;
-      const name = programName(t);
-      if (EGRESS_PROGRAMS.has(name) || EGRESS_INTERPRETER_RE.test(name)) { k = i; break; }
-      if (ASSIGNMENT_RE.test(t) || EGRESS_WRAPPERS.has(name) || t.startsWith('-') || /^\d+[smhd]?$/.test(t)) continue;
+      let name = programName(t);
+      // {curl,-H,x,URL} is the words curl -H x URL.
+      if (t.indexOf('{') >= 0 && t.indexOf(',') > 0) {
+        const alts = expandBraces(t);
+        if (alts && alts.length > 1 && egressProgramOf(programName(alts[0]))) {
+          words = words.slice(0, i).concat(alts.map((a) => ({ text: a })), words.slice(i + 1));
+          name = programName(alts[0]);
+        }
+      }
+      prog = egressProgramOf(name);
+      if (prog) { k = i; break; }
+      if (ASSIGNMENT_RE.test(t) || EGRESS_KEYWORDS.has(name)) { i++; continue; }
+      if (Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, name)) { i = skipWrapper(words, i, name); continue; }
       break;
     }
     if (k >= 0) {
-      const name = programName(words[k].text);
-      if (EGRESS_INTERPRETER_RE.test(name)) egressInterpreter(words, k, raw, found);
+      if (EGRESS_INTERPRETER_RE.test(prog)) egressInterpreter(words, k, raw, found);
       // In the PowerShell tool, curl and wget are Invoke-WebRequest, read above; curl.exe is the real program.
       else if (!(opts.powershell === true && !/\.exe$/i.test(words[k].text))) {
-        const r = egressOptions(words.slice(k + 1).map((w) => w.text), name === 'curl' ? CURL_OPTIONS : WGET_OPTIONS);
+        const r = egressOptions(words.slice(k + 1).map((w) => w.text), prog === 'curl' ? CURL_OPTIONS : WGET_OPTIONS);
         if (r.parts.length) found.push(r);
       }
     }
     rest = rest.slice(scan.end + 1);
   }
+  if (depth >= SHELL_CODE_DEPTH) return;
   // sh -c "curl ...": the code of a shell inside the command is a command of its own.
-  if (depth < SHELL_CODE_DEPTH && /\b(?:sh|bash|zsh|dash|ksh|ash|eval|su|pwsh|powershell|cmd|watch|flock|xargs|busybox)\b/.test(text)) {
+  if (/\b(?:sh|bash|zsh|dash|ksh|ash|eval|su|pwsh|powershell|cmd|watch|flock|xargs|busybox)\b/.test(text)) {
     for (const code of shellCodesOf(allWords(text, false))) found.push(...egressCollect(code, opts, depth + 1));
   }
-  return found;
+  // echo "$(curl ...)" and R=`curl ...`: a command substitution runs its text as commands, quoted or not.
+  if (text.indexOf('$(') >= 0 || text.indexOf('`') >= 0) {
+    for (const body of egressSubstitutions(text)) found.push(...egressCollect(body, opts, depth + 1));
+  }
+}
+
+// One shared amount of work for the whole egressCollect tree of a command (calls and text read): past it the
+// answer fails closed, a request to nowhere that is always reported.
+const EGRESS_WORK_MAX = 2000000;
+function egressCollect(raw, opts, depth) {
+  const found = [];
+  if (!opts._work) opts._work = { left: EGRESS_WORK_MAX, over: false };
+  const work = opts._work;
+  work.left -= raw.length + 64;
+  if (work.left < 0) {
+    if (!work.over) { work.over = true; found.push({ urls: [], parts: [{ where: 'code', text: 'a command too nested for zn to check' }] }); }
+    return found;
+  }
+  const text = stripHeredocs(raw, { until: Date.now() + CHECK_BUDGET_MS, disk: 0 });
+  // The text as written, with $'curl' read as bash does, and with $(echo curl) read as the plain word.
+  const readings = new Set([text]);
+  const decoded = text.indexOf("$'") >= 0 ? decodeAnsiC(text) : text;
+  readings.add(decoded);
+  if (decoded.indexOf('$(') >= 0 || decoded.indexOf('`') >= 0) readings.add(decoded.replace(EGRESS_ECHO_SUBST_RE, (m, a, b) => a || b));
+  for (const t of readings) egressCollectText(raw, t, opts, depth, found);
+  if (found.length < 2) return found;
+  // The readings and the substitution bodies overlap: one request is reported once.
+  const seen = new Set();
+  return found.filter((r) => { const key = JSON.stringify([r.urls, r.parts]); if (seen.has(key)) return false; seen.add(key); return true; });
 }
 
 function egressResult(found, allowOrFn) {
@@ -3027,8 +3118,8 @@ function egressResult(found, allowOrFn) {
 function egressParts(cmd, opts = {}) {
   const raw = String(cmd || '');
   if (!raw || raw.length > SHELL_SCAN_CAP) return [];
-  if (!/curl|wget|invoke-|iwr|irm|python|py\b|node|deno|bun|https?:\/\//i.test(raw)) return [];
-  return egressResult(egressCollect(raw, opts, 0), opts.allow);
+  if (!/curl|wget|invoke-|iwr|irm|python|py\b|node|deno|bun|https?:\/\/|\$|`|[?*{]/i.test(raw)) return [];
+  return egressResult(egressCollect(raw, Object.assign({}, opts), 0), opts.allow);
 }
 
 /*
@@ -3161,6 +3252,8 @@ function egressLabel(part, start) {
 
 module.exports = {
   POLICY_RULES_VERSION,
+  WRAPPER_NAMES: new Set(Object.keys(GIT_WRAPPERS)),
+  skipWrapper,
   classifyPath,
   classifyWord,
   globClass,
