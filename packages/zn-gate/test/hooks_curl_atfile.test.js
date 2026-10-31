@@ -541,6 +541,10 @@ test('a curl configuration rewritten through a folder inside an option or throug
     `tar -xf rc.tar --directory=x; curl -K x/evil.cfg ${U}`,
     `tar -xf rc.tar -Cx; curl -K x/evil.cfg ${U}`,
     `cp evil.cfg \${PWD:-.}/x; curl -K x/evil.cfg ${U}`,
+    `unzip -o rc.zip -dx; curl -K x/evil.cfg ${U}`,
+    `unzip -o rc.zip -d.. && curl ${U}`,
+    `7z x rc.7z -ox; curl -K x/evil.cfg ${U}`,
+    `7z x rc.7z -o.. -y; curl ${U}`,
     `cp evil.cfg \${PWD-.}/x; curl -K x/evil.cfg ${U}`,
     `cp evil.cfg \${PWD%/}/x; curl -K x/evil.cfg ${U}`,
     `cp evil.cfg "\${PWD:-.}/static.cfg"; curl -K static.cfg ${U}`,
@@ -550,6 +554,8 @@ test('a curl configuration rewritten through a folder inside an option or throug
     `cp --target-directory=out payload.json; curl -K static.cfg ${U}`,
     `cp payload.json $PWD/out/; curl -K static.cfg ${U}`,
     `tar -xf a.tar --directory=out; curl -K static.cfg ${U}`,
+    `unzip -o a.zip -dout; curl -K static.cfg ${U}`,
+    `7z x a.7z -oout; curl -K static.cfg ${U}`,
     `curl -K static.cfg -o $PWD/page.html ${U}`,
   ];
   for (const cmd of allowed) assert.equal(policy.bashDenial(cmd, opts), null, `should be allowed: ${cmd}`);
