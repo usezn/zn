@@ -66,8 +66,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pull requests run Ubuntu only; Windows and macOS run on pushes and the schedule, or with the full-ci label.
-        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
+        # Pull requests into next run Ubuntu only; pull requests into release/** also run Windows and macOS (nothing else tests a release branch
+        # on those systems before the tag). Pushes and the schedule run all three, and so does the full-ci label.
+        os: ${{ fromJSON((github.event_name != 'pull_request' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
         node-version: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["20.19.0", "20.x", "22.x", "24.x", "26.x"]' || '["22.x"]') }}
         # Pushes to next run macOS with Node.js 22.x only; every other full run tests every version.
         # 20.19.0 is the lowest Node.js the plugin supports (its locked dependencies need it), so the floor is tested exactly.
