@@ -1,0 +1,18 @@
+{
+ "rc": 0,
+ "dur_s": 5.0,
+ "requests": 2,
+ "tool_msgs": [
+  "zn: this call would send a secret (an AWS key) to the MCP server zn_fake, so zn blocked it. A stored secret cannot be passed to this server. Next step: for a web request, use the secrets_http_request tool of the zn \"secrets\" MCP server, which sends the stored value itself; do not put the value in this call."
+ ],
+ "proj_files": [
+  ".env",
+  "a.txt"
+ ],
+ "outcomes": [
+  "success",
+  "failed",
+  "blocked",
+  "failed"
+ ]
+}
