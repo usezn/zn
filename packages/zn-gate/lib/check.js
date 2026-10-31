@@ -1231,6 +1231,7 @@ async function checkAgent(spec, ctx) {
       res.notes.push('another Antigravity hook also runs before tool calls (' + JSON.stringify(first.name) + ' in ' + first.file + (others.length > 1 ? ', and ' + (others.length - 1) + ' more' : '') + '). Antigravity does not document in which order hooks run or which answer wins, so zn cannot tell whether its deny holds against it; review that hook, or turn it off with "enabled": false');
     }
   }
+  if (spec.id === 'codex' && installed) res.notes.push('Codex asks you to approve new hooks with /hooks before it runs them; an OK here does not prove that Codex runs the hook until you have approved it');
   if (spec.id === 'opencode' && installed) res.notes.push('zn\'s rules were checked; its plugin runs inside OpenCode, so it was not started here');
 
   // The project file can be anyone's repository: read only a regular file, and only so much of it.
