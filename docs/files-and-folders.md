@@ -11,7 +11,7 @@ zn-gate keeps the vault and its settings in a `.zn` folder in your home folder (
 | The vault files | Your stored secrets, encrypted. |
 | `audit.jsonl` | The local audit log, next to the vault files. |
 | `~/.zn/vault-backup-<date>` | Encrypted copy of an old vault, made by `zn-gate vault reset`. |
-| `~/.zn/hooks` | A small launcher script, shared by every profile of the same agent. |
+| `~/.zn/hooks` | A small launcher script, shared by every profile of the same agent. `npm update -g zn-gate` refreshes these launchers by itself (a short install step); a project-local install does not touch them, and neither does an update with `--ignore-scripts`. |
 | `~/.zn/reach-last.json` | Written only by `reach --remember`. |
 
 More: [uninstall](uninstall.md#your-env-files-and-the-vault), [`hooks uninstall`](cli.md#hooks-uninstall).
