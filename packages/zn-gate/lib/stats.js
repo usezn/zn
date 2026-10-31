@@ -99,8 +99,29 @@ function save(data, file = statsFile()) {
   }
 }
 
+const DAY_MS = 86400000;
+// A day more than this far ahead of now was written under a wrong clock: it never counts and never moves the prune.
+const FUTURE_SLACK_DAYS = 1;
+// If now is further ahead of the newest stored day than this, the clock is not believed: nothing is pruned.
+const IMPLAUSIBLE_GAP_DAYS = 400;
+
+function isFutureDay(day, now) {
+  return day > today(new Date(now.getTime() + FUTURE_SLACK_DAYS * DAY_MS));
+}
+
+/**
+ * Drop days older than KEEP_DAYS. Future-dated days are ignored (kept, not counted), and when the clock is far
+ * ahead of the newest real day nothing is deleted: history lost to a wrong clock cannot be restored.
+ */
 function prune(data, now = new Date()) {
-  const cutoff = today(new Date(now.getTime() - KEEP_DAYS * 86400000));
+  const todayKey = today(now);
+  let newest = null;
+  for (const day of Object.keys(data.days)) {
+    if (day === todayKey || isFutureDay(day, now)) continue;
+    if (!newest || day > newest) newest = day;
+  }
+  if (newest && now.getTime() - Date.parse(newest + 'T00:00:00Z') > IMPLAUSIBLE_GAP_DAYS * DAY_MS) return;
+  const cutoff = today(new Date(now.getTime() - KEEP_DAYS * DAY_MS));
   for (const day of Object.keys(data.days)) if (day < cutoff) delete data.days[day];
 }
 
@@ -158,7 +179,7 @@ function summary({ days = 30, now = new Date(), file } = {}) {
   const detections = {};
   let first = null;
   for (const [day, entries] of Object.entries(data.days)) {
-    if (day < cutoff) continue;
+    if (day < cutoff || isFutureDay(day, now)) continue;
     if (!first || day < first) first = day;
     for (const [key, c] of Object.entries(entries)) {
       const k = (byKey[key] ||= { checked: 0, blocked: 0, warned: 0, redacted: 0 });

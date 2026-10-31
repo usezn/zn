@@ -50,8 +50,9 @@ const policy = require('./policy');
 const markers = require('../broker/markers');
 const { gitStatusOf } = require('../broker/files');
 const deps = require('../deps');
+const { envFlag } = require('../env-flag');
 const { shQuote, SH_QUOTE_ESCAPE, portablePath } = require('../shell-quote');
-const { znCommand } = require('../zn-command');
+const { znCommand, winCommandText } = require('../zn-command');
 const { hasUnsafeText } = require('../safe-text');
 
 const SECRET_SOURCES = new Set(['exact', 'pattern']);
@@ -194,7 +195,7 @@ function destructiveRulesOf(opts) {
  */
 function instructionWritesOf(opts) {
   if (opts.instructionWrites) return ['ask', 'deny', 'off'].includes(opts.instructionWrites) ? opts.instructionWrites : 'ask';
-  if (process.env.ZN_STRICT === '1') return 'deny';
+  if (envFlag('ZN_STRICT')) return 'deny';
   const hooks = readConfig(opts.home).hooks || {};
   const v = hooks.agentInstructionWrites;
   if (v === false || ['off', 'allow'].includes(String(v).toLowerCase())) return 'off';
@@ -231,12 +232,12 @@ function egressAllowOf(opts) {
 // Reinstall the running version: `npm install -g zn-gate` alone could install an
 // older release without hooks.
 const { version: ZN_VERSION } = require('../../package.json');
-const REINSTALL = 'part of zn-gate is missing from this installation, so zn cannot check this action and blocked it. ' +
-  'Ask the user to reinstall it with `npm install -g zn-gate@' + ZN_VERSION + '` and then run `zn hooks install`.';
+const REINSTALL = winCommandText('part of zn-gate is missing from this installation, so zn cannot check this action and blocked it. ' +
+  'Ask the user to reinstall it with `npm install -g zn-gate@' + ZN_VERSION + '` and then run `zn hooks install`.');
 // Only the person sees how to let actions pass unchecked; the model never gets that hint.
-const REINSTALL_USER = 'part of zn-gate is missing from this installation, so zn blocks what it cannot check. ' +
+const REINSTALL_USER = winCommandText('part of zn-gate is missing from this installation, so zn blocks what it cannot check. ' +
   'Reinstall it with `npm install -g zn-gate@' + ZN_VERSION + '` and then run `zn hooks install`. ' +
-  'To let actions pass unchecked until then, set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.';
+  'To let actions pass unchecked until then, set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.');
 /* Claude Code sets CLAUDE_PLUGIN_ROOT only for the hooks of a plugin: there `zn hooks install` does not apply. */
 const AGENT_NAMES = { 'claude-code': 'Claude Code', codex: 'Codex CLI', cursor: 'Cursor', opencode: 'OpenCode', antigravity: 'Antigravity', zcode: 'ZCode' };
 function fixHint(agentId) {
@@ -579,8 +580,6 @@ async function decidePre(ev, d, agentId, opts) {
   if (tool === 'mcp' && ev.input && ev.input.args !== undefined) {
     let res = await decideMcp(ev, d, agentId);
     if (res.decision === 'deny') return res;
-    // zn's own MCP server checks text on this computer: its arguments are not a network request.
-    if (ev.mcp && ev.mcp.ours === 'analyze') return res;
     const mode = egressModeOf(opts);
     // Personal data in the arguments follows the egress settings: with the check off nobody is asked, and when the
     // call is a network request whose arguments the egress check read in full, it decides (local and allow-listed
@@ -864,8 +863,7 @@ async function decideMcp(ev, d, agentId) {
     }
   }
   if (kinds.size === 0) {
-    // zn's own detector server (the plugin's) analyses the text the user asked about: no question for it.
-    if (piiKinds.size === 0 || (ev.mcp && ev.mcp.ours === 'analyze')) return { decision: 'allow' };
+    if (piiKinds.size === 0) return { decision: 'allow' };
     // Personal data is not always wrong to send: the user decides (never a deny).
     return {
       decision: 'ask',
@@ -1709,7 +1707,7 @@ function refuseInput(agentId, why) {
  */
 const CODEX_WATCHDOG_MARGIN_S = 5;
 // The step every agent gets when a check did not finish in time or failed: the same words whatever the agent.
-const TIMEOUT_STEP = 'Try again; if it keeps happening, ask the user to run `zn-gate check` in their terminal.';
+const TIMEOUT_STEP = winCommandText('Try again; if it keeps happening, ask the user to run `zn-gate check` in their terminal.');
 const CODEX_FAIL_REASON = 'zn: the check could not finish in time or failed, so this was blocked. ' + TIMEOUT_STEP;
 // A ZCode post-tool event whose check timed out: the tool had already run and ZCode cannot hide its output.
 const POST_TIMEOUT_NOTE = 'zn: the check timed out, so this output was not checked for secrets. It was NOT withheld: ' +
