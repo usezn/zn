@@ -1,0 +1,7 @@
+$ /work/zcrt /opt/ZCode/resources/glm/zcode.cjs plugins uninstall zn-gate@usezn --force
+rc=0
+--stdout--
+Uninstalled plugin zn-gate@usezn
+
+--stderr--
+

@@ -96,20 +96,20 @@ struct Args {
     #[arg(long, short, default_value_t = false)]
     dashboard: bool,
 
-    /// Management API port
-    #[arg(long)]
+    /// Management API port (also accepted after `start` and `dashboard`)
+    #[arg(long, global = true)]
     port: Option<u16>,
 
-    /// Path to zn configuration file
-    #[arg(long, short)]
+    /// Path to zn configuration file (also accepted after `start`)
+    #[arg(long, short, global = true)]
     config: Option<String>,
 
-    /// API key for Management API authentication
-    #[arg(long)]
+    /// API key for Management API authentication (also accepted after `start` and `dashboard`)
+    #[arg(long, global = true)]
     api_key: Option<String>,
 
-    /// Database path for audit logs
-    #[arg(long)]
+    /// Database path for audit logs (also accepted after `start`)
+    #[arg(long, global = true)]
     db_path: Option<String>,
 }
 
@@ -180,7 +180,7 @@ async fn main() -> Result<()> {
 
     // 3. Handle Commands
     match &args.command {
-        Some(Commands::Dashboard) => return tui::TuiApp::run(args.api_key.clone()).await,
+        Some(Commands::Dashboard) => return run_dashboard(&args).await,
         Some(Commands::Start) => return start_proxy(args).await,
         Some(Commands::Shield { action }) => match action {
             ShieldAction::Scan => {
@@ -218,7 +218,7 @@ async fn main() -> Result<()> {
         Some(Commands::Mcp) => return run_mcp().await,
         None => {
             if args.dashboard {
-                return tui::TuiApp::run(args.api_key.clone()).await;
+                return run_dashboard(&args).await;
             }
             if args.start {
                 start_proxy(args).await?;
@@ -234,11 +234,26 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Open the dashboard on the port given with --port, or else the port from the
+/// settings file or ZN_PORT, or else the default one.
+async fn run_dashboard(args: &Args) -> Result<()> {
+    let port = args.port.or_else(|| {
+        ZnConfig::load(args.config.as_ref().map(std::path::Path::new))
+            .ok()
+            .map(|c| c.server.port)
+    });
+    tui::TuiApp::run(args.api_key.clone(), port).await
+}
+
 async fn start_proxy(args: Args) -> Result<()> {
     log::info("Initializing High-Performance Security Engine...")?;
 
     // Load configuration
-    let mut zn_config = ZnConfig::load(args.config.as_ref().map(std::path::Path::new))?;
+    let (mut zn_config, config_notices) =
+        ZnConfig::load_with_notices(args.config.as_ref().map(std::path::Path::new))?;
+    for notice in &config_notices {
+        log::warning(notice)?;
+    }
 
     // Apply CLI overrides
     if let Some(port) = args.port {
@@ -279,11 +294,10 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Initial load of all policies from configured directory
     let policy_dir = &zn_config.engine.policy_dir;
+    let mut policy_load_error: Option<anyhow::Error> = None;
     if let Err(e) = engine.load_all_policies(policy_dir) {
-        log::warning(format!(
-            "Failed to load initial policies from {}: {}",
-            policy_dir, e
-        ))?;
+        log::warning(zn::user_errors::policy_folder_problem(policy_dir, &e))?;
+        policy_load_error = Some(e);
     } else {
         log::success(format!(
             "Loaded {} initial security policies",
@@ -292,8 +306,14 @@ async fn start_proxy(args: Args) -> Result<()> {
     }
 
     // Initialize Policy Watcher for Hot-Reload
-    let watcher = PolicyWatcher::new(Arc::clone(&engine), policy_dir)
-        .map_err(|e| anyhow!("Failed to start policy watcher: {}", e))?;
+    let watcher = PolicyWatcher::new(Arc::clone(&engine), policy_dir).map_err(|e| {
+        anyhow!(zn::user_errors::policy_watch_problem(
+            policy_dir,
+            std::path::Path::new(policy_dir).exists(),
+            policy_load_error.as_ref(),
+            &e
+        ))
+    })?;
 
     // Explicitly keep watcher alive
     let _watcher = watcher;
@@ -355,8 +375,12 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     // Key for the content references kept in the audit log and the vector
     // memory; it never leaves this machine.
-    zn::ai::init_ref_key(std::path::Path::new("data"))
-        .map_err(|e| anyhow!("cannot set up data/ref.key: {e}"))?;
+    zn::ai::init_ref_key(std::path::Path::new("data")).map_err(|e| {
+        anyhow!(zn::user_errors::data_folder_problem(
+            std::path::Path::new("data"),
+            &e
+        ))
+    })?;
 
     // Initialize Audit Vault
     if zn_config.audit.store_payloads && db_key.is_none() {
@@ -476,6 +500,12 @@ async fn start_proxy(args: Args) -> Result<()> {
         );
         McpPool::new(std::collections::HashMap::new())
     });
+    for notice in pool.notices() {
+        log::warning(notice)?;
+    }
+    if !pool.list_mcps().is_empty() {
+        log::warning(zn::user_errors::mcp_not_forwarded(pool.list_mcps().len()))?;
+    }
     let cache = Arc::new(zn::engine::cache::ResultCache::new(
         zn_config.caching.clone(),
     ));
@@ -646,7 +676,10 @@ struct AnalyzerPipeline {
 
 async fn build_pipeline() -> Result<AnalyzerPipeline> {
     // Load configuration (defaults + env vars)
-    let config = ZnConfig::load(None)?;
+    let (config, config_notices) = ZnConfig::load_with_notices(None)?;
+    for notice in &config_notices {
+        eprintln!("Warning: {notice}");
+    }
 
     // Initialize engine with defaults
     let engine_config = ZnEngineConfig {
@@ -2717,5 +2750,59 @@ mod audit_metadata_tests {
             "require_write must deny: {out}"
         );
         assert!(v.get("result").is_none());
+    }
+}
+
+#[cfg(test)]
+mod cli_form_tests {
+    use super::{Args, Commands};
+    use clap::{CommandFactory, Parser};
+
+    #[test]
+    fn the_command_definition_is_consistent() {
+        Args::command().debug_assert();
+    }
+
+    #[test]
+    fn start_accepts_port_config_and_db_path_after_it() {
+        let args = Args::try_parse_from([
+            "zn",
+            "start",
+            "--port",
+            "9191",
+            "--config",
+            "my.json",
+            "--db-path",
+            "a.db",
+        ])
+        .expect("zn start --port must parse");
+        assert!(matches!(args.command, Some(Commands::Start)));
+        assert_eq!(args.port, Some(9191));
+        assert_eq!(args.config.as_deref(), Some("my.json"));
+        assert_eq!(args.db_path.as_deref(), Some("a.db"));
+    }
+
+    #[test]
+    fn the_old_form_still_works() {
+        let args = Args::try_parse_from(["zn", "--start", "--port", "9191", "-c", "my.json"])
+            .expect("zn --start --port must parse");
+        assert!(args.start);
+        assert!(args.command.is_none());
+        assert_eq!(args.port, Some(9191));
+        assert_eq!(args.config.as_deref(), Some("my.json"));
+    }
+
+    #[test]
+    fn dashboard_accepts_port_and_key_after_it() {
+        let args = Args::try_parse_from(["zn", "dashboard", "--port", "9191", "--api-key", "k"])
+            .expect("zn dashboard --port must parse");
+        assert!(matches!(args.command, Some(Commands::Dashboard)));
+        assert_eq!(args.port, Some(9191));
+        assert_eq!(args.api_key.as_deref(), Some("k"));
+    }
+
+    #[test]
+    fn a_port_out_of_range_is_still_refused() {
+        assert!(Args::try_parse_from(["zn", "start", "--port", "99999"]).is_err());
     }
 }

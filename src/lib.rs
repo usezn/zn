@@ -23,4 +23,5 @@ pub mod shield;
 pub mod sql_guard;
 pub mod tenants;
 pub mod tui;
+pub mod user_errors;
 pub mod webhooks;
