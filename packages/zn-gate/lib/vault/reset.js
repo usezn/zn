@@ -52,10 +52,7 @@ function vaultFiles(opts) {
   return found;
 }
 
-function teamPresent(opts) {
-  const f = policy.paths(opts);
-  return [f.teamFile, f.policyFile].some((x) => fs.existsSync(x));
-}
+const teamPresent = (opts) => policy.onTeamMachine(opts);
 
 function stamp(now) {
   const d = now || new Date();
