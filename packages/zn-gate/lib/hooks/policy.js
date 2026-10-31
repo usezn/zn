@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-30.1';
+const POLICY_RULES_VERSION = '2026-10-31.20';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2337,6 +2337,191 @@ function shellAssignments(cmd, opts) {
   return { env: Object.keys(out).length ? out : null, unknown };
 }
 
+/* --------------------- environment that makes git run a command --------------------- */
+
+/*
+ * GIT_PAGER=<cmd> git log, GIT_SSH_COMMAND=<cmd> git fetch, export GIT_EDITOR=<cmd>; git commit and the GIT_CONFIG_*
+ * variables (GIT_CONFIG_COUNT with GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n, GIT_CONFIG_PARAMETERS) make git start a program
+ * with a value the agent chose, as an alias does. The assignment is read where the shell reads it (before a command, after
+ * env or another wrapper, after export/declare/typeset/readonly/local; also $env:NAME = and set NAME=): a command variable
+ * is read as shell code, a configuration pair whose key runs a program is read the same way, and a key that loads more
+ * configuration or hooks (core.fsmonitor, core.hooksPath, include.path, init.templateDir) is refused unless it is a switch.
+ * A key or value zn cannot read as a literal is refused. Quiet uses stay allowed: GIT_PAGER=cat, GIT_EDITOR=true,
+ * GIT_CONFIG_KEY_0=user.name.
+ */
+const GIT_ENV_PRESCAN_RE = /GIT_|PAGER|EDITOR|VISUAL|LESSOPEN|LESSCLOSE|SSH_ASKPASS/i;
+// Variables whose whole value is a command line (the pager and editors also when git falls back to them).
+const GIT_CODE_ENV = new Set(['GIT_PAGER', 'PAGER', 'GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'EDITOR', 'VISUAL', 'GIT_SSH_COMMAND', 'GIT_SSH',
+  'GIT_ASKPASS', 'SSH_ASKPASS', 'GIT_EXTERNAL_DIFF', 'GIT_PROXY_COMMAND', 'LESSOPEN', 'LESSCLOSE']);
+// Variables that point git at configuration or helpers it then runs: refused unless they name nothing (/dev/null) .
+const GIT_LOAD_ENV = new Set(['GIT_CONFIG', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_EXEC_PATH', 'GIT_TEMPLATE_DIR']);
+const GIT_EXPORT_CMDS = new Set(['export', 'declare', 'typeset', 'readonly', 'local']);
+const GIT_ENV_NAME_RE = /^(?:GIT_[A-Z0-9_]+|PAGER|EDITOR|VISUAL|LESSOPEN|LESSCLOSE|SSH_ASKPASS)$/i;
+const GIT_CFG_NAME_RE = /^GIT_CONFIG_(?:KEY|VALUE)_(\d{1,4})$/i;
+// Key => how its value is read: 'code' (a command line), 'bang' (code only when it starts with !), 'refuse' (loads config
+// or hooks), 'helper' (a credential helper: !code, or a name; a path is refused), 'bool' (code unless true/false).
+function gitKeyKind(key) {
+  const k = String(key).trim().toLowerCase();
+  if (/^alias\..+$/.test(k) || /^submodule\..+\.update$/.test(k)) return 'bang';
+  if (/^credential\.(?:.+\.)?helper$/.test(k)) return 'helper';
+  if (/^pager\..+$/.test(k)) return 'bool';
+  if (/^core\.(?:fsmonitor|hookspath)$/.test(k) || /^(?:include\.path|includeif\..+\.path|init\.templatedir|protocol\.ext\.allow)$/.test(k)) return 'refuse';
+  if (/^(?:core\.(?:pager|editor|sshcommand|askpass|gitproxy|alternaterefscommand)|sequence\.editor|diff\.external|gpg\.ssh\.defaultkeycommand|web\.browser|uploadpack\.packobjectshook)$/.test(k) ||
+      /^(?:diff|merge)\..+\.(?:textconv|command|driver)$/.test(k) || /^(?:difftool|mergetool)\..+\.(?:cmd|path)$/.test(k) ||
+      /^filter\..+\.(?:clean|smudge|process)$/.test(k) || /^gpg\.(?:.+\.)?program$/.test(k) || /^(?:browser|man|trailer)\..+\.cmd$/.test(k) ||
+      /^remote\..+\.(?:uploadpack|receivepack|vcs)$/.test(k)) return 'code';
+  return null;
+}
+const GIT_ENV_MESSAGE = (what) => 'zn: this command sets ' + what + ', which makes git run a program chosen in the command line, and zn cannot tell that it is safe, ' +
+  'so it was blocked. Next step: run the program yourself, or set it only to a plain value (GIT_PAGER=cat); tell the user if you need it.';
+
+/* The NAME=value words of one simple command that the shell applies to it or exports: leading assignments, those after
+   env or another wrapper, and those after export/declare/typeset/readonly/local. */
+function gitEnvAssignmentWords(w, out) {
+  let k = 0;
+  while (k < w.length && ASSIGNMENT_RE.test(w[k].text)) out.push(w[k++].text);
+  for (let guard = 0; k < w.length && guard < 16; guard++) {
+    const name = programName(w[k].text);
+    if (GIT_EXPORT_CMDS.has(name)) {
+      for (let j = k + 1; j < w.length; j++) {
+        const t = w[j].text;
+        if (t.startsWith('-')) continue;
+        if (ASSIGNMENT_RE.test(t)) out.push(t); else break;
+      }
+      return;
+    }
+    if (!Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, name)) return;
+    const nk = skipWrapper(w, k, name);
+    for (let j = k + 1; j < nk && j < w.length; j++) if (ASSIGNMENT_RE.test(w[j].text)) out.push(w[j].text);
+    k = nk;
+  }
+}
+
+/* The shell words of a GIT_CONFIG_PARAMETERS value ('k'='v' 'k2'='v2', or 'k=v'): null when a quote is not closed. */
+function gitConfigParameterPairs(value) {
+  const pairs = [];
+  let i = 0;
+  const n = value.length;
+  while (i < n) {
+    while (i < n && /\s/.test(value[i])) i++;
+    if (i >= n) break;
+    let cur = '';
+    while (i < n && !/\s/.test(value[i])) {
+      if (value[i] === "'") {
+        const end = value.indexOf("'", i + 1);
+        if (end < 0) return null;
+        cur += value.slice(i + 1, end);
+        i = end + 1;
+      } else if (value[i] === '\\' && value[i + 1] === "'") { cur += "'"; i += 2; } else cur += value[i++];
+    }
+    const eq = cur.indexOf('=');
+    pairs.push(eq < 0 ? [cur, ''] : [cur.slice(0, eq), cur.slice(eq + 1)]);
+    if (pairs.length > 64) return null;
+  }
+  return pairs;
+}
+
+function gitEnvScan(readings, text, opts) {
+  const home = opts.home || os.homedir();
+  const env = opts.env || process.env;
+  const found = [];
+  // Assignment words, per simple command, in every reading of the command line.
+  let seen = 0;
+  for (const r of readings) {
+    let start = 0;
+    while (start < r.length) {
+      let end = start;
+      while (end < r.length && r[end].seq === r[start].seq) end++;
+      const words = [];
+      gitEnvAssignmentWords(r.slice(start, end), words);
+      for (const t of words) {
+        if (++seen > 256) return { deny: TOO_MANY_MESSAGE, codes: [] };
+        const eq = t.indexOf('=');
+        found.push([t.slice(0, eq), t.slice(eq + 1)]);
+      }
+      start = end;
+    }
+  }
+  // PowerShell ($env:NAME = 'v') and cmd.exe (set NAME=v, set "NAME=v").
+  for (const m of text.matchAll(/\$env:([A-Za-z_][A-Za-z0-9_]*)\s*=\s*("[^"]*"|'[^']*'|[^\s;|&]+)/gi)) {
+    if (++seen > 256) break;
+    found.push([m[1], m[2].replace(/^(["'])(.*)\1$/s, '$2')]);
+  }
+  for (const m of text.matchAll(/(?:^|[\s;&|(])set\s+"?([A-Za-z_][A-Za-z0-9_]*)=([^"&|\r\n]*)"?/gi)) {
+    if (++seen > 256) break;
+    found.push([m[1], m[2]]);
+  }
+  // NAME=$(cmd) or NAME=`cmd` unquoted: the words split the substitution, so the value is read from the text.
+  for (const m of text.matchAll(/(?:^|[\s;&|(])([A-Za-z_][A-Za-z0-9_]*)=(?:\$\(|`)/g)) {
+    if (GIT_ENV_NAME_RE.test(m[1])) return { deny: GIT_ENV_MESSAGE(m[1].toUpperCase().slice(0, 40) + ' to the output of a command'), codes: [] };
+  }
+  const codes = [];
+  const keys = new Map();
+  const values = new Map();
+  const literal = (v) => {
+    const x = expandEnv(expandHome(String(v), home), env).text;
+    return /\$\{?[A-Za-z_(]|`|%[A-Za-z_][A-Za-z0-9_]*%/.test(x) ? null : x;
+  };
+  const judgeKey = (key, value, label) => {
+    const kind = gitKeyKind(key);
+    if (!kind) return null;
+    if (value === null) return GIT_ENV_MESSAGE('git configuration ' + label + ' whose value zn cannot read');
+    const v = String(value);
+    if (kind === 'refuse') {
+      if (/^core\.fsmonitor$/i.test(key.trim()) && /^(?:true|false|yes|no|on|off|0|1|)$/i.test(v.trim())) return null;
+      if (/^protocol\.ext\.allow$/i.test(key.trim()) && /^never$/i.test(v.trim())) return null;
+      return GIT_ENV_MESSAGE('git configuration ' + key.trim().slice(0, 40));
+    }
+    let code = v.trim();
+    if (kind === 'bool' && /^(?:true|false|yes|no|on|off|0|1|)$/i.test(code)) return null;
+    if (kind === 'bang') { if (!code.startsWith('!')) return null; code = code.slice(1); }
+    if (kind === 'helper') {
+      if (!code.startsWith('!')) return /[\\/]/.test(code) ? GIT_ENV_MESSAGE('a credential helper path') : null;
+      code = code.slice(1);
+    }
+    if (code) codes.push(code);
+    return null;
+  };
+  for (const [name, raw] of found) {
+    if (!GIT_ENV_NAME_RE.test(name)) continue;
+    const up = name.toUpperCase();
+    const v = literal(raw);
+    if (GIT_CODE_ENV.has(up)) {
+      if (v === null) return { deny: GIT_ENV_MESSAGE(up + ' to a value zn cannot read'), codes: [] };
+      let code = v.trim();
+      // LESSOPEN='|cmd %s' runs cmd; a leading | or || marks a program.
+      if (up === 'LESSOPEN' || up === 'LESSCLOSE') code = code.replace(/^\|{1,2}-?/, '');
+      if (code) codes.push(code);
+    } else if (GIT_LOAD_ENV.has(up)) {
+      if (v === null || (v.trim() && !/^(?:\/dev\/null|nul)$/i.test(v.trim()))) {
+        return { deny: GIT_ENV_MESSAGE(up), codes: [] };
+      }
+    } else if (up === 'GIT_CONFIG_PARAMETERS') {
+      if (v === null) return { deny: GIT_ENV_MESSAGE('GIT_CONFIG_PARAMETERS to a value zn cannot read'), codes: [] };
+      const pairs = gitConfigParameterPairs(v);
+      if (!pairs) return { deny: GIT_ENV_MESSAGE('GIT_CONFIG_PARAMETERS with a quote that is not closed'), codes: [] };
+      for (const [k, val] of pairs) {
+        const d = judgeKey(k, val, k.slice(0, 40));
+        if (d) return { deny: d, codes: [] };
+      }
+    } else {
+      const m = GIT_CFG_NAME_RE.exec(name);
+      if (!m) continue;
+      const idx = Number(m[1]);
+      // KEY_n: the key must be a literal (a key spelled with a variable could be core.pager). VALUE_n: read when its key is known.
+      if (/^GIT_CONFIG_KEY_/i.test(name)) {
+        if (v === null) return { deny: GIT_ENV_MESSAGE(up + ' to a key zn cannot read'), codes: [] };
+        if (!keys.has(idx)) keys.set(idx, v);
+      } else if (!values.has(idx)) values.set(idx, v);
+    }
+  }
+  for (const [idx, key] of keys) {
+    const d = judgeKey(key, values.has(idx) ? values.get(idx) : (gitKeyKind(key) ? null : ''), key.slice(0, 40));
+    if (d) return { deny: d, codes: [] };
+  }
+  return { deny: null, codes };
+}
+
 function bashDenialOf(cmd, opts = {}) {
   if (String(cmd || '').length > SHELL_SCAN_CAP) return TOO_LONG_MESSAGE;
   const admin = adminCommand(cmd);
@@ -2378,6 +2563,12 @@ function bashDenialOf(cmd, opts = {}) {
   const words = readings.flat();
   const codes = new Set();
   for (const r of readings) shellCodesOf(r, codes);
+  // Environment variables that make git (or the pager and editor it starts) run a command: their values are code.
+  if (GIT_ENV_PRESCAN_RE.test(text)) {
+    const ge = gitEnvScan(readings, text, opts);
+    if (ge.deny) return ge.deny;
+    for (const c of ge.codes) codes.add(c);
+  }
   if (codes.size) {
     if (depth >= SHELL_CODE_DEPTH) return TOO_NESTED_MESSAGE;
     for (const code of codes) {
