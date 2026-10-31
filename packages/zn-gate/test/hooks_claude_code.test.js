@@ -1055,6 +1055,10 @@ test('vault call: a project server named secrets__x is foreign, not the zn secre
   const name = 'mcp__secrets__x__secrets_http_request';
   assert.equal(adapter.normalize(preTool(name, VAULT_CALL, dir)).mcp.ours, undefined);
   assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'deny', 'the placeholder is still blocked');
+  // A server called secrets_ sends mcp__secrets___secrets_http_request: server secrets, tool _secrets_http_request.
+  const single = 'mcp__secrets___secrets_http_request';
+  assert.equal(adapter.normalize(preTool(single, VAULT_CALL, dir)).mcp.ours, undefined);
+  assert.equal(decisionOf(await run(preTool(single, VAULT_CALL, dir), { engine: piiEngine })), 'deny', 'secrets_: the placeholder is still blocked');
 });
 
 test('vault call: no secrets server in the config at all is checked', async (t) => {
