@@ -87,9 +87,11 @@ jobs:
   private-file:
     name: private file writer (${{ matrix.os }})
     # The owner-only file writer has a separate Windows implementation (protected DACL) and platform-specific
-    # Unix code, so its tests also run on Windows and macOS. Draft pull requests skip this job; marking the
-    # pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # Unix code, so its tests also run on Windows and macOS. Not a required check. Pull requests into next leave it
+    # out (the shared runner pool is the bottleneck: those pull requests run the required checks and one Windows job,
+    # "Windows (Node.js 22)"); the merge queue, pushes to main, next and release branches, the schedule, pull
+    # requests into main or release branches and the full-ci label run both systems. Draft pull requests skip it.
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'pull_request' && github.base_ref == 'next' && !contains(github.event.pull_request.labels.*.name, 'full-ci'))
     strategy:
       fail-fast: false
       matrix:
