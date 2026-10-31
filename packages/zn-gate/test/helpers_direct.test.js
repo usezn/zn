@@ -7,7 +7,10 @@ process.env.ZN_STATS = 'off';
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { unknownToolEvent } = require('../lib/agents/claude-code');
-const { phoneValid } = require('../lib/scrub/patterns');
+const { findPii } = require('../lib/scrub/patterns');
+
+// The phone check (phoneValid) is the validator of the PHONE rule: a value is a phone when the rule reports it.
+const phoneValid = (v) => findPii(v).some((x) => x.type === 'PHONE' && x.start === 0 && x.end === v.length);
 const { _internal } = require('../lib/check');
 
 const base = { event: 'pre_tool', cwd: '/p' };

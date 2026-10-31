@@ -1008,7 +1008,6 @@ module.exports = {
   cardValid,
   e164Valid,
   ipv4Public,
-  phoneValid,
   shannon,
   looksRandom,
   isPlaceholder,
