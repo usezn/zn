@@ -32,7 +32,7 @@ outdated one, and `zn unlock` restarts it for you.
 
 zn asks you to confirm some things outside the agent (step 4). On a desktop it
 shows a system dialog. On a server or over SSH there is no dialog: run the
-vault in a terminal of its own instead, and answer there:
+vault in a terminal of its own instead, and answer there (if the vault is already unlocked, run `zn lock` first, because `unlock --foreground` refuses with "already unlocked"):
 
 ```bash
 zn unlock --foreground
@@ -291,7 +291,7 @@ you to run `zn unlock`.
 ## If something fails
 
 - **You see `__ZN_REDACTED_...` markers**: the vault is locked. Run `zn unlock`.
-- **No confirmation dialog appears** (a server, or SSH): run `zn unlock --foreground` in a terminal of its own and answer there.
+- **No confirmation dialog appears** (a server, or SSH): run `zn lock` and then `zn unlock --foreground` in a terminal of its own and answer there.
 - **You updated zn-gate and secrets still show as markers in the hooks**: the vault is still the old version. Run `zn vault status`, then `zn unlock`, which restarts it.
 - **Codex does not run the hooks**: open Codex and approve them with `/hooks`.
 - **Claude Code ignores the hooks on a computer managed by an organization**: `zn hooks install claude-code` and `zn-gate status` say when a managed setting stops them. Ask your administrator to add zn to the managed settings.

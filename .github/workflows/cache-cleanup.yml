@@ -151,3 +151,76 @@ jobs:
             echo "::error::$failed lookups or deletions failed; see the warnings above."
             exit 1
           fi
+
+  deleted-branches:
+    name: Delete caches of branches that no longer exist
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write # list and delete caches
+      contents: read # check out the selection script and list branches
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Delete caches of deleted branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # This job only lists on the weekly schedule: it deletes only on a manual run with dry_run unchecked.
+          DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && !inputs.dry_run) && 'false' || 'true' }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$REPO/actions/caches?per_page=100" \
+            --jq '.actions_caches[] | [.id, .key, .ref, .size_in_bytes, .created_at] | @tsv' > "$RUNNER_TEMP/all.tsv"
+          gh api --paginate "repos/$REPO/branches?per_page=100" --jq '.[].name' | sort -u > "$RUNNER_TEMP/branches.txt"
+          if [ ! -s "$RUNNER_TEMP/branches.txt" ]; then
+            echo "::error::Could not list the branches; no cache is deleted."
+            exit 1
+          fi
+          bash .github/scripts/cache-deleted-branches.sh "$RUNNER_TEMP/branches.txt" < "$RUNNER_TEMP/all.tsv" > "$RUNNER_TEMP/dead.tsv"
+
+          rows="$RUNNER_TEMP/rows.md"; : > "$rows"
+          found=0; found_bytes=0; failed=0
+          while IFS=$'\t' read -r id ref size; do
+            case "$id" in ''|*[!0-9]*) continue ;; esac
+            case "$size" in ''|*[!0-9]*) size=0 ;; esac
+            if [ "$DRY_RUN" = "true" ]; then
+              action="would delete"
+            elif gh api -X DELETE "repos/$REPO/actions/caches/$id" > /dev/null; then
+              action="deleted"
+            else
+              echo "::warning::Could not delete cache $id."
+              failed=$((failed + 1))
+              continue
+            fi
+            found=$((found + 1)); found_bytes=$((found_bytes + size))
+            printf '| %s | %s | %s MB | %s |\n' "${ref#refs/heads/}" "$id" "$((size / 1048576))" "$action" >> "$rows"
+          done < "$RUNNER_TEMP/dead.tsv"
+
+          {
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "## Deleted-branch cache cleanup (dry run, nothing deleted)"
+            else
+              echo "## Deleted-branch cache cleanup"
+            fi
+            echo
+            echo "Caches of deleted branches: $found ($((found_bytes / 1048576)) MB)."
+            echo "Errors: $failed."
+            if [ -s "$rows" ]; then
+              echo
+              echo "| Branch | Cache id | Size | Action |"
+              echo "| --- | --- | --- | --- |"
+              cat "$rows"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$failed" -gt 0 ]; then
+            echo "::error::$failed deletions failed; see the warnings above."
+            exit 1
+          fi
