@@ -92,24 +92,36 @@ const OP_CHARS = new Set([' ', '\t', '\n', ';', '&', '|', '(', ')', '<', '>', '\
 const NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*/;
 const ASSIGN_PREFIX_RE = /^([A-Za-z_][A-Za-z0-9_]*)(?:\[([^\]]*)\])?(\+?)=/;
 
+const MAX_NEST = 64; // nested "$( ... )" levels a scan follows; past it the command is refused
 function findClose(s, i, open, close) {
-  // s[i] === open; the index of the matching close (quotes and nested pairs respected), or -1.
-  let depth = 0;
+  // s[i] === open; the index of the matching close (quotes and nested pairs respected), or -1. Iterative: a command
+  // with thousands of nested levels is refused (TooComplex), it never overflows the stack.
+  const stack = [{ open, close, depth: 0, dq: false }];
   for (let k = i; k < s.length; k++) {
+    const f = stack[stack.length - 1];
     const ch = s[k];
-    if (ch === '\\') { k++; continue; }
-    if (ch === "'") { const e = s.indexOf("'", k + 1); if (e < 0) return -1; k = e; continue; }
-    if (ch === '"') {
-      for (k++; k < s.length && s[k] !== '"'; k++) {
-        if (s[k] === '\\') k++;
-        else if (s[k] === '$' && s[k + 1] === '(') { const c = findClose(s, k + 1, '(', ')'); if (c < 0) return -1; k = c; }
-        else if (s[k] === '`') { const e = s.indexOf('`', k + 1); if (e < 0) return -1; k = e; }
-      }
+    if (f.dq) {
+      if (ch === '\\') k++;
+      else if (ch === '$' && s[k + 1] === '(') {
+        if (stack.length >= MAX_NEST) throw new TooComplex('nesting');
+        stack.push({ open: '(', close: ')', depth: 1, dq: false });
+        k++;
+      } else if (ch === '`') { const e = s.indexOf('`', k + 1); if (e < 0) return -1; k = e; }
+      else if (ch === '"') f.dq = false;
       continue;
     }
+    if (ch === '\\') { k++; continue; }
+    if (ch === "'") { const e = s.indexOf("'", k + 1); if (e < 0) return -1; k = e; continue; }
+    if (ch === '"') { f.dq = true; continue; }
     if (ch === '`') { const e = s.indexOf('`', k + 1); if (e < 0) return -1; k = e; continue; }
-    if (ch === open) depth++;
-    else if (ch === close) { depth--; if (depth === 0) return k; }
+    if (ch === f.open) f.depth++;
+    else if (ch === f.close) {
+      f.depth--;
+      if (f.depth === 0) {
+        if (stack.length === 1) return k;
+        stack.pop();
+      }
+    }
   }
   return -1;
 }
@@ -506,10 +518,48 @@ const NET_SOURCES = new Set(['curl', 'wget', 'http', 'https', 'xh', 'fetch', 'nc
 const STDIN_SENDERS = new Set(['curl', 'wget', 'nc', 'ncat', 'netcat', 'socat', 'ssh', 'telnet', 'mail', 'mailx', 'sendmail', 'mutt', 'pbcopy', 'xclip', 'xsel', 'clip', 'scp', 'sftp', 'ftp', 'openssl', 'bash', 'sh', 'zsh', 'dash', 'ksh', 'python', 'python3', 'node', 'ruby', 'perl', 'php']);
 
 // Programs that never turn a value into a file name: used for the output of $(...). Their output is "safe".
-const SAFE_VALUE = new Set(['date', 'whoami', 'id', 'hostname', 'uname', 'nproc', 'mktemp', 'which', 'type', 'wc', 'seq', 'expr', 'bc', 'uptime', 'tty', 'arch', 'lsb_release', 'getconf', 'logname', 'sw_vers', 'sysctl', 'git-rev-parse', 'shuf', 'uuidgen', 'md5sum', 'sha1sum', 'sha256sum', 'shasum', 'cksum', 'openssl', 'od', 'tput', 'stat', 'file', 'du', 'df', 'free', 'realpath-nolink', 'test', '[', 'true', 'false']);
+const SAFE_VALUE = new Set(['date', 'whoami', 'id', 'hostname', 'uname', 'nproc', 'mktemp', 'uuidgen', 'logname', 'arch', 'tty', 'uptime', 'lsb_release', 'sw_vers', 'df', 'free', 'test', '[', 'true', 'false']);
+// date prints its format: only %-directives and separators without letters or dots; the others take options only.
+const DATE_FMT_RE = /^\+(?:%[-_0^#]?[A-Za-z%]|[ \t:\/,_-])*$/;
+const DATE_OPT_RE = /^(?:-u|--utc|--universal|-I|-Idate|-Ihours|-Iminutes|-Iseconds|-Ins)$/;
+const OPT_ONLY_RE = /^-{1,2}[A-Za-z][A-Za-z-]*$/;
+const OPT_ONLY_PROGS = new Set(['id', 'hostname', 'uname', 'nproc', 'uuidgen', 'whoami', 'logname', 'arch', 'tty']);
+function safeCall(name, texts) {
+  const args = texts.slice(1);
+  if (name === 'date') return args.every((a) => a !== null && (DATE_OPT_RE.test(a) || DATE_FMT_RE.test(a)));
+  if (OPT_ONLY_PROGS.has(name)) return args.every((a) => a !== null && OPT_ONLY_RE.test(a));
+  if (name === 'mktemp') return args.every((a) => a !== null && /^(?:-[du]+|--directory|--dry-run)$/.test(a));
+  return true;
+}
 // git commands whose output is names of tracked files or ids: a list the policy does not walk.
-const GIT_SAFE = new Set(['rev-parse', 'describe', 'config', 'branch', 'status', 'rev-list', 'merge-base', 'tag', 'symbolic-ref', 'show-ref', 'remote', 'ls-files', 'ls-tree', 'diff', 'log', 'shortlog', 'stash', 'worktree', 'submodule', 'for-each-ref', 'name-rev', 'var', 'version', 'ls-remote', 'count-objects', 'reflog', 'cherry', 'diff-tree', 'diff-index', 'diff-files', 'show-branch', 'whatchanged', 'blame-ignore']);
-const EVAL_SAFE = new Set(['ssh-agent', 'direnv', 'pyenv', 'rbenv', 'nodenv', 'jenv', 'goenv', 'fnm', 'volta', 'brew', 'minikube', 'docker-machine', 'conda', 'micromamba', 'mamba', 'mise', 'asdf', 'starship', 'zoxide', 'thefuck', 'opam', 'keychain', 'register-python-argcomplete', 'kubectl', 'helm', 'gh', 'rustup', 'fzf', 'dircolors', 'lesspipe', 'luarocks', 'aws', 'gcloud', 'poetry', 'pipenv', 'npm', 'pnpm', 'yarn', 'direnv', 'ssh-agent', 'gpg-agent', 'tmux', 'zellij', 'atuin', 'navi', 'mcfly', 'nvm', 'sdk', 'sdkman', 'rtx', 'devbox', 'flox', 'nix', 'nix-env', 'fly', 'flyctl', 'doctl', 'vercel', 'netlify', 'terraform', 'tofu', 'cargo', 'pip', 'pip3', 'pipx', 'uv', 'deno', 'bun', 'go']);
+// git subcommands whose output holds hashes or tags, never a name an agent picked: judged by their options.
+const GIT_REV = new Set(['rev-parse', 'describe', 'rev-list', 'merge-base']);
+// git subcommands that list files: judged like find or ls, by the names on the disk (tracked-only ones skip what the
+// root .gitignore ignores).
+const GIT_LIST = new Set(['ls-files', 'ls-tree', 'diff', 'diff-tree', 'diff-index', 'diff-files', 'status', 'log', 'show', 'stash', 'whatchanged', 'shortlog', 'cherry', 'show-branch']);
+const GIT_REV_OPT_RE = /^(?:-[A-Za-z0-9]+|--[a-z][a-z-]*(?:=\d+)?)$/;
+const GIT_REV_BAD_RE = /^--(?:format|pretty|show|git|absolute|resolve|path|sq|local|prefix|cdup|superproject|shared|exclude|stdin|default)/;
+const REVPARSE_OPT_RE = /^(?:--short(?:=\d+)?|--verify|--abbrev-ref|--is-inside-work-tree|--is-bare-repository|-q|--quiet|--symbolic-full-name)$/;
+const REVPARSE_OPERAND_RE = /^(?:(?:HEAD|@)(?:[~^]\d*)*|[0-9a-f]{7,40})$/;
+// The exact calls whose output is shell code written by a well-known environment tool (eval "$(ssh-agent -s)").
+const INIT_SHELL_RE = /^(?:bash|zsh|fish|sh|dash|ksh|tcsh|powershell|pwsh|nu|elvish|xonsh)$/;
+function isInitCall(w) {
+  const p = w[0];
+  const a = w.slice(1);
+  switch (p) {
+    case 'ssh-agent': return a.length === 1 && a[0] === '-s';
+    case 'direnv': return a.length === 2 && a[0] === 'hook' && INIT_SHELL_RE.test(a[1]);
+    case 'pyenv': case 'rbenv': case 'nodenv': return a.length === 2 && a[0] === 'init' && a[1] === '-';
+    case 'starship': case 'zoxide': return a.length === 2 && a[0] === 'init' && INIT_SHELL_RE.test(a[1]);
+    case 'mise': return a.length === 2 && a[0] === 'activate' && INIT_SHELL_RE.test(a[1]);
+    case 'brew': return a[0] === 'shellenv' && (a.length === 1 || (a.length === 2 && INIT_SHELL_RE.test(a[1])));
+    case 'fnm': return a[0] === 'env' && a.slice(1).every((x) => x === '--use-on-cd');
+    case 'conda': return a.length === 2 && /^shell\.(?:bash|zsh|fish)$/.test(a[0]) && a[1] === 'hook';
+    case 'register-python-argcomplete': return a.length === 1 && /^[\w.-]+$/.test(a[0]);
+    case 'kubectl': case 'helm': case 'gh': return (a.length === 2 && a[0] === 'completion' && INIT_SHELL_RE.test(a[1])) || (p === 'gh' && a.length === 3 && a[0] === 'completion' && a[1] === '-s' && INIT_SHELL_RE.test(a[2]));
+    default: return false;
+  }
+}
 
 /* ------------------------------ state ------------------------------ */
 
@@ -837,6 +887,7 @@ function echoOutput(args, st) {
 
 function printfOutput(args, st) {
   // args: alternatives per argument; args[0] is the format. Known format only.
+  if (args.length && args[0].length === 1 && literalOf(args[0][0]) === '--') args = args.slice(1);
   if (!args.length) return null;
   const fmts = args[0].map((it) => literalOf(it));
   if (fmts.some((f) => f === null)) return null;
@@ -925,6 +976,7 @@ function walkProtected(root, opts, st) {
     if (seen > MAX_ENTRIES || (ctx.spend && ctx.spend(ents.length))) { slow = true; return; }
     for (const e of ents) {
       const abs = dir === '/' ? '/' + e.name : dir + '/' + e.name;
+      if (opts.ignore && opts.ignore(abs.slice(opts.rootLen), e.isDirectory())) continue;
       if (e.isDirectory()) {
         // Not followed: past the depth, a folder no listing goes into, or a hidden folder an ls does not show.
         if (depth + 1 >= opts.maxDepth || SKIP_DIRS.has(e.name) || SKIP_ABS.has(abs) || (!opts.dot && e.name[0] === '.')) continue;
@@ -1072,6 +1124,134 @@ function ancestorsOf(cwd) {
 
 /* The output of one command, as {items} (alternatives of the whole output) or {unk} (a segment).
    argsItems: for echo and printf the items of the arguments. */
+/* Whether the root .gitignore (or .git/info/exclude) ignores a path: a name, a folder, a pattern with a slash. A "!" line
+   anywhere that matches counts as not ignored. */
+function makeIgnore(root) {
+  const lines = [];
+  for (const f of [path.join(root, '.gitignore'), path.join(root, '.git', 'info', 'exclude')]) {
+    try { for (const l of fs.readFileSync(f, 'utf8').split(/\r?\n/)) lines.push(l.replace(/\s+$/, '')); } catch (_) { /* none */ }
+  }
+  const pos = [];
+  const neg = [];
+  for (const l of lines) {
+    if (!l || l[0] === '#') continue;
+    const negated = l[0] === '!';
+    let p = negated ? l.slice(1) : l;
+    const dirOnly = p.endsWith('/');
+    if (dirOnly) p = p.slice(0, -1);
+    const anchored = p.includes('/');
+    p = p.replace(/^\//, '').replace(/^\*\*\//, '');
+    if (!p) continue;
+    let re;
+    try { re = globToRegExp(p); } catch (_) { continue; }
+    (negated ? neg : pos).push({ re, dirOnly, anchored });
+  }
+  const matches = (list, rel, isDir) => {
+    const segs = rel.split('/');
+    for (let n = 1; n <= segs.length; n++) {
+      const isLast = n === segs.length;
+      const dirLike = !isLast || isDir;
+      const prefix = segs.slice(0, n).join('/');
+      for (const e of list) {
+        if (e.dirOnly && !dirLike) continue;
+        if (e.re.test(e.anchored ? prefix : segs[n - 1])) return true;
+      }
+    }
+    return false;
+  };
+  return (rel, isDir) => !matches(neg, rel, isDir) && matches(pos, rel, isDir);
+}
+
+/* The files a git listing names, judged by the disk: any protected file below the folder (that git would list) makes
+   the list unsafe. Listings of what is tracked or changed leave out what .gitignore ignores; -o/-i/--ignored do not. */
+function gitListing(sub, rest, cdir, st) {
+  const full = rest.some((t) => t === null || /^--(?:others|ignored)/.test(t) || (sub === 'ls-files' && /^-[A-Za-z]*[oi]/.test(t)));
+  const root = path.resolve(st.ctx.cwd, cdir || '.');
+  // Without a repository git prints nothing on standard output.
+  const repo = findRepo(root);
+  if (!repo) return { unk: unk('safe', { why: 'git' }) };
+  const byIndex = !full && (sub === 'ls-files' || ((sub === 'diff' || sub === 'diff-files') && rest.every((t) => t.startsWith('-'))));
+  const cache = st.ctx.__gitWalk || (st.ctx.__gitWalk = new Map());
+  const key = root + '\u0000' + full + '\u0000' + byIndex;
+  let res = cache.get(key);
+  if (!res) {
+    res = byIndex ? indexProtected(repo, st) : null;
+    if (!res) res = walkProtected(root, { maxDepth: MAX_WALK_DEPTH, recursive: true, dot: true, rootLen: root === '/' ? 1 : root.length + 1, ignore: full ? null : makeIgnore(root) }, st);
+    cache.set(key, res);
+  }
+  if (res.bad) return { unk: unk('any', { bad: res.bad, why: 'git' }) };
+  if (res.slow) return { unk: unk('any', { why: 'git' }) };
+  return { unk: unk('safe', { why: 'git' }) };
+}
+
+function findRepo(dir) {
+  for (let d = dir, n = 0; n < 64; n++) {
+    try { fs.lstatSync(path.join(d, '.git')); return d; } catch (_) { /* not here */ }
+    const up = path.dirname(d);
+    if (up === d) return null;
+    d = up;
+  }
+  return null;
+}
+
+/* The paths in .git/index (versions 2, 3 and 4), or null when the file is not a plain index. */
+function readIndex(repo) {
+  let buf;
+  try {
+    const gd = path.join(repo, '.git');
+    if (!fs.lstatSync(gd).isDirectory()) return null;
+    const f = path.join(gd, 'index');
+    if (fs.statSync(f).size > 32 * 1024 * 1024) return null;
+    buf = fs.readFileSync(f);
+  } catch (_) { return null; }
+  if (buf.length < 12 || buf.toString('latin1', 0, 4) !== 'DIRC') return null;
+  const ver = buf.readUInt32BE(4);
+  const n = buf.readUInt32BE(8);
+  if (ver < 2 || ver > 4) return null;
+  const names = [];
+  let off = 12;
+  let prev = '';
+  for (let i = 0; i < n; i++) {
+    if (off + 62 > buf.length) return null;
+    const flags = buf.readUInt16BE(off + 60);
+    let p = off + 62;
+    if (ver >= 3 && (flags & 0x4000)) p += 2;
+    let name;
+    if (ver < 4) {
+      const nul = buf.indexOf(0, p);
+      if (nul < 0) return null;
+      name = buf.toString('utf8', p, nul);
+      off += (p - off + (nul - p) + 8) & ~7;
+    } else {
+      let c = buf[p++];
+      let strip = c & 127;
+      while (c & 128) { if (p >= buf.length) return null; c = buf[p++]; strip = ((strip + 1) << 7) | (c & 127); }
+      const nul = buf.indexOf(0, p);
+      if (nul < 0) return null;
+      name = prev.slice(0, Math.max(0, prev.length - strip)) + buf.toString('utf8', p, nul);
+      off = nul + 1;
+    }
+    prev = name;
+    names.push(name);
+  }
+  return names;
+}
+
+/* A protected file among the tracked paths of the repository, or null when the index cannot be read. */
+function indexProtected(repo, st) {
+  const names = readIndex(repo);
+  if (!names) return null;
+  for (const name of names) {
+    const b = name.split('/').pop();
+    if (QUICK_NAME_RE.test(b) || QUICK_DIR_RE.test('/' + name)) {
+      const abs = path.join(repo, name);
+      const deny = st.ctx.fileDeny ? st.ctx.fileDeny(abs) : null;
+      if (deny) return { bad: { name: b, deny }, slow: false };
+    }
+  }
+  return { bad: null, slow: false };
+}
+
 function produce(cmd, st, cmds, idx) {
   const pi = programIndex(cmd, st);
   if (pi < 0) {
@@ -1122,11 +1302,30 @@ function produce(cmd, st, cmds, idx) {
   if (name === 'git') {
     // git -C dir? rev-parse --show-toplevel: a folder that holds the working folder.
     let k = pi + 1;
-    while (k < cmd.words.length && (plainText(cmd.words[k]) || '').startsWith('-')) { k += (plainText(cmd.words[k]) === '-C' || plainText(cmd.words[k]) === '-c') ? 2 : 1; }
+    let cdir = null;
+    let cdUnknown = false;
+    while (k < cmd.words.length && (plainText(cmd.words[k]) || '').startsWith('-')) {
+      const t = plainText(cmd.words[k]);
+      if (t === '-C') { cdir = cmd.words[k + 1] ? plainText(cmd.words[k + 1]) : null; if (cdir === null) cdUnknown = true; k += 2; }
+      else if (t === '-c') k += 2;
+      else k++;
+    }
     const sub = k < cmd.words.length ? plainText(cmd.words[k]) : null;
+    const rest = texts.slice(k - pi + 1);
     if (sub === 'rev-parse' && texts.some((t) => t === '--show-toplevel') && st.cdSeen) return { unk: unk('any', { why: 'folder' }) };
     if (sub === 'rev-parse' && texts.some((t) => t === '--show-toplevel')) return { items: ancestorsOf(st.ctx.cwd).map((d) => [d]) };
-    if (sub !== null && GIT_SAFE.has(sub) && !(sub === 'log' && texts.some((t) => t && /^-(?:p|u|-patch|G.*|S.*)$/.test(t)))) return { unk: unk('safe', { why: 'git' }) };
+    if (sub !== null && GIT_REV.has(sub)) {
+      const ok = rest.every((t) => t !== null && (t === '--' ? true : t.startsWith('-')
+        ? (sub === 'rev-parse' ? REVPARSE_OPT_RE.test(t) : GIT_REV_OPT_RE.test(t) && !GIT_REV_BAD_RE.test(t))
+        : (sub === 'rev-parse' ? REVPARSE_OPERAND_RE.test(t) : true)));
+      if (ok && !cdUnknown) return { unk: unk('safe', { why: 'git' }) };
+      return { unk: unk('any', { why: 'git' }) };
+    }
+    if (sub !== null && GIT_LIST.has(sub) && !((sub === 'log' || sub === 'show' || sub === 'stash') && rest.some((t) => t && /^-(?:p|u|-patch|G.*|S.*)$/.test(t)))) {
+      if (st.cdSeen || cdUnknown) return { unk: unk('any', { why: 'folder' }) };
+      return gitListing(sub, rest, cdir, st);
+    }
+    if (sub === 'version' || sub === 'count-objects') return { unk: unk('safe', { why: 'git' }) };
     return { unk: unk('any', { why: 'git' }) };
   }
   if (name === 'find' || name === 'fd' || name === 'fdfind') {
@@ -1155,8 +1354,7 @@ function produce(cmd, st, cmds, idx) {
     if (r) return r;
   }
   if (name === 'seq') return { unk: unk('num') };
-  if (name === 'command' && texts[1] === '-v') return { unk: unk('safe') };
-  if (SAFE_VALUE.has(name)) return { unk: unk('safe', { why: name }) };
+  if (SAFE_VALUE.has(name) && safeCall(name, texts)) return { unk: unk('safe', { why: name }) };
   if (name === 'xargs' || name === 'cat' || PASS_THROUGH.has(name)) {
     // A pipe stage that passes lines through gives what its source gives.
     if (cmd.pipeIn && cmds && idx > 0 && PASS_THROUGH.has(name) && cmd.words.length - pi <= 1 + (name === 'grep' || name === 'head' || name === 'tail' || name === 'sort' ? 6 : 0)) {
@@ -1212,7 +1410,7 @@ function redirSource(r, st, cmds, idx) {
   }
   if (parts.length === 1 && parts[0].t === 'proc') {
     let sub;
-    try { sub = lex(parts[0].code, st.ctx.home); } catch (_) { return { unk: unk('any') }; }
+    try { sub = lex(parts[0].code, st.ctx.home); } catch (e) { if (e instanceof TooComplex) throw e; return { unk: unk('any') }; }
     if (!sub.length) return { items: [[]] };
     return produce(sub[sub.length - 1], child(st), sub, sub.length - 1);
   }
@@ -1256,9 +1454,9 @@ function sourceOf(cmds, idx, st) {
 
 /* The result of $(code): alternatives as items. */
 function cmdSub(code, st, mode) {
-  if (st.depth >= MAX_DEPTH) return [[unk('any', { why: 'nested' })]];
+  if (st.depth >= MAX_DEPTH) throw new TooComplex('nested');
   let sub;
-  try { sub = lex(code, st.ctx.home); } catch (_) { return [[unk('any')]]; }
+  try { sub = lex(code, st.ctx.home); } catch (e) { if (e instanceof TooComplex) throw e; return [[unk('any')]]; }
   if (!sub.length) return [[]];
   const inner = child(st);
   runCommands(sub, inner, mode === 'check' ? 'check' : 'collect');
@@ -1298,9 +1496,13 @@ function assignWord(word, st, mode) {
     st.vars.set(name, e);
     e.arr = e.arr || [];
     for (const w of rest[1].words) {
-      const flat = evalWord(w, st, mode);
+      // [3]=value sets the element 3.
+      const p0 = w.parts[0];
+      const mm = p0 && p0.t === 'lit' && !p0.q ? /^\[(\d{1,3})\]=/.exec(p0.v) : null;
+      const ww = mm ? Object.assign({}, w, { parts: [Object.assign({}, p0, { v: p0.v.slice(mm[0].length) })].concat(w.parts.slice(1)) }) : w;
+      const flat = evalWord(ww, st, mode);
       const x = ent(flat.length ? flat : [[]]);
-      e.arr.push(x);
+      if (mm) { const k = Number(mm[1]); if (!e.arr[k]) e.arr[k] = x; else mergeItems(e.arr[k], flat.length ? flat : [[]]); } else e.arr.push(x);
       if (e.arr.length > 256) break;
     }
     return true;
@@ -1463,6 +1665,8 @@ function checkItems(st, items, writing, wholeCheck, head, redirectTarget, fileVa
     if (!hasUnk(it)) {
       const t = it.join('');
       if (!t) continue;
+      // echo and printf only print a name: a resolved word given to them is not a read (a redirect target is a write).
+      if ((head === 'echo' || head === 'printf') && !redirectTarget) continue;
       const push = (text) => st.out.words.push({ text, redirectTarget: !!redirectTarget, head, seq: 1e6 + st.out.words.length });
       push(t);
       // Interpreter code ("open('.env')") is read in pieces, the way the policy reads code it can see.
@@ -1480,6 +1684,7 @@ function checkItems(st, items, writing, wholeCheck, head, redirectTarget, fileVa
   }
 }
 
+const XARGS_SENDERS = new Set([...SENDER_PROGS, 'nc', 'ncat', 'netcat', 'socat', 'scp', 'sftp', 'ftp', 'telnet']);
 const READ_ONLY = new Set(['cat', 'head', 'tail', 'more', 'grep', 'egrep', 'fgrep', 'rg', 'ls', 'stat', 'wc', 'diff', 'file', 'bat', 'jq', 'echo', 'pwd']);
 
 function runCommands(cmds, st, mode) {
@@ -1651,6 +1856,15 @@ function runCommand(cmds, ci, st, mode) {
       checkItems(st, items.map((it) => (dd && typeof it[0] === 'string' ? normItem([it[0].replace(/^if=/, '')].concat(it.slice(1))) : it)), writing, !!isOperand, head, false, prev !== null && !!FILE_OPTS[head] && FILE_OPTS[head].has(prev));
     }
   }
+  // "$@" / $* of an unknown call given to a program that sends its files (curl "$@") can hold any file option.
+  if (SENDER_PROGS.has(head)) {
+    for (let k = pi + 1; k < ws.length; k++) {
+      const w = ws[k];
+      if (w.parts.length === 1 && w.parts[0].t === 'var' && (w.parts[0].name === '@' || w.parts[0].name === '*') && evaluated[k] && evaluated[k].some((it) => it.length === 1 && isUnk(it[0]) && it[0].why === 'argument')) { out.refuse = RUNTIME_NAME_MESSAGE; return; }
+    }
+  }
+  // Each resolved reading of the command is judged as a command line of its own by the caller.
+  if (head !== 'echo' && head !== 'printf' && !SHELLS.has(head) && head !== 'eval' && head !== 'trap' && head !== 'xargs' && head !== 'source' && head !== '.') buildLines(cmd, pi, st);
   // Redirects: a file read into a program that sends or shows it, a file written.
   for (const r of cmd.redirs) {
     if (!hasExpansion(r.target)) continue;
@@ -1689,6 +1903,14 @@ function runCommand(cmds, ci, st, mode) {
       }
     }
   }
+  // source <(cmd), bash <(cmd): the output of cmd is the code that runs.
+  if ((head === 'source' || head === '.' || SHELLS.has(head)) && !shellCodeOf(cmd, pi, st)) {
+    const first = args.find((w) => { const t = plainText(w); return t === null || !t.startsWith('-'); });
+    if (first && first.parts.length === 1 && first.parts[0].t === 'proc') {
+      procCode(first.parts[0].code, st);
+      if (out.refuse) return;
+    }
+  }
   // Shell code built at run time: eval, trap, sh -c, source of a process substitution.
   if (head === 'eval' || head === 'trap') {
     const codeWords = head === 'trap' ? args.slice(0, 1) : args;
@@ -1716,7 +1938,8 @@ function runCommand(cmds, ci, st, mode) {
   heredocCodes(cmd, head, st);
 }
 
-/* The code of eval, sh -c and the like: read it when it is known, refuse it when it is not. */
+/* The code of eval, sh -c and the like: read it when it is known, refuse it when any part of it is not (except the exact
+   calls of the well-known environment tools). */
 function codeCheck(st, codeWords, argWords, cmd) {
   const out = st.out;
   if (!codeWords.length) return;
@@ -1732,38 +1955,100 @@ function codeCheck(st, codeWords, argWords, cmd) {
   for (const it of alts) {
     // bash -c CODE arg0 arg1: $0 is arg0, $1 is arg1.
     if (!hasUnk(it)) { out.codes.push({ text: it.join(''), vars: st.vars, positional: argWords ? argWords.slice(1).map((w) => ent(evalWord(w, st, 'check'))) : null }); continue; }
-    // The code is partly or wholly built from a value zn cannot read.
+    // Text with a part zn cannot read is code nobody has read, unless the whole text is one of the exact init calls. A
+    // part of a longer text that can only be a number, a date or a hash (never a name) is no more than a number.
+    if (initInvocation(codeWords, st)) continue;
     const whole = it.every(isUnk);
-    const safeAll = it.every((s) => !isUnk(s) || s.kind !== 'any');
-    if (safeAll) continue;
-    if (whole && it.length === 1 && it[0].why === 'init') continue;
-    if (whole && cmd && codeFromInitTool(codeWords, st)) continue;
-    if (whole) { out.refuse = RUNTIME_CODE_MESSAGE; return; }
-    // Partly known code: read it with a variable standing for each unknown part, and keep the checks of that reading.
-    const vars = new Map(st.vars);
-    let text = '';
-    let n = 0;
-    for (const s of it) {
-      if (typeof s === 'string') text += s;
-      else { const nm = '__ZN_UNK' + (n++); vars.set(nm, ent([[s]])); text += '${' + nm + '}'; }
-    }
-    out.codes.push({ text, vars, positional: null });
+    if (!whole && it.every((x) => !isUnk(x) || x.kind !== 'any')) continue;
+    out.refuse = RUNTIME_CODE_MESSAGE;
+    return;
   }
 }
 
-/* eval "$(ssh-agent -s)": the output of a well-known environment tool is not an agent's choice. */
-function codeFromInitTool(codeWords, st) {
-  for (const w of codeWords) {
-    if (w.parts.length !== 1 || w.parts[0].t !== 'cmd') continue;
-    let sub;
-    try { sub = lex(w.parts[0].code, st.ctx.home); } catch (_) { return false; }
-    if (sub.length !== 1) continue;
-    const pi = programIndex(sub[0], st);
-    if (pi < 0) continue;
-    const t = plainText(sub[0].words[pi]);
-    if (t !== null && EVAL_SAFE.has(base(t))) return true;
+/* The command inside $( ) or <( ) when it is one simple command that is exactly an init call. */
+function initCode(code, st) {
+  let sub;
+  try { sub = lex(code, st.ctx.home); } catch (e) { if (e instanceof TooComplex) throw e; return false; }
+  if (sub.length !== 1) return false;
+  const c = sub[0];
+  if (c.pipeIn || c.redirs.length || c.heredocs.length || !c.words.length) return false;
+  const t = c.words.map((w) => plainText(w));
+  if (t.some((x) => x === null)) return false;
+  return isInitCall(t);
+}
+
+/* eval "$(ssh-agent -s)": the exact calls of a well-known environment tool, matched with their arguments. */
+function initInvocation(codeWords, st) {
+  if (codeWords.length !== 1) return false;
+  const w = codeWords[0];
+  if (w.parts.length !== 1 || w.parts[0].t !== 'cmd') return false;
+  return initCode(w.parts[0].code, st);
+}
+
+/* source <(cmd): the output of cmd runs as code; known output is read as code, init calls pass, the rest is refused. */
+function procCode(code, st) {
+  if (initCode(code, st)) return;
+  let sub;
+  try { sub = lex(code, st.ctx.home); } catch (e) { if (e instanceof TooComplex) throw e; sub = null; }
+  if (sub && sub.length) {
+    const r = produce(sub[sub.length - 1], child(st), sub, sub.length - 1);
+    if (r.items && r.items.every((it) => !hasUnk(it))) { for (const it of r.items) st.out.codes.push({ text: it.join(''), vars: st.vars, positional: null }); return; }
   }
-  return false;
+  st.out.refuse = RUNTIME_CODE_MESSAGE;
+}
+
+/* The command lines a simple command can stand for when everything in it is resolved: each is judged by the caller
+   like a command typed in full (every rule that reads typed words reads these too). */
+const MAX_LINES = 400;
+const shq = (x) => (/^[\w@%+=:,.\/-]+$/.test(x) ? x : "'" + x.replace(/'/g, "'\\''") + "'");
+function wordBranches(w, st) {
+  // "$@", $*, "${a[@]}": the values in order (the sets of alternatives lose the order of the fields).
+  if (w.parts.length === 1 && w.parts[0].t === 'var') {
+    const p = w.parts[0];
+    let elems = null;
+    if (p.name === '@' || p.name === '*') elems = st.positional ? st.positional.map((x) => scalarItems(x)) : null;
+    else if ((p.idx === '@' || p.idx === '*') && !p.op && !p.indirect && !p.length) { const e = lookup(st, p.name); if (e.arr) elems = e.arr.filter(Boolean).map((x) => scalarItems(x)); }
+    if (elems) {
+      let br = [[]];
+      for (const el of elems) {
+        const next = [];
+        for (const b of br) for (const it of el) next.push(b.concat([it]));
+        br = next.slice(0, MAX_BRANCHES);
+      }
+      if (!p.q) br = br.map((b) => [].concat(...b.map((it) => { const l = literalOf(it); return l === null ? [it] : splitFields(l, st).map((f) => [f]); })));
+      return br;
+    }
+  }
+  return evalParts(w.parts, st, 'collect');
+}
+function pushLine(st, words) {
+  const text = words.map(shq).join(' ');
+  const out = st.out;
+  if (out.lineSet.has(text)) return;
+  out.lineSet.add(text);
+  out.lines.push(text);
+  if (out.lines.length > MAX_LINES) throw new TooComplex('lines');
+}
+function buildLines(cmd, pi, st) {
+  const ws = cmd.words.slice(pi);
+  if (!ws.length || !ws.some((w) => hasExpansion(w))) return;
+  let combos = [[]];
+  for (const w of ws) {
+    const brs = hasExpansion(w) ? wordBranches(w, st) : [[[plainText(w)]]];
+    const next = [];
+    for (const c of combos) {
+      for (const br of brs) {
+        const fields = [];
+        let ok = true;
+        for (const it of br) { const l = literalOf(it); if (l === null || /[*?[]/.test(l)) { ok = false; break; } if (l !== '') fields.push(l); }
+        if (ok) next.push(c.concat(fields));
+      }
+    }
+    combos = next;
+    if (combos.length > MAX_LINES) throw new TooComplex('lines');
+    if (!combos.length) return;
+  }
+  for (const c of combos) if (c.length) pushLine(st, c);
 }
 
 /* The body of a here-document given to a shell is code. */
@@ -1802,13 +2087,23 @@ function xargsCheck(cmds, ci, cmd, pi, st) {
   const sraw = plainText(sub.words[spi]);
   const sname = sraw === null ? '' : base(sraw);
   const src = argFile ? (typeof argFile === 'string' ? readList(argFile, st) : { unk: unk('any', { why: 'xargs -a' }) }) : sourceOf(cmds, ci, st);
-  const dumpish = sraw === null || Object.prototype.hasOwnProperty.call(DUMP, sname) || SHELLS.has(sname) || sname === 'eval';
+  const dumpish = sraw === null || Object.prototype.hasOwnProperty.call(DUMP, sname) || SHELLS.has(sname) || sname === 'eval' || XARGS_SENDERS.has(sname);
   // The source gives known names (echo a b | xargs cat): they are checked as words of the command.
   if (src.items) {
+    const subTexts = sub.words.map((w) => plainText(w));
+    const all = [];
     for (const it of src.items) {
       if (hasUnk(it)) continue;
-      for (const f of splitFields(it.join(''), st)) if (f) out.words.push({ text: f, redirectTarget: false, head: sname, seq: 1e6 + out.words.length });
+      const fields = splitFields(it.join(''), st).filter((f) => f);
+      for (const f of fields) if (sname !== 'echo' && sname !== 'printf') out.words.push({ text: f, redirectTarget: false, head: sname, seq: 1e6 + out.words.length });
+      all.push(fields);
+      // The command xargs runs for this input, judged as a command line of its own.
+      if (sname !== 'echo' && sname !== 'printf' && subTexts.every((t) => t !== null) && subTexts.length) {
+        if (replace) pushLine(st, subTexts.map((t) => (t.includes(replace) ? fields.map((f) => t.split(replace).join(f)) : [t])).flat());
+        else pushLine(st, subTexts.concat(fields));
+      }
     }
+    if (sname !== 'echo' && sname !== 'printf' && !replace && subTexts.every((t) => t !== null) && subTexts.length && all.length > 1) pushLine(st, subTexts.concat([].concat(...all)));
     return;
   }
   const u = src.unk;
@@ -1850,13 +2145,17 @@ const QUICK_RE = /[$`]|<<<|<\s*[^\s<(]|\|\s*&?\s*(?:[\w.-]+\/)*(?:ba|z|da|k|a|mk
  */
 function analyse(cmd, ctx0, seed) {
   const ctx = Object.assign({}, ctx0, { cmdText: String(cmd) });
-  const out = { refuse: null, words: [], codes: [] };
+  const out = { refuse: null, words: [], codes: [], lines: [], lineSet: new Set() };
+  // An alias holds code under a name: in a line that turns alias expansion on (or runs an interactive shell), an alias
+  // definition is code zn does not follow.
+  if (/\balias\b/.test(cmd) && (/\bshopt\b|expand_aliases|(?:^|\s)-[A-Za-z]*i[A-Za-z]*(?:\s|$)/.test(cmd))) { out.refuse = RUNTIME_CODE_MESSAGE; return out; }
   if (!QUICK_RE.test(cmd)) return out;
   let cmds;
   work = 0;
   try { cmds = lex(cmd, ctx.home); } catch (e) {
-    if (e instanceof TooComplex || (e && e.message === 'too many commands')) { out.refuse = TOO_COMPLEX_MESSAGE; return out; }
-    throw e;
+    // Whatever the reading throws (a limit, a stack overflow, a bug) the command is refused, never checked in part.
+    out.refuse = TOO_COMPLEX_MESSAGE;
+    return out;
   }
   const st = {
     ctx,
@@ -1874,9 +2173,9 @@ function analyse(cmd, ctx0, seed) {
     runCommands(cmds, st, 'collect');
     runCommands(cmds, st, 'check');
   } catch (e) {
-    // A command that builds more than zn works through is refused, not checked in part.
-    if (e instanceof TooComplex) { out.refuse = TOO_COMPLEX_MESSAGE; return out; }
-    throw e;
+    // A command that builds more than zn works through, or that the reading cannot follow, is refused, not checked in part.
+    out.refuse = TOO_COMPLEX_MESSAGE;
+    return out;
   }
   // Two words with the same text and head are one.
   const seen = new Set();
@@ -1884,4 +2183,4 @@ function analyse(cmd, ctx0, seed) {
   return out;
 }
 
-module.exports = { analyse };
+module.exports = { analyse, TOO_COMPLEX_MESSAGE };

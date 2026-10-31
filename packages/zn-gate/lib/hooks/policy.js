@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.11';
+const POLICY_RULES_VERSION = '2026-10-31.13';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2368,6 +2368,8 @@ function runtimeContext(opts) {
   };
 }
 
+const RUNTIME_FAILED_MESSAGE = 'zn: this command builds file names with more steps than zn can follow, so it was blocked. Next step: run it as several simpler commands, with the file names written out.';
+
 function bashDenialOf(cmd, opts = {}) {
   if (String(cmd || '').length > SHELL_SCAN_CAP) return TOO_LONG_MESSAGE;
   const admin = adminCommand(cmd);
@@ -2414,7 +2416,7 @@ function bashDenialOf(cmd, opts = {}) {
   if (!opts.powershell) {
     try {
       runtime = require('./runtime-args').analyse(text, runtimeContext(opts), opts.runtimeSeed);
-    } catch (_) { /* a command the analysis cannot read is checked as before */ }
+    } catch (_) { return RUNTIME_FAILED_MESSAGE; } // an analysis that fails refuses the command, it never skips the rule
   }
   if (runtime.refuse) return runtime.refuse;
   words.push(...runtime.words);
@@ -2423,7 +2425,7 @@ function bashDenialOf(cmd, opts = {}) {
   const own = new Set();
   for (const c of runtime.codes) own.add(c.text);
   for (const c of own) codes.delete(c);
-  if (codes.size || own.size) {
+  if (codes.size || own.size || (runtime.lines && runtime.lines.length)) {
     if (depth >= SHELL_CODE_DEPTH) return TOO_NESTED_MESSAGE;
     for (const code of codes) {
       if (overBudget(opts.budget, 5)) return TOO_SLOW_MESSAGE;
@@ -2436,6 +2438,12 @@ function bashDenialOf(cmd, opts = {}) {
       done.add(c.text);
       if (overBudget(opts.budget, 5)) return TOO_SLOW_MESSAGE;
       const deny = bashDenialOf(c.text, { ...opts, depth: depth + 1, runtimeSeed: { vars: c.vars, positional: c.positional } });
+      if (deny) return deny;
+    }
+    // Each resolved reading of a simple command is judged as a command line typed in full.
+    for (const line of runtime.lines || []) {
+      if (overBudget(opts.budget, 5)) return TOO_SLOW_MESSAGE;
+      const deny = bashDenialOf(line, { ...opts, depth: depth + 1, runtimeSeed: null });
       if (deny) return deny;
     }
   }

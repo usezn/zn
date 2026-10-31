@@ -71,7 +71,10 @@ zn's own folder): a variable set earlier in the same command, a `for` loop over
 a fixed list, an array, `${name/x/y}` and the other `${...}` forms,
 `$(echo ...)`, `$(printf ...)`, `$(basename ...)`, `read`, `xargs` and `while
 read` fed by known text or by a file the command does not also write, and `eval`
-or `sh -c` with known text.
+or `sh -c` with known text. Each resolved reading of a simple command (and each
+command `xargs` would run for known input) is then checked as a command line of
+its own, so the rules for a specific program (`curl`, `wget`, ...) read the
+resolved words too.
 
 What the command does not fix is refused when a protected file could be behind
 it, in any command:
@@ -82,19 +85,38 @@ it, in any command:
   from `xargs` or `while read` fed by an unknown list) given to a program that
   shows, copies or sends the files it gets (`cat`, `head`, `sed`, `awk`, `cp`,
   `tar`, `scp`, `rsync`, `curl -T`, `source`, and similar);
-- `eval`, `sh -c` or `trap` with code built from something unknown (the usual
-  set-up commands, such as `eval "$(ssh-agent -s)"`, are allowed).
+- `eval`, `sh -c`, `trap`, or `source <(...)` with code built from something
+  unknown. Only the exact calls of a few well-known environment tools are
+  allowed (`eval "$(ssh-agent -s)"`, `direnv hook <shell>`, `pyenv init -`,
+  `starship init <shell>`, `zoxide init <shell>`, `mise activate <shell>`,
+  `brew shellenv`, `fnm env`, `conda shell.bash hook`, `kubectl`, `helm` and `gh`
+  `completion <shell>`); any other argument, or anything more in the code, is
+  refused;
+- an alias definition in a command that turns alias expansion on (`shopt -s
+  expand_aliases`) or runs an interactive shell, because an alias is code under
+  a name.
 
 A list from `find`, `ls`, `grep -l` or a file on the disk is looked up and
-refused only when it holds a protected file. A list from `git ls-files`,
-`git diff --name-only`, `fd` or `rg --files` is the project's own files and is
-not looked up, and neither is output that is never a file name (`date`,
-`git rev-parse`, `mktemp`). A variable that is set neither in the command nor in
-the environment counts as unknown.
+refused only when it holds a protected file. A list from `git ls-files` or
+`git diff --name-only` is looked up in the repository's index, `git status`,
+`git log` and the like on the disk (leaving out what the root `.gitignore`
+ignores), and a list that includes ignored or untracked files (`git ls-files
+-o`, `--ignored`) on the whole folder. `fd` and `rg --files` are the project's
+own files. Output that can only be a number, a date, a hash or a temporary name
+(`date` with a format of `%` directives, `uname`, `id -u`, `mktemp`, `git
+rev-parse --short HEAD`, `git describe`) is not a file name. Output that can
+carry a name the command picked (`date` with any other format, `expr`, `openssl`,
+`stat`, `git config`, `git branch`, `git tag`) is unknown. A variable that is
+set neither in the command nor in the environment counts as unknown.
+
+A command that nests more levels than zn follows (more than 64 levels of
+`"$( ... )"`), or that the reading cannot follow for any other reason, is
+refused.
 
 Not covered: a program whose own name is built at run time (`$CMD file`), the
 code inside `python -c` or `node -e` beyond the words it spells out, and what a
-script file does when it runs. Keep secrets out of plain-text files
+script file does when it runs. These checks are part of the Node hooks; the
+Python package has no shell policy for protected paths. Keep secrets out of plain-text files
 (`zn-gate env shadow .env`) so that there is nothing to read.
 
 The hooks also ask before the agent writes to the files where it keeps memory and
