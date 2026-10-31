@@ -1046,6 +1046,21 @@ test('vault call: a secrets server that is not zn (user scope) is checked', asyn
   assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
 });
 
+test('vault call: a project server named secrets__x is foreign, not the zn secrets server', async (t) => {
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } } });
+  const dir = tmpProject(t);
+  // The real zn server stays ours.
+  assert.equal(adapter.normalize(preTool(VAULT_TOOL, VAULT_CALL, dir)).mcp.ours, 'secrets');
+  // The host sends mcp__secrets__x__tool for a server called secrets__x: the lazy parse gives server secrets, tool x__tool.
+  const name = 'mcp__secrets__x__secrets_http_request';
+  assert.equal(adapter.normalize(preTool(name, VAULT_CALL, dir)).mcp.ours, undefined);
+  assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'deny', 'the placeholder is still blocked');
+  // A server called secrets_ sends mcp__secrets___secrets_http_request: server secrets, tool _secrets_http_request.
+  const single = 'mcp__secrets___secrets_http_request';
+  assert.equal(adapter.normalize(preTool(single, VAULT_CALL, dir)).mcp.ours, undefined);
+  assert.equal(decisionOf(await run(preTool(single, VAULT_CALL, dir), { engine: piiEngine })), 'deny', 'secrets_: the placeholder is still blocked');
+});
+
 test('vault call: no secrets server in the config at all is checked', async (t) => {
   claudeConfig(t, { claudeJson: { mcpServers: {} } });
   const dir = tmpProject(t);

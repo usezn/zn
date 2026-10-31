@@ -16,9 +16,13 @@ const { spawn } = require('child_process');
 
 const { tempDir } = require('./helpers/tmp');
 const launcher = require('../lib/agents/launcher');
+const { winCommandText } = require('../lib/zn-command');
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const WIN = process.platform === 'win32';
+// On Windows the hook names the command as zn-gate.cmd (the form that runs from a terminal), so the expected text goes through the same rewrite.
+const NEXT_STEP = winCommandText('ask the user to run `zn-gate check` in their terminal');
+const hasNextStep = (text) => text.includes('if it keeps happening, ' + NEXT_STEP);
 
 // A pre-tool event of each agent (the secret path makes no difference: the check never gets to run).
 const PRE = {
@@ -112,7 +116,7 @@ test('a check that runs out of time gives every agent the same next step', async
     child.stdin.end(JSON.stringify(PRE[agent]));
     const r = await done;
     const all = r.stdout + r.stderr;
-    assert.match(all, /if it keeps happening, ask the user to run `zn-gate check` in their terminal/, agent + ': ' + all);
+    assert.ok(hasNextStep(all), agent + ': ' + all);
     assert.doesNotMatch(all, /zn-gate doctor|hooks install/, agent);
   }
 });
@@ -130,7 +134,7 @@ test('zcode: a post-tool event whose check runs out of time gets the timeout not
   assert.match(note, /the check timed out/, note);
   assert.match(note, /It was NOT withheld/, note);
   assert.doesNotMatch(note, /withheld because|too large/, note);
-  assert.match(note, /ask the user to run `zn-gate check` in their terminal/, note);
+  assert.ok(note.includes(NEXT_STEP), note);
 });
 
 test('claude-code: a post-tool event whose check runs out of time keeps the withheld text', async (t) => {
