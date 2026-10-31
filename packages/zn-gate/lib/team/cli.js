@@ -138,7 +138,7 @@ function describeRevocations(list) {
     lines.push('Revocation pending since ' + r.since + ' (installation ' + r.install_id + (r.org ? ', ' + r.org : '') + '): last error ' + (r.last_error || 'unknown') +
       (r.last_try_at ? ' (last try ' + r.last_try_at + ')' : '') + '.');
     lines.push('  The server was not told that this installation left, so its token still works there. Next step: `zn team sync` retries now (zn also retries every 15 minutes while the vault is unlocked)' +
-      (r.give_up_at ? ' until ' + r.give_up_at + ', when it stops; an admin can then remove the installation from the dashboard' : '') + '.');
+      '; it keeps retrying until the server confirms. An admin can also remove the installation from the dashboard.');
   }
   return lines;
 }
@@ -176,7 +176,7 @@ async function leaveCmd() {
       : 'The server was told: installation ' + r.install_id + ' is revoked and its token no longer works.');
   } else if (r.left && rev && rev.status === 'pending') {
     out('The server was NOT told yet that you left (' + rev.error + '): installation ' + r.install_id + ' stays on the organization\'s list, and its token still works there, until a retry succeeds.');
-    out('zn keeps the token in your vault only for that retry and nothing else: no policy, no uploads, no detectors. It retries on `zn team sync` and every 15 minutes while the vault is unlocked, and stops on ' + rev.give_up_at + '. `zn team status` shows it.');
+    out('zn keeps the token in your vault only for that retry and nothing else: no policy, no uploads, no detectors. It retries on `zn team sync` and every 15 minutes while the vault is unlocked, until the server confirms. `zn team status` shows it.');
   } else if (!r.left && Array.isArray(r.revocations) && r.revocations.length) {
     for (const l of describeRevocations(r.revocations)) out(l);
   }
