@@ -1,10 +1,10 @@
 name: Windows checks for the Python package
 
 # Python 3.12 on Windows for the merge queue into next (the Python package has Windows-specific code: paths, file
-# locking, the console). Pull requests into next do not run it: they run the required checks and one Windows job,
-# "Windows (Node.js 22)", because the shared runner pool is the bottleneck. Not a required check. The full Python
-# matrix, Windows included, still runs on pushes to main and next, on pull requests into main and release
-# branches, and with the full-ci label.
+# locking, the console). It runs only in the merge queue: pull requests do not run it (the shared runner pool is the
+# bottleneck; they run the required checks and one Windows job, "Windows (Node.js 22)"), and the push to next is the
+# commit the queue already checked. Not a required check. Python 3.12 on Windows is also part of ci.yml's full matrix
+# (pushes to main and release branches, pull requests into them, and the full-ci label).
 on:
   # The merge queue always runs it: one Windows job on the LTS version is the Windows sample of the queue.
   merge_group:

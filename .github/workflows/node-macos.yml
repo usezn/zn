@@ -62,7 +62,7 @@ env:
 jobs:
   test-node-macos:
     name: Node.js 22 tests (macOS)
-    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    # Pull requests do not trigger this workflow (see the header); the condition only guards a future trigger.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: macos-latest
     timeout-minutes: 20
