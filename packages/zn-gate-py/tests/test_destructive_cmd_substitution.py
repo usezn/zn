@@ -86,3 +86,33 @@ def test_similar_substitutions_that_run_nothing_destructive_stay_allowed():
         'echo "$(echo `date`)"',
     ]:
         assert check_command(c).verdict == "allow", c
+
+
+def test_quoted_substitution_in_body_non_arithmetic_double_paren_and_function_substitution_are_read():
+    for c in [
+        'echo "$(echo "$(echo ")")"; rm -rf ~)"',
+        'x="$(echo "$(echo ")")"; rm -rf ~)"',
+        'echo "$(echo "$(echo ")")" && rm -rf ~)"',
+        'echo "$((rm -rf ~); true)"',
+        'echo "$((echo x) ; rm -rf ~)"',
+        'x="$((rm -rf ~) )"',
+        'echo "${ rm -rf ~; }"',
+        'echo ${ rm -rf ~; }',
+        'echo "${| rm -rf ~; }"',
+    ]:
+        res = check_command(c)
+        assert res.verdict == "block", c
+        assert res.rule == "destructive:rm_root_home", c
+
+
+def test_their_benign_twins_stay_allowed():
+    for c in [
+        'echo $((1+2))',
+        'echo "$(date)"',
+        'echo "${x}"',
+        'echo "$(echo "$(date)")"',
+        'echo "$((1+(2*3)))"',
+        'echo "${HOME}"',
+        'echo "$(echo "a)b")"',
+    ]:
+        assert check_command(c).verdict == "allow", c

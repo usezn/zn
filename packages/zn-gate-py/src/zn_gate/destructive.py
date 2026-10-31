@@ -509,8 +509,14 @@ def _dollar_paren_code(text: str) -> str:
         elif ch == "$" and text[i + 1:i + 2] == "'" and quote == "":
             quote = "$'"
             i += 1
+        elif ch == "$" and text[i + 1:i + 2] == "{" and (text[i + 2:i + 3].isspace() or text[i + 2:i + 3] == "|"):
+            # A ${ cmd; } or ${| cmd; } (bash 5.3, ksh, mksh) runs its text as commands in the current shell: read it wide.
+            parts, last = _dollar_paren_wide(text, i + (3 if text[i + 2] == "|" else 2), quote == '"', "}")
+            bodies.extend(parts)
+            i = last
         elif ch == "$" and text[i + 1:i + 2] == "(":
-            if text[i + 2:i + 3] == "(":
+            # $(( is arithmetic only when it closes with )); otherwise it is a substitution that starts with a subshell: read it as code.
+            if text[i + 2:i + 3] == "(" and _is_arithmetic(text, i + 3):
                 i += 2
             else:
                 depth = 1
@@ -537,7 +543,10 @@ def _dollar_paren_code(text: str) -> str:
                         q = "$'"
                         j += 1
                     elif q == '"':
-                        pass
+                        # A $( ) or a backtick inside a double-quoted string of the body opens a nested scope where quotes restart: its quotes and parentheses cannot be paired here.
+                        if (c == "$" and text[j + 1:j + 2] == "(") or c == "`":
+                            unsure = True
+                            break
                     else:
                         # A case pattern, a comment, a here-document, a ${ } expansion or a backtick span can hold a parenthesis that does not close the substitution.
                         word_start = j == i + 2 or text[j - 1].isspace() or text[j - 1] in ";&|("
@@ -566,7 +575,26 @@ def _dollar_paren_code(text: str) -> str:
     return "\n".join(bodies)
 
 
-def _dollar_paren_wide(text: str, start: int, quoted: bool) -> Tuple[List[str], int]:
+def _is_arithmetic(text: str, start: int) -> bool:
+    """True when the `$((` whose text after it starts at `start` closes with `))` (arithmetic expansion). When the inner
+    parenthesis closes on its own, or nothing closes it, bash reads a substitution that starts with a subshell."""
+    depth = 2
+    j = start
+    while j < len(text):
+        c = text[j]
+        if c == "\\":
+            j += 1
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 1:
+                return text[j + 1:j + 2] == ")"
+        j += 1
+    return False
+
+
+def _dollar_paren_wide(text: str, start: int, quoted: bool, close: str = ")") -> Tuple[List[str], int]:
     """The body of a substitution the scanner cannot close with certainty: everything up to the last `)` before the closing
     double quote of the enclosing string (or the end of the text when it is not quoted), plus the text after each `)` in it,
     so that code after an early `)` is read too. Returns the texts and the index the outer scan resumes from."""
@@ -582,16 +610,16 @@ def _dollar_paren_wide(text: str, start: int, quoted: bool) -> Tuple[List[str], 
             k += 1
         if last_quote >= 0:
             limit = last_quote
-    end = text.rfind(")", 0, limit) if limit > 0 else -1
+    end = text.rfind(close, 0, limit) if limit > 0 else -1
     if end < start:
         end = limit
     body = text[start:end]
     parts = [body]
-    k = body.find(")")
+    k = body.find(close)
     while k >= 0:
         parts.append(body[k + 1:])
-        k = body.find(")", k + 1)
-    return parts, (end if text[end:end + 1] == ")" else end - 1)
+        k = body.find(close, k + 1)
+    return parts, (end if text[end:end + 1] == close else end - 1)
 
 
 def _backtick_code(text: str) -> str:
@@ -1395,7 +1423,7 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None) -> Optional[str]:
         if inner_hit:
             return inner_hit
     # A command substitution $( ) runs its text as commands even inside double quotes (echo "$(rm -rf ~)"); read them too.
-    if depth < _MAX_DEPTH and "$(" in text:
+    if depth < _MAX_DEPTH and ("$(" in text or "${" in text):
         inner = _dollar_paren_code(text)
         inner_hit = _analyze(inner, depth + 1, known) if inner else None
         if inner_hit:

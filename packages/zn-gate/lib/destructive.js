@@ -274,8 +274,16 @@ function dollarParenCode(text) {
     if (ch === '"') { quote = quote === '"' ? '' : '"'; continue; }
     if (ch === "'" && quote === '') { quote = "'"; continue; }
     if (ch === '$' && text[i + 1] === "'" && quote === '') { quote = "$'"; i++; continue; }
+    // A ${ cmd; } or ${| cmd; } (bash 5.3, ksh, mksh) runs its text as commands in the current shell: read it wide, like an unclosable body.
+    if (ch === '$' && text[i + 1] === '{' && /[\s|]/.test(text[i + 2] || '')) {
+      const r = dollarParenWide(text, i + (text[i + 2] === '|' ? 3 : 2), quote === '"', '}');
+      for (const p of r.parts) bodies.push(p);
+      i = r.last;
+      continue;
+    }
     if (ch !== '$' || text[i + 1] !== '(') continue;
-    if (text[i + 2] === '(') { i += 2; continue; }
+    // $(( is arithmetic only when it closes with )); otherwise it is a substitution that starts with a subshell: read it as code.
+    if (text[i + 2] === '(' && isArithmetic(text, i + 3)) { i += 2; continue; }
     // Find the closing parenthesis: quotes and escapes inside the body hide parentheses.
     let depth = 1;
     let q = '';
@@ -289,6 +297,8 @@ function dollarParenCode(text) {
       if (c === '"') { q = q === '"' ? '' : '"'; continue; }
       if (c === "'" && q === '') { q = "'"; continue; }
       if (c === '$' && text[j + 1] === "'" && q === '') { q = "$'"; j++; continue; }
+      // A $( ) or a backtick inside a double-quoted string of the body opens a nested scope where quotes restart: its quotes and parentheses cannot be paired here.
+      if (q === '"' && ((c === '$' && text[j + 1] === '(') || c === '`')) { unsure = true; break; }
       if (q === '"') continue;
       // A case pattern, a comment, a here-document, a ${ } expansion or a backtick span can hold a parenthesis that does not close the substitution.
       const wordStart = j === i + 2 || /[\s;&|(]/.test(text[j - 1]);
@@ -314,7 +324,7 @@ function dollarParenCode(text) {
 /* The body of a substitution the scanner cannot close with certainty: everything up to the last `)` before the closing
    double quote of the enclosing string (or the end of the text when it is not quoted), plus the text after each `)` in
    it, so that code after an early `)` is read too. Returns the texts and the index the outer scan resumes from. */
-function dollarParenWide(text, from, quoted) {
+function dollarParenWide(text, from, quoted, close = ')') {
   let limit = text.length;
   if (quoted) {
     let lastQuote = -1;
@@ -324,12 +334,25 @@ function dollarParenWide(text, from, quoted) {
     }
     if (lastQuote >= 0) limit = lastQuote;
   }
-  let end = limit > 0 ? text.lastIndexOf(')', limit - 1) : -1;
+  let end = limit > 0 ? text.lastIndexOf(close, limit - 1) : -1;
   if (end < from) end = limit;
   const body = text.slice(from, end);
   const parts = [body];
-  for (let k = body.indexOf(')'); k >= 0; k = body.indexOf(')', k + 1)) parts.push(body.slice(k + 1));
-  return { parts, last: text[end] === ')' ? end : end - 1 };
+  for (let k = body.indexOf(close); k >= 0; k = body.indexOf(close, k + 1)) parts.push(body.slice(k + 1));
+  return { parts, last: text[end] === close ? end : end - 1 };
+}
+
+/* True when the `$((` whose text after it starts at `from` closes with `))` (arithmetic expansion). When the inner
+   parenthesis closes on its own, or nothing closes it, bash reads a substitution that starts with a subshell. */
+function isArithmetic(text, from) {
+  let depth = 2;
+  for (let j = from; j < text.length; j++) {
+    const c = text[j];
+    if (c === '\\') { j++; continue; }
+    if (c === '(') depth++;
+    else if (c === ')' && --depth === 1) return text[j + 1] === ')';
+  }
+  return false;
 }
 
 /* The folder a command runs in when it is wrapped in env -C / sudo -D: `dirs` are the words of its chdir options in
@@ -845,7 +868,7 @@ function analyze(cmd, depth = 0, known = null) {
     if (innerHit) return innerHit;
   }
   // A command substitution $( ) runs its text as commands even inside double quotes (echo "$(rm -rf ~)"); read them too.
-  if (depth < MAX_DEPTH && text.includes('$(')) {
+  if (depth < MAX_DEPTH && (text.includes('$(') || text.includes('${'))) {
     const inner = dollarParenCode(text);
     const innerHit = inner ? analyze(inner, depth + 1, known) : null;
     if (innerHit) return innerHit;

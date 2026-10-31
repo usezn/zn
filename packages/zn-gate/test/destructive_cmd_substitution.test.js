@@ -101,3 +101,35 @@ test('similar substitutions that run nothing destructive stay allowed', () => {
     assert.equal(checkCommand(c).verdict, 'allow', c);
   }
 });
+
+test('a substitution inside a quoted string of the body, a $(( that is not arithmetic and a ${ cmd; } function substitution are read as commands', () => {
+  for (const c of [
+    'echo "$(echo "$(echo ")")"; rm -rf ~)"',
+    'x="$(echo "$(echo ")")"; rm -rf ~)"',
+    'echo "$(echo "$(echo ")")" && rm -rf ~)"',
+    'echo "$((rm -rf ~); true)"',
+    'echo "$((echo x) ; rm -rf ~)"',
+    'x="$((rm -rf ~) )"',
+    'echo "${ rm -rf ~; }"',
+    'echo ${ rm -rf ~; }',
+    'echo "${| rm -rf ~; }"',
+  ]) {
+    const res = checkCommand(c);
+    assert.equal(res.verdict, 'block', c);
+    assert.equal(res.rule, 'destructive:rm_root_home', c);
+  }
+});
+
+test('their benign twins stay allowed', () => {
+  for (const c of [
+    'echo $((1+2))',
+    'echo "$(date)"',
+    'echo "${x}"',
+    'echo "$(echo "$(date)")"',
+    'echo "$((1+(2*3)))"',
+    'echo "${HOME}"',
+    'echo "$(echo "a)b")"',
+  ]) {
+    assert.equal(checkCommand(c).verdict, 'allow', c);
+  }
+});
