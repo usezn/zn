@@ -576,7 +576,8 @@ function makeTeamOps(ctx) {
         // The log is checked before anything leaves the machine; one that does not verify is never sent.
         const chain = verifyChain ? verifyChain() : { ok: true };
         if (!chain.ok) {
-          out.upload = { status: 'tampered', uploaded: 0, pending: -1, error: chain.error };
+          // A log that could not be read is a read error, never reported as tampering.
+          out.upload = { status: chain.readError ? 'error' : 'tampered', uploaded: 0, pending: -1, error: chain.error };
           return out;
         }
         out.upload = await uploadPending({

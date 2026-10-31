@@ -1,2 +1,2 @@
-zn-gate==1.14.0rc2
+zn-gate==1.14.1
 pydantic-ai-slim==2.57.0

@@ -1,0 +1,102 @@
+{
+  "features": {
+    "mcp": true
+  },
+  "mcp": {
+    "servers": {
+      "zn_fake": {
+        "type": "stdio",
+        "command": "python3",
+        "args": [
+          "/opt/znjob/work/mcp_echo.py"
+        ],
+        "enabled": true,
+        "timeoutMs": 30000
+      },
+      "secrets": {
+        "type": "stdio",
+        "command": "/work/node/bin/node",
+        "args": [
+          "/work/node/lib/node_modules/zn-gate/bin/cli.js",
+          "secrets-mcp",
+          "--agent",
+          "zcode"
+        ],
+        "enabled": true
+      }
+    }
+  },
+  "hooks": {
+    "enabled": true,
+    "events": {
+      "PreToolUse": [
+        {
+          "matcher": "*",
+          "hooks": [
+            {
+              "type": "process",
+              "command": "/work/home/.zn/hooks/zn-hook-zcode.sh",
+              "args": [
+                "PreToolUse"
+              ],
+              "timeoutMs": 30000,
+              "statusMessage": "zn: checking for secrets"
+            }
+          ]
+        }
+      ],
+      "PermissionRequest": [
+        {
+          "matcher": "*",
+          "hooks": [
+            {
+              "type": "process",
+              "command": "/work/home/.zn/hooks/zn-hook-zcode.sh",
+              "args": [
+                "PermissionRequest"
+              ],
+              "timeoutMs": 30000,
+              "statusMessage": "zn: checking for secrets"
+            }
+          ]
+        }
+      ],
+      "UserPromptSubmit": [
+        {
+          "hooks": [
+            {
+              "type": "process",
+              "command": "/work/home/.zn/hooks/zn-hook-zcode.sh",
+              "args": [
+                "UserPromptSubmit"
+              ],
+              "timeoutMs": 30000,
+              "statusMessage": "zn: checking for secrets"
+            }
+          ]
+        }
+      ],
+      "PostToolUse": [
+        {
+          "matcher": "^(Bash|Read|Grep|WebFetch)$|^mcp__.*",
+          "hooks": [
+            {
+              "type": "process",
+              "command": "/work/home/.zn/hooks/zn-hook-zcode.sh",
+              "args": [
+                "PostToolUse"
+              ],
+              "timeoutMs": 30000,
+              "statusMessage": "zn: checking for secrets"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "plugins": {
+    "enabledPlugins": {
+      "zn-gate@usezn": true
+    }
+  }
+}

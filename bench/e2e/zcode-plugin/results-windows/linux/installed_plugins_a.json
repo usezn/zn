@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "plugins": [
+    {
+      "id": "zn-gate@usezn",
+      "name": "zn-gate",
+      "marketplace": "usezn",
+      "version": "1.14.1",
+      "installPath": "/work/home/.zcode/cli/plugins/cache/usezn/zn-gate/1.14.1",
+      "installedAt": "2026-10-30T09:35:07.075Z",
+      "updatedAt": "2026-10-30T09:35:07.075Z",
+      "scope": "user",
+      "source": "./zn-gate",
+      "cacheTransactionId": "64b715fe-9fed-4c67-9f5c-130dd944cc1d"
+    }
+  ]
+}

@@ -115,7 +115,7 @@
   },
   "examplesVersion": {
     "_comment": "The release the examples pin: always one that is published on npm and PyPI. It moves after a release is published (requirements in the PyPI form, 1.14.0rc1 for 1.14.0-rc.1).",
-    "value": "1.14.0-rc.2",
+    "value": "1.14.1",
     "files": [
       {
         "file": "examples/ag2-agent/requirements.txt",
@@ -240,6 +240,36 @@
     }
   ],
   "fields": [
+    {
+      "id": "short description (npm)",
+      "value": "The local security layer for coding agents. zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app. No account, and nothing is sent by default.",
+      "files": [
+        {
+          "file": "packages/zn-gate/package.json",
+          "json": "description"
+        }
+      ]
+    },
+    {
+      "id": "short description (PyPI)",
+      "value": "The local security layer for Python AI agents (LangChain, CrewAI, LlamaIndex, plain tool calling): prompt-injection checks and secret redaction, zero dependencies. No account, and nothing is sent by default.",
+      "files": [
+        {
+          "file": "packages/zn-gate-py/pyproject.toml",
+          "regex": "^description = \"([^\"]+)\""
+        }
+      ]
+    },
+    {
+      "id": "short description (MCP Registry)",
+      "value": "The local security layer for coding agents. No account, and nothing is sent by default.",
+      "files": [
+        {
+          "file": "packages/zn-gate/server.json",
+          "json": "description"
+        }
+      ]
+    },
     {
       "id": "license",
       "value": "MIT",

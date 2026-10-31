@@ -19,6 +19,17 @@ test.after(() => fs.rmSync(home, { recursive: true, force: true }));
 const reset = () => { for (const f of fs.readdirSync(home)) fs.rmSync(path.join(home, f), { force: true }); };
 const capture = async (args, confirm = async () => false) => { let out = ''; const code = await cli.run(args, (s) => { out += s; }, { confirm }); return { code, out }; };
 
+test('a record under a far-future clock keeps history and the future day is not counted', () => {
+  reset();
+  stats.record({ layer: 'hook', agent: 'claude-code', checked: 3 }, { now: new Date('2026-10-14T10:00:00Z') });
+  stats.record({ layer: 'hook', agent: 'claude-code', checked: 5 }, { now: new Date('2099-01-02T03:04:05Z') });
+  const data = JSON.parse(fs.readFileSync(stats.statsFile(), 'utf8'));
+  assert.ok(data.days['2026-10-14'], 'history survives the wrong clock');
+  const s = stats.summary({ days: 30, now: new Date('2026-10-15T10:00:00Z') });
+  assert.equal(s.total.checked, 3);
+  assert.equal(s.since, '2026-10-14');
+});
+
 test('records counts per day, layer and agent; never content', () => {
   reset();
   const now = new Date('2026-10-14T10:00:00Z');
