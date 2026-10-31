@@ -658,7 +658,7 @@ mod tests {
 
     // ---- send_batch against a local stub (127.0.0.1, ephemeral port) ----
 
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
 
     /// One request as the stub saw it.
