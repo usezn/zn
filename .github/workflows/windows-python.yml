@@ -20,9 +20,11 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request, or to next, cancels the run still going for it. Runs for main, release branches,
+# the merge queue and the schedule always complete (each has its own group).
 concurrency:
-  group: windows-python-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: windows-python-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.
@@ -36,7 +38,13 @@ jobs:
   windows-python:
     name: Windows (Python 3.12)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # It also skips when zn CI already runs its full matrix (Windows Python 3.12 included): a pull request
+    # labelled full-ci, and a merge queue into main or a release branch. Only the merge queue into next
+    # and unlabelled pull requests into next need this job.
+    if: >-
+      (github.event_name != 'pull_request' || (github.event.pull_request.draft == false &&
+      !contains(github.event.pull_request.labels.*.name, 'full-ci'))) &&
+      (github.event_name != 'merge_group' || github.event.merge_group.base_ref == 'refs/heads/next')
     runs-on: windows-latest
     timeout-minutes: 20
     defaults:

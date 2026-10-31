@@ -667,6 +667,8 @@ MCP servers are tool servers your agent talks to. zn-shield sits between your ag
 
 **What to do:** open that file at the root of your project and look at the pattern or path in the message. Change or remove the rule if it is wrong. If a teammate added it, ask them.
 
+To see where these rules apply, and what happens when the file is not valid, read [where custom rules apply](../packages/zn-gate/README.md#where-custom-rules-apply).
+
 #### "Output too large to scan in full" / "Input too large to scan in full" / "nested too deeply to check"
 
 **What happened:** zn-gate scans text in windows up to a limit (4 MB for a tool result). Text past it, or nested too deeply to walk, is blocked, because the part that was not scanned could hold an attack.

@@ -1,0 +1,2 @@
+### Security
+- The Python package is now published with `pypa/gh-action-pypi-publish` 1.14.3, which no longer trusts the emSign root certificate that GHSA-5xjx-3w67-w9x9 reports as compromised; that trust store is used for Trusted Publishing and the PyPI attestations. Earlier releases were published with 1.14.2: the files on PyPI for 1.14.1 and 1.15.0-rc.1 match the `SHA256SUMS` signed in their GitHub releases.

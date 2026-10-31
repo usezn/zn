@@ -18,7 +18,7 @@
 
 ## Install
 
-Everything runs on your machine; no account or API key is needed. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. With a Node.js older than 18, the `zn-gate` and `zn` commands stop and say how to install it.
+Everything runs on your machine; no account or API key is needed. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. On Debian or Ubuntu, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages (steps in [docs/first-5-minutes.md](https://github.com/usezn/zn/blob/main/docs/first-5-minutes.md#before-you-start)). With a Node.js older than 18, the `zn-gate` and `zn` commands stop and say how to install it.
 
 **On Alpine Linux, install Node.js with the package manager.** The Node.js builds on nodejs.org do not run on Alpine, so run `apk add nodejs npm` instead. Use Alpine 3.21 or later: 3.21 and 3.22 ship Node.js 22, 3.23 and later ship Node.js 24. Alpine 3.20 ships Node.js 20.15, which is too old for the Claude Code plugin. The `npm` package is in the community repository, so if `npm` is not found, make sure the community repository is listed in `/etc/apk/repositories`.
 
@@ -306,11 +306,36 @@ CONFIDENTIAL_INTERNAL_PROJECT_[A-Z0-9]+
 
 Each non-comment line is a pattern (matched without regard to case) unless it starts with `path:`, `secret:` or is the word `strict`. In `zn.config.json` the same patterns go in `bannedPatterns` and the paths in `forbiddenPaths`.
 
-These files are read by this npm package (CLI, agent hooks and the Node.js library). The Python package does not read them: there, use `strict=True` or `ZN_STRICT=1`.
+These files are read by this npm package (the CLI, the shield and the Node.js library). The agent hooks use them only for the Claude Code output note described below. The Python package does not read them: there, use `strict=True` or `ZN_STRICT=1`. Where the rules apply, and what an invalid file does, is set out in [Where custom rules apply](#where-custom-rules-apply).
 
 Patterns run in time proportional to the text, so a project file cannot make the hooks hang. That is why only this syntax is accepted: literal characters, `.`, classes such as `[a-z]` or `[^x]`, `\d \w \s`, `\b`, `^`, `$`, groups `( )` and `(?: )`, alternation `|`, and the quantifiers `?`, `*`, `+` and `{n}`, `{n,}`, `{n,m}` (counts up to 100). A pattern can be at most 500 steps long once its counts are expanded (for example `a{100}` is 100 steps), and all the patterns of a file together at most 600 steps, so that checking a long text stays fast; a file can hold at most 100 patterns and a pattern at most 500 characters. Matching ignores case for ASCII letters (a-z); letters of other scripts are matched as written. Backreferences, lookahead, lookbehind, named groups, `\p{...}` and a quantifier on a group that already contains one (such as `(a+)+`) are rejected.
 
 If a rules file cannot be read, is not valid JSON, or holds a pattern that is not accepted, zn-gate does not apply half of it. It blocks with a message that names the file, the line or entry and the reason, until you fix the file: edit that line, or delete it. `zn-gate check` lists the errors, and `zn-gate audit` reports them as one finding about the rules file.
+
+### Where custom rules apply
+
+Custom rules apply to MCP calls that go through the shield, and to code that uses the guard. They do not apply in the agent hooks: not to shell commands, file reads, prompts or MCP calls that a hook sees.
+
+- **MCP calls through `zn-gate shield`.** The shield checks the tool descriptions, the arguments the agent sends, and what the tool returns. A matching rule blocks that call or that result.
+- **The guard in your code.** `checkToolCall` and `guardTool` check the text in the tool arguments. `guardTool` also checks the result when you set `checkResult`. `guardTool` throws a `GuardBlockError` by default; `checkToolCall` does not throw and returns a result with `allowed: false`.
+- **Not the agent hooks.** The agent hooks check shell commands and file paths with their own built-in policy. A custom rule does not block a shell command, a file read, a prompt or an MCP call there. In Claude Code only, a match in the output of a web fetch, an MCP call or a shell command adds a note for the agent. The note tells the agent to treat that text as data and not to follow it. The output is not blocked for this reason.
+
+If both files exist, zn-gate reads `.znrules` and ignores `zn.config.json`.
+
+### What an invalid rules file does
+
+If the file cannot be read, is not valid JSON, has the wrong shape, or holds a pattern that zn-gate does not accept, zn-gate applies none of its custom rules. It blocks every shield and guard check that uses them until the file is fixed. The shell hook is not affected.
+
+The shield prints the rule name `custom:invalid_rules` on stderr. The reason, with the file name, the line or entry, and the problem, goes to the evidence log (`zn-gate evidence`). In your code, the `GuardBlockError` message carries the same reason. `zn-gate check` lists every error and exits with code 1.
+
+### Example
+
+```ini
+# .znrules
+ZZ-PROJECT-[0-9]{4}
+```
+
+With this file, a tool call whose arguments contain `ZZ-PROJECT-4821` is blocked by the shield or the guard, with the rule `custom:banned_pattern`. Upper case and lower case both match. A call with the text `list the files in src` is allowed.
 
 ### Local audit log
 

@@ -56,13 +56,20 @@ The check reads command text only. These are **not** covered, and the check lets
 - A script saved first and run later (`curl -o x.sh ... && sh x.sh`), or a download piped into an interpreter that is given a script file (`curl ... | python3 script.py`, which only reads the download as data).
 - Other tools (`rsync --delete`, `git clean`), code in a file or built at run time (a script the agent wrote, `python3 -c "shutil.rmtree(path)"` with a variable), and paths below the top level (`rm -rf /usr/local`).
 - Commands that run inside a container (`docker run ... rm -rf /`) or on another machine (`ssh host "rm -rf /"`).
+- Some shell wrappers and constructs that run a command indirectly are not read.
 - Anything an agent does by writing a file and then running it.
+- A command that comes right after a shell keyword or a block opener. Commands after `{`, `then`, `else`, `do` and `!`, and commands inside backticks, are not read: `{ rm -rf ~; }`, `if true; then rm -rf ~; fi`, `while true; do rm -rf ~; done`, `! rm -rf ~` and `` echo `rm -rf ~` `` pass, while the same command inside `( )`, `$( )`, after `time`, or after `case ... )` is read.
+- A change of folder. The check does not follow where the command runs, so a relative target such as `.` is judged without knowing the folder: `cd ~ && rm -rf .`, `env -C ~ rm -rf .`, `env --chdir=/ rm -rf .` and `sudo -D / rm -rf .` pass, also inside `sh -c "..."`.
+
+We are working on both gaps (the commands after keywords and the changes of folder); they are not fixed in the released versions yet.
 
 For those, use a sandbox, a container or your agent's own permission prompts. This check adds a cheap last barrier for the most common catastrophic mistakes.
 
+Untrusted code should run in a sandbox, such as a container or a virtual machine, not on your own machine. This check does not contain code that you do not trust.
+
 ## How well it works
 
-The test corpus has about 1,000 ordinary developer commands (builds, git, package managers, containers, `rm -rf node_modules dist build target .venv`, `curl -o`, `curl | jq`, edits to `.bashrc`, and many that sit close to the blocked shapes) and about 550 commands with the blocked shapes, written from templates with varied flags, targets and fictitious hosts. On that corpus there are no false positives and no misses; the corpus is written by the same people who wrote the rules, so read it as a regression test, not as an error rate on all real commands. Run `node bench/destructive_policy.js` in the repository to see the numbers, and `--docs` to also check the shell lines of the repository's documentation.
+The test corpus has about 1,000 ordinary developer commands (builds, git, package managers, containers, `rm -rf node_modules dist build target .venv`, `curl -o`, `curl | jq`, edits to `.bashrc`, and many that sit close to the blocked shapes) and about 650 commands with the blocked shapes, written from templates with varied flags, targets and fictitious hosts. On that corpus there are no false positives and no misses. The corpus is written by the same people who wrote the rules, so read it as a regression test, not as an error rate on all real commands. Run `node bench/destructive_policy.js` in the repository to see the numbers, and `--docs` to also check the shell lines of the repository's documentation.
 
 Cost: about 5 microseconds per command for the check itself, and a few microseconds more for a hook decision, which takes about 160 microseconds without it. The check code is loaded the first time a shell command is checked, and not at all when you turn the check off.
 

@@ -6,6 +6,26 @@ You use an AI coding agent (Claude Code, Codex CLI, Cursor, OpenCode, Antigravit
 
 Node.js is the program that runs zn-gate, and LTS (long-term support) is the version line meant for everyday use. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. If `node --version` (it prints your Node.js version) says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command below in your own terminal (the window where you type commands), not through your agent.
 
+On Debian or Ubuntu Linux, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages. Gemini CLI and the Claude Code plugin need an even newer one. For example, with the NodeSource packages for Node.js 22 LTS:
+
+```bash
+sudo apt-get install -y curl
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+node --version
+```
+
+`node --version` should print `v22` followed by numbers. On another Linux system, download Node.js 22 LTS from [nodejs.org](https://nodejs.org/en/download).
+
+## Install your agent first
+
+zn-gate protects an agent that is already installed; it does not install the agent for you. Install the agent from its official site, and sign in with your own account for that agent (zn-gate itself needs no account):
+
+- Codex CLI: run `npm install -g @openai/codex`, then run `codex` and sign in with your OpenAI account. OpenAI's own steps are in the [Codex CLI docs](https://developers.openai.com/codex/cli).
+- Gemini CLI: run `npm install -g @google/gemini-cli` (it needs Node.js 20 or later), then run `gemini` and sign in with your Google account. Google's own steps are in the [Gemini CLI repository](https://github.com/google-gemini/gemini-cli).
+
+If `npm install -g` fails with `EACCES`, use the fix in Troubleshooting, then run the same `npm install -g` command again.
+
 ## 1. Install
 
 ```bash
