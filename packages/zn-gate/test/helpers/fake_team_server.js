@@ -212,11 +212,22 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
     const parsed = m ? INSTALL_TOKEN_RE.exec(m[1]) : null;
     if (!parsed) return null;
     const inst = state.installs.get(parsed[1]);
-    if (!inst || inst.revoked || !inst.tokenHash) return null;
+    if (!inst || inst.revoked || !inst.tokenHash || inst.expired) return null;
     const want = Buffer.from(inst.tokenHash, 'hex');
     const got = Buffer.from(sha256Hex(parsed[2]), 'hex');
     if (want.length !== got.length || !crypto.timingSafeEqual(want, got)) return null;
     return inst;
+  }
+
+  /* The 401 body for a token authInstall refused: the expired one (right secret) gets the code, the rest the plain message. */
+  function unauthorized(req) {
+    const m = /^Bearer (\S+)$/.exec(req.headers.authorization || '');
+    const parsed = m ? INSTALL_TOKEN_RE.exec(m[1]) : null;
+    const inst = parsed ? state.installs.get(parsed[1]) : null;
+    if (inst && inst.expired && !inst.revoked && inst.tokenHash && sha256Hex(parsed[2]) === inst.tokenHash) {
+      return { error: 'This install token expired because this installation was not used for 90 days. Run `zn team leave`, then join again with a new join token from your organization admin (`zn team join <token>`).', code: 'install_token_expired', expired_at: '2026-01-01T00:00:00.000Z' };
+    }
+    return { error: 'Missing or invalid install token' };
   }
 
   /* POST /v1/org/install/leave: the installation revokes itself with its own token (200 revoked/already, 401 otherwise). */
@@ -297,7 +308,7 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
   }
 
   function handleGetPolicy(req, res) {
-    if (!authInstall(req)) return send(res, 401, { error: 'Missing or invalid install token' });
+    if (!authInstall(req)) return send(res, 401, unauthorized(req));
     if (state.policyVersion === 0) return send(res, 404, { error: 'No policy published for this organization' });
     const dayStart = Math.floor(now() / DAY) * DAY;
     const day = new Date(dayStart).toISOString().slice(0, 10).replace(/-/g, '');
@@ -324,7 +335,7 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
 
   function handleIngest(req, res, body) {
     const inst = authInstall(req);
-    if (!inst) return send(res, 401, { error: 'Missing or invalid install token' });
+    if (!inst) return send(res, 401, unauthorized(req));
     if (!isValidIngestBody(body)) return send(res, 400, { error: 'Invalid audit batch' });
     if (body.install_id !== inst.installId) return send(res, 403, { error: 'install_id does not match the token' });
     if (!state.active) return send(res, 402, { error: 'This organization has no active Team subscription' });
@@ -424,6 +435,12 @@ async function startFakeTeamServer({ now = Date.now } = {}) {
       if (!inst) throw new Error('unknown installation');
       inst.revoked = true;
       inst.tokenHash = null;
+    },
+    /** The server's expiry of an install token: policy and upload answer 401 install_token_expired (right secret only). */
+    expireInstall(installId) {
+      const inst = state.installs.get(installId);
+      if (!inst) throw new Error('unknown installation');
+      inst.expired = true;
     },
     /** Forces the answer of POST /v1/org/install/leave: {status, headers?, body?}, {network: true}, or null for the real one. */
     setLeaveMode(mode) {

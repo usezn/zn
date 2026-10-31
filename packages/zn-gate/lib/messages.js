@@ -314,6 +314,12 @@ function teamJoinNoPolicyYet() {
 const TEAM_REMOVED = 'An admin removed this machine from the organization, so it no longer gets the policy. ' +
   'To disconnect it run: zn team leave. To join again, ask your admin for a new token and run: zn team join <token>';
 
+// The install token has a 90-day life that renews every time this machine syncs; it ran out because the machine was
+// not connected for that long. Nothing is lost: the last policy keeps applying and the audit records stay here.
+const TEAM_TOKEN_EXPIRED = 'This machine has not reached the zn server for 90 days, so its install token expired. ' +
+  'The last policy you received still applies and your audit records stay on this machine. ' +
+  'To reconnect, run: zn team leave. Then ask your organization admin for a new token and run: zn team join <token>';
+
 function teamSyncNoNetwork(detail) {
   return withDetails('Could not reach the zn server. Nothing was changed. Check your internet connection and run again: zn team sync', detail);
 }
@@ -349,6 +355,6 @@ module.exports = {
   PINS_USAGE_APPROVE, pinsAgentRefusal, PINS_NEEDS_TERMINAL, PINS_NOT_APPROVED, pinsError,
   TEAM_INVALID_JOIN_TOKEN, TEAM_INVALID_REQUEST, TEAM_NOTHING_TO_APPROVE, TEAM_NOT_ASKED, TEAM_INVALID_ORG_KEY,
   teamJoinFailed, TEAM_JOIN_TOKEN_REJECTED, teamJoinTokenRejected, teamJoinNoNetwork, TEAM_JOIN_NO_TOKEN, teamJoinNoPolicyYet,
-  TEAM_REMOVED, teamSyncNoNetwork, teamSyncInactive, teamNotACommand,
+  TEAM_REMOVED, TEAM_TOKEN_EXPIRED, teamSyncNoNetwork, teamSyncInactive, teamNotACommand,
   DISCONNECT_UNLOCK_FIRST, disconnectVaultNotRemoved, disconnectKeychainLeft, TROUBLESHOOTING_URL, vaultDamaged,
 };

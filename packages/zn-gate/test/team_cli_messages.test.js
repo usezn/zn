@@ -102,6 +102,18 @@ test('a removed installation is told to leave or rejoin, never to retry a sync',
   assert.ok(!/Policy: revoked/.test(r.stdout));
 });
 
+test('an expired install token says it expired and how to join again, not that the machine was removed', async () => {
+  fake.teamSync = async () => ({ policy: { status: 'expired' } });
+  let r = await run(['team', 'sync']);
+  assert.strictEqual(r.code, 1);
+  assert.strictEqual(r.stderr, '[zn] This machine has not reached the zn server for 90 days, so its install token expired. The last policy you received still applies and your audit records stay on this machine. To reconnect, run: zn team leave. Then ask your organization admin for a new token and run: zn team join <token>\n');
+  assert.ok(!/removed/.test(r.stderr) && !/Policy: expired/.test(r.stdout));
+  fake.teamSync = async () => ({ policy: { status: 'updated', version: 3 }, upload: { status: 'expired', uploaded: 0, pending: 2 } });
+  r = await run(['team', 'sync']);
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /install token expired/);
+});
+
 test('sync with no network: no internal code on stdout or stderr, next step given', async () => {
   fake.teamSync = async () => ({ policy: { status: 'offline', error: 'ZN_TEAM_NETWORK' }, upload: { status: 'offline', uploaded: 0, pending: 1 } });
   let r = await run(['team', 'sync']);

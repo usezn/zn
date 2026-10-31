@@ -235,8 +235,9 @@ function isExpected(body) {
 }
 
 /* Maps a failed API call to a status. Status 0 means no answer from the network. */
-function apiFailure(status) {
+function apiFailure(status, body) {
   if (status === 422) return { status: 'rejected', text: 'server rejected the batch (chain check failed)' };
+  if (status === 401 && body && body.code === 'install_token_expired') return { status: 'expired', text: 'install token expired (HTTP 401)' };
   if (status === 401) return { status: 'revoked', text: 'installation was revoked (HTTP 401)' };
   if (status === 402) return { status: 'inactive', text: 'organization has no active subscription (HTTP 402)' };
   if (status === 0) return { status: 'offline', text: 'server unreachable' };
@@ -353,7 +354,7 @@ async function sync(o, ctx) {
         sendable = scan.window;
         continue;
       }
-      outcome = apiFailure(status);
+      outcome = apiFailure(status, err && err.body);
       break;
     }
 

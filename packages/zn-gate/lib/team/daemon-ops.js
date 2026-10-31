@@ -624,7 +624,12 @@ function makeTeamOps(ctx) {
         }
         if (t.revoked_at) await updateTeam((tt) => { tt.revoked_at = null; }, snap);
       } catch (err) {
-        if (err && err.status === 401) {
+        if (err && err.status === 401 && err.body && err.body.code === 'install_token_expired') {
+          // Not a removal: the token ran out after 90 days without a sync. The cached policy keeps applying (enforcement
+          // never relaxes) and nothing is marked revoked; the user is told how to join again.
+          if (!(await isCurrent())) return stale();
+          out.policy = { status: 'expired' };
+        } else if (err && err.status === 401) {
           if (!(await isCurrent())) return stale();
           out.policy = { status: 'revoked' };
           if (!t.revoked_at) await updateTeam((tt) => { tt.revoked_at = new Date().toISOString(); }, snap);
@@ -636,7 +641,7 @@ function makeTeamOps(ctx) {
       // Keep the readable copy in line with the vault (it may have been edited or deleted), only while this is still
       // the membership that started the sync. A copy that cannot be written fails the sync.
       if (!(await ensureCopies(snap, true))) return stale();
-      if (a.upload !== false && out.policy.status !== 'revoked' && !isClosed()) {
+      if (a.upload !== false && out.policy.status !== 'revoked' && out.policy.status !== 'expired' && !isClosed()) {
         const f = files();
         // The log is checked before anything leaves the machine; one that does not verify is never sent.
         const chain = verifyChain ? verifyChain() : { ok: true };

@@ -213,7 +213,8 @@ async function syncCmd() {
   const o = syncOutcome(r);
   // The three failures with one plain cause and one next step: removed, offline, organization inactive.
   const inactive = Boolean(r.upload) && r.upload.status === 'inactive';
-  const special = pol.status === 'revoked' ? 'revoked' : inactive ? 'inactive' : pol.status === 'offline' && !(r.upload && r.upload.status === 'tampered') ? 'offline' : null;
+  const expired = pol.status === 'expired' || (Boolean(r.upload) && r.upload.status === 'expired');
+  const special = pol.status === 'revoked' ? 'revoked' : expired ? 'expired' : inactive ? 'inactive' : pol.status === 'offline' && !(r.upload && r.upload.status === 'tampered') ? 'offline' : null;
   if (!special) out('Policy: ' + (pol.status === 'updated' || pol.status === 'current' ? pol.status + ' (version ' + pol.version + ')' : pol.status + (pol.error ? ': ' + pol.error : '')));
   if (r.upload && !special) out('Audit upload: ' + r.upload.status + ', ' + (r.upload.uploaded || 0) + ' sent, ' + (r.upload.pending > 0 ? r.upload.pending : 0) + ' pending');
   if (r.revocations && r.revocations.pending) out('Revocation: the server has not taken the earlier leave yet (' + r.revocations.pending + ' pending); see `zn team status`.');
@@ -222,6 +223,7 @@ async function syncCmd() {
   if (r.upload && r.upload.status === 'tampered') out('Nothing was uploaded: ' + r.upload.error + '. Keep a copy of the audit log, look into the change, then run `' + znCommand('vault verify --acknowledge') + '` in your own terminal.');
   // Exit 0 only with a valid policy applied and no failed upload.
   if (special === 'revoked') err('[zn] ' + messages.TEAM_REMOVED);
+  else if (special === 'expired') err('[zn] ' + messages.TEAM_TOKEN_EXPIRED);
   else if (special === 'inactive') err('[zn] ' + messages.teamSyncInactive(r.upload.pending));
   else if (special === 'offline') {
     err('[zn] ' + messages.teamSyncNoNetwork().split('\ndetails: ')[0]);

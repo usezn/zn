@@ -11,7 +11,7 @@
  */
 
 const POLICY_OK = new Set(['updated', 'current']);
-const UPLOAD_FAILED = new Set(['offline', 'revoked', 'inactive', 'rejected', 'diverged', 'local_gap', 'error', 'tampered']);
+const UPLOAD_FAILED = new Set(['offline', 'revoked', 'expired', 'inactive', 'rejected', 'diverged', 'local_gap', 'error', 'tampered']);
 
 const short = (s, n) => String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, n);
 
@@ -20,6 +20,7 @@ function policyProblem(pol) {
     case 'none': return 'the organization has not published a policy yet';
     case 'rejected': return 'the downloaded policy was refused' + (pol.error ? ' (' + short(pol.error, 120) + ')' : '');
     case 'revoked': return 'this machine was removed from the organization';
+    case 'expired': return 'the install token expired after 90 days without a sync (the last policy still applies); run `zn team leave`, then join again with a new token from your admin';
     case 'offline': return 'could not reach the zn server';
     case 'stopped': return 'the vault was locked before the sync finished';
     case 'stale': return 'this machine left or changed its organization while the sync was running; nothing was applied';

@@ -249,8 +249,17 @@ patterns are skipped on the machine, and all custom detectors together get
 | No network for longer than the policy's validity | Strict mode: the restrictions keep applying; anything the organization had opened is withdrawn until a fresh policy arrives. `zn team status` says so. |
 | A downloaded policy fails a check (signature, key, organization, expiry, older version, same version with other content) | It is refused and the last accepted policy stays. The refusal is recorded in the audit log. |
 | An admin removes this machine | Uploads stop. `zn team status` shows "removed from org". The last policy applies until it expires, then strict mode. |
+| The install token expires (this machine did not reach the server for 90 days) | `zn team sync` says the token expired and what to run. The last policy keeps applying and the audit records stay on this machine. See "Install token life" below. |
 | The vault is locked | Nothing is downloaded or uploaded until `zn unlock`. The last accepted policy still applies to every use of a secret, which needs the vault unlocked anyway. |
 | `~/.zn/team.json` or `~/.zn/org-policy.json` is deleted or edited | The vault puts them back (see below). |
+
+### Install token life
+
+When you join, this machine gets an install token. It is the credential `zn team sync` uses to download the policy and upload the audit log, and it stays in the encrypted vault.
+
+- **It lasts 90 days and renews by itself.** Every sync that works pushes the expiry to 90 days from that moment (the server only rewrites it when fewer than 60 days are left). A machine that syncs at least once every 90 days never notices.
+- **If it expires** (the machine was off or offline for 90 days), the server answers that the token expired. `zn team sync` then says so and does not call it a removal: the last policy you received keeps applying, nothing is relaxed, and your audit records stay on the machine. Run `zn team leave`, ask your organization admin for a new join token, and run `zn team join <token>`. `zn team leave` still works with an expired token.
+- **Admins** see the expiry of each installation in the installations list of the API (`GET /v1/org/installs`, field `expires_at`). Removing an installation works as before and takes effect at once.
 
 ### The readable copies and the hooks
 
