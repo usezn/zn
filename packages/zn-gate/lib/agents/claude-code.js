@@ -720,4 +720,5 @@ module.exports = {
   configDir,
   hookCommand,
   ourHooks,
+  unknownToolEvent,
 };
