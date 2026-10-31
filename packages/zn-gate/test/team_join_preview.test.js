@@ -53,7 +53,7 @@ test('the dialog names the organization (as reported by the server) and the invi
 
 test('an unusable token and an organization without a subscription stop before the dialog, with an audit record', async () => {
   const a = ops();
-  await assert.rejects(a.o.teamJoin({ join_token: 'znj_' + 'Q'.repeat(40) }), /invalid, expired or used up/);
+  await assert.rejects(a.o.teamJoin({ join_token: 'znj_' + 'Q'.repeat(40) }), /expired, already used or not valid.*zn team join <new token>/);
   assert.strictEqual(a.dialogs.length, 0);
   assert.deepStrictEqual(a.audit.at(-1), { mode: 'set', decision: 'deny', reason: 'team_join_failed' });
   cloud.setOrgActive(false);

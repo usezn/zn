@@ -4,7 +4,7 @@ Set up zn-gate in Cline in two minutes: add it as an MCP server, and what zn-gat
 
 ## Install (no coding needed)
 
-1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart VS Code (or your editor).
+1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart VS Code (or your editor).
 2. In the Cline panel, click the **MCP Servers** icon, open the **Configure** tab and click **Configure MCP Servers**. Cline opens its settings file.
 3. Paste this:
 
