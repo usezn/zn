@@ -201,6 +201,51 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         run: python bench/bench_python.py
 
+  # The Python package on the newest Python with deprecation and resource warnings as errors, in pull requests
+  # too: a call that a future Python removes, or a file or socket left open, fails here instead of in a user's
+  # upgrade. No -X dev: its debug checks multiply the run time and break the linear-time tests.
+  python-warnings:
+    name: Python 3.14 tests with warnings as errors (ubuntu-latest)
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        run: bash .github/scripts/ci-scope.sh
+      - name: Set up Python 3.14
+        if: steps.scope.outputs.run == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install package and test dependencies
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python -m pip install --require-hashes -r .github/ci-test-requirements.txt
+          python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
+      - name: Run pytest with deprecation and resource warnings as errors
+        # pytest reports a file or socket closed by the garbage collector as PytestUnraisableExceptionWarning, not as a
+        # ResourceWarning, so that category is an error too: without it an unclosed file does not fail the job.
+        if: steps.scope.outputs.run == 'true'
+        working-directory: packages/zn-gate-py
+        run: python -W error::DeprecationWarning -W error::ResourceWarning -m pytest tests/ -q -W error::DeprecationWarning -W error::ResourceWarning -W error::pytest.PytestUnraisableExceptionWarning
+
   # The coverage report for the Python package, off the pull request path: "Python 3.12 tests & benchmarks
   # (ubuntu-latest)" above is a required check and runs plain pytest, so the tracing slowdown and the
   # report upload never delay a merge. Runs on pushes to main and next, on the daily schedule and on
