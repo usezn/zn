@@ -452,6 +452,14 @@ zn checks every command and patch before it runs. When one is too large or too d
 
 **What to do:** ask the agent to run it as several shorter commands, or to run the inner command directly instead of a shell inside a shell.
 
+#### "zn: this command builds the name of a file at run time" / "runs shell code built at run time" / "hands a list of files to a program" / "builds file names with more steps than zn can follow"
+
+**What happened:** the command makes up a file name, or shell code, from something zn cannot read before the command runs (a variable that is not set in the command, the output of another program, the input of `xargs` or `while read`), and a protected file (a `.env` with values, a private key, a credential file or zn's own folder) could be behind it. Nothing ran. The third message names the protected file that a `find`, `ls` or list file would give to `cat`, `sed`, `cp` or a similar program.
+
+The last message appears when a command builds names through so many steps (a value that doubles at every step, hundreds of chained expansions) that zn stops following them.
+
+**What to do:** ask the agent to write the file names in the command, or to loop over a fixed list of names. If a list holds the protected file, ask it to leave that file out. A command that only builds text (`echo`, `git commit -m "$(...)"`, `docker run -v "$(pwd)":/app`) is not affected.
+
 #### "zn: this patch was blocked because it writes to `<file>`" / "because it was sent as a shell command"
 
 **What happened:** a patch tried to write a file that holds secrets, or was sent as a shell command (Codex does this with `apply_patch`), which zn cannot check file by file.

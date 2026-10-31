@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-30.1';
+const POLICY_RULES_VERSION = '2026-10-31.11';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2337,6 +2337,37 @@ function shellAssignments(cmd, opts) {
   return { env: Object.keys(out).length ? out : null, unknown };
 }
 
+/* The context hooks/runtime-args.js reads a command with: the files it may judge on the disk and the protected folders. */
+function runtimeContext(opts) {
+  const ctx = opts.ctx;
+  let examples = null;
+  return {
+    home: ctx.home,
+    cwd: ctx.cwd,
+    env: opts.env || process.env,
+    fileDeny(abs) {
+      const c = classifyPath(abs, opts);
+      if (!c || c.kind === 'agent_config') return null;
+      return denialOf(c, abs, opts);
+    },
+    spend: (n) => overBudget(opts.budget, n),
+    // Protected files inside a folder with a name of its own (.aws/credentials), for a word whose folder is partly unknown.
+    examples(writing) {
+      if (!examples) {
+        examples = [];
+        for (const e of [...GLOB_EXAMPLES.map((x) => [path.join(ctx.home, x), x]), ...PROJECT_EXAMPLES.map((x) => [path.join(ctx.cwd, x), x])]) {
+          const c = classifyResolved(e[0], ctx);
+          if (!c || c.kind === 'dotenv') continue;
+          const rel = path.posix.dirname(slash(e[1]));
+          if (rel === '.') continue;
+          examples.push({ abs: slash(e[0]), relDir: rel, kind: c.kind });
+        }
+      }
+      return writing ? examples : examples.filter((x) => x.kind !== 'agent_config');
+    },
+  };
+}
+
 function bashDenialOf(cmd, opts = {}) {
   if (String(cmd || '').length > SHELL_SCAN_CAP) return TOO_LONG_MESSAGE;
   const admin = adminCommand(cmd);
@@ -2376,13 +2407,35 @@ function bashDenialOf(cmd, opts = {}) {
   // A reading that could not be split to the end is refused, not checked in part.
   if (readings.some((r) => r.truncated)) return TOO_MANY_MESSAGE;
   const words = readings.flat();
+  // Arguments the command builds at run time: what it fixes itself is resolved and checked like typed words, what it
+  // does not is refused when a protected file could hide in it (see hooks/runtime-args.js).
+  let runtime = { refuse: null, words: [], codes: [] };
+  // It reads POSIX shell syntax: a PowerShell command line ($x = ..., $(...) as a sub-expression) is checked as before.
+  if (!opts.powershell) {
+    try {
+      runtime = require('./runtime-args').analyse(text, runtimeContext(opts), opts.runtimeSeed);
+    } catch (_) { /* a command the analysis cannot read is checked as before */ }
+  }
+  if (runtime.refuse) return runtime.refuse;
+  words.push(...runtime.words);
   const codes = new Set();
   for (const r of readings) shellCodesOf(r, codes);
-  if (codes.size) {
+  const own = new Set();
+  for (const c of runtime.codes) own.add(c.text);
+  for (const c of own) codes.delete(c);
+  if (codes.size || own.size) {
     if (depth >= SHELL_CODE_DEPTH) return TOO_NESTED_MESSAGE;
     for (const code of codes) {
       if (overBudget(opts.budget, 5)) return TOO_SLOW_MESSAGE;
-      const deny = bashDenialOf(code, { ...opts, depth: depth + 1 });
+      const deny = bashDenialOf(code, { ...opts, depth: depth + 1, runtimeSeed: null });
+      if (deny) return deny;
+    }
+    const done = new Set();
+    for (const c of runtime.codes) {
+      if (done.has(c.text)) continue;
+      done.add(c.text);
+      if (overBudget(opts.budget, 5)) return TOO_SLOW_MESSAGE;
+      const deny = bashDenialOf(c.text, { ...opts, depth: depth + 1, runtimeSeed: { vars: c.vars, positional: c.positional } });
       if (deny) return deny;
     }
   }

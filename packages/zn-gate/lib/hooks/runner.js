@@ -619,7 +619,7 @@ async function decidePre(ev, d, agentId, opts) {
     const original = String(input.command || '');
     const instructionMode = instructionWritesOf(opts);
     const instructionNotice = instructionMode === 'off' ? undefined : {};
-    const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts), instructionNotice });
+    const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts), instructionNotice, powershell: tool === 'powershell' });
     if (deny) return { decision: 'deny', message: deny };
     if (input.scanAsk) {
       return { decision: 'ask', message: input.scanAsk === 'long'

@@ -54,11 +54,48 @@ project, and the locations `CODEX_HOME`, `OPENCODE_CONFIG`,
 `OPENCODE_CONFIG_DIR`, `CLAUDE_CONFIG_DIR` and `XDG_CONFIG_HOME` name). A command that moves,
 removes or enters one of those directories is refused, and so is a write to a
 file in it. This is best effort: a write the hooks cannot read as a word of the
-command (a path built inside a script, in inline code such as
-`python -c "open(...)"`, or with a variable set earlier in the same command) is
-not seen. Paths are checked after `~`, variables and symlinks are resolved,
-and globs and brace lists are checked against the files that exist now and
-against the names they could match.
+command (a path built inside a script or in inline code such as
+`python -c "open(...)"`) is not seen. A path the command builds when it runs is
+read when the command itself fixes it, and refused when it does not and a
+protected file could be behind it (see "Names built at run time" below). Paths
+are checked after `~`, variables and symlinks are resolved, and globs and brace
+lists are checked against the files that exist now and against the names they
+could match.
+
+### Names built at run time
+
+The hooks read a command a second time, like a small shell that never runs
+anything. What the command itself fixes is worked out and then checked like a
+name the agent typed (a `.env` with values, a private key, a credential file,
+zn's own folder): a variable set earlier in the same command, a `for` loop over
+a fixed list, an array, `${name/x/y}` and the other `${...}` forms,
+`$(echo ...)`, `$(printf ...)`, `$(basename ...)`, `read`, `xargs` and `while
+read` fed by known text or by a file the command does not also write, and `eval`
+or `sh -c` with known text.
+
+What the command does not fix is refused when a protected file could be behind
+it, in any command:
+
+- a name that is partly unknown and could be a protected one (`.e$x`,
+  `$dir/.env`, `~/.aws/$f`, `$key.pem`);
+- a name that is entirely unknown (`$f`, the output of another program, input
+  from `xargs` or `while read` fed by an unknown list) given to a program that
+  shows, copies or sends the files it gets (`cat`, `head`, `sed`, `awk`, `cp`,
+  `tar`, `scp`, `rsync`, `curl -T`, `source`, and similar);
+- `eval`, `sh -c` or `trap` with code built from something unknown (the usual
+  set-up commands, such as `eval "$(ssh-agent -s)"`, are allowed).
+
+A list from `find`, `ls`, `grep -l` or a file on the disk is looked up and
+refused only when it holds a protected file. A list from `git ls-files`,
+`git diff --name-only`, `fd` or `rg --files` is the project's own files and is
+not looked up, and neither is output that is never a file name (`date`,
+`git rev-parse`, `mktemp`). A variable that is set neither in the command nor in
+the environment counts as unknown.
+
+Not covered: a program whose own name is built at run time (`$CMD file`), the
+code inside `python -c` or `node -e` beyond the words it spells out, and what a
+script file does when it runs. Keep secrets out of plain-text files
+(`zn-gate env shadow .env`) so that there is nothing to read.
 
 The hooks also ask before the agent writes to the files where it keeps memory and
 standing instructions: `MEMORY.md`, `SOUL.md`, `AGENTS.md`, `CLAUDE.md`,
