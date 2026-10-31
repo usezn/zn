@@ -132,6 +132,92 @@ pub fn audit_db_problem(db_path: &str, raw: &str, probe: Option<ErrorKind>) -> S
     }
 }
 
+/// An explicit `--config` file that is not there.
+pub fn config_missing(file: &str) -> String {
+    format!(
+        "the settings file {file} does not exist. Check the path, or create a settings file with: zn init"
+    )
+}
+
+/// An explicit `--config` file that is not JSON.
+pub fn config_not_json(file: &str) -> String {
+    format!(
+        "the settings file {file} is not a JSON file. zn reads JSON only, so the name must end in .json (for example zn.json). Create one with: zn init"
+    )
+}
+
+/// A setting in the settings file that zn does not know and ignored.
+pub fn unknown_setting(file: &str, setting: &str, suggestion: Option<&str>) -> String {
+    match suggestion {
+        Some(s) => format!(
+            "{file}: unknown setting \"{setting}\" was ignored, did you mean \"{s}\"?"
+        ),
+        None => format!(
+            "{file}: unknown setting \"{setting}\" was ignored. The settings file that `zn init` writes lists every setting zn knows."
+        ),
+    }
+}
+
+/// `ZN_PORT` is not a port number, so the port from the settings is kept.
+pub fn invalid_port_env(value: &str, fallback: u16) -> String {
+    format!(
+        "ZN_PORT=\"{value}\" is not a valid port number (0-65535), so it was ignored. zn uses port {fallback} instead."
+    )
+}
+
+/// An upstream MCP server whose command is not on the allowed list.
+pub fn mcp_command_not_allowed(
+    server: &str,
+    command: &str,
+    allowed: &[&str],
+    file: Option<&str>,
+) -> String {
+    let place = file
+        .map(|f| format!(" in {f}"))
+        .unwrap_or_else(|| " in your MCP servers file".to_string());
+    format!(
+        "MCP server \"{server}\" was skipped: \"{command}\" is not an allowed command. zn only starts: {}. Point the server at one of those{place} (for example \"command\": \"npx\").",
+        allowed.join(", ")
+    )
+}
+
+/// An upstream MCP server with neither a command nor a URL.
+pub fn mcp_server_incomplete(server: &str, file: Option<&str>) -> String {
+    let place = file.map(|f| format!(" in {f}")).unwrap_or_default();
+    format!(
+        "MCP server \"{server}\" was skipped: it has neither a \"command\" nor a \"url\"{place}."
+    )
+}
+
+/// The MCP servers file exists but cannot be used.
+pub fn mcp_file_unreadable(file: &str, reason: &str) -> String {
+    format!(
+        "zn could not read the MCP servers file {file}: {reason}. No MCP servers are loaded from it until it is fixed."
+    )
+}
+
+/// A WebSocket MCP server did not answer.
+pub fn mcp_not_reached(server: &str, url: &str, attempts: u32, reason: &str) -> String {
+    format!(
+        "zn could not reach MCP server \"{server}\" at {url} after {attempts} attempts ({reason}). Check that the server is running and that the url in your MCP servers file is right."
+    )
+}
+
+/// A stdio MCP server could not be started.
+pub fn mcp_not_started(server: &str, command: &str, reason: &str) -> String {
+    format!(
+        "zn could not start MCP server \"{server}\" (command \"{command}\"): {}. Check that the command is installed and on your PATH.",
+        plain_text(reason)
+    )
+}
+
+/// What `zn start` does with the upstream servers it found.
+pub fn mcp_not_forwarded(count: usize) -> String {
+    format!(
+        "{count} upstream MCP server(s) found in your MCP servers file, but `zn start` does not forward calls to them. It checks each tool call it reads on stdin and writes the checked message to stdout."
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +303,36 @@ mod tests {
             Some(ErrorKind::NotFound),
         );
         assert!(missing.contains("does not exist"));
+    }
+
+    #[test]
+    fn settings_file_messages_say_what_to_do() {
+        assert!(config_missing("/w/nope.json").contains("does not exist"));
+        assert!(config_missing("/w/nope.json").contains("zn init"));
+        assert!(config_not_json("/w/zn.toml").contains("not a JSON file"));
+        let u = unknown_setting("zn.json", "server.prot", Some("server.port"));
+        assert!(u.contains("\"server.prot\" was ignored") && u.contains("\"server.port\""));
+        let p = invalid_port_env("abc", 9090);
+        assert!(p.contains("\"abc\"") && p.contains("9090"));
+    }
+
+    #[test]
+    fn mcp_messages_name_the_server_the_command_and_the_list() {
+        let m = mcp_command_not_allowed(
+            "demo",
+            "/x/srv",
+            &["node", "npx"],
+            Some("/h/mcp_servers.json"),
+        );
+        assert!(m.contains("\"demo\"") && m.contains("/x/srv") && m.contains("node, npx"));
+        assert!(m.contains("/h/mcp_servers.json"));
+        assert!(!m.contains('['));
+        assert!(mcp_file_unreadable("/h/m.json", "the file ends too early").contains("/h/m.json"));
+        assert!(mcp_not_reached("a", "ws://192.0.2.1:1", 5, "refused").contains("ws://192.0.2.1:1"));
+        assert!(
+            mcp_not_started("a", "node", "No such file or directory (os error 2)")
+                .contains("No such file or directory.")
+        );
+        assert!(mcp_not_forwarded(2).contains("does not forward"));
     }
 }

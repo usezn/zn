@@ -7,6 +7,7 @@ pub mod a2a;
 pub mod ai;
 pub mod audit;
 pub mod auth;
+pub mod bounded_line;
 pub mod config;
 pub mod crypto;
 pub mod engine;

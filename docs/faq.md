@@ -15,7 +15,7 @@ zn-gate refuses to uninstall when an agent or a script runs it, and zn's hooks
 ### 1. How do I update zn-gate?
 
 Run `npm install -g zn-gate` (npm is the installer that comes with Node.js; `-g`
-installs for the whole computer), and `pip install -U zn-gate` (pip is Python's
+installs it for your user account, so you can run it from any folder), and `pip install -U zn-gate` (pip is Python's
 installer) if you use the Python package. Then run `zn-gate check`: every agent that is set up should say **OK**.
 If you only ever run `npx -y zn-gate ...` (npx runs a package without installing
 it), there is nothing to update.

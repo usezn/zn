@@ -1,0 +1,18 @@
+{
+ "rc": 0,
+ "dur_s": 4.8,
+ "requests": 2,
+ "tool_msgs": [
+  "zn: Zcode settings and hooks (/work/home/.zcode/cli/config.json) is protected: an agent may not change how zn and its hooks run. Ask the user to make this change."
+ ],
+ "proj_files": [
+  ".env",
+  "a.txt"
+ ],
+ "outcomes": [
+  "success",
+  "failed",
+  "blocked",
+  "failed"
+ ]
+}

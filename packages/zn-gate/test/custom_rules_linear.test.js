@@ -11,7 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const rules = require('../lib/rules');
 const { compileCustomPattern, MAX_PATTERN_LENGTH, MAX_PATTERNS } = require('../lib/linear-regex');
-const { budget } = require('./helpers/time_budget');
+const { budget, cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 // Pieces are joined at run time so the test file holds no ready-made adversarial expression.
 const NESTED = ['(a+)', '+$'].join('');
@@ -33,9 +33,9 @@ function inProject(files, fn) {
 }
 
 function timed(fn) {
-  const t0 = process.hrtime.bigint();
+  const t0 = cpuNow();
   const out = fn();
-  return { out, ms: Number(process.hrtime.bigint() - t0) / 1e6 };
+  return { out, ms: cpuMsSince(t0) };
 }
 
 test('a normal custom pattern still matches, ignoring case', () => {

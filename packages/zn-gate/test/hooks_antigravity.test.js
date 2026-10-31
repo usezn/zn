@@ -232,7 +232,7 @@ test('install (user, Windows) writes a command with no quotes or spaces inside a
   assert.ok(!/["']/.test(command));
   const script = windowsCommandScript(command);
   assert.match(script, /^\$ProgressPreference='SilentlyContinue'; \$zt=0; \$za = .*?function zf\(\$x\) \{.*?return \$null \}; if \(\[System\.IO\.File\]::Exists\('C:\/Program Files\/nodejs\/node\.exe'\) -and \[System\.IO\.File\]::Exists\('C:\/Users\/a b\/zn\/lib\/hooks\/runner\.js'\)\) \{ \$zt=1; & 'C:\/Program Files\/nodejs\/node\.exe' 'C:\/Users\/a b\/zn\/lib\/hooks\/runner\.js' antigravity; /);
-  assert.match(script, /"decision":"deny".*zn hooks install antigravity/);
+  assert.match(script, /"decision":"deny".*zn\.cmd hooks install antigravity/);
   assert.ok(cfg.isOurs(command, 'antigravity'));
   // zn-gate check and zn audit read it in the same shape as the -Command form.
   // Other agents keep the readable -Command form for the same paths.

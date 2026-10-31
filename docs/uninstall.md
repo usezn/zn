@@ -53,7 +53,7 @@ claude plugin uninstall zn-gate@usezn
 
 Or, inside Claude Code, type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
 
-### Hooks (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, or Claude Code without the plugin)
+### Hooks (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, Gemini CLI, Copilot CLI, or Claude Code without the plugin)
 
 ```bash
 npx -y zn-gate hooks uninstall claude-code
@@ -83,7 +83,7 @@ zn-gate keeps the vault and its settings in a `.zn` folder in your home folder. 
 
 ### The program itself
 
-`npm` is the installer that comes with Node.js, and `-g` means it was installed for the whole computer.
+`npm` is the installer that comes with Node.js, and `-g` means it was installed for your user account, so you can run it from any folder.
 
 ```bash
 npm uninstall -g zn-gate
