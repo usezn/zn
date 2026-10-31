@@ -4,6 +4,26 @@ Install methods by operating system, with the command that verifies each one. Ev
 taken from [compat.md](compat.md) and [first-5-minutes.md](first-5-minutes.md); read those pages for the full
 details. Run every command in your own terminal, not through your agent.
 
+## How to read this table
+
+Each row is one way to install zn, or one operating system. The "Command" column is what you run; the
+"Verify with" column is the command that shows the install worked. Run each command in your own terminal, not
+through your agent. The Windows row only summarizes what [compat.md](compat.md) says per agent, so read that page
+before you rely on it.
+
+Notation used in the tables:
+
+| Notation | Meaning |
+|---|---|
+| `code font` | A command or value to type exactly as shown. |
+| `<agent>` | A placeholder: replace it with one agent name from the "Hooks for one agent" row, such as `claude-code`. |
+| `exits with 0` | The command ended without a failure; for `npx -y zn-gate test`, all built-in examples passed. |
+| `NOT protected` | The output of `check` when the hook did not stop the read of the fake key. See [first-5-minutes.md](first-5-minutes.md#2-check-that-it-worked). |
+| "one end-to-end run" | A single run of the agent itself on Windows Server 2022, not part of CI. See the evidence link in [compat.md](compat.md). |
+| "not tested" | No run was made, so the page makes no claim for it. |
+| "not verified by us" | We have not checked it ourselves; see the Antigravity notes in [compat.md](compat.md). |
+| "No separate install steps" | The same commands as in the first table apply on that system. |
+
 ## Install methods and how to verify them
 
 | Install method | Command | Verify with |
