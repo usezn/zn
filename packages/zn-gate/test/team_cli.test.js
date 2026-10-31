@@ -88,7 +88,7 @@ test('join passes the options through and reports the policy that came with it',
 test('join to an organization without a name shows the id; an organization with no policy yet leaves the join unfinished (exit 1)', async () => {
   fake.teamJoin = async () => ({ org: 'org_Example12345678', install_id: 'inst-0002' });
   fake.teamSync = async () => ({ policy: { status: 'none' } });
-  const r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'b'.repeat(32)]));
+  const r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'b'.repeat(32) } }));
   assert.strictEqual(r.code, 1);
   assert.match(r.stdout, /^Joined org_Example12345678\. Installation inst-0002\./);
   assert.match(r.stdout, /Policy: none\./);
@@ -99,7 +99,7 @@ test('join to an organization without a name shows the id; an organization with 
 test('join with a policy that is already current (a reconnect) is complete', async () => {
   fake.teamJoin = async () => ({ org: 'org_Example12345678', install_id: 'inst-0002' });
   fake.teamSync = async () => ({ policy: { status: 'current', version: 4 } });
-  const r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'b'.repeat(32)]));
+  const r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'b'.repeat(32) } }));
   assert.strictEqual(r.code, 0);
   assert.strictEqual(r.stderr, '');
 });
@@ -107,14 +107,14 @@ test('join with a policy that is already current (a reconnect) is complete', asy
 test('join exits 1 when the first policy download fails (offline) or the policy is refused', async () => {
   fake.teamJoin = async () => ({ org: 'org_Example12345678', install_id: 'inst-0003' });
   fake.teamSync = async () => { throw new Error('could not reach team.example.invalid'); };
-  let r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'c'.repeat(32)]));
+  let r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'c'.repeat(32) } }));
   assert.strictEqual(r.code, 1);
   assert.match(r.stdout, /Joined org_Example12345678\./);
   assert.match(r.stdout, /Policy: not downloaded yet \(could not reach team\.example\.invalid\)\./);
   assert.match(r.stderr, /The join is not finished: .*\(not downloaded yet \(could not reach team\.example\.invalid\)\)\./);
   for (const policyState of [{ status: 'offline', error: 'ZN_TEAM_NETWORK' }, { status: 'rejected', error: 'bad signature' }, { status: 'revoked' }]) {
     fake.teamSync = async () => ({ policy: policyState, upload: null });
-    r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'c'.repeat(32)]));
+    r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'c'.repeat(32) } }));
     assert.strictEqual(r.code, 1, policyState.status);
     assert.match(r.stderr, /The join is not finished/);
   }
@@ -122,16 +122,16 @@ test('join exits 1 when the first policy download fails (offline) or the policy 
 
 test('a failed join exits 1 and names the reason; a locked vault adds the unlock hint', async () => {
   fake.teamJoin = async () => { throw new Error('join failed (HTTP 403)'); };
-  let r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'd'.repeat(32)]));
+  let r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'd'.repeat(32) } }));
   assert.strictEqual(r.code, 1);
   assert.strictEqual(r.stderr, '[zn] join failed (HTTP 403)\n');
   fake.teamJoin = async () => { throw Object.assign(new Error('vault is locked'), { code: CODES.LOCKED }); };
-  r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'd'.repeat(32)]));
+  r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'd'.repeat(32) } }));
   assert.strictEqual(r.code, 1);
   assert.match(r.stderr, /^\[zn\] vault is locked; run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`\n$/);
   // A message that already says how to unlock is not given the hint a second time.
   fake.teamJoin = async () => { throw Object.assign(new Error('vault is locked; run `zn unlock`'), { code: CODES.LOCKED }); };
-  r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'd'.repeat(32)]));
+  r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'd'.repeat(32) } }));
   assert.strictEqual(r.stderr, '[zn] vault is locked; run `zn unlock`\n');
 });
 
@@ -307,7 +307,7 @@ test('join asks to send the earlier audit log only with --include-history', asyn
   r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'e'.repeat(32), '--agent', 'codex']));
   assert.ok(!('include_history' in joinArgs), 'no flag, no consent');
   r = await capture(() => runTeamCommand(['team', '--help']));
-  assert.match(r.stdout, /zn team join <token> \[--api URL\] \[--agent ID\] \[--include-history\]/);
+  assert.match(r.stdout, /zn team join <token> \| zn team join - \| ZN_TEAM_JOIN_TOKEN=\.\.\. zn team join \[--api URL\] \[--agent ID\] \[--include-history\]/);
 });
 
 test('status counts only the records after the join as pending', async () => {
