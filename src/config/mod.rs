@@ -125,6 +125,17 @@ pub struct ServerConfig {
     /// A larger frame closes the connection.
     #[serde(default = "default_ws_max_frame_bytes")]
     pub ws_max_frame_bytes: usize,
+
+    /// Seconds a management API connection may go without receiving a byte before it is closed
+    /// (default 900, 15 minutes; 0 means the default). It ends an SSE stream or WebSocket session
+    /// that nobody uses.
+    #[serde(default = "default_session_idle_timeout_secs")]
+    pub session_idle_timeout_secs: u64,
+
+    /// Seconds a write to a management API client may stay blocked (a client that does not read)
+    /// before the connection is closed (default 30; 0 means the default).
+    #[serde(default = "default_write_timeout_secs")]
+    pub write_timeout_secs: u64,
 }
 
 impl Default for ServerConfig {
@@ -135,6 +146,8 @@ impl Default for ServerConfig {
             channel_capacity: default_channel_capacity(),
             ws_max_message_bytes: default_ws_max_message_bytes(),
             ws_max_frame_bytes: default_ws_max_frame_bytes(),
+            session_idle_timeout_secs: default_session_idle_timeout_secs(),
+            write_timeout_secs: default_write_timeout_secs(),
         }
     }
 }
@@ -147,6 +160,12 @@ fn default_ws_max_message_bytes() -> usize {
 }
 fn default_ws_max_frame_bytes() -> usize {
     1024 * 1024
+}
+fn default_session_idle_timeout_secs() -> u64 {
+    900
+}
+fn default_write_timeout_secs() -> u64 {
+    30
 }
 fn default_bind_address() -> String {
     "127.0.0.1".to_string()
@@ -768,20 +787,36 @@ impl ZnConfig {
         })
     }
 
-    /// Load configuration from file with environment variable overrides
+    /// Load configuration from file with environment variable overrides.
+    /// Warnings about settings that were ignored are dropped here; use
+    /// `load_with_notices` to show them.
     pub fn load(path: Option<&Path>) -> Result<Self> {
+        Self::load_with_notices(path).map(|(config, _)| config)
+    }
+
+    /// Like `load`, and also returns plain-English warnings for settings that
+    /// zn ignored: unknown keys in the file and an invalid `ZN_PORT`.
+    ///
+    /// An explicit `path` must exist and must be a `.json` file; otherwise the
+    /// call fails with a message that says what to do.
+    pub fn load_with_notices(path: Option<&Path>) -> Result<(Self, Vec<String>)> {
+        let mut notices = Vec::new();
         let mut config = if let Some(p) = path {
-            if p.exists() {
-                let content = Self::read_settings_file(p)?;
-                if p.extension().map(|e| e == "json").unwrap_or(false) {
-                    Self::parse_text(&crate::user_errors::display_path(p), &content)?
-                } else {
-                    // Default to JSON if extension is unknown
-                    serde_json::from_str(&content).unwrap_or_default()
-                }
-            } else {
-                Self::default()
+            let shown = crate::user_errors::display_path(p);
+            let is_json = p
+                .extension()
+                .map(|e| e.eq_ignore_ascii_case("json"))
+                .unwrap_or(false);
+            if !is_json {
+                return Err(anyhow!(crate::user_errors::config_not_json(&shown)));
             }
+            if !p.exists() {
+                return Err(anyhow!(crate::user_errors::config_missing(&shown)));
+            }
+            let content = Self::read_settings_file(p)?;
+            let config = Self::parse_text(&shown, &content)?;
+            notices.extend(unknown_setting_notices(&shown, &content));
+            config
         } else {
             // Try to load from default locations
             let config_options = ["zn.json", "zn.config.json", ".zn.json"];
@@ -789,11 +824,10 @@ impl ZnConfig {
             for option in config_options {
                 let option_path = Path::new(option);
                 if option_path.exists() {
+                    let shown = crate::user_errors::display_path(option_path);
                     let content = Self::read_settings_file(option_path)?;
-                    found = Some(Self::parse_text(
-                        &crate::user_errors::display_path(option_path),
-                        &content,
-                    )?);
+                    found = Some(Self::parse_text(&shown, &content)?);
+                    notices.extend(unknown_setting_notices(&shown, &content));
                     break;
                 }
             }
@@ -801,20 +835,24 @@ impl ZnConfig {
         };
 
         // Override with environment variables
-        config.apply_env_overrides();
+        config.apply_env_overrides(&mut notices);
 
-        Ok(config)
+        Ok((config, notices))
     }
 
     /// Apply environment variable overrides
-    fn apply_env_overrides(&mut self) {
+    fn apply_env_overrides(&mut self, notices: &mut Vec<String>) {
         if let Ok(env) = std::env::var("ZN_ENV") {
             self.environment = env;
         }
 
         if let Ok(port) = std::env::var("ZN_PORT") {
-            if let Ok(p) = port.parse() {
-                self.server.port = p;
+            match port.trim().parse() {
+                Ok(p) => self.server.port = p,
+                Err(_) => notices.push(crate::user_errors::invalid_port_env(
+                    &port,
+                    self.server.port,
+                )),
             }
         }
 
@@ -1125,6 +1163,128 @@ fn find_bad_setting(content: &str) -> Option<String> {
     None
 }
 
+/// Every setting name zn knows, as dotted paths (`server.port`), taken from
+/// the default configuration so the list can never fall behind the structs.
+fn known_setting_paths() -> Vec<String> {
+    fn walk(prefix: &str, value: &serde_json::Value, out: &mut Vec<String>) {
+        if let Some(map) = value.as_object() {
+            for (key, inner) in map {
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                out.push(path.clone());
+                walk(&path, inner, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    if let Ok(value) = serde_json::to_value(ZnConfig::default()) {
+        walk("", &value, &mut out);
+    }
+    out
+}
+
+/// Settings in `content` that zn does not know, as dotted paths. Keys that
+/// start with `_` or `$` (comments, `$schema`) are not reported.
+pub fn unknown_settings(content: &str) -> Vec<String> {
+    fn walk(
+        prefix: &str,
+        file: &serde_json::Value,
+        known: &serde_json::Value,
+        out: &mut Vec<String>,
+    ) {
+        let (Some(file_map), Some(known_map)) = (file.as_object(), known.as_object()) else {
+            return;
+        };
+        for (key, inner) in file_map {
+            if key.starts_with('_') || key.starts_with('$') {
+                continue;
+            }
+            let path = if prefix.is_empty() {
+                key.clone()
+            } else {
+                format!("{prefix}.{key}")
+            };
+            match known_map.get(key) {
+                None => out.push(path),
+                Some(known_inner) => walk(&path, inner, known_inner, out),
+            }
+        }
+    }
+    let (Ok(file), Ok(known)) = (
+        serde_json::from_str::<serde_json::Value>(content),
+        serde_json::to_value(ZnConfig::default()),
+    ) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    walk("", &file, &known, &mut out);
+    out
+}
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            cur.push((prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1));
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
+/// The known setting that `unknown` was most likely meant to be: a name close
+/// to it in the same section, or else the same name in another section.
+fn suggest_setting(unknown: &str, known: &[String]) -> Option<String> {
+    let (section, last) = match unknown.rfind('.') {
+        Some(i) => (&unknown[..i], &unknown[i + 1..]),
+        None => ("", unknown),
+    };
+    let limit = if last.chars().count() <= 3 { 1 } else { 2 };
+    let mut best: Option<(usize, &String)> = None;
+    for k in known {
+        let (k_section, k_last) = match k.rfind('.') {
+            Some(i) => (&k[..i], &k[i + 1..]),
+            None => ("", k.as_str()),
+        };
+        if k_section != section {
+            continue;
+        }
+        let d = edit_distance(&last.to_lowercase(), &k_last.to_lowercase());
+        if d <= limit && best.map(|(bd, _)| d < bd).unwrap_or(true) {
+            best = Some((d, k));
+        }
+    }
+    if let Some((_, k)) = best {
+        return Some(k.clone());
+    }
+    known
+        .iter()
+        .find(|k| k.rsplit('.').next() == Some(last))
+        .cloned()
+}
+
+/// One warning per unknown setting in `content`.
+fn unknown_setting_notices(file: &str, content: &str) -> Vec<String> {
+    let unknown = unknown_settings(content);
+    if unknown.is_empty() {
+        return Vec::new();
+    }
+    let known = known_setting_paths();
+    unknown
+        .iter()
+        .map(|u| {
+            crate::user_errors::unknown_setting(file, u, suggest_setting(u, &known).as_deref())
+        })
+        .collect()
+}
+
 /// Plain-English text for a settings file that cannot be parsed: the file, the
 /// setting if it is known, the line, and what to do.
 pub fn config_parse_problem(file: &str, content: &str, err: &serde_json::Error) -> String {
@@ -1371,5 +1531,90 @@ mod parse_message_tests {
         let msg = err.to_string();
         assert!(msg.contains("bad.json"), "{msg}");
         assert!(msg.contains("server.port"), "{msg}");
+    }
+
+    #[test]
+    fn a_misspelled_setting_is_reported_with_a_suggestion() {
+        let notices = unknown_setting_notices("zn.json", "{\"server\": {\"prot\": 1}}");
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(
+            notices[0].contains("\"server.prot\" was ignored"),
+            "{notices:?}"
+        );
+        assert!(
+            notices[0].contains("did you mean \"server.port\""),
+            "{notices:?}"
+        );
+    }
+
+    #[test]
+    fn a_setting_in_the_wrong_section_points_to_the_right_one() {
+        let notices = unknown_setting_notices("zn.json", "{\"port\": 1}");
+        assert!(
+            notices[0].contains("did you mean \"server.port\""),
+            "{notices:?}"
+        );
+    }
+
+    #[test]
+    fn an_unrelated_setting_gets_no_guess() {
+        let notices = unknown_setting_notices("zn.json", "{\"flavour\": 1}");
+        assert!(
+            notices[0].contains("\"flavour\" was ignored"),
+            "{notices:?}"
+        );
+        assert!(!notices[0].contains("did you mean"), "{notices:?}");
+    }
+
+    #[test]
+    fn the_file_zn_init_writes_has_no_unknown_settings() {
+        let json = serde_json::to_string_pretty(&ZnConfig::init_template()).expect("json");
+        assert!(unknown_settings(&json).is_empty());
+    }
+
+    #[test]
+    fn comment_and_schema_keys_are_not_reported() {
+        assert!(unknown_settings("{\"$schema\": \"x\", \"_note\": \"y\"}").is_empty());
+    }
+
+    #[test]
+    fn a_missing_config_file_is_an_error() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let err = ZnConfig::load(Some(&dir.path().join("nope.json"))).expect_err("must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("nope.json") && msg.contains("does not exist"),
+            "{msg}"
+        );
+        assert!(msg.contains("zn init"), "{msg}");
+    }
+
+    #[test]
+    fn a_config_file_that_is_not_json_is_an_error() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("zn.toml");
+        std::fs::write(&file, "port = 1").expect("write");
+        let err = ZnConfig::load(Some(&file)).expect_err("must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("zn.toml") && msg.contains("not a JSON file"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn an_invalid_port_variable_is_reported_and_the_port_is_kept() {
+        let mut config = ZnConfig::default();
+        config.server.port = 9090;
+        let mut notices = Vec::new();
+        std::env::set_var("ZN_PORT", "abc");
+        config.apply_env_overrides(&mut notices);
+        std::env::remove_var("ZN_PORT");
+        assert_eq!(config.server.port, 9090);
+        assert_eq!(notices.len(), 1);
+        assert!(
+            notices[0].contains("ZN_PORT=\"abc\"") && notices[0].contains("9090"),
+            "{notices:?}"
+        );
     }
 }

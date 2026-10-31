@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-10-30.1",
+      "version": "2026-10-31.1",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -47,13 +47,13 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "e1dbb78a61a8877953a4417daf03de3d73e78c933146405f378195bb9e35ccb5",
+        "lib/rules.js": "506365876370a0a5dc67f06c79a31d30026f2bbd5190fe660274e43677b12d96",
         "lib/mcp-secrets.js": "1a051cdb7ac9cd04b46494a2efe0aa90ab136a5e866d2dbf42d4431888ab7487"
       }
     },
     "scrub": {
       "version_const": "SCRUB_RULES_VERSION",
-      "version": "2026-10-24.1",
+      "version": "2026-10-30.2",
       "ids": [
         "AGE_SECRET_KEY",
         "ALIBABA_KEY_ID",
@@ -150,7 +150,7 @@
         "exact.variants"
       ],
       "sha256": {
-        "lib/scrub/patterns.js": "ce5ad532a50614e1eca3f62380c78606bdeee37c7105f8d713c2d17db7418a1a",
+        "lib/scrub/patterns.js": "13ccda2d8f032ce53403902ba0f85b8b261a29cab213db7bff9c326bc1dfec28",
         "lib/scrub/exact.js": "cc4344ace825676514a2edac385a013b29fb14faed5bc1cd3c779d0f8587eddd"
       }
     },
@@ -211,7 +211,7 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-10-29.6",
+      "version": "2026-10-30.1",
       "ids": [
         "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
@@ -241,8 +241,8 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "02f92c690d58e7f8e76df7a4d4ffa88c8febc0e747c5d628f114f3df24afb753",
-        "lib/broker/files.js": "61d2808cadf534094cdc3a9ac686149e8f4e3477dc7bd7890f5d91a2f72f604f",
+        "lib/hooks/policy.js": "530727685181e36c05830135a04fd44b0e6772ed906a1992f50084a8929e75e9",
+        "lib/broker/files.js": "f74250b2509bc7451865279da3daff9b1be5e0697cb7d275f0b0871b35b0893d",
         "lib/broker/markers.js": "301eb1d763e8e88c32e32a02c344be8f44b342b06b61897f3a2d478dbe55d6b4",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
         "lib/shell-quote.js": "91cf4832cf68d4a367854f0c6e982c349afad2934e634f743d33aaf7c71c7471",

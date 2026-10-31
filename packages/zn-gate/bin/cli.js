@@ -41,6 +41,8 @@ const { configureEnvironments } = require('../lib/init');
 const { verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, usesStoredKey, RULES_VERSION } = require('../lib/client');
 const { evaluate, redactSecrets, redactScanSecrets, redactScanRules, SECRET_PATTERNS } = require('../lib/rules');
+// A verdict from the cloud or the ledger can come in any case; compare it the way the MCP server does.
+const isBlockVerdict = (v) => typeof v === 'string' && v.toLowerCase() === 'block';
 const { SCRUB_RULES_VERSION } = require('../lib/scrub/patterns');
 const { AUDIT_RULES_VERSION } = require('../lib/audit/rules');
 const { styles, sym, ruleLine } = require('../lib/term');
@@ -265,6 +267,8 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   reach [path]        Show what your coding agents can reach: secrets (names only),
                       credential files, MCP servers [--json | --sarif]
                       [--fail-on high|medium|low|none] [--remember]. Read only, nothing is sent
+                      reach --history: which secrets your agents kept in their session
+                      history (types and counts, never values) [--json] [--max-seconds N]
   secrets-mcp         Run the "secrets" MCP server (stdio)
   hook <agent>        Hook entry point used by agents (reads the event on stdin)
 
@@ -301,7 +305,8 @@ VAULT (local, encrypted with age; the key stays in the OS keychain):
   vault purge         Delete the vault, every backup and the token maps for good [--yes] (your terminal only)
   vault log export --otlp
                       Export the audit log as OpenTelemetry logs (OTLP/JSON Lines)
-                      [--since 7d] [--out FILE]
+                      [--since 7d] [--out FILE] [--unverified]
+                      (with the vault locked, the chain cannot be checked: --unverified exports a copy that is NOT verified)
   vault team          Shows that a shared team vault is planned, not available yet
 
 TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
@@ -374,7 +379,7 @@ Evaluating ${TEST_VECTORS.length} curated test vectors (${TEST_VECTORS.filter(v 
     totalTimeNs += elapsedNs;
     const elapsedMs = (Number(elapsedNs) / 1e6).toFixed(2);
 
-    const isBlock = result.verdict === 'block';
+    const isBlock = isBlockVerdict(result.verdict);
     // Default policy: some heuristic rules give an advisory instead of a block.
     const isFlagged = isBlock || Boolean(result.advisory);
     const isPass = (vec.type === 'attack' && isFlagged) || (vec.type === 'benign' && !isBlock);
@@ -683,7 +688,7 @@ Files   : ${files.length} file(s) queued for audit\n
       };
       // A scan reports every match, including the rules that only warn by default.
       const evalRes = evaluate(line, { ...options, strict: true });
-      if (evalRes.verdict === 'block') {
+      if (isBlockVerdict(evalRes.verdict)) {
         totalFindings++;
         findings.push({ file: relPath, line: lineIdx + 1, rule: evalRes.rule, reason: evalRes.reason, type: 'injection', sample: sampleOf() });
       }
@@ -851,7 +856,7 @@ async function runBrokerCommand(command, rest) {
   process.exitCode = await require('../lib/broker/cli').dispatch(command, rest);
 }
 
-const REACH_USAGE = 'usage: zn-gate reach [path] [--json | --sarif] [--fail-on high|medium|low|none] [--remember]';
+const REACH_USAGE = 'usage: zn-gate reach [path] [--json | --sarif] [--fail-on high|medium|low|none] [--remember]\n       zn-gate reach --history [--json] [--max-seconds N]';
 
 /*
  * zn-gate reach [path] [--json | --sarif] [--fail-on high|medium|low|none]: read only, nothing sent.
@@ -863,12 +868,22 @@ async function runReachCommand(rest) {
   let format = 'text';
   let failOn = 'none';
   let remember = false;
+  let historyMode = false;
+  let maxSeconds = null;
   const usage = (msg) => { process.stderr.write('zn-gate reach: ' + msg + '\n' + REACH_USAGE + '\n'); return 2; };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === '-h' || a === '--help') { process.stdout.write(REACH_USAGE + '\nShows what the coding agents on this machine can reach. Read only: nothing is changed or sent.\n'); return 0; }
     // --remember keeps this run's counts in ~/.zn/reach-last.json for the next one; without it nothing is written.
     if (a === '--remember') { remember = true; continue; }
+    // --history: scan the local session histories of the agents for secrets (types and counts only).
+    if (a === '--history') { historyMode = true; continue; }
+    if (a === '--max-seconds' || a.startsWith('--max-seconds=')) {
+      const v = a === '--max-seconds' ? rest[++i] : a.slice('--max-seconds='.length);
+      if (!/^\d{1,4}$/.test(String(v)) || +v < 1 || +v > 3600) return usage('--max-seconds must be a whole number from 1 to 3600');
+      maxSeconds = +v;
+      continue;
+    }
     if (a === '--json' || a === '--sarif') {
       if (format !== 'text') return usage('choose one of --json and --sarif');
       format = a.slice(2);
@@ -884,6 +899,22 @@ async function runReachCommand(rest) {
     if (target !== null) return usage('only one folder at a time');
     target = a;
   }
+  if (historyMode) {
+    if (target !== null || remember || failOn !== 'none' || format === 'sarif') return usage('--history reads your home folder: it takes only --json and --max-seconds');
+    process.env.ZN_STATS = 'off';
+    const zh = require('../lib/reach/history');
+    let h;
+    try {
+      h = zh.history({ maxSeconds: maxSeconds || undefined });
+    } catch (err) {
+      process.stderr.write('zn-gate reach: could not finish: ' + String((err && err.message) || err).slice(0, 300) + '\n');
+      return 2;
+    }
+    if (format === 'json') process.stdout.write(JSON.stringify(h, null, 2) + '\n');
+    else zh.report(h);
+    return 0;
+  }
+  if (maxSeconds !== null) return usage('--max-seconds goes with --history');
   const root = path.resolve(target || '.');
   let st = null;
   try { st = fs.statSync(root); } catch (_) { st = null; }
@@ -1197,8 +1228,8 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
       process.stdout.write('  No events recorded yet.\n\n');
     } else {
       for (const rec of stats.recent.slice(-options.tail)) {
-        const isBlock = rec.verdict === 'block';
-        const vTag = isBlock ? col.red('BLOCK') : (rec.verdict === 'shadow' ? col.yellow('SHADOW') : col.green('ALLOW'));
+        const isBlock = isBlockVerdict(rec.verdict);
+        const vTag = isBlock ? col.red('BLOCK') : (String(rec.verdict).toLowerCase() === 'shadow' ? col.yellow('SHADOW') : col.green('ALLOW'));
         process.stdout.write(`  ${(rec.timestamp || '').slice(11, 19)} [${vTag}] tool=${rec.tool_name || 'call'} rule=${rec.rule || 'none'} hash=${(rec.record_hash || '').slice(0, 10)}...\n`);
       }
       process.stdout.write(`\nTip: Run 'zn-gate evidence --ui' to open interactive dashboard.\n\n`);
@@ -1288,7 +1319,7 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
 
     const result = await analyze(textToAnalyze, options);
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
-    process.exit(result.verdict === 'block' ? 2 : 0);
+    process.exit(isBlockVerdict(result.verdict) ? 2 : 0);
   }
 
   if (command === 'status') {
