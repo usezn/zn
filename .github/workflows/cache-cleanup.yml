@@ -5,11 +5,10 @@ name: Cache cleanup
 # it is closed they only take space from the repository's 10 GB cache limit. Merge queue runs save
 # theirs under refs/heads/gh-readonly-queue/<base>/pr-<number>-<sha>, a branch GitHub deletes when the
 # run ends, so those caches are deleted once their branch is gone. Caches of other branches and of
-# tags, of open pull requests and of merge queue runs still going are never touched. It runs when a
-# pull request is closed (only that pull request's caches) and weekly for anything left behind.
+# tags, of open pull requests and of merge queue runs still going are never touched. It runs weekly
+# and on demand. It deliberately has no pull_request trigger: that event runs the workflow file as
+# the pull request has it, so a same-repository branch could use this job's actions: write token.
 on:
-  pull_request:
-    types: [closed]
   schedule:
     - cron: "41 4 * * 0" # weekly, Sunday 04:41 UTC
   workflow_dispatch:
@@ -28,8 +27,6 @@ concurrency:
 jobs:
   closed-pull-requests:
     name: Delete caches of closed pull requests and finished merge queue runs
-    # A pull request from a fork gets a read-only token, so its caches are left to the weekly run.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -47,7 +44,7 @@ jobs:
           REPO: ${{ github.repository }}
           # Scheduled runs have no inputs and delete; manual runs delete only when dry_run is unchecked.
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
-          # Set only when a pull request was just closed: then only its caches are looked at.
+          # Empty on scheduled and manual runs; kept so a single pull request can be targeted.
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail

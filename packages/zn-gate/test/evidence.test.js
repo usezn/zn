@@ -216,3 +216,40 @@ test('evidence ledger - directory is 0700 and file is 0600 on POSIX', { skip: pr
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('escapeHtml - escapes an ampersand', () => {
+  assert.equal(escapeHtml('a & b'), 'a &amp; b');
+});
+
+test('escapeHtml - escapes angle brackets', () => {
+  assert.equal(escapeHtml('<a></a>'), '&lt;a&gt;&lt;/a&gt;');
+});
+
+test('escapeHtml - escapes double and single quotes', () => {
+  assert.equal(escapeHtml('"'), '&quot;');
+  assert.equal(escapeHtml("'"), '&#39;');
+});
+
+test('escapeHtml - null and undefined become an empty string', () => {
+  assert.equal(escapeHtml(null), '');
+  assert.equal(escapeHtml(undefined), '');
+  assert.equal(escapeHtml(), '');
+});
+
+test('escapeHtml - numbers and other values are converted to text', () => {
+  assert.equal(escapeHtml(42), '42');
+  assert.equal(escapeHtml(0), '0');
+  assert.equal(escapeHtml(-1.5), '-1.5');
+  assert.equal(escapeHtml(false), 'false');
+});
+
+test('escapeHtml - handles very long text', () => {
+  const input = '<&>'.repeat(100000);
+  const out = escapeHtml(input);
+  assert.equal(out, '&lt;&amp;&gt;'.repeat(100000));
+});
+
+test('escapeHtml - already escaped text is escaped again', () => {
+  assert.equal(escapeHtml('&lt;b&gt;'), '&amp;lt;b&amp;gt;');
+  assert.equal(escapeHtml('&amp;'), '&amp;amp;');
+});

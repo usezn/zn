@@ -21,7 +21,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-axum = { version = "0.7", features = ["macros", "ws", "multipart"] }
+axum = { version = "0.8", features = ["macros", "ws", "multipart"] }
 tower-http = { version = "0.5", features = ["cors", "auth", "fs"] }
 wasmtime = { version = "48", default-features = false, features = ["anyhow", "async", "backtrace", "gc", "gc-copying", "gc-drc", "gc-null", "wat", "profiling", "parallel-compilation", "cranelift", "pooling-allocator", "demangle", "addr2line", "coredump", "debug-builtins", "runtime", "component-model", "component-model-async", "threads", "stack-switching", "std", "debug", "compile-time-builtins", "wit-parser"] }
 rusqlite = { version = "0.40", default-features = false, features = ["bundled", "cache", "fallible_uint"] }
@@ -35,7 +35,7 @@ dashmap = "5.5"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 async-stream = "0.3"
-tower_governor = "0.4"
+tower_governor = { version = "0.8", default-features = false, features = ["axum"] }
 aho-corasick = "1.1"
 reqwest = { version = "0.12", features = ["json"] }
 prometheus = "0.14"
@@ -79,6 +79,10 @@ libc = "0.2.189"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+
+[dev-dependencies]
+# Property tests for the scrubber (tests/scrubber_properties.rs). Test-only: the shipped binary does not depend on it.
+proptest = { version = "1", default-features = false, features = ["std"] }
 
 [package.metadata.cargo-machete]
 # schemars is used through the rmcp::schemars derive, which expands to schemars:: paths,

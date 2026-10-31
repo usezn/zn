@@ -1,6 +1,6 @@
 # Install, verify and uninstall by agent
 
-A short list of the steps for each supported agent. Run every command in your own terminal. For what each agent is and is not protected against, see [Editors and coding agents](editors/README.md); each editor has its own page with the full steps.
+A short list of the steps for each of the eight agents zn-gate can install hooks for: seven supported, plus Gemini CLI, which is experimental. Run every command in your own terminal. For what each agent is and is not protected against, see [Editors and coding agents](editors/README.md); each editor has its own page with the full steps.
 
 Verifying is the same for every agent that has hooks: `npx -y zn-gate check` makes a temporary folder with a fake `.env` file, asks the hook to read it, and reports whether it was blocked. See [Check that it works](check.md). To remove everything at once, run `npx -y zn-gate uninstall`: see [Remove zn-gate](uninstall.md).
 
@@ -17,6 +17,7 @@ The hooks need zn-gate 1.5 or later from npm (`npm install -g zn-gate`).
 | [GitHub Copilot (VS Code, CLI)](editors/vscode.md) | `zn hooks install copilot` | `npx -y zn-gate check` | `zn hooks uninstall copilot` |
 | [Google Antigravity](editors/antigravity.md) | `zn hooks install antigravity` | `npx -y zn-gate check` | `zn hooks uninstall antigravity` |
 | [ZCode desktop app](editors/zcode.md) | `zn hooks install zcode` | `npx -y zn-gate check` | `zn hooks uninstall zcode` |
+| Gemini CLI (experimental) | `zn hooks install gemini` | `npx -y zn-gate check` | `zn hooks uninstall gemini` |
 
 Add `--project` to the install and uninstall commands to work on one project only; run them from that project's folder. A backup of the settings file is written first. More: [Remove zn-gate](uninstall.md#piece-by-piece).
 

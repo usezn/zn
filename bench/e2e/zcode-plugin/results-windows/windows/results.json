@@ -1,0 +1,114 @@
+[
+ {
+  "case": "A0 install through the runtime plugin API",
+  "expected": "installed and enabled through the runtime, hooks listed",
+  "observed": "Plugins (16) - visualize@zcode-plugins-official [enabled] official/zcode-plugins-official: C:\\work\\home\\.zcode\\cli\\plugins\\cache\\zcode-plugins-official\\visualize\\0.1.0 skills: 1, commands: 0, hooks: 0, mcp: none - node-repl-host@zcode-plugins-official [enabled] official/zcode-plugins-official: C:\\wo | enabled=True",
+  "result": "PASS",
+  "evidence": "a_install.txt, a_list.txt"
+ },
+ {
+  "case": "A1 installed copy has both hooks per event",
+  "expected": "4 events x (1 /bin/sh + 1 PowerShell)",
+  "observed": "sh=4 powershell=4 dir=C:/work/home/.zcode/cli/plugins/cache/usezn/zn-gate\\1.14.1",
+  "result": "PASS",
+  "evidence": "cached_hooks.json"
+ },
+ {
+  "case": "B1 Read .env",
+  "expected": "denied by the plugin hook with the zn reason (not a launcher refusal), value not returned",
+  "observed": "zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.14.1 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use. | [('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'PreToolUse', 'failed'), ('plugin', 'PreToolUse', 'blocked')]",
+  "result": "PASS",
+  "evidence": "cases/b_read_env, b_read_env_hook_events.json"
+ },
+ {
+  "case": "B2 Bash type %USERPROFILE%\\.aws\\credentials",
+  "expected": "denied by the plugin hook, key not returned",
+  "observed": "zn: C:\\work\\home\\.aws\\credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `npx -y zn-gate@1.14 | [('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'PreToolUse', 'failed'), ('plugin', 'PreToolUse', 'blocked')]",
+  "result": "PASS",
+  "evidence": "cases/b_aws_bash"
+ },
+ {
+  "case": "B3 Read ~/.aws/credentials",
+  "expected": "denied by the plugin hook, key not returned",
+  "observed": "zn: C:/work/home/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `npx -y zn-gate@1.14 | [('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'PreToolUse', 'failed'), ('plugin', 'PreToolUse', 'blocked')]",
+  "result": "PASS",
+  "evidence": "cases/b_aws_read"
+ },
+ {
+  "case": "C ordinary dir + Read a.txt",
+  "expected": "allowed, no false block, the plugin hooks ran",
+  "observed": " Volume in drive C has no label.\r  Volume Serial Number is 1CE9-5F0A\r \r  Directory of C:\\work\\proj\r \r 10/30/2026  09:30  || 1\thello world 2\t | [('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'PreToolUse', 'failed'), ('plugin', 'PreToolUse', 'success'), ('plugin', 'PostToolUse', 'failed'), ('plugin', 'PostToolUse', 'success'), ('plugin', 'PreToolUse', 'failed'), ('plugin', 'PreToolUse', 'success')]",
+  "result": "PASS",
+  "evidence": "cases/c_benign"
+ },
+ {
+  "case": "C2 prompt with FAKE secret",
+  "expected": "blocked by UserPromptSubmit, 0 model requests",
+  "observed": "requests=0 [('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'UserPromptSubmit', 'blocked')]",
+  "result": "PASS",
+  "evidence": "cases/c_prompt"
+ },
+ {
+  "case": "C3 MCP call with a doc AWS key in args",
+  "expected": "denied, server not called",
+  "observed": "zn: this call would send a secret (an AWS key) to the MCP server zn_fake, so zn blocked it. A stored secret cannot be passed to this server. Next step: for a web request, use the secrets_http_request tool of the zn \"secr | called=False",
+  "result": "PASS",
+  "evidence": "cases/c_mcp_secret"
+ },
+ {
+  "case": "E1 zn-gate check: plugin only, hooks.enabled=false",
+  "expected": "OK ZCode, protected via the plugin",
+  "observed": "rc=1 ne X ZCode NOT protected: the zn-gate plugin starts its UserPromptSubmit hook with `C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe` by name, so a program or script in a relative or empty PATH entry, or in the folder the agent runs in, could run in its place and skip zn. To fix it, update ",
+  "result": "FAIL",
+  "evidence": "e_check_plugin_only.txt"
+ },
+ {
+  "case": "E2 zn-gate check: plugin turned off",
+  "expected": "NOT protected, says the plugin is off",
+  "observed": "rc=1 ne X ZCode NOT protected: the zn-gate plugin is turned off in ZCode, and the hooks of `zn hooks install zcode` are not installed, so nothing of zn protects ZCode. To fix it, turn the plugin on in ZCode (Settings, Plugins), or run `zn hooks install zcode` in your own terminal, then run `zn-gate check",
+  "result": "PASS",
+  "evidence": "e_check_plugin_off.txt"
+ },
+ {
+  "case": "D1 hook entry, no usable Node.js (PreToolUse)",
+  "expected": "exit 2 with a zn reason, call not let through",
+  "observed": "node_hidden=True rc=2 zn: no Node.js 20.19 or later was found for the hook (looked in the PATH, the usual install folders and the app itself). This call was blocked because zn could not check it. Ask the user to fix it, or",
+  "result": "PASS",
+  "evidence": "d_direct_nonode_PreToolUse.txt"
+ },
+ {
+  "case": "D2 hook entry, no usable Node.js (PostToolUse)",
+  "expected": "exit 0 with a warning (nothing left to block)",
+  "observed": "rc=0 zn is NOT protecting this session: no Node.js 20.19 or later was found for the hook (looked in the PATH, the usual install folders and the app itself).",
+  "result": "PASS",
+  "evidence": "d_direct_nonode_PostToolUse.txt"
+ },
+ {
+  "case": "D3 in the app, Node.js uninstalled and off the PATH: Read .env",
+  "expected": "still denied (the plugin falls back to the app own Node.js), never let through",
+  "observed": "zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.14.1 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use. | [('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'PreToolUse', 'failed'), ('plugin', 'PreToolUse', 'blocked')]",
+  "result": "PASS",
+  "evidence": "cases/d_app_nonode_read_env"
+ },
+ {
+  "case": "D4 (info) same setup, ordinary dir",
+  "expected": "observe only",
+  "observed": " Volume in drive C has no label.\r  Volume Serial Number is 1CE9-5F0A\r \r  Directory of C:\\work\\proj\r \r 10/30/2026  09:31  | [('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'PreToolUse', 'failed'), ('plugin', 'PreToolUse', 'success'), ('plugin', 'PostToolUse', 'failed'), ('plugin', 'PostToolUse', 'success')]",
+  "result": "PASS",
+  "evidence": "cases/d_app_nonode_benign"
+ },
+ {
+  "case": "D5 (control) hook entry with Node.js back, ordinary call",
+  "expected": "exit 0 (allowed)",
+  "observed": "rc=0 ",
+  "result": "PASS",
+  "evidence": "d_direct_withnode_PreToolUse.txt"
+ },
+ {
+  "case": "H hook latency (info)",
+  "expected": "observe only",
+  "observed": "durationMs of hook runs: [1116, 4862, 43, 34, 763, 30, 785, 21, 44, 747, 32, 768, 14]",
+  "result": "PASS",
+  "evidence": "cases/h_latency"
+ }
+]

@@ -17,15 +17,54 @@ NAMES = {
     "ISC License (ISCL)": "ISC",
 }
 
+# Operators: "AND" binds tighter than "OR"; ";" is how pip-licenses separates
+# several licenses, and it counts as "OR". Parentheses group.
+TOKEN = re.compile(r"\(|\)|;|\bAND\b|\bOR\b|[^\s();]+")
+
 
 def load_allowed(path):
     with open(path, encoding="utf-8") as fh:
         return {line.strip() for line in fh if line.strip() and not line.lstrip().startswith("#")}
 
 
+def parse_or(tokens, pos, allowed):
+    value, pos = parse_and(tokens, pos, allowed)
+    while pos < len(tokens) and tokens[pos] in ("OR", ";"):
+        other, pos = parse_and(tokens, pos + 1, allowed)
+        value = value or other
+    return value, pos
+
+
+def parse_and(tokens, pos, allowed):
+    value, pos = parse_atom(tokens, pos, allowed)
+    while pos < len(tokens) and tokens[pos] == "AND":
+        other, pos = parse_atom(tokens, pos + 1, allowed)
+        value = value and other
+    return value, pos
+
+
+def parse_atom(tokens, pos, allowed):
+    if pos >= len(tokens) or tokens[pos] in ("AND", "OR", ";", ")"):
+        raise ValueError("expected a license id")
+    if tokens[pos] == "(":
+        value, pos = parse_or(tokens, pos + 1, allowed)
+        if pos >= len(tokens) or tokens[pos] != ")":
+            raise ValueError("missing )")
+        return value, pos + 1
+    return tokens[pos] in allowed, pos + 1
+
+
 def is_allowed(expr, allowed):
-    parts = re.split(r"\s*(?:;|\sOR\s)\s*", expr.strip("() "))
-    return any(NAMES.get(p, p) in allowed for p in parts)
+    # Map classifier names first: some contain parentheses of their own.
+    text = expr.strip()
+    for name, spdx in sorted(NAMES.items(), key=lambda kv: -len(kv[0])):
+        text = text.replace(name, spdx)
+    tokens = TOKEN.findall(text)
+    try:
+        value, pos = parse_or(tokens, 0, allowed)
+    except ValueError:
+        return False  # anything we cannot read is flagged
+    return pos == len(tokens) and value
 
 
 def main():
