@@ -4,10 +4,10 @@ Set up zn-gate in VS Code with GitHub Copilot agent mode in two minutes: hooks t
 
 ## Install (no coding needed)
 
-1. **Check that Node.js is installed.** Open a terminal (in VS Code: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart VS Code.
+1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart VS Code.
 2. In your own terminal, run:
 
-   ```
+   ```bash
    npm install -g zn-gate
    zn hooks install copilot
    ```

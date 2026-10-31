@@ -4,13 +4,17 @@ name: Cache cleanup
 # saves its caches under refs/pull/<number>/merge, and only that pull request can use them, so once
 # it is closed they only take space from the repository's 10 GB cache limit. Merge queue runs save
 # theirs under refs/heads/gh-readonly-queue/<base>/pr-<number>-<sha>, a branch GitHub deletes when the
-# run ends, so those caches are deleted once their branch is gone. Caches of other branches and of
-# tags, of open pull requests and of merge queue runs still going are never touched. It runs weekly
-# and on demand. It deliberately has no pull_request trigger: that event runs the workflow file as
+# run ends, so those caches are deleted once their branch is gone. Caches of tags, of open pull requests,
+# of merge queue runs still going and of other branches that still exist are never touched, except the
+# superseded caches of main below. The caches of other deleted branches are listed on the schedule and
+# deleted only by a manual run with dry_run unchecked. It also deletes
+# the superseded caches of main (see .github/scripts/cache-superseded.sh): a Rust build cache is
+# 1 to 1.5 GB and a new one is saved whenever Cargo.lock changes, so the old one would otherwise sit
+# in the 10 GB limit until it is evicted, and push live caches out first. It runs daily and on demand. It deliberately has no pull_request trigger: that event runs the workflow file as
 # the pull request has it, so a same-repository branch could use this job's actions: write token.
 on:
   schedule:
-    - cron: "41 4 * * 0" # weekly, Sunday 04:41 UTC
+    - cron: "41 4 * * *" # daily, 04:41 UTC
   workflow_dispatch:
     inputs:
       dry_run:
@@ -38,6 +42,9 @@ jobs:
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Delete caches of closed pull requests
         env:
           GH_TOKEN: ${{ github.token }}
@@ -127,6 +134,21 @@ jobs:
             fi
           fi
 
+          # Superseded caches of main: an older Cargo.lock or CodeQL base commit of the same family.
+          # Skipped when a single pull request is targeted.
+          superseded=0; superseded_bytes=0
+          if [ -z "${PR_NUMBER:-}" ]; then
+            gh api --paginate "repos/$REPO/actions/caches?per_page=100" \
+              --jq '.actions_caches[] | [.id, .key, .ref, .size_in_bytes, .created_at] | @tsv' > "$RUNNER_TEMP/full.tsv"
+            bash .github/scripts/cache-superseded.sh < "$RUNNER_TEMP/full.tsv" > "$RUNNER_TEMP/superseded.tsv"
+            while IFS=$'\t' read -r id key size; do
+              case "$id" in ''|*[!0-9]*) continue ;; esac
+              case "$size" in ''|*[!0-9]*) size=0 ;; esac
+              delete_cache "$id" "$size" "superseded ${key:0:60}" || continue
+              superseded=$((superseded + 1)); superseded_bytes=$((superseded_bytes + size))
+            done < "$RUNNER_TEMP/superseded.tsv"
+          fi
+
           {
             if [ "$DRY_RUN" = "true" ]; then
               echo "## Cache cleanup (dry run, nothing deleted)"
@@ -138,6 +160,7 @@ jobs:
             echo "Pull requests still open, caches kept: $kept_open."
             echo "Caches of finished merge queue runs: $queue_deleted ($((queue_deleted_bytes / 1048576)) MB)."
             echo "Merge queue runs still going, caches kept: $queue_kept."
+            echo "Superseded caches of main: $superseded ($((superseded_bytes / 1048576)) MB)."
             echo "Errors: $failed."
             if [ -s "$rows" ]; then
               echo
@@ -149,5 +172,78 @@ jobs:
 
           if [ "$failed" -gt 0 ]; then
             echo "::error::$failed lookups or deletions failed; see the warnings above."
+            exit 1
+          fi
+
+  deleted-branches:
+    name: Delete caches of branches that no longer exist
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write # list and delete caches
+      contents: read # check out the selection script and list branches
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Delete caches of deleted branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # This job only lists on the daily schedule: it deletes only on a manual run with dry_run unchecked.
+          DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && !inputs.dry_run) && 'false' || 'true' }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$REPO/actions/caches?per_page=100" \
+            --jq '.actions_caches[] | [.id, .key, .ref, .size_in_bytes, .created_at] | @tsv' > "$RUNNER_TEMP/all.tsv"
+          gh api --paginate "repos/$REPO/branches?per_page=100" --jq '.[].name' | sort -u > "$RUNNER_TEMP/branches.txt"
+          if [ ! -s "$RUNNER_TEMP/branches.txt" ]; then
+            echo "::error::Could not list the branches; no cache is deleted."
+            exit 1
+          fi
+          bash .github/scripts/cache-deleted-branches.sh "$RUNNER_TEMP/branches.txt" < "$RUNNER_TEMP/all.tsv" > "$RUNNER_TEMP/dead.tsv"
+
+          rows="$RUNNER_TEMP/rows.md"; : > "$rows"
+          found=0; found_bytes=0; failed=0
+          while IFS=$'\t' read -r id ref size; do
+            case "$id" in ''|*[!0-9]*) continue ;; esac
+            case "$size" in ''|*[!0-9]*) size=0 ;; esac
+            if [ "$DRY_RUN" = "true" ]; then
+              action="would delete"
+            elif gh api -X DELETE "repos/$REPO/actions/caches/$id" > /dev/null; then
+              action="deleted"
+            else
+              echo "::warning::Could not delete cache $id."
+              failed=$((failed + 1))
+              continue
+            fi
+            found=$((found + 1)); found_bytes=$((found_bytes + size))
+            printf '| %s | %s | %s MB | %s |\n' "${ref#refs/heads/}" "$id" "$((size / 1048576))" "$action" >> "$rows"
+          done < "$RUNNER_TEMP/dead.tsv"
+
+          {
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "## Deleted-branch cache cleanup (dry run, nothing deleted)"
+            else
+              echo "## Deleted-branch cache cleanup"
+            fi
+            echo
+            echo "Caches of deleted branches: $found ($((found_bytes / 1048576)) MB)."
+            echo "Errors: $failed."
+            if [ -s "$rows" ]; then
+              echo
+              echo "| Branch | Cache id | Size | Action |"
+              echo "| --- | --- | --- | --- |"
+              cat "$rows"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$failed" -gt 0 ]; then
+            echo "::error::$failed deletions failed; see the warnings above."
             exit 1
           fi

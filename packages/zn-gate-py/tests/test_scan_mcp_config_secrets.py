@@ -107,6 +107,7 @@ class TestMcpSecrets(_Base):
     def test_next_step_is_plain(self):
         env = mcp.mcp_next_step("environment variable", "BRAVE_API_KEY")
         self.assertIn("npx -y zn-gate secret set BRAVE_API_KEY", env)
+        self.assertIn("commands of the npm package, not of this Python package", env)
         self.assertIn("put run, --secrets, BRAVE_API_KEY, -- and the old command first in args", env)
         self.assertIn("environment variable BRAVE_API_KEY", env)
         self.assertNotIn("put __ZN_", env)

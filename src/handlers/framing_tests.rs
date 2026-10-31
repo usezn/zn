@@ -519,7 +519,49 @@ async fn slow_but_moving_body_is_served() {
     assert!(text.starts_with("HTTP/1.1 200"), "{text}");
 }
 
-/// With the cap at 3, three idle clients take every slot: a fourth gets no answer until one leaves.
+/// With the cap at 3, idle keep-alive clients cannot lock everyone else out: a fourth client is served and the
+/// oldest idle connection is closed to make room.
+#[tokio::test]
+async fn connection_cap_evicts_idle_keepalive() {
+    let addr = spawn_server_with(ServeLimits {
+        header_read_timeout: Duration::from_secs(30),
+        body_idle_timeout: Duration::from_secs(30),
+        max_connections: 3,
+        ..ServeLimits::DEFAULT
+    })
+    .await;
+    let mut held = Vec::new();
+    for _ in 0..3 {
+        let mut c = TcpStream::connect(addr).await.unwrap();
+        // One finished request, then the client sits idle on keep-alive.
+        c.write_all(b"GET /api/v1/health HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = [0u8; 1024];
+        let n = tokio::time::timeout(BOUND, c.read(&mut buf))
+            .await
+            .expect("no answer")
+            .unwrap();
+        assert!(String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"));
+        held.push(c);
+    }
+    let served = probe(
+        addr,
+        b"GET /api/v1/health HTTP/1.1\r\nHost: localhost\r\n\r\n".to_vec(),
+        BOUND,
+    )
+    .await;
+    report("cap_evicts_idle", &served);
+    assert_eq!(served.status, Some(200), "{served:?}");
+    // The oldest idle connection was closed to free its slot.
+    let mut buf = [0u8; 64];
+    let r = tokio::time::timeout(BOUND, held[0].read(&mut buf))
+        .await
+        .expect("the oldest idle connection was not closed");
+    assert!(matches!(r, Ok(0) | Err(_)), "{r:?}");
+}
+
+/// With the cap at 3, three requests in flight take every slot: a fourth gets no answer until one leaves.
 #[tokio::test]
 async fn connection_cap_holds() {
     let addr = spawn_server_with(ServeLimits {
@@ -532,18 +574,16 @@ async fn connection_cap_holds() {
     let mut held = Vec::new();
     for _ in 0..3 {
         let mut c = TcpStream::connect(addr).await.unwrap();
-        // One finished request proves the slot is in use (keep-alive keeps it open).
-        c.write_all(b"GET /api/v1/health HTTP/1.1\r\nHost: localhost\r\n\r\n")
-            .await
-            .unwrap();
-        let mut buf = [0u8; 1024];
-        let n = tokio::time::timeout(BOUND, c.read(&mut buf))
-            .await
-            .expect("no answer")
-            .unwrap();
-        assert!(String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"));
+        // Headers plus part of the body: the request is in flight and is never evicted.
+        c.write_all(
+            b"POST /api/v1/tenants HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 64\r\n\r\n{\"name\"",
+        )
+        .await
+        .unwrap();
         held.push(c);
     }
+    // Let the server accept all three and start their requests.
+    tokio::time::sleep(Duration::from_millis(200)).await;
     let blocked = probe(
         addr,
         b"GET /api/v1/health HTTP/1.1\r\nHost: localhost\r\n\r\n".to_vec(),

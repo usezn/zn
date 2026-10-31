@@ -779,7 +779,15 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"  Python Runtime  : {sys.version.split()[0]}")
     print(f"  Active Engine   : {'Local rules + cloud for analyze (ZN_CLOUD=1)' if cloud else 'Local rules only'}")
     print(f"  Endpoint        : {resolve_endpoint() if cloud else 'None (nothing leaves this machine)'}")
-    print(f"  API key         : {('Set' + ('' if cloud else ' (unused: cloud requires ZN_CLOUD=1)')) if has_key else 'Not set'}")
+    if not has_key:
+        key_line = 'Not set'
+    elif cloud:
+        key_line = 'Set'
+    elif os.environ.get('ZN_LOCAL_ONLY') == 'true':
+        key_line = 'Set (unused: ZN_LOCAL_ONLY=true overrides ZN_CLOUD=1)'
+    else:
+        key_line = 'Set (unused: cloud requires ZN_CLOUD=1)'
+    print(f"  API key         : {key_line}")
     print(f"  Leaves machine  : {'analyze() text only, secrets redacted locally first' if cloud else 'Nothing'}\n")
     return 0
 

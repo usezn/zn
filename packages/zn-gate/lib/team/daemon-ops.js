@@ -235,6 +235,13 @@ function makeTeamOps(ctx) {
     }));
   }
 
+  /* Warning for `zn team status`: pending revocations that were dropped for lack of room (kept for 30 days). Never a token. */
+  function droppedView(s) {
+    const d = s.revocationsDropped;
+    if (!d || !Number.isInteger(d.count) || d.count < 1 || !Number.isFinite(Date.parse(d.last_at)) || Date.now() - Date.parse(d.last_at) > REVOCATION_GIVE_UP_MS) return null;
+    return { count: d.count, last_at: printable(d.last_at, 40), last_org: printable(d.last_org, 40) || null, last_install_id: printable(d.last_install_id, 64) || null };
+  }
+
   /*
    * Tell the server about every pending revocation that is due. {tried, done, pending, abandoned}. Network calls
    * are made outside the serialised section. `skip` is a record that was just tried.
@@ -318,9 +325,8 @@ function makeTeamOps(ctx) {
       const pv = base === DEFAULT_API ? await api.preview(joinToken) : { ok: false, reason: 'unavailable', detail: 'not checked on a server other than api.usezn.com' };
       if (!pv.ok && (pv.reason === 'invalid' || pv.reason === 'no_subscription')) {
         writeAudit({ mode: 'set', decision: 'deny', reason: 'team_join_failed' });
-        throw znError(CODES.POLICY_DENIED, messages.teamJoinFailed(pv.reason === 'invalid'
-          ? 'this join token is invalid, expired or used up; ask your administrator for a new one'
-          : 'this organization has no active Team subscription'));
+        throw znError(CODES.POLICY_DENIED, pv.reason === 'invalid' ? messages.TEAM_JOIN_TOKEN_REJECTED
+          : messages.teamJoinFailed('this organization has no active Team subscription'));
       }
       const previewOrg = pv.ok ? printable(pv.org_name, 100) || null : null;
       const previewBy = pv.ok ? printable(pv.invited_by, 60) || null : null;
@@ -379,6 +385,9 @@ function makeTeamOps(ctx) {
       } catch (err) {
         const why = err && err.status ? 'HTTP ' + err.status + (err.body && err.body.error ? ': ' + printable(String(err.body.error), 160) : '') : (err && err.code) || 'network error';
         writeAudit({ mode: 'set', decision: 'deny', reason: 'team_join_failed' });
+        // The user can only get a new invitation (rejected token) or fix the connection: say that, with the technical cause on a details line.
+        if (err && [401, 403, 404, 410].includes(err.status)) throw znError(CODES.POLICY_DENIED, messages.teamJoinTokenRejected(why));
+        if (err && (err.code === 'ZN_TEAM_NETWORK' || err.code === 'ZN_TEAM_TIMEOUT')) throw znError(CODES.POLICY_DENIED, messages.teamJoinNoNetwork(why));
         throw znError(CODES.POLICY_DENIED, messages.teamJoinFailed(why));
       }
       if (current && res.org !== current.org) throw znError(CODES.POLICY_DENIED, 'the token is for another organization; run `zn team leave` first');
@@ -455,7 +464,17 @@ function makeTeamOps(ctx) {
           };
           const list = pendingList(s).filter((r) => !sameRevocation(r, rec));
           list.push(rec);
-          s.pendingRevocations = list.slice(-MAX_PENDING_REVOCATIONS);
+          // The oldest records beyond the limit are dropped, but never silently: one audit record each, and a
+          // warning in `zn team status` (revocations_dropped) for as long as a retry could have lasted.
+          const dropped = list.length > MAX_PENDING_REVOCATIONS ? list.splice(0, list.length - MAX_PENDING_REVOCATIONS) : [];
+          s.pendingRevocations = list;
+          if (dropped.length) {
+            const prev = s.revocationsDropped && Number.isInteger(s.revocationsDropped.count) && Number.isFinite(Date.parse(s.revocationsDropped.last_at)) &&
+              Date.now() - Date.parse(s.revocationsDropped.last_at) <= REVOCATION_GIVE_UP_MS ? s.revocationsDropped.count : 0;
+            const last = dropped[dropped.length - 1];
+            s.revocationsDropped = { count: prev + dropped.length, last_at: at, last_org: last.org || null, last_install_id: last.install_id || null };
+            for (let i = 0; i < dropped.length; i += 1) writeAudit({ mode: 'remove', decision: 'error', reason: 'team_revocation_dropped' });
+          }
           writeAudit({ mode: 'set', decision: 'error', reason: 'team_revocation_pending' });
           revocation = { status: 'pending', since: at, error: rec.last_error, give_up_at: new Date(Date.parse(at) + REVOCATION_GIVE_UP_MS).toISOString() };
         }
@@ -472,7 +491,14 @@ function makeTeamOps(ctx) {
     async teamInfo() {
       const t = await team();
       const secrets0 = await state.loadSecrets();
-      if (!t) return pendingList(secrets0).length ? { joined: false, revocations: revocationsView(secrets0) } : { joined: false };
+      const dropped = droppedView(secrets0);
+      if (!t) {
+        return {
+          joined: false,
+          ...(pendingList(secrets0).length ? { revocations: revocationsView(secrets0) } : {}),
+          ...(dropped ? { revocations_dropped: dropped } : {}),
+        };
+      }
       const st = await policyState();
       await ensureCopies(membership(t));
       return {
@@ -487,6 +513,7 @@ function makeTeamOps(ctx) {
         upload_after_seq: Number.isInteger(t.upload_after_seq) ? t.upload_after_seq : 0,
         last_sync: lastSyncOf(t),
         ...(pendingList(secrets0).length ? { revocations: revocationsView(secrets0) } : {}),
+        ...(dropped ? { revocations_dropped: dropped } : {}),
       };
     },
 
