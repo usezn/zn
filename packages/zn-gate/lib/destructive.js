@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-30.17';
+const COMMAND_RULES_VERSION = '2026-10-31.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -85,13 +85,14 @@ const PS_TICK_RE = /(?:(?<=[\s|;&(A-Za-z0-9_.-])|^)`(?=[A-Za-z-])/g;
 const PS_DISK_RE = /(?:^|[\s;&|(])(?:format-volume|clear-disk)\b/i;
 
 // Code an interpreter runs from its command line (python -c, node -e, perl -e, ruby -e) and a download piped into one.
-// Every quantifier is bounded, so the scan over the code is linear.
+// The option patterns are linear: an option word that may say "no program from stdin" has at most 32 letters on
+// each side of its key letter. A longer word is not taken as such an option, so a pipe into it stays blocked.
 const INTERPRETER_RE = /^(?:py|python(?:[23](?:\.\d+)?)?|pypy3?|node(?:js)?|perl|ruby)$/;
 const INTERPRETERS = {
-  py: { skip: new Set(['-W', '-X']), code: /^-[A-Za-z]*c$/, noStdin: /^(?:-[A-Za-z]*[cmVh][A-Za-z]*|--(?:version|help))$/ },
-  node: { skip: new Set(['-r', '--require', '--import', '--loader', '--experimental-loader']), code: /^(?:-e|-p|-pe|--eval|--print)$/, noStdin: /^(?:-[A-Za-z]*[epcvh][A-Za-z]*|--(?:eval|print|check|version|help|test)(?:=.*)?)$/ },
-  perl: { skip: new Set(['-I']), code: /^-[A-Za-z]*[eE]$/, noStdin: /^-[A-Za-z]*[eEcvVh][A-Za-z]*$/ },
-  ruby: { skip: new Set(['-r', '-I']), code: /^-[A-Za-z]*e$/, noStdin: /^(?:-[A-Za-z]*[ecvh][A-Za-z]*|--(?:version|help))$/ },
+  py: { skip: new Set(['-W', '-X']), code: /^-[A-Za-z]*c$/, noStdin: /^(?:-[A-Za-z]{0,32}[cmVh][A-Za-z]{0,32}|--(?:version|help))$/ },
+  node: { skip: new Set(['-r', '--require', '--import', '--loader', '--experimental-loader']), code: /^(?:-e|-p|-pe|--eval|--print)$/, noStdin: /^(?:-[A-Za-z]{0,32}[epcvh][A-Za-z]{0,32}|--(?:eval|print|check|version|help|test)(?:=.*)?)$/ },
+  perl: { skip: new Set(['-I']), code: /^-[A-Za-z]*[eE]$/, noStdin: /^-[A-Za-z]{0,32}[eEcvVh][A-Za-z]{0,32}$/ },
+  ruby: { skip: new Set(['-r', '-I']), code: /^-[A-Za-z]*e$/, noStdin: /^(?:-[A-Za-z]{0,32}[ecvh][A-Za-z]{0,32}|--(?:version|help))$/ },
 };
 // A recursive-delete call: shutil.rmtree, fs.rmSync / rmdirSync / rm / rmdir, rimraf, File::Path remove_tree / rmtree,
 // FileUtils.rm_rf / rm_r / remove_entry, and Perl's unlink glob(...).

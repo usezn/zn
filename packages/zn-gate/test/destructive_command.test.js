@@ -19,6 +19,7 @@ const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
 const { tempDir } = require('./helpers/tmp');
 const corpus = require('./fixtures/destructive_commands.json');
+const { budget } = require('./helpers/time_budget');
 
 function preTool(tool_name, command, cwd) {
   return { session_id: 'abc123', cwd, permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name, tool_input: { command }, tool_use_id: 'toolu_01' };
@@ -95,7 +96,7 @@ test('hostile long input stays fast', () => {
   for (const input of inputs) {
     const t0 = Date.now();
     checkCommand(input);
-    assert.ok(Date.now() - t0 < 3000, 'slow input: ' + input.slice(0, 12) + ' (' + input.length + ' chars)');
+    assert.ok(Date.now() - t0 < budget(3000), 'slow input: ' + input.slice(0, 12) + ' (' + input.length + ' chars)');
   }
 });
 

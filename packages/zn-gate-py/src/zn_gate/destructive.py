@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-30.17"
+COMMAND_RULES_VERSION = "2026-10-31.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -111,7 +111,8 @@ _PS_NEXT_PIPE_RE = re.compile(r"\r?\n[ \t]*\|")
 _PS_DISK_RE = re.compile(r"(?:^|[\s;&|(])(?:format-volume|clear-disk)\b", _AI)
 
 # Code an interpreter runs from its command line (python -c, node -e, perl -e, ruby -e) and a download piped into one.
-# Every quantifier is bounded, so the scan over the code is linear.
+# The option patterns are linear: an option word that may say "no program from stdin" has at most 32 letters on
+# each side of its key letter. A longer word is not taken as such an option, so a pipe into it stays blocked.
 _INTERPRETER_RE = re.compile(r"^(?:py|python(?:[23](?:\.\d+)?)?|pypy3?|node(?:js)?|perl|ruby)\Z", _A)
 class _InterpSpec(NamedTuple):
     """How one interpreter family takes code and options on its command line."""
@@ -125,22 +126,22 @@ _INTERPRETERS: Dict[str, _InterpSpec] = {
     "py": _InterpSpec(
         skip=frozenset({"-W", "-X"}),
         code=re.compile(r"^-[A-Za-z]*c\Z", _A),
-        no_stdin=re.compile(r"^(?:-[A-Za-z]*[cmVh][A-Za-z]*|--(?:version|help))\Z", _A),
+        no_stdin=re.compile(r"^(?:-[A-Za-z]{0,32}[cmVh][A-Za-z]{0,32}|--(?:version|help))\Z", _A),
     ),
     "node": _InterpSpec(
         skip=frozenset({"-r", "--require", "--import", "--loader", "--experimental-loader"}),
         code=re.compile(r"^(?:-e|-p|-pe|--eval|--print)\Z", _A),
-        no_stdin=re.compile(r"^(?:-[A-Za-z]*[epcvh][A-Za-z]*|--(?:eval|print|check|version|help|test)(?:=.*)?)\Z", _A | re.S),
+        no_stdin=re.compile(r"^(?:-[A-Za-z]{0,32}[epcvh][A-Za-z]{0,32}|--(?:eval|print|check|version|help|test)(?:=.*)?)\Z", _A | re.S),
     ),
     "perl": _InterpSpec(
         skip=frozenset({"-I"}),
         code=re.compile(r"^-[A-Za-z]*[eE]\Z", _A),
-        no_stdin=re.compile(r"^-[A-Za-z]*[eEcvVh][A-Za-z]*\Z", _A),
+        no_stdin=re.compile(r"^-[A-Za-z]{0,32}[eEcvVh][A-Za-z]{0,32}\Z", _A),
     ),
     "ruby": _InterpSpec(
         skip=frozenset({"-r", "-I"}),
         code=re.compile(r"^-[A-Za-z]*e\Z", _A),
-        no_stdin=re.compile(r"^(?:-[A-Za-z]*[ecvh][A-Za-z]*|--(?:version|help))\Z", _A),
+        no_stdin=re.compile(r"^(?:-[A-Za-z]{0,32}[ecvh][A-Za-z]{0,32}|--(?:version|help))\Z", _A),
     ),
 }
 _NODE_EVAL_EQ_RE = re.compile(r"^--(?:eval|print)=([\s\S]*)\Z")

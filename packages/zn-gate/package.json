@@ -38,7 +38,8 @@
   "types": "lib/client.d.ts",
   "scripts": {
     "postinstall": "node lib/agents/refresh.js",
-    "test": "node test/run-all.js"
+    "test": "node test/run-all.js",
+    "check:rules": "node --test test/rules_snapshot.test.js"
   },
   "contentPolicy": {
     "class": "dual-use"
