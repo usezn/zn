@@ -655,4 +655,172 @@ mod tests {
             "application/json"
         );
     }
+
+    // ---- send_batch against a local stub (127.0.0.1, ephemeral port) ----
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// One request as the stub saw it.
+    struct Seen {
+        head: String,
+        body: Vec<u8>,
+    }
+
+    /// Serve `statuses` in order, one connection each, then stop. Returns the
+    /// endpoint and a handle that yields the requests received.
+    async fn stub(statuses: Vec<u16>) -> (String, tokio::task::JoinHandle<Vec<Seen>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/ingest", listener.local_addr().unwrap());
+        let handle = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            for status in statuses {
+                let (mut sock, _) = listener.accept().await.unwrap();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                let (head_end, content_len) = loop {
+                    let n = sock.read(&mut chunk).await.unwrap();
+                    assert!(n > 0, "client closed before sending a full request");
+                    buf.extend_from_slice(&chunk[..n]);
+                    if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&buf[..pos]).to_lowercase();
+                        let len = head
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length:"))
+                            .map(|v| v.trim().parse::<usize>().unwrap())
+                            .unwrap_or(0);
+                        break (pos + 4, len);
+                    }
+                };
+                while buf.len() < head_end + content_len {
+                    let n = sock.read(&mut chunk).await.unwrap();
+                    assert!(n > 0, "client closed before sending the body");
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                seen.push(Seen {
+                    head: String::from_utf8_lossy(&buf[..head_end]).to_string(),
+                    body: buf[head_end..head_end + content_len].to_vec(),
+                });
+                let reply = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                );
+                sock.write_all(reply.as_bytes()).await.unwrap();
+                sock.shutdown().await.ok();
+            }
+            seen
+        });
+        (endpoint, handle)
+    }
+
+    fn two_entries() -> Vec<AuditEntry> {
+        vec![entry("a1", Some("example payload")), entry("a2", None)]
+    }
+
+    #[tokio::test]
+    async fn send_batch_posts_the_events_and_clears_the_batch_on_success() {
+        let (endpoint, server) = stub(vec![200]).await;
+        let mut cfg = config(Some(&endpoint), 10);
+        cfg.token = Some("example-token-not-real".to_string());
+        let exporter = SiemExporter::new(cfg);
+        let mut batch = two_entries();
+
+        exporter.send_batch(&endpoint, &mut batch).await;
+
+        assert!(batch.is_empty(), "a delivered batch is cleared");
+        let seen = server.await.unwrap();
+        assert_eq!(seen.len(), 1);
+        let head = seen[0].head.to_lowercase();
+        assert!(head.starts_with("post /ingest "), "{head}");
+        assert!(head.contains("authorization: bearer example-token-not-real"));
+        assert!(head.contains("content-type: application/json"));
+        let parsed: serde_json::Value = serde_json::from_slice(&seen[0].body).unwrap();
+        assert_eq!(parsed.as_array().unwrap().len(), 2);
+        assert_eq!(parsed[0]["id"], "a1");
+        assert_eq!(parsed[1]["id"], "a2");
+    }
+
+    #[tokio::test]
+    async fn send_batch_without_a_token_sends_no_authorization_header() {
+        let (endpoint, server) = stub(vec![204]).await;
+        let exporter = SiemExporter::new(config(Some(&endpoint), 10));
+        let mut batch = two_entries();
+        exporter.send_batch(&endpoint, &mut batch).await;
+        assert!(batch.is_empty());
+        let seen = server.await.unwrap();
+        assert!(!seen[0].head.to_lowercase().contains("authorization"));
+    }
+
+    #[tokio::test]
+    async fn send_batch_keeps_the_events_when_the_server_returns_an_error() {
+        for status in [500u16, 503, 401, 404] {
+            let (endpoint, server) = stub(vec![status]).await;
+            let exporter = SiemExporter::new(config(Some(&endpoint), 10));
+            let mut batch = two_entries();
+            exporter.send_batch(&endpoint, &mut batch).await;
+            assert_eq!(batch.len(), 2, "status {status}: events are not dropped");
+            assert_eq!(server.await.unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn send_batch_keeps_the_events_when_the_connection_is_refused() {
+        // Bind and drop to get a local port with nothing listening.
+        let port = {
+            let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let endpoint = format!("http://127.0.0.1:{port}/ingest");
+        let exporter = SiemExporter::new(config(Some(&endpoint), 10));
+        let mut batch = two_entries();
+        exporter.send_batch(&endpoint, &mut batch).await;
+        assert_eq!(batch.len(), 2, "a network error does not drop events");
+    }
+
+    #[tokio::test]
+    async fn a_failed_batch_is_resent_whole_on_the_next_attempt() {
+        // The only retry is the next call: the batch stays in place and is
+        // posted again together with anything added since.
+        let (endpoint, server) = stub(vec![500, 200]).await;
+        let exporter = SiemExporter::new(config(Some(&endpoint), 10));
+        let mut batch = two_entries();
+        exporter.send_batch(&endpoint, &mut batch).await;
+        assert_eq!(batch.len(), 2);
+        batch.push(entry("a3", None));
+        exporter.send_batch(&endpoint, &mut batch).await;
+        assert!(batch.is_empty());
+
+        let seen = server.await.unwrap();
+        assert_eq!(seen.len(), 2);
+        let first: serde_json::Value = serde_json::from_slice(&seen[0].body).unwrap();
+        let second: serde_json::Value = serde_json::from_slice(&seen[1].body).unwrap();
+        assert_eq!(first.as_array().unwrap().len(), 2);
+        let ids: Vec<&str> = second
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["a1", "a2", "a3"]);
+    }
+
+    #[tokio::test]
+    async fn run_sends_a_full_batch_through_the_stub_and_stops_on_close() {
+        let (endpoint, server) = stub(vec![200]).await;
+        let (tx, rx) = broadcast::channel::<AuditEntry>(8);
+        let exporter = SiemExporter::new(config(Some(&endpoint), 2));
+        let task = tokio::spawn(exporter.run(rx));
+        tx.send(entry("r1", None)).unwrap();
+        tx.send(entry("r2", None)).unwrap();
+        let seen = tokio::time::timeout(Duration::from_secs(5), server)
+            .await
+            .expect("the full batch is sent without waiting for the flush timer")
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&seen[0].body).unwrap();
+        assert_eq!(parsed.as_array().unwrap().len(), 2);
+        drop(tx);
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("run stops when the channel closes")
+            .unwrap();
+    }
 }
