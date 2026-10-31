@@ -554,7 +554,10 @@ async function decidePre(ev, d, agentId, opts) {
   if (tool === 'fileaccess') {
     // A tool zn does not know that names files: every path gets the read and the write checks.
     for (const p of Array.isArray(input.paths) ? input.paths : []) {
-      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts);
+      // A tool whose name says it writes gets the write wording: the file was not changed, not "not read".
+      const deny = input.intent === 'write'
+        ? policy.writeDenial(p, pathOpts) || policy.readDenial(p, { ...pathOpts, verb: 'write' })
+        : policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts);
       if (deny) return { decision: 'deny', message: deny };
     }
     return { decision: 'allow' };
@@ -569,7 +572,7 @@ async function decidePre(ev, d, agentId, opts) {
     let instruction = null;
     for (const p of Array.isArray(input.paths) ? input.paths : [input.path]) {
       // An adapter that promises "no reads or writes of secret files" asks for the read check on a write too.
-      const deny = (input.alsoReadCheck && policy.readDenial(p, pathOpts)) || policy.writeDenial(p, pathOpts);
+      const deny = (input.alsoReadCheck && policy.readDenial(p, { ...pathOpts, verb: 'write' })) || policy.writeDenial(p, pathOpts);
       if (deny) return { decision: 'deny', message: deny };
       if (!instruction && instructionMode !== 'off') instruction = policy.instructionWriteNotice(p, pathOpts);
     }

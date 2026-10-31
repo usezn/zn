@@ -96,19 +96,42 @@ function firstString(obj, keys) {
 // The text of a patch tool call (VS Code's apply_patch sends {input: "*** Begin Patch ..."}): the tool named
 // apply_patch, or any tool with a string argument that starts a patch. undefined = not a patch.
 const PATCH_KEYS = ['input', 'patch', 'patchText', 'command', 'text'];
+const PATCH_HEAD_RE = /^\*\*\* Begin Patch\b/m;
+// The argument objects of a call: the top level, then each object (or object in an array) one level down.
+function argLevels(args) {
+  const down = [];
+  for (const v of Object.values(args)) {
+    if (isObj(v)) down.push(v);
+    else if (Array.isArray(v)) for (const x of v) if (isObj(x)) down.push(x);
+  }
+  return [args, ...down];
+}
+/** {text, key}: the patch text and where it sits in the arguments (top level first, then one level down); undefined = not a patch. */
+function patchFound(toolName, args) {
+  for (const level of argLevels(args)) {
+    const keyOf = (obj, k) => (obj === args ? [k] : null);
+    if (toolName === 'apply_patch') {
+      const k = PATCH_KEYS.find((x) => typeof level[x] === 'string' && level[x]);
+      if (k !== undefined) return { text: level[k], key: level === args ? [k] : null };
+      continue;
+    }
+    const k = Object.keys(level).find((x) => typeof level[x] === 'string' && PATCH_HEAD_RE.test(level[x]));
+    if (k !== undefined) return { text: level[k], key: keyOf(level, k) };
+  }
+  return toolName === 'apply_patch' ? { text: '', key: null } : undefined;
+}
 function patchTextOf(toolName, args) {
-  if (toolName === 'apply_patch') return firstString(args, PATCH_KEYS) || '';
-  for (const v of Object.values(args)) if (typeof v === 'string' && /^\*\*\* Begin Patch\b/m.test(v)) return v;
-  return undefined;
+  const f = patchFound(toolName, args);
+  return f ? f.text : undefined;
 }
 
 /** The write input of a patch: every file it adds, updates, deletes or moves to (the Codex parser), checked like a write. */
-function patchInput(text) {
+function patchInput(text, key) {
   const { patchScan, PATCH_SCAN_CAP } = require('./codex');
   const tooLong = text.length > PATCH_SCAN_CAP;
   const scan = tooLong ? { files: [], suspicious: false } : patchScan(text);
   const files = scan.files;
-  return { path: files[0], paths: files, alsoReadCheck: true, tooLong, unparsed: !tooLong && (files.length === 0 || scan.suspicious), texts: [{ key: ['input'], value: text }] };
+  return { path: files[0], paths: files, alsoReadCheck: true, tooLong, unparsed: !tooLong && (files.length === 0 || scan.suspicious), texts: key ? [{ key, value: text }] : [] };
 }
 
 /**
@@ -189,6 +212,120 @@ function nestedCommand(args) {
     return lines.filter((l, i, arr) => arr.indexOf(l) === i).join('\n');
   }
   return undefined;
+}
+
+// A tool whose name says it changes files: its refusals use the write wording.
+const WRITE_NAME_RE = /write|edit|create|replace|insert|patch|delete|remove|move|rename|save|append|overwrite|modify/i;
+function isWriteName(name) {
+  return WRITE_NAME_RE.test(String(name || ''));
+}
+
+// JSON with comments and trailing commas, which is what VS Code's tasks.json is. Throws when it is not.
+function parseJsonc(text) {
+  let out = '';
+  let inStr = false;
+  const n = text.length;
+  for (let i = 0; i < n; i++) {
+    const ch = text[i];
+    if (inStr) {
+      out += ch;
+      if (ch === '\\') { out += text[i + 1] || ''; i++; } else if (ch === '"') inStr = false;
+    } else if (ch === '"') {
+      inStr = true;
+      out += ch;
+    } else if (ch === '/' && text[i + 1] === '/') {
+      while (i < n && text[i] !== '\n') i++;
+      out += '\n';
+    } else if (ch === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      if (end < 0) throw new Error('unterminated comment');
+      i = end + 1;
+      out += ' ';
+    } else if (ch === ',') {
+      let j = i + 1;
+      while (j < n && /\s/.test(text[j])) j++;
+      if (text[j] !== '}' && text[j] !== ']') out += ch;
+    } else {
+      out += ch;
+    }
+  }
+  return JSON.parse(out.replace(/^﻿/, ''));
+}
+
+const RUN_TASK_RE = /^run_?task$/i;
+const MAX_TASKS_BYTES = 1024 * 1024;
+
+function dependsLabels(d) {
+  const list = Array.isArray(d) ? d : d === undefined ? [] : [d];
+  return list.map((x) => (typeof x === 'string' ? x : isObj(x) ? x.task : undefined)).filter((x) => typeof x === 'string');
+}
+
+/** The command lines of one task of tasks.json: its command, its per-OS overrides and the tasks it depends on. null = unreadable. */
+function taskLines(t, tasks, seen, depth) {
+  const lines = [];
+  const add = (obj) => {
+    const l = nestedCommand({ task: obj });
+    if (l === null) return false;
+    if (l !== undefined) lines.push(l);
+    return true;
+  };
+  if (!add(t)) return null;
+  for (const os of ['windows', 'linux', 'osx']) {
+    if (t[os] === undefined) continue;
+    if (!isObj(t[os]) || !add({ type: t.type, ...t[os] })) return null;
+  }
+  if (depth < 5) {
+    for (const dep of dependsLabels(t.dependsOn)) {
+      if (seen.has(dep)) continue;
+      seen.add(dep);
+      const d = tasks.find((x) => isObj(x) && (x.label === dep || x.taskName === dep));
+      if (!d) continue;
+      const sub = taskLines(d, tasks, seen, depth + 1);
+      if (sub === null) return null;
+      if (sub !== undefined) lines.push(sub);
+    }
+  }
+  return lines.length ? lines.join('\n') : undefined;
+}
+
+/**
+ * run_task runs a task that already exists, named by id, so its input holds no command. The task is read from the
+ * workspace's .vscode/tasks.json as it is on disk now (so a task written earlier in the same turn is judged by what was
+ * written) and its command lines are returned like nestedCommand's. undefined = not a run_task call, or a task that is
+ * not in tasks.json (a built-in or extension task, such as npm: test); null = the call or the file cannot be read.
+ */
+function taskCommand(toolName, args, cwd) {
+  if (!RUN_TASK_RE.test(String(toolName || ''))) return undefined;
+  const id = firstString(args, ['id', 'label', 'taskId', 'task', 'name']);
+  if (id === undefined) return null;
+  let ws = firstString(args, ['workspaceFolder', 'workspace', 'cwd', 'folder']) || cwd;
+  if (/^file:/i.test(ws)) {
+    try { ws = fileURLToPath(ws); } catch (_) { return null; }
+  }
+  const file = path.join(path.resolve(cwd, ws), '.vscode', 'tasks.json');
+  let text;
+  try {
+    const st = fs.statSync(file);
+    if (!st.isFile()) return null;
+    if (st.size > MAX_TASKS_BYTES) return null;
+    text = fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    return e && e.code === 'ENOENT' ? undefined : null;
+  }
+  let data;
+  try { data = parseJsonc(text); } catch (_) { return null; }
+  if (!isObj(data)) return null;
+  if (data.tasks === undefined) return undefined;
+  if (!Array.isArray(data.tasks)) return null;
+  const names = [id, id.replace(/^[^:]+:\s*/, '')];
+  const t = data.tasks.find((x) => isObj(x) && (names.includes(x.label) || names.includes(x.taskName)));
+  if (!t) return undefined;
+  return taskLines(t, data.tasks, new Set([id]), 0);
+}
+
+function nestedOrTask(rawName, args, cwd) {
+  const t = taskCommand(rawName, args, cwd);
+  return t !== undefined ? t : nestedCommand(args);
 }
 
 /** Every string argument whose key looks like a file or folder (content-like keys skipped), three levels deep. */
@@ -272,10 +409,10 @@ function normalize(raw) {
     return { ...ev, tool: toolName || 'unknown', input: { texts: [] }, ...(known ? { unreadable: unreadable('arguments') } : {}) };
   }
   if (!known) {
-    const patch = patchTextOf(toolName, args);
-    if (patch !== undefined) return { ...ev, tool: 'write', input: patchInput(patch) };
+    const found = patchFound(toolName, args);
+    if (found) return { ...ev, tool: 'write', input: patchInput(found.text, found.key) };
   }
-  let cmd = firstString(args, COMMAND_KEYS) !== undefined ? firstString(args, COMMAND_KEYS) : (known ? undefined : nestedCommand(args));
+  let cmd = firstString(args, COMMAND_KEYS) !== undefined ? firstString(args, COMMAND_KEYS) : (known ? undefined : nestedOrTask(rawName, args, cwd));
   const nestedBad = cmd === null;
   if (nestedBad) cmd = undefined;
   if (SHELL_TOOLS.has(toolName) || nestedBad || (!known && cmd !== undefined)) {
@@ -300,7 +437,7 @@ function normalize(raw) {
   // glob lists names only. Any other tool that names a file (a plugin, an MCP server, a future tool) gets the read
   // and write checks on every path in it; tools with no path get no opinion.
   if (toolName !== 'glob' && (paths.length || bad)) {
-    const e = { ...ev, tool: 'fileaccess', input };
+    const e = { ...ev, tool: 'fileaccess', input: isWriteName(toolName) ? { ...input, intent: 'write' } : input };
     if (bad) e.unreadable = unreadable('file address');
     return e;
   }
@@ -439,6 +576,10 @@ module.exports = {
   firstString,
   COMMAND_KEYS,
   patchTextOf,
+  patchFound,
   patchInput,
   nestedCommand,
+  taskCommand,
+  nestedOrTask,
+  isWriteName,
 };

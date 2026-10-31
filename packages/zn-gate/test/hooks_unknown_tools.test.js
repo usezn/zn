@@ -214,3 +214,86 @@ test('real Claude Code tools with a command field (SlashCommand, Skill) keep ben
   assert.equal((await run(pre('SlashCommand', { command: '/review' }, dir))).output, null);
   assert.equal((await run(pre('Skill', { command: 'pdf' }, dir))).output, null);
 });
+
+// Follow-ups: a patch one level down, run_task after a tasks.json write, write wording, SlashCommand and Skill.
+const fs = require('fs');
+const reasonOf = (r) => (r.output && r.output.hookSpecificOutput ? r.output.hookSpecificOutput.permissionDecisionReason : r.output && r.output.permissionDecisionReason) || '';
+const askedOrDenied = (r) => denied(r) || Boolean(r.output && r.output.hookSpecificOutput && r.output.hookSpecificOutput.permissionDecision === 'ask');
+
+for (const file of ['.github/hooks/zn-gate.json', AWS]) {
+  test('a patch nested one level down on ' + path.basename(file) + ' is blocked in both adapters', async (t) => {
+    const dir = tempDir(t, 'zn-unknown-tools-');
+    const shapes = [{ patch: { text: patchOf(file) } }, { change: { input: patchOf(file) } }, { edits: [{ diff: patchOf(file) }] }];
+    for (const input of shapes) {
+      assert.ok(askedOrDenied(await run(pre('some_patch_tool', input, dir))), JSON.stringify(input));
+      assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'some_patch_tool', toolArgs: input })), JSON.stringify(input));
+    }
+    const wrapped = { wrapper: { input: patchOf(file) } };
+    assert.ok(askedOrDenied(await run(pre('apply_patch', wrapped, dir))));
+    assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'apply_patch', toolArgs: wrapped })));
+  });
+}
+
+test('a benign patch nested one level down passes in both adapters', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  const input = { patch: { text: patchOf('src/x.js') } };
+  assert.equal((await run(pre('some_patch_tool', input, dir))).output, null);
+  assert.equal((await runCopilot({ cwd: dir, toolName: 'some_patch_tool', toolArgs: input })).output, null);
+});
+
+function writeTasks(dir, text) {
+  fs.mkdirSync(path.join(dir, '.vscode'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.vscode', 'tasks.json'), text);
+}
+const runTask = (dir, id) => ({ workspaceFolder: dir, id });
+
+test('run_task is judged against the task in tasks.json as it was just written', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  writeTasks(dir, '// tasks\n{\n  "version": "2.0.0",\n  /* comment */\n  "tasks": [\n' +
+    '    { "label": "steal", "type": "shell", "command": "cat", "args": ["' + AWS + '"], },\n' +
+    '    { "label": "build", "type": "shell", "command": "npm", "args": ["test"] },\n' +
+    '    { "label": "wipe", "type": "shell", "command": "echo hi", "linux": { "command": "rm -rf ~" } },\n' +
+    '    { "label": "chain", "type": "shell", "command": "echo hi", "dependsOn": ["steal"] },\n' +
+    '  ]\n}\n');
+  for (const id of ['steal', 'shell: steal', 'wipe', 'chain']) {
+    assert.ok(denied(await run(pre('run_task', runTask(dir, id), dir))), id);
+    assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'run_task', toolArgs: runTask(dir, id) })), id);
+  }
+  assert.equal((await run(pre('run_task', runTask(dir, 'build'), dir))).output, null);
+  assert.equal((await runCopilot({ cwd: dir, toolName: 'run_task', toolArgs: runTask(dir, 'build') })).output, null);
+  // A task that is not in the file (built-in or from an extension) cannot be read here and is left to Copilot.
+  assert.equal((await run(pre('run_task', runTask(dir, 'npm: test'), dir))).output, null);
+});
+
+test('run_task is refused when the task file or the task name cannot be read', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  writeTasks(dir, '{ "tasks": [ { "label": "x", ');
+  assert.ok(denied(await run(pre('run_task', runTask(dir, 'x'), dir))));
+  assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'run_task', toolArgs: runTask(dir, 'x') })));
+  assert.ok(denied(await run(pre('run_task', { workspaceFolder: dir }, dir))));
+  assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'run_task', toolArgs: { workspaceFolder: dir } })));
+});
+
+test('a refused write through an unknown write tool says the file was not changed', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  for (const name of ['replace_string_in_file', 'insert_edit_into_file', 'some_patch_tool']) {
+    const input = name === 'some_patch_tool' ? { input: patchOf(AWS) } : { filePath: AWS, newString: 'x' };
+    const reason = reasonOf(await run(pre(name, input, dir)));
+    assert.ok(/was not changed/.test(reason) && !/was not read/.test(reason), name + ': ' + reason);
+    const c = reasonOf(await runCopilot({ cwd: dir, toolName: name, toolArgs: input }));
+    assert.ok(/was not changed/.test(c) && !/was not read/.test(c), name + ': ' + c);
+  }
+  // A read tool keeps the read wording.
+  assert.ok(/was not read/.test(reasonOf(await run(pre('read_file', { filePath: AWS }, dir)))));
+});
+
+test('SlashCommand and Skill: a command field gets the shell checks, a benign one passes', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  assert.ok(denied(await run(pre('SlashCommand', { command: 'cat ' + AWS }, dir))));
+  assert.ok(denied(await run(pre('Skill', { command: 'rm -rf ~' }, dir))));
+  assert.equal((await run(pre('SlashCommand', { command: '/review src/a.js' }, dir))).output, null);
+  assert.equal((await run(pre('Skill', { command: 'pdf' }, dir))).output, null);
+  // The shapes with no command field and no path stay with no opinion.
+  assert.equal((await run(pre('Skill', { skill: 'pdf', args: 'report.pdf' }, dir))).output, null);
+  assert.equal((await run(pre('SlashCommand', { name: 'review' }, dir))).output, null);
+});

@@ -49,6 +49,8 @@ With the hooks (`zn hooks install copilot`), zn-gate checks every tool call befo
 | Blocks a secret pasted into the chat | **No**: Copilot drops the output of a command hook for a typed prompt |
 | Blocks the call when a hook runs out of time | zn answers itself at 11 seconds, before Copilot's timeout (15 seconds), which on its own would let the call through |
 | MCP tools of other servers | Only those Copilot names as read or shell tools; wrap the others with `zn-gate shield` (below) |
+| Patches (`apply_patch` and similar), including a patch one level down inside the tool's input | Every file the patch adds, changes, moves or deletes gets the same checks as a write; a refusal says the file was not changed |
+| Running an existing task (`run_task`) | zn reads the task from `.vscode/tasks.json` as it is on disk when the call arrives, so a task written to that file earlier in the same session is judged by its command (and its per-OS commands and the tasks it depends on) before it runs. If the file or the task name cannot be read, the call is blocked. A task that is not in that file (a built-in or extension task, such as `npm: test`, or one defined in your user settings) is not checked |
 
 ### What VS Code's documentation says
 

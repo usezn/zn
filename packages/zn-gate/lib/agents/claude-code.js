@@ -140,15 +140,15 @@ const KNOWN_TOOLS = new Set(Object.values(TOOL_MAP));
    through the Claude-format hook). If its input carries a command, it gets the shell checks; if it names files, every
    path gets the read and write checks, as in the Copilot adapter. A tool with neither gets no opinion. */
 function unknownToolEvent(base, toolName, ti) {
-  const { pathsOf, firstString, COMMAND_KEYS, patchTextOf, patchInput, nestedCommand } = require('./copilot');
-  const patch = patchTextOf(toolName, ti);
-  if (patch !== undefined) return { ...base, tool: 'write', toolName, input: patchInput(patch) };
-  const cmd = firstString(ti, COMMAND_KEYS) !== undefined ? firstString(ti, COMMAND_KEYS) : nestedCommand(ti);
+  const { pathsOf, firstString, COMMAND_KEYS, patchFound, patchInput, nestedOrTask, isWriteName } = require('./copilot');
+  const found = patchFound(toolName, ti);
+  if (found) return { ...base, tool: 'write', toolName, input: patchInput(found.text, found.key) };
+  const cmd = firstString(ti, COMMAND_KEYS) !== undefined ? firstString(ti, COMMAND_KEYS) : nestedOrTask(toolName, ti, base.cwd);
   if (cmd === null) return { ...base, tool: 'bash', toolName, input: { texts: [] } };
   if (cmd !== undefined) return { ...base, tool: 'bash', toolName, input: { command: cmd, texts: [] } };
   const { paths, bad } = pathsOf(ti);
   if (bad) return { ...base, tool: 'write', toolName, input: { paths, unparsed: true, texts: [] } };
-  if (paths.length) return { ...base, tool: 'fileaccess', toolName, input: { path: paths[0], paths, texts: [] } };
+  if (paths.length) return { ...base, tool: 'fileaccess', toolName, input: { path: paths[0], paths, texts: [], ...(isWriteName(toolName) ? { intent: 'write' } : {}) } };
   return null;
 }
 

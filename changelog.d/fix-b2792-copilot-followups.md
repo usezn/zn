@@ -1,0 +1,3 @@
+### Security
+- GitHub Copilot in VS Code: a patch sent one level down inside a tool's input (for example `{"patch": {"text": "..."}}`) is checked like a top-level patch, and `run_task` is judged against the task in `.vscode/tasks.json` as it is on disk when the call arrives, so a task written to that file earlier in the same session is checked before it runs (its command, its per-OS commands and the tasks it depends on). A `run_task` call whose task name or `tasks.json` cannot be read is blocked; a task that is not in the file (a built-in or extension task, such as `npm: test`) is left to Copilot.
+- A refused write through a tool zn does not know (a patch, `replace_string_in_file`) now says the file was not changed, instead of the wording used for a refused read.

@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-30.1';
+const POLICY_RULES_VERSION = '2026-10-31.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -760,12 +760,13 @@ function readDenial(p, opts = {}) {
     let text = head === NOT_A_FILE ? null : Buffer.from(head, 'latin1').toString('utf8');
     if (text !== null && Buffer.byteLength(head, 'latin1') >= DOTENV_SCAN_BYTES) text = null;
     if (text !== null && dotenv.isShadowed(text)) return null;
+    if (opts.verb === 'write') return 'zn: ' + path.basename(abs) + ' holds plain-text secrets, so it was not changed. Ask the user to edit it, or to run `' + znCommand('env shadow ' + path.basename(abs)) + '` first so it holds markers instead of values.';
     return 'zn: ' + path.basename(abs) + ' holds plain-text secrets. Ask the user to run `' +
       znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.';
   }
   if (c.kind === 'zn_state') return vaultMessage(opts);
   if (c.kind === 'keyfile') return keyFileDenial(p, c, opts);
-  return credentialDenial(p, c);
+  return credentialDenial(p, c, opts.verb === 'write');
 }
 
 /* Spend `n` looks on disk from a command's budget; true once the time or the looks are used up. */
@@ -811,7 +812,7 @@ function keyFileDenial(p, c, opts) {
   if (GLOB_RE.test(p)) return keyFileGlobDenial(p, c, opts);
   const text = readHead(resolvedOf(p, opts), KEY_SCAN_BYTES);
   if (text === null) return null; // missing file: nothing to protect
-  if (text === NOT_A_FILE || PRIVATE_KEY_RE.test(text)) return credentialDenial(p, c);
+  if (text === NOT_A_FILE || PRIVATE_KEY_RE.test(text)) return credentialDenial(p, c, opts.verb === 'write');
   return null;
 }
 
@@ -841,7 +842,8 @@ function keyFileGlobDenial(p, c, opts) {
 }
 
 /* Reads of credential files: what was refused, why, and how to use a value instead. */
-function credentialDenial(p, c) {
+function credentialDenial(p, c, write) {
+  if (write) return 'zn: ' + p + ' was not changed because zn treats it as holding secrets (' + c.reason + '). Ask the user to make this change themselves; a secret value never goes through the agent.';
   return 'zn: ' + p + ' was not read because zn treats it as holding secrets (' + c.reason + '), and secret values never go to the model. ' +
     'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then run the command with `' + znCommand('run --secrets NAME -- <command>') + '` so the program gets it as an environment variable.';
 }
