@@ -246,7 +246,7 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   - `disableAllHooks` in zn's file or in `.github/copilot/settings(.local).json`
     turns the hooks off; `zn-gate check` reports it.
 - **Gemini CLI** (experimental: `zn hooks install gemini [--project]`;
-  `zn-gate check` lists it as "Gemini CLI"). Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts on 18 June 2026; Gemini CLI keeps working with zn-gate.
+  `zn-gate check` lists it as "Gemini CLI (experimental)"). Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts on 18 June 2026; Gemini CLI keeps working with zn-gate.
   Covered: `BeforeTool` blocks reads and writes of secret files by path, shell
   commands that handle secrets, and edits of Gemini CLI's own settings files.
   zn adds its hook to `~/.gemini/settings.json` (or `.gemini/settings.json`
