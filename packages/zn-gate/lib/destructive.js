@@ -269,29 +269,67 @@ function dollarParenCode(text) {
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (quote === "'") { if (ch === "'") quote = ''; continue; }
+    if (quote === "$'") { if (ch === '\\') i++; else if (ch === "'") quote = ''; continue; }
     if (ch === '\\') { i++; continue; }
     if (ch === '"') { quote = quote === '"' ? '' : '"'; continue; }
     if (ch === "'" && quote === '') { quote = "'"; continue; }
+    if (ch === '$' && text[i + 1] === "'" && quote === '') { quote = "$'"; i++; continue; }
     if (ch !== '$' || text[i + 1] !== '(') continue;
     if (text[i + 2] === '(') { i += 2; continue; }
     // Find the closing parenthesis: quotes and escapes inside the body hide parentheses.
     let depth = 1;
     let q = '';
     let j = i + 2;
+    let unsure = false;
     for (; j < text.length; j++) {
       const c = text[j];
       if (q === "'") { if (c === "'") q = ''; continue; }
+      if (q === "$'") { if (c === '\\') j++; else if (c === "'") q = ''; continue; }
       if (c === '\\') { j++; continue; }
       if (c === '"') { q = q === '"' ? '' : '"'; continue; }
       if (c === "'" && q === '') { q = "'"; continue; }
+      if (c === '$' && text[j + 1] === "'" && q === '') { q = "$'"; j++; continue; }
       if (q === '"') continue;
+      // A case pattern, a comment or a here-document can hold a parenthesis that does not close the substitution.
+      const wordStart = j === i + 2 || /[\s;&|(]/.test(text[j - 1]);
+      if ((c === '<' && text[j + 1] === '<' && text[j + 2] !== '<') ||
+          (c === '#' && wordStart) ||
+          (c === 'c' && wordStart && text.startsWith('case', j) && /\s/.test(text[j + 4] || ''))) { unsure = true; break; }
+      if (c === '<' && text[j + 1] === '<') { j += 2; continue; }
       if (c === '(') depth++;
       else if (c === ')' && --depth === 0) break;
+    }
+    if (unsure) {
+      const r = dollarParenWide(text, i + 2, quote === '"');
+      for (const p of r.parts) bodies.push(p);
+      i = r.last;
+      continue;
     }
     bodies.push(text.slice(i + 2, j));
     i = j;
   }
   return bodies.join('\n');
+}
+
+/* The body of a substitution the scanner cannot close with certainty: everything up to the last `)` before the closing
+   double quote of the enclosing string (or the end of the text when it is not quoted), plus the text after each `)` in
+   it, so that code after an early `)` is read too. Returns the texts and the index the outer scan resumes from. */
+function dollarParenWide(text, from, quoted) {
+  let limit = text.length;
+  if (quoted) {
+    let lastQuote = -1;
+    for (let k = from; k < text.length; k++) {
+      if (text[k] === '\\') { k++; continue; }
+      if (text[k] === '"') lastQuote = k;
+    }
+    if (lastQuote >= 0) limit = lastQuote;
+  }
+  let end = limit > 0 ? text.lastIndexOf(')', limit - 1) : -1;
+  if (end < from) end = limit;
+  const body = text.slice(from, end);
+  const parts = [body];
+  for (let k = body.indexOf(')'); k >= 0; k = body.indexOf(')', k + 1)) parts.push(body.slice(k + 1));
+  return { parts, last: text[end] === ')' ? end : end - 1 };
 }
 
 /* The folder a command runs in when it is wrapped in env -C / sudo -D: `dirs` are the words of its chdir options in

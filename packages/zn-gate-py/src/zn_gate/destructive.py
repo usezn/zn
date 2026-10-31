@@ -495,12 +495,20 @@ def _dollar_paren_code(text: str) -> str:
         if quote == "'":
             if ch == "'":
                 quote = ""
+        elif quote == "$'":
+            if ch == "\\":
+                i += 1
+            elif ch == "'":
+                quote = ""
         elif ch == "\\":
             i += 1
         elif ch == '"':
             quote = "" if quote == '"' else '"'
         elif ch == "'" and quote == "":
             quote = "'"
+        elif ch == "$" and text[i + 1:i + 2] == "'" and quote == "":
+            quote = "$'"
+            i += 1
         elif ch == "$" and text[i + 1:i + 2] == "(":
             if text[i + 2:i + 3] == "(":
                 i += 2
@@ -508,10 +516,16 @@ def _dollar_paren_code(text: str) -> str:
                 depth = 1
                 q = ""
                 j = i + 2
+                unsure = False
                 while j < n:
                     c = text[j]
                     if q == "'":
                         if c == "'":
+                            q = ""
+                    elif q == "$'":
+                        if c == "\\":
+                            j += 1
+                        elif c == "'":
                             q = ""
                     elif c == "\\":
                         j += 1
@@ -519,19 +533,65 @@ def _dollar_paren_code(text: str) -> str:
                         q = "" if q == '"' else '"'
                     elif c == "'" and q == "":
                         q = "'"
+                    elif c == "$" and text[j + 1:j + 2] == "'" and q == "":
+                        q = "$'"
+                        j += 1
                     elif q == '"':
                         pass
-                    elif c == "(":
-                        depth += 1
-                    elif c == ")":
-                        depth -= 1
-                        if depth == 0:
+                    else:
+                        # A case pattern, a comment or a here-document can hold a parenthesis that does not close the substitution.
+                        word_start = j == i + 2 or text[j - 1].isspace() or text[j - 1] in ";&|("
+                        if ((c == "<" and text[j + 1:j + 2] == "<" and text[j + 2:j + 3] != "<")
+                                or (c == "#" and word_start)
+                                or (c == "c" and word_start and text.startswith("case", j) and text[j + 4:j + 5].isspace())):
+                            unsure = True
                             break
+                        if c == "<" and text[j + 1:j + 2] == "<":
+                            j += 2
+                        elif c == "(":
+                            depth += 1
+                        elif c == ")":
+                            depth -= 1
+                            if depth == 0:
+                                break
                     j += 1
-                bodies.append(text[i + 2:j])
-                i = j
+                if unsure:
+                    parts, last = _dollar_paren_wide(text, i + 2, quote == '"')
+                    bodies.extend(parts)
+                    i = last
+                else:
+                    bodies.append(text[i + 2:j])
+                    i = j
         i += 1
     return "\n".join(bodies)
+
+
+def _dollar_paren_wide(text: str, start: int, quoted: bool) -> Tuple[List[str], int]:
+    """The body of a substitution the scanner cannot close with certainty: everything up to the last `)` before the closing
+    double quote of the enclosing string (or the end of the text when it is not quoted), plus the text after each `)` in it,
+    so that code after an early `)` is read too. Returns the texts and the index the outer scan resumes from."""
+    limit = len(text)
+    if quoted:
+        last_quote = -1
+        k = start
+        while k < len(text):
+            if text[k] == "\\":
+                k += 1
+            elif text[k] == '"':
+                last_quote = k
+            k += 1
+        if last_quote >= 0:
+            limit = last_quote
+    end = text.rfind(")", 0, limit) if limit > 0 else -1
+    if end < start:
+        end = limit
+    body = text[start:end]
+    parts = [body]
+    k = body.find(")")
+    while k >= 0:
+        parts.append(body[k + 1:])
+        k = body.find(")", k + 1)
+    return parts, (end if text[end:end + 1] == ")" else end - 1)
 
 
 def _backtick_code(text: str) -> str:

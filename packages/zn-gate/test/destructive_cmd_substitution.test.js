@@ -71,3 +71,28 @@ test('arithmetic expansion is not a command', () => {
     assert.equal(checkCommand(c).verdict, 'allow', c);
   }
 });
+
+test('a substitution whose parenthesis hides in a case pattern, a comment, a here-document or an ANSI-C quote is still read', () => {
+  for (const c of [
+    'echo "$(case a in a) rm -rf ~ ;; esac)"',
+    'echo "$( # )\nrm -rf ~\n)"',
+    'echo "$(cat <<E\n)\nE\nrm -rf ~\n)"',
+    "echo $'\\'' \"$(rm -rf ~)\" $'\\''",
+  ]) {
+    const res = checkCommand(c);
+    assert.equal(res.verdict, 'block', c);
+    assert.equal(res.rule, 'destructive:rm_root_home', c);
+  }
+});
+
+test('similar substitutions that run nothing destructive stay allowed', () => {
+  for (const c of [
+    'echo "$(case $x in a) echo hi ;; esac)"',
+    'echo "$(date) # not a comment"',
+    "echo $'\\'' \"$(date)\" $'\\''",
+    'echo "$(cat <<< hi)"',
+    'echo "$(echo ${#PATH})"',
+  ]) {
+    assert.equal(checkCommand(c).verdict, 'allow', c);
+  }
+});
