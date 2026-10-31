@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-31.1"
+COMMAND_RULES_VERSION = "2026-10-31.4"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -975,6 +975,9 @@ def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[s
             return _OVERFLOW
     # env -S "rm -rf ~": the split strings (env joins their words in order) are a command line of its own, followed by
     # the words after them. One reading for all of them, so the cost does not multiply with the number of -S options.
+    # Nested deeper than the checker reads: refused rather than allowed unread.
+    if splits and depth >= _MAX_DEPTH:
+        return _OVERFLOW
     if splits and depth < _MAX_DEPTH:
         tail = " ".join("'" + w.replace("'", "'\\''") + "'" for w in args)
         # The string is read as the rest of an env command, so env options inside it (-i, -u NAME, -C DIR, -S) are read too.

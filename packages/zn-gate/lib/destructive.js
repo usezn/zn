@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-31.1';
+const COMMAND_RULES_VERSION = '2026-10-31.4';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -522,6 +522,8 @@ function checkSimple(words, depth, known) {
   }
   // env -S "rm -rf ~": the split strings (env joins their words in order) are a command line of its own, followed by the
   // words after them. One reading for all of them, so the cost does not multiply with the number of -S options.
+  // Nested deeper than the checker reads: refused rather than allowed unread.
+  if (un.splits.length && depth >= MAX_DEPTH) return OVERFLOW;
   if (un.splits.length && depth < MAX_DEPTH) {
     const tail = args.map((w) => "'" + w.replace(/'/g, "'\\''") + "'").join(' ');
     // The string is read as the rest of an env command, so env options inside it (-i, -u NAME, -C DIR, -S) are read too.
