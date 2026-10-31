@@ -111,14 +111,44 @@ function patchInput(text) {
   return { path: files[0], paths: files, alsoReadCheck: true, tooLong, unparsed: !tooLong && (files.length === 0 || scan.suspicious), texts: [{ key: ['input'], value: text }] };
 }
 
-/** A command one level down (create_and_run_task sends {task: {command, args}}), with its string arguments. */
+/**
+ * One piece of a task line (a command or an argument) the way VS Code gives it: a string, or {value, quoting} with
+ * quoting escape, strong or weak. Returns the text as VS Code puts it on a shell line, the bare value, and a
+ * POSIX-quoted form; null when the piece has a shape zn cannot read.
+ */
+function taskPiece(x) {
+  if (typeof x === 'string') return { vs: /\s/.test(x) ? "'" + x + "'" : x, raw: x, q: shQuote(x) };
+  if (!isObj(x) || typeof x.value !== 'string') return null;
+  const v = x.value;
+  const k = x.quoting;
+  if (k !== undefined && k !== 'escape' && k !== 'strong' && k !== 'weak') return null;
+  const vs = k === 'strong' ? "'" + v + "'" : k === 'weak' ? '"' + v + '"' : k === 'escape' ? v.replace(/([^A-Za-z0-9_\-./=:@%+,])/g, '\\$1') : (/\s/.test(v) ? "'" + v + "'" : v);
+  return { vs, raw: v, q: shQuote(v) };
+}
+
+/**
+ * A command one level down (create_and_run_task sends {task: {command, args}}) as the line(s) it runs.
+ * For a shell task VS Code puts an argument with white space in single quotes without escaping a quote inside it and
+ * leaves every other argument as typed, so the line is built that way, and also with the bare values and with every
+ * argument quoted: the lines are judged together and the stricter answer wins. A process task has no shell, so each
+ * argument is quoted. undefined = no command here; null = a command or argument zn cannot read (never dropped).
+ */
 function nestedCommand(args) {
   for (const v of Object.values(args)) {
     if (!isObj(v)) continue;
-    const c = firstString(v, COMMAND_KEYS);
-    if (c === undefined) continue;
-    const extra = Array.isArray(v.args) ? v.args.filter((x) => typeof x === 'string') : [];
-    return [c, ...extra.map((x) => shQuote(x))].join(' ');
+    const key = COMMAND_KEYS.find((k) => v[k] !== undefined);
+    if (key === undefined) continue;
+    const c = taskPiece(v[key]);
+    if (!c || (typeof v[key] === 'string' && !v[key])) return null;
+    let extra = [];
+    if (v.args !== undefined) {
+      if (!Array.isArray(v.args)) return null;
+      extra = v.args.map(taskPiece);
+      if (extra.some((p) => p === null)) return null;
+    }
+    const join = (f) => [c, ...extra].map(f).join(' ');
+    if (typeof v.type === 'string' && v.type.toLowerCase() === 'process') return join((p) => p.q);
+    return [join((p) => p.vs), join((p) => p.raw), join((p) => p.q)].filter((l, i, a) => a.indexOf(l) === i).join('\n');
   }
   return undefined;
 }
@@ -207,8 +237,10 @@ function normalize(raw) {
     const patch = patchTextOf(toolName, args);
     if (patch !== undefined) return { ...ev, tool: 'write', input: patchInput(patch) };
   }
-  const cmd = firstString(args, COMMAND_KEYS) !== undefined ? firstString(args, COMMAND_KEYS) : (known ? undefined : nestedCommand(args));
-  if (SHELL_TOOLS.has(toolName) || (!known && cmd !== undefined)) {
+  let cmd = firstString(args, COMMAND_KEYS) !== undefined ? firstString(args, COMMAND_KEYS) : (known ? undefined : nestedCommand(args));
+  const nestedBad = cmd === null;
+  if (nestedBad) cmd = undefined;
+  if (SHELL_TOOLS.has(toolName) || nestedBad || (!known && cmd !== undefined)) {
     const e = { ...ev, tool: toolName === 'powershell' ? 'powershell' : 'bash', input: { command: cmd || '', texts: [] } };
     if (cmd === undefined) e.unreadable = unreadable('command');
     return e;

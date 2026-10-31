@@ -144,6 +144,7 @@ function unknownToolEvent(base, toolName, ti) {
   const patch = patchTextOf(toolName, ti);
   if (patch !== undefined) return { ...base, tool: 'write', toolName, input: patchInput(patch) };
   const cmd = firstString(ti, COMMAND_KEYS) !== undefined ? firstString(ti, COMMAND_KEYS) : nestedCommand(ti);
+  if (cmd === null) return { ...base, tool: 'bash', toolName, input: { texts: [] } };
   if (cmd !== undefined) return { ...base, tool: 'bash', toolName, input: { command: cmd, texts: [] } };
   const { paths, bad } = pathsOf(ti);
   if (bad) return { ...base, tool: 'write', toolName, input: { paths, unparsed: true, texts: [] } };

@@ -127,6 +127,52 @@ test('task.args are quoted like VS Code runs them: bash -c with a destructive or
   assert.equal((await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: ok })).output, null);
 });
 
+test('VS Code shell task lines are judged as VS Code builds them, not as zn would quote them', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  const cases = [
+    { type: 'shell', command: 'echo', args: ['x&&rm', '-rf', '~'] },
+    { type: 'shell', command: 'echo', args: ["a' ; rm -rf ~ ; 'b"] },
+    { type: 'shell', command: 'rm', args: ['-rf', { value: '~', quoting: 'strong' }] },
+    { type: 'shell', command: { value: 'rm -rf ~', quoting: 'weak' } },
+  ];
+  for (const task of cases) {
+    const input = { workspaceFolder: dir, task: Object.assign({ label: 'x' }, task) };
+    assert.ok(denied(await run(pre('create_and_run_task', input, dir))), JSON.stringify(task));
+    assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: input })), JSON.stringify(task));
+  }
+});
+
+test('a task command or argument zn cannot read is blocked, never dropped', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  const cases = [
+    { type: 'shell', command: 'echo', args: [{ foo: 'bar' }] },
+    { type: 'shell', command: 'echo', args: [42] },
+    { type: 'shell', command: 'echo', args: 'hello' },
+    { type: 'shell', command: { foo: 'rm -rf ~' } },
+    { type: 'shell', command: 'echo', args: [{ value: 'x', quoting: 'bogus' }] },
+  ];
+  for (const task of cases) {
+    const input = { workspaceFolder: dir, task: Object.assign({ label: 'x' }, task) };
+    assert.ok(denied(await run(pre('create_and_run_task', input, dir))), JSON.stringify(task));
+    assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: input })), JSON.stringify(task));
+  }
+});
+
+test('a process task has no shell: its arguments stay data, and benign tasks pass', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  const ok = [
+    { type: 'process', command: 'echo', args: ['x&&rm', '-rf', '~'] },
+    { type: 'shell', command: 'npm', args: ['test'] },
+    { type: 'shell', command: 'bash', args: ['-c', 'echo hello'] },
+    { type: 'shell', command: 'echo', args: [{ value: 'hello world', quoting: 'strong' }] },
+  ];
+  for (const task of ok) {
+    const input = { workspaceFolder: dir, task: Object.assign({ label: 'x' }, task) };
+    assert.equal((await run(pre('create_and_run_task', input, dir))).output, null, JSON.stringify(task));
+    assert.equal((await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: input })).output, null, JSON.stringify(task));
+  }
+});
+
 test('real Claude Code tools with a command field (SlashCommand, Skill) keep benign forms passing', async (t) => {
   const dir = tempDir(t, 'zn-unknown-tools-');
   assert.equal((await run(pre('SlashCommand', { command: '/review' }, dir))).output, null);
