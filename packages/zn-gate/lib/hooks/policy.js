@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.15';
+const POLICY_RULES_VERSION = '2026-10-31.16';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -322,10 +322,20 @@ function credentialElsewhere(text, opts) {
   const t = slash(text);
   if (!bases || !bases.moved || !t || path.isAbsolute(t) || /^[~$`%-]/.test(t) || /^[a-z][a-z0-9+.-]*:\/\//i.test(t)) return null;
   const cwd = path.resolve(opts.cwd || process.cwd());
+  // The name as a program reads it: curl -d @file, --data-binary @file, -F f=@file;type=x, --data-urlencode k@file.
+  const names = new Set([t]);
+  let m;
+  if ((m = /^(?:[^=@<\s]*=)?[@<]([^;]+)/.exec(t))) names.add(m[1]);
+  if ((m = /^[A-Za-z0-9_.-]+@([^;@]+)$/.exec(t))) names.add(m[1]);
   for (const b of bases.dirs) {
     if (b === cwd) continue;
-    const c = classifyPath(path.join(b, text), opts);
-    if (c && c.kind === 'credential') return c;
+    for (const n of names) {
+      if (!n || path.isAbsolute(n) || /^[~$`%-]/.test(n)) continue;
+      const full = path.join(b, n);
+      // A pattern (cred*, credential?, [c]redentials) is matched in that folder like the same pattern written in full.
+      const c = /[*?[]/.test(n) ? classifyWord(full, opts) : classifyPath(full, opts);
+      if (c && c.kind === 'credential') return c;
+    }
   }
   return null;
 }
