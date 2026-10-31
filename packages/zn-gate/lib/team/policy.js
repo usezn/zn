@@ -26,6 +26,12 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const store = require('../vault/store');
+const { ASTRAL_CLASS } = require('../invisible');
+
+// A reason is refused when it holds a control character or an astral invisible one (Unicode tag characters
+// U+E0000-E007F, supplementary variation selectors): those can carry hidden text to the agent. The BMP
+// invisibles (zero-width, bidi, variation selectors) stay valid, as before: they are removed where the text is shown.
+const BAD_REASON_RE = new RegExp('[\u0000-\u001f\u007f' + ASTRAL_CLASS + ']', 'u');
 
 const SKEW_MS = 5 * 60 * 1000;
 const MAX_LIFETIME_MS = 7 * 86400000;
@@ -111,7 +117,7 @@ function checkRule(r) {
   if (r.deny !== undefined && typeof r.deny !== 'boolean') return 'invalid deny';
   if (r.warn !== undefined && typeof r.warn !== 'boolean') return 'invalid warn';
   if (r.deny === true && r.warn === true) return 'invalid rule: deny and warn together';
-  if (r.reason !== undefined && (typeof r.reason !== 'string' || r.reason.length < 1 || r.reason.length > 200 || /[\u0000-\u001f]/.test(r.reason))) return 'invalid reason';
+  if (r.reason !== undefined && (typeof r.reason !== 'string' || Array.from(r.reason).length < 1 || Array.from(r.reason).length > 200 || BAD_REASON_RE.test(r.reason))) return 'invalid reason (control characters and Unicode tag characters are not allowed)';
   return null;
 }
 
