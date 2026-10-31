@@ -7,9 +7,33 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Europe/Madrid
+    rebase-strategy: disabled
     open-pull-requests-limit: 5
     groups:
+      cargo-crypto:
+        applies-to: version-updates
+        patterns:
+          - "sha*"
+          - "rand*"
+          - "getrandom"
+          - "ring"
+          - "rustls*"
+          - "hmac"
+          - "hkdf"
+          - "aes*"
+          - "digest"
+          - "ed25519*"
+          - "rsa"
+          - "p256"
+          - "p384"
+          - "crypto-*"
+          - "*-crypto"
+        update-types: [minor, patch]
       cargo:
+        applies-to: version-updates
         patterns: ["*"]
         update-types: [minor, patch]
 
@@ -18,9 +42,33 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Europe/Madrid
+    rebase-strategy: disabled
     open-pull-requests-limit: 2
     groups:
+      cargo-fuzz-crypto:
+        applies-to: version-updates
+        patterns:
+          - "sha*"
+          - "rand*"
+          - "getrandom"
+          - "ring"
+          - "rustls*"
+          - "hmac"
+          - "hkdf"
+          - "aes*"
+          - "digest"
+          - "ed25519*"
+          - "rsa"
+          - "p256"
+          - "p384"
+          - "crypto-*"
+          - "*-crypto"
+        update-types: [minor, patch]
       cargo-fuzz:
+        applies-to: version-updates
         patterns: ["*"]
         update-types: [minor, patch]
 
@@ -29,9 +77,14 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Europe/Madrid
+    rebase-strategy: disabled
     open-pull-requests-limit: 2
     groups:
       npm:
+        applies-to: version-updates
         patterns: ["*"]
         update-types: [minor, patch]
 
@@ -40,9 +93,14 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Europe/Madrid
+    rebase-strategy: disabled
     open-pull-requests-limit: 5
     groups:
       npm:
+        applies-to: version-updates
         patterns: ["*"]
         update-types: [minor, patch]
 
@@ -51,6 +109,10 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Europe/Madrid
+    rebase-strategy: disabled
     # Security updates only. The release pins zn-gate and writes
     # scripts/zn-gate.lock.json (plugins/tools/pin-release.js); a version bump
     # from Dependabot would leave that lock out of sync.
@@ -59,6 +121,7 @@ updates:
       - dependency-name: "zn-gate"
     groups:
       npm:
+        applies-to: version-updates
         patterns: ["*"]
         update-types: [minor, patch]
 
@@ -67,16 +130,30 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Europe/Madrid
+    rebase-strategy: disabled
     open-pull-requests-limit: 2
+    groups:
+      sbom-tools:
+        applies-to: version-updates
+        patterns: [\"*\"]
+        update-types: [minor, patch]
 
   - package-ecosystem: pip
     directory: "/packages/zn-gate-py"
     target-branch: next
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Europe/Madrid
+    rebase-strategy: disabled
     open-pull-requests-limit: 5
     groups:
       pip:
+        applies-to: version-updates
         patterns: ["*"]
         update-types: [minor, patch]
 
@@ -85,11 +162,16 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Europe/Madrid
+    rebase-strategy: disabled
     # Security updates only. The requirement files here are generated with uv
     # and some minimum versions are deliberate (ci-framework-test-requirements-oldest.txt).
     open-pull-requests-limit: 0
     groups:
       pip:
+        applies-to: version-updates
         patterns: ["*"]
         update-types: [minor, patch]
 
@@ -98,9 +180,14 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Europe/Madrid
+    rebase-strategy: disabled
     open-pull-requests-limit: 2
     groups:
       pip:
+        applies-to: version-updates
         patterns: ["*"]
         update-types: [minor, patch]
 
@@ -109,23 +196,44 @@ updates:
     target-branch: next
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Europe/Madrid
+    rebase-strategy: disabled
     groups:
       github-actions:
+        applies-to: version-updates
         patterns: ["*"]
+        update-types: [minor, patch]
 
   - package-ecosystem: docker
     directory: "/"
     target-branch: next
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Europe/Madrid
+    rebase-strategy: disabled
     open-pull-requests-limit: 2
+    groups:
+      docker:
+        applies-to: version-updates
+        patterns: [\"*\"]
+        update-types: [minor, patch]
 
   - package-ecosystem: npm
     directory: "/.github/eslint"
     target-branch: next
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Europe/Madrid
+    rebase-strategy: disabled
     open-pull-requests-limit: 2
     groups:
       lint-tooling:
+        applies-to: version-updates
         patterns: ["*"]
+        update-types: [minor, patch]
