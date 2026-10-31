@@ -110,22 +110,49 @@ function patchInput(text) {
   return { path: files[0], paths: files, alsoReadCheck: true, tooLong, unparsed: !tooLong && (files.length === 0 || scan.suspicious), texts: [{ key: ['input'], value: text }] };
 }
 
-/** A command one level down (create_and_run_task sends {task: {command, args}}), with its string arguments. */
+// Bounds of the walk over the arguments of a tool zn does not know: deeper or larger than this cannot be checked, so it is refused.
+const MAX_NEST_DEPTH = 6;
+const MAX_NEST_NODES = 500;
+
+/**
+ * Every command in the arguments of an unknown tool, at any level up to MAX_NEST_DEPTH (create_and_run_task sends
+ * {task: {command, args}}), each with its string arguments. A command key whose value is a list of strings is joined; any
+ * other value that is not a string is `bad`. `truncated` = the arguments are deeper or larger than the bounds.
+ */
+function commandScan(args) {
+  const commands = [];
+  let bad = false;
+  let truncated = false;
+  let nodes = 0;
+  const walk = (obj, depth) => {
+    if (++nodes > MAX_NEST_NODES || depth > MAX_NEST_DEPTH) { truncated = true; return; }
+    const entries = Array.isArray(obj) ? obj.map((v) => [null, v]) : Object.entries(obj);
+    const extra = !Array.isArray(obj) && Array.isArray(obj.args) ? obj.args.filter((x) => typeof x === 'string') : [];
+    for (const [k, v] of entries) {
+      if (k !== null && COMMAND_KEYS.includes(k)) {
+        if (typeof v === 'string') { if (v) commands.push([v, ...extra].join(' ')); } else if (Array.isArray(v) && v.length && v.every((x) => typeof x === 'string')) commands.push(v.join(' '));
+        else if (v !== undefined && v !== null) bad = true;
+        continue;
+      }
+      if (isObj(v) || Array.isArray(v)) walk(v, depth + 1);
+    }
+  };
+  walk(args, 0);
+  return { command: commands.length ? commands.join(' ; ') : undefined, bad, truncated };
+}
+
+/** The commands of an unknown tool as one string, or undefined when it has none. */
 function nestedCommand(args) {
-  for (const v of Object.values(args)) {
-    if (!isObj(v)) continue;
-    const c = firstString(v, COMMAND_KEYS);
-    if (c === undefined) continue;
-    const extra = Array.isArray(v.args) ? v.args.filter((x) => typeof x === 'string') : [];
-    return [c, ...extra].join(' ');
-  }
-  return undefined;
+  return commandScan(args).command;
 }
 
 /** Every string argument whose key looks like a file or folder (content-like keys skipped), three levels deep. */
-function pathsOf(args) {
+function pathsOf(args, opts = {}) {
   const out = [];
   let bad = false;
+  // loose (a tool zn does not know): a string that looks like a path counts under any key, deeper than the named keys.
+  const loose = opts.loose === true;
+  const pathLike = (v) => /^[~.]|[\\/]/.test(v);
   const add = (k, v) => {
     if (typeof v !== 'string' || !v) return;
     if (/^file:/i.test(v)) {
@@ -137,12 +164,18 @@ function pathsOf(args) {
     out.push(v);
   };
   const keyOk = (k) => (PATH_KEY_RE.test(k) || /url/i.test(k)) && !NOT_PATH_KEY_RE.test(k);
+  const maxDepth = loose ? MAX_NEST_DEPTH : 3;
+  let nodes = 0;
   const walk = (obj, depth) => {
+    if (loose && ++nodes > MAX_NEST_NODES) return;
     for (const [k, v] of Object.entries(obj)) {
       if (keyOk(k)) {
         if (Array.isArray(v)) v.forEach((x) => add(k, x)); else add(k, v);
+      } else if (loose) {
+        if (typeof v === 'string' && pathLike(v)) add(k, v);
+        else if (Array.isArray(v)) v.forEach((x) => { if (typeof x === 'string' && pathLike(x)) add(k, x); });
       }
-      if (depth < 3) {
+      if (depth < maxDepth) {
         if (isObj(v)) walk(v, depth + 1);
         else if (Array.isArray(v)) v.forEach((x) => { if (isObj(x)) walk(x, depth + 1); });
       }
@@ -200,19 +233,25 @@ function normalize(raw) {
 
   const known = KNOWN_TOOLS.has(toolName);
   if (args === null) {
-    return { ...ev, tool: toolName || 'unknown', input: { texts: [] }, ...(known ? { unreadable: unreadable('arguments') } : {}) };
+    // Arguments that are not an object (or a JSON string of one) cannot be checked, whatever the tool is.
+    return { ...ev, tool: toolName || 'unknown', input: { texts: [] }, unreadable: unreadable('arguments') };
   }
   if (!known) {
     const patch = patchTextOf(toolName, args);
     if (patch !== undefined) return { ...ev, tool: 'write', input: patchInput(patch) };
   }
-  const cmd = firstString(args, COMMAND_KEYS) !== undefined ? firstString(args, COMMAND_KEYS) : (known ? undefined : nestedCommand(args));
+  // A tool zn does not know: commands and files are looked for in the nested arguments too, within bounds.
+  const scan = known ? null : commandScan(args);
+  if (scan && (scan.bad || scan.truncated)) {
+    return { ...ev, tool: 'unreadable', input: { texts: [] }, unreadable: unreadable(scan.bad ? 'command' : 'arguments (too deeply nested)') };
+  }
+  const cmd = known ? firstString(args, COMMAND_KEYS) : scan.command;
   if (SHELL_TOOLS.has(toolName) || (!known && cmd !== undefined)) {
     const e = { ...ev, tool: toolName === 'powershell' ? 'powershell' : 'bash', input: { command: cmd || '', texts: [] } };
     if (cmd === undefined) e.unreadable = unreadable('command');
     return e;
   }
-  const { paths, bad } = pathsOf(args);
+  const { paths, bad } = pathsOf(args, { loose: !known });
   const input = { path: paths[0], paths, texts: [] };
   const kind = toolName === 'view' ? 'read' : toolName === 'grep' ? 'grep' : WRITE_TOOLS.has(toolName) ? 'write' : null;
   if (kind) {
@@ -370,4 +409,7 @@ module.exports = {
   patchTextOf,
   patchInput,
   nestedCommand,
+  commandScan,
+  MAX_NEST_DEPTH,
+  MAX_NEST_NODES,
 };

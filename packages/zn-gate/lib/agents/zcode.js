@@ -154,7 +154,15 @@ function normalize(raw) {
   if (event === 'user_prompt') return { ...base, tool: null, input: { prompt: typeof raw.prompt === 'string' ? raw.prompt : '' } };
 
   const toolName = typeof (raw.tool_name || raw.toolName) === 'string' ? String(raw.tool_name || raw.toolName) : '';
-  const rawInput = raw.tool_input !== undefined ? raw.tool_input : raw.toolInput;
+  let rawInput = raw.tool_input !== undefined ? raw.tool_input : raw.toolInput;
+  // A JSON string is read as its object. Anything else that is not an object (a number, a list, text that does not parse) cannot be checked.
+  let malformed = false;
+  if (event === 'pre_tool' && rawInput !== undefined && rawInput !== null) {
+    if (typeof rawInput === 'string') {
+      try { rawInput = JSON.parse(rawInput); } catch (_) { malformed = true; }
+    }
+    if (!malformed && !isObj(rawInput)) malformed = true;
+  }
   const args = isObj(rawInput) ? rawInput : {};
   const ev = { ...base, toolName, rawArgs: args };
   const mcp = MCP_TOOL_RE.exec(toolName);
@@ -168,6 +176,7 @@ function normalize(raw) {
 
   const unreadable = (what) => ({ ...ev, tool: 'unreadable', input: { texts: [] }, unreadable: 'zn: could not read ' + what + ' of this call, so zn cannot check it.' });
   if (!toolName) return unreadable('the tool name');
+  if (malformed) return unreadable('the arguments');
 
   // pathsOf is shared with the Gemini CLI adapter: every string argument whose key looks like a file or folder.
   const { pathsOf } = require('./gemini');
@@ -209,8 +218,17 @@ function normalize(raw) {
     if (!file) e.unreadable = 'zn: could not read the file this call uses, so zn cannot check it. Name the file explicitly.';
     return e;
   }
-  // Any other tool that names a file (a tool zn does not know) gets the read and write checks on every path.
-  const { paths, bad } = pathsOf(args);
+  // Any other tool (one zn does not know): commands and files in its nested arguments, within bounds, get the shell,
+  // read and write checks; arguments zn cannot read to the end are refused.
+  if (!NAMES_ONLY_TOOLS.has(toolName)) {
+    const scan = require('./copilot').commandScan(args);
+    if (scan.bad || scan.truncated) return unreadable(scan.bad ? 'the command' : 'the arguments (too deeply nested)');
+    if (scan.command !== undefined) return { ...ev, tool: 'bash', input: { command: scan.command, texts: [] } };
+  }
+  const named = pathsOf(args);
+  const loose = NAMES_ONLY_TOOLS.has(toolName) ? { paths: [], bad: false } : require('./copilot').pathsOf(args, { loose: true });
+  const paths = [...new Set([...named.paths, ...loose.paths])];
+  const bad = named.bad || loose.bad;
   if (!NAMES_ONLY_TOOLS.has(toolName) && (paths.length || bad)) {
     const e = { ...ev, tool: 'fileaccess', input: { path: paths[0], paths, texts: [] } };
     if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
