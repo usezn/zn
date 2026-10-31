@@ -1313,15 +1313,51 @@ mod tests {
         std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
     }
 
-    /// How long `work` takes: this thread's CPU time on unix, wall time elsewhere.
+    /// CPU time used by this thread (kernel plus user), from GetThreadTimes.
+    #[cfg(windows)]
+    fn thread_cpu_time() -> std::time::Duration {
+        use windows_sys::Win32::Foundation::FILETIME;
+        use windows_sys::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+        let zero = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+        // SAFETY: GetThreadTimes only writes the four FILETIMEs it is given; the
+        // pseudo-handle from GetCurrentThread needs no closing.
+        let ok = unsafe {
+            GetThreadTimes(
+                GetCurrentThread(),
+                &mut created,
+                &mut exited,
+                &mut kernel,
+                &mut user,
+            )
+        };
+        assert_ne!(ok, 0, "GetThreadTimes");
+        let ticks = |t: FILETIME| (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime);
+        // FILETIME counts 100 ns ticks.
+        std::time::Duration::from_nanos((ticks(kernel) + ticks(user)) * 100)
+    }
+
+    /// How long `work` takes: this thread's CPU time on unix and Windows, wall
+    /// time on any other platform.
     fn time_of(work: &dyn Fn()) -> std::time::Duration {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             let start = thread_cpu_time();
             work();
-            thread_cpu_time().saturating_sub(start)
+            let used = thread_cpu_time().saturating_sub(start);
+            // GetThreadTimes only advances once per scheduler tick (about
+            // 15.6 ms), so a short run can read as 0 and the 16x bound would
+            // then fail on a linear algorithm. Adding one tick on Windows
+            // keeps the reading at or above the real CPU time; unix keeps the
+            // exact nanosecond clock and the check there is unchanged.
+            #[cfg(windows)]
+            let used = used + std::time::Duration::from_micros(15_625);
+            used
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             let start = std::time::Instant::now();
             work();
@@ -1329,13 +1365,13 @@ mod tests {
         }
     }
 
-    /// Best of three runs of `work(size)`, so a hiccup on a busy machine
+    /// Best of five runs of `work(size)`, so a hiccup on a busy machine
     /// cannot inflate the measurement.
-    fn best_of_three(work: &dyn Fn(usize), size: usize) -> std::time::Duration {
-        (0..3)
+    fn best_of_five(work: &dyn Fn(usize), size: usize) -> std::time::Duration {
+        (0..5)
             .map(|_| time_of(&|| work(size)))
             .min()
-            .expect("three runs")
+            .expect("five runs")
     }
 
     /// The rule: 8x the input may cost at most 16x the time (a quadratic
@@ -1349,8 +1385,8 @@ mod tests {
     /// first timing is not taken with cold caches.
     fn assert_scales_linearly(work: &dyn Fn(usize), size: usize) {
         work(size / 8);
-        let small = best_of_three(work, size / 8);
-        let large = best_of_three(work, size);
+        let small = best_of_five(work, size / 8);
+        let large = best_of_five(work, size);
         assert!(
             scales_linearly(small, large),
             "8x the input took {large:?} against {small:?}"
@@ -1399,11 +1435,11 @@ mod tests {
         // One opener followed by a very long run of backslashes must cost about the same as the
         // same length of any other character: the run is counted only inside the scan window.
         let time = |input: &str| {
-            (0..3)
+            (0..5)
                 .map(|_| {
-                    let start = std::time::Instant::now();
-                    let _ = Scrubber::scrub(input);
-                    start.elapsed()
+                    time_of(&|| {
+                        let _ = Scrubber::scrub(input);
+                    })
                 })
                 .min()
                 .unwrap()
