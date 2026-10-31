@@ -1,0 +1,76 @@
+name: CodeQL
+
+# Code scanning with CodeQL (advanced setup), replacing the repository's default setup, which ran on every pull
+# request and push (about 12 runs a day) whatever changed. Here it runs:
+#   - on pushes to main and next, and weekly on main: the alerts of the Security tab come from these runs;
+#   - on pull requests only when they change code or workflows, so a documentation change does not wait for it.
+# Not a required check. The default setup must be turned off in the repository settings (Code security) before this
+# workflow takes over; until then GitHub refuses advanced uploads for the same languages.
+on:
+  push:
+    branches: [ main, next ]
+  pull_request:
+    branches: [ main, next, 'release/**' ]
+    types: [ opened, synchronize, reopened, ready_for_review ]
+    paths:
+      - 'packages/**'
+      - 'plugins/**'
+      - 'skill/**'
+      - 'bench/**'
+      - 'examples/**'
+      - 'src/**'
+      - 'fuzz/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'action.yml'
+      - '.github/workflows/**'
+      - '.github/actions/**'
+      - '.github/scripts/**'
+  schedule:
+    - cron: '37 4 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+# A new push to a pull request, or to next, cancels the run still going for it. Runs for main, release branches,
+# the merge queue and the schedule always complete (each has its own group).
+concurrency:
+  group: codeql-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}-${{ github.workflow }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # The languages the default setup scans today (actions, javascript-typescript, python, rust).
+        language: [ actions, javascript-typescript, python, rust ]
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          # The default query suite, as the default setup used: a larger suite would open new alerts, and the release
+          # gate requires zero open CodeQL alerts. The category below matches the default setup's, so existing alerts
+          # carry over instead of reopening.
+      - name: Analyze
+        uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          category: /language:${{ matrix.language }}
