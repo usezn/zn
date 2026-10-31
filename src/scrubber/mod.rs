@@ -403,12 +403,7 @@ fn card_valid(raw: &str) -> bool {
     if raw.len() < 13 {
         return false;
     }
-    // One kind of separator only: "4111 1111-1111 1111" is not a card number.
-    let has_space = raw.contains(' ');
-    let has_dash = raw.contains('-');
-    if has_space && has_dash {
-        return false;
-    }
+    // Spaces and dashes may be mixed ("4111 1111-1111 1111"), as in the Node.js scrubber.
     // At most 19 digits: collect them on the stack (this runs for every
     // candidate start in long inputs).
     let mut buf = [0u8; 19];
@@ -432,7 +427,7 @@ fn card_valid(raw: &str) -> bool {
 /// US SSN: area 001-899 except 666, group 01-99, serial 0001-9999.
 fn ssn_valid(raw: &str) -> bool {
     let parts: Vec<&str> = raw.split('-').collect();
-    if parts.len() != 3 {
+    if parts.len() != 3 || parts[2].len() != 4 {
         return false;
     }
     let area: u32 = parts[0].parse().unwrap_or(0);
@@ -1434,7 +1429,6 @@ mod tests {
         for input in [
             "Card: 4111-1111-1111-1112",  // fails Luhn
             "id 1234567812345670",        // passes Luhn, no card network
-            "Card: 4111 1111-1111 1111",  // mixed separators
             "order-4111111111111111",     // part of a longer token
             "x4111111111111111",          // part of a word
             "amount 4111111111111111.50", // decimal number
@@ -1611,13 +1605,11 @@ mod table_parity_tests {
     }
 
     #[test]
-    #[ignore = "B-2511: Rust rejects mixed space and dash separators, Node.js accepts them; decide"]
     fn card_validator_equals_node() {
         assert_eq!(mismatches("card", card_valid), Vec::<String>::new());
     }
 
     #[test]
-    #[ignore = "B-2512: Rust ssn_valid does not check the 4-digit serial shape (harmless behind the candidate regex)"]
     fn ssn_validator_equals_node() {
         assert_eq!(mismatches("ssn", ssn_valid), Vec::<String>::new());
     }

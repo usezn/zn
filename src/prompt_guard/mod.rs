@@ -55,14 +55,13 @@ fn get_automaton() -> &'static AhoCorasick {
 // shorter forms. "you can ignore the build instructions" and "don't forget
 // to read the instructions" do not match: "build" is not a qualifier, and
 // "forget to" is not followed by an object.
-const QUANT: &str = r"(?:all|any|every|each)";
-// Quantifiers that may come straight before the noun ("ignore your rules").
-const QUANT_NOUN: &str = r"(?:all|any|every|each|your|my|these|those)";
+// One quantifier list in every form, as in the Node.js rules ("ignore your rules").
+const QUANT: &str = r"(?:all|any|every|each|your|my|these|those)";
 // Words allowed between the verb and the object ("ignore absolutely every one of ...").
 const FILLER: &str = r"(?:absolutely|completely|entirely|totally|simply|just|really|literally|all|every|each|any|single|one|of|please)";
 const DET: &str = r"(?:the|your|my|these|those|our|its|their)";
 const QUAL: &str = r"(?:previous|prior|above|earlier|preceding|foregoing|original|initial|existing|safety|security|former|developer|system)";
-const NOUN: &str = r"(?:instructions?|directives?|guidelines|guardrails|rules|restrictions|constraints|guidance|programming)";
+const NOUN: &str = r"(?:instructions?|prompts?|rules|guidelines?|directives?|guidance|restrictions?|guardrails?|context|constraints?|commands?|policies|programming|orders|limitations?|directions|requests?|tasks?)";
 
 /// The override patterns for one verb.
 fn override_patterns(verb: &str) -> Vec<String> {
@@ -72,9 +71,7 @@ fn override_patterns(verb: &str) -> Vec<String> {
             r"(?i-u)\b{verb}\s+(?:{QUANT}\s+(?:of\s+)?)?(?:{DET}\s+)?(?:{QUAL}\s+){{1,2}}{NOUN}\b"
         ),
         // ignore all instructions / every instruction / all safety guidelines
-        format!(
-            r"(?i-u)\b{verb}\s+{QUANT_NOUN}\s+(?:of\s+)?(?:{DET}\s+)?(?:{QUAL}\s+){{0,2}}{NOUN}\b"
-        ),
+        format!(r"(?i-u)\b{verb}\s+{QUANT}\s+(?:of\s+)?(?:{DET}\s+)?(?:{QUAL}\s+){{0,2}}{NOUN}\b"),
         // ignore [the|these|my] instructions
         format!(
             r"(?i-u)\b{verb}\s+(?:(?:the|these|those|my|your)\s+)?(?:instructions|directives|guardrails)\b"
@@ -330,8 +327,6 @@ mod tests {
             "The token works as an unrestricted credential.",
             "The docs say the system message: sets the behavior.",
             "You can ignore the warnings and follow your team guidelines.",
-            "Ignore the above prompts if the installer already ran.",
-            "Did you forget your system prompt?",
             "Don't forget to follow the safety guidelines.",
             "Don't forget to update the system instructions.",
             "ignore warnings from the security rules",
@@ -405,7 +400,7 @@ mod table_parity_tests {
 
     #[test]
     fn override_quantifier_before_a_noun_equals_node() {
-        assert_eq!(const_words(QUANT_NOUN), fixture_words("quantifier"));
+        assert_eq!(const_words(QUANT), fixture_words("quantifier"));
     }
 
     #[test]
@@ -419,16 +414,34 @@ mod table_parity_tests {
     }
 
     #[test]
-    #[ignore = "B-2509: the Rust noun list is shorter than the Node.js one; decide which is right"]
     fn override_noun_equals_node() {
         assert_eq!(const_words(NOUN), fixture_words("noun"));
     }
 
     #[test]
-    #[ignore = "B-2510: QUANT lacks your/my/these/those that Node.js uses in every form; decide"]
     fn override_quantifier_of_the_qualifier_forms_equals_node() {
-        // Node.js uses one quantifier list in every form; QUANT is the shorter list Rust uses in two.
+        // Node.js uses one quantifier list in every form; so does Rust.
         assert_eq!(const_words(QUANT), fixture_words("quantifier"));
+    }
+
+    #[test]
+    fn the_shared_benign_phrases_do_not_match_an_override_rule() {
+        let f: serde_json::Value = serde_json::from_str(include_str!(
+            "../../packages/zn-gate/test/fixtures/benign_phrases.json"
+        ))
+        .unwrap();
+        let phrases = f["phrases"].as_array().unwrap();
+        assert!(!phrases.is_empty());
+        for p in phrases {
+            let text = p.as_str().unwrap_or_default();
+            let rule = detect_prompt_injection(text)
+                .matched_pattern
+                .unwrap_or_default();
+            assert!(
+                !["pi:ignore_previous", "pi:disregard", "pi:forget"].contains(&rule.as_str()),
+                "benign phrase matches {rule}: {text}"
+            );
+        }
     }
 
     #[test]

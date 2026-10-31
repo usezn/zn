@@ -59,6 +59,7 @@ scope rust-scope.sh true  "rules.js (override grammar, rule ids; must match prom
 scope rust-scope.sh true  "scrub/patterns.js (card, SSN, phone checks; must match the Rust scrubber) runs the Rust job" packages/zn-gate/lib/scrub/patterns.js
 scope rust-scope.sh true  "prompt guard fixture (read by a Rust test) runs the Rust job" packages/zn-gate/test/fixtures/prompt_guard_tables.json
 scope rust-scope.sh true  "scrub validator fixture (read by a Rust test) runs the Rust job" packages/zn-gate/test/fixtures/scrub_validator_cases.json
+scope rust-scope.sh true  "benign phrase fixture (read by a Rust test) runs the Rust job" packages/zn-gate/test/fixtures/benign_phrases.json
 scope rust-scope.sh true  "Rust rules change runs the Rust job, which holds the parity test" src/engine/rules.rs
 scope rust-scope.sh false "docs-only change skips the Rust job" docs/cli.md
 scope rust-scope.sh false "package-only change skips the Rust job" packages/zn-gate/lib/x.js
