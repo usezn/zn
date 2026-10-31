@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.8';
+const POLICY_RULES_VERSION = '2026-10-31.9';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1401,6 +1401,15 @@ function programOfGroup(group) {
 
 /* The words after `curl` in a command are marked (`curl`), and the one after --data-urlencode or --variable (`urlencode`):
    they may name a file to send as `@file`, `name=@file`, `name=<file` or `name@file`. */
+/* A curl -K / --config value zn cannot read before curl does: standard input, a pipe or file descriptor, a process
+   substitution, or a value built at run time. Its options (upload-file, data @file) could send any file, so the
+   command is refused whatever the configuration holds (fail closed by structure, not by listing spellings). */
+function curlConfigUnreadable(v) {
+  const t = String(v).replace(/^["']+|["']+$/g, '');
+  return t === '' || t === '-' || /^\/dev\/(?:stdin|fd\/)|^\/proc\/(?:self|\d+)\/fd\//.test(t) || t.startsWith('<(') ||
+    t.startsWith('>(') || /[$`]/.test(t);
+}
+
 function markCurlWords(readings) {
   for (const r of readings) {
     let i = 0;
@@ -1415,6 +1424,13 @@ function markCurlWords(readings) {
           if (group[m - 1] && CURL_NAME_AT_FILE_OPTS.has(group[m - 1].text)) group[m].urlencode = true;
           // -T, a short-option cluster that ends in T (-sT, -vsT) or --upload-file: the next word is the file to upload.
           if (group[m - 1] && (/^-[A-Za-z0-9#:]*T$/.test(group[m - 1].text) || group[m - 1].text === '--upload-file')) group[m].upload = true;
+          // -K / --config (also in a cluster, glued or with =): where curl reads more options from.
+          const t = String(group[m].text);
+          let cfg = null;
+          if (/^-[A-Za-z0-9#:]*K$/.test(t) || t === '--config') cfg = group[m + 1] ? String(group[m + 1].text) : '';
+          else if (/^--config=/.test(t)) cfg = t.slice('--config='.length);
+          else if (/^-[A-Za-z0-9#:]*?K(.+)$/.test(t)) cfg = /^-[A-Za-z0-9#:]*?K(.+)$/.exec(t)[1];
+          if (cfg !== null && curlConfigUnreadable(cfg)) group[prog.at].curlConfigUnreadable = true;
         }
       }
       i = j;
@@ -1483,6 +1499,8 @@ function atFilesOf(text) {
 }
 
 const BRACE_EXPANSION_CAP = 64;
+const CURL_CONFIG_UNREADABLE_MESSAGE = 'zn: this curl command reads its options from standard input, a pipe or a value built at run time (-K -, --config /dev/stdin, -K <(...), -K "$VAR"), so zn cannot see which files it sends, and it was blocked. Next step: write the curl options on the command line, or in a configuration file that already exists.';
+const CURL_UPLOAD_UNKNOWN_MESSAGE = 'zn: this curl command uploads a file whose name is built at run time ($(...), backticks or an unknown variable), so zn cannot check it, and it was blocked. Next step: name the file to upload literally.';
 const GLOB_TOO_LARGE_MESSAGE = 'zn: this command uploads files named by a pattern that stands for more names than zn checks, so it was blocked. Next step: name the files to upload one by one.';
 
 /* The names a {..} glob stands for, as curl -T and the shell read it: every {a,b} or {x} group is replaced by each of
@@ -1512,9 +1530,13 @@ function braceNames(text) {
    escapes decoded; a decoded control or space character becomes a space, so a configuration written on one line with
    escapes (printf 'silent\nupload-file .env') splits into its real lines. Only used to find extra file names to check. */
 function decodeEscapes(text) {
-  return String(text).replace(/\\(x[0-9A-Fa-f]{1,2}|0[0-7]{0,3}|[1-7][0-7]{0,2}|[nrtvfab\\])/g, (m, e) => {
+  return String(text).replace(/\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|0[0-7]{0,3}|[1-7][0-7]{0,2}|[nrtvfab\\])/g, (m, e) => {
     let ch;
     if (e[0] === 'x') ch = String.fromCharCode(parseInt(e.slice(1), 16));
+    else if (e[0] === 'u' || e[0] === 'U') {
+      const cp = parseInt(e.slice(1), 16);
+      ch = cp <= 0x10ffff ? String.fromCodePoint(cp) : ' ';
+    }
     else if (/^[0-7]/.test(e)) ch = String.fromCharCode(parseInt(e, 8) & 255);
     else if (e === '\\') ch = '\\';
     else ch = ' ';
@@ -1547,9 +1569,10 @@ function uploadNamesOf(text) {
    carry it after = (--data-urlencode=k@.env); curl's short options can carry it glued (-d@.env, -Ff=@.env, -T.env,
    -sT{.env}, -H@file). Every name is also read through its {..} glob (curl -T .e{nv}). Returns null when a glob
    stands for too many names to check. */
-function atFileWords(words) {
+function atFileWords(words, env = {}) {
   const extra = [];
   let tooMany = false;
+  let dynamicUpload = false;
   // failClosed: an upload name (curl -T, --upload-file) whose glob is too large to read refuses the command. Other words
   // (a JSON body with many commas inside braces) are then only read as they are.
   const add = (w, files, failClosed = false) => {
@@ -1563,8 +1586,27 @@ function atFileWords(words) {
       for (const n of names) if (n && n !== w.text) extra.push({ text: n, head: 'cat', redirectTarget: false, seq: w.seq, atFile: true });
     }
   };
+  // $NAME and ${NAME} replaced by their values when zn knows them (the environment and assignments earlier in the command).
+  const known = (t) => String(t).replace(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g, (m, n) => (Object.prototype.hasOwnProperty.call(env, n) ? String(env[n]) : m));
   for (const w of words) {
     const text = String(w.text);
+    // The value of an assignment (c='-T .env', c='upload-file .env') and a word that is a known variable ($c) are read
+    // like any word: their upload lines and @file references count.
+    const assigned = /^[A-Za-z_][A-Za-z0-9_]*=([\s\S]*)$/.exec(text);
+    const valueTexts = [];
+    if (assigned) valueTexts.push(assigned[1]);
+    const expanded = known(text);
+    if (expanded !== text) valueTexts.push(expanded);
+    for (const v of valueTexts) {
+      add(w, uploadNamesOf(v), true);
+      add(w, atFilesOf(v));
+      const dv = decodeEscapes(v);
+      if (dv !== v) { add(w, uploadNamesOf(dv), true); add(w, atFilesOf(dv)); }
+    }
+    // An upload name built at run time ($(...), backticks, a variable zn does not know) cannot be checked.
+    if (w.upload && /[$`]/.test(known(text))) dynamicUpload = true;
+    if (w.curl && /^-[A-Za-z0-9#:]*?T./.test(text) && !text.startsWith('--') && /[$`]/.test(known(text.replace(/^-[A-Za-z0-9#:]*?T/, '')))) dynamicUpload = true;
+    if (/^--upload-file=/.test(text) && /[$`]/.test(known(text.slice('--upload-file='.length)))) dynamicUpload = true;
     // A word with spaces (a curl configuration fed on stdin: upload-file .env, -T .env) or an upload-file= line holds
     // upload names: each one is read through its {..} glob, failing closed past the cap.
     // Every word, as written and with its printf/echo escapes decoded: upload lines anywhere in it (a curl configuration
@@ -1598,6 +1640,7 @@ function atFileWords(words) {
     // Any other word with a {a,b} list names each item, as the shell expands it (cat {.e,x}nv).
     else if (text.includes('{') && text.includes(',') && text.includes('}')) add(w, [text]);
   }
+  if (dynamicUpload) return { refuse: CURL_UPLOAD_UNKNOWN_MESSAGE };
   return tooMany ? null : extra;
 }
 
@@ -2627,9 +2670,11 @@ function bashDenialOf(cmd, opts = {}) {
   opts.elsewhere = new Map();
   markLinkWords(readings);
   markCurlWords(readings);
+  if (words.some((x) => x.curlConfigUnreadable)) return CURL_CONFIG_UNREADABLE_MESSAGE;
   {
-    const atWords = atFileWords(words);
+    const atWords = atFileWords(words, opts.env || {});
     if (atWords === null) return GLOB_TOO_LARGE_MESSAGE;
+    if (atWords.refuse) return atWords.refuse;
     words.push(...atWords);
   }
   const mentionsAgents = /\.agents/i.test(text);
