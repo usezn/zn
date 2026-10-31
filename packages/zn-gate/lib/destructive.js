@@ -25,7 +25,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-29.5';
+const COMMAND_RULES_VERSION = '2026-10-31.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -33,7 +33,7 @@ const REASONS = {
   disk_overwrite: 'it writes to or formats a disk device',
   perm_root: 'it changes permissions or owners across the whole filesystem or a system folder',
   fork_bomb: 'it is a fork bomb, which freezes the machine',
-  rc_download: 'it writes downloaded content into a shell startup file, which runs in every new terminal',
+  rc_download: 'it writes downloaded content into a startup file or a cron, systemd or launchd task, which then runs on its own',
 };
 
 const MAX_DEPTH = 3;
@@ -59,6 +59,8 @@ const SYSTEM_DIRS = new Set(['/bin', '/boot', '/dev', '/etc', '/home', '/lib', '
 const HOME_WORDS = new Set(['~', '$home', '${home}', '$userprofile', '${userprofile}', '%userprofile%', '$env:userprofile', '$env:home', '$env:homepath']);
 const BLOCK_DEVICE_RE = /^\/dev\/(?:sd[a-z]+\d*|hd[a-z]+\d*|vd[a-z]+\d*|xvd[a-z]+\d*|nvme\d+n\d+(?:p\d+)?|mmcblk\d+(?:p\d+)?|disk\d+(?:s\d+)?|rdisk\d+(?:s\d+)?|md\d+|dm-\d+|mapper\/[A-Za-z0-9._-]+)$/;
 const RC_UNIX_RE = /\/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)$|\/fish\/config\.fish$|^\/etc\/(?:profile|bash\.bashrc|zshrc|zsh\/zshrc|environment)$|^\/etc\/profile\.d\//;
+// Places that run a file on a schedule or at login: cron, systemd units, launchd plists, desktop autostart.
+const PERSIST_RE = /\/\.config\/systemd\/user\/|\/\.config\/autostart\/|^\/etc\/systemd\/(?:system|user)\/|^\/usr\/lib\/systemd\/(?:system|user)\/|^\/etc\/cron(?:tab|\.[a-z]+)?(?:\/|$)|^\/etc\/anacrontab$|^\/var\/spool\/cron\/|\/Library\/Launch(?:Agents|Daemons)\//i;
 const RC_PS_RE = /^\$profile(?:\.\w+)?$|(?:^|[\\/])(?:microsoft\.powershell_)?profile\.ps1$/i;
 
 const QUOTED_RE = /'[^']*'|"(?:[^"\\]|\\.)*"/g;
@@ -378,7 +380,65 @@ function worldWritable(mode) {
 
 function isRcPath(w) {
   const t = String(w).replace(/\\/g, '/').replace(/^~\//, '/').replace(/^\$\{?home\}?\//i, '/');
-  return RC_UNIX_RE.test(t) || RC_PS_RE.test(String(w));
+  return RC_UNIX_RE.test(t) || RC_PS_RE.test(String(w)) || PERSIST_RE.test(t);
+}
+
+function normPath(w) {
+  return String(w).replace(/\\/g, '/').replace(/^~\//, '/').replace(/^\$\{?home\}?\//i, '/');
+}
+
+function headNames(s) {
+  const a = unwrap(s.words);
+  return a.length ? (braceAlts(a[0]) || [String(a[0])]).map(programName) : [''];
+}
+
+/* Where each download of one pipeline is saved (curl -o F, wget -O F, > F, | tee F). */
+function downloadTargets(pipe) {
+  const out = [];
+  const heads = pipe.map(headNames);
+  if (!heads.some((names) => names.some((n) => DOWNLOADERS.has(n)))) return out;
+  pipe.forEach((s, j) => {
+    const words = s.words;
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      const prev = i > 0 ? words[i - 1] : '';
+      let t = null;
+      if (/^\d*>>?\|?$/.test(prev)) t = w;
+      else if (/^\d*>>?\|?.+$/.test(w)) t = w.replace(/^\d*>>?\|?/, '');
+      else if (outFlag(prev)) t = w;
+      else if (/^(?:--output|--output-document|-OutFile)[=:]/i.test(w)) t = w.replace(/^[^=:]*[=:]/, '');
+      else if (heads[j][0] === 'tee' && !w.startsWith('-') && i > 0) t = w;
+      if (t !== null && t !== '') out.push(normPath(t));
+    }
+  });
+  return out;
+}
+
+/* A command that installs or enables a file the same command line just downloaded (crontab F, launchctl load F,
+   systemctl enable F, cp F into a cron, systemd or launchd folder), or a crontab fed straight from a download. */
+function installsDownload(words, downloaded, fromPipe) {
+  const a = unwrap(words);
+  if (!a.length) return false;
+  const head = programName(a[0]);
+  const rest = a.slice(1);
+  const plain = rest.filter((w) => !w.startsWith('-'));
+  const isDl = (w) => downloaded.has(normPath(w));
+  if (head === 'crontab') {
+    if (rest.some((w) => /^-[A-Za-z]*[lreT][A-Za-z]*$/.test(w))) return false;
+    const user = rest.indexOf('-u') >= 0 ? rest[rest.indexOf('-u') + 1] : null;
+    const files = plain.filter((w) => w !== user);
+    return files.length ? files.some(isDl) : fromPipe;
+  }
+  if (head === 'launchctl') return /^(?:load|bootstrap)$/.test(plain[0] || '') && plain.slice(1).some(isDl);
+  if (head === 'systemctl') {
+    if (!/^(?:enable|reenable|link)$/.test(plain[0] || '')) return false;
+    const names = new Set([...downloaded].map((d) => d.split('/').pop()));
+    return plain.slice(1).some((w) => isDl(w) || names.has(normPath(w).split('/').pop()));
+  }
+  if (head === 'cp' || head === 'mv' || head === 'install' || head === 'ln') {
+    return plain.some(isDl) && plain.some((w) => !isDl(w) && PERSIST_RE.test(normPath(w)));
+  }
+  return false;
 }
 
 /* The flag before the file a download is saved to: curl -o / --output, wget -O / --output-document, iwr -OutFile. */
@@ -469,17 +529,32 @@ function on(rule) { return ENABLED === null || ENABLED.has(rule); }
 
 function checkSegments(segs, depth) {
   let pipe = [];
+  const downloaded = new Set();
+  // A download that is installed as a scheduled or login task, in this pipeline or an earlier one of the same line.
+  const persistHit = (p) => {
+    if (!on('rc_download')) return null;
+    const here = downloadTargets(p);
+    const local = new Set([...downloaded, ...here]);
+    const first = p.map(headNames).findIndex((names) => names.some((n) => DOWNLOADERS.has(n)));
+    if (local.size || first >= 0) {
+      for (let k = 0; k < p.length; k++) {
+        if (installsDownload(p[k].words, local, first >= 0 && k > first)) return 'rc_download';
+      }
+    }
+    for (const t of here) downloaded.add(t);
+    return null;
+  };
   for (const seg of segs) {
     const hit = checkSimple(seg.words, depth);
     if (hit) return hit;
     pipe.push(seg);
     if (!isPipe(seg.sep)) {
-      const hit2 = checkPipeline(pipe);
+      const hit2 = checkPipeline(pipe) || persistHit(pipe);
       if (hit2) return hit2;
       pipe = [];
     }
   }
-  return pipe.length ? checkPipeline(pipe) : null;
+  return pipe.length ? checkPipeline(pipe) || persistHit(pipe) : null;
 }
 
 function analyze(cmd, depth = 0) {

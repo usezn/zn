@@ -28,7 +28,7 @@ from typing import Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-29.5"
+COMMAND_RULES_VERSION = "2026-10-31.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -36,7 +36,7 @@ _REASONS = {
     "disk_overwrite": "it writes to or formats a disk device",
     "perm_root": "it changes permissions or owners across the whole filesystem or a system folder",
     "fork_bomb": "it is a fork bomb, which freezes the machine",
-    "rc_download": "it writes downloaded content into a shell startup file, which runs in every new terminal",
+    "rc_download": "it writes downloaded content into a startup file or a cron, systemd or launchd task, which then runs on its own",
 }
 
 _MAX_DEPTH = 3
@@ -77,6 +77,11 @@ _RC_UNIX_RE = re.compile(
     r"/\.(?:bashrc|bash_profile|bash_login|bash_aliases|profile|zshrc|zprofile|zshenv|zlogin|kshrc|cshrc|tcshrc)\Z"
     r"|/fish/config\.fish\Z|^/etc/(?:profile|bash\.bashrc|zshrc|zsh/zshrc|environment)\Z|^/etc/profile\.d/",
     _A,
+)
+_PERSIST_RE = re.compile(
+    r"/\.config/systemd/user/|/\.config/autostart/|^/etc/systemd/(?:system|user)/|^/usr/lib/systemd/(?:system|user)/"
+    r"|^/etc/cron(?:tab|\.[a-z]+)?(?:/|\Z)|^/etc/anacrontab\Z|^/var/spool/cron/|/Library/Launch(?:Agents|Daemons)/",
+    _AI,
 )
 _RC_PS_RE = re.compile(r"^\$profile(?:\.\w+)?\Z|(?:^|[\\/])(?:microsoft\.powershell_)?profile\.ps1\Z", _AI)
 
@@ -627,7 +632,77 @@ def _is_rc_path(w: str) -> bool:
     t = str(w).replace("\\", "/")
     t = re.sub(r"^~/", "/", t)
     t = re.sub(r"^\$\{?home\}?/", "/", t, flags=re.I)
-    return bool(_RC_UNIX_RE.search(t) or _RC_PS_RE.search(str(w)))
+    return bool(_RC_UNIX_RE.search(t) or _RC_PS_RE.search(str(w)) or _PERSIST_RE.search(t))
+
+
+def _norm_path(w: str) -> str:
+    t = str(w).replace("\\", "/")
+    t = re.sub(r"^~/", "/", t)
+    return re.sub(r"^\$\{?home\}?/", "/", t, flags=re.I)
+
+
+def _head_names(words: List[str]) -> List[str]:
+    a = _unwrap(words)
+    if not a:
+        return [""]
+    alts = _brace_alts(a[0])
+    return [_program_name(x) for x in (alts if alts is not None else [str(a[0])])]
+
+
+def _download_targets(pipe: List[Tuple[List[str], Optional[str]]]) -> List[str]:
+    """Where each download of one pipeline is saved (curl -o F, wget -O F, > F, | tee F)."""
+    out: List[str] = []
+    heads = [_head_names(words) for words, _sep in pipe]
+    if not any(n in _DOWNLOADERS for names in heads for n in names):
+        return out
+    for j, (words, _sep) in enumerate(pipe):
+        for i, w in enumerate(words):
+            prev = words[i - 1] if i > 0 else ""
+            t: Optional[str] = None
+            if re.match(r"^\d*>>?\|?\Z", prev, _A):
+                t = w
+            elif re.match(r"^\d*>>?\|?.+\Z", w, _A | re.S):
+                t = re.sub(r"^\d*>>?\|?", "", w, count=1, flags=_A)
+            elif _out_flag(prev):
+                t = w
+            elif re.match(r"^(?:--output|--output-document|-OutFile)[=:]", w, re.I):
+                t = re.sub(r"^[^=:]*[=:]", "", w, count=1)
+            elif heads[j][0] == "tee" and not w.startswith("-") and i > 0:
+                t = w
+            if t:
+                out.append(_norm_path(t))
+    return out
+
+
+def _installs_download(words: List[str], downloaded: set, from_pipe: bool) -> bool:
+    """A command that installs or enables a file the same line just downloaded (crontab F, launchctl load F,
+    systemctl enable F, cp F into a cron, systemd or launchd folder), or a crontab fed straight from a download."""
+    a = _unwrap(words)
+    if not a:
+        return False
+    head = _program_name(a[0])
+    rest = a[1:]
+    plain = [w for w in rest if not w.startswith("-")]
+
+    def is_dl(w: str) -> bool:
+        return _norm_path(w) in downloaded
+
+    if head == "crontab":
+        if any(re.match(r"^-[A-Za-z]*[lreT][A-Za-z]*\Z", w) for w in rest):
+            return False
+        user = rest[rest.index("-u") + 1] if "-u" in rest and rest.index("-u") + 1 < len(rest) else None
+        files = [w for w in plain if w != user]
+        return any(is_dl(w) for w in files) if files else from_pipe
+    if head == "launchctl":
+        return bool(plain) and plain[0] in ("load", "bootstrap") and any(is_dl(w) for w in plain[1:])
+    if head == "systemctl":
+        if not plain or plain[0] not in ("enable", "reenable", "link"):
+            return False
+        names = {d.rsplit("/", 1)[-1] for d in downloaded}
+        return any(is_dl(w) or _norm_path(w).rsplit("/", 1)[-1] in names for w in plain[1:])
+    if head in ("cp", "mv", "install", "ln"):
+        return any(is_dl(w) for w in plain) and any(not is_dl(w) and _PERSIST_RE.search(_norm_path(w)) for w in plain)
+    return False
 
 
 def _out_flag(w: str) -> bool:
@@ -742,17 +817,31 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
 
 def _check_segments(segs: List[Tuple[List[str], Optional[str]]], depth: int) -> Optional[str]:
     pipe: List[Tuple[List[str], Optional[str]]] = []
+    downloaded: set = set()
+
+    def persist_hit(p: List[Tuple[List[str], Optional[str]]]) -> Optional[str]:
+        # A download that is installed as a scheduled or login task, in this pipeline or an earlier one of the same line.
+        here = _download_targets(p)
+        local = downloaded | set(here)
+        first = next((k for k, (words, _s) in enumerate(p) if any(n in _DOWNLOADERS for n in _head_names(words))), -1)
+        if local or first >= 0:
+            for k, (words, _s) in enumerate(p):
+                if _installs_download(words, local, first >= 0 and k > first):
+                    return "rc_download"
+        downloaded.update(here)
+        return None
+
     for words, sep in segs:
         hit = _check_simple(words, depth)
         if hit:
             return hit
         pipe.append((words, sep))
         if not _is_pipe(sep):
-            hit2 = _check_pipeline(pipe)
+            hit2 = _check_pipeline(pipe) or persist_hit(pipe)
             if hit2:
                 return hit2
             pipe = []
-    return _check_pipeline(pipe) if pipe else None
+    return (_check_pipeline(pipe) or persist_hit(pipe)) if pipe else None
 
 
 def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
