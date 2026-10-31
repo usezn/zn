@@ -2,9 +2,10 @@ name: Public facts
 
 # The version, agents with hooks, license and install command must read the same in every manifest and
 # doc of this repository (.github/public-facts.json). A release changes them in the same pull request.
-# Pushes always run it. Pull requests and the merge queue always run it too: "Public facts" is a required check,
+# Pushes run it (a push to a release branch whose pull request run covers the commit skips it: see the dedupe job).
+# Pull requests and the merge queue always run it: "Public facts" is a required check,
 # and a workflow skipped by a paths filter leaves a required check pending forever. The job takes under a
-# minute, so there is no paths filter and no skip step.
+# minute, so there is no paths filter and no skip step (the dedupe job only skips a duplicate release push).
 on:
   push:
     branches: [ main, next, 'release/**' ]
@@ -17,18 +18,36 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request, or to next, cancels the run still going for it, so a burst of
-# merges into next tests only the newest commit. Runs for main always complete.
+# A new push to a pull request, to next or to a release branch cancels the run still going for the same pull request
+# or branch, so a burst of merges into next, or of commits on a release branch, tests only the newest commit (the
+# last run is never cancelled; a release branch cancels only the superseded run of that branch). Runs for main and the merge queue always
+# complete (each has its own group).
 concurrency:
-  group: public-facts-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: public-facts-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && (github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/release/'))) && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/release/'))) }}
 
 jobs:
+  # A push to a release branch whose head commit is also the head of an open pull request into main or a release
+  # branch is covered by that pull request's run of this workflow (same checks, same commit). This job finds that out
+  # and the jobs below skip, so the commit is not tested twice; the required checks still end up on the commit from
+  # the pull request run. Every other event skips this job, and the jobs below run as before.
+  # See .github/workflows/release-push-dedupe.yml.
+  dedupe:
+    name: Release push dedupe
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/release-push-dedupe.yml
+
   public-facts:
     name: Public facts
+    needs: dedupe
     # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
     # (the required checks) are skipped there; the push runs only what the queue does not.
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+    # A push to a release branch skips it when the pull request run of the same commit already runs it (job dedupe).
+    if: ${{ !cancelled() && needs.dedupe.outputs.skip != 'true' && (!(github.event_name == 'push' && github.ref == 'refs/heads/next')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

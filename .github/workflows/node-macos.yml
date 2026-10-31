@@ -46,10 +46,12 @@ on:
 permissions:
   contents: read
 
-# A new push to next cancels the run still going for it. Other runs always complete.
+# A new push to a release branch (or to next, which does not trigger this workflow) cancels the run still going
+# for that branch, so only the newest commit of a release branch is tested; the last run is never cancelled.
+# Other runs (main, the merge queue, the schedule, manual runs) always complete.
 concurrency:
-  group: node-macos-${{ (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/next' }}
+  group: node-macos-${{ (github.event_name == 'push' && (github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/release/'))) && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/release/')) }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.

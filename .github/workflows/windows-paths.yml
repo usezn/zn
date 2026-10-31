@@ -33,11 +33,13 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request, or to next, cancels the run still going for it. Runs for main, release branches,
-# the merge queue and the schedule always complete (each has its own group).
+# A new push to a pull request or to a release branch cancels the run still going for the same pull request or
+# branch (the last run is never cancelled). The push run is not skipped when a pull request has the commit: the
+# pull request run only starts for some paths, so this one gives the required check. Runs for main and the merge
+# queue always complete (each has its own group).
 concurrency:
-  group: windows-paths-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: windows-paths-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && (github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/release/'))) && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/release/'))) }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.

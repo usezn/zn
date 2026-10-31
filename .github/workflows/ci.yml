@@ -27,11 +27,13 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request, or to next, cancels the run still going for it, so a burst of
-# merges into next tests only the newest commit. Runs for main always complete.
+# A new push to a pull request, to next or to a release branch cancels the run still going for the same pull request
+# or branch, so a burst of merges into next, or of commits on a release branch, tests only the newest commit (the
+# last run is never cancelled; a release branch cancels only the superseded run of that branch). Runs for main, the schedule,
+# the merge queue and manual runs always complete (each has its own group).
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && (github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/release/'))) && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/release/'))) }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.
@@ -42,10 +44,26 @@ env:
   PIP_TIMEOUT: "60"
 
 jobs:
+  # A push to a release branch whose head commit is also the head of an open pull request into main or a release
+  # branch is covered by that pull request's run of this workflow (same checks, same commit). This job finds that out
+  # and the jobs below skip, so the commit is not tested twice; the required checks still end up on the commit from
+  # the pull request run. Every other event skips this job, and the jobs below run as before.
+  # See .github/workflows/release-push-dedupe.yml.
+  dedupe:
+    name: Release push dedupe
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/release-push-dedupe.yml
+
   test-node:
     name: Node.js ${{ matrix.node-version }} tests & benchmarks
+    needs: dedupe
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # A push to a release branch skips it when the pull request run of the same commit already runs it (job dedupe).
+    if: ${{ !cancelled() && needs.dedupe.outputs.skip != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -122,8 +140,10 @@ jobs:
   # macOS run on the push to next; label a pull request full-ci to run them before the merge.
   test-python:
     name: Python ${{ matrix.python-version }} tests & benchmarks (${{ matrix.os }})
+    needs: dedupe
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # A push to a release branch skips it when the pull request run of the same commit already runs it (job dedupe).
+    if: ${{ !cancelled() && needs.dedupe.outputs.skip != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
@@ -208,8 +228,10 @@ jobs:
   # upgrade. No -X dev: its debug checks multiply the run time and break the linear-time tests.
   python-warnings:
     name: Python 3.14 tests with warnings as errors (ubuntu-latest)
+    needs: dedupe
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # A push to a release branch skips it when the pull request run of the same commit already runs it (job dedupe).
+    if: ${{ !cancelled() && needs.dedupe.outputs.skip != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -305,10 +327,13 @@ jobs:
   # when an earlier one failed, so one run reports all of them.
   lint:
     name: Lint (eslint, ruff, mypy)
+    needs: dedupe
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
     # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
     # (the required checks) are skipped there; the push runs only what the queue does not.
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
+    # A push to a release branch whose pull request run already covers the commit skips the steps through ci-scope.sh (job dedupe).
+    # The job itself still runs and reports success: this check is required by name.
+    if: ${{ !cancelled() && ((github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -324,6 +349,7 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
+          DEDUPE_SKIP: ${{ needs.dedupe.outputs.skip }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         run: bash .github/scripts/ci-scope.sh
@@ -386,10 +412,13 @@ jobs:
 
   pack-node:
     name: npm package (pack, inspect, install)
+    needs: dedupe
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
     # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
     # (the required checks) are skipped there; the push runs only what the queue does not.
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
+    # A push to a release branch whose pull request run already covers the commit skips the steps through ci-scope.sh (job dedupe).
+    # The job itself still runs and reports success: this check is required by name.
+    if: ${{ !cancelled() && ((github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -406,6 +435,7 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
+          DEDUPE_SKIP: ${{ needs.dedupe.outputs.skip }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         working-directory: .
@@ -468,10 +498,13 @@ jobs:
 
   build-python:
     name: Python package (build, twine check, install)
+    needs: dedupe
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
     # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
     # (the required checks) are skipped there; the push runs only what the queue does not.
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
+    # A push to a release branch whose pull request run already covers the commit skips the steps through ci-scope.sh (job dedupe).
+    # The job itself still runs and reports success: this check is required by name.
+    if: ${{ !cancelled() && ((github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -488,6 +521,7 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
+          DEDUPE_SKIP: ${{ needs.dedupe.outputs.skip }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         working-directory: .

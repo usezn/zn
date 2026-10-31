@@ -119,7 +119,8 @@ jobs:
           persist-credentials: false
       # Every check named in .github/release-required-checks.txt must have succeeded on this exact commit
       # (skipped and neutral do not count for them), and no check of the commit may have failed or still
-      # be running. The release branch runs the whole set on every push (ci.yml and the other workflows).
+      # be running. The release branch runs the whole set on every push (ci.yml and the other workflows), or the
+      # pull request of that exact commit does (a push run skips its jobs then: release-push-dedupe.yml).
       - name: Check that the required checks of the commit passed
         env:
           GH_TOKEN: ${{ github.token }}

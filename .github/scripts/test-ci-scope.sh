@@ -45,6 +45,15 @@ scope ci-scope.sh false "Rust-only change skips the Node and Python jobs" src/ma
 scope ci-scope.sh true  "package change runs" packages/zn-gate/lib/x.js
 scope ci-scope.sh true  "workflow change runs" .github/workflows/ci.yml
 
+# DEDUPE_SKIP=true (a release push whose pull request run covers the commit) skips even a full run; any other value
+# leaves the usual answer.
+n=$((n + 1))
+got="$(EVENT_NAME=push FULL=true DEDUPE_SKIP=true bash "$scripts/ci-scope.sh" | grep -E '^run=')"
+if [ "$got" = run=false ]; then echo "ok   DEDUPE_SKIP=true skips a full run"; else echo "FAIL DEDUPE_SKIP=true: got $got"; fails=$((fails + 1)); fi
+n=$((n + 1))
+got="$(EVENT_NAME=push FULL=true DEDUPE_SKIP=false bash "$scripts/ci-scope.sh" | grep -E '^run=')"
+if [ "$got" = run=true ]; then echo "ok   DEDUPE_SKIP=false leaves a push running"; else echo "FAIL DEDUPE_SKIP=false: got $got"; fails=$((fails + 1)); fi
+
 # rust-scope.sh: the Rust gateway job
 scope rust-scope.sh true  "Rust-only change runs the Rust job" src/engine/watcher.rs
 scope rust-scope.sh true  "Cargo.lock change runs the Rust job" Cargo.lock
@@ -94,6 +103,7 @@ done < <(grep -rhoE 'docs/[A-Za-z0-9_-]+\.md' packages/*/test packages/zn-gate-p
 # The cache-cleanup selection logic has its own tests.
 bash "$scripts/test-cache-superseded.sh" || fails=$((fails + 1))
 bash "$scripts/test-cache-deleted-branches.sh" || fails=$((fails + 1))
+bash "$scripts/test-release-push-dedupe.sh" || fails=$((fails + 1))
 
 echo "$n checks, $fails failed"
 [ "$fails" -eq 0 ]

@@ -1,0 +1,57 @@
+name: Release push dedupe
+
+# Reusable workflow, called by the first job ("dedupe") of every workflow that runs both on pushes to release
+# branches and on pull requests (ci.yml, rust.yml, scrubber.yml, leak-bench.yml, public-facts.yml).
+#
+# A release branch normally has an open pull request into main. Each push to it starts those workflows twice
+# on the same commit, once for the push and once for the pull request, and both attach their check runs to
+# that commit. This job tells the push run when the pull request run of the same commit covers it (see
+# .github/scripts/release-push-dedupe.sh for the exact conditions), and the push run then skips its heavy jobs.
+#
+# The release gate (tag-release.yml, ~/zn-release-gate) reads the check runs of the exact release commit, so
+# it keeps working: the checks it requires come from the pull request run, and a skipped job counts as
+# harmless. Required checks whose name has no matrix (Lint, the npm and Python package builds) are not skipped as
+# jobs: their steps are skipped through ci-scope.sh, so the check still ends in "success" on the commit.
+#
+# It only reads: pull requests, workflow runs and the repository. Any error means "do not skip".
+on:
+  workflow_call:
+    outputs:
+      skip:
+        description: "true when the pull request run of this exact commit already covers this push run"
+        value: ${{ jobs.dedupe.outputs.skip }}
+
+permissions: {}
+
+jobs:
+  dedupe:
+    name: Look for the pull request run of this commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read # find the pull request run of this commit
+      contents: read # check out the script
+      pull-requests: read # find the open pull request whose head is this commit
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/scripts/release-push-dedupe.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Is there a pull request run of this commit?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: bash .github/scripts/release-push-dedupe.sh

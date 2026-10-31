@@ -3,7 +3,8 @@
 # Prints "run=true" or "run=false" to $GITHUB_OUTPUT (and to the log).
 #
 # Always true outside pull requests (pushes, tags, manual runs) and when the full
-# matrix was asked for. For a pull request, false only when every changed file is
+# matrix was asked for, except with DEDUPE_SKIP=true: a push to a release branch whose pull request run already
+# covers the commit (see release-push-dedupe.sh) skips every step, so the required check still reports. For a pull request, false only when every changed file is
 # documentation or belongs to the Rust gateway (checked by its own workflow, whose required job always
 # reports). Documentation files that tests read (docs/cli.md, ...) count as code.
 # Anything under packages/, plugins/, skill/, bench/ or .github/ always needs the
@@ -17,6 +18,7 @@ set -uo pipefail
 
 out() { echo "run=$1"; [ -n "${GITHUB_OUTPUT:-}" ] && echo "run=$1" >> "$GITHUB_OUTPUT"; exit 0; }
 
+[ "${DEDUPE_SKIP:-}" = "true" ] && out false
 [ "${EVENT_NAME:-}" = "pull_request" ] || out true
 [ "${FULL:-false}" = "true" ] && out true
 [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || out true
