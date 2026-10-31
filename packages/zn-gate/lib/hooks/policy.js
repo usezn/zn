@@ -1101,7 +1101,7 @@ function instructionWriteInWords(readings, opts) {
       const candidates = [];
       for (const w of seg) if (w.redirectTarget) candidates.push(w.text);
       if (at >= 0 && INSTRUCTION_DOWNLOADERS[progs[at]] && Object.prototype.hasOwnProperty.call(INSTRUCTION_DOWNLOADERS, progs[at])) {
-        candidates.push(...downloadTargets(progs[at], seg.slice(at + 1).map((x) => x.text)));
+        for (const x of downloadTargets(progs[at], seg.slice(at + 1).map((x) => x.text))) candidates.push(x);
       } else if (at >= 0 && INSTRUCTION_WRITERS.has(progs[at])) {
         const name = progs[at];
         const rest = seg.slice(at + 1).map((x) => x.text);
@@ -1115,18 +1115,20 @@ function instructionWriteInWords(readings, opts) {
           const psDest = PS_COPY_MOVE.has(name) ? psDestinationOf(rest) : null;
           const dir = psDest !== null ? null : targetDirectoryOf(rest);
           if (psDest !== null) {
-            candidates.push(psDest, ...intoDirectory(psDest, args.filter((x) => x !== psDest), false, opts));
+            candidates.push(psDest);
+            for (const x of intoDirectory(psDest, args.filter((x) => x !== psDest), false, opts)) candidates.push(x);
           } else if (dir !== null) {
             // -t DIR: every other argument is a source, written into DIR.
             const at = args.indexOf(dir);
             const sources = args.filter((_, j) => j !== at);
-            candidates.push(...intoDirectory(dir, sources, true, opts));
+            for (const x of intoDirectory(dir, sources, true, opts)) candidates.push(x);
           } else if (args.length > 1) {
             const dest = args[args.length - 1];
-            candidates.push(dest, ...intoDirectory(dest, args.slice(0, -1), false, opts));
+            candidates.push(dest);
+            for (const x of intoDirectory(dest, args.slice(0, -1), false, opts)) candidates.push(x);
           }
         } else {
-          candidates.push(...args);
+          for (const x of args) candidates.push(x);
         }
       }
       for (const text of candidates) {
@@ -2216,7 +2218,7 @@ const keychainLibName = (t) => {
     const j = u.replace(KEYCHAIN_SHELL_JOIN_RE, '');
     out.push(keychainUnescape(j), keychainUnescape(j, KEYCHAIN_SH_ESC_RE));
   }
-  out.push(...joins);
+  for (const x of joins) out.push(x);
   return out.some((x) => KEYCHAIN_LIB_NAME_RE.test(x.replace(KEYCHAIN_DOT_RE, '')));
 };
 const KEYCHAIN_LIB_USE_RE = /(?:loadStoredKey|resolveApiKey|\b_native\b|CLOUD_SLOT|loadIdentity|storeIdentity|\banalyze\b|\bisCloudEnabled\b)/;
@@ -2392,7 +2394,7 @@ function bashDenialOf(cmd, opts = {}) {
   if (/\$\(|`/.test(text) || words.some((w) => CODE_CMDS_RE.test(bareHead(w.head)))) {
     const split = [];
     for (const t of text.split(/[\s'"`$(){};|&<>=,]+/)) if (t) split.push({ text: t, redirectTarget: false, head: '', seq: 0 });
-    words.push(...split);
+    for (const x of split) words.push(x);
     readings.push(split);
   }
   {
@@ -2999,7 +3001,7 @@ function egressCollect(raw, opts, depth) {
   }
   // sh -c "curl ...": the code of a shell inside the command is a command of its own.
   if (depth < SHELL_CODE_DEPTH && /\b(?:sh|bash|zsh|dash|ksh|ash|eval|su|pwsh|powershell|cmd|watch|flock|xargs|busybox)\b/.test(text)) {
-    for (const code of shellCodesOf(allWords(text, false))) found.push(...egressCollect(code, opts, depth + 1));
+    for (const code of shellCodesOf(allWords(text, false))) for (const x of egressCollect(code, opts, depth + 1)) found.push(x);
   }
   return found;
 }
