@@ -1604,7 +1604,10 @@ mod parse_message_tests {
             .expect_err("a misspelt audit key must fail");
         let msg = err.to_string();
         assert!(msg.contains("audit.encryption_enabld"), "{msg}");
-        assert!(msg.contains("did you mean \"audit.encryption_enabled\""), "{msg}");
+        assert!(
+            msg.contains("did you mean \"audit.encryption_enabled\""),
+            "{msg}"
+        );
     }
 
     #[test]
@@ -1630,7 +1633,10 @@ mod parse_message_tests {
         let json = serde_json::to_string_pretty(&ZnConfig::init_template()).expect("json");
         std::fs::write(&file, json).expect("write");
         let (_, notices) = ZnConfig::load_with_notices(Some(&file)).expect("template loads");
-        assert!(notices.iter().all(|n| !n.contains("unknown")), "{notices:?}");
+        assert!(
+            notices.iter().all(|n| !n.contains("unknown")),
+            "{notices:?}"
+        );
     }
 
     #[test]
