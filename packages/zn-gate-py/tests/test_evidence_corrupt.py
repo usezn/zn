@@ -22,6 +22,16 @@ from zn_gate.evidence import (
 )
 
 
+def _read_bytes(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _read_text(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
 @pytest.fixture(autouse=True)
 def _reset_warning(monkeypatch):
     monkeypatch.setattr(evidence, "_last_warn", None)
@@ -126,10 +136,10 @@ def test_get_last_hash_fails_closed(tmp_path, make):
 @pytest.mark.parametrize("make", TAIL_CORRUPT)
 def test_log_evidence_refuses_to_append_and_warns_once(tmp_path, make, capsys):
     p, _ = make(tmp_path)
-    before = open(p, "rb").read()
+    before = _read_bytes(p)
     assert log_evidence({"payload": "after"}, file_path=p) is None
     assert log_evidence({"payload": "again"}, file_path=p) is None
-    assert open(p, "rb").read() == before  # nothing appended, chain not restarted
+    assert _read_bytes(p) == before  # nothing appended, chain not restarted
     err = capsys.readouterr().err
     assert err.count("is damaged") == 1
     assert "--verify" in err
@@ -248,10 +258,10 @@ def test_last_record_hash_must_be_lowercase_hex(tmp_path, capsys, bad):
         f.write(json.dumps({"id": "x", "prev_hash": GENESIS_HASH, "record_hash": bad}) + "\n")
     with pytest.raises(EvidenceLedgerError):
         get_last_hash(p)
-    before = open(p, "rb").read()
+    before = _read_bytes(p)
     assert log_evidence({"payload": "after"}, file_path=p) is None
     assert "is damaged" in capsys.readouterr().err
-    assert open(p, "rb").read() == before
+    assert _read_bytes(p) == before
 
 
 # ---- a log that cannot be written never breaks the caller ----
@@ -267,12 +277,12 @@ def test_log_readable_but_not_writable_warns_and_does_not_raise(tmp_path, capsys
     p = _ledger(tmp_path)
     os.chmod(p, 0o400)
     try:
-        before = open(p, "rb").read()
+        before = _read_bytes(p)
         assert log_evidence({"payload": "after"}, file_path=p) is None
         assert log_evidence({"payload": "again"}, file_path=p) is None
         err = capsys.readouterr().err
         assert err.count("cannot write to the evidence log") == 1  # warns once
-        assert open(p, "rb").read() == before
+        assert _read_bytes(p) == before
         assert verify_evidence_ledger(p)["valid"] is True
         assert not os.path.exists(p + ".lock")
     finally:
@@ -297,13 +307,13 @@ def test_busy_lock_skips_the_write_after_a_short_wait(tmp_path, capsys):
     assert not os.path.exists(p + ".lock")  # released after a normal write
     with open(p + ".lock", "w") as f:
         f.write("99999")
-    before = open(p, "rb").read()
+    before = _read_bytes(p)
     t0 = time.monotonic()
     assert log_evidence({"payload": "blocked"}, file_path=p) is None
     waited = time.monotonic() - t0
     assert 1.5 <= waited < 8, waited
     assert "another process is writing" in capsys.readouterr().err
-    assert open(p, "rb").read() == before
+    assert _read_bytes(p) == before
     assert os.path.exists(p + ".lock")  # a lock held by someone else is left alone
 
 
@@ -393,7 +403,7 @@ def test_stale_lock_is_left_alone_while_another_breaker_holds_the_break_mutex(tm
     with open(p + ".lock.break", "w") as f:
         f.write("busy")
     assert log_evidence({"payload": "x"}, file_path=p, lock_wait=0.2) is None
-    assert open(p + ".lock").read() == "1:crashed"  # a second breaker does not touch it
+    assert _read_text(p + ".lock") == "1:crashed"  # a second breaker does not touch it
     assert verify_evidence_ledger(p)["total"] == 1
 
 
@@ -428,7 +438,7 @@ def test_non_ascii_records_written_by_python_verify_in_node(tmp_path):
     p = str(tmp_path / "evidence.jsonl")
     for _ in range(3):
         assert log_evidence({"payload": NON_ASCII, "reason": NON_ASCII, "tool_name": "bash"}, file_path=p)
-    assert "漢字" in open(p, encoding="utf-8").read()  # written as text, not as \uXXXX
+    assert "漢字" in _read_text(p)  # written as text, not as \uXXXX
     assert verify_evidence_ledger(p)["valid"] is True
     v = _node_verify(p)
     assert v["valid"] is True, v
@@ -446,7 +456,7 @@ def test_non_ascii_records_written_by_node_verify_in_python(tmp_path):
     assert v["error"] is None
     assert v["valid"] is True
     assert v["total"] == 3
-    assert get_last_hash(p) == json.loads(open(p, encoding="utf-8").read().splitlines()[-1])["record_hash"]
+    assert get_last_hash(p) == json.loads(_read_text(p).splitlines()[-1])["record_hash"]
 
 
 def test_log_written_by_older_version_with_escaped_non_ascii_still_verifies(tmp_path):
@@ -488,7 +498,7 @@ def test_lone_surrogate_is_escaped_like_node(tmp_path):
 
 def test_writer_that_lost_its_lock_writes_nothing_and_leaves_the_new_lock_alone(tmp_path, capsys, monkeypatch):
     p = _ledger(tmp_path, n=1)
-    before = open(p, "rb").read()
+    before = _read_bytes(p)
     real = evidence.get_last_hash
 
     def steal_after_reading(path):
@@ -501,8 +511,8 @@ def test_writer_that_lost_its_lock_writes_nothing_and_leaves_the_new_lock_alone(
     monkeypatch.setattr(evidence, "get_last_hash", steal_after_reading)
     assert log_evidence({"payload": "slow writer"}, file_path=p) is None
     assert "taken over" in capsys.readouterr().err
-    assert open(p, "rb").read() == before
-    assert open(p + ".lock").read() == "4242:otherwriter"
+    assert _read_bytes(p) == before
+    assert _read_text(p + ".lock") == "4242:otherwriter"
 
 
 def test_several_writers_meeting_one_stale_lock_keep_one_chain(tmp_path):
@@ -554,7 +564,7 @@ def test_lock_that_turns_out_not_to_be_stale_is_put_back(tmp_path, capsys, monke
     monkeypatch.setattr(os, "rename", rename_after_new_lock)
     assert log_evidence({"payload": "x"}, file_path=p, lock_wait=0.3) is None
     monkeypatch.setattr(os, "rename", real_rename)
-    assert open(p + ".lock").read() == "4242:newowner"
+    assert _read_text(p + ".lock") == "4242:newowner"
     assert [n for n in os.listdir(tmp_path) if ".stale-" in n] == []
 
 
