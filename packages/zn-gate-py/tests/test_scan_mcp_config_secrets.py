@@ -131,9 +131,11 @@ class TestMcpSecrets(_Base):
             "one huge value": '{ "A_TOKEN": "' + "x" * (2 * mb) + '" }',
         }
         for name, text in inputs.items():
-            t0 = time.time()
+            # CPU time of this process, not wall-clock: a busy machine must not fail a linear scan,
+            # while a quadratic one still takes far longer than the limit.
+            t0 = time.process_time()
             mcp.find_mcp_config_secrets(text)
-            self.assertLess(time.time() - t0, 30, name)
+            self.assertLess(time.process_time() - t0, 30, name)
 
 
 class TestScanMcpConfigs(_Base):
