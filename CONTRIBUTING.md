@@ -34,6 +34,15 @@ python -m pip install -e .
 python -m pytest tests/ -v
 ```
 
+The full suite takes about five minutes because the oversize-result and worst-case (ReDoS) tests feed
+it very large inputs. Those tests carry the `slow` marker. While you iterate, skip them:
+
+```bash
+python -m pytest tests/ -m "not slow"   # or: ZN_SKIP_SLOW=1 python -m pytest tests/
+```
+
+Run the full suite before you push. CI always runs every test: it never passes `-m` and refuses `ZN_SKIP_SLOW`.
+
 ## Adding New Rules
 
 When adding new detection rules:
