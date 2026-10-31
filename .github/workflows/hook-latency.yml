@@ -94,7 +94,9 @@ jobs:
   # measured on a Windows runner.
   latency-windows:
     name: Hook latency budget (Windows, not required)
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # Not in pull requests into next (they run the required checks and one Windows job); pushes to main and next,
+    # pull requests into main or release branches and the full-ci label measure Windows.
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'pull_request' && github.base_ref == 'next' && !contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: windows-latest
     continue-on-error: true
     timeout-minutes: 30
