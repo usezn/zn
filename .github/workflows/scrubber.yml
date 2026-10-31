@@ -54,7 +54,8 @@ jobs:
         os: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
         node: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[18, 20, 22, 24]' || '[22]') }}
         # Pushes to next leave macOS out (4 jobs); every other full run keeps it.
-        exclude: ${{ fromJSON((github.event_name == 'push' && github.ref == 'refs/heads/next') && '[{"os":"macos-latest"}]' || '[]') }}
+        # A push to next also leaves out node 22 on Ubuntu, the required leg the merge queue already ran on this commit.
+        exclude: ${{ fromJSON((github.event_name == 'push' && github.ref == 'refs/heads/next') && '[{"os":"macos-latest"},{"os":"ubuntu-latest","node":22}]' || '[]') }}
     defaults:
       run:
         working-directory: packages/zn-gate

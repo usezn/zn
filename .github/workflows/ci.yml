@@ -52,7 +52,8 @@ jobs:
       fail-fast: false
       matrix:
         # 18.x, 22.x and 24.x are required checks: they always run.
-        node-version: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["18.x", "20.x", "22.x", "24.x", "26.x"]' || '["18.x", "22.x", "24.x"]') }}
+        # On a push to next the queue already ran 18.x, 22.x and 24.x on this commit: only the other versions run.
+        node-version: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/next') && fromJSON('["20.x", "26.x"]') || fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["18.x", "20.x", "22.x", "24.x", "26.x"]' || '["18.x", "22.x", "24.x"]') }}
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
@@ -132,7 +133,8 @@ jobs:
         # report is the python-coverage job): it is in both lists. The
         # list depends only on the event (never on another job), so every job name is known when the
         # run starts.
-        include: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.12"}]') }}
+        # On a push to next the queue already ran Python 3.12 on Ubuntu on this commit: only the other entries run.
+        include: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/next') && fromJSON('[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]') || fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.12"}]') }}
     defaults:
       run:
         shell: bash
@@ -254,7 +256,9 @@ jobs:
   lint:
     name: Lint (eslint, ruff, mypy)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
+    # (the required checks) are skipped there; the push runs only what the queue does not.
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -333,7 +337,9 @@ jobs:
   pack-node:
     name: npm package (pack, inspect, install)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
+    # (the required checks) are skipped there; the push runs only what the queue does not.
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -413,7 +419,9 @@ jobs:
   build-python:
     name: Python package (build, twine check, install)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
+    # (the required checks) are skipped there; the push runs only what the queue does not.
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
