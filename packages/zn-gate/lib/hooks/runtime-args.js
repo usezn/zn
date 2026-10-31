@@ -483,6 +483,7 @@ const WRAPPERS = {
 //   dest: the last operand is the destination, not a source
 //   archive: the first operand (after a bundled option word) is the archive
 const SOME = (a) => new Set(a);
+const GREP_SPEC = { first: true, script: SOME(['-e', '-f', '--regexp', '--file']), val: new Map([['-e', 1], ['-f', 1], ['--regexp', 1], ['--file', 1], ['-A', 1], ['-B', 1], ['-C', 1], ['-m', 1], ['-g', 1], ['-t', 1], ['-T', 1], ['-d', 1], ['-D', 1], ['-j', 1], ['--glob', 1], ['--type', 1], ['--type-not', 1], ['--max-count', 1], ['--include', 1], ['--exclude', 1], ['--exclude-dir', 1], ['--after-context', 1], ['--before-context', 1], ['--context', 1], ['--max-depth', 1], ['--threads', 1], ['--sort', 1], ['--ignore-file', 1], ['--pre', 1], ['--iglob', 1]]) };
 const DUMP = {
   cat: {}, tac: {}, more: { val: new Map([['-n', 1]]) }, less: { val: new Map([['-p', 1], ['-P', 1], ['-b', 1], ['-j', 1], ['-x', 1], ['-y', 1], ['-z', 1], ['-h', 1]]) },
   nl: { val: new Map([['-w', 1], ['-s', 1], ['-n', 1], ['-b', 1], ['-i', 1], ['-v', 1], ['-l', 1], ['-d', 1], ['-f', 1], ['-h', 1]]) },
@@ -512,6 +513,13 @@ const DUMP = {
   zip: { archive: true, val: new Map([['-x', 0], ['-P', 1], ['-b', 1], ['-t', 1]]) },
   source: {}, '.': {},
   dd: { dd: true },
+  grep: GREP_SPEC, egrep: GREP_SPEC, fgrep: GREP_SPEC, rg: GREP_SPEC, ag: GREP_SPEC, ack: GREP_SPEC,
+  gzip: { val: new Map([['-S', 1], ['--suffix', 1]]) }, gunzip: {}, zcat: {}, bzip2: {}, bunzip2: {}, bzcat: {}, xz: { val: new Map([['-S', 1], ['-T', 1]]) }, unxz: {}, xzcat: {}, zstd: { val: new Map([['-o', 1], ['-T', 1]]) }, unzstd: {}, zstdcat: {}, compress: {}, uncompress: {},
+  '7z': { first: true }, '7za': { first: true }, '7zr': { first: true }, unzip: { first: false }, lz4: {}, lzma: {},
+  split: { val: new Map([['-l', 1], ['-b', 1], ['-n', 1], ['-a', 1], ['-C', 1], ['-t', 1], ['--lines', 1], ['--bytes', 1]]) }, csplit: { val: new Map([['-f', 1], ['-b', 1], ['-n', 1]]) },
+  ln: { dest: true, val: new Map([['-t', 1], ['-S', 1], ['--target-directory', 1], ['--suffix', 1]]) }, link: {},
+  iconv: { val: new Map([['-f', 1], ['-t', 1], ['-o', 1]]) }, shuf: { val: new Map([['-n', 1], ['-o', 1], ['--random-source', 1]]) }, join: { val: new Map([['-1', 1], ['-2', 1], ['-j', 1], ['-t', 1], ['-o', 1], ['-e', 1]]) },
+  expand: { val: new Map([['-t', 1]]) }, unexpand: { val: new Map([['-t', 1]]) }, tsort: {}, base32: { val: new Map([['-w', 1]]) }, uuencode: {}, look: {},
 };
 // A download piped into a shell is the business of the pipe_to_shell rule (off unless the user turns it on), not of this one.
 const NET_SOURCES = new Set(['curl', 'wget', 'http', 'https', 'xh', 'fetch', 'nc', 'ncat', 'netcat', 'ssh']);
@@ -520,10 +528,10 @@ const STDIN_SENDERS = new Set(['curl', 'wget', 'nc', 'ncat', 'netcat', 'socat', 
 // Programs that never turn a value into a file name: used for the output of $(...). Their output is "safe".
 const SAFE_VALUE = new Set(['date', 'whoami', 'id', 'hostname', 'uname', 'nproc', 'mktemp', 'uuidgen', 'logname', 'arch', 'tty', 'uptime', 'lsb_release', 'sw_vers', 'df', 'free', 'test', '[', 'true', 'false']);
 // date prints its format: only %-directives and separators without letters or dots; the others take options only.
-const DATE_FMT_RE = /^\+(?:%[-_0^#]?[A-Za-z%]|[ \t:\/,_-])*$/;
+const DATE_FMT_RE = /^\+(?:%[-_0^#]?[A-Ya-z%]|[ \t:\/,_-])*$/;
 const DATE_OPT_RE = /^(?:-u|--utc|--universal|-I|-Idate|-Ihours|-Iminutes|-Iseconds|-Ins)$/;
 const OPT_ONLY_RE = /^-{1,2}[A-Za-z][A-Za-z-]*$/;
-const OPT_ONLY_PROGS = new Set(['id', 'hostname', 'uname', 'nproc', 'uuidgen', 'whoami', 'logname', 'arch', 'tty']);
+const OPT_ONLY_PROGS = new Set(['id', 'hostname', 'uname', 'nproc', 'uuidgen', 'whoami', 'logname', 'arch', 'tty', 'df', 'free', 'uptime', 'lsb_release', 'sw_vers']);
 function safeCall(name, texts) {
   const args = texts.slice(1);
   if (name === 'date') return args.every((a) => a !== null && (DATE_OPT_RE.test(a) || DATE_FMT_RE.test(a)));
@@ -533,13 +541,13 @@ function safeCall(name, texts) {
 }
 // git commands whose output is names of tracked files or ids: a list the policy does not walk.
 // git subcommands whose output holds hashes or tags, never a name an agent picked: judged by their options.
-const GIT_REV = new Set(['rev-parse', 'describe', 'rev-list', 'merge-base']);
+const GIT_REV = new Set(['rev-parse', 'rev-list', 'merge-base']);
 // git subcommands that list files: judged like find or ls, by the names on the disk (tracked-only ones skip what the
 // root .gitignore ignores).
 const GIT_LIST = new Set(['ls-files', 'ls-tree', 'diff', 'diff-tree', 'diff-index', 'diff-files', 'status', 'log', 'show', 'stash', 'whatchanged', 'shortlog', 'cherry', 'show-branch']);
 const GIT_REV_OPT_RE = /^(?:-[A-Za-z0-9]+|--[a-z][a-z-]*(?:=\d+)?)$/;
-const GIT_REV_BAD_RE = /^--(?:format|pretty|show|git|absolute|resolve|path|sq|local|prefix|cdup|superproject|shared|exclude|stdin|default)/;
-const REVPARSE_OPT_RE = /^(?:--short(?:=\d+)?|--verify|--abbrev-ref|--is-inside-work-tree|--is-bare-repository|-q|--quiet|--symbolic-full-name)$/;
+const GIT_REV_BAD_RE = /^--(?:format|pretty|show|git|absolute|resolve|path|sq|local|prefix|cdup|superproject|shared|exclude|stdin|default|objects|abbrev-ref|symbolic|bisect|disk-usage|children|parents|graph|header|oneline|tags|branches|remotes|glob|alternate)/;
+const REVPARSE_OPT_RE = /^(?:--short(?:=\d+)?|--verify|--is-inside-work-tree|--is-bare-repository|-q|--quiet)$/;
 const REVPARSE_OPERAND_RE = /^(?:(?:HEAD|@)(?:[~^]\d*)*|[0-9a-f]{7,40})$/;
 // The exact calls whose output is shell code written by a well-known environment tool (eval "$(ssh-agent -s)").
 const INIT_SHELL_RE = /^(?:bash|zsh|fish|sh|dash|ksh|tcsh|powershell|pwsh|nu|elvish|xonsh)$/;
@@ -1354,7 +1362,8 @@ function produce(cmd, st, cmds, idx) {
     if (r) return r;
   }
   if (name === 'seq') return { unk: unk('num') };
-  if (SAFE_VALUE.has(name) && safeCall(name, texts)) return { unk: unk('safe', { why: name }) };
+  const prefixed = cmd.words.slice(0, pi).some((w) => { const t = plainText(w); return t === null || t.includes('='); });
+  if (SAFE_VALUE.has(name) && !prefixed && safeCall(name, texts)) return { unk: unk('safe', { why: name }) };
   if (name === 'xargs' || name === 'cat' || PASS_THROUGH.has(name)) {
     // A pipe stage that passes lines through gives what its source gives.
     if (cmd.pipeIn && cmds && idx > 0 && PASS_THROUGH.has(name) && cmd.words.length - pi <= 1 + (name === 'grep' || name === 'head' || name === 'tail' || name === 'sort' ? 6 : 0)) {
@@ -1546,6 +1555,7 @@ function operandsOf(spec, name, cmd, pi, st) {
     const t = plainText(ws[k]);
     if (!endOpts && t !== null && t.startsWith('-') && t !== '-') {
       if (t === '--') { endOpts = true; continue; }
+      if (spec.inline && spec.inline.test(t)) { k++; continue; }
       if (spec.script && spec.script.has(t)) scriptGiven = true;
       if (t === '-t' || t === '--target-directory') hasT = true;
       const cnt = spec.val && spec.val.get(t);
@@ -1655,7 +1665,7 @@ function partialProtected(item0, writing, st) {
 const INTERPRETERS = new Set(['python', 'python3', 'py', 'node', 'nodejs', 'deno', 'bun', 'ruby', 'perl', 'php', 'lua', 'osascript', 'pwsh', 'powershell']);
 // File-valued options of the programs that send a file: a value that is entirely unknown names any file.
 const SENDER_PROGS = new Set(['curl', 'wget', 'http', 'https', 'xh', 'httpie']);
-const FILE_OPTS = { curl: new Set(['-T', '--upload-file', '-K', '--config', '--cert', '--key', '-E', '--netrc-file']), wget: new Set(['--post-file', '--body-file', '-i', '--input-file', '--certificate', '--private-key']) };
+const FILE_OPTS = { curl: new Set(['-T', '--upload-file', '-K', '--config', '--cert', '--key', '-E', '--netrc-file']), wget: new Set(['--post-file', '--body-file', '-i', '--input-file', '--certificate', '--private-key']), openssl: new Set(['-in', '-infile', '-inkey', '-key', '-cert', '-CAfile', '-kfile', '-certfile', '-rand', '-config']) };
 const FILE_OPT_GLUED_RE = /^--(?:upload-file|config|post-file|body-file|input-file|netrc-file|cert|key)=$/;
 // @file, name=@file, name=<file: the program reads the file after the @ or <.
 const FILE_REF_RE = /^(?:-[A-Za-z]|--[\w-]+=|[\w-]+=)?[@<]$/;
@@ -1674,8 +1684,14 @@ function checkItems(st, items, writing, wholeCheck, head, redirectTarget, fileVa
       continue;
     }
     if (st.out.refuse) continue;
+    // A producer that is "safe" may print nothing (head -c0, an empty list): the word without it is judged too.
+    if (it.some((s) => isUnk(s) && s.kind === 'safe')) {
+      const em = normItem(it.filter((s) => !(isUnk(s) && s.kind === 'safe')));
+      if (em.length && em.length !== it.length) checkItems(st, [em], writing, false, head, redirectTarget, false);
+      if (st.out.refuse) continue;
+    }
     if (SENDER_PROGS.has(head) && it.length === 2 && typeof it[0] === 'string' && wholeUnknown([it[1]]) && (FILE_REF_RE.test(it[0]) || FILE_OPT_GLUED_RE.test(it[0]))) { st.out.refuse = RUNTIME_NAME_MESSAGE; continue; }
-    if (SENDER_PROGS.has(head) && fileValue && wholeUnknown(it)) { st.out.refuse = RUNTIME_NAME_MESSAGE; continue; }
+    if ((SENDER_PROGS.has(head) || FILE_OPTS[head]) && fileValue && wholeUnknown(it)) { st.out.refuse = RUNTIME_NAME_MESSAGE; continue; }
     if (partialProtected(it, writing, st)) { st.out.refuse = RUNTIME_NAME_MESSAGE; continue; }
     if (wholeCheck && wholeUnknown(it)) {
       const u = it.find((s) => isUnk(s) && s.kind === 'any');
@@ -1717,6 +1733,9 @@ function shellCodeOf(cmd, pi, st) {
   }
   return null;
 }
+
+const INLINE_FLAG = { python: /^-[A-Za-z]*c$/, python3: /^-[A-Za-z]*c$/, py: /^-[A-Za-z]*c$/, node: /^-[A-Za-z]*[ep]$/, nodejs: /^-[A-Za-z]*[ep]$/, ruby: /^-[A-Za-z]*e$/, perl: /^-[A-Za-z]*[eE]$/, php: /^-[A-Za-z]*r$/, lua: /^-e$/, deno: /^eval$/, bun: /^(?:-e|--eval|-p)$/ };
+const texts0 = (cmd, pi) => cmd.words.slice(pi).map((w) => plainText(w));
 
 function runCommand(cmds, ci, st, mode) {
   const cmd = cmds[ci];
@@ -1763,7 +1782,8 @@ function runCommand(cmds, ci, st, mode) {
         if (w.parts.length === 2 && w.parts[1].t === 'arr') { for (const e of w.parts[1].words) checkItems(st, evalWord(e, st, 'check'), false, false, '', false); continue; }
         if (hasExpansion(w)) checkItems(st, evalWord(w, st, 'check'), false, false, '', false);
       }
-      for (const r of cmd.redirs) if (hasExpansion(r.target)) checkItems(st, evalWord(r.target, st, 'check'), r.op !== '<', false, '', r.op !== '<');
+      // A read redirect with no command of its own (exec 3< $f, done < $f) feeds some command: an unknown name is refused.
+      for (const r of cmd.redirs) if (hasExpansion(r.target) && r.op !== '<<<') checkItems(st, evalWord(r.target, st, 'check'), r.op !== '<' && r.op !== '<>', r.op === '<' || r.op === '<>', '', r.op !== '<' && r.op !== '<>');
       heredocCodes(cmd, null, st);
     }
     return;
@@ -1832,7 +1852,9 @@ function runCommand(cmds, ci, st, mode) {
   // ---- check mode ----
   const writing = !READ_ONLY.has(head);
   // The words of the command, evaluated: resolved text goes to the path check, partly unknown words are judged.
-  const spec = Object.prototype.hasOwnProperty.call(DUMP, head) ? DUMP[head] : null;
+  let spec = Object.prototype.hasOwnProperty.call(DUMP, head) ? DUMP[head] : null;
+  if (!spec && INLINE_FLAG[head] && texts0(cmd, pi).some((t) => t !== null && (INLINE_FLAG[head].test(t) || t === '--eval' || t === '--print'))) spec = { inline: INLINE_FLAG[head], val: new Map([['--eval', 1], ['--print', 1]]) };
+  if (!spec && head === 'git' && texts0(cmd, pi).includes('--no-index')) spec = { val: new Map([['-C', 1], ['-c', 1]]) };
   let operandKeys = null;
   if (spec) {
     if (spec.dd) {
@@ -1876,7 +1898,7 @@ function runCommand(cmds, ci, st, mode) {
       else checkItems(st, items.filter((it) => !hasUnk(it)), false, false, head, false);
       continue;
     }
-    const senderish = reading && (spec || STDIN_SENDERS.has(head) || head === 'while' || head === '');
+    const senderish = reading;
     checkItems(st, items, !reading, !!senderish, head, !reading);
   }
   if (out.refuse) return;
@@ -1910,6 +1932,16 @@ function runCommand(cmds, ci, st, mode) {
       procCode(first.parts[0].code, st);
       if (out.refuse) return;
     }
+  }
+  // alias NAME=VALUE: the value is code (POSIX shells and shells with expand_aliases run it by name): judged like a function body.
+  if (head === 'alias') {
+    for (const w of args) {
+      const t = plainText(w);
+      if (t === null) { if (hasExpansion(w)) { out.refuse = RUNTIME_CODE_MESSAGE; return; } continue; }
+      const m = /^([^=]+)=([\s\S]*)$/.exec(t);
+      if (m) out.codes.push({ text: m[2], vars: st.vars, positional: null });
+    }
+    return;
   }
   // Shell code built at run time: eval, trap, sh -c, source of a process substitution.
   if (head === 'eval' || head === 'trap') {
@@ -2087,7 +2119,7 @@ function xargsCheck(cmds, ci, cmd, pi, st) {
   const sraw = plainText(sub.words[spi]);
   const sname = sraw === null ? '' : base(sraw);
   const src = argFile ? (typeof argFile === 'string' ? readList(argFile, st) : { unk: unk('any', { why: 'xargs -a' }) }) : sourceOf(cmds, ci, st);
-  const dumpish = sraw === null || Object.prototype.hasOwnProperty.call(DUMP, sname) || SHELLS.has(sname) || sname === 'eval' || XARGS_SENDERS.has(sname);
+  const dumpish = sraw === null || (Object.prototype.hasOwnProperty.call(DUMP, sname) && DUMP[sname] !== GREP_SPEC) || SHELLS.has(sname) || sname === 'eval' || XARGS_SENDERS.has(sname);
   // The source gives known names (echo a b | xargs cat): they are checked as words of the command.
   if (src.items) {
     const subTexts = sub.words.map((w) => plainText(w));
@@ -2134,7 +2166,7 @@ function xargsCheck(cmds, ci, cmd, pi, st) {
 
 /* ------------------------------ entry point ------------------------------ */
 
-const QUICK_RE = /[$`]|<<<|<\s*[^\s<(]|\|\s*&?\s*(?:[\w.-]+\/)*(?:ba|z|da|k|a|mk)?sh\b|\beval\b|\bxargs\b|-exec|-execdir|-ok\b|\bread\b|\bmapfile\b|\breadarray\b|<\(|>\(|\btrap\b|\bsource\b|^\s*\.\s|[;&|(]\s*\.\s|\bfor\b|\bwhile\b|\bprintf\b/;
+const QUICK_RE = /\balias\b|[$`]|<<<|<\s*[^\s<(]|\|\s*&?\s*(?:[\w.-]+\/)*(?:ba|z|da|k|a|mk)?sh\b|\beval\b|\bxargs\b|-exec|-execdir|-ok\b|\bread\b|\bmapfile\b|\breadarray\b|<\(|>\(|\btrap\b|\bsource\b|^\s*\.\s|[;&|(]\s*\.\s|\bfor\b|\bwhile\b|\bprintf\b/;
 
 /*
  * analyse(cmd, ctx) -> { refuse, words, codes }
