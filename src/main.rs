@@ -20,7 +20,7 @@ use opentelemetry_sdk::{trace::SdkTracerProvider, Resource};
 use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{self, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::broadcast;
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_governor::GovernorLayer;
@@ -249,7 +249,11 @@ async fn start_proxy(args: Args) -> Result<()> {
     log::info("Initializing High-Performance Security Engine...")?;
 
     // Load configuration
-    let mut zn_config = ZnConfig::load(args.config.as_ref().map(std::path::Path::new))?;
+    let (mut zn_config, config_notices) =
+        ZnConfig::load_with_notices(args.config.as_ref().map(std::path::Path::new))?;
+    for notice in &config_notices {
+        log::warning(notice)?;
+    }
 
     // Apply CLI overrides
     if let Some(port) = args.port {
@@ -496,6 +500,12 @@ async fn start_proxy(args: Args) -> Result<()> {
         );
         McpPool::new(std::collections::HashMap::new())
     });
+    for notice in pool.notices() {
+        log::warning(notice)?;
+    }
+    if !pool.list_mcps().is_empty() {
+        log::warning(zn::user_errors::mcp_not_forwarded(pool.list_mcps().len()))?;
+    }
     let cache = Arc::new(zn::engine::cache::ResultCache::new(
         zn_config.caching.clone(),
     ));
@@ -625,10 +635,26 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
-    let mut reader = BufReader::new(stdin).lines();
+    let mut reader = BufReader::new(stdin);
 
-    while let Some(line) = reader.next_line().await? {
-        if let Ok(Some(response)) = process_mcp_message(&line, &state, None).await {
+    // A line is read with a size limit: one without a newline cannot make the gateway buffer forever.
+    loop {
+        let response = match zn::bounded_line::read_line_bounded(
+            &mut reader,
+            zn::bounded_line::MAX_STDIN_LINE_BYTES,
+        )
+        .await?
+        {
+            zn::bounded_line::BoundedLine::Eof => break,
+            zn::bounded_line::BoundedLine::TooLong => Some(
+                r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Request too large"}}"#
+                    .to_string(),
+            ),
+            zn::bounded_line::BoundedLine::Line(line) => {
+                process_mcp_message(&line, &state, None).await.ok().flatten()
+            }
+        };
+        if let Some(response) = response {
             stdout.write_all(response.as_bytes()).await?;
             stdout.write_all(b"\n").await?;
             stdout.flush().await?;
@@ -650,7 +676,10 @@ struct AnalyzerPipeline {
 
 async fn build_pipeline() -> Result<AnalyzerPipeline> {
     // Load configuration (defaults + env vars)
-    let config = ZnConfig::load(None)?;
+    let (config, config_notices) = ZnConfig::load_with_notices(None)?;
+    for notice in &config_notices {
+        eprintln!("Warning: {notice}");
+    }
 
     // Initialize engine with defaults
     let engine_config = ZnEngineConfig {

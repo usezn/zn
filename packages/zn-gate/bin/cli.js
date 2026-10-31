@@ -265,6 +265,8 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   reach [path]        Show what your coding agents can reach: secrets (names only),
                       credential files, MCP servers [--json | --sarif]
                       [--fail-on high|medium|low|none] [--remember]. Read only, nothing is sent
+                      reach --history: which secrets your agents kept in their session
+                      history (types and counts, never values) [--json] [--max-seconds N]
   secrets-mcp         Run the "secrets" MCP server (stdio)
   hook <agent>        Hook entry point used by agents (reads the event on stdin)
 
@@ -851,7 +853,7 @@ async function runBrokerCommand(command, rest) {
   process.exitCode = await require('../lib/broker/cli').dispatch(command, rest);
 }
 
-const REACH_USAGE = 'usage: zn-gate reach [path] [--json | --sarif] [--fail-on high|medium|low|none] [--remember]';
+const REACH_USAGE = 'usage: zn-gate reach [path] [--json | --sarif] [--fail-on high|medium|low|none] [--remember]\n       zn-gate reach --history [--json] [--max-seconds N]';
 
 /*
  * zn-gate reach [path] [--json | --sarif] [--fail-on high|medium|low|none]: read only, nothing sent.
@@ -863,12 +865,22 @@ async function runReachCommand(rest) {
   let format = 'text';
   let failOn = 'none';
   let remember = false;
+  let historyMode = false;
+  let maxSeconds = null;
   const usage = (msg) => { process.stderr.write('zn-gate reach: ' + msg + '\n' + REACH_USAGE + '\n'); return 2; };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === '-h' || a === '--help') { process.stdout.write(REACH_USAGE + '\nShows what the coding agents on this machine can reach. Read only: nothing is changed or sent.\n'); return 0; }
     // --remember keeps this run's counts in ~/.zn/reach-last.json for the next one; without it nothing is written.
     if (a === '--remember') { remember = true; continue; }
+    // --history: scan the local session histories of the agents for secrets (types and counts only).
+    if (a === '--history') { historyMode = true; continue; }
+    if (a === '--max-seconds' || a.startsWith('--max-seconds=')) {
+      const v = a === '--max-seconds' ? rest[++i] : a.slice('--max-seconds='.length);
+      if (!/^\d{1,4}$/.test(String(v)) || +v < 1 || +v > 3600) return usage('--max-seconds must be a whole number from 1 to 3600');
+      maxSeconds = +v;
+      continue;
+    }
     if (a === '--json' || a === '--sarif') {
       if (format !== 'text') return usage('choose one of --json and --sarif');
       format = a.slice(2);
@@ -884,6 +896,22 @@ async function runReachCommand(rest) {
     if (target !== null) return usage('only one folder at a time');
     target = a;
   }
+  if (historyMode) {
+    if (target !== null || remember || failOn !== 'none' || format === 'sarif') return usage('--history reads your home folder: it takes only --json and --max-seconds');
+    process.env.ZN_STATS = 'off';
+    const zh = require('../lib/reach/history');
+    let h;
+    try {
+      h = zh.history({ maxSeconds: maxSeconds || undefined });
+    } catch (err) {
+      process.stderr.write('zn-gate reach: could not finish: ' + String((err && err.message) || err).slice(0, 300) + '\n');
+      return 2;
+    }
+    if (format === 'json') process.stdout.write(JSON.stringify(h, null, 2) + '\n');
+    else zh.report(h);
+    return 0;
+  }
+  if (maxSeconds !== null) return usage('--max-seconds goes with --history');
   const root = path.resolve(target || '.');
   let st = null;
   try { st = fs.statSync(root); } catch (_) { st = null; }
