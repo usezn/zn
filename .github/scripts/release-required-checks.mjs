@@ -6,7 +6,10 @@
 //
 //   node .github/scripts/release-required-checks.mjs lint [list-file] [workflows-dir]
 //     Fails when a name in the list matches no job name in the workflows, so a renamed job breaks loudly
-//     instead of making every release fail (or, worse, a name nobody can produce).
+//     instead of making every release fail (or, worse, a name nobody can produce). It also fails when a job
+//     that the release push dedupe can skip (it needs a dedupe job, directly or through another job, or reads
+//     its output) is named exactly like a required check: a skipped duplicate under a required name would be
+//     the "latest" run of that name and could hide a failure or block the release.
 //
 //   node .github/scripts/release-required-checks.mjs verify <checks.tsv> [list-file]
 //     Reads the check runs of the release commit (one per line: name, status, conclusion, app slug, tab
@@ -74,6 +77,73 @@ export function templateRegex(template) {
   return new RegExp('^' + parts.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.+') + '$');
 }
 
+// Jobs of a workflow file with what the dedupe lint needs: id, name as written (or the id), the ids listed
+// under needs, and the raw text of the job (to find reads of the dedupe output in if: or env:).
+export function jobDefs(workflowText) {
+  const lines = workflowText.split(/\r?\n/);
+  const start = lines.findIndex((l) => /^jobs:\s*(#.*)?$/.test(l));
+  if (start < 0) return [];
+  const jobs = [];
+  let job = null;
+  for (const line of lines.slice(start + 1)) {
+    if (/^\S/.test(line)) break; // the next top-level key ends the jobs block
+    const key = /^ {2}([A-Za-z0-9_-]+):\s*(#.*)?$/.exec(line);
+    if (key) { job = { id: key[1], name: null, needs: [], text: '', inNeeds: false }; jobs.push(job); continue; }
+    if (!job) continue;
+    job.text += line + '\n';
+    const name = /^ {4}name:\s*(.+?)\s*$/.exec(line);
+    if (name && job.name === null) {
+      let v = name[1];
+      if (/^(["']).*\1/.test(v)) v = v.slice(1, v.lastIndexOf(v[0]));
+      else v = v.replace(/\s+#.*$/, '');
+      job.name = v;
+    }
+    const needs = /^ {4}needs:\s*([^#]*?)\s*(#.*)?$/.exec(line);
+    if (needs) {
+      job.inNeeds = needs[1] === '';
+      job.needs.push(...needs[1].replace(/[[\]]/g, '').split(',').map((x) => x.trim()).filter(Boolean));
+      continue;
+    }
+    const item = /^ {6}-\s*([A-Za-z0-9_-]+)\s*(#.*)?$/.exec(line);
+    if (job.inNeeds && item) { job.needs.push(item[1]); continue; }
+    if (/^ {4}\S/.test(line)) job.inNeeds = false;
+  }
+  return jobs.map((j) => ({ id: j.id, name: j.name ?? j.id, needs: j.needs, text: j.text }));
+}
+
+// The jobs of one workflow that the release push dedupe can skip: the dedupe job itself (it calls
+// release-push-dedupe.yml), every job that reads its output, and every job that needs one of those (the jobs
+// that need a skipped job are skipped too).
+export function dedupeSkippable(workflowText) {
+  const jobs = jobDefs(workflowText);
+  const dedupeIds = [...new Set(jobs.filter((j) => /release-push-dedupe\.yml/.test(j.text)).map((j) => j.id))];
+  if (dedupeIds.length === 0) return [];
+  const reads = (j) => dedupeIds.some((id) => new RegExp(`needs\\.${id}\\.`).test(j.text));
+  const hit = new Set(dedupeIds);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const j of jobs) {
+      if (!hit.has(j.id) && (reads(j) || j.needs.some((n) => hit.has(n)))) { hit.add(j.id); grew = true; }
+    }
+  }
+  return jobs.filter((j) => hit.has(j.id));
+}
+
+// A skipped job shows under its name as written: a matrix name stays unexpanded ("Node.js ${{ matrix.v }} tests"),
+// so it cannot collide with a required name. A name without an expression is exactly what a ruleset can require.
+export function lintDedupe(required, workflowTexts) {
+  const errors = [];
+  for (const text of workflowTexts) {
+    for (const j of dedupeSkippable(text)) {
+      if (!j.name.includes('${{') && required.includes(j.name)) {
+        errors.push(`required check "${j.name}" is produced by job "${j.id}", which the release push dedupe can skip (it needs the dedupe job or reads its output): a skipped run under a required name can hide a failure or block the release; let the job run on every push`);
+      }
+    }
+  }
+  return errors;
+}
+
 export function lint(required, workflowTexts) {
   const templates = workflowTexts.flatMap((t) => jobNames(t));
   const regexes = templates.map(templateRegex);
@@ -83,6 +153,7 @@ export function lint(required, workflowTexts) {
       errors.push(`required check "${name}" matches no job name in .github/workflows (was the job renamed?)`);
     }
   }
+  errors.push(...lintDedupe(required, workflowTexts));
   return errors;
 }
 
@@ -126,7 +197,7 @@ function main(argv) {
       const required = parseList(readFileSync(list, 'utf8'));
       const errors = lint(required, readWorkflows(dir));
       if (errors.length) { for (const e of errors) console.error(`::error::${e}`); return 1; }
-      console.log(`all ${required.length} required release checks match a job name`);
+      console.log(`all ${required.length} required release checks match a job name and none can be skipped by the release push dedupe`);
       return 0;
     }
     if (cmd === 'verify') {

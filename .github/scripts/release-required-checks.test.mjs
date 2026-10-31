@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import {
-  DEFAULT_LIST, DEFAULT_WORKFLOWS, parseList, jobNames, templateRegex, lint, parseRows, verify,
+  DEFAULT_LIST, DEFAULT_WORKFLOWS, parseList, jobNames, templateRegex, lint, lintDedupe, dedupeSkippable, jobDefs, parseRows, verify,
 } from './release-required-checks.mjs';
 
 const REQUIRED = ['A tests', 'B (ubuntu-latest)', 'Public facts'];
@@ -61,6 +61,75 @@ test('lint reports a required name no job produces', () => {
   const errors = lint(['A tests', 'Renamed job'], [wf]);
   assert.equal(errors.length, 1);
   assert.match(errors[0], /Renamed job/);
+});
+
+const DEDUPE_JOB = [
+  '  dedupe:', '    name: Release push dedupe', "    if: github.event_name == 'push'", '    uses: ./.github/workflows/release-push-dedupe.yml',
+];
+const wfWith = (...jobLines) => ['name: x', 'on: push', 'jobs:', ...DEDUPE_JOB, ...jobLines, ''].join('\n');
+
+test('jobDefs reads needs in every YAML form', () => {
+  const wf = [
+    'jobs:',
+    '  a:', '    name: A', '    needs: dedupe', '    runs-on: x',
+    '  b:', '    needs: [dedupe, a]  # c', '    runs-on: x',
+    '  c:', '    needs:', '      - a', '      - b # c', '    runs-on: x',
+  ].join('\n');
+  const jobs = Object.fromEntries(jobDefs(wf).map((j) => [j.id, j.needs]));
+  assert.deepEqual(jobs, { a: ['dedupe'], b: ['dedupe', 'a'], c: ['a', 'b'] });
+});
+
+test('the real workflows: no job that the release push dedupe can skip carries a required name', () => {
+  const required = parseList(readFileSync(DEFAULT_LIST, 'utf8'));
+  const texts = readdirSync(DEFAULT_WORKFLOWS).filter((f) => /\.ya?ml$/.test(f)).map((f) => readFileSync(path.join(DEFAULT_WORKFLOWS, f), 'utf8'));
+  assert.deepEqual(lintDedupe(required, texts), []);
+  // the dedupe is still wired somewhere, so this test cannot pass by finding nothing
+  assert.ok(texts.some((t) => dedupeSkippable(t).length > 1));
+});
+
+test('lintDedupe passes a matrix job behind the dedupe: its skipped name is the unexpanded template', () => {
+  const wf = wfWith('  t:', '    name: Node.js ${{ matrix.v }} tests', '    needs: dedupe', "    if: ${{ needs.dedupe.outputs.skip != 'true' }}");
+  assert.deepEqual(lintDedupe(['Node.js 18.x tests', 'Public facts'], [wf]), []);
+});
+
+test('lintDedupe fails a job under a required name that needs the dedupe job', () => {
+  const wf = wfWith('  lint:', '    name: Lint (x)', '    needs: dedupe', '    runs-on: x');
+  const errors = lintDedupe(['Lint (x)'], [wf]);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /"Lint \(x\)".*job "lint"/);
+});
+
+test('lintDedupe fails on needs in list form and flow form, and on a job named by its id', () => {
+  for (const needs of ['    needs: [dedupe]', '    needs:\n      - dedupe']) {
+    const wf = wfWith('  lint:', '    name: Lint (x)', needs, '    runs-on: x');
+    assert.equal(lintDedupe(['Lint (x)'], [wf]).length, 1, needs);
+  }
+  const noName = wfWith('  Public-facts:', '    needs: dedupe', '    runs-on: x');
+  assert.equal(lintDedupe(['Public-facts'], [noName]).length, 1);
+});
+
+test('lintDedupe fails when a required job only reads the dedupe output in an if: or an env, without listing it in needs', () => {
+  const inIf = wfWith('  lint:', '    name: Lint (x)', "    if: ${{ needs.dedupe.outputs.skip != 'true' }}", '    runs-on: x');
+  assert.equal(lintDedupe(['Lint (x)'], [inIf]).length, 1);
+  const inEnv = wfWith('  lint:', '    name: Lint (x)', '    runs-on: x', '    env:', '      S: ${{ needs.dedupe.outputs.skip }}');
+  assert.equal(lintDedupe(['Lint (x)'], [inEnv]).length, 1);
+});
+
+test('lintDedupe follows needs through another job (a job that needs a skipped job is skipped too)', () => {
+  const wf = wfWith('  scope:', '    name: Scope', '    needs: dedupe', '  lint:', '    name: Lint (x)', '    needs: scope');
+  assert.equal(lintDedupe(['Lint (x)'], [wf]).length, 1);
+});
+
+test('lintDedupe ignores a workflow without a dedupe job and a job that does not depend on it', () => {
+  assert.deepEqual(lintDedupe(['Lint (x)'], ['jobs:\n  lint:\n    name: Lint (x)\n    needs: other\n']), []);
+  assert.deepEqual(lintDedupe(['Lint (x)'], [wfWith('  lint:', '    name: Lint (x)', '    runs-on: x')]), []);
+});
+
+test('lint reports the dedupe collision together with the other errors', () => {
+  const wf = wfWith('  lint:', '    name: Lint (x)', '    needs: dedupe');
+  const errors = lint(['Lint (x)', 'Missing'], [wf]);
+  assert.equal(errors.length, 2);
+  assert.ok(errors.some((e) => /Missing/.test(e)) && errors.some((e) => /dedupe can skip/.test(e)));
 });
 
 test('verify passes when every required check succeeded and nothing else failed', () => {
