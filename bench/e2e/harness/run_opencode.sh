@@ -13,6 +13,10 @@ PORT=${PORT:-8789}
 rm -rf "$RUN"; mkdir -p "$RUN"
 node "$H/setup.js" --pkg "$PKG" --run "$RUN" --agent opencode >/dev/null
 OUT=$RUN/out
+# The scripted commands call zn run, so the run has a zn on its PATH (as run_codex.sh does).
+mkdir -p "$RUN/bin"
+ln -sf "$PKG/bin/cli.js" "$RUN/bin/zn"
+export PATH=$RUN/bin:$PATH
 export HOME=$RUN/home ZN_HOME=$RUN/zn XDG_CONFIG_HOME=$RUN/home/.config XDG_DATA_HOME=$RUN/home/.local/share XDG_STATE_HOME=$RUN/home/.local/state XDG_CACHE_HOME=$RUN/home/.cache
 export MOCK_API_KEY=mock-provider-key OPENCODE_DISABLE_AUTOUPDATE=1 OPENCODE_DISABLE_SHARE=1
 mkdir -p "$XDG_CONFIG_HOME/opencode"

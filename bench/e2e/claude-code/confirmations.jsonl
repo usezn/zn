@@ -1,2 +1,2 @@
-{"ts":"2026-10-11T11:52:04.667Z","kind":"approval","title":"let `node` use secret DB_PASSWORD?","answer":true}
-{"ts":"2026-10-11T11:52:05.930Z","kind":"approval","title":"let `python3` use secret DB_PASSWORD?","answer":false}
+{"ts":"2026-10-31T20:46:46.961Z","kind":"approval","title":"let `node` use secret DB_PASSWORD?","answer":true}
+{"ts":"2026-10-31T20:46:47.435Z","kind":"approval","title":"let `python3` use secret DB_PASSWORD?","answer":false}
