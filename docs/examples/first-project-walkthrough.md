@@ -63,6 +63,19 @@ Put the real values back into `.env` first, with the name of the encrypted copy 
 npx -y zn-gate env unshadow .env --backup <name>
 ```
 
+On a computer with no desktop session (for example a server or an SSH session), `env unshadow` cannot show its question and refuses with:
+
+```text
+zn env: Not allowed: zn could not ask you outside the agent: no confirmation channel. Start the vault with `zn unlock --foreground` in a terminal of its own (it asks there), or unlock it from a desktop session so zn can show a dialog.
+```
+
+In that case, lock the vault, then run it in a terminal of its own (`unlock --foreground` refuses with "already unlocked" while the vault is still unlocked), answer its questions there, and then run the `env unshadow` command again in your first terminal:
+
+```bash
+npx -y zn-gate lock
+npx -y zn-gate unlock --foreground
+```
+
 Then remove zn-gate:
 
 ```bash
