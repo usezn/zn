@@ -130,7 +130,6 @@ async function listTools() {
     });
   });
   child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'initialize', params: {} }) + '\n');
-  await new Promise((r) => setTimeout(r, 300));
   child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) + '\n');
   try {
     return (await reply).result.tools;

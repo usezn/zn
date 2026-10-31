@@ -444,7 +444,7 @@ test('the streaming scrubber keeps a value written in two bursts together', asyn
     await new Promise((r) => setTimeout(r, 300)); // longer than the partial-line flush
     early = out;
     child.stdin.write(GHP.slice(half) + ' done\n' + 'x'.repeat(5000) + ' ' + GHP.slice(0, half));
-    await new Promise((r) => setTimeout(r, 400));
+    for (const end = Date.now() + 20000; !/ done\n/.test(out) && Date.now() < end;) await new Promise((r) => setTimeout(r, 10));
     child.stdin.end(GHP.slice(half) + '\n');
   } catch (err) {
     child.kill(); // stop the scrubber before its working directory is removed

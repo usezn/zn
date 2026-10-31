@@ -393,11 +393,12 @@ for (const [mode, opts, edit] of MODES) {
 // POSIX only: Node cannot send TERM on Windows (child.kill is TerminateProcess, so the launcher's trap never runs). A TERM sent from inside Git Bash does reach it (measured on Windows: the launcher blocks with exit 2).
 test('posix launcher, no deadline: a TERM while the hook runs answers with the block and removes the private files', { skip: !posix }, async (t) => {
   const tmp = tempDir(t, 'zn-ov-clean-term-');
-  const file = writeScript(t, 'claude-code', "setTimeout(() => { require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); }, 800);\n");
+  const file = writeScript(t, 'claude-code', "require('fs').writeFileSync(require('path').join(process.env.TMPDIR, 'hook-ready'), '1'); setTimeout(() => { require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); }, 800);\n");
   const child = spawn('/bin/sh', [file, 'PreToolUse'], { env: { PATH: '', HOME: '/nonexistent', TMPDIR: tmp }, stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdin.end('{}');
   const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
-  await new Promise((r) => setTimeout(r, 300));
+  // The launcher arms its SIGTERM handler before it starts the hook: once the hook says it runs, the TERM is certain to reach it.
+  await waitUntil(() => fs.existsSync(path.join(tmp, 'hook-ready')), 'the hook to start');
   assert.ok(zfiles(tmp).length >= 2, 'the launcher made its private files');
   child.kill('SIGTERM');
   assert.equal(await exited, 2);
@@ -453,11 +454,12 @@ for (const [mode, opts, edit] of MODES) {
 test('posix launcher with a deadline: a TERM with `.` first on the PATH runs no planted command', { skip: !posix }, async (t) => {
   const { proj, mark } = plantProject(t);
   const tmp = tempDir(t, 'zn-ov-planted-term-');
-  const file = writeScript(t, 'claude-code', 'process.stdin.resume(); setInterval(() => {}, 1000);\n', { deadlineS: 30 });
+  const file = writeScript(t, 'claude-code', "require('fs').writeFileSync(require('path').join(process.env.TMPDIR, 'hook-ready'), '1'); process.stdin.resume(); setInterval(() => {}, 1000);\n", { deadlineS: 30 });
   const child = spawn('/bin/sh', [file, 'PreToolUse'], { cwd: proj, env: { PATH: '.:/usr/bin:/bin', HOME: '/nonexistent', TMPDIR: tmp }, stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdin.write('{');
   const exited = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
-  await new Promise((r) => setTimeout(r, 400));
+  // The launcher arms its SIGTERM handler before it starts the hook: once the hook says it runs, the TERM is certain to reach it.
+  await waitUntil(() => fs.existsSync(path.join(tmp, 'hook-ready')), 'the hook to start');
   child.kill('SIGTERM');
   assert.equal(await exited, 2);
   assert.equal(fs.existsSync(mark) ? fs.readFileSync(mark, 'utf8') : '', '');
@@ -559,3 +561,11 @@ test('posix launcher with a TMPDIR that starts with "-": the answer passes and n
     }
   }
 });
+
+// Polls a condition until it holds (deadline 20 s), instead of a fixed pause.
+async function waitUntil(cond, what) {
+  for (const end = Date.now() + 20000; !cond();) {
+    if (Date.now() > end) throw new Error('timeout waiting for ' + what);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}

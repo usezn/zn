@@ -155,7 +155,8 @@ test('a full pending table answers with the limit text and the request never rea
     s.send(call(5, 'ok'));
     const r5 = await s.reply(5);
     assert.match(r5.error.message, /^\[zn-gate\] Not sent: 3 requests are already waiting/);
-    await new Promise((r) => setTimeout(r, 300));
+    // The server's log is a file, not a stream: poll it (deadline 20 s).
+    for (const end = Date.now() + 20000; s.received().length < 3 && Date.now() < end;) await new Promise((r) => setTimeout(r, 10));
     assert.equal(s.received().length, 3, 'only the three waiting requests reached the server');
   } finally { await s.stop(); }
 });

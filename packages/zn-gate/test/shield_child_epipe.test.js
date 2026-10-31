@@ -82,8 +82,11 @@ test('any other error on the server input stops the shield with exit 1 and stops
   assert.equal(r.code, 1);
   assert.match(r.stderr, /Could not send input to the server: simulated input failure/);
   const pid = Number(fs.readFileSync(path.join(home, 'pid'), 'utf8'));
-  await new Promise((res) => setTimeout(res, 300));
+  // The server stops when the shield does: poll until its process is gone (deadline 10 s).
   let alive = true;
-  try { process.kill(pid, 0); } catch (_) { alive = false; }
+  for (const end = Date.now() + 10000; alive && Date.now() < end;) {
+    try { process.kill(pid, 0); } catch (_) { alive = false; break; }
+    await new Promise((res) => setTimeout(res, 20));
+  }
   assert.equal(alive, false, 'the server was left running');
 });
