@@ -61,11 +61,12 @@ fn validate_command(command: &str) -> Result<()> {
         Ok(())
     } else {
         warn!("Blocked MCP command not in whitelist: {}", command);
-        Err(anyhow!(
-            "Command '{}' is not in the allowed list. Allowed: {:?}",
+        Err(anyhow!(crate::user_errors::mcp_command_not_allowed(
+            "this server",
             command,
-            ALLOWED_COMMANDS
-        ))
+            ALLOWED_COMMANDS,
+            None
+        )))
     }
 }
 
@@ -112,7 +113,12 @@ impl McpConnection {
                     Err(e) => {
                         if attempts >= max_attempts {
                             error!(mcp = %name, "Failed to connect after {} attempts: {}", max_attempts, e);
-                            return Err(anyhow!("Failed to connect to WS MCP '{}': {}", name, e));
+                            return Err(anyhow!(crate::user_errors::mcp_not_reached(
+                                name,
+                                url,
+                                max_attempts,
+                                &e.to_string()
+                            )));
                         }
                         warn!(mcp = %name, "Connection failed: {}. Retrying in {:?}...", e, delay);
                         tokio::time::sleep(delay).await;
@@ -122,7 +128,14 @@ impl McpConnection {
             }
         } else if let Some(command) = &config.command {
             // Validate command before spawning
-            validate_command(command)?;
+            validate_command(command).map_err(|_| {
+                anyhow!(crate::user_errors::mcp_command_not_allowed(
+                    name,
+                    command,
+                    ALLOWED_COMMANDS,
+                    None
+                ))
+            })?;
 
             info!(mcp = %name, command = %command, "Spawning MCP server");
 
@@ -142,9 +155,13 @@ impl McpConnection {
                 }
             }
 
-            let mut child = cmd
-                .spawn()
-                .map_err(|e| anyhow!("Failed to spawn MCP '{}': {}", name, e))?;
+            let mut child = cmd.spawn().map_err(|e| {
+                anyhow!(crate::user_errors::mcp_not_started(
+                    name,
+                    command,
+                    &e.to_string()
+                ))
+            })?;
 
             let stdin = child
                 .stdin
@@ -279,9 +296,9 @@ pub struct McpPool {
     connections: Mutex<HashMap<String, ConnectionSlot>>,
     /// Optional Result Cache
     cache: Option<Arc<crate::engine::cache::ResultCache>>,
-    /// Servers that were left out (not allowed, cannot start or unreachable),
-    /// with the reason. A tool call for one of them is refused, not allowed.
-    skipped: std::sync::Mutex<HashMap<String, String>>,
+    /// Plain-English warnings from loading the servers file (servers that were
+    /// skipped, a file that could not be read). The caller shows them.
+    notices: Vec<String>,
 }
 
 impl McpPool {
@@ -291,48 +308,13 @@ impl McpPool {
             configs,
             connections: Mutex::new(HashMap::new()),
             cache: None,
-            skipped: std::sync::Mutex::new(HashMap::new()),
+            notices: Vec::new(),
         }
     }
 
-    /// Record that a server is left out, and why.
-    pub fn mark_skipped(&self, name: &str, reason: &str) {
-        if let Ok(mut skipped) = self.skipped.lock() {
-            skipped.insert(name.to_string(), reason.to_string());
-        }
-    }
-
-    /// The servers that were left out, as (name, reason), sorted by name.
-    pub fn skipped_servers(&self) -> Vec<(String, String)> {
-        let mut list: Vec<(String, String)> = self
-            .skipped
-            .lock()
-            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-            .unwrap_or_default();
-        list.sort();
-        list
-    }
-
-    /// If `tool` belongs to a server that was left out, that server and the
-    /// reason. The server is read from the tool name: `mcp__<server>__<tool>`,
-    /// or `<server>` followed by `__`, `.`, `/` or `:`.
-    pub fn skip_reason_for_tool(&self, tool: &str) -> Option<(String, String)> {
-        let skipped = self.skipped.lock().ok()?;
-        if skipped.is_empty() {
-            return None;
-        }
-        let mut candidates: Vec<&str> = Vec::new();
-        if let Some(rest) = tool.strip_prefix("mcp__") {
-            candidates.extend(rest.split("__").next());
-        }
-        for sep in ["__", ".", "/", ":"] {
-            if let Some((server, _)) = tool.split_once(sep) {
-                candidates.push(server);
-            }
-        }
-        candidates
-            .into_iter()
-            .find_map(|c| skipped.get(c).map(|r| (c.to_string(), r.clone())))
+    /// Warnings found while loading the servers file, for the user to see.
+    pub fn notices(&self) -> &[String] {
+        &self.notices
     }
 
     /// Set the result cache for the pool
@@ -351,6 +333,7 @@ impl McpPool {
             format!("{}/.config/claude/mcp_servers.json", home),
         ];
 
+        let mut notices = Vec::new();
         for path in &search_paths {
             let path_obj = Path::new(path);
             if path_obj.exists() {
@@ -359,26 +342,41 @@ impl McpPool {
                     Ok(pool) => return Ok(pool),
                     Err(e) => {
                         warn!("Failed to load MCP config from {}: {}", path, e);
+                        notices.push(e.to_string());
                         continue;
                     }
                 }
             }
         }
 
-        info!("No MCP configuration found, using empty pool");
-        Ok(Self::new(HashMap::new()))
+        info!("No MCP servers loaded, using an empty pool");
+        let mut pool = Self::new(HashMap::new());
+        pool.notices = notices;
+        Ok(pool)
     }
 
     /// Load MCP configurations from a JSON file
     fn from_config_file(path: &str) -> Result<Self> {
-        let mut skipped: Vec<(String, String)> = Vec::new();
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| anyhow!("Failed to read MCP config file '{}': {}", path, e))?;
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            anyhow!(crate::user_errors::mcp_file_unreadable(
+                path,
+                &crate::user_errors::plain_text(&e.to_string())
+            ))
+        })?;
 
-        let value: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| anyhow!("Failed to parse MCP config file '{}': {}", path, e))?;
+        let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
+            let at = format!("line {}, column {}", e.line(), e.column());
+            let reason = match e.classify() {
+                serde_json::error::Category::Eof => {
+                    format!("the file ends too early ({at}); a closing }} or ] is probably missing")
+                }
+                _ => format!("it is not valid JSON at {at}"),
+            };
+            anyhow!(crate::user_errors::mcp_file_unreadable(path, &reason))
+        })?;
 
         let mut configs = HashMap::new();
+        let mut notices = Vec::new();
 
         if let Some(servers) = value.get("mcpServers").and_then(|v| v.as_object()) {
             for (name, server) in servers {
@@ -396,17 +394,19 @@ impl McpPool {
                         "Skipping MCP server '{}': missing both 'command' and 'url'",
                         name
                     );
-                    skipped.push((
-                        name.clone(),
-                        "its entry has neither 'command' nor 'url'".to_string(),
-                    ));
+                    notices.push(crate::user_errors::mcp_server_incomplete(name, Some(path)));
                     continue;
                 }
 
                 if let Some(ref cmd) = command {
-                    if let Err(e) = validate_command(cmd) {
-                        warn!("Skipping MCP server '{}': {}", name, e);
-                        skipped.push((name.clone(), e.to_string()));
+                    if validate_command(cmd).is_err() {
+                        warn!("Skipping MCP server '{}': command not allowed", name);
+                        notices.push(crate::user_errors::mcp_command_not_allowed(
+                            name,
+                            cmd,
+                            ALLOWED_COMMANDS,
+                            Some(path),
+                        ));
                         continue;
                     }
                 }
@@ -444,10 +444,8 @@ impl McpPool {
             }
         }
 
-        let pool = Self::new(configs);
-        for (name, reason) in skipped {
-            pool.mark_skipped(&name, &reason);
-        }
+        let mut pool = Self::new(configs);
+        pool.notices = notices;
         Ok(pool)
     }
 
@@ -476,12 +474,12 @@ impl McpPool {
             Some(conn) => {
                 if !conn.is_alive().await {
                     info!("MCP '{}' connection died, reconnecting", name);
-                    *guard = Some(self.connect_or_skip(name, &config).await?);
+                    *guard = Some(McpConnection::connect(name, &config).await?);
                 }
             }
             None => {
                 info!("Establishing new MCP connection: {}", name);
-                *guard = Some(self.connect_or_skip(name, &config).await?);
+                *guard = Some(McpConnection::connect(name, &config).await?);
             }
         }
         let conn = guard
@@ -505,17 +503,6 @@ impl McpPool {
         }
 
         Ok(response)
-    }
-
-    /// Connect; when that fails, remember the server as skipped with the reason.
-    async fn connect_or_skip(&self, name: &str, config: &McpServerConfig) -> Result<McpConnection> {
-        match McpConnection::connect(name, config).await {
-            Ok(conn) => Ok(conn),
-            Err(e) => {
-                self.mark_skipped(name, &format!("it could not be started or reached: {e}"));
-                Err(e)
-            }
-        }
     }
 
     /// Get a list of configured MCP server names
@@ -584,34 +571,6 @@ impl McpPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn servers_that_are_not_allowed_are_recorded_with_a_reason() {
-        let dir = std::env::temp_dir().join(format!("zn-mcp-skip-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("mcp_servers.json");
-        std::fs::write(
-            &file,
-            r#"{"mcpServers":{"bad":{"command":"rm"},"empty":{},"good":{"command":"node"}}}"#,
-        )
-        .unwrap();
-        let pool = McpPool::from_config_file(file.to_str().unwrap()).unwrap();
-        let skipped = pool.skipped_servers();
-        let names: Vec<&str> = skipped.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(names, vec!["bad", "empty"]);
-        assert!(
-            skipped[0].1.contains("not in the allowed list"),
-            "{:?}",
-            skipped
-        );
-        assert_eq!(pool.list_mcps(), vec!["good".to_string()]);
-
-        let (server, _) = pool.skip_reason_for_tool("mcp__bad__run").unwrap();
-        assert_eq!(server, "bad");
-        assert!(pool.skip_reason_for_tool("bad.run").is_some());
-        assert!(pool.skip_reason_for_tool("mcp__good__run").is_none());
-        assert!(pool.skip_reason_for_tool("other_tool").is_none());
-    }
 
     #[test]
     fn test_validate_command_allowed() {
@@ -862,6 +821,39 @@ Content-Length: 0
             elapsed < std::time::Duration::from_secs(5),
             "health_check waited for the busy server: {:?}",
             elapsed
+        );
+    }
+
+    #[test]
+    fn a_server_with_a_disallowed_command_is_skipped_with_a_notice() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("mcp_servers.json");
+        std::fs::write(
+            &file,
+            r#"{"mcpServers": {"demo": {"command": "/nonexistent/zn-demo-server"}, "ok": {"command": "npx"}, "empty": {}}}"#,
+        )
+        .expect("write");
+        let pool = McpPool::from_config_file(file.to_str().expect("utf8")).expect("loads");
+        assert_eq!(pool.list_mcps(), vec!["ok".to_string()]);
+        let all = pool.notices().join("\n");
+        assert!(all.contains("\"demo\" was skipped"), "{all}");
+        assert!(all.contains("/nonexistent/zn-demo-server"), "{all}");
+        assert!(all.contains("node, npx"), "{all}");
+        assert!(all.contains("\"empty\" was skipped"), "{all}");
+    }
+
+    #[test]
+    fn a_broken_servers_file_is_reported_not_hidden() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("mcp_servers.json");
+        std::fs::write(&file, "{").expect("write");
+        let err = McpPool::from_config_file(file.to_str().expect("utf8"))
+            .err()
+            .expect("must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("mcp_servers.json") && msg.contains("ends too early"),
+            "{msg}"
         );
     }
 }

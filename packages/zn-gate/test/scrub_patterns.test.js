@@ -8,6 +8,7 @@ const path = require('path');
 const { test, run } = require('./_harness');
 const P = require('../lib/scrub/patterns');
 const { generateAll, mulberry32 } = require('./fixtures/fake_secrets');
+const { budget } = require('./helpers/time_budget');
 
 const rnd = mulberry32(424242);
 const pick = (chars, n) => { let s = ''; for (let i = 0; i < n; i++) s += chars[Math.floor(rnd() * chars.length)]; return s; };
@@ -182,13 +183,13 @@ test('HF letters-only check is linear on adversarial bodies', () => {
   let t0 = process.hrtime.bigint();
   P.findPatterns(many, {});
   let ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.ok(ms < 50, 'twenty adversarial bodies took ' + ms.toFixed(1) + ' ms');
+  assert.ok(ms < budget(50), 'twenty adversarial bodies took ' + ms.toFixed(1) + ' ms');
   const long = Array.from({ length: 423 }, () => unit + ' ').join('');
   assert.ok(long.length >= 16000 && long.length < 17000, String(long.length));
   t0 = process.hrtime.bigint();
   P.findPatterns(long, {});
   ms = Number(process.hrtime.bigint() - t0) / 1e6;
-  assert.ok(ms < 200, '16k-character text took ' + ms.toFixed(1) + ' ms');
+  assert.ok(ms < budget(200), '16k-character text took ' + ms.toFixed(1) + ' ms');
 });
 
 test('Azure AD client secret at the end of a sentence: the full stop is not part of the span', () => {
@@ -472,7 +473,7 @@ test('BEARER_TOKEN and URL_PASSWORD stay fast on 100 KB adversarial inputs', () 
     const t0 = process.hrtime.bigint();
     P.findPatterns(input, {});
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 500, 'findPatterns took ' + ms.toFixed(1) + ' ms on ' + JSON.stringify(input.slice(0, 16)));
+    assert.ok(ms < budget(500), 'findPatterns took ' + ms.toFixed(1) + ' ms on ' + JSON.stringify(input.slice(0, 16)));
   }
 });
 

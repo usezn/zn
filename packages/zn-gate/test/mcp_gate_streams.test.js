@@ -44,7 +44,15 @@ async function session(lines, options = { localOnly: true }) {
   Object.defineProperty(process, 'stdout', { value: output, configurable: true });
   try {
     gate.startMcpServer(options);
-    for (const l of lines) input.write((typeof l === 'string' ? l : JSON.stringify(l)) + '\n');
+    for (const l of lines) {
+      // { raw } is written as is (no added newline), to test chunk boundaries and line endings.
+      if (l && typeof l === 'object' && typeof l.raw === 'string') {
+        input.write(l.raw);
+        await new Promise((r) => setImmediate(r));
+      } else {
+        input.write((typeof l === 'string' ? l : JSON.stringify(l)) + '\n');
+      }
+    }
     input.end();
     const code = await done;
     // Handlers are async: let pending replies flush before reading.
@@ -181,4 +189,47 @@ test('a message with no method and an id gets -32601; tools/call errors keep the
   assert.equal(replies[2].error.code, -32602);
   assert.deepEqual(replies.map((r) => r.id), [1, 2, 3, 4]);
   assert.match(replies[3].error.message, /no_such_tool/);
+});
+
+test('a request split across several chunks is answered once, after its newline', async () => {
+  const text = JSON.stringify(rpc(1, 'ping'));
+  const second = JSON.stringify(rpc(2, 'ping'));
+  const replies = await session([
+    { raw: text.slice(0, 7) },
+    { raw: text.slice(7, 20) },
+    { raw: text.slice(20) },
+    { raw: '\n' + second.slice(0, 10) },
+    { raw: second.slice(10) + '\n' },
+  ]);
+  assert.deepEqual(replies.map((r) => r.id), [1, 2]);
+});
+
+test('CRLF line endings are accepted and blank CRLF lines are skipped', async () => {
+  const replies = await session([
+    { raw: JSON.stringify(rpc(1, 'ping')) + '\r\n\r\n' },
+    { raw: JSON.stringify(rpc(2, 'ping')) + '\r\n' },
+    { raw: '\r\n' },
+  ]);
+  assert.deepEqual(replies, [
+    { jsonrpc: '2.0', id: 1, result: {} },
+    { jsonrpc: '2.0', id: 2, result: {} },
+  ]);
+});
+
+test('one line of invalid JSON gets exactly one parse error reply and nothing else', async () => {
+  const replies = await session(['{"jsonrpc": "2.0", "id": 1, oops}']);
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].jsonrpc, '2.0');
+  assert.equal(replies[0].id, null);
+  assert.equal(replies[0].error.code, -32700);
+  assert.equal(replies[0].error.message, 'Parse error');
+});
+
+test('a final line without a newline is still answered when the input ends', async () => {
+  const replies = await session([{ raw: JSON.stringify(rpc(5, 'ping')) }]);
+  assert.deepEqual(replies, [{ jsonrpc: '2.0', id: 5, result: {} }]);
+});
+
+test('the server stops with exit code 0 and no output when the input ends at once', async () => {
+  assert.deepEqual(await session([]), []);
 });
