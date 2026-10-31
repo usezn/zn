@@ -2,25 +2,26 @@ name: CodeQL
 
 # Code scanning with CodeQL (advanced setup), replacing the repository's default setup, which ran on every pull
 # request and push (about 12 runs a day) whatever changed. Here it runs:
-#   - on pushes to main and next, and weekly on main: the alerts of the Security tab come from these runs;
+#   - on pushes to main, next and release branches, and weekly on main: the alerts of the Security tab come from
+#     these runs, and a release commit is analysed on its release branch before the tag;
 #   - not on pull requests: an upload needs security-events: write, which a pull request job must not have. A finding
 #     shows up after the merge, on the push to next.
 # Not a required check. The default setup must be turned off in the repository settings (Code security) before this
 # workflow takes over; until then GitHub refuses advanced uploads for the same languages.
 on:
   push:
-    branches: [ main, next ]
+    branches: [ main, next, 'release/**' ]
   schedule:
     - cron: '37 4 * * 1'
   workflow_dispatch:
 
 permissions: {}
 
-# A new push to a pull request, or to next, cancels the run still going for it. Runs for main, release branches,
-# the merge queue and the schedule always complete (each has its own group).
+# A new push to next cancels the run still going for it. Runs for main, release branches and the schedule always
+# complete (each has its own group).
 concurrency:
-  group: codeql-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}-${{ github.workflow }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: codeql-${{ (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/next' }}
 
 jobs:
   analyze:
