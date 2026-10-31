@@ -157,13 +157,11 @@ async function statusCmd(args) {
     // The server was not told yet that an installation left: kept in the vault and retried.
     revocation_pending: (info && Array.isArray(info.revocations)) ? info.revocations : [],
     // Legacy: pending revocations an older version dropped to make room; the server was never told about them. This version never drops one.
-    revocations_dropped: (info && info.revocations_dropped) || null,
   };
   if (json) { out(JSON.stringify(res, null, 2)); return 0; }
   if (!joined) {
     out('Not in a zn organization. Join with: zn team join <token> (from your organization admin).');
     for (const l of describeRevocations(res.revocation_pending)) out(l);
-    for (const l of describeDropped(res.revocations_dropped)) out(l);
     return 0;
   }
   out('Organization: ' + (res.org_name ? res.org_name + ' (' + res.org + ')' : res.org));
@@ -181,7 +179,6 @@ async function statusCmd(args) {
       (res.revoked_at ? '' : '; run `zn team sync` to retry')));
   }
   for (const l of describeRevocations(res.revocation_pending)) out(l);
-  for (const l of describeDropped(res.revocations_dropped)) out(l);
   if (!info) out('The vault is locked: policy downloads and uploads resume after `' + znCommand('unlock') + '`.');
   return 0;
 }
@@ -196,15 +193,6 @@ function describeRevocations(list) {
       '; it keeps retrying until the server confirms. An admin can also remove the installation from the dashboard.');
   }
   return lines;
-}
-
-/* Warning for `zn team status` about pending revocations that an older version dropped to make room (this version keeps every one). */
-function describeDropped(d) {
-  if (!d || !(d.count > 0)) return [];
-  return [
-    'WARNING: ' + d.count + ' pending revocation' + (d.count === 1 ? ' was' : 's were') + ' dropped (last on ' + d.last_at + (d.last_install_id ? ', installation ' + d.last_install_id : '') + '): an older version of zn kept at most 8 and dropped the oldest when more installations left while the server could not be reached.',
-    '  The server was never told about ' + (d.count === 1 ? 'it' : 'them') + ', so ' + (d.count === 1 ? 'that installation token' : 'those installation tokens') + ' still work there. Ask an admin to remove ' + (d.count === 1 ? 'it' : 'them') + ' from the dashboard.',
-  ];
 }
 
 async function syncCmd() {

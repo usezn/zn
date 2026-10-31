@@ -36,7 +36,6 @@ const NAME_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
 const ALERT_EVERY_MS = 6 * 3600 * 1000; // a sync that keeps failing leaves one local alert every 6 hours
 // A revocation the server has not confirmed is never dropped. When this many are waiting, a further leave is refused.
 const MAX_PENDING_REVOCATIONS = 64;
-const LEGACY_DROPPED_NOTICE_MS = 30 * 24 * 3600 * 1000; // how long `zn team status` keeps showing a drop recorded by an older version
 
 const osName = () => (['linux', 'darwin', 'win32'].includes(process.platform) ? process.platform : 'other');
 /* Text from the server shown in dialogs and in `zn team status`: printable only (same invisible set as the dialogs). */
@@ -241,18 +240,6 @@ function makeTeamOps(ctx) {
       last_error: printable(r.last_error, 200) || null, tries: Number.isInteger(r.tries) ? r.tries : 0,
       next_try_at: printable(r.next_try_at, 40) || null,
     }));
-  }
-
-  /*
-   * Legacy notice for `zn team status`. An older version dropped the oldest pending revocation to keep the list
-   * small and recorded it in s.revocationsDropped. This version never drops one, so it never writes that field;
-   * a vault written by the older version may still carry it, and the notice is shown for LEGACY_DROPPED_NOTICE_MS.
-   * Never a token.
-   */
-  function droppedView(s) {
-    const d = s.revocationsDropped;
-    if (!d || !Number.isInteger(d.count) || d.count < 1 || !Number.isFinite(Date.parse(d.last_at)) || Date.now() - Date.parse(d.last_at) > LEGACY_DROPPED_NOTICE_MS) return null;
-    return { count: d.count, last_at: printable(d.last_at, 40), last_org: printable(d.last_org, 40) || null, last_install_id: printable(d.last_install_id, 64) || null };
   }
 
   /*
@@ -487,12 +474,10 @@ function makeTeamOps(ctx) {
     async teamInfo() {
       const t = await team();
       const secrets0 = await state.loadSecrets();
-      const dropped = droppedView(secrets0);
       if (!t) {
         return {
           joined: false,
           ...(pendingList(secrets0).length ? { revocations: revocationsView(secrets0) } : {}),
-          ...(dropped ? { revocations_dropped: dropped } : {}),
         };
       }
       const st = await policyState();
@@ -509,7 +494,6 @@ function makeTeamOps(ctx) {
         upload_after_seq: Number.isInteger(t.upload_after_seq) ? t.upload_after_seq : 0,
         last_sync: lastSyncOf(t),
         ...(pendingList(secrets0).length ? { revocations: revocationsView(secrets0) } : {}),
-        ...(dropped ? { revocations_dropped: dropped } : {}),
       };
     },
 
