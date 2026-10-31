@@ -236,8 +236,8 @@ jobs:
 
   coverage:
     name: coverage report
-    # Report only, no threshold, and it repeats the build and tests, so it runs on pushes to main and next
-    # and on manual runs, not on pull requests or the weekly schedule.
+    # Report only, no threshold, and it repeats the build and tests, so it runs on every push (main, next and
+    # release branches) and on manual runs, not on pull requests or the weekly schedule.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -29,7 +29,7 @@ env:
   ZN_SELFTEST_VERSION: '1.12.0'
 
 # A new push to a pull request, or to next, cancels the run still going for it, so a burst of
-# merges into next tests only the newest commit. Runs for main and manual runs always complete.
+# merges into next tests only the newest commit. Runs for main, the schedule and manual runs always complete.
 concurrency:
   group: action-selftest-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
