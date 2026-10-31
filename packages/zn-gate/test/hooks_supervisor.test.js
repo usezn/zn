@@ -223,6 +223,17 @@ function launcherRun(t, agent, event, hookSource, opts, drive) {
 }
 
 const HANG = 'process.stdin.resume(); setInterval(() => {}, 1000);'; // reads stdin, never ends, never answers
+// The same, and it says it is running (a file in the test's own TMPDIR). The launcher arms its SIGTERM handler
+// before it starts the hook, so once this file exists a SIGTERM is certain to reach the handler, however slow the machine.
+const HANG_READY = "require('fs').writeFileSync(require('path').join(process.env.TMPDIR, 'hook-ready'), '1'); " + HANG;
+const hookReady = async (dir) => {
+  const file = path.join(dir, 'hook-ready');
+  const end = Date.now() + 20000;
+  while (!fs.existsSync(file)) {
+    if (Date.now() > end) throw new Error('the hook never started');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+};
 
 for (const [agent, event, deny] of [['gemini', 'BeforeTool', (r) => assert.equal(r.status, 2)], ['claude-code', 'PreToolUse', (r) => assert.equal(r.status, 2)], ['codex', 'PermissionRequest', (r) => assert.match(r.stdout, /"behavior":"deny"/)]]) {
   test('launcher ' + agent + ' ' + event + ': a hook stuck on stdin is stopped and blocked at the launcher deadline', async (t) => {
@@ -236,9 +247,9 @@ for (const [agent, event, deny] of [['gemini', 'BeforeTool', (r) => assert.equal
 
   test('launcher ' + agent + ' ' + event + ': SIGTERM makes the launcher answer with the block, not exit 143', async (t) => {
     if (WIN) return t.skip('POSIX launcher');
-    const { child, done } = launcherRun(t, agent, event, HANG, { deadlineS: 30, deadlineSoft: true });
+    const { child, done, dir } = launcherRun(t, agent, event, HANG_READY, { deadlineS: 30, deadlineSoft: true });
     child.stdin.write('{"hook_event_name":"' + event + '"');
-    await new Promise((r) => setTimeout(r, 600));
+    await hookReady(dir);
     child.kill('SIGTERM');
     const r = await done;
     assert.notEqual(r.status, 143);
@@ -249,9 +260,9 @@ for (const [agent, event, deny] of [['gemini', 'BeforeTool', (r) => assert.equal
 
 test('launcher: a non-blocking event (PostToolUse) is not blocked on SIGTERM, only warned', async (t) => {
   if (WIN) return t.skip('POSIX launcher');
-  const { child, done } = launcherRun(t, 'claude-code', 'PostToolUse', HANG, { deadlineS: 30, deadlineSoft: true });
+  const { child, done, dir } = launcherRun(t, 'claude-code', 'PostToolUse', HANG_READY, { deadlineS: 30, deadlineSoft: true });
   child.stdin.write('{}');
-  await new Promise((r) => setTimeout(r, 600));
+  await hookReady(dir);
   child.kill('SIGTERM');
   const r = await done;
   assert.equal(r.status, 0);
