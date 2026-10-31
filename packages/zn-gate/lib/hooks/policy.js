@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.21';
+const POLICY_RULES_VERSION = '2026-10-31.25';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2327,8 +2327,8 @@ const CRED_DIRS = [
 const TAR_READERS = new Set(['tar', 'gtar', 'bsdtar', 'gnutar']);
 const GREP_READERS = new Set(['grep', 'egrep', 'fgrep', 'zgrep', 'rgrep']);
 const SEARCH_ALWAYS = new Set(['rg', 'ag', 'ack', 'ack-grep']);
-const FIND_READERS = new Set(['cat', 'head', 'tail', 'less', 'more', 'tac', 'nl', 'bat', 'grep', 'egrep', 'fgrep', 'rg', 'ag', 'base64', 'xxd',
-  'od', 'hexdump', 'strings', 'cp', 'tar', 'zip', 'curl', 'scp', 'rsync', 'sed', 'awk', 'jq', 'openssl', 'gpg', 'sh', 'bash', 'zsh', 'dash']);
+// find -exec on a credential folder is refused unless the program is one that does not read content.
+const FIND_SAFE_EXEC = new Set(['chmod', 'chown', 'chgrp', 'touch', 'ls', 'stat', 'rm']);
 const CF_VALUE_SHORT = {
   tar: 'fCTXbILNgKVH', zip: 'bntPOz', rsync: 'efTBM', cp: 'tS', scp: 'PiosFcSJlD', grep: 'efmABCdD', rg: 'efgtTmABCjEMdr', ag: 'GgABCm',
 };
@@ -2442,7 +2442,17 @@ function recursiveReaderOf(prog, args) {
     while (i < args.length && !/^(?:-|\(|!)/.test(args[i])) roots.push({ text: args[i++], base: null });
     let reads = false;
     for (let j = i; j < args.length; j++) {
-      if (/^-(?:exec|execdir|ok|okdir)$/.test(args[j]) && args[j + 1] && FIND_READERS.has(programName(args[j + 1]))) reads = true;
+      if (!/^-(?:exec|execdir|ok|okdir)$/.test(args[j])) continue;
+      // The program run for each file, after wrappers (env cat, nice cat): anything not known to leave content alone reads.
+      const ew = [];
+      for (let m = j + 1; m < args.length && args[m] !== ';' && args[m] !== '+'; m++) ew.push({ text: args[m] });
+      let k = 0;
+      for (let g = 0; k < ew.length && g < 16; g++) {
+        const n = programName(ew[k].text);
+        if (!Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, n)) break;
+        k = skipWrapper(ew, k, n);
+      }
+      if (k >= ew.length || !FIND_SAFE_EXEC.has(programName(ew[k].text))) reads = true;
     }
     return reads ? { operands: roots.length ? roots : [{ text: '.', base: null }], recursive: true } : null;
   }
@@ -2472,6 +2482,241 @@ function credentialFolders(ctx) {
 
 function isDirectory(p) {
   try { return fs.statSync(p).isDirectory(); } catch (_) { return false; }
+}
+
+/* Brace expansion of one word (~/.{aws,x} -> ~/.aws, ~/.x; .{a..c}ws), capped. A word without braces is returned as is. */
+function braceExpand(word, cap = 64) {
+  let list = [word];
+  for (let pass = 0; pass < 8; pass++) {
+    const next = [];
+    let changed = false;
+    for (const item of list) {
+      let done = false;
+      const re = /\{([^{}]*)\}/g;
+      let m;
+      while ((m = re.exec(item))) {
+        if (m.index > 0 && item[m.index - 1] === '$') continue;
+        const inner = m[1];
+        let alts = null;
+        const range = /^([A-Za-z0-9])\.\.([A-Za-z0-9])$/.exec(inner);
+        if (range) {
+          const a = range[1].charCodeAt(0);
+          const b = range[2].charCodeAt(0);
+          alts = [];
+          for (let c = Math.min(a, b); c <= Math.max(a, b) && alts.length < cap; c++) alts.push(String.fromCharCode(c));
+        } else if (inner.includes(',')) alts = inner.split(',');
+        if (!alts) continue;
+        for (const a of alts) { if (next.length < cap) next.push(item.slice(0, m.index) + a + item.slice(m.index + m[0].length)); }
+        done = true;
+        break;
+      }
+      if (done) changed = true; else next.push(item);
+    }
+    list = next;
+    if (!changed) break;
+  }
+  return list.slice(0, cap);
+}
+
+/* A shell pattern (* ? [..]) as a regular expression over a whole path. */
+function globRegex(g) {
+  let re = '';
+  for (let i = 0; i < g.length; i++) {
+    const c = g[i];
+    if (c === '*') re += '[^/]*';
+    else if (c === '?') re += '[^/]';
+    else if (c === '[') {
+      let j = i + 1;
+      if (g[j] === '!' || g[j] === '^') j++;
+      if (g[j] === ']') j++;
+      while (j < g.length && g[j] !== ']') j++;
+      if (j >= g.length) { re += '\\['; continue; }
+      let body = g.slice(i + 1, j);
+      let neg = '';
+      if (body[0] === '!' || body[0] === '^') { neg = '^'; body = body.slice(1); }
+      re += '[' + neg + body.replace(/\\/g, '\\\\').replace(/\[/g, '\\[') + ']';
+      i = j;
+    } else if (c === '\\' && i + 1 < g.length) re += '\\' + g[++i].replace(/[^A-Za-z0-9]/g, (x) => x);
+    else re += c.replace(/[.+^${}()|\\\]]/g, '\\$&');
+  }
+  try { return new RegExp('^' + re + '$'); } catch (_) { return /^$/; }
+}
+
+const GLOB_CHARS_RE = /[*?[]/;
+
+/* An operand with a pattern (~/.a*s, ~/.[a]ws) names a credential folder when the pattern matches it ('cred'), or a
+   folder that contains one ('parent'). */
+function globFolderKind(abs, folders) {
+  const pat = globRegex(keyOf(slash(abs)));
+  for (const d of folders) if (pat.test(d.key)) return { kind: 'cred', folder: d };
+  for (const d of folders) {
+    let p = d.key;
+    for (let i = p.lastIndexOf('/'); i > 0; i = p.lastIndexOf('/')) {
+      p = p.slice(0, i);
+      if (pat.test(p)) return { kind: 'parent', folder: d };
+    }
+  }
+  return null;
+}
+
+/* The operand's last name made of wildcards only (dir/*, dir/.*) is the folder's whole content: the folder itself. */
+function cfStripWild(expanded) {
+  const wild = /^(.*?)(?:\/|^)[*?.]*[*?][*?.]*$/.exec(expanded);
+  if (!wild) return expanded;
+  return wild[1] === '' && expanded.startsWith('/') ? '/' : (wild[1] || '.');
+}
+
+/* What a word names among the credential folders: 'cred', 'parent', 'unknown' (a variable zn cannot resolve) or null. */
+function cfOperandKind(text, c) {
+  const ex = expandEnv(expandHome(text, c.home), c.env).text;
+  if (!ex || /\$\{?[A-Za-z_]|`|\$\(/.test(ex)) return 'unknown';
+  let best = null;
+  for (const v of braceExpand(cfStripWild(ex))) {
+    for (const st of path.isAbsolute(v) ? [''] : c.places) {
+      const abs = path.resolve(st || c.cwd, v);
+      const k = GLOB_CHARS_RE.test(abs) ? globFolderKind(abs, c.folders) : folderKindOf(abs, c.folders);
+      if (k && k.kind === 'cred') return 'cred';
+      if (k) best = 'parent';
+    }
+  }
+  return best;
+}
+
+/* The pipeline stages of a command line (split at | outside quotes). */
+function pipeStages(text) {
+  const out = [];
+  let cur = '';
+  let q = '';
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) { if (ch === q) q = ''; cur += ch; continue; }
+    if (ch === '"' || ch === "'") { q = ch; cur += ch; continue; }
+    if (ch === '|' && text[i + 1] !== '|' && text[i - 1] !== '|' && text[i - 1] !== '>') {
+      out.push(cur);
+      cur = '';
+      if (text[i + 1] === '&') i++;
+      continue;
+    }
+    cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
+/* The simple commands of one stage as {prog, args}, wrappers skipped. */
+function stageCommands(stage, posix) {
+  const bySeq = new Map();
+  for (const w of allWords(stage, posix)) {
+    if (!w.seq || !w.head) continue;
+    if (!bySeq.has(w.seq)) bySeq.set(w.seq, []);
+    bySeq.get(w.seq).push(w.text.replace(/^["']|["']$/g, ''));
+  }
+  const cmds = [];
+  for (const t of bySeq.values()) {
+    let k = t.findIndex((x) => !ASSIGNMENT_RE.test(x) && !/^(?:then|do|else|!|\{|\()$/.test(x));
+    const tw = t.map((x) => ({ text: x }));
+    for (let g = 0; k >= 0 && k < t.length && g < 16; g++) {
+      const n = programName(t[k]);
+      if (n === 'xargs' || !Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, n)) break;
+      k = skipWrapper(tw, k, n);
+    }
+    if (k < 0 || k >= t.length) continue;
+    cmds.push({ prog: programName(t[k]), args: t.slice(k + 1) });
+  }
+  return cmds;
+}
+
+const PIPE_LISTERS = new Set(['find', 'ls', 'echo', 'printf', 'tree', 'fd', 'fdfind', 'realpath', 'readlink', 'dir', 'locate', 'git']);
+const PIPE_RECURSIVE_LISTERS = new Set(['find', 'tree', 'fd', 'fdfind']);
+const PIPE_PASSTHROUGH = new Set(['sort', 'uniq', 'head', 'tail', 'grep', 'egrep', 'fgrep', 'sed', 'awk', 'cut', 'tr', 'tee', 'rev', 'cat', 'wc']);
+
+/* What a command that prints names lists: 'cred' (a credential folder), 'unknown', 'safe' (a known lister of other
+   places) or null (not a lister). */
+function listerKind(cmd, c) {
+  if (!PIPE_LISTERS.has(cmd.prog)) return null;
+  let ops = [];
+  if (cmd.prog === 'find') {
+    let i = 0;
+    while (i < cmd.args.length && /^-(?:[HLP]|O\d?|D)$/.test(cmd.args[i])) i += cmd.args[i] === '-D' ? 2 : 1;
+    while (i < cmd.args.length && !/^(?:-|\(|!)/.test(cmd.args[i])) ops.push(cmd.args[i++]);
+    if (!ops.length) ops = ['.'];
+  } else if (cmd.prog === 'git') {
+    if (!cmd.args.some((a) => /^(?:ls-files|ls-tree|diff|status|log|grep|ls-remote|rev-list|show)$/.test(a))) return null;
+    ops = cmd.args.filter((a, i) => cmd.args[i - 1] === '-C' || /^-C./.test(a)).map((a) => (a === '-C' ? '' : a.slice(2))).filter(Boolean);
+  } else ops = cmd.args.filter((a) => !a.startsWith('-'));
+  const recursive = PIPE_RECURSIVE_LISTERS.has(cmd.prog) || (cmd.prog === 'ls' && cmd.args.some((a) => /^-[A-Za-z]*R/.test(a)));
+  let unknown = false;
+  for (const o of ops) {
+    const k = cfOperandKind(o, c);
+    if (k === 'cred' || (k === 'parent' && recursive)) return 'cred';
+    if (k === 'unknown' && cmd.prog !== 'echo' && cmd.prog !== 'printf') unknown = true;
+  }
+  return unknown ? 'unknown' : 'safe';
+}
+
+/* What a command that takes the names to read from its input does: 'xargs' (any program), 'list' (tar -T -, zip -@,
+   cpio -o, rsync --files-from=-) or null. */
+function stdinConsumerOf(cmd) {
+  const p = cmd.prog;
+  if (p === 'xargs') return 'xargs';
+  if (TAR_READERS.has(p)) {
+    const a = cmd.args.slice();
+    if (a.length && /^[A-Za-z]+$/.test(a[0])) a[0] = '-' + a[0];
+    const s = cfScanArgs('tar', a);
+    return s.seen.some(([o, v]) => (o === 'T' || o === '--files-from') && (v === '-' || v === '/dev/stdin')) ? 'list' : null;
+  }
+  if (p === 'zip') return cfScanArgs('zip', cmd.args).flags.has('@') ? 'list' : null;
+  if (p === 'cpio') return cmd.args.some((x) => /^-[A-Za-z]*[op]/.test(x) || x === '--create' || x === '--pass-through') ? 'list' : null;
+  if (p === 'rsync') {
+    const s = cfScanArgs('rsync', cmd.args);
+    return s.seen.some(([o, v]) => o === '--files-from' && (v === '-' || v === '/dev/stdin')) ? 'list' : null;
+  }
+  return null;
+}
+
+/* Names listed from a credential folder and handed to a program through a pipe (find ~/.aws | xargs cat,
+   echo ~/.aws | xargs tar c, find ~/.aws | tar c -T -) are the same read as naming the folder. A list read from
+   stdin by tar, zip, cpio or rsync must come from a known lister of other places (find, ls, git ls-files). */
+function credentialPipeDenial(text, opts) {
+  if (!text.includes('|')) return null;
+  const ctx = opts.ctx || contextOf(opts);
+  const moved = opts.cdBases && opts.cdBases.moved;
+  const c = {
+    ctx, home: opts.home || os.homedir(), env: opts.env || process.env, cwd: path.resolve(opts.cwd || process.cwd()),
+    places: moved ? opts.cdBases.dirs : [path.resolve(opts.cwd || process.cwd())], folders: null,
+  };
+  c.folders = credentialFolders(ctx);
+  const stages = pipeStages(text);
+  if (stages.length < 2) return null;
+  for (const posix of [false, true]) {
+    const cmds = stages.map((st) => stageCommands(st, posix));
+    let tainted = false;
+    for (let i = 0; i < cmds.length; i++) {
+      if (overBudget(opts.budget, 1)) return TOO_SLOW_MESSAGE;
+      const first = cmds[i][0];
+      const consumer = first ? stdinConsumerOf(first) : null;
+      if (consumer && i > 0) {
+        if (tainted) return credPipeMessage(first.prog);
+        if (consumer === 'list') {
+          // The list comes from a known lister of other places, through filters only.
+          const safe = cmds.slice(0, i).every((g, gi) => (gi === 0 ? g.length > 0 && listerKind(g[g.length - 1], c) === 'safe'
+            : g.length > 0 && g.every((x) => PIPE_PASSTHROUGH.has(x.prog))));
+          if (!safe) {
+            return 'zn: ' + first.prog + ' reads the names of the files to archive from its input, and zn cannot tell whether they include a credential folder ' +
+              '(such as ~/.aws or ~/.ssh), so it was blocked. Name the files on the command line, or list a project folder with find, ls or git ls-files.';
+          }
+        }
+      }
+      for (const cm of cmds[i]) if (listerKind(cm, c) === 'cred') tainted = true;
+    }
+  }
+  return null;
+}
+
+function credPipeMessage(prog) {
+  return 'zn: the names of the files in a credential folder (such as ~/.aws or ~/.ssh) are handed to ' + prog + ' through a pipe, which would read the secrets in it, ' +
+    'and secret values never go to the model, so it was blocked. If a command needs a value, ask the user to run `' + znCommand('secret set NAME') +
+    '`, then run the command with `' + znCommand('run --secrets NAME -- <command>') + '` so the program gets it as an environment variable.';
 }
 
 /* 'cred' when abs is a credential folder or below one, 'parent' when it contains one, else null. */
@@ -2525,11 +2770,10 @@ function credentialFolderDenial(readings, opts) {
       for (const op of reader.operands) {
         if (overBudget(opts.budget, 1)) return TOO_SLOW_MESSAGE;
         let text = op.text;
-        let expanded = expandEnv(expandHome(text, home), env).text;
-        if (!expanded || /\$\{?[A-Za-z_]|`/.test(expanded)) continue;
-        // A last name made of wildcards only (dir/*, dir/.*) is the folder's whole content.
-        const wild = /^(.*?)(?:\/|^)[*?.]*[*?][*?.]*$/.exec(expanded);
-        if (wild) expanded = wild[1] === '' && expanded.startsWith('/') ? '/' : (wild[1] || '.');
+        const expanded0 = expandEnv(expandHome(text, home), env).text;
+        if (!expanded0 || /\$\{?[A-Za-z_]|`/.test(expanded0)) continue;
+        // A last name made of wildcards only (dir/*, dir/.*) is the folder's whole content; braces name several folders.
+        for (const expanded of braceExpand(cfStripWild(expanded0))) {
         let starts = [''];
         if (!path.isAbsolute(expanded)) starts = places;
         let baseDirs = [null];
@@ -2542,7 +2786,8 @@ function credentialFolderDenial(readings, opts) {
         for (const bd of baseDirs) {
           for (const s of starts) {
             const abs = path.resolve(bd || s || cwd, expanded);
-            const kind = folderKindOf(abs, folders);
+            // A pattern (~/.a*s, ~/.[a]ws) that matches a credential folder names it.
+            const kind = GLOB_CHARS_RE.test(abs) ? globFolderKind(abs, folders) : folderKindOf(abs, folders);
             if (kind && kind.kind === 'cred') {
               return 'zn: ' + prog + ' would read every file in ' + text + ', which holds secrets (' + kind.folder.label + '), and secret values never go to the model, ' +
                 'so it was blocked. If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then run the command with `' +
@@ -2558,6 +2803,7 @@ function credentialFolderDenial(readings, opts) {
               if (c && c.kind === 'credential') return credentialDenial(text, c);
             }
           }
+        }
         }
       }
     }
@@ -2665,6 +2911,8 @@ function bashDenialOf(cmd, opts = {}) {
   {
     const folderDeny = credentialFolderDenial(readings, opts);
     if (folderDeny) return folderDeny;
+    const pipeDeny = credentialPipeDenial(text, opts);
+    if (pipeDeny) return pipeDeny;
   }
   // A word is classified once per command: each classification resolves the path on disk, and a long command
   // often repeats the same words.
