@@ -124,6 +124,25 @@ def cloud_error_hint(exc: BaseException) -> str:
     return "The cloud check failed."
 
 
+# Why the last cloud check fell back to the local rules, in a few words (no URL, no key, no text),
+# or None. The command line reads it to print one notice; a library call prints nothing by itself.
+last_fallback_reason: Optional[str] = None
+
+
+def cloud_fallback_reason(exc: BaseException) -> str:
+    """A few plain words on why the cloud check failed: never the URL, the key or the text."""
+    if isinstance(exc, urllib.error.HTTPError):
+        if exc.code in (401, 403):
+            return "the API key was not accepted"
+        return f"HTTP {exc.code}"
+    reason = getattr(exc, "reason", exc)
+    if isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError) or "timed out" in str(exc):
+        return "timed out"
+    if isinstance(exc, urllib.error.URLError):
+        return "could not connect"
+    return "the check failed"
+
+
 def analyze(
     input_text: str,
     api_key: Optional[str] = None,
@@ -138,6 +157,8 @@ def analyze(
     Only if the user opted in (ZN_API_KEY + ZN_CLOUD=1) is the text, with secrets
     redacted locally, also sent to the zn cloud gate. Otherwise nothing leaves the machine.
     """
+    global last_fallback_reason
+    last_fallback_reason = None
     key = api_key or os.environ.get("ZN_API_KEY")
 
     # 1. Local fast path (no network)
@@ -190,6 +211,7 @@ def analyze(
         if isinstance(exc, urllib.error.HTTPError):
             # An HTTP error carries the open response: close it now instead of leaving the socket to the GC.
             exc.close()
+        last_fallback_reason = cloud_fallback_reason(exc)
         if is_verbose():
             import sys
             sys.stderr.write(f"[zn-gate] Warning: Cloud gate error ({exc}). {cloud_error_hint(exc)} "

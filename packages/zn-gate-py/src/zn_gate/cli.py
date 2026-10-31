@@ -240,8 +240,22 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     res["latency_ms"] = round(elapsed_ms, 2)
 
     print(json.dumps(res, indent=2))
+    _note_cloud_fallback(res)
 
     return 2 if res.get("verdict") == "block" else 0
+
+
+def _note_cloud_fallback(res: Dict[str, Any]) -> None:
+    """One line on stderr when the cloud check failed and the local result was used. The reason is a
+    few plain words (no URL, key or text). With ZN_VERBOSE the client has already printed the detail."""
+    if not (isinstance(res, dict) and res.get("fallback") is True):
+        return
+    from . import client as _client
+    from .verbose import is_verbose
+    if is_verbose():
+        return
+    reason = _client.last_fallback_reason or "the check failed"
+    sys.stderr.write(f"zn-gate: cloud check unavailable ({reason}); using the local result\n")
 
 
 def _skip_reason(file_path: Path, mcp_only: bool = False, follow: bool = False) -> Optional[str]:

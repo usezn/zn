@@ -431,7 +431,9 @@ stop malware running as the same user (see above).
 
 - **Optional cloud check unavailable** (no connection, timeout, a service error, or a
   saved key that cannot be read): the prompt is checked by the local rules alone
-  and the result says `fallback: true`. This path does not fail closed.
+  and the result says `fallback: true`. This path does not fail closed. `zn-gate analyze` prints one short
+  line on stderr (the reason in a few words, never the key, the URL or the text); a call from your own code
+  prints nothing unless `ZN_VERBOSE=1`.
 - **Vault locked:** the hooks still run the scrubber without it. They redact
   patterns, PII and values found in local files with irreversible markers. The
   broker refuses to fill any value.

@@ -1,0 +1,2 @@
+### Changed
+- `zn-gate analyze` (npm and PyPI) now prints one short line on stderr when the optional cloud check fails and the local result is used, for example `zn-gate: cloud check unavailable (timed out); using the local result`. The verdict, the `fallback` field and the exit code are unchanged. The line never carries the key, the URL or the text; library calls stay silent unless `ZN_VERBOSE=1`.

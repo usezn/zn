@@ -76,7 +76,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 - Prompt evaluation: runs local rules first. Queries the cloud classifier only when the user opted in, with both an API key (`apiKey` or `ZN_API_KEY`) and `ZN_CLOUD=1` or with `zn-gate connect`, and `ZN_LOCAL_ONLY` is not `true`. The text is secret-redacted locally before it is sent.
 - Options: `apiKey`, `apiUrl`, `stage` (`'v30'` or `'prod'`), `timeout` (**milliseconds**; default 4000, or 12000 for text over 1,000 characters), `localOnly`, `longInput` (`'windows'` or `'off'`), `strict`.
 - Returns: `Promise<{ verdict, confidence, rule, reason, engine, rules_version, mode, ... }>`. `mode` is `'hybrid-local-fastpath'` (a local rule blocked, no network), `'oss-local'` (cloud not enabled), or `'hybrid-cloud'` (the cloud answered; `secrets_redacted_before_upload` counts the redactions).
-- If the cloud call fails or no key can be read, it resolves with the local result, `mode: 'oss-local'`, `fallback: true` and `cloud_error` (a message). It does not throw.
+- If the cloud call fails or no key can be read, it resolves with the local result, `mode: 'oss-local'`, `fallback: true` and `cloud_error` (a message). It does not throw and prints nothing unless `ZN_VERBOSE=1`; the command line prints one short line on stderr.
 
 ### `analyzeLocal(text, options)`
 
@@ -274,7 +274,7 @@ except GuardBlockError as e:
 - Synchronous (the Node function returns a Promise). Same data flow as Node: local rules first, and the cloud only when the user opted in with `ZN_API_KEY` and `ZN_CLOUD=1`, with `ZN_LOCAL_ONLY` not `true`. Text is secret-redacted before it is sent.
 - `timeout` is in **seconds** (default 4.0, or 12.0 for text over 1,000 characters); the Node option is in milliseconds.
 - Returns a dict with `verdict`, `confidence`, `rule`, `reason`, `engine`, `rules_version` and `mode`: `'hybrid-local-fastpath'`, `'oss-local'` or `'hybrid-cloud'`, as in Node.
-- If the cloud call fails it returns the local result with `mode: 'oss-local-fallback'`, `fallback: True` and `cloud_error`. Node reports the same case as `mode: 'oss-local'` with `fallback: true`.
+- If the cloud call fails it returns the local result with `mode: 'oss-local-fallback'`, `fallback: True` and `cloud_error`. It prints nothing unless `ZN_VERBOSE=1`; the command line prints one short line on stderr. Node reports the same case as `mode: 'oss-local'` with `fallback: true`.
 - `api_url` and `stage` (`'v30'` or `'prod'`) can be passed as keyword arguments, like `apiUrl` and `stage` in Node; they pick the endpoint as `resolve_endpoint` does. The `endpoint` argument wins over both.
 - Unlike Node, it does not use a key saved by `zn-gate connect`: pass `api_key` or set `ZN_API_KEY` together with `ZN_CLOUD=1`.
 

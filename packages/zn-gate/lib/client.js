@@ -115,6 +115,16 @@ function cloudErrorHint(err) {
   return 'The cloud check failed.';
 }
 
+// Why the last cloud check fell back to the local rules, in a few words (no URL, key or text), or null.
+// The command line reads it to print one notice; a library call prints nothing by itself.
+let lastFallbackReason = null;
+function cloudFallbackReason(err) {
+  if (err && err.httpStatus) return err.httpStatus === 401 || err.httpStatus === 403 ? 'the API key was not accepted' : `HTTP ${err.httpStatus}`;
+  if (err && err.code === 'ETIMEDOUT') return 'timed out';
+  if (err && typeof err.code === 'string') return 'could not connect';
+  return 'the check failed';
+}
+
 // The cloud gate answers "allow" or "block". The verdict is read once here, without case or surrounding spaces, so every
 // caller compares a lowercase value; any other verdict (missing, empty, unknown) blocks the text: fail closed. A body that
 // is not a JSON object is a failed cloud call (the local rules decide), as in the Python package.
@@ -225,6 +235,7 @@ async function analyze(input, options = {}) {
   if (!found) {
     // Connected, but the key is not readable now (empty keychain, vault locked, marker not matching): local rules only.
     if (markerOnly) noteNoStoredKey();
+    lastFallbackReason = 'no usable API key';
     return { ...local, mode: 'oss-local', fallback: true, cloud_error: 'no API key available (run zn-gate status)' };
   }
   const apiKey = found.key;
@@ -233,10 +244,12 @@ async function analyze(input, options = {}) {
   const tlsWhy = storedKey ? cloudKey.tlsRefusal() : null;
   if (tlsWhy) {
     // The saved key is never sent over a connection that is not checked against the system's authorities.
+    lastFallbackReason = 'the saved key is not sent over an unchecked connection';
     return { ...local, mode: 'oss-local', fallback: true, cloud_error: tlsWhy };
   }
   const endpoint = resolveEndpoint(options, { stored: storedKey });
   if (storedKey && endpoint.indexOf(FIXED_API_ORIGIN + '/') !== 0) {
+    lastFallbackReason = 'the saved key is only sent to ' + FIXED_API_ORIGIN;
     return { ...local, mode: 'oss-local', fallback: true, cloud_error: 'the saved key is only sent to ' + FIXED_API_ORIGIN };
   }
   const urlIgnored = storedKey && Boolean(options.apiUrl || process.env.ZN_API_URL);
@@ -257,6 +270,7 @@ async function analyze(input, options = {}) {
     }
     return out;
   } catch (err) {
+    lastFallbackReason = cloudFallbackReason(err);
     if (isVerbose()) {
       process.stderr.write(`[zn-gate] Warning: Cloud gate error (${err.message}). ${cloudErrorHint(err)} The local rules were used instead, so the text was checked on this machine only.\n`);
     }
@@ -308,6 +322,7 @@ function logEvidence(...args) {
 module.exports = {
   _cloudVerdict: cloudVerdict,
   usableApiKey,
+  getLastFallbackReason: () => lastFallbackReason,
   analyze,
   analyzeLocal,
   checkToolResult,

@@ -39,7 +39,7 @@ const { startMcpServer } = require('../lib/mcp');
 const { startMcpShield } = require('../lib/shield');
 const { configureEnvironments } = require('../lib/init');
 const { verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
-const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, usesStoredKey, RULES_VERSION } = require('../lib/client');
+const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, usesStoredKey, getLastFallbackReason, RULES_VERSION } = require('../lib/client');
 const { evaluate, redactSecrets, redactScanSecrets, redactScanRules, SECRET_PATTERNS } = require('../lib/rules');
 // A verdict from the cloud or the ledger can come in any case; compare it the way the MCP server does.
 const isBlockVerdict = (v) => typeof v === 'string' && v.toLowerCase() === 'block';
@@ -1319,6 +1319,10 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
 
     const result = await analyze(textToAnalyze, options);
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    // One line when the cloud check failed and the local result was used (with ZN_VERBOSE the library printed the detail).
+    if (result && result.fallback === true && !require('../lib/verbose').isVerbose()) {
+      process.stderr.write(`zn-gate: cloud check unavailable (${getLastFallbackReason() || 'the check failed'}); using the local result\n`);
+    }
     process.exit(isBlockVerdict(result.verdict) ? 2 : 0);
   }
 
