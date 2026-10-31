@@ -403,12 +403,7 @@ fn card_valid(raw: &str) -> bool {
     if raw.len() < 13 {
         return false;
     }
-    // One kind of separator only: "4111 1111-1111 1111" is not a card number.
-    let has_space = raw.contains(' ');
-    let has_dash = raw.contains('-');
-    if has_space && has_dash {
-        return false;
-    }
+    // Spaces and dashes may be mixed ("4111 1111-1111 1111"), as in the Node.js scrubber.
     // At most 19 digits: collect them on the stack (this runs for every
     // candidate start in long inputs).
     let mut buf = [0u8; 19];
@@ -432,7 +427,7 @@ fn card_valid(raw: &str) -> bool {
 /// US SSN: area 001-899 except 666, group 01-99, serial 0001-9999.
 fn ssn_valid(raw: &str) -> bool {
     let parts: Vec<&str> = raw.split('-').collect();
-    if parts.len() != 3 {
+    if parts.len() != 3 || parts[2].len() != 4 {
         return false;
     }
     let area: u32 = parts[0].parse().unwrap_or(0);
@@ -1050,9 +1045,10 @@ mod tests {
         let out = Scrubber::scrub(&long);
         assert_eq!(out.len(), long.len());
         let many = r#"password=""#.repeat(50_000);
-        let start = std::time::Instant::now();
-        let _ = Scrubber::scrub(&many);
-        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        let took = time_of(&|| {
+            let _ = Scrubber::scrub(&many);
+        });
+        assert!(took < std::time::Duration::from_secs(5), "{took:?}");
         assert!(
             Scrubber::detect_pii_types(r#"{"password":"abcdefgh ijk lmn"}"#)
                 .contains(&"api_key_or_secret")
@@ -1303,28 +1299,97 @@ mod tests {
         assert!(!Scrubber::scrub("A123-45-6789").contains("[SSN_REDACTED]"));
     }
 
-    /// Best of three runs of `work(size)`, so a scheduling hiccup on a busy
-    /// machine cannot inflate the measurement.
-    fn best_of_three(work: &dyn Fn(usize), size: usize) -> std::time::Duration {
-        (0..3)
-            .map(|_| {
-                let start = std::time::Instant::now();
-                work(size);
-                start.elapsed()
-            })
-            .min()
-            .expect("three runs")
+    /// CPU time used by this thread. Tests run in parallel, so wall time also
+    /// counts the time this thread waits for a CPU; its own CPU time does not.
+    #[cfg(unix)]
+    fn thread_cpu_time() -> std::time::Duration {
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: clock_gettime only writes the timespec it is given.
+        let rc = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+        assert_eq!(rc, 0, "clock_gettime(CLOCK_THREAD_CPUTIME_ID)");
+        std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
     }
 
-    /// Time must grow about linearly: quadrupling the input may cost at most
-    /// 8x (a quadratic algorithm costs 16x), plus a small allowance for
-    /// noise. Relative, so the machine's speed does not matter.
+    /// CPU time used by this thread (kernel plus user), from GetThreadTimes.
+    #[cfg(windows)]
+    fn thread_cpu_time() -> std::time::Duration {
+        use windows_sys::Win32::Foundation::FILETIME;
+        use windows_sys::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+        let zero = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+        // SAFETY: GetThreadTimes only writes the four FILETIMEs it is given; the
+        // pseudo-handle from GetCurrentThread needs no closing.
+        let ok = unsafe {
+            GetThreadTimes(
+                GetCurrentThread(),
+                &mut created,
+                &mut exited,
+                &mut kernel,
+                &mut user,
+            )
+        };
+        assert_ne!(ok, 0, "GetThreadTimes");
+        let ticks = |t: FILETIME| (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime);
+        // FILETIME counts 100 ns ticks.
+        std::time::Duration::from_nanos((ticks(kernel) + ticks(user)) * 100)
+    }
+
+    /// How long `work` takes: this thread's CPU time on unix and Windows, wall
+    /// time on any other platform.
+    fn time_of(work: &dyn Fn()) -> std::time::Duration {
+        #[cfg(any(unix, windows))]
+        {
+            let start = thread_cpu_time();
+            work();
+            let used = thread_cpu_time().saturating_sub(start);
+            // GetThreadTimes only advances once per scheduler tick (about
+            // 15.6 ms), so a short run can read as 0 and the 16x bound would
+            // then fail on a linear algorithm. Adding one tick on Windows
+            // keeps the reading at or above the real CPU time; unix keeps the
+            // exact nanosecond clock and the check there is unchanged.
+            #[cfg(windows)]
+            let used = used + std::time::Duration::from_micros(15_625);
+            used
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let start = std::time::Instant::now();
+            work();
+            start.elapsed()
+        }
+    }
+
+    /// Best of five runs of `work(size)`, so a hiccup on a busy machine
+    /// cannot inflate the measurement.
+    fn best_of_five(work: &dyn Fn(usize), size: usize) -> std::time::Duration {
+        (0..5)
+            .map(|_| time_of(&|| work(size)))
+            .min()
+            .expect("five runs")
+    }
+
+    /// The rule: 8x the input may cost at most 16x the time (a quadratic
+    /// algorithm costs 64x), plus 50 ms for noise on very short runs.
+    fn scales_linearly(small: std::time::Duration, large: std::time::Duration) -> bool {
+        large < small * 16 + std::time::Duration::from_millis(50)
+    }
+
+    /// Time must grow about linearly with the input. Relative, so the
+    /// machine's speed does not matter. One untimed run comes first, so the
+    /// first timing is not taken with cold caches.
     fn assert_scales_linearly(work: &dyn Fn(usize), size: usize) {
-        let small = best_of_three(work, size / 4);
-        let large = best_of_three(work, size);
+        work(size / 8);
+        let small = best_of_five(work, size / 8);
+        let large = best_of_five(work, size);
         assert!(
-            large < small * 8 + std::time::Duration::from_millis(50),
-            "4x the input took {large:?} against {small:?}"
+            scales_linearly(small, large),
+            "8x the input took {large:?} against {small:?}"
         );
         // Only a hang guard; the ratio above is the real check.
         assert!(large < std::time::Duration::from_secs(30), "{large:?}");
@@ -1351,20 +1416,18 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "4x the input took")]
     fn test_scaling_check_rejects_quadratic_time() {
-        // Proves the check above can fail: a deliberately quadratic loop.
-        let quadratic = |n: usize| {
-            let n = n / 32;
-            let mut acc = 0usize;
-            for i in 0..n {
-                for j in 0..n {
-                    acc = std::hint::black_box(acc.wrapping_add(i ^ j));
-                }
-            }
-            std::hint::black_box(acc);
-        };
-        assert_scales_linearly(&quadratic, 1 << 19);
+        // The rule above on fixed durations, so this cannot depend on load:
+        // linear growth passes, quadratic growth fails, and the 50 ms floor
+        // only matters for very short runs.
+        let ms = std::time::Duration::from_millis;
+        assert!(scales_linearly(ms(100), ms(800))); // 8x: linear
+        assert!(scales_linearly(ms(100), ms(1_600))); // 16x: at the edge, still linear
+        assert!(!scales_linearly(ms(100), ms(6_400))); // 64x: quadratic
+        assert!(!scales_linearly(ms(100), ms(1_700))); // past 16x + 50 ms
+        assert!(scales_linearly(ms(1), ms(60))); // tiny runs: within the floor
+        assert!(!scales_linearly(ms(1), ms(70))); // 16 ms + 50 ms is the limit
+        assert!(!scales_linearly(ms(0), ms(64))); // nothing measured for the small run
     }
 
     #[test]
@@ -1372,11 +1435,11 @@ mod tests {
         // One opener followed by a very long run of backslashes must cost about the same as the
         // same length of any other character: the run is counted only inside the scan window.
         let time = |input: &str| {
-            (0..3)
+            (0..5)
                 .map(|_| {
-                    let start = std::time::Instant::now();
-                    let _ = Scrubber::scrub(input);
-                    start.elapsed()
+                    time_of(&|| {
+                        let _ = Scrubber::scrub(input);
+                    })
                 })
                 .min()
                 .unwrap()
@@ -1402,7 +1465,6 @@ mod tests {
         for input in [
             "Card: 4111-1111-1111-1112",  // fails Luhn
             "id 1234567812345670",        // passes Luhn, no card network
-            "Card: 4111 1111-1111 1111",  // mixed separators
             "order-4111111111111111",     // part of a longer token
             "x4111111111111111",          // part of a word
             "amount 4111111111111111.50", // decimal number
@@ -1531,5 +1593,65 @@ mod tests {
         assert!(!e164_valid("+0123456789"));
         assert!(ssn_valid("123-45-6789"));
         assert!(!ssn_valid("900-45-6789"));
+    }
+}
+
+/// The card, SSN and phone checks are claimed to be the Node.js scrubber's
+/// (packages/zn-gate/lib/scrub/patterns.js). The shared fixture holds the cases and the results of
+/// the Node.js validators; packages/zn-gate/test/rust_table_parity.test.js checks the Node.js side.
+#[cfg(test)]
+mod table_parity_tests {
+    use super::*;
+
+    fn cases() -> Vec<(String, String, bool)> {
+        let f: serde_json::Value = serde_json::from_str(include_str!(
+            "../../packages/zn-gate/test/fixtures/scrub_validator_cases.json"
+        ))
+        .unwrap();
+        f["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| {
+                (
+                    c["fn"].as_str().unwrap().to_string(),
+                    c["input"].as_str().unwrap().to_string(),
+                    c["valid"].as_bool().unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    /// The cases of one validator that Rust answers differently from the fixture.
+    fn mismatches(name: &str, f: fn(&str) -> bool) -> Vec<String> {
+        let all = cases();
+        assert!(
+            all.iter().any(|c| c.0 == name),
+            "no {name} cases in the fixture"
+        );
+        all.into_iter()
+            .filter(|c| c.0 == name && f(&c.1) != c.2)
+            .map(|c| format!("{} {:?}: Node.js says {}", c.0, c.1, c.2))
+            .collect()
+    }
+
+    #[test]
+    fn luhn_equals_node() {
+        assert_eq!(mismatches("luhn", luhn_valid), Vec::<String>::new());
+    }
+
+    #[test]
+    fn card_validator_equals_node() {
+        assert_eq!(mismatches("card", card_valid), Vec::<String>::new());
+    }
+
+    #[test]
+    fn ssn_validator_equals_node() {
+        assert_eq!(mismatches("ssn", ssn_valid), Vec::<String>::new());
+    }
+
+    #[test]
+    fn e164_validator_equals_node() {
+        assert_eq!(mismatches("e164", e164_valid), Vec::<String>::new());
     }
 }

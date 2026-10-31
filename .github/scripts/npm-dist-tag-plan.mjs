@@ -18,9 +18,10 @@
 //     With <versions.json> (`npm view zn-gate versions --json`), "latest" must also not be older than the
 //     newest final version on npm (a stage approved late must not move it back).
 //
-//   node .github/scripts/npm-dist-tag-plan.mjs staged <version> <plan.json> [<sha>]
+//   node .github/scripts/npm-dist-tag-plan.mjs staged <version> <plan.json> <sha>
 //     For a re-run that finds <version> already on npm: reads the plan written when it was staged,
-//     checks that it is for <version> (and for commit <sha>) and that its dist-tag fits the version, and
+//     checks that it is for <version> and for commit <sha> (40 hex characters, required) and that its
+//     dist-tag fits the version, and
 //     prints the same two lines as "plan". Fails closed on a missing, unreadable or mismatched plan.
 //
 // <dist-tags.json> is the output of `npm view zn-gate dist-tags --json`.
@@ -92,13 +93,21 @@ export function verify(version, tag, latestBefore, tags, versions = null) {
   if (versions !== null) {
     // A stage approved late can move "latest" back to an older final that was planned as latest before a newer
     // final came out: latest must never be below the newest final version on npm.
-    if (!Array.isArray(versions) || versions.some((x) => typeof x !== 'string')) throw new Error('the published versions are not a list of strings');
+    // npm prints a plain string, not a list, when a package has only one version.
+    // A single version string is accepted only if it is a version; the list must contain the version being checked.
+    const notList = 'the published versions are not a list (or a single version string) of strings';
+    if (typeof versions === 'string') {
+      if (!parse(versions)) throw new Error(notList);
+      versions = [versions];
+    }
+    if (!Array.isArray(versions) || versions.some((x) => typeof x !== 'string')) throw new Error(notList);
     const finals = versions.filter((x) => parse(x) && !parse(x).pre.length);
     const newest = finals.reduce((m, x) => (m === null || compare(x, m) > 0 ? x : m), null);
     if (newest !== null) {
       if (!tags.latest || !parse(tags.latest)) throw new Error(`latest is missing or invalid (${tags.latest})`);
       if (compare(tags.latest, newest) < 0) throw new Error(`latest is ${tags.latest}, but ${newest} is published: latest moved backward`);
     }
+    if (!versions.includes(version)) throw new Error(`${version} is not among the published versions`);
   }
   if (!parse(version)) throw new Error(`${version} is not a valid semver version`);
   if (!tag) throw new Error('no dist-tag given');
@@ -116,14 +125,20 @@ export function verify(version, tag, latestBefore, tags, versions = null) {
   return true;
 }
 
-export function stagedPlan(version, saved, sha = '') {
+const SHA_RE = /^[0-9a-f]{40}$/;
+
+export function stagedPlan(version, saved, sha) {
   const v = parse(version);
   if (!v) throw new Error(`${version} is not a valid semver version`);
   if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('the saved dist-tag plan is not an object');
   const { version: pv, tag, latest_before: lb } = saved;
   if (pv !== version) throw new Error(`the saved dist-tag plan is for ${pv}, not ${version}`);
-  // The plan must come from the job that staged this commit, not from another job of the run.
-  if (sha && saved.sha !== sha) throw new Error(`the saved dist-tag plan is for commit ${saved.sha}, not ${sha}`);
+  // Only the commit is checked: the plan must be for the same commit as this run. It is not bound to the
+  // job that wrote it; the artifact comes from this same workflow run (same repository, same run id), which
+  // is the trust boundary here.
+  // The commit is required: an empty or malformed sha would skip the check, so it fails closed instead.
+  if (typeof sha !== 'string' || !SHA_RE.test(sha)) throw new Error(`the released commit must be 40 hex characters, got ${JSON.stringify(sha)}`);
+  if (saved.sha !== sha) throw new Error(`the saved dist-tag plan is for commit ${saved.sha}, not ${sha}`);
   const allowed = v.pre.length ? [PRERELEASE_TAGS[v.pre[0]]] : ['latest', `release-${v.major}.${v.minor}`];
   if (typeof tag !== 'string' || !allowed.includes(tag)) throw new Error(`the saved dist-tag ${tag} does not fit ${version}`);
   if (typeof lb !== 'string' || (lb !== '' && !parse(lb))) throw new Error(`the saved latest-before (${lb}) is not a version`);
@@ -141,8 +156,8 @@ function main(argv) {
       console.log(`latest_before=${latestBefore}`);
       return 0;
     }
-    if (cmd === 'staged' && (a.length === 2 || a.length === 3)) {
-      const { tag, latestBefore } = stagedPlan(a[0], JSON.parse(readFileSync(a[1], 'utf8')), a[2] || '');
+    if (cmd === 'staged' && a.length === 3) {
+      const { tag, latestBefore } = stagedPlan(a[0], JSON.parse(readFileSync(a[1], 'utf8')), a[2]);
       console.log(`tag=${tag}`);
       console.log(`latest_before=${latestBefore}`);
       return 0;
@@ -152,7 +167,7 @@ function main(argv) {
       console.log(`dist-tags are as expected: ${a[1]} -> ${a[0]}`);
       return 0;
     }
-    throw new Error('usage: npm-dist-tag-plan.mjs plan <version> <dist-tags.json> [<plan.json> [<sha>]] | staged <version> <plan.json> [<sha>] | verify <version> <tag> <latest-before> <dist-tags.json> [<versions.json>]');
+    throw new Error('usage: npm-dist-tag-plan.mjs plan <version> <dist-tags.json> [<plan.json> [<sha>]] | staged <version> <plan.json> <sha> | verify <version> <tag> <latest-before> <dist-tags.json> [<versions.json>]');
   } catch (e) {
     console.error(`::error::${e.message}`);
     return 1;

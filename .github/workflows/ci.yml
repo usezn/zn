@@ -306,6 +306,11 @@ jobs:
         if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
         working-directory: packages/zn-gate-py
         run: python -m ruff check .
+      - name: Test the CI helper scripts
+        if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
+        run: |
+          python -m pytest .github/scripts/test_normalize_sdist.py .github/scripts/test_doc_snippets.py -q
+          python -m ruff check .github/scripts/test_normalize_sdist.py .github/scripts/test_doc_snippets.py
       - name: Run mypy
         if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
         working-directory: packages/zn-gate-py
@@ -321,6 +326,9 @@ jobs:
           src/zn_gate/__init__.py src/zn_gate/rules.py src/zn_gate/guard.py
           src/zn_gate/client.py src/zn_gate/evidence.py
           typing_check/check_public_api.py
+      - name: Test the PyPI license checker
+        if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
+        run: python -m pytest -q .github/scripts/test_license_check_py.py .github/scripts/test_check_license_allowlist.py
 
   pack-node:
     name: npm package (pack, inspect, install)

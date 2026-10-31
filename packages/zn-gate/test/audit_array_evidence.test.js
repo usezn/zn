@@ -10,6 +10,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { tempDir } = require('./helpers/tmp');
 const { redact } = require('../lib/audit');
+const { budget } = require('./helpers/time_budget');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 const V1 = 'zn-test-fake-value-0000';
@@ -255,7 +256,7 @@ test('redaction stays linear on adversarial input', () => {
     const t0 = process.hrtime.bigint();
     redact(text);
     const ms1 = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms1 < 2000, `${name}: ${ms1} ms`);
+    assert.ok(ms1 < budget(2000), `${name}: ${ms1} ms`);
   }
   // the same per line through a whole report
   const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'zn-audit-lin-'));
@@ -358,6 +359,6 @@ test('redaction stays linear: block comments, long comments, backslashes and spa
     const t0 = process.hrtime.bigint();
     redact(text);
     const ms1 = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms1 < 2000, `${name}: ${ms1} ms`);
+    assert.ok(ms1 < budget(2000), `${name}: ${ms1} ms`);
   }
 });

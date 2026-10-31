@@ -2,6 +2,37 @@
 
 Every command of the `zn-gate` program, with its options and exit codes. For a first walk through, start with [First 5 minutes](first-5-minutes.md). Words you do not know are explained in the [glossary](glossary.md).
 
+## Contents
+
+- [`init`](#init)
+- [`uninstall`](#uninstall)
+- [`check`](#check)
+- [`status`](#status)
+- [`test`](#test)
+- [`version`](#version)
+- [`connect`](#connect)
+- [`disconnect`](#disconnect)
+- [`scan`](#scan)
+- [`audit`](#audit)
+- [`reach`](#reach)
+- [`analyze`](#analyze)
+- [`pins`](#pins)
+- [`secret`](#secret)
+- [`env`](#env)
+- [`run`](#run)
+- [`unlock`](#unlock)
+- [`lock`](#lock)
+- [`vault`](#vault)
+- [`hooks`](#hooks)
+- [`hook`](#hook)
+- [`secrets-mcp`](#secrets-mcp)
+- [`mcp`](#mcp)
+- [`shield`](#shield)
+- [`evidence`](#evidence)
+- [`stats`](#stats)
+- [`report`](#report)
+- [`team`](#team)
+
 ## Program names
 
 The package installs three names. They are the same program, so every command below works with any of them:
@@ -54,7 +85,7 @@ zn-gate init
 zn-gate init --wrap-mcp [--dry-run] [--shadow] [--revert]
 ```
 
-Without options, `init` is the guided setup: it finds the coding agents on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app), shows what is missing and, in your own terminal, asks before each step. It takes no other arguments. When it runs without a terminal, or an AI agent runs it, it only prints the steps and changes nothing.
+Without options, `init` is the guided setup: it finds the coding agents on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, and the experimental Gemini CLI and Copilot CLI), shows what is missing and, in your own terminal, asks before each step. It takes no other arguments. When it runs without a terminal, or an AI agent runs it, it only prints the steps and changes nothing.
 
 With `--wrap-mcp` it finds the MCP servers in known agent configs and wraps them with `shield`. Backups are written first.
 
@@ -187,9 +218,10 @@ Exit codes: `0` nothing at or above `--fail-on`, `1` findings at or above it, `2
 
 ```bash
 zn-gate reach [path] [--json | --sarif] [--fail-on high|medium|low|none] [--remember]
+zn-gate reach --history [--json] [--max-seconds N]
 ```
 
-Shows what your coding agents can reach from a folder: secrets (names only), credential files and MCP servers. Read only, nothing is sent. [What it shows](reach.md).
+Shows what your coding agents can reach from a folder: secrets (names only), credential files and MCP servers. Read only, nothing is sent. [What it shows](reach.md). With `--history` it instead scans the local session histories of Claude Code and Codex for secrets they kept, and prints agent, file, secret type, count and the action to take, never a value. [History](reach.md#history-did-your-agents-keep-a-secret-of-yours).
 
 - `--fail-on`: default `none`, so it is a report.
 - `--remember`: keep this run's counts for the next run.
@@ -402,10 +434,10 @@ Shows the audit log of secret use. Same as `secret log`. With the vault unlocked
 #### `vault log export`
 
 ```bash
-zn-gate vault log export --otlp [--since 7d] [--out file]
+zn-gate vault log export --otlp [--since 7d] [--out file] [--unverified]
 ```
 
-Writes the audit log as OpenTelemetry logs (OTLP, JSON Lines) to the file, or to the screen. Needs no account. With the vault unlocked, the vault checks the whole log first and nothing is exported when the check fails (exit `1`, and the vault stores a warning, see `vault verify`). With the vault locked the chain cannot be checked: the export still runs and prints a warning that it is not a verified copy. Exit codes: `0` done, `1` error, `2` without `--otlp`. [Details](team.md).
+Writes the audit log as OpenTelemetry logs (OTLP, JSON Lines) to the file, or to the screen. Needs no account. With the vault unlocked, the vault checks the whole log first and nothing is exported when the check fails (exit `1`, and the vault stores a warning, see `vault verify`). With the vault locked the chain cannot be checked: the export is refused unless you add `--unverified`, and then it prints a warning that it is not a verified copy. `--out` writes a new private (0600) file and refuses a symbolic link or a folder. Exit codes: `0` done, `1` error, `2` without `--otlp`. [Details](team.md).
 
 #### `vault verify`
 
@@ -655,4 +687,4 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 | `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`. |
 | `stats` | `--days N`, `--json` | Local counts for the last `N` days (1 to 90, default 30). There is no `stats share`. Exit `0`, or `2` if `--days` is out of range. |
 
-The other commands on this page are only in the npm package. In the Python package they print a short note and exit `2`: `init`, `check`, `doctor`, `audit`, `hooks`, `run`, `secret`, `env`, `vault`, `unlock`, `lock`, `pins`, `mcp`, `shield`, `team`, `logs` and `export` point to `npx -y zn-gate init`, and `reach`, `report`, `connect` and `disconnect` point to `npx -y zn-gate <command>`. A command neither package knows exits `1`. To use the optional cloud check from Python, set `ZN_CLOUD=1` and `ZN_API_KEY` (or pass `--key` to `analyze`) instead of running `connect`.
+The other commands on this page are only in the npm package. In the Python package they print a short note and exit `2`: `init`, `check`, `doctor`, `audit`, `hooks`, `run`, `secret`, `env`, `vault`, `unlock`, `lock`, `pins`, `mcp`, `shield`, `team`, `logs` and `export` point to `npx -y zn-gate init`, and `report`, `connect` and `disconnect` point to `npx -y zn-gate <command>`. `reach` is in the npm package too, except `reach --history`, which the Python package has as well (see [reach](reach.md#history-did-your-agents-keep-a-secret-of-yours)). A command neither package knows exits `1`. To use the optional cloud check from Python, set `ZN_CLOUD=1` and `ZN_API_KEY` (or pass `--key` to `analyze`) instead of running `connect`.

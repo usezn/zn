@@ -12,7 +12,7 @@
 
 <p align="center">
   <strong>The local security layer for coding agents.</strong><br/>
-  zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app.<br/>
+  zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app (plus Gemini CLI and Copilot CLI, both experimental).<br/>
   An open-source security layer that runs on your machine, between your agent and the tools and content it touches.
 </p>
 
@@ -33,13 +33,15 @@
 
 ---
 
-**For:** developers using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or any MCP client, and teams building agents with MCP, LangChain, CrewAI or LlamaIndex.
+**For:** developers using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, Gemini CLI (experimental), Copilot CLI (experimental) or any MCP client, and teams building agents with MCP, LangChain, CrewAI or LlamaIndex.
 
 **What it does:** keeps secret values out of what your agent sends to its model, checks what your agent reads and calls for prompt injection, and audits prompts, skills and configs. Everything runs on your machine, is MIT-licensed and needs no account. The Python package has no runtime dependencies; the npm package's only one is `age-encryption` (with its `@noble`/`@scure` dependencies) for the secret vault, bundled in the package.
 
 ## Install
 
 Everything runs on your machine; no account or API key is needed. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. With a Node.js older than 18, the `zn-gate` and `zn` commands stop and say how to install it.
+
+**On Alpine Linux, install Node.js with the package manager.** The Node.js builds on nodejs.org do not run on Alpine, so run `apk add nodejs npm` instead. Use Alpine 3.21 or later: 3.21 and 3.22 ship Node.js 22, 3.23 and later ship Node.js 24. Alpine 3.20 ships Node.js 20.15, which is too old for the Claude Code plugin. The `npm` package is in the community repository, so if `npm` is not found, make sure the community repository is listed in `/etc/apk/repositories`.
 
 **Getting started: four steps, one command each.** Run them in your own terminal.
 
@@ -56,7 +58,7 @@ npx -y zn-gate init
 
 `init` does this:
 
-- It finds Claude Code, Codex CLI, Cursor, OpenCode, Antigravity and ZCode desktop app on your machine.
+- It finds the eight coding agents it supports on your machine: Claude Code, Codex CLI, Cursor, OpenCode, Antigravity and ZCode desktop app, plus Gemini CLI and Copilot CLI (both experimental).
 - For each one that is not protected yet, it shows the setup: the zn-gate plugin for Claude Code (or zn's hooks when your Node.js is older than 20.19), and zn's hooks for the others.
 - It runs each step only after you confirm it.
 - It ends with `zn-gate check`.
@@ -107,6 +109,15 @@ npm install -g zn-gate
 zn hooks install codex           # or: cursor, opencode
 ```
 
+If `npm install -g` fails with `EACCES` (common with Node.js from your Linux distribution, such as `dnf` or `apk`, and with Node.js from nodejs.org on macOS), do not use `sudo`. Give npm a folder in your home directory, then run the install again:
+
+```bash
+mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.bashrc   # ~/.zshrc on macOS, ~/.profile if you have no .bashrc
+```
+
+Open a new terminal so the new PATH applies.
+
 In Codex, approve the new hooks with `/hooks`. In Cursor, shell output and file contents are not scrubbed. What each agent supports: [docs/compat.md](docs/compat.md).
 
 **Other editors** (VS Code, Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/).
@@ -143,7 +154,7 @@ zn-gate scan .
 
 `pipx ensurepath` puts `~/.local/bin` on your PATH. Until you reopen the terminal, `zn-gate` is reported as "command not found". With uv: `uv tool install zn-gate` (run `uv tool update-shell` if the command is not found). To run it once without installing: `uvx zn-gate scan .`
 
-The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app, run `npx -y zn-gate init` (Node 18 or later).
+The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app (or the experimental Gemini CLI and Copilot CLI), run `npx -y zn-gate init` (Node 18 or later).
 
 For LangChain and LangGraph, `ZnGuardCallbackHandler` stops the run when it blocks a prompt, a tool call or a tool output, and `guard_langchain_tool(tool)` wraps a tool so its arguments are checked before it runs and its output is checked and masked before the model reads it. A callback cannot change what a tool returns, so the handler with `mask_secrets=True` (default) also stops the run on a secret in a tool output (it fails closed); to hide secrets and keep going, wrap the tool and create the handler with `mask_secrets=False`. See the [Python package guide](packages/zn-gate-py/README.md#langchain--langgraph).
 
@@ -464,7 +475,7 @@ Runnable examples are in [`examples/`](examples/). The code API checks text for 
 
 For Codex CLI, zn also reviews the model's final answer. By default it only warns you; with `"stopReview": "block"` under `hooks` in `~/.zn/config.json`, Codex asks the model to rewrite a final answer that contains a secret value. A second opt-in, `"replaceToolOutputOnSecret": true` under `hooks` in the same file, makes Codex replace a tool result that holds a real secret with zn's stop text and carry on, so the model gets that text instead of the output. See [docs/compat.md](docs/compat.md).
 
-**Which agents are supported?** Claude Code, Codex CLI, Cursor, OpenCode, Antigravity and ZCode desktop app, through hooks (what each one supports: [docs/compat.md](docs/compat.md)). Other editors (VS Code, Windsurf, Cline, Zed, JetBrains, Continue) work as an MCP server only: [setup for each one](https://usezn.com/docs/integrations/editors/). `init` can also wrap the MCP servers you already use.
+**Which agents are supported?** Claude Code, Codex CLI, Cursor, OpenCode, Antigravity and ZCode desktop app, through hooks, and Gemini CLI and Copilot CLI, through experimental hooks (what each one supports: [docs/compat.md](docs/compat.md)). Other editors (VS Code, Windsurf, Cline, Zed, JetBrains, Continue) work as an MCP server only: [setup for each one](https://usezn.com/docs/integrations/editors/). `init` can also wrap the MCP servers you already use.
 
 **How do I remove it?** Run `npx -y zn-gate uninstall` in your own terminal. It lists what it found (the Claude Code plugin, zn's hooks for each agent, wrapped MCP servers), asks before removing, and ends with `zn-gate check`. Your vault is only deleted if you confirm that separately. `npx -y zn-gate uninstall --dry-run` shows the list and changes nothing. To remove one part at a time, or for the steps by agent, see the [removal guide](docs/uninstall.md). `init --revert` is narrower: it only puts back the MCP configs that were saved before `init --wrap-mcp` wrapped them. For a standalone server, remove the `zn-gate` entry from your agent config.
 

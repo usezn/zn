@@ -20,14 +20,14 @@ const policy = require('./policy');
 const { pendingCount } = require('./upload');
 const { syncOutcome } = require('./sync-outcome');
 const { cleanChange, describeChange } = require('./changes');
-const { exportAuditFile } = require('./otel');
+const { exportAuditStream } = require('./otel');
 const store = require('../vault/store');
 const { createClient } = require('../vault/client');
-const { messageWithUnlockHint } = require('../errors');
+const { messageWithUnlockHint, fsErrorText } = require('../errors');
 const { znCommand } = require('../zn-command');
 
 const USAGE = 'usage: zn team join <token> [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
-const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE]';
+const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE] [--unverified]';
 
 const out = (s) => process.stdout.write(s + '\n');
 const err = (s) => process.stderr.write(s + '\n');
@@ -150,6 +150,7 @@ async function syncCmd() {
   if (r.upload) out('Audit upload: ' + r.upload.status + ', ' + (r.upload.uploaded || 0) + ' sent, ' + (r.upload.pending > 0 ? r.upload.pending : 0) + ' pending');
   if (r.revocations && r.revocations.pending) out('Revocation: the server has not taken the earlier leave yet (' + r.revocations.pending + ' pending); see `zn team status`.');
   else if (r.revocations && r.revocations.done) out('Revocation: the server has now been told that the earlier installation left.');
+  if (r.upload && r.upload.status === 'error' && r.upload.error) out('Nothing was uploaded: ' + r.upload.error);
   if (r.upload && r.upload.status === 'tampered') out('Nothing was uploaded: ' + r.upload.error + '. Keep a copy of the audit log, look into the change, then run `' + znCommand('vault verify --acknowledge') + '` in your own terminal.');
   // Exit 0 only with a valid policy applied and no failed upload.
   const o = syncOutcome(r);
@@ -219,32 +220,68 @@ async function runLogExport(args) {
       let unlocked = false;
       try { unlocked = await probe.isUnlocked(); } catch (e) { unlocked = false; }
       if (unlocked) {
-        r = await probe.auditExport({ since: opts.since, installId: opts.installId, orgId: opts.orgId });
+        r = await probe.auditExport({ since: opts.since, installId: opts.installId, orgId: opts.orgId, verifyOnly: true });
+        if (!r.ok && !r.tampered) {
+          // The log could not be read: a read error, not a sign that it was changed.
+          err('[zn] Not exported: ' + r.error);
+          return 1;
+        }
         if (!r.ok) {
           err('[zn] Not exported: ' + r.error + '. Keep a copy of ~/.zn/audit.jsonl as evidence, look into the change, then run `' + znCommand('vault verify --acknowledge') + '` in your own terminal.');
           return 1;
         }
       }
     } finally { probe.close(); }
-    let unverified = false;
-    if (!r) {
-      unverified = true;
-      r = exportAuditFile(opts);
+    const unverified = !r;
+    // A copy that was not verified is only made when asked for: it could be a log that was changed.
+    if (unverified && !args.includes('--unverified')) {
+      err('[zn] Not exported: the vault is locked or unreachable, so the audit log chain cannot be verified. Unlock it (`' + znCommand('unlock') + '`) and export again, or add --unverified to export a copy that is NOT verified.');
+      return 1;
     }
+    // The vault verified these exact bytes; the export read the file again. A different answer means the log changed in between.
+    const sameBytes = (res) => {
+      if (unverified || (res.fileSha256 === r.sha256 && res.fileBytes === r.bytes)) return;
+      // A vault started by an older version answers without the hash of what it checked.
+      if (r.sha256 === undefined) {
+        throw new Error('Not exported: the running vault is from an older version of zn-gate and cannot confirm which bytes it verified. Run `' + znCommand('lock') + '`, then `' + znCommand('unlock') + '`, and export again. Nothing from this run should be used.');
+      }
+      throw new Error('Not exported: the audit log changed after the vault verified it (a new record may have been written), so this copy is not the verified log. Nothing from this run should be used; run the export again.');
+    };
     const warn = () => {
       if (unverified) err('[zn] Warning: the vault is locked or unreachable, so the audit log chain was NOT verified. Unlock it (`' + znCommand('unlock') + '`) and export again for a verified copy.');
     };
     const file = flag(args, '--out');
     if (file) {
-      fs.writeFileSync(file, r.content, { mode: 0o600 });
-      err('Exported ' + r.records + ' records to ' + file + ' (OTLP/JSON Lines, sha256 ' + r.sha256 + ').');
+      // --out is never a link or a folder: a link would send the audit to whatever it points at.
+      let existing = null;
+      try { existing = fs.lstatSync(file); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+      if (existing && !existing.isFile()) {
+        err('[zn] Not exported: ' + file + ' is ' + (existing.isSymbolicLink() ? 'a symbolic link' : 'not a regular file') + '. Choose a path that is a new file or a regular file.');
+        return 1;
+      }
+      // Written piece by piece to a temporary file and moved into place when complete: a read error leaves no partial export.
+      const tmp = file + '.' + process.pid + '.tmp';
+      const fd = fs.openSync(tmp, 'wx', 0o600);
+      let res;
+      try {
+        res = exportAuditStream(opts, (s) => fs.writeSync(fd, s));
+        sameBytes(res);
+        fs.closeSync(fd);
+        fs.renameSync(tmp, file);
+      } catch (e) {
+        try { fs.closeSync(fd); } catch (e2) { /* closed */ }
+        try { fs.unlinkSync(tmp); } catch (e2) { /* gone */ }
+        throw e;
+      }
+      err('Exported ' + res.records + ' records to ' + file + ' (OTLP/JSON Lines, sha256 ' + res.sha256 + ').');
     } else {
-      process.stdout.write(r.content);
+      // Pipes and files are written synchronously by Node on POSIX, so the output is not queued in memory.
+      sameBytes(exportAuditStream(opts, (text) => { process.stdout.write(text); }));
     }
     warn();
     return 0;
   } catch (e) {
-    err('[zn] ' + (e && e.message ? e.message : e));
+    err('[zn] ' + (fsErrorText(e) || (e && e.message ? e.message : e)));
     return 1;
   }
 }
