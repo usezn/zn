@@ -23,7 +23,6 @@ use axum::{
     response::Response,
     Extension, Router,
 };
-use http_body_util::BodyExt;
 use hyper::server::conn::http1;
 use hyper_util::{
     rt::{TokioIo, TokioTimer},
@@ -225,11 +224,40 @@ async fn mark_served(tag: Option<Extension<ConnTag>>, req: Request, next: Next) 
     }
     // The guard moves into the body, so a streamed response (SSE) counts as in flight until it ends.
     let (parts, body) = response.into_parts();
-    let body = body.map_frame(move |frame| {
-        let _keep = &guard;
-        frame
-    });
-    Response::from_parts(parts, Body::new(body))
+    Response::from_parts(
+        parts,
+        Body::new(GuardedBody {
+            inner: body,
+            _guard: guard,
+        }),
+    )
+}
+
+/// A response body that holds the in-flight guard until it is dropped. It forwards the size hint, so a
+/// fixed-length response keeps its Content-Length instead of turning into a chunked one.
+struct GuardedBody {
+    inner: Body,
+    _guard: InFlight,
+}
+
+impl hyper::body::Body for GuardedBody {
+    type Data = axum::body::Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        Pin::new(&mut self.get_mut().inner).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.inner.size_hint()
+    }
 }
 
 fn timed_out(what: &str) -> io::Error {
