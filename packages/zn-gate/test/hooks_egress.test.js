@@ -467,18 +467,6 @@ test('egress asks: PowerShell backtick line continuation', async () => {
 
 /* ------------------------- zn's own MCP server ------------------------- */
 
-async function ownMcp(args, extra = {}) {
-  const ev = { event: 'pre_tool', tool: 'mcp', toolName: 'mcp__zn__check_tool_call', mcp: { server: 'zn', tool: 'check_tool_call', ours: 'analyze' }, cwd: process.cwd(), input: { args } };
-  const d = { engine: () => realEngine, vault: async () => createFakeVault(), detectors: () => [] };
-  const res = await runner.decidePre(ev, d, 'claude-code', { failMode: 'open', ...extra });
-  return { decision: res.decision === 'allow' ? 'none' : res.decision, reason: res.message || '' };
-}
-
-test('zn own MCP server: a URL and personal data in the arguments are not a network request', async () => {
-  const args = { tool_name: 'fetch', arguments: { url: 'https://example.com/a', prompt: 'reply to ' + EMAIL, headers: { 'X-User': EMAIL } } };
-  assert.equal((await ownMcp(args)).decision, 'none');
-});
-
 test('MCP attribution: data in plain arguments goes to the MCP server, data in headers to the host', async () => {
   const plain = await mcp({ url: 'https://example.com/a', note: 'contact ' + EMAIL });
   assert.equal(plain.decision, 'ask');

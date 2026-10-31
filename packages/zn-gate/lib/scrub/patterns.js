@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-30.4';
+const SCRUB_RULES_VERSION = '2026-10-31.1';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -500,8 +500,14 @@ function findQuotedKv(text, out) {
 const PATTERNS = [
   { type: 'ANTHROPIC_KEY', hints: ['sk-ant-'], re: re(NB + 'sk-ant-[a-z]{3,8}\\d{2}-[A-Za-z0-9_-]{32,200}' + NA),
     check: (v) => !maskedBody(v.replace(/^sk-ant-[a-z]+\d{2}-/, '')) },
+  /* A key with hyphens or underscores in the body (sk-test-..., sk-<name>_<id>): 40 to 200 characters. The body
+   * must look random and hold a digit, so a lower-case hyphenated slug (a blog post title) is not a key. Case does
+   * not matter: sk-or-v1- plus hex and lower-case sk-/sk-proj- keys are real secrets. */
   { type: 'OPENAI_KEY', hints: ['sk-'], re: re(NB + 'sk-(?!ant-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + NA),
-    check: (v) => looksRandom(v.replace(/^sk-(?:proj-|svcacct-|admin-|or-v1-)?/, ''), 2, 3.5) },
+    check: (v) => {
+      const body = v.replace(/^sk-(?:proj-|svcacct-|admin-|or-v1-)?/, '');
+      return looksRandom(body, 2, 3.5) && /[0-9]/.test(body);
+    } },
   /* Legacy DeepSeek-style key: `sk-` + 32 hex digits. The length and charset
    * are not stated in the provider's docs (checked 2026-10-14); the shape
    * follows rules.js secret:openai_key, which already accepts it. */
