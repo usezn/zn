@@ -148,3 +148,31 @@ test('refresh: a project-local install does not repoint launchers at another cop
   assert.equal(post(ctx2, { runnerPath: localRunner, global: false }), '');
   assert.deepEqual(fs.readFileSync(ctx2.file), b2);
 });
+
+function sudoRun(ctx, extra) {
+  let out = '';
+  let err = '';
+  refresh.main({ env: { ...ctx.env, ...(extra.env || {}) }, home: ctx.home, runnerPath: ctx.runner, out: (s) => { out += s; }, err: (s) => { err += s; }, ...(extra.uid !== undefined ? { uid: extra.uid } : {}) });
+  return { out, err };
+}
+
+test('refresh: as root through sudo with nothing refreshed, one line on stderr says to run the install as yourself', { skip: !posix }, (t) => {
+  const ctx = setup(t);
+  const empty = tempDir(t, 'zn-refresh-root-');
+  const r = sudoRun({ ...ctx, home: empty, env: { HOME: empty, ZN_HOME: path.join(empty, '.zn'), PATH: process.env.PATH } }, { uid: 0, env: { SUDO_USER: 'someone' } });
+  assert.equal(r.out, '');
+  assert.match(r.err, /^zn-gate: installed with sudo, so your hook launchers were not refreshed\. Run `zn hooks install <agent>` again as yourself \(without sudo\)/);
+  assert.equal(r.err.trim().split('\n').length, 1);
+  assert.equal(fs.existsSync(path.join(empty, '.zn')), false, 'nothing is written');
+});
+
+test('refresh: no sudo notice without root, without SUDO_USER, or when a launcher was refreshed', { skip: !posix }, (t) => {
+  const ctx = setup(t);
+  assert.equal(sudoRun(ctx, { uid: 1000, env: { SUDO_USER: 'someone' } }).err, '');
+  assert.equal(sudoRun(ctx, { uid: 0 }).err, '');
+  assert.equal(sudoRun(ctx, { uid: 0, env: { SUDO_USER: 'root' } }).err, '');
+  fs.writeFileSync(ctx.runner, REAL + '// v2\n');
+  const r = sudoRun(ctx, { uid: 0, env: { SUDO_USER: 'someone' } });
+  assert.match(r.out, /refreshed hook launchers for claude-code/);
+  assert.equal(r.err, '');
+});

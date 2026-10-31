@@ -22,12 +22,16 @@ const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
 const { tempDir } = require('./helpers/tmp');
 const { runScript } = require('./helpers/shell');
+const { WIN, shellFor, fwd } = require('./helpers/git_bash');
 
 const POSIX = process.platform !== 'win32';
+// sh and bash: the ones of Git Bash on Windows (found the way the product finds it), skipped there only when it is missing.
+const SHELLS = shellFor('sh') && shellFor('bash');
+const needSh = !SHELLS && 'needs sh and bash (Git Bash on Windows)';
 const CANARY = 'zn-canary';
 
 // Directory names a user's install path could contain.
-const NAMES = [
+const ALL_NAMES = [
   'with space',
   "it's",
   'say "hi"',
@@ -43,6 +47,8 @@ const NAMES = [
   'é 中文 😀',
   '%PATH% !x! ^&|<>',
 ];
+// A Windows file name cannot hold these (nor end in a backslash or be split by one): the rest still reach the shell literally.
+const NAMES = WIN ? ALL_NAMES.filter((n) => !/[<>:"|?*\\/\x00-\x1f]/.test(n)) : ALL_NAMES;
 
 function canRun(bin) {
   const r = spawnSync(bin, ['-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { encoding: 'utf8' });
@@ -61,7 +67,7 @@ function fakeInstall(t, name) {
   fs.writeFileSync(node, '#!/bin/sh\nfor a in "$@"; do printf \'%s\\0\' "$a"; done > "$ZN_ARGV_OUT"\nprintf \'agent=%s\\0\' "$ZN_AGENT" >> "$ZN_ARGV_OUT"\ncat > /dev/null\n', { mode: 0o755 });
   const runnerJs = path.join(dir, 'runner.js');
   fs.writeFileSync(runnerJs, '');
-  return { root, dir, node, runnerJs, out: path.join(root, 'argv.out') };
+  return { root, dir, node, runnerJs, out: fwd(path.join(root, 'argv.out')) };
 }
 
 function readArgv(out) {
@@ -178,7 +184,7 @@ test('install replaces, and uninstall removes, hooks written with double quotes 
 
 /* ------------------------ executed in a shell ------------------------ */
 
-test('hook commands run in sh and bash with every argument literal', { skip: !POSIX && 'needs sh' }, (t) => {
+test('hook commands run in sh and bash with every argument literal', { skip: needSh }, (t) => {
   for (const name of NAMES) {
     const f = fakeInstall(t, name);
     const commands = [
@@ -190,13 +196,13 @@ test('hook commands run in sh and bash with every argument literal', { skip: !PO
       // Codex runs hook commands with `$SHELL -lc`, Claude Code with `sh -c` (Git Bash on Windows).
       for (const [shell, flags] of [['sh', []], ['bash', []], ['bash', ['-l']]]) {
         const { argv } = runIn(t, shell, cmd, f, flags);
-        assert.deepEqual(argv, [f.runnerJs, id], shell + ' ' + JSON.stringify(name));
+        assert.deepEqual(argv, [fwd(f.runnerJs), id], shell + ' ' + JSON.stringify(name)); // the product writes C:/ paths on Windows
       }
     }
   }
 });
 
-test('the Monitor wrapper pipes into the scrubber with literal paths', { skip: !POSIX && 'needs bash' }, async (t) => {
+test('the Monitor wrapper pipes into the scrubber with literal paths', { skip: needSh }, async (t) => {
   for (const name of NAMES) {
     const f = fakeInstall(t, name);
     const raw = {
@@ -206,11 +212,11 @@ test('the Monitor wrapper pipes into the scrubber with literal paths', { skip: !
     const res = await runner.handle(claude, raw, { engine: fakeEngine, vault: createFakeVault(), failMode: 'closed', nodePath: f.node });
     const cmd = res.output.hookSpecificOutput.updatedInput.command;
     const { argv } = runIn(t, 'bash', cmd, f);
-    assert.deepEqual(argv, [path.resolve(__dirname, '..', 'lib', 'scrub', 'stream.js')], JSON.stringify(name));
+    assert.deepEqual(argv, [fwd(path.resolve(__dirname, '..', 'lib', 'scrub', 'stream.js'))], JSON.stringify(name));
   }
 });
 
-test('the Windows hook command reaches powershell.exe intact through sh and bash', { skip: !POSIX && 'needs sh' }, (t) => {
+test('the Windows hook command reaches powershell.exe intact through sh and bash', { skip: needSh }, (t) => {
   // A fake powershell.exe on PATH records the arguments it gets.
   const names = NAMES.filter((n) => !n.includes('\\'));
   for (const name of names) {
@@ -230,7 +236,7 @@ test('the Windows hook command reaches powershell.exe intact through sh and bash
       assert.deepEqual(argv.slice(0, 2), ['-NoProfile', '-NonInteractive']);
       const script = argv[2] === '-Command' ? argv[3] : Buffer.from(argv[3], 'base64').toString('utf16le');
       assert.equal(script, sq.windowsCommandScript(cmd), JSON.stringify(name));
-      assert.equal(script, '& ' + sq.powershellQuote(f.node) + ' ' + sq.powershellQuote(f.runnerJs) + ' codex');
+      assert.equal(script, '& ' + sq.powershellQuote(fwd(f.node)) + ' ' + sq.powershellQuote(fwd(f.runnerJs)) + ' codex');
     }
   }
 });

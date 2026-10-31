@@ -231,6 +231,8 @@ async function writeEncrypted(file, data, recipient) {
 /* Housekeeping                                                        */
 /* ------------------------------------------------------------------ */
 
+const MAX_PLAUSIBLE_GAP_DAYS = 400;
+
 /** Delete project token maps unused for `days` (default 30). Returns count. */
 function pruneStale(opts) {
   const days = (opts && opts.days) || STALE_DAYS;
@@ -238,12 +240,28 @@ function pruneStale(opts) {
   let removed = 0;
   let names = [];
   try { names = fs.readdirSync(dir); } catch (err) { return 0; }
-  const limit = Date.now() - days * 86400000;
+  const now = Date.now();
+  const limit = now - days * 86400000;
+  const maps = [];
+  let newest = -Infinity;
   for (const n of names) {
     if (!PROJECT_FILE_RE.test(n)) continue;
     const f = path.join(dir, n);
     try {
-      if (fs.statSync(f).mtimeMs < limit) { fs.unlinkSync(f); removed++; }
+      const m = fs.statSync(f).mtimeMs;
+      maps.push([f, m]);
+      if (m > newest) newest = m;
+    } catch (err) { /* ignore */ }
+  }
+  // A wrong clock must never delete token maps (there is no way back): skip when the newest map is dated
+  // in the future, or when now is implausibly far ahead of it.
+  if (maps.length && (newest > now + 86400000 || now - newest > MAX_PLAUSIBLE_GAP_DAYS * 86400000)) {
+    process.stderr.write('zn-gate: vault prune skipped, the system clock looks wrong\n');
+    return 0;
+  }
+  for (const [f, m] of maps) {
+    try {
+      if (m < limit) { fs.unlinkSync(f); removed++; }
     } catch (err) { /* ignore */ }
   }
   return removed;

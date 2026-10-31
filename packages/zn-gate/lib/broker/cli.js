@@ -500,7 +500,15 @@ function hooksUsage() {
   return 'usage: zn hooks install|uninstall ' + require('../agents').listAdapters().join('|') + ' [--project] [--no-mcp]';
 }
 
+const HOOKS_OPTIONS = ['--project', '--no-mcp'];
+
 async function hooks(args, io) {
+  // Checked before parseFlags, which would read an unknown option as one that needs a value.
+  for (const a of args) {
+    if (a.startsWith('-') && !HOOKS_OPTIONS.includes(a.split('=')[0])) {
+      throw deps.znError('ZN_USAGE', 'unknown option "' + a.slice(0, 40) + '". The options of zn hooks are ' + HOOKS_OPTIONS.join(' and ') + '.');
+    }
+  }
   const { flags, positional } = parseFlags(args, { bool: ['project', 'no-mcp'] });
   const [action, agentId] = positional;
   if (!['install', 'uninstall'].includes(action) || !agentId) {
@@ -512,6 +520,16 @@ async function hooks(args, io) {
   needHuman(io, 'zn hooks ' + action);
   const adapter = require('../agents').getAdapter(agentId);
   const opts = { scope: flags.project ? 'project' : 'user', projectDir: io.cwd, home: io.home, env: io.env, mcp: !flags['no-mcp'], selfCheck: true };
+  if (action === 'install' && typeof adapter.settingsFile === 'function') {
+    // A settings file that is a link to nothing would be replaced by a plain file, and the person would lose the link.
+    const file = adapter.settingsFile(opts);
+    let broken = false;
+    try { broken = require('fs').lstatSync(file).isSymbolicLink() && !require('fs').existsSync(file); } catch (_) { broken = false; }
+    if (broken) {
+      throw deps.znError('ZN_USAGE', file + ' is a link to a file that does not exist, so zn did not change anything. ' +
+        'Remove the link or point it to a real file, then run `' + require('../zn-command').znCommand('hooks install ' + agentId) + '` again.');
+    }
+  }
   const report = action === 'install' ? adapter.install(opts) : adapter.uninstall(opts);
   out(io, (action === 'install' ? 'Installed' : 'Removed') + ' zn hooks for ' + adapter.id + ' in ' + report.settings);
   if (report.backup) out(io, '  backup: ' + report.backup);

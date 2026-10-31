@@ -11,7 +11,7 @@ const { LAYERS, SNAPSHOT_FILE, computeLayer, compareLayer, compareVersions, read
 const snapshot = readSnapshot();
 
 test('the rules snapshot is committed', () => {
-  assert.ok(snapshot, `missing ${SNAPSHOT_FILE}: run node scripts/update-rules-snapshot.js`);
+  assert.ok(snapshot, `missing ${SNAPSHOT_FILE}: run node packages/zn-gate/scripts/update-rules-snapshot.js from the repository root`);
 });
 
 for (const name of Object.keys(LAYERS)) {

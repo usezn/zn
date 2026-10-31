@@ -1,0 +1,13 @@
+{
+ "rc": 0,
+ "dur_s": 4.5,
+ "requests": 2,
+ "tool_msgs": [
+  "[default]\naws_access_key_id = AKIAIOSFODNN7EXAMPLE\naws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+ ],
+ "proj_files": [
+  ".env",
+  "a.txt"
+ ],
+ "outcomes": []
+}
