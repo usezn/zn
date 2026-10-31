@@ -69,6 +69,7 @@ const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
 const launcher = require('./launcher');
+const { shQuote } = require('../shell-quote');
 
 const id = 'copilot';
 const FILE_NAME = 'zn-gate.json';
@@ -130,7 +131,7 @@ function commandScan(args) {
     const extra = !Array.isArray(obj) && Array.isArray(obj.args) ? obj.args.filter((x) => typeof x === 'string') : [];
     for (const [k, v] of entries) {
       if (k !== null && COMMAND_KEYS.includes(k)) {
-        if (typeof v === 'string') { if (v) commands.push([v, ...extra].join(' ')); } else if (Array.isArray(v) && v.length && v.every((x) => typeof x === 'string')) commands.push(v.join(' '));
+        if (typeof v === 'string') { if (v) commands.push([v, ...extra.map((x) => shQuote(x))].join(' ')); } else if (Array.isArray(v) && v.length && v.every((x) => typeof x === 'string')) commands.push(v.join(' '));
         else if (v !== undefined && v !== null) bad = true;
         continue;
       }

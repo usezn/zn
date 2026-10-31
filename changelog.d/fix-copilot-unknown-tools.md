@@ -1,0 +1,2 @@
+### Security
+- GitHub Copilot in VS Code: tool calls zn did not recognize no longer pass unchecked. Any tool that names a file or folder gets the same read and write checks as the built-in tools, a file written with `apply_patch` is checked like any other write (including `.github/hooks` and `.claude/settings.json`), and a command sent as `task.command` with its `task.args` (for example `create_and_run_task`) is checked as a shell command, with each argument quoted the way VS Code runs it, so `bash -c 'rm -rf ~'` is judged as written.
