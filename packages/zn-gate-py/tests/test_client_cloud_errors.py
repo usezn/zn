@@ -77,6 +77,14 @@ class TestCloudErrors(unittest.TestCase):
     def test_http_500(self):
         self._assert_fallback(self._run(self._raising(_http_error(500, "Server Error"))), "500")
 
+    def test_http_error_response_is_closed(self):
+        # The error carries the open response; leaving it to the GC keeps the socket open
+        # and Python 3.14 warns "Implicitly cleaning up HTTPError".
+        body = io.BytesIO(b"{}")
+        err = urllib.error.HTTPError(ENDPOINT, 503, "unavailable", {}, body)
+        self._assert_fallback(self._run(self._raising(err)), "503")
+        self.assertTrue(body.closed)
+
     def test_body_not_json(self):
         res = self._run(lambda r, timeout=None: _Resp(b"<html>not json</html>"))
         self._assert_fallback(res)

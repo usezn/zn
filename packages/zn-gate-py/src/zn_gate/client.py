@@ -163,6 +163,9 @@ def analyze(
                                     % (li.get("reason") or "no windows"))
         return cloud_res
     except Exception as exc:
+        if isinstance(exc, urllib.error.HTTPError):
+            # An HTTP error carries the open response: close it now instead of leaving the socket to the GC.
+            exc.close()
         if is_verbose():
             import sys
             sys.stderr.write(f"[zn-gate] Warning: Cloud gate error ({exc}). {cloud_error_hint(exc)} "
