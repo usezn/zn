@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.6';
+const POLICY_RULES_VERSION = '2026-10-31.7';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1413,7 +1413,8 @@ function markCurlWords(readings) {
         for (let m = prog.at + 1; m < group.length; m++) {
           group[m].curl = true;
           if (group[m - 1] && CURL_NAME_AT_FILE_OPTS.has(group[m - 1].text)) group[m].urlencode = true;
-          if (group[m - 1] && (group[m - 1].text === '-T' || group[m - 1].text === '--upload-file')) group[m].upload = true;
+          // -T, a short-option cluster that ends in T (-sT, -vsT) or --upload-file: the next word is the file to upload.
+          if (group[m - 1] && (/^-[A-Za-z]*T$/.test(group[m - 1].text) || group[m - 1].text === '--upload-file')) group[m].upload = true;
         }
       }
       i = j;
@@ -1486,19 +1487,45 @@ const GLOB_TOO_LARGE_MESSAGE = 'zn: this command uploads files named by a patter
 
 /* The names a {..} glob stands for, as curl -T and the shell read it: every {a,b} or {x} group is replaced by each of
    its items, left to right (nested groups are read flat). null when there would be more than BRACE_EXPANSION_CAP
-   names: the caller then refuses the command (fail closed). A word without { is returned as it is. */
+   names or more than BRACE_GROUP_CAP groups: the caller then refuses an upload (fail closed). A word without { is
+   returned as it is. Iterative, so a word with thousands of groups costs no stack. */
+const BRACE_GROUP_CAP = 256;
 function braceNames(text) {
-  const t = String(text);
-  const open = t.indexOf('{');
-  if (open < 0) return [t];
-  const close = t.indexOf('}', open + 1);
-  if (close < 0) return [t];
-  const head = t.slice(0, open);
-  const items = t.slice(open + 1, close).replace(/\{/g, '').split(',');
-  const tails = braceNames(t.slice(close + 1));
-  if (tails === null || items.length * tails.length > BRACE_EXPANSION_CAP) return null;
+  let out = [''];
+  let rest = String(text);
+  for (let groups = 0; ; groups++) {
+    const open = rest.indexOf('{');
+    const close = open < 0 ? -1 : rest.indexOf('}', open + 1);
+    if (open < 0 || close < 0) return out.map((o) => o + rest);
+    if (groups >= BRACE_GROUP_CAP) return null;
+    const head = rest.slice(0, open);
+    const items = rest.slice(open + 1, close).replace(/\{/g, '').split(',');
+    if (out.length * items.length > BRACE_EXPANSION_CAP) return null;
+    const next = [];
+    for (const o of out) for (const item of items) next.push(o + head + item);
+    out = next;
+    rest = rest.slice(close + 1);
+  }
+}
+
+/* Upload lines in a word with spaces, as in a curl configuration fed with -K - (printf 'upload-file .env' | curl -K -):
+   upload-file, --upload-file or -T, with the value after a space, = or :, or glued (-T.env, upload-file=".env"). */
+function uploadNamesOf(text) {
+  const pieces = String(text).trim().split(/\s+/);
   const out = [];
-  for (const item of items) for (const tail of tails) out.push(head + item + tail);
+  const clean = (v) => String(v).replace(/^["']+/, '').replace(/(?:\\[nrt])+$/, '').replace(/["']+$/, '');
+  for (let i = 0; i < pieces.length; i++) {
+    const m = /^["']?(?:--upload-file|upload-file|-T)(?:[=:])?(.*)$/.exec(pieces[i]);
+    if (!m) continue;
+    let v = m[1];
+    let k = i + 1;
+    if (!v) {
+      v = pieces[k] || '';
+      if (v === '=' || v === ':') v = pieces[++k] || '';
+    }
+    v = clean(v);
+    if (v && v !== '-') out.push(v);
+  }
   return out;
 }
 
@@ -1524,6 +1551,9 @@ function atFileWords(words) {
   };
   for (const w of words) {
     const text = String(w.text);
+    // A word with spaces (a curl configuration fed on stdin: upload-file .env, -T .env) or an upload-file= line holds
+    // upload names: each one is read through its {..} glob, failing closed past the cap.
+    if (/\s/.test(text.trim()) || /^["']?(?:--)?upload-file[=:]/.test(text)) add(w, uploadNamesOf(text), true);
     if (text.startsWith('--')) {
       const eq = text.indexOf('=');
       if (eq > 0) {
