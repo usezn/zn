@@ -1,0 +1,7 @@
+$ C:/ZCodeApp/ZCode.exe C:\ZCodeApp\resources\glm\zcode.cjs plugins install zn-gate@usezn
+rc=0
+--stdout--
+Installed plugin zn-gate@usezn (1.14.1) [enabled]
+
+--stderr--
+

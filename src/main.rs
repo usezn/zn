@@ -20,7 +20,7 @@ use opentelemetry_sdk::{trace::SdkTracerProvider, Resource};
 use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::io::{self, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{self, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::broadcast;
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_governor::GovernorLayer;
@@ -560,6 +560,7 @@ async fn start_proxy(args: Args) -> Result<()> {
     tokio::spawn(async move {
         let allowed_origins = api_state.config.security.allowed_origins.clone();
         let cors = build_cors_layer(&allowed_origins);
+        let serve_limits = zn::http_limits::ServeLimits::from_server(&api_state.config.server);
 
         let governor_layer = GovernorLayer::new(std::sync::Arc::new(governor_conf));
 
@@ -611,14 +612,9 @@ async fn start_proxy(args: Args) -> Result<()> {
         match tokio::net::TcpListener::bind(&addr).await {
             Ok(listener) => {
                 log::info(format!("🛰️ Management API listening on {}", addr)).ok();
-                if let Err(e) = axum::serve(
-                    listener,
-                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-                )
-                .await
-                {
-                    tracing::error!("Management API server error: {}", e);
-                }
+                // Header and body timeouts, a connection cap that keeps room for served clients, and a
+                // write timeout and idle time for streams (axum::serve has none of these).
+                zn::http_limits::serve_limited(listener, app, serve_limits).await;
             }
             Err(e) => {
                 tracing::error!("Failed to bind Management API to {}: {}", addr, e);
@@ -635,10 +631,26 @@ async fn start_proxy(args: Args) -> Result<()> {
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
-    let mut reader = BufReader::new(stdin).lines();
+    let mut reader = BufReader::new(stdin);
 
-    while let Some(line) = reader.next_line().await? {
-        if let Ok(Some(response)) = process_mcp_message(&line, &state, None).await {
+    // A line is read with a size limit: one without a newline cannot make the gateway buffer forever.
+    loop {
+        let response = match zn::bounded_line::read_line_bounded(
+            &mut reader,
+            zn::bounded_line::MAX_STDIN_LINE_BYTES,
+        )
+        .await?
+        {
+            zn::bounded_line::BoundedLine::Eof => break,
+            zn::bounded_line::BoundedLine::TooLong => Some(
+                r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Request too large"}}"#
+                    .to_string(),
+            ),
+            zn::bounded_line::BoundedLine::Line(line) => {
+                process_mcp_message(&line, &state, None).await.ok().flatten()
+            }
+        };
+        if let Some(response) = response {
             stdout.write_all(response.as_bytes()).await?;
             stdout.write_all(b"\n").await?;
             stdout.flush().await?;

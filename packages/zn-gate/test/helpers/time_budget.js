@@ -31,4 +31,21 @@ function budget(limitMs) {
   return Math.round(limitMs * scale());
 }
 
-module.exports = { budget, scale, spin };
+// Time a check hook gets to start on a slow Windows runner (the same hook took 3-8 s on Linux and 16-27 s on windows-latest, over the 15 s default); undefined elsewhere, so the product default applies.
+const hookTimeoutMs = () => (process.platform === 'win32' ? 60000 : undefined);
+
+// CPU time of this process (user + system), for the tests that bound a linear-time check. Wall time also
+// counts the moments a busy shared runner does not run the process at all, which no code change causes;
+// CPU time leaves them out, and a check that became quadratic still burns the CPU, so the limit still
+// fails it. It does not count child processes, so a test that waits for one keeps wall time.
+function cpuNow() {
+  return process.cpuUsage();
+}
+
+// Milliseconds of CPU time since the value cpuNow() returned.
+function cpuMsSince(start) {
+  const c = process.cpuUsage(start);
+  return (c.user + c.system) / 1000;
+}
+
+module.exports = { budget, scale, spin, hookTimeoutMs, cpuNow, cpuMsSince };

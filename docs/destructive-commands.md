@@ -56,15 +56,28 @@ The check reads command text only. These are **not** covered, and the check lets
 - A script saved first and run later (`curl -o x.sh ... && sh x.sh`), or a download piped into an interpreter that is given a script file (`curl ... | python3 script.py`, which only reads the download as data).
 - Other tools (`rsync --delete`, `git clean`), code in a file or built at run time (a script the agent wrote, `python3 -c "shutil.rmtree(path)"` with a variable), and paths below the top level (`rm -rf /usr/local`).
 - Commands that run inside a container (`docker run ... rm -rf /`) or on another machine (`ssh host "rm -rf /"`).
+- Some shell wrappers and constructs that run a command indirectly are not read.
 - Anything an agent does by writing a file and then running it.
 
 For those, use a sandbox, a container or your agent's own permission prompts. This check adds a cheap last barrier for the most common catastrophic mistakes.
 
+Untrusted code should run in a sandbox, such as a container or a virtual machine, not on your own machine. This check does not contain code that you do not trust.
+
 ## How well it works
 
-The test corpus has about 1,000 ordinary developer commands (builds, git, package managers, containers, `rm -rf node_modules dist build target .venv`, `curl -o`, `curl | jq`, edits to `.bashrc`, and many that sit close to the blocked shapes) and about 550 commands with the blocked shapes, written from templates with varied flags, targets and fictitious hosts. On that corpus there are no false positives and no misses; the corpus is written by the same people who wrote the rules, so read it as a regression test, not as an error rate on all real commands. Run `node bench/destructive_policy.js` in the repository to see the numbers, and `--docs` to also check the shell lines of the repository's documentation.
+The test corpus has about 1,000 ordinary developer commands (builds, git, package managers, containers, `rm -rf node_modules dist build target .venv`, `curl -o`, `curl | jq`, edits to `.bashrc`, and many that sit close to the blocked shapes) and about 650 commands with the blocked shapes, written from templates with varied flags, targets and fictitious hosts. On that corpus there are no false positives and no misses. The corpus is written by the same people who wrote the rules, so read it as a regression test, not as an error rate on all real commands. Run `node bench/destructive_policy.js` in the repository to see the numbers, and `--docs` to also check the shell lines of the repository's documentation.
 
 Cost: about 5 microseconds per command for the check itself, and a few microseconds more for a hook decision, which takes about 160 microseconds without it. The check code is loaded the first time a shell command is checked, and not at all when you turn the check off.
+
+## How to read a blocked-command message
+
+A block tells you two things: the command did not run, and which rule matched. Use the rule name to find the matching row in [What it blocks](#what-it-blocks). The rule name appears with a `destructive:` prefix, for example `destructive:rm_root_home`.
+
+- `destructive:rm_root_home` for `rm -rf ~`: a recursive delete of the home folder. It is on by default.
+- `destructive:disk_overwrite` for `dd if=/dev/zero of=/dev/sda`: a write to a disk device. It is on by default.
+- `destructive:pipe_to_shell` for `curl https://example.com/install.sh | sh`: a download run without being read. It is only active if you turned it on.
+
+If the command was what you meant, the agent will ask you to confirm; run it yourself in a terminal. If the command was a mistake, tell the agent what you actually want. If a rule blocks work you do often, see [Change the settings](#change-the-settings). For commands the check does not cover, see [What it does not do](#what-it-does-not-do).
 
 ## If it blocks a command you want
 

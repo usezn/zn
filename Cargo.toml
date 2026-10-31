@@ -22,7 +22,10 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 axum = { version = "0.8", features = ["macros", "ws", "multipart"] }
-tower-http = { version = "0.5", features = ["cors", "auth", "fs"] }
+tower-http = { version = "0.5", features = ["cors", "auth", "fs", "timeout"] }
+# Already in the tree through axum; named here to run the management API with read timeouts.
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "service"] }
 wasmtime = { version = "48", default-features = false, features = ["anyhow", "async", "backtrace", "gc", "gc-copying", "gc-drc", "gc-null", "wat", "profiling", "parallel-compilation", "cranelift", "pooling-allocator", "demangle", "addr2line", "coredump", "debug-builtins", "runtime", "component-model", "component-model-async", "threads", "stack-switching", "std", "debug", "compile-time-builtins", "wit-parser"] }
 rusqlite = { version = "0.40", default-features = false, features = ["bundled", "cache", "fallible_uint"] }
 ratatui = "0.30"
@@ -79,6 +82,10 @@ libc = "0.2.189"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+
+[dev-dependencies]
+# Property tests for the scrubber (tests/scrubber_properties.rs). Test-only: the shipped binary does not depend on it.
+proptest = { version = "1", default-features = false, features = ["std"] }
 
 [package.metadata.cargo-machete]
 # schemars is used through the rmcp::schemars derive, which expands to schemars:: paths,
