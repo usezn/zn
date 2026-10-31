@@ -74,8 +74,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.x
-          cache: npm
-          cache-dependency-path: packages/zn-gate/package-lock.json
+          # No npm cache: this workflow runs on release branches, and a cache restored there could be poisoned by an
+          # earlier run (zizmor cache-poisoning). The install is small.
+          package-manager-cache: false
       - name: Install zn-gate dependencies
         working-directory: packages/zn-gate
         run: npm ci --ignore-scripts
