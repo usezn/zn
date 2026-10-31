@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-10-30.6",
+      "version": "2026-10-31.1",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -47,7 +47,7 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "bafc7b37ffa0f3ea4d5352e646b0057b8f7388a4e2a03a923e82851ca5862414",
+        "lib/rules.js": "506365876370a0a5dc67f06c79a31d30026f2bbd5190fe660274e43677b12d96",
         "lib/mcp-secrets.js": "1a051cdb7ac9cd04b46494a2efe0aa90ab136a5e866d2dbf42d4431888ab7487"
       }
     },
@@ -156,7 +156,7 @@
     },
     "audit": {
       "version_const": "AUDIT_RULES_VERSION",
-      "version": "2026-10-23.8",
+      "version": "2026-10-30.1",
       "ids": [
         "ZNA001",
         "ZNA002",
@@ -205,7 +205,7 @@
         "patterns.weakening"
       ],
       "sha256": {
-        "lib/audit/rules.js": "ee8511cce1dd36c7e80a00d640764c96aafb97a77fb530c3c18a15549c137145",
+        "lib/audit/rules.js": "0b4f5e96a50f2122adcaa4bcdea3ed1f540686b5fde641f7815881a624d0dcc3",
         "lib/audit/patterns.js": "e758c777211da759a6973260363f3ddac41a37156171886bed624d97f18cdf46"
       }
     },

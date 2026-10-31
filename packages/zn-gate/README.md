@@ -8,11 +8,11 @@
 [![npm version](https://img.shields.io/npm/v/zn-gate?color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/zn-gate)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/usezn/zn/blob/main/LICENSE)
 
-**The local security layer for coding agents.** zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app.
+**The local security layer for coding agents.** zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app (plus Gemini CLI and Copilot CLI, both experimental).
 
 `zn-gate` is an open-source security layer that runs on your machine, between your agent and the tools and content it touches. It checks what the agent reads and calls for prompt injection, redacts secrets from tool output before the model sees it, and audits prompts, skills and configs. No account, no network by default, and no runtime dependencies except `age-encryption` (and its `@noble`/`@scure` dependencies) for the secret vault, bundled in the package at the versions pinned in `package-lock.json`.
 
-**For:** developers using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or any MCP client. Python SDK: [`zn-gate` on PyPI](https://pypi.org/project/zn-gate/).
+**For:** developers using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, Gemini CLI (experimental), Copilot CLI (experimental) or any MCP client. Python SDK: [`zn-gate` on PyPI](https://pypi.org/project/zn-gate/).
 
 ---
 
@@ -37,7 +37,7 @@ npx -y zn-gate init
 
 `init` does this:
 
-- It finds Claude Code, Codex CLI, Cursor, OpenCode, Antigravity and ZCode desktop app on your machine.
+- It finds the eight coding agents it supports on your machine: Claude Code, Codex CLI, Cursor, OpenCode, Antigravity and ZCode desktop app, plus Gemini CLI and Copilot CLI (both experimental).
 - For each one that is not protected yet, it shows the setup: the zn-gate plugin for Claude Code (or zn's hooks when your Node.js is older than 20.19), and zn's hooks for the others.
 - It runs each step only after you confirm it.
 - It ends with `zn-gate check`.

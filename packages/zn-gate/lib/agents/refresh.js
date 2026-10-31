@@ -84,7 +84,7 @@ function refreshLaunchers(opts = {}) {
       if (!same && !(gone && isGlobal)) continue;
       const useNode = isExecutableFile(n[1]) ? n[1] : node;
       const kept = launcherOptions(text);
-      const next = launcher.unixScript(id, portablePath(useNode, platform), portablePath(runner, platform), kept);
+      const next = launcher.unixScript(id, portablePath(useNode, platform), portablePath(runner, platform), { ...kept, platform });
       if (next === text) continue;
       launcher.writeLauncher(id, useNode, runner, { env, home: opts.home, platform, ...kept });
       done.push(id);

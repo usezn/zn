@@ -1,0 +1,7 @@
+$ C:/ZCodeApp/ZCode.exe C:\ZCodeApp\resources\glm\zcode.cjs plugins enable zn-gate@usezn
+rc=0
+--stdout--
+Enabled plugin zn-gate@usezn in C:\work\home\.zcode\cli\config.json
+
+--stderr--
+
