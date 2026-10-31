@@ -104,6 +104,17 @@ function longInputMode(options = {}) {
   return ['off', 'none', 'truncate', '0', 'false', 'no'].includes(v) ? 'off' : 'windows';
 }
 
+// One plain sentence on what a failed cloud call means and what to do (same wording as zn-gate-py).
+function cloudErrorHint(err) {
+  if (err && err.httpStatus) {
+    if (err.httpStatus === 401 || err.httpStatus === 403) return 'The cloud service did not accept the API key: check ZN_API_KEY.';
+    return `The cloud service answered with an error (HTTP ${err.httpStatus}): try again later.`;
+  }
+  if (err && err.code === 'ETIMEDOUT') return 'The cloud service took too long to answer: check your network connection.';
+  if (err && typeof err.code === 'string') return 'The cloud service could not be reached: check your network connection and ZN_API_URL.';
+  return 'The cloud check failed.';
+}
+
 function analyzeCloud(input, apiKey, endpointUrl, timeoutMs = 4000, extra = {}) {
   return new Promise((resolve, reject) => {
     const url = new URL(endpointUrl);
@@ -138,7 +149,9 @@ function analyzeCloud(input, apiKey, endpointUrl, timeoutMs = 4000, extra = {}) 
               reject(new Error(`Failed to parse gateway response: ${err.message}`));
             }
           } else {
-            reject(new Error(`Gateway responded with HTTP ${res.statusCode}: ${body.slice(0, 120)}`));
+            const err = new Error(`Gateway responded with HTTP ${res.statusCode}: ${body.slice(0, 120)}`);
+            err.httpStatus = res.statusCode;
+            reject(err);
           }
         });
       }
@@ -146,7 +159,9 @@ function analyzeCloud(input, apiKey, endpointUrl, timeoutMs = 4000, extra = {}) 
 
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error('Gateway request timed out'));
+      const err = new Error('Gateway request timed out');
+      err.code = 'ETIMEDOUT';
+      reject(err);
     });
 
     req.on('error', (err) => reject(err));
@@ -229,7 +244,7 @@ async function analyze(input, options = {}) {
     return out;
   } catch (err) {
     if (isVerbose()) {
-      process.stderr.write(`[zn-gate] Warning: Cloud gate error (${err.message}). Using local rules result.\n`);
+      process.stderr.write(`[zn-gate] Warning: Cloud gate error (${err.message}). ${cloudErrorHint(err)} The local rules were used instead, so the text was checked on this machine only.\n`);
     }
     return {
       ...local,

@@ -2,6 +2,13 @@
 
 An index of the guides in this folder. The main [README](../README.md) is the best place to start.
 
+## Where to start
+
+- **New user:** read [First 5 minutes](first-5-minutes.md), then run [Check that it works](check.md). If a word is unfamiliar, see the [Glossary](glossary.md).
+- **Team lead:** read [zn Team](team.md) for organization policy and audit upload, and the [Team quick guide](team-quick-guide.md). Add the [GitHub Action](github-action.md) to review agent configs on pull requests.
+- **Editor user:** pick your editor in [Editors and coding agents](editors/README.md), or follow the steps for your agent in [Install, verify and uninstall by agent](by-agent.md). [Agent compatibility](compat.md) shows what the scrubber does in each one.
+- **Automation:** see the [Command line reference](cli.md) for commands, options and exit codes, the [GitHub Action](github-action.md) for CI, and the [API reference](api-reference.md) for the Node.js and Python functions.
+
 ## Getting started
 
 | Guide | What it covers | For whom |

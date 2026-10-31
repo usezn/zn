@@ -12,6 +12,7 @@ const detectors = require('../lib/team/detectors');
 const engine = require('../lib/scrub/engine');
 const policy = require('../lib/team/policy');
 const { detectorsOf } = require('../lib/team/effective');
+const { budget } = require('./helpers/time_budget');
 
 const ACME = 'ACME-' + 'K7Q2ZP4M9XW3LB8RT5VN6YC1';
 
@@ -67,7 +68,7 @@ test('patterns that could run for a long time never get to run', () => {
   const text = ('a'.repeat(4000) + '\n').repeat(10);
   const t0 = Date.now();
   detectors.find(text, c);
-  assert.ok(Date.now() - t0 < 1000, 'took ' + (Date.now() - t0) + ' ms');
+  assert.ok(Date.now() - t0 < budget(1000), 'took ' + (Date.now() - t0) + ' ms');
 });
 
 test('all custom detectors together stop after their time budget for one call', () => {

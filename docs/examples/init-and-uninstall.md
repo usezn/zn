@@ -8,7 +8,7 @@ A short walk-through of `init` and `uninstall`, including a dry run of each. Eve
 npx -y zn-gate init
 ```
 
-`init` finds the coding agents on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, Copilot CLI (experimental), Gemini CLI, ZCode), shows what is missing, and asks before each step. Exit code `0` means it is done, or every agent found is already protected. `1` means no supported agent was found, or the steps were only printed.
+`init` finds the coding agents on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, and the experimental Gemini CLI and Copilot CLI), shows what is missing, and asks before each step. Exit code `0` means it is done, or every agent found is already protected. `1` means no supported agent was found, or the steps were only printed.
 
 ## 2. Preview wrapping MCP servers
 
