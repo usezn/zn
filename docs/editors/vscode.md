@@ -62,6 +62,8 @@ All read 2026-10-30; VS Code's hooks are in Preview and may change.
 - "Command-hook output is ignored for `userPromptSubmitted`" (section "Events and payloads"): a hook cannot block a typed prompt.
 - The Copilot harness also reads the repository's `.claude/settings.json` and `.claude/settings.local.json` with no setting needed, and "Applicable hooks from multiple sources run together" (section "Choose a hook source"); GitHub's reference says "Cross-tool `.claude/settings.json` and `.claude/settings.local.json` files in the repository are also read" (<https://docs.github.com/en/copilot/reference/hooks-reference>). The setting `chat.useClaudeHooks` ("Claude settings files require `chat.useClaudeHooks`") is described in the section on the older **Local** harness, which zn does not document. See the next section.
 
+The hooks above are for the **Copilot** session target. With **Local** selected, VS Code uses its own harness, which "always sends the payloads documented here, even when the file uses Copilot or Claude format" (<https://code.visualstudio.com/docs/agents/reference/hooks-reference>, read 2026-10-31): snake_case fields, a `tool_response` field after a tool ran, tool names the page does not list, and no field that rewrites a tool result. So in the Local harness zn-gate can still deny a call before it runs, but it cannot replace secret values in a tool result. The tool names and argument names that Local sends have not been captured yet.
+
 zn-gate has not run inside the VS Code app: the sections above are what the documentation promises, not something we saw happen in VS Code.
 
 ### If zn-gate also protects Claude Code in the same project

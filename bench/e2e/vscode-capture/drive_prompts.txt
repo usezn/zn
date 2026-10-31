@@ -1,0 +1,7 @@
+Run the shell command: echo capture-shell
+Read the file README.md and tell me its first line.
+Create a file notes/capture.txt containing the text hello.
+Edit notes/capture.txt and replace hello with goodbye.
+Search the workspace for the word capture.
+List the files named *.md in the workspace.
+Use the echo MCP server tool to echo the text capture-mcp.

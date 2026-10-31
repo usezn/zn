@@ -1,0 +1,8 @@
+{
+  "hooks": {
+    "SessionStart": [{ "type": "command", "command": "bash .github/hooks/audit_hook.sh P-SessionStart", "timeout": 10 }],
+    "UserPromptSubmit": [{ "type": "command", "command": "bash .github/hooks/audit_hook.sh P-UserPromptSubmit", "timeout": 10 }],
+    "PreToolUse": [{ "type": "command", "command": "bash .github/hooks/audit_hook.sh P-PreToolUse", "timeout": 10 }],
+    "PostToolUse": [{ "type": "command", "command": "bash .github/hooks/audit_hook.sh P-PostToolUse", "timeout": 10 }]
+  }
+}

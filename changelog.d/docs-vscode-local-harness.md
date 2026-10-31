@@ -1,0 +1,2 @@
+### Changed
+- The VS Code page now says what changes when the **Local** session target is selected instead of **Copilot**: VS Code's own Local harness sends its documented payload (including `tool_response`) and has no field to rewrite a tool result, so zn-gate can still deny a call there but cannot replace secret values in a result. The tool names that Local sends are not documented and have not been captured yet.

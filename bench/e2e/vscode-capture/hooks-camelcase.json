@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [{ "type": "command", "bash": "bash .github/hooks/audit_hook.sh sessionStart", "timeoutSec": 10 }],
+    "userPromptSubmitted": [{ "type": "command", "bash": "bash .github/hooks/audit_hook.sh userPromptSubmitted", "timeoutSec": 10 }],
+    "preToolUse": [{ "type": "command", "bash": "bash .github/hooks/audit_hook.sh preToolUse", "timeoutSec": 10 }],
+    "postToolUse": [{ "type": "command", "bash": "bash .github/hooks/audit_hook.sh postToolUse", "timeoutSec": 10 }]
+  }
+}

@@ -361,3 +361,14 @@ test('the install report states the documented Copilot limits (prompt hook ignor
   }
   assert.equal(data.hooks.userPromptSubmitted, undefined, 'zn installs no prompt hook: its output is dropped');
 });
+
+// Doc-derived, not captured: VS Code's Local harness (https://code.visualstudio.com/docs/agents/reference/hooks-reference,
+// read 2026-10-31) sends PostToolUse with tool_response (a string or an object) and documents no field that rewrites a
+// tool result, so a result there is never rewritten, even when the hook file uses the Copilot spelling.
+test('Local harness PostToolUse (tool_response): read as a post event, nothing is rewritten', () => {
+  const raw = { hook_event_name: 'PostToolUse', session_id: 's1', cwd: '/work/proj', tool_name: 'localTool', tool_use_id: 't1', tool_input: { command: 'env' }, tool_response: 'K=' + FAKE_AWS };
+  const d = cop.normalize(raw);
+  assert.equal(d.event, 'post_tool');
+  assert.equal(d.output, undefined, 'tool_response is not a documented Copilot result field: zn does not claim to rewrite it');
+  assert.equal(cop.respond({ event: d, decision: 'allow', updatedOutput: undefined }), null);
+});
