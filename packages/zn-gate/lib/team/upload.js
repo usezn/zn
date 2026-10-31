@@ -143,7 +143,8 @@ function acquireLock(lockFile, nowMs) {
         if (e.code === 'ENOENT') continue;
         throw e;
       }
-      if (age < LOCK_TTL_MS) return null;
+      // abs(): a lock dated in the future (clock moved back) goes stale after the timeout too.
+      if (Math.abs(age) < LOCK_TTL_MS) return null;
       try { fs.unlinkSync(lockFile); } catch (e) { if (e.code !== 'ENOENT') throw e; }
       continue;
     }

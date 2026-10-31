@@ -241,6 +241,36 @@
   ],
   "fields": [
     {
+      "id": "short description (npm)",
+      "value": "The local security layer for coding agents. zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot. No account, and nothing is sent by default.",
+      "files": [
+        {
+          "file": "packages/zn-gate/package.json",
+          "json": "description"
+        }
+      ]
+    },
+    {
+      "id": "short description (PyPI)",
+      "value": "The local security layer for Python AI agents (LangChain, CrewAI, LlamaIndex, plain tool calling): prompt-injection checks and secret redaction, zero dependencies. No account, and nothing is sent by default.",
+      "files": [
+        {
+          "file": "packages/zn-gate-py/pyproject.toml",
+          "regex": "^description = \"([^\"]+)\""
+        }
+      ]
+    },
+    {
+      "id": "short description (MCP Registry)",
+      "value": "The local security layer for coding agents. No account, and nothing is sent by default.",
+      "files": [
+        {
+          "file": "packages/zn-gate/server.json",
+          "json": "description"
+        }
+      ]
+    },
+    {
       "id": "license",
       "value": "MIT",
       "files": [

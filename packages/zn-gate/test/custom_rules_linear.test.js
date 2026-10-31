@@ -11,6 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const rules = require('../lib/rules');
 const { compileCustomPattern, MAX_PATTERN_LENGTH, MAX_PATTERNS } = require('../lib/linear-regex');
+const { budget, cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 // Pieces are joined at run time so the test file holds no ready-made adversarial expression.
 const NESTED = ['(a+)', '+$'].join('');
@@ -32,9 +33,9 @@ function inProject(files, fn) {
 }
 
 function timed(fn) {
-  const t0 = process.hrtime.bigint();
+  const t0 = cpuNow();
   const out = fn();
-  return { out, ms: Number(process.hrtime.bigint() - t0) / 1e6 };
+  return { out, ms: cpuMsSince(t0) };
 }
 
 test('a normal custom pattern still matches, ignoring case', () => {
@@ -110,7 +111,7 @@ test('matching a long input stays fast, also for patterns that are slow in a bac
     assert.equal(r.ok, true, src);
     for (const input of inputs) {
       const { ms } = timed(() => r.rule.test(input));
-      assert.ok(ms < 3000, `${src} took ${ms} ms`);
+      assert.ok(ms < budget(3000), `${src} took ${ms} ms`);
     }
   }
 });
@@ -348,7 +349,7 @@ test('a file of the most plain-text rules stays within the budget and scans fast
     assert.deepEqual(cfg.errors, []);
     const text = 'secret_project_name_number_'.repeat(9000) + 'x';
     const { ms } = timed(() => { for (const p of cfg.bannedPatterns) p.test(text); });
-    assert.ok(ms < 5000, `${ms} ms`);
+    assert.ok(ms < budget(5000), `${ms} ms`);
     assert.equal(cfg.bannedPatterns[7].test('see secret_project_name_number_7 now'), true);
   });
 });

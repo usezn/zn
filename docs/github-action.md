@@ -96,6 +96,39 @@ With `format: sarif` and the upload step, the findings appear in your repository
 
 Code scanning needs a public repository, or GitHub Code Security on a private one. Without it, use `format: github` (the default): the findings show as annotations in the workflow run and on the pull request, and no `security-events` permission is needed.
 
+## Pull request example with common inputs
+
+This workflow checks every pull request with both the audit and the scan. It fails the step on audit findings of severity `high` or above, and on any scan finding. It uses only inputs that `action.yml` defines, and needs no code scanning permissions because `format: github` shows findings as annotations.
+
+```yaml
+name: zn-gate
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  zn-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Audit agent configs and scan for secrets
+        uses: usezn/zn@746be20f3276ab0d589f2d6df941b5d31a5396d8 # v1.13.1
+        with:
+          version: '1.13.1'
+          mode: both
+          path: '.'
+          format: github
+          fail-on-threat: 'true'
+          severity-threshold: 'high'
+```
+
+See [Inputs](#inputs) for every option.
+
 ## Warn without failing the build
 
 To see the findings on a pull request without blocking it, set `fail-on-threat: 'false'`. The step then ends green even when something is found, and with the default `format: github` each finding shows as an annotation in the workflow run and on the changed lines of the pull request.

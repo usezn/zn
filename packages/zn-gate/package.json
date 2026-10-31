@@ -38,7 +38,8 @@
   "types": "lib/client.d.ts",
   "scripts": {
     "postinstall": "node lib/agents/refresh.js",
-    "test": "node test/run-all.js"
+    "test": "node test/run-all.js",
+    "check:rules": "node --test test/rules_snapshot.test.js"
   },
   "contentPolicy": {
     "class": "dual-use"
@@ -63,6 +64,6 @@
   "devDependencies": {
     "c8": "12.0.0",
     "fast-check": "4.10.2",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   }
 }
