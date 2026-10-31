@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.5';
+const POLICY_RULES_VERSION = '2026-10-31.6';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1413,6 +1413,7 @@ function markCurlWords(readings) {
         for (let m = prog.at + 1; m < group.length; m++) {
           group[m].curl = true;
           if (group[m - 1] && CURL_NAME_AT_FILE_OPTS.has(group[m - 1].text)) group[m].urlencode = true;
+          if (group[m - 1] && (group[m - 1].text === '-T' || group[m - 1].text === '--upload-file')) group[m].upload = true;
         }
       }
       i = j;
@@ -1447,13 +1448,20 @@ const CURL_NAME_AT_FILE_OPTS = new Set(['--data-urlencode', '--url-query', '--va
 
 /* The files a word can make a program read and send, whatever the program: @file and @a,b (curl -d, -F with a list,
    gh -F, httpie), name=@file, name:=@file, name=<file, name@file (curl --data-urlencode/--url-query/--variable,
-   httpie, xh) and a {a,b} list (curl -T {a,b}). A form field's ;type= and ;filename= are dropped. The result is only
-   refused when it names a protected path, so an e-mail address or @scope/pkg stays allowed. */
+   httpie, xh; the name may hold any character but = and @: a/b@f, x:y@f, v[0-200]@f). A word with spaces (a curl
+   config fed to -K -, printf 'data-binary @.env') is read piece by piece. A form field's ;type= and ;filename= and a
+   trailing \n, \r or \t escape are dropped. The result is only refused when it names a protected path, so an e-mail
+   address or @scope/pkg stays allowed. */
 function atFilesOf(text) {
   const t = String(text);
+  if (/\s/.test(t.trim())) {
+    const all = [];
+    for (const piece of t.split(/\s+/)) if (piece) all.push(...atFilesOf(piece));
+    return all;
+  }
   const out = [];
   const push = (raw) => {
-    let v = String(raw);
+    let v = String(raw).trim();
     if (v[0] === '"' || v[0] === "'") {
       const end = v.indexOf(v[0], 1);
       v = v.slice(1, end > 0 ? end : undefined);
@@ -1461,46 +1469,85 @@ function atFilesOf(text) {
       const semi = v.indexOf(';');
       if (semi >= 0) v = v.slice(0, semi);
     }
+    v = v.replace(/(?:\\[nrt])+$/, '').replace(/["']+$/, '');
     if (v && v !== '-') out.push(v);
   };
   const list = (raw) => { for (const part of String(raw).split(',')) push(part); };
+  const word = t.trim().replace(/^["']+/, '');
   let m;
-  if ((m = /^[@<](.+)$/.exec(t))) list(m[1]);
-  else if ((m = /^[^=@<\s]*?(?::=@|=@|=<)(.+)$/.exec(t))) list(m[1]);
-  else if ((m = /^[A-Za-z0-9_.+-]+@([^@\s]+)$/.exec(t))) push(m[1]);
-  if ((m = /^\{([^{}]+)\}$/.exec(t))) list(m[1]);
+  if ((m = /^[@<](.+)$/.exec(word))) list(m[1]);
+  else if ((m = /^[^=@<\s]*?(?::=@|=@|=<)(.+)$/.exec(word))) list(m[1]);
+  else if ((m = /^[^=@]*@(.+)$/.exec(word))) push(m[1]);
+  return out;
+}
+
+const BRACE_EXPANSION_CAP = 64;
+const GLOB_TOO_LARGE_MESSAGE = 'zn: this command uploads files named by a pattern that stands for more names than zn checks, so it was blocked. Next step: name the files to upload one by one.';
+
+/* The names a {..} glob stands for, as curl -T and the shell read it: every {a,b} or {x} group is replaced by each of
+   its items, left to right (nested groups are read flat). null when there would be more than BRACE_EXPANSION_CAP
+   names: the caller then refuses the command (fail closed). A word without { is returned as it is. */
+function braceNames(text) {
+  const t = String(text);
+  const open = t.indexOf('{');
+  if (open < 0) return [t];
+  const close = t.indexOf('}', open + 1);
+  if (close < 0) return [t];
+  const head = t.slice(0, open);
+  const items = t.slice(open + 1, close).replace(/\{/g, '').split(',');
+  const tails = braceNames(t.slice(close + 1));
+  if (tails === null || items.length * tails.length > BRACE_EXPANSION_CAP) return null;
+  const out = [];
+  for (const item of items) for (const tail of tails) out.push(head + item + tail);
   return out;
 }
 
 /* Extra words to classify, one per file a word may send (see atFilesOf), read as a read of that file. Long options
    carry it after = (--data-urlencode=k@.env); curl's short options can carry it glued (-d@.env, -Ff=@.env, -T.env,
-   -sT{.env}, -H@file). */
+   -sT{.env}, -H@file). Every name is also read through its {..} glob (curl -T .e{nv}). Returns null when a glob
+   stands for too many names to check. */
 function atFileWords(words) {
   const extra = [];
-  const add = (w, files) => {
-    for (const f of files) if (f !== w.text) extra.push({ text: f, head: 'cat', redirectTarget: false, seq: w.seq, atFile: true });
+  let tooMany = false;
+  // failClosed: an upload name (curl -T, --upload-file) whose glob is too large to read refuses the command. Other words
+  // (a JSON body with many commas inside braces) are then only read as they are.
+  const add = (w, files, failClosed = false) => {
+    for (const f of files) {
+      const names = braceNames(f);
+      if (names === null) {
+        if (failClosed) tooMany = true;
+        if (f !== w.text) extra.push({ text: f, head: 'cat', redirectTarget: false, seq: w.seq, atFile: true });
+        continue;
+      }
+      for (const n of names) if (n && n !== w.text) extra.push({ text: n, head: 'cat', redirectTarget: false, seq: w.seq, atFile: true });
+    }
   };
   for (const w of words) {
     const text = String(w.text);
     if (text.startsWith('--')) {
       const eq = text.indexOf('=');
-      if (eq > 0) add(w, atFilesOf(text.slice(eq + 1)));
+      if (eq > 0) {
+        const v = text.slice(eq + 1);
+        add(w, atFilesOf(v));
+        if (/^--upload-file=/.test(text)) add(w, [v], true);
+      }
       continue;
     }
     if (text.startsWith('-')) {
       const glued = w.curl ? /^-[A-Za-z]*?([dFTH])(.+)$/.exec(text) : null;
       if (glued) {
-        const v = glued[2];
-        if (glued[1] === 'T') {
-          const brace = /^\{([^{}]+)\}$/.exec(v);
-          add(w, brace ? brace[1].split(',').filter(Boolean) : [v]);
-        } else add(w, atFilesOf(v));
+        if (glued[1] === 'T') add(w, [glued[2]], true);
+        else add(w, atFilesOf(glued[2]));
       }
       continue;
     }
     add(w, atFilesOf(text));
+    // The value of curl -T / --upload-file is a glob: each {..} expansion is a file sent (curl -T .e{nv}, -T {.e}nv).
+    if (w.upload) add(w, [text], true);
+    // Any other word with a {a,b} list names each item, as the shell expands it (cat {.e,x}nv).
+    else if (text.includes('{') && text.includes(',') && text.includes('}')) add(w, [text]);
   }
-  return extra;
+  return tooMany ? null : extra;
 }
 
 function markLinkWords(readings) {
@@ -2529,7 +2576,11 @@ function bashDenialOf(cmd, opts = {}) {
   opts.elsewhere = new Map();
   markLinkWords(readings);
   markCurlWords(readings);
-  words.push(...atFileWords(words));
+  {
+    const atWords = atFileWords(words);
+    if (atWords === null) return GLOB_TOO_LARGE_MESSAGE;
+    words.push(...atWords);
+  }
   const mentionsAgents = /\.agents/i.test(text);
   const makesLink = words.some((x) => x.link === true);
   if (overBudget(opts.budget, 0)) return TOO_SLOW_MESSAGE;
