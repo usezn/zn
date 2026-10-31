@@ -149,3 +149,5 @@ cargo build --release
 When `kms.key_id` (or `ZN_KMS_KEY_ID`) is set, the gateway takes the audit database key from the KMS. If that key cannot be fetched, the gateway now refuses to start with a clear error instead of quietly using the key from the config.
 
 To keep the old behaviour on purpose, set `kms.allow_config_fallback = true` (or `ZN_KMS_ALLOW_CONFIG_FALLBACK=true`). The gateway then starts with the config key and logs a warning on every start. The option is off by default. Without `kms.key_id`, nothing changes: the key from the config is used.
+
+The gateway reads at most 16 MiB per line, from its own input and from each upstream MCP server over stdio; a longer line is dropped and answered with a JSON-RPC error.
