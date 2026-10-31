@@ -169,7 +169,7 @@ function taskPiece(x) {
  * task has no shell, so each argument is quoted. undefined = no command here; null = a command or argument zn
  * cannot read (never dropped).
  */
-function taskLines(v) {
+function taskLineOf(v, hasShell) {
   const key = COMMAND_KEYS.find((k) => v[k] !== undefined);
   if (key === undefined) return undefined;
   const c = taskPiece(v[key]);
@@ -181,10 +181,60 @@ function taskLines(v) {
     if (extra.some((p) => p === null)) return null;
   }
   const join = (f) => [c, ...extra].map(f).join(' ');
-  if (typeof v.type === 'string' && v.type.toLowerCase() === 'process') return join((p) => p.q);
+  if (!hasShell && typeof v.type === 'string' && v.type.toLowerCase() === 'process') return join((p) => p.q);
   const bare = typeof v[key] === 'string' && extra.length === 0;
   const lines = [bare ? c.raw : join((p) => p.vs), bare ? c.raw : join((p) => p.vse), bare ? c.raw : join((p) => p.vw), join((p) => p.raw), join((p) => p.q)];
   return lines.filter((l, i, arr) => arr.indexOf(l) === i).join('\n');
+}
+
+// Per-platform overrides VS Code reads on a task: the block for the running system replaces fields of the base task.
+const TASK_PLATFORMS = ['linux', 'osx', 'windows'];
+
+/** Whether a task's shell settings (options.shell) are readable; true = a custom shell is set, null = unreadable. */
+function taskShell(o) {
+  if (o === undefined) return false;
+  if (!isObj(o)) return null;
+  const sh = o.shell;
+  if (sh === undefined) return false;
+  if (!isObj(sh)) return null;
+  if (sh.executable !== undefined && typeof sh.executable !== 'string') return null;
+  if (sh.args !== undefined && (!Array.isArray(sh.args) || sh.args.some((a) => typeof a !== 'string'))) return null;
+  return true;
+}
+
+/**
+ * A task object as the line(s) it runs, across the base task and every platform override (linux, osx, windows): each
+ * override is merged over the base the way VS Code applies it, every merged task is judged, and the stricter answer
+ * wins. A custom options.shell (in the base or in an override) makes the task a shell task, whatever its type says.
+ * undefined = not a task; null = a shape zn cannot read (an override that is not an object, options or shell of the
+ * wrong type, a type that is not a string, a command or argument it cannot read).
+ */
+function taskLines(v) {
+  const overrides = TASK_PLATFORMS.filter((k) => v[k] !== undefined);
+  const hasCommand = (o) => COMMAND_KEYS.some((k) => o[k] !== undefined);
+  const isTask = hasCommand(v) || overrides.some((k) => isObj(v[k]) && hasCommand(v[k]));
+  if (!isTask) return undefined;
+  if (v.type !== undefined && typeof v.type !== 'string') return null;
+  const baseShell = taskShell(v.options);
+  if (baseShell === null) return null;
+  const base = {};
+  for (const k of Object.keys(v)) if (!TASK_PLATFORMS.includes(k)) base[k] = v[k];
+  const variants = [{ task: base, shell: baseShell }];
+  for (const k of overrides) {
+    const ov = v[k];
+    if (!isObj(ov)) return null;
+    if (ov.type !== undefined && typeof ov.type !== 'string') return null;
+    const ovShell = taskShell(ov.options);
+    if (ovShell === null) return null;
+    variants.push({ task: Object.assign({}, base, ov), shell: baseShell || ovShell });
+  }
+  const out = [];
+  for (const { task, shell } of variants) {
+    const r = taskLineOf(task, shell);
+    if (r === null) return null;
+    if (r !== undefined) out.push(r);
+  }
+  return out.length ? out.join('\n') : undefined;
 }
 
 
@@ -210,7 +260,7 @@ function commandScan(args) {
       const r = taskLines(obj);
       if (r === null) bad = true;
       else if (r !== undefined) commands.push(r);
-      if (r !== undefined) skip = new Set([...COMMAND_KEYS, 'args']);
+      if (r !== undefined) skip = new Set([...COMMAND_KEYS, 'args', ...TASK_PLATFORMS]);
     }
     const entries = Array.isArray(obj) ? obj.map((v) => [null, v]) : Object.entries(obj);
     for (const [k, v] of entries) {

@@ -214,3 +214,64 @@ test('real Claude Code tools with a command field (SlashCommand, Skill) keep ben
   assert.equal((await run(pre('SlashCommand', { command: '/review' }, dir))).output, null);
   assert.equal((await run(pre('Skill', { command: 'pdf' }, dir))).output, null);
 });
+
+test('a task whose command sits in a platform override, or whose shell is custom, is judged like a shell task', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  const cases = [
+    { type: 'shell', command: 'echo', linux: { command: 'rm -rf ~' } },
+    { type: 'shell', command: 'echo', osx: { command: 'cat', args: [AWS] } },
+    { type: 'shell', command: 'echo', windows: { command: 'rm -rf ~' } },
+    { type: 'shell', linux: { command: 'rm -rf ~' } },
+    { type: 'shell', command: 'echo', linux: { args: ['x&&rm', '-rf', '~'] } },
+    { type: 'process', command: 'echo', args: ['x'], linux: { type: 'shell', args: ['x&&rm', '-rf', '~'] } },
+    { type: 'process', command: 'echo', args: ['x&&rm', '-rf', '~'], options: { shell: { executable: '/bin/bash', args: ['-c'] } } },
+    { type: 'process', command: 'echo', args: ['x&&rm', '-rf', '~'], linux: { options: { shell: { executable: '/bin/bash' } } } },
+    { type: 'process', command: 'echo', linux: { command: 'rm -rf ~', options: { shell: { executable: '/bin/bash' } } } },
+  ];
+  for (const task of cases) {
+    const input = { workspaceFolder: dir, task: Object.assign({ label: 'x' }, task) };
+    assert.ok(denied(await run(pre('create_and_run_task', input, dir))), JSON.stringify(task));
+    assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: input })), JSON.stringify(task));
+  }
+});
+
+test('a task with platform overrides or a custom shell that it cannot read is blocked, never dropped', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  const cases = [
+    { type: 'shell', command: 'echo', linux: 'rm -rf ~' },
+    { type: 'shell', command: 'echo', osx: ['rm', '-rf', '~'] },
+    { type: 'shell', command: 'echo', windows: 42 },
+    { type: 'shell', command: 'echo', linux: { command: 42 } },
+    { type: 'shell', command: 'echo', linux: { command: 'echo', args: 'hello' } },
+    { type: 'shell', command: 'echo', linux: { command: 'echo', args: [{ foo: 'bar' }] } },
+    { type: 'shell', command: 'echo', options: 'bash' },
+    { type: 'shell', command: 'echo', options: { shell: 'bash' } },
+    { type: 'shell', command: 'echo', options: { shell: { executable: 42 } } },
+    { type: 'shell', command: 'echo', options: { shell: { args: 'x' } } },
+    { type: 'shell', command: 'echo', linux: { options: { shell: ['bash'] } } },
+    { type: 42, command: 'echo', linux: { command: 'echo' } },
+  ];
+  for (const task of cases) {
+    const input = { workspaceFolder: dir, task: Object.assign({ label: 'x' }, task) };
+    assert.ok(denied(await run(pre('create_and_run_task', input, dir))), JSON.stringify(task));
+    assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: input })), JSON.stringify(task));
+  }
+});
+
+test('benign twins: a harmless task with platform overrides or a custom shell passes', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  const cases = [
+    { type: 'shell', command: 'npm', args: ['test'], linux: { command: 'npm', args: ['run', 'test:linux'] }, windows: { command: 'npm.cmd', args: ['test'] } },
+    { type: 'shell', command: 'echo', osx: { args: ['hello'] }, linux: { args: ['hello', 'world'] } },
+    { type: 'shell', linux: { command: 'ls', args: ['-la', '/home/example'] } },
+    { type: 'process', command: 'echo', args: ['x&&rm', '-rf', '~'], linux: { args: ['a&&b'] } },
+    { type: 'shell', command: 'echo', args: ['hello'], options: { cwd: '/home/example', shell: { executable: '/bin/bash', args: ['-c'] } } },
+    { type: 'shell', command: 'echo', args: ['hello'], linux: { options: { shell: { executable: '/bin/zsh' } } } },
+    { type: 'shell', command: 'curl', args: ['-sS', 'https://example.com/health'], windows: { command: 'curl.exe' } },
+  ];
+  for (const task of cases) {
+    const input = { workspaceFolder: dir, task: Object.assign({ label: 'x' }, task) };
+    assert.equal((await run(pre('create_and_run_task', input, dir))).output, null, JSON.stringify(task));
+    assert.equal((await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: input })).output, null, JSON.stringify(task));
+  }
+});
