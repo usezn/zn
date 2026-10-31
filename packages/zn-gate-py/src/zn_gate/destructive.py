@@ -539,10 +539,10 @@ def _dollar_paren_code(text: str) -> str:
                     elif q == '"':
                         pass
                     else:
-                        # A case pattern, a comment or a here-document can hold a parenthesis that does not close the substitution.
+                        # A case pattern, a comment, a here-document, a ${ } expansion or a backtick span can hold a parenthesis that does not close the substitution.
                         word_start = j == i + 2 or text[j - 1].isspace() or text[j - 1] in ";&|("
                         if ((c == "<" and text[j + 1:j + 2] == "<" and text[j + 2:j + 3] != "<")
-                                or (c == "#" and word_start)
+                                or (c == "#" and word_start) or c == "`" or (c == "$" and text[j + 1:j + 2] == "{")
                                 or (c == "c" and word_start and text.startswith("case", j) and text[j + 4:j + 5].isspace())):
                             unsure = True
                             break

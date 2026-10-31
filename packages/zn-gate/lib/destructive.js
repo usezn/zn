@@ -290,10 +290,10 @@ function dollarParenCode(text) {
       if (c === "'" && q === '') { q = "'"; continue; }
       if (c === '$' && text[j + 1] === "'" && q === '') { q = "$'"; j++; continue; }
       if (q === '"') continue;
-      // A case pattern, a comment or a here-document can hold a parenthesis that does not close the substitution.
+      // A case pattern, a comment, a here-document, a ${ } expansion or a backtick span can hold a parenthesis that does not close the substitution.
       const wordStart = j === i + 2 || /[\s;&|(]/.test(text[j - 1]);
       if ((c === '<' && text[j + 1] === '<' && text[j + 2] !== '<') ||
-          (c === '#' && wordStart) ||
+          (c === '#' && wordStart) || c === '`' || (c === '$' && text[j + 1] === '{') ||
           (c === 'c' && wordStart && text.startsWith('case', j) && /\s/.test(text[j + 4] || ''))) { unsure = true; break; }
       if (c === '<' && text[j + 1] === '<') { j += 2; continue; }
       if (c === '(') depth++;

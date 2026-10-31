@@ -78,6 +78,9 @@ test('a substitution whose parenthesis hides in a case pattern, a comment, a her
     'echo "$( # )\nrm -rf ~\n)"',
     'echo "$(cat <<E\n)\nE\nrm -rf ~\n)"',
     "echo $'\\'' \"$(rm -rf ~)\" $'\\''",
+    'echo "$(echo ${x//)/y}; rm -rf ~)"',
+    'echo "$(echo ${x:-)}; rm -rf ~)"',
+    'echo "$(echo `echo )` ; rm -rf ~)"',
   ]) {
     const res = checkCommand(c);
     assert.equal(res.verdict, 'block', c);
@@ -92,6 +95,8 @@ test('similar substitutions that run nothing destructive stay allowed', () => {
     "echo $'\\'' \"$(date)\" $'\\''",
     'echo "$(cat <<< hi)"',
     'echo "$(echo ${#PATH})"',
+    'echo "$(echo ${HOME})"',
+    'echo "$(echo `date`)"',
   ]) {
     assert.equal(checkCommand(c).verdict, 'allow', c);
   }

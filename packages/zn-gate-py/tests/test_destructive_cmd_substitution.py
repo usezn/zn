@@ -66,6 +66,9 @@ def test_parenthesis_hidden_in_case_comment_heredoc_or_ansi_c_quote_is_still_rea
         'echo "$( # )\nrm -rf ~\n)"',
         'echo "$(cat <<E\n)\nE\nrm -rf ~\n)"',
         "echo $'\\'' \"$(rm -rf ~)\" $'\\''",
+        'echo "$(echo ${x//)/y}; rm -rf ~)"',
+        'echo "$(echo ${x:-)}; rm -rf ~)"',
+        'echo "$(echo `echo )` ; rm -rf ~)"',
     ]:
         res = check_command(c)
         assert res.verdict == "block", c
@@ -79,5 +82,7 @@ def test_similar_substitutions_that_run_nothing_destructive_stay_allowed():
         "echo $'\\'' \"$(date)\" $'\\''",
         'echo "$(cat <<< hi)"',
         'echo "$(echo ${#PATH})"',
+        'echo "$(echo ${HOME})"',
+        'echo "$(echo `date`)"',
     ]:
         assert check_command(c).verdict == "allow", c
