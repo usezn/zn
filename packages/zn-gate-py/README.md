@@ -14,7 +14,7 @@
 
 **For:** developers building their own agents with LangChain, CrewAI, LlamaIndex or plain Python tool calling.
 
-> **Using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later; 22 LTS is recommended, and the Claude Code plugin needs 20.19 or later): see [Install](https://github.com/usezn/zn#install).
+> **Using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, or the experimental Gemini CLI or Copilot CLI?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later; 22 LTS is recommended, and the Claude Code plugin needs 20.19 or later): see [Install](https://github.com/usezn/zn#install).
 
 ---
 
@@ -50,7 +50,7 @@ zn-gate scan .
 
 `pipx ensurepath` puts `~/.local/bin` on your PATH. Until you reopen the terminal, `zn-gate` is reported as "command not found". With uv: `uv tool install zn-gate` (run `uv tool update-shell` if the command is not found). To run it once without installing: `uvx zn-gate scan .`
 
-The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app, run `npx -y zn-gate init` (Node 18 or later).
+The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app (or the experimental Gemini CLI and Copilot CLI), run `npx -y zn-gate init` (Node 18 or later).
 
 Inside an environment you already use (your project's virtualenv, Poetry, uv), `pip install zn-gate` is enough. Python 3.10 or later (CI tests 3.10 to 3.14). Zero runtime dependencies.
 
@@ -63,7 +63,7 @@ Inside an environment you already use (your project's virtualenv, Poetry, uv), `
 - `python3 -m venv` fails on Debian or Ubuntu: run `sudo apt update && sudo apt install python3-venv`.
 - Python says it cannot find `zn_gate`: run your script with the Python of that environment (`.venv/bin/python`; Windows: `.venv\Scripts\python`).
 - Legitimate content is blocked: use `on_block="return"` with a fallback while you evaluate it.
-- You use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app: this package does not protect them. Run `npx -y zn-gate init` in your own terminal instead.
+- You use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, or the experimental Gemini CLI or Copilot CLI: this package does not protect them. Run `npx -y zn-gate init` in your own terminal instead.
 
 ## Check that it works
 
@@ -332,6 +332,7 @@ We only publish numbers we can reproduce, with the method next to them.
 - `ZN_ALLOW_TRUNCATED`: `1` lets a tool result over 4 MB through, marked `truncated`, instead of blocking it. This weakens protection: the part of the output past the limit is never checked, so use it only for a tool you trust. It has no effect on arguments, which are always blocked over 4 MB.
 - `ZN_VERBOSE`: `1` (or `DEBUG=zn`) prints technical detail on the error output.
 - `ZN_HOME`: folder used instead of `~/.zn`. The Python package reads the usage counts there (`zn-gate stats`), written by the npm package.
+- Project files: this package does not read `.znrules` or `zn.config.json`. Custom rules and the `strict` setting in those files apply only to the npm package (its CLI, agent hooks and Node.js library). In Python, turn strict mode on with `strict=True` or `ZN_STRICT=1`.
 - `ZN_STAGE` / `ZN_API_URL`: cloud endpoint selection.
 - `NO_COLOR` (any non-empty value) or `TERM=dumb`: the command line output leaves out its symbols; the status words (ALLOW, BLOCK, clean, ...) stay.
 

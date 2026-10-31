@@ -71,7 +71,15 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   its hook is blocking tool calls and prompts: zn-gate changed since the hooks were installed (<path> no longer matches the launcher), so zn will not run it
   ```
 
-  `npm update -g zn-gate` refreshes the launchers by itself (a short install step), so you normally never see this after an update. You see it if the file was edited, or if the update ran with `--ignore-scripts`. Run `zn hooks install <agent>` again in your own terminal to record the new files.
+  `npm update -g zn-gate` refreshes the launchers by itself (a short install step), so you normally never see this after an update. You see it if the file was edited, or if the update ran with `--ignore-scripts` or with bun (which skip it), or if you installed or updated with `sudo` (the step does not change your files then). Run `zn hooks install <agent>` again in your own terminal to record the new files.
+
+  pnpm also skips the install step but keeps the previous version's folder, so there the hooks keep running the previous version's runner (with its older rules) and the check stays **OK**, with a note on that agent's line:
+
+  ```text
+  the hooks run zn-gate <old version>, older than this zn-gate <version>: run `zn hooks install <agent>` to use the new one
+  ```
+
+  Run `zn hooks install <agent>` again in your own terminal to switch to the new version.
 
   The first form usually happens after you removed or upgraded Node.js with a version manager such as nvm: the old Node.js took its copy of zn-gate with it. The repair is:
 
@@ -109,16 +117,17 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   ```text
   the zn-gate plugin starts its hook with /bin/sh, which is not on this computer, so the hook cannot start
-  the ZCode plugin needs a system with /bin/sh (Linux); elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again
+  the ZCode plugin needs a system with /bin/sh (macOS, Linux) or Windows PowerShell; elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again
   ```
 
-  The ZCode plugin starts its hooks with `/bin/sh`, so it works on Linux. On other systems, use `zn hooks install zcode` instead.
+  The ZCode plugin has two hooks for every event: one starts `/bin/sh` (macOS and Linux) and one starts the Windows PowerShell by its full path (`C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`, Windows). On each system only the matching one can start. If your Windows folder is not `C:/Windows`, or the program is missing, use `zn hooks install zcode` instead.
 
 - **The ZCode plugin has no PreToolUse hook.**
 
   ```text
   the zn-gate plugin has no PreToolUse hook in <plugin folder>/hooks/hooks.json, so ZCode runs no zn check before tool calls
   the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`/bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
+  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`powershell.exe ... scripts/zn-hook.ps1 PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
   install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again
   ```
 

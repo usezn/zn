@@ -19,9 +19,19 @@ them.
 The hook launchers of `zn hooks install` keep the SHA-256 of zn-gate's hook
 runner and run it only while it matches. An update with npm rewrites them by
 itself (an install step of the package). If your update does not run install
-scripts (`npm install --ignore-scripts`, or pnpm and bun, which skip them by
-default), run `zn hooks install <agent>` again for each agent: until then the
-hooks block tool calls and say so.
+scripts, the launchers are not refreshed, and what happens depends on how you
+installed zn-gate:
+
+- **pnpm** (`pnpm add -g zn-gate@<newer>`) skips install scripts. The old
+  version's folder stays on disk, so the hooks keep working but run the runner
+  of the previous version, with its older rules, until you run
+  `zn hooks install <agent>` again. `zn-gate check` still says **OK** and adds a
+  note that names the older version.
+- **bun** and `npm install --ignore-scripts` skip them too. The runner changed,
+  so the hooks block tool calls and say so until you run
+  `zn hooks install <agent>` again for each agent.
+
+If you installed or updated with `sudo`, run `zn hooks install <agent>` again as yourself (without `sudo`) after the update.
 
 If `zn-gate check` says an agent is not protected, it also prints the command
 that fixes it.
@@ -221,6 +231,30 @@ If you use the Python package (`pip install -U zn-gate`):
 - [ ] **`check_tool_call` and `@guard`** now read the strings inside objects, and
   block a generator or other one-shot iterator (pass a list). Check that your
   tools still pass.
+
+## Going back to the previous version
+
+Run these in your own terminal, not through an AI agent. Going back does not
+touch your code or your vault.
+
+1. Remove the hooks of each agent you set up with `zn hooks install`:
+   `npx -y zn-gate hooks uninstall claude-code` (use `codex`, `cursor`,
+   `opencode` or `antigravity` for the others, and add `--project` for a project
+   install). With the Claude Code plugin, see [Remove zn-gate](uninstall.md#claude-code-plugin).
+2. Remove the program: `npm uninstall -g zn-gate`, and `pip uninstall zn-gate`
+   if you also installed the Python package
+   ([details](uninstall.md#the-program-itself)).
+3. Install the older release with your package manager, the same way you
+   installed zn-gate the first time. The commands on this page
+   (`npm install -g zn-gate`, `pip install -U zn-gate`) install the newest release.
+4. Run `zn hooks install <agent>` again for each agent, and trust the hooks in
+   `/hooks` if you use Codex.
+5. Run `zn-gate check`. Every agent that is set up should say **OK**.
+
+Before you go back, look up your versions in
+[the table below](#what-each-release-asks-you-to-do): one row says not to go back
+to 1.7.1 in a zn Team organization with Warn rules. For the full removal steps,
+see [Remove zn-gate](uninstall.md).
 
 ## What each release asks you to do
 
