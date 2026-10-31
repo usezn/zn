@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-30.1';
+const POLICY_RULES_VERSION = '2026-10-31.21';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2311,6 +2311,260 @@ function findDeleteDenial(words, opts) {
   return null;
 }
 
+/* ------------------- recursive readers of credential folders ------------------- */
+
+/*
+ * A program that reads every file of a folder it is given (tar c, zip -r, 7z a, rsync, cp -r, scp -r, grep -r, rg,
+ * find -exec cat, ...) reads the secrets in a credential folder without naming one. It is refused when its argument is
+ * such a folder (or a folder below it), or, when it is recursive, a folder that contains one (~, ~/.config). `tar -C DIR`
+ * and a cd followed by `.` count as DIR. ls, du and stat do not read content and stay free.
+ */
+const CRED_DIRS = [
+  ['.aws', 'AWS credentials'], ['.ssh', 'SSH keys'], ['.kube', 'Kubernetes credentials'], ['.config/gh', 'GitHub CLI token'],
+  ['.docker', 'Docker registry credentials'], ['.gnupg', 'GPG private keys'], ['.azure', 'Azure credentials'],
+  ['.config/gcloud', 'Google Cloud credentials'], ['.zcode/v2', 'Zcode model provider credentials'],
+];
+const TAR_READERS = new Set(['tar', 'gtar', 'bsdtar', 'gnutar']);
+const GREP_READERS = new Set(['grep', 'egrep', 'fgrep', 'zgrep', 'rgrep']);
+const SEARCH_ALWAYS = new Set(['rg', 'ag', 'ack', 'ack-grep']);
+const FIND_READERS = new Set(['cat', 'head', 'tail', 'less', 'more', 'tac', 'nl', 'bat', 'grep', 'egrep', 'fgrep', 'rg', 'ag', 'base64', 'xxd',
+  'od', 'hexdump', 'strings', 'cp', 'tar', 'zip', 'curl', 'scp', 'rsync', 'sed', 'awk', 'jq', 'openssl', 'gpg', 'sh', 'bash', 'zsh', 'dash']);
+const CF_VALUE_SHORT = {
+  tar: 'fCTXbILNgKVH', zip: 'bntPOz', rsync: 'efTBM', cp: 'tS', scp: 'PiosFcSJlD', grep: 'efmABCdD', rg: 'efgtTmABCjEMdr', ag: 'GgABCm',
+};
+const CF_VALUE_LONG = {
+  tar: ['--file', '--files-from', '--exclude', '--exclude-from', '--transform', '--use-compress-program', '--index-file', '--newer',
+    '--newer-mtime', '--listed-incremental', '--owner', '--group', '--label', '--blocking-factor', '--suffix', '--mode', '--mtime', '--strip-components'],
+  zip: ['--temp-path', '--password'],
+  rsync: ['--rsh', '--exclude', '--include', '--filter', '--exclude-from', '--include-from', '--files-from', '--rsync-path', '--port', '--bwlimit',
+    '--log-file', '--backup-dir', '--temp-dir', '--timeout', '--chmod', '--chown', '--usermap', '--groupmap', '--partial-dir', '--compare-dest',
+    '--copy-dest', '--link-dest', '--max-size', '--min-size', '--sockopts', '--address', '--out-format', '--password-file'],
+  cp: ['--target-directory', '--suffix'],
+  scp: [],
+  grep: ['--regexp', '--file', '--include', '--exclude', '--exclude-dir', '--exclude-from', '--max-count', '--after-context', '--before-context',
+    '--context', '--label', '--directories', '--devices'],
+  rg: ['--regexp', '--file', '--glob', '--iglob', '--type', '--type-not', '--max-count', '--max-depth', '--max-filesize', '--after-context',
+    '--before-context', '--context', '--replace', '--threads', '--encoding', '--ignore-file', '--pre', '--pre-glob', '--engine', '--sort',
+    '--sortr', '--type-add', '--colors', '--color', '--path-separator'],
+  ag: ['--ignore', '--depth', '--file-search-regex', '--path-to-ignore', '--pager', '--color-path', '--color-match', '--color-line-number'],
+};
+
+/* Splits a program's arguments into short options, long options and positional words, each positional with the folder
+   a tar -C set when it was read. `seen` lists [option, value] for the options that take one. */
+function cfScanArgs(prog, args) {
+  const valShort = CF_VALUE_SHORT[prog] || '';
+  const valLong = new Set(CF_VALUE_LONG[prog] || []);
+  const flags = new Set();
+  const longs = new Set();
+  const seen = [];
+  const pos = [];
+  let base = null;
+  let rest = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (rest || a === '-' || !a.startsWith('-')) { pos.push({ text: a, base }); continue; }
+    if (a === '--') { rest = true; continue; }
+    if (a.startsWith('--')) {
+      const eq = a.indexOf('=');
+      const name = eq < 0 ? a : a.slice(0, eq);
+      longs.add(name);
+      let val = null;
+      if (eq >= 0) val = a.slice(eq + 1);
+      else if (valLong.has(name) || (prog === 'tar' && name === '--directory')) val = i + 1 < args.length ? args[++i] : '';
+      if (val !== null) {
+        seen.push([name, val]);
+        if (prog === 'tar' && name === '--directory') base = val;
+      }
+      continue;
+    }
+    for (let j = 1; j < a.length; j++) {
+      const ch = a[j];
+      flags.add(ch);
+      if (valShort.includes(ch)) {
+        const val = a.slice(j + 1) || (i + 1 < args.length ? args[++i] : '');
+        seen.push([ch, val]);
+        if (prog === 'tar' && ch === 'C') base = val;
+        break;
+      }
+    }
+  }
+  return { flags, longs, seen, pos, args };
+}
+
+/* How a command that reads folders applies to its arguments: {operands, recursive, hiddenOnly} or null for any other
+   command. operands: [{text, base}]; recursive: the folders are read below their top; hiddenOnly: the program skips
+   dot folders unless an option asks for them, so a parent folder counts only with that option. */
+function recursiveReaderOf(prog, args) {
+  if (TAR_READERS.has(prog)) {
+    // Old style: the first word is a bundle of options without the dash (tar czf out.tgz src).
+    const a = args.slice();
+    if (a.length && /^[A-Za-z]+$/.test(a[0])) a[0] = '-' + a[0];
+    const s = cfScanArgs('tar', a);
+    if (!(s.flags.has('c') || s.flags.has('r') || s.flags.has('u') || s.longs.has('--create') || s.longs.has('--append') || s.longs.has('--update'))) return null;
+    return { operands: s.pos, recursive: true };
+  }
+  if (prog === 'zip') {
+    const s = cfScanArgs('zip', args);
+    const operands = s.pos.slice(1); // the first word is the archive
+    return { operands, recursive: s.flags.has('r') || s.flags.has('R') || s.longs.has('--recurse-paths') };
+  }
+  if (/^7z[a-z]?$/.test(prog)) {
+    const s = cfScanArgs('7z', args);
+    if (!s.pos.length || !/^[au]$/.test(s.pos[0].text)) return null;
+    return { operands: s.pos.slice(2), recursive: true };
+  }
+  if (prog === 'rsync' || prog === 'cp' || prog === 'scp') {
+    const s = cfScanArgs(prog, args);
+    const hasTarget = s.flags.has('t') || s.longs.has('--target-directory');
+    const operands = s.pos.length >= 2 && !hasTarget ? s.pos.slice(0, -1) : s.pos;
+    const recursive = prog === 'rsync' ? ['r', 'a', 'd'].some((x) => s.flags.has(x)) || ['--recursive', '--archive', '--dirs'].some((x) => s.longs.has(x))
+      : ['r', 'R', 'a'].some((x) => s.flags.has(x)) || ['--recursive', '--archive'].some((x) => s.longs.has(x));
+    return { operands, recursive };
+  }
+  if (GREP_READERS.has(prog) || SEARCH_ALWAYS.has(prog)) {
+    const s = cfScanArgs(SEARCH_ALWAYS.has(prog) ? (prog === 'rg' ? 'rg' : 'ag') : 'grep', args);
+    const hasPattern = s.flags.has('e') || s.flags.has('f') || s.longs.has('--regexp') || s.longs.has('--file') || s.longs.has('--files');
+    const operands = hasPattern ? s.pos : s.pos.slice(1);
+    if (SEARCH_ALWAYS.has(prog)) {
+      let hidden = s.longs.has('--hidden') || s.longs.has('--unrestricted') || s.flags.has('.');
+      if (prog === 'rg') hidden = s.longs.has('--hidden') || s.flags.has('.') || args.filter((x) => /^-[A-Za-z]/.test(x)).join('').split('u').length > 2;
+      if (prog === 'ag') hidden = s.longs.has('--hidden') || s.flags.has('u') || s.longs.has('--unrestricted');
+      return { operands, recursive: true, hiddenOnly: prog !== 'ack' && prog !== 'ack-grep' ? !hidden : false };
+    }
+    const recursive = s.flags.has('r') || s.flags.has('R') || prog === 'rgrep' || s.longs.has('--recursive') || s.longs.has('--dereference-recursive') ||
+      s.seen.some(([o, v]) => (o === 'd' || o === '--directories') && v === 'recurse');
+    return { operands, recursive };
+  }
+  if (prog === 'find') {
+    let i = 0;
+    while (i < args.length && /^-(?:[HLP]|O\d?|D)$/.test(args[i])) i += args[i] === '-D' ? 2 : 1;
+    const roots = [];
+    while (i < args.length && !/^(?:-|\(|!)/.test(args[i])) roots.push({ text: args[i++], base: null });
+    let reads = false;
+    for (let j = i; j < args.length; j++) {
+      if (/^-(?:exec|execdir|ok|okdir)$/.test(args[j]) && args[j + 1] && FIND_READERS.has(programName(args[j + 1]))) reads = true;
+    }
+    return reads ? { operands: roots.length ? roots : [{ text: '.', base: null }], recursive: true } : null;
+  }
+  if (prog === 'rclone') {
+    const s = cfScanArgs('rclone', args);
+    if (!s.pos.length || !/^(?:copy|sync|move|copyto|moveto|bisync)$/.test(s.pos[0].text)) return null;
+    return { operands: s.pos.slice(1), recursive: true };
+  }
+  if (prog === 'aws') {
+    const s = cfScanArgs('aws', args);
+    if (s.pos.length < 3 || s.pos[0].text !== 's3' || !/^(?:cp|sync|mv)$/.test(s.pos[1].text)) return null;
+    return { operands: s.pos.slice(2).filter((x) => !/^s3:\/\//i.test(x.text)), recursive: s.pos[1].text === 'sync' || s.longs.has('--recursive') };
+  }
+  return null;
+}
+
+/* The credential folders as keys: under each home folder, plus the folders a credential variable names. */
+function credentialFolders(ctx) {
+  const out = [];
+  for (const h of ctx.agent.homes || [keyOf(slash(path.resolve(ctx.home)))]) {
+    const pre = h.endsWith('/') ? h : h + '/';
+    for (const [rel, label] of CRED_DIRS) out.push({ key: pre + keyOf(rel), label, shown: '~/' + rel });
+  }
+  for (const d of ctx.creds.dirs) out.push({ key: d, label: 'a directory named by a credential environment variable', shown: d });
+  return out;
+}
+
+function isDirectory(p) {
+  try { return fs.statSync(p).isDirectory(); } catch (_) { return false; }
+}
+
+/* 'cred' when abs is a credential folder or below one, 'parent' when it contains one, else null. */
+function folderKindOf(abs, folders) {
+  let parent = null;
+  for (const cand of new Set([abs, ...targetsOf(abs)])) {
+    const key = keyOf(slash(cand));
+    for (const d of folders) {
+      // Below a credential folder only a folder counts: a file there is judged by its own name (classifyResolved).
+      if (key === d.key || (key.startsWith(d.key + '/') && isDirectory(cand))) return { kind: 'cred', folder: d };
+    }
+    const pre = key.endsWith('/') ? key : key + '/';
+    if (!parent) parent = folders.find((d) => d.key.startsWith(pre)) || null;
+  }
+  return parent ? { kind: 'parent', folder: parent } : null;
+}
+
+function credentialFolderDenial(readings, opts) {
+  const ctx = opts.ctx || contextOf(opts);
+  const home = opts.home || os.homedir();
+  const env = opts.env || process.env;
+  const cwd = path.resolve(opts.cwd || process.cwd());
+  const moved = opts.cdBases && opts.cdBases.moved;
+  const places = moved ? opts.cdBases.dirs : [cwd];
+  let folders = null;
+  const done = new Set();
+  for (const words of readings) {
+    const bySeq = new Map();
+    for (const w of words) {
+      if (!w.seq || !w.head) continue;
+      if (!bySeq.has(w.seq)) bySeq.set(w.seq, []);
+      bySeq.get(w.seq).push(w);
+    }
+    for (const ws of bySeq.values()) {
+      const t = ws.map((w) => w.text.replace(/^["']|["']$/g, ''));
+      const sig = t.join('\0');
+      if (done.has(sig)) continue;
+      done.add(sig);
+      let k = t.findIndex((x) => !ASSIGNMENT_RE.test(x) && !/^(?:then|do|else|!|\{)$/.test(x));
+      const tw = t.map((x) => ({ text: x }));
+      for (let g = 0; k >= 0 && k < t.length && g < 16; g++) {
+        const n = programName(t[k]);
+        if (!Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, n)) break;
+        k = skipWrapper(tw, k, n);
+      }
+      if (k < 0 || k >= t.length) continue;
+      const prog = programName(t[k]);
+      const reader = recursiveReaderOf(prog, t.slice(k + 1));
+      if (!reader) continue;
+      if (!folders) folders = credentialFolders(ctx);
+      for (const op of reader.operands) {
+        if (overBudget(opts.budget, 1)) return TOO_SLOW_MESSAGE;
+        let text = op.text;
+        let expanded = expandEnv(expandHome(text, home), env).text;
+        if (!expanded || /\$\{?[A-Za-z_]|`/.test(expanded)) continue;
+        // A last name made of wildcards only (dir/*, dir/.*) is the folder's whole content.
+        const wild = /^(.*?)(?:\/|^)[*?.]*[*?][*?.]*$/.exec(expanded);
+        if (wild) expanded = wild[1] === '' && expanded.startsWith('/') ? '/' : (wild[1] || '.');
+        let starts = [''];
+        if (!path.isAbsolute(expanded)) starts = places;
+        let baseDirs = [null];
+        if (op.base) {
+          const b = expandEnv(expandHome(op.base, home), env).text;
+          if (/\$\{?[A-Za-z_]|`/.test(b)) continue;
+          baseDirs = starts.map((s) => path.resolve(s || cwd, b));
+          starts = [''];
+        }
+        for (const bd of baseDirs) {
+          for (const s of starts) {
+            const abs = path.resolve(bd || s || cwd, expanded);
+            const kind = folderKindOf(abs, folders);
+            if (kind && kind.kind === 'cred') {
+              return 'zn: ' + prog + ' would read every file in ' + text + ', which holds secrets (' + kind.folder.label + '), and secret values never go to the model, ' +
+                'so it was blocked. If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then run the command with `' +
+                znCommand('run --secrets NAME -- <command>') + '` so the program gets it as an environment variable.';
+            }
+            if (kind && kind.kind === 'parent' && reader.recursive && !reader.hiddenOnly) {
+              return 'zn: ' + prog + ' would read everything under ' + text + ', which includes ' + kind.folder.shown + ' (' + kind.folder.label + '), so it was blocked. ' +
+                'zn cannot tell what an exclude option leaves out: run it on a project folder instead (for example `' + prog + ' ... ./src`).';
+            }
+            // A file named from a folder a -C or a cd changed to (tar -C ~/.aws -c credentials).
+            if (op.base || moved) {
+              const c = classifyResolved(abs, ctx);
+              if (c && c.kind === 'credential') return credentialDenial(text, c);
+            }
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
 /* NAME=value words of the command (also after export, set or declare), with ~ and the variables already known
    expanded, as an environment overlay: {NAME: value} or null. A name set twice keeps its first value; the cases a
    later value would matter are covered by the targets check (protectedElsewhere). */
@@ -2408,6 +2662,10 @@ function bashDenialOf(cmd, opts = {}) {
   const makesLink = words.some((x) => x.link === true);
   if (overBudget(opts.budget, 0)) return TOO_SLOW_MESSAGE;
   opts.cmdText = text;
+  {
+    const folderDeny = credentialFolderDenial(readings, opts);
+    if (folderDeny) return folderDeny;
+  }
   // A word is classified once per command: each classification resolves the path on disk, and a long command
   // often repeats the same words.
   const classified = new Map();
