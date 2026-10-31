@@ -48,6 +48,23 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Editors and coding agents](editors/README.md) | Protection level and two-minute setup per editor | Editor users |
 | [Install, verify and uninstall by agent](by-agent.md) | The steps for each supported agent on one page | Editor users |
 
+## Worked examples
+
+More short walk-throughs in [examples/](examples/), all with fake values:
+
+- [After an upgrade](examples/after-an-upgrade.md): five commands to run after you update zn-gate.
+- [Check output explained](examples/check-output-explained.md): a sample `check` output, line by line.
+- [Init and uninstall](examples/init-and-uninstall.md): set up zn-gate, preview, then remove it.
+- [Offline and local only](examples/offline-and-local-only.md): use zn-gate with no network and with the cloud check off.
+- [Python API](examples/python-api.md): five short examples of the Python package.
+- [Reach report file](examples/reach-report-file.md): write the reach report to a file in CI.
+- [Scripting](examples/scripting.md): exit codes and JSON output in a shell script and a CI job.
+- [Uninstall one agent](examples/uninstall-one-agent.md): remove zn-gate from one agent and keep the others.
+- [Unix first run](examples/unix-first-run.md): the first ten minutes on macOS or Linux with a version-manager Node.js.
+- [Upgrade checklist](examples/upgrade-checklist.md): a one-screen version of the upgrade steps.
+- [Windows checklist](examples/windows-checklist.md): install and check zn-gate on Windows.
+- [Zed and JetBrains](examples/zed-and-jetbrains.md): connect, check and remove zn-gate in Zed and JetBrains.
+
 ## Teams and CI
 
 | Guide | What it covers | For whom |
