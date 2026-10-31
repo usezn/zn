@@ -23,7 +23,7 @@ const os = require('os');
 const path = require('path');
 const dotenv = require('../broker/dotenv');
 const markers = require('../broker/markers');
-const { realTargetOf, nativeTargetOf } = require('../broker/files');
+const { targetsOf } = require('../broker/files');
 const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
@@ -204,7 +204,7 @@ function credentialEnvPaths(env, home, cwd) {
     for (const raw of String(env[name]).split(path.delimiter)) {
       if (!raw.trim()) continue;
       const abs = path.resolve(cwd, expandHome(raw.trim(), home));
-      for (const p of new Set([abs, realTargetOf(abs), nativeTargetOf(abs)])) (CRED_ENV_DIRS.has(name) ? dirs : files).add(keyOf(slash(p)));
+      for (const p of new Set([abs, ...targetsOf(abs)])) (CRED_ENV_DIRS.has(name) ? dirs : files).add(keyOf(slash(p)));
     }
   }
   return { files, dirs: [...dirs] };
@@ -223,7 +223,7 @@ function projectRootOf(cwd) {
 
 /** Keys of a path as typed and where it really leads. */
 function keysOf(p) {
-  return [...new Set([keyOf(slash(p)), keyOf(slash(realTargetOf(p))), keyOf(slash(nativeTargetOf(p)))])];
+  return [...new Set([keyOf(slash(p)), ...targetsOf(p).map((t) => keyOf(slash(t)))])];
 }
 
 // The home folder and the project root are resolved once per process: a hook process checks one call, and the
@@ -434,10 +434,10 @@ function classifyPath(p, opts = {}) {
   }
   expanded.text = stripStreams(expanded.text);
   const abs = path.resolve(ctx.cwd, expanded.text);
-  const candidates = new Set([abs, realTargetOf(abs), nativeTargetOf(abs)]);
+  const candidates = new Set([abs, ...targetsOf(abs)]);
   // ag/../hooks.json, with ag a link to .agents/skills, names .agents/hooks.json: ".." is applied to where the link leads.
   const physical = physicalDotDot(expanded.text, ctx.cwd);
-  if (physical) { candidates.add(physical); candidates.add(realTargetOf(physical)); candidates.add(nativeTargetOf(physical)); }
+  if (physical) { candidates.add(physical); for (const t of targetsOf(physical)) candidates.add(t); }
   for (const candidate of candidates) {
     const c = classifyResolved(candidate, ctx);
     if (c) return c;
@@ -689,7 +689,7 @@ function globClass(word, opts = {}) {
     const hits = globOnDisk(abs, opts.budget);
     if (hits === 'too-broad' || hits === 'too-slow') return { kind: 'credential', reason: 'a pattern too broad to check' };
     for (const hit of hits || []) {
-      for (const cand of new Set([hit, realTargetOf(hit), nativeTargetOf(hit)])) {
+      for (const cand of new Set([hit, ...targetsOf(hit)])) {
         const c = classifyResolved(cand, ctx);
         // A key file match is judged by its content (keyFileGlobDenial); a protected file found later still wins.
         if (c && c.kind === 'keyfile') { keyHit = keyHit || c; continue; }
@@ -950,9 +950,9 @@ function isInstructionPath(p, opts = {}) {
   // the same normalization as classifyPath, on the text, so it also holds for a file that does not exist yet.
   expanded.text = stripStreams(expanded.text);
   const abs = path.resolve(ctx.cwd, expanded.text);
-  const candidates = new Set([abs, realTargetOf(abs), nativeTargetOf(abs)]);
+  const candidates = new Set([abs, ...targetsOf(abs)]);
   const physical = physicalDotDot(expanded.text, ctx.cwd);
-  if (physical) { candidates.add(physical); candidates.add(realTargetOf(physical)); candidates.add(nativeTargetOf(physical)); }
+  if (physical) { candidates.add(physical); for (const t of targetsOf(physical)) candidates.add(t); }
   for (const candidate of candidates) {
     if (isInstructionFile(candidate, ctx) || isShortInstructionName(candidate) || isInstructionUnderShortFolder(candidate, ctx)) return true;
   }
