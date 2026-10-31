@@ -1,0 +1,14 @@
+{
+ "rc": 0,
+ "dur_s": 2.8,
+ "requests": 0,
+ "tool_msgs": [],
+ "proj_files": [
+  ".env",
+  "a.txt"
+ ],
+ "outcomes": [
+  "blocked",
+  "failed"
+ ]
+}

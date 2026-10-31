@@ -31,4 +31,18 @@ function budget(limitMs) {
   return Math.round(limitMs * scale());
 }
 
-module.exports = { budget, scale, spin };
+// CPU time of this process (user + system), for the tests that bound a linear-time check. Wall time also
+// counts the moments a busy shared runner does not run the process at all, which no code change causes;
+// CPU time leaves them out, and a check that became quadratic still burns the CPU, so the limit still
+// fails it. It does not count child processes, so a test that waits for one keeps wall time.
+function cpuNow() {
+  return process.cpuUsage();
+}
+
+// Milliseconds of CPU time since the value cpuNow() returned.
+function cpuMsSince(start) {
+  const c = process.cpuUsage(start);
+  return (c.user + c.system) / 1000;
+}
+
+module.exports = { budget, scale, spin, cpuNow, cpuMsSince };

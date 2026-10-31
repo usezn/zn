@@ -251,6 +251,23 @@ test('pruneStale removes only old project maps and honours the days option', (t)
   assert.equal(store.pruneStale({ home: path.join(home, 'nope') }), 0);
 });
 
+test('pruneStale never deletes maps when the clock is far in the future or behind the newest map', (t) => {
+  const home = tmpHome(t);
+  store.ensureLayout({ home });
+  const a = store.projectFile('/work/a', { home });
+  const b = store.projectFile('/work/b', { home });
+  fs.writeFileSync(a, 'x');
+  fs.writeFileSync(b, 'x');
+  const realNow = Date.now;
+  try {
+    Date.now = () => Date.parse('2099-01-02T03:04:05Z');
+    assert.equal(store.pruneStale({ home }), 0);
+    Date.now = () => realNow() - 10 * 86400000;
+    assert.equal(store.pruneStale({ home }), 0);
+  } finally { Date.now = realNow; }
+  assert.equal(fs.existsSync(a) && fs.existsSync(b), true);
+});
+
 test('forgetProject reports whether a map existed; touch never throws', (t) => {
   const home = tmpHome(t);
   store.ensureLayout({ home });
