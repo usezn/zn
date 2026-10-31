@@ -190,47 +190,117 @@ function taskLineOf(v, hasShell) {
 // Per-platform overrides VS Code reads on a task: the block for the running system replaces fields of the base task.
 const TASK_PLATFORMS = ['linux', 'osx', 'windows'];
 
-/** Whether a task's shell settings (options.shell) are readable; true = a custom shell is set, null = unreadable. */
-function taskShell(o) {
-  if (o === undefined) return false;
+const { classifyEnv } = require('../audit/patterns');
+
+// The shells a task may launch, and the only arguments zn accepts for them: each shell's own flags. Anything else
+// (a program that is not a shell, or an argument that can carry code) is refused, because VS Code launches a custom
+// shell as `executable args... commandLine`, so the code could sit in the shell settings.
+const KNOWN_SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'fish', 'pwsh', 'powershell', 'cmd', 'nu']);
+const SHELL_FLAGS = new Set(['-c', '-l', '-i', '-lc', '--login', '-noprofile', '-command', '/d', '/s', '/c']);
+// Keys VS Code reads under a task's options; any other key is refused so a new field fails closed.
+const TASK_OPTION_KEYS = new Set(['cwd', 'env', 'shell']);
+
+/** The settings of a task's options as {shell, cwd, env}; null = unreadable or not accepted. shell: false = none, or {exe, args}. */
+function taskOptions(o) {
+  if (o === undefined) return { shell: false };
   if (!isObj(o)) return null;
+  if (Object.keys(o).some((k) => !TASK_OPTION_KEYS.has(k))) return null;
+  const out = { shell: false };
+  if (o.cwd !== undefined) {
+    if (typeof o.cwd !== 'string' || !o.cwd) return null;
+    out.cwd = o.cwd;
+  }
+  if (o.env !== undefined) {
+    if (!isObj(o.env)) return null;
+    for (const [k, v] of Object.entries(o.env)) {
+      if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') return null;
+      if (classifyEnv(k, v) || /^(?:LD_|DYLD_)/i.test(k)) return null;
+    }
+  }
   const sh = o.shell;
-  if (sh === undefined) return false;
+  if (sh === undefined) return out;
   if (!isObj(sh)) return null;
   if (sh.executable !== undefined && typeof sh.executable !== 'string') return null;
   if (sh.args !== undefined && (!Array.isArray(sh.args) || sh.args.some((a) => typeof a !== 'string'))) return null;
-  return true;
+  const exe = sh.executable;
+  if (exe !== undefined) {
+    const name = exe.split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, '');
+    if (!KNOWN_SHELLS.has(name)) return null;
+  }
+  const args = sh.args || [];
+  if (args.some((a) => !SHELL_FLAGS.has(a.toLowerCase()))) return null;
+  out.shell = { exe, args };
+  return out;
+}
+
+/** options.cwd as a folder: ${workspaceFolder}, ${userHome} and ${env:HOME} are replaced, any other ${...} is refused. */
+function taskCwd(c, workspace) {
+  const home = process.env.HOME || os.homedir();
+  const t = c.replace(/\$\{(workspaceFolder|userHome|env:HOME)\}/g, (m, k) => (k === 'workspaceFolder' ? workspace : home));
+  if (t.includes('${')) return null;
+  return path.resolve(workspace, t);
+}
+
+/** Whether a folder is the workspace or inside it, links followed. A task folder outside it is refused: its relative names cannot be judged. */
+function insideFolder(dir, workspace) {
+  const real = (p) => { try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); } };
+  const rel = path.relative(real(workspace), real(dir));
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/** Every line of a task variant: the built lines, run in the task's folder (cd) and, for a custom shell, as launched. */
+function variantLines(task, opts, workspace) {
+  const r = taskLineOf(task, opts.shell !== false);
+  if (r === null || r === undefined) return r;
+  let lines = r.split('\n');
+  if (opts.shell && opts.shell.exe !== undefined) {
+    const head = [opts.shell.exe, ...opts.shell.args].map(shQuote).join(' ');
+    lines = lines.concat(lines.map((l) => head + ' ' + l));
+  }
+  if (opts.cwd !== undefined) {
+    const dir = taskCwd(opts.cwd, workspace);
+    if (dir === null || !insideFolder(dir, workspace)) return null;
+    if (dir !== path.resolve(workspace)) lines = lines.map((l) => 'cd ' + shQuote(dir) + ' && ' + l);
+  }
+  return lines.join('\n');
 }
 
 /**
  * A task object as the line(s) it runs, across the base task and every platform override (linux, osx, windows): each
  * override is merged over the base the way VS Code applies it, every merged task is judged, and the stricter answer
- * wins. A custom options.shell (in the base or in an override) makes the task a shell task, whatever its type says.
- * undefined = not a task; null = a shape zn cannot read (an override that is not an object, options or shell of the
- * wrong type, a type that is not a string, a command or argument it cannot read).
+ * wins. A custom options.shell (in the base or in an override) makes the task a shell task, whatever its type says; the
+ * line is judged as launched (shell, its flags, then the command), and a shell that is not a known one, or a shell
+ * argument that is not a flag, is refused. options.cwd (merged over the base) is where the line is judged, and a folder outside the workspace is refused, options.env
+ * is checked against the dangerous-environment list and an unknown key under options is refused.
+ * undefined = not a task; null = a shape zn cannot read (an override that is not an object, options of the wrong
+ * shape, a type that is not a string, a command or argument it cannot read).
  */
-function taskLines(v) {
+function taskLines(v, workspace) {
+  workspace = workspace || process.cwd();
   const overrides = TASK_PLATFORMS.filter((k) => v[k] !== undefined);
   const hasCommand = (o) => COMMAND_KEYS.some((k) => o[k] !== undefined);
   const isTask = hasCommand(v) || overrides.some((k) => isObj(v[k]) && hasCommand(v[k]));
   if (!isTask) return undefined;
   if (v.type !== undefined && typeof v.type !== 'string') return null;
-  const baseShell = taskShell(v.options);
-  if (baseShell === null) return null;
+  const baseOpts = taskOptions(v.options);
+  if (baseOpts === null) return null;
   const base = {};
   for (const k of Object.keys(v)) if (!TASK_PLATFORMS.includes(k)) base[k] = v[k];
-  const variants = [{ task: base, shell: baseShell }];
+  const variants = [{ task: base, opts: baseOpts }];
   for (const k of overrides) {
     const ov = v[k];
     if (!isObj(ov)) return null;
     if (ov.type !== undefined && typeof ov.type !== 'string') return null;
-    const ovShell = taskShell(ov.options);
-    if (ovShell === null) return null;
-    variants.push({ task: Object.assign({}, base, ov), shell: baseShell || ovShell });
+    const ovOpts = taskOptions(ov.options);
+    if (ovOpts === null) return null;
+    const merged = { shell: ovOpts.shell || baseOpts.shell };
+    const cwd = ovOpts.cwd !== undefined ? ovOpts.cwd : baseOpts.cwd;
+    if (cwd !== undefined) merged.cwd = cwd;
+    variants.push({ task: Object.assign({}, base, ov), opts: merged });
   }
   const out = [];
-  for (const { task, shell } of variants) {
-    const r = taskLineOf(task, shell);
+  for (const { task, opts } of variants) {
+    const r = variantLines(task, opts, workspace);
     if (r === null) return null;
     if (r !== undefined) out.push(r);
   }
@@ -248,7 +318,7 @@ const MAX_NEST_NODES = 500;
  * is judged. A command or argument zn cannot read (a number, a list, an object without a string value) is `bad` and the
  * call is refused, never dropped. `truncated` = the arguments are deeper or larger than the bounds.
  */
-function commandScan(args) {
+function commandScan(args, workspace) {
   const commands = [];
   let bad = false;
   let truncated = false;
@@ -257,7 +327,7 @@ function commandScan(args) {
     if (++nodes > MAX_NEST_NODES || depth > MAX_NEST_DEPTH) { truncated = true; return; }
     let skip = null;
     if (!Array.isArray(obj)) {
-      const r = taskLines(obj);
+      const r = taskLines(obj, workspace);
       if (r === null) bad = true;
       else if (r !== undefined) commands.push(r);
       if (r !== undefined) skip = new Set([...COMMAND_KEYS, 'args', ...TASK_PLATFORMS]);
@@ -273,10 +343,10 @@ function commandScan(args) {
 }
 
 /** The first command one level down (see taskLines), as the line(s) it runs; undefined = none, null = unreadable. */
-function nestedCommand(args) {
+function nestedCommand(args, workspace) {
   for (const v of Object.values(args)) {
     if (!isObj(v)) continue;
-    const r = taskLines(v);
+    const r = taskLines(v, workspace);
     if (r !== undefined) return r;
   }
   return undefined;
@@ -378,7 +448,7 @@ function normalize(raw) {
   }
   // A known tool: its top-level command string (dev1's rule). A tool zn does not know: every command at any level within
   // bounds, built the way VS Code builds the line; unreadable or too deep = refused.
-  const scan = known ? null : commandScan(args);
+  const scan = known ? null : commandScan(args, cwd);
   if (scan && (scan.bad || scan.truncated)) {
     return { ...ev, tool: 'unreadable', input: { texts: [] }, unreadable: unreadable(scan.bad ? 'command' : 'arguments (too deeply nested)') };
   }

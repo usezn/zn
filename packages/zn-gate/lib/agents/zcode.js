@@ -222,7 +222,7 @@ function normalize(raw) {
   // Any other tool (one zn does not know): commands and files in its nested arguments, within bounds, get the shell,
   // read and write checks; arguments zn cannot read to the end are refused.
   if (!NAMES_ONLY_TOOLS.has(toolName)) {
-    const scan = require('./copilot').commandScan(args);
+    const scan = require('./copilot').commandScan(args, cwd);
     if (scan.bad || scan.truncated) return unreadable(scan.bad ? 'the command' : 'the arguments (too deeply nested)');
     if (scan.command !== undefined) return { ...ev, tool: 'bash', input: { command: scan.command, texts: [] } };
   }
