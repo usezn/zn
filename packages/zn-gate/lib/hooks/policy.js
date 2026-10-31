@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-30.1';
+const POLICY_RULES_VERSION = '2026-10-31.15';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -314,6 +314,22 @@ function homeRelClass(rel) {
 /* A write target zn cannot place on disk that may still name ~/.zn or an agent's plugins: a prefix that is a variable
    the environment does not set, a command substitution or another user's ~name (each may be a home folder), or a
    relative path after a cd (into the home folder, or to a place zn cannot follow). Returns the class or null. */
+/* A relative path read after a cd: the credential it names in a folder the cd leads to (other than the working folder),
+   or null. A cd zn cannot follow is handled by the .env rule; credentials are named by their place, so it is not
+   guessed here. */
+function credentialElsewhere(text, opts) {
+  const bases = opts.cdBases;
+  const t = slash(text);
+  if (!bases || !bases.moved || !t || path.isAbsolute(t) || /^[~$`%-]/.test(t) || /^[a-z][a-z0-9+.-]*:\/\//i.test(t)) return null;
+  const cwd = path.resolve(opts.cwd || process.cwd());
+  for (const b of bases.dirs) {
+    if (b === cwd) continue;
+    const c = classifyPath(path.join(b, text), opts);
+    if (c && c.kind === 'credential') return c;
+  }
+  return null;
+}
+
 function protectedElsewhere(text, opts) {
   const t = slash(text);
   const m = /^(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|\$\([^)]*\)|`[^`]*`|~[A-Za-z0-9._-]+)\/(.*)$/.exec(t)
@@ -2415,6 +2431,7 @@ function bashDenialOf(cmd, opts = {}) {
   const denied = new Map();
   // And whether a write target may still name ~/.zn or a plugin folder (protectedElsewhere).
   const elsewhereProt = new Map();
+  const elsewhereCred = new Map();
   // A word with * ? or [ can match a secret file; the message names a literal file when the command has one too.
   // The command is refused either way, so after a glob only a few more words are resolved on disk to find that file.
   const GLOB_NAME_LOOKAHEAD = 32;
@@ -2448,6 +2465,16 @@ function bashDenialOf(cmd, opts = {}) {
       classified.set(text, classifyWord(text, opts));
     }
     let c = classified.get(text);
+    // A relative name after a cd (cd ~/.aws && cat credentials, cd ~/.kube && cat config) is the file in the folder the
+    // cd leads to: a credential there is refused like the same file named by its full path.
+    if (!c && !CD_CMDS.has(bareHead(w.head).toLowerCase())) {
+      if (!elsewhereCred.has(text)) {
+        if (overBudget(opts.budget, (opts.cdBases && opts.cdBases.dirs.length) || 1)) return TOO_SLOW_MESSAGE;
+        elsewhereCred.set(text, credentialElsewhere(text, opts));
+      }
+      const e = elsewhereCred.get(text);
+      if (e) c = e;
+    }
     // A cd's own target is not written to (where the cd leads is followed by cdBasesOf).
     if ((writing || w.redirectTarget) && !CD_CMDS.has(bareHead(w.head).toLowerCase()) &&
         (!c || (c.kind !== 'zn_state' && c.kind !== 'agent_config'))) {
