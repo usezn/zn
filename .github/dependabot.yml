@@ -138,7 +138,7 @@ updates:
     groups:
       sbom-tools:
         applies-to: version-updates
-        patterns: [\"*\"]
+        patterns: ["*"]
         update-types: [minor, patch]
 
   - package-ecosystem: pip
@@ -219,7 +219,7 @@ updates:
     groups:
       docker:
         applies-to: version-updates
-        patterns: [\"*\"]
+        patterns: ["*"]
         update-types: [minor, patch]
 
   - package-ecosystem: npm
