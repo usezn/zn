@@ -203,7 +203,27 @@ async fn main() -> Result<()> {
             }
         },
         Some(Commands::Init) => {
-            ZnConfig::write_init_file(std::path::Path::new("zn.json"))?;
+            let zn_json = std::path::Path::new("zn.json");
+            let held = ZnConfig::secret_settings_in_file(zn_json);
+            if !held.is_empty() {
+                let lines: Vec<String> = held
+                    .iter()
+                    .map(|field| {
+                        let var = match *field {
+                            "security.api_key" => "ZN_API_KEY",
+                            "security.jwt_secret" => "ZN_JWT_SECRET",
+                            "security.mcp_ws_token" => "ZN_MCP_WS_TOKEN",
+                            _ => "ZN_DB_KEY",
+                        };
+                        format!("  {field} (use {var} instead)")
+                    })
+                    .collect();
+                anyhow::bail!(
+                    "zn.json already holds a key or token in clear text, so zn init left it as it is:\n{}\nRemove those settings from the file and keep the values in the environment, then run zn init again (or delete zn.json to start over).",
+                    lines.join("\n")
+                );
+            }
+            ZnConfig::write_init_file(zn_json)?;
             log::success("Initialized zn.json with default secure configuration.")?;
             note(
                 "Next Steps",

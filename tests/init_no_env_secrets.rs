@@ -135,3 +135,30 @@ fn init_replaces_an_existing_zn_json_atomically_without_leftovers() {
     assert_eq!(tmp, 0);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn zn_init_leaves_an_existing_zn_json_that_holds_a_secret_and_names_the_field() {
+    let dir = workdir("init-held-secret");
+    let original = "{\"security\": {\"api_key\": \"fake-held-key-not-real\"}}";
+    std::fs::write(dir.join("zn.json"), original).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_zn"))
+        .arg("init")
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run zn init");
+    assert!(!out.status.success());
+    let shown = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(shown.contains("security.api_key"), "{shown}");
+    assert!(shown.contains("ZN_API_KEY"), "{shown}");
+    assert!(!shown.contains("fake-held-key-not-real"), "value printed");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("zn.json")).unwrap(),
+        original
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

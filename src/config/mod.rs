@@ -753,6 +753,49 @@ impl ZnConfig {
         Self::write_private_json(path, &Self::init_template())
     }
 
+    /// The settings in an existing file at `path` that hold a key or token:
+    /// `security.api_key`, `security.jwt_secret`, `security.mcp_ws_token` and
+    /// `audit.encryption_key`. Only the names are returned, never the values.
+    /// A missing, unreadable, non-regular or invalid file gives an empty list.
+    pub fn secret_settings_in_file(path: &Path) -> Vec<&'static str> {
+        const FIELDS: [(&str, &str); 4] = [
+            ("security", "api_key"),
+            ("security", "jwt_secret"),
+            ("security", "mcp_ws_token"),
+            ("audit", "encryption_key"),
+        ];
+        let is_file = std::fs::symlink_metadata(path)
+            .map(|m| m.is_file())
+            .unwrap_or(false);
+        if !is_file {
+            return Vec::new();
+        }
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Vec::new();
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+            return Vec::new();
+        };
+        let names: [&'static str; 4] = [
+            "security.api_key",
+            "security.jwt_secret",
+            "security.mcp_ws_token",
+            "audit.encryption_key",
+        ];
+        FIELDS
+            .iter()
+            .zip(names)
+            .filter(|((section, field), _)| {
+                value
+                    .get(*section)
+                    .and_then(|s| s.get(*field))
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|v| !v.trim().is_empty())
+            })
+            .map(|(_, name)| name)
+            .collect()
+    }
+
     /// Write `config` to `path` as pretty JSON through `write_private_file`.
     pub fn write_private_json(path: &Path, config: &Self) -> Result<()> {
         let json = serde_json::to_string_pretty(config)?;
@@ -1637,6 +1680,22 @@ mod parse_message_tests {
             notices.iter().all(|n| !n.contains("unknown")),
             "{notices:?}"
         );
+    }
+
+    #[test]
+    fn secret_settings_in_a_file_are_named_without_their_values() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("zn.json");
+        std::fs::write(
+            &file,
+            "{\"security\": {\"api_key\": \"fake-key-not-real\", \"jwt_secret\": \"\"}, \"audit\": {\"encryption_key\": \"fake-db-not-real\"}}",
+        )
+        .expect("write");
+        let found = ZnConfig::secret_settings_in_file(&file);
+        assert_eq!(found, vec!["security.api_key", "audit.encryption_key"]);
+        assert!(ZnConfig::secret_settings_in_file(&dir.path().join("none.json")).is_empty());
+        std::fs::write(&file, "not json").expect("write");
+        assert!(ZnConfig::secret_settings_in_file(&file).is_empty());
     }
 
     #[test]
