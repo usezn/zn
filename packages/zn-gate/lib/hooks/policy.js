@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.11';
+const POLICY_RULES_VERSION = '2026-10-31.12';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1012,7 +1012,7 @@ const INSTRUCTION_WRAPPERS = new Map([
 function commandWordAt(seg, progs) {
   let i = 0;
   while (i < progs.length) {
-    if (seg[i].redirectTarget || /^[A-Za-z_][A-Za-z0-9_]*=/.test(seg[i].text)) { i++; continue; }
+    if (seg[i].redirectTarget || /^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(seg[i].text)) { i++; continue; }
     const takesValue = INSTRUCTION_WRAPPERS.get(progs[i]);
     if (!takesValue) return i;
     const wrapper = progs[i];
@@ -1539,33 +1539,72 @@ function parseCurlConfig(content, opts, depth) {
   return { items, paths };
 }
 
-/* True when a word of the command other than curl's own -K/--config value names one of the configuration paths:
-   the command may write that file before curl reads it (cat > cfg <<EOF, cp, mv, ln -sf, sed -i, dd of=cfg). */
-function curlConfigNamedElsewhere(readings, paths, opts) {
+/* True when a word of the command other than curl's own -K/--config value (and other than a cd target) may name one
+   of the given paths, so the command may write that file before curl reads it: the path itself (cat > cfg <<EOF, cp,
+   mv, ln -sf, sed -i, dd of=cfg), a folder that holds it (cp evil.cfg x/, cp -r dir/. ~/, rsync, cp -t x) or a
+   pattern that may match it (stat*.cfg, static.{cfg,x}, x/*, ~/.c*). */
+function pathsNamedElsewhere(readings, paths, opts) {
   if (!paths.length) return false;
-  const want = new Set(paths.map((q) => path.resolve(q)));
-  const names = new Set([...want].map((q) => path.basename(q)));
+  const want = [...new Set(paths.map((q) => path.resolve(q)))];
+  const wantSet = new Set(want);
   const home = opts.home || os.homedir();
   const dirs = curlBaseDirs(opts) || [path.resolve(opts.cwd || process.cwd())];
+  const holds = (abs) => {
+    if (wantSet.has(abs)) return true;
+    const pre = abs.endsWith(path.sep) ? abs : abs + path.sep;
+    return want.some((q) => q.startsWith(pre));
+  };
+  const at = (c) => {
+    const exp = expandHome(c, home);
+    return path.isAbsolute(exp) ? [path.resolve(exp)] : dirs.map((d) => path.resolve(d, exp));
+  };
   for (const r of readings) {
     for (const w of r) {
       if (w.curlCfgValue) continue;
+      if (CD_CMDS.has(bareHead(w.head).toLowerCase())) continue;
       const t = String(w.text).replace(/^["']+|["']+$/g, '');
+      if (!t || /^-/.test(t) || /^[a-z][a-z0-9+.-]*:\/\//i.test(t)) continue;
       const cands = new Set([t]);
       const eq = t.indexOf('=');
       if (eq >= 0) { cands.add(t.slice(eq + 1)); cands.add(t.slice(t.lastIndexOf('=') + 1)); }
-      for (const c of cands) {
-        if (!c || !names.has(path.basename(c))) continue;
-        const exp = expandHome(c, home);
-        for (const d of path.isAbsolute(exp) ? [''] : dirs) {
-          const abs = path.resolve(d || '/', exp);
-          if (want.has(abs)) return true;
-          try { if (want.has(fs.realpathSync(abs))) return true; } catch (_) { /* not there */ }
+      for (const c0 of cands) {
+        if (!c0) continue;
+        const named = c0.includes('{') ? (braceNames(c0) || [c0]) : [c0];
+        for (const c of named) {
+          const g = c.search(/[*?[]/);
+          if (g >= 0) {
+            // a pattern: the folder before the first wildcard holds every name it can match
+            const cut = c.slice(0, g);
+            const slashAt = Math.max(cut.lastIndexOf('/'), cut.lastIndexOf('\\'));
+            const dir = slashAt >= 0 ? cut.slice(0, slashAt + 1) : '.';
+            for (const a of at(dir)) if (holds(a)) return true;
+            continue;
+          }
+          for (const a of at(c)) {
+            if (holds(a)) return true;
+            if (want.some((q) => path.basename(q) === path.basename(a))) {
+              try { if (wantSet.has(fs.realpathSync(a))) return true; } catch (_) { /* not there */ }
+            }
+          }
         }
       }
     }
   }
   return false;
+}
+
+function curlConfigNamedElsewhere(readings, paths, opts) {
+  return pathsNamedElsewhere(readings, paths, opts);
+}
+
+/* Every place curl may read a default configuration from (whether it exists now or not). */
+function curlDefaultConfigPlaces(opts) {
+  const env = opts.env || process.env;
+  const home = opts.home || os.homedir();
+  const out = [path.join(home, '.curlrc'), path.join(home, '.config', 'curlrc')];
+  if (env.CURL_HOME) out.push(path.join(String(env.CURL_HOME), '.curlrc'));
+  if (env.XDG_CONFIG_HOME) out.push(path.join(String(env.XDG_CONFIG_HOME), 'curlrc'));
+  return out;
 }
 
 /* A small file read for a curl --variable name@file: its content, or null when zn cannot read it. */
@@ -1619,7 +1658,7 @@ function curlHomeChanged(readings) {
   for (const r of readings) {
     for (const w of r) {
       const t = String(w.text).replace(/\\(.)/g, '$1').replace(/["']/g, '');
-      if (/^(?:CURL_HOME|XDG_CONFIG_HOME|HOME)=/.test(t)) return true;
+      if (/^(?:CURL_HOME|XDG_CONFIG_HOME|HOME)\+?=/.test(t)) return true;
     }
   }
   return false;
@@ -1716,8 +1755,8 @@ function markCurlWords(readings, opts = {}, cmdText = '') {
         const first = group[prog.at + 1] ? String(group[prog.at + 1].text) : '';
         if (first !== '-q' && first !== '--disable') {
           // A curlrc written by this command, or the folders curl looks in changed by it, cannot be checked.
-          if (curlrcWritten(readings, group) || curlHomeChanged(readings) ||
-            /(?:^|[\s;&|(`])(?:export\s+|declare\s+-x\s+|env\s+(?:-\S+\s+)*)?(?:CURL_HOME|XDG_CONFIG_HOME|HOME)=/.test(cmdText)) {
+          if (curlrcWritten(readings, group) || curlHomeChanged(readings) || pathsNamedElsewhere(readings, curlDefaultConfigPlaces(opts), opts) ||
+            /(?:^|[\s;&|(`])(?:export\s+|declare\s+-x\s+|env\s+(?:-\S+\s+)*)?(?:CURL_HOME|XDG_CONFIG_HOME|HOME)\+?=/.test(cmdText)) {
             curlWord.curlConfigUnreadable = true;
           }
           for (const f of curlDefaultConfigs(opts)) {
@@ -1977,7 +2016,7 @@ function markLinkWords(readings) {
 }
 
 const RESERVED_WORDS = new Set(['if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'function', '{', '}', '!', '[[', 'time', 'coproc', 'select', 'eval', 'exec', 'source', '.', 'sudo', 'doas', 'env', 'xargs', 'nohup', 'command', 'builtin', 'export', 'declare', 'local', 'readonly', 'typeset', 'alias', 'set', 'unset', 'let']);
-const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;   // NAME=value and NAME+=value
 
 /**
  * Commands with named markers. A marker in a command's arguments is never
@@ -2801,7 +2840,7 @@ function textOnlyCommand(text) {
   if (/[;&|\n\r`]|\$\(|<\(|>\(/.test(text)) return false;
   const toks = text.trim().split(/\s+/).map((x) => x.replace(/^['"]+|['"]+$/g, ''));
   let i = 0;
-  while (i < toks.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i]) || ['env', 'command', 'nohup', 'time'].includes(programBase(toks[i])))) i++;
+  while (i < toks.length && (/^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(toks[i]) || ['env', 'command', 'nohup', 'time'].includes(programBase(toks[i])))) i++;
   const prog = programBase(toks[i]);
   if (prog === 'echo' || prog === 'printf') return true;
   if (prog !== 'git') return false;
@@ -3002,6 +3041,15 @@ function bashDenialOf(cmd, opts = {}) {
     if (atWords === null) return GLOB_TOO_LARGE_MESSAGE;
     if (atWords.refuse) return atWords.refuse;
     words.push(...atWords);
+  }
+  // ~1, ~+2, ~-1 (directory-stack entries other than the top): zn does not know which folder they are, so each is read
+  // in every folder the command may be in (the working folder and every place a cd or pushd leads to).
+  for (const x of words.slice()) {
+    const m = /^~[+-]?[1-9]\d*(?=$|[\\/])/.exec(String(x.text));
+    if (!m) continue;
+    const rest = String(x.text).slice(m[0].length).replace(/^[\\/]+/, '');
+    const dirs = new Set([path.resolve(opts.cwd || process.cwd()), ...((opts.cdBases && opts.cdBases.dirs) || []).map((d) => path.resolve(d))]);
+    for (const d of dirs) words.push({ text: path.join(d, rest), head: x.head, redirectTarget: x.redirectTarget, seq: x.seq });
   }
   const mentionsAgents = /\.agents/i.test(text);
   const makesLink = words.some((x) => x.link === true);
