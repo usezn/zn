@@ -82,6 +82,11 @@ const SHELL_TOOLS = new Set(['bash', 'powershell']);
 const WRITE_TOOLS = new Set(['create', 'edit']);
 const KNOWN_TOOLS = new Set(['bash', 'powershell', 'view', 'create', 'edit', 'grep', 'glob', 'web_fetch']);
 const COMMAND_KEYS = ['command', 'cmd', 'Command', 'script'];
+// Every key an unknown tool may carry a command under. `input` counts only as a string (an object there is plain data);
+// executable takes its arguments from args or argv.
+const LINE_KEYS = [...COMMAND_KEYS, 'commandLine', 'command_line', 'CommandLine', 'executable', 'input'];
+const ARG_KEYS = ['args', 'argv'];
+const lineKeysOf = (v) => LINE_KEYS.filter((k) => v[k] !== undefined && (k !== 'input' || typeof v[k] === 'string'));
 const PATH_KEY_RE = /path|file|target|uri|dir|source|destination/i;
 const NOT_PATH_KEY_RE = /content|text|instruction|description|query|pattern|code|chunk|summary|title|str$/i;
 const MAX_PATH_LEN = 4096;
@@ -170,23 +175,29 @@ function taskPiece(x) {
  * cannot read (never dropped).
  */
 function taskLines(v) {
-  const key = COMMAND_KEYS.find((k) => v[k] !== undefined);
-  if (key === undefined) return undefined;
-  const c = taskPiece(v[key]);
-  if (!c || (typeof v[key] === 'string' && !v[key])) return null;
+  const keys = lineKeysOf(v);
+  if (!keys.length) return undefined;
   let extra = [];
-  if (v.args !== undefined) {
-    if (!Array.isArray(v.args)) return null;
-    extra = v.args.map(taskPiece);
+  const argKey = ARG_KEYS.find((k) => v[k] !== undefined);
+  if (argKey !== undefined) {
+    if (!Array.isArray(v[argKey])) return null;
+    extra = v[argKey].map(taskPiece);
     if (extra.some((p) => p === null)) return null;
   }
-  const join = (f) => [c, ...extra].map(f).join(' ');
-  if (typeof v.type === 'string' && v.type.toLowerCase() === 'process') return join((p) => p.q);
-  const bare = typeof v[key] === 'string' && extra.length === 0;
-  const lines = [bare ? c.raw : join((p) => p.vs), bare ? c.raw : join((p) => p.vse), bare ? c.raw : join((p) => p.vw), join((p) => p.raw), join((p) => p.q)];
-  return lines.filter((l, i, arr) => arr.indexOf(l) === i).join('\n');
+  const out = [];
+  for (const key of keys) {
+    const val = v[key];
+    // A list is an argv: every element is one argument, and a number, list or object inside it cannot be read.
+    const head = Array.isArray(val) ? val.map(taskPiece) : [taskPiece(val)];
+    if (!head.length || head.some((p) => p === null) || (typeof val === 'string' && !val)) return null;
+    const pieces = [...head, ...extra];
+    const join = (f) => pieces.map(f).join(' ');
+    if (typeof v.type === 'string' && v.type.toLowerCase() === 'process') { out.push(join((p) => p.q)); continue; }
+    const bare = typeof val === 'string' && extra.length === 0;
+    out.push(bare ? head[0].raw : join((p) => p.vs), bare ? head[0].raw : join((p) => p.vse), bare ? head[0].raw : join((p) => p.vw), join((p) => p.raw), join((p) => p.q));
+  }
+  return out.filter((l, i, arr) => arr.indexOf(l) === i).join('\n');
 }
-
 
 // Bounds of the walk over the arguments of a tool zn does not know: deeper or larger than this cannot be checked, so it is refused.
 const MAX_NEST_DEPTH = 6;
@@ -210,7 +221,7 @@ function commandScan(args) {
       const r = taskLines(obj);
       if (r === null) bad = true;
       else if (r !== undefined) commands.push(r);
-      if (r !== undefined) skip = new Set([...COMMAND_KEYS, 'args']);
+      if (r !== undefined) skip = new Set([...lineKeysOf(obj), ...ARG_KEYS]);
     }
     const entries = Array.isArray(obj) ? obj.map((v) => [null, v]) : Object.entries(obj);
     for (const [k, v] of entries) {
@@ -220,16 +231,6 @@ function commandScan(args) {
   };
   walk(args, 0);
   return { command: commands.length ? commands.join('\n') : undefined, bad, truncated };
-}
-
-/** The first command one level down (see taskLines), as the line(s) it runs; undefined = none, null = unreadable. */
-function nestedCommand(args) {
-  for (const v of Object.values(args)) {
-    if (!isObj(v)) continue;
-    const r = taskLines(v);
-    if (r !== undefined) return r;
-  }
-  return undefined;
 }
 
 /** Every string argument whose key looks like a file or folder (content-like keys skipped), three levels deep. */
@@ -495,7 +496,6 @@ module.exports = {
   COMMAND_KEYS,
   patchTextOf,
   patchInput,
-  nestedCommand,
   commandScan,
   MAX_NEST_DEPTH,
   MAX_NEST_NODES,

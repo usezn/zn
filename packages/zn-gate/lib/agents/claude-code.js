@@ -140,12 +140,14 @@ const KNOWN_TOOLS = new Set(Object.values(TOOL_MAP));
    through the Claude-format hook). If its input carries a command, it gets the shell checks; if it names files, every
    path gets the read and write checks, as in the Copilot adapter. A tool with neither gets no opinion. */
 function unknownToolEvent(base, toolName, ti) {
-  const { pathsOf, firstString, COMMAND_KEYS, patchTextOf, patchInput, nestedCommand } = require('./copilot');
+  const { pathsOf, patchTextOf, patchInput, commandScan } = require('./copilot');
   const patch = patchTextOf(toolName, ti);
   if (patch !== undefined) return { ...base, tool: 'write', toolName, input: patchInput(patch) };
-  const cmd = firstString(ti, COMMAND_KEYS) !== undefined ? firstString(ti, COMMAND_KEYS) : nestedCommand(ti);
-  if (cmd === null) return { ...base, tool: 'bash', toolName, input: { texts: [] } };
-  if (cmd !== undefined) return { ...base, tool: 'bash', toolName, input: { command: cmd, texts: [] } };
+  // Every command-like key, at any depth within bounds, is judged as a shell line; one zn cannot read (a number, an
+  // object, a nested list) or arguments too deep to walk give a call without a command, which the runner refuses.
+  const scan = commandScan(ti);
+  if (scan.bad || scan.truncated) return { ...base, tool: 'bash', toolName, input: { texts: [] } };
+  if (scan.command !== undefined) return { ...base, tool: 'bash', toolName, input: { command: scan.command, texts: [] } };
   const { paths, bad } = pathsOf(ti);
   if (bad) return { ...base, tool: 'write', toolName, input: { paths, unparsed: true, texts: [] } };
   if (paths.length) return { ...base, tool: 'fileaccess', toolName, input: { path: paths[0], paths, texts: [] } };

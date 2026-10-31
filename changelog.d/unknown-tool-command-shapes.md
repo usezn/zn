@@ -1,0 +1,2 @@
+### Security
+- A tool that zn does not know, called through the Claude-format or Copilot hook, is now checked as a shell command when its command is a list of arguments or sits under `input`, `commandLine`, `command_line` or `executable` with `args`, not only under `command`. If a command-like field cannot be read (a number, an object or a nested list), the call is blocked with a clear message instead of passing unchecked. Tools without any command-like field, and ordinary commands the policy allows, are unchanged.
