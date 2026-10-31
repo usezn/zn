@@ -64,12 +64,27 @@ export const SPECS = [
     versionFile: PY + 'destructive.py',
     files: [PY + 'destructive.py'],
   },
+  {
+    id: 'node:PROD_GUARD_RULES_VERSION',
+    lang: 'node',
+    constName: 'PROD_GUARD_RULES_VERSION',
+    versionFile: NODE + 'lib/prod-guard.js',
+    files: [NODE + 'lib/prod-guard.js'],
+  },
+  {
+    id: 'py:PROD_GUARD_RULES_VERSION',
+    lang: 'py',
+    constName: 'PROD_GUARD_RULES_VERSION',
+    versionFile: PY + 'prod_guard.py',
+    files: [PY + 'prod_guard.py'],
+  },
 ];
 
 // Pairs that must hold the same value in the Node and the Python package.
 export const PARITY = [
   ['node:RULES_VERSION', 'py:RULES_VERSION'],
   ['node:COMMAND_RULES_VERSION', 'py:COMMAND_RULES_VERSION'],
+  ['node:PROD_GUARD_RULES_VERSION', 'py:PROD_GUARD_RULES_VERSION'],
 ];
 
 // Reads the string assigned to a version constant from source text, or null.

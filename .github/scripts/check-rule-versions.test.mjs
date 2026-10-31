@@ -101,7 +101,21 @@ test('Node and Python must agree on rules and command versions', () => {
   const b = run({ 'py:COMMAND_RULES_VERSION': '2026-10-22.6' }, {});
   assert.equal(b.length, 1);
   assert.match(b[0], /COMMAND_RULES_VERSION differs/);
-  assert.equal(PARITY.length, 2);
+  const c = run({ 'node:PROD_GUARD_RULES_VERSION': '2026-10-22.6' }, {}, ['packages/zn-gate/lib/prod-guard.js']);
+  assert.ok(c.some((m) => /PROD_GUARD_RULES_VERSION differs/.test(m)), c.join('\n'));
+  assert.equal(PARITY.length, 3);
+});
+
+test('the production data guard needs its own bump in each package', () => {
+  const node = run({}, {}, ['packages/zn-gate/lib/prod-guard.js']);
+  assert.equal(node.length, 1);
+  assert.match(node[0], /prod-guard\.js/);
+  const py = run({}, {}, ['packages/zn-gate-py/src/zn_gate/prod_guard.py']);
+  assert.equal(py.length, 1);
+  assert.match(py[0], /prod_guard\.py/);
+  const both = run({ 'node:PROD_GUARD_RULES_VERSION': '2026-10-22.6', 'py:PROD_GUARD_RULES_VERSION': '2026-10-22.6' }, {},
+    ['packages/zn-gate/lib/prod-guard.js', 'packages/zn-gate-py/src/zn_gate/prod_guard.py']);
+  assert.deepEqual(both, []);
 });
 
 test('extractVersion reads JS and Python constants and ignores comments', () => {
