@@ -6,8 +6,9 @@
 # the same as .github/license-allowlist.txt (derived from
 # packages/zn-gate/THIRD_PARTY_NOTICES.md), plus "Apache-2.0 WITH
 # LLVM-exception". .github/scripts/check-license-allowlist.py (job
-# license-lists in dependency-review.yml) fails when the two differ. Anything else (for example MPL-2.0 or CC0-1.0) is
-# reported as a finding for a person to review.
+# license-lists in dependency-review.yml) fails when the two differ. Anything else (for example MPL-2.0) is
+# reported as a finding for a person to review. Unusual but acceptable licenses
+# are allowed per crate in [[licenses.exceptions]] below instead of globally.
 
 [graph]
 all-features = false
@@ -24,6 +25,21 @@ allow = [
     "Unicode-3.0",
     "Zlib",
 ]
+
+# Per-crate exceptions: permissive licenses that are compatible with shipping
+# zn under MIT but are not worth allowing for every crate.
+[[licenses.exceptions]]
+# notify: file watcher used by the engine. CC0-1.0 is a public-domain
+# dedication with no attribution or notice obligations.
+allow = ["CC0-1.0"]
+crate = "notify"
+
+[[licenses.exceptions]]
+# webpki-root-certs: root certificate data, only built for wasm32 targets
+# (rustls-platform-verifier); never part of the native binary. CDLA-Permissive-2.0
+# is a permissive data licence.
+allow = ["CDLA-Permissive-2.0"]
+crate = "webpki-root-certs"
 
 [bans]
 # Two versions of one crate are common in a large tree: report, do not fail.
