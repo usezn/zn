@@ -116,7 +116,7 @@ jobs:
   node-hooks:
     name: hook input fuzz (Node.js)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: packages/zn-gate
