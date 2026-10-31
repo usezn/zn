@@ -1586,8 +1586,9 @@ function pathsNamedElsewhere(readings, paths, opts) {
       // $PWD and ${PWD} are the folder the command is in (each place a cd may lead to); $OLDPWD is not known, so a word
       // that names a folder through it is taken to name the configuration.
       if ([...cands].some((c) => /\$\{?OLDPWD\b/.test(c))) return true;
-      // ${PWD:-x}, ${PWD-x}, ${PWD%/} and other expansions of PWD: zn does not follow them, so they count as naming it.
-      if ([...cands].some((c) => /\$\{PWD[^}]/.test(c))) return true;
+      // ${PWD:-x}, ${HOME:-~}, ${HOME%/}, ${!v}, ${#v} and any other expansion of a variable that zn does not resolve: the word
+      // counts as naming the configuration. Plain ${NAME} is handled below and by the home expansion.
+      if ([...cands].some((c) => /\$\{(?:!|#|[A-Za-z_][A-Za-z0-9_]*[^A-Za-z0-9_}])/.test(c))) return true;
       for (const c of [...cands]) {
         if (!/\$\{?PWD\b/.test(c)) continue;
         cands.delete(c);
@@ -1963,7 +1964,7 @@ function atFileWords(words, env = {}) {
       const dv = decodeEscapes(v);
       if (dv !== v) { add(w, uploadNamesOf(dv), true); add(w, atFilesOf(dv)); }
     }
-    // --expand-<option> values with {{name}} replaced by the curl --variable values (B-2584 r7).
+    // --expand-<option> values with {{name}} replaced by the curl --variable values.
     if (w.expandOpt) {
       if (w.expandUnknown && /^(?:upload-file|config|data|data-binary|data-raw|data-ascii|data-urlencode|json|form|form-string|url-query|header)$/.test(w.expandOpt)) dynamicUpload = true;
       else if (w.expandOpt === 'upload-file') add(w, [w.expanded], true);

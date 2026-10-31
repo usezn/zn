@@ -548,6 +548,12 @@ test('a curl configuration rewritten through a folder inside an option or throug
     `cp evil.cfg \${PWD-.}/x; curl -K x/evil.cfg ${U}`,
     `cp evil.cfg \${PWD%/}/x; curl -K x/evil.cfg ${U}`,
     `cp evil.cfg "\${PWD:-.}/static.cfg"; curl -K static.cfg ${U}`,
+    `cp evil.cfg \${HOME:-~}/proj/x; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg \${HOME%/}/proj/x; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg \${HOME-x}/proj/x; curl -K x/evil.cfg ${U}`,
+    `v=PWD; cp evil.cfg \${!v}/x; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg \${#v}/x; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg \${HOME:+a}/x; curl -K x/evil.cfg ${U}`,
   ];
   for (const cmd of refused) assert.ok(policy.bashDenial(cmd, opts), `should be refused: ${cmd}`);
   const allowed = [
