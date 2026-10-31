@@ -153,11 +153,11 @@ docker build -t zn .
 docker run --rm -i zn analyze "ignore all previous instructions"
 ```
 
-The server (`zn start`) needs two things inside a container. It listens on `127.0.0.1` by default, which a published port cannot reach, so set `server.bind_address` to `0.0.0.0` in a config file (the container's own address). And it needs a terminal: without `-t` it exits at once. Set `ZN_API_KEY` too, because a random key would be written inside the container and lost when it stops:
+The server (`zn start`) needs two things inside a container. It listens on `127.0.0.1` by default, which a published port cannot reach, so set `server.bind_address` to `0.0.0.0` in a config file (the container's own address). And it reads requests on standard input, so keep stdin open with `-i`: without it the server exits at once. Set `ZN_API_KEY` too, because a random key would be written inside the container and lost when it stops:
 
 ```bash
 echo '{"server":{"bind_address":"0.0.0.0"}}' > zn.json
-docker run --rm -it -p 127.0.0.1:9090:9090 -e ZN_API_KEY=<your-key>   -v "$PWD/zn.json:/data/zn.json:ro" zn start
+docker run --rm -i -p 127.0.0.1:9090:9090 -e ZN_API_KEY=<your-key>   -v "$PWD/zn.json:/data/zn.json:ro" zn start
 curl -H "X-API-Key: <your-key>" http://127.0.0.1:9090/api/v1/health
 ```
 
