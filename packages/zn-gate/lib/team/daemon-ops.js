@@ -26,7 +26,7 @@ const { uploadPending } = require('./upload');
 const { syncOutcome } = require('./sync-outcome');
 const { CODES, znError } = require('../errors');
 const messages = require('../messages');
-const { INVISIBLE } = require('../vault/confirm');
+const { INVISIBLE_ANY_RE } = require('../vault/confirm');
 
 const VERSION = require('../../package.json').version;
 const DEFAULT_API = 'https://api.usezn.com';
@@ -39,8 +39,7 @@ const MAX_PENDING_REVOCATIONS = 8;
 
 const osName = () => (['linux', 'darwin', 'win32'].includes(process.platform) ? process.platform : 'other');
 /* Text from the server shown in dialogs and in `zn team status`: printable only (same invisible set as the dialogs). */
-const INVISIBLE_RE = new RegExp('[' + INVISIBLE + ']', 'g');
-const printable = (s, max) => (typeof s === 'string' ? s.replace(INVISIBLE_RE, '').trim().slice(0, max) : null);
+const printable = (s, max) => (typeof s === 'string' ? Array.from(s.replace(INVISIBLE_ANY_RE, '').trim()).slice(0, max).join('') : null);
 
 function makeTeamOps(ctx) {
   const { state, writeAudit, confirmOutOfBand } = ctx;
@@ -104,7 +103,21 @@ function makeTeamOps(ctx) {
     }
   }
 
+  /* The membership marker in keychain.json (org id, no secret): readable with the vault locked, so the reset,
+   * purge and uninstall guards do not depend on the two readable copies. Best effort; healed by writeCopies. */
+  function markMembership(org) {
+    try {
+      const keychain = require('../vault/keychain');
+      const m = keychain.readMeta(state.opts);
+      if (!m || (m.team_org || null) === (org || null)) return;
+      const next = Object.assign({}, m);
+      if (org) next.team_org = org; else delete next.team_org;
+      keychain.writeMeta(next, state.opts);
+    } catch (err) { /* the marker is a second guard, not the source of truth */ }
+  }
+
   function writeCopies(t, strict) {
+    markMembership(t.org);
     try {
       const disk = policy.readTeam(state.opts);
       if (!disk || !sameJson(disk, Object.assign({ v: 1 }, teamRecord(t)))) policy.writeTeam(teamRecord(t), state.opts);
@@ -392,6 +405,7 @@ function makeTeamOps(ctx) {
         };
         writeAudit({ mode: 'set', decision: 'allow', reason: current ? 'team_rejoined' : 'team_joined' });
         await state.saveSecrets();
+        markMembership(s.team.org);
         mirror(s.team);
         return { org: res.org, org_name: orgName, install_id: installId, api_base: base };
       });
@@ -426,6 +440,7 @@ function makeTeamOps(ctx) {
         if (!s.team) return { left: null, pending_files: removeLocalCopies() };
         if (!sameMembership(s.team, snap)) throw znError(CODES.POLICY_DENIED, 'the organization membership changed while leaving; run `zn team leave` again');
         delete s.team;
+        markMembership(null);
         s.teamGen = (Number.isInteger(s.teamGen) ? s.teamGen : 0) + 1;
         delete s.orgApprovals;
         writeAudit({ mode: 'remove', decision: 'allow', reason: 'team_left' });
@@ -480,15 +495,37 @@ function makeTeamOps(ctx) {
      * the custom detectors of the policy held in the vault, and what the last version lifted.
      * It also puts the copies back. Never the token.
      */
-    async teamHookInfo() {
+    async teamHookInfo(args) {
       const t = await team();
       if (!t) return { joined: false };
+      // The hook says which pinned key id its readable team.json carries. The pin held in the vault is the
+      // one that counts: a different one means team.json was replaced, and that is written to the audit log.
+      const seen = args && typeof args === 'object' && typeof args.seen_kid === 'string' ? args.seen_kid.slice(0, 64) : null;
+      const pinMismatch = seen !== null && seen !== t.pin.kid;
+      if (pinMismatch) writeAudit({ mode: 'set', decision: 'error', reason: 'team_pin_mismatch' });
       await ensureCopies(membership(t));
       const st = await policyState();
+      const shown = t.policy && Number.isSafeInteger(t.policy.change_shown) ? t.policy.change_shown : null;
       return {
-        joined: true, org: t.org, state: st.state, version: st.version || null,
+        joined: true, org: t.org, kid: t.pin.kid, state: st.state, version: st.version || null,
         detectors: detectorsOf(st), change: changes.cleanChange(t.policy && t.policy.change),
+        change_shown: shown, pin_mismatch: pinMismatch,
       };
+    },
+
+    /**
+     * teamChangeShown(to) -> true when recorded. The hook showed the person the "your organization lifted a
+     * restriction" line for the policy change that ends at version `to`; the vault remembers it, so a file in
+     * ~/.zn cannot mark a change as already shown.
+     */
+    async teamChangeShown(to) {
+      if (!Number.isSafeInteger(to)) return false;
+      const r = await updateTeam((tt) => {
+        if (!tt.policy || !tt.policy.change || tt.policy.change.to !== to) return false;
+        tt.policy.change_shown = to;
+        return true;
+      });
+      return Boolean(r && r.value);
     },
 
     /**
@@ -539,6 +576,7 @@ function makeTeamOps(ctx) {
               const isNew = !prevPolicy || prevPolicy.version !== v.policy.version;
               const change = isNew ? (prevPolicy ? changes.changeRecord(prevPolicy, v.policy, rec.fetched_at) : null) : ((tt.policy && tt.policy.change) || null);
               if (change) rec.change = change; else delete rec.change;
+              if (!isNew && tt.policy && Number.isSafeInteger(tt.policy.change_shown)) rec.change_shown = tt.policy.change_shown;
               tt.policy = rec;
               return { ok: true, isNew, lifted: isNew ? change : null };
             }, snap, (tt, res) => {
@@ -709,4 +747,4 @@ function makeTeamOps(ctx) {
   return ops;
 }
 
-module.exports = { makeTeamOps, DEFAULT_API };
+module.exports = { makeTeamOps, DEFAULT_API, printable };
