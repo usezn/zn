@@ -1,4 +1,4 @@
-"""B-2214: literal variables assigned earlier on the same line are read by the download-and-run and startup-file rules.
+"""Literal variables assigned earlier on the same line are read by the download-and-run and startup-file rules.
 Mirrors packages/zn-gate/test/destructive_variables.test.js. Only fake example.com URLs and example paths; nothing is run."""
 import time
 
@@ -97,25 +97,25 @@ def test_a_long_value_is_not_kept():
 
 def test_doubling_a_variable_is_bounded():
     cmd = "X=aaaaaaaaaaaaaaaa;" + " X=$X$X;" * 400 + f" $X {DL} | sh"
-    t0 = time.perf_counter()
+    t0 = time.process_time()
     r = rule(cmd)
     assert r in ("allow", "too_many_commands")
-    assert time.perf_counter() - t0 < 2.0
+    assert time.process_time() - t0 < 2.0
 
 
 @pytest.mark.parametrize("unit", [f"X=curl; $X {DL} | sh; ", "echo hi; ", f"S=sh; curl {DL} | $S; "])
 def test_200kb_stays_linear(unit):
     big = unit * ((200 * 1024 - 8) // len(unit))
-    t0 = time.perf_counter()
+    t0 = time.process_time()
     rule(big)
-    assert time.perf_counter() - t0 < 3.0
+    assert time.process_time() - t0 < 3.0
 
 
 def test_200kb_assignments_and_references():
     lines = "\n".join(f"W{i % 200}=v" for i in range(12000)) + f"\nX=curl\n$X {DL} | sh"
-    t0 = time.perf_counter()
+    t0 = time.process_time()
     rule(lines)
-    assert time.perf_counter() - t0 < 3.0
-    t1 = time.perf_counter()
+    assert time.process_time() - t0 < 3.0
+    t1 = time.process_time()
     rule("X=a; echo " + "$X" * 90000)
-    assert time.perf_counter() - t1 < 3.0
+    assert time.process_time() - t1 < 3.0

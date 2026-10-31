@@ -63,7 +63,7 @@ def test_short_sequences_are_expanded():
 
 def test_long_cd_chain_is_followed_in_one_pass_and_fails_closed_above_the_cap():
     import time
-    t0 = time.time()
+    t0 = time.process_time()
     flat = check_command("cd ~ && " + "cd ./ && " * 22000 + "rm -rf .")
     assert flat.verdict == "block" and flat.rule == "destructive:rm_root_home"
     back = check_command("cd ~ && " + "cd a && cd .. && " * 9000 + "rm -rf .")
@@ -73,7 +73,7 @@ def test_long_cd_chain_is_followed_in_one_pass_and_fails_closed_above_the_cap():
     deep_var = check_command("cd $WORK && " + "cd a && cd .. && " * 9000 + "rm -rf .")
     # A folder named by a variable is not followed past its own name; the same chain stays allowed, like cd "$BUILD_DIR" && rm -rf .
     assert deep_var.verdict == "allow"
-    assert time.time() - t0 < 30
+    assert time.process_time() - t0 < 30
 
 
 def test_cmd_exe_cd_d_and_trailing_separator_are_followed():
@@ -86,12 +86,12 @@ def test_cmd_exe_cd_d_and_trailing_separator_are_followed():
 
 def test_the_cost_of_a_cd_does_not_depend_on_the_length_of_the_folder():
     import time
-    t0 = time.time()
+    t0 = time.process_time()
     folder = "/" + "abcdefgh/" * 450
     cmd = "cd " + folder + " && " + "cd b && cd .. && " * 11000 + "rm -rf ."
     assert len(cmd) < 200000
     assert check_command(cmd).verdict == "allow"
-    assert time.time() - t0 < 3
+    assert time.process_time() - t0 < 3
 
 
 def test_a_relative_target_that_climbs_out_of_a_known_folder_is_judged_from_there():

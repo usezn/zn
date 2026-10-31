@@ -29,7 +29,7 @@ const { znCommand } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-10-31.2';
+const POLICY_RULES_VERSION = '2026-10-31.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2904,6 +2904,8 @@ function egressSubstitutions(text) {
         else if (text[j] === ')') depth--;
       }
       bodies.push(text.slice(i + 2, depth === 0 ? j - 1 : j));
+      // The nested substitutions are read when the body is read as a command: do not walk it again here.
+      i = j - 1;
     }
   }
   return bodies;
@@ -3068,8 +3070,18 @@ function egressCollectText(raw, text, opts, depth, found) {
   }
 }
 
+// One shared amount of work for the whole egressCollect tree of a command (calls and text read): past it the
+// answer fails closed, a request to nowhere that is always reported.
+const EGRESS_WORK_MAX = 2000000;
 function egressCollect(raw, opts, depth) {
   const found = [];
+  if (!opts._work) opts._work = { left: EGRESS_WORK_MAX, over: false };
+  const work = opts._work;
+  work.left -= raw.length + 64;
+  if (work.left < 0) {
+    if (!work.over) { work.over = true; found.push({ urls: [], parts: [{ where: 'code', text: 'a command too nested for zn to check' }] }); }
+    return found;
+  }
   const text = stripHeredocs(raw, { until: Date.now() + CHECK_BUDGET_MS, disk: 0 });
   // The text as written, with $'curl' read as bash does, and with $(echo curl) read as the plain word.
   const readings = new Set([text]);
@@ -3107,7 +3119,7 @@ function egressParts(cmd, opts = {}) {
   const raw = String(cmd || '');
   if (!raw || raw.length > SHELL_SCAN_CAP) return [];
   if (!/curl|wget|invoke-|iwr|irm|python|py\b|node|deno|bun|https?:\/\/|\$|`|[?*{]/i.test(raw)) return [];
-  return egressResult(egressCollect(raw, opts, 0), opts.allow);
+  return egressResult(egressCollect(raw, Object.assign({}, opts), 0), opts.allow);
 }
 
 /*

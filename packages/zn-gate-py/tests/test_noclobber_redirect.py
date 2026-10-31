@@ -1,4 +1,4 @@
-"""B-2218: `>|` (the noclobber override) is a redirect, like `>`, in the rc_download rule.
+"""`>|` (the noclobber override) is a redirect, like `>`, in the rc_download rule.
 
 The expected verdicts are the Node ones (lib/destructive.js, scanFirstCommand joins `>|` to its word). `>>|` is not
 joined by either package: it is split at the pipe, which bash rejects anyway, so it is allowed here too.

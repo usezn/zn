@@ -19,7 +19,7 @@ const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
 const { tempDir } = require('./helpers/tmp');
 const corpus = require('./fixtures/destructive_commands.json');
-const { budget } = require('./helpers/time_budget');
+const { budget, cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 function preTool(tool_name, command, cwd) {
   return { session_id: 'abc123', cwd, permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name, tool_input: { command }, tool_use_id: 'toolu_01' };
@@ -94,9 +94,9 @@ test('hostile long input stays fast', () => {
   const inputs = ['a'.repeat(100000), 'curl '.repeat(20000), 'iwr '.repeat(20000), '"\\"'.repeat(30000), '"a '.repeat(30000), '; '.repeat(40000),
     '$( '.repeat(30000), ':(){ '.repeat(15000), 'sh -c '.repeat(15000), 'echo ' + 'a'.repeat(150000) + ' && rm -rf ~'];
   for (const input of inputs) {
-    const t0 = Date.now();
+    const t0 = cpuNow();
     checkCommand(input);
-    assert.ok(Date.now() - t0 < budget(3000), 'slow input: ' + input.slice(0, 12) + ' (' + input.length + ' chars)');
+    assert.ok(cpuMsSince(t0) < budget(3000), 'slow input: ' + input.slice(0, 12) + ' (' + input.length + ' chars)');
   }
 });
 
@@ -225,9 +225,9 @@ test('destructive: keywords, backticks and env -C / sudo -D chains of any length
   ];
   for (const [cmd, want] of cases) {
     assert.ok(cmd.length < 200 * 1024);
-    const t0 = Date.now();
+    const t0 = cpuNow();
     const res = checkCommand(cmd);
-    assert.ok(Date.now() - t0 < 2000, cmd.slice(0, 40) + ' took ' + (Date.now() - t0) + ' ms');
+    assert.ok(cpuMsSince(t0) < 2000, cmd.slice(0, 40) + ' took ' + (cpuMsSince(t0)) + ' ms');
     assert.equal(res.verdict, want, cmd.slice(0, 40));
   }
 });
@@ -282,7 +282,7 @@ test('agent hooks: the policy does not change what the other rules decide', asyn
 });
 
 test('a long chain of cd is followed in one pass and fails closed above the folder-length cap', () => {
-  const t0 = Date.now();
+  const t0 = cpuNow();
   // Dot and dot-dot steps stay constant size, so a 200 KB chain is read to the end and the final rm is still caught.
   const flat = checkCommand('cd ~ && ' + 'cd ./ && '.repeat(22000) + 'rm -rf .');
   assert.equal(flat.verdict, 'block');
@@ -296,7 +296,7 @@ test('a long chain of cd is followed in one pass and fails closed above the fold
   const deepVar = checkCommand('cd $WORK && ' + 'cd a && cd .. && '.repeat(9000) + 'rm -rf .');
   // A folder named by a variable is not followed past its own name; the same chain stays allowed, like cd "$BUILD_DIR" && rm -rf .
   assert.equal(deepVar.verdict, 'allow');
-  assert.ok(Date.now() - t0 < 30000, 'took ' + (Date.now() - t0) + ' ms');
+  assert.ok(cpuMsSince(t0) < 30000, 'took ' + (cpuMsSince(t0)) + ' ms');
 });
 
 test('cmd.exe cd /d and a trailing separator are followed', () => {
@@ -310,14 +310,14 @@ test('cmd.exe cd /d and a trailing separator are followed', () => {
 });
 
 test('the cost of a cd does not depend on the length of the folder it is in', () => {
-  const t0 = Date.now();
+  const t0 = cpuNow();
   // A folder near the length cap, then 11,000 pairs of cd down and up: each step must stay constant size.
   const folder = '/' + 'abcdefgh/'.repeat(450);
   const cmd = 'cd ' + folder + ' && ' + 'cd b && cd .. && '.repeat(11000) + 'rm -rf .';
   assert.ok(cmd.length < 200000);
   const res = checkCommand(cmd);
   assert.equal(res.verdict, 'allow');
-  assert.ok(Date.now() - t0 < 1500, 'took ' + (Date.now() - t0) + ' ms');
+  assert.ok(cpuMsSince(t0) < 1500, 'took ' + (cpuMsSince(t0)) + ' ms');
 });
 
 test('a relative target that climbs out of a known folder is judged from there', () => {

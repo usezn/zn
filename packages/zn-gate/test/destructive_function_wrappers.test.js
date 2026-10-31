@@ -12,6 +12,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { checkCommand } = require('../lib/destructive');
+const { cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 const rule = (cmd) => { const r = checkCommand(cmd); return r.verdict === 'block' ? r.rule.replace('destructive:', '') : 'allow'; };
 
@@ -126,12 +127,12 @@ test('benign twins of the wrapper forms stay allowed', () => {
 
 test('env options inside the -S string and in clusters stay linear', () => {
   const N = 200 * 1024;
-  const t0 = Date.now();
+  const t0 = cpuNow();
   rule("env -S '" + '-i '.repeat(Math.floor(N / 3)) + "ls'");
   rule('env ' + '-0S x '.repeat(Math.floor(N / 6)) + 'ls');
   rule('env -' + 'i'.repeat(N) + 'S ls');
   rule('env --split-s ' + "'ls' ".repeat(Math.floor(N / 5)));
-  assert.ok(Date.now() - t0 < 12000);
+  assert.ok(cpuMsSince(t0) < 12000);
 });
 
 test('the wrapper forms read a download piped into a shell too', () => {
@@ -141,9 +142,9 @@ test('the wrapper forms read a download piped into a shell too', () => {
 });
 
 function ms(fn) {
-  const t0 = process.hrtime.bigint();
+  const t0 = cpuNow();
   fn();
-  return Number(process.hrtime.bigint() - t0) / 1e6;
+  return cpuMsSince(t0);
 }
 
 test('200 KB inputs with the wrapper forms stay linear', () => {

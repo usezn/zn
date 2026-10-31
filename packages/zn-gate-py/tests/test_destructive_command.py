@@ -55,9 +55,9 @@ class DestructiveCommandShape(unittest.TestCase):
         inputs = ["a" * 100000, "curl " * 20000, "iwr " * 20000, '"\\"' * 30000, '"a ' * 30000, "; " * 40000,
                   "$( " * 30000, ":(){ " * 15000, "sh -c " * 15000, "echo " + "a" * 150000 + " && rm -rf ~"]
         for text in inputs:
-            t0 = time.time()
+            t0 = time.process_time()
             check_command(text)
-            self.assertLess(time.time() - t0, 3, text[:12])
+            self.assertLess(time.process_time() - t0, 3, text[:12])
 
     def test_long_line_cannot_hide_a_command_after_the_segment_limit(self):
         for sep in (";", "\n"):
@@ -97,9 +97,9 @@ class DestructiveCommandShape(unittest.TestCase):
         ]
         for cmd, allowed in cases:
             self.assertLess(len(cmd), 200 * 1024)
-            t0 = time.time()
+            t0 = time.process_time()
             res = check_command(cmd)
-            self.assertLess(time.time() - t0, 2.0, cmd[:40])
+            self.assertLess(time.process_time() - t0, 2.0, cmd[:40])
             self.assertEqual(res.allowed, allowed, cmd[:40])
 
     def test_shell_fed_from_a_substitution_or_a_piped_group(self):

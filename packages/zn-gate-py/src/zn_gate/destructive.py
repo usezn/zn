@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-31.1"
+COMMAND_RULES_VERSION = "2026-10-31.2"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -84,13 +84,17 @@ _QUOTED_RE = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
 _FORK_BOMB_RE = re.compile(r"(?<![\w:])([A-Za-z_:][\w:]*)\s*\(\s*\)\s*\{\s*\1\s*\|\s*\1\s*&\s*\}\s*;?\s*\1(?!\w)", _A)
 # The downloader inside the substitution may be written \curl, env curl, command -p curl or /usr/bin/curl, and the shell
 # /bin/sh or env sh. Every quantifier below is over a class that cannot also match the separator after it, so the scan is linear.
-_SUBST_DL = r"(?:(?:env|command|exec|nohup)\s+(?:(?:-\S*|\w+=\S*)\s+)*)?\\?(?:[\w.~-]*/)*(?:curl|wget)\b"
+_SUBST_DL = r"(?:(?:env|command|exec|nohup)\s+(?:(?:-\S*|\w+=\S*)\s+)*)?\\?(?:[\w.~-]*/)*(?:c\\?u\\?r\\?l|w\\?g\\?e\\?t)\b"
 _SUBST_SHELL = r"(?:[\w.~-]*/)*(?:ba|z|da|k)?sh"
 _SHELL_RUNS_DOWNLOAD_RE = re.compile(
     r"(?:^|[\s;&|(])(?:eval|" + _SUBST_SHELL + r"\s+(?:-\w+\s+)*-\w*c)\s+[\"']?(?:\$\(|`)\s*" + _SUBST_DL, _A
 )
 _SOURCE_DOWNLOAD_RE = re.compile(
     r"(?:^|[\s;&|(])(?:source|\.|" + _SUBST_SHELL + r")\s+(?:-\w+\s+)*<\(\s*" + _SUBST_DL, _A
+)
+# A shell that reads its program from a substitution on stdin: bash < <(curl URL), sh <<< "$(curl URL)".
+_SHELL_STDIN_DOWNLOAD_RE = re.compile(
+    r"(?:^|[\s;&|(])" + _SUBST_SHELL + r"\s+(?:-\S*\s+)*(?:<\s*<\(|<<<\s*[\"']?(?:\$\(|`))\s*" + _SUBST_DL, _A
 )
 # After a pipe the next command may follow a line break or be a group: curl URL |<nl>sh, curl URL | (sh).
 _PIPE_LEAD_RE = re.compile(r"(?:\s|\()+", _A)
@@ -1262,6 +1266,7 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None) -> Optional[str]:
     if (
         _SHELL_RUNS_DOWNLOAD_RE.search(text)
         or _SOURCE_DOWNLOAD_RE.search(bare)
+        or _SHELL_STDIN_DOWNLOAD_RE.search(text)
         or _PS_PIPE_RE.search(ps_bare)
         or _PS_CALL_RE.search(ps_bare)
     ):

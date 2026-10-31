@@ -124,12 +124,12 @@ def test_twin_allowed(cmd):
 
 def test_env_option_forms_stay_linear():
     n = 200 * 1024
-    t0 = time.time()
+    t0 = time.process_time()
     rule("env -S '" + "-i " * (n // 3) + "ls'")
     rule("env " + "-0S x " * (n // 6) + "ls")
     rule("env -" + "i" * n + "S ls")
     rule("env --split-s " + "'ls' " * (n // 5))
-    assert time.time() - t0 < 12
+    assert time.process_time() - t0 < 12
 
 
 def test_wrapper_forms_read_download_pipes():
@@ -139,9 +139,9 @@ def test_wrapper_forms_read_download_pipes():
 
 
 def _under(cmd, limit=3.0):
-    t0 = time.perf_counter()
+    t0 = time.process_time()
     rule(cmd)
-    return time.perf_counter() - t0 < limit
+    return time.process_time() - t0 < limit
 
 
 def test_200kb_wrapper_forms_stay_linear():

