@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-30.7';
+const POLICY_RULES_VERSION = '2026-10-31.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -73,6 +73,7 @@ const CREDENTIAL_RES = [
   [/(^|\/)\.config\/gcloud\/(credentials\.db|access_tokens\.db|application_default_credentials\.json)$/, 'Google Cloud credentials'],
   [/(^|\/)\.azure\/(accessTokens\.json|msal_token_cache\.json)$/, 'Azure credentials'],
   [/(^|\/)\.zcode\/v2\/provider_config\.json$/, 'Zcode model provider credentials'],
+  [/(^|\/)(?:\.gnupg|AppData\/Roaming\/gnupg)\/.+$/i, 'GnuPG keyring'],
 ];
 
 // Credential-file variables. A path given through one of them, or equal to
@@ -1441,7 +1442,7 @@ function curlFileOf(value, urlencode) {
 const ARCHIVE_PROGRAMS = new Set(['tar', 'bsdtar', 'gtar', 'zip', '7z', '7za', '7zr', '7zz', 'cp', 'rsync', 'scp']);
 const COPY_PROGRAMS = new Set(['cp', 'rsync', 'scp']);
 // What is looked at inside a folder before a command packs it: how many entries, how deep, and for how long. Past the
-// limit the folder is allowed (a whole project tree is not a secret), so what is found first is what is closest to the top.
+// limit zn cannot tell what the folder holds, so the command is not allowed silently: the user is asked.
 const DIR_WALK_ENTRIES = 3000;
 const DIR_WALK_DEPTH = 6;
 const DIR_WALK_MS = 1000;
@@ -1503,7 +1504,7 @@ function protectedInFolder(dir, opts, ctx, state) {
     let entries;
     try { entries = fs.readdirSync(at, { withFileTypes: true }); } catch (_) { continue; }
     for (const e of entries) {
-      if (++state.entries > DIR_WALK_ENTRIES || Date.now() > state.until) return null;
+      if (++state.entries > DIR_WALK_ENTRIES || Date.now() > state.until) { state.limit = true; return null; }
       const p = path.join(at, e.name);
       const c = classifyPath(p, { ...opts, ctx });
       // Reading the agent settings is allowed, so packing them is too.
@@ -1511,7 +1512,10 @@ function protectedInFolder(dir, opts, ctx, state) {
         const deny = denialOf(c, p, opts);
         if (deny) return { file: p, deny };
       }
-      if (e.isDirectory() && depth < DIR_WALK_DEPTH && !DIR_WALK_SKIP.has(e.name)) queue.push([p, depth + 1]);
+      if (e.isDirectory() && !DIR_WALK_SKIP.has(e.name)) {
+        if (depth < DIR_WALK_DEPTH) queue.push([p, depth + 1]);
+        else state.limit = true;
+      }
     }
   }
   return null;
@@ -1525,8 +1529,8 @@ function archiveDirDenial(operands, opts) {
   const cwd = path.resolve(opts.cwd || process.cwd());
   const places = [cwd];
   for (const d of (opts.cdBases && opts.cdBases.dirs) || []) if (!places.includes(d)) places.push(d);
-  const state = { entries: 0, until: Date.now() + DIR_WALK_MS };
   const seen = new Set();
+  let cut = null;
   for (const op of operands) {
     const expanded = expandEnv(expandHome(op.text, ctx.home), env).text;
     // A path that is still built while the command runs, or is a pattern, cannot be looked at here.
@@ -1545,12 +1549,21 @@ function archiveDirDenial(operands, opts) {
       } catch (_) { continue; }
       if (seen.has(real)) continue;
       seen.add(real);
+      // Each folder has its own look, so a large one does not hide a protected one named after it.
+      const state = { entries: 0, until: Date.now() + DIR_WALK_MS, limit: false };
       const hit = protectedInFolder(real, opts, ctx, state);
       if (hit) {
         return 'zn: this command packs, copies or sends the folder ' + op.text + ', which holds ' + slash(path.relative(real, hit.file)) +
           ', a file zn protects. ' + hit.deny.replace(/^zn: /, '');
       }
+      if (state.limit && !cut) cut = op.text;
     }
+  }
+  // A folder the look could not finish is not allowed silently: the caller asks the user (opts.limitNotice.hit).
+  if (cut && opts.limitNotice && !opts.limitNotice.hit) {
+    opts.limitNotice.hit = 'zn: this command packs, copies or sends the folder ' + cut + ', which is too large for zn to look through (more than ' +
+      DIR_WALK_ENTRIES.toLocaleString('en-US') + ' entries, ' + DIR_WALK_DEPTH + ' levels or ' + DIR_WALK_MS / 1000 + ' second), so zn cannot tell whether it holds protected files. ' +
+      'Approve only if the folder holds no credentials, or name the files you need.';
   }
   return null;
 }

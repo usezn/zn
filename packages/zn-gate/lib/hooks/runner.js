@@ -595,7 +595,8 @@ async function decidePre(ev, d, agentId, opts) {
     const original = String(input.command || '');
     const instructionMode = instructionWritesOf(opts);
     const instructionNotice = instructionMode === 'off' ? undefined : {};
-    const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts), instructionNotice });
+    const limitNotice = {};
+    const deny = policy.bashDenial(original, { ...pathOpts, destructiveRules: destructiveRulesOf(opts), instructionNotice, limitNotice });
     if (deny) return { decision: 'deny', message: deny };
     if (input.scanAsk) {
       return { decision: 'ask', message: input.scanAsk === 'long'
@@ -618,6 +619,8 @@ async function decidePre(ev, d, agentId, opts) {
       if (!instruction) return r;
       return r.decision === 'ask' ? { ...r, soft: false, confirm: true, message: (r.message ? r.message + ' ' : '') + instruction.ask } : { decision: 'ask', message: instruction.ask };
     };
+    // An archive, copy or upload of a folder too large to look through: ask, do not allow silently.
+    if (limitNotice.hit) return withEgress(withInstruction({ decision: 'ask', soft: false, confirm: true, message: limitNotice.hit }), egress);
 
     let command = original;
     const notes = [];
