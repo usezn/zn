@@ -1574,6 +1574,9 @@ function pathsNamedElsewhere(readings, paths, opts) {
         let m;
         if (/^(?:cp|mv|install|ln|gcp|gmv|ginstall|gln)$/.test(prog) && (m = /^-[A-Za-z]*?t(.+)$/.exec(t))) cands.add(m[1]);
         if (/^(?:tar|gtar|bsdtar)$/.test(prog) && (m = /^-[A-Za-z]*?C(.+)$/.exec(t))) cands.add(m[1]);
+        // archive extraction into a folder: unzip -dDIR, 7z x -oDIR
+        if (/^(?:unzip|funzip|bsdunzip)$/.test(prog) && (m = /^-[A-Za-z]*?d(.+)$/.exec(t))) cands.add(m[1]);
+        if (/^(?:7z|7za|7zr|7zz)$/.test(prog) && (m = /^-o(.+)$/.exec(t))) cands.add(m[1]);
         if (!cands.size) continue;
       } else {
         cands.add(t);
