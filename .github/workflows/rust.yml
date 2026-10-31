@@ -59,11 +59,9 @@ jobs:
           # in Cargo.toml.
           toolchain: 1.99.0
           components: clippy, rustfmt
-      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+      - name: Install protoc 29.3 (checksum verified)
         if: steps.scope.outputs.rust == 'true'
-        with:
-          version: "29.3"
-          repo-token: ${{ github.token }}
+        uses: ./.github/actions/setup-protoc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
         if: steps.scope.outputs.rust == 'true'
         with:
@@ -115,11 +113,9 @@ jobs:
         if: steps.scope.outputs.rust == 'true'
         with:
           toolchain: 1.99.0
-      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+      - name: Install protoc 29.3 (checksum verified)
         if: steps.scope.outputs.rust == 'true'
-        with:
-          version: "29.3"
-          repo-token: ${{ github.token }}
+        uses: ./.github/actions/setup-protoc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
         if: steps.scope.outputs.rust == 'true'
         with:
@@ -157,11 +153,9 @@ jobs:
         with:
           # Must equal rust-version in Cargo.toml.
           toolchain: "1.95"
-      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+      - name: Install protoc 29.3 (checksum verified)
         if: steps.scope.outputs.rust == 'true'
-        with:
-          version: "29.3"
-          repo-token: ${{ github.token }}
+        uses: ./.github/actions/setup-protoc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
         if: steps.scope.outputs.rust == 'true'
         with:
@@ -228,10 +222,8 @@ jobs:
         with:
           toolchain: 1.99.0
           components: llvm-tools-preview
-      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.3"
-          repo-token: ${{ github.token }}
+      - name: Install protoc 29.3 (checksum verified)
+        uses: ./.github/actions/setup-protoc
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
         with:
           # Release pushes never restore or save a cache that a pull request could have poisoned.
