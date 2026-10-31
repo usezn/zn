@@ -312,9 +312,8 @@ function makeTeamOps(ctx) {
       const pv = base === DEFAULT_API ? await api.preview(joinToken) : { ok: false, reason: 'unavailable', detail: 'not checked on a server other than api.usezn.com' };
       if (!pv.ok && (pv.reason === 'invalid' || pv.reason === 'no_subscription')) {
         writeAudit({ mode: 'set', decision: 'deny', reason: 'team_join_failed' });
-        throw znError(CODES.POLICY_DENIED, messages.teamJoinFailed(pv.reason === 'invalid'
-          ? 'this join token is invalid, expired or used up; ask your administrator for a new one'
-          : 'this organization has no active Team subscription'));
+        throw znError(CODES.POLICY_DENIED, pv.reason === 'invalid' ? messages.TEAM_JOIN_TOKEN_REJECTED
+          : messages.teamJoinFailed('this organization has no active Team subscription'));
       }
       const previewOrg = pv.ok ? printable(pv.org_name, 100) || null : null;
       const previewBy = pv.ok ? printable(pv.invited_by, 60) || null : null;
@@ -373,6 +372,9 @@ function makeTeamOps(ctx) {
       } catch (err) {
         const why = err && err.status ? 'HTTP ' + err.status + (err.body && err.body.error ? ': ' + printable(String(err.body.error), 160) : '') : (err && err.code) || 'network error';
         writeAudit({ mode: 'set', decision: 'deny', reason: 'team_join_failed' });
+        // The user can only get a new invitation (rejected token) or fix the connection: say that, with the technical cause on a details line.
+        if (err && [401, 403, 404, 410].includes(err.status)) throw znError(CODES.POLICY_DENIED, messages.teamJoinTokenRejected(why));
+        if (err && (err.code === 'ZN_TEAM_NETWORK' || err.code === 'ZN_TEAM_TIMEOUT')) throw znError(CODES.POLICY_DENIED, messages.teamJoinNoNetwork(why));
         throw znError(CODES.POLICY_DENIED, messages.teamJoinFailed(why));
       }
       if (current && res.org !== current.org) throw znError(CODES.POLICY_DENIED, 'the token is for another organization; run `zn team leave` first');

@@ -92,10 +92,10 @@ test('precedence: argument over the environment; `-` over the environment', asyn
   assert.strictEqual(joined.join_token, TOK_IN);
 });
 
-test('no token anywhere: usage, exit 2, and the usage line mentions the other ways in', async () => {
+test('no token anywhere: a sentence, exit 2, and it mentions the other ways in', async () => {
   const r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: '   ' } }));
   assert.strictEqual(r.code, 2);
-  assert.match(r.stderr, /^usage: zn team join <token>/);
+  assert.match(r.stderr, /^\[zn\] No join token given\./);
   assert.match(r.stderr, /ZN_TEAM_JOIN_TOKEN/);
   assert.strictEqual(joined, null);
 });

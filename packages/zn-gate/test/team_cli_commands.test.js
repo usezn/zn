@@ -58,12 +58,13 @@ test('--help and -h print the usage on stdout and exit 0, wherever they appear',
   assert.strictEqual(closed, 0, 'help never opens a vault client');
 });
 
-test('the usage error is the same line as the help text, on stderr', async () => {
+test('an unknown subcommand is named as not a command, on stderr', async () => {
   const help = await capture(() => runTeamCommand(['team', '-h']));
   const bad = await capture(() => runTeamCommand(['team', 'nope']));
   assert.strictEqual(bad.code, 2);
   assert.strictEqual(bad.stdout, '');
-  assert.strictEqual(bad.stderr, help.stdout);
+  assert.match(bad.stderr, /^\[zn\] 'zn team nope' is not a zn command\./);
+  assert.ok(help.stdout.startsWith('usage: zn team join'));
   assert.strictEqual(closed, 0);
 });
 
@@ -71,7 +72,7 @@ test('subcommand names are case sensitive and extra words are not subcommands', 
   for (const sub of ['JOIN', 'Status', 'leave now', '--json']) {
     const r = await capture(() => runTeamCommand(['team', sub]));
     assert.strictEqual(r.code, 2, sub);
-    assert.match(r.stderr, /^usage: zn team join/);
+    assert.match(r.stderr, /^\[zn\] 'zn team .*' is not a zn command\./);
   }
 });
 
@@ -80,7 +81,7 @@ test('join with an empty token is a usage error', async () => {
   const r = await capture(() => runTeamCommand(['team', 'join', '']));
   assert.strictEqual(r.code, 2);
   assert.strictEqual(r.stdout, '');
-  assert.match(r.stderr, /^usage: zn team join <token>/);
+  assert.match(r.stderr, /^\[zn\] No join token given\./);
 });
 
 test('join without options sends undefined for --api and --agent', async () => {
