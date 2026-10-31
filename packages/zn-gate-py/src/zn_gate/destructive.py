@@ -13,8 +13,9 @@ blocks only a few narrow shapes:
   rc_download      a download written into a shell startup file
 
 It is a guardrail against a model's mistake or a bad suggestion, not a sandbox: a
-command built at run time (rm -rf "$DIR" with an empty variable, a script file the
-agent wrote and then runs) is not seen. Calling check_command() is the opt-in: it
+argument built at run time (rm -rf "$DIR" with an empty variable) or a script file the
+agent wrote and then runs is not seen. (A program name built at run time is judged by the
+Node hook policy, not here.) Calling check_command() is the opt-in: it
 always applies the policy. Pure Python stdlib.
 
 The Node.js and Python versions give the same answer on the shared test corpus
@@ -28,7 +29,7 @@ from typing import Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-29.5"
+COMMAND_RULES_VERSION = "2026-10-31.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -623,6 +624,48 @@ def _check_simple(words: List[str], depth: int) -> Optional[str]:
     return None
 
 
+_RC_NAMES = (".bashrc", ".bash_profile", ".bash_login", ".bash_aliases", ".profile", ".zshrc", ".zprofile", ".zshenv",
+             ".zlogin", ".kshrc", ".cshrc", ".tcshrc")
+
+
+def _glob_regex(pattern: str) -> "Pattern[str]":
+    out = []
+    i = 0
+    while i < len(pattern):
+        c = pattern[i]
+        if c == "*":
+            out.append("[^/]*")
+        elif c == "?":
+            out.append("[^/]")
+        elif c == "[":
+            j = pattern.find("]", i + 2)
+            if j < 0:
+                out.append(re.escape(c))
+            else:
+                body = pattern[i + 1:j]
+                if body[:1] in ("!", "^"):
+                    body = "^" + body[1:]
+                out.append("[" + body + "]")
+                i = j
+        else:
+            out.append(re.escape(c))
+        i += 1
+    return re.compile("".join(out) + r"\Z", _A)
+
+
+def _glob_is_rc(w: str) -> bool:
+    """A target with a glob in its last name (>> ~/.bas?rc): it counts when the glob can be a startup file."""
+    t = str(w)
+    at = t.rfind("/")
+    dir_, base = ("" if at < 0 else t[:at + 1]), t[at + 1:]
+    if not re.search(r"[*?\[]", t) or len(base) > 64 or len(re.sub(r"[?*\[\]\\]", "", base)) < 2:
+        return False
+    rx = _glob_regex(base)
+    if re.search(r"[*?\[]", dir_):
+        return any(rx.match(n) for n in _RC_NAMES)
+    return any(rx.match(n) and _is_rc_path(dir_ + n) for n in _RC_NAMES)
+
+
 def _is_rc_path(w: str) -> bool:
     t = str(w).replace("\\", "/")
     t = re.sub(r"^~/", "/", t)
@@ -731,7 +774,7 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
                     target = w
                 if target is not None:
                     alts = _brace_alts(target)
-                    if alts is None or any(_is_rc_path(t) for t in alts):
+                    if alts is None or any(_is_rc_path(t) or _glob_is_rc(t) for t in alts):
                         return "rc_download"
     for words, _sep in pipe:
         for t in _redirect_targets(words):

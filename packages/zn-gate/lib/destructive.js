@@ -10,8 +10,10 @@
  *
  * Narrow on purpose: a command is blocked only when its shape is one of the
  * few below. It is a guardrail against a model's mistake or a bad suggestion,
- * not a sandbox: a command built at run time (`rm -rf "$DIR"` with an empty
- * variable, a script file the agent wrote and then runs) is not seen.
+ * not a sandbox: an argument built at run time (`rm -rf "$DIR"` with an empty
+ * variable) or a script file the agent wrote and then runs is not seen. A program
+ * name built at run time (`$(echo rm)`, `/bin/r?`) with network or delete arguments
+ * is refused by the hook policy (hooks/built-command.js), not by this module.
  *
  *   rm_root_home     recursive delete of the home folder, the filesystem root,
  *                    a top-level system folder or a drive root
@@ -25,7 +27,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-29.5';
+const COMMAND_RULES_VERSION = '2026-10-31.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -410,9 +412,25 @@ function braceAlts(w) {
   return require('./hooks/policy').expandBraces(expandSequences(String(w)));
 }
 
+// The startup files a glob in a redirect target can name (>> ~/.bas?rc): the file names of RC_UNIX_RE.
+const RC_NAMES = ['.bashrc', '.bash_profile', '.bash_login', '.bash_aliases', '.profile', '.zshrc', '.zprofile', '.zshenv', '.zlogin', '.kshrc', '.cshrc', '.tcshrc'];
+
+/* A target with a glob in its last name: it counts when the glob can be a startup file (the folder is read as typed;
+   a glob in the folder itself counts too). */
+function globIsRc(w) {
+  const t = String(w);
+  const at = t.lastIndexOf('/');
+  const dir = at < 0 ? '' : t.slice(0, at + 1);
+  const base = t.slice(at + 1);
+  if (!/[*?[]/.test(t) || base.length > 64 || base.replace(/[?*[\]]/g, '').length < 2) return false;
+  const re = require('./hooks/policy').globRegExp(base);
+  if (/[*?[]/.test(dir)) return RC_NAMES.some((n) => re.test(n));
+  return RC_NAMES.some((n) => re.test(n) && isRcPath(dir + n));
+}
+
 function isRcTarget(w) {
   const alts = braceAlts(w);
-  return alts === null || alts.some(isRcPath);
+  return alts === null || alts.some((a) => isRcPath(a) || globIsRc(a));
 }
 
 function checkPipeline(pipe) {

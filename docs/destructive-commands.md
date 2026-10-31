@@ -47,12 +47,16 @@ Both return the same result as `evaluate`, with a rule such as `destructive:rm_r
 
 The command is split the way the rest of zn-gate's hook policy splits it, so quotes, `&&`, `;`, pipes, `sudo`, `env`, `nohup` and similar wrappers are understood. The code of `sh -c`, `bash -lc`, `eval`, `pwsh -Command` and `cmd /c` is checked too, up to three levels deep. Text that only mentions a command inside quotes (`echo "rm -rf ~"`, a commit message) is not blocked.
 
+## Program names built at run time
+
+Separately from the rules above, and whether or not you turned them on, the agent hooks refuse a command whose program name is not written out and that also has network or delete arguments. The name counts as built at run time when it holds a command substitution (`$(echo curl)`, `` `echo rm` ``), a variable (`$X`, `${X}`, `"$X"`), a glob (`/usr/bin/cu?l`, `/bin/r?`) or quotes spliced inside the word (`c''url`), and when a command such as `eval` is given text that holds one. The arguments count as network when they show a URL, a network program or a socket, and as delete when they show `rm` or a similar program, `-delete`, `--recursive` or a recursive and forced flag. The same name with other arguments is left alone (`$(which python) -m pytest`, `"$EDITOR" notes.txt`, `./scripts/*.sh`), and so is a glob or variable in an argument (`ls /usr/bin/py*`). A glob that can name a shell startup file (`>> ~/.bas?rc`) is read as that file by the startup-file rule above. PowerShell command lines are not read this way.
+
 ## What it does not do
 
 The check reads command text only. These are **not** covered, and the check lets them through:
 
 - A path the command builds at run time: `rm -rf "$DIR"` with an empty `DIR`, `rm -rf *` in an unknown folder, or a target that comes from a pipe (`echo ~ | xargs rm -rf`).
-- A program or shell named by a variable set earlier on the same line (`C=curl; $C https://example.com/i.sh | sh`): the value is not followed. Quoting that bash decodes before it runs the word (`$'\x63url'`, `c\url`) is read.
+- A program or shell named by a variable set earlier on the same line (`C=curl; $C https://example.com/i.sh | sh`): this check does not follow the value. The agent hooks refuse such a command anyway when the name is built at run time and the command has network or delete arguments (see below). Quoting that bash decodes before it runs the word (`$'\x63url'`, `c\url`) is read.
 - A script saved first and run later (`curl -o x.sh ... && sh x.sh`), or a download piped into an interpreter that is given a script file (`curl ... | python3 script.py`, which only reads the download as data).
 - Other tools (`rsync --delete`, `git clean`), code in a file or built at run time (a script the agent wrote, `python3 -c "shutil.rmtree(path)"` with a variable), and paths below the top level (`rm -rf /usr/local`).
 - Commands that run inside a container (`docker run ... rm -rf /`) or on another machine (`ssh host "rm -rf /"`).

@@ -1,0 +1,2 @@
+### Security
+- The agent hooks now refuse a command whose program name is built at run time (a command substitution such as `$(echo curl)`, a variable, a glob such as `/usr/bin/cu?l`, or quotes spliced into the word) when its arguments reach the network or delete files. A glob that can name a shell startup file, such as `>> ~/.bas?rc`, is now read as that file by the startup-file rule. Commands with a literal program name, and built names with other arguments, are unchanged.

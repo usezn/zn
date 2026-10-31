@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-30.1';
+const POLICY_RULES_VERSION = '2026-10-31.30';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2365,6 +2365,12 @@ function bashDenialOf(cmd, opts = {}) {
       const destructiveDeny = require('../destructive').denial(text, rules);
       if (destructiveDeny) return destructiveDeny;
     }
+  }
+  // A program name built at run time ($(echo curl), /usr/bin/cu?l, c''url) with network or delete arguments is refused
+  // (see hooks/built-command.js). A PowerShell command line has other syntax and is not read this way.
+  if (!opts.powershell) {
+    const builtDeny = require('./built-command').builtCommandDenial(text);
+    if (builtDeny) return builtDeny;
   }
   // The command is read three times: a backslash before a letter is a Windows
   // path separator or a bash escape, and a PowerShell backtick is an escape too.
