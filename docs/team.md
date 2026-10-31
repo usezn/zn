@@ -89,11 +89,14 @@ retried on `zn team sync`, on `zn team leave` and every 15 minutes while the
 vault is unlocked, each time with the token of the installation that left
 (also after you join an organization again, when the new membership keeps its
 own token and is never affected). The record is removed when the server
-confirms (or answers that the token is no longer valid), and zn-gate gives up
-after **30 days**: from then on, ask an organization admin to remove the
-installation from the dashboard. `zn team status` shows the pending record
-(since when, the last error and when zn-gate stops trying); `--json` has it
-as `revocation_pending`. A server that answers 404 or 405 (an older API) is
+confirms (or answers that the token is no longer valid). It is never dropped
+because of its age and the warning stays in `zn team status` until the server
+has confirmed; an organization admin can also remove the installation from the
+dashboard, and zn-gate then clears the record on its next retry. Every pending
+installation is kept, up to 64: with 64 unconfirmed leaves, `zn team leave`
+refuses to leave another organization and tells you to run `zn team sync` or
+ask an admin to remove them. `zn team status` shows each pending record (since
+when and the last error); `--json` has it as `revocation_pending`. A server that answers 404 or 405 (an older API) is
 treated as "not supported yet", never as revoked. If the server asks to wait
 (HTTP 429), zn-gate waits for the time it gave.
 

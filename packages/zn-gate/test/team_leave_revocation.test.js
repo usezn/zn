@@ -2,7 +2,7 @@
 /*
  * `zn team leave` tells the server (POST /v1/org/install/leave, the installation's own token) before it deletes
  * anything, and keeps a small pending record when the server cannot take it: retried on sync, on leave and by the
- * periodic job, with its own token only, until 200, 401 or the 30-day give-up. A pending record is not a membership.
+ * periodic job, with its own token only, until 200 or 401, never by age. A pending record is not a membership.
  * The zn cloud is the local stand-in server (its leave route follows the real contract; setLeaveMode forces answers).
  */
 const test = require('node:test');
@@ -119,7 +119,7 @@ for (const [name, mode, why] of [
     assert.deepStrictEqual(out.pending_files, []);
     assert.strictEqual(out.revocation.status, 'pending');
     assert.match(out.revocation.error, why);
-    assert.ok(Date.parse(out.revocation.give_up_at) - Date.parse(out.revocation.since) === 30 * DAY, 'give-up is 30 days');
+    assert.strictEqual(out.revocation.give_up_at, undefined, 'it is never given up by age');
     // Not a membership: the Team policy and behaviour are gone at once.
     assert.strictEqual(m.secrets.team, undefined);
     assert.strictEqual(policy.readTeam(), null);
@@ -258,35 +258,57 @@ test('leaving a second time also retries the revocation of an earlier membership
   assert.strictEqual(m2.secrets.pendingRevocations, undefined);
 });
 
-test('give-up: a record older than 30 days is dropped without asking the server; one of 29 days is still retried', async () => {
+test('no give-up by age: a record of 31 days is still retried, still shown, and removed only when the server confirms', async () => {
   const m = await joined();
   cloud.setLeaveMode({ status: 503 });
   await m.o.teamLeave();
-  cloud.setLeaveMode({ status: 503 });
-  pendingOf(m)[0].since = new Date(Date.now() - 29 * DAY).toISOString();
-  cloud.requests.length = 0;
-  await assert.rejects(m.o.teamSync({}), /not in an organization/);
-  assert.strictEqual(leaveCalls().length, 1, '29 days: still retried');
-  assert.strictEqual(pendingOf(m).length, 1);
-  assert.ok((await m.o.teamInfo()).revocations[0].give_up_at, 'status says when it stops');
   pendingOf(m)[0].since = new Date(Date.now() - 31 * DAY).toISOString();
   cloud.requests.length = 0;
   await assert.rejects(m.o.teamSync({}), /not in an organization/);
-  assert.strictEqual(leaveCalls().length, 0, '31 days: no request');
-  assert.strictEqual(m.secrets.pendingRevocations, undefined);
-  assert.ok(m.audit.some((a) => a.reason === 'team_revocation_abandoned'));
+  assert.strictEqual(leaveCalls().length, 1, '31 days: still retried');
+  assert.strictEqual(pendingOf(m).length, 1);
+  const view = (await m.o.teamInfo()).revocations;
+  assert.strictEqual(view.length, 1, 'the warning is still shown');
+  assert.strictEqual(view[0].give_up_at, undefined, 'no give-up date any more');
+  assert.ok(!m.audit.some((a) => a.reason === 'team_revocation_abandoned'));
+  cloud.setLeaveMode(null);
+  pendingOf(m)[0].next_try_at = null;
+  await assert.rejects(m.o.teamSync({}), /not in an organization/);
+  assert.strictEqual(m.secrets.pendingRevocations, undefined, 'acknowledged: removed');
   assert.deepStrictEqual(await m.o.teamInfo(), { joined: false });
 });
 
-test('a leave of the same installation twice keeps one record; at most 8 are kept', async () => {
+test('a leave of the same installation twice keeps one record; more than 8 are all kept and all retried', async () => {
   const m = machine();
-  for (let i = 0; i < 10; i += 1) {
-    await joinOn(m);
+  const ids = [];
+  for (let i = 0; i < 12; i += 1) {
+    ids.push((await joinOn(m)).install_id);
     cloud.setLeaveMode({ status: 503 });
     await m.o.teamLeave();
   }
-  assert.strictEqual(pendingOf(m).length, 8);
-  assert.strictEqual(new Set(pendingOf(m).map((r) => r.install_id)).size, 8);
+  assert.strictEqual(pendingOf(m).length, 12);
+  assert.deepStrictEqual(pendingOf(m).map((r) => r.install_id).sort(), ids.slice().sort());
+  assert.strictEqual((await m.o.teamInfo()).revocations.length, 12);
+  // Back online: every one of them reaches the server and only then is removed.
+  cloud.setLeaveMode(null);
+  for (const r of pendingOf(m)) r.next_try_at = null;
+  cloud.requests.length = 0;
+  const none = await m.o.teamLeave();
+  assert.strictEqual(none.left, null);
+  assert.strictEqual(leaveCalls().length, 12);
+  assert.strictEqual(m.secrets.pendingRevocations, undefined);
+  for (const id of ids) assert.strictEqual(serverInstall(id).revoked, true);
+});
+
+test('when the storage bound is reached a further leave is refused with the next step, nothing is dropped and the machine stays joined', async () => {
+  const m = await joined();
+  const fake = [];
+  for (let i = 0; i < 64; i += 1) fake.push({ org: 'org_Example12345678', install_id: 'inst-' + i, api_base: cloud.base, install_token: 'zni_fake' + i, since: new Date().toISOString(), tries: 1, next_try_at: new Date(Date.now() + DAY).toISOString() });
+  m.secrets.pendingRevocations = fake;
+  await assert.rejects(m.o.teamLeave(), /cannot leave another organization yet.*zn team sync.*admin/s);
+  assert.strictEqual(pendingOf(m).length, 64);
+  assert.ok(m.secrets.team, 'still a member: nothing was deleted');
+  assert.strictEqual(leaveCalls().length, 0, 'the server was not asked either');
 });
 
 test('a membership change during the leave call is refused and nothing is deleted', async () => {
