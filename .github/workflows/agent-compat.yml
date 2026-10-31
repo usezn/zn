@@ -42,7 +42,7 @@ jobs:
     name: agent compatibility (latest CLIs, node 22)
     if: github.repository == 'usezn/zn'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
     env:
       AGENTS: ${{ github.event.inputs.agents || 'claude-code codex opencode' }}
     steps:

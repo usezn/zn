@@ -31,7 +31,7 @@ outdated one, and `zn unlock` restarts it for you.
 
 zn asks you to confirm some things outside the agent (step 4). On a desktop it
 shows a system dialog. On a server or over SSH there is no dialog: run the
-vault in a terminal of its own instead, and answer there:
+vault in a terminal of its own instead, and answer there (if the vault is already unlocked, run `zn lock` first, because `unlock --foreground` refuses with "already unlocked"):
 
 ```bash
 zn unlock --foreground
@@ -276,7 +276,7 @@ example costs nothing.
 | `zn secret list` | Names, modes, hosts and commands (never values) |
 | `zn secret rm NAME` | Remove a secret |
 | `zn vault log` | Local audit log: who used which secret where (no values). Also `zn secret log`; `--since 1h` limits it. With the vault unlocked it checks the whole chain first and shows nothing if the check fails (the vault stores a warning); with the vault locked it says the chain was not checked. (`zn audit` reviews agent configs; see [audit.md](audit.md)) |
-| `zn vault log export --otlp` | The same log as OpenTelemetry logs (OTLP/JSON Lines) for an OpenTelemetry Collector; `--since 7d`, `--out FILE`. An unlocked vault checks the chain first and refuses to export a log that does not verify; a locked vault cannot, and the export warns that it is not a verified copy. See [team.md](team.md#export-the-audit-log-to-opentelemetry) |
+| `zn vault log export --otlp` | The same log as OpenTelemetry logs (OTLP/JSON Lines) for an OpenTelemetry Collector; `--since 7d`, `--out FILE`. An unlocked vault checks the chain first and refuses to export a log that does not verify; a locked vault cannot, so the export is refused unless you add `--unverified`, and then it warns that it is not a verified copy; `--out` refuses a symbolic link. See [team.md](team.md#export-the-audit-log-to-opentelemetry) |
 | `zn vault verify` | Check the audit log's HMAC chain and compare its last record with the one the vault remembers. If the log was cut or replaced while the vault was locked or running, the vault keeps a warning (also after lock and unlock) and this command fails until you look into it and accept the log with `zn vault verify --acknowledge` in your own terminal (the vault asks you to confirm). The vault saves its checkpoint every minute and when it locks; if the vault process is killed, the records of the last minute may be missing without notice. Restoring an older `secrets.age`, with or without its older `audit.jsonl`, is not detected. After a power loss the check can report a false alarm |
 | `zn lock` | Lock the vault now |
 | `zn vault reset` | Forgot the passphrase? Sets the old vault aside (an encrypted backup) and starts a new, empty one. Your own terminal only; the old values are lost. See "If something fails" |
@@ -290,7 +290,7 @@ you to run `zn unlock`.
 ## If something fails
 
 - **You see `__ZN_REDACTED_...` markers**: the vault is locked. Run `zn unlock`.
-- **No confirmation dialog appears** (a server, or SSH): run `zn unlock --foreground` in a terminal of its own and answer there.
+- **No confirmation dialog appears** (a server, or SSH): run `zn lock` and then `zn unlock --foreground` in a terminal of its own and answer there.
 - **You updated zn-gate and secrets still show as markers in the hooks**: the vault is still the old version. Run `zn vault status`, then `zn unlock`, which restarts it.
 - **Codex does not run the hooks**: open Codex and approve them with `/hooks`.
 - **Claude Code ignores the hooks on a computer managed by an organization**: `zn hooks install claude-code` and `zn-gate status` say when a managed setting stops them. Ask your administrator to add zn to the managed settings.

@@ -59,6 +59,30 @@ def long_input_mode(value: Optional[str] = None) -> str:
     return "off" if v in ("off", "none", "truncate", "0", "false", "no") else "windows"
 
 
+# The cloud gate answers "allow" or "block". The verdict is read once here, without case or surrounding spaces,
+# so every caller compares a lowercase value; any other verdict (missing, empty, unknown) blocks: fail closed.
+# A body that is not a JSON object raises TypeError, a failed cloud call (the local rules decide).
+_UNKNOWN_CLOUD_VERDICT: Dict[str, Any] = {
+    "verdict": "block",
+    "confidence": 1.0,
+    "rule": "cloud:unknown-verdict",
+    "reason": "The cloud gate answered with a verdict zn does not know, so the text is blocked.",
+}
+
+
+def _cloud_verdict(parsed: Any) -> Dict[str, Any]:
+    if not isinstance(parsed, dict):
+        raise TypeError("the gateway response is not a JSON object")
+    out: Dict[str, Any] = dict(parsed)
+    v = out.get("verdict")
+    v = v.strip().lower() if isinstance(v, str) else ""
+    if v in ("allow", "block"):
+        out["verdict"] = v
+        return out
+    out.update(_UNKNOWN_CLOUD_VERDICT)
+    return out
+
+
 def analyze_cloud(
     input_text: str,
     api_key: str,
@@ -81,7 +105,7 @@ def analyze_cloud(
     req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         raw = resp.read().decode("utf-8")
-        parsed: Dict[str, Any] = json.loads(raw)
+        parsed: Dict[str, Any] = _cloud_verdict(json.loads(raw))
         parsed["engine"] = "cloud-v30" if "/v30" in endpoint else "cloud-prod"
         return parsed
 
@@ -163,6 +187,9 @@ def analyze(
                                     % (li.get("reason") or "no windows"))
         return cloud_res
     except Exception as exc:
+        if isinstance(exc, urllib.error.HTTPError):
+            # An HTTP error carries the open response: close it now instead of leaving the socket to the GC.
+            exc.close()
         if is_verbose():
             import sys
             sys.stderr.write(f"[zn-gate] Warning: Cloud gate error ({exc}). {cloud_error_hint(exc)} "
