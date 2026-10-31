@@ -812,7 +812,7 @@ def npm_only_message(command: str) -> str:
         f"zn-gate {command} is in the npm package, not in this Python package.\n"
         "The Python package protects agents you build yourself (LangChain, CrewAI, "
         "LlamaIndex or plain tool calling).\n"
-        "To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app, run this in your own "
+        "To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, run this in your own "
         "terminal (it needs Node.js 18 or later):\n"
         "  npx -y zn-gate init\n"
     )

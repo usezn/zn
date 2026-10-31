@@ -1,6 +1,6 @@
 # First 5 minutes with zn-gate
 
-You use an AI coding agent (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app, or the experimental Gemini CLI or Copilot CLI) and you do not write code yourself, or not much. This page takes you from nothing to "zn-gate is on and I saw it work", then tells you what its messages mean and how to remove it. No account and no API key are needed. Everything runs on your machine.
+You use an AI coding agent (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, or the experimental Gemini CLI) and you do not write code yourself, or not much. This page takes you from nothing to "zn-gate is on and I saw it work", then tells you what its messages mean and how to remove it. No account and no API key are needed. Everything runs on your machine.
 
 ## Before you start
 
@@ -32,7 +32,7 @@ If `npm install -g` fails with `EACCES`, use the fix in Troubleshooting, then ru
 npx -y zn-gate init
 ```
 
-`init` finds the coding agents on your machine and shows each step before it runs it. It asks first, and you can say no. For Claude Code it sets up the zn-gate plugin (or zn's hooks when your Node.js is older than 20.19). For Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app and the experimental Gemini CLI and Copilot CLI it sets up zn's hooks. A hook is a small check that your agent runs before it uses a tool. Setup for one agent at a time is in the [README](../README.md#install).
+`init` finds the coding agents on your machine and shows each step before it runs it. It asks first, and you can say no. For Claude Code it sets up the zn-gate plugin (or zn's hooks when your Node.js is older than 20.19). For Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot and the experimental Gemini CLI it sets up zn's hooks. A hook is a small check that your agent runs before it uses a tool. Setup for one agent at a time is in the [README](../README.md#install).
 
 Want to look first? `npx -y zn-gate reach` lists what your agents can reach (secret names, credential files, MCP servers). It changes nothing and sends nothing. See [reach](reach.md).
 
@@ -143,7 +143,7 @@ For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a
 
 To remove everything in one step, run `npx -y zn-gate uninstall` in your own terminal ([details](uninstall.md)). To remove only the part you installed:
 
-- **Hooks** (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, Gemini CLI, Copilot CLI, or Claude Code without the plugin): `npx -y zn-gate hooks uninstall claude-code`. Use `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `gemini` or `copilot` for the others, and add `--project` if you installed them for one project only. A backup of the settings file is written first.
+- **Hooks** (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, Gemini CLI, or Claude Code without the plugin): `npx -y zn-gate hooks uninstall claude-code`. Use `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `copilot` or `gemini` for the others, and add `--project` if you installed them for one project only. A backup of the settings file is written first.
 - **Claude Code plugin**: run `claude plugin uninstall zn-gate@usezn`, or in Claude Code type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
 - **Wrapped MCP servers** (from `init --wrap-mcp`): `npx -y zn-gate init --revert` puts back each MCP settings file as it was saved just before zn wrapped it. Changes you made to those files later, such as MCP servers you added, are lost, so add them again afterwards. It only undoes MCP wrapping, not hooks.
 - **The program itself**, if you installed it with `npm install -g zn-gate`: `npm uninstall -g zn-gate`.
