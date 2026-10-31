@@ -156,7 +156,6 @@ async function statusCmd(args) {
     last_sync: (info && info.last_sync) || null,
     // The server was not told yet that an installation left: kept in the vault and retried.
     revocation_pending: (info && Array.isArray(info.revocations)) ? info.revocations : [],
-    // Legacy: pending revocations an older version dropped to make room; the server was never told about them. This version never drops one.
   };
   if (json) { out(JSON.stringify(res, null, 2)); return 0; }
   if (!joined) {

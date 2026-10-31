@@ -95,7 +95,7 @@ has confirmed; an organization admin can also remove the installation from the
 dashboard, and zn-gate then clears the record on its next retry. Every pending
 installation is kept, up to 64: with 64 unconfirmed leaves, `zn team leave`
 refuses to leave another organization and tells you to run `zn team sync` or
-ask an admin to remove them. Up to version 1.15.0-rc.1, waiting revocations beyond the eighth were dropped without any record: if your organization used an earlier version, an organization admin should review the installations in the dashboard and remove any that should be gone. `zn team status` shows each pending record (since
+ask an admin to remove them. Earlier versions kept at most eight waiting revocations and dropped the oldest beyond that without any record: if your organization used an earlier version, an organization admin should review the installations in the dashboard and remove any that should be gone. `zn team status` shows each pending record (since
 when and the last error); `--json` has it as `revocation_pending`. A server that answers 404 or 405 (an older API) is
 treated as "not supported yet", never as revoked. If the server asks to wait
 (HTTP 429), zn-gate waits for the time it gave.
