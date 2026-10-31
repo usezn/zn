@@ -87,6 +87,7 @@ const ZCODE_FILES = [
   ['hooks/hooks.json', ZCODE, ZCODE_DIR + '/hooks/hooks.json'],
   ['scripts/zn-hook.sh', ZCODE, ZCODE_DIR + '/scripts/zn-hook.sh'],
   ['scripts/zn-hook.ps1', ZCODE, ZCODE_DIR + '/scripts/zn-hook.ps1'],
+  ['scripts/zn-hook-win.cmd', ZCODE, ZCODE_DIR + '/scripts/zn-hook-win.cmd'],
   ['README.md', ZCODE, ZCODE_DIR + '/README.md'],
   ['scripts/zn-launch.js', PLUGIN, ZCODE_DIR + '/scripts/zn-launch.js'],
   ['icon.png', PLUGIN, ZCODE_DIR + '/icon.png'],

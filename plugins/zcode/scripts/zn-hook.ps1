@@ -1,12 +1,12 @@
 # zn-gate hook for the ZCode desktop app on Windows (plugin copy). The counterpart of zn-hook.sh.
 #
-# hooks.json starts this file with a small inline PowerShell command that reads it and runs it as a script block, so no
-# execution policy (Restricted, AllSigned, a group policy) can stop it from running. It does one job: it runs
+# hooks.json starts scripts/zn-hook-win.cmd (inside this plugin), which starts the system PowerShell on this file with
+# -ExecutionPolicy Bypass and blocks when it cannot. This file does one job: it runs
 # zn-launch.js, which checks the zn-gate copy shipped inside this plugin byte for byte and runs it, and when anything stops
 # that from happening (no usable Node.js, a missing file, an unexpected exit code, a hang) it blocks instead of letting the
 # call run: exit code 2 on PreToolUse, PermissionRequest and UserPromptSubmit, a warning only on the other events.
 #
-# Usage (as the inline command runs it): the event name is the only argument; the event JSON arrives on stdin;
+# Usage (as zn-hook-win.cmd runs it): the event name is the only argument; the event JSON arrives on stdin;
 # ZCODE_PLUGIN_ROOT names the plugin folder.
 #
 # Node.js, in this order: node.exe in the absolute PATH entries of the hook outside the project (never one in the project

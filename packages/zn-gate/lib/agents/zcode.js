@@ -78,19 +78,15 @@ const PERMISSION_MATCHER = '*';
 
 /* The plugin's hooks.json (plugins/zcode/hooks/hooks.json) has no field for a platform: ZCode starts what an entry names and
  * a hook that cannot start lets the call run. So every event has two "process" entries: /bin/sh on a script, which only
- * macOS and Linux have, and, for Windows, the system PowerShell by its full path with a small inline command that reads
- * scripts/zn-hook.ps1 from the plugin folder (ZCODE_PLUGIN_ROOT) and runs it as a script block (no execution policy applies
- * to it). On each system the entry of the other one cannot start and is skipped. The inline command is built here, so
- * the manifest, `zn-gate check` and the tests all read the same text. It has no double quote and no apostrophe in its
- * messages: ZCode starts the process with no shell and Windows puts the arguments on one command line. */
-const PLUGIN_WIN_POWERSHELL = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
+ * macOS and Linux have, and, for Windows, the launcher scripts/zn-hook-win.cmd inside the plugin. ZCode fills in
+ * ${ZCODE_PLUGIN_ROOT} in the command, so the entry is an absolute path on every system: on Windows ZCode runs a .cmd file
+ * through cmd.exe, and on macOS and Linux the file is not executable, so it cannot start and nothing in the project can
+ * run in its place (a command that is a relative path would be looked up in the project folder, where the project could
+ * plant a program). The launcher starts the system PowerShell by its full path on scripts/zn-hook.ps1 and blocks when that
+ * cannot start. The only argument is the event name, fixed text: no user data reaches the cmd.exe command line. */
+const PLUGIN_WIN_COMMAND = '${ZCODE_PLUGIN_ROOT}/scripts/zn-hook-win.cmd';
 function pluginWindowsArgs(event) {
-  const blocks = event !== 'PostToolUse';
-  const msg = blocks
-    ? 'zn: the plugin launcher (scripts/zn-hook.ps1) could not run. This call was blocked because zn could not check it. Ask the user to fix it, or to turn off the zn-gate plugin in ZCode (Settings, Plugins).'
-    : 'zn is NOT protecting this session: the plugin launcher (scripts/zn-hook.ps1) could not run.';
-  const script = "try { & ([scriptblock]::Create([IO.File]::ReadAllText($env:ZCODE_PLUGIN_ROOT + '/scripts/zn-hook.ps1'))) '" + event + "' } catch { [Console]::Error.WriteLine('" + msg + "'); exit " + (blocks ? 2 : 0) + ' }; exit ' + (blocks ? 2 : 0);
-  return ['-NoProfile', '-NonInteractive', '-Command', script];
+  return [event];
 }
 // Tools whose output can hold a secret: the built-in ones that print file or command text, and every MCP tool.
 const POST_MATCHER = '^(Bash|Read|Grep|WebFetch)$|^mcp__.*';
@@ -642,7 +638,7 @@ module.exports = {
   HOOK_TIMEOUT_S,
   HOOK_TIMEOUT_MS,
   LAUNCHER_DEADLINE_S,
-  PLUGIN_WIN_POWERSHELL,
+  PLUGIN_WIN_COMMAND,
   pluginWindowsArgs,
   HOOK_STATUS,
   PRE_MATCHER,

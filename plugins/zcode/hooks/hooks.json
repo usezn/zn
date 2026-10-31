@@ -1,11 +1,11 @@
 {
-  "description": "zn-gate: keep secret values out of tool calls, tool output and prompts. Every hook runs scripts/zn-hook.sh (macOS and Linux) or scripts/zn-hook.ps1 (Windows), which runs the pinned, verified zn-gate copy inside this plugin and blocks (exit 2) when it cannot.",
+  "description": "zn-gate: keep secret values out of tool calls, tool output and prompts. Every hook runs scripts/zn-hook.sh (macOS and Linux) or scripts/zn-hook-win.cmd (Windows, which starts scripts/zn-hook.ps1), which runs the pinned, verified zn-gate copy inside this plugin and blocks (exit 2) when it cannot.",
   "hooks": {
     "UserPromptSubmit": [
       {
         "hooks": [
           { "type": "process", "command": "/bin/sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "UserPromptSubmit"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" },
-          { "type": "process", "command": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "args": ["-NoProfile", "-NonInteractive", "-Command", "try { & ([scriptblock]::Create([IO.File]::ReadAllText($env:ZCODE_PLUGIN_ROOT + '/scripts/zn-hook.ps1'))) 'UserPromptSubmit' } catch { [Console]::Error.WriteLine('zn: the plugin launcher (scripts/zn-hook.ps1) could not run. This call was blocked because zn could not check it. Ask the user to fix it, or to turn off the zn-gate plugin in ZCode (Settings, Plugins).'); exit 2 }; exit 2"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
+          { "type": "process", "command": "${ZCODE_PLUGIN_ROOT}/scripts/zn-hook-win.cmd", "args": ["UserPromptSubmit"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
         ]
       }
     ],
@@ -14,7 +14,7 @@
         "matcher": "*",
         "hooks": [
           { "type": "process", "command": "/bin/sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PreToolUse"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" },
-          { "type": "process", "command": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "args": ["-NoProfile", "-NonInteractive", "-Command", "try { & ([scriptblock]::Create([IO.File]::ReadAllText($env:ZCODE_PLUGIN_ROOT + '/scripts/zn-hook.ps1'))) 'PreToolUse' } catch { [Console]::Error.WriteLine('zn: the plugin launcher (scripts/zn-hook.ps1) could not run. This call was blocked because zn could not check it. Ask the user to fix it, or to turn off the zn-gate plugin in ZCode (Settings, Plugins).'); exit 2 }; exit 2"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
+          { "type": "process", "command": "${ZCODE_PLUGIN_ROOT}/scripts/zn-hook-win.cmd", "args": ["PreToolUse"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
         ]
       }
     ],
@@ -23,7 +23,7 @@
         "matcher": "*",
         "hooks": [
           { "type": "process", "command": "/bin/sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PermissionRequest"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" },
-          { "type": "process", "command": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "args": ["-NoProfile", "-NonInteractive", "-Command", "try { & ([scriptblock]::Create([IO.File]::ReadAllText($env:ZCODE_PLUGIN_ROOT + '/scripts/zn-hook.ps1'))) 'PermissionRequest' } catch { [Console]::Error.WriteLine('zn: the plugin launcher (scripts/zn-hook.ps1) could not run. This call was blocked because zn could not check it. Ask the user to fix it, or to turn off the zn-gate plugin in ZCode (Settings, Plugins).'); exit 2 }; exit 2"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
+          { "type": "process", "command": "${ZCODE_PLUGIN_ROOT}/scripts/zn-hook-win.cmd", "args": ["PermissionRequest"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
         ]
       }
     ],
@@ -32,7 +32,7 @@
         "matcher": "^(Bash|Read|Grep|WebFetch)$|^mcp__.*",
         "hooks": [
           { "type": "process", "command": "/bin/sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PostToolUse"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" },
-          { "type": "process", "command": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "args": ["-NoProfile", "-NonInteractive", "-Command", "try { & ([scriptblock]::Create([IO.File]::ReadAllText($env:ZCODE_PLUGIN_ROOT + '/scripts/zn-hook.ps1'))) 'PostToolUse' } catch { [Console]::Error.WriteLine('zn is NOT protecting this session: the plugin launcher (scripts/zn-hook.ps1) could not run.'); exit 0 }; exit 0"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
+          { "type": "process", "command": "${ZCODE_PLUGIN_ROOT}/scripts/zn-hook-win.cmd", "args": ["PostToolUse"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
         ]
       }
     ]

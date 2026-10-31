@@ -283,14 +283,14 @@ for (const f of ['hooks/hooks.json', 'com.openai/hooks.json']) {
       for (const h of g.hooks || []) {
         const args = JSON.stringify(h.args);
         const sh = h.command === '/bin/sh' && args === JSON.stringify(['${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh', event]);
-        const ps = h.command === zcodeAdapter.PLUGIN_WIN_POWERSHELL && args === JSON.stringify(zcodeAdapter.pluginWindowsArgs(event));
+        const ps = h.command === zcodeAdapter.PLUGIN_WIN_COMMAND && args === JSON.stringify(zcodeAdapter.pluginWindowsArgs(event));
         if (h.type !== 'process' || !(sh || ps)) {
-          fail(ZC + '/hooks/hooks.json: ' + event + ' hook must be a process hook: /bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh ' + event + ', or the PowerShell entry for Windows (lib/agents/zcode.js pluginWindowsArgs)');
+          fail(ZC + '/hooks/hooks.json: ' + event + ' hook must be a process hook: /bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh ' + event + ', or the Windows launcher entry ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook-win.cmd ' + event + '');
         }
         if (h.onFailure !== undefined || h.async !== undefined) fail(ZC + '/hooks/hooks.json: ' + event + ' hook must not set onFailure or async');
       }
-      if ((g.hooks || []).length !== 2 || g.hooks[0].command !== '/bin/sh' || g.hooks[1].command !== zcodeAdapter.PLUGIN_WIN_POWERSHELL) {
-        fail(ZC + '/hooks/hooks.json: ' + event + ' must have exactly two hooks, the /bin/sh one and then the PowerShell one for Windows');
+      if ((g.hooks || []).length !== 2 || g.hooks[0].command !== '/bin/sh' || g.hooks[1].command !== zcodeAdapter.PLUGIN_WIN_COMMAND) {
+        fail(ZC + '/hooks/hooks.json: ' + event + ' must have exactly two hooks, the /bin/sh one and then the launcher for Windows (scripts/zn-hook-win.cmd)');
       }
     }
   }

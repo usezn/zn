@@ -120,14 +120,14 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   the ZCode plugin needs a system with /bin/sh (macOS, Linux) or Windows PowerShell; elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again
   ```
 
-  The ZCode plugin has two hooks for every event: one starts `/bin/sh` (macOS and Linux) and one starts the Windows PowerShell by its full path (`C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`, Windows). On each system only the matching one can start. If your Windows folder is not `C:/Windows`, or the program is missing, use `zn hooks install zcode` instead.
+  The ZCode plugin has two hooks for every event: one starts `/bin/sh` (macOS and Linux) and one runs the launcher script `scripts/zn-hook-win.cmd` inside the plugin (Windows), which starts the Windows PowerShell by its full path from your Windows folder. On each system only the matching one can start. A hook command that is a relative path, or the Windows PowerShell path of an earlier version of the plugin, is reported as not protected on every system: install the plugin again. If the Windows PowerShell is missing, use `zn hooks install zcode` instead.
 
 - **The ZCode plugin has no PreToolUse hook.**
 
   ```text
   the zn-gate plugin has no PreToolUse hook in <plugin folder>/hooks/hooks.json, so ZCode runs no zn check before tool calls
   the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`/bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
-  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`powershell.exe ... scripts/zn-hook.ps1 PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
+  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`scripts/zn-hook-win.cmd PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
   install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again
   ```
 

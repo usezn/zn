@@ -41,12 +41,13 @@ try {
     for (const [event, group] of Object.entries(theirs)) {
       assert.strictEqual(mine[event].length, 1, event);
       assert.strictEqual(mine[event][0].matcher, group.matcher, event + ' matcher');
-      // Two entries: /bin/sh for macOS and Linux, then the system PowerShell for Windows (the manifest has no platform field,
-      // and on each system the other entry cannot start).
+      // Two entries: /bin/sh for macOS and Linux, then the launcher inside the plugin for Windows (the manifest has no platform
+      // field, and on each system the other entry cannot start).
       assert.strictEqual(mine[event][0].hooks.length, 2);
       const w = mine[event][0].hooks[1];
-      assert.strictEqual(w.type, 'process', event + ': no shell between ZCode and PowerShell');
-      assert.strictEqual(w.command, adapter.PLUGIN_WIN_POWERSHELL, event + ': PowerShell by its full path');
+      assert.strictEqual(w.type, 'process', event + ': no shell between ZCode and the launcher');
+      assert.strictEqual(w.command, adapter.PLUGIN_WIN_COMMAND, event + ': the launcher inside the plugin, absolute after ZCode fills in the plugin root');
+      assert.ok(w.command.startsWith('${ZCODE_PLUGIN_ROOT}/'), event + ': never a relative path');
       assert.deepStrictEqual(w.args, adapter.pluginWindowsArgs(event));
       assert.strictEqual(w.timeoutMs, adapter.HOOK_TIMEOUT_MS, event + ' Windows timeout');
       assert.strictEqual(w.statusMessage, adapter.HOOK_STATUS);
