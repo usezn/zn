@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.10';
+const POLICY_RULES_VERSION = '2026-10-31.11';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -38,11 +38,17 @@ const POLICY_RULES_VERSION = '2026-10-31.10';
 const HOME_VAR_RE = /^(?:\$\{?HOME\}?|\$env:(?:HOME|USERPROFILE)|%USERPROFILE%|%HOMEDRIVE%%HOMEPATH%)(?=$|[\\/])/i;
 const ZN_HOME_VAR_RE = /^(?:\$\{?ZN_HOME\}?|\$env:ZN_HOME|%ZN_HOME%)(?=$|[\\/])/i;
 
+// A directory-stack entry other than the top (~1, ~+2, ~-1): zn does not know where it points.
+const DIR_STACK_RE = /(?:^|[\s=@<:,{])~[+-]?[1-9]\d*(?=$|[\\/\s,}])/;
+
 function expandHome(p, home) {
   if (p === '~') return home;
   // ~+ is $PWD and ~- is $OLDPWD: both are read as the working folder (a path relative to it), so ~+/.env is .env.
   if (p === '~+' || p === '~-') return '.';
   if (/^~[+-][\\/]/.test(p)) return '.' + p.slice(2);
+  // ~0, ~+0 and ~-0 are the top of the directory stack: the working folder. ~1, ~+2, ~-1 (deeper entries) are not known:
+  // they are left as written and refused where a file is sent (DIR_STACK_RE).
+  if (/^~[+-]?0(?=$|[\\/])/.test(p)) return '.' + p.replace(/^~[+-]?0/, '');
   if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(home, p.slice(2));
   if (ZN_HOME_VAR_RE.test(p)) return path.join(home, '.zn', p.replace(ZN_HOME_VAR_RE, ''));
   if (HOME_VAR_RE.test(p)) return path.join(home, p.replace(HOME_VAR_RE, ''));
@@ -1418,22 +1424,165 @@ const CURL_CONFIG_MAX_BYTES = 1 << 20;
    Returns {content} for a regular file zn could read, or {refuse: true} for anything else: a path under /dev or
    /proc (however it is spelled: //dev/stdin, /dev/./stdin, ../../dev/stdin, /proc/thread-self/fd/0), a link or a
    fifo that leads there, a file that does not exist yet (written by this same command) or cannot be read. */
-function curlConfigFile(v, opts) {
+const CURL_CONFIG_DEPTH = 4;
+// curl's short options that read a file or name one to send, as used in a configuration file (-T .env, -d @.env).
+const CURL_SHORT_FILE_OPTS = { T: 'upload-file', K: 'config', d: 'data', F: 'form', H: 'header' };
+
+/* The folders a relative path in a curl command may be opened from: the working folder and every place a cd in the
+   command may lead to. null when a cd goes somewhere zn cannot follow. */
+function curlBaseDirs(opts) {
+  const cwd = path.resolve(opts.cwd || process.cwd());
+  const bases = opts.cdBases;
+  if (bases && bases.unknown) return null;
+  const dirs = new Set([cwd]);
+  if (bases && bases.dirs) for (const d of bases.dirs) dirs.add(path.resolve(d));
+  return [...dirs];
+}
+
+function curlConfigFile(v, opts, depth = 0) {
   const t = String(v).replace(/^["']+|["']+$/g, '');
-  if (curlConfigUnreadable(t)) return { refuse: true };
+  if (curlConfigUnreadable(t) || /^~[+-]?[1-9]/.test(t)) return { refuse: true };
   const home = opts.home || os.homedir();
-  const abs = path.resolve(opts.cwd || process.cwd(), expandHome(t, home));
+  const exp = expandHome(t, home);
+  let cands;
+  if (path.isAbsolute(exp)) cands = [path.resolve(exp)];
+  else {
+    const dirs = curlBaseDirs(opts);
+    if (!dirs) return { refuse: true };
+    cands = dirs.map((d) => path.resolve(d, exp));
+  }
   const special = (q) => /^[\\/](?:dev|proc)(?:[\\/]|$)/.test(slash(q));
-  if (special(abs)) return { refuse: true };
-  let real;
-  try { real = fs.realpathSync(abs); } catch (_) { return { refuse: true }; }
-  if (special(real)) return { refuse: true };
+  const items = [];
+  const paths = [];
+  let found = 0;
+  for (const abs of cands) {
+    if (special(abs)) return { refuse: true };
+    let real;
+    try { real = fs.realpathSync(abs); } catch (_) {
+      // A file that does not exist where curl may run: refused when it exists nowhere (written by this command).
+      try { fs.lstatSync(abs); return { refuse: true }; } catch (_) { continue; }
+    }
+    if (special(real)) return { refuse: true };
+    let content;
+    try {
+      const st = fs.statSync(real);
+      if (!st.isFile() || st.size > CURL_CONFIG_MAX_BYTES) return { refuse: true };
+      content = fs.readFileSync(real, 'utf8');
+    } catch (_) {
+      return { refuse: true };
+    }
+    found++;
+    paths.push(abs, real);
+    const parsed = parseCurlConfig(content, opts, depth);
+    if (parsed.refuse) return { refuse: true };
+    items.push(...parsed.items);
+    paths.push(...parsed.paths);
+    items.raw = (items.raw || []).concat([content], parsed.items.raw || []);
+  }
+  if (!found) return { refuse: true };
+  return { items, paths, content: (items.raw || []).join('\n') };
+}
+
+/* The options of a curl configuration file, read the way curl reads them: one option per line (with or without
+   leading dashes; a short option may hold its value, -T.env), then spaces, '=' or ':' and the value; a value in double
+   quotes ends at the next quote, \t \n \r \v are control characters and any other \X is X. A config line is followed
+   (to a depth of four); variable and expand-* lines are refused, since zn does not follow curl's variables there. */
+function parseCurlConfig(content, opts, depth) {
+  const items = [];
+  const paths = [];
+  items.raw = [];
+  for (const line of String(content).split(/\r?\n|\r/)) {
+    const s = line.replace(/^\s+/, '');
+    if (!s || s[0] === '#') continue;
+    let k = 0;
+    while (k < s.length && !/[\s=:]/.test(s[k])) k++;
+    const opt = s.slice(0, k);
+    const rest = s.slice(k).replace(/^[\s=:]+/, '');
+    let val = '';
+    if (rest[0] === '"') {
+      for (let q = 1; q < rest.length && rest[q] !== '"'; q++) {
+        if (rest[q] === '\\' && q + 1 < rest.length) {
+          q++;
+          const c = rest[q];
+          val += c === 't' ? '\t' : c === 'n' ? '\n' : c === 'r' ? '\r' : c === 'v' ? '\v' : c;
+        } else {
+          val += rest[q];
+        }
+      }
+    } else {
+      val = /^\S*/.exec(rest)[0];
+    }
+    const named = [];
+    if (opt.startsWith('--')) named.push([opt.slice(2), val]);
+    else if (opt.startsWith('-')) {
+      for (let q = 1; q < opt.length; q++) {
+        const long = CURL_SHORT_FILE_OPTS[opt[q]];
+        if (long) { named.push([long, opt.slice(q + 1) || val]); break; }
+      }
+    } else {
+      named.push([opt, val]);
+    }
+    for (const [name, value] of named) {
+      if (name === 'variable' || name.startsWith('expand-')) return { refuse: true };
+      if (name === 'config') {
+        if (depth + 1 >= CURL_CONFIG_DEPTH) return { refuse: true };
+        const sub = curlConfigFile(value, opts, depth + 1);
+        if (sub.refuse) return { refuse: true };
+        items.push(...sub.items);
+        paths.push(...sub.paths);
+        items.raw.push(...(sub.items.raw || []));
+        continue;
+      }
+      items.push({ name, value });
+    }
+  }
+  return { items, paths };
+}
+
+/* True when a word of the command other than curl's own -K/--config value names one of the configuration paths:
+   the command may write that file before curl reads it (cat > cfg <<EOF, cp, mv, ln -sf, sed -i, dd of=cfg). */
+function curlConfigNamedElsewhere(readings, paths, opts) {
+  if (!paths.length) return false;
+  const want = new Set(paths.map((q) => path.resolve(q)));
+  const names = new Set([...want].map((q) => path.basename(q)));
+  const home = opts.home || os.homedir();
+  const dirs = curlBaseDirs(opts) || [path.resolve(opts.cwd || process.cwd())];
+  for (const r of readings) {
+    for (const w of r) {
+      if (w.curlCfgValue) continue;
+      const t = String(w.text).replace(/^["']+|["']+$/g, '');
+      const cands = new Set([t]);
+      const eq = t.indexOf('=');
+      if (eq >= 0) { cands.add(t.slice(eq + 1)); cands.add(t.slice(t.lastIndexOf('=') + 1)); }
+      for (const c of cands) {
+        if (!c || !names.has(path.basename(c))) continue;
+        const exp = expandHome(c, home);
+        for (const d of path.isAbsolute(exp) ? [''] : dirs) {
+          const abs = path.resolve(d || '/', exp);
+          if (want.has(abs)) return true;
+          try { if (want.has(fs.realpathSync(abs))) return true; } catch (_) { /* not there */ }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/* A small file read for a curl --variable name@file: its content, or null when zn cannot read it. */
+function curlVariableFile(f, opts) {
+  const t = String(f).replace(/^["']+|["']+$/g, '');
+  if (!t || t === '-' || /[$`]/.test(t) || /^~[+-]?[1-9]/.test(t)) return null;
+  const exp = expandHome(t, opts.home || os.homedir());
+  if (!path.isAbsolute(exp) && opts.cdBases && opts.cdBases.moved) return null;
+  const abs = path.resolve(opts.cwd || process.cwd(), exp);
   try {
+    const real = fs.realpathSync(abs);
+    if (/^[\\/](?:dev|proc)(?:[\\/]|$)/.test(slash(real))) return null;
     const st = fs.statSync(real);
-    if (!st.isFile() || st.size > CURL_CONFIG_MAX_BYTES) return { refuse: true };
-    return { content: fs.readFileSync(real, 'utf8') };
+    if (!st.isFile() || st.size > CURL_CONFIG_MAX_BYTES) return null;
+    return fs.readFileSync(real, 'utf8');
   } catch (_) {
-    return { refuse: true };
+    return null;
   }
 }
 
@@ -1464,7 +1613,42 @@ function curlrcWritten(readings, group) {
   return false;
 }
 
+/* True when a word of the command (as the shell reads it: quotes and backslashes removed) sets CURL_HOME,
+   XDG_CONFIG_HOME or HOME: env "CURL_HOME=x", export CURL_\HOME=x, declare -x 'HOME=x'. */
+function curlHomeChanged(readings) {
+  for (const r of readings) {
+    for (const w of r) {
+      const t = String(w.text).replace(/\\(.)/g, '$1').replace(/["']/g, '');
+      if (/^(?:CURL_HOME|XDG_CONFIG_HOME|HOME)=/.test(t)) return true;
+    }
+  }
+  return false;
+}
+
+/* Marks, in every reading, the words that are curl's own -K/--config values (glued or apart), so that another word
+   naming the same file can be told from them. */
+function markCurlConfigValues(readings) {
+  for (const r of readings) {
+    let i = 0;
+    while (i < r.length) {
+      let j = i;
+      while (j < r.length && r[j].seq === r[i].seq) j++;
+      const group = r.slice(i, j);
+      const prog = programOfGroup(group);
+      if (prog && prog.name === 'curl') {
+        for (let m = prog.at + 1; m < group.length; m++) {
+          const t = String(group[m].text);
+          if ((/^-[A-Za-z0-9#:]*K$/.test(t) || t === '--config') && group[m + 1]) group[m + 1].curlCfgValue = true;
+          else if (/^--config=/.test(t) || /^-[A-Za-z0-9#:]*?K(.+)$/.test(t)) group[m].curlCfgValue = true;
+        }
+      }
+      i = j;
+    }
+  }
+}
+
 function markCurlWords(readings, opts = {}, cmdText = '') {
+  markCurlConfigValues(readings);
   for (const r of readings) {
     let i = 0;
     while (i < r.length) {
@@ -1485,19 +1669,19 @@ function markCurlWords(readings, opts = {}, cmdText = '') {
           let mm;
           if ((mm = /^%([A-Za-z_][A-Za-z0-9_]*)(?:=(.*))?$/.exec(val))) vars[mm[1]] = envv[mm[1]] !== undefined ? String(envv[mm[1]]) : (mm[2] !== undefined ? mm[2] : null);
           else if ((mm = /^([A-Za-z0-9_]+)=(.*)$/.exec(val))) vars[mm[1]] = mm[2];
-          else if ((mm = /^([A-Za-z0-9_]+)@/.exec(val))) vars[mm[1]] = { fileContent: true };   // the content of a file
+          else if ((mm = /^([A-Za-z0-9_]+)@(.*)$/.exec(val))) vars[mm[1]] = curlVariableFile(mm[2], opts);   // the content of a file, or unknown
         }
         const expand = (v) => {
           let unknown = false;
-          let fromFile = false;
-          const out = String(v).replace(/\{\{([A-Za-z0-9_]+)(?::[^}]*)?\}\}/g, (x, n) => {
+          // {{name}} with its --variable value; a function ({{name:trim}}, {{name:64dec}}) or a value zn does not know
+          // leaves the result unknown.
+          const out = String(v).replace(/\{\{([A-Za-z0-9_]+)(:[^}]*)?\}\}/g, (x, n, fn) => {
             const val = Object.prototype.hasOwnProperty.call(vars, n) ? vars[n] : null;
-            if (typeof val === 'string') return val;
-            if (val && val.fileContent) { fromFile = true; return ''; }
+            if (typeof val === 'string' && !fn) return val;
             unknown = true;
             return x;
           });
-          return { out, unknown, fromFile };
+          return { out, unknown };
         };
         for (let m = prog.at + 1; m < group.length; m++) {
           const tx = String(group[m].text);
@@ -1508,7 +1692,7 @@ function markCurlWords(readings, opts = {}, cmdText = '') {
             const r2 = expand(ex.v);
             ex.w.expandOpt = ex.opt;
             ex.w.expanded = r2.out;
-            ex.w.expandUnknown = r2.unknown || (r2.fromFile && /^(?:upload-file|config)$/.test(ex.opt));
+            ex.w.expandUnknown = r2.unknown;
           }
         }
         for (let m = prog.at + 1; m < group.length; m++) {
@@ -1524,21 +1708,22 @@ function markCurlWords(readings, opts = {}, cmdText = '') {
           else if (/^-[A-Za-z0-9#:]*?K(.+)$/.test(t)) cfg = /^-[A-Za-z0-9#:]*?K(.+)$/.exec(t)[1];
           if (cfg !== null) {
             const c = curlConfigFile(cfg, opts);
-            if (c.refuse) curlWord.curlConfigUnreadable = true;
-            else configs.push(c.content);
+            if (c.refuse || curlConfigNamedElsewhere(readings, c.paths, opts)) curlWord.curlConfigUnreadable = true;
+            else configs.push(c);
           }
         }
         // curl reads ~/.curlrc (or $CURL_HOME/.curlrc, $XDG_CONFIG_HOME/curlrc) unless -q/--disable comes first.
         const first = group[prog.at + 1] ? String(group[prog.at + 1].text) : '';
         if (first !== '-q' && first !== '--disable') {
           // A curlrc written by this command, or the folders curl looks in changed by it, cannot be checked.
-          if (curlrcWritten(readings, group) || /(?:^|[\s;&|(`])(?:export\s+|declare\s+-x\s+|env\s+(?:-\S+\s+)*)?(?:CURL_HOME|XDG_CONFIG_HOME|HOME)=/.test(cmdText)) {
+          if (curlrcWritten(readings, group) || curlHomeChanged(readings) ||
+            /(?:^|[\s;&|(`])(?:export\s+|declare\s+-x\s+|env\s+(?:-\S+\s+)*)?(?:CURL_HOME|XDG_CONFIG_HOME|HOME)=/.test(cmdText)) {
             curlWord.curlConfigUnreadable = true;
           }
           for (const f of curlDefaultConfigs(opts)) {
             const c = curlConfigFile(f, opts);
-            if (c.refuse) curlWord.curlConfigUnreadable = true;
-            else configs.push(c.content);
+            if (c.refuse || curlConfigNamedElsewhere(readings, c.paths, opts)) curlWord.curlConfigUnreadable = true;
+            else configs.push(c);
           }
         }
         if (configs.length) curlWord.curlConfigContents = configs;
@@ -1609,7 +1794,7 @@ function atFilesOf(text) {
 }
 
 const BRACE_EXPANSION_CAP = 64;
-const CURL_CONFIG_UNREADABLE_MESSAGE = 'zn: this curl command reads its options from standard input, a pipe or a value built at run time (-K -, --config /dev/stdin, -K <(...), -K "$VAR"), so zn cannot see which files it sends, and it was blocked. Next step: write the curl options on the command line, or in a configuration file that already exists.';
+const CURL_CONFIG_UNREADABLE_MESSAGE = 'zn: this curl command reads its options from a place zn cannot check (standard input, a pipe or a value built at run time such as -K - or -K "$VAR"; a configuration file that does not exist yet, that this command writes, or that names curl variables; or a CURL_HOME, XDG_CONFIG_HOME or HOME this command changes), so zn cannot see which files it sends, and it was blocked. Next step: write the curl options on the command line, or in a configuration file that already exists, and run curl in its own command.';
 const CURL_UPLOAD_UNKNOWN_MESSAGE = 'zn: this curl command uploads a file whose name is built at run time ($(...), backticks or an unknown variable), so zn cannot check it, and it was blocked. Next step: name the file to upload literally.';
 const GLOB_TOO_LARGE_MESSAGE = 'zn: this command uploads files named by a pattern that stands for more names than zn checks, so it was blocked. Next step: name the files to upload one by one.';
 
@@ -1722,6 +1907,8 @@ function atFileWords(words, env = {}) {
     }
     // An upload name built at run time ($(...), backticks, a variable zn does not know) cannot be checked.
     if (w.upload && /[$`]/.test(known(text))) dynamicUpload = true;
+    // ~1, ~+2, ~-1: a directory-stack entry zn does not know, in a curl word.
+    if (w.curl && !w.configText && DIR_STACK_RE.test(text)) dynamicUpload = true;
     if (w.curl && /^-[A-Za-z0-9#:]*?T./.test(text) && !text.startsWith('--') && /[$`]/.test(known(text.replace(/^-[A-Za-z0-9#:]*?T/, '')))) dynamicUpload = true;
     if (/^--upload-file=/.test(text) && /[$`]/.test(known(text.slice('--upload-file='.length)))) dynamicUpload = true;
     // A word with spaces (a curl configuration fed on stdin: upload-file .env, -T .env) or an upload-file= line holds
@@ -2724,6 +2911,12 @@ function bashDenialOf(cmd, opts = {}) {
   const admin = adminCommand(cmd);
   if (admin) return adminDenial(admin, opts, cmd);
   if (keychainQuery(cmd, opts.env || process.env)) return KEYCHAIN_MESSAGE;
+  // $PWD is the folder the command runs in (not the hook's own); $OLDPWD is not known.
+  if (!opts.pwdSet) {
+    const env0 = { ...(opts.env || process.env), PWD: path.resolve(opts.cwd || process.cwd()) };
+    delete env0.OLDPWD;
+    opts = { ...opts, env: env0, pwdSet: true };
+  }
   // Variables the command sets itself (X=$HOME; rm -rf $X/.zn, export D=~/.zn) are expanded like the environment's.
   const assigned = shellAssignments(cmd, opts);
   if (assigned.env || assigned.unknown.size) {
@@ -2791,10 +2984,21 @@ function bashDenialOf(cmd, opts = {}) {
   // The content of a curl configuration file zn could read (-K file, ~/.curlrc) is read like a word of the command:
   // its upload-file, -T, data @file and form lines name files that are sent.
   for (const x of words.slice()) {
-    for (const c of x.curlConfigContents || []) words.push({ text: c, head: 'curl', redirectTarget: false, seq: x.seq, curl: true, configText: true });
+    for (const c of x.curlConfigContents || []) {
+      words.push({ text: c.content, head: 'curl', redirectTarget: false, seq: x.seq, curl: true, configText: true });
+      for (const it of c.items) {
+        words.push({
+          text: it.value, head: 'curl', redirectTarget: false, seq: x.seq, curl: true, configText: true,
+          upload: it.name === 'upload-file', urlencode: CURL_NAME_AT_FILE_OPTS.has('--' + it.name),
+        });
+      }
+    }
   }
   {
-    const atWords = atFileWords(words, opts.env || process.env);
+    // After a cd, $PWD is wherever the cd led: left as written, the path rules follow it there.
+    const atEnv = { ...(opts.env || process.env) };
+    if (opts.cdBases && opts.cdBases.moved) delete atEnv.PWD;
+    const atWords = atFileWords(words, atEnv);
     if (atWords === null) return GLOB_TOO_LARGE_MESSAGE;
     if (atWords.refuse) return atWords.refuse;
     words.push(...atWords);
