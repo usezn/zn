@@ -315,7 +315,8 @@ class VaultClient {
   teamJoin(args) { return this.call('teamJoin', [args || {}]); }
   teamLeave() { return this.call('teamLeave', []); }
   teamInfo() { return this.call('teamInfo', []); }
-  teamHookInfo() { return this.call('teamHookInfo', []); }
+  teamHookInfo(args) { return this.call('teamHookInfo', args ? [args] : []); }
+  teamChangeShown(to) { return this.call('teamChangeShown', [to]); }
   teamSync(args) { return this.call('teamSync', [args || {}]); }
   confirmOrgOpening(secret, kind, value, agent, agentTrusted) { return this.call('confirmOrgOpening', [secret, kind, value, agent || null, agentTrusted === true]); }
   status() { return this.call('status', []); }
