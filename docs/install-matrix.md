@@ -23,7 +23,7 @@ agent's hook to read it, and deletes the folder. If it says `NOT protected`, see
 |---|---|---|
 | Windows | Documented per agent in the Windows row of [compat.md](compat.md). Claude Code is supported, including its PowerShell tool (2.1.299 or later). Codex CLI and OpenCode have one end-to-end run each on Windows Server 2022; Cursor is not tested; Antigravity is not verified by us. | `npx -y zn-gate check`. If PowerShell says "running scripts is disabled on this system", use `npx.cmd -y zn-gate check` |
 | macOS | No separate install steps. The same commands apply; compat.md mentions macOS only for managed settings paths and for how approved programs are started. | `npx -y zn-gate check` |
-| Linux | The same commands apply. Install Node.js 22 LTS first: on Debian or Ubuntu, `sudo apt install nodejs` gives the end-of-life Node.js 18 (use NodeSource, see [first-5-minutes.md](first-5-minutes.md#before-you-start)). | `npx -y zn-gate check` |
+| Linux | The same commands apply. On Debian or Ubuntu, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages (see [first-5-minutes.md](first-5-minutes.md#before-you-start)). | `npx -y zn-gate check` |
 
 All methods need Node.js: 22 LTS is recommended, 18 or later works for the hooks and the CLI, and the Claude
 Code plugin needs 20.19 or later. Without `npx`, install the LTS version from
