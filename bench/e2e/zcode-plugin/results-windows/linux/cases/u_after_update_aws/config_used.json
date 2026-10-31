@@ -1,0 +1,26 @@
+{
+  "features": {
+    "mcp": true
+  },
+  "mcp": {
+    "servers": {
+      "zn_fake": {
+        "type": "stdio",
+        "command": "python3",
+        "args": [
+          "/opt/znjob/work/mcp_echo.py"
+        ],
+        "enabled": true,
+        "timeoutMs": 30000
+      }
+    }
+  },
+  "hooks": {
+    "enabled": false
+  },
+  "plugins": {
+    "enabledPlugins": {
+      "zn-gate@usezn": true
+    }
+  }
+}

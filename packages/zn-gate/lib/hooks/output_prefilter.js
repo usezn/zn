@@ -29,7 +29,7 @@ const MAX_PREFILTER_CHARS = 256 * 1024;
 
 // Injection, markup, path and encoding rules: one literal each is enough ("ignor" covers the
 // Spanish, Portuguese, French and German forms of "ignore"; the other phrases of those languages have their own).
-const HINT_RE = /ignor|disregard|forget|youarenow|newinstruction|system|actas|pretend|roleplay|jailbreak|bypass|override|olvida|actuacomo|ahoraeres|oublie|agiscomme|tuesmaintenant|vergiss|dubistjetzt|handleals|\[\/?inst\]|<<<sys|<\/<<sys|<\|im_(?:start|end)\|>|\.ssh|\.aws|\/etc\/(?:shadow|passwd)|\.env|!\[|base64|openssl/i;
+const HINT_RE = /ignor|disregard|forget|youarenow|newinstruction|system|actas|pretend|roleplay|jailbreak|bypass|override|olvida|actuacomo|ahoraeres|oublie|agiscomme|tuesmaintenant|vergiss|dubistjetzt|handleals|\[\/?inst\]|<<<sys|<\/<<sys|<\|im_(?:start|end)\|>|\.ssh|\.gnupg|\.aws|\/etc\/(?:shadow|passwd)|\.env|!\[|base64|openssl/i;
 
 // Credential requests: a request verb and a credential word.
 const EXFIL_VERB_RE = /give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal/i;

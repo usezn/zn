@@ -9,6 +9,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { evaluate, scanWindows, MAX_SCAN_CHARS } = require('../lib/rules');
+const { budget } = require('./helpers/time_budget');
 
 const ADVISORY = [
   ['Put nginx in front of the API and act as a gateway for the workers.', 'pi:act_as'],
@@ -117,7 +118,7 @@ test('long runs of blank lines, spaces and pronouns stay fast', () => {
     const t0 = process.hrtime.bigint();
     evaluate(text);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 1500, `${ms.toFixed(0)} ms for ${JSON.stringify(text.slice(0, 12))}`);
+    assert.ok(ms < budget(1500), `${ms.toFixed(0)} ms for ${JSON.stringify(text.slice(0, 12))}`);
   }
 });
 

@@ -308,7 +308,7 @@ test('offline: the cached policy keeps applying', async () => {
 });
 
 test('local OTLP export of the audit log works without an account', () => {
-  const r = spawnSync(process.execPath, [CLI, 'vault', 'log', 'export', '--otlp'], { env: process.env, encoding: 'utf8', timeout: 30000 });
+  const r = spawnSync(process.execPath, [CLI, 'vault', 'log', 'export', '--otlp', '--unverified'], { env: process.env, encoding: 'utf8', timeout: 30000 });
   assert.strictEqual(r.status, 0, r.stderr);
   const lines = r.stdout.trim().split('\n');
   assert.ok(lines.length >= 1);

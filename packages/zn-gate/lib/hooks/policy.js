@@ -23,12 +23,12 @@ const os = require('os');
 const path = require('path');
 const dotenv = require('../broker/dotenv');
 const markers = require('../broker/markers');
-const { realTargetOf, nativeTargetOf } = require('../broker/files');
+const { targetsOf } = require('../broker/files');
 const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.1';
+const POLICY_RULES_VERSION = '2026-10-31.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -204,7 +204,7 @@ function credentialEnvPaths(env, home, cwd) {
     for (const raw of String(env[name]).split(path.delimiter)) {
       if (!raw.trim()) continue;
       const abs = path.resolve(cwd, expandHome(raw.trim(), home));
-      for (const p of new Set([abs, realTargetOf(abs), nativeTargetOf(abs)])) (CRED_ENV_DIRS.has(name) ? dirs : files).add(keyOf(slash(p)));
+      for (const p of new Set([abs, ...targetsOf(abs)])) (CRED_ENV_DIRS.has(name) ? dirs : files).add(keyOf(slash(p)));
     }
   }
   return { files, dirs: [...dirs] };
@@ -223,7 +223,7 @@ function projectRootOf(cwd) {
 
 /** Keys of a path as typed and where it really leads. */
 function keysOf(p) {
-  return [...new Set([keyOf(slash(p)), keyOf(slash(realTargetOf(p))), keyOf(slash(nativeTargetOf(p)))])];
+  return [...new Set([keyOf(slash(p)), ...targetsOf(p).map((t) => keyOf(slash(t)))])];
 }
 
 // The home folder and the project root are resolved once per process: a hook process checks one call, and the
@@ -434,10 +434,10 @@ function classifyPath(p, opts = {}) {
   }
   expanded.text = stripStreams(expanded.text);
   const abs = path.resolve(ctx.cwd, expanded.text);
-  const candidates = new Set([abs, realTargetOf(abs), nativeTargetOf(abs)]);
+  const candidates = new Set([abs, ...targetsOf(abs)]);
   // ag/../hooks.json, with ag a link to .agents/skills, names .agents/hooks.json: ".." is applied to where the link leads.
   const physical = physicalDotDot(expanded.text, ctx.cwd);
-  if (physical) { candidates.add(physical); candidates.add(realTargetOf(physical)); candidates.add(nativeTargetOf(physical)); }
+  if (physical) { candidates.add(physical); for (const t of targetsOf(physical)) candidates.add(t); }
   for (const candidate of candidates) {
     const c = classifyResolved(candidate, ctx);
     if (c) return c;
@@ -689,7 +689,7 @@ function globClass(word, opts = {}) {
     const hits = globOnDisk(abs, opts.budget);
     if (hits === 'too-broad' || hits === 'too-slow') return { kind: 'credential', reason: 'a pattern too broad to check' };
     for (const hit of hits || []) {
-      for (const cand of new Set([hit, realTargetOf(hit), nativeTargetOf(hit)])) {
+      for (const cand of new Set([hit, ...targetsOf(hit)])) {
         const c = classifyResolved(cand, ctx);
         // A key file match is judged by its content (keyFileGlobDenial); a protected file found later still wins.
         if (c && c.kind === 'keyfile') { keyHit = keyHit || c; continue; }
@@ -950,9 +950,9 @@ function isInstructionPath(p, opts = {}) {
   // the same normalization as classifyPath, on the text, so it also holds for a file that does not exist yet.
   expanded.text = stripStreams(expanded.text);
   const abs = path.resolve(ctx.cwd, expanded.text);
-  const candidates = new Set([abs, realTargetOf(abs), nativeTargetOf(abs)]);
+  const candidates = new Set([abs, ...targetsOf(abs)]);
   const physical = physicalDotDot(expanded.text, ctx.cwd);
-  if (physical) { candidates.add(physical); candidates.add(realTargetOf(physical)); candidates.add(nativeTargetOf(physical)); }
+  if (physical) { candidates.add(physical); for (const t of targetsOf(physical)) candidates.add(t); }
   for (const candidate of candidates) {
     if (isInstructionFile(candidate, ctx) || isShortInstructionName(candidate) || isInstructionUnderShortFolder(candidate, ctx)) return true;
   }
@@ -1380,6 +1380,9 @@ const LINK_WRAPPERS = new Set(['env', 'sudo', 'doas', 'command', 'exec', 'nohup'
  * The options are read only from that command's own words. A link made some other way (an interpreter) is not seen here;
  * a link that already exists is followed instead (physicalDotDot, cdBasesOf).
  */
+// Words that run the next command (sudo, env, nohup...). Its own list: the egress code keeps another for its own purpose.
+const ARCHIVE_WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'exec', 'nohup', 'time', 'nice', 'timeout', 'stdbuf', 'xargs', 'builtin',
+  'ionice', 'setsid', 'then', 'do', 'else', '!', '{']);
 /* The program a simple command runs: the first word that is not an assignment, a wrapper (sudo, env, nohup...) or an option.
    Returns {name, at} (the lower-case name without .exe, and its index in `group`) or null. */
 function programOfGroup(group) {
@@ -1387,7 +1390,7 @@ function programOfGroup(group) {
     const t = String(group[k].text).replace(/^\(+/, '');
     if (!t || ASSIGNMENT_RE.test(t) || t.startsWith('-') || /^\d+[smhd]?$/.test(t)) continue;
     const name = programName(t.replace(/^[\\]+/, ''));
-    if (EGRESS_WRAPPERS.has(name)) continue;
+    if (ARCHIVE_WRAPPERS.has(name)) continue;
     return { name, at: k };
   }
   return null;
@@ -1439,8 +1442,10 @@ function curlFileOf(value, urlencode) {
 /* ---- archive, copy and sync commands: a folder as operand ---- */
 
 // Programs that read whole folders to pack, copy or send them. cp, rsync and scp name the destination last.
-const ARCHIVE_PROGRAMS = new Set(['tar', 'bsdtar', 'gtar', 'zip', '7z', '7za', '7zr', '7zz', 'cp', 'rsync', 'scp']);
-const COPY_PROGRAMS = new Set(['cp', 'rsync', 'scp']);
+const ARCHIVE_PROGRAMS = new Set(['tar', 'bsdtar', 'gtar', 'zip', '7z', '7za', '7zr', '7zz', 'cp', 'rsync', 'scp', 'mv', 'install']);
+const COPY_PROGRAMS = new Set(['cp', 'rsync', 'scp', 'mv', 'install']);
+// These name the destination with -t DIR, --target-directory DIR or --target-directory=DIR: every other operand is a source.
+const TARGET_DIR_PROGRAMS = new Set(['cp', 'mv', 'install']);
 // What is looked at inside a folder before a command packs it: how many entries, how deep, and for how long. Past the
 // limit zn cannot tell what the folder holds, so the command is not allowed silently: the user is asked.
 const DIR_WALK_ENTRIES = 3000;
@@ -1479,12 +1484,21 @@ function archiveOperands(readings) {
           if (!t.startsWith('-')) operands.push(t);
         }
       } else {
-        operands = args.map((x) => x.text).filter((t) => !t.startsWith('-') || t === '-');
+        let given = false;
+        operands = [];
+        for (let k = 0; k < args.length; k++) {
+          const t = args[k].text;
+          if (TARGET_DIR_PROGRAMS.has(prog.name)) {
+            if (t === '-t' || /^-[A-Za-z]+t$/.test(t) || /^--t[a-z-]*$/.test(t)) { given = true; k++; continue; }
+            if (/^--t[a-z-]*=/.test(t) || /^-[A-Za-z]*t.+$/.test(t)) { given = true; continue; }
+          }
+          if (!t.startsWith('-') || t === '-') operands.push(t);
+        }
         if (prog.name === 'zip') operands = operands.slice(1);
         else if (prog.name.startsWith('7z')) {
           if (/^[xelt]$/.test(operands[0] || '')) continue;
           operands = operands.slice(1);
-        } else if (COPY_PROGRAMS.has(prog.name) && operands.length >= 2) operands = operands.slice(0, -1);
+        } else if (COPY_PROGRAMS.has(prog.name) && !given && operands.length >= 2) operands = operands.slice(0, -1);
       }
       for (const t of operands) {
         if (t === '-' || (REMOTE_OPERAND_RE.test(t) && !DRIVE_OPERAND_RE.test(t))) continue;

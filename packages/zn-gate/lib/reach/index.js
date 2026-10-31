@@ -30,7 +30,7 @@ const CREDENTIAL_FILES = [
   '.aws/credentials', '.ssh/id_rsa', '.ssh/id_ed25519', '.ssh/id_ecdsa', '.ssh/id_dsa', '.netrc', '_netrc',
   '.docker/config.json', '.config/gh/hosts.yml', '.config/gh/hosts.yaml', '.git-credentials', '.pgpass', '.kube/config',
   '.config/gcloud/application_default_credentials.json', '.config/gcloud/credentials.db', '.config/gcloud/access_tokens.db',
-  '.azure/accessTokens.json', '.azure/msal_token_cache.json', '.npmrc', '.pypirc',
+  '.azure/accessTokens.json', '.azure/msal_token_cache.json', '.npmrc', '.pypirc', '.gnupg/secring.gpg',
 ];
 
 // Environment variable names that hold a secret, matched on the end of the name so TOKEN_LIMIT or KEY_ID are not.
@@ -108,6 +108,10 @@ function credentialFiles(home, env, cwd) {
   try {
     for (const n of fs.readdirSync(path.join(home, '.ssh'))) if (/^id_|_key$/.test(n) && !n.endsWith('.pub')) rels.add('.ssh/' + n);
   } catch (_) { /* no ~/.ssh */ }
+  // GnuPG private keys: names only.
+  try {
+    for (const n of fs.readdirSync(path.join(home, '.gnupg', 'private-keys-v1.d'))) if (n.endsWith('.key')) rels.add('.gnupg/private-keys-v1.d/' + n);
+  } catch (_) { /* no ~/.gnupg */ }
   const out = [];
   for (const rel of [...rels].sort()) {
     const abs = path.join(home, rel);
@@ -408,4 +412,4 @@ function failed(r, failOn) {
   return r.findings.some((f) => f.severity !== 'info' && SEVERITIES.indexOf(f.severity) <= limit);
 }
 
-module.exports = { reach, report, failed, FAIL_ON, VERSION, _internal: { dotenvFiles, credentialFiles, secretEnvNames, SECRET_ENV_NAME_RE, memoryFile } };
+module.exports = { reach, report, failed, FAIL_ON, VERSION, _internal: { safeText, dotenvFiles, credentialFiles, secretEnvNames, SECRET_ENV_NAME_RE, memoryFile } };

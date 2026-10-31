@@ -156,8 +156,10 @@ function systemCmdExe() {
   return cmd;
 }
 
+// Double a run of backslashes that comes right before a double quote or the closing quote, so a program that
+// reads its command line with the MSVCRT rules (nearly all of them) does not take `\"` for an escaped quote.
 function cmdQuote(arg) {
-  return '"' + String(arg).replace(/"/g, '""') + '"';
+  return '"' + String(arg).replace(/(\\*)"/g, '$1$1""').replace(/(\\*)$/, '$1$1') + '"';
 }
 
 /*
@@ -486,7 +488,7 @@ async function main(args) {
   process.exitCode = await runBroker(args);
 }
 
-module.exports = { systemCmdExe, batchInvocation, parseRunArgs, requiredSecrets, argvMarkers, optionalSecrets, referencedSecrets, prepare, runBroker, main, USAGE };
+module.exports = { systemCmdExe, cmdQuote, batchInvocation, parseRunArgs, requiredSecrets, argvMarkers, optionalSecrets, referencedSecrets, prepare, runBroker, main, USAGE };
 
 // Direct entry (`node lib/broker/run.js -- <command>`), used by hook rewrites.
 if (require.main === module) main(process.argv.slice(2));

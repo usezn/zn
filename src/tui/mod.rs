@@ -68,35 +68,119 @@ pub struct TuiApp {
     connection_color: Color,
 }
 
+/// Port the gateway uses when nothing else is set.
+const DEFAULT_PORT: u16 = 9090;
+
+/// Gives the terminal back (normal mode, main screen) when it is dropped, so
+/// every way out of the dashboard, an error or a panic included, leaves a
+/// usable terminal.
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+    }
+}
+
+/// The API key as an HTTP header value, or a plain explanation of what is wrong
+/// with it. The value is marked sensitive so it never shows up in debug output.
+fn api_key_header(key: &str) -> std::result::Result<reqwest::header::HeaderValue, String> {
+    let key = key.trim();
+    if key.is_empty() {
+        return Err(
+            "The API key is empty. Pass it with --api-key, or set the ZN_API_KEY environment variable."
+                .to_string(),
+        );
+    }
+    match reqwest::header::HeaderValue::from_str(key) {
+        Ok(mut value) => {
+            value.set_sensitive(true);
+            Ok(value)
+        }
+        Err(_) => Err(
+            "The API key has characters that cannot be sent in an HTTP header (for example a line break or an accented letter). Copy the key again, without extra characters, and pass it with --api-key or ZN_API_KEY."
+                .to_string(),
+        ),
+    }
+}
+
+/// What to tell the user when the gateway answers the first request with this
+/// status. None means the answer is fine.
+fn first_reply_problem(status: u16, api_url: &str) -> Option<String> {
+    match status {
+        200..=299 => None,
+        401 | 403 => Some(format!(
+            "The gateway at {api_url} rejected the API key (HTTP {status}). Use the key the gateway was started with: pass it with --api-key, or set ZN_API_KEY. If zn generated the key, it is in the file zn-superadmin-key.txt next to the audit database."
+        )),
+        _ => Some(format!(
+            "The gateway at {api_url} answered with HTTP {status} instead of its statistics. Check that this is the zn gateway, and that --port is the port it listens on."
+        )),
+    }
+}
+
+/// What to tell the user when nothing answers at the address.
+fn unreachable_problem(api_url: &str) -> String {
+    format!(
+        "The dashboard could not reach the zn gateway at {api_url}. Check that zn is running (start it with: zn start). If it listens on another port, run: zn dashboard --port <port>."
+    )
+}
+
 impl TuiApp {
-    pub async fn run(api_key: Option<String>) -> Result<()> {
-        enable_raw_mode()?;
+    /// Open the dashboard. The key and the gateway are checked before the screen
+    /// is taken over, so a mistake ends with a clear message in the normal
+    /// terminal instead of a screen stuck on CONNECTING.
+    pub async fn run(api_key: Option<String>, port: Option<u16>) -> Result<()> {
+        // Resolve API Key (CLI > Env > Error)
+        let resolved_key = match api_key {
+            Some(key) => key,
+            None => std::env::var("ZN_API_KEY").map_err(|_| {
+                anyhow::anyhow!(
+                    "No API key was given. Pass it with --api-key, or set the ZN_API_KEY environment variable."
+                )
+            })?,
+        };
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "X-API-Key",
+            api_key_header(&resolved_key).map_err(|m| anyhow::anyhow!(m))?,
+        );
+        let api_url = format!("http://localhost:{}", port.unwrap_or(DEFAULT_PORT));
+
+        let client = Client::builder()
+            .default_headers(headers)
+            .timeout(Duration::from_secs(1))
+            .build()?;
+
+        // Check the gateway and the key before the terminal is changed.
+        match client.get(format!("{api_url}/api/v1/stats")).send().await {
+            Ok(res) => {
+                if let Some(problem) = first_reply_problem(res.status().as_u16(), &api_url) {
+                    anyhow::bail!(problem);
+                }
+            }
+            Err(_) => anyhow::bail!(unreachable_problem(&api_url)),
+        }
+
+        enable_raw_mode().map_err(|_| {
+            anyhow::anyhow!(
+                "The dashboard needs an interactive terminal. Run it directly in a terminal window, not through a pipe or a script."
+            )
+        })?;
+        let _guard = TerminalGuard;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
-        // Resolve API Key (CLI > Env > Error)
-        let resolved_key = match api_key {
-            Some(key) => key,
-            None => std::env::var("ZN_API_KEY").map_err(|_| {
-                anyhow::anyhow!("No API key provided via CLI and ZN_API_KEY is not set.")
-            })?,
-        };
-
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("X-API-Key", resolved_key.parse().unwrap());
-
         let mut app = TuiApp {
-            client: Client::builder()
-                .default_headers(headers)
-                .timeout(Duration::from_secs(1))
-                .build()?,
+            client,
             logs: Vec::new(),
             pending_actions: Vec::new(),
             stats: ApiStats::default(),
             last_update: Instant::now(),
-            api_url: "http://localhost:9090".to_string(),
+            api_url,
             connection_status: "CONNECTING".to_string(),
             connection_color: Color::Yellow,
         };
@@ -124,8 +208,6 @@ impl TuiApp {
             }
         }
 
-        disable_raw_mode()?;
-        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
         terminal.show_cursor()?;
 
         Ok(())
@@ -140,10 +222,20 @@ impl TuiApp {
             .await
         {
             Ok(res) => {
-                if let Ok(json) = res.json::<ApiStatsResponse>().await {
+                let status = res.status().as_u16();
+                if status == 401 || status == 403 {
+                    self.connection_status = "KEY REJECTED".to_string();
+                    self.connection_color = Color::Red;
+                } else if !(200..=299).contains(&status) {
+                    self.connection_status = format!("HTTP {status}");
+                    self.connection_color = Color::Red;
+                } else if let Ok(json) = res.json::<ApiStatsResponse>().await {
                     self.stats = json.stats;
                     self.connection_status = "CONNECTED".to_string();
                     self.connection_color = Color::Green;
+                } else {
+                    self.connection_status = "UNEXPECTED REPLY".to_string();
+                    self.connection_color = Color::Red;
                 }
             }
             Err(_) => {
@@ -499,5 +591,48 @@ mod tests {
             (stats.stats.total, stats.stats.allowed, stats.stats.denied),
             (3, 2, 1)
         );
+    }
+}
+
+#[cfg(test)]
+mod startup_check_tests {
+    use super::*;
+
+    #[test]
+    fn a_key_with_a_line_break_is_explained_not_unwrapped() {
+        let msg = api_key_header("abc\ndef").expect_err("a line break cannot be a header value");
+        assert!(msg.contains("--api-key"), "{msg}");
+        assert!(msg.contains("ZN_API_KEY"), "{msg}");
+    }
+
+    #[test]
+    fn an_empty_key_is_explained() {
+        assert!(api_key_header("   ").is_err());
+        assert!(api_key_header("good-key-123").is_ok());
+    }
+
+    #[test]
+    fn a_rejected_key_says_what_to_do() {
+        let msg = first_reply_problem(401, "http://localhost:9090").expect("401 is a problem");
+        assert!(msg.contains("rejected the API key"), "{msg}");
+        assert!(msg.contains("--api-key"), "{msg}");
+        assert!(first_reply_problem(200, "http://localhost:9090").is_none());
+        assert!(first_reply_problem(500, "http://localhost:9090").is_some());
+    }
+
+    #[test]
+    fn an_unreachable_gateway_names_the_address_and_the_port_option() {
+        let msg = unreachable_problem("http://localhost:9191");
+        assert!(msg.contains("http://localhost:9191"), "{msg}");
+        assert!(msg.contains("--port"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn a_closed_port_ends_with_a_message_before_the_screen_is_taken() {
+        // Port 1 is not served; the check must fail with text, never hang or panic.
+        let err = TuiApp::run(Some("some-key".to_string()), Some(1))
+            .await
+            .expect_err("nothing listens on port 1");
+        assert!(err.to_string().contains("could not reach"), "{err}");
     }
 }

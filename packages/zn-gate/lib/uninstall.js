@@ -161,8 +161,7 @@ async function removeVault(p, io) {
   const daemon = require('./vault/daemon');
   const policy = require('./team/policy');
   const o = p.vaultOpts;
-  const f = policy.paths(o);
-  if ([f.teamFile, f.policyFile].some((x) => fs.existsSync(x))) {
+  if (policy.onTeamMachine(o)) {
     out(io, 'The vault was kept: this computer belongs to a zn Team organization and its controls are kept inside the vault. Ask your administrator.');
     return 'failed';
   }

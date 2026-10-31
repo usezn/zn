@@ -313,3 +313,51 @@ test('zn-gate check runs the installed hook live against a fake secret', async (
   assert.equal(r.state, 'protected', JSON.stringify(r));
   assert.equal(r.verified, true);
 });
+
+test('zn-gate check says when the project Claude Code hooks also reach Copilot (checked twice), with the next step', async (t) => {
+  const check = require('../lib/check');
+  const home = tempDir(t, 'zn-cop-dbl-');
+  const cwd = tempDir(t, 'zn-cop-dbl-cwd-');
+  const env = { PATH: process.env.PATH, HOME: home };
+  const find = async () => (await check.check({ home, cwd, env, live: false })).results.find((r) => r.id === 'copilot');
+  cop.install({ scope: 'user', home, env, nodePath: process.execPath });
+  const before = await find();
+  assert.equal(before.state, 'protected');
+  assert.ok(!before.notes.some((n) => /checked twice/.test(n)), 'no Claude hooks yet: no note');
+  // A project file with somebody else's hook only: still no note.
+  fs.mkdirSync(path.join(cwd, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(cwd, '.claude', 'settings.json'), JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'echo other' }] }] } }));
+  assert.ok(!(await find()).notes.some((n) => /checked twice/.test(n)));
+  // zn's own Claude Code hooks in the project file.
+  getAdapter('claude-code').install({ scope: 'project', projectDir: cwd, home, env, nodePath: process.execPath, mcp: false });
+  const after = await find();
+  assert.equal(after.state, 'protected');
+  const note = after.notes.find((n) => /checked twice/.test(n));
+  assert.ok(note, JSON.stringify(after.notes));
+  assert.doesNotMatch(note, /chat\.useClaudeHooks/);
+  assert.match(note, /Copilot \(VS Code and Copilot CLI\)/);
+  assert.match(note, /zn hooks uninstall claude-code --project/);
+  assert.match(note, /Keep the Copilot hook/);
+  assert.doesNotMatch(note, /zn hooks uninstall copilot/);
+});
+
+test('the install report states the documented Copilot limits (prompt hook ignored, timeout fails open, VS Code not run in the app)', (t) => {
+  const home = tempDir(t, 'zn-cop-warn-');
+  const rep = cop.install({ scope: 'user', home, env: { HOME: home }, nodePath: process.execPath });
+  const all = rep.warnings.join('\n');
+  assert.match(all, /VS Code and Copilot CLI/);
+  assert.match(all, /drops the output of a command hook for a typed prompt/);
+  assert.match(all, /blocks the call itself 4 s earlier/);
+  assert.match(all, /not inside the VS Code app/);
+  assert.doesNotMatch(all, /experimental/);
+  const data = readJson(cop.hooksFile({ home, env: { HOME: home } }));
+  // The shape VS Code documents for the Copilot harness: version 1, command hooks with bash/powershell and timeoutSec.
+  assert.equal(data.version, 1);
+  for (const ev of ['preToolUse', 'postToolUse']) {
+    const h = data.hooks[ev][0];
+    assert.equal(h.type, 'command');
+    assert.equal(typeof h.bash, 'string');
+    assert.equal(h.timeoutSec, 15);
+  }
+  assert.equal(data.hooks.userPromptSubmitted, undefined, 'zn installs no prompt hook: its output is dropped');
+});

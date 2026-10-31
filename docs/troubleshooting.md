@@ -4,6 +4,21 @@ The eleven messages people most often meet when they first use zn-gate: what eac
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
+## Symptom index
+
+- [Node.js is too old](#1-nodejs-is-too-old)
+- [`npx: command not found`](#2-npx-command-not-found)
+- ["running scripts is disabled on this system" (Windows)](#3-running-scripts-is-disabled-on-this-system-windows)
+- [It needs you at your own terminal](#4-it-needs-you-at-your-own-terminal)
+- ["Your secret vault is locked"](#5-your-secret-vault-is-locked)
+- [Your agent was blocked: "`.env` holds plain-text secrets"](#6-your-agent-was-blocked-env-holds-plain-text-secrets)
+- [`zn-gate connect` does not accept your key](#7-zn-gate-connect-does-not-accept-your-key)
+- ["will not send the saved key" (TLS settings)](#8-will-not-send-the-saved-key-tls-settings)
+- [Your agent ignores zn's hooks on a managed computer](#9-your-agent-ignores-zns-hooks-on-a-managed-computer)
+- ["the evidence log ... is damaged"](#10-the-evidence-log--is-damaged)
+- [The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)
+- [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
+
 ## 1. Node.js is too old
 
 ```text
@@ -650,6 +665,8 @@ MCP servers are tool servers your agent talks to. zn-shield sits between your ag
 
 **What to do:** open that file at the root of your project and look at the pattern or path in the message. Change or remove the rule if it is wrong. If a teammate added it, ask them.
 
+To see where these rules apply, and what happens when the file is not valid, read [where custom rules apply](../packages/zn-gate/README.md#where-custom-rules-apply).
+
 #### "Output too large to scan in full" / "Input too large to scan in full" / "nested too deeply to check"
 
 **What happened:** zn-gate scans text in windows up to a limit (4 MB for a tool result). Text past it, or nested too deeply to walk, is blocked, because the part that was not scanned could hold an attack.
@@ -737,6 +754,10 @@ From time to time browsers and runtimes stop trusting a certificate authority. I
 
 The Node.js package always refuses a connection whose certificate does not check out, even when `NODE_TLS_REJECT_UNAUTHORIZED=0` is set. If `NODE_EXTRA_CA_CERTS` or `SSL_CERT_FILE` is set in your terminal, it will not send the key saved by `zn-gate connect` (see [8. "will not send the saved key"](#8-will-not-send-the-saved-key-tls-settings)). A key you pass in `ZN_API_KEY` (or with `--key`) is sent anyway, and Node.js then trusts `NODE_EXTRA_CA_CERTS`. The Python package follows your system's TLS settings, `SSL_CERT_FILE` and `SSL_CERT_DIR` included. In every case, updating the list as above is the better fix.
 
+### Hooks block everything: "zn-gate changed since the hooks were installed"
+
+The hook launcher keeps a fingerprint of zn-gate's hook runner and runs it only while it matches, so after the files change your agent blocks its tool calls and prompts and shows the message "zn-gate changed since the hooks were installed". `npm update -g zn-gate` fixes the launchers by itself, but not when the update ran with `--ignore-scripts`, with bun, or with `sudo`. In your own terminal, without `sudo`, run `zn hooks install <agent>` again (for example `zn hooks install claude-code`), then start a new session. More in [check](check.md) and [upgrading](upgrading.md).
+
 ### npm says EACCES when init installs zn-gate
 
 On macOS (Node.js from nodejs.org) and on Linux (Node.js from your distribution), npm often cannot write to its global folder, so `npm install -g zn-gate` fails with `EACCES`. `zn-gate init` says so and lists the agents left unprotected until zn-gate is installed. Do not use `sudo`. Give npm a folder in your home directory, in your own terminal:
@@ -746,6 +767,6 @@ mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global
 echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.zshrc
 ```
 
-Use `~/.bashrc` instead of `~/.zshrc` if you use bash. Then open a new terminal and run `npx -y zn-gate init` again. A Node.js version manager such as nvm also avoids the problem. This does not apply to Windows.
+Use `~/.bashrc` instead of `~/.zshrc` if you use bash. Then open a new terminal and run the installs again: `npm install -g` for your agent (for example `npm install -g @openai/codex` or `npm install -g @google/gemini-cli`, if it failed too) and `npm install -g zn-gate`, then `npx -y zn-gate init` (or `zn hooks install <agent>`). An install that failed with `EACCES` did nothing, so it has to be run again. A Node.js version manager such as nvm also avoids the problem. This does not apply to Windows.
 
 **To see the technical detail of an error:** run the command again with `ZN_VERBOSE=1`, or set `DEBUG=zn` (also `zn*`, `zn:*`, `zn-gate` or `zn-gate:*`, alone or in a comma-separated list). Other `DEBUG` values, such as `DEBUG=*`, do not change what zn prints. The Node.js and Python packages follow the same rule.

@@ -389,13 +389,13 @@ def test_cmd_analyze_json_and_block(capsys, monkeypatch):
     assert json.loads(capsys.readouterr().out)["verdict"] == "block"
 
 
-def test_cmd_analyze_plain_text(capsys, monkeypatch):
+def test_cmd_analyze_prints_json_even_without_the_json_flag(capsys, monkeypatch):
     monkeypatch.setenv("ZN_API_KEY", "fake-key-for-tests")
     monkeypatch.setenv("ZN_STAGE", "v31")
     with mock.patch.object(cli, "analyze", return_value={"verdict": "allow", "engine": "t"}) as m:
         assert cli.cmd_analyze(argparse.Namespace(text="t", json=False)) == 0
     assert m.call_args.kwargs["api_key"] == "fake-key-for-tests" and m.call_args.kwargs["stage"] == "v31"
-    assert "Verdict: allow | Engine: t" in capsys.readouterr().out
+    assert json.loads(capsys.readouterr().out)["verdict"] == "allow"
 
 
 def test_cmd_status_local_and_cloud(capsys, monkeypatch):
@@ -408,6 +408,11 @@ def test_cmd_status_local_and_cloud(capsys, monkeypatch):
     with mock.patch.object(cli, "is_cloud_enabled", return_value=False):
         cli.cmd_status(argparse.Namespace())
     assert "unused: cloud requires ZN_CLOUD=1" in capsys.readouterr().out
+    monkeypatch.setenv("ZN_LOCAL_ONLY", "true")
+    with mock.patch.object(cli, "is_cloud_enabled", return_value=False):
+        cli.cmd_status(argparse.Namespace())
+    assert "unused: ZN_LOCAL_ONLY=true overrides ZN_CLOUD=1" in capsys.readouterr().out
+    monkeypatch.delenv("ZN_LOCAL_ONLY")
     with mock.patch.object(cli, "is_cloud_enabled", return_value=True), \
          mock.patch.object(cli, "resolve_endpoint", return_value="https://api.example.invalid/v30"):
         cli.cmd_status(argparse.Namespace())

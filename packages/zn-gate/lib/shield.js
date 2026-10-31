@@ -257,6 +257,20 @@ function startMcpShield(command, args, options = {}) {
     process.exit(1);
   });
 
+  // The server can exit (or close its input) while the client is still sending: the write then fails with EPIPE.
+  // That is not an error of its own; the exit handler below passes on the server's exit code.
+  child.stdin.on('error', (err) => {
+    if (err && (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED' || err.code === 'EOF')) {
+      log(`Wrapped server stopped reading its input (${err.code})`);
+      process.stdin.pause();
+      return;
+    }
+    // Any other error means requests can no longer reach the server: stop, do not keep running with a dead input.
+    process.stderr.write(`[zn-shield] Could not send input to the server: ${err && err.message ? err.message : err}. Stopping the shield and the server.\n`);
+    try { child.kill(); } catch (_) { /* already gone */ }
+    process.exit(1);
+  });
+
   child.on('exit', (code, signal) => {
     log(`Wrapped server exited with code=${code} signal=${signal}`);
     process.exit(code !== null ? code : 1);

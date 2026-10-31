@@ -9,6 +9,9 @@
 # Anything under packages/, plugins/, skill/, bench/ or .github/ always needs the
 # checks, Markdown files included (some are checked by the package and plugin checks).
 # With SCOPE=core (scrubber, leak bench) examples/ and the other workflows' files do not count.
+# A Rust-only change needs no JS or Python check: no JS or Python test reads a .rs file. The Rust-to-Node
+# parity test (invisible_table_equals_shared_fixture) is a cargo test, so the required Rust job runs it,
+# and rust-scope.sh also runs that job when the Node side of the parity (invisible.js, its fixture) changes.
 # Any error while listing the files means true: when in doubt, run the checks.
 set -uo pipefail
 

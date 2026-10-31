@@ -52,7 +52,8 @@ jobs:
       fail-fast: false
       matrix:
         # 18.x, 22.x and 24.x are required checks: they always run.
-        node-version: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["18.x", "20.x", "22.x", "24.x", "26.x"]' || '["18.x", "22.x", "24.x"]') }}
+        # On a push to next the queue already ran 18.x, 22.x and 24.x on this commit: only the other versions run.
+        node-version: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/next') && fromJSON('["20.x", "26.x"]') || fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["18.x", "20.x", "22.x", "24.x", "26.x"]' || '["18.x", "22.x", "24.x"]') }}
     steps:
       - name: Harden the runner (egress audit)
         if: runner.os == 'Linux'
@@ -132,7 +133,8 @@ jobs:
         # report is the python-coverage job): it is in both lists. The
         # list depends only on the event (never on another job), so every job name is known when the
         # run starts.
-        include: ${{ fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.12"}]') }}
+        # On a push to next the queue already ran Python 3.12 on Ubuntu on this commit: only the other entries run.
+        include: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/next') && fromJSON('[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]') || fromJSON(((github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '[{"os":"ubuntu-latest","python-version":"3.10"},{"os":"ubuntu-latest","python-version":"3.11"},{"os":"ubuntu-latest","python-version":"3.12"},{"os":"ubuntu-latest","python-version":"3.13"},{"os":"ubuntu-latest","python-version":"3.14"},{"os":"windows-latest","python-version":"3.12"},{"os":"macos-latest","python-version":"3.12"}]' || '[{"os":"ubuntu-latest","python-version":"3.12"}]') }}
     defaults:
       run:
         shell: bash
@@ -201,6 +203,51 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         run: python bench/bench_python.py
 
+  # The Python package on the newest Python with deprecation and resource warnings as errors, in pull requests
+  # too: a call that a future Python removes, or a file or socket left open, fails here instead of in a user's
+  # upgrade. No -X dev: its debug checks multiply the run time and break the linear-time tests.
+  python-warnings:
+    name: Python 3.14 tests with warnings as errors (ubuntu-latest)
+    # Draft pull requests skip this job; marking the pull request ready for review runs it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Decide what this change needs
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        run: bash .github/scripts/ci-scope.sh
+      - name: Set up Python 3.14
+        if: steps.scope.outputs.run == 'true'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install package and test dependencies
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python -m pip install --require-hashes -r .github/ci-test-requirements.txt
+          python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
+      - name: Run pytest with deprecation and resource warnings as errors
+        # pytest reports a file or socket closed by the garbage collector as PytestUnraisableExceptionWarning, not as a
+        # ResourceWarning, so that category is an error too: without it an unclosed file does not fail the job.
+        if: steps.scope.outputs.run == 'true'
+        working-directory: packages/zn-gate-py
+        run: python -W error::DeprecationWarning -W error::ResourceWarning -m pytest tests/ -q -W error::DeprecationWarning -W error::ResourceWarning -W error::pytest.PytestUnraisableExceptionWarning
+
   # The coverage report for the Python package, off the pull request path: "Python 3.12 tests & benchmarks
   # (ubuntu-latest)" above is a required check and runs plain pytest, so the tracing slowdown and the
   # report upload never delay a merge. Runs on pushes to main and next, on the daily schedule and on
@@ -210,7 +257,7 @@ jobs:
     # Not in pull requests or the merge queue: it is a report, not a required check.
     if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Harden the runner (egress audit)
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
@@ -227,8 +274,13 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
           python -m pip install --require-hashes -r .github/ci-test-requirements.txt
+          # The real-framework tests (LangChain, LlamaIndex) must run in the report, not skip: without them
+          # integrations/langchain.py reads about 40 % instead of about 93 %.
+          python -m pip install --require-hashes -r .github/ci-framework-test-requirements.txt
           python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
       - name: Run pytest (unit + integration) with a coverage report
+        env:
+          ZN_REQUIRE_FRAMEWORKS: "1"
         # One wall-clock test is left out here (tracing slows it past its limit); the required job runs it untraced.
         working-directory: packages/zn-gate-py
         run: |
@@ -254,7 +306,9 @@ jobs:
   lint:
     name: Lint (eslint, ruff, mypy)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
+    # (the required checks) are skipped there; the push runs only what the queue does not.
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -306,6 +360,11 @@ jobs:
         if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
         working-directory: packages/zn-gate-py
         run: python -m ruff check .
+      - name: Test the CI helper scripts
+        if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
+        run: |
+          python -m pytest .github/scripts/test_normalize_sdist.py .github/scripts/test_doc_snippets.py -q
+          python -m ruff check .github/scripts/test_normalize_sdist.py .github/scripts/test_doc_snippets.py
       - name: Run mypy
         if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
         working-directory: packages/zn-gate-py
@@ -321,11 +380,16 @@ jobs:
           src/zn_gate/__init__.py src/zn_gate/rules.py src/zn_gate/guard.py
           src/zn_gate/client.py src/zn_gate/evidence.py
           typing_check/check_public_api.py
+      - name: Test the PyPI license checker
+        if: ${{ !cancelled() && steps.python-tools.outcome == 'success' }}
+        run: python -m pytest -q .github/scripts/test_license_check_py.py .github/scripts/test_check_license_allowlist.py
 
   pack-node:
     name: npm package (pack, inspect, install)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
+    # (the required checks) are skipped there; the push runs only what the queue does not.
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -405,7 +469,9 @@ jobs:
   build-python:
     name: Python package (build, twine check, install)
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
+    # (the required checks) are skipped there; the push runs only what the queue does not.
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'push' && github.ref == 'refs/heads/next')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

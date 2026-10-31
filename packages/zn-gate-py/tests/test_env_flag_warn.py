@@ -33,3 +33,17 @@ def test_one_turns_it_on_and_unset_or_zero_is_quiet(caplog, monkeypatch):
     monkeypatch.delenv("ZN_STRICT")
     assert rules.env_flag("ZN_STRICT") is False
     assert _warnings(caplog) == []
+
+
+def test_truncated_flags_warn_with_accepted_values(monkeypatch, caplog):
+    import logging
+    from zn_gate import rules
+    rules._ENV_FLAG_WARNED.clear()
+    for name in ("ZN_BLOCK_TRUNCATED", "ZN_ALLOW_TRUNCATED"):
+        monkeypatch.setenv(name, "yes")
+    with caplog.at_level(logging.WARNING, logger="zn_gate"):
+        assert rules.env_flag("ZN_BLOCK_TRUNCATED") is False
+        assert rules.truncated_blocks() is True  # ZN_ALLOW_TRUNCATED=yes does not opt out
+    msgs = [r.getMessage() for r in caplog.records]
+    for name in ("ZN_BLOCK_TRUNCATED", "ZN_ALLOW_TRUNCATED"):
+        assert any(name in m and "accepted values" in m for m in msgs), msgs

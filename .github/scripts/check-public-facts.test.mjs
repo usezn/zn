@@ -361,3 +361,15 @@ test('docsVersion.files follow the last final release on a pre-release and the r
   assert.equal(stale.length, 1, stale.join('\n'));
   assert.match(stale[0], /README\.md: version 2\.0\.0, public-facts\.json version says 2\.1\.0/);
 });
+
+test('a short description is checked word for word on each surface', () => {
+  const desc = 'Local layer. No account, and nothing is sent by default.';
+  const facts = { ...FACTS, fields: [...FACTS.fields, { id: 'short description (MCP Registry)', value: desc, files: [{ file: 'pkg/server.json', json: 'description' }] }] };
+  const files = { ...GOOD, 'pkg/server.json': JSON.stringify({ description: desc, packages: [{ version: '2.0.0' }] }) };
+  const read = (f) => { if (!(f in files)) throw new Error('missing'); return files[f]; };
+  assert.deepEqual(check(facts, Object.keys(files), read), []);
+  files['pkg/server.json'] = JSON.stringify({ description: 'Local layer. Sends nothing by default.', packages: [{ version: '2.0.0' }] });
+  const errors = check(facts, Object.keys(files), read);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /short description \(MCP Registry\) is Local layer\. Sends nothing/);
+});

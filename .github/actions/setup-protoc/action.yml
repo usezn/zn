@@ -1,0 +1,34 @@
+name: Set up protoc
+description: >
+  Install a pinned protoc release from the official protobuf release assets and verify its SHA-256
+  before use. Fails closed on any mismatch. Supports Linux x86_64, macOS (arm64 and x86_64) and
+  Windows x64 runners.
+
+runs:
+  using: composite
+  steps:
+    - name: Install protoc 29.3 (SHA-256 verified)
+      if: runner.os != 'Windows'
+      shell: bash
+      env:
+        PROTOC_VERSION: "29.3"
+        SHA_LINUX_X86_64: 3e866620c5be27664f3d2fa2d656b5f3e09b5152b42f1bedbf427b333e90021a
+        SHA_OSX_AARCH_64: 2b8a3403cd097f95f3ba656e14b76c732b6b26d7f183330b11e36ef2bc028765
+        SHA_OSX_X86_64: 9a788036d8f9854f7b03c305df4777cf0e54e5b081e25bf15252da87e0e90875
+      run: bash "${GITHUB_ACTION_PATH}/install.sh"
+    - name: Install protoc 29.3 (SHA-256 verified, Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        PROTOC_VERSION: "29.3"
+        SHA_WIN64: 57ea59e9f551ad8d71ffaa9b5cfbe0ca1f4e720972a1db7ec2d12ab44bff9383
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $asset = "protoc-$env:PROTOC_VERSION-win64.zip"
+        $zip = Join-Path $env:RUNNER_TEMP $asset
+        $dest = Join-Path $env:RUNNER_TEMP "protoc-$env:PROTOC_VERSION"
+        Invoke-WebRequest -Uri "https://github.com/protocolbuffers/protobuf/releases/download/v$env:PROTOC_VERSION/$asset" -OutFile $zip
+        $got = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLowerInvariant()
+        if ($got -ne $env:SHA_WIN64) { throw "protoc checksum mismatch: expected $env:SHA_WIN64, got $got" }
+        Expand-Archive -Path $zip -DestinationPath $dest -Force
+        Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $dest 'bin')

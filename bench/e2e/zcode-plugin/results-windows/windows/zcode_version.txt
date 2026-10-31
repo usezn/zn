@@ -1,0 +1,7 @@
+$ C:/ZCodeApp/ZCode.exe C:\ZCodeApp\resources\glm\zcode.cjs --version
+rc=0
+--stdout--
+0.17.0
+
+--stderr--
+

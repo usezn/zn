@@ -1,0 +1,25 @@
+$ C:/work/npm/zn-gate.cmd check
+rc=1
+--stdout--
+
+zn-gate check: does zn stop your coding agent from reading a secret?
+
+zn made a test folder with a fake key in a .env file and an ordinary file next to it, then asked
+each agent's zn hook whether the agent may read them. This is what happened:
+
+  -  Claude Code  not found on this machine
+  -  Codex CLI    not found on this machine
+  -  Cursor       not found on this machine
+  -  OpenCode     not found on this machine
+  -  Antigravity  not found on this machine
+  -  Copilot CLI (experimental) not found on this machine
+  -  Gemini CLI   not found on this machine
+  X  ZCode        NOT protected: the zn-gate plugin is turned off in ZCode, and the hooks of `zn hooks install zcode` are not installed, so nothing of zn protects ZCode.
+     To fix it, turn the plugin on in ZCode (Settings, Plugins), or run `zn hooks install zcode` in your own terminal, then run `zn-gate check` again.
+
+Some agents are not protected (see above). More: https://usezn.com/docs/check
+
+The test folder was deleted.
+
+--stderr--
+

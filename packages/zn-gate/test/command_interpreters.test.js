@@ -10,6 +10,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { checkCommand } = require('../lib/destructive');
+const { budget } = require('./helpers/time_budget');
 
 const U = 'https://example.com/i.py';
 
@@ -142,7 +143,7 @@ test('interpreter checks read long input in linear time', () => {
     const t0 = process.hrtime.bigint();
     verdictOf(c);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 1500, 'slow (' + ms.toFixed(0) + ' ms): ' + c.slice(0, 40));
+    assert.ok(ms < budget(1500), 'slow (' + ms.toFixed(0) + ' ms): ' + c.slice(0, 40));
   }
 });
 

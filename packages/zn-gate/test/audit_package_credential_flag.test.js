@@ -10,6 +10,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { tempDir } = require('./helpers/tmp');
 const P = require('../lib/audit/patterns');
+const { budget } = require('./helpers/time_budget');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 const V = (n) => 'zn-test-fake-value-' + n;
@@ -177,6 +178,6 @@ test('audit: the newer credential flags stay linear on hostile input', (t) => {
     fs.writeFileSync(path.join(dir, '.mcp.json'), '{"mcpServers": {"x": {"command": "npx ' + big + ' pkg"}}}' + String.fromCharCode(10));
     const t0 = Date.now();
     cli([dir, '--format', 'json', '--fail-on', 'none']);
-    assert.ok(Date.now() - t0 < 8000, unit + ' took ' + (Date.now() - t0) + ' ms');
+    assert.ok(Date.now() - t0 < budget(8000), unit + ' took ' + (Date.now() - t0) + ' ms');
   }
 });

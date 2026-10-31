@@ -1,0 +1,20 @@
+{
+ "rc": 0,
+ "dur_s": 7.6,
+ "requests": 2,
+ "tool_msgs": [
+  " Volume in drive C has no label.\r\n Volume Serial Number is 1CE9-5F0A\r\n\r\n Directory of C:\\work\\proj\r\n\r\n10/30/2026  09:31 AM    <DIR>          .\r\n10/30/2026  09:31 AM    <DIR>          ..\r\n10/30/2026  09:31 AM                90 .env\r\n10/30/2026  09:31 AM                13 a.txt\r\n               2 File(s)            103 bytes\r\n               2 Dir(s)  28,975,493,120 bytes free"
+ ],
+ "proj_files": [
+  ".env",
+  "a.txt"
+ ],
+ "outcomes": [
+  "failed",
+  "success",
+  "failed",
+  "success",
+  "failed",
+  "success"
+ ]
+}

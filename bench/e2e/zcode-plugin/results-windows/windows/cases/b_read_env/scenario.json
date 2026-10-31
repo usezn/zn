@@ -1,0 +1,15 @@
+{
+ "steps": [
+  {
+   "tool": "read",
+   "values": {
+    "command": "ls",
+    "description": "test",
+    "file_path": "C:/work/proj/.env",
+    "content": "ZN_WRITTEN",
+    "text": "hello"
+   }
+  }
+ ],
+ "final": "done"
+}

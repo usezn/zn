@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { findPromptAssignments } = require('../lib/scrub/prompt');
 const { decidePrompt } = require('../lib/hooks/runner');
+const { budget } = require('./helpers/time_budget');
 
 // Prompts that hand a credential to the model: each must be blocked.
 const POSITIVES = [
@@ -106,7 +107,7 @@ test('prompt layer: bounded work on long input', () => {
   const long = ('API_KEY=' + 'x'.repeat(30) + ' ').repeat(20000);
   const t0 = Date.now();
   findPromptAssignments(long);
-  assert.ok(Date.now() - t0 < 2000);
+  assert.ok(Date.now() - t0 < budget(2000));
 });
 
 function deps(spans = []) {

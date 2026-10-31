@@ -10,6 +10,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const rules = require('../lib/rules');
+const { budget } = require('./helpers/time_budget');
 
 const CASES = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'identity_request_cases.json'), 'utf8'));
 const FAMILY = ['pi:identity_request', 'pi:identity_request_multi'];
@@ -59,7 +60,7 @@ test('long runs of words do not make the family slow', () => {
   const start = Date.now();
   rules.evaluate(filler);
   rules.evaluate('include ' + 'the user '.repeat(5000) + 'header');
-  assert.ok(Date.now() - start < 3000);
+  assert.ok(Date.now() - start < budget(3000));
 });
 
 // Prefilters: the cheap checks in front of the two patterns must never change

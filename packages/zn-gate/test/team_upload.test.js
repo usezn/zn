@@ -304,6 +304,18 @@ test('a stale lock (older than 10 minutes) is taken over and released afterwards
   assert.strictEqual(fs.existsSync(f.lockFile), false);
 });
 
+test('a lock dated in the future goes stale after the timeout (clock moved back)', async (t) => {
+  const f = setup(t);
+  const key = crypto.randomBytes(32);
+  fillLog(f.auditFile, key, 10);
+  fs.writeFileSync(f.lockFile, 'crashed run\n');
+  const srv = fakeServer(key);
+
+  const r = await uploadPending(opts(f, srv, { now: () => Date.now() - 11 * MINUTE }));
+  assert.strictEqual(r.status, 'ok');
+  assert.strictEqual(fs.existsSync(f.lockFile), false);
+});
+
 test('a local log rewritten with a different chain is diverged and nothing is sent', async (t) => {
   const f = setup(t);
   const keyA = crypto.randomBytes(32);

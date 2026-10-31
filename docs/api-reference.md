@@ -1,5 +1,56 @@
 # zn-gate API Reference
 
+## Table of contents
+
+- [Node.js (`zn-gate`)](#nodejs-zn-gate)
+  - [`evaluate(text, options)`](#evaluatetext-options)
+  - [`analyze(text, options)`](#analyzetext-options)
+  - [`analyzeLocal(text, options)`](#analyzelocaltext-options)
+  - [`isCloudEnabled(options)`](#iscloudenabledoptions)
+  - [`usesStoredKey(options)`](#usesstoredkeyoptions)
+  - [`usableApiKey(value)`](#usableapikeyvalue)
+  - [`longInputMode(options)`](#longinputmodeoptions)
+  - [`resolveEndpoint(options, flags)`](#resolveendpointoptions-flags)
+  - [Constants](#constants)
+  - [`sanitizeToolResult(toolName, content, options)`](#sanitizetoolresulttoolname-content-options)
+  - [`redactSecrets(text)`](#redactsecretstext)
+  - [`checkToolResult(toolName, content, options)`](#checktoolresulttoolname-content-options)
+  - [`checkCommand(command)`](#checkcommandcommand)
+  - [`checkToolCall(toolName, args, options)`](#checktoolcalltoolname-args-options)
+  - [`guardTool(fn, options)`](#guardtoolfn-options)
+  - [`GuardBlockError`](#guardblockerror)
+  - [`sanitizeToolResult`, `redactSecrets`, `verifyEvidenceLedger` and `logEvidence`](#sanitizetoolresult-redactsecrets-verifyevidenceledger-and-logevidence)
+  - [`logEvidence(event, filePath, options)`](#logevidenceevent-filepath-options)
+  - [`verifyEvidenceLedger(filePath)`](#verifyevidenceledgerfilepath)
+- [Python (`zn-gate`)](#python-zn-gate)
+  - [`evaluate(text: str, strict: bool | None = None) -> Assessment`](#evaluatetext-str-strict-bool--none--none---assessment)
+  - [`@guard(on_block='raise'|'return'|'custom', fallback=None, check_args=True, check_result=False, mask_secrets=False, callback=None, block_truncated=False)`](#guardon_blockraisereturncustom-fallbacknone-check_argstrue-check_resultfalse-mask_secretsfalse-callbacknone-block_truncatedfalse)
+  - [`GuardBlockError(assessment, target='', payload=None)`](#guardblockerrorassessment-target-payloadnone)
+  - [`check_tool_call(tool_name: str, arguments: Any = None, strict: bool | None = None, block_truncated: bool = False) -> Assessment`](#check_tool_calltool_name-str-arguments-any--none-strict-bool--none--none-block_truncated-bool--false---assessment)
+  - [`check_tool_result(result: Any, block_truncated: bool = False, strict: bool | None = None, allow_truncated: bool = False) -> Assessment`](#check_tool_resultresult-any-block_truncated-bool--false-strict-bool--none--none-allow_truncated-bool--false---assessment)
+  - [`check_command(command: str) -> Assessment`](#check_commandcommand-str---assessment)
+  - [`normalize_input(text: str) -> tuple[str, str]`](#normalize_inputtext-str---tuplestr-str)
+  - [`redact_secrets(text: str) -> tuple[str, list[dict]]`](#redact_secretstext-str---tuplestr-listdict)
+  - [`sanitize_tool_result(tool_or_result, content=None, mask_secrets=True, block_truncated=False, strict=None, allow_truncated=False)`](#sanitize_tool_resulttool_or_result-contentnone-mask_secretstrue-block_truncatedfalse-strictnone-allow_truncatedfalse)
+  - [`analyze(input_text, api_key=None, endpoint=None, timeout=None, local_only=False, long_input=None, **kwargs) -> dict`](#analyzeinput_text-api_keynone-endpointnone-timeoutnone-local_onlyfalse-long_inputnone-kwargs---dict)
+  - [`analyze_cloud(input_text, api_key, endpoint_url=None, timeout=4.0, long_input=None) -> dict`](#analyze_cloudinput_text-api_key-endpoint_urlnone-timeout40-long_inputnone---dict)
+  - [`is_cloud_enabled(api_key: str | None = None, local_only: bool = False) -> bool`](#is_cloud_enabledapi_key-str--none--none-local_only-bool--false---bool)
+  - [`resolve_endpoint(options: dict | None = None) -> str`](#resolve_endpointoptions-dict--none--none---str)
+  - [`log_evidence(event: dict, file_path: str = EVIDENCE_FILE, lock_wait: float = 2.0) -> dict | None`](#log_evidenceevent-dict-file_path-str--evidence_file-lock_wait-float--20---dict--none)
+  - [`verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> dict`](#verify_evidence_ledgerfile_path-str--evidence_file---dict)
+  - [`get_evidence_stats(file_path: str = EVIDENCE_FILE, limit: int = 50) -> dict`](#get_evidence_statsfile_path-str--evidence_file-limit-int--50---dict)
+  - [`export_evidence_ledger(file_path: str | None = None, format: str = 'jsonl') -> dict`](#export_evidence_ledgerfile_path-str--none--none-format-str--jsonl---dict)
+  - [Constants (Python)](#constants-python)
+  - [Framework integrations (`zn_gate.integrations`)](#framework-integrations-zn_gateintegrations)
+  - [`ZnGuardCallbackHandler(on_block='raise', mask_secrets=True, raise_on_injection=None, block_truncated=False)`](#znguardcallbackhandleron_blockraise-mask_secretstrue-raise_on_injectionnone-block_truncatedfalse)
+  - [`guard_langchain_tool(tool, on_block='raise', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`](#guard_langchain_tooltool-on_blockraise-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone)
+  - [`guarded_tool(on_block='raise', mask_secrets=True, fallback=None, check_result=True, block_truncated=False, framework=None)`](#guarded_toolon_blockraise-mask_secretstrue-fallbacknone-check_resulttrue-block_truncatedfalse-frameworknone)
+  - [`adk_tool_callbacks(on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`](#adk_tool_callbackson_blockreturn-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone)
+  - [`openai_agents_tool_guardrails(on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`](#openai_agents_tool_guardrailson_blockreturn-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone)
+  - [`guard_pydantic_ai_toolset(toolset, on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`](#guard_pydantic_ai_toolsettoolset-on_blockreturn-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone)
+  - [`ZnLlamaGuard(on_block='raise', mask_secrets=True, raise_on_violation=None, fallback=None)`](#znllamaguardon_blockraise-mask_secretstrue-raise_on_violationnone-fallbacknone)
+  - [`call_api(prompt, options=None, context=None) -> dict`](#call_apiprompt-optionsnone-contextnone---dict)
+
 ## Node.js (`zn-gate`)
 
 <!-- snippet-test -->
@@ -15,7 +66,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 ### `evaluate(text, options)`
 
 - Synchronous in-memory deterministic rule evaluation. Never touches the network.
-- Options: `strict` (boolean; also blocks the heuristic rules that are advisories by default; `ZN_STRICT=1` does the same).
+- Options: `strict` (boolean; also blocks the heuristic rules that are advisories by default; `ZN_STRICT=1` does the same). Any other value (`true`, `yes`) leaves it off and prints one warning on stderr.
 - Inputs over 256 KB are scanned whole, in overlapping windows. An input over 4 MB is blocked with rule `size:oversize` (and `truncated: true`).
 - Returns: `{ verdict: 'allow' | 'block', confidence: number, rule: string, reason: string | null, engine: string, rules_version: string }`, plus `truncated: true` when the input was blocked for its size and `advisory: { rule, reason }` when an advisory rule matched on an allowed input.
 - `evaluate` is also exported by `zn-gate/lib/client`.
@@ -164,7 +215,7 @@ from zn_gate import get_evidence_stats, export_evidence_ledger
 - Python decorator protecting sync and async agent functions and tool handlers.
 - `on_block='raise'` raises `GuardBlockError`; `'return'` returns `fallback` (or the `Assessment` when `fallback` is `None`); `'custom'` calls `callback(assessment, function_name, payload)` and then raises `GuardBlockError`, unless the callback raises its own exception first. A blocked call never runs the function.
 - `on_block` must be `'raise'`, `'return'` or `'custom'`; any other value, or `'custom'` without a `callback`, raises `ValueError` when the decorator is created.
-- With `check_result=True`, a result too large to scan in full (over 4 MB) is blocked by default (rule `size:truncated`); set `ZN_ALLOW_TRUNCATED=1` to allow it. `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` forces the block and also covers arguments. The `self` or `cls` of a method is not checked.
+- With `check_result=True`, a result too large to scan in full (over 4 MB) is blocked by default (rule `size:truncated`); set `ZN_ALLOW_TRUNCATED=1` to allow it. `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` forces the block even with `ZN_ALLOW_TRUNCATED=1`. An argument string over 4 MB is always blocked (rule `size:oversize`); `ZN_ALLOW_TRUNCATED` does not change that. `ZN_ALLOW_TRUNCATED=1` weakens protection: the part of the output past 4 MB is never checked. The `self` or `cls` of a method is not checked.
 - Application objects passed to the function (a client, a session, a dependency container) are read as far as possible: they are read attribute by attribute down to 32 levels, as a result is, and the text found there is checked; what is deeper than 32 levels blocks the call (rule `size:nesting`), while what cannot be read, or lies past 100,000 values, is left out. Data is checked strictly, like in `check_tool_call`: dicts, lists, `SimpleNamespace`, `argparse.Namespace`, dataclasses and data models nested deeper than ten levels block the call, and a container that cannot be read (its items raise) blocks it with rule `type:unscannable`. Framework run contexts (pydantic-ai `RunContext`, Google ADK and OpenAI Agents SDK tool contexts, LangChain callback managers and `RunnableConfig`) and logging objects (loggers, handlers, `LoggerAdapter`) are not checked, so pass those as before. Arguments bound with `functools.partial` are checked the same way.
 - A generator or async generator result is passed on chunk by chunk, each chunk checked together with the end of the previous one. With `mask_secrets=True` the text is masked as one stream, so a secret split across chunks is masked whole: the last 16 KiB of text are held back, as it arrived, until more text or the end of the stream (also when the function fails) arrives, and a secret that reaches into them keeps the text from its start held too. Each chunk the function yields still gives one chunk out, empty while its text is held. The held text is withheld when a chunk blocks.
 
@@ -190,7 +241,7 @@ except GuardBlockError as e:
 
 - Recursively extracts and inspects all strings in arguments for malicious commands or credentials: dict keys and values, lists, tuples, sets, dict views, dataclasses, pydantic models and the attributes of other objects.
 - A generator or other one-shot iterator is blocked (rule `type:unscannable`), because checking it would use it up; more than 100,000 values taken from objects and other iterables is blocked (rule `size:items`); nesting deeper than ten levels is blocked (rule `size:nesting`).
-- Long strings are scanned in overlapping windows up to 4 MB, as tool results are; `Assessment.truncated` is `True` when a string was not scanned in full, and `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` blocks it (rule `size:truncated`).
+- Long strings are scanned in overlapping windows up to 4 MB, as tool results are. An argument string over 4 MB is always blocked (rule `size:oversize`, `Assessment.truncated` is `True`); `ZN_ALLOW_TRUNCATED` does not apply to arguments.
 
 ### `check_tool_result(result: Any, block_truncated: bool = False, strict: bool | None = None, allow_truncated: bool = False) -> Assessment`
 

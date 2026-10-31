@@ -12,7 +12,7 @@ const { _internal } = require('../lib/check');
 
 const posix = process.platform !== 'win32';
 
-test('check: a hook that blocks and exits before reading a large event is read as a block, not as a hook that could not start', { skip: !posix }, (t) => {
+test('check: a shell-script hook that blocks and exits before reading a large event is read as a block, not as a hook that could not start', { skip: !posix }, (t) => {
   const dir = tempDir(t, 'zn-check-epipe-');
   const hook = path.join(dir, 'hook.sh');
   const lines = ['#!/bin/sh', "printf '%s' '{\"permissionDecision\":\"deny\"}'", 'exit 2', ''];
@@ -26,7 +26,21 @@ test('check: a hook that blocks and exits before reading a large event is read a
   }
 });
 
-test('check: a hook that cannot be started is still reported as not run', { skip: !posix }, (t) => {
+// The same through Node, which every platform starts natively (a shell script cannot be started by name on Windows: EFTYPE).
+test('check: a Node hook that blocks and exits before reading a large event is read as a block, not as a hook that could not start', (t) => {
+  const dir = tempDir(t, 'zn-check-epipe-node-');
+  const hook = path.join(dir, 'hook.js');
+  fs.writeFileSync(hook, "process.stdout.write('{\"permissionDecision\":\"deny\"}');\nprocess.exit(2);\n");
+  const big = { hook_event_name: 'PreToolUse', pad: 'x'.repeat(8 * 1024 * 1024) };
+  for (let i = 0; i < 5; i++) {
+    const r = _internal.spawnHook(process.execPath, [hook], big, {}, dir);
+    assert.equal(r.ran, true, JSON.stringify({ why: r.why }));
+    assert.equal(r.status, 2);
+    assert.equal(r.decision, 'deny');
+  }
+});
+
+test('check: a hook that cannot be started is still reported as not run', (t) => {
   const dir = tempDir(t, 'zn-check-enoent-');
   const r = _internal.spawnHook(path.join(dir, 'missing.sh'), [], {}, {}, dir);
   assert.equal(r.ran, false);

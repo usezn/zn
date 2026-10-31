@@ -15,6 +15,7 @@ const runner = require('../lib/hooks/runner');
 const fakeEngine = require('./helpers/fake_engine');
 const { createFakeVault } = require('./helpers/fake_vault');
 const { AGENTS } = require('./helpers/post_events');
+const { budget } = require('./helpers/time_budget');
 
 const NOTICE = /output withheld because it is too large to check/;
 const LAST_KEY = 'AKIAQQQQQQQQQQQQQQQQ'; // fictitious
@@ -41,7 +42,7 @@ for (const [name, a] of Object.entries(AGENTS)) {
     const t = Date.now();
     const r = await handle(name, a.event(text), { vault: slowVault(5) });
     const ms = Date.now() - t;
-    assert.ok(ms < 5000, 'answered in ' + ms + ' ms');
+    assert.ok(ms < budget(5000), 'answered in ' + ms + ' ms');
     assert.equal(r.decision.decision, 'allow');
     assert.ok(r.output, 'the hook answers');
     const everything = JSON.stringify(r.output);
@@ -57,7 +58,7 @@ for (const [name, a] of Object.entries(AGENTS)) {
     const t = Date.now();
     const r = await handle(name, a.event(text), { vault: slowVault(100), postDeadlineMs: 300 });
     const ms = Date.now() - t;
-    assert.ok(ms < 2000, 'answered in ' + ms + ' ms');
+    assert.ok(ms < budget(2000), 'answered in ' + ms + ' ms');
     assert.equal(r.decision.decision, 'allow');
     assert.equal(r.decision.abandoned, true);
     const everything = JSON.stringify(r.output);

@@ -53,6 +53,17 @@ A saved key is only ever sent to <https://api.usezn.com>. `--url` and `ZN_API_UR
 - **It says nothing was saved because there is no keychain**: unlock the vault with `zn unlock` and run `zn-gate connect` again, or set `ZN_CLOUD=1` and `ZN_API_KEY` in your shell yourself.
 - **You want to stop**: run `zn-gate disconnect`.
 
+## Common messages
+
+- **Refuses to run (AI agent or no terminal)**: run `zn-gate connect` or `zn-gate disconnect` in your own terminal.
+- **Full-access key refused**: create an analysis-only key on <https://usezn.com/connect>, then run `zn-gate connect` again.
+- **Key rejected, or could not be checked**: check your connection and run `zn-gate connect` again. Nothing was saved.
+- **Nothing saved, no keychain**: run `zn unlock` and then `zn-gate connect`, or set `ZN_CLOUD=1` and `ZN_API_KEY` in your shell.
+- **Saved key cannot be read, prompts checked locally**: run `zn-gate status`, then `zn-gate connect --reconnect` to replace the key.
+- **`fallback: true` in a result**: the cloud call failed and the local rules checked the prompt. See [What is sent](#what-is-sent).
+
+For the full steps, see [If something fails](#if-something-fails).
+
 ## What is sent
 
 Only the text of `analyze_prompt` and `zn-gate analyze` calls, after zn-gate removed the secrets it detects (personal data is not removed on this path, and a secret zn-gate does not recognize is sent with the text), and the key as a request header. Tool output, tool-call arguments and tool descriptions are never sent. If the cloud call fails, the prompt is checked by the local rules alone (`fallback: true`); it does not fail closed. `zn-gate status` shows the state at any time. See also [What leaves your machine](../README.md#what-leaves-your-machine).

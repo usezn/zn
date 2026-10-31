@@ -105,3 +105,93 @@ test('confirm waits for a full line', async () => {
   t.stdin.write('es\n');
   assert.equal(await p, true);
 });
+
+test('agentEnvDetected finds each agent variable with a value and names only the first match', () => {
+  for (const k of tty.AGENT_ENV_VARS) assert.equal(tty.agentEnvDetected({ HOME: '/x', [k]: '1' }), k);
+  assert.equal(tty.agentEnvDetected({ ZN_AGENT: '1', CLAUDECODE: '1' }), 'CLAUDECODE');
+});
+
+test('requireHuman refuses for each agent variable and names it', () => {
+  for (const k of tty.AGENT_ENV_VARS) {
+    const t = fakeTty();
+    assert.throws(
+      () => tty.requireHuman('zn-gate thing', { stdin: t.stdin, env: { [k]: '' }, ancestry: noAncestor }),
+      (e) => e.code === 'ZN_POLICY_DENIED' && e.message.includes(k),
+      k,
+    );
+  }
+});
+
+// readClipboard on Linux: fake programs on a temporary PATH must never be run, and the fixed
+// absolute tools are replaced by a stub for spawnSync so the result does not depend on the host.
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const childProcess = require('node:child_process');
+
+function loadTtyWithSpawn(spawnStub) {
+  const modPath = require.resolve('../lib/broker/tty');
+  const original = childProcess.spawnSync;
+  childProcess.spawnSync = spawnStub;
+  delete require.cache[modPath];
+  try {
+    return require(modPath);
+  } finally {
+    childProcess.spawnSync = original;
+    delete require.cache[modPath];
+  }
+}
+
+const linuxOnly = { skip: process.platform !== 'linux' && 'Linux clipboard tools only' };
+
+test('readClipboard throws an unavailable error when no clipboard program exists', linuxOnly, () => {
+  const calls = [];
+  const fresh = loadTtyWithSpawn((cmd) => { calls.push(cmd); return { error: new Error('ENOENT'), status: null }; });
+  assert.throws(() => fresh.readClipboard(), (e) => e.code === 'ZN_UNAVAILABLE');
+  assert.deepEqual(calls, ['/usr/bin/wl-paste', '/usr/bin/xclip', '/usr/bin/xsel']);
+});
+
+test('readClipboard returns an empty string for an empty clipboard', linuxOnly, () => {
+  const fresh = loadTtyWithSpawn(() => ({ status: 0, stdout: '' }));
+  assert.equal(fresh.readClipboard(), '');
+  const none = loadTtyWithSpawn(() => ({ status: 0, stdout: null }));
+  assert.equal(none.readClipboard(), '');
+});
+
+test('readClipboard removes one trailing newline only', linuxOnly, () => {
+  const read = (out) => loadTtyWithSpawn(() => ({ status: 0, stdout: out })).readClipboard();
+  assert.equal(read('fake-value\n'), 'fake-value');
+  assert.equal(read('fake-value\r\n'), 'fake-value');
+  assert.equal(read('fake-value\n\n'), 'fake-value\n');
+  assert.equal(read('fake-value'), 'fake-value');
+  assert.equal(read('line one\nline two\n'), 'line one\nline two');
+});
+
+test('readClipboard tries the next tool when one fails', linuxOnly, () => {
+  const calls = [];
+  const fresh = loadTtyWithSpawn((cmd) => {
+    calls.push(cmd);
+    return cmd === '/usr/bin/xclip' ? { status: 0, stdout: 'fake-value\n' } : { status: 1, stdout: '' };
+  });
+  assert.equal(fresh.readClipboard(), 'fake-value');
+  assert.deepEqual(calls, ['/usr/bin/wl-paste', '/usr/bin/xclip']);
+});
+
+test('readClipboard ignores fake clipboard programs on PATH', linuxOnly, () => {
+  const hostHasTool = ['/usr/bin/wl-paste', '/usr/bin/xclip', '/usr/bin/xsel'].some((p) => fs.existsSync(p));
+  if (hostHasTool) return;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-clip-'));
+  const oldPath = process.env.PATH;
+  try {
+    for (const name of ['wl-paste', 'xclip', 'xsel']) {
+      const f = path.join(dir, name);
+      fs.writeFileSync(f, '#!/bin/sh\necho planted-value\n');
+      fs.chmodSync(f, 0o755);
+    }
+    process.env.PATH = dir;
+    assert.throws(() => tty.readClipboard(), (e) => e.code === 'ZN_UNAVAILABLE');
+  } finally {
+    process.env.PATH = oldPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -1,0 +1,2 @@
+### Fixed
+- `zn-gate check` now adds a note when an agent's hooks still run the runner of an older zn-gate. With pnpm, an update skips the install step and leaves the previous version's folder in place, so the hooks kept working with the older rules while the check said only OK. The note names the older version and says to run `zn hooks install <agent>`. The upgrade guide no longer says pnpm blocks the hooks: pnpm keeps running the previous runner, while bun and `--ignore-scripts` block.

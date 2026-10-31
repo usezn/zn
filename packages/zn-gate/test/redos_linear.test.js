@@ -14,6 +14,7 @@ const exact = require('../lib/linear-text');
 const { normalizeProject } = require('../lib/vault/store');
 const { claudePermission } = require('../lib/audit/patterns');
 const { _internal: audit } = require('../lib/audit');
+const { budget } = require('./helpers/time_budget');
 
 const BIG = 200 * 1024;
 
@@ -175,5 +176,5 @@ test('the Codex hook denies a patch over 100 KB with a clear message', async () 
   const { decision } = await runner.handle(codex, raw, {});
   assert.equal(decision.decision, 'deny');
   assert.match(decision.message, /too long for zn to check/);
-  assert.ok(Date.now() - t0 < 2000);
+  assert.ok(Date.now() - t0 < budget(2000));
 });

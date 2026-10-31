@@ -118,9 +118,11 @@ is built from the agent's public documentation and has not had the same
 end-to-end testing as the agents above, so read this section before relying on
 it. Each adapter lists its limits when you install it.
 
-### GitHub Copilot CLI
+### GitHub Copilot (VS Code and Copilot CLI)
 
-Install it with `zn hooks install copilot` (add `--project` for one project).
+This adapter is supported and documented; it is listed here because its limits
+are written out with the adapters. Evidence: documented for VS Code, not tested
+in the VS Code app. Install it with `zn hooks install copilot` (add `--project` for one project).
 It adds hooks that run before and after each tool call. zn writes its own
 `zn-gate.json` in `~/.copilot/hooks/` (or `$COPILOT_HOME/hooks/` when you set
 a custom Copilot folder) and, with `--project`, in `.github/hooks/`. It has

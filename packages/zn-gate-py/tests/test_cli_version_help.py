@@ -45,6 +45,16 @@ class TestVersionOutput(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(proc.stdout, _zn("--version").stdout)
 
+    def test_all_version_forms_print_identical_output_with_the_package_version(self):
+        outputs = {form: _zn(form) for form in ("version", "-V", "-v", "--version")}
+        for form, proc in outputs.items():
+            with self.subTest(form=form):
+                self.assertEqual(proc.returncode, 0)
+                self.assertEqual(proc.stderr, "")
+        self.assertEqual(len({p.stdout for p in outputs.values()}), 1)
+        first_line = outputs["version"].stdout.splitlines()[0]
+        self.assertEqual(first_line.split()[1], __version__)
+
 
 class TestHelpOutput(unittest.TestCase):
     def test_every_expected_subcommand_is_known(self):

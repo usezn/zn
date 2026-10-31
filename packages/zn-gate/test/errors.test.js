@@ -61,8 +61,10 @@ test('humanError: other errors return the plain message', () => {
   assert.strictEqual(humanError(notImplemented('x'), quiet), 'x is not implemented yet');
   assert.strictEqual(humanError(null, quiet), '');
   assert.strictEqual(humanError(undefined, quiet), '');
+  // A file system error is told in plain words (see fs_error_text.test.js); its own code shows only when verbose.
   const foreign = new Error('disk'); foreign.code = 'ENOENT';
-  assert.strictEqual(humanError(foreign, verbose), 'disk');
+  assert.strictEqual(humanError(foreign, quiet), 'a file does not exist, or a folder on its path is missing.');
+  assert.strictEqual(humanError(foreign, verbose), '[ENOENT] a file does not exist, or a folder on its path is missing.');
 });
 
 test('humanError: the code is shown only when verbose', () => {

@@ -13,6 +13,7 @@ const { spawnSync } = require('child_process');
 const { tempDir } = require('./helpers/tmp');
 const { audit } = require('../lib/audit');
 const mcp = require('../lib/mcp-secrets');
+const { budget } = require('./helpers/time_budget');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 const SAMPLES = path.join(__dirname, 'fixtures', 'mcp_config_secret_samples.json');
@@ -294,7 +295,7 @@ test('large and hostile files are read in linear time', () => {
   };
   for (const [name, text] of Object.entries(inputs)) {
     const took = ms(() => mcp.findMcpConfigSecrets(text));
-    assert.ok(took < 8000, `${name}: ${Math.round(took)} ms`);
+    assert.ok(took < budget(8000), `${name}: ${Math.round(took)} ms`);
   }
 });
 

@@ -5,6 +5,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const { findPromptAssignments } = require('../lib/scrub/prompt');
+const { budget } = require('./helpers/time_budget');
 
 const V = ['q7w8', 'e9r0', 't1y2', 'Zx'].join('');   // 14 chars, not a placeholder
 const B = ['Zm9v', 'YmFy', 'Q2Fz', 'ZTEy', 'Mw=='].join('');   // base64-looking, 20 chars
@@ -155,6 +156,6 @@ test('1 MiB prompts: the new forms stay linear', () => {
     const t0 = process.hrtime.bigint();
     findPromptAssignments(text);
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    assert.ok(ms < 3000, label + ' took ' + ms.toFixed(0) + ' ms');
+    assert.ok(ms < budget(3000), label + ' took ' + ms.toFixed(0) + ' ms');
   }
 });

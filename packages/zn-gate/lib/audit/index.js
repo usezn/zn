@@ -1200,6 +1200,15 @@ const EXTENSION_DIRS = [
   [/(^|\/)\.amazonq\/(?:cli-)?agents$/, 'amazonq', 'agents'],
 ];
 
+// Directories an agent reads files from, so a symbolic link at one of these
+// paths is followed (inside the repository) or reported (outside it).
+const SYMLINK_DIRS = EXTENSION_DIRS.map(([re]) => re).concat([
+  /(^|\/)\.cursor\/(?:rules|agents)$/,
+  /(^|\/)\.github\/instructions$/,
+  /(^|\/)\.amazonq\/rules$/,
+  /(^|\/)\.claude\/output-styles$/,
+]);
+
 // Directories agents read from. They are visited first, and inside them the
 // SKIP_DIRS list does not apply (a skill may be called "build" or "dist").
 const AGENT_DIRS = new Set(['.claude', '.codex', '.cursor', '.amazonq', '.vscode', '.opencode', '.gemini', '.github', '.claude-plugin', '.clinerules', 'skills']);
@@ -1282,17 +1291,22 @@ function walk(root, deadline, maxEntries) {
       const agentHere = inAgent || isAgentDirName(d.name);
       if (d.isSymbolicLink()) {
         const asFile = classify(r, !rel);
-        if (!asFile && !isAgentDirName(d.name)) continue;
+        const dirLike = isAgentDirName(d.name) || SYMLINK_DIRS.some((re) => re.test(r.toLowerCase()));
+        if (!asFile && !dirLike && !inAgent) continue;
         let real = null;
         try { real = fs.realpathSync(abs); } catch (_) { real = null; }
         let st = null;
         try { st = real && fs.statSync(real); } catch (_) { st = null; }
+        // Inside an agent directory, only a linked directory is of interest.
+        if (!asFile && !dirLike && !(st && st.isDirectory())) continue;
         if (!real || !st) {
           unchecked.push({ file: r, agent: asFile ? asFile.agent : 'any', readers: asFile ? asFile.readers : AGENTS, severity: 'medium', detail: r + ' is a broken symbolic link.' });
         } else if (!insideRoot(real)) {
           unchecked.push({ file: r, agent: asFile ? asFile.agent : 'any', readers: asFile ? asFile.readers : AGENTS, severity: 'high', detail: r + ' is a symbolic link to a location outside the audited directory. Agents follow it; zn audit does not read it.' });
-        } else if (st.isDirectory() && isAgentDirName(d.name)) {
-          if (!visitedReal.has(real)) { visitedReal.add(real); visit(real, r, depth + 1, true); }
+        } else if (st.isDirectory()) {
+          const ext = EXTENSION_DIRS.find(([re]) => re.test(r.toLowerCase()));
+          if (ext) extDirs.push({ rel: r, abs, agent: ext[1], what: ext[2] });
+          if (depth < MAX_DEPTH && !visitedReal.has(real)) { visitedReal.add(real); visit(real, r, depth + 1, true); }
         } else if (st.isFile() && asFile) {
           files.push(Object.assign({ abs: real, rel: r, display: r, scope: 'project' }, asFile));
         }

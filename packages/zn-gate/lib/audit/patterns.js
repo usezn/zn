@@ -396,11 +396,11 @@ function claudePermission(entry) {
 const EXFIL = [
   // send / upload ... secret material ... to a destination (the secret must be
   // the thing sent: "create an API key at https://console..." is not)
-  /\b(?:send|upload|post|exfiltrate|forward|transmit|leak|e-?mail)\b[^\n]{0,120}?(?:\.env\b|~\/\.ssh|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials|api[ _-]?keys?|access[ _-]?tokens?|secrets?|credentials?|passwords?|private[ _-]?keys?|environment variables)\b[^\n]{0,120}?(?:https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker)/i,
+  /\b(?:send|upload|post|exfiltrate|forward|transmit|leak|e-?mail)\b[^\n]{0,120}?(?:\.env\b|~\/\.(?:ssh|gnupg)|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials|api[ _-]?keys?|access[ _-]?tokens?|secrets?|credentials?|passwords?|private[ _-]?keys?|environment variables)\b[^\n]{0,120}?(?:https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker)/i,
   // curl/wget posting a sensitive file
-  /\b(?:curl|wget|http|iwr|invoke-webrequest|invoke-restmethod)\b[^\n|]{0,200}?(?:-d|--data(?:-binary|-raw|-urlencode)?|-F|--form|-T|--upload-file|--post-file|-InFile|-Body)[\s=]{1,3}["']?@?[^\s"']{0,40}?(?:\.env\b|\.ssh\/|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials)/i,
+  /\b(?:curl|wget|http|iwr|invoke-webrequest|invoke-restmethod)\b[^\n|]{0,200}?(?:-d|--data(?:-binary|-raw|-urlencode)?|-F|--form|-T|--upload-file|--post-file|-InFile|-Body)[\s=]{1,3}["']?@?[^\s"']{0,40}?(?:\.env\b|\.(?:ssh|gnupg)\/|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials)/i,
   // dumping the environment or a key file into a network tool
-  /\b(?:env|printenv|set|cat\s{1,5}[^\n|]{0,80}?(?:\.env\b|\.ssh\/|id_rsa|\.aws\/credentials|\.npmrc|\.netrc))\s{0,5}\|\s{0,5}(?:curl|wget|nc|ncat|netcat|socat|http)\b/i,
+  /\b(?:env|printenv|set|cat\s{1,5}[^\n|]{0,80}?(?:\.env\b|\.(?:ssh|gnupg)\/|id_rsa|\.aws\/credentials|\.npmrc|\.netrc))\s{0,5}\|\s{0,5}(?:curl|wget|nc|ncat|netcat|socat|http)\b/i,
 ];
 
 const WEAKEN = [
@@ -443,7 +443,7 @@ const ENV_TEMPLATE = /\.env(?:\.[\w-]+)*\.(?:example|sample|template|dist)\b|\.(
 // https://console... and paste it into config.json"). A known drop host always
 // counts; for any other URL the line is exempt only when the URL is introduced by
 // "from" or by create/generate/get/obtain/find (the console setup step).
-const WEAK_EXFIL = /\b(?:copy|share|paste)\b[^\n]{0,120}?(?:\.env\b|~\/\.ssh|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials|api[ _-]?keys?|access[ _-]?tokens?|secrets?|credentials?|passwords?|private[ _-]?keys?|environment variables)\b[^\n]{0,120}?((?:https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker))/gi;
+const WEAK_EXFIL = /\b(?:copy|share|paste)\b[^\n]{0,120}?(?:\.env\b|~\/\.(?:ssh|gnupg)|id_rsa|id_ed25519|\.aws\/credentials|\.npmrc|\.netrc|\.git-credentials|api[ _-]?keys?|access[ _-]?tokens?|secrets?|credentials?|passwords?|private[ _-]?keys?|environment variables)\b[^\n]{0,120}?((?:https?:\/\/|webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker))/gi;
 const DROP_HOST = /webhook|pastebin|discord(?:app)?\.com|gist\.github|ngrok|requestbin|attacker/i;
 // The setup verb has to govern the URL: "from (the)" right before it, or a
 // create/generate/get/obtain/find clause (a new clause, not "to obtain ...") whose

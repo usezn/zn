@@ -1,0 +1,111 @@
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.started ZCode app startup started
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.config.completed ZCode app configuration loaded
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.plugins.completed ZCode plugins resolved
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.sqlite_migration.started ZCode SQLite migration started
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage_state SQLite startup state
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.sqlite_migration.completed ZCode SQLite migration completed
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.runtime_config.completed ZCode runtime configuration resolved
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.storage.completed ZCode storage adapters initialized
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.mcp.completed ZCode MCP adapter initialized
+info [adapters.mcp] trace=27bb1d61 event=mcp.configured_servers.connect.started MCP configured servers connection started
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.runtime.completed ZCode runtime constructed
+info [bootstrap] trace=27bb1d61 event=bootstrap.app.startup.completed ZCode app startup completed
+info [adapters.logging] trace=27bb1d61 event=log.retention.cleanup.scheduled Log retention cleanup scheduled
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.connect.started MCP server connection started
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.connect.started MCP server connection started
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.connect.started MCP server connection started
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.connect.started MCP server connection started
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.connect.started MCP server connection started
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.connect.started MCP server connection started
+info [core.runtime] trace=27bb1d61 event=turn.phase.started Turn phase started
+info [core.runtime] trace=27bb1d61 event=turn.phase.completed Turn phase completed
+info [core.runtime] trace=27bb1d61 event=turn.phase.started Turn phase started
+info [core.runtime] trace=27bb1d61 event=turn.phase.completed Turn phase completed
+info [core.runtime] trace=27bb1d61 event=turn.started Turn started
+info [core.runtime] trace=27bb1d61 event=turn.phase.started Turn phase started
+info [core.runtime] trace=27bb1d61 event=session.persistence.started Session persistence started
+info [core.runtime] trace=27bb1d61 event=session.event.persistence.started Session event persistence started
+info [core.runtime] trace=27bb1d61 event=session.event.persistence.completed Session event persistence completed
+info [core.runtime] trace=27bb1d61 event=session.persistence.completed Session persistence completed
+info [core.runtime] trace=27bb1d61 event=turn.phase.completed Turn phase completed
+info [core.runtime] trace=27bb1d61 event=turn.phase.started Turn phase started
+info [core.runtime] trace=27bb1d61 event=session.event.persistence.started Session event persistence started
+info [core.runtime] trace=27bb1d61 event=session.event.persistence.completed Session event persistence completed
+info [core.runtime] trace=27bb1d61 event=turn.phase.completed Turn phase completed
+info [core.runtime] trace=27bb1d61 event=turn.phase.started Turn phase started
+info [core.runtime] trace=27bb1d61 event=turn.phase.completed Turn phase completed
+info [core.runtime] trace=27bb1d61 event=turn.phase.started Turn phase started
+info [core.runtime] trace=27bb1d61 event=turn.phase.completed Turn phase completed
+info [core.runtime] trace=27bb1d61 event=turn.phase.started Turn phase started
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.connected MCP server connected
+ZCode Built-in updated revision=43 source=CDN
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.connected MCP server connected
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.connected MCP server connected
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.connected MCP server connected
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.connected MCP server connected
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.connected MCP server connected
+info [adapters.mcp] trace=27bb1d61 event=mcp.configured_servers.connect.completed MCP configured servers connection completed
+info [core.runtime] trace=27bb1d61 event=mcp.startup.completed MCP startup completed
+info [core.runtime] trace=27bb1d61 event=mcp.tools.registered MCP tools registered
+info [core.runtime] trace=27bb1d61 event=model.request.started Model request started
+info [core.runtime] trace=27bb1d61 event=session.event.persistence.started Session event persistence started
+info [core.runtime] trace=27bb1d61 event=session.event.persistence.completed Session event persistence completed
+info [adapters.model] trace=27bb1d61 event=model.sdk.stream.completed AI SDK stream completed
+info [adapters.model] trace=27bb1d61 event=model.request.completed Model request completed
+info [core.runtime] trace=27bb1d61 event=model.network.completed Model network request completed
+info [core.runtime] trace=27bb1d61 event=model.response.diagnostics Model response diagnostics
+info [core.runtime] trace=27bb1d61 event=session.event.persistence.started Session event persistence started
+info [core.runtime] trace=27bb1d61 event=session.event.persistence.completed Session event persistence completed
+info [core.runtime] trace=27bb1d61 event=model.request.completed Model request completed
+info [core.tool.executor] trace=27bb1d61 event=tool.call.started Tool call started
+info [core.tool.executor] trace=27bb1d61 event=tool.call.completed Tool call completed
+info [core.runtime] trace=27bb1d61 event=model.request.started Model request started
+info [core.runtime] trace=27bb1d61 event=session.event.persistence.started Session event persistence started
+info [core.runtime] trace=27bb1d61 event=session.event.persistence.completed Session event persistence completed
+info [adapters.model] trace=27bb1d61 event=model.sdk.stream.completed AI SDK stream completed
+info [adapters.model] trace=27bb1d61 event=model.request.completed Model request completed
+info [core.runtime] trace=27bb1d61 event=model.network.completed Model network request completed
+info [core.runtime] trace=27bb1d61 event=model.response.diagnostics Model response diagnostics
+info [core.runtime] trace=27bb1d61 event=session.event.persistence.started Session event persistence started
+info [core.runtime] trace=27bb1d61 event=session.event.persistence.completed Session event persistence completed
+info [core.runtime] trace=27bb1d61 event=model.request.completed Model request completed
+info [core.runtime] trace=27bb1d61 event=turn.phase.completed Turn phase completed
+info [core.runtime] trace=27bb1d61 event=session.event.persistence.started Session event persistence started
+info [core.runtime] trace=27bb1d61 event=session.event.persistence.completed Session event persistence completed
+info [core.runtime] trace=27bb1d61 event=turn.completed Turn completed
+info [bootstrap.app] trace=27bb1d61 event=dynamic_workflow.service.closing Dynamic workflow run service closing
+info [bootstrap.app] trace=27bb1d61 event=dynamic_workflow.service.closed Dynamic workflow run service closed
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.closed MCP server closed
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.closed MCP server closed
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.closed MCP server closed
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.closed MCP server closed
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.closed MCP server closed
+info [adapters.mcp] trace=27bb1d61 event=mcp.server.closed MCP server closed
+info [adapters.mcp] trace=27bb1d61 event=mcp.adapter.closed MCP adapter closed

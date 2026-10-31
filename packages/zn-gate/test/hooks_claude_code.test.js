@@ -19,6 +19,7 @@ const fakeEngine = require('./helpers/fake_engine');
 const { generateAll } = require('./fixtures/fake_secrets');
 const { tempDir } = require('./helpers/tmp');
 const { runScript } = require('./helpers/shell');
+const { budget } = require('./helpers/time_budget');
 
 const FAKE = generateAll(4242, { perType: 1, piiPerType: 1 });
 const fake = (type) => FAKE.secrets.find((s) => s.type === type);
@@ -829,7 +830,7 @@ test('Bash, PowerShell and Monitor commands over 100 KB are blocked before they 
     assert.equal(r.output.hookSpecificOutput.permissionDecision, 'deny', tool);
     assert.match(r.output.hookSpecificOutput.permissionDecisionReason, /too long for zn to check \(over 100 KB\)/, tool);
     assert.match(r.output.hookSpecificOutput.permissionDecisionReason, /do not resend it in parts/, tool);
-    assert.ok(ms < 50, tool + ' took ' + ms + ' ms');
+    assert.ok(ms < budget(50), tool + ' took ' + ms + ' ms');
   }
   // A normal command is unchanged.
   const ok = await run(preTool('Bash', { command: 'npm test', description: 'x' }, dir));
@@ -1043,6 +1044,21 @@ test('vault call: a secrets server that is not zn (user scope) is checked', asyn
   const dir = tmpProject(t);
   assert.equal(adapter.normalize(preTool('mcp__secrets__x', {}, dir)).mcp.ours, undefined);
   assert.equal(decisionOf(await run(preTool(VAULT_TOOL, VAULT_CALL, dir), { engine: piiEngine })), 'deny');
+});
+
+test('vault call: a project server named secrets__x is foreign, not the zn secrets server', async (t) => {
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } } });
+  const dir = tmpProject(t);
+  // The real zn server stays ours.
+  assert.equal(adapter.normalize(preTool(VAULT_TOOL, VAULT_CALL, dir)).mcp.ours, 'secrets');
+  // The host sends mcp__secrets__x__tool for a server called secrets__x: the lazy parse gives server secrets, tool x__tool.
+  const name = 'mcp__secrets__x__secrets_http_request';
+  assert.equal(adapter.normalize(preTool(name, VAULT_CALL, dir)).mcp.ours, undefined);
+  assert.equal(decisionOf(await run(preTool(name, VAULT_CALL, dir), { engine: piiEngine })), 'deny', 'the placeholder is still blocked');
+  // A server called secrets_ sends mcp__secrets___secrets_http_request: server secrets, tool _secrets_http_request.
+  const single = 'mcp__secrets___secrets_http_request';
+  assert.equal(adapter.normalize(preTool(single, VAULT_CALL, dir)).mcp.ours, undefined);
+  assert.equal(decisionOf(await run(preTool(single, VAULT_CALL, dir), { engine: piiEngine })), 'deny', 'secrets_: the placeholder is still blocked');
 });
 
 test('vault call: no secrets server in the config at all is checked', async (t) => {
@@ -1269,7 +1285,10 @@ test('vault call: a user-scope entry that sets NODE_OPTIONS, NODE_PATH or a fold
   assert.equal(kind(ZN_SECRETS), 'secrets');
   assert.equal(kind({ ...ZN_SECRETS, env: { NODE_OPTIONS: '--require ./x.js' } }), null);
   assert.equal(kind({ ...ZN_SECRETS, env: { node_path: path.join(dir, 'lib') } }), null);
-  assert.equal(kind({ ...ZN_SECRETS, env: { ZN_EXAMPLE: '1' } }), 'secrets');
+  for (const k of ['LD_PRELOAD', 'ld_library_path', 'LD_AUDIT', 'ld_audit', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'dyld_framework_path', 'OPENSSL_CONF', 'openssl_conf']) {
+    assert.equal(kind({ ...ZN_SECRETS, env: { [k]: '/opt/example/lib.so' } }), null, k);
+  }
+  assert.equal(kind({ ...ZN_SECRETS, env: { ZN_EXAMPLE: '1', LDAP_EXAMPLE: '1' } }), 'secrets');
   assert.equal(kind({ ...ZN_SECRETS, cwd: dir }), null);
   assert.equal(kind({ ...ZN_SECRETS, cwd: 'relative' }), null);
   assert.equal(kind({ ...ZN_SECRETS, cwd: path.dirname(process.execPath) }), 'secrets');

@@ -103,8 +103,8 @@ def main():
     inst = json.load(open(INSTALLED)) if os.path.exists(INSTALLED) else {}
     cfgj = json.load(open(CFG))
     en = cfgj.get('plugins', {}).get('enabledPlugins', {}).get(PLUGIN_ID)
-    record('A0 install through the runtime plugin API', 'installed, enabled, 4 hooks listed, no npm install needed',
-           re.sub(r'\s+', ' ', listing)[:300] + ' | enabled=%s' % en, ok and en is True and 'hooks: 4' in listing, 'a_install.txt, a_list.txt')
+    record('A0 install through the runtime plugin API', 'installed, enabled, 8 hooks listed (a /bin/sh and a PowerShell hook per event), no npm install needed',
+           re.sub(r'\s+', ' ', listing)[:300] + ' | enabled=%s' % en, ok and en is True and 'hooks: 8' in listing, 'a_install.txt, a_list.txt')
     shutil.copy(CFG, OUT + '/config_a_after_install.json')
     shutil.copy(INSTALLED, OUT + '/installed_plugins_a.json')
     matrix('a', 'A (hooks.enabled=false)')

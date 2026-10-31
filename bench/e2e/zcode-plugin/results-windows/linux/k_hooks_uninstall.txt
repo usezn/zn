@@ -1,0 +1,6 @@
+$ (pty) /work/node/bin/zn hooks uninstall zcode
+rc=0 answers_sent=0
+--output--
+Removed zn hooks for zcode in /work/home/.zcode/cli/config.json
+  backup: /work/home/.zcode/cli/config.json.bak-zn-20261030T093719
+

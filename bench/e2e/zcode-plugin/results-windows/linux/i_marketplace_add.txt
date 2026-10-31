@@ -1,0 +1,7 @@
+$ /work/zcrt /opt/ZCode/resources/glm/zcode.cjs plugins marketplace add /work/market
+rc=0
+--stdout--
+Added marketplace usezn (1 plugins)
+
+--stderr--
+
