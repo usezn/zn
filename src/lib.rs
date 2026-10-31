@@ -20,6 +20,7 @@ pub mod private_file;
 pub mod prompt_guard;
 pub mod proxy;
 pub mod scrubber;
+pub mod shell_guard;
 pub mod shield;
 pub mod sql_guard;
 pub mod tenants;
