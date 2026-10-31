@@ -8,7 +8,7 @@ name: Hook latency
 # is kept as an artifact for 30 days.
 on:
   push:
-    branches: [ main, next ]
+    branches: [ main ]
     paths:
       - 'packages/zn-gate/lib/**'
       - 'packages/zn-gate/bin/**'
@@ -29,6 +29,9 @@ on:
       - 'packages/zn-gate/test/fixtures/fake_secrets*'
       - 'bench/hook_latency*'
       - '.github/workflows/hook-latency.yml'
+  # Nightly run on next (a schedule runs on main; the checkout steps switch to next).
+  schedule:
+    - cron: '25 3 * * *'
   workflow_dispatch:
 
 permissions:
@@ -61,6 +64,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.schedule == '25 3 * * *' && 'next' || '' }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -106,6 +110,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.schedule == '25 3 * * *' && 'next' || '' }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -144,6 +149,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.schedule == '25 3 * * *' && 'next' || '' }}
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         continue-on-error: true
