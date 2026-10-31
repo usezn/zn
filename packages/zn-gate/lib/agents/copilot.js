@@ -111,14 +111,92 @@ function patchInput(text) {
   return { path: files[0], paths: files, alsoReadCheck: true, tooLong, unparsed: !tooLong && (files.length === 0 || scan.suspicious), texts: [{ key: ['input'], value: text }] };
 }
 
+/**
+ * Whether VS Code's shell task builder wraps a plain string argument in strong quotes. Ported from the task system's
+ * shell command line builder in the VS Code source (terminalTaskSystem.ts, needsQuotes): an argument that starts and
+ * ends with the same quote character is left alone; otherwise it is scanned left to right, quotes open and close a
+ * quoted stretch, and only a space outside a quoted stretch asks for quotes (a tab or a newline does not).
+ * VS Code compares the character with its escape setting, which is an object for bash and zsh, so a backslash skips
+ * nothing there; skipEscape reads the same argument the other way (a backslash skips the next character) so both
+ * readings of the line are judged.
+ */
+function needsQuotes(value, skipEscape) {
+  if (value.length >= 2 && (value[0] === "'" || value[0] === '"') && value[0] === value[value.length - 1]) return false;
+  let quote;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === quote) quote = undefined;
+    else if (quote !== undefined) continue;
+    else if (skipEscape && ch === '\\') i++;
+    else if (ch === "'" || ch === '"') quote = ch;
+    else if (ch === ' ') return true;
+  }
+  return false;
+}
+
+/**
+ * One piece of a task line (a command or an argument) the way VS Code gives it: a string, or {value, quoting} with
+ * quoting escape, strong or weak. Returns the text as VS Code puts it on a bash line (vs), the same with a backslash
+ * read as an escape (vse), the bare value (raw) and a POSIX-quoted form (q); null when the piece has a shape zn
+ * cannot read. VS Code wraps a plain string only when needsQuotes says so, without escaping a quote inside it, and
+ * writes {value, quoting} with its own quoting (escape puts a backslash before a space, a double quote, a single
+ * quote and a comma).
+ */
+function taskPiece(x) {
+  if (typeof x === 'string') {
+    return {
+      vs: needsQuotes(x, false) ? "'" + x + "'" : x,
+      vse: needsQuotes(x, true) ? "'" + x + "'" : x,
+      vw: /\s/.test(x) ? "'" + x + "'" : x,
+      raw: x,
+      q: shQuote(x),
+    };
+  }
+  if (!isObj(x) || typeof x.value !== 'string') return null;
+  const v = x.value;
+  const k = x.quoting;
+  if (k !== undefined && k !== 'escape' && k !== 'strong' && k !== 'weak') return null;
+  const vs = k === 'strong' ? "'" + v + "'" : k === 'weak' ? '"' + v + '"' : k === 'escape' ? v.replace(/[ "',]/g, '\\$&') : v;
+  return { vs, vse: vs, vw: vs, raw: v, q: shQuote(v) };
+}
+
+/**
+ * A command one level down (create_and_run_task sends {task: {command, args}}) as the line(s) it runs.
+ * For a shell task the line is built the way VS Code builds it, argument by argument (see needsQuotes), and that line
+ * is judged; a newline or tab inside an argument VS Code leaves unquoted stays in the line, so the shell's second
+ * command is seen. The same line with a backslash read as an escape, the bare values and every argument quoted are
+ * judged as well and the stricter answer wins. With no arguments VS Code runs a string command as typed. A process
+ * task has no shell, so each argument is quoted. undefined = no command here; null = a command or argument zn
+ * cannot read (never dropped).
+ */
+function taskLines(v) {
+  const key = COMMAND_KEYS.find((k) => v[k] !== undefined);
+  if (key === undefined) return undefined;
+  const c = taskPiece(v[key]);
+  if (!c || (typeof v[key] === 'string' && !v[key])) return null;
+  let extra = [];
+  if (v.args !== undefined) {
+    if (!Array.isArray(v.args)) return null;
+    extra = v.args.map(taskPiece);
+    if (extra.some((p) => p === null)) return null;
+  }
+  const join = (f) => [c, ...extra].map(f).join(' ');
+  if (typeof v.type === 'string' && v.type.toLowerCase() === 'process') return join((p) => p.q);
+  const bare = typeof v[key] === 'string' && extra.length === 0;
+  const lines = [bare ? c.raw : join((p) => p.vs), bare ? c.raw : join((p) => p.vse), bare ? c.raw : join((p) => p.vw), join((p) => p.raw), join((p) => p.q)];
+  return lines.filter((l, i, arr) => arr.indexOf(l) === i).join('\n');
+}
+
+
 // Bounds of the walk over the arguments of a tool zn does not know: deeper or larger than this cannot be checked, so it is refused.
 const MAX_NEST_DEPTH = 6;
 const MAX_NEST_NODES = 500;
 
 /**
  * Every command in the arguments of an unknown tool, at any level up to MAX_NEST_DEPTH (create_and_run_task sends
- * {task: {command, args}}), each with its string arguments. A command key whose value is a list of strings is joined; any
- * other value that is not a string is `bad`. `truncated` = the arguments are deeper or larger than the bounds.
+ * {task: {command, args}}), each built with taskLines, the way VS Code builds a task line, so every reading of the line
+ * is judged. A command or argument zn cannot read (a number, a list, an object without a string value) is `bad` and the
+ * call is refused, never dropped. `truncated` = the arguments are deeper or larger than the bounds.
  */
 function commandScan(args) {
   const commands = [];
@@ -127,24 +205,31 @@ function commandScan(args) {
   let nodes = 0;
   const walk = (obj, depth) => {
     if (++nodes > MAX_NEST_NODES || depth > MAX_NEST_DEPTH) { truncated = true; return; }
+    let skip = null;
+    if (!Array.isArray(obj)) {
+      const r = taskLines(obj);
+      if (r === null) bad = true;
+      else if (r !== undefined) commands.push(r);
+      if (r !== undefined) skip = new Set([...COMMAND_KEYS, 'args']);
+    }
     const entries = Array.isArray(obj) ? obj.map((v) => [null, v]) : Object.entries(obj);
-    const extra = !Array.isArray(obj) && Array.isArray(obj.args) ? obj.args.filter((x) => typeof x === 'string') : [];
     for (const [k, v] of entries) {
-      if (k !== null && COMMAND_KEYS.includes(k)) {
-        if (typeof v === 'string') { if (v) commands.push([v, ...extra.map((x) => shQuote(x))].join(' ')); } else if (Array.isArray(v) && v.length && v.every((x) => typeof x === 'string')) commands.push(v.join(' '));
-        else if (v !== undefined && v !== null) bad = true;
-        continue;
-      }
+      if (skip && skip.has(k)) continue;
       if (isObj(v) || Array.isArray(v)) walk(v, depth + 1);
     }
   };
   walk(args, 0);
-  return { command: commands.length ? commands.join(' ; ') : undefined, bad, truncated };
+  return { command: commands.length ? commands.join('\n') : undefined, bad, truncated };
 }
 
-/** The commands of an unknown tool as one string, or undefined when it has none. */
+/** The first command one level down (see taskLines), as the line(s) it runs; undefined = none, null = unreadable. */
 function nestedCommand(args) {
-  return commandScan(args).command;
+  for (const v of Object.values(args)) {
+    if (!isObj(v)) continue;
+    const r = taskLines(v);
+    if (r !== undefined) return r;
+  }
+  return undefined;
 }
 
 /** Every string argument whose key looks like a file or folder (content-like keys skipped), three levels deep. */
@@ -241,7 +326,8 @@ function normalize(raw) {
     const patch = patchTextOf(toolName, args);
     if (patch !== undefined) return { ...ev, tool: 'write', input: patchInput(patch) };
   }
-  // A tool zn does not know: commands and files are looked for in the nested arguments too, within bounds.
+  // A known tool: its top-level command string (dev1's rule). A tool zn does not know: every command at any level within
+  // bounds, built the way VS Code builds the line; unreadable or too deep = refused.
   const scan = known ? null : commandScan(args);
   if (scan && (scan.bad || scan.truncated)) {
     return { ...ev, tool: 'unreadable', input: { texts: [] }, unreadable: unreadable(scan.bad ? 'command' : 'arguments (too deeply nested)') };

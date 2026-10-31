@@ -105,3 +105,29 @@ test('known tools keep their shape', () => {
   assert.equal(zcode.normalize({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } }).tool, 'bash');
   assert.equal(zcode.normalize({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '/tmp/example/a' } }).tool, 'read');
 });
+
+// Review cases: a nested task line is built argument by argument the way VS Code builds it, and every reading is judged.
+for (const a of AGENTS) {
+  test(a.name + ': a nested task whose argument chains a second command is judged on the raw line too', async (t) => {
+    const dir = tempDir(t, 'zn-b2589-');
+    assert.ok(a.deny(await a.run(dir, 'create_and_run_task', { task: { type: 'shell', command: 'echo', args: ['x&&rm -rf ~'] } })));
+  });
+  test(a.name + ': a nested task argument given as {value} is read, not dropped', async (t) => {
+    const dir = tempDir(t, 'zn-b2589-');
+    assert.ok(a.deny(await a.run(dir, 'create_and_run_task', { task: { type: 'shell', command: 'rm', args: ['-rf', { value: '~' }] } })));
+  });
+  test(a.name + ': a nested task argument zn cannot read (a number) is denied with a reason', async (t) => {
+    const dir = tempDir(t, 'zn-b2589-');
+    const r = a.deny(await a.run(dir, 'create_and_run_task', { task: { type: 'shell', command: 'ls', args: [42] } }));
+    assert.ok(r); assert.match(r, /could not read/i);
+  });
+}
+
+test('commandScan builds the nested lines with the VS Code reading and keeps the rest', () => {
+  const s = copilot.commandScan({ task: { command: 'echo', args: ['x&&rm -rf ~'] } });
+  assert.equal(s.bad, false);
+  assert.ok(s.command.split('\n').includes('echo x&&rm -rf ~'));
+  assert.equal(copilot.commandScan({ task: { command: 'ls', args: [42] } }).bad, true);
+  assert.ok(copilot.commandScan({ a: { b: { c: { command: 'npm test' } } } }).command.split('\n').includes('npm test'));
+  assert.equal(copilot.commandScan({ q: 'hello' }).command, undefined);
+});
