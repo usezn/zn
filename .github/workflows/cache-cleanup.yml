@@ -172,7 +172,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          # Same default as the job above: scheduled runs delete; manual runs delete only when dry_run is unchecked.
           # This job only lists on the weekly schedule: it deletes only on a manual run with dry_run unchecked.
           DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && !inputs.dry_run) && 'false' || 'true' }}
         run: |
