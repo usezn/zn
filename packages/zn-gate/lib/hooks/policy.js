@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.12';
+const POLICY_RULES_VERSION = '2026-10-31.15';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1563,10 +1563,33 @@ function pathsNamedElsewhere(readings, paths, opts) {
       if (w.curlCfgValue) continue;
       if (CD_CMDS.has(bareHead(w.head).toLowerCase())) continue;
       const t = String(w.text).replace(/^["']+|["']+$/g, '');
-      if (!t || /^-/.test(t) || /^[a-z][a-z0-9+.-]*:\/\//i.test(t)) continue;
-      const cands = new Set([t]);
-      const eq = t.indexOf('=');
-      if (eq >= 0) { cands.add(t.slice(eq + 1)); cands.add(t.slice(t.lastIndexOf('=') + 1)); }
+      if (!t || /^[a-z][a-z0-9+.-]*:\/\//i.test(t)) continue;
+      const cands = new Set();
+      if (/^-/.test(t)) {
+        // An option that holds a folder: --target-directory=DIR, --directory=DIR, and a glued short option of the
+        // programs that write into a folder (cp/mv/install/ln -tDIR, tar -CDIR).
+        const eq = t.indexOf('=');
+        if (eq > 0) cands.add(t.slice(eq + 1));
+        const prog = path.basename(bareHead(w.head)).toLowerCase();
+        let m;
+        if (/^(?:cp|mv|install|ln|gcp|gmv|ginstall|gln)$/.test(prog) && (m = /^-[A-Za-z]*?t(.+)$/.exec(t))) cands.add(m[1]);
+        if (/^(?:tar|gtar|bsdtar)$/.test(prog) && (m = /^-[A-Za-z]*?C(.+)$/.exec(t))) cands.add(m[1]);
+        if (!cands.size) continue;
+      } else {
+        cands.add(t);
+        const eq = t.indexOf('=');
+        if (eq >= 0) { cands.add(t.slice(eq + 1)); cands.add(t.slice(t.lastIndexOf('=') + 1)); }
+      }
+      // $PWD and ${PWD} are the folder the command is in (each place a cd may lead to); $OLDPWD is not known, so a word
+      // that names a folder through it is taken to name the configuration.
+      if ([...cands].some((c) => /\$\{?OLDPWD\b/.test(c))) return true;
+      // ${PWD:-x}, ${PWD-x}, ${PWD%/} and other expansions of PWD: zn does not follow them, so they count as naming it.
+      if ([...cands].some((c) => /\$\{PWD[^}]/.test(c))) return true;
+      for (const c of [...cands]) {
+        if (!/\$\{?PWD\b/.test(c)) continue;
+        cands.delete(c);
+        for (const d of dirs) cands.add(c.replace(/\$\{PWD\}|\$PWD\b/g, d));
+      }
       for (const c0 of cands) {
         if (!c0) continue;
         const named = c0.includes('{') ? (braceNames(c0) || [c0]) : [c0];
