@@ -17,6 +17,7 @@ const { tempDir } = require('./helpers/tmp');
 
 const HOME = process.env.HOME || '/home/u';
 const AWS = path.join(HOME, '.aws', 'credentials');
+const SSHKEY = path.join(HOME, '.ssh', 'id_rsa');
 const PREFIX = 'ZN_AGENT=x "node" "run.js" --';
 
 function pre(tool_name, tool_input, cwd) {
@@ -139,6 +140,41 @@ test('VS Code shell task lines are judged as VS Code builds them, not as zn woul
     const input = { workspaceFolder: dir, task: Object.assign({ label: 'x' }, task) };
     assert.ok(denied(await run(pre('create_and_run_task', input, dir))), JSON.stringify(task));
     assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: input })), JSON.stringify(task));
+  }
+});
+
+test('VS Code decides quoting per argument: a mix of quoted and unquoted arguments is judged as one line', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  const cases = [
+    { command: 'echo', args: ['a "b', 'x\nrm\t-rf\t~', 'c d" e'] },
+    { command: 'echo', args: ['a "b', 'x\ncat\t' + AWS, 'c d" e'] },
+    { command: 'echo', args: ['a "b', 'x\ncat\t' + SSHKEY, 'c d" e'] },
+    { command: 'echo', args: ['x\nrm\t-rf\t~'] },
+    { command: 'echo', args: ["'a b'", 'x\nrm -rf ~'] },
+    { command: 'echo', args: ['a\\ b', 'x\nrm -rf ~', "c d'"] },
+    { command: 'echo', args: [{ value: 'a b', quoting: 'escape' }, 'x\nrm -rf ~'] },
+  ];
+  for (const task of cases) {
+    const input = { workspaceFolder: dir, task: Object.assign({ label: 'x', type: 'shell' }, task) };
+    assert.ok(denied(await run(pre('create_and_run_task', input, dir))), JSON.stringify(task));
+    assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: input })), JSON.stringify(task));
+  }
+});
+
+test('benign twins of the per-argument quoting cases pass', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  const cases = [
+    { command: 'echo', args: ['a "b', 'x\nls\t-la', 'c d" e'] },
+    { command: 'echo', args: ['a "b', 'x\necho\thello', 'c d" e'] },
+    { command: 'echo', args: ["'hello world'", 'done'] },
+    { command: 'echo', args: ['hello\\ world', 'done'] },
+    { command: 'echo', args: [{ value: 'hello world', quoting: 'escape' }] },
+    { command: 'echo', args: ['x\ttab'] },
+  ];
+  for (const task of cases) {
+    const input = { workspaceFolder: dir, task: Object.assign({ label: 'x', type: 'shell' }, task) };
+    assert.equal((await run(pre('create_and_run_task', input, dir))).output, null, JSON.stringify(task));
+    assert.equal((await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: input })).output, null, JSON.stringify(task));
   }
 });
 
