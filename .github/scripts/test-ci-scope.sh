@@ -93,6 +93,7 @@ done < <(grep -rhoE 'docs/[A-Za-z0-9_-]+\.md' packages/*/test packages/zn-gate-p
 
 # The cache-cleanup selection logic has its own tests.
 bash "$scripts/test-cache-superseded.sh" || fails=$((fails + 1))
+bash "$scripts/test-cache-deleted-branches.sh" || fails=$((fails + 1))
 
 echo "$n checks, $fails failed"
 [ "$fails" -eq 0 ]

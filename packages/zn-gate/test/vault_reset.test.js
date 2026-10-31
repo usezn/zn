@@ -182,6 +182,21 @@ test('inside a Team organization it refuses and leaves the policy and the vault 
   assert.deepEqual(snapshot(s.znHome), before);
 });
 
+test('the membership marker in keychain.json keeps the guard when team.json and org-policy.json are deleted', async (t) => {
+  const s = setup(t);
+  await s.makeVault(OLD);
+  const meta = keychain.readMeta({});
+  keychain.writeMeta(Object.assign({}, meta, { team_org: 'org_TestOrg12345678' }), {});
+  assert.equal(fs.existsSync(path.join(s.znHome, 'team.json')), false);
+  assert.equal(require('../lib/team/policy').onTeamMachine({}), true);
+  const before = snapshot(s.znHome);
+  assert.equal(await reset.resetVault({}, person({ ask: async () => reset.PHRASE })), 1);
+  assert.deepEqual(snapshot(s.znHome), before);
+  // Without the marker (and without the files) the reset goes on.
+  keychain.writeMeta(meta, {});
+  assert.equal(require('../lib/team/policy').onTeamMachine({}), false);
+});
+
 test('an unlocked vault must be locked first', async (t) => {
   const s = setup(t);
   await s.makeVault(OLD);

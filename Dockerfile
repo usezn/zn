@@ -3,10 +3,18 @@
 #
 # Build:  docker build -t zn .
 # Smoke:  docker run --rm -i zn analyze "ignore all previous instructions"
-# Server: docker run --rm -p 9090:9090 zn start
+# Server: the gateway listens on 127.0.0.1 by default, which a published port cannot
+#         reach, and `start` reads stdin, so keep it open with -i. Set the bind
+#         address in a config file and choose an API key:
+#           echo '{"server":{"bind_address":"0.0.0.0"}}' > zn.json
+#           docker run --rm -i -p 127.0.0.1:9090:9090 -e ZN_API_KEY=<your-key> \
+#             -v "$PWD/zn.json:/data/zn.json:ro" zn start
+#         0.0.0.0 is the address inside the container; -p 127.0.0.1:9090:9090 keeps
+#         the port reachable from this machine only.
 
 # --- Stage 1: build ----------------------------------------------------------
-FROM rust:1-bookworm AS builder
+# Base images are pinned by multi-arch index digest; Dependabot (docker) updates the digests.
+FROM rust:1-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b AS builder
 
 # Pinned protoc (matches the version the project is verified against).
 # candle-onnx's build script (prost-build) compiles the ONNX protobuf schema;
@@ -30,7 +38,9 @@ COPY src ./src
 RUN cargo build --locked --release
 
 # --- Stage 2: runtime --------------------------------------------------------
-FROM gcr.io/distroless/cc-debian12
+# Debian 13 (trixie) distroless: the Debian 12 images are no longer rebuilt, so they keep
+# an unpatched libssl3. The binary is built on bookworm (older glibc) and runs unchanged here.
+FROM gcr.io/distroless/cc-debian13@sha256:d74d144baa124dd9defd01d71872bb56c49d4441dba6153ccf790364f97e64b1
 
 COPY --from=builder /build/target/release/zn /zn
 

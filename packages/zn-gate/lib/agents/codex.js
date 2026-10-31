@@ -142,10 +142,10 @@ function patchFiles(patch) {
   return patchScan(patch).files;
 }
 
-// The tools of zn's own "secrets" MCP server (lib/broker/mcp.js). Only these
+// The tools of zn's own "secrets" MCP server (lib/broker/secrets-tools.js). Only these
 // names can get the placeholder exception, so a third-party server called
-// "secrets__<something>" cannot take it.
-const OWN_SECRETS_TOOL = /^mcp__secrets__(secrets_list|secrets_http_request|secrets_render_file|secrets_request)$/;
+// "secrets__<something>" or "secrets_" cannot take it.
+const OWN_SECRETS_TOOL = new RegExp('^mcp__secrets__(' + require('../broker/secrets-tools').SECRETS_TOOL_NAMES.join('|') + ')$');
 
 /*
  * The command of a [mcp_servers.secrets] table in one config.toml. found is
