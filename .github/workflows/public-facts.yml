@@ -43,7 +43,11 @@ jobs:
           package-manager-cache: false
           node-version: 22
       - name: Test the checker
-        run: node --test .github/scripts/check-public-facts.test.mjs .github/scripts/check-rule-versions.test.mjs .github/scripts/release-required-checks.test.mjs .github/scripts/npm-dist-tag-plan.test.mjs
+        run: node --test .github/scripts/check-public-facts.test.mjs .github/scripts/check-rule-versions.test.mjs .github/scripts/release-required-checks.test.mjs .github/scripts/npm-dist-tag-plan.test.mjs .github/scripts/license-check.test.mjs .github/scripts/prune-bundled-sources.test.mjs
+      - name: Check the rules snapshot (fast, no npm ci)
+        # A rule change without a regenerated snapshot fails here in seconds instead of in the Node matrix.
+        working-directory: packages/zn-gate
+        run: npm run check:rules
       - name: Check the public facts
         env:
           # A release pull request (from or into a release/* branch of this repository) is opened

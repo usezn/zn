@@ -1,0 +1,9 @@
+$ /work/zcrt /opt/ZCode/resources/glm/zcode.cjs plugins marketplace update
+rc=0
+--stdout--
+Updated marketplace usezn (1 plugins)
+Updated marketplace zcode-plugins-official (67 plugins)
+Updated marketplace claude-plugins-official (315 plugins)
+
+--stderr--
+

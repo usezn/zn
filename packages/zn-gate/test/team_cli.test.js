@@ -425,15 +425,15 @@ function writeAudit(lines) {
 const rec = (seq, ts) => ({ v: 1, seq, ts, secret: 'EXAMPLE_KEY', mode: 'env', agent: 'codex', tool: 'Bash', argv0: 'node', host: 'api.example.com', decision: 'allow', reason: 'policy', prev: '0'.repeat(64), mac: 'f'.repeat(64) });
 
 test('log export writes OTLP lines to stdout, filtered by --since; no log at all is empty output', async () => {
-  let r = await capture(() => runLogExport(['--otlp']));
+  let r = await capture(() => runLogExport(['--unverified', '--otlp']));
   assert.strictEqual(r.code, 0);
   assert.strictEqual(r.stdout, '');
   writeAudit([rec(1, '2020-01-01T00:00:00.000Z'), 'not json', rec(2, new Date().toISOString())]);
-  r = await capture(() => runLogExport(['--otlp']));
+  r = await capture(() => runLogExport(['--unverified', '--otlp']));
   assert.strictEqual(r.code, 0);
   assert.ok(r.stdout.includes('2020-01-01') || r.stdout.length > 0);
   const all = r.stdout.length;
-  r = await capture(() => runLogExport(['--otlp', '--since', '1d']));
+  r = await capture(() => runLogExport(['--unverified', '--otlp', '--since', '1d']));
   assert.strictEqual(r.code, 0);
   assert.ok(r.stdout.length > 0 && r.stdout.length < all, 'the old record is filtered out');
 });
@@ -441,7 +441,7 @@ test('log export writes OTLP lines to stdout, filtered by --since; no log at all
 test('log export to a file reports the count and hash on stderr and keeps the file private', async () => {
   writeAudit([rec(1, new Date().toISOString())]);
   const out = path.join(HOME, 'export.jsonl');
-  const r = await capture(() => runLogExport(['--otlp', '--out', out]));
+  const r = await capture(() => runLogExport(['--unverified', '--otlp', '--out', out]));
   assert.strictEqual(r.code, 0);
   assert.strictEqual(r.stdout, '');
   assert.match(r.stderr, /^Exported 1 records to .*export\.jsonl \(OTLP\/JSON Lines, sha256 [0-9a-f]{64}\)\./);
@@ -452,7 +452,7 @@ test('log export to a file reports the count and hash on stderr and keeps the fi
 test('log export on a machine in an organization labels the records with the installation', async () => {
   policy.writeTeam({ org: 'org_Example12345678', api_base: 'https://team.example.com', install_id: '11111111-2222-4333-8444-555555555555', policy_public_key: PIN });
   writeAudit([rec(1, new Date().toISOString())]);
-  const r = await capture(() => runLogExport(['--otlp']));
+  const r = await capture(() => runLogExport(['--unverified', '--otlp']));
   assert.strictEqual(r.code, 0);
   assert.ok(r.stdout.includes('11111111-2222-4333-8444-555555555555'));
   assert.ok(r.stdout.includes('org_Example12345678'));
@@ -460,10 +460,10 @@ test('log export on a machine in an organization labels the records with the ins
 
 test('log export fails with exit 1 on a bad --since or an unwritable --out', async () => {
   writeAudit([rec(1, new Date().toISOString())]);
-  let r = await capture(() => runLogExport(['--otlp', '--since', 'last-tuesday-ish']));
+  let r = await capture(() => runLogExport(['--unverified', '--otlp', '--since', 'last-tuesday-ish']));
   assert.strictEqual(r.code, 1);
   assert.match(r.stderr, /\[zn\] invalid since: last-tuesday-ish/);
-  r = await capture(() => runLogExport(['--otlp', '--out', path.join(HOME, 'no', 'such', 'dir', 'x.jsonl')]));
+  r = await capture(() => runLogExport(['--unverified', '--otlp', '--out', path.join(HOME, 'no', 'such', 'dir', 'x.jsonl')]));
   assert.strictEqual(r.code, 1);
   assert.match(r.stderr, /^\[zn\] /);
 });
@@ -504,8 +504,92 @@ test('status lists what the last policy version removed or loosened, from the va
 test('log export with a vault that cannot be probed warns that it is locked or unreachable', async () => {
   fake.isUnlocked = async () => { throw new Error('connect ECONNREFUSED'); };
   writeAudit([rec(1, new Date().toISOString())]);
-  const r = await capture(() => runLogExport(['--otlp']));
+  const r = await capture(() => runLogExport(['--unverified', '--otlp']));
   assert.strictEqual(r.code, 0);
   assert.ok(r.stdout.length > 0);
   assert.match(r.stderr, /the vault is locked or unreachable, so the audit log chain was NOT verified/);
+});
+
+test('log export refuses an unverified copy unless --unverified is given, and writes nothing', async () => {
+  const out = path.join(HOME, 'unverified-out.jsonl');
+  const r = await capture(() => runLogExport(['--otlp', '--out', out]));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /Not exported: the vault is locked or unreachable.*--unverified/);
+  assert.ok(!fs.existsSync(out));
+  const ok = await capture(() => runLogExport(['--otlp', '--unverified', '--out', out]));
+  assert.strictEqual(ok.code, 0);
+  assert.match(ok.stderr, /NOT verified/);
+});
+
+test('log export --out refuses a symbolic link or a folder and never touches the target', async () => {
+  const target = path.join(HOME, 'victim.txt');
+  fs.writeFileSync(target, 'keep me');
+  const link = path.join(HOME, 'link.jsonl');
+  try { fs.symlinkSync(target, link); } catch (e) { return; } // no symlinks here (Windows without the right)
+  let r = await capture(() => runLogExport(['--otlp', '--unverified', '--out', link]));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /is a symbolic link/);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), 'keep me');
+  assert.ok(fs.lstatSync(link).isSymbolicLink(), 'the link is still there');
+  const dir = path.join(HOME, 'adir');
+  fs.mkdirSync(dir);
+  r = await capture(() => runLogExport(['--otlp', '--unverified', '--out', dir]));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /not a regular file/);
+});
+
+test('log export --out on an existing 0644 file leaves a 0600 file', async () => {
+  if (process.platform === 'win32') return;
+  const out = path.join(HOME, 'existing.jsonl');
+  fs.writeFileSync(out, 'old', { mode: 0o644 });
+  fs.chmodSync(out, 0o644);
+  const r = await capture(() => runLogExport(['--otlp', '--unverified', '--out', out]));
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(fs.statSync(out).mode & 0o777, 0o600);
+});
+
+test('log export with an unlocked vault and no audit log yet exports 0 records', async () => {
+  const auditFile = store.paths().auditFile;
+  fs.rmSync(auditFile, { force: true });
+  fake.isUnlocked = async () => true;
+  fake.auditExport = async () => ({ ok: true, records: 0, sha256: crypto.createHash('sha256').update('').digest('hex'), bytes: 0 });
+  const out = path.join(HOME, 'empty-out.jsonl');
+  const r = await capture(() => runLogExport(['--otlp', '--out', out]));
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stderr, /^Exported 0 records to /);
+  assert.ok(fs.existsSync(out));
+});
+
+test('log export with a vault from an older version (no sha256) says to lock and unlock', async () => {
+  writeAudit([rec(1, new Date().toISOString())]);
+  fake.isUnlocked = async () => true;
+  fake.auditExport = async () => ({ ok: true, records: 1 });
+  const out = path.join(HOME, 'old-daemon-out.jsonl');
+  const r = await capture(() => runLogExport(['--otlp', '--out', out]));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /older version of zn-gate/);
+  assert.match(r.stderr, /lock/);
+  assert.ok(!fs.existsSync(out));
+});
+
+test('log export with an unlocked vault: the file must be the one that was verified', async () => {
+  writeAudit([rec(1, new Date().toISOString())]);
+  const auditFile = store.paths().auditFile;
+  const bytes = fs.readFileSync(auditFile);
+  const sha = crypto.createHash('sha256').update(bytes).digest('hex');
+  fake.isUnlocked = async () => true;
+  const out = path.join(HOME, 'verified-out.jsonl');
+  fake.auditExport = async () => ({ ok: true, records: 1, sha256: sha, bytes: bytes.length });
+  let r = await capture(() => runLogExport(['--otlp', '--out', out]));
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.ok(fs.existsSync(out));
+  assert.doesNotMatch(r.stderr, /NOT verified/);
+  // A record written after the check: the export aborts and leaves nothing.
+  fs.rmSync(out);
+  fs.appendFileSync(auditFile, JSON.stringify(rec(2, new Date().toISOString())) + '\n');
+  r = await capture(() => runLogExport(['--otlp', '--out', out]));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /changed after the vault verified it/);
+  assert.ok(!fs.existsSync(out));
+  assert.deepStrictEqual(fs.readdirSync(HOME).filter((n) => n.endsWith('.tmp')), []);
 });

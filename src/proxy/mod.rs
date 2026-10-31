@@ -7,13 +7,14 @@
 //! - Command validation for security
 //! - Race-condition-free connection management
 
+use crate::bounded_line::{read_line_bounded, BoundedLine, MAX_STDIN_LINE_BYTES};
 use anyhow::{anyhow, Result};
 use futures::{future::join_all, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncBufRead, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
@@ -61,11 +62,12 @@ fn validate_command(command: &str) -> Result<()> {
         Ok(())
     } else {
         warn!("Blocked MCP command not in whitelist: {}", command);
-        Err(anyhow!(
-            "Command '{}' is not in the allowed list. Allowed: {:?}",
+        Err(anyhow!(crate::user_errors::mcp_command_not_allowed(
+            "this server",
             command,
-            ALLOWED_COMMANDS
-        ))
+            ALLOWED_COMMANDS,
+            None
+        )))
     }
 }
 
@@ -112,7 +114,12 @@ impl McpConnection {
                     Err(e) => {
                         if attempts >= max_attempts {
                             error!(mcp = %name, "Failed to connect after {} attempts: {}", max_attempts, e);
-                            return Err(anyhow!("Failed to connect to WS MCP '{}': {}", name, e));
+                            return Err(anyhow!(crate::user_errors::mcp_not_reached(
+                                name,
+                                url,
+                                max_attempts,
+                                &e.to_string()
+                            )));
                         }
                         warn!(mcp = %name, "Connection failed: {}. Retrying in {:?}...", e, delay);
                         tokio::time::sleep(delay).await;
@@ -122,7 +129,14 @@ impl McpConnection {
             }
         } else if let Some(command) = &config.command {
             // Validate command before spawning
-            validate_command(command)?;
+            validate_command(command).map_err(|_| {
+                anyhow!(crate::user_errors::mcp_command_not_allowed(
+                    name,
+                    command,
+                    ALLOWED_COMMANDS,
+                    None
+                ))
+            })?;
 
             info!(mcp = %name, command = %command, "Spawning MCP server");
 
@@ -142,9 +156,13 @@ impl McpConnection {
                 }
             }
 
-            let mut child = cmd
-                .spawn()
-                .map_err(|e| anyhow!("Failed to spawn MCP '{}': {}", name, e))?;
+            let mut child = cmd.spawn().map_err(|e| {
+                anyhow!(crate::user_errors::mcp_not_started(
+                    name,
+                    command,
+                    &e.to_string()
+                ))
+            })?;
 
             let stdin = child
                 .stdin
@@ -177,9 +195,7 @@ impl McpConnection {
                 stdin.write_all(b"\n").await?;
                 stdin.flush().await?;
 
-                let mut response = String::new();
-                stdout.read_line(&mut response).await?;
-                Ok(response.trim().to_string())
+                read_upstream_line(stdout, MAX_STDIN_LINE_BYTES, request).await
             }
             Self::WebSocket { ws_stream, .. } => {
                 ws_stream
@@ -266,6 +282,38 @@ impl McpConnection {
     }
 }
 
+/// Read one reply line from an upstream stdio server, holding at most `max` bytes of it.
+///
+/// A longer line is dropped as it streams past, so a server that never sends a newline cannot make the
+/// gateway buffer without a bound. The client then gets a JSON-RPC error carrying the id of its request
+/// (`null` when the request has none), and the connection stays usable for the next request.
+async fn read_upstream_line<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    max: usize,
+    request: &str,
+) -> Result<String> {
+    match read_line_bounded(reader, max).await? {
+        BoundedLine::Line(line) => Ok(line.trim().to_string()),
+        BoundedLine::Eof => Ok(String::new()),
+        BoundedLine::TooLong => {
+            warn!(
+                limit_bytes = max,
+                "MCP server reply dropped: line over the size limit"
+            );
+            let id = serde_json::from_str::<serde_json::Value>(request)
+                .ok()
+                .and_then(|v| v.get("id").cloned())
+                .unwrap_or(serde_json::Value::Null);
+            Ok(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {"code": -32600, "message": "Response too large"}
+            })
+            .to_string())
+        }
+    }
+}
+
 /// A connection slot: empty until the first successful connect.
 type ConnectionSlot = Arc<Mutex<Option<McpConnection>>>;
 
@@ -279,6 +327,9 @@ pub struct McpPool {
     connections: Mutex<HashMap<String, ConnectionSlot>>,
     /// Optional Result Cache
     cache: Option<Arc<crate::engine::cache::ResultCache>>,
+    /// Plain-English warnings from loading the servers file (servers that were
+    /// skipped, a file that could not be read). The caller shows them.
+    notices: Vec<String>,
 }
 
 impl McpPool {
@@ -288,7 +339,13 @@ impl McpPool {
             configs,
             connections: Mutex::new(HashMap::new()),
             cache: None,
+            notices: Vec::new(),
         }
+    }
+
+    /// Warnings found while loading the servers file, for the user to see.
+    pub fn notices(&self) -> &[String] {
+        &self.notices
     }
 
     /// Set the result cache for the pool
@@ -307,6 +364,7 @@ impl McpPool {
             format!("{}/.config/claude/mcp_servers.json", home),
         ];
 
+        let mut notices = Vec::new();
         for path in &search_paths {
             let path_obj = Path::new(path);
             if path_obj.exists() {
@@ -315,25 +373,41 @@ impl McpPool {
                     Ok(pool) => return Ok(pool),
                     Err(e) => {
                         warn!("Failed to load MCP config from {}: {}", path, e);
+                        notices.push(e.to_string());
                         continue;
                     }
                 }
             }
         }
 
-        info!("No MCP configuration found, using empty pool");
-        Ok(Self::new(HashMap::new()))
+        info!("No MCP servers loaded, using an empty pool");
+        let mut pool = Self::new(HashMap::new());
+        pool.notices = notices;
+        Ok(pool)
     }
 
     /// Load MCP configurations from a JSON file
     fn from_config_file(path: &str) -> Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| anyhow!("Failed to read MCP config file '{}': {}", path, e))?;
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            anyhow!(crate::user_errors::mcp_file_unreadable(
+                path,
+                &crate::user_errors::plain_text(&e.to_string())
+            ))
+        })?;
 
-        let value: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| anyhow!("Failed to parse MCP config file '{}': {}", path, e))?;
+        let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
+            let at = format!("line {}, column {}", e.line(), e.column());
+            let reason = match e.classify() {
+                serde_json::error::Category::Eof => {
+                    format!("the file ends too early ({at}); a closing }} or ] is probably missing")
+                }
+                _ => format!("it is not valid JSON at {at}"),
+            };
+            anyhow!(crate::user_errors::mcp_file_unreadable(path, &reason))
+        })?;
 
         let mut configs = HashMap::new();
+        let mut notices = Vec::new();
 
         if let Some(servers) = value.get("mcpServers").and_then(|v| v.as_object()) {
             for (name, server) in servers {
@@ -351,12 +425,19 @@ impl McpPool {
                         "Skipping MCP server '{}': missing both 'command' and 'url'",
                         name
                     );
+                    notices.push(crate::user_errors::mcp_server_incomplete(name, Some(path)));
                     continue;
                 }
 
                 if let Some(ref cmd) = command {
-                    if let Err(e) = validate_command(cmd) {
-                        warn!("Skipping MCP server '{}': {}", name, e);
+                    if validate_command(cmd).is_err() {
+                        warn!("Skipping MCP server '{}': command not allowed", name);
+                        notices.push(crate::user_errors::mcp_command_not_allowed(
+                            name,
+                            cmd,
+                            ALLOWED_COMMANDS,
+                            Some(path),
+                        ));
                         continue;
                     }
                 }
@@ -394,7 +475,9 @@ impl McpPool {
             }
         }
 
-        Ok(Self::new(configs))
+        let mut pool = Self::new(configs);
+        pool.notices = notices;
+        Ok(pool)
     }
 
     /// Send a request to an MCP server, connecting if necessary.
@@ -531,6 +614,72 @@ mod tests {
     fn test_validate_command_blocked() {
         assert!(validate_command("bash").is_err());
         assert!(validate_command("rm").is_err());
+    }
+
+    #[tokio::test]
+    async fn upstream_normal_reply_passes_unchanged() {
+        let mut r = BufReader::new(&b"{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}\r\n"[..]);
+        let out = read_upstream_line(&mut r, 1024, r#"{"id":7}"#)
+            .await
+            .unwrap();
+        assert_eq!(out, r#"{"jsonrpc":"2.0","id":7,"result":{}}"#);
+    }
+
+    #[tokio::test]
+    async fn upstream_line_over_the_cap_becomes_an_error_for_the_request_id() {
+        let mut data = vec![b'a'; 2000];
+        data.extend_from_slice(b"\n{\"id\":8}\n");
+        let mut r = BufReader::new(&data[..]);
+        let out = read_upstream_line(&mut r, 1024, r#"{"jsonrpc":"2.0","id":"abc","method":"x"}"#)
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["id"], "abc");
+        assert_eq!(v["error"]["code"], -32600);
+        // The next line is still readable: the proxy stays in sync.
+        let next = read_upstream_line(&mut r, 1024, "{}").await.unwrap();
+        assert_eq!(next, r#"{"id":8}"#);
+    }
+
+    #[tokio::test]
+    async fn upstream_request_without_id_gets_a_null_id() {
+        let mut r = BufReader::new(&b"aaaaaaaa\n"[..]);
+        let out = read_upstream_line(&mut r, 4, "not json").await.unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(v["id"].is_null());
+    }
+
+    /// 64 MiB with no newline, through a small buffer: dropped as it streams, not stored.
+    #[tokio::test]
+    async fn upstream_endless_line_is_not_buffered() {
+        use tokio::io::AsyncReadExt;
+        let stream = tokio::io::repeat(b'a').take(64 * 1024 * 1024);
+        let mut r = BufReader::with_capacity(4096, stream);
+        let out = read_upstream_line(&mut r, 1024, r#"{"id":1}"#)
+            .await
+            .unwrap();
+        assert!(out.contains("Response too large"));
+        assert!(out.len() < 200);
+    }
+
+    /// Small chunks that add up past the cap are still refused.
+    #[tokio::test]
+    async fn upstream_slow_drip_over_the_cap_is_refused() {
+        let (mut tx, rx) = tokio::io::duplex(64);
+        tokio::spawn(async move {
+            for _ in 0..200 {
+                if tx.write_all(&[b'a'; 16]).await.is_err() {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+            let _ = tx.write_all(b"\n").await;
+        });
+        let mut r = BufReader::with_capacity(32, rx);
+        let out = read_upstream_line(&mut r, 1000, r#"{"id":3}"#)
+            .await
+            .unwrap();
+        assert!(out.contains("Response too large"));
     }
 
     async fn ws_conn(addr: std::net::SocketAddr) -> McpConnection {
@@ -769,6 +918,39 @@ Content-Length: 0
             elapsed < std::time::Duration::from_secs(5),
             "health_check waited for the busy server: {:?}",
             elapsed
+        );
+    }
+
+    #[test]
+    fn a_server_with_a_disallowed_command_is_skipped_with_a_notice() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("mcp_servers.json");
+        std::fs::write(
+            &file,
+            r#"{"mcpServers": {"demo": {"command": "/nonexistent/zn-demo-server"}, "ok": {"command": "npx"}, "empty": {}}}"#,
+        )
+        .expect("write");
+        let pool = McpPool::from_config_file(file.to_str().expect("utf8")).expect("loads");
+        assert_eq!(pool.list_mcps(), vec!["ok".to_string()]);
+        let all = pool.notices().join("\n");
+        assert!(all.contains("\"demo\" was skipped"), "{all}");
+        assert!(all.contains("/nonexistent/zn-demo-server"), "{all}");
+        assert!(all.contains("node, npx"), "{all}");
+        assert!(all.contains("\"empty\" was skipped"), "{all}");
+    }
+
+    #[test]
+    fn a_broken_servers_file_is_reported_not_hidden() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("mcp_servers.json");
+        std::fs::write(&file, "{").expect("write");
+        let err = McpPool::from_config_file(file.to_str().expect("utf8"))
+            .err()
+            .expect("must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("mcp_servers.json") && msg.contains("ends too early"),
+            "{msg}"
         );
     }
 }

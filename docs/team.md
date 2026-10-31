@@ -1,5 +1,15 @@
 # zn Team on a developer machine
 
+| Command | Summary |
+|---|---|
+| `zn-gate team join` | Connects this machine to your organization with the join token your admin gave you. |
+| `zn-gate team status` | Shows the organization, the policy version and the state of the audit upload. |
+| `zn-gate team sync` | Downloads the policy and uploads the audit log now. |
+| `zn-gate team leave` | Disconnects this machine from the organization. |
+| `zn-gate team managed-config` | For administrators. Prints the managed configuration files to deploy so that the zn hooks run for every developer. |
+
+Options and exit codes are in the [command line reference](cli.md#team).
+
 zn Team lets an organization publish one policy for how its developers' AI
 agents may use secrets, and collect the audit records of that use. This page
 covers the zn-gate side: what runs on each machine, what the organization can
@@ -357,3 +367,12 @@ HMAC chain travels with it (`zn.audit.seq`, `zn.audit.prev`,
 `zn.audit.mac`), so a gap or a reordered record stays visible after the
 export. The mapping is the same as the export
 from the zn dashboard. No account is needed for the local export.
+
+With the vault unlocked, the vault checks the whole chain first and the export
+then confirms that the file it reads is byte for byte the one that was checked.
+If a record was written in between, the command exits with an error and asks
+you to run it again: with `--out` no file is written, and on standard output the
+export has already been printed, so discard it. With the vault locked the chain cannot be checked, so the
+export is refused unless you add `--unverified`, and then it warns that the copy
+is not verified. `--out` writes a new private file and refuses a symbolic link or
+a folder.

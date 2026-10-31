@@ -178,6 +178,19 @@ pub fn payload_if_enabled(store_payloads: bool, payload: impl Into<String>) -> O
     }
 }
 
+/// Plain-English text for a database that could not be opened. The file
+/// system is asked what is wrong with the file, because the database library
+/// only says that it "unable to open database file".
+fn audit_open_problem(db_path: &str, raw: &str) -> String {
+    let probe = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(db_path)
+        .err()
+        .map(|e| e.kind());
+    crate::user_errors::audit_db_problem(db_path, raw, probe)
+}
+
 impl AuditVault {
     /// Enable or disable persisting payloads. When disabled, any payload on an
     /// entry is dropped before it is written.
@@ -188,10 +201,26 @@ impl AuditVault {
 
     /// Create a new AuditVault, initializing the database schema if needed
     pub fn new(db_path: &str, encryption_key: Option<&str>) -> Result<Self> {
+        Self::open_vault(db_path, encryption_key).map_err(|e| {
+            let text = format!("{e:#}");
+            if text.starts_with("zn ") || !text.contains("readonly database") {
+                e
+            } else {
+                // A file that exists but cannot be written fails on the first write.
+                anyhow!(crate::user_errors::audit_db_problem(
+                    db_path,
+                    "readonly database",
+                    None
+                ))
+            }
+        })
+    }
+
+    fn open_vault(db_path: &str, encryption_key: Option<&str>) -> Result<Self> {
         info!("Initializing AuditVault at: {}", db_path);
 
         let mut conn = Connection::open(db_path)
-            .map_err(|e| anyhow!("Failed to open audit database '{}': {}", db_path, e))?;
+            .map_err(|e| anyhow!(audit_open_problem(db_path, &e.to_string())))?;
 
         // Wait for other processes that have the file open (the first start
         // after an upgrade compacts the file and needs a write lock).
@@ -234,7 +263,13 @@ impl AuditVault {
             )",
             [],
         )
-        .map_err(|e| anyhow!("Failed to create metadata table: {}", e))?;
+        .map_err(|e| {
+            anyhow!(crate::user_errors::audit_db_problem(
+                db_path,
+                &e.to_string(),
+                None
+            ))
+        })?;
 
         // Derive key if provided
         let derived_key = if let Some(key_str) = encryption_key {
