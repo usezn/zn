@@ -12,7 +12,7 @@ W=/w
 mkdir -p "$W/ws/.github/hooks" "$W/ws/notes" "$RES"
 exec > >(tee -a "$RES/boot.log") 2>&1
 export DEBIAN_FRONTEND=noninteractive
-apt-get -o DPkg::Lock::Timeout=300 update -q && apt-get -o DPkg::Lock::Timeout=300 install -y -q xvfb curl ca-certificates jq libnss3 libgbm1 libasound2t64 libgtk-3-0 libxkbfile1 libsecret-1-0 || { echo "abort: APT"; exit 1; }
+apt-get -o DPkg::Lock::Timeout=300 update -q && apt-get -o DPkg::Lock::Timeout=300 install -y -q xvfb libasound2 curl ca-certificates jq libnss3 libgbm1 libgtk-3-0 libxkbfile1 libsecret-1-0 || { echo "abort: APT"; exit 1; }
 curl -fsSLo "$W/code.deb" "https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-x64" || { echo "abort: DOWNLOAD"; exit 1; }
 dpkg -i "$W/code.deb" || apt-get -f install -y -q || { echo "abort: DPKG"; exit 1; }
 code --version | tee "$RES/code_version.txt"
