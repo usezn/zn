@@ -91,5 +91,8 @@ while IFS= read -r p; do
   if [ "$got" = "run=true" ]; then echo "ok   $p is code (a test mentions it)"; else echo "FAIL $p is mentioned by a test but ci-scope.sh skips it: add it to ci-scope.sh (or to allow_unread if no test reads it)"; fails=$((fails + 1)); fi
 done < <(grep -rhoE 'docs/[A-Za-z0-9_-]+\.md' packages/*/test packages/zn-gate-py/tests 2>/dev/null | sort -u)
 
+# The cache-cleanup selection logic has its own tests.
+bash "$scripts/test-cache-deleted-branches.sh" || fails=$((fails + 1))
+
 echo "$n checks, $fails failed"
 [ "$fails" -eq 0 ]
