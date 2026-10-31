@@ -29,8 +29,9 @@ Use one of them. `zn-gate check` reports it when both are active, and when the p
 
 - Linux (tested with the ZCode desktop app 3.16.3). macOS is not tested. Windows: every event has a second hook that starts the
   system PowerShell by its full path and runs `scripts/zn-hook.ps1` (the same checks as the shell script, with the same
-  deadline). It is tested with the plugin's own tests on Windows Server 2022, not yet in the ZCode app on Windows: if
-  `zn-gate check` reports it as not protected, use `zn hooks install zcode` there.
+  deadline). Tested in the ZCode desktop app 3.16.3 on Windows Server 2022 (October 2026): it blocked reading `.env` and
+  `~/.aws/credentials`, and `zn-gate check` reported ZCode as protected.
+- ZCode lists each hook of a plugin in the chat with its result, and its hooks have no setting per operating system, so on every event one zn-gate hook shows **Failed**: the one for the other system (the PowerShell entry on macOS and Linux, the `/bin/sh` entry on Windows), which ZCode cannot start there. This is expected and changes nothing: the other entry runs the checks and blocks what it has to. Use `zn-gate check` to see whether ZCode is protected.
 - ZCode cannot rewrite what a tool returns: a value a command prints or a file the agent may read reaches the model.
   zn adds a notice when an output holds a secret. Keep secrets in the vault.
 - A user can turn the plugin off in Settings, Plugins. `zn-gate check` reads ZCode's configuration and says so.
