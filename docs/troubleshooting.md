@@ -93,6 +93,8 @@ More in [secrets](secrets.md). If it asks for a terminal to enter the passphrase
 
 **If `zn vault verify` says the audit log did not pass its check:** do not delete or edit the log. It is the record of what the vault did, and a change to it is what the check finds. Keep a copy of `~/.zn/audit.jsonl`, then open an issue; `zn vault verify` with `ZN_VERBOSE=1` prints the reason. If the message says the log "was changed behind the vault", and you have looked into it (for example you know a disk problem or a restore cut the log), run `zn vault verify --acknowledge` in your own terminal to accept the log as it is now; the warning stays in the log. If it says the log "does not verify on its own", the chain itself is broken and cannot be accepted.
 
+For the other messages of `zn unlock`, `zn lock` and `zn forget` (cancelled prompts, passphrases that do not match, `--ttl` and `--idle`, the clipboard), see [Messages from the vault commands](#messages-from-the-vault-commands-zn-unlock-zn-lock-zn-forget).
+
 **If you forgot the passphrase:** nobody can recover it, zn included. That is what keeps your secrets safe. After three wrong passphrases in a row (other errors do not count), `zn unlock` points you to the way out:
 
 ```text
@@ -872,6 +874,58 @@ When a command cannot read or write a file or folder, zn-gate says what is wrong
 **What happened:** you tried to approve something for your organization policy, and zn did not accept it: the name, kind or value is not valid, this computer has no policy waiting for your answer, or the policy does not ask for it. Nothing was approved.
 
 **What to do:** run `zn team status` to see what, if anything, is waiting. If something should be waiting, ask your administrator.
+
+### Messages from the vault commands (`zn unlock`, `zn lock`, `zn forget`)
+
+The vault being locked, damaged or refusing a keychain are in [section 5](#5-your-secret-vault-is-locked). These are the other messages of the vault commands.
+
+#### "Cancelled: nothing was entered" / "Cancelled: no passphrase was entered"
+
+**What happened:** a hidden prompt was closed (for example with Ctrl+C) before you entered anything. Nothing was changed.
+
+**What to do:** run the command again when you are ready (`zn unlock` for the passphrase).
+
+#### "The two passphrases do not match"
+
+**What happened:** when the vault is created, zn asks for the passphrase twice and the two did not match. Nothing was created.
+
+**What to do:** run `zn unlock` again and type the same passphrase both times.
+
+#### "invalid duration" / "The --ttl and --idle times must be between 1m and 24h"
+
+**What happened:** `zn unlock --ttl` or `--idle` was not a time such as `30m` or `8h`, or it was outside the range from 1 minute to 24 hours. Nothing was done.
+
+**What to do:** use a number followed by `s`, `m` or `h` within the range, for example `zn unlock --ttl 8h --idle 30m`.
+
+#### "Unknown vault backend"
+
+**What happened:** the name after `--backend` is not one zn knows. The message lists the names that work.
+
+**What to do:** use one of the listed names, for example `zn unlock --backend passphrase`.
+
+#### "Lock the vault first"
+
+**What happened:** `zn forget` removes what zn stored for a project, and the unlocked vault may hold that project in memory.
+
+**What to do:** run `zn lock`, then `zn forget` again.
+
+#### "The vault is already unlocked"
+
+**What happened:** you ran `zn unlock` while the vault is open. There is nothing to do.
+
+**What to do:** nothing. To unlock it again, run `zn lock` in your own terminal first.
+
+#### "could not read the clipboard"
+
+**What happened:** a command that takes `--clipboard` (such as `zn secret set`) could not read the value you copied. The message lists what it tried, or says Windows PowerShell 5.1 was not found.
+
+**What to do:** copy the value again, or run the command without `--clipboard` and type the value at the hidden prompt.
+
+#### "zn could not find Windows PowerShell" / "zn could not start the system program that holds its key"
+
+**What happened:** zn needs a system program to use your keychain (Windows PowerShell for the Windows Credential Manager) and could not find or start it.
+
+**What to do:** close the terminal, open a new one and try again. If it keeps failing, create the vault with a passphrase: `zn unlock --backend passphrase`.
 
 ### Where a message points you
 
