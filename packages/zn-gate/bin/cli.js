@@ -1157,6 +1157,13 @@ ${ruleLine(process.env, 60)}\n`);
     }
 
     const totalModified = actions.filter(a => a.status === 'shielded' || a.status === 'reverted').length;
+    const totalFailed = actions.filter(a => a.failed).length;
+    if (totalFailed) {
+      // Exit 1: at least one config could not be changed (see the line above it for the path and the next step).
+      process.stdout.write(`\nDone. Checked ${scanned.length} environment configurations (${totalModified} modified, ${totalFailed} could not be changed).\n\n`);
+      process.exitCode = 1;
+      return;
+    }
     process.stdout.write(`\nDone. Checked ${scanned.length} environment configurations (${totalModified} modified).\n\n`);
     return;
   }
