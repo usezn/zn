@@ -757,6 +757,64 @@ When a command cannot read or write a file or folder, zn-gate says what is wrong
 
 **What to do:** move the folder to a shorter path, or choose another path without circular links, then run the command again.
 
+### Messages when the gateway starts (`zn start`)
+
+`zn start` runs the zn gateway, which reads tool calls on its input and checks them. Most of these messages stop it before it starts and name the setting that fixes the problem. Settings live in `zn.json`; `zn init` writes a settings file that lists every setting zn knows.
+
+#### "zn could not prepare its policy folder" / "zn could not watch its policy folder" / "zn cannot start: its policy folder ... does not exist and could not be created"
+
+**What happened:** zn keeps its security policy files in a policy folder and could not read, create or watch it. The message gives the reason, such as a permission problem.
+
+**What to do:** run zn from a folder you own, or set `"engine.policy_dir"` in `zn.json` to a folder you can write to. For the "watch" message, also check that your user can read the folder. Then start zn again.
+
+#### "zn cannot write to its data folder"
+
+**What happened:** zn keeps a private key file (`ref.key`) in its data folder and cannot write there.
+
+**What to do:** run zn from a folder you own, or fix the permissions of the folder named in the message, then start zn again.
+
+#### "zn cannot write to its audit database" / "zn cannot open its audit database" / "zn cannot create its audit database" / "zn could not open its audit database"
+
+**What happened:** zn could not use the file where it records what it checked. The message tells which case it is: the file is read-only, nobody may write to the file or its folder, the folder does not exist, or another reason (which it gives).
+
+**What to do:** make the file or folder writable, create the missing folder, or choose another place with `--db-path` (or `"audit.db_path"` in `zn.json`). For the last message, also check that no other program has the file open. Then start zn again.
+
+#### "the settings file `<file>` does not exist" / "the settings file `<file>` is not a JSON file"
+
+**What happened:** you pointed zn at a settings file with `--config`, and it is not there or is not JSON. zn reads JSON only, so the name must end in `.json`.
+
+**What to do:** check the path, or create a settings file with `zn init`, then start zn again.
+
+#### "`<file>`: unknown setting `<name>` was ignored" / "`<file>`: unknown setting `<name>`. Settings in the security and audit sections are not ignored"
+
+**What happened:** the settings file has a setting zn does not know, usually a typo. In most sections zn ignores it and carries on. In the `security` and `audit` sections zn stops instead, because a typo there would silently weaken a protection.
+
+**What to do:** if the message says "did you mean", use that name. Otherwise compare with the file that `zn init` writes, fix the name, and start zn again.
+
+#### "ZN_PORT=`<value>` is not a valid port number"
+
+**What happened:** the `ZN_PORT` setting of your terminal is not a number from 0 to 65535, so zn ignored it and used the port from its settings (the message says which).
+
+**What to do:** set `ZN_PORT` to a valid number, or remove it.
+
+#### "MCP server `<name>` was skipped"
+
+**What happened:** zn skipped one server of your MCP servers file. Either its command is not one zn starts (the message lists the allowed commands), or the server has neither a `command` nor a `url`.
+
+**What to do:** edit the entry in your MCP servers file: use an allowed command (for example `"command": "npx"`), or give the server a command or a url. The other servers still load.
+
+#### "zn could not read the MCP servers file" / "zn could not reach MCP server" / "zn could not start MCP server"
+
+**What happened:** zn could not read your MCP servers file (no servers are loaded from it until it is fixed), could not reach a server at its url after several attempts, or could not start a server's command. The message gives the reason.
+
+**What to do:** fix the file named in the message. For a server that is not reached, check that it is running and that its url is right. For one that does not start, check that its command is installed and on your PATH.
+
+#### "`<n>` upstream MCP server(s) found in your MCP servers file, but `zn start` does not forward calls to them"
+
+**What happened:** this is a notice, not a failure. `zn start` checks each tool call it reads on its input and writes the checked message to its output; it does not pass calls on to the servers in your file.
+
+**What to do:** nothing. To check the tools of other servers, see [shield](shield.md).
+
 ### Where a message points you
 
 - A message that ends with "More: <https://usezn.com/docs/zn-gate/troubleshooting/>" (a vault that did not start, a damaged vault file, a failed audit log check) points to this page. [Section 5](#5-your-secret-vault-is-locked) covers the vault, and [section 10](#10-the-evidence-log--is-damaged) the logs.
