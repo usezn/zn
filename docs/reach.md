@@ -168,11 +168,12 @@ the local copy only.
 ### Big histories and the time limit
 
 Files are read in streaming mode, one line at a time, so a history of several
-hundred MB does not fill memory (a 300 MB file takes a few seconds with the npm package; the Python package is much slower, about a minute and a half for the same file, measured on a generated 300 MB history on 2026-11-01, so on a very large history raise `--max-seconds`). The scan
+hundred MB does not fill memory (a 300 MB file takes a few seconds with the npm package; the Python package is much slower: a generated 299 MB history took 132 seconds, measured on 2026-11-01, so on a very large history raise `--max-seconds`). The scan
 stops after `--max-seconds` seconds (default 120, at most 3600), newest files
 first. When it stops, the report lists the files that were not fully scanned
 and never says that nothing was found. A line longer than 32 MB is skipped and
 its file is listed as partly scanned.
+Lines longer than 4 MB are scanned in slices, so a secret split across a slice cut can be missed.
 
 ### History: flags
 
