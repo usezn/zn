@@ -252,6 +252,43 @@ patterns are skipped on the machine, and all custom detectors together get
 | The vault is locked | Nothing is downloaded or uploaded until `zn unlock`. The last accepted policy still applies to every use of a secret, which needs the vault unlocked anyway. |
 | `~/.zn/team.json` or `~/.zn/org-policy.json` is deleted or edited | The vault puts them back (see below). |
 
+### A wrong system clock
+
+zn-gate compares the dates of the organization's policy with your computer's
+clock. The zn server sets those dates, so the check only works when your clock
+is right. A clock a few minutes off is fine (five minutes of difference are
+tolerated). A clock that is far off is not:
+
+- **Clock behind** (by about a day or more; just after midnight UTC, when the
+  new policy is dated, a few minutes can be enough): zn-gate refuses the policy as "issued in
+  the future", and the copy it kept stops counting as valid. The organization's
+  restrictions do not apply on this machine until the clock is right and a
+  policy downloads again. `zn team status` shows "cached copy does not verify
+  (policy issued in the future)".
+- **Clock ahead** (by about a week or more): every download is refused as
+  "policy expired", so the kept copy counts as expired and strict mode applies:
+  the restrictions stay, but the organization's new policies cannot be applied
+  until the clock is right. `zn team sync` then reports that the server could
+  not be reached, although it can; the clock is the cause.
+- **Audit records** carry your computer's time. Records with a wrong time can
+  fall outside the default date range of the audit log views and exports.
+
+The zn server uses its own clock for join tokens, invitations and installation
+tokens, so a wrong clock on your machine does not break those.
+
+To fix it, turn on automatic time for your system, then check zn:
+
+- **Windows 11:** Settings > Time & language > Date & time. Turn on "Set time
+  automatically", then select "Sync now". (From an administrator Command Prompt:
+  `w32tm /resync`.)
+- **macOS:** System Settings > General > Date & Time. Turn on "Set date and time
+  automatically".
+- **Linux (systemd):** `sudo timedatectl set-ntp true`. Then `timedatectl status`
+  should say `System clock synchronized: yes`.
+
+Then run `zn team sync`, and `zn team status` to confirm the policy version and
+expiry date are shown and nothing says "does not verify" or "pending".
+
 ### The readable copies and the hooks
 
 The hooks do not open the vault to read the policy. They read
