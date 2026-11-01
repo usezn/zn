@@ -43,7 +43,7 @@ Windows notes: use PowerShell, and run each command on its own line (Windows Pow
 | Check | Commands | Linux and macOS | Windows (PowerShell) |
 | --- | --- | --- | --- |
 | Node.js 18, 22 and 24 tests and benchmarks | `cd packages/zn-gate`, `npm ci --ignore-scripts`, `npm test`, `node test/integration/test_agent_workflows.js`; then, from the root, `node bench/bench_node.js` | Same | Same. Only your installed Node.js version runs; CI runs 18, 22 and 24. |
-| Python 3.12 tests and benchmarks | `python -m pip install -e packages/zn-gate-py pytest`, `cd packages/zn-gate-py`, `python -m pytest tests/ -v`; then, from the root, `python bench/bench_python.py` | Same | Same |
+| Python 3.12 tests and benchmarks | `python -m pip install --require-hashes -r .github/ci-test-requirements.txt`, `python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py`, `cd packages/zn-gate-py`, `python -m pytest tests/ -v`; then, from the root, `python bench/bench_python.py` | Same | Same |
 | Lint (eslint, ruff, mypy) | See the Lint commands below | Same | Same, with `eslint.cmd` |
 | Public facts | `node .github/scripts/check-public-facts.mjs`, `cd packages/zn-gate`, `npm run check:rules`; for a pull request also `git fetch origin next` and `node .github/scripts/check-rule-versions.mjs origin/next` | Same | Same |
 | leak bench | `bash packages/zn-gate/test/fixtures/benign/fetch_corpus.sh`, `node packages/zn-gate/test/fixtures/benign/build_manifest.js --verify`, `node bench/rules_fp_gate.js`, `node packages/zn-gate/test/fixtures/fake_secrets.js --selftest`, `node bench/leak_bench.js --require-engine --json leak_bench_results.json` | Same | The corpus download is a bash script (needs `bash`, `curl`, `tar`): run it in Git Bash, or let CI run this check. The `node` commands run in PowerShell. |
@@ -62,7 +62,7 @@ npm ci --ignore-scripts
 cd ../../packages/zn-gate
 ../../.github/eslint/node_modules/.bin/eslint -c ../../.github/eslint/eslint.config.mjs --max-warnings 0 .
 cd ../zn-gate-py
-python -m pip install ruff mypy
+python -m pip install --require-hashes -r .github/ci-test-requirements.txt
 python -m ruff check .
 python -m mypy
 python -m mypy --strict src/zn_gate/__init__.py src/zn_gate/rules.py src/zn_gate/guard.py src/zn_gate/client.py src/zn_gate/evidence.py typing_check/check_public_api.py
