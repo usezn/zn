@@ -314,6 +314,21 @@ function homeRelClass(rel) {
 /* A write target zn cannot place on disk that may still name ~/.zn or an agent's plugins: a prefix that is a variable
    the environment does not set, a command substitution or another user's ~name (each may be a home folder), or a
    relative path after a cd (into the home folder, or to a place zn cannot follow). Returns the class or null. */
+/* The folder a cd leads to and the folder it came from, written as $(pwd), $(pwd -P), $(builtin pwd) or through a variable
+   the same command line sets to one of them (d=$PWD, export X=`pwd`, local Y=~-), are read as $PWD and $OLDPWD. */
+function normalizePwdForms(text) {
+  let t = String(text).replace(/\$\(\s*(?:(?:builtin|command)\s+)?pwd(?:\s+-[LP])?\s*\)/g, '$PWD');
+  const val = '(\\$PWD|\\$\\{PWD\\}|`pwd`|~\\+|\\$OLDPWD|\\$\\{OLDPWD\\}|~-)';
+  const re = new RegExp('(?:^|[\\s;&|({])(?:(?:export|local|declare|typeset|readonly)\\s+(?:-[A-Za-z]+\\s+)*)?([A-Za-z_][A-Za-z0-9_]*)=(["\']?)' + val + '\\2(?=[\\s;&|)}]|$)', 'g');
+  const vars = new Map();
+  let m;
+  while ((m = re.exec(t))) vars.set(m[1], /OLDPWD|~-/.test(m[3]) ? '$OLDPWD' : '$PWD');
+  for (const [name, to] of vars) {
+    t = t.replace(new RegExp('\\$\\{' + name + '\\}|\\$' + name + '(?![A-Za-z0-9_])', 'g'), () => to);
+  }
+  return t;
+}
+
 /* A relative path read after a cd: the credential it names in a folder the cd leads to (other than the working folder),
    or null. A cd zn cannot follow is handled by the .env rule; credentials are named by their place, so it is not
    guessed here. */
@@ -321,9 +336,9 @@ function credentialElsewhere(text, opts) {
   const bases = opts.cdBases;
   const t = slash(text);
   if (!bases || !bases.moved || !t || path.isAbsolute(t) || /^[a-z][a-z0-9+.-]*:\/\//i.test(t)) return null;
-  // The folder a cd leads to, named as $PWD, ${PWD}, ${PWD%/}, $(pwd), `pwd` or ~+, is that cd target. The folder a cd
+  // The folder a cd leads to, named as $PWD, ${PWD}, ${PWD%/}, `pwd` or ~+ ($(pwd) and variables set to these are rewritten first), is that cd target. The folder a cd
   // came from (~-, $OLDPWD, ${OLDPWD}) is any folder the command was in before: every followed folder is tried.
-  const pwdRe = /^(?:\$PWD|\$\{PWD(?:[^}]*)\}|\$\(\s*pwd(?:\s+-[LP])?\s*\)|`\s*pwd(?:\s+-[LP])?\s*`|~\+)(?=\/|$)/;
+  const pwdRe = /^(?:\$PWD|\$\{PWD(?:[^}]*)\}|`\s*pwd(?:\s+-[LP])?\s*`|~\+)(?=\/|$)/;
   const oldRe = /^(?:\$OLDPWD|\$\{OLDPWD(?:[^}]*)\}|~-)(?=\/|$)/;
   if (/^[~$`%-]/.test(t) && !pwdRe.test(t) && !oldRe.test(t)) return null;
   const cwd = path.resolve(opts.cwd || process.cwd());
@@ -2390,7 +2405,7 @@ function bashDenialOf(cmd, opts = {}) {
   const depth = opts.depth || 0;
   if (!depth || !opts.budget) opts.budget = { until: Date.now() + CHECK_BUDGET_MS, disk: CHECK_BUDGET_DISK };
   // The bodies of the here-documents read as data are data, not command-line words, and are dropped first.
-  const text = stripHeredocs(cmd, opts.budget);
+  const text = normalizePwdForms(stripHeredocs(cmd, opts.budget));
   // Destructive shell commands (see lib/destructive.js). The runner passes the rules from the user's settings; with no
   // list, the two default rules apply. The bodies of data here-documents are not shell code and are not read.
   {
