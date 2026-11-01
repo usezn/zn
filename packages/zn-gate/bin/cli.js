@@ -230,6 +230,7 @@ COMMANDS:
   pins                Tool pins of the MCP servers that shield wraps ("pins approve <server>|--all" accepts changes)
   status              Show engine configuration and gateway connectivity
   version, -V         Show package version
+  help [command]      Show this help, or the help of one command that has its own
 
 SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   secret set NAME     Store a secret (hidden prompt or --clipboard; never as an argument)
@@ -985,8 +986,13 @@ function scanTargetOf(args) {
   return '.';
 }
 
+// Commands whose --help returns before any side effect, so `help <command>` can run it.
+const HELP_OWN_COMMANDS = new Set(['audit', 'reach', 'unlock', 'lock', 'vault']);
+
 async function main() {
-  const args = process.argv.slice(2);
+  let args = process.argv.slice(2);
+  // `zn-gate help [command]`: the same text as --help, exit 0. A command with its own --help gets that text.
+  if (args[0] === 'help') args = HELP_OWN_COMMANDS.has(args[1]) ? [args[1], '--help'] : ['--help'];
   if (args[0] === 'audit') {
     await runAuditCommand(args.slice(1));
     return;

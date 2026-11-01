@@ -45,7 +45,7 @@ Without installing, use `npx -y zn-gate <command>`. This page writes `zn-gate` i
 
 This page describes the npm package. The Python package (`pip install zn-gate`) has a smaller command line: see [The Python package](#the-python-package) at the end.
 
-`zn-gate --help` (or `-h`) prints the short help. `zn-gate version`, `zn-gate -V` and `zn-gate --version` print the version.
+`zn-gate --help` (or `-h`) prints the short help. `zn-gate help` prints the same text, and `zn-gate help <command>` prints that command's own help when it has one (otherwise the general help). Both exit `0`. `zn-gate version`, `zn-gate -V` and `zn-gate --version` print the version.
 
 ## Exit codes
 
@@ -143,6 +143,14 @@ zn-gate test
 ```
 
 Runs the local self-test on built-in examples (attacks and ordinary developer text). It never uses the network. Exit codes: `0` all passed, `1` at least one example failed.
+
+### `help`
+
+```bash
+zn-gate help
+```
+
+Prints the same help as `zn-gate --help`. `zn-gate help <command>` prints the help of that command when it has its own (`audit`, `reach`, `unlock`, `lock`, `vault`); for any other command it prints the general help. Exit code `0`, with nothing on stderr.
 
 ### `version`
 
@@ -679,7 +687,7 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 
 ## The Python package
 
-`pip install zn-gate` installs only the name `zn-gate` (not `zn` or `zn-mcp`). It is meant for agents you build yourself. It has six commands. `zn-gate version`, `zn-gate -V` and `zn-gate --version` print the version and the rules version.
+`pip install zn-gate` installs only the name `zn-gate` (not `zn` or `zn-mcp`). It is meant for agents you build yourself. It has six commands. `zn-gate version`, `zn-gate -V` and `zn-gate --version` print the version and the rules version. `zn-gate help` and `zn-gate help <command>` work as in the npm package.
 
 | Command | Options | What it does |
 |---|---|---|

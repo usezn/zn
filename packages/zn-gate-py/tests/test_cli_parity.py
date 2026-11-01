@@ -65,13 +65,30 @@ def test_every_subcommand_is_a_known_command(monkeypatch, capsys):
         assert "Unknown command" not in capsys.readouterr().err
 
 
-def test_help_points_to_npm_help(monkeypatch, capsys):
-    assert _run(monkeypatch, "help") == 2
-    out = capsys.readouterr()
-    assert out.out == ""
-    assert "npx -y zn-gate --help" in out.err
-    assert "Unknown command" not in out.err
-    assert "Traceback" not in out.err
+def _main_output(monkeypatch, capsys, argv):
+    monkeypatch.setattr(sys, "argv", ["zn-gate", *argv])
+    try:
+        rc = cli.main()
+    except SystemExit as exc:
+        rc = exc.code
+    captured = capsys.readouterr()
+    return rc, captured.out, captured.err
+
+
+@pytest.mark.parametrize("help_argv, flag_argv", [
+    (["help"], ["--help"]),
+    (["help", "test"], ["test", "--help"]),
+    (["help", "bogus"], ["--help"]),
+])
+def test_help_command_prints_the_help_flag_text(monkeypatch, capsys, help_argv, flag_argv):
+    rc, out, err = _main_output(monkeypatch, capsys, help_argv)
+    assert rc == 0
+    assert err == ""
+    assert out.startswith("usage: zn-gate")
+    flag_rc, flag_out, flag_err = _main_output(monkeypatch, capsys, flag_argv)
+    assert flag_rc == 0
+    assert flag_err == ""
+    assert out == flag_out
 
 
 @pytest.mark.parametrize("argv", [["stats", "share"], ["stats", "share", "show"]])

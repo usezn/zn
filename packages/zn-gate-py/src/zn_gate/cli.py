@@ -841,12 +841,15 @@ def npm_only_simple_message(command: str) -> str:
     )
 
 
-def npm_help_message() -> str:
-    return (
-        "zn-gate help is not a command. The npm package shows its help with --help.\n"
-        "Run it with Node.js 18 or later:\n"
-        "  npx -y zn-gate --help\n"
-    )
+def cmd_help(topic: list[str]) -> int:
+    """`zn-gate help [command]`: the same text as --help, or the command's own --help when it has one."""
+    parser = build_parser()
+    subparsers = parser.get_default("_subparsers")
+    if topic and topic[0] in subparsers.choices:
+        subparsers.choices[topic[0]].print_help()
+    else:
+        parser.print_help()
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -921,8 +924,7 @@ def main() -> int:
         sys.stderr.write(npm_only_simple_message(first))
         return 2
     if first == "help":
-        sys.stderr.write(npm_help_message())
-        return 2
+        return cmd_help(sys.argv[2:3])
     if first == "stats" and sys.argv[2:3] == ["share"]:
         sys.stderr.write(npm_only_simple_message("stats share"))
         return 2
