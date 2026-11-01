@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-31.6
+RULES_VERSION: 2026-11-01.1
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-10-31.6"
+RULES_VERSION = "2026-11-01.1"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1552,7 +1552,68 @@ def _kv_placeholder(value: str) -> bool:
     return m is not None and _kv_bare_placeholder(value[m.end():])
 
 
-def _find_quoted_credentials(text: str) -> List[Tuple[int, int, str]]:
+# A value without whitespace under a secret key, quoted or not (see KV_REF in rules.js): a secret unless it
+# is a reference or a name. It also needs a digit or a symbol and is not a CONSTANT_NAME, so a plain word (a
+# translation) or a type name is left alone; a value with no letters (a PIN) counts only under a password
+# key. An unquoted value is read only under a password key.
+_KV_REF_RE = _rc(r"""(?:[$%{<]|https?://|(?:process\.env|import\.meta|os\.environ|os\.getenv|getenv|ENV)\b)""", re.IGNORECASE | re.ASCII)
+_KV_IDENT_CHAIN_RE = _rc(r"""[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+""")
+_KV_CALL_RE = _rc(r"""[A-Za-z_][A-Za-z0-9_.]*(?:\(.*\)|\[.*\])""", re.DOTALL)
+_KV_SLUG_RE = _rc(r"""[a-z]+(?:[_.-][a-z]+)+""", re.IGNORECASE | re.ASCII)
+_KV_SEPARATORS_RE = _rc(r"""[-_.:]""")
+_KV_MASK_RUN_RE = _rc(r"""x{4,}|\*{3,}|\.{3,}|_{3,}""", re.IGNORECASE | re.ASCII)
+_KV_UNQUOTED_RE = _rc(r"""[A-Za-z0-9][A-Za-z0-9_\-./+=#^!]{7,511}""")
+_KV_UNQUOTED_END_RE = _rc(r"""[\s,;)}\]"'&]""")
+_KV_LETTER_RE = _rc(r"""[A-Za-z]""")
+_KV_PLAIN_SYMBOL_RE = _rc(r"""[0-9/+=@#^!*~]""")
+_KV_UNQUOTED_SYMBOL_RE = _rc(r"""[0-9/+=#^!]""")
+_KV_CONSTANT_RE = _rc(r"""[A-Z][A-Z0-9_]*""")
+PLAIN_CREDENTIAL_RULE = "secret:plain_credential"
+
+
+def _kv_not_a_reference(v: str) -> bool:
+    return not (_KV_REF_RE.match(v) is not None or _KV_IDENT_CHAIN_RE.fullmatch(v) is not None
+                or _KV_CALL_RE.fullmatch(v) is not None or _KV_SLUG_RE.fullmatch(v) is not None
+                or _KV_MASK_RUN_RE.search(v) is not None or len(set(_KV_SEPARATORS_RE.sub('', v))) == 1)
+
+
+def _kv_is_password_key(key: str) -> bool:
+    return key.lower() in ("password", "passwd")
+
+
+def _kv_plain_quoted_ok(value: str, key: str) -> bool:
+    if not _kv_not_a_reference(value):
+        return False
+    if _KV_PLAIN_SYMBOL_RE.search(value) is None or _KV_CONSTANT_RE.fullmatch(value) is not None:
+        return False
+    return _KV_LETTER_RE.search(value) is not None or _kv_is_password_key(key)
+
+
+def _kv_unquoted_end(text: str, i: int, key: str, key_index: int) -> int:
+    """End of an unquoted value that starts at i, or -1."""
+    if not _kv_is_password_key(key):
+        return -1
+    # $NAME:value and ${NAME}:value are shell references, not assignments.
+    j = key_index
+    while j > 0 and (text[j - 1].isascii() and (text[j - 1].isalnum() or text[j - 1] == '_')):
+        j -= 1
+    if (j > 0 and text[j - 1] == '$') or (j > 1 and text[j - 1] == '{' and text[j - 2] == '$'):
+        return -1
+    m = _KV_UNQUOTED_RE.match(text, i)
+    if m is None:
+        return -1
+    v = m.group()
+    end = m.end()
+    if end < len(text) and _KV_UNQUOTED_END_RE.match(text, end) is None:
+        return -1
+    if _KV_LETTER_RE.search(v) is None or _KV_UNQUOTED_SYMBOL_RE.search(v) is None:
+        return -1
+    if _KV_CONSTANT_RE.fullmatch(v) is not None or _kv_placeholder(v) or not _kv_not_a_reference(v):
+        return -1
+    return end
+
+
+def _find_quoted_credentials(text: str, plain: bool = False) -> List[Tuple[int, int, str]]:
     """Spans (start, end, quote) of the values described above. quote is the
     quote that the replacement of a bare number is wrapped in (empty for a
     quoted value, whose own quotes stay)."""
@@ -1570,6 +1631,12 @@ def _find_quoted_credentials(text: str) -> List[Tuple[int, int, str]]:
         if opener is None:
             num = _KV_NUMBER_RE.match(text, after)
             # Only a quoted key (a JSON member or a dict entry) counts.
+            if plain:
+                uend = _kv_unquoted_end(text, after, m.group(1), m.start(1))
+                if uend > 0:
+                    found.append((after, uend, ''))
+                    pos = uend
+                continue
             if not key_quote or num is None or num.end() - after < _KV_MIN_VALUE:
                 continue
             end = num.end()
@@ -1613,7 +1680,10 @@ def _find_quoted_credentials(text: str) -> List[Tuple[int, int, str]]:
         if end < 0:
             continue
         value = text[start:end]
-        if _utf16_len(value) < _KV_MIN_VALUE or _KV_SPACE_RE.search(value) is None or _kv_placeholder(value):
+        if _utf16_len(value) < _KV_MIN_VALUE or _kv_placeholder(value):
+            continue
+        spaced = _KV_SPACE_RE.search(value) is not None
+        if (spaced or not _kv_plain_quoted_ok(value, m.group(1))) if plain else not spaced:
             continue
         span_end = end
         if level == 0 and not key_quote:
@@ -1634,7 +1704,7 @@ def _find_quoted_credentials(text: str) -> List[Tuple[int, int, str]]:
     return found
 
 
-def _redact_quoted_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+def _redact_quoted_credentials(text: str, plain: bool = False) -> Tuple[str, List[Dict[str, Any]]]:
     """Redacts the values found by _find_quoted_credentials, on the text and on
     the text without invisible characters (as every other rule)."""
     if not text or _KV_PREFILTER_RE.search(text) is None:
@@ -1649,14 +1719,14 @@ def _redact_quoted_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     seen_starts: List[int] = []
     seen_ends: List[int] = []
     for hay, mapping in passes:
-        for start, end, quote in _find_quoted_credentials(hay):
+        for start, end, quote in _find_quoted_credentials(hay, plain):
             s, e = _span_in(mapping, start, end)
             if mapping is None:
                 seen_starts.append(s)
                 seen_ends.append(e)
             elif bisect.bisect_left(seen_starts, e) - bisect.bisect_right(seen_ends, s) >= 2:
                 continue
-            cands.append((s, e, QUOTED_CREDENTIAL_RULE, quote + _KV_REPLACEMENT + quote))
+            cands.append((s, e, PLAIN_CREDENTIAL_RULE if plain else QUOTED_CREDENTIAL_RULE, quote + _KV_REPLACEMENT + quote))
     if not cands:
         return text, []
     detections: List[Dict[str, Any]] = []
@@ -1811,6 +1881,13 @@ def _merge_candidates(cands: List[Tuple[int, int, str, str]]) -> List[Tuple[int,
     return merged
 
 
+def _with_plain_credentials(redacted: str, found: List[Dict[str, Any]]) -> Tuple[str, List[Dict[str, Any]]]:
+    """Values without whitespace under a password key (see _kv_plain_quoted_ok): the last pass, so every rule
+    that names a value more precisely has already taken it."""
+    redacted, plain = _redact_quoted_credentials(redacted, True)
+    return (redacted, found + plain) if plain else (redacted, found)
+
+
 def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     """
     Scans a text for sensitive credentials (API keys, private keys, passwords)
@@ -1819,7 +1896,7 @@ def redact_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     characters; the redacted spans are the union of both (see redactSecrets in
     rules.js).
     """
-    return _redact_credentials(text)
+    return _with_plain_credentials(*_redact_credentials(text))
 
 
 def redact_scan_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
@@ -1828,7 +1905,7 @@ def redact_scan_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     rules.js, with the provider formats in between as the Node.js scan does)."""
     redacted, first = _redact_credentials(text)
     redacted, second = _redact_with(redacted, SCAN_SECRET_PATTERNS)
-    return redacted, first + second
+    return _with_plain_credentials(redacted, first + second)
 
 
 def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern[str], str]]) -> Tuple[str, List[Dict[str, Any]]]:

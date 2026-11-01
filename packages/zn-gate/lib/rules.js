@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-31.6
+ * RULES_VERSION: 2026-11-01.1
  */
 
-const RULES_VERSION = '2026-10-31.6';
+const RULES_VERSION = '2026-11-01.1';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1321,6 +1321,7 @@ const KV_PLACEHOLDER_RE = /^(?:x{3,}|\*{3,}|\.{3,}|-+|_+|<[^>]*>|\$\{?[^}]*\}?|\
 const KV_PLACEHOLDER_WORDS_RE = /(?:^|[^a-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|redacted|dummy|sample|foobar|hunter2|xxxx|todo|insert|replace|mypass|pass(?:word)?123)(?:[^a-z]|$)/i;
 const KV_REPEAT_RE = /^([^\n\r\u2028\u2029])\1+$/u;
 const QUOTED_CREDENTIAL_RULE = 'secret:quoted_credential';
+const PLAIN_CREDENTIAL_RULE = 'secret:plain_credential';
 const KV_REPLACEMENT = '[REDACTED_SECRET]';
 
 function kvBarePlaceholder(value) {
@@ -1366,7 +1367,50 @@ function kvClosingQuote(text, start, quote, level) {
 // Spans {start, end, quote} of the values described above. `quote` is the quote
 // that the replacement of a bare number is wrapped in (empty for a quoted value,
 // whose own quotes stay).
-function findQuotedCredentials(text) {
+/* A value without whitespace under a secret key, quoted or not. It is a secret unless it is a reference or
+ * a name rather than a value: ${X}, $X, %X%, <x>, a URL, process.env.X, os.environ[...], a dotted identifier
+ * chain (config.db.password), a call or an index (input(), os.getenv("X")) or a lower-case slug (password_field).
+ * It also needs a digit or a symbol and is not a CONSTANT_NAME, so a plain word (a translation) or a type
+ * name (SecretStr) is left alone; a value with no letters (a PIN) counts only under a password key. An unquoted
+ * value is read only under a password key. */
+const KV_REF = /^(?:[$%{<]|https?:\/\/|(?:process\.env|import\.meta|os\.environ|os\.getenv|getenv|ENV)\b)/i;
+const KV_IDENT_CHAIN = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$/;
+const KV_CALL = /^[A-Za-z_][\w.]*(?:\(.*\)|\[.*\])$/;
+const KV_SLUG = /^[a-z]+(?:[_.-][a-z]+)+$/i;
+const KV_MASK_RUN = /x{4,}|\*{3,}|\.{3,}|_{3,}/i;
+const KV_UNQUOTED = /[A-Za-z0-9][A-Za-z0-9_\-./+=#^!]{7,511}/y;
+const KV_PLAIN_SYMBOL = /[0-9\/+=@#^!*~]/;
+function kvNotAReference(v) {
+  return !(KV_REF.test(v) || KV_IDENT_CHAIN.test(v) || KV_CALL.test(v) || KV_SLUG.test(v) || KV_MASK_RUN.test(v) ||
+    /^(.)\1+$/.test(v.replace(/[-_.:]/g, '')));
+}
+function kvIsPasswordKey(key) {
+  return /^(?:password|passwd)$/i.test(key);
+}
+function kvPlainQuotedOk(value, key) {
+  if (!kvNotAReference(value)) return false;
+  if (!KV_PLAIN_SYMBOL.test(value) || /^[A-Z][A-Z0-9_]*$/.test(value)) return false;
+  return /[A-Za-z]/.test(value) || kvIsPasswordKey(key);
+}
+/* End of an unquoted value that starts at i, or -1. */
+function kvUnquotedEnd(text, i, key, keyIndex) {
+  if (!kvIsPasswordKey(key)) return -1;
+  // $NAME:value and ${NAME}:value are shell references, not assignments.
+  let j = keyIndex;
+  while (j > 0 && /[A-Za-z0-9_]/.test(text[j - 1])) j--;
+  if (text[j - 1] === '$' || (text[j - 1] === '{' && text[j - 2] === '$')) return -1;
+  KV_UNQUOTED.lastIndex = i;
+  const m = KV_UNQUOTED.exec(text);
+  if (m === null) return -1;
+  const v = m[0];
+  const end = i + v.length;
+  if (end < text.length && !/[\s,;)}\]"'&]/.test(text[end])) return -1;
+  if (!/[A-Za-z]/.test(v) || !/[0-9\/+=#^!]/.test(v)) return -1;
+  if (/^[A-Z][A-Z0-9_]*$/.test(v) || kvPlaceholder(v) || !kvNotAReference(v)) return -1;
+  return end;
+}
+
+function findQuotedCredentials(text, plain) {
   const found = [];
   const n = text.length;
   const re = new RegExp(KV_OPEN_RE.source, KV_OPEN_RE.flags);
@@ -1383,6 +1427,14 @@ function findQuotedCredentials(text) {
       KV_NUMBER_RE.lastIndex = after;
       const num = KV_NUMBER_RE.exec(text);
       // Only a quoted key (a JSON member or a dict entry) counts.
+      if (plain) {
+        const uend = kvUnquotedEnd(text, after, m[1], m.index);
+        if (uend > 0) {
+          found.push({ start: after, end: uend, quote: '' });
+          pos = uend;
+        }
+        continue;
+      }
       if (!keyQuote || num === null || num[0].length < KV_MIN_VALUE) continue;
       const end = after + num[0].length;
       if (end < n && KV_WORD_CHAR_RE.test(text[end])) continue; // part of a longer word, not a number
@@ -1397,7 +1449,9 @@ function findQuotedCredentials(text) {
     const end = kvClosingQuote(text, start, quote, level);
     if (end < 0) continue;
     const value = text.slice(start, end);
-    if (value.length < KV_MIN_VALUE || !/\s/.test(value) || kvPlaceholder(value)) continue;
+    if (value.length < KV_MIN_VALUE || kvPlaceholder(value)) continue;
+    const spaced = /\s/.test(value);
+    if (plain ? spaced || !kvPlainQuotedOk(value, m[1]) : !spaced) continue;
     let spanEnd = end;
     if (level === 0 && !keyQuote) {
       // A shell word glued to more quoted pieces ('a b''c') is one value: take them too.
@@ -1442,7 +1496,7 @@ function upperBound(a, x) {
 
 // Redacts the values found by findQuotedCredentials, on the text and on the text
 // without invisible characters (as every other rule).
-function redactQuotedCredentials(text) {
+function redactQuotedCredentials(text, plain) {
   if (typeof text !== 'string' || !text || !KV_PREFILTER_RE.test(text)) return { sanitized: text, detections: [] };
   const view = invisibleView(text);
   const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
@@ -1452,13 +1506,13 @@ function redactQuotedCredentials(text) {
   const seenStarts = [];
   const seenEnds = [];
   for (const [hay, map] of passes) {
-    for (const f of findQuotedCredentials(hay)) {
+    for (const f of findQuotedCredentials(hay, plain)) {
       const [start, end] = spanIn(map, f.start, f.end);
       if (!map) {
         seenStarts.push(start);
         seenEnds.push(end);
       } else if (lowerBound(seenStarts, end) - upperBound(seenEnds, start) >= 2) continue;
-      cands.push({ start, end, rule: QUOTED_CREDENTIAL_RULE, text: f.quote + KV_REPLACEMENT + f.quote });
+      cands.push({ start, end, rule: plain ? PLAIN_CREDENTIAL_RULE : QUOTED_CREDENTIAL_RULE, text: f.quote + KV_REPLACEMENT + f.quote });
     }
   }
   if (cands.length === 0) return { sanitized: text, detections: [] };
@@ -1487,11 +1541,24 @@ function redactCredentials(text) {
 // of what both find, so a secret split by a zero-width or tag character is
 // redacted whole. Texts without invisible characters are handled as before.
 function redactSecrets(text) {
+  return withPlainCredentials(redactSecretsBase(text));
+}
+
+// redactSecrets without the last pass for plain credentials (`zn-gate scan` runs its own rules before it).
+function redactSecretsBase(text) {
   const first = redactCredentials(text);
   if (typeof first.sanitized !== 'string' || !first.sanitized) return first;
   const second = redactProviderFormats(first.sanitized);
   if (second.detections.length === 0) return first;
   return { sanitized: second.sanitized, detections: first.detections.concat(second.detections) };
+}
+
+// Values without whitespace under a password key (see kvPlainQuotedOk): the last pass, so every rule
+// that names a value more precisely has already taken it.
+function withPlainCredentials(res) {
+  const plain = redactQuotedCredentials(res.sanitized, true);
+  if (plain.detections.length === 0) return res;
+  return { sanitized: plain.sanitized, detections: res.detections.concat(plain.detections) };
 }
 
 // Scrubber secret types that count as provider formats, with the rule id the
@@ -1546,7 +1613,7 @@ function redactScanRules(text) {
 function redactScanSecrets(text) {
   const first = redactCredentials(text);
   const second = redactWith(first.sanitized, SCAN_SECRET_PATTERNS);
-  return { sanitized: second.sanitized, detections: first.detections.concat(second.detections) };
+  return withPlainCredentials({ sanitized: second.sanitized, detections: first.detections.concat(second.detections) });
 }
 
 function redactWith(text, patterns) {
@@ -1812,6 +1879,8 @@ module.exports = {
   QUOTED_CREDENTIAL_RULE,
   redactScanSecrets,
   redactScanRules,
+  redactSecretsBase,
+  withPlainCredentials,
   isNonSecretValue,
   sanitizeToolResult,
   tooInvisible,

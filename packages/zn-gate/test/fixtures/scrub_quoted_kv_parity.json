@@ -130,6 +130,181 @@
       "name": "no closing quote",
       "input": "password=\"unterminated value with spaces",
       "output": "password=\"unterminated value with spaces"
+    },
+    {
+      "name": "assignment, double quotes, spaces around =",
+      "input": "password = \"Winter2026demo\"",
+      "output": "password = \"{S}\""
+    },
+    {
+      "name": "assignment, single quotes, spaces around =",
+      "input": "password = 'Winter2026demo'",
+      "output": "password = '{S}'"
+    },
+    {
+      "name": "assignment, no quotes, spaces around =",
+      "input": "password = Winter2026demo",
+      "output": "password = {S}"
+    },
+    {
+      "name": "assignment, double quotes, no spaces",
+      "input": "password=\"Winter2026demo\"",
+      "output": "password=\"{S}\""
+    },
+    {
+      "name": "assignment, no quotes, no spaces, keeps the text after it",
+      "input": "password=Winter2026demo user=demo",
+      "output": "password={S} user=demo"
+    },
+    {
+      "name": "YAML value",
+      "input": "password: Winter2026demo",
+      "output": "password: {S}"
+    },
+    {
+      "name": "YAML quoted value with a digit",
+      "input": "password: \"winter-demo-2026\"",
+      "output": "password: \"{S}\""
+    },
+    {
+      "name": "quoted PIN under password",
+      "input": "password = \"12345678\"",
+      "output": "password = \"{S}\""
+    },
+    {
+      "name": "JSON member",
+      "input": "{\"password\": \"Winter2026demo\", \"user\": \"demo\"}",
+      "output": "{\"password\": \"{S}\", \"user\": \"demo\"}"
+    },
+    {
+      "name": "single quoted dict entry",
+      "input": "{'password': 'Winter2026demo'}",
+      "output": "{'password': '{S}'}"
+    },
+    {
+      "name": "upper-case key, lower-case value with digits",
+      "input": "PASSWORD = \"winterdemo99\"",
+      "output": "PASSWORD = \"{S}\""
+    },
+    {
+      "name": "prefixed key",
+      "input": "db_password = \"Winter2026demo\"",
+      "output": "db_password = \"{S}\""
+    },
+    {
+      "name": "token with a digit",
+      "input": "token = \"abcdefgh1234\"",
+      "output": "token = \"{S}\""
+    },
+    {
+      "name": "input call",
+      "input": "password = input()",
+      "output": "password = input()"
+    },
+    {
+      "name": "environment lookup, Python",
+      "input": "password = os.environ[\"DB_PASS\"]",
+      "output": "password = os.environ[\"DB_PASS\"]"
+    },
+    {
+      "name": "environment lookup, Node",
+      "input": "password = process.env.DB_PASS",
+      "output": "password = process.env.DB_PASS"
+    },
+    {
+      "name": "empty string",
+      "input": "password = \"\"",
+      "output": "password = \"\""
+    },
+    {
+      "name": "short value",
+      "input": "password = \"short\"",
+      "output": "password = \"short\""
+    },
+    {
+      "name": "placeholder word",
+      "input": "password = \"changeme\"",
+      "output": "password = \"changeme\""
+    },
+    {
+      "name": "reference in quotes",
+      "input": "password = \"${DB_PASSWORD}\"",
+      "output": "password = \"${DB_PASSWORD}\""
+    },
+    {
+      "name": "URL in quotes",
+      "input": "password = \"https://example.com/x\"",
+      "output": "password = \"https://example.com/x\""
+    },
+    {
+      "name": "other key, quoted",
+      "input": "password_hint = \"winterdemo99\"",
+      "output": "password_hint = \"winterdemo99\""
+    },
+    {
+      "name": "lower-case slug",
+      "input": "password = \"password_field\"",
+      "output": "password = \"password_field\""
+    },
+    {
+      "name": "attribute access",
+      "input": "password = args.password",
+      "output": "password = args.password"
+    },
+    {
+      "name": "getpass call",
+      "input": "password = getpass.getpass()",
+      "output": "password = getpass.getpass()"
+    },
+    {
+      "name": "index expression",
+      "input": "password = request.form[\"password\"]",
+      "output": "password = request.form[\"password\"]"
+    },
+    {
+      "name": "type annotation",
+      "input": "password: SecretStr",
+      "output": "password: SecretStr"
+    },
+    {
+      "name": "generic type annotation",
+      "input": "password: Optional[str]",
+      "output": "password: Optional[str]"
+    },
+    {
+      "name": "constant name",
+      "input": "password = DB_PASSWORD_2",
+      "output": "password = DB_PASSWORD_2"
+    },
+    {
+      "name": "plain word under token",
+      "input": "token = \"abcdefgh\"",
+      "output": "token = \"abcdefgh\""
+    },
+    {
+      "name": "plain word under password (a translation)",
+      "input": "'password' => 'Contrasena'",
+      "output": "'password' => 'Contrasena'"
+    },
+    {
+      "name": "quoted number under token",
+      "input": "token = \"12345678\"",
+      "output": "token = \"12345678\""
+    },
+    {
+      "name": "all-zero id",
+      "input": "{\"password\": \"00000000-0000-0000-0000-000000000000\"}",
+      "output": "{\"password\": \"00000000-0000-0000-0000-000000000000\"}"
+    },
+    {
+      "name": "prose word",
+      "input": "password: required",
+      "output": "password: required"
+    },
+    {
+      "name": "slug under secret",
+      "input": "secret: \"my-secret-name\"",
+      "output": "secret: \"my-secret-name\""
     }
   ]
 }

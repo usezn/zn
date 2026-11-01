@@ -40,7 +40,7 @@ const { startMcpShield } = require('../lib/shield');
 const { configureEnvironments } = require('../lib/init');
 const { verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, usesStoredKey, RULES_VERSION } = require('../lib/client');
-const { evaluate, redactSecrets, redactScanSecrets, redactScanRules, SECRET_PATTERNS } = require('../lib/rules');
+const { evaluate, redactSecretsBase, withPlainCredentials, redactScanSecrets, redactScanRules, SECRET_PATTERNS } = require('../lib/rules');
 // A verdict from the cloud or the ledger can come in any case; compare it the way the MCP server does.
 const isBlockVerdict = (v) => typeof v === 'string' && v.toLowerCase() === 'block';
 const { SCRUB_RULES_VERSION } = require('../lib/scrub/patterns');
@@ -80,9 +80,12 @@ const SCAN_FORMATS = new Set(['text', 'json', 'github']);
 // redactSecrets), then the scan-only rules. Each step runs on the text the
 // previous ones redacted, so one value is reported once.
 function scanSecretRules(line) {
-  const first = redactSecrets(line);
+  const first = redactSecretsBase(line);
   const rules = first.detections.map((d) => d.rule);
-  for (const d of redactScanRules(first.sanitized).detections) rules.push(d.rule);
+  const scan = redactScanRules(first.sanitized);
+  for (const d of scan.detections) rules.push(d.rule);
+  // Plain credentials come last, so a value a rule above names more precisely is reported once, by that rule.
+  for (const d of withPlainCredentials({ sanitized: scan.sanitized, detections: [] }).detections) rules.push(d.rule);
   return rules;
 }
 

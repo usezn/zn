@@ -1,0 +1,2 @@
+### Fixed
+- Secret redaction: a password or token assignment whose value has no spaces is now redacted in tool output, in the Node.js hooks and in the Python package, as the gateway already did. This covers double quotes, single quotes and no quotes, spaces around the = sign, and JSON or YAML members (password = "value", password: value). References and look-alikes such as input(), os.environ[...], process.env.X, an empty string, password_hint and a type annotation are left alone.

@@ -168,5 +168,32 @@ class QuotedCredentialLinearTimeTests(unittest.TestCase):
             self.assertNotIn("12345678901", redact(text))
 
 
+class PlainPasswordValueTests(unittest.TestCase):
+    """password = "value" with no spaces in the value, in every spelling (shared cases in the fixture too)."""
+
+    def test_every_spelling_is_redacted_by_both_entry_points(self) -> None:
+        for text, value in (
+            ('password = "Winter2026demo"', "Winter2026demo"),
+            ("password = 'Winter2026demo'", "Winter2026demo"),
+            ("password = Winter2026demo", "Winter2026demo"),
+            ('password="Winter2026demo"', "Winter2026demo"),
+            ("password: Winter2026demo", "Winter2026demo"),
+            ('{"password": "Winter2026demo"}', "Winter2026demo"),
+            ('mytool --password="Winter2026demo"', "Winter2026demo"),
+        ):
+            for fn in (redact_secrets, redact_scan_secrets):
+                with self.subTest(text=text, fn=fn.__name__):
+                    out, found = fn(text)
+                    self.assertNotIn(value, out)
+                    self.assertTrue(found)
+
+    def test_look_alikes_are_left_alone(self) -> None:
+        for text in ('password = input()', 'password = os.environ["DB_PASS"]', 'password = ""',
+                     'password_hint = "winterdemo99"', 'password: SecretStr', 'echo $DB_PASSWORD:Winter2026demo',
+                     "'password' => 'Contrasena'"):
+            with self.subTest(text=text):
+                self.assertEqual(redact_secrets(text), (text, []))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-31.1';
+const SCRUB_RULES_VERSION = '2026-11-01.1';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -415,6 +415,49 @@ const KV_PLACEHOLDER = (v) => {
   return bare(v) || bare(v.replace(/^(?:bearer|basic|token)\s+/i, ''));
 };
 
+/* A value without whitespace under a secret key, quoted or not. It is a secret unless it is a reference or
+ * a name rather than a value: ${X}, $X, %X%, <x>, a URL, process.env.X, os.environ[...], a dotted identifier
+ * chain (config.db.password), a call or an index (input(), os.getenv("X")) or a lower-case slug (password_field).
+ * It also needs a digit or a symbol and is not a CONSTANT_NAME, so a plain word (a translation) or a type
+ * name (SecretStr) is left alone; a value with no letters (a PIN) counts only under a password key. An unquoted
+ * value is read only under a password key. */
+const KV_REF = /^(?:[$%{<]|https?:\/\/|(?:process\.env|import\.meta|os\.environ|os\.getenv|getenv|ENV)\b)/i;
+const KV_IDENT_CHAIN = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$/;
+const KV_CALL = /^[A-Za-z_][\w.]*(?:\(.*\)|\[.*\])$/;
+const KV_SLUG = /^[a-z]+(?:[_.-][a-z]+)+$/i;
+const KV_MASK_RUN = /x{4,}|\*{3,}|\.{3,}|_{3,}/i;
+const KV_UNQUOTED = /[A-Za-z0-9][A-Za-z0-9_\-./+=#^!]{7,511}/y;
+const KV_PLAIN_SYMBOL = /[0-9\/+=@#^!*~]/;
+function kvNotAReference(v) {
+  return !(KV_REF.test(v) || KV_IDENT_CHAIN.test(v) || KV_CALL.test(v) || KV_SLUG.test(v) || KV_MASK_RUN.test(v) ||
+    /^(.)\1+$/.test(v.replace(/[-_.:]/g, '')));
+}
+function kvIsPasswordKey(key) {
+  return /^(?:password|passwd)$/i.test(key);
+}
+function kvPlainQuotedOk(value, key) {
+  if (!kvNotAReference(value)) return false;
+  if (!KV_PLAIN_SYMBOL.test(value) || /^[A-Z][A-Z0-9_]*$/.test(value)) return false;
+  return /[A-Za-z]/.test(value) || kvIsPasswordKey(key);
+}
+/* End of an unquoted value that starts at i, or -1. */
+function kvUnquotedEnd(text, i, key, keyIndex) {
+  if (!kvIsPasswordKey(key)) return -1;
+  // $NAME:value and ${NAME}:value are shell references, not assignments.
+  let j = keyIndex;
+  while (j > 0 && /[A-Za-z0-9_]/.test(text[j - 1])) j--;
+  if (text[j - 1] === '$' || (text[j - 1] === '{' && text[j - 2] === '$')) return -1;
+  KV_UNQUOTED.lastIndex = i;
+  const m = KV_UNQUOTED.exec(text);
+  if (m === null) return -1;
+  const v = m[0];
+  const end = i + v.length;
+  if (end < text.length && !/[\s,;)}\]"'&]/.test(text[end])) return -1;
+  if (!/[A-Za-z]/.test(v) || !/[0-9\/+=#^!]/.test(v)) return -1;
+  if (/^[A-Z][A-Z0-9_]*$/.test(v) || KV_PLACEHOLDER(v) || !kvNotAReference(v)) return -1;
+  return end;
+}
+
 /* Spans of two kinds of value that the entropy rules do not see:
  *   - a quoted value that has whitespace in it, up to its closing quote
  *     (`"password":"abcdefgh ijk lmn"`); a double-quoted value ends at the
@@ -438,7 +481,14 @@ function findQuotedKv(text, out) {
       const num = KV_NUMBER.exec(text);
       // Only a quoted key (a JSON member or a dict entry) counts: YAML and shell numbers
       // (`password: 123456789012345`) are left alone, as the structured rules always did.
-      if (!m[2] || !num || num[0].length < KV_MIN_VALUE) continue;
+      if (!m[2] || !num || num[0].length < KV_MIN_VALUE) {
+        const uend = kvUnquotedEnd(text, afterOpen, m[1], m.index);
+        if (uend > 0) {
+          out.push({ start: afterOpen, end: uend });
+          KV_OPEN.lastIndex = uend;
+        }
+        continue;
+      }
       const end = afterOpen + num[0].length;
       if (end < text.length && /[A-Za-z0-9_.-]/.test(text[end])) continue; // part of a longer word, not a number
       if (/^-?(\d)\1+$/.test(num[0])) continue;                            // 00000000: a mask
@@ -479,7 +529,8 @@ function findQuotedKv(text, out) {
     }
     if (end < 0) continue;
     const value = text.slice(start, end);
-    if (value.length < KV_MIN_VALUE || !/\s/.test(value) || KV_PLACEHOLDER(value)) continue;
+    if (value.length < KV_MIN_VALUE || KV_PLACEHOLDER(value)) continue;
+    if (!/\s/.test(value) && !kvPlainQuotedOk(value, m[1])) continue;
     let spanEnd = end;
     if (level === 0 && !m[2]) {
       // A shell word glued to more quoted pieces ('a b''c') is one value: take them too.
@@ -788,7 +839,21 @@ function findPatterns(text, opts) {
       spans.push({ start, end, type: p.typeOf ? p.typeOf(m) : p.type, source: 'pattern' });
     }
   }
-  return spans;
+  return dedupeSpans(spans);
+}
+
+/* The same value named twice by two rules (same start, end and type) is one span. */
+function dedupeSpans(spans) {
+  if (spans.length < 2) return spans;
+  const seen = new Set();
+  const out = [];
+  for (const s of spans) {
+    const k = s.start + ':' + s.end + ':' + s.type + ':' + (s.quote || '');
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(s);
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ */

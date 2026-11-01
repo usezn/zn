@@ -459,10 +459,16 @@ class TestPrefixedCredentialNames(unittest.TestCase):
                 R.sanitize_tool_result(text)
 
     def test_documented_limits(self):
-        # Lower-case words joined by "_" read as an identifier, and values under 12 characters are not checked.
-        for text in ("DB_PASSWORD=" + "orbit_maple_" + "harbor_cinder", "DB_PASSWORD=hunter2xyz", "db_password: " + RANDOM_24):
+        # Lower-case words joined by "_" read as an identifier.
+        text = "DB_PASSWORD=" + "orbit_maple_" + "harbor_cinder"
+        self.assertKept(text)
+
+    def test_password_values_without_spaces_are_redacted_whatever_the_name(self):
+        # Under a password key (any case, with a prefix) a value of 8 or more characters with a digit or a symbol
+        # is redacted, quoted or not, as in the Node.js rules (plain credentials, the last pass).
+        for text, value in (("DB_PASSWORD=hunter2xyz", "hunter2xyz"), ("db_password: " + RANDOM_24, RANDOM_24)):
             with self.subTest(text=text[:20]):
-                self.assertKept(text)
+                self.assertRedacted(text, value)
 
     def test_value_checks_are_bounded_per_call(self):
         line = "SERVICE_TOKEN=process.env.SERVICE_TOKEN_VALUE"

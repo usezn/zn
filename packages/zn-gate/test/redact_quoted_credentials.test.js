@@ -175,3 +175,24 @@ test('many values after an invisible character stay linear (time grows with the 
     assert.ok(!out.includes('q7a1b2c3') && !out.includes('12345678901'));
   }
 });
+
+test('password values without spaces: every spelling, in both entry points', () => {
+  for (const text of [
+    'password = "Winter2026demo"', "password = 'Winter2026demo'", 'password = Winter2026demo',
+    'password="Winter2026demo"', 'password: Winter2026demo', '{"password": "Winter2026demo"}',
+    'mytool --password="Winter2026demo"',
+  ]) {
+    for (const fn of [redactSecrets, redactScanSecrets]) {
+      const res = fn(text);
+      assert.ok(!res.sanitized.includes('Winter2026demo'), text);
+      assert.ok(res.detections.length > 0, text);
+    }
+  }
+});
+
+test('password look-alikes are left alone', () => {
+  for (const text of ['password = input()', 'password = os.environ["DB_PASS"]', 'password = ""',
+    'password_hint = "winterdemo99"', 'password: SecretStr', 'echo $DB_PASSWORD:Winter2026demo', "'password' => 'Contrasena'"]) {
+    assert.strictEqual(redact(text), text, text);
+  }
+});

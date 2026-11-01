@@ -195,3 +195,13 @@ test('a quote that closes a string literal in source code does not start a value
   // The same key and value on one line is still redacted.
   assert.ok(!(await redact('password="abcdefgh ijk lmn"\n')).includes('ijk'));
 });
+
+test('values without whitespace under a password key: shared cases with the other redactors', async () => {
+  const fs = require('fs');
+  const path = require('path');
+  const file = path.join(__dirname, 'fixtures', 'scrub_quoted_kv_parity.json');
+  const cases = JSON.parse(fs.readFileSync(file, 'utf8')).cases;
+  for (const c of cases) {
+    assert.equal(await redact(c.input), c.output.split('{S}').join('__ZN_SECRET_1__'), c.name);
+  }
+});
