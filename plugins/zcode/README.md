@@ -33,6 +33,7 @@ Use one of them. `zn-gate check` reports it when both are active, and when the p
   as the shell script, with the same deadline) and blocks the call when PowerShell or the script cannot start. On macOS and
   Linux that launcher is a plain file that cannot start, so only the shell hook runs. It is tested with the plugin's own tests on Windows Server 2022, not yet in the ZCode app on Windows: if
   `zn-gate check` reports it as not protected, use `zn hooks install zcode` there.
+- Windows and PowerShell policy: the launcher starts PowerShell with `-ExecutionPolicy Bypass`, which overrides a policy set for the user or the machine but not one set by Group Policy (`MachinePolicy` or `UserPolicy` set to `AllSigned`). There `scripts/zn-hook.ps1` cannot start, so every call is blocked (it never runs unchecked). Ask your administrator to allow the script, or turn off the zn-gate plugin in ZCode (Settings, Plugins).
 - ZCode cannot rewrite what a tool returns: a value a command prints or a file the agent may read reaches the model.
   zn adds a notice when an output holds a secret. Keep secrets in the vault.
 - A user can turn the plugin off in Settings, Plugins. `zn-gate check` reads ZCode's configuration and says so.
