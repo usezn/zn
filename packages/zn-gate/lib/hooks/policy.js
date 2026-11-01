@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.27';
+const POLICY_RULES_VERSION = '2026-11-01.5';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -321,9 +321,11 @@ function credentialElsewhere(text, opts) {
   const bases = opts.cdBases;
   const t = slash(text);
   if (!bases || !bases.moved || !t || path.isAbsolute(t) || /^[a-z][a-z0-9+.-]*:\/\//i.test(t)) return null;
-  // The folder a cd leads to, named as $PWD, ${PWD} or ~+, is that cd target.
-  const pwdRe = /^(?:\$PWD|\$\{PWD\}|~\+)(?=\/|$)/;
-  if (/^[~$`%-]/.test(t) && !pwdRe.test(t)) return null;
+  // The folder a cd leads to, named as $PWD, ${PWD}, ${PWD%/}, $(pwd), `pwd` or ~+, is that cd target. The folder a cd
+  // came from (~-, $OLDPWD, ${OLDPWD}) is any folder the command was in before: every followed folder is tried.
+  const pwdRe = /^(?:\$PWD|\$\{PWD(?:[^}]*)\}|\$\(\s*pwd(?:\s+-[LP])?\s*\)|`\s*pwd(?:\s+-[LP])?\s*`|~\+)(?=\/|$)/;
+  const oldRe = /^(?:\$OLDPWD|\$\{OLDPWD(?:[^}]*)\}|~-)(?=\/|$)/;
+  if (/^[~$`%-]/.test(t) && !pwdRe.test(t) && !oldRe.test(t)) return null;
   const cwd = path.resolve(opts.cwd || process.cwd());
   // The name as a program reads it: curl -d @file, --data-binary @file, -F f=@file;type=x, --data-urlencode k@file.
   const names = new Set([t]);
@@ -331,9 +333,11 @@ function credentialElsewhere(text, opts) {
   if ((m = /^(?:[^=@<\s]*=)?[@<]([^;]+)/.exec(t))) names.add(m[1]);
   if ((m = /^[A-Za-z0-9_.-]+@([^;@]+)$/.exec(t))) names.add(m[1]);
   for (const b of bases.dirs) {
-    if (b === cwd) continue;
     for (const n0 of names) {
-      const n = pwdRe.test(n0) ? n0.replace(pwdRe, b) : n0;
+      const old = oldRe.test(n0);
+      // The working folder is skipped for a plain relative name (classified as usual), not for a name that points back at it.
+      if (b === cwd && !old) continue;
+      const n = pwdRe.test(n0) ? n0.replace(pwdRe, b) : old ? n0.replace(oldRe, b) : n0;
       if (!n || /^[~$`%-]/.test(n)) continue;
       if (path.isAbsolute(n) && n === n0) continue;
       const full = path.isAbsolute(n) ? n : path.join(b, n);
