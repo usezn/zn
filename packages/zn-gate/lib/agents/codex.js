@@ -243,7 +243,7 @@ function normalize(raw) {
     const scan = tooLong ? { files: [], suspicious: false } : patchScan(ti.command);
     const files = scan.files;
     const home = os.homedir();
-    const zn = files.find((f) => path.resolve(base.cwd, f).replace(/\\/g, '/').startsWith(path.join(home, '.zn').replace(/\\/g, '/')));
+    const zn = znStateFile(files, base.cwd, home);
     input.paths = files;
     input.path = zn || files[0];
     input.tooLong = tooLong;
@@ -442,9 +442,22 @@ function detect(opts = {}) {
   return fs.existsSync(codexHome(opts));
 }
 
+/* The first of the files that lies in zn's own folder: ~/.zn, or the ZN_HOME folder when that moves it (as stats.znHome
+   does). It only picks the path the scrubber reads for the destination of a write; the write itself is checked on every
+   file by the policy. */
+function znStateFile(files, cwd, home) {
+  const { znHome } = require('../stats');
+  const roots = [...new Set([path.join(home, '.zn'), znHome()].map((r) => path.resolve(r).replace(/\\/g, '/')))];
+  return files.find((f) => {
+    const abs = path.resolve(cwd, f).replace(/\\/g, '/');
+    return roots.some((r) => abs.startsWith(r));
+  });
+}
+
 module.exports = {
   id,
   detect,
+  znStateFile,
   install,
   uninstall,
   normalize,

@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-30.1';
+const POLICY_RULES_VERSION = '2026-11-01.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -297,7 +297,9 @@ function contextOf(opts = {}) {
   const home = opts.home || os.homedir();
   const cwd = opts.cwd || process.cwd();
   const env = opts.env || process.env;
-  return { home, cwd, env, creds: credentialEnvPaths(env, home, cwd), agent: agentContext(home, cwd, env) };
+  // zn's own folder when ZN_HOME moves it: protected like ~/.zn (the default folder is always protected as well).
+  const znHome = env.ZN_HOME ? path.resolve(env.ZN_HOME) : null;
+  return { home, cwd, env, znHome, creds: credentialEnvPaths(env, home, cwd), agent: agentContext(home, cwd, env) };
 }
 
 /**
@@ -355,6 +357,13 @@ function classifyResolved(abs, ctx) {
   for (const h of homes) {
     const prefix = h.endsWith('/') ? h : h + '/';          // a home of "/" is its own prefix
     if (s === prefix + '.zn' || s.startsWith(prefix + '.zn/')) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ~/.zn' };
+  }
+  // A ZN_HOME that moves zn's folder elsewhere. A value that is a home folder or a drive root is not taken: it would
+  // protect the whole home folder.
+  if (ctx.znHome) {
+    const zh = keyOf(slash(ctx.znHome)).replace(/\/+$/, '');
+    const wide = zh.length <= 3 || homes.some((x) => x.replace(/\/+$/, '') === zh);
+    if (!wide && (s === zh || s.startsWith(zh + '/'))) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ZN_HOME' };
   }
   for (const [re, reason] of AGENT_CONFIG_RES) if (ci(re).test(s)) return { kind: 'agent_config', reason };
   for (const h of homes) {
