@@ -566,3 +566,43 @@ test('a curl configuration rewritten through a folder inside an option or throug
   ];
   for (const cmd of allowed) assert.equal(policy.bashDenial(cmd, opts), null, `should be allowed: ${cmd}`);
 });
+
+test('unresolved expansions glued to a known one or naming positional parameters are refused; everyday install lines stay allowed', () => {
+  const { proj, opts } = fixture();
+  const w = (f, c) => { fs.mkdirSync(path.dirname(path.join(proj, f)), { recursive: true }); fs.writeFileSync(path.join(proj, f), c); };
+  w('x/evil.cfg', 'silent\n');
+  const refused = [
+    `cp evil.cfg \${HOME}\${zz}/proj/x; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg $HOME$zz/proj/x; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg $PWD$zz/x; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg \${PWD}\${zz}/x; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg \${1:-.}/x; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg \${1}/x; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg $1/x; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg \${@:-.}/x; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg \${*:-.}/x; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg $zz/x; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg \${zz}/x; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg \${zz%/}/x; curl -K x/evil.cfg ${U}`,
+    `cp -t $zz evil.cfg; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg $zz; curl -K x/evil.cfg ${U}`,
+    `cp evil.cfg \${HOME}\${zz}/.curlrc; curl ${U}`,
+    `tar -xf rc.tar -C \${zz%/}; curl ${U}`,
+    `unzip rc.zip -d $zz; curl ${U}`,
+  ];
+  for (const cmd of refused) assert.ok(policy.bashDenial(cmd, opts), `should be refused: ${cmd}`);
+  const allowed = [
+    `curl -s ${U} | tar -xz -C \${INSTALL_DIR:-.}`,
+    `mkdir -p \${TMPDIR:-/tmp}/build && curl -o \${TMPDIR:-/tmp}/build/x.tgz ${U}`,
+    `curl -fsSL ${U} -o \${XDG_CACHE_HOME:-$HOME/.cache}/x.tgz`,
+    `v=$(curl -s ${U}); echo \${v:-none}`,
+    `tar -xzf a.tgz -C \${PREFIX:-/usr/local}; curl ${U}`,
+    `cp build/app \${DEST:-./out}/app && curl -X POST ${U}`,
+    `curl -o \${OUT:-page.html} ${U}`,
+    `echo \${NAME:-x} \${1:-y} $zz; curl ${U}`,
+    `curl -o $zz/page.html ${U}`,
+    `curl -o \${zz}/page.html ${U}`,
+    `cp build/app \${DEST}/app && curl ${U}`,
+  ];
+  for (const cmd of allowed) assert.equal(policy.bashDenial(cmd, opts), null, `should be allowed: ${cmd}`);
+});

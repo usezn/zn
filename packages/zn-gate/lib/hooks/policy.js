@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.26';
+const POLICY_RULES_VERSION = '2026-11-01.7';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1539,6 +1539,49 @@ function parseCurlConfig(content, opts, depth) {
   return { items, paths };
 }
 
+/* The expansions of one word of a command that may rewrite a curl configuration. $HOME and ${HOME} are the home folder.
+   ${NAME:-literal} and ${NAME-literal} of a variable that zn does not track, with a plain literal default, are that
+   literal. $PWD and ${PWD} stay for the caller. Every other expansion (positional and special parameters, a variable
+   zn does not resolve, a variable with an operator, ${HOME:-x}, ${PWD:-x}) may be empty or any folder: it becomes a
+   marker. A marker glued after other text becomes `*`; a marker that starts the word is a leading expansion, returned
+   with the text that follows it. { refuse: true } for $OLDPWD, which zn cannot follow. */
+const UNKNOWN_EXP = '\u0001';
+function resolveWordExpansions(c, home) {
+  let s = String(c).replace(/\$\{HOME\}|\$HOME(?![A-Za-z0-9_])/g, () => home);
+  if (!s.includes('$')) return { text: s };
+  let refuse = false;
+  s = s.replace(/\$\{([^}]*)\}|\$([A-Za-z_][A-Za-z0-9_]*|[0-9@*])/g, (all, inner, bare) => {
+    const name = inner !== undefined ? inner : bare;
+    if (/^OLDPWD$/.test(name) || /^OLDPWD[^A-Za-z0-9_]/.test(name)) { refuse = true; return all; }
+    if (inner === undefined || /^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*])$/.test(inner)) {
+      return name === 'PWD' || name === 'ZN_HOME' ? all : UNKNOWN_EXP;
+    }
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)(?::?-)([A-Za-z0-9_.\/-]*)$/.exec(inner);
+    if (m && !/^(?:HOME|PWD|OLDPWD)$/.test(m[1])) return m[2];
+    return UNKNOWN_EXP;
+  });
+  if (refuse) return { refuse: true };
+  if (!s.includes(UNKNOWN_EXP)) return { text: s };
+  if (s.startsWith(UNKNOWN_EXP)) return { lead: s.replace(/^\u0001+/, '').replace(/\u0001/g, '*') };
+  return { text: s.replace(/\u0001/g, '*') };
+}
+
+/* True when a word that starts with an expansion zn cannot resolve (any folder) followed by `tail` may name one of the
+   wanted paths: the tail ends the path or a folder that holds it. */
+function leadingExpansionHolds(tail, want) {
+  const t = slash(tail).replace(/\/+$/, '');
+  if (!t) return false;
+  const re = new RegExp(t.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\?/g, '[^/]').replace(/\*/g, '[^/]*') + '$');
+  return want.some((q) => {
+    let a = slash(q);
+    while (a && a !== '/') {
+      if (re.test(a)) return true;
+      a = a.slice(0, Math.max(a.lastIndexOf('/'), 0));
+    }
+    return false;
+  });
+}
+
 /* True when a word of the command other than curl's own -K/--config value (and other than a cd target) may name one
    of the given paths, so the command may write that file before curl reads it: the path itself (cat > cfg <<EOF, cp,
    mv, ln -sf, sed -i, dd of=cfg), a folder that holds it (cp evil.cfg x/, cp -r dir/. ~/, rsync, cp -t x) or a
@@ -1559,12 +1602,15 @@ function pathsNamedElsewhere(readings, paths, opts) {
     return path.isAbsolute(exp) ? [path.resolve(exp)] : dirs.map((d) => path.resolve(d, exp));
   };
   for (const r of readings) {
-    for (const w of r) {
+    for (let wi = 0; wi < r.length; wi++) {
+      const w = r[wi];
       if (w.curlCfgValue) continue;
       if (CD_CMDS.has(bareHead(w.head).toLowerCase())) continue;
       const t = String(w.text).replace(/^["']+|["']+$/g, '');
       if (!t || /^[a-z][a-z0-9+.-]*:\/\//i.test(t)) continue;
-      const cands = new Set();
+      let cands = new Set();
+      const prog0 = path.basename(bareHead(w.head)).toLowerCase();
+      let folderWord = /^(?:cp|mv|install|ln|rsync|gcp|gmv|ginstall|gln)$/.test(prog0);
       if (/^-/.test(t)) {
         // An option that holds a folder: --target-directory=DIR, --directory=DIR, and a glued short option of the
         // programs that write into a folder (cp/mv/install/ln -tDIR, tar -CDIR).
@@ -1578,7 +1624,10 @@ function pathsNamedElsewhere(readings, paths, opts) {
         if (/^(?:unzip|funzip|bsdunzip)$/.test(prog) && (m = /^-[A-Za-z]*?d(.+)$/.exec(t))) cands.add(m[1]);
         if (/^(?:7z|7za|7zr|7zz)$/.test(prog) && (m = /^-o(.+)$/.exec(t))) cands.add(m[1]);
         if (!cands.size) continue;
+        folderWord = true;
       } else {
+        const pv = wi > 0 ? String(r[wi - 1].text) : '';
+        if (/^(?:-[A-Za-z]*[Ctd]|--target-directory|--directory)$/.test(pv)) folderWord = true;
         cands.add(t);
         const eq = t.indexOf('=');
         if (eq >= 0) { cands.add(t.slice(eq + 1)); cands.add(t.slice(t.lastIndexOf('=') + 1)); }
@@ -1586,9 +1635,22 @@ function pathsNamedElsewhere(readings, paths, opts) {
       // $PWD and ${PWD} are the folder the command is in (each place a cd may lead to); $OLDPWD is not known, so a word
       // that names a folder through it is taken to name the configuration.
       if ([...cands].some((c) => /\$\{?OLDPWD\b/.test(c))) return true;
-      // ${PWD:-x}, ${HOME:-~}, ${HOME%/}, ${!v}, ${#v} and any other expansion of a variable that zn does not resolve: the word
-      // counts as naming the configuration. Plain ${NAME} is handled below and by the home expansion.
-      if ([...cands].some((c) => /\$\{(?:!|#|[A-Za-z_][A-Za-z0-9_]*[^A-Za-z0-9_}])/.test(c))) return true;
+      // Expansions of variables zn does not resolve (${HOME:-~}, ${PWD%/}, ${!v}, ${1:-.}, ${@}, $zz, ${HOME}${zz}): an
+      // unset variable is empty, so they may name any folder. A word that is only such an expansion counts when it is the
+      // destination folder of a program that writes into one; a word with a literal tail counts when the tail ends a
+      // wanted path or a folder that holds one. A default that is a plain literal (${DIR:-.}) is that literal.
+      {
+        const home0 = opts.home || os.homedir();
+        const next = new Set();
+        for (const c of cands) {
+          const rr = resolveWordExpansions(c, home0);
+          if (rr.refuse) return true;
+          if (rr.lead === undefined) { next.add(rr.text); continue; }
+          if (!slash(rr.lead).replace(/\/+$/, '')) { if (folderWord) return true; continue; }
+          if (leadingExpansionHolds(rr.lead, want)) return true;
+        }
+        cands = next;
+      }
       for (const c of [...cands]) {
         if (!/\$\{?PWD\b/.test(c)) continue;
         cands.delete(c);
