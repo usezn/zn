@@ -310,6 +310,20 @@ try {
     });
   }
 
+  // The Windows hook runs under scripts/zn-hook-win.cmd, so the process that started the PowerShell script is cmd.exe, not ZCode.
+  // Measured on the ZCode desktop app 3.16.3: a fallback that took the parent as Node.js and trusted exit code 0 ran cmd.exe as
+  // "node", which read the event as commands and let every call through. These checks run on every system.
+  test('zn-hook.ps1 never takes a shell or script host for Node.js, and reads the version Node.js prints', () => {
+    const text = fs.readFileSync(path.join(ZC, 'scripts', 'zn-hook.ps1'), 'utf8');
+    assert.ok(/ZNPROBE/.test(text) && /function VersionOk/.test(text), 'the probe prints a version that is parsed');
+    assert.ok(!/return \(\$p\.ExitCode -eq 0\)/.test(text), 'the exit code alone never decides');
+    for (const shell of ['cmd.exe', 'powershell.exe', 'pwsh.exe', 'conhost.exe', 'wscript.exe', 'cscript.exe', 'bash.exe', 'sh.exe']) {
+      assert.ok(text.includes("'" + shell + "'"), shell + ' is skipped as a parent');
+    }
+    assert.ok(/\$lvl -lt 6/.test(text), 'the chain of parents is walked up, with a limit');
+    assert.ok(/Refuse 'no Node\.js 20\.19 or later was found/.test(text), 'with no valid Node.js the hook blocks');
+  });
+
   if (posix) {
     const HOOK = path.join(ZC, 'scripts', 'zn-hook.sh');
     // Small fixed parent scripts (written once, no command string built at run time); the values arrive as arguments.
