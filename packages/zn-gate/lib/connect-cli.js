@@ -142,6 +142,9 @@ async function connect(args, io) {
     c.err(looksLikeKey ? messages.CONNECT_KEY_ON_COMMAND_LINE + '\n' : USAGE_CONNECT);
     return 2;
   }
+  // Refused before anything is stored: a key saved in the keychain or vault
+  // would have no setting to point at it.
+  try { cloudKey.checkWritable(); } catch (e) { c.err(String(e.message) + '\n'); return 1; }
   try { c.tty.requireHuman('zn-gate connect', c.ttyIo); } catch (e) {
     c.err(String(e.message) + '\n');
     return 1;
@@ -245,6 +248,8 @@ async function disconnect(args, io) {
   const c = defaults(io);
   const flags = args.filter((a) => a === '--revoke' || a === '--no-revoke');
   if (flags.length !== args.length || new Set(flags).size > 1) { c.err(USAGE_DISCONNECT); return 2; }
+  // Refused before anything is removed or revoked.
+  try { cloudKey.checkWritable(); } catch (e) { c.err(String(e.message) + '\n'); return 1; }
   try { c.tty.requireHuman('zn-gate disconnect', c.ttyIo); } catch (e) {
     // Nothing is removed and nothing is revoked without a person at the terminal.
     c.err(String(e.message) + '\n'

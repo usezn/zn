@@ -14,7 +14,9 @@ const { spawnSync } = require('child_process');
 const PKG = path.resolve(__dirname, '..');
 const CLI = path.join(PKG, 'bin', 'cli.js');
 const RUNNER = path.join(PKG, 'lib', 'hooks', 'runner.js');
-const { readUserConfig, displayPath } = require(path.join(PKG, 'lib', 'user-config.js'));
+const { readUserConfig, assertWritable, ConfigUnusableError, displayPath } = require(path.join(PKG, 'lib', 'user-config.js'));
+
+const REFUSED = 'is not valid JSON, so zn-gate did not change it. Fix or remove the file.';
 
 const INVALID = 'is not valid JSON, so zn-gate is using default settings. Fix or remove the file.';
 
@@ -119,4 +121,66 @@ test('hook: invalid file gives one stderr line per process and the same verdict'
 test('hook: valid file gives no warning', () => {
   const res = hook(BASH_LS, tmpHome('valid'));
   assert.equal(res.stderr.includes('zn hook:'), false);
+});
+
+// ---- writers: an unusable file is never overwritten ----
+
+const BROKEN = '{ this is not json';
+
+function brokenHome() {
+  const home = tmpHome('invalid');
+  return { home, file: path.join(home, '.zn', 'config.json') };
+}
+
+test('assertWritable: unusable file throws and keeps its bytes; valid and missing files pass', () => {
+  const { file } = brokenHome();
+  assert.throws(() => assertWritable(file), (e) => e instanceof ConfigUnusableError && e.code === 'ZN_CONFIG_UNUSABLE' && e.message === displayPath(file) + ' ' + REFUSED);
+  assert.equal(fs.readFileSync(file, 'utf8'), BROKEN);
+  const ok = tmpHome('valid');
+  assert.doesNotThrow(() => assertWritable(path.join(ok, '.zn', 'config.json')));
+  assert.doesNotThrow(() => assertWritable(path.join(tmpHome('missing'), '.zn', 'config.json')));
+});
+
+test('stats share off: unusable file is refused, exit 1, stderr says so, bytes unchanged', () => {
+  const { home, file } = brokenHome();
+  const res = cli(['stats', 'share', 'off'], home);
+  assert.equal(res.status, 1);
+  assert.ok(res.stderr.includes('~/.zn/config.json ' + REFUSED), res.stderr);
+  assert.equal(fs.readFileSync(file, 'utf8'), BROKEN);
+});
+
+test('stats share on: unusable file is refused before the confirmation question', () => {
+  const { home, file } = brokenHome();
+  const res = cli(['stats', 'share', 'on'], home);
+  assert.equal(res.status, 1);
+  assert.doesNotMatch(res.stdout, /Turn on sharing/);
+  assert.match(res.stderr, /did not change it/);
+  assert.equal(fs.readFileSync(file, 'utf8'), BROKEN);
+});
+
+test('stats share off: valid file is written as before, other settings kept', () => {
+  const home = tmpHome('valid');
+  const file = path.join(home, '.zn', 'config.json');
+  const res = cli(['stats', 'share', 'off'], home);
+  assert.equal(res.status, 0);
+  const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(cfg.stats.share, false);
+  assert.deepEqual(cfg.hooks, { blockDestructiveCommands: 'off' });
+});
+
+test('stats share off: missing file is created as before', () => {
+  const home = tmpHome('missing');
+  const res = cli(['stats', 'share', 'off'], home);
+  assert.equal(res.status, 0);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home, '.zn', 'config.json'), 'utf8')).stats.share, false);
+});
+
+test('connect and disconnect: unusable file is refused before anything is stored or removed', () => {
+  for (const args of [['connect'], ['disconnect']]) {
+    const { home, file } = brokenHome();
+    const res = cli(args, home);
+    assert.equal(res.status, 1, args.join(' '));
+    assert.match(res.stderr, /did not change it/, args.join(' '));
+    assert.equal(fs.readFileSync(file, 'utf8'), BROKEN, args.join(' '));
+  }
 });

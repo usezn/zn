@@ -100,10 +100,24 @@ test('malformed file: treated as no marker and replaced on the next save', async
       assert.equal(cloudKey.isConnected(), false);
       assert.equal(await cloudKey.loadStoredKey(), null);
     }
+    // A file that cannot be used is never replaced by a save: the save is refused before the key is stored.
     fs.writeFileSync(file, '{not json');
+    cloudKey._use(fakeKeychain());
+    await assert.rejects(cloudKey.saveKey(FAKE_KEY), (e) => e.code === 'ZN_CONFIG_UNUSABLE');
+    assert.equal(fs.readFileSync(file, 'utf8'), '{not json');
+    assert.equal(cloudKey.readMarker(), null);
+  });
+});
+
+test('malformed file: a save replaces a missing file and a valid one as before', async () => {
+  await withTempHome(async (home, file) => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
     cloudKey._use(fakeKeychain());
     await cloudKey.saveKey(FAKE_KEY);
     assert.equal(cloudKey.readMarker().store, 'keychain');
+    fs.writeFileSync(file, JSON.stringify({ hooks: { egressCheck: 'off' }, cloud: { store: 'keychain' } }));
+    await cloudKey.saveKey(FAKE_KEY);
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).hooks.egressCheck, 'off');
   });
 });
 

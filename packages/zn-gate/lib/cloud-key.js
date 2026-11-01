@@ -24,7 +24,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { readUserConfig } = require('./user-config');
+const { readUserConfig, assertWritable } = require('./user-config');
 
 const KEY_RE = /^[A-Za-z0-9._-]{16,256}$/;
 const VAULT_SECRET = 'ZN_CLOUD_API_KEY';
@@ -129,8 +129,14 @@ function readConfig() {
   return readUserConfig(configFile()).config;
 }
 
+/** Throws ConfigUnusableError when the settings file exists and cannot be used; nothing is written then. */
+function checkWritable() {
+  assertWritable(configFile());
+}
+
 function writeConfig(cfg) {
   const file = configFile();
+  assertWritable(file);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 });
@@ -214,6 +220,8 @@ class NoSecureStore extends Error {
 /** Store the key and record the marker. Returns the store used. Throws NoSecureStore or the store's error. */
 async function saveKey(key, deps) {
   if (!usableApiKey(key)) throw new Error('not a usable API key');
+  // Checked before the key is stored: a key with no setting to point at it would be left behind.
+  checkWritable();
   const store = await availableStore(deps);
   if (!store) throw new NoSecureStore();
   if (store === 'keychain') {
@@ -303,6 +311,7 @@ module.exports = {
   usableApiKey,
   looksLikeZnKey,
   last4,
+  checkWritable,
   readMarker,
   forgetMarker,
   isConnected,

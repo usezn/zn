@@ -19,8 +19,31 @@ function displayPath(file) {
   return file;
 }
 
-function unusable(shown, why) {
-  return { config: {}, error: shown + ' ' + why + ', so zn-gate is using default settings. Fix or remove the file.' };
+/** The sentence for a file that exists but cannot be used. `effect` says what zn-gate does instead. */
+function describe(problem, effect) {
+  return problem.shown + ' ' + problem.why + ', so zn-gate ' + effect + '. Fix or remove the file.';
+}
+
+/** {config, problem}: problem is null, or {shown, why} for a file that exists and cannot be used. */
+function probe(file) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { config: {}, problem: null };
+    return { config: {}, problem: { shown: displayPath(file), why: 'cannot be read' } };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (_) {
+    return { config: {}, problem: { shown: displayPath(file), why: 'is not valid JSON' } };
+  }
+  if (parsed === null) return { config: {}, problem: null };
+  if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { config: {}, problem: { shown: displayPath(file), why: 'is not a JSON object' } };
+  }
+  return { config: parsed, problem: null };
 }
 
 /**
@@ -29,22 +52,27 @@ function unusable(shown, why) {
  * person, or null. A missing file is not an error.
  */
 function readUserConfig(file) {
-  let text;
-  try {
-    text = fs.readFileSync(file, 'utf8');
-  } catch (e) {
-    if (e && e.code === 'ENOENT') return { config: {}, error: null };
-    return unusable(displayPath(file), 'cannot be read');
+  const p = probe(file);
+  return { config: p.config, error: p.problem ? describe(p.problem, 'is using default settings') : null };
+}
+
+/** Thrown by a command that would write the file when the file exists and cannot be used. */
+class ConfigUnusableError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ConfigUnusableError';
+    this.code = 'ZN_CONFIG_UNUSABLE';
   }
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch (_) {
-    return unusable(displayPath(file), 'is not valid JSON');
-  }
-  if (parsed === null) return { config: {}, error: null };
-  if (typeof parsed !== 'object' || Array.isArray(parsed)) return unusable(displayPath(file), 'is not a JSON object');
-  return { config: parsed, error: null };
+}
+
+/**
+ * Called before any write to the settings file. A missing file is fine (it is
+ * created). An existing file that cannot be used is never overwritten: that
+ * would throw away the person's settings. The file is not touched either way.
+ */
+function assertWritable(file) {
+  const p = probe(file);
+  if (p.problem) throw new ConfigUnusableError(describe(p.problem, 'did not change it'));
 }
 
 /**
@@ -62,4 +90,4 @@ function userConfigProblems(env = process.env) {
   return files.map((f) => readUserConfig(f).error).filter(Boolean);
 }
 
-module.exports = { readUserConfig, userConfigProblems, displayPath };
+module.exports = { readUserConfig, assertWritable, ConfigUnusableError, userConfigProblems, displayPath };

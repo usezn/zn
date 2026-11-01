@@ -69,6 +69,17 @@ function printSummary(s, out) {
   if (!stats.enabled()) out('  Counting is off on this machine (ZN_STATS=off).\n');
 }
 
+/** True (after printing the reason to stderr) when the settings file exists and cannot be written. */
+function refusedToWrite() {
+  try {
+    share.checkWritable();
+    return false;
+  } catch (e) {
+    process.stderr.write(String(e.message) + '\n');
+    return true;
+  }
+}
+
 function explainShare(out) {
   out('What is shared, once a day, only if you turn sharing on: a random id for this installation (a new one each time you turn sharing on), the day, the zn-gate version, the operating system, the Node.js version, the agent and part of zn-gate used most that day, and how many secrets of each built-in type were found (for example AWS_KEY 3). Never secret values, prompts, variable or secret names, file names, paths, repository names, hosts or emails.\n');
   out(`Where: ${share.ENDPOINT}.\n`);
@@ -79,6 +90,8 @@ async function run(args, out = (s) => process.stdout.write(s), { confirm = confi
   if (o.bad) { out(USAGE); return 2; }
   if (o.rest[0] === 'share') {
     const sub = o.rest[1] || 'status';
+    // Refused before the confirmation question and before any write.
+    if ((sub === 'on' || sub === 'off') && refusedToWrite()) return 1;
     if (sub === 'on') {
       if (share.status().share) { out('Sharing pseudonymous daily counts is already on.\n'); return 0; }
       explainShare(out);
