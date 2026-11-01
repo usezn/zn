@@ -638,7 +638,9 @@ def _is_rc_path(w: str) -> bool:
 def _norm_path(w: str) -> str:
     t = str(w).replace("\\", "/")
     t = re.sub(r"^~/", "/", t)
-    return re.sub(r"^\$\{?home\}?/", "/", t, flags=re.I)
+    t = re.sub(r"^\$\{?home\}?/", "/", t, flags=re.I)
+    t = re.sub(r"/{2,}", "/", t)
+    return re.sub(r"^(?:\./)+", "", t)
 
 
 def _head_names(words: List[str]) -> List[str]:
@@ -672,6 +674,14 @@ def _download_targets(pipe: List[Tuple[List[str], Optional[str]]]) -> List[str]:
             if t:
                 out.append(_norm_path(t))
     return out
+
+
+def _reads_download(words: List[str], downloaded: set) -> bool:
+    """cat F, type F or Get-Content F where F is a file the line downloaded: an earlier stage that feeds a pipe."""
+    a = _unwrap(words)
+    if not a or _program_name(a[0]) not in ("cat", "type", "get-content", "gc"):
+        return False
+    return any(not w.startswith("-") and _norm_path(w) in downloaded for w in a[1:])
 
 
 def _installs_download(words: List[str], downloaded: set, from_pipe: bool) -> bool:
@@ -826,7 +836,8 @@ def _check_segments(segs: List[Tuple[List[str], Optional[str]]], depth: int) -> 
         first = next((k for k, (words, _s) in enumerate(p) if any(n in _DOWNLOADERS for n in _head_names(words))), -1)
         if local or first >= 0:
             for k, (words, _s) in enumerate(p):
-                if _installs_download(words, local, first >= 0 and k > first):
+                fed = (first >= 0 and k > first) or any(_reads_download(w2, local) for w2, _s2 in p[:k])
+                if _installs_download(words, local, fed):
                     return "rc_download"
         downloaded.update(here)
         return None

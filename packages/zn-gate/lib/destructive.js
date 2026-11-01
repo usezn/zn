@@ -384,7 +384,8 @@ function isRcPath(w) {
 }
 
 function normPath(w) {
-  return String(w).replace(/\\/g, '/').replace(/^~\//, '/').replace(/^\$\{?home\}?\//i, '/');
+  return String(w).replace(/\\/g, '/').replace(/^~\//, '/').replace(/^\$\{?home\}?\//i, '/')
+    .replace(/\/{2,}/g, '/').replace(/^(?:\.\/)+/, '');
 }
 
 function headNames(s) {
@@ -412,6 +413,13 @@ function downloadTargets(pipe) {
     }
   });
   return out;
+}
+
+/* cat F, type F or Get-Content F where F is a file the line downloaded: an earlier stage that feeds a pipe. */
+function readsDownload(words, downloaded) {
+  const a = unwrap(words);
+  if (!a.length || !/^(?:cat|type|get-content|gc)$/.test(programName(a[0]))) return false;
+  return a.slice(1).some((w) => !w.startsWith('-') && downloaded.has(normPath(w)));
 }
 
 /* A command that installs or enables a file the same command line just downloaded (crontab F, launchctl load F,
@@ -538,7 +546,8 @@ function checkSegments(segs, depth) {
     const first = p.map(headNames).findIndex((names) => names.some((n) => DOWNLOADERS.has(n)));
     if (local.size || first >= 0) {
       for (let k = 0; k < p.length; k++) {
-        if (installsDownload(p[k].words, local, first >= 0 && k > first)) return 'rc_download';
+        const fed = (first >= 0 && k > first) || p.slice(0, k).some((st) => readsDownload(st.words, local));
+        if (installsDownload(p[k].words, local, fed)) return 'rc_download';
       }
     }
     for (const t of here) downloaded.add(t);
