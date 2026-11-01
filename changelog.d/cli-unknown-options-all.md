@@ -1,0 +1,2 @@
+### Fixed
+- `zn-gate status`, `test`, `check`, `doctor`, `version`, `evidence`, `logs`, `export`, `mcp`, `shield`, `secrets-mcp`, `report`, `stats`, `pins`, `team status|sync|leave|join`, `vault log` and `secret`/`env` subcommands now refuse an unknown option instead of ignoring it. The message names the option and lists the options the command takes. Exit code is 2, or 64 for the `secret`, `env` and `vault log` commands, as documented. Nothing is written to standard output.

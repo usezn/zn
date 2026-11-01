@@ -935,12 +935,19 @@ async function runReachCommand(rest) {
 }
 
 // Options of scan and analyze: parsing and the --opt=value form live in lib/cli-args.js.
-const { expandEqualsOptions, optionProblem, scanTargetOf } = require('../lib/cli-args');
+const { expandEqualsOptions, optionProblem, scanTargetOf, simpleOptionProblem } = require('../lib/cli-args');
 
 async function main() {
   const rawArgs = process.argv.slice(2);
   // scan and analyze accept --opt=value: it is split into --opt value before the parser reads the arguments.
   const args = (rawArgs[0] === 'scan' || rawArgs[0] === 'analyze') ? expandEqualsOptions(rawArgs[0], rawArgs) : rawArgs;
+  // Commands that take a fixed set of options refuse any other one before they run, instead of ignoring it.
+  const unknownOption = simpleOptionProblem(args);
+  if (unknownOption) {
+    process.stderr.write('zn-gate: ' + unknownOption.message + '\n');
+    process.exitCode = unknownOption.code;
+    return;
+  }
   if (args[0] === 'audit') {
     await runAuditCommand(args.slice(1));
     return;

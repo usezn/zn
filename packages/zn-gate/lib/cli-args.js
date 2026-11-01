@@ -89,4 +89,83 @@ function scanTargetOf(args) {
   return '.';
 }
 
-module.exports = { COMMAND_OPTIONS, expandEqualsOptions, optionProblem, scanTargetOf };
+// Commands whose options are checked by name before they run. Each command reads its own values, so only the names
+// are listed here: the options its handler and docs/cli.md give it. -h, --help, -V and --version are always accepted.
+const CLOUD_OPTIONS = CLOUD_VALUE_OPTIONS.concat(CLOUD_FLAG_OPTIONS);
+const EVIDENCE_OPTIONS = ['--verify', '--ui', '--export', '--format', '--output', '--port', '--tail'];
+const SHIELD_OPTIONS = CLOUD_OPTIONS.concat(['--shadow']);
+const SECRET_SET_OPTIONS =['--mode', '--in', '--host', '--command', '--type', '--force', '--clipboard'];
+const SIMPLE_OPTIONS = {
+  'status': CLOUD_OPTIONS,
+  'test': CLOUD_OPTIONS,
+  'check': ['--verbose'],
+  'doctor': ['--verbose'],
+  'version': [],
+  'evidence': EVIDENCE_OPTIONS,
+  'logs': EVIDENCE_OPTIONS,
+  'export': EVIDENCE_OPTIONS,
+  'mcp': CLOUD_OPTIONS,
+  'shield': SHIELD_OPTIONS,
+  'wrap': SHIELD_OPTIONS,
+  'mcp-shield': SHIELD_OPTIONS,
+  'secrets-mcp': ['--agent'],
+  'report': ['--since', '--json', '--no-team-line'],
+  'stats': ['--days', '--json'],
+  'pins': ['--all'],
+  'team status': ['--json'],
+  'team sync': [],
+  'team leave': [],
+  'team join': ['--api', '--agent', '--include-history'],
+  'vault log': ['--since'],
+  'vault log export': ['--otlp', '--since', '--out', '--unverified'],
+  'secret set': SECRET_SET_OPTIONS,
+  'secret list': [],
+  'secret ls': [],
+  'secret rm': [],
+  'secret allow': ['--host', '--in', '--replace', '--mode', '--command'],
+  'secret approve': ['--command'],
+  'secret import': ['--all', '--keys', '--host', '--command', '--force', '--mode', '--in', '--type'],
+  'secret adopt': ['--name', '--host', '--command', '--mode', '--in', '--type'],
+  'secret log': ['--since'],
+  'env shadow': ['--all', '--keys', '--host', '--command', '--force', '--dry-run', '--mode', '--in', '--type'],
+  'env unshadow': ['--backup'],
+};
+
+// The SIMPLE_OPTIONS entry for these arguments, or null. Secret, env and vault log usage errors exit 64
+// (docs/exit-codes.md); the other commands exit 2 (docs/cli.md).
+function simpleOptionSpec(args) {
+  const [first, second, third] = args;
+  if (!['team', 'secret', 'secrets', 'env', 'vault', 'pins'].includes(first) && !SIMPLE_OPTIONS[first]) return null;
+  let key = first === 'secrets' ? 'secret' : first;
+  if (key !== first || ['team', 'secret', 'env', 'vault'].includes(first)) {
+    if (!second) return null;
+    key = key + ' ' + second;
+    if (first === 'vault' && second === 'log' && third === 'export') key = 'vault log export';
+  }
+  if (!Object.prototype.hasOwnProperty.call(SIMPLE_OPTIONS, key)) return null;
+  const code = /^(secret|env|vault log)( |$)/.test(key) ? 64 : 2;
+  return { label: key, options: SIMPLE_OPTIONS[key], code };
+}
+
+// The problem with an option that the command does not take, as { message, code }, or null.
+// Stops at a bare "--": everything after it is positional text.
+function simpleOptionProblem(args) {
+  const spec = simpleOptionSpec(args);
+  if (!spec) return null;
+  const allowed = ['-h', '--help', '-V', '--version'].concat(spec.options);
+  for (let i = 1; i < args.length; i++) {
+    const tok = args[i];
+    if (tok === '--') break;
+    if (!tok.startsWith('--')) continue;
+    const name = tok.split('=')[0];
+    if (allowed.includes(name)) continue;
+    const shown = tok.replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
+    const list = spec.options.length
+      ? 'The options of zn-gate ' + spec.label + ' are ' + spec.options.join(', ') + '.'
+      : 'zn-gate ' + spec.label + ' takes no options.';
+    return { message: 'unknown option "' + shown + '". ' + list, code: spec.code };
+  }
+  return null;
+}
+
+module.exports = { COMMAND_OPTIONS, expandEqualsOptions, optionProblem, scanTargetOf, simpleOptionProblem };
