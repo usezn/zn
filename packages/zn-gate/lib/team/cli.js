@@ -53,12 +53,31 @@ function withClient(fn) {
   return Promise.resolve(fn(c)).finally(() => c.close());
 }
 
+/* What an expired cached policy means on this machine; shared by `zn team status` and `zn team sync`. */
+const STRICT_MODE = 'strict mode (only restrictions apply)';
+
 function describePolicy(p) {
   if (!p || p.state === 'none') return 'none received yet (PENDING: the organization policy is not applied; run `zn team sync`)';
   if (p.state === 'invalid') return 'cached copy does not verify (' + (p.error || 'invalid') + '); run `zn team sync`';
   const base = 'version ' + p.version + ', valid until ' + p.expires_at;
-  if (p.state === 'expired') return base + ' -- EXPIRED: strict mode (only restrictions apply) until zn can reach the server';
+  if (p.state === 'expired') return base + ' -- EXPIRED: ' + STRICT_MODE + ' until zn can reach the server';
   return base;
+}
+
+/*
+ * One line for `zn team sync` when it could not reach the server and the saved policy has already expired: the same
+ * state `zn team status` reads (daemon first, the cache file when the vault is locked). Null when the policy is valid.
+ */
+async function offlineExpiredNote() {
+  let st = null;
+  try {
+    const info = await withClient((c) => c.teamInfo());
+    if (info && info.joined) st = info.policy;
+  } catch (e) { st = null; }
+  if (!st) { try { st = policy.state(); } catch (e) { st = null; } }
+  if (!st || st.state !== 'expired') return null;
+  return 'Your saved organization policy (version ' + st.version + ') expired on ' + st.expires_at + ', so this machine is in ' +
+    STRICT_MODE + ' until a sync works.';
 }
 
 /* First non-empty line of standard input, trimmed. Never echoed. */
@@ -225,6 +244,8 @@ async function syncCmd() {
   else if (special === 'inactive') err('[zn] ' + messages.teamSyncInactive(r.upload.pending));
   else if (special === 'offline') {
     err('[zn] ' + messages.teamSyncNoNetwork().split('\ndetails: ')[0]);
+    const expired = await offlineExpiredNote();
+    if (expired) err('[zn] ' + expired);
     if (isVerbose() && pol.error) err('[zn] details: ' + pol.error);
   } else if (!o.ok) err('[zn] sync incomplete: ' + o.problems.join('; '));
   return o.ok ? 0 : 1;
