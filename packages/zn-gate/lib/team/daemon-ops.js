@@ -36,6 +36,9 @@ const NAME_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
 const ALERT_EVERY_MS = 6 * 3600 * 1000; // a sync that keeps failing leaves one local alert every 6 hours
 const REVOCATION_GIVE_UP_MS = 30 * 24 * 3600 * 1000; // a revocation the server never confirms is dropped after 30 days
 const MAX_PENDING_REVOCATIONS = 8;
+// Installations whose pending revocation was pushed out of the list above (it kept a token). Only the ids are kept
+// (org, install id, time: about 100 bytes each, 20 KB at most) until the server confirms or an admin dismisses them.
+const MAX_DROPPED_KEPT = 200;
 
 const osName = () => (['linux', 'darwin', 'win32'].includes(process.platform) ? process.platform : 'other');
 /* Text from the server shown in dialogs and in `zn team status`: printable only (same invisible set as the dialogs). */
@@ -235,11 +238,45 @@ function makeTeamOps(ctx) {
     }));
   }
 
-  /* Warning for `zn team status`: pending revocations that were dropped for lack of room (kept for 30 days). Never a token. */
-  function droppedView(s) {
+  /*
+   * s.revocationsDropped = {items: [{org, install_id, dropped_at}], omitted, last_at, last_org, last_install_id}: the
+   * installations whose revocation was dropped for lack of room. Never a token. The entry stays until the server
+   * confirms (a record with the same install id is told successfully) or an admin dismisses it (teamDismissDropped);
+   * it does not expire. Beyond MAX_DROPPED_KEPT the oldest ids are forgotten and only counted (omitted).
+   * An entry written by an older version (count and last_* only) is read as its last id plus (count - 1) omitted.
+   */
+  function droppedState(s) {
     const d = s.revocationsDropped;
-    if (!d || !Number.isInteger(d.count) || d.count < 1 || !Number.isFinite(Date.parse(d.last_at)) || Date.now() - Date.parse(d.last_at) > REVOCATION_GIVE_UP_MS) return null;
-    return { count: d.count, last_at: printable(d.last_at, 40), last_org: printable(d.last_org, 40) || null, last_install_id: printable(d.last_install_id, 64) || null };
+    if (!d || typeof d !== 'object') return null;
+    let items = [];
+    if (Array.isArray(d.items)) {
+      items = d.items.filter((x) => x && typeof x.install_id === 'string').map((x) => ({ org: x.org || null, install_id: x.install_id, dropped_at: x.dropped_at || null }));
+    } else if (typeof d.last_install_id === 'string') {
+      items = [{ org: d.last_org || null, install_id: d.last_install_id, dropped_at: d.last_at || null }];
+    }
+    let omitted = Number.isInteger(d.omitted) && d.omitted > 0 ? d.omitted : 0;
+    if (!Array.isArray(d.items) && Number.isInteger(d.count) && d.count > items.length) omitted = d.count - items.length;
+    if (!items.length && !omitted) return null;
+    return { items, omitted, last_at: d.last_at || null };
+  }
+  function saveDropped(s, d) {
+    if (!d || (!d.items.length && !d.omitted)) { delete s.revocationsDropped; return; }
+    while (d.items.length > MAX_DROPPED_KEPT) { d.items.shift(); d.omitted += 1; }
+    const last = d.items[d.items.length - 1];
+    s.revocationsDropped = { items: d.items, omitted: d.omitted, last_at: d.last_at, last_org: last ? last.org : null, last_install_id: last ? last.install_id : null };
+  }
+
+  /* Warning for `zn team status`: pending revocations that were dropped for lack of room. Never a token. */
+  function droppedView(s) {
+    const d = droppedState(s);
+    if (!d) return null;
+    const last = d.items[d.items.length - 1];
+    return {
+      count: d.items.length + d.omitted, last_at: printable(d.last_at, 40) || null,
+      last_org: last ? printable(last.org, 40) || null : null, last_install_id: last ? printable(last.install_id, 64) || null : null,
+      installations: d.items.map((x) => ({ org: printable(x.org, 40) || null, install_id: printable(x.install_id, 64), dropped_at: printable(x.dropped_at, 40) || null })),
+      omitted: d.omitted,
+    };
   }
 
   /*
@@ -264,10 +301,12 @@ function makeTeamOps(ctx) {
       if ((skip && sameRevocation(skip, rec)) || (Date.parse(rec.next_try_at) > now)) { sum.pending += 1; continue; }
       const r = await askServerToRevoke(rec);
       sum.tried += 1;
-      await updatePending((list) => {
+      await updatePending((list, s) => {
         const i = list.findIndex((x) => sameRevocation(x, rec));
         if (i < 0) return;
         if (r.done) {
+          const d = droppedState(s);
+          if (d && d.items.some((x) => x.install_id === rec.install_id)) { d.items = d.items.filter((x) => x.install_id !== rec.install_id); saveDropped(s, d); }
           list.splice(i, 1);
           writeAudit({ mode: 'remove', decision: 'allow', reason: 'team_revocation_done' });
         } else {
@@ -427,6 +466,37 @@ function makeTeamOps(ctx) {
      * every local copy is deleted and checked one by one. A revocation the server could not take stays pending in the
      * vault and is retried (see retryRevocations); it never keeps the machine in the organization.
      */
+    /*
+     * teamDismissDropped({install_id} | {all: true}) -> {dismissed, remaining}. For installations an admin has removed
+     * from the dashboard: forgets them so `zn team status` stops warning. Confirmed out of band.
+     */
+    async teamDismissDropped(args) {
+      const a = args && typeof args === 'object' ? args : {};
+      const id = typeof a.install_id === 'string' ? a.install_id : null;
+      if (!id && a.all !== true) throw znError(CODES.POLICY_DENIED, 'say which installation to dismiss (an install id) or use --all');
+      const before = droppedState(await state.loadSecrets());
+      if (!before) return { dismissed: 0, remaining: 0 };
+      await confirmOutOfBand({
+        kind: 'team',
+        title: 'dismiss the warning about revocations that were never sent?',
+        warnings: ['Do this only after an organization admin removed ' + (id ? 'that installation' : 'these installations') + ' from the dashboard. Until then their tokens still work on the server.'],
+        fields: [['Installations', id ? printable(id, 64) : String(before.items.length + before.omitted)]],
+        footer: 'If you did not just run `zn team dismiss-dropped` yourself, choose Deny.',
+      }, { mode: 'remove', reason: 'team_revocation_dropped_dismiss' });
+      return state.serial(async () => {
+        const s = await state.loadSecrets();
+        const d = droppedState(s);
+        if (!d) return { dismissed: 0, remaining: 0 };
+        const total = d.items.length + d.omitted;
+        if (id) d.items = d.items.filter((x) => x.install_id !== id); else { d.items = []; d.omitted = 0; }
+        saveDropped(s, d);
+        await state.saveSecrets();
+        const remaining = d.items.length + d.omitted;
+        writeAudit({ mode: 'remove', decision: 'allow', reason: 'team_revocation_dropped_dismissed' });
+        return { dismissed: total - remaining, remaining };
+      });
+    },
+
     async teamLeave() {
       const t = await team();
       if (!t) {
@@ -469,10 +539,10 @@ function makeTeamOps(ctx) {
           const dropped = list.length > MAX_PENDING_REVOCATIONS ? list.splice(0, list.length - MAX_PENDING_REVOCATIONS) : [];
           s.pendingRevocations = list;
           if (dropped.length) {
-            const prev = s.revocationsDropped && Number.isInteger(s.revocationsDropped.count) && Number.isFinite(Date.parse(s.revocationsDropped.last_at)) &&
-              Date.now() - Date.parse(s.revocationsDropped.last_at) <= REVOCATION_GIVE_UP_MS ? s.revocationsDropped.count : 0;
-            const last = dropped[dropped.length - 1];
-            s.revocationsDropped = { count: prev + dropped.length, last_at: at, last_org: last.org || null, last_install_id: last.install_id || null };
+            const d = droppedState(s) || { items: [], omitted: 0 };
+            for (const x of dropped) d.items.push({ org: x.org || null, install_id: x.install_id, dropped_at: at });
+            d.last_at = at;
+            saveDropped(s, d);
             for (let i = 0; i < dropped.length; i += 1) writeAudit({ mode: 'remove', decision: 'error', reason: 'team_revocation_dropped' });
           }
           writeAudit({ mode: 'set', decision: 'error', reason: 'team_revocation_pending' });

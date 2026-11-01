@@ -1,7 +1,8 @@
 'use strict';
 /*
- * A ninth pending revocation pushes the oldest one out of the vault (the list keeps 8). That is no longer silent:
- * one audit record per dropped entry, and a warning in `zn team status` (info.revocations_dropped, never a token).
+ * A ninth pending revocation pushes the oldest one out of the vault (the list keeps 8). That is never silent:
+ * one audit record per dropped entry, and a warning in `zn team status` (info.revocations_dropped, never a token) that
+ * lists every dropped installation id until the server confirms or an admin dismisses it (no expiry).
  */
 const test = require('node:test');
 const assert = require('node:assert');
@@ -101,14 +102,72 @@ test('the ninth drops the oldest, leaves an audit record and a warning in teamIn
   assert.strictEqual(JSON.parse(j.stdout).revocations_dropped.count, 1);
 });
 
-test('the count grows with each drop, and the warning goes away after 30 days', async () => {
+test('every dropped installation id is kept, and the warning does not expire after 30 days', async () => {
   const m = machine();
-  for (let i = 0; i < 10; i += 1) await joinAndLeave(m);
-  assert.strictEqual(m.secrets.revocationsDropped.count, 2);
-  assert.strictEqual(m.audit.filter((a) => a.reason === 'team_revocation_dropped').length, 2);
+  const ids = [];
+  for (let i = 0; i < 12; i += 1) ids.push(await joinAndLeave(m));
+  assert.strictEqual(m.secrets.revocationsDropped.items.length, 4);
+  assert.strictEqual(m.audit.filter((a) => a.reason === 'team_revocation_dropped').length, 4);
+  let info = await m.o.teamInfo();
+  assert.strictEqual(info.revocations_dropped.count, 4);
+  assert.deepStrictEqual(info.revocations_dropped.installations.map((x) => x.install_id), ids.slice(0, 4));
+  assert.ok(!JSON.stringify(info).includes(m.secrets.pendingRevocations[0].install_token), 'no token in the view');
+  for (const x of m.secrets.revocationsDropped.items) x.dropped_at = new Date(Date.now() - 45 * DAY).toISOString();
+  m.secrets.revocationsDropped.last_at = new Date(Date.now() - 45 * DAY).toISOString();
+  info = await m.o.teamInfo();
+  assert.strictEqual(info.revocations_dropped.count, 4, 'still warned after 45 days');
+  fake.teamInfo = () => m.o.teamInfo();
+  const r = await capture(() => runTeamCommand(['team', 'status']));
+  for (const id of ids.slice(0, 4)) assert.match(r.stdout, new RegExp('installation ' + id));
+});
+
+test('the list of dropped ids is capped on disk and the rest is only counted', async () => {
+  const m = machine();
+  m.secrets.revocationsDropped = {
+    items: Array.from({ length: 200 }, (_, i) => ({ org: 'org_x', install_id: 'old-' + i, dropped_at: new Date().toISOString() })),
+    omitted: 5, last_at: new Date().toISOString(),
+  };
+  for (let i = 0; i < 9; i += 1) await joinAndLeave(m);
+  assert.strictEqual(m.secrets.revocationsDropped.items.length, 200);
+  assert.strictEqual(m.secrets.revocationsDropped.omitted, 6);
+  assert.strictEqual((await m.o.teamInfo()).revocations_dropped.count, 206);
+  assert.strictEqual(m.secrets.revocationsDropped.items[0].install_id, 'old-1');
+});
+
+test('an older vault entry (count and last id only) is still read', async () => {
+  const m = machine();
+  m.secrets.revocationsDropped = { count: 3, last_at: new Date(Date.now() - 90 * DAY).toISOString(), last_org: 'org_x', last_install_id: 'inst-old' };
+  const v = (await m.o.teamInfo()).revocations_dropped;
+  assert.strictEqual(v.count, 3);
+  assert.strictEqual(v.last_install_id, 'inst-old');
+  assert.strictEqual(v.omitted, 2);
+});
+
+test('the server confirming a retry removes that installation from the dropped list', async () => {
+  const m = machine();
+  await joinAndLeave(m);
+  const rec = m.secrets.pendingRevocations[0];
+  m.secrets.revocationsDropped = { items: [{ org: rec.org, install_id: rec.install_id, dropped_at: new Date().toISOString() }, { org: 'org_x', install_id: 'other', dropped_at: new Date().toISOString() }], omitted: 0, last_at: new Date().toISOString() };
+  cloud.setLeaveMode(null);
+  await assert.rejects(m.o.teamSync({}), /completed/);
+  assert.strictEqual(m.secrets.pendingRevocations, undefined);
+  assert.deepStrictEqual(m.secrets.revocationsDropped.items.map((x) => x.install_id), ['other']);
+});
+
+test('an admin dismisses dropped installations one by one or all at once, and the warning goes away', async () => {
+  const m = machine();
+  const ids = [];
+  for (let i = 0; i < 10; i += 1) ids.push(await joinAndLeave(m));
   assert.strictEqual((await m.o.teamInfo()).revocations_dropped.count, 2);
-  m.secrets.revocationsDropped.last_at = new Date(Date.now() - 31 * DAY).toISOString();
+  const one = await m.o.teamDismissDropped({ install_id: ids[0] });
+  assert.deepStrictEqual(one, { dismissed: 1, remaining: 1 });
+  assert.strictEqual((await m.o.teamInfo()).revocations_dropped.last_install_id, ids[1]);
+  assert.ok(m.audit.some((a) => a.reason === 'team_revocation_dropped_dismissed'));
+  const all = await m.o.teamDismissDropped({ all: true });
+  assert.deepStrictEqual(all, { dismissed: 1, remaining: 0 });
   assert.strictEqual((await m.o.teamInfo()).revocations_dropped, undefined);
+  assert.strictEqual(m.secrets.revocationsDropped, undefined);
+  await assert.rejects(() => m.o.teamDismissDropped({}));
 });
 
 test('status says nothing about drops when none happened', async () => {

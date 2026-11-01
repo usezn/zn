@@ -29,7 +29,7 @@ const { isVerbose } = require('../verbose');
 const messages = require('../messages');
 const { znCommand } = require('../zn-command');
 
-const USAGE = 'usage: zn team join <token> | zn team join - | ZN_TEAM_JOIN_TOKEN=... zn team join [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
+const USAGE = 'usage: zn team join <token> | zn team join - | ZN_TEAM_JOIN_TOKEN=... zn team join [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json] | zn team dismiss-dropped <install-id>|--all';
 const JOIN_TOKEN_ENV = 'ZN_TEAM_JOIN_TOKEN';
 const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE] [--unverified]';
 
@@ -198,13 +198,32 @@ function describeRevocations(list) {
   return lines;
 }
 
-/* Warning for `zn team status` when pending revocations were dropped to make room (at most 8 are kept). */
+/*
+ * Warning for `zn team status` when pending revocations were dropped to make room (at most 8 are kept). It stays
+ * until the server confirms or `zn team dismiss-dropped` is run; every installation id is listed (up to 20 lines).
+ */
+const DROPPED_LINES = 20;
 function describeDropped(d) {
   if (!d || !(d.count > 0)) return [];
-  return [
-    'WARNING: ' + d.count + ' pending revocation' + (d.count === 1 ? ' was' : 's were') + ' dropped (last on ' + d.last_at + (d.last_install_id ? ', installation ' + d.last_install_id : '') + '): more than 8 installations left while the server could not be reached.',
-    '  The server was never told about ' + (d.count === 1 ? 'it' : 'them') + ', so ' + (d.count === 1 ? 'that installation token' : 'those installation tokens') + ' still work there. Ask an admin to remove ' + (d.count === 1 ? 'it' : 'them') + ' from the dashboard.',
+  const one = d.count === 1;
+  const lines = [
+    'WARNING: ' + d.count + ' pending revocation' + (one ? ' was' : 's were') + ' dropped (last on ' + d.last_at + (d.last_install_id ? ', installation ' + d.last_install_id : '') + '): more than 8 installations left while the server could not be reached.',
+    '  The server was never told about ' + (one ? 'it' : 'them') + ', so ' + (one ? 'that installation token' : 'those installation tokens') + ' still work there. Ask an admin to remove ' + (one ? 'it' : 'them') + ' from the dashboard, then run `zn team dismiss-dropped ' + (one && d.last_install_id ? d.last_install_id : '--all') + '`. This warning stays until then.',
   ];
+  const list = Array.isArray(d.installations) ? d.installations : [];
+  for (const x of list.slice(-DROPPED_LINES)) lines.push('  - installation ' + x.install_id + (x.org ? ' (' + x.org + ')' : '') + (x.dropped_at ? ', dropped ' + x.dropped_at : ''));
+  const hidden = d.count - Math.min(list.length, DROPPED_LINES);
+  if (hidden > 0) lines.push('  ... and ' + hidden + ' more' + (d.omitted ? ' (' + d.omitted + ' oldest ids are no longer stored; the full list is in the dashboard of your organization)' : ' (`zn team status --json` lists them all)'));
+  return lines;
+}
+
+async function dismissDroppedCmd(args) {
+  const all = args.includes('--all');
+  const id = args.slice(2).find((a) => !a.startsWith('-'));
+  if (!all && !id) { err('[zn] usage: zn team dismiss-dropped <install-id> | --all'); return 2; }
+  const r = await withClient((c) => c.teamDismissDropped(all ? { all: true } : { install_id: id }));
+  out(r.dismissed ? 'Dismissed ' + r.dismissed + ' dropped revocation' + (r.dismissed === 1 ? '' : 's') + (r.remaining ? '; ' + r.remaining + ' still listed.' : '; none left.') : 'Nothing to dismiss' + (id ? ' for that installation id.' : '.'));
+  return 0;
 }
 
 async function syncCmd() {
@@ -264,6 +283,7 @@ async function runTeamCommand(args, io) {
     if (sub === 'status' || sub === undefined) return await statusCmd(args);
     if (sub === 'sync') return await syncCmd();
     if (sub === 'leave') return await leaveCmd();
+    if (sub === 'dismiss-dropped') return await dismissDroppedCmd(args);
     if (sub === 'managed-config') return require('./managed-config').run(args.slice(2));
     err('[zn] ' + messages.teamNotACommand(sub));
     return 2;

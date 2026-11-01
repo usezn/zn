@@ -669,6 +669,15 @@ zn-gate team leave
 
 Disconnects this machine from the organization. It first tells the server to revoke this installation (with the installation's own token), then deletes the local copies of the policy and upload state. Exit `1` when one of those files cannot be deleted; the message names it. If the server cannot take the revocation now (offline, an error, a rate limit, or an older server), the machine still leaves at once and the command exits `0`, but it prints that the server was not told yet: zn-gate keeps the token in the vault only to retry on `team sync` and while the vault is unlocked, for up to 30 days, and `team status` shows the pending revocation. See [zn Team](team.md#leaving).
 
+#### `team dismiss-dropped`
+
+```bash
+zn-gate team dismiss-dropped <install-id>
+zn-gate team dismiss-dropped --all
+```
+
+Forgets installations whose revocation was dropped because more than 8 installations left while the server could not be reached. Run it only after an organization admin removed them from the dashboard: until then their tokens still work on the server, and `team status` keeps warning (the warning does not expire). It is confirmed on the vault's own channel. Exit `2` when neither an installation id nor `--all` is given. See [zn Team](team.md#leaving).
+
 #### `team managed-config`
 
 ```bash
