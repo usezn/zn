@@ -1735,7 +1735,69 @@ function shellCodeOf(cmd, pi, st) {
 }
 
 const INLINE_FLAG = { python: /^-[A-Za-z]*c$/, python3: /^-[A-Za-z]*c$/, py: /^-[A-Za-z]*c$/, node: /^-[A-Za-z]*[ep]$/, nodejs: /^-[A-Za-z]*[ep]$/, ruby: /^-[A-Za-z]*e$/, perl: /^-[A-Za-z]*[eE]$/, php: /^-[A-Za-z]*r$/, lua: /^-e$/, deno: /^eval$/, bun: /^(?:-e|--eval|-p)$/ };
-const INTERP_RE = /^(?:python[0-9.]*|py|node|nodejs|ruby|perl|php|lua|deno|bun)$/;
+const INTERP_RE = /^(?:python[0-9.]*|py|pypy[0-9.]*|node|nodejs|ruby|perl|php|lua|deno|bun|sh|bash|dash|zsh|ksh|ash)$/;
+// Interpreters that read their code from standard input or run a module (see interpOperandKeys). Per family: the short options that take
+// a value, the long ones that do, and whether -m runs a module.
+const INTERP_OPTS = {
+  python: { short: 'XWQ', long: new Set(['--check-hash-based-pycs']), mod: true },
+  node: { short: 'rC', long: new Set(['--require', '--import', '--conditions', '--env-file', '--loader', '--experimental-loader', '--input-type', '--title']) },
+  ruby: { short: 'IrCEFK', long: new Set(['--encoding', '--external-encoding', '--internal-encoding']) },
+  perl: { short: 'IMm', long: new Set() },
+  php: { short: 'cdzfn', long: new Set(), dashdash: true },
+  lua: { short: 'l', long: new Set() },
+  other: { short: '', long: new Set() },
+  shell: { short: 'oO', long: new Set(['--rcfile', '--init-file']), shell: true },
+};
+const STDIN_SCRIPT = /^\/(?:dev\/(?:stdin|fd\/\d+)|proc\/self\/fd\/\d+)$/;
+function interpFamily(head) {
+  if (/^(?:python[0-9.]*|py|pypy[0-9.]*)$/.test(head)) return INTERP_OPTS.python;
+  if (/^(?:node|nodejs|bun|deno)$/.test(head)) return INTERP_OPTS.node;
+  if (head === 'ruby') return INTERP_OPTS.ruby;
+  if (head === 'perl') return INTERP_OPTS.perl;
+  if (head === 'php') return INTERP_OPTS.php;
+  if (head === 'lua') return INTERP_OPTS.lua;
+  if (/^(?:sh|bash|dash|zsh|ksh|ash)$/.test(head)) return INTERP_OPTS.shell;
+  return INTERP_OPTS.other;
+}
+// The operand words (indexes) of an interpreter whose code is not in its own command line: it reads the script from standard input
+// (operand -, /dev/stdin, /dev/fd/N, <( ), php with -- and no script, a shell with -s) or it runs a module (python -m MOD, -mMOD, -Im MOD).
+// Option clusters are read letter by letter, and the value of an option that takes one (python -X dev, -W ignore, node -r mod, ...)
+// is skipped, so it is never taken for the script. Returns null for a normal script file or inline code, which are judged elsewhere.
+function interpOperandKeys(head, cmd, pi) {
+  const fam = interpFamily(head);
+  const ws = cmd.words;
+  let k = pi + 1;
+  let module = false;
+  let sFlag = false;
+  let dashdash = false;
+  let scriptFile = false;
+  for (; k < ws.length; k++) {
+    const t = plainText(ws[k]);
+    if (t === null) break;
+    if (t === '--') { dashdash = true; k++; break; }
+    if (t === '-' || !(t.startsWith('-') || (fam.shell && t.startsWith('+')))) break;
+    if (t.startsWith('--')) { if (!t.includes('=') && fam.long.has(t)) k++; continue; }
+    let stop = false;
+    for (let i = 1; i < t.length && !stop; i++) {
+      const c = t[i];
+      if (fam.mod && c === 'm') { module = true; if (i === t.length - 1) k++; stop = true; }
+      else if (fam.shell && c === 's') sFlag = true;
+      else if (fam.shell && c === 'c') return null;
+      else if (c === 'f' && fam === INTERP_OPTS.php) { scriptFile = true; if (i === t.length - 1) k++; stop = true; }
+      else if (fam.short.includes(c)) { if (i === t.length - 1) k++; stop = true; }
+    }
+    if (module) { k++; break; }
+  }
+  const keys = (from) => { const o = new Set(); for (let j = from; j < ws.length; j++) { const u = plainText(ws[j]); if (u === null || u === '-' || !u.startsWith('-')) o.add(j); } return o; };
+  if (module) return keys(k);
+  if (fam.shell && sFlag) return keys(k);
+  if (fam.dashdash && dashdash && !scriptFile) return keys(k);
+  if (k >= ws.length) return null;
+  const fw = ws[k];
+  const ft = plainText(fw);
+  const stdin = (ft !== null && (ft === '-' || STDIN_SCRIPT.test(ft))) || (fw.parts.length === 1 && fw.parts[0].t === 'proc');
+  return stdin ? keys(k + 1) : null;
+}
 const texts0 = (cmd, pi) => cmd.words.slice(pi).map((w) => plainText(w));
 
 function runCommand(cmds, ci, st, mode) {
@@ -1855,23 +1917,10 @@ function runCommand(cmds, ci, st, mode) {
   // The words of the command, evaluated: resolved text goes to the path check, partly unknown words are judged.
   let spec = Object.prototype.hasOwnProperty.call(DUMP, head) ? DUMP[head] : null;
   if (!spec && INLINE_FLAG[head] && texts0(cmd, pi).some((t) => t !== null && (INLINE_FLAG[head].test(t) || t === '--eval' || t === '--print'))) spec = { inline: INLINE_FLAG[head], val: new Map([['--eval', 1], ['--print', 1]]) };
-  // An interpreter whose code comes on standard input (script operand -, /dev/stdin, /dev/fd/N, <( )) or that runs a module (-m)
-  // is read like inline code: the names it is given as operands must be known.
-  if (!spec && INTERP_RE.test(head)) {
-    const tx = texts0(cmd, pi);
-    const modFlag = /^python[0-9.]*$|^py$/.test(head) && tx.some((t) => t !== null && /^-[A-Za-z]*m$/.test(t));
-    let firstOp = -1;
-    for (let k = pi + 1; k < ws.length; k++) {
-      const t = plainText(ws[k]);
-      if (t !== null && t.startsWith('-') && t !== '-') { if (/^-[A-Za-z]*m$/.test(t)) break; continue; }
-      firstOp = k; break;
-    }
-    const fw = firstOp >= 0 ? ws[firstOp] : null;
-    const ft = fw ? plainText(fw) : null;
-    const stdinScript = fw && ((ft !== null && (ft === '-' || /^\/(?:dev\/(?:stdin|fd\/\d+)|proc\/self\/fd\/\d+)$/.test(ft))) || (fw.parts.length === 1 && fw.parts[0].t === 'proc'));
-    if (modFlag) spec = { val: new Map([['-m', 1]]) };
-    else if (stdinScript) spec = { first: true };
-  }
+  // An interpreter whose code comes on standard input (script operand -, /dev/stdin, /dev/fd/N, <( ), php --, sh -s) or that runs a
+  // module (-m, -mMOD) is read like inline code: the names it is given as operands must be known.
+  let interpKeys = null;
+  if (!spec && INTERP_RE.test(head)) interpKeys = interpOperandKeys(head, cmd, pi);
   if (!spec && head === 'git' && texts0(cmd, pi).includes('--no-index')) spec = { val: new Map([['-C', 1], ['-c', 1]]) };
   let operandKeys = null;
   if (spec) {
@@ -1879,7 +1928,7 @@ function runCommand(cmds, ci, st, mode) {
       operandKeys = new Set();
       args.forEach((w, k) => { const t = plainText(w); if ((t !== null && /^if=/.test(t)) || (w.parts[0] && w.parts[0].t === 'lit' && /^if=$/.test(w.parts[0].v) && w.parts.length > 1)) operandKeys.add(pi + 1 + k); });
     } else operandKeys = new Set(operandsOf(spec, head, cmd, pi, st).map((o) => o.k));
-  }
+  } else if (interpKeys) operandKeys = interpKeys;
   const evaluated = [];
   for (let k = 0; k < ws.length; k++) {
     if (k === pi || k < pi) {
