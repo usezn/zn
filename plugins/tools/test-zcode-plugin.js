@@ -310,7 +310,7 @@ try {
     });
   }
 
-  // The Windows hook runs under scripts/zn-hook-win.cmd, so the process that started the PowerShell script is cmd.exe, not ZCode.
+  // The Windows hook runs under scripts/zn-hook.cmd, so the process that started the PowerShell script is cmd.exe, not ZCode.
   // Measured on the ZCode desktop app 3.16.3: a fallback that took the parent as Node.js and trusted exit code 0 ran cmd.exe as
   // "node", which read the event as commands and let every call through. These checks run on every system.
   test('zn-hook.ps1 never takes a shell or script host for Node.js, and reads the version Node.js prints', () => {
@@ -322,6 +322,19 @@ try {
     }
     assert.ok(/\$lvl -lt 6/.test(text), 'the chain of parents is walked up, with a limit');
     assert.ok(/Refuse 'no Node\.js 20\.19 or later was found/.test(text), 'with no valid Node.js the hook blocks');
+  });
+
+  // ZCode starts hooks in the project folder, where Windows looks for a program by name first: the launcher names every program it
+  // starts by full path. The PowerShell script counts the 30 second timeout from the start of its process.
+  test('zn-hook.cmd starts programs by full path only, and zn-hook.ps1 counts its deadline from the process start', () => {
+    const cmd = fs.readFileSync(path.join(ZC, 'scripts', 'zn-hook.cmd'), 'utf8').split(/\r?\n/).filter((l) => !/^\s*rem\b/i.test(l));
+    for (const l of cmd) {
+      assert.ok(!/(^|[\s(&|])(powershell|pwsh|cmd|node|python|wscript|cscript)(\.exe)?\s/i.test(l.replace(/"[^"]*"/g, '""')), 'a program started by name: ' + l);
+    }
+    assert.ok(!cmd.some((l) => /\bstart\b/i.test(l)), 'nothing runs in the background');
+    const ps = fs.readFileSync(path.join(ZC, 'scripts', 'zn-hook.ps1'), 'utf8');
+    assert.ok(/GetCurrentProcess\(\)\.StartTime/.test(ps) && /\$Deadline - /.test(ps), 'the deadline is what is left of 28 seconds since the process started');
+    assert.ok((ps.match(/Get-CimInstance/g) || []).length === 1, 'one process query for the whole chain of parents');
   });
 
   if (posix) {
