@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.25';
+const POLICY_RULES_VERSION = '2026-11-01.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2330,6 +2330,7 @@ const SEARCH_ALWAYS = new Set(['rg', 'ag', 'ack', 'ack-grep']);
 // find -exec on a credential folder is refused unless the program is one that does not read content.
 const FIND_SAFE_EXEC = new Set(['chmod', 'chown', 'chgrp', 'touch', 'ls', 'stat', 'rm']);
 const CF_VALUE_SHORT = {
+  pax: 'fsxEobt', diff: 'xXIUCFWD',
   tar: 'fCTXbILNgKVH', zip: 'bntPOz', rsync: 'efTBM', cp: 'tS', scp: 'PiosFcSJlD', grep: 'efmABCdD', rg: 'efgtTmABCjEMdr', ag: 'GgABCm',
 };
 const CF_VALUE_LONG = {
@@ -2348,6 +2349,19 @@ const CF_VALUE_LONG = {
     '--sortr', '--type-add', '--colors', '--color', '--path-separator'],
   ag: ['--ignore', '--depth', '--file-search-regex', '--path-to-ignore', '--pager', '--color-path', '--color-match', '--color-line-number'],
 };
+
+/* Old-style tar (tar czfT out.tgz -): the first word is a bundle of options without the dash and each option that takes
+   a value gets the next words in order. Returned as dashed options with their values. */
+function tarOldStyle(args) {
+  if (!args.length || !/^[A-Za-z]+$/.test(args[0])) return args.slice();
+  const rest = args.slice(1);
+  const out = [];
+  for (const ch of args[0]) {
+    out.push('-' + ch);
+    if (CF_VALUE_SHORT.tar.includes(ch)) out.push(rest.length ? rest.shift() : '');
+  }
+  return out.concat(rest);
+}
 
 /* Splits a program's arguments into short options, long options and positional words, each positional with the folder
    a tar -C set when it was read. `seen` lists [option, value] for the options that take one. */
@@ -2397,9 +2411,7 @@ function cfScanArgs(prog, args) {
 function recursiveReaderOf(prog, args) {
   if (TAR_READERS.has(prog)) {
     // Old style: the first word is a bundle of options without the dash (tar czf out.tgz src).
-    const a = args.slice();
-    if (a.length && /^[A-Za-z]+$/.test(a[0])) a[0] = '-' + a[0];
-    const s = cfScanArgs('tar', a);
+    const s = cfScanArgs('tar', tarOldStyle(args));
     if (!(s.flags.has('c') || s.flags.has('r') || s.flags.has('u') || s.longs.has('--create') || s.longs.has('--append') || s.longs.has('--update'))) return null;
     return { operands: s.pos, recursive: true };
   }
@@ -2434,6 +2446,16 @@ function recursiveReaderOf(prog, args) {
     const recursive = s.flags.has('r') || s.flags.has('R') || prog === 'rgrep' || s.longs.has('--recursive') || s.longs.has('--dereference-recursive') ||
       s.seen.some(([o, v]) => (o === 'd' || o === '--directories') && v === 'recurse');
     return { operands, recursive };
+  }
+  if (prog === 'pax') {
+    const s = cfScanArgs('pax', args);
+    if (!s.flags.has('w')) return null;
+    return { operands: s.flags.has('r') && s.pos.length >= 2 ? s.pos.slice(0, -1) : s.pos, recursive: true };
+  }
+  if (prog === 'diff') {
+    const s = cfScanArgs('diff', args);
+    if (!(s.flags.has('r') || s.longs.has('--recursive'))) return null;
+    return { operands: s.pos, recursive: true };
   }
   if (prog === 'find') {
     let i = 0;
@@ -2629,6 +2651,36 @@ function stageCommands(stage, posix) {
 const PIPE_LISTERS = new Set(['find', 'ls', 'echo', 'printf', 'tree', 'fd', 'fdfind', 'realpath', 'readlink', 'dir', 'locate', 'git']);
 const PIPE_RECURSIVE_LISTERS = new Set(['find', 'tree', 'fd', 'fdfind']);
 const PIPE_PASSTHROUGH = new Set(['sort', 'uniq', 'head', 'tail', 'grep', 'egrep', 'fgrep', 'sed', 'awk', 'cut', 'tr', 'tee', 'rev', 'cat', 'wc']);
+const STDIN_NAME_RE = /^(?:-|\/dev\/stdin|\/dev\/fd\/0|\/proc\/self\/fd\/0)$/;
+// Programs that only filter or count the names they get. Any other program after a stage that lists a credential folder
+// may turn the names into reads (parallel cat, sh, while read, pax, ...), so it is refused.
+const NAMES_ONLY = new Set(['sort', 'uniq', 'head', 'tail', 'grep', 'egrep', 'fgrep', 'cut', 'tr', 'rev', 'wc', 'tee', 'cat']);
+
+/* True when this command only filters the names it reads from input. awk and sed count only when their program text
+   cannot run a command (system, getline, a pipe, the e command or flag, a script file). */
+function namesOnlyCommand(cm) {
+  const p = cm.prog;
+  const args = cm.args;
+  if (NAMES_ONLY.has(p)) {
+    if (p === 'sort' && args.some((a) => /^--compress-program/.test(a))) return false;
+    if (p === 'tee' && args.some((a) => a.includes('('))) return false;
+    if (p === 'cat' && args.some((a) => a !== '-' && !a.startsWith('-'))) return false;
+    return true;
+  }
+  if (/^(?:awk|gawk|mawk|nawk)$/.test(p)) {
+    if (args.some((a) => /^(?:-f|--file|-E|--exec|-i|--include|-l|--load)/.test(a))) return false;
+    return !/system\s*\(|getline|\|/.test(args.join(' '));
+  }
+  if (p === 'sed') {
+    if (args.some((a) => /^(?:-[A-Za-z]*[fs]|--file|--separate)/.test(a) && a !== '-s')) return false;
+    const text = args.join('\n');
+    const flagRe = /(?:^|[;{}=\s])[0-9,$]*s(.)(?:\\.|(?!\1)[^\\])*\1(?:\\.|(?!\1)[^\\])*\1([A-Za-z0-9]*)/g;
+    let m;
+    while ((m = flagRe.exec(text))) if (m[2].includes('e')) return false;
+    return !/(?:^|[;{}=\n\s])[0-9,$!]*e(?:\s|;|$|\})/.test(text);
+  }
+  return false;
+}
 
 /* What a command that prints names lists: 'cred' (a credential folder), 'unknown', 'safe' (a known lister of other
    places) or null (not a lister). */
@@ -2660,16 +2712,14 @@ function stdinConsumerOf(cmd) {
   const p = cmd.prog;
   if (p === 'xargs') return 'xargs';
   if (TAR_READERS.has(p)) {
-    const a = cmd.args.slice();
-    if (a.length && /^[A-Za-z]+$/.test(a[0])) a[0] = '-' + a[0];
-    const s = cfScanArgs('tar', a);
-    return s.seen.some(([o, v]) => (o === 'T' || o === '--files-from') && (v === '-' || v === '/dev/stdin')) ? 'list' : null;
+    const s = cfScanArgs('tar', tarOldStyle(cmd.args));
+    return s.seen.some(([o, v]) => (o === 'T' || o === '--files-from') && STDIN_NAME_RE.test(v)) ? 'list' : null;
   }
   if (p === 'zip') return cfScanArgs('zip', cmd.args).flags.has('@') ? 'list' : null;
   if (p === 'cpio') return cmd.args.some((x) => /^-[A-Za-z]*[op]/.test(x) || x === '--create' || x === '--pass-through') ? 'list' : null;
   if (p === 'rsync') {
     const s = cfScanArgs('rsync', cmd.args);
-    return s.seen.some(([o, v]) => o === '--files-from' && (v === '-' || v === '/dev/stdin')) ? 'list' : null;
+    return s.seen.some(([o, v]) => o === '--files-from' && STDIN_NAME_RE.test(v)) ? 'list' : null;
   }
   return null;
 }
@@ -2694,6 +2744,11 @@ function credentialPipeDenial(text, opts) {
     for (let i = 0; i < cmds.length; i++) {
       if (overBudget(opts.budget, 1)) return TOO_SLOW_MESSAGE;
       const first = cmds[i][0];
+      if (tainted && i > 0) {
+        if (!cmds[i].length && stages[i].trim()) return credPipeMessage('the next command');
+        const bad = cmds[i].find((x) => !namesOnlyCommand(x));
+        if (bad) return credPipeMessage(bad.prog);
+      }
       const consumer = first ? stdinConsumerOf(first) : null;
       if (consumer && i > 0) {
         if (tainted) return credPipeMessage(first.prog);
