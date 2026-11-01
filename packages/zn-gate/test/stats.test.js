@@ -17,7 +17,7 @@ const cli = require('../lib/stats-cli');
 
 test.after(() => fs.rmSync(home, { recursive: true, force: true }));
 const reset = () => { for (const f of fs.readdirSync(home)) fs.rmSync(path.join(home, f), { force: true }); };
-const capture = async (args, confirm = async () => false) => { let out = ''; const code = await cli.run(args, (s) => { out += s; }, { confirm }); return { code, out }; };
+const capture = async (args, confirm = async () => false) => { let out = ''; let err = ''; const code = await cli.run(args, (s) => { out += s; }, { confirm, err: (s) => { err += s; } }); return { code, out, err }; };
 
 test('a record under a far-future clock keeps history and the future day is not counted', () => {
   reset();
@@ -173,7 +173,8 @@ test('bad options print the usage with exit code 2', async () => {
   for (const args of [['--days', '0'], ['--days', 'x'], ['--nope'], ['foo']]) {
     const r = await capture(args);
     assert.equal(r.code, 2, args.join(' '));
-    assert.match(r.out, /Usage: zn-gate stats/);
+    assert.match(r.err, /Usage: zn-gate stats/);
+    assert.equal(r.out, '');
   }
 });
 

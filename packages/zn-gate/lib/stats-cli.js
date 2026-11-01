@@ -74,9 +74,9 @@ function explainShare(out) {
   out(`Where: ${share.ENDPOINT}.\n`);
 }
 
-async function run(args, out = (s) => process.stdout.write(s), { confirm = confirmInTerminal } = {}) {
+async function run(args, out = (s) => process.stdout.write(s), { confirm = confirmInTerminal, err = (s) => process.stderr.write(s) } = {}) {
   const o = parse(args);
-  if (o.bad) { out(USAGE); return 2; }
+  if (o.bad) { err(USAGE); return 2; }
   if (o.rest[0] === 'share') {
     const sub = o.rest[1] || 'status';
     if (sub === 'on') {
@@ -112,7 +112,7 @@ async function run(args, out = (s) => process.stdout.write(s), { confirm = confi
       out(share.status().share ? 'Sharing pseudonymous daily counts: on.\n' : 'Sharing pseudonymous daily counts: off (the default).\n');
       return 0;
     }
-    out('Usage: zn-gate stats share on|off|status|show\n');
+    err('Usage: zn-gate stats share on|off|status|show\n');
     return 2;
   }
   const s = stats.summary({ days: o.days });

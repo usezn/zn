@@ -225,9 +225,9 @@ function toJson(r) {
   };
 }
 
-function run(args, out = (s) => process.stdout.write(s), { now = new Date() } = {}) {
+function run(args, out = (s) => process.stdout.write(s), { now = new Date(), err = (s) => process.stderr.write(s) } = {}) {
   const o = parse(args);
-  if (o.bad) { out(USAGE); return 2; }
+  if (o.bad) { err(USAGE); return 2; }
   const r = collect(o.days, now);
   if (o.json) { out(JSON.stringify(toJson(r), null, 2) + '\n'); return 0; }
 

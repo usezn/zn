@@ -16,7 +16,7 @@ const cli = require('../lib/stats-cli');
 
 test.after(() => fs.rmSync(home, { recursive: true, force: true }));
 const reset = () => { for (const f of fs.readdirSync(home)) fs.rmSync(path.join(home, f), { recursive: true, force: true }); };
-const run = async (args) => { let out = ''; const code = await cli.run(args, (s) => { out += s; }, { confirm: async () => false }); return { code, out }; };
+const run = async (args) => { let out = ''; let err = ''; const code = await cli.run(args, (s) => { out += s; }, { confirm: async () => false, err: (s) => { err += s; } }); return { code, out, err }; };
 
 const USAGE_START = 'Usage: zn-gate stats [--days 1-90] [--json]';
 
@@ -24,8 +24,9 @@ test('an unknown flag prints the usage text and exits with 2', async () => {
   reset();
   const r = await run(['--bogus']);
   assert.equal(r.code, 2);
-  assert.ok(r.out.startsWith(USAGE_START));
-  assert.match(r.out, /stats share on\|off\|status\|show/);
+  assert.ok(r.err.startsWith(USAGE_START));
+  assert.equal(r.out, '');
+  assert.match(r.err, /stats share on\|off\|status\|show/);
 });
 
 test('bad --days values and stray words are rejected with the usage text', async () => {
@@ -33,7 +34,8 @@ test('bad --days values and stray words are rejected with the usage text', async
   for (const args of [['--days', '0'], ['--days', '91'], ['--days', 'abc'], ['--days'], ['--days', '1.5'], ['hello']]) {
     const r = await run(args);
     assert.equal(r.code, 2, args.join(' '));
-    assert.ok(r.out.startsWith(USAGE_START), args.join(' '));
+    assert.ok(r.err.startsWith(USAGE_START), args.join(' '));
+    assert.equal(r.out, '', args.join(' '));
   }
 });
 

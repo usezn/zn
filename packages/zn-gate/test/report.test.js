@@ -26,7 +26,7 @@ const report = require('../lib/report');
 test.after(() => fs.rmSync(home, { recursive: true, force: true }));
 const reset = () => { for (const f of fs.readdirSync(home)) fs.rmSync(path.join(home, f), { recursive: true, force: true }); };
 const NOW = new Date('2026-10-17T12:00:00Z');
-const run = (args) => { let out = ''; const code = report.run(args, (s) => { out += s; }, { now: NOW }); return { code, out }; };
+const run = (args) => { let out = ''; let err = ''; const code = report.run(args, (s) => { out += s; }, { now: NOW, err: (s) => { err += s; } }); return { code, out, err }; };
 const snapshot = () => JSON.stringify(fs.readdirSync(home, { recursive: true }).sort().map((f) => [f, fs.statSync(path.join(home, f)).isFile() ? fs.readFileSync(path.join(home, f), 'utf8') : '']));
 
 function seed() {
@@ -184,7 +184,8 @@ test('--since changes the window; bad values exit 2', () => {
   for (const bad of [['--since', '91d'], ['--since', '0d'], ['--since', '7'], ['--since', '7w'], ['--since'], ['--bogus']]) {
     const r = run(bad);
     assert.equal(r.code, 2, bad.join(' '));
-    assert.match(r.out, /Usage: zn-gate report/);
+    assert.match(r.err, /Usage: zn-gate report/);
+    assert.equal(r.out, '');
   }
 });
 
