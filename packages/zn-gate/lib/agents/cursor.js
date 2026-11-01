@@ -249,21 +249,26 @@ function install(opts = {}) {
   return report;
 }
 
+// Takes zn's entries out of data in place; true when it removed any.
+function removeOurs(data) {
+  if (!data.hooks || typeof data.hooks !== 'object') return false;
+  let changed = false;
+  for (const event of Object.keys(data.hooks)) {
+    const kept = strip(data.hooks[event]);
+    if (JSON.stringify(kept) === JSON.stringify(data.hooks[event])) continue;
+    changed = true;
+    if (kept.length) data.hooks[event] = kept; else delete data.hooks[event];
+  }
+  return changed;
+}
+
 function uninstall(opts = {}) {
   const file = hooksFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
-  if (!fs.existsSync(file)) return report;
-  const data = cfg.readJson(file);
-  if (!data.hooks || typeof data.hooks !== 'object') return report;
-  const before = JSON.stringify(data.hooks);
-  for (const event of Object.keys(data.hooks)) {
-    const kept = strip(data.hooks[event]);
-    if (kept.length) data.hooks[event] = kept; else delete data.hooks[event];
-  }
-  if (JSON.stringify(data.hooks) !== before) {
-    report.backup = cfg.backup(file);
+  const res = cfg.uninstallJson(file, removeOurs);
+  if (res.action !== 'unchanged') {
+    report.backup = res.backup;
     report.removed = 1;
-    cfg.writeJson(file, data);
     // The launcher (see commandFor) is shared by every config of this machine: one uninstall leaves it in place,
     // only the machine-wide uninstall (opts.removeLauncher) deletes it.
     if ((opts.scope || 'user') !== 'project' && opts.removeLauncher === true) {

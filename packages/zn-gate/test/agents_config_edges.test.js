@@ -136,7 +136,8 @@ test('claude-code: a fresh home gets the hooks; uninstall removes them and the h
   const u = claude.uninstall(opts(h));
   assert.equal(u.removed, 1);
   assert.equal(u.backup !== null, true);
-  assert.equal('hooks' in json(file), false);
+  // Install created the file and nothing else was in it: uninstall removes the file.
+  assert.equal(fs.existsSync(file), false);
 });
 
 test('claude-code: install keeps the user\'s other hooks and drops only the old zn entry', (t) => {
@@ -409,7 +410,7 @@ test('cursor: on win32 each hook runs through powershell.exe, and uninstall find
     for (const e of entries) assert.match(e.command, /^C:\/Windows\/System32\/WindowsPowerShell\/v1\.0\/powershell\.exe /);
   }
   assert.equal(cursor.uninstall(win).removed, 1);
-  assert.deepEqual(json(file).hooks, {});
+  assert.equal(fs.existsSync(file), false, 'the file install created is removed');
 });
 
 test('cursor: an event name it does not know is not a hook event', () => {
