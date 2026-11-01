@@ -15,6 +15,7 @@ const launcher = require('../lib/agents/launcher');
 const cfg = require('../lib/agents/config-file');
 const { windowsCommandScript } = require('../lib/shell-quote');
 const { tempDir } = require('./helpers/tmp');
+const { spawnStdinFile } = require('./helpers/spawn_stdin_file');
 
 const agy = getAdapter('antigravity');
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
@@ -176,10 +177,10 @@ test('it works the same with dash, bash and when a shell runs the whole line', s
     assert.equal(JSON.parse(ok.stdout).decision, 'allow', shell);
     // If Antigravity did hand the line to a shell, the script still gives the same answers.
     const bin = mkbin(t, { node: true, shell });
-    const viaShell = spawnSync(shell, ['-c', command], { input: EVENT, encoding: 'utf8', env: { PATH: bin } });
+    const viaShell = spawnStdinFile(shell, ['-c', command], { input: EVENT, encoding: 'utf8', env: { PATH: bin } });
     assert.equal(JSON.parse(viaShell.stdout).decision, 'deny', shell + ' outer shell');
     const bin2 = mkbin(t, { node: true, shell, zn: ALLOW });
-    const viaShell2 = spawnSync(shell, ['-c', command], { input: EVENT, encoding: 'utf8', env: { PATH: bin2 } });
+    const viaShell2 = spawnStdinFile(shell, ['-c', command], { input: EVENT, encoding: 'utf8', env: { PATH: bin2 } });
     assert.equal(JSON.parse(viaShell2.stdout).decision, 'allow', shell + ' outer shell');
   }
 });

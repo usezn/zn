@@ -17,7 +17,7 @@ test('zn-gate init - getKnownEnvironments returns list of supported agents', () 
 });
 
 test('zn-gate init - scanEnvironments detects active MCP configs', () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-scan-'));
+  const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-scan-')));
   try {
     const testClaude = path.join(tmpDir, 'claude.json');
     fs.writeFileSync(testClaude, JSON.stringify({
@@ -46,7 +46,7 @@ test('zn-gate init - scanEnvironments detects active MCP configs', () => {
 });
 
 test('zn-gate init - configureEnvironments dryRun does not alter configs', () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-dry-'));
+  const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-dry-')));
   try {
     const testClaude = path.join(tmpDir, 'claude.json');
     fs.writeFileSync(testClaude, JSON.stringify({
@@ -71,7 +71,7 @@ test('zn-gate init - configureEnvironments dryRun does not alter configs', () =>
 });
 
 test('zn-gate init - configureEnvironments wraps servers with zn-gate shield and creates backup', () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-wrap-'));
+  const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-wrap-')));
   try {
     const testClaude = path.join(tmpDir, 'claude.json');
     fs.writeFileSync(testClaude, JSON.stringify({
@@ -127,7 +127,7 @@ test('zn-gate init - known paths: Codex uses config.toml, OpenCode uses ~/.confi
 });
 
 test('zn-gate init - Codex config.toml: wraps stdio servers, keeps env tables and url servers, reverts', () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-codex-'));
+  const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-codex-')));
   try {
     const file = path.join(tmpDir, 'config.toml');
     const original = [
@@ -176,7 +176,7 @@ test('zn-gate init - Codex config.toml: wraps stdio servers, keeps env tables an
 });
 
 test('zn-gate init - Codex config.toml with multi-line args is left untouched and reported', () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-codex-ml-'));
+  const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-codex-ml-')));
   try {
     const file = path.join(tmpDir, 'config.toml');
     const original = '[mcp_servers.x]\ncommand = "npx"\nargs = [\n  "-y",\n  "pkg"\n]\n';
@@ -191,7 +191,7 @@ test('zn-gate init - Codex config.toml with multi-line args is left untouched an
 });
 
 test('zn-gate init - OpenCode opencode.json: wraps local servers (command array), skips remote, reverts', () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-oc-'));
+  const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-oc-')));
   try {
     const file = path.join(tmpDir, 'opencode.json');
     const original = JSON.stringify({
@@ -221,7 +221,7 @@ test('zn-gate init - OpenCode opencode.json: wraps local servers (command array)
 });
 
 test('zn-gate init - OpenCode JSONC with comments is not rewritten', () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-ocjsonc-'));
+  const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-init-ocjsonc-')));
   try {
     const file = path.join(tmpDir, 'opencode.jsonc');
     const original = '{\n  // my servers\n  "mcp": { "x": { "type": "local", "command": ["npx", "y"] } }\n}\n';
