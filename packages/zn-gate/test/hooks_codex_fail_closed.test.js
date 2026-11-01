@@ -14,6 +14,7 @@ const { spawnSync } = require('child_process');
 
 const { tempDir } = require('./helpers/tmp');
 const { HOOK_TIMEOUT_S } = require('../lib/agents/codex');
+const { winCmdRe } = require('./helpers/wincmd');
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 
@@ -59,7 +60,7 @@ for (const [event, mk] of EVENTS) {
     const r = run(t, 'codex', mk(t), { ZN_TEST_HOOK_FAULT: 'hang', ZN_TEST_HOOK_HANG_MS: '30000', ZN_TEST_HOOK_DEADLINE_MS: '800' });
     assertCodexDeny(r, event);
     assert.ok(r.ms < 10000, 'answered in ' + r.ms + ' ms');
-    assert.match(r.stdout, /the check could not finish in time or failed, so this was blocked\. Try again; if it keeps happening, ask the user to run `zn-gate check` in their terminal\./);
+    assert.match(r.stdout, winCmdRe(/the check could not finish in time or failed, so this was blocked\. Try again; if it keeps happening, ask the user to run `zn-gate check` in their terminal\./));
   });
 
   test('codex ' + event + ': an error thrown by the check is deny, exit 2, JSON only', (t) => {
