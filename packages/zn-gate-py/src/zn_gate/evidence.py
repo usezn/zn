@@ -382,17 +382,56 @@ _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 _HASH_RE = re.compile(r"[0-9a-f]{64}")
 
 
+_CONF_MARK = "@@zn-confidence@@"
+
+
+def _js_number(x: float) -> str:
+    """The text JavaScript's Number toString gives for a finite non-integer float."""
+    from decimal import Decimal
+
+    sign, digit_tuple, exp = Decimal(repr(x)).as_tuple()
+    all_digits = "".join(map(str, digit_tuple))
+    digits = all_digits.rstrip("0") or "0"
+    # Decimal point position: value = 0.<digits> * 10**n
+    n = len(all_digits) + exp
+    k = len(digits)
+    if 0 < n <= 21:
+        out = digits.ljust(n, "0") if k <= n else digits[:n] + "." + digits[n:]
+    elif -6 < n <= 0:
+        out = "0." + "0" * (-n) + digits
+    else:
+        e = n - 1
+        out = digits[0] + ("." + digits[1:] if k > 1 else "") + "e" + ("-" if e < 0 else "+") + str(abs(e))
+    return ("-" if sign else "") + out
+
+
+def _serialize(record: Dict[str, Any], ascii_only: bool = False, js_numbers: bool = False) -> str:
+    conf = record.get("confidence")
+    swap = js_numbers and isinstance(conf, float) and math.isfinite(conf) and not conf.is_integer()
+    text = json.dumps({**record, "confidence": _CONF_MARK} if swap else record,
+                      separators=(",", ":"), ensure_ascii=ascii_only)
+    if swap:
+        text = text.replace('"' + _CONF_MARK + '"', _js_number(conf), 1)
+    return text if ascii_only else _LONE_SURROGATE.sub(lambda m: "\\u%04x" % ord(m.group()), text)
+
+
 def _canonical(record: Dict[str, Any]) -> str:
-    """Canonical serialization of a record for hashing: compact JSON with UTF-8 left as is and
-    lone surrogates escaped, byte for byte what JSON.stringify gives in the Node package."""
-    text = json.dumps(record, separators=(",", ":"), ensure_ascii=False)
-    return _LONE_SURROGATE.sub(lambda m: "\\u%04x" % ord(m.group()), text)
+    """Canonical serialization of a record for hashing: compact JSON with UTF-8 left as is, lone
+    surrogates escaped and numbers written as JavaScript writes them (0.00001, not 1e-05), byte
+    for byte what JSON.stringify gives in the Node package."""
+    return _serialize(record, js_numbers=True)
 
 
-def _canonical_ascii(record: Dict[str, Any]) -> str:
-    """The older form (non-ASCII escaped as \\uXXXX) that earlier Python versions hashed.
-    Verification accepts it so existing logs stay valid; new records use _canonical."""
-    return json.dumps(record, separators=(",", ":"))
+def _canonical_forms(record: Dict[str, Any]) -> List[str]:
+    """Every form a record may have been hashed in: the current one, the older Python forms
+    (non-ASCII escaped as \\uXXXX; small numbers as Python writes them, 1e-05) and their mix.
+    Verification accepts all of them so existing logs stay valid."""
+    return [
+        _serialize(record, js_numbers=True),
+        _serialize(record),
+        _serialize(record, ascii_only=True),
+        _serialize(record, ascii_only=True, js_numbers=True),
+    ]
 
 
 _last_write_warn: Optional[float] = None
@@ -461,28 +500,40 @@ def _build_record(event: Dict[str, Any], prev_hash: str) -> Dict[str, Any]:
     # Note: a payload with a lone surrogate hashes as "?" here and as U+FFFD in the Node package,
     # so payload_sha256 differs between the two for such text; record_hash and verification are
     # not affected.
-    payload_raw = event.get("payload", "")
-    payload_str = payload_raw if isinstance(payload_raw, str) else json.dumps(payload_raw, separators=(",", ":"))
+    # A missing or None payload is the empty string; any other non-string payload is its compact
+    # JSON (so 0 is "0" and False is "false"), as in the Node package.
+    payload_raw = event.get("payload")
+    if isinstance(payload_raw, str):
+        payload_str = payload_raw
+    elif payload_raw is None:
+        payload_str = ""
+    else:
+        payload_str = json.dumps(payload_raw, separators=(",", ":"), ensure_ascii=False)
     payload_sha256 = hashlib.sha256(payload_str.encode("utf-8", errors="replace")).hexdigest()
 
-    raw_conf = event.get("confidence", 1.0)
-    conf_val = int(raw_conf) if isinstance(raw_conf, (int, float)) and float(raw_conf).is_integer() else float(raw_conf)
+    # A confidence of 0 is kept as 0; only a missing or non-numeric one defaults to 1.
+    raw_conf = event.get("confidence")
+    if isinstance(raw_conf, bool) or not isinstance(raw_conf, (int, float)) or not math.isfinite(raw_conf):
+        raw_conf = 1.0
+    conf_val = int(raw_conf) if float(raw_conf).is_integer() else float(raw_conf)
+    raw_lat = event.get("latency_us")
+    latency = int(raw_lat) if isinstance(raw_lat, (int, float)) and not isinstance(raw_lat, bool) and math.isfinite(raw_lat) else 0
 
     base_record = {
         "id": record_id,
         "timestamp": timestamp,
         "agent_environment": event.get("agent") or event.get("agent_environment") or "python-agent",
-        "phase": event.get("phase", "tool-call"),
+        "phase": event.get("phase") or "tool-call",
         "tool_name": event.get("tool_name") or event.get("tool") or "unknown",
         "payload_sha256": payload_sha256,
         # Redact the full payload first, then cut, so a secret straddling the cut is not leaked.
         "payload_preview": (_redact(payload_str) or "")[:120],
-        "verdict": event.get("verdict", "allow"),
-        "rule": event.get("rule", None),
-        "reason": event.get("reason", None),
+        "verdict": event.get("verdict") or "allow",
+        "rule": event.get("rule") or None,
+        "reason": event.get("reason") or None,
         "confidence": conf_val,
-        "latency_us": int(event.get("latency_us", 0)),
-        "engine": event.get("engine", "python-deterministic"),
+        "latency_us": latency,
+        "engine": event.get("engine") or "python-deterministic",
         "prev_hash": prev_hash,
     }
 
@@ -545,7 +596,7 @@ def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
         def _hash_of(text: str) -> str:
             return hashlib.sha256(f"{expected_prev}:{text}".encode("utf-8", errors="replace")).hexdigest()  # noqa: B023
 
-        if recorded_hash not in (_hash_of(_canonical(base_record)), _hash_of(_canonical_ascii(base_record))):
+        if recorded_hash not in {_hash_of(text) for text in _canonical_forms(base_record)}:
             return {
                 "valid": False,
                 "total": len(lines),
