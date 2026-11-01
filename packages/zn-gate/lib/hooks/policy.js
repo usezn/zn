@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-03.2';
+const POLICY_RULES_VERSION = '2026-11-04.20';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2446,7 +2446,7 @@ function bashDenialOf(cmd, opts = {}) {
   let afterGlob = 0;
   // A <rev>:<path> word is read as a git object in any command that runs git (echo HEAD:.env | xargs git show).
   const anyGit = words.some((x) => x.git || x.text === 'git' || x.text.endsWith('/git'));
-  for (const w of words) {
+  for (const w of psListWords(words, opts)) {
     // --flag=value carries a path too (--kubeconfig=~/.kube/config).
     let text = w.text;
     if (text.startsWith('-')) {
@@ -2516,6 +2516,32 @@ function bashDenialOf(cmd, opts = {}) {
 }
 
 const NAME_VALUE_RE = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}=/;
+
+/* PowerShell reads every path of a comma list (cat a,b  gc 'a','b'  type @('a','b')); in bash, a,b is one file name.
+   Readers that take such lists, and the ones that exist only in PowerShell (read as PowerShell in any tool). */
+const PS_LIST_READERS = new Set(['cat', 'gc', 'type', 'get-content', 'select-string', 'sls', 'import-csv', 'ipcsv', 'more', 'get-item',
+  'gi', 'get-childitem', 'gci', 'ls', 'dir', 'copy-item', 'copy', 'cp', 'import-clixml', 'convertfrom-json']);
+const PS_ONLY_READERS = new Set(['gc', 'get-content', 'select-string', 'sls', 'import-csv', 'ipcsv', 'get-item', 'gi', 'get-childitem',
+  'gci', 'copy-item', 'import-clixml']);
+/* The words of a command, each comma list of a PowerShell reader followed by the paths inside it. */
+function psListWords(words, opts) {
+  const out = [];
+  let prev = null;
+  for (const w of words) {
+    out.push(w);
+    // @('a','b'): the opening bracket starts a new command, so the word after "@" takes the head of the "@".
+    const lead = prev && prev.text === '@' ? prev : w;
+    prev = w;
+    if (typeof w.text !== 'string' || w.text.indexOf(',') < 0 || w.text.length > 4096) continue;
+    const head = bareHead(lead.head || '').toLowerCase().replace(/\.exe$/, '');
+    if (!PS_LIST_READERS.has(head) || !(opts.powershell === true || PS_ONLY_READERS.has(head))) continue;
+    const inner = w.text.replace(/^@?\(/, '').replace(/\)$/, '');
+    const parts = inner.split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+    if (parts.length < 2) continue;
+    for (const part of parts) out.push({ ...w, text: part });
+  }
+  return out;
+}
 const ANSI_C_SIMPLE = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', "'": "'", '"': '"', '?': '?' };
 
 /* The command with each bash $'...' word decoded and quoted again as a plain '...' word, and $"..." read as "...". */
