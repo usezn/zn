@@ -418,7 +418,7 @@ function createSecretsServer(opts = {}) {
           : null;
     const where = gitStatusOf(out);
     if (where !== 'ignored' && where !== 'outside') {
-      return denied(out + ' is ' + (where === 'unknown' ? 'in an unknown git state (git not available)' : 'tracked by git (it could be committed)') +
+      return denied(out + ' is ' + (where === 'unknown' ? 'in an unknown git state (git is not available or did not answer in time)' : 'tracked by git (it could be committed)') +
         '. Secret values are only written to git-ignored files or outside the repository.');
     }
     let template;

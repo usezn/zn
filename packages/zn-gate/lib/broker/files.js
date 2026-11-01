@@ -28,12 +28,16 @@ function existingDir(p) {
   }
 }
 
+// Longest a git call may take inside a hook. A git that hangs (a network drive, a locked index) is killed after this and
+// the answer is 'unknown'; the hook then answers before the agent's own hook timeout instead of never.
+const GIT_TIMEOUT_MS = 3000;
+
 /**
  * 'ignored' | 'tracked' | 'outside' | 'unknown'
  *   ignored: inside a git work tree and matched by .gitignore
  *   tracked: inside a git work tree and not ignored (could be committed)
  *   outside: not inside any git work tree
- *   unknown: git is not available; callers treat it as 'tracked'
+ *   unknown: git is not available or did not answer within GIT_TIMEOUT_MS; callers treat it as 'tracked'
  */
 function gitStatusOf(file) {
   const abs = path.resolve(file);
@@ -45,7 +49,10 @@ function gitStatusOf(file) {
   // English messages (to tell "not a repository" from other failures), and no fsmonitor: core.fsmonitor in the
   // repository's own .git/config names a program that git would otherwise run.
   const env = { ...exe.programEnv(), LC_ALL: 'C', LANGUAGE: 'C' };
-  const run = (args) => spawnSync(git, ['-c', 'core.fsmonitor=false', '-C', dir, ...args], { encoding: 'utf8', windowsHide: true, env });
+  // timeout: spawnSync blocks the event loop, so a hung git would otherwise stop the hook from answering at all.
+  const run = (args) => spawnSync(git, ['-c', 'core.fsmonitor=false', '-C', dir, ...args], {
+    encoding: 'utf8', windowsHide: true, env, timeout: GIT_TIMEOUT_MS, killSignal: 'SIGKILL',
+  });
   const top = run(['rev-parse', '--show-toplevel']);
   if (top.error) return 'unknown';
   // Only "not a git repository" means outside; any other failure (a repository git refuses to read, such as one owned by

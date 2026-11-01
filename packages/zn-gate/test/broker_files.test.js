@@ -86,3 +86,21 @@ test('gitStatusOf: ignored, tracked and outside', { skip: !haveGit }, () => {
     fs.rmSync(plain, { recursive: true, force: true });
   }
 });
+
+test('gitStatusOf: a git that hangs is killed and answered as unknown', { skip: process.platform === 'win32' }, () => {
+  // A stand-in git on the PATH that sleeps 30 s. The hook must answer well before that, with the safe answer.
+  const shims = tmp();
+  const oldPath = process.env.PATH;
+  try {
+    fs.writeFileSync(path.join(shims, 'git'), '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+    process.env.PATH = shims + path.delimiter + oldPath;
+    const started = Date.now();
+    const out = gitStatusOf(path.join(shims, 'a.txt'));
+    const took = Date.now() - started;
+    assert.equal(out, 'unknown');
+    assert.ok(took < 5000, 'gitStatusOf took ' + took + ' ms');
+  } finally {
+    process.env.PATH = oldPath;
+    fs.rmSync(shims, { recursive: true, force: true });
+  }
+});
