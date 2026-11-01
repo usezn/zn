@@ -78,19 +78,23 @@ Short meanings of words used in the zn-gate docs.
 
 **Protocol version**: the dated edition of the MCP standard that a client and a server agree to use, for example `2025-11-25`. See [Agent compatibility](compat.md).
 
-**Audit log**: the local record of what zn-gate decided or which secret was used. It never holds secret values. See [Audit](audit.md).
+**Vault audit log**: the local record of what the vault did, such as which secret was used, unlock and reset. It is the file `~/.zn/audit.jsonl` and never holds secret values. Read it with `zn vault log`. See [Secrets](secrets.md) and [Files and folders](files-and-folders.md).
 
-**Hash chain**: a way to make a log tamper-evident. Each record includes a fingerprint of the one before it, so a changed or deleted record breaks the chain. `vault log` and `evidence --verify` check it.
+**Decision log**: the local record of what zn-gate allowed or blocked. It is the file `~/.zn/evidence.jsonl`, also called the evidence log. Check it with `zn-gate evidence --verify`. See [How the log works](architecture.md).
+
+**`zn audit`**: a command that reviews the agent configuration of a repository before you open it. It has nothing to do with the vault audit log. See [Audit](audit.md).
+
+**Hash chain**: a way to make a log tamper-evident. Each record includes a fingerprint of the one before it, so a changed or deleted record breaks the chain. `vault verify` checks the vault audit log and `evidence --verify` checks the decision log.
 
 **SARIF**: a standard JSON format for reports of findings, which code hosts and CI tools can show.
 
-**OTLP** (OpenTelemetry): a standard format for sending logs to monitoring tools. `vault log export --otlp` writes the audit log in it.
+**OTLP** (OpenTelemetry): a standard format for sending logs to monitoring tools. `vault log export --otlp` writes the vault audit log in it.
 
 **Sandbox**: a closed space that stops a program from touching anything outside it. zn-gate is not one: it checks what an agent's hooks can see.
 
 **Best effort**: it works where the agent gives zn-gate enough information to act, and not everywhere. The [compatibility table](compat.md) marks these cases.
 
-**zn Team**: the optional service for organizations. It shares a policy with every developer's machine and collects audit logs. See [Team](team.md).
+**zn Team**: the optional service for organizations. It shares a policy with every developer's machine and collects the vault audit log. See [Team](team.md).
 
 **Join token**: the one-time code an admin gives you so that `team join` can connect your machine to your organization.
 

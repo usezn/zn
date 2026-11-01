@@ -9,7 +9,8 @@ zn-gate keeps the vault and its settings in a `.zn` folder in your home folder (
 | Path | What it is |
 | --- | --- |
 | The vault files | Your stored secrets, encrypted. |
-| `audit.jsonl` | The local audit log, next to the vault files. |
+| `audit.jsonl` | The vault audit log: what the vault did (which secret was used, unlock, reset). Never holds secret values. Next to the vault files. Check it with `zn vault verify`; read it with `zn vault log`. |
+| `evidence.jsonl` | The decision log: what zn-gate allowed or blocked. Check it with `zn-gate evidence --verify`. If it is damaged, you move it aside to `evidence.damaged.jsonl`, see [troubleshooting](troubleshooting.md#10-the-evidence-log--is-damaged). |
 | `~/.zn/vault-backup-<date>` | Encrypted copy of an old vault, made by `zn-gate vault reset`. |
 | `~/.zn/hooks` | A small launcher script, shared by every profile of the same agent. `npm update -g zn-gate` refreshes these launchers by itself (a short install step); a project-local install does not touch them, and neither does an update with `--ignore-scripts`. |
 | `~/.zn/reach-last.json` | Written only by `reach --remember`. |
@@ -50,7 +51,7 @@ More: [CLI reference](cli.md), [remove by hand](editors/remove-by-hand.md).
 
 - It removes the hooks, the `secrets` MCP server, and the Claude Code plugin.
 - It puts back the saved copies of wrapped MCP configs.
-- It keeps the vault unless you answer yes to a second question. A yes deletes the vault files, `audit.jsonl` and the vault key in your system keychain.
-- The rest of the `.zn` folder stays: your settings and any `vault-backup-*` folders.
+- It keeps the vault unless you answer yes to a second question. A yes deletes the vault files, the vault audit log (`audit.jsonl`), the `vault-backup-*` folders, the token maps, the session key and the vault key in your system keychain.
+- The rest of the `.zn` folder stays: your settings and the decision log (`evidence.jsonl`).
 
 More: [Remove zn-gate](uninstall.md), [`uninstall` in the CLI reference](cli.md#uninstall).
