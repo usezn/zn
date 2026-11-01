@@ -112,7 +112,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 
 - `LONG_INPUT_MIN_CHARS` (`zn-gate/lib/client`): `1000`. Text longer than this asks the cloud classifier for windowed reading, and gets the longer default timeout.
 - `RULES_VERSION` (`zn-gate/lib/client` and `zn-gate/lib/rules`): the version of the built-in rule set, the same string that comes back as `rules_version` in results.
-- `EVIDENCE_FILE` (`zn-gate/lib/evidence`): the default evidence log path, `~/.zn/evidence.jsonl`.
+- `EVIDENCE_FILE` (`zn-gate/lib/evidence`): the default evidence log path, `~/.zn/evidence.jsonl` (inside the folder `ZN_HOME` names when that variable is set).
 
 ### `sanitizeToolResult(toolName, content, options)`
 
@@ -313,7 +313,7 @@ except GuardBlockError as e:
 ### Constants (Python)
 
 - `GENESIS_HASH`: 64 zeros, the `prev_hash` of the first record of a log.
-- `EVIDENCE_FILE` (`zn_gate.evidence`): the default evidence log path, `~/.zn/evidence.jsonl`.
+- `EVIDENCE_FILE` (`zn_gate.evidence`): the default evidence log path, `~/.zn/evidence.jsonl` (inside the folder `ZN_HOME` names when that variable is set).
 - `RULES_VERSION`: the version of the built-in rule set, the same string that comes back as `rules_version` in results.
 - `__version__`: the installed package version.
 

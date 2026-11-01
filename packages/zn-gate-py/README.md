@@ -331,7 +331,7 @@ We only publish numbers we can reproduce, with the method next to them.
 - `ZN_BLOCK_TRUNCATED`: `1` keeps a tool result too large to scan in full blocked (rule `size:truncated`), even when `ZN_ALLOW_TRUNCATED=1` is set. Any other value leaves it off and logs a warning (logger `zn_gate`) naming the accepted values.
 - `ZN_ALLOW_TRUNCATED`: `1` lets a tool result over 4 MB through, marked `truncated`, instead of blocking it. This weakens protection: the part of the output past the limit is never checked, so use it only for a tool you trust. It has no effect on arguments, which are always blocked over 4 MB.
 - `ZN_VERBOSE`: `1` (or `DEBUG=zn`) prints technical detail on the error output.
-- `ZN_HOME`: folder used instead of `~/.zn`. The Python package reads the usage counts there (`zn-gate stats`), written by the npm package.
+- `ZN_HOME`: folder used instead of `~/.zn`. The Python package reads the usage counts there (`zn-gate stats`), written by the npm package, and keeps the evidence ledger there. In the npm package it also covers the hook settings (`config.json`) and the secret request list.
 - Project files: this package does not read `.znrules` or `zn.config.json`. Custom rules and the `strict` setting in those files apply only to the npm package (its CLI, agent hooks and Node.js library). In Python, turn strict mode on with `strict=True` or `ZN_STRICT=1`.
 - `ZN_STAGE` / `ZN_API_URL`: cloud endpoint selection.
 - `NO_COLOR` (any non-empty value) or `TERM=dumb`: the command line output leaves out its symbols; the status words (ALLOW, BLOCK, clean, ...) stay.
