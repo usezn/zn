@@ -24,7 +24,7 @@ Percent-encoded values are read too: `jane.doe%40example.com` in a URL or a form
 
 It looks for the same things the zn-gate scrubber already finds:
 
-- **personal data:** email addresses, phone numbers, bank account numbers (IBAN), card numbers, national ID numbers and social security numbers;
+- **personal data:** email addresses, international phone numbers (see Limits), bank account numbers (IBAN), card numbers, national ID numbers and social security numbers;
 - **literal secrets:** API keys, tokens, private keys and passwords in URLs, plus any secret you stored in the zn vault.
 
 ## What it does not flag
@@ -93,6 +93,8 @@ This reads the text of a command, a URL or the arguments of an MCP call. It is a
 - the body of a file you upload with `@file`.
 
 It also depends on the scrubber: it reports what the scrubber can detect, so a name or an address that has no fixed format (a street, a first name) is not found, and neither is a bare password passed with `--user name:password` unless it looks like a credential the scrubber knows. MCP calls are checked in agents that send their arguments to the pre-tool check (see [Agent compatibility](compat.md)).
+
+Phone numbers are found only in the international form: a `+`, a country code and 8 to 15 digits in total, written together (`+34600123456`) or in groups separated by single spaces, dashes or dots (`+34 600 123 456`, `+1 202-555-0143`, `+44 20 7946 0958`). A number written without the `+` (`(202) 555-0143`, `020 7946 0958`) is not found: in agent traffic such digit groups are most often dates, ids, versions or prices, so reporting them would flag too much harmless text.
 
 The Python package (`zn-gate` on PyPI) does not install hooks and has no personal-data detector, so this check is part of the Node.js hooks only.
 

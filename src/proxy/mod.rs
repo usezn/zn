@@ -7,13 +7,14 @@
 //! - Command validation for security
 //! - Race-condition-free connection management
 
+use crate::bounded_line::{read_line_bounded, BoundedLine, MAX_STDIN_LINE_BYTES};
 use anyhow::{anyhow, Result};
 use futures::{future::join_all, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncBufRead, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
@@ -194,9 +195,7 @@ impl McpConnection {
                 stdin.write_all(b"\n").await?;
                 stdin.flush().await?;
 
-                let mut response = String::new();
-                stdout.read_line(&mut response).await?;
-                Ok(response.trim().to_string())
+                read_upstream_line(stdout, MAX_STDIN_LINE_BYTES, request).await
             }
             Self::WebSocket { ws_stream, .. } => {
                 ws_stream
@@ -283,6 +282,38 @@ impl McpConnection {
     }
 }
 
+/// Read one reply line from an upstream stdio server, holding at most `max` bytes of it.
+///
+/// A longer line is dropped as it streams past, so a server that never sends a newline cannot make the
+/// gateway buffer without a bound. The client then gets a JSON-RPC error carrying the id of its request
+/// (`null` when the request has none), and the connection stays usable for the next request.
+async fn read_upstream_line<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    max: usize,
+    request: &str,
+) -> Result<String> {
+    match read_line_bounded(reader, max).await? {
+        BoundedLine::Line(line) => Ok(line.trim().to_string()),
+        BoundedLine::Eof => Ok(String::new()),
+        BoundedLine::TooLong => {
+            warn!(
+                limit_bytes = max,
+                "MCP server reply dropped: line over the size limit"
+            );
+            let id = serde_json::from_str::<serde_json::Value>(request)
+                .ok()
+                .and_then(|v| v.get("id").cloned())
+                .unwrap_or(serde_json::Value::Null);
+            Ok(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {"code": -32600, "message": "Response too large"}
+            })
+            .to_string())
+        }
+    }
+}
+
 /// A connection slot: empty until the first successful connect.
 type ConnectionSlot = Arc<Mutex<Option<McpConnection>>>;
 
@@ -299,6 +330,10 @@ pub struct McpPool {
     /// Plain-English warnings from loading the servers file (servers that were
     /// skipped, a file that could not be read). The caller shows them.
     notices: Vec<String>,
+    /// Servers left out when the file was loaded (command not allowed, or
+    /// neither a command nor a url), with the reason. A tool call for one of
+    /// them is refused instead of being passed on as allowed.
+    skipped: HashMap<String, String>,
 }
 
 impl McpPool {
@@ -309,12 +344,51 @@ impl McpPool {
             connections: Mutex::new(HashMap::new()),
             cache: None,
             notices: Vec::new(),
+            skipped: HashMap::new(),
         }
     }
 
     /// Warnings found while loading the servers file, for the user to see.
     pub fn notices(&self) -> &[String] {
         &self.notices
+    }
+
+    /// The same pool, with these servers recorded as skipped (name -> reason).
+    pub fn with_skipped(mut self, skipped: HashMap<String, String>) -> Self {
+        self.skipped = skipped;
+        self
+    }
+
+    /// The servers that were left out, as (name, reason), sorted by name.
+    pub fn skipped_servers(&self) -> Vec<(String, String)> {
+        let mut list: Vec<(String, String)> = self
+            .skipped
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        list.sort();
+        list
+    }
+
+    /// If `tool` belongs to a server that was left out, that server and the
+    /// reason. The server is read from the tool name: `mcp__<server>__<tool>`,
+    /// or `<server>` followed by `__`, `.`, `/` or `:`.
+    pub fn skip_reason_for_tool(&self, tool: &str) -> Option<(String, String)> {
+        if self.skipped.is_empty() {
+            return None;
+        }
+        let mut candidates: Vec<&str> = Vec::new();
+        if let Some(rest) = tool.strip_prefix("mcp__") {
+            candidates.extend(rest.split("__").next());
+        }
+        for sep in ["__", ".", "/", ":"] {
+            if let Some((server, _)) = tool.split_once(sep) {
+                candidates.push(server);
+            }
+        }
+        candidates
+            .into_iter()
+            .find_map(|c| self.skipped.get(c).map(|r| (c.to_string(), r.clone())))
     }
 
     /// Set the result cache for the pool
@@ -377,6 +451,7 @@ impl McpPool {
 
         let mut configs = HashMap::new();
         let mut notices = Vec::new();
+        let mut skipped = HashMap::new();
 
         if let Some(servers) = value.get("mcpServers").and_then(|v| v.as_object()) {
             for (name, server) in servers {
@@ -395,6 +470,10 @@ impl McpPool {
                         name
                     );
                     notices.push(crate::user_errors::mcp_server_incomplete(name, Some(path)));
+                    skipped.insert(
+                        name.clone(),
+                        "it has neither a \"command\" nor a \"url\"".to_string(),
+                    );
                     continue;
                 }
 
@@ -407,6 +486,8 @@ impl McpPool {
                             ALLOWED_COMMANDS,
                             Some(path),
                         ));
+                        skipped
+                            .insert(name.clone(), format!("\"{cmd}\" is not an allowed command"));
                         continue;
                     }
                 }
@@ -444,7 +525,7 @@ impl McpPool {
             }
         }
 
-        let mut pool = Self::new(configs);
+        let mut pool = Self::new(configs).with_skipped(skipped);
         pool.notices = notices;
         Ok(pool)
     }
@@ -583,6 +664,72 @@ mod tests {
     fn test_validate_command_blocked() {
         assert!(validate_command("bash").is_err());
         assert!(validate_command("rm").is_err());
+    }
+
+    #[tokio::test]
+    async fn upstream_normal_reply_passes_unchanged() {
+        let mut r = BufReader::new(&b"{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}\r\n"[..]);
+        let out = read_upstream_line(&mut r, 1024, r#"{"id":7}"#)
+            .await
+            .unwrap();
+        assert_eq!(out, r#"{"jsonrpc":"2.0","id":7,"result":{}}"#);
+    }
+
+    #[tokio::test]
+    async fn upstream_line_over_the_cap_becomes_an_error_for_the_request_id() {
+        let mut data = vec![b'a'; 2000];
+        data.extend_from_slice(b"\n{\"id\":8}\n");
+        let mut r = BufReader::new(&data[..]);
+        let out = read_upstream_line(&mut r, 1024, r#"{"jsonrpc":"2.0","id":"abc","method":"x"}"#)
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["id"], "abc");
+        assert_eq!(v["error"]["code"], -32600);
+        // The next line is still readable: the proxy stays in sync.
+        let next = read_upstream_line(&mut r, 1024, "{}").await.unwrap();
+        assert_eq!(next, r#"{"id":8}"#);
+    }
+
+    #[tokio::test]
+    async fn upstream_request_without_id_gets_a_null_id() {
+        let mut r = BufReader::new(&b"aaaaaaaa\n"[..]);
+        let out = read_upstream_line(&mut r, 4, "not json").await.unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(v["id"].is_null());
+    }
+
+    /// 64 MiB with no newline, through a small buffer: dropped as it streams, not stored.
+    #[tokio::test]
+    async fn upstream_endless_line_is_not_buffered() {
+        use tokio::io::AsyncReadExt;
+        let stream = tokio::io::repeat(b'a').take(64 * 1024 * 1024);
+        let mut r = BufReader::with_capacity(4096, stream);
+        let out = read_upstream_line(&mut r, 1024, r#"{"id":1}"#)
+            .await
+            .unwrap();
+        assert!(out.contains("Response too large"));
+        assert!(out.len() < 200);
+    }
+
+    /// Small chunks that add up past the cap are still refused.
+    #[tokio::test]
+    async fn upstream_slow_drip_over_the_cap_is_refused() {
+        let (mut tx, rx) = tokio::io::duplex(64);
+        tokio::spawn(async move {
+            for _ in 0..200 {
+                if tx.write_all(&[b'a'; 16]).await.is_err() {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+            let _ = tx.write_all(b"\n").await;
+        });
+        let mut r = BufReader::with_capacity(32, rx);
+        let out = read_upstream_line(&mut r, 1000, r#"{"id":3}"#)
+            .await
+            .unwrap();
+        assert!(out.contains("Response too large"));
     }
 
     async fn ws_conn(addr: std::net::SocketAddr) -> McpConnection {
@@ -822,6 +969,35 @@ Content-Length: 0
             "health_check waited for the busy server: {:?}",
             elapsed
         );
+    }
+
+    #[test]
+    fn skipped_servers_are_recorded_with_a_reason_and_matched_by_tool_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("mcp_servers.json");
+        std::fs::write(
+            &file,
+            r#"{"mcpServers":{"bad":{"command":"rm"},"empty":{},"good":{"command":"node"}}}"#,
+        )
+        .unwrap();
+        let pool = McpPool::from_config_file(file.to_str().unwrap()).unwrap();
+        let skipped = pool.skipped_servers();
+        let names: Vec<&str> = skipped.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["bad", "empty"]);
+        assert!(
+            skipped[0].1.contains("not an allowed command"),
+            "{:?}",
+            skipped
+        );
+        assert_eq!(pool.list_mcps(), vec!["good".to_string()]);
+        let (server, _) = pool.skip_reason_for_tool("mcp__bad__run").unwrap();
+        assert_eq!(server, "bad");
+        assert!(pool.skip_reason_for_tool("bad.run").is_some());
+        assert!(pool.skip_reason_for_tool("mcp__good__run").is_none());
+        assert!(pool.skip_reason_for_tool("other_tool").is_none());
+        // A server that is only unreachable is never recorded: nothing here
+        // connects, and the list comes from the file alone.
+        assert!(pool.skip_reason_for_tool("good.run").is_none());
     }
 
     #[test]

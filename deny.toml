@@ -4,9 +4,9 @@
 #
 # The allowed licenses are the permissive ones the project accepts. They are
 # the same as .github/license-allowlist.txt (derived from
-# packages/zn-gate/THIRD_PARTY_NOTICES.md), plus a few permissive licenses
-# that only Rust crates use (Unicode-3.0, Zlib, Apache-2.0 WITH
-# LLVM-exception). Anything else (for example MPL-2.0 or CC0-1.0) is
+# packages/zn-gate/THIRD_PARTY_NOTICES.md), plus "Apache-2.0 WITH
+# LLVM-exception". .github/scripts/check-license-allowlist.py (job
+# license-lists in dependency-review.yml) fails when the two differ. Anything else (for example MPL-2.0 or CC0-1.0) is
 # reported as a finding for a person to review.
 
 [graph]

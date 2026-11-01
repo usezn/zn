@@ -80,7 +80,32 @@ pub enum JsonRpcValidation {
 
 /// Validate and extract tool call from JSON-RPC request
 pub fn validate_jsonrpc(json_str: &str) -> JsonRpcValidation {
-    // Parse JSON
+    // One frame is one object. Batches (arrays) are not supported, and a string, number, boolean or null
+    // is not a request, so none of them is forwarded. The struct would read an array as a positional
+    // struct (["2.0", {...}, "ping"] reads as jsonrpc, id, method) and forward the raw line unchecked.
+    let first = json_str
+        .bytes()
+        .find(|b| !matches!(b, b' ' | b'\t' | b'\n' | b'\r'));
+    if first != Some(b'{') {
+        // Valid JSON that is not an object is an invalid request; anything else does not parse.
+        return match serde_json::from_str::<serde::de::IgnoredAny>(json_str) {
+            Ok(_) => JsonRpcValidation::Error {
+                id: None,
+                code: jsonrpc_error::INVALID_REQUEST,
+                message:
+                    "Invalid Request: a frame must be a single JSON object (batches are not supported)"
+                        .to_string(),
+            },
+            Err(_) => JsonRpcValidation::Error {
+                id: None,
+                code: jsonrpc_error::PARSE_ERROR,
+                message: "Parse error: Invalid JSON".to_string(),
+            },
+        };
+    }
+    // Straight into the struct, never through serde_json::Value: a Value keeps the last of two duplicate
+    // keys, while the struct rejects them, so the method and params checked here are the only ones in
+    // the raw line that is forwarded.
     let request: JsonRpcRequest = match serde_json::from_str(json_str) {
         Ok(r) => r,
         Err(_) => {
@@ -473,23 +498,23 @@ mod tests {
     // ---- batches and broken JSON ----
 
     #[test]
-    fn batch_arrays_are_a_parse_error() {
-        // Current behaviour: the validator takes one request object; any array is rejected as a parse error.
+    fn batch_arrays_are_an_invalid_request() {
+        // The validator takes one request object; any array is valid JSON but not a request (-32600).
         let mixed = format!(r#"[{OK_CALL},{{"jsonrpc":"1.0","method":"x"}},5]"#);
         let single = format!("[{OK_CALL}]");
         for b in ["[]", "[{}]", "[1,2,3]", single.as_str(), mixed.as_str()] {
             let (id, code, msg) = err(validate_jsonrpc(b));
             assert_eq!(id, None, "{b}");
-            assert_eq!(code, jsonrpc_error::PARSE_ERROR, "{b}");
-            assert!(msg.starts_with("Parse error"));
+            assert_eq!(code, jsonrpc_error::INVALID_REQUEST, "{b}");
+            assert!(msg.starts_with("Invalid Request"));
         }
     }
 
     #[test]
-    fn non_object_json_is_a_parse_error() {
+    fn non_object_json_is_an_invalid_request() {
         for s in ["null", "true", "42", r#""text""#] {
             let (_, code, _) = err(validate_jsonrpc(s));
-            assert_eq!(code, jsonrpc_error::PARSE_ERROR, "{s}");
+            assert_eq!(code, jsonrpc_error::INVALID_REQUEST, "{s}");
         }
     }
 

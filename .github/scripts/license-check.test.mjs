@@ -126,6 +126,20 @@ test('dual licenses: OR needs one allowed alternative, AND needs all of them', (
   assert.ok(r.stdout.includes(header(5, 2)), r.stdout);
 });
 
+test('WITH exceptions: allowed for an allowed base and a known exception only', () => {
+  const root = nodeModules({
+    with_ok: { name: 'with-ok', version: '1.0.0', license: 'Apache-2.0 WITH LLVM-exception' },
+    with_bad_base: { name: 'with-bad-base', version: '1.0.0', license: 'GPL-3.0 WITH LLVM-exception' },
+    with_unknown: { name: 'with-unknown', version: '1.0.0', license: 'MIT WITH Classpath-exception-2.0' },
+    with_dangling: { name: 'with-dangling', version: '1.0.0', license: 'MIT WITH' },
+  });
+  const r = check(root);
+  assert.ok(r.stdout.includes(row('with-ok', '1.0.0', 'Apache-2.0 WITH LLVM-exception', 'ok')), r.stdout);
+  assert.ok(r.stdout.includes(row('with-bad-base', '1.0.0', 'GPL-3.0 WITH LLVM-exception', 'review')), r.stdout);
+  assert.ok(r.stdout.includes(row('with-unknown', '1.0.0', 'MIT WITH Classpath-exception-2.0', 'review')), r.stdout);
+  assert.ok(r.stdout.includes(row('with-dangling', '1.0.0', 'MIT WITH', 'review')), r.stdout);
+});
+
 test('an AND group inside an OR is satisfied by its allowed alternative', () => {
   const root = nodeModules({
     nested: { name: 'nested', version: '1.0.0', license: 'MIT OR (Apache-2.0 AND GPL-3.0)' },

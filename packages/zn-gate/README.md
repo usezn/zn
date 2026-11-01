@@ -8,17 +8,17 @@
 [![npm version](https://img.shields.io/npm/v/zn-gate?color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/zn-gate)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/usezn/zn/blob/main/LICENSE)
 
-**The local security layer for coding agents.** zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app (plus Gemini CLI and Copilot CLI, both experimental).
+**The local security layer for coding agents.** zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot (plus Gemini CLI, experimental).
 
 `zn-gate` is an open-source security layer that runs on your machine, between your agent and the tools and content it touches. It checks what the agent reads and calls for prompt injection, redacts secrets from tool output before the model sees it, and audits prompts, skills and configs. No account, no network by default, and no runtime dependencies except `age-encryption` (and its `@noble`/`@scure` dependencies) for the secret vault, bundled in the package at the versions pinned in `package-lock.json`.
 
-**For:** developers using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, Gemini CLI (experimental), Copilot CLI (experimental) or any MCP client. Python SDK: [`zn-gate` on PyPI](https://pypi.org/project/zn-gate/).
+**For:** developers using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, Gemini CLI (experimental) or any MCP client. Python SDK: [`zn-gate` on PyPI](https://pypi.org/project/zn-gate/).
 
 ---
 
 ## Install
 
-Everything runs on your machine; no account or API key is needed. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. With a Node.js older than 18, the `zn-gate` and `zn` commands stop and say how to install it.
+Everything runs on your machine; no account or API key is needed. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. On Debian or Ubuntu, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages (steps in [docs/first-5-minutes.md](https://github.com/usezn/zn/blob/main/docs/first-5-minutes.md#before-you-start)). With a Node.js older than 18, the `zn-gate` and `zn` commands stop and say how to install it.
 
 **On Alpine Linux, install Node.js with the package manager.** The Node.js builds on nodejs.org do not run on Alpine, so run `apk add nodejs npm` instead. Use Alpine 3.21 or later: 3.21 and 3.22 ship Node.js 22, 3.23 and later ship Node.js 24. Alpine 3.20 ships Node.js 20.15, which is too old for the Claude Code plugin. The `npm` package is in the community repository, so if `npm` is not found, make sure the community repository is listed in `/etc/apk/repositories`.
 
@@ -37,7 +37,7 @@ npx -y zn-gate init
 
 `init` does this:
 
-- It finds the eight coding agents it supports on your machine: Claude Code, Codex CLI, Cursor, OpenCode, Antigravity and ZCode desktop app, plus Gemini CLI and Copilot CLI (both experimental).
+- It finds the eight coding agents it supports on your machine: Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app and GitHub Copilot, plus Gemini CLI (experimental).
 - For each one that is not protected yet, it shows the setup: the zn-gate plugin for Claude Code (or zn's hooks when your Node.js is older than 20.19), and zn's hooks for the others.
 - It runs each step only after you confirm it.
 - It ends with `zn-gate check`.
@@ -99,13 +99,13 @@ Open a new terminal so the new PATH applies.
 
 In Codex, approve the new hooks with `/hooks`. In Cursor, shell output and file contents are not scrubbed. What each agent supports: [docs/compat.md](https://github.com/usezn/zn/blob/main/docs/compat.md).
 
-**Other editors** (VS Code, Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/).
+**Other editors** (Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/).
 
 **Antigravity.** `zn hooks install antigravity` (or `npx -y zn-gate init`) adds a hook that runs before each tool call. It blocks reads and writes of secret files and shell commands that handle secrets, and the agent cannot edit the hook files. It cannot remove secrets from what a tool returns, Antigravity's MCP configuration files are not protected, and Antigravity does not document what happens when a hook fails (in our tests the call is blocked), so treat it as a first layer. The MCP server works there too. Details: [Antigravity page](https://github.com/usezn/zn/blob/main/docs/editors/antigravity.md).
 
 **ZCode desktop app.** `zn hooks install zcode` (or `npx -y zn-gate init`) adds hooks that run before each tool call and before each prompt. It blocks reads and writes of secret files, shell commands that handle secrets, MCP calls that would send a secret, and a prompt that contains a secret, and the agent cannot edit ZCode's own config file. It cannot remove secrets from what a tool returns (zn adds a notice when an output holds one), ZCode ignores the hooks of a project, and zn's launcher blocks the call when its Node.js is gone, so treat it as a first layer. ZCode's documentation does not say what happens when a hook fails; in our tests with the ZCode desktop app 3.16.3 on Linux, a hook that failed (an exit code other than 2, a crash or a timeout) let the call run, and only exit code 2 or a deny answer blocked it. Tested end to end on the ZCode desktop app 3.16.3 on Linux x64 and Windows x64 (Windows Server 2022, through the agent the app ships; the Windows app window was not driven); macOS is not tested. Details: [ZCode page](https://github.com/usezn/zn/blob/main/docs/editors/zcode.md).
 
-**Copilot CLI (experimental).** `zn hooks install copilot` adds hooks that run before and after each tool call. They block reads and writes of secret files and shell commands that handle secrets, and replace secret values in the results of read-type and shell tools. They cannot block a typed prompt, Copilot lets a call through when a hook times out, so zn, which sets a 15-second timeout on its hooks, blocks the call itself at 11 seconds, it has not been tested on Windows, and Copilot's own session log keeps the original output, so treat it as a first layer. Details: [Copilot CLI notes](https://github.com/usezn/zn/blob/main/docs/compat.md).
+**GitHub Copilot (VS Code and Copilot CLI).** `zn hooks install copilot` adds hooks that run before and after each tool call. They block reads and writes of secret files and shell commands that handle secrets, and replace secret values in the results of read-type and shell tools. They cannot block a typed prompt, Copilot lets a call through when a hook times out, so zn, which sets a 15-second timeout on its hooks, blocks the call itself at 11 seconds, it has not been tested on Windows, and Copilot's own session log keeps the original output, so treat it as a first layer. Details: [Copilot CLI notes](https://github.com/usezn/zn/blob/main/docs/compat.md).
 
 **Gemini CLI (experimental).** `zn hooks install gemini` adds a hook that runs before each tool call. It blocks reads and writes of secret files and shell commands that handle secrets, and the agent cannot edit Gemini CLI's settings files. It does not change what a tool returns, Gemini CLI hooks cannot ask you for confirmation, and Gemini CLI lets a call run when a hook crashes or times out, so zn blocks it instead (a hook that fails is answered with a block, and zn sets a 15-second timeout on its hook and answers a check still running after 11 seconds with a block), so treat it as a first layer. Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts on 18 June 2026; Gemini CLI keeps working with zn-gate. Details: [Gemini CLI notes](https://github.com/usezn/zn/blob/main/docs/compat.md).
 
@@ -306,11 +306,36 @@ CONFIDENTIAL_INTERNAL_PROJECT_[A-Z0-9]+
 
 Each non-comment line is a pattern (matched without regard to case) unless it starts with `path:`, `secret:` or is the word `strict`. In `zn.config.json` the same patterns go in `bannedPatterns` and the paths in `forbiddenPaths`.
 
-These files are read by this npm package (CLI, agent hooks and the Node.js library). The Python package does not read them: there, use `strict=True` or `ZN_STRICT=1`.
+These files are read by this npm package (the CLI, the shield and the Node.js library). The agent hooks use them only for the Claude Code output note described below. The Python package does not read them: there, use `strict=True` or `ZN_STRICT=1`. Where the rules apply, and what an invalid file does, is set out in [Where custom rules apply](#where-custom-rules-apply).
 
 Patterns run in time proportional to the text, so a project file cannot make the hooks hang. That is why only this syntax is accepted: literal characters, `.`, classes such as `[a-z]` or `[^x]`, `\d \w \s`, `\b`, `^`, `$`, groups `( )` and `(?: )`, alternation `|`, and the quantifiers `?`, `*`, `+` and `{n}`, `{n,}`, `{n,m}` (counts up to 100). A pattern can be at most 500 steps long once its counts are expanded (for example `a{100}` is 100 steps), and all the patterns of a file together at most 600 steps, so that checking a long text stays fast; a file can hold at most 100 patterns and a pattern at most 500 characters. Matching ignores case for ASCII letters (a-z); letters of other scripts are matched as written. Backreferences, lookahead, lookbehind, named groups, `\p{...}` and a quantifier on a group that already contains one (such as `(a+)+`) are rejected.
 
 If a rules file cannot be read, is not valid JSON, or holds a pattern that is not accepted, zn-gate does not apply half of it. It blocks with a message that names the file, the line or entry and the reason, until you fix the file: edit that line, or delete it. `zn-gate check` lists the errors, and `zn-gate audit` reports them as one finding about the rules file.
+
+### Where custom rules apply
+
+Custom rules apply to MCP calls that go through the shield, and to code that uses the guard. They do not apply in the agent hooks: not to shell commands, file reads, prompts or MCP calls that a hook sees.
+
+- **MCP calls through `zn-gate shield`.** The shield checks the tool descriptions, the arguments the agent sends, and what the tool returns. A matching rule blocks that call or that result.
+- **The guard in your code.** `checkToolCall` and `guardTool` check the text in the tool arguments. `guardTool` also checks the result when you set `checkResult`. `guardTool` throws a `GuardBlockError` by default; `checkToolCall` does not throw and returns a result with `allowed: false`.
+- **Not the agent hooks.** The agent hooks check shell commands and file paths with their own built-in policy. A custom rule does not block a shell command, a file read, a prompt or an MCP call there. In Claude Code only, a match in the output of a web fetch, an MCP call or a shell command adds a note for the agent. The note tells the agent to treat that text as data and not to follow it. The output is not blocked for this reason.
+
+If both files exist, zn-gate reads `.znrules` and ignores `zn.config.json`.
+
+### What an invalid rules file does
+
+If the file cannot be read, is not valid JSON, has the wrong shape, or holds a pattern that zn-gate does not accept, zn-gate applies none of its custom rules. It blocks every shield and guard check that uses them until the file is fixed. The shell hook is not affected.
+
+The shield prints the rule name `custom:invalid_rules` on stderr. The reason, with the file name, the line or entry, and the problem, goes to the evidence log (`zn-gate evidence`). In your code, the `GuardBlockError` message carries the same reason. `zn-gate check` lists every error and exits with code 1.
+
+### Example
+
+```ini
+# .znrules
+ZZ-PROJECT-[0-9]{4}
+```
+
+With this file, a tool call whose arguments contain `ZZ-PROJECT-4821` is blocked by the shield or the guard, with the rule `custom:banned_pattern`. Upper case and lower case both match. A call with the text `list the files in src` is allowed.
 
 ### Local audit log
 

@@ -227,7 +227,7 @@ test('brace patterns are read without backtracking, and very large ones are refu
     policy.classifyWord(w, opts);
     policy.bashDenial('cat ' + w, opts);
     const ms = cpuMsSince(t0);
-    assert.ok(ms < limit, w.slice(0, 12) + '... took ' + ms.toFixed(1) + ' ms');
+    assert.ok(ms < budget(limit), w.slice(0, 12) + '... took ' + ms.toFixed(1) + ' ms');
   }
   const big = policy.classifyWord(braces + '*/'.repeat(100000) + 'x', opts);
   assert.equal(big && big.kind, 'credential');

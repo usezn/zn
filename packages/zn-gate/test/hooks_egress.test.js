@@ -75,6 +75,8 @@ const POSITIVE = [
   ['curl --url', `curl --url "https://example.com/?m=${EMAIL}"`, /email address in the query string/],
   // curl: body
   ['curl -d, email', `curl -X POST -d "email=${EMAIL}" https://example.com/api`, /email address in the body/],
+  ['curl --data-raw, phone with spaces', `curl --data-raw '{"phone":"+44 20 7946 0958"}' https://example.com/api`, /phone number in the body/],
+  ['curl --header, phone with dashes', `curl --header "X-Phone: +1 202-555-0143" https://example.com/api`, /phone number in a header/],
   ['curl --data-raw, phone', `curl --data-raw '{"phone":"${PHONE}"}' https://example.com/api`, /phone number in the body/],
   ['curl --json, email', `curl --json '{"mail":"${EMAIL}"}' https://example.com/api`, /email address in the body/],
   ['curl -F, email', `curl -F "mail=${EMAIL}" https://example.com/api`, /email address in the body/],

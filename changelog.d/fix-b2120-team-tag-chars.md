@@ -1,0 +1,2 @@
+### Security
+- Team policy text from an organization's admin or server is now cleaned of invisible Unicode characters, including the tag characters (U+E0000-E007F) and variation selectors, before it is shown. A policy whose rule reason contains them is rejected, the policy note and organization name shown to the user and the agent have them removed, and length limits count whole characters instead of splitting emoji.

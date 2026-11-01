@@ -8,7 +8,7 @@ name: Doc snippets
 # CONTRIBUTING.md, "Runnable doc snippets".
 on:
   push:
-    branches: [ main, next ]
+    branches: [ main ]
     paths:
       - 'README.md'
       - 'docs/**'
@@ -23,14 +23,19 @@ on:
       - 'packages/**'
       - '.github/scripts/doc-snippets*'
       - '.github/workflows/doc-snippets.yml'
+  # Nightly run on next (a schedule runs on main; the checkout steps switch to next).
+  schedule:
+    - cron: '20 3 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A new push to a pull request, or to next, cancels the run still going for it. Runs for main, release branches,
+# the merge queue and the schedule always complete (each has its own group).
 concurrency:
-  group: doc-snippets-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: doc-snippets-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
 jobs:
   snippets:
@@ -44,6 +49,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.schedule == '20 3 * * *' && 'next' || '' }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:

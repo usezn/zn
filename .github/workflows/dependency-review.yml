@@ -21,6 +21,7 @@ on:
       - "**/*requirements*.txt"
       - ".github/license-allowlist.txt"
       - ".github/scripts/license-check*"
+      - ".github/scripts/check-license-allowlist.py"
       - ".github/workflows/dependency-review.yml"
   pull_request:
     types: [ opened, synchronize, reopened, ready_for_review ]
@@ -38,6 +39,7 @@ on:
       - "**/*requirements*.txt"
       - ".github/license-allowlist.txt"
       - ".github/scripts/license-check*"
+      - ".github/scripts/check-license-allowlist.py"
       - ".github/workflows/dependency-review.yml"
   schedule:
     - cron: "17 7 * * 1" # weekly license check
@@ -46,9 +48,11 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request, or to next, cancels the run still going for it. Runs for main, release branches,
+# the merge queue and the schedule always complete (each has its own group).
 concurrency:
-  group: dependency-review-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: dependency-review-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.
@@ -59,6 +63,23 @@ env:
   PIP_TIMEOUT: "60"
 
 jobs:
+  license-lists:
+    name: license lists agree (allowlist, deny.toml, dependency review)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare the license lists
+        run: python3 -I .github/scripts/check-license-allowlist.py
+
   dependency-review:
     name: dependency review (new dependencies, informational)
     # Only pull requests have a base to compare with. Draft pull requests skip
@@ -82,6 +103,7 @@ jobs:
           warn-only: true
           fail-on-severity: high
           license-check: true
+          # Same ids as .github/license-allowlist.txt (the license-lists job fails when they differ).
           allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, Zlib
           comment-summary-in-pr: never
 

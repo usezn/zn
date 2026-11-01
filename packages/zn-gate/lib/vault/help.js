@@ -19,7 +19,7 @@ const HELP = {
     'Locks the vault now. Secrets stay unavailable to commands until zn unlock runs again.',
   ],
   vault: [
-    'usage: zn vault status | log [--since 1h] | verify [--acknowledge] | forget [dir] | reset | purge [--yes] | team | log export --otlp',
+    'usage: zn vault status | log [--since 1h] | verify [--acknowledge] | forget [dir] | reset | purge [--yes] | team | log export --otlp [--unverified]',
     'Shows and checks the local vault.',
     '  status               whether the vault exists and is unlocked',
     '  log [--since 1h]     who used which secret, and where (no values); also: zn secret log',
@@ -29,7 +29,7 @@ const HELP = {
     '  reset                lost the passphrase? set the old vault aside and start empty (your own terminal)',
     '  purge [--yes]        delete the vault, its backups and token maps for good (your own terminal)',
     '  team                 shows that a shared team vault is planned, not available yet',
-    '  log export --otlp    export the audit log as OpenTelemetry logs [--since 7d] [--out FILE]',
+    '  log export --otlp    export the audit log as OpenTelemetry logs [--since 7d] [--out FILE] [--unverified]',
   ],
   'env shadow': [
     'usage: zn env shadow [FILE] [--all] [--keys A,B] [--dry-run] [--force] [--mode proxy|env|file] [--host H] [--command C]',

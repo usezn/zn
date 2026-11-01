@@ -6,6 +6,8 @@
 use crate::audit::AuditEntry;
 use crate::config::SiemConfig;
 use reqwest::Client;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc};
@@ -25,6 +27,13 @@ const DROP_WARN_INTERVAL: Duration = Duration::from_secs(30);
 /// channel is small (`server.channel_capacity`) and drops events for a slow receiver, so a
 /// dedicated task moves events from it into this queue while the loop is busy sending.
 pub const QUEUE_CAPACITY: usize = 4_096;
+/// Approximate cap, in bytes, on the events waiting in that queue. Events that would pass it
+/// are dropped and counted, like the event cap, so a burst of huge events cannot fill memory.
+pub const MAX_QUEUE_BYTES: usize = 8 * 1024 * 1024;
+/// Most events sent in one request. A backlog after an outage goes out in several of these.
+pub const MAX_REQUEST_EVENTS: usize = 500;
+/// Approximate cap, in bytes, on the events in one request (a single larger event goes alone).
+pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 /// Healthy flush interval for a partial batch.
 const FLUSH_INTERVAL: Duration = Duration::from_secs(5);
 /// First wait before retrying a failed export; it doubles on each further failure.
@@ -90,19 +99,96 @@ impl DropTracker {
     }
 }
 
-/// Drop the oldest events until the buffer is within both caps. Returns how many were dropped.
-fn enforce_cap(batch: &mut Vec<AuditEntry>, max_events: usize, max_bytes: usize) -> usize {
-    let mut drop_n = batch.len().saturating_sub(max_events);
-    let mut bytes: usize = batch[drop_n..].iter().map(approx_size).sum();
-    // Always keep the newest event, even when it alone is above the byte cap.
-    while bytes > max_bytes && drop_n + 1 < batch.len() {
-        bytes -= approx_size(&batch[drop_n]);
-        drop_n += 1;
+/// Events waiting to be sent, bounded by count and by approximate bytes. The byte total is kept
+/// as events come and go, so a push costs the same however full the buffer is.
+struct Buffer {
+    entries: VecDeque<AuditEntry>,
+    bytes: usize,
+    max_events: usize,
+    max_bytes: usize,
+}
+
+/// What a push did to the buffer.
+#[derive(Debug, PartialEq, Eq)]
+struct Pushed {
+    /// Older events dropped to make room.
+    dropped_oldest: usize,
+    /// The event alone is above the byte cap, so it was not kept.
+    rejected: bool,
+}
+
+impl Buffer {
+    fn new(max_events: usize, max_bytes: usize) -> Self {
+        Self {
+            entries: VecDeque::new(),
+            bytes: 0,
+            max_events,
+            max_bytes,
+        }
     }
-    if drop_n > 0 {
-        batch.drain(..drop_n);
+
+    fn len(&self) -> usize {
+        self.entries.len()
     }
-    drop_n
+
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    #[cfg(test)]
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.bytes = 0;
+    }
+
+    /// Number of events at the front that go in the next request: at most `max_events` and
+    /// about `max_bytes`, and always at least one (if there is one).
+    fn chunk_len(&self, max_events: usize, max_bytes: usize) -> usize {
+        let mut bytes = 0usize;
+        let mut n = 0usize;
+        for e in self.entries.iter().take(max_events.max(1)) {
+            let size = approx_size(e);
+            if n > 0 && bytes + size > max_bytes {
+                break;
+            }
+            bytes += size;
+            n += 1;
+        }
+        n
+    }
+
+    /// Remove the `n` oldest events (sent ones), keeping the byte total in step.
+    fn drain_front(&mut self, n: usize) {
+        for e in self.entries.drain(..n) {
+            self.bytes -= approx_size(&e);
+        }
+    }
+
+    /// Add an event, dropping the oldest ones until both caps hold. An event that alone is above the
+    /// byte cap is rejected (the buffered events are kept) rather than emptying the buffer for it.
+    fn push(&mut self, entry: AuditEntry) -> Pushed {
+        let size = approx_size(&entry);
+        if size > self.max_bytes {
+            return Pushed {
+                dropped_oldest: 0,
+                rejected: true,
+            };
+        }
+        self.entries.push_back(entry);
+        self.bytes += size;
+        let mut dropped_oldest = 0;
+        while self.entries.len() > self.max_events || self.bytes > self.max_bytes {
+            let Some(old) = self.entries.pop_front() else {
+                break;
+            };
+            self.bytes -= approx_size(&old);
+            dropped_oldest += 1;
+        }
+        Pushed {
+            dropped_oldest,
+            rejected: false,
+        }
+    }
 }
 
 /// Exponential backoff for retries of a failing endpoint.
@@ -155,20 +241,35 @@ impl Backoff {
 async fn pump(
     mut rx: broadcast::Receiver<AuditEntry>,
     queue: mpsc::Sender<AuditEntry>,
+    queued_bytes: Arc<AtomicUsize>,
     drops: Arc<Mutex<DropTracker>>,
 ) {
     loop {
         match rx.recv().await {
-            Ok(entry) => match queue.try_send(entry) {
-                Ok(()) => {}
-                Err(mpsc::error::TrySendError::Full(_)) => {
-                    drops
-                        .lock()
-                        .unwrap()
-                        .record_with(1, "SIEM export queue full: dropped {} new events");
+            Ok(entry) => {
+                let size = approx_size(&entry);
+                // Always accept an event into an empty queue, even one above the byte cap.
+                let held = queued_bytes.load(Ordering::SeqCst);
+                if held > 0 && held + size > MAX_QUEUE_BYTES {
+                    drops.lock().unwrap().record_with(
+                        1,
+                        "SIEM export queue over its byte cap: dropped {} new events",
+                    );
+                    continue;
                 }
-                Err(mpsc::error::TrySendError::Closed(_)) => break,
-            },
+                queued_bytes.fetch_add(size, Ordering::SeqCst);
+                match queue.try_send(entry) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        queued_bytes.fetch_sub(size, Ordering::SeqCst);
+                        drops
+                            .lock()
+                            .unwrap()
+                            .record_with(1, "SIEM export queue full: dropped {} new events");
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => break,
+                }
+            }
             Err(broadcast::error::RecvError::Lagged(n)) => {
                 drops.lock().unwrap().record_with(
                     n as usize,
@@ -221,9 +322,10 @@ impl SiemExporter {
 
         info!("SIEM exporter active, sending to {}", endpoint);
 
-        let mut batch = Vec::with_capacity(self.config.batch_size);
+        let mut batch = Buffer::new(MAX_BUFFERED_EVENTS, MAX_BUFFERED_BYTES);
         let (queue_tx, mut queue_rx) = mpsc::channel(QUEUE_CAPACITY);
-        tokio::spawn(pump(rx, queue_tx, self.drops.clone()));
+        let queued_bytes = Arc::new(AtomicUsize::new(0));
+        tokio::spawn(pump(rx, queue_tx, queued_bytes.clone(), self.drops.clone()));
 
         let mut tick = tokio::time::interval(Duration::from_secs(1));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -235,10 +337,17 @@ impl SiemExporter {
                 next = queue_rx.recv() => {
                     match next {
                         Some(entry) => {
-                            batch.push(entry);
-                            let dropped =
-                                enforce_cap(&mut batch, MAX_BUFFERED_EVENTS, MAX_BUFFERED_BYTES);
-                            self.drops.lock().unwrap().record(dropped);
+                            queued_bytes.fetch_sub(approx_size(&entry), Ordering::SeqCst);
+                            let pushed = batch.push(entry);
+                            let mut drops = self.drops.lock().unwrap();
+                            drops.record(pushed.dropped_oldest);
+                            if pushed.rejected {
+                                drops.record_with(
+                                    1,
+                                    "SIEM export: dropped {} events larger than the buffer byte cap",
+                                );
+                            }
+                            drop(drops);
                             flush = batch.len() >= self.config.batch_size;
                         }
                         None => break,
@@ -261,7 +370,7 @@ impl SiemExporter {
     }
 
     /// Send the batch and update the backoff.
-    async fn flush(&mut self, endpoint: &str, batch: &mut Vec<AuditEntry>) {
+    async fn flush(&mut self, endpoint: &str, batch: &mut Buffer) {
         if self.send_batch(endpoint, batch).await {
             self.backoff.on_success();
         } else {
@@ -275,28 +384,41 @@ impl SiemExporter {
         }
     }
 
-    async fn send_batch(&self, endpoint: &str, batch: &mut Vec<AuditEntry>) -> bool {
-        let count = batch.len();
-        info!("Sending batch of {} events to SIEM", count);
+    /// Send the buffer in chunks of at most `MAX_REQUEST_EVENTS` events and about
+    /// `MAX_REQUEST_BYTES` bytes, oldest first. Sent chunks are removed; on the first failure
+    /// the rest stays buffered. True when the buffer was sent in full.
+    async fn send_batch(&self, endpoint: &str, batch: &mut Buffer) -> bool {
+        while !batch.is_empty() {
+            let n = batch.chunk_len(MAX_REQUEST_EVENTS, MAX_REQUEST_BYTES);
+            if !self
+                .send_chunk(endpoint, &batch.entries.make_contiguous()[..n])
+                .await
+            {
+                return false;
+            }
+            batch.drain_front(n);
+        }
+        true
+    }
 
-        let mut req = self.client.post(endpoint).json(batch);
+    async fn send_chunk(&self, endpoint: &str, chunk: &[AuditEntry]) -> bool {
+        info!("Sending batch of {} events to SIEM", chunk.len());
+
+        let mut req = self.client.post(endpoint).json(chunk);
 
         if let Some(token) = &self.config.token {
             req = req.header("Authorization", format!("Bearer {}", token));
         }
 
         match req.send().await {
-            Ok(resp) if resp.status().is_success() => {
-                batch.clear();
-                true
-            }
+            Ok(resp) if resp.status().is_success() => true,
             Ok(resp) => {
                 error!(
                     "SIEM export failed: server returned status {}",
                     resp.status()
                 );
-                // The batch stays in the buffer and is resent on the backoff timer;
-                // `enforce_cap` bounds it.
+                // The chunk stays in the buffer and is resent on the backoff timer;
+                // `Buffer::push` bounds it.
                 false
             }
             Err(e) => {
@@ -372,31 +494,105 @@ mod tests {
             .expect("run should stop after the lag and the close");
     }
 
+    fn buffer_of(n: usize, payload: Option<&str>, max_events: usize, max_bytes: usize) -> Buffer {
+        let mut b = Buffer::new(max_events, max_bytes);
+        for i in 0..n {
+            b.push(entry(&format!("e{i}"), payload));
+        }
+        b
+    }
+
+    fn ids(b: &Buffer) -> Vec<&str> {
+        b.entries.iter().map(|e| e.id.as_str()).collect()
+    }
+
+    fn real_bytes(b: &Buffer) -> usize {
+        b.entries.iter().map(approx_size).sum()
+    }
+
     #[test]
     fn cap_drops_oldest_events_first() {
-        let mut batch: Vec<AuditEntry> = (0..10).map(|i| entry(&format!("e{i}"), None)).collect();
-        let dropped = enforce_cap(&mut batch, 4, usize::MAX);
-        assert_eq!(dropped, 6);
-        let ids: Vec<&str> = batch.iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(ids, ["e6", "e7", "e8", "e9"]);
-        assert_eq!(enforce_cap(&mut batch, 4, usize::MAX), 0);
+        let b = buffer_of(10, None, 4, usize::MAX);
+        assert_eq!(ids(&b), ["e6", "e7", "e8", "e9"]);
+        let mut b = b;
+        let p = b.push(entry("e10", None));
+        assert_eq!(p.dropped_oldest, 1);
+        assert_eq!(ids(&b), ["e7", "e8", "e9", "e10"]);
     }
 
     #[test]
     fn byte_cap_drops_oldest_and_keeps_the_newest() {
         let big = "x".repeat(1000);
-        let mut batch: Vec<AuditEntry> = (0..5)
-            .map(|i| entry(&format!("e{i}"), Some(&big)))
-            .collect();
-        let one = approx_size(&batch[0]);
-        let dropped = enforce_cap(&mut batch, 100, one * 2 + 1);
-        assert_eq!(dropped, 3);
-        assert_eq!(batch[0].id, "e3");
-        // A single event above the cap is kept rather than emptying the buffer.
-        let dropped = enforce_cap(&mut batch, 100, 1);
-        assert_eq!(dropped, 1);
-        assert_eq!(batch.len(), 1);
-        assert_eq!(batch[0].id, "e4");
+        let one = approx_size(&entry("e0", Some(&big)));
+        let b = buffer_of(5, Some(&big), 100, one * 2 + 1);
+        assert_eq!(ids(&b), ["e3", "e4"]);
+        assert_eq!(b.bytes, one * 2);
+    }
+
+    #[test]
+    fn an_event_above_the_byte_cap_is_rejected_and_the_buffer_is_kept() {
+        let big = "x".repeat(1000);
+        let one = approx_size(&entry("e0", Some(&big)));
+        let mut b = buffer_of(2, Some(&big), 100, one * 2);
+        let huge = entry("huge", Some(&"y".repeat(one * 3)));
+        let p = b.push(huge);
+        assert_eq!(
+            p,
+            Pushed {
+                dropped_oldest: 0,
+                rejected: true
+            }
+        );
+        assert_eq!(ids(&b), ["e0", "e1"]);
+        assert_eq!(b.bytes, real_bytes(&b));
+    }
+
+    #[test]
+    fn the_byte_counter_always_equals_the_real_sum() {
+        let mut b = Buffer::new(50, 20_000);
+        for i in 0..2_000usize {
+            let payload = "z".repeat((i * 37) % 3_000);
+            b.push(entry(&format!("e{i}"), Some(&payload)));
+            assert_eq!(b.bytes, real_bytes(&b), "after push {i}");
+            assert!(b.len() <= 50 && b.bytes <= 20_000);
+        }
+        b.clear();
+        assert_eq!((b.len(), b.bytes), (0, 0));
+    }
+
+    #[test]
+    fn pushes_at_the_cap_stay_linear() {
+        // Before the byte total was kept incrementally, 100k pushes took about 48 s.
+        let mut b = Buffer::new(MAX_BUFFERED_EVENTS, MAX_BUFFERED_BYTES);
+        let start = Instant::now();
+        for i in 0..100_000 {
+            b.push(entry(&format!("e{i}"), None));
+        }
+        assert_eq!(b.len(), MAX_BUFFERED_EVENTS);
+        assert_eq!(b.bytes, real_bytes(&b));
+        assert!(
+            start.elapsed() < Duration::from_secs(3),
+            "100k pushes took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn pushes_at_the_byte_cap_stay_linear() {
+        // Large events: the byte cap, not the count, is what bounds the buffer.
+        let payload = "p".repeat(4_000);
+        let mut b = Buffer::new(MAX_BUFFERED_EVENTS, MAX_BUFFERED_BYTES);
+        let start = Instant::now();
+        for i in 0..50_000 {
+            b.push(entry(&format!("e{i}"), Some(&payload)));
+        }
+        assert!(b.bytes <= MAX_BUFFERED_BYTES);
+        assert_eq!(b.bytes, real_bytes(&b));
+        assert!(
+            start.elapsed() < Duration::from_secs(3),
+            "50k pushes took {:?}",
+            start.elapsed()
+        );
     }
 
     #[test]
@@ -425,14 +621,19 @@ mod tests {
             Duration::from_millis(200),
             Duration::from_millis(500),
         );
-        let mut batch: Vec<AuditEntry> = (0..20).map(|i| entry(&format!("e{i}"), None)).collect();
+        let mut batch = Buffer::new(8, usize::MAX);
+        for i in 0..8 {
+            batch.push(entry(&format!("e{i}"), None));
+        }
         assert!(!exporter.send_batch(&endpoint, &mut batch).await);
-        assert_eq!(batch.len(), 20, "a failed batch is kept for retry");
-        let dropped = enforce_cap(&mut batch, 8, usize::MAX);
-        exporter.drops.lock().unwrap().record(dropped);
+        assert_eq!(batch.len(), 8, "a failed batch is kept for retry");
+        for i in 8..20 {
+            let dropped = batch.push(entry(&format!("e{i}"), None)).dropped_oldest;
+            exporter.drops.lock().unwrap().record(dropped);
+        }
         assert_eq!(exporter.drops.lock().unwrap().total, 12);
         assert_eq!(batch.len(), 8);
-        assert_eq!(batch[0].id, "e12");
+        assert_eq!(batch.entries[0].id, "e12");
     }
 
     #[tokio::test]
@@ -454,7 +655,7 @@ mod tests {
             Duration::from_millis(500),
             Duration::from_millis(400),
         );
-        let mut batch = vec![entry("e1", None)];
+        let mut batch = buffer_of(1, None, 100, usize::MAX);
         let endpoint = format!("http://127.0.0.1:{port}/");
         let started = Instant::now();
         let ok = tokio::time::timeout(
@@ -479,7 +680,7 @@ mod tests {
         drop(tx);
         let (queue_tx, mut queue_rx) = mpsc::channel(QUEUE);
         let drops = Arc::new(Mutex::new(DropTracker::new()));
-        pump(rx, queue_tx, drops.clone()).await;
+        pump(rx, queue_tx, Arc::new(AtomicUsize::new(0)), drops.clone()).await;
         let mut kept = 0;
         while queue_rx.try_recv().is_ok() {
             kept += 1;
@@ -497,7 +698,7 @@ mod tests {
         drop(tx);
         let (queue_tx, mut queue_rx) = mpsc::channel(100);
         let drops = Arc::new(Mutex::new(DropTracker::new()));
-        pump(rx, queue_tx, drops.clone()).await;
+        pump(rx, queue_tx, Arc::new(AtomicUsize::new(0)), drops.clone()).await;
         let mut kept = 0;
         while queue_rx.try_recv().is_ok() {
             kept += 1;
@@ -541,8 +742,7 @@ mod tests {
     }
 
     /// Minimal HTTP server: counts requests and answers each with `status`.
-    async fn counting_server(status: u16) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
-        use std::sync::atomic::{AtomicUsize, Ordering};
+    async fn counting_server(status: u16) -> (String, Arc<AtomicUsize>) {
         use tokio::io::AsyncWriteExt;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -567,7 +767,6 @@ mod tests {
 
     #[tokio::test]
     async fn failing_endpoint_is_retried_on_the_timer_not_per_event() {
-        use std::sync::atomic::Ordering;
         let (endpoint, hits) = counting_server(500).await;
         let (tx, rx) = broadcast::channel::<AuditEntry>(512);
         let mut exporter = SiemExporter::with_timeouts(
@@ -597,6 +796,171 @@ mod tests {
         );
         drop(tx);
         let _ = tokio::time::timeout(Duration::from_secs(5), task).await;
+    }
+
+    /// Body size and event ids of each request a test server received, in order.
+    type Seen = Arc<Mutex<Vec<(usize, Vec<String>)>>>;
+
+    /// Test server: answers 200 to the first `ok_requests` requests and 500 afterwards, and
+    /// records the body size and the event ids of every request, in order.
+    async fn recording_server(ok_requests: usize) -> (String, Seen) {
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let mut data: Vec<u8> = Vec::new();
+                let mut buf = vec![0u8; 65536];
+                let (head_end, want) = loop {
+                    let n = sock.read(&mut buf).await.unwrap_or(0);
+                    if n == 0 {
+                        break (0, 0);
+                    }
+                    data.extend_from_slice(&buf[..n]);
+                    if let Some(i) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&data[..i]).to_ascii_lowercase();
+                        let len = head
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length:"))
+                            .and_then(|v| v.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                        break (i + 4, len);
+                    }
+                };
+                while data.len() < head_end + want {
+                    let n = sock.read(&mut buf).await.unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    data.extend_from_slice(&buf[..n]);
+                }
+                let body = &data[head_end.min(data.len())..];
+                let parsed: Vec<serde_json::Value> =
+                    serde_json::from_slice(body).unwrap_or_default();
+                let ids = parsed
+                    .iter()
+                    .map(|v| v["id"].as_str().unwrap_or("").to_string())
+                    .collect();
+                let index = {
+                    let mut l = log.lock().unwrap();
+                    l.push((body.len(), ids));
+                    l.len()
+                };
+                let status = if index <= ok_requests { 200 } else { 500 };
+                let reply = format!(
+                    "HTTP/1.1 {status} X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+                let _ = sock.write_all(reply.as_bytes()).await;
+            }
+        });
+        (format!("http://127.0.0.1:{port}/"), seen)
+    }
+
+    fn exporter_for(endpoint: &str) -> SiemExporter {
+        SiemExporter::with_timeouts(
+            config(Some(endpoint), 100),
+            Duration::from_millis(500),
+            Duration::from_secs(10),
+        )
+    }
+
+    #[tokio::test]
+    async fn backlog_is_sent_in_chunks_of_at_most_the_event_cap_in_order() {
+        let (endpoint, seen) = recording_server(usize::MAX).await;
+        let exporter = exporter_for(&endpoint);
+        let n = MAX_REQUEST_EVENTS * 2 + 37;
+        let mut batch = buffer_of(n, None, 100_000, usize::MAX);
+        assert!(exporter.send_batch(&endpoint, &mut batch).await);
+        assert!(batch.is_empty());
+        assert_eq!(batch.bytes, 0);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), n.div_ceil(MAX_REQUEST_EVENTS));
+        assert!(seen.iter().all(|(_, ids)| ids.len() <= MAX_REQUEST_EVENTS));
+        let all: Vec<String> = seen.iter().flat_map(|(_, ids)| ids.clone()).collect();
+        let expected: Vec<String> = (0..n).map(|i| format!("e{i}")).collect();
+        assert_eq!(all, expected, "order is preserved");
+    }
+
+    #[tokio::test]
+    async fn large_events_are_split_by_the_request_byte_cap() {
+        let (endpoint, seen) = recording_server(usize::MAX).await;
+        let exporter = exporter_for(&endpoint);
+        let big = "x".repeat(300_000);
+        let mut batch = buffer_of(10, Some(&big), 100, usize::MAX);
+        assert!(exporter.send_batch(&endpoint, &mut batch).await);
+        let seen = seen.lock().unwrap();
+        assert!(seen.len() > 1, "{} requests", seen.len());
+        for (bytes, ids) in seen.iter() {
+            assert!(*bytes <= MAX_REQUEST_BYTES, "request of {bytes} bytes");
+            assert!(!ids.is_empty());
+        }
+        let total: usize = seen.iter().map(|(_, ids)| ids.len()).sum();
+        assert_eq!(total, 10);
+    }
+
+    #[test]
+    fn chunk_len_respects_both_caps_and_sends_an_oversized_event_alone() {
+        let b = buffer_of(1200, None, 10_000, usize::MAX);
+        assert_eq!(b.chunk_len(MAX_REQUEST_EVENTS, usize::MAX), 500);
+        let one = approx_size(&entry("e0", None));
+        assert_eq!(b.chunk_len(MAX_REQUEST_EVENTS, one * 3), 3);
+        let mut huge = Buffer::new(10, usize::MAX);
+        huge.push(entry("big", Some(&"y".repeat(MAX_REQUEST_BYTES * 2))));
+        huge.push(entry("small", None));
+        assert_eq!(huge.chunk_len(MAX_REQUEST_EVENTS, MAX_REQUEST_BYTES), 1);
+        assert_eq!(Buffer::new(1, 1).chunk_len(5, 5), 0);
+    }
+
+    #[tokio::test]
+    async fn failure_midway_keeps_the_unsent_rest_buffered() {
+        let (endpoint, seen) = recording_server(1).await;
+        let exporter = exporter_for(&endpoint);
+        let n = MAX_REQUEST_EVENTS * 3;
+        let mut batch = buffer_of(n, None, 100_000, usize::MAX);
+        assert!(!exporter.send_batch(&endpoint, &mut batch).await);
+        assert_eq!(seen.lock().unwrap().len(), 2, "stops at the first failure");
+        assert_eq!(batch.len(), n - MAX_REQUEST_EVENTS, "sent chunk removed");
+        assert_eq!(batch.entries[0].id, format!("e{MAX_REQUEST_EVENTS}"));
+        assert_eq!(batch.bytes, real_bytes(&batch));
+        assert_eq!(batch.entries.back().unwrap().id, format!("e{}", n - 1));
+    }
+
+    #[tokio::test]
+    async fn first_chunk_failure_keeps_everything() {
+        let (endpoint, hits) = counting_server(500).await;
+        let exporter = exporter_for(&endpoint);
+        let n = MAX_REQUEST_EVENTS + 10;
+        let mut batch = buffer_of(n, None, 100_000, usize::MAX);
+        assert!(!exporter.send_batch(&endpoint, &mut batch).await);
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_eq!(batch.len(), n);
+        assert_eq!(batch.bytes, real_bytes(&batch));
+    }
+
+    #[tokio::test]
+    async fn queue_never_exceeds_its_byte_cap() {
+        let big = "z".repeat(MAX_QUEUE_BYTES / 4);
+        let (tx, rx) = broadcast::channel::<AuditEntry>(64);
+        for i in 0..10 {
+            tx.send(entry(&format!("e{i}"), Some(&big))).unwrap();
+        }
+        drop(tx);
+        let (queue_tx, mut queue_rx) = mpsc::channel(100);
+        let drops = Arc::new(Mutex::new(DropTracker::new()));
+        let bytes = Arc::new(AtomicUsize::new(0));
+        pump(rx, queue_tx, bytes.clone(), drops.clone()).await;
+        let mut kept = 0;
+        let mut real = 0;
+        while let Ok(e) = queue_rx.try_recv() {
+            kept += 1;
+            real += approx_size(&e);
+        }
+        assert!((1..10).contains(&kept), "kept {kept}");
+        assert_eq!(drops.lock().unwrap().total, 10 - kept as u64);
+        assert_eq!(bytes.load(Ordering::SeqCst), real);
+        assert!(real <= MAX_QUEUE_BYTES);
     }
 
     #[test]

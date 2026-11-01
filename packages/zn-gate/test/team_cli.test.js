@@ -59,18 +59,18 @@ const rawKey = crypto.generateKeyPairSync('ed25519').publicKey.export({ format: 
 const PIN = { alg: 'Ed25519', kid: policy.kidOf(rawKey), key: rawKey };
 const JOINED = { joined: true, org: 'org_Example12345678', org_name: 'Example Org', install_id: 'inst-0001', api_base: 'https://team.example.com', revoked_at: null };
 
-test('join without a token, or with a flag in its place, prints the usage and exits 2', async () => {
+test('join without a token, or with a flag in its place, says no token was given and exits 2', async () => {
   for (const args of [['team', 'join'], ['team', 'join', '--api', 'https://team.example.com']]) {
     const r = await capture(() => runTeamCommand(args));
     assert.strictEqual(r.code, 2);
-    assert.match(r.stderr, /^usage: zn team join <token>/);
+    assert.match(r.stderr, /^\[zn\] No join token given\. .*zn team join <token>/);
   }
 });
 
-test('an unknown subcommand prints the usage and exits 2', async () => {
+test('an unknown subcommand says it is not a command and exits 2', async () => {
   const r = await capture(() => runTeamCommand(['team', 'frobnicate']));
   assert.strictEqual(r.code, 2);
-  assert.match(r.stderr, /usage: zn team join/);
+  assert.match(r.stderr, /^\[zn\] 'zn team frobnicate' is not a zn command\. Commands: zn team join <token>/);
 });
 
 test('join passes the options through and reports the policy that came with it', async () => {
@@ -88,18 +88,16 @@ test('join passes the options through and reports the policy that came with it',
 test('join to an organization without a name shows the id; an organization with no policy yet leaves the join unfinished (exit 1)', async () => {
   fake.teamJoin = async () => ({ org: 'org_Example12345678', install_id: 'inst-0002' });
   fake.teamSync = async () => ({ policy: { status: 'none' } });
-  const r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'b'.repeat(32)]));
+  const r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'b'.repeat(32) } }));
   assert.strictEqual(r.code, 1);
   assert.match(r.stdout, /^Joined org_Example12345678\. Installation inst-0002\./);
-  assert.match(r.stdout, /Policy: none\./);
-  assert.match(r.stderr, /^\[zn\] The join is not finished: this machine is registered, but no valid policy is applied yet \(the organization has not published a policy yet\)\./);
-  assert.match(r.stderr, /`zn team status` shows it as pending; run `zn team sync` to retry/);
+  assert.match(r.stderr, /Your admin has not published a policy yet/);
 });
 
 test('join with a policy that is already current (a reconnect) is complete', async () => {
   fake.teamJoin = async () => ({ org: 'org_Example12345678', install_id: 'inst-0002' });
   fake.teamSync = async () => ({ policy: { status: 'current', version: 4 } });
-  const r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'b'.repeat(32)]));
+  const r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'b'.repeat(32) } }));
   assert.strictEqual(r.code, 0);
   assert.strictEqual(r.stderr, '');
 });
@@ -107,14 +105,14 @@ test('join with a policy that is already current (a reconnect) is complete', asy
 test('join exits 1 when the first policy download fails (offline) or the policy is refused', async () => {
   fake.teamJoin = async () => ({ org: 'org_Example12345678', install_id: 'inst-0003' });
   fake.teamSync = async () => { throw new Error('could not reach team.example.invalid'); };
-  let r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'c'.repeat(32)]));
+  let r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'c'.repeat(32) } }));
   assert.strictEqual(r.code, 1);
   assert.match(r.stdout, /Joined org_Example12345678\./);
   assert.match(r.stdout, /Policy: not downloaded yet \(could not reach team\.example\.invalid\)\./);
   assert.match(r.stderr, /The join is not finished: .*\(not downloaded yet \(could not reach team\.example\.invalid\)\)\./);
   for (const policyState of [{ status: 'offline', error: 'ZN_TEAM_NETWORK' }, { status: 'rejected', error: 'bad signature' }, { status: 'revoked' }]) {
     fake.teamSync = async () => ({ policy: policyState, upload: null });
-    r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'c'.repeat(32)]));
+    r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'c'.repeat(32) } }));
     assert.strictEqual(r.code, 1, policyState.status);
     assert.match(r.stderr, /The join is not finished/);
   }
@@ -122,16 +120,16 @@ test('join exits 1 when the first policy download fails (offline) or the policy 
 
 test('a failed join exits 1 and names the reason; a locked vault adds the unlock hint', async () => {
   fake.teamJoin = async () => { throw new Error('join failed (HTTP 403)'); };
-  let r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'd'.repeat(32)]));
+  let r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'd'.repeat(32) } }));
   assert.strictEqual(r.code, 1);
   assert.strictEqual(r.stderr, '[zn] join failed (HTTP 403)\n');
   fake.teamJoin = async () => { throw Object.assign(new Error('vault is locked'), { code: CODES.LOCKED }); };
-  r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'd'.repeat(32)]));
+  r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'd'.repeat(32) } }));
   assert.strictEqual(r.code, 1);
   assert.match(r.stderr, /^\[zn\] vault is locked; run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`\n$/);
   // A message that already says how to unlock is not given the hint a second time.
   fake.teamJoin = async () => { throw Object.assign(new Error('vault is locked; run `zn unlock`'), { code: CODES.LOCKED }); };
-  r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'd'.repeat(32)]));
+  r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'd'.repeat(32) } }));
   assert.strictEqual(r.stderr, '[zn] vault is locked; run `zn unlock`\n');
 });
 
@@ -235,8 +233,8 @@ test('sync reports the policy and the upload, and rejection or revocation exit 1
   fake.teamSync = async () => ({ policy: { status: 'offline', error: 'ZN_TEAM_NETWORK' }, upload: { status: 'offline', uploaded: 0, pending: 2 } });
   r = await capture(() => runTeamCommand(['team', 'sync']));
   assert.strictEqual(r.code, 1, 'offline is a failure: nothing was synced');
-  assert.match(r.stdout, /Policy: offline: ZN_TEAM_NETWORK/);
-  assert.strictEqual(r.stderr, '[zn] sync incomplete: could not reach the server (ZN_TEAM_NETWORK); audit upload failed (offline, 2 records pending)\n');
+  assert.ok(!/ZN_TEAM_NETWORK/.test(r.stdout));
+  assert.strictEqual(r.stderr, '[zn] Could not reach the zn server. Nothing was changed. Check your internet connection and run again: zn team sync\n');
   fake.teamSync = async () => ({ policy: { status: 'rejected', error: 'policy version rollback' } });
   r = await capture(() => runTeamCommand(['team', 'sync']));
   assert.strictEqual(r.code, 1);
@@ -246,7 +244,7 @@ test('sync reports the policy and the upload, and rejection or revocation exit 1
   fake.teamSync = async () => ({ policy: { status: 'revoked' } });
   r = await capture(() => runTeamCommand(['team', 'sync']));
   assert.strictEqual(r.code, 1);
-  assert.match(r.stderr, /this machine was removed from the organization/);
+  assert.match(r.stderr, /An admin removed this machine from the organization/);
 });
 
 test('sync exits 1 without a valid applied policy or with a failed upload, and 0 only when both are fine', async () => {
@@ -258,7 +256,7 @@ test('sync exits 1 without a valid applied policy or with a failed upload, and 0
     [{ policy: { status: 'current', version: 3 }, upload: { status: 'error', uploaded: 0, pending: 4 } }, 1, /audit upload failed \(error, 4 records pending\)/],
     [{ policy: { status: 'updated', version: 3 }, upload: { status: 'diverged', pending: 1 } }, 1, /audit upload failed \(diverged, 1 records pending\)/],
     [{ policy: { status: 'updated', version: 3 }, upload: { status: 'local_gap', pending: 0 } }, 1, /audit upload failed \(local_gap\)/],
-    [{ policy: { status: 'updated', version: 3 }, upload: { status: 'inactive', pending: 0 } }, 1, /audit upload failed \(inactive\)/],
+    [{ policy: { status: 'updated', version: 3 }, upload: { status: 'inactive', pending: 0 } }, 1, /not active on zn right now/],
     [{ policy: { status: 'updated', version: 3 }, upload: { status: 'ok', uploaded: 2, pending: 0 } }, 0, null],
     [{ policy: { status: 'current', version: 3 }, upload: { status: 'nothing', pending: 0 } }, 0, null],
     [{ policy: { status: 'current', version: 3 }, upload: { status: 'busy', pending: 5 } }, 0, null],
@@ -274,11 +272,11 @@ test('sync exits 1 without a valid applied policy or with a failed upload, and 0
 });
 
 test('status shows a pending join and the last failed sync with its cause; --json carries both', async () => {
-  const failed = { at: '2026-10-23T10:00:00.000Z', ok: false, last_ok_at: '2026-10-22T09:00:00.000Z', problems: ['could not reach the server (ZN_TEAM_NETWORK)'] };
+  const failed = { at: '2026-10-23T10:00:00.000Z', ok: false, last_ok_at: '2026-10-22T09:00:00.000Z', problems: ['could not reach the zn server'] };
   fake.teamInfo = async () => ({ ...JOINED, policy: { state: 'none' }, last_sync: failed });
   let r = await capture(() => runTeamCommand(['team', 'status']));
   assert.match(r.stdout, /Policy:       none received yet \(PENDING: the organization policy is not applied; run `zn team sync`\)/);
-  assert.match(r.stdout, /Last sync:    FAILED 2026-10-23T10:00:00\.000Z: could not reach the server \(ZN_TEAM_NETWORK\) \(last success 2026-10-22T09:00:00\.000Z\); run `zn team sync` to retry/);
+  assert.match(r.stdout, /Last sync:    FAILED 2026-10-23T10:00:00\.000Z: could not reach the zn server \(last success 2026-10-22T09:00:00\.000Z\); run `zn team sync` to retry/);
   r = await capture(() => runTeamCommand(['team', 'status', '--json']));
   const j = JSON.parse(r.stdout);
   assert.strictEqual(j.join_pending, true);
@@ -307,7 +305,7 @@ test('join asks to send the earlier audit log only with --include-history', asyn
   r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'e'.repeat(32), '--agent', 'codex']));
   assert.ok(!('include_history' in joinArgs), 'no flag, no consent');
   r = await capture(() => runTeamCommand(['team', '--help']));
-  assert.match(r.stdout, /zn team join <token> \[--api URL\] \[--agent ID\] \[--include-history\]/);
+  assert.match(r.stdout, /zn team join <token> \| zn team join - \| ZN_TEAM_JOIN_TOKEN=\.\.\. zn team join \[--api URL\] \[--agent ID\] \[--include-history\]/);
 });
 
 test('status counts only the records after the join as pending', async () => {
@@ -425,15 +423,15 @@ function writeAudit(lines) {
 const rec = (seq, ts) => ({ v: 1, seq, ts, secret: 'EXAMPLE_KEY', mode: 'env', agent: 'codex', tool: 'Bash', argv0: 'node', host: 'api.example.com', decision: 'allow', reason: 'policy', prev: '0'.repeat(64), mac: 'f'.repeat(64) });
 
 test('log export writes OTLP lines to stdout, filtered by --since; no log at all is empty output', async () => {
-  let r = await capture(() => runLogExport(['--otlp']));
+  let r = await capture(() => runLogExport(['--unverified', '--otlp']));
   assert.strictEqual(r.code, 0);
   assert.strictEqual(r.stdout, '');
   writeAudit([rec(1, '2020-01-01T00:00:00.000Z'), 'not json', rec(2, new Date().toISOString())]);
-  r = await capture(() => runLogExport(['--otlp']));
+  r = await capture(() => runLogExport(['--unverified', '--otlp']));
   assert.strictEqual(r.code, 0);
   assert.ok(r.stdout.includes('2020-01-01') || r.stdout.length > 0);
   const all = r.stdout.length;
-  r = await capture(() => runLogExport(['--otlp', '--since', '1d']));
+  r = await capture(() => runLogExport(['--unverified', '--otlp', '--since', '1d']));
   assert.strictEqual(r.code, 0);
   assert.ok(r.stdout.length > 0 && r.stdout.length < all, 'the old record is filtered out');
 });
@@ -441,7 +439,7 @@ test('log export writes OTLP lines to stdout, filtered by --since; no log at all
 test('log export to a file reports the count and hash on stderr and keeps the file private', async () => {
   writeAudit([rec(1, new Date().toISOString())]);
   const out = path.join(HOME, 'export.jsonl');
-  const r = await capture(() => runLogExport(['--otlp', '--out', out]));
+  const r = await capture(() => runLogExport(['--unverified', '--otlp', '--out', out]));
   assert.strictEqual(r.code, 0);
   assert.strictEqual(r.stdout, '');
   assert.match(r.stderr, /^Exported 1 records to .*export\.jsonl \(OTLP\/JSON Lines, sha256 [0-9a-f]{64}\)\./);
@@ -452,7 +450,7 @@ test('log export to a file reports the count and hash on stderr and keeps the fi
 test('log export on a machine in an organization labels the records with the installation', async () => {
   policy.writeTeam({ org: 'org_Example12345678', api_base: 'https://team.example.com', install_id: '11111111-2222-4333-8444-555555555555', policy_public_key: PIN });
   writeAudit([rec(1, new Date().toISOString())]);
-  const r = await capture(() => runLogExport(['--otlp']));
+  const r = await capture(() => runLogExport(['--unverified', '--otlp']));
   assert.strictEqual(r.code, 0);
   assert.ok(r.stdout.includes('11111111-2222-4333-8444-555555555555'));
   assert.ok(r.stdout.includes('org_Example12345678'));
@@ -460,10 +458,10 @@ test('log export on a machine in an organization labels the records with the ins
 
 test('log export fails with exit 1 on a bad --since or an unwritable --out', async () => {
   writeAudit([rec(1, new Date().toISOString())]);
-  let r = await capture(() => runLogExport(['--otlp', '--since', 'last-tuesday-ish']));
+  let r = await capture(() => runLogExport(['--unverified', '--otlp', '--since', 'last-tuesday-ish']));
   assert.strictEqual(r.code, 1);
   assert.match(r.stderr, /\[zn\] invalid since: last-tuesday-ish/);
-  r = await capture(() => runLogExport(['--otlp', '--out', path.join(HOME, 'no', 'such', 'dir', 'x.jsonl')]));
+  r = await capture(() => runLogExport(['--unverified', '--otlp', '--out', path.join(HOME, 'no', 'such', 'dir', 'x.jsonl')]));
   assert.strictEqual(r.code, 1);
   assert.match(r.stderr, /^\[zn\] /);
 });
@@ -504,8 +502,92 @@ test('status lists what the last policy version removed or loosened, from the va
 test('log export with a vault that cannot be probed warns that it is locked or unreachable', async () => {
   fake.isUnlocked = async () => { throw new Error('connect ECONNREFUSED'); };
   writeAudit([rec(1, new Date().toISOString())]);
-  const r = await capture(() => runLogExport(['--otlp']));
+  const r = await capture(() => runLogExport(['--unverified', '--otlp']));
   assert.strictEqual(r.code, 0);
   assert.ok(r.stdout.length > 0);
   assert.match(r.stderr, /the vault is locked or unreachable, so the audit log chain was NOT verified/);
+});
+
+test('log export refuses an unverified copy unless --unverified is given, and writes nothing', async () => {
+  const out = path.join(HOME, 'unverified-out.jsonl');
+  const r = await capture(() => runLogExport(['--otlp', '--out', out]));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /Not exported: the vault is locked or unreachable.*--unverified/);
+  assert.ok(!fs.existsSync(out));
+  const ok = await capture(() => runLogExport(['--otlp', '--unverified', '--out', out]));
+  assert.strictEqual(ok.code, 0);
+  assert.match(ok.stderr, /NOT verified/);
+});
+
+test('log export --out refuses a symbolic link or a folder and never touches the target', async () => {
+  const target = path.join(HOME, 'victim.txt');
+  fs.writeFileSync(target, 'keep me');
+  const link = path.join(HOME, 'link.jsonl');
+  try { fs.symlinkSync(target, link); } catch (e) { return; } // no symlinks here (Windows without the right)
+  let r = await capture(() => runLogExport(['--otlp', '--unverified', '--out', link]));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /is a symbolic link/);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), 'keep me');
+  assert.ok(fs.lstatSync(link).isSymbolicLink(), 'the link is still there');
+  const dir = path.join(HOME, 'adir');
+  fs.mkdirSync(dir);
+  r = await capture(() => runLogExport(['--otlp', '--unverified', '--out', dir]));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /not a regular file/);
+});
+
+test('log export --out on an existing 0644 file leaves a 0600 file', async () => {
+  if (process.platform === 'win32') return;
+  const out = path.join(HOME, 'existing.jsonl');
+  fs.writeFileSync(out, 'old', { mode: 0o644 });
+  fs.chmodSync(out, 0o644);
+  const r = await capture(() => runLogExport(['--otlp', '--unverified', '--out', out]));
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(fs.statSync(out).mode & 0o777, 0o600);
+});
+
+test('log export with an unlocked vault and no audit log yet exports 0 records', async () => {
+  const auditFile = store.paths().auditFile;
+  fs.rmSync(auditFile, { force: true });
+  fake.isUnlocked = async () => true;
+  fake.auditExport = async () => ({ ok: true, records: 0, sha256: crypto.createHash('sha256').update('').digest('hex'), bytes: 0 });
+  const out = path.join(HOME, 'empty-out.jsonl');
+  const r = await capture(() => runLogExport(['--otlp', '--out', out]));
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stderr, /^Exported 0 records to /);
+  assert.ok(fs.existsSync(out));
+});
+
+test('log export with a vault from an older version (no sha256) says to lock and unlock', async () => {
+  writeAudit([rec(1, new Date().toISOString())]);
+  fake.isUnlocked = async () => true;
+  fake.auditExport = async () => ({ ok: true, records: 1 });
+  const out = path.join(HOME, 'old-daemon-out.jsonl');
+  const r = await capture(() => runLogExport(['--otlp', '--out', out]));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /older version of zn-gate/);
+  assert.match(r.stderr, /lock/);
+  assert.ok(!fs.existsSync(out));
+});
+
+test('log export with an unlocked vault: the file must be the one that was verified', async () => {
+  writeAudit([rec(1, new Date().toISOString())]);
+  const auditFile = store.paths().auditFile;
+  const bytes = fs.readFileSync(auditFile);
+  const sha = crypto.createHash('sha256').update(bytes).digest('hex');
+  fake.isUnlocked = async () => true;
+  const out = path.join(HOME, 'verified-out.jsonl');
+  fake.auditExport = async () => ({ ok: true, records: 1, sha256: sha, bytes: bytes.length });
+  let r = await capture(() => runLogExport(['--otlp', '--out', out]));
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.ok(fs.existsSync(out));
+  assert.doesNotMatch(r.stderr, /NOT verified/);
+  // A record written after the check: the export aborts and leaves nothing.
+  fs.rmSync(out);
+  fs.appendFileSync(auditFile, JSON.stringify(rec(2, new Date().toISOString())) + '\n');
+  r = await capture(() => runLogExport(['--otlp', '--out', out]));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /changed after the vault verified it/);
+  assert.ok(!fs.existsSync(out));
+  assert.deepStrictEqual(fs.readdirSync(HOME).filter((n) => n.endsWith('.tmp')), []);
 });

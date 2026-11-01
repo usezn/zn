@@ -45,7 +45,7 @@ async function capture(fn) {
   }
 }
 
-const USAGE_START = 'usage: zn team join <token> [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config';
+const USAGE_START = 'usage: zn team join <token> | zn team join - | ZN_TEAM_JOIN_TOKEN=... zn team join [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config';
 
 test('--help and -h print the usage on stdout and exit 0, wherever they appear', async () => {
   for (const args of [['team', '--help'], ['team', '-h'], ['team', 'join', '--help'], ['team', 'sync', '-h'], ['team', 'bogus', '--help'], ['team', 'status', '--json', '-h']]) {
@@ -58,12 +58,13 @@ test('--help and -h print the usage on stdout and exit 0, wherever they appear',
   assert.strictEqual(closed, 0, 'help never opens a vault client');
 });
 
-test('the usage error is the same line as the help text, on stderr', async () => {
+test('an unknown subcommand is named as not a command, on stderr', async () => {
   const help = await capture(() => runTeamCommand(['team', '-h']));
   const bad = await capture(() => runTeamCommand(['team', 'nope']));
   assert.strictEqual(bad.code, 2);
   assert.strictEqual(bad.stdout, '');
-  assert.strictEqual(bad.stderr, help.stdout);
+  assert.match(bad.stderr, /^\[zn\] 'zn team nope' is not a zn command\./);
+  assert.ok(help.stdout.startsWith('usage: zn team join'));
   assert.strictEqual(closed, 0);
 });
 
@@ -71,7 +72,7 @@ test('subcommand names are case sensitive and extra words are not subcommands', 
   for (const sub of ['JOIN', 'Status', 'leave now', '--json']) {
     const r = await capture(() => runTeamCommand(['team', sub]));
     assert.strictEqual(r.code, 2, sub);
-    assert.match(r.stderr, /^usage: zn team join/);
+    assert.match(r.stderr, /^\[zn\] 'zn team .*' is not a zn command\./);
   }
 });
 
@@ -80,7 +81,7 @@ test('join with an empty token is a usage error', async () => {
   const r = await capture(() => runTeamCommand(['team', 'join', '']));
   assert.strictEqual(r.code, 2);
   assert.strictEqual(r.stdout, '');
-  assert.match(r.stderr, /^usage: zn team join <token>/);
+  assert.match(r.stderr, /^\[zn\] No join token given\./);
 });
 
 test('join without options sends undefined for --api and --agent', async () => {
@@ -120,7 +121,7 @@ test('status --json on a joined machine is valid JSON with the documented keys',
   const r = await capture(() => runTeamCommand(['team', 'status', '--json']));
   assert.strictEqual(r.code, 0);
   const j = JSON.parse(r.stdout);
-  assert.deepStrictEqual(Object.keys(j), ['joined', 'vault', 'org', 'org_name', 'install_id', 'api_base', 'revoked_at', 'policy', 'upload', 'join_pending', 'last_sync', 'revocation_pending']);
+  assert.deepStrictEqual(Object.keys(j), ['joined', 'vault', 'org', 'org_name', 'install_id', 'api_base', 'revoked_at', 'policy', 'upload', 'join_pending', 'last_sync', 'revocation_pending', 'revocations_dropped']);
   assert.strictEqual(j.vault, 'unlocked');
   assert.deepStrictEqual(j.policy, { state: 'active', version: 3, expires_at: '2099-01-01T00:00:00.000Z', change: null });
   assert.ok(r.stdout.endsWith('\n'));

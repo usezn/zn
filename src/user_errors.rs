@@ -158,6 +158,17 @@ pub fn unknown_setting(file: &str, setting: &str, suggestion: Option<&str>) -> S
     }
 }
 
+/// A misspelt key under `security` or `audit`: zn stops instead of running with a weaker setting.
+pub fn unknown_security_setting(file: &str, setting: &str, suggestion: Option<&str>) -> String {
+    let hint = match suggestion {
+        Some(s) => format!("did you mean \"{s}\"?"),
+        None => "the settings file that `zn init` writes lists every setting zn knows.".to_string(),
+    };
+    format!(
+        "{file}: unknown setting \"{setting}\". Settings in the security and audit sections are not ignored, because a typo would silently weaken them, so zn did not start; {hint}"
+    )
+}
+
 /// `ZN_PORT` is not a port number, so the port from the settings is kept.
 pub fn invalid_port_env(value: &str, fallback: u16) -> String {
     format!(

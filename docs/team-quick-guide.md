@@ -10,8 +10,8 @@ Each machine needs zn-gate installed and the vault unlocked.
 
 ```bash
 zn unlock
-JOIN_TOKEN='paste-your-join-token-here'
-zn team join "$JOIN_TOKEN"
+zn team join -
+# paste the join token and press Enter (it stays out of your shell history)
 zn team status
 ```
 

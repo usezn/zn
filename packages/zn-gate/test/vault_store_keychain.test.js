@@ -268,6 +268,77 @@ test('pruneStale never deletes maps when the clock is far in the future or behin
   assert.equal(fs.existsSync(a) && fs.existsSync(b), true);
 });
 
+test('pruneStale keeps maps when the clock is 45 or 46 days ahead, and prunes again once it is normal', (t) => {
+  const home = tmpHome(t);
+  store.ensureLayout({ home });
+  const f = store.projectFile('/work/a', { home });
+  fs.writeFileSync(f, 'x');
+  assert.equal(store.pruneStale({ home }), 0); // a normal run records the time
+  const realNow = Date.now;
+  try {
+    for (const d of [45, 46]) {
+      Date.now = () => realNow() + d * 86400000;
+      assert.equal(store.pruneStale({ home }), 0);
+      assert.equal(fs.existsSync(f), true);
+    }
+    Date.now = realNow;
+    const past = new Date(realNow() - 40 * 86400000);
+    fs.utimesSync(f, past, past);
+    assert.equal(store.pruneStale({ home }), 1);
+  } finally { Date.now = realNow; }
+  assert.equal(fs.existsSync(f), false);
+});
+
+test('pruneStale: a skip lasts 7 days, then the clock is accepted; a clock back to normal clears the note', (t) => {
+  const realNow = Date.now;
+  const age = (f) => { const past = new Date(realNow() - 40 * 86400000); fs.utimesSync(f, past, past); };
+  try {
+    // +45 days, kept; +8 more days, pruned
+    let home = tmpHome(t);
+    let p = store.ensureLayout({ home });
+    let f = store.projectFile('/work/a', { home });
+    fs.writeFileSync(f, 'x');
+    assert.equal(store.pruneStale({ home }), 0);
+    age(f);
+    Date.now = () => realNow() + 45 * 86400000;
+    assert.equal(store.pruneStale({ home }), 0);
+    assert.equal(fs.existsSync(f), true);
+    assert.equal(fs.existsSync(path.join(p.runDir, '.prune-skipped-since')), true);
+    Date.now = () => realNow() + 53 * 86400000;
+    assert.equal(store.pruneStale({ home }), 1);
+    assert.equal(fs.existsSync(f), false);
+    assert.equal(fs.existsSync(path.join(p.runDir, '.prune-skipped-since')), false);
+    // user away 60 days: first run skips, a run 8 days later prunes
+    Date.now = realNow;
+    home = tmpHome(t);
+    p = store.ensureLayout({ home });
+    f = store.projectFile('/work/b', { home });
+    fs.writeFileSync(f, 'x');
+    assert.equal(store.pruneStale({ home }), 0);
+    age(f);
+    Date.now = () => realNow() + 60 * 86400000;
+    assert.equal(store.pruneStale({ home }), 0);
+    assert.equal(fs.existsSync(f), true);
+    Date.now = () => realNow() + 68 * 86400000;
+    assert.equal(store.pruneStale({ home }), 1);
+    // clock back to normal before 7 days: prunes and clears the note
+    Date.now = realNow;
+    home = tmpHome(t);
+    p = store.ensureLayout({ home });
+    f = store.projectFile('/work/c', { home });
+    fs.writeFileSync(f, 'x');
+    assert.equal(store.pruneStale({ home }), 0);
+    age(f);
+    Date.now = () => realNow() + 365 * 86400000;
+    assert.equal(store.pruneStale({ home }), 0);
+    Date.now = () => realNow() + 2 * 86400000 + 365 * 86400000;
+    assert.equal(store.pruneStale({ home }), 0);
+    Date.now = realNow;
+    assert.equal(store.pruneStale({ home }), 1);
+    assert.equal(fs.existsSync(path.join(p.runDir, '.prune-skipped-since')), false);
+  } finally { Date.now = realNow; }
+});
+
 test('forgetProject reports whether a map existed; touch never throws', (t) => {
   const home = tmpHome(t);
   store.ensureLayout({ home });

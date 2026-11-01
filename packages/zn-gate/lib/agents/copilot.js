@@ -1,9 +1,29 @@
 'use strict';
 
 /**
- * GitHub Copilot CLI adapter. Experimental.
+ * GitHub Copilot adapter: Copilot in VS Code and GitHub Copilot CLI. Supported.
  *
- * Hook format (docs read 2026-10-19):
+ * VS Code documents that "VS Code, the GitHub Copilot app, and GitHub Copilot CLI share this harness and its hook
+ * format" (https://code.visualstudio.com/docs/copilot/customization/hooks, section "Copilot harness"; read 2026-10-30,
+ * hooks in VS Code are in Preview). The same page lists what that harness loads: "User hook files in ~/.copilot/hooks/, or
+ * $COPILOT_HOME/hooks/ when COPILOT_HOME is set" and ".github/hooks/*.json at the repository root", with "version": 1,
+ * "type": "command", the platform commands "bash" / "powershell" and "timeoutSec", and the events preToolUse and
+ * postToolUse. The files zn writes are exactly those. Evidence level: documented, and run end to end only with Copilot
+ * CLI 1.0.98; not tested in the VS Code app itself.
+ *
+ * Limits that VS Code and GitHub document, and that no hook format can lift:
+ *  - "Timeouts are fail-open for every event, including preToolUse and admin-deployed policy hooks"
+ *    (https://docs.github.com/en/copilot/reference/hooks-reference, "Exit codes"). zn does not wait for it: its own
+ *    supervisor (runner armSupervisor) answers with a deny 4 s before timeoutSec, so only a hook that is stopped before it
+ *    could start its timer (a machine so loaded that Node.js does not start in 11 s) is let through.
+ *  - "Command and HTTP config-file userPromptSubmitted hooks have their output dropped, including modifiedPrompt"
+ *    (same page, "userPromptSubmitted"): a typed prompt cannot be blocked from a hook file in VS Code or the CLI.
+ *  - The Copilot harness also reads the repository .claude/settings(.local).json ("Cross-tool .claude/settings.json ...
+ *    files in the repository are also read"; no setting needed: chat.useClaudeHooks is for VS Code's older Local harness) and runs
+ *    "Applicable hooks from multiple sources ... together", so zn set up for Claude Code with --project runs twice.
+ *    `zn-gate check` says so.
+ *
+ * Hook format (docs read 2026-10-19 and 2026-10-30):
  *  - https://docs.github.com/en/copilot/reference/hooks-reference
  *  - https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-byok-models (custom model endpoint)
  *
@@ -21,7 +41,7 @@
  *  Empty output means "no opinion" (default behaviour), so zn never prints "allow".
  *  stdout of postToolUse: {modifiedResult: {resultType: "success", textResultForLlm}, additionalContext}.
  *  Exit codes: 0 = parse stdout; 2 = deny for preToolUse (a warning for the other events); any other non-zero =
- *  fail-closed for preToolUse and fail-open for the others. A TIMEOUT (default 30 s) always fails OPEN.
+ *  fail-closed for preToolUse and fail-open for the others. A TIMEOUT (default 30 s) always fails OPEN: zn answers first (see above).
  *
  *  Events: preToolUse is checked and can deny (zn also asks for confirmation when it needs one; Copilot turns
  *  "ask" into a deny in the cloud agent and in autopilot). postToolUse replaces secret values in the result of
@@ -49,6 +69,7 @@ const os = require('os');
 const path = require('path');
 const cfg = require('./config-file');
 const launcher = require('./launcher');
+const { shQuote } = require('../shell-quote');
 
 const id = 'copilot';
 const FILE_NAME = 'zn-gate.json';
@@ -69,6 +90,104 @@ const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
 
 function firstString(obj, keys) {
   for (const k of keys) if (typeof obj[k] === 'string' && obj[k]) return obj[k];
+  return undefined;
+}
+
+// The text of a patch tool call (VS Code's apply_patch sends {input: "*** Begin Patch ..."}): the tool named
+// apply_patch, or any tool with a string argument that starts a patch. undefined = not a patch.
+const PATCH_KEYS = ['input', 'patch', 'patchText', 'command', 'text'];
+function patchTextOf(toolName, args) {
+  if (toolName === 'apply_patch') return firstString(args, PATCH_KEYS) || '';
+  for (const v of Object.values(args)) if (typeof v === 'string' && /^\*\*\* Begin Patch\b/m.test(v)) return v;
+  return undefined;
+}
+
+/** The write input of a patch: every file it adds, updates, deletes or moves to (the Codex parser), checked like a write. */
+function patchInput(text) {
+  const { patchScan, PATCH_SCAN_CAP } = require('./codex');
+  const tooLong = text.length > PATCH_SCAN_CAP;
+  const scan = tooLong ? { files: [], suspicious: false } : patchScan(text);
+  const files = scan.files;
+  return { path: files[0], paths: files, alsoReadCheck: true, tooLong, unparsed: !tooLong && (files.length === 0 || scan.suspicious), texts: [{ key: ['input'], value: text }] };
+}
+
+/**
+ * Whether VS Code's shell task builder wraps a plain string argument in strong quotes. Ported from the task system's
+ * shell command line builder in the VS Code source (terminalTaskSystem.ts, needsQuotes): an argument that starts and
+ * ends with the same quote character is left alone; otherwise it is scanned left to right, quotes open and close a
+ * quoted stretch, and only a space outside a quoted stretch asks for quotes (a tab or a newline does not).
+ * VS Code compares the character with its escape setting, which is an object for bash and zsh, so a backslash skips
+ * nothing there; skipEscape reads the same argument the other way (a backslash skips the next character) so both
+ * readings of the line are judged.
+ */
+function needsQuotes(value, skipEscape) {
+  if (value.length >= 2 && (value[0] === "'" || value[0] === '"') && value[0] === value[value.length - 1]) return false;
+  let quote;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (ch === quote) quote = undefined;
+    else if (quote !== undefined) continue;
+    else if (skipEscape && ch === '\\') i++;
+    else if (ch === "'" || ch === '"') quote = ch;
+    else if (ch === ' ') return true;
+  }
+  return false;
+}
+
+/**
+ * One piece of a task line (a command or an argument) the way VS Code gives it: a string, or {value, quoting} with
+ * quoting escape, strong or weak. Returns the text as VS Code puts it on a bash line (vs), the same with a backslash
+ * read as an escape (vse), the bare value (raw) and a POSIX-quoted form (q); null when the piece has a shape zn
+ * cannot read. VS Code wraps a plain string only when needsQuotes says so, without escaping a quote inside it, and
+ * writes {value, quoting} with its own quoting (escape puts a backslash before a space, a double quote, a single
+ * quote and a comma).
+ */
+function taskPiece(x) {
+  if (typeof x === 'string') {
+    return {
+      vs: needsQuotes(x, false) ? "'" + x + "'" : x,
+      vse: needsQuotes(x, true) ? "'" + x + "'" : x,
+      vw: /\s/.test(x) ? "'" + x + "'" : x,
+      raw: x,
+      q: shQuote(x),
+    };
+  }
+  if (!isObj(x) || typeof x.value !== 'string') return null;
+  const v = x.value;
+  const k = x.quoting;
+  if (k !== undefined && k !== 'escape' && k !== 'strong' && k !== 'weak') return null;
+  const vs = k === 'strong' ? "'" + v + "'" : k === 'weak' ? '"' + v + '"' : k === 'escape' ? v.replace(/[ "',]/g, '\\$&') : v;
+  return { vs, vse: vs, vw: vs, raw: v, q: shQuote(v) };
+}
+
+/**
+ * A command one level down (create_and_run_task sends {task: {command, args}}) as the line(s) it runs.
+ * For a shell task the line is built the way VS Code builds it, argument by argument (see needsQuotes), and that line
+ * is judged; a newline or tab inside an argument VS Code leaves unquoted stays in the line, so the shell's second
+ * command is seen. The same line with a backslash read as an escape, the bare values and every argument quoted are
+ * judged as well and the stricter answer wins. With no arguments VS Code runs a string command as typed. A process
+ * task has no shell, so each argument is quoted. undefined = no command here; null = a command or argument zn
+ * cannot read (never dropped).
+ */
+function nestedCommand(args) {
+  for (const v of Object.values(args)) {
+    if (!isObj(v)) continue;
+    const key = COMMAND_KEYS.find((k) => v[k] !== undefined);
+    if (key === undefined) continue;
+    const c = taskPiece(v[key]);
+    if (!c || (typeof v[key] === 'string' && !v[key])) return null;
+    let extra = [];
+    if (v.args !== undefined) {
+      if (!Array.isArray(v.args)) return null;
+      extra = v.args.map(taskPiece);
+      if (extra.some((p) => p === null)) return null;
+    }
+    const join = (f) => [c, ...extra].map(f).join(' ');
+    if (typeof v.type === 'string' && v.type.toLowerCase() === 'process') return join((p) => p.q);
+    const bare = typeof v[key] === 'string' && extra.length === 0;
+    const lines = [bare ? c.raw : join((p) => p.vs), bare ? c.raw : join((p) => p.vse), bare ? c.raw : join((p) => p.vw), join((p) => p.raw), join((p) => p.q)];
+    return lines.filter((l, i, arr) => arr.indexOf(l) === i).join('\n');
+  }
   return undefined;
 }
 
@@ -152,8 +271,14 @@ function normalize(raw) {
   if (args === null) {
     return { ...ev, tool: toolName || 'unknown', input: { texts: [] }, ...(known ? { unreadable: unreadable('arguments') } : {}) };
   }
-  const cmd = firstString(args, COMMAND_KEYS);
-  if (SHELL_TOOLS.has(toolName) || (!known && cmd !== undefined)) {
+  if (!known) {
+    const patch = patchTextOf(toolName, args);
+    if (patch !== undefined) return { ...ev, tool: 'write', input: patchInput(patch) };
+  }
+  let cmd = firstString(args, COMMAND_KEYS) !== undefined ? firstString(args, COMMAND_KEYS) : (known ? undefined : nestedCommand(args));
+  const nestedBad = cmd === null;
+  if (nestedBad) cmd = undefined;
+  if (SHELL_TOOLS.has(toolName) || nestedBad || (!known && cmd !== undefined)) {
     const e = { ...ev, tool: toolName === 'powershell' ? 'powershell' : 'bash', input: { command: cmd || '', texts: [] } };
     if (cmd === undefined) e.unreadable = unreadable('command');
     return e;
@@ -266,10 +391,11 @@ function install(opts = {}) {
     data.hooks[event] = [...list, handlerFor(event)];
   }
   cfg.writeJson(file, data);
-  report.warnings.push('GitHub Copilot CLI support is experimental. zn checks tool calls before they run (preToolUse): it blocks reads and writes of secret files and shell commands that handle secrets, and it replaces secret values in the results of read-type and shell tools (postToolUse).');
+  report.warnings.push('GitHub Copilot (VS Code and Copilot CLI) reads this file. zn checks tool calls before they run (preToolUse): it blocks reads and writes of secret files and shell commands that handle secrets, and it replaces secret values in the results of read-type and shell tools (postToolUse).');
   report.warnings.push('Copilot keeps its own session log (events.jsonl) with the original tool output on this machine: zn replaces secret values in what goes to the model, not in that local log.');
-  report.warnings.push('Copilot does not let a command hook block a typed prompt, so a secret pasted into a prompt is not stopped.');
-  report.warnings.push('Copilot lets a call through when a hook times out (30 s by default; zn asks for ' + HOOK_TIMEOUT_S + ' s), and its machine policy files (/etc/github-copilot/policy.d, or the Windows policy folder) are loaded in addition to this one.');
+  report.warnings.push('Copilot drops the output of a command hook for a typed prompt (userPromptSubmitted), in VS Code and in Copilot CLI, so a secret pasted into a prompt is not stopped.');
+  report.warnings.push('The hooks follow the VS Code and GitHub documentation; they were run end to end with Copilot CLI, not inside the VS Code app.');
+  report.warnings.push('Copilot lets a call through when a hook times out (30 s by default; zn asks for ' + HOOK_TIMEOUT_S + ' s and blocks the call itself 4 s earlier), and its machine policy files (/etc/github-copilot/policy.d, or the Windows policy folder) are loaded in addition to this one.');
   if (project && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook copilot): every teammate who opens this project in Copilot CLI needs zn-gate installed, otherwise the hook cannot start. Copilot also asks each person to trust the folder before it runs repository hooks.');
   return report;
 }
@@ -309,4 +435,10 @@ module.exports = {
   capabilities: { ask: 'interactive', rewriteInput: false, rewriteOutput: true },
   hooksFile,
   copilotHome,
+  pathsOf,
+  firstString,
+  COMMAND_KEYS,
+  patchTextOf,
+  patchInput,
+  nestedCommand,
 };

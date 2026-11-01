@@ -232,6 +232,8 @@ async function writeEncrypted(file, data, recipient) {
 /* ------------------------------------------------------------------ */
 
 const MAX_PLAUSIBLE_GAP_DAYS = 400;
+const PRUNE_MARK = '.last-prune';
+const PRUNE_SKIPPED = '.prune-skipped-since';
 
 /** Delete project token maps unused for `days` (default 30). Returns count. */
 function pruneStale(opts) {
@@ -259,11 +261,35 @@ function pruneStale(opts) {
     process.stderr.write('zn-gate: vault prune skipped, the system clock looks wrong\n');
     return 0;
   }
+  // The clock can also be wrong by 31 to 400 days, which the checks above cannot see. So every prune that
+  // runs on a sane clock records its time on disk, and a later prune only deletes while the clock is within
+  // `days` of that record. A jump ahead skips the prune and the record is not moved, so a wrong clock cannot
+  // approve itself. The skip is time-bound (a user who was simply away must not keep stale maps for ever):
+  // the first skip notes its time, and once the clock has kept running for 7 days since then it is accepted.
+  // If the clock returns to normal before that, the next prune deletes as usual and the note is cleared.
+  const run = paths(opts).runDir;
+  const marker = path.join(run, PRUNE_MARK);
+  const skipFile = path.join(run, PRUNE_SKIPPED);
+  let last = NaN;
+  let since = NaN;
+  try { last = Number(fs.readFileSync(marker, 'utf8').trim()); } catch (err) { /* no record yet */ }
+  try { since = Number(fs.readFileSync(skipFile, 'utf8').trim()); } catch (err) { /* not skipping */ }
+  if (maps.length && Number.isFinite(last) && now - last > days * 86400000) {
+    if (!(Number.isFinite(since) && now - since >= 7 * 86400000)) {
+      if (!Number.isFinite(since)) {
+        try { fs.mkdirSync(run, { recursive: true, mode: 0o700 }); fs.writeFileSync(skipFile, String(now), { mode: 0o600 }); } catch (err) { /* ignore */ }
+      }
+      process.stderr.write('zn-gate: vault prune skipped, the system clock looks wrong; it resumes after 7 days unless the clock is fixed\n');
+      return 0;
+    }
+  }
   for (const [f, m] of maps) {
     try {
       if (m < limit) { fs.unlinkSync(f); removed++; }
     } catch (err) { /* ignore */ }
   }
+  try { fs.mkdirSync(run, { recursive: true, mode: 0o700 }); fs.writeFileSync(marker, String(now), { mode: 0o600 }); } catch (err) { /* ignore */ }
+  try { fs.unlinkSync(skipFile); } catch (err) { /* none */ }
   return removed;
 }
 

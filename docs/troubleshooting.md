@@ -665,6 +665,8 @@ MCP servers are tool servers your agent talks to. zn-shield sits between your ag
 
 **What to do:** open that file at the root of your project and look at the pattern or path in the message. Change or remove the rule if it is wrong. If a teammate added it, ask them.
 
+To see where these rules apply, and what happens when the file is not valid, read [where custom rules apply](../packages/zn-gate/README.md#where-custom-rules-apply).
+
 #### "Output too large to scan in full" / "Input too large to scan in full" / "nested too deeply to check"
 
 **What happened:** zn-gate scans text in windows up to a limit (4 MB for a tool result). Text past it, or nested too deeply to walk, is blocked, because the part that was not scanned could hold an attack.
@@ -765,6 +767,6 @@ mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global
 echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.zshrc
 ```
 
-Use `~/.bashrc` instead of `~/.zshrc` if you use bash. Then open a new terminal and run `npx -y zn-gate init` again. A Node.js version manager such as nvm also avoids the problem. This does not apply to Windows.
+Use `~/.bashrc` instead of `~/.zshrc` if you use bash. Then open a new terminal and run the installs again: `npm install -g` for your agent (for example `npm install -g @openai/codex` or `npm install -g @google/gemini-cli`, if it failed too) and `npm install -g zn-gate`, then `npx -y zn-gate init` (or `zn hooks install <agent>`). An install that failed with `EACCES` did nothing, so it has to be run again. A Node.js version manager such as nvm also avoids the problem. This does not apply to Windows.
 
 **To see the technical detail of an error:** run the command again with `ZN_VERBOSE=1`, or set `DEBUG=zn` (also `zn*`, `zn:*`, `zn-gate` or `zn-gate:*`, alone or in a comma-separated list). Other `DEBUG` values, such as `DEBUG=*`, do not change what zn prints. The Node.js and Python packages follow the same rule.
