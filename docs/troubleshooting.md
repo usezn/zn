@@ -977,6 +977,34 @@ The problems with the key you paste are in [section 7](#7-zn-gate-connect-does-n
 
 **What to do:** check your internet connection and run `zn-gate disconnect --revoke` again, or revoke the key on the dashboard shown in the message.
 
+### Messages from the Python package
+
+The `zn-gate` command of the Python package protects agents you build yourself. Some commands live only in the npm package.
+
+#### "zn-gate `<command>` is in the npm package, not in this Python package" / "zn-gate `<command>` is a command of the npm package, not of this Python package" / "zn-gate help is not a command"
+
+**What happened:** you ran a command that only the npm package has, such as `init`, `hooks`, `report`, `connect` or `disconnect`. Nothing was changed. The message prints the command that works.
+
+**What to do:** run it with Node.js 18 or later, for example `npx -y zn-gate init`. To see the help of the npm package, run `npx -y zn-gate --help`.
+
+#### "Error: target path not found"
+
+**What happened:** `zn-gate scan` could not find the path you gave. The Node form of this message is "Target path does not exist".
+
+**What to do:** check the spelling and the folder you run `zn-gate` from, then run it again.
+
+#### "zn-gate stats: --days must be between 1 and `<n>`"
+
+**What happened:** `zn-gate stats --days` takes a whole number of days up to the limit in the message. Nothing was shown.
+
+**What to do:** run it again with a number in that range, for example `zn-gate stats --days 7`.
+
+#### "Error: the export was not saved"
+
+**What happened:** `zn-gate evidence --output` could not write the file. The rest of the message says why, in the same words as [Messages about files and folders](#messages-about-files-and-folders).
+
+**What to do:** follow that message, or choose another `--output` path, then run it again.
+
 ### Where a message points you
 
 - A message that ends with "More: <https://usezn.com/docs/zn-gate/troubleshooting/>" (a vault that did not start, a damaged vault file, a failed audit log check) points to this page. [Section 5](#5-your-secret-vault-is-locked) covers the vault, and [section 10](#10-the-evidence-log--is-damaged) the logs.
