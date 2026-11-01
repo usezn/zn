@@ -97,7 +97,7 @@ test('expiry and clock skew: five minutes of tolerance on both dates', () => {
   assert.strictEqual(r.expired, true);
   const iss = Date.parse(p.issued_at);
   assert.strictEqual(policy.verifyEnvelope(env, k.pin, { now: iss - 4 * 60000 }).ok, true);
-  assert.strictEqual(policy.verifyEnvelope(env, k.pin, { now: iss - 6 * 60000 }).error, 'policy issued in the future');
+  assert.strictEqual(policy.verifyEnvelope(env, k.pin, { now: iss - 6 * 60000 }).error, "policy issued in the future: this computer's clock looks behind; check the date and time");
 });
 
 test('the cache accepts newer versions, refuses rollbacks and keeps the last good one', (t) => {
@@ -226,4 +226,63 @@ test('the vault applies a deny for another agent, also from an expired policy (s
   assert.strictEqual(expired[0].deny, true);
   assert.strictEqual(expired[0].orgPolicy.state, 'expired');
   assert.strictEqual(expired[1].deny, false);
+});
+
+test('a policy issued in the future: the cache reads as expired (strict mode), a new one is refused with a clock hint', (t) => {
+  const { home, k } = setup(t);
+  const { effective } = require('../lib/team/effective');
+  const p = body({ rules: [{ secret: 'PROD_*', agents: ['*'], deny: true }] });
+  const iss = Date.parse(p.issued_at);
+  const behind = iss - DAY; // the computer clock is one day in the past
+  const env = sign(p, k);
+  const r = policy.verifyEnvelope(env, k.pin, { now: behind, allowExpired: true });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.expired, true);
+  assert.strictEqual(r.clock, 'behind');
+  // Accepting a new policy: still refused, and the message points at the clock.
+  const n = policy.verifyEnvelope(env, k.pin, { now: behind });
+  assert.strictEqual(n.ok, false);
+  assert.match(n.error, /^policy issued in the future: .*clock.*date and time/);
+  assert.match(policy.accept(env, null, { home, now: behind }).error, /date and time/);
+  // Cache path: written at the right time, read later with the clock set back.
+  assert.strictEqual(policy.accept(env, null, { home, now: iss + 60000 }).ok, true);
+  const st = policy.state({ home, now: behind });
+  assert.strictEqual(st.state, 'expired');
+  assert.strictEqual(st.clock, 'behind');
+  const e = effective('PROD_DB', { mode: 'env', allowHosts: [], allowCommands: [], allowIn: ['header'] }, { policy: st.policy, state: st.state, agent: 'codex', agentTrusted: true });
+  assert.strictEqual(e.deny, true);
+  // A normal read is not marked as a clock problem.
+  assert.strictEqual(policy.state({ home, now: iss + 60000 }).clock, undefined);
+});
+
+test('a policy issued within the skew stays active; a forged or foreign one with a future date stays invalid', (t) => {
+  const { home, k } = setup(t);
+  const p = body();
+  const iss = Date.parse(p.issued_at);
+  const env = sign(p, k);
+  const near = policy.verifyEnvelope(env, k.pin, { now: iss - 4 * 60000, allowExpired: true });
+  assert.strictEqual(near.ok, true);
+  assert.strictEqual(near.expired, false);
+  assert.strictEqual(near.clock, undefined);
+  const behind = iss - DAY;
+  const other = orgKey();
+  assert.strictEqual(policy.verifyEnvelope(sign(p, other), k.pin, { now: behind, allowExpired: true }).error, 'unknown key id');
+  assert.strictEqual(policy.verifyEnvelope(env, k.pin, { now: behind, allowExpired: true, org: 'org_Another12345678' }).error, 'policy is for another organization');
+  const forged = JSON.parse(JSON.stringify(env));
+  forged.policy.version = 99;
+  assert.strictEqual(policy.verifyEnvelope(forged, k.pin, { now: behind, allowExpired: true }).error, 'bad signature');
+  // Held version rollback is still checked.
+  assert.strictEqual(policy.verifyEnvelope(env, k.pin, { now: behind, allowExpired: true, minVersion: 5 }).error, 'policy version rollback');
+  assert.ok(home);
+});
+
+test('policy status texts tell the user to check the date and time', () => {
+  const { describePolicy } = require('../lib/team/cli');
+  const base = { version: 3, expires_at: '2026-10-20T00:00:00.000Z' };
+  assert.match(describePolicy({ state: 'expired', clock: 'behind', ...base }), /clock is behind.*date and time/);
+  assert.match(describePolicy({ state: 'expired', ...base }), /online, check its date and time/);
+  assert.doesNotMatch(describePolicy({ state: 'active', ...base }), /date and time/);
+  const { syncOutcome } = require('../lib/team/sync-outcome');
+  const o = syncOutcome({ policy: { status: 'rejected', error: 'policy expired' }, upload: { status: 'uploaded' } });
+  assert.match(o.problems[0], /clock may be ahead.*date and time/);
 });
