@@ -947,8 +947,9 @@ const COMMAND_OPTIONS = {
   },
   analyze: {
     value: CLOUD_VALUE_OPTIONS,
-    flag: CLOUD_FLAG_OPTIONS,
-    listed: CLOUD_VALUE_OPTIONS.concat(CLOUD_FLAG_OPTIONS),
+    // --json is a no-op: analyze always prints JSON. The Python package accepts the flag too.
+    flag: [...CLOUD_FLAG_OPTIONS, '--json'],
+    listed: CLOUD_VALUE_OPTIONS.concat(CLOUD_FLAG_OPTIONS, ['--json']),
   },
 };
 
@@ -1307,7 +1308,7 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     const textArgs = dashAt !== -1 ? args.slice(dashAt + 1) : args.filter((a, idx) => {
       if (idx === 0) return false;
       if (a.startsWith('--')) return false;
-      if (idx > 0 && args[idx - 1].startsWith('--') && args[idx - 1] !== '--local-only' && args[idx - 1] !== '--verbose') return false;
+      if (idx > 0 && args[idx - 1].startsWith('--') && args[idx - 1] !== '--local-only' && args[idx - 1] !== '--verbose' && args[idx - 1] !== '--json') return false;
       return true;
     });
 
