@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.2';
+const POLICY_RULES_VERSION = '2026-11-01.4';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1451,6 +1451,8 @@ const TARGET_DIR_PROGRAMS = new Set(['cp', 'mv', 'install']);
 const DIR_WALK_ENTRIES = 3000;
 const DIR_WALK_DEPTH = 6;
 const DIR_WALK_MS = 1000;
+// Time for the look into all the folders of one command together.
+const ARCHIVE_BUDGET_MS = 2000;
 // Folders that only hold packages or caches, not skipped for what they protect but to keep the look short.
 const DIR_WALK_SKIP = new Set(['node_modules', '.git', '.cache', '.npm', '.cargo', '.rustup', '.nvm', '.venv', 'venv', '__pycache__', '.gradle', '.m2']);
 // host:path is a remote file; a drive letter (C:\x, C:/x) is a local path.
@@ -1545,15 +1547,33 @@ function archiveDirDenial(operands, opts) {
   for (const d of (opts.cdBases && opts.cdBases.dirs) || []) if (!places.includes(d)) places.push(d);
   const seen = new Set();
   let cut = null;
+  // One deadline for every folder of the command, so many operands cannot each use their own walk and add up.
+  const deadline = Math.min(Date.now() + (opts.archiveBudgetMs === undefined ? ARCHIVE_BUDGET_MS : opts.archiveBudgetMs),
+    opts.budget ? opts.budget.until : Infinity);
   for (const op of operands) {
     const expanded = expandEnv(expandHome(op.text, ctx.home), env).text;
-    // A path that is still built while the command runs, or is a pattern, cannot be looked at here.
-    if (!expanded || /[$`*?[]/.test(expanded) || expanded.startsWith('//')) continue;
+    // A path still built while the command runs cannot be looked at here.
+    if (!expanded || /[$`]/.test(expanded) || expanded.startsWith('//')) continue;
+    const isGlob = GLOB_RE.test(expanded);
     let roots;
     if (path.isAbsolute(expanded)) roots = [expanded];
     else {
       const moved = op.bases.map((b) => path.resolve(cwd, expandEnv(expandHome(b, ctx.home), env).text));
       roots = [...moved, ...places].map((b) => path.resolve(b, expanded));
+    }
+    if (isGlob) {
+      // A pattern is read against the disk (with the command's budget) and every folder it matches is looked into.
+      const hits = [];
+      for (const r of roots) {
+        const alts = expandBraces(slash(r));
+        if (alts === null) { if (!cut) cut = op.text; continue; }
+        for (const alt of alts) {
+          const found = globOnDisk(alt, opts.budget);
+          if (found === 'too-broad' || found === 'too-slow') { if (!cut) cut = op.text; continue; }
+          for (const h of found || []) hits.push(h);
+        }
+      }
+      roots = hits;
     }
     for (const abs of roots) {
       let real;
@@ -1563,8 +1583,9 @@ function archiveDirDenial(operands, opts) {
       } catch (_) { continue; }
       if (seen.has(real)) continue;
       seen.add(real);
-      // Each folder has its own look, so a large one does not hide a protected one named after it.
-      const state = { entries: 0, until: Date.now() + DIR_WALK_MS, limit: false };
+      if (Date.now() >= deadline) { if (!cut) cut = op.text; continue; }
+      // Each folder has its own entry limit; all of them stop at the command's deadline.
+      const state = { entries: 0, until: Math.min(Date.now() + DIR_WALK_MS, deadline), limit: false };
       const hit = protectedInFolder(real, opts, ctx, state);
       if (hit) {
         return 'zn: this command packs, copies or sends the folder ' + op.text + ', which holds ' + slash(path.relative(real, hit.file)) +
@@ -1576,7 +1597,7 @@ function archiveDirDenial(operands, opts) {
   // A folder the look could not finish is not allowed silently: the caller asks the user (opts.limitNotice.hit).
   if (cut && opts.limitNotice && !opts.limitNotice.hit) {
     opts.limitNotice.hit = 'zn: this command packs, copies or sends the folder ' + cut + ', which is too large for zn to look through (more than ' +
-      DIR_WALK_ENTRIES.toLocaleString('en-US') + ' entries, ' + DIR_WALK_DEPTH + ' levels or ' + DIR_WALK_MS / 1000 + ' second), so zn cannot tell whether it holds protected files. ' +
+      DIR_WALK_ENTRIES.toLocaleString('en-US') + ' entries, ' + DIR_WALK_DEPTH + ' levels or ' + DIR_WALK_MS / 1000 + ' second, or the whole command more than ' + ARCHIVE_BUDGET_MS / 1000 + ' seconds), so zn cannot tell whether it holds protected files. ' +
       'Approve only if the folder holds no credentials, or name the files you need.';
   }
   return null;

@@ -112,3 +112,45 @@ test('wrapped programs and pipes into curl are still judged (the guard has its o
     assert.ok(run(cmd, opts).deny, `should be refused: ${cmd}`);
   }
 });
+
+test('a glob operand is read against the disk and the folders it matches are judged', () => {
+  const { opts } = fixture();
+  const refused = [
+    'tar czf k.tgz ~/.ss?',
+    'tar czf k.tgz ~/.ss*',
+    'cp -r ~/.ss[h] /x',
+    'cp -r ~/.s* /x',
+    'zip -r k.zip ~/.gn*',
+    'tar czf k.tgz ~/.gnup?',
+    'cp -r ~/.g?upg x',
+    'rsync -a ~/.s{s,x}h host:/x',
+    'tar czf k.tgz -C ~ .ss?',
+  ];
+  for (const cmd of refused) assert.ok(run(cmd, opts).deny, `should be refused: ${cmd}`);
+  for (const cmd of ['tar czf k.tgz s*', 'cp -r s?c ./out', 'zip -r k.zip ./sr[c]', 'tar czf k.tgz ~/proj/s*']) {
+    const r = run(cmd, opts);
+    assert.equal(r.deny, null, `should be allowed: ${cmd}`);
+    assert.equal(r.ask, null, `should not ask: ${cmd}`);
+  }
+});
+
+test('a glob over a folder too large to read asks instead of being skipped', () => {
+  const { opts } = fixture();
+  const r = run('tar czf k.tgz bi*', opts);
+  assert.equal(r.deny, null);
+  assert.match(r.ask || '', /too large for zn to look through/);
+});
+
+test('every folder of a command shares one time budget', () => {
+  const { opts } = fixture();
+  const many = 'tar czf k.tgz big big/d1 big/d2 big/d3 big/d4 big/d5 big/d6 big/d7 big/d8 big/d9 src';
+  const started = Date.now();
+  const spent = run(many, { ...opts, archiveBudgetMs: 0 });
+  assert.equal(spent.deny, null);
+  assert.match(spent.ask || '', /too large for zn to look through/, 'folders not looked at are treated as cut');
+  assert.ok(Date.now() - started < 1000, 'an exhausted budget does no walking');
+  // A small folder is also cut once the budget is gone, so the command asks.
+  assert.match(run('cp -r src out', { ...opts, archiveBudgetMs: 0 }).ask || '', /too large/);
+  // With the normal budget the same small folders pass.
+  assert.equal(run('cp -r src out', opts).ask, null);
+});

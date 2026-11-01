@@ -643,8 +643,6 @@ async function decidePre(ev, d, agentId, opts) {
       if (!instruction) return r;
       return r.decision === 'ask' ? { ...r, soft: false, confirm: true, message: (r.message ? r.message + ' ' : '') + instruction.ask } : { decision: 'ask', message: instruction.ask };
     };
-    // An archive, copy or upload of a folder too large to look through: ask, do not allow silently.
-    if (limitNotice.hit) return withEgress(withInstruction({ decision: 'ask', soft: false, confirm: true, message: limitNotice.hit }), egress);
 
     let command = original;
     const notes = [];
@@ -653,6 +651,8 @@ async function decidePre(ev, d, agentId, opts) {
       : policy.wrapWithZnRun(command);
     // Neither wrapper rewrites a command any more: a marker in the arguments is refused with guidance.
     if (!wrap.ok) return { decision: 'deny', message: wrap.reason };
+    // An archive, copy or upload of a folder too large to look through: ask, do not allow silently.
+    if (limitNotice.hit) return withEgress(withInstruction({ decision: 'ask', soft: false, confirm: true, message: limitNotice.hit }), egress);
 
     const detected = markers.findMarkers(command).filter((m) => m.detected);
     let context;
