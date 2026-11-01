@@ -781,14 +781,27 @@ mod tests {
         for i in 0..200 {
             tx.send(entry(&format!("e{i}"), None)).unwrap();
         }
-        tokio::time::sleep(Duration::from_millis(1500)).await;
-        assert_eq!(
-            hits.load(Ordering::SeqCst),
-            1,
-            "no send per event while backing off"
-        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while hits.load(Ordering::SeqCst) < 1 {
+            assert!(Instant::now() < deadline, "the first attempt never arrived");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        // Watch a window inside the 2 s backoff: a send per event would show up as extra hits.
+        let window = Instant::now() + Duration::from_millis(1000);
+        while Instant::now() < window {
+            assert_eq!(
+                hits.load(Ordering::SeqCst),
+                1,
+                "no send per event while backing off"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
         // After the backoff, the timer retries once with the whole buffer.
-        tokio::time::sleep(Duration::from_millis(2700)).await;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while hits.load(Ordering::SeqCst) < 2 {
+            assert!(Instant::now() < deadline, "the timer retry never arrived");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         assert_eq!(
             hits.load(Ordering::SeqCst),
             2,
