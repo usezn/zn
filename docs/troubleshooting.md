@@ -143,6 +143,8 @@ Nothing was saved.
 2. Run `zn-gate connect` and paste the key at the hidden prompt. Never put the key on the command line.
 3. To turn the cloud check off at any time: `zn-gate disconnect`.
 
+For `Could not save the key` and everything about `disconnect` and `--revoke`, see [Messages from connect and disconnect](#messages-from-zn-gate-connect-and-zn-gate-disconnect).
+
 More in [connect](connect.md). You do not need `connect` to use zn-gate: without it everything stays on your machine.
 
 ## 8. "will not send the saved key" (TLS settings)
@@ -926,6 +928,54 @@ The vault being locked, damaged or refusing a keychain are in [section 5](#5-you
 **What happened:** zn needs a system program to use your keychain (Windows PowerShell for the Windows Credential Manager) and could not find or start it.
 
 **What to do:** close the terminal, open a new one and try again. If it keeps failing, create the vault with a passphrase: `zn unlock --backend passphrase`.
+
+### Messages from `zn-gate connect` and `zn-gate disconnect`
+
+The problems with the key you paste are in [section 7](#7-zn-gate-connect-does-not-accept-your-key). These are the others. `disconnect` removes the key from this computer and can also revoke it, so it stops working everywhere.
+
+#### "Cancelled. Nothing was saved."
+
+**What happened:** you closed the key prompt before finishing.
+
+**What to do:** run `zn-gate connect` again when you are ready.
+
+#### "Could not save the key: `<reason>`"
+
+**What happened:** the key was valid but zn could not store it in the system keychain or the vault. Nothing was kept.
+
+**What to do:** read the reason, fix what it names, then run `zn-gate connect` again. Run `zn-gate connect` again with `ZN_VERBOSE=1` for more detail.
+
+#### "Could not read the saved key from the zn vault, so nothing was removed or revoked"
+
+**What happened:** `zn-gate disconnect` needs the saved key to revoke it, and the vault is locked.
+
+**What to do:** run `zn unlock`, then `zn-gate disconnect` again. To only remove the local copy, run `zn-gate disconnect --no-revoke`, and revoke the key yourself on the dashboard the message names.
+
+#### "Could not remove the saved key from the zn vault"
+
+**What happened:** the key could not be removed from the vault, so it is still saved.
+
+**What to do:** unlock the vault with `zn unlock` if the reason says it is locked, then run `zn-gate disconnect` again.
+
+#### "Removed the connect setting from zn" ... "Could not clean your system keychain"
+
+**What happened:** the cloud check is off, but zn could not reach your system keychain, so a saved key may still be there.
+
+**What to do:** open your keychain app and delete the item named `zn-cloud`. If you did not revoke the key, the message also tells you where to revoke it.
+
+#### "Could not read the saved key from your system keychain, so it was not revoked"
+
+**What happened:** you asked for `--revoke`, but the keychain would not give zn the key. The local setting was still removed.
+
+**What to do:** revoke the key yourself on the dashboard the message names.
+
+#### "key `<key>` was not revoked" / "key `<key>` may still work" / "usezn.com did not accept key `<key>`" / "usezn.com cannot revoke key `<key>` from here"
+
+**What happened:** `zn-gate disconnect --revoke` removed the key from this computer but could not revoke it on usezn.com: no connection, the site not answering, or the site not accepting the key (it may already be revoked). The key is shown shortened.
+
+**Is it safe?** The key may still work until it is revoked. The dashboard link in the message is the sure way.
+
+**What to do:** check your internet connection and run `zn-gate disconnect --revoke` again, or revoke the key on the dashboard shown in the message.
 
 ### Where a message points you
 
