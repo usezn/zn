@@ -571,11 +571,11 @@ function createSecretsServer(opts = {}) {
       case 'tools/call': {
         if (!params || typeof params.name !== 'string') return fail(-32602, 'Invalid params: name is required');
         const result = await callTool(params.name, params.arguments || {});
-        if (!result) return fail(proto.unknownToolCode(negotiated), "Tool '" + params.name + "' not found. " + NO_GET);
+        if (!result) return fail(proto.unknownToolCode(negotiated), 'Tool not found. ' + NO_GET);
         return ok(result);
       }
       default:
-        return id === undefined ? null : fail(-32601, 'Unsupported method: ' + method);
+        return id === undefined ? null : fail(-32601, 'Unsupported method');
     }
   }
 

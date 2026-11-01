@@ -77,10 +77,41 @@ test('unknown methods: -32601 with an id, silence without one', async (t) => {
   const g = startGate(t);
   const r = await g.call({ jsonrpc: '2.0', id: 1, method: 'resources/list' });
   assert.equal(r.error.code, -32601);
-  assert.match(r.error.message, /Unsupported method: resources\/list/);
+  assert.equal(r.error.message, 'Unsupported method');
   g.child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'something/else' }) + '\n');
   const ping = await g.call({ jsonrpc: '2.0', id: 2, method: 'ping' });
   assert.deepEqual(ping.result, {});
+});
+
+// A fragment of a secret is enough to leak it, so no 8-character window of the value may appear in the reply.
+function assertNoEcho(reply, value) {
+  const text = JSON.stringify(reply);
+  for (let i = 0; i + 8 <= value.length; i += 1) {
+    assert.ok(!text.includes(value.slice(i, i + 8)), 'the reply echoes part of the input: ' + value.slice(i, i + 8));
+  }
+}
+
+test('a line that is not JSON gets a bare -32700 reply that echoes none of the input', async (t) => {
+  const g = startGate(t);
+  const line = '{"jsonrpc":"2.0","id":1,"method":"ping","key":"' + FAKE_AWS + '" oops';
+  const bad = await g.send(line, null);
+  assert.equal(bad.error.code, -32700);
+  assert.equal(bad.error.message, 'Parse error');
+  assert.equal(bad.error.data, undefined);
+  assertNoEcho(bad, FAKE_AWS);
+  assert.ok(!JSON.stringify(bad).includes('oops'));
+});
+
+test('an unknown method or tool name with odd text is not echoed back', async (t) => {
+  const g = startGate(t);
+  const weird = 'x ' + FAKE_AWS + ' "quoted" <tag>';
+  const m = await g.call({ jsonrpc: '2.0', id: 1, method: weird });
+  assert.equal(m.error.code, -32601);
+  assert.equal(m.error.message, 'Unsupported method');
+  assertNoEcho(m, FAKE_AWS);
+  const tool = await g.call({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: weird, arguments: {} } });
+  assert.equal(tool.error.message, 'Method or tool not found');
+  assertNoEcho(tool, FAKE_AWS);
 });
 
 test('tools/list serves the four tools', async (t) => {
@@ -103,7 +134,7 @@ test('tools/call with an unknown tool name is -32601', async (t) => {
   const g = startGate(t);
   const r = await g.call(toolCall(1, 'secrets_get', {}));
   assert.equal(r.error.code, -32601);
-  assert.match(r.error.message, /secrets_get/);
+  assert.equal(r.error.message, 'Method or tool not found');
 });
 
 test('analyze_prompt with a missing or non-string text analyzes an empty string instead of failing', async (t) => {

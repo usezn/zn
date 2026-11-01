@@ -280,12 +280,14 @@ async function handleRequest(message, options) {
         });
       }
 
-      return sendError(id, proto.unknownToolCode(negotiated), `Method or tool '${toolName}' not found`);
+      // The name is not echoed: it is client input and may hold a secret. The client knows what it sent.
+      return sendError(id, proto.unknownToolCode(negotiated), 'Method or tool not found');
     }
 
     default: {
       if (id !== undefined) {
-        return sendError(id, -32601, `Unsupported method: ${method}`);
+        // Not echoed, same reason as the unknown tool name above.
+        return sendError(id, -32601, 'Unsupported method');
       }
     }
   }
@@ -324,26 +326,36 @@ function startMcpServer(options = {}) {
     const trimmed = line.trim();
     if (!trimmed) return;
 
+    // The parser's own error text quotes the start of the line (Node 20+), so it is never sent or logged.
+    let message;
     try {
-      const message = JSON.parse(trimmed);
+      message = JSON.parse(trimmed);
+    } catch (_) {
+      if (isVerbose()) {
+        process.stderr.write('[zn-gate] JSON-RPC parse error: the line is not valid JSON (content not shown)\n');
+      }
+      sendJsonRpc({
+        jsonrpc: '2.0',
+        id: null,
+        error: { code: -32700, message: 'Parse error' },
+      });
+      return;
+    }
+
+    if (message === null || typeof message !== 'object') {
+      sendError(null, -32600, 'Invalid Request');
+      return;
+    }
+
+    try {
       if (Array.isArray(message)) {
         await handleBatch(message, options);
         return;
       }
       await handleRequest(message, options);
-    } catch (err) {
-      if (isVerbose()) {
-        process.stderr.write(`[zn-gate] JSON-RPC parse error: ${err.message}\n`);
-      }
-      sendJsonRpc({
-        jsonrpc: '2.0',
-        id: null,
-        error: {
-          code: -32700,
-          message: 'Parse error',
-          data: err.message,
-        },
-      });
+    } catch (_) {
+      // Only requests get a reply; a notification that fails stays silent, as in the rest of the server.
+      if (message.id !== undefined) sendError(message.id, -32603, 'Internal error');
     }
   });
 

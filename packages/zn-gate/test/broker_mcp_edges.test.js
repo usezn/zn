@@ -39,7 +39,17 @@ test('handleMessage: ping, notifications, odd messages and unknown methods', asy
   const r = await srv.handleMessage({ jsonrpc: '2.0', id: 7, method: 'resources/list' });
   assert.equal(r.id, 7);
   assert.equal(r.error.code, -32601);
-  assert.match(r.error.message, /Unsupported method: resources\/list/);
+  assert.equal(r.error.message, 'Unsupported method');
+});
+
+test('handleMessage: an unknown method or tool with odd text is not echoed back', async () => {
+  const srv = createSecretsServer({ vault: createFakeVault(), engine: fakeEngine });
+  const weird = 'x ' + FAKE_TOKEN + ' <y>';
+  const m = await srv.handleMessage({ jsonrpc: '2.0', id: 9, method: weird });
+  assert.equal(m.error.message, 'Unsupported method');
+  assert.ok(!JSON.stringify(m).includes(FAKE_TOKEN.slice(0, 12)));
+  const tool = await srv.handleMessage({ jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: weird, arguments: {} } });
+  assert.ok(!JSON.stringify(tool).includes(FAKE_TOKEN.slice(0, 12)));
 });
 
 test('handleMessage: tools/call without params or a string name is -32602', async () => {
@@ -149,7 +159,7 @@ test('secrets-mcp over stdio: a malformed line gets a parse error with a null id
     let i;
     while ((i = buf.indexOf('\n')) !== -1) { lines.push(JSON.parse(buf.slice(0, i))); buf = buf.slice(i + 1); }
   });
-  child.stdin.write('this is not json\n\n');
+  child.stdin.write('this is not json ' + FAKE_TOKEN + '\n\n');
   child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'ping' }) + '\n');
   child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
   child.stdin.end();
@@ -157,5 +167,6 @@ test('secrets-mcp over stdio: a malformed line gets a parse error with a null id
   assert.equal(lines.length, 2);
   assert.equal(lines[0].error.code, -32700);
   assert.equal(lines[0].id, null);
+  assert.ok(!JSON.stringify(lines[0]).includes(FAKE_TOKEN.slice(0, 12)));
   assert.deepEqual(lines[1].result, {});
 });

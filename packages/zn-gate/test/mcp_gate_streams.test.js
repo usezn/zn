@@ -152,7 +152,7 @@ test('unknown methods: -32601 with the request id, no reply for a notification',
   assert.equal(replies.length, 2);
   assert.equal(replies[0].id, 'req-1');
   assert.equal(replies[0].error.code, -32601);
-  assert.match(replies[0].error.message, /resources\/list/);
+  assert.equal(replies[0].error.message, 'Unsupported method');
   assert.equal(replies[1].id, 2);
 });
 
@@ -167,13 +167,13 @@ test('malformed JSON-RPC lines get -32700 with a null id and the stream keeps go
     rpc(7, 'ping'),
   ]);
   const errors = replies.filter((r) => r.error);
-  assert.equal(errors.length, 3); // the bare number 42 has no method and no id: no reply
+  // Two lines are not JSON (-32700); null and 42 parse but are not objects, so they are invalid requests (-32600).
+  assert.deepEqual(errors.map((e) => e.error.code), [-32700, -32700, -32600, -32600]);
   for (const e of errors) {
     assert.equal(e.id, null);
-    assert.equal(e.error.code, -32700);
-    assert.equal(e.error.message, 'Parse error');
-    assert.equal(typeof e.error.data, 'string');
+    assert.equal(e.error.data, undefined);
   }
+  assert.equal(errors[0].error.message, 'Parse error');
   assert.deepEqual(replies.find((r) => r.id === 7), { jsonrpc: '2.0', id: 7, result: {} });
 });
 
@@ -188,7 +188,7 @@ test('a message with no method and an id gets -32601; tools/call errors keep the
   assert.equal(replies[1].error.code, -32602);
   assert.equal(replies[2].error.code, -32602);
   assert.deepEqual(replies.map((r) => r.id), [1, 2, 3, 4]);
-  assert.match(replies[3].error.message, /no_such_tool/);
+  assert.equal(replies[3].error.message, 'Method or tool not found');
 });
 
 test('a request split across several chunks is answered once, after its newline', async () => {
