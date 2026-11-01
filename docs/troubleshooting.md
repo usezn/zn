@@ -17,6 +17,7 @@ Run every command in your own terminal, not through your AI agent. New here? Sta
 - [Your agent ignores zn's hooks on a managed computer](#9-your-agent-ignores-zns-hooks-on-a-managed-computer)
 - ["the evidence log ... is damaged"](#10-the-evidence-log--is-damaged)
 - [The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)
+- [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
 - [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
 
 ## 1. Node.js is too old
@@ -727,6 +728,34 @@ your Copilot user settings have "disableAllHooks" turned on; the docs do not say
 **Is it safe?** The first line means protection is back on. For the second, check that zn still runs.
 
 **What to do:** for the first, nothing. For the second, remove the setting if you did not set it on purpose, then run `npx -y zn-gate check` again. The [check page](check.md#copilot-cli-settings-switch-the-hooks-off) explains the other Copilot lines.
+
+### Messages about files and folders
+
+When a command cannot read or write a file or folder, zn-gate says what is wrong with the path in plain words. The same sentences come from commands that write something, such as `init`, the vault commands, `scan --output` and `evidence --output`. Nothing is half written: zn writes a file through a temporary one and puts it in place at the end. Run the command again with `ZN_VERBOSE=1` to see the system's error code next to the message.
+
+#### "Your account is not allowed to read or change `<path>`"
+
+**What happened:** your computer would not let you open or change that file or folder.
+
+**What to do:** check who owns `<path>` and its permissions (on macOS or Linux, `ls -ld <path>` shows them), fix them or choose a path you own, then run the command again.
+
+#### "`<path>` does not exist, or a folder on its path is missing" / "A part of the path `<path>` is a file where a folder should be" / "`<path>` is a folder where a file should be"
+
+**What happened:** the path does not lead where the command needs. Either something on the way is missing, or a file stands where a folder should be, or a folder stands where a file should be.
+
+**What to do:** check the spelling and create any missing folder. For the second message, move or remove the file that is in the way. For the third, give a file name instead of a folder. In the Python package, the first message adds "Create the folder first, or choose another --output path". Then run the command again.
+
+#### "The disk that holds `<path>` is full" / "Your disk quota is used up, so `<path>` cannot be written" / "`<path>` is on a read-only disk"
+
+**What happened:** the file could not be written because the disk has no room left, your storage quota is used up, or the disk only allows reading.
+
+**What to do:** free some space, or choose a path on a disk you can write to, then run the command again. Your files are untouched.
+
+#### "The folder path `<path>` is too long" / "The links in the path `<path>` lead in a circle"
+
+**What happened:** the path is too long for your system (on Windows the limit is about 260 characters, and the message says so), or it goes through links that point back to each other.
+
+**What to do:** move the folder to a shorter path, or choose another path without circular links, then run the command again.
 
 ### Where a message points you
 
