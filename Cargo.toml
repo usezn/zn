@@ -8,6 +8,20 @@ authors = ["usezn <admin@usezn.com>"]
 homepage = "https://usezn.com"
 repository = "https://github.com/usezn/zn"
 description = "Local-first prompt-injection gate and active-defense proxy for AI agents. MCP-native."
+# What a crate package contains: the Rust sources, their tests and the three shared test tables they read.
+# Benchmarks, end-to-end run records, screenshots, docs and the npm and Python packages stay in the repository.
+include = [
+  "/src/**",
+  "/tests/**",
+  "/Cargo.toml",
+  "/Cargo.lock",
+  "/LICENSE",
+  "/README.md",
+  "/CHANGELOG.md",
+  "/packages/zn-gate/test/fixtures/benign_phrases.json",
+  "/packages/zn-gate/test/fixtures/prompt_guard_tables.json",
+  "/packages/zn-gate/test/fixtures/scrub_validator_cases.json",
+]
 
 [[bin]]
 name = "zn"
