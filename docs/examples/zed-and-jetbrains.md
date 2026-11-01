@@ -8,7 +8,7 @@ The examples use a made-up project folder, `/home/user/example-project`.
 
 ### Connect in Zed
 
-1. In a terminal, run `node --version`. You need 18 or later.
+1. In a terminal, run `node --version`. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later.
 2. In Zed, open the Command Palette and run **zed: open settings file**.
 3. Add this to the file (if `"context_servers"` already exists, add only the `"zn-gate"` part inside it), then save:
 
@@ -38,7 +38,7 @@ Open the same settings file, delete the `zn-gate` entry, save, and restart Zed. 
 
 ### Connect in JetBrains
 
-1. In the editor's terminal, in `/home/user/example-project`, run `node --version`. You need 18 or later.
+1. In the editor's terminal, in `/home/user/example-project`, run `node --version`. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later.
 2. Open **Settings → Tools → AI Assistant → Model Context Protocol (MCP)** and click **Add** (+).
 3. Paste this into the New MCP Server dialog, click **OK** and apply the settings:
 

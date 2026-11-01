@@ -316,7 +316,8 @@ test('the ZCode plugin hook, started as ZCode starts it, runs no planted sh or n
     // ZCode gives the hook the plugin folder in ZCODE_PLUGIN_ROOT (the Windows entry reads its script there).
     const env = posix ? { PATH, HOME: cwd } : { PATH, SystemRoot: process.env.SystemRoot, USERPROFILE: cwd, ZCODE_PLUGIN_ROOT: pluginRoot };
     const r = spawnSync(pre.command, args, { cwd, input: event, encoding: 'utf8', env, timeout: 40000, windowsHide: true });
-    assert.equal(r.error, undefined, PATH + ': ' + (r.error && r.error.message));
+    // The hook may refuse before it reads its input; the write of the event then fails with EPIPE, which is not a failure here.
+    assert.ok(!r.error || r.error.code === 'EPIPE', PATH + ': ' + (r.error && r.error.message));
     assert.equal(fs.existsSync(marker), false, PATH + ': planted ' + (fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim() : '') + ' ran');
     // This checkout has no verified zn-gate copy inside the plugin folder, so the hook refuses (exit 2), as it must:
     // never the planted program's exit 0.

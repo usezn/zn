@@ -2,7 +2,7 @@ name: Agent plugins
 
 on:
   push:
-    branches: [ main, next ]
+    branches: [ main ]
     tags: [ 'v*' ]
     # Documentation-only pushes skip this workflow. Markdown under packages/, plugins/, skill/,
     # bench/ and .github/ still runs it (the package and plugin checks read some of it): a stricter
@@ -34,9 +34,10 @@ on:
       - '.github/scripts/ci-scope.sh'
       - '.github/workflows/plugins.yml'
       - '.github/workflows/plugin-repo.yml'
-  # Daily full run on the default branch.
+  # Daily full run on the default branch, plus a nightly run on next (see the second cron).
   schedule:
     - cron: '30 6 * * *'
+    - cron: '30 3 * * *' # nightly run on next
   workflow_dispatch:
 
 permissions:
@@ -79,6 +80,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.schedule == '30 3 * * *' && 'next' || '' }}
           persist-credentials: false
       - name: Decide what this change needs
         id: scope
@@ -131,7 +133,7 @@ jobs:
     # Prerelease tags (vX.Y.Z-beta.N) are skipped: the plugin is pinned only to
     # final releases.
     name: Release pin checks
-    if: github.event_name == 'schedule' || (github.event_name == 'push' && ((startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')) || github.ref == 'refs/heads/main')) || (github.event_name == 'pull_request' && github.base_ref == 'main')
+    if: (github.event_name == 'schedule' && github.event.schedule != '30 3 * * *') || (github.event_name == 'push' && ((startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')) || github.ref == 'refs/heads/main')) || (github.event_name == 'pull_request' && github.base_ref == 'main')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -142,6 +144,7 @@ jobs:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.schedule == '30 3 * * *' && 'next' || '' }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:

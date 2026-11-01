@@ -53,6 +53,9 @@ fn zn_command(dir: &Path) -> Command {
     cmd
 }
 
+/// How many times a test starts zn on a new port when the one it picked was taken in between.
+const PORT_ATTEMPTS: u32 = 5;
+
 fn free_port() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.local_addr().unwrap().port()
@@ -106,6 +109,25 @@ impl Gateway {
             .expect("run zn init");
         assert!(status.success(), "zn init failed: {status:?}");
 
+        // free_port() releases the port before zn binds it, so a test running in parallel can take it first:
+        // zn then exits with "already in use". Try again with a new port a few times.
+        for attempt in 1..=PORT_ATTEMPTS {
+            let mut gateway = Gateway::launch(&dir);
+            match gateway.wait_until_ready() {
+                Ok(()) => return gateway,
+                Err(e) if attempt < PORT_ATTEMPTS => {
+                    eprintln!("zn lost its port at boot (attempt {attempt}): {e}");
+                    gateway.dir = PathBuf::new(); // keep the work directory for the next attempt
+                }
+                Err(e) => panic!("zn lost its port {PORT_ATTEMPTS} times: {e}"),
+            }
+        }
+        unreachable!()
+    }
+
+    /// One start of the gateway on a fresh port, with its mock upstream and relay threads.
+    fn launch(dir: &Path) -> Gateway {
+        let dir = dir.to_path_buf();
         let port = free_port();
         let policies = dir.join("policies");
         std::fs::create_dir_all(&policies).unwrap();
@@ -179,7 +201,7 @@ impl Gateway {
             }
         });
 
-        let mut gateway = Gateway {
+        Gateway {
             child,
             stdin,
             port,
@@ -187,20 +209,24 @@ impl Gateway {
             client,
             stderr,
             dir,
-        };
-        gateway.wait_until_ready();
-        gateway
+        }
     }
 
-    fn wait_until_ready(&mut self) {
+    /// Ok once the health route answers. Err only when zn exited because its port was taken (the caller retries);
+    /// any other early exit or a timeout fails the test.
+    fn wait_until_ready(&mut self) -> Result<(), String> {
         let deadline = Instant::now() + BOOT;
         loop {
             if let Some(status) = self.child.try_wait().unwrap() {
-                panic!("zn exited early ({status:?}): {}", self.stderr_text());
+                let text = self.stderr_text();
+                if text.contains(&format!("Port {} is already in use", self.port)) {
+                    return Err(format!("port {} taken ({status:?})", self.port));
+                }
+                panic!("zn exited early ({status:?}): {text}");
             }
             let last = http_get(self.port, "/api/v1/health", Some(API_KEY));
             if let Ok((200, _)) = last {
-                return;
+                return Ok(());
             }
             assert!(
                 Instant::now() < deadline,

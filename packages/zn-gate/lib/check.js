@@ -33,6 +33,7 @@ const { nodeAdvice } = require('./node-support');
 
 const FAKE_LINE = 'ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key\n';
 const HOOK_TIMEOUT_MS = 15000;
+const HOOK_TIMEOUT_CEILING_MS = 120000;
 const PLUGIN_ID = 'zn-gate@usezn';
 // The PreToolUse hooks the zn-gate plugins ship (plugins/zn-gate/hooks/hooks.json, plugins/zcode/hooks/hooks.json).
 // A plugin counts only when its manifest holds this exact hook, and zn-gate check runs that command as the agent does.
@@ -131,7 +132,7 @@ const AGENTS = [
     request: (dir, file) => ({ conversationId: 'zn-check', workspacePaths: [dir], toolCall: { name: 'view_file', args: { AbsolutePath: file } }, stepIdx: 0 }),
   },
   {
-    id: 'copilot', name: 'Copilot CLI (experimental)', event: 'preToolUse', tool: 'view',
+    id: 'copilot', name: 'GitHub Copilot (VS Code, CLI)', event: 'preToolUse', tool: 'view',
     fix: 'run `zn hooks install copilot` in your own terminal',
     file: (a, o) => a.hooksFile(o), project: (dir) => path.join(dir, '.github', 'hooks', 'zn-gate.json'),
     request: (dir, file) => ({ sessionId: 'zn-check', timestamp: 0, cwd: dir, toolName: 'view', toolArgs: { path: file } }),
@@ -895,10 +896,16 @@ function modifiedProjectGuard(spec, text) {
   } catch (_) { return false; }
 }
 
+/* The time a hook gets to start. The agents kill a hook at 15 s, so that is the default; only a test on a slow machine passes a longer one (opts.hookTimeoutMs), never above 120 s. */
+function hookTimeout(ctx, own) {
+  const t = ctx && ctx.hookTimeoutMs;
+  return typeof t === 'number' && t > 0 ? Math.min(HOOK_TIMEOUT_CEILING_MS, Math.max(t, own || 0)) : own;
+}
+
 /* Runs an installed hook with the two requests: '' when it blocks .env and allows the ordinary file, else the problem. */
 function runLive(spec, ctx, live) {
-  const a = spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.envFile), live.env, ctx.dir, live.timeout);
-  const b = a.ran ? spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.readme), live.env, ctx.dir, live.timeout) : a;
+  const a = spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.envFile), live.env, ctx.dir, hookTimeout(ctx, live.timeout));
+  const b = a.ran ? spawnHook(live.file, live.args, spec.request(ctx.dir, ctx.readme), live.env, ctx.dir, hookTimeout(ctx, live.timeout)) : a;
   if (!a.ran) return 'its hook cannot start (' + a.why + ')';
   if (a.decision !== 'deny') return 'the installed hook did not block the read of .env';
   if (b.decision === 'deny') return 'the installed hook blocks everything, ordinary files too, so part of zn is missing or broken';
@@ -927,8 +934,21 @@ function copilotSwitchedOff(userFile, ctx, adapter) {
   }
   const user = readJson(path.join(adapter.copilotHome({ home: ctx.home, env: ctx.env }), 'settings.json'));
   if (user && user.disableAllHooks === true) out.notes.push('your Copilot user settings have "disableAllHooks" turned on; the docs do not say whether that skips hook files, so check that zn still runs');
-  out.notes.push('Copilot also loads machine policy hooks (/etc/github-copilot/policy.d) and skips a hook that takes longer than its timeout; zn cannot see either from here');
+  out.notes.push('Copilot also loads machine policy hooks (/etc/github-copilot/policy.d) and skips a hook that takes longer than its timeout (zn answers by itself 4 seconds before that); zn cannot see the policy hooks from here');
   return out;
+}
+
+/* The zn hooks of Claude Code in this project's .claude/settings(.local).json: the file name, or ''. Copilot's harness
+   (VS Code and Copilot CLI, no setting needed) also reads these files, so a call can be checked twice. */
+function claudeProjectHooksFile(cwd) {
+  for (const name of ['settings.json', 'settings.local.json']) {
+    const f = path.join(cwd, '.claude', name);
+    const text = require('./audit')._internal.readBounded(f, 256 * 1024, false).text;
+    let tree = null;
+    try { tree = text ? JSON.parse(text.replace(/^\uFEFF/, '')) : null; } catch (_) { tree = null; }
+    if (hookEntries(tree, 'claude-code').some((e) => parseCommand(e.command, 'claude-code'))) return f;
+  }
+  return '';
 }
 
 async function checkAgent(spec, ctx) {
@@ -1022,7 +1042,7 @@ async function checkAgent(spec, ctx) {
           // The plugin's SessionStart command, the same script with "check": only for the launcher's own message about
           // the plugin itself (for example a Node.js it does not support). It never makes the plugin count as protected.
           const checkRun = claudePluginRun(CLAUDE_CHECK_COMMAND, realRoot, ctx, 15);
-          const pre = ctx.live ? spawnHook(checkRun.file, checkRun.args, {}, checkRun.env, ctx.dir, checkRun.timeout) : { ran: false };
+          const pre = ctx.live ? spawnHook(checkRun.file, checkRun.args, {}, checkRun.env, ctx.dir, hookTimeout(ctx, checkRun.timeout)) : { ran: false };
           const sys = pre.ran && /"systemMessage"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(pre.stdout || '');
           if (!res.problem && sys) { res.problem = bare(oneLine(JSON.parse('"' + sys[1] + '"'), 300)); res.pluginFault = true; }
           live = { ...run, plugin: true };
@@ -1214,6 +1234,11 @@ async function checkAgent(spec, ctx) {
     const off = copilotSwitchedOff(userFile, ctx, adapter);
     if (off.problem) { res.problem = off.problem; res.fix = off.fix; }
     res.notes.push(...off.notes);
+    // Copilot's harness also reads the Claude Code hooks of the project, and runs every hook it finds: zn would check each call twice.
+    const claudeFile = claudeProjectHooksFile(ctx.cwd);
+    if (claudeFile) {
+      res.notes.push('zn is also set up for Claude Code in ' + claudeFile + ', and Copilot (VS Code and Copilot CLI) reads that file too whenever it holds zn hooks, with no setting needed, so every call can be checked twice (same answer, double the time). Keep the Copilot hook: if you do not use Claude Code in this project, run `zn hooks uninstall claude-code --project` in your own terminal; if you do, leave both in place (the only cost is time). Do not remove the Copilot hook, because it is the one that checks Copilot\'s own tool names');
+    }
   }
   if (spec.id === 'antigravity' && installed && res.where === userFile) {
     // Antigravity says what "allow" means ("delegating to the next hook or default policy") but not in which order hooks
@@ -1224,6 +1249,7 @@ async function checkAgent(spec, ctx) {
       res.notes.push('another Antigravity hook also runs before tool calls (' + JSON.stringify(first.name) + ' in ' + first.file + (others.length > 1 ? ', and ' + (others.length - 1) + ' more' : '') + '). Antigravity does not document in which order hooks run or which answer wins, so zn cannot tell whether its deny holds against it; review that hook, or turn it off with "enabled": false');
     }
   }
+  if (spec.id === 'codex' && installed) res.notes.push('Codex asks you to approve new hooks with /hooks before it runs them; an OK here does not prove that Codex runs the hook until you have approved it');
   if (spec.id === 'opencode' && installed) res.notes.push('zn\'s rules were checked; its plugin runs inside OpenCode, so it was not started here');
 
   // The project file can be anyone's repository: read only a regular file, and only so much of it.
@@ -1375,7 +1401,7 @@ async function check(opts = {}) {
     return { results, removed: true, warnings: nodeWarnings(opts, env) };
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-check-'));
-  const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, claudePolicy: opts.claudePolicy, cursorPolicy: opts.cursorPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode };
+  const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, claudePolicy: opts.claudePolicy, cursorPolicy: opts.cursorPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode, hookTimeoutMs: opts.hookTimeoutMs };
   const results = [];
   try {
     fs.writeFileSync(path.join(dir, '.gitignore'), '.env\n');
@@ -1453,4 +1479,4 @@ function report({ results, removed, warnings }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, zcodeRelevant, spawnHook, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
+module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };

@@ -26,6 +26,9 @@ concurrency:
 jobs:
   public-facts:
     name: Public facts
+    # A push to next is the commit the merge queue already checked: the jobs and legs the queue ran on that commit
+    # (the required checks) are skipped there; the push runs only what the queue does not.
+    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/next') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

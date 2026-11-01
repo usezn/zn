@@ -41,6 +41,8 @@ const { configureEnvironments } = require('../lib/init');
 const { verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, usesStoredKey, RULES_VERSION } = require('../lib/client');
 const { evaluate, redactSecrets, redactScanSecrets, redactScanRules, SECRET_PATTERNS } = require('../lib/rules');
+// A verdict from the cloud or the ledger can come in any case; compare it the way the MCP server does.
+const isBlockVerdict = (v) => typeof v === 'string' && v.toLowerCase() === 'block';
 const { SCRUB_RULES_VERSION } = require('../lib/scrub/patterns');
 const { AUDIT_RULES_VERSION } = require('../lib/audit/rules');
 const { styles, sym, ruleLine } = require('../lib/term');
@@ -303,7 +305,8 @@ VAULT (local, encrypted with age; the key stays in the OS keychain):
   vault purge         Delete the vault, every backup and the token maps for good [--yes] (your terminal only)
   vault log export --otlp
                       Export the audit log as OpenTelemetry logs (OTLP/JSON Lines)
-                      [--since 7d] [--out FILE]
+                      [--since 7d] [--out FILE] [--unverified]
+                      (with the vault locked, the chain cannot be checked: --unverified exports a copy that is NOT verified)
   vault team          Shows that a shared team vault is planned, not available yet
 
 TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
@@ -376,7 +379,7 @@ Evaluating ${TEST_VECTORS.length} curated test vectors (${TEST_VECTORS.filter(v 
     totalTimeNs += elapsedNs;
     const elapsedMs = (Number(elapsedNs) / 1e6).toFixed(2);
 
-    const isBlock = result.verdict === 'block';
+    const isBlock = isBlockVerdict(result.verdict);
     // Default policy: some heuristic rules give an advisory instead of a block.
     const isFlagged = isBlock || Boolean(result.advisory);
     const isPass = (vec.type === 'attack' && isFlagged) || (vec.type === 'benign' && !isBlock);
@@ -685,7 +688,7 @@ Files   : ${files.length} file(s) queued for audit\n
       };
       // A scan reports every match, including the rules that only warn by default.
       const evalRes = evaluate(line, { ...options, strict: true });
-      if (evalRes.verdict === 'block') {
+      if (isBlockVerdict(evalRes.verdict)) {
         totalFindings++;
         findings.push({ file: relPath, line: lineIdx + 1, rule: evalRes.rule, reason: evalRes.reason, type: 'injection', sample: sampleOf() });
       }
@@ -1225,8 +1228,8 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
       process.stdout.write('  No events recorded yet.\n\n');
     } else {
       for (const rec of stats.recent.slice(-options.tail)) {
-        const isBlock = rec.verdict === 'block';
-        const vTag = isBlock ? col.red('BLOCK') : (rec.verdict === 'shadow' ? col.yellow('SHADOW') : col.green('ALLOW'));
+        const isBlock = isBlockVerdict(rec.verdict);
+        const vTag = isBlock ? col.red('BLOCK') : (String(rec.verdict).toLowerCase() === 'shadow' ? col.yellow('SHADOW') : col.green('ALLOW'));
         process.stdout.write(`  ${(rec.timestamp || '').slice(11, 19)} [${vTag}] tool=${rec.tool_name || 'call'} rule=${rec.rule || 'none'} hash=${(rec.record_hash || '').slice(0, 10)}...\n`);
       }
       process.stdout.write(`\nTip: Run 'zn-gate evidence --ui' to open interactive dashboard.\n\n`);
@@ -1316,7 +1319,7 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
 
     const result = await analyze(textToAnalyze, options);
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
-    process.exit(result.verdict === 'block' ? 2 : 0);
+    process.exit(isBlockVerdict(result.verdict) ? 2 : 0);
   }
 
   if (command === 'status') {

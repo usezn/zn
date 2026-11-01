@@ -81,7 +81,7 @@ Needs the vault unlocked. See [zn Team](team.md).
 
 | Command | Useful flags | Example |
 |---|---|---|
-| [`team join`](cli.md#team-join) | `--api`, `--agent`, `--include-history` | `zn-gate team join "$JOIN_TOKEN" --include-history` |
+| [`team join`](cli.md#team-join) | `--api`, `--agent`, `--include-history` | `zn-gate team join -` |
 | [`team status`](cli.md#team-status) | `--json` | `zn-gate team status --json` |
 | [`team sync`](cli.md#team-sync) | none | `zn-gate team sync` |
 | [`team leave`](cli.md#team-leave) | none | `zn-gate team leave` |
