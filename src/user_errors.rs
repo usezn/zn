@@ -169,6 +169,13 @@ pub fn unknown_security_setting(file: &str, setting: &str, suggestion: Option<&s
     )
 }
 
+/// A yes/no environment setting holds something else: zn stops instead of guessing.
+pub fn invalid_bool_env(var: &str, value: &str) -> String {
+    format!(
+        "{var}=\"{value}\" is not a valid on/off value, so zn did not start: a mistyped value could silently leave a security setting off. Use one of 1, 0, true, false, yes, no, on or off (any capitalisation), or leave {var} unset or empty to keep the default."
+    )
+}
+
 /// `ZN_PORT` is not a port number, so the port from the settings is kept.
 pub fn invalid_port_env(value: &str, fallback: u16) -> String {
     format!(
