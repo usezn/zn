@@ -132,8 +132,22 @@ function writeConfig(cfg) {
   const file = configFile();
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 });
-  fs.renameSync(tmp, file);
+  try {
+    const fd = fs.openSync(tmp, 'w', 0o600);
+    try {
+      fs.writeSync(fd, JSON.stringify(cfg, null, 2) + '\n');
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    // Never leave a half-written temporary file behind; the config itself is untouched when the write fails.
+    try { fs.unlinkSync(tmp); } catch (_) { /* gone */ }
+    // The error names the config file the person knows, not the temporary one.
+    if (err && typeof err === 'object') err.path = file;
+    throw err;
+  }
 }
 
 /** {store, connectedAt, last4} when `connect` stored a key, else null. Never the key. */

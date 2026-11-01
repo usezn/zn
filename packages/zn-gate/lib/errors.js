@@ -58,6 +58,18 @@ function fsCodeOf(err, platform) {
   return code;
 }
 
+/* Why a write failed, in a few words for a sentence such as "...: the disk is full.", or null for any other error. */
+const FS_REASONS = {
+  EACCES: 'your account is not allowed to write it',
+  EPERM: 'your account is not allowed to write it',
+  ENOSPC: 'the disk is full',
+  EDQUOT: 'your disk quota is used up',
+  EROFS: 'the disk is read-only',
+};
+function fsReason(err, platform = process.platform) {
+  return FS_REASONS[fsCodeOf(err, platform)] || null;
+}
+
 /* The plain text of a file system error (EACCES, ENOENT, ENOSPC...), or null for any other error. `file` names the
  * path when the error does not carry one. The code is added only with ZN_VERBOSE=1 or DEBUG=zn. */
 function fsErrorText(err, file, env = process.env, platform = process.platform) {
@@ -110,4 +122,4 @@ function messageWithUnlockHint(err) {
   return msg.replace(/[.\s]+$/, '') + '; run `' + znCommand('unlock') + '`';
 }
 
-module.exports = { CODES, znError, notImplemented, humanError, messageWithUnlockHint, fsErrorText };
+module.exports = { CODES, znError, notImplemented, humanError, messageWithUnlockHint, fsErrorText, fsReason };

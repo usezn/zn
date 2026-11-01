@@ -20,6 +20,21 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, TextIO, Tuple
 
 
+_FS_REASONS = {
+    "EACCES": "your account is not allowed to write it",
+    "EPERM": "your account is not allowed to write it",
+    "ENOSPC": "the disk is full",
+    "EDQUOT": "your disk quota is used up",
+    "EROFS": "the disk is read-only",
+}
+
+
+def _fs_reason(err: BaseException) -> Optional[str]:
+    """Why a write failed, in a few words for a sentence (same wording as the Node fsReason), or None."""
+    code = errno.errorcode.get(getattr(err, "errno", None) or 0, "")
+    return _FS_REASONS.get(code)
+
+
 def _redact(text: str) -> str:
     from .rules import mask_token_runs, redact_secrets  # local import avoids import cycles
     return mask_token_runs(redact_secrets(text)[0])
@@ -443,9 +458,12 @@ def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
         now = time.monotonic()
         if _last_write_warn is None or now - _last_write_warn >= WARN_INTERVAL:
             _last_write_warn = now
-            why = str(e) if isinstance(e, EvidenceLockError) else (e.strerror or e)
+            if isinstance(e, EvidenceLockError):
+                why = str(e)
+            else:
+                why = _fs_reason(e) or "the file could not be written"
             sys.stderr.write(
-                f"zn-gate: cannot write to the evidence log {file_path} ({why}). "
+                f"zn-gate: cannot write to the evidence log {file_path}: {why}. "
                 "Events are not being recorded; the log is left as it is.\n"
             )
         return None

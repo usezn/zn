@@ -1362,6 +1362,18 @@ async function checkAgent(spec, ctx) {
 
 /* Warnings about the Node.js that runs zn-gate and the one the plugin's hooks will run on (end-of-life, or below the
    patched release of its line). They never change what is protected or the exit code. */
+/* The scratch folder for a live check. A failure names the temporary folder and the variable that moves it, instead of
+ * the template name (zn-check-XXXXXX) that the system error carries. */
+function makeCheckDir() {
+  const tmp = os.tmpdir();
+  try {
+    return fs.mkdtempSync(path.join(tmp, 'zn-check-'));
+  } catch (err) {
+    const why = require('./errors').fsReason(err) || 'it cannot be written to';
+    throw new Error('zn-gate check cannot use the temporary folder ' + tmp + ': ' + why + '. Set TMPDIR (TEMP on Windows) to a folder you can write, for example TMPDIR=/workspace/tmp, then run check again.');
+  }
+}
+
 function nodeWarnings(opts, env) {
   const out = [];
   try {
@@ -1400,7 +1412,7 @@ async function check(opts = {}) {
     }
     return { results, removed: true, warnings: nodeWarnings(opts, env) };
   }
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-check-'));
+  const dir = makeCheckDir();
   const ctx = { home, env, cwd, live: true, dir, envFile: path.join(dir, '.env'), readme: path.join(dir, 'README.txt'), codexPolicy: opts.codexPolicy, claudePolicy: opts.claudePolicy, cursorPolicy: opts.cursorPolicy, geminiSystemFile: opts.geminiSystemFile, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode, pluginNode: opts.pluginNode, hookTimeoutMs: opts.hookTimeoutMs };
   const results = [];
   try {

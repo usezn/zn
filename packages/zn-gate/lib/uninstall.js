@@ -232,7 +232,10 @@ async function run(args, io) {
           const rep = adapter.uninstall({ scope, projectDir: io.cwd, home: io.home, env: io.env, mcp: true, removeLauncher: true });
           out(io, '  ' + a.name + ': removed zn\'s hooks (' + scope + ') in ' + rep.settings + (rep.backup ? ' (copy saved: ' + rep.backup + ')' : ''));
         } catch (err) {
-          out(io, '  ' + a.name + ': could not remove the ' + scope + ' hooks: ' + (err && err.message ? err.message : err));
+          // A failed copy names its destination (the file that was full); the plain sentence replaces the system text.
+          const shown = err && err.dest ? Object.assign({}, err, { path: err.dest }) : err;
+          const why = require('./errors').fsErrorText(shown, null) || (err && err.message ? err.message : String(err));
+          out(io, '  ' + a.name + ': could not remove the ' + scope + ' hooks: ' + why);
           failed++;
         }
       }

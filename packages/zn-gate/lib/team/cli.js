@@ -343,6 +343,8 @@ async function runLogExport(args) {
       } catch (e) {
         try { fs.closeSync(fd); } catch (e2) { /* closed */ }
         try { fs.unlinkSync(tmp); } catch (e2) { /* gone */ }
+        // Name the export file the person asked for, not the temporary one.
+        if (e && typeof e === 'object') e.path = file;
         throw e;
       }
       err('Exported ' + res.records + ' records to ' + file + ' (OTLP/JSON Lines, sha256 ' + res.sha256 + ').');

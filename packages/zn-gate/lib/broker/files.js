@@ -118,10 +118,12 @@ function writeFileAtomic(file, data, mode = 0o600) {
   const tmp = path.join(path.dirname(file), '.' + path.basename(file) + '.' + process.pid + '.' + crypto.randomBytes(8).toString('hex') + '.zn-tmp');
   const fd = fs.openSync(tmp, 'wx', mode);
   try {
-    try { fs.writeFileSync(fd, data); } finally { fs.closeSync(fd); }
+    try { fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     fs.renameSync(tmp, file);
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch (_) { /* best effort */ }
+    // The system error does not carry the file that was being written (the temporary one has another name): name the real file.
+    if (e && typeof e === 'object') e.path = file;
     throw e;
   }
 }

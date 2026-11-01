@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const { fsReason } = require('./errors');
 // rules (with the scrubber engine behind it), term and http are loaded where they are used, so an
 // append that does not need them (a hook block, see _plainPreview in logEvidence) stays cheap.
 
@@ -432,8 +433,8 @@ function logEvidence(event, filePath = EVIDENCE_FILE, opts = {}) {
     const now = Date.now();
     if (lastWriteWarnAt === null || now - lastWriteWarnAt >= WARN_INTERVAL_MS) {
       lastWriteWarnAt = now;
-      const why = e instanceof EvidenceLockError ? e.message : (e.code || e.message);
-      process.stderr.write(`zn-gate: cannot write to the evidence log ${filePath} (${why}). Events are not being recorded; the log is left as it is.\n`);
+      const why = e instanceof EvidenceLockError ? e.message : (fsReason(e) || 'the file could not be written');
+      process.stderr.write(`zn-gate: cannot write to the evidence log ${filePath}: ${why}. Events are not being recorded; the log is left as it is.\n`);
     }
     return null;
   } finally {

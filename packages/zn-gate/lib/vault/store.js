@@ -168,17 +168,19 @@ async function decryptWithPassphrase(passphrase, ciphertext) {
 function writePrivateFile(file, data) {
   ensurePrivateDir(path.dirname(file));
   const tmp = file + '.' + process.pid + '.' + crypto.randomBytes(6).toString('hex') + '.tmp';
-  const fd = fs.openSync(tmp, 'wx', 0o600);
   try {
-    fs.writeSync(fd, data);
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-  try {
+    const fd = fs.openSync(tmp, 'wx', 0o600);
+    try {
+      fs.writeSync(fd, data);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(tmp, file);
   } catch (err) {
     try { fs.unlinkSync(tmp); } catch (e) { /* ignore */ }
+    // Name the vault file the person knows, not the temporary one (system errors carry no path for a failed write).
+    if (err && typeof err === 'object') err.path = file;
     throw err;
   }
   if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
