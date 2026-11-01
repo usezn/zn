@@ -1466,6 +1466,10 @@ async function handle(adapter, rawEvent, opts = {}) {
     else if (ev.event === 'session_start') decision = { decision: 'allow', context: SESSION_CONTEXT() };
     else if (ev.event === 'prompt_expansion') decision = await decideExpansion(ev, d, adapter.id);
     else decision = { decision: 'allow' };
+    // Arguments too large or deep to check in full: a call the checks let through is asked about, never denied.
+    if (ev && ev.event === 'pre_tool' && ev.truncatedAsk && (!decision || decision.decision === 'allow')) {
+      decision = { decision: 'ask', soft: false, confirm: true, message: ev.truncatedAsk };
+    }
   } catch (err) {
     decision = failDecision(ev, err, mode, adapter.id);
   } finally {

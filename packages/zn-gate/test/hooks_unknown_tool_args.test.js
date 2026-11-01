@@ -67,13 +67,15 @@ for (const a of AGENTS) {
     assert.ok(a.deny(await a.run(dir, 'custom_open', { items: [{ inner: { thing: AWS } }] })));
   });
 
-  test(a.name + ': an unknown tool with a command of the wrong type or nested too deeply is denied', async (t) => {
+  test(a.name + ': an unknown tool with a command of the wrong type is denied; one nested too deeply is asked about', async (t) => {
     const dir = tempDir(t, 'zn-b2589-');
     assert.ok(a.deny(await a.run(dir, 'custom_shell', { command: 7 })));
     assert.ok(a.deny(await a.run(dir, 'custom_shell', { command: { nested: 'x' } })));
     let deep = { command: 'cat ' + AWS };
     for (let i = 0; i < 12; i++) deep = { wrap: deep };
-    assert.ok(a.deny(await a.run(dir, 'custom_shell', deep)));
+    const r = await a.run(dir, 'custom_shell', deep);
+    assert.ok(!a.deny(r));
+    assert.match(JSON.stringify(r.output), /"permissionDecision":"ask"/);
   });
 
   test(a.name + ': benign unknown tools still pass with no opinion', async (t) => {

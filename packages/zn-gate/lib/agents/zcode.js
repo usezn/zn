@@ -223,7 +223,9 @@ function normalize(raw) {
   // read and write checks; arguments zn cannot read to the end are refused.
   if (!NAMES_ONLY_TOOLS.has(toolName)) {
     const scan = require('./copilot').commandScan(args);
-    if (scan.bad || scan.truncated) return unreadable(scan.bad ? 'the command' : 'the arguments (too deeply nested)');
+    if (scan.bad) return unreadable('the command');
+    // Too deep or too large to walk: what was read is still judged; a call that passes is asked about, not denied.
+    if (scan.truncated) ev.truncatedAsk = require('./copilot').TOO_BIG_ASK;
     if (scan.command !== undefined) return { ...ev, tool: 'bash', input: { command: scan.command, texts: [] } };
   }
   const named = pathsOf(args);

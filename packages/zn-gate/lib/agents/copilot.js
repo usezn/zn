@@ -86,7 +86,11 @@ const COMMAND_KEYS = ['command', 'cmd', 'Command', 'script'];
 // executable takes its arguments from args or argv.
 const LINE_KEYS = [...COMMAND_KEYS, 'commandLine', 'command_line', 'CommandLine', 'executable', 'input'];
 const ARG_KEYS = ['args', 'argv'];
-const lineKeysOf = (v) => LINE_KEYS.filter((k) => v[k] !== undefined && (k !== 'input' || typeof v[k] === 'string'));
+// executable, script and input are ordinary field names on many benign tools (a boolean flag, a script object): they count
+// only as a string or a list. command, cmd, Command and the commandLine spellings stay strict: any other shape is unreadable.
+const LOOSE_LINE_KEYS = new Set(['executable', 'script', 'input']);
+const lineKeysOf = (v) => LINE_KEYS.filter((k) => v[k] !== undefined && (!LOOSE_LINE_KEYS.has(k) || typeof v[k] === 'string' || Array.isArray(v[k])));
+const TOO_BIG_ASK = 'zn: the arguments of this call are larger or deeper than zn can check in full. Approve only if you trust this tool and its input.';
 const PATH_KEY_RE = /path|file|target|uri|dir|source|destination/i;
 const NOT_PATH_KEY_RE = /content|text|instruction|description|query|pattern|code|chunk|summary|title|str$/i;
 const MAX_PATH_LEN = 4096;
@@ -330,9 +334,12 @@ function normalize(raw) {
   // A known tool: its top-level command string (dev1's rule). A tool zn does not know: every command at any level within
   // bounds, built the way VS Code builds the line; unreadable or too deep = refused.
   const scan = known ? null : commandScan(args);
-  if (scan && (scan.bad || scan.truncated)) {
-    return { ...ev, tool: 'unreadable', input: { texts: [] }, unreadable: unreadable(scan.bad ? 'command' : 'arguments (too deeply nested)') };
+  if (scan && scan.bad) {
+    return { ...ev, tool: 'unreadable', input: { texts: [] }, unreadable: unreadable('command') };
   }
+  // Too deep or too large to walk (a big MCP page or document): what was read is still judged, and a call that passes is
+  // asked about rather than denied.
+  if (scan && scan.truncated) ev.truncatedAsk = TOO_BIG_ASK;
   const cmd = known ? firstString(args, COMMAND_KEYS) : scan.command;
   if (SHELL_TOOLS.has(toolName) || (!known && cmd !== undefined)) {
     const e = { ...ev, tool: toolName === 'powershell' ? 'powershell' : 'bash', input: { command: cmd || '', texts: [] } };
@@ -497,6 +504,7 @@ module.exports = {
   patchTextOf,
   patchInput,
   commandScan,
+  TOO_BIG_ASK,
   MAX_NEST_DEPTH,
   MAX_NEST_NODES,
 };

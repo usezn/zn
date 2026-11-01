@@ -1,0 +1,2 @@
+### Fixed
+- Tools zn does not know are no longer blocked when a field only looks like a command: a boolean `executable`, an object under `script` or `input`. A very large or deeply nested call (for example a long page sent to an MCP tool) now asks for confirmation instead of being blocked; any command found in it is still checked and blocked. Fields named `command`, `cmd` or `commandLine` that cannot be read are still refused.

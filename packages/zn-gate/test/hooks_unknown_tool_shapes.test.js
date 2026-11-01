@@ -87,3 +87,50 @@ for (const a of AGENTS) {
     for (const args of ok) assert.equal((await a.run(dir, 'run_in_terminal', args)).output, null, a.name + ' ' + JSON.stringify(args));
   });
 }
+
+// Benign tools whose field names only look like a command: a boolean, an object or a plain flag is data, not a command.
+for (const a of AGENTS) {
+  test(a.name + ': a boolean executable, a script object or an input object is not a command', async (t) => {
+    const dir = tempDir(t, 'zn-b2888-');
+    const ok = [
+      { path: 'a.txt', executable: true },
+      { filePath: 'a.sh', content: 'x', executable: false },
+      { script: { lang: 'js' } },
+      { script: { lang: 'js', body: 'x' }, name: 'build' },
+      { input: { text: 'hello' } },
+    ];
+    for (const args of ok) assert.equal((await a.run(dir, 'custom_tool', args)).output, null, a.name + ' ' + JSON.stringify(args));
+  });
+
+  test(a.name + ': a script or executable that is a string or a list is still judged', async (t) => {
+    const dir = tempDir(t, 'zn-b2888-');
+    for (const args of [{ script: 'cat ' + AWS }, { script: ['cat', AWS] }, { executable: 'rm', args: ['-rf', '~'] }]) {
+      assert.ok(a.deny(await a.run(dir, 'custom_tool', args)), a.name + ' ' + JSON.stringify(args));
+    }
+  });
+
+  test(a.name + ': a command key of the wrong shape is still refused', async (t) => {
+    const dir = tempDir(t, 'zn-b2888-');
+    for (const args of [{ command: true }, { cmd: { run: 'ls' } }, { commandLine: false }, { command_line: { a: 1 } }]) {
+      assert.match(a.deny(await a.run(dir, 'custom_tool', args)) || '', /could not read/, a.name + ' ' + JSON.stringify(args));
+    }
+  });
+
+  test(a.name + ': a large or deep call to an unknown tool is asked about, and a command found in it is still denied', async (t) => {
+    const dir = tempDir(t, 'zn-b2888-');
+    const ask = (r) => {
+      const o = r.output && (r.output.hookSpecificOutput || r.output);
+      return o && o.permissionDecision === 'ask' ? o.permissionDecisionReason : null;
+    };
+    const blocks = Array.from({ length: 600 }, (_, i) => ({ type: 'paragraph', text: 'line ' + i }));
+    let deep = { title: 'page' };
+    for (let i = 0; i < 8; i++) deep = { wrap: deep };
+    for (const args of [{ parent: 'example', children: blocks }, deep]) {
+      const r = await a.run(dir, 'mcp_notion_create_page', args);
+      assert.equal(a.deny(r), null);
+      assert.match(ask(r) || '', /larger or deeper/);
+    }
+    const r = await a.run(dir, 'mcp_notion_create_page', { children: blocks, command: 'cat ' + AWS });
+    assert.ok(a.deny(r));
+  });
+}

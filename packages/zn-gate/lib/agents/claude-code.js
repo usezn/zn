@@ -146,11 +146,14 @@ function unknownToolEvent(base, toolName, ti) {
   // Every command-like key, at any depth within bounds, is judged as a shell line; one zn cannot read (a number, an
   // object, a nested list) or arguments too deep to walk give a call without a command, which the runner refuses.
   const scan = commandScan(ti);
-  if (scan.bad || scan.truncated) return { ...base, tool: 'bash', toolName, input: { texts: [] } };
-  if (scan.command !== undefined) return { ...base, tool: 'bash', toolName, input: { command: scan.command, texts: [] } };
+  if (scan.bad) return { ...base, tool: 'bash', toolName, input: { texts: [] } };
+  // Too deep or too large to walk: what was read is still judged; a call that passes is asked about, not denied.
+  const more = scan.truncated ? { truncatedAsk: require('./copilot').TOO_BIG_ASK } : {};
+  if (scan.command !== undefined) return { ...base, ...more, tool: 'bash', toolName, input: { command: scan.command, texts: [] } };
   const { paths, bad } = pathsOf(ti);
-  if (bad) return { ...base, tool: 'write', toolName, input: { paths, unparsed: true, texts: [] } };
-  if (paths.length) return { ...base, tool: 'fileaccess', toolName, input: { path: paths[0], paths, texts: [] } };
+  if (bad) return { ...base, ...more, tool: 'write', toolName, input: { paths, unparsed: true, texts: [] } };
+  if (paths.length) return { ...base, ...more, tool: 'fileaccess', toolName, input: { path: paths[0], paths, texts: [] } };
+  if (scan.truncated) return { ...base, ...more, tool: toolName.toLowerCase(), toolName, input: { texts: [] } };
   return null;
 }
 
