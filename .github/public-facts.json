@@ -188,7 +188,7 @@
         "packages/zn-gate/package.json"
       ],
       "must": [
-        "while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app"
+        "while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot"
       ]
     },
     {
@@ -197,7 +197,7 @@
         "README.md"
       ],
       "must": [
-        "Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app"
+        "Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot"
       ]
     },
     {
@@ -242,7 +242,7 @@
   "fields": [
     {
       "id": "short description (npm)",
-      "value": "The local security layer for coding agents. zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app. No account, and nothing is sent by default.",
+      "value": "The local security layer for coding agents. zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot. No account, and nothing is sent by default.",
       "files": [
         {
           "file": "packages/zn-gate/package.json",
