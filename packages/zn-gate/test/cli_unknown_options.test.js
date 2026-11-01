@@ -57,10 +57,11 @@ test('analyze -- analyzes text that starts with dashes', () => {
   assert.match(r.stdout, /"verdict"/);
 });
 
-test('analyze with --option=value says to use two arguments', () => {
-  const r = run(['analyze', '--stage=v30', 'hello']);
-  assert.strictEqual(r.status, 2, r.stderr);
-  assert.match(r.stderr, /--stage VALUE/);
+test('analyze accepts --option=value and reads the value, as --option value does', () => {
+  const r = run(['analyze', '--stage=v30', '--local-only', 'hello there']);
+  assert.notStrictEqual(r.status, 2, r.stderr);
+  assert.doesNotMatch(r.stderr, /unknown option|give the value|takes no value/);
+  assert.match(r.stdout, /"verdict"/);
 });
 
 test('scan with an unknown option names it, lists its options and exits 2', () => {
@@ -82,10 +83,17 @@ test('scan with an unknown option after a folder is refused too', () => {
   assert.match(r.stderr, /unknown option "--dry-run"/);
 });
 
-test('scan with --format=json says to use two arguments', () => {
-  const r = run(['scan', '.', '--format=json']);
-  assert.strictEqual(r.status, 2, r.stderr);
-  assert.match(r.stderr, /--format VALUE/);
+test('scan accepts --format=json and prints JSON, as --format json does', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-b2247-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'README.md'), '# Notes\n\nNothing to see here.\n');
+    const r = run(['scan', '--format=json', dir]);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /unknown option|give the value|takes no value/);
+    assert.doesNotThrow(() => JSON.parse(r.stdout));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('scan reads the folder that comes after its options', () => {
