@@ -75,7 +75,10 @@ The commands that start a long-running server (`mcp`, `shield`, `secrets-mcp`) e
 | `ZN_TEAM_JOIN_TOKEN` | The join token for `team join` when you give none as an argument and no `-`. Keeps the token out of your shell history. An argument wins over it. |
 | `ZN_STATS=off` | Turns off the local counts shown by `stats` and `report`. |
 | `ZN_VERBOSE=1` or `--verbose` | Prints debug messages to the error output. |
-| `NO_COLOR` | Turns off colors. |
+| `NO_COLOR` | Turns off colors, emoji and box-drawing characters. Any non-empty value counts (see [no-color.org](https://no-color.org)). `TERM=dumb` does the same. |
+| `CI` | Any non-empty value turns off emoji and box-drawing characters too. Colors are not affected. |
+
+Emoji and box-drawing characters are used only when the output goes to a terminal and neither `NO_COLOR`, `TERM=dumb` nor `CI` is set. Everywhere else the CLI prints a short ASCII marker in their place: `[ok]` for a check mark, `[!]` for a warning, `[x]` for a failure, `[+]` for the shield, and `->` for an arrow. Rules are drawn with dashes. So output sent to a pipe or a file is plain printable ASCII, apart from text that comes from your own files or input. The status words (`ALLOWED`, `BLOCKED`, `FAILED`, ...) carry the meaning in every mode.
 
 ## Set up and check
 

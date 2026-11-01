@@ -354,14 +354,14 @@ EXAMPLES:
   npx -y zn-gate evidence --verify
   npx -y zn-gate evidence --ui
 
-Learn more & documentation at https://usezn.com · GitHub: https://github.com/usezn/zn
+Learn more & documentation at https://usezn.com | GitHub: https://github.com/usezn/zn
 `);
 }
 
 async function runTestSuite(options) {
   process.stdout.write(`
 ${sym(process.env, '🛡️', undefined, '  ')}Running zn-gate v${VERSION} Self-Test Suite
-Engine: Local rules (the self-test never uses the network) · Rules: ${RULES_VERSION}
+Engine: Local rules (the self-test never uses the network) | Rules: ${RULES_VERSION}
 Evaluating ${TEST_VECTORS.length} curated test vectors (${TEST_VECTORS.filter(v => v.type === 'attack').length} attacks + ${TEST_VECTORS.filter(v => v.type === 'benign').length} benign developer scenarios)...\n
 `);
 
