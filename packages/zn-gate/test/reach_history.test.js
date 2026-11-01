@@ -323,3 +323,15 @@ test('one very long line stops within a bounded amount after the deadline', (t) 
   assert.equal(r.reason, 'time-limit');
   assert.ok(engine.calls <= 2);
 });
+
+// Same corpus and same expected files as the Python test "test_a_home_over_the_file_cap_keeps_the_same_files_as_npm".
+// Names are compared by UTF-8 bytes, so U+1F600 (after U+FF01 in code points, before it in UTF-16) is the file left out.
+test('a home over the file cap keeps the same files as the Python package', (t) => {
+  const { home, env } = machine(t);
+  const names = ['B.jsonl', 'a.jsonl', 'z.jsonl', '\u00e9.jsonl', '\uff01.jsonl', '\u{1f600}.jsonl'];
+  for (const n of names) put(home, '.claude/projects/p/' + n, jsonl([{ text: 'key ' + AWS }]));
+  const r = history({ home, env, _maxFiles: 5 });
+  const files = [...new Set(r.findings.map((f) => f.file.split('/').pop()))].sort();
+  assert.deepEqual(files, ['B.jsonl', 'a.jsonl', 'z.jsonl', '\u00e9.jsonl', '\uff01.jsonl']);
+  assert.ok(r.incomplete.some((i) => i.reason === 'too-many-files' && i.limit === 5));
+});

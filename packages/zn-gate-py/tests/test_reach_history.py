@@ -393,3 +393,16 @@ def test_slicing_a_long_line_gives_the_same_counts_as_scanning_it_whole(tmp_path
     sliced = reach_history.scan_file(path, deadline=10 ** 18)
     assert whole["complete"] and sliced["complete"]
     assert whole["counts"] == sliced["counts"] and sum(whole["counts"].values()) == 100
+
+
+def test_a_home_over_the_file_cap_keeps_the_same_files_as_npm(machine):
+    # Same corpus and same expected files as the npm test of the same name. Names are compared by UTF-8 bytes:
+    # U+1F600 is after U+FF01 in code points, so it is the file left out at a cap of 5.
+    home, env = machine
+    names = ["B.jsonl", "a.jsonl", "z.jsonl", "\u00e9.jsonl", "\uff01.jsonl", "\U0001f600.jsonl"]
+    for n in names:
+        put(home, ".claude/projects/p/" + n, jsonl([{"text": "key " + AWS}]))
+    r = history(home=home, env=env, _max_files=5)
+    files = sorted({f["file"].split("/")[-1] for f in r["findings"]})
+    assert files == sorted(["B.jsonl", "a.jsonl", "z.jsonl", "\u00e9.jsonl", "\uff01.jsonl"])
+    assert any(i["reason"] == "too-many-files" and i["limit"] == 5 for i in r["incomplete"])

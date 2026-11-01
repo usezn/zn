@@ -130,33 +130,39 @@ function display(home, abs) {
   return clean(abs);
 }
 
-function walk(dir, ext, depth, out, skipped, agent, home) {
+// Entries are visited in byte order of their names (UTF-8), the same order as the Python package. readdir returns
+// the order of the directory on disk, which differs between machines, and the cap below cuts the walk short.
+function byNameBytes(a, b) {
+  return Buffer.compare(Buffer.from(a.name, 'utf8'), Buffer.from(b.name, 'utf8'));
+}
+
+function walk(dir, ext, depth, out, skipped, agent, home, limit) {
   if (depth > MAX_DEPTH) {
     skipped.push({ agent: agent.id, file: display(home, dir), reason: 'too-deep', limit: MAX_DEPTH });
     return;
   }
-  if (out.length >= MAX_FILES) {
-    skipped.push({ agent: agent.id, file: display(home, dir), reason: 'too-many-files', limit: MAX_FILES });
+  if (out.length >= limit) {
+    skipped.push({ agent: agent.id, file: display(home, dir), reason: 'too-many-files', limit });
     return;
   }
   let entries;
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }).sort(byNameBytes); } catch (_) { return; }
   for (const e of entries) {
     const abs = path.join(dir, e.name);
     if (e.isSymbolicLink()) { skipped.push({ agent: agent.id, file: display(home, abs), reason: 'symlink' }); continue; }
-    if (e.isDirectory()) { walk(abs, ext, depth + 1, out, skipped, agent, home); continue; }
+    if (e.isDirectory()) { walk(abs, ext, depth + 1, out, skipped, agent, home, limit); continue; }
     if (!e.isFile() || !e.name.endsWith(ext)) continue;
     const st = lstatOrNull(abs);
     if (!st || !st.isFile()) continue;
-    if (out.length >= MAX_FILES) {
-      skipped.push({ agent: agent.id, file: display(home, dir), reason: 'too-many-files', limit: MAX_FILES });
+    if (out.length >= limit) {
+      skipped.push({ agent: agent.id, file: display(home, dir), reason: 'too-many-files', limit });
       return;
     }
     out.push({ abs, size: st.size, mtime: st.mtimeMs });
   }
 }
 
-function collect(agent, home, env, skipped) {
+function collect(agent, home, env, skipped, limit) {
   const c = configDir(agent, home, env);
   let base;
   let basePath;
@@ -185,7 +191,7 @@ function collect(agent, home, env, skipped) {
   for (const t of agent.trees) {
     const root = realDirBelow(base, t.dir);
     if (!root) continue;
-    walk(root, t.ext, 0, files, skipped, agent, home);
+    walk(root, t.ext, 0, files, skipped, agent, home, limit);
   }
   return { base, files };
 }
@@ -317,13 +323,14 @@ function history(opts = {}) {
   const maxSeconds = Math.min(MAX_SECONDS_LIMIT, Math.max(1, Number(opts.maxSeconds) || DEFAULT_MAX_SECONDS));
   const started = Date.now();
   const deadline = started + (Number.isFinite(opts._maxMs) ? opts._maxMs : maxSeconds * 1000); // _maxMs: tests only
+  const limit = Number.isInteger(opts._maxFiles) ? opts._maxFiles : MAX_FILES; // _maxFiles: tests only
   const engine = require('../scrub/engine');
 
   const skipped = [];
   const plan = [];
   const agents = [];
   for (const a of AGENTS) {
-    const c = collect(a, home, env, skipped);
+    const c = collect(a, home, env, skipped, limit);
     agents.push({ id: a.id, name: a.name, scanned: !!c.base, reason: c.base ? null : 'not-found', files: 0, bytes: 0 });
     // Newest first: the sessions most likely to hold a live key.
     c.files.sort((x, y) => y.mtime - x.mtime);

@@ -168,7 +168,7 @@ the local copy only.
 ### Big histories and the time limit
 
 Files are read in streaming mode, one line at a time, so a history of several
-hundred MB does not fill memory (a 300 MB file takes a few seconds with the npm package; the Python package is much slower: a generated 299 MB history took 132 seconds, measured on 2026-11-01, so on a very large history raise `--max-seconds`). The scan
+hundred MB does not fill memory (a 300 MB file takes a few seconds with the npm package). The Python package is about 17 times slower: on a synthetic 192 MB history, measured on 2026-11-01, the npm package read about 62 MB per second and the Python package about 3.6 MB per second. So within the default 120 seconds the npm package covers roughly 7 GB and the Python package roughly 430 MB. On a large history, raise `--max-seconds` when you use the Python package. The scan
 stops after `--max-seconds` seconds (default 120, at most 3600), newest files
 first. When it stops, the report lists the files that were not fully scanned
 and never says that nothing was found. A line longer than 32 MB is skipped and

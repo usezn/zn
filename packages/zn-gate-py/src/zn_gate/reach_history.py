@@ -179,15 +179,17 @@ def display(home: str, absolute: str) -> str:
 
 
 def _walk(directory: str, ext: str, depth: int, out: List[Dict[str, Any]], skipped: List[Dict[str, Any]],
-          agent: Dict[str, Any], home: str) -> None:
+          agent: Dict[str, Any], home: str, limit: int) -> None:
+    # Entries are visited in byte order of their names (UTF-8), the same order as the npm package. The cap
+    # below cuts the walk short, so the order decides which files are read.
     if depth > MAX_DEPTH:
         skipped.append({"agent": agent["id"], "file": display(home, directory), "reason": "too-deep", "limit": MAX_DEPTH})
         return
-    if len(out) >= MAX_FILES:
-        skipped.append({"agent": agent["id"], "file": display(home, directory), "reason": "too-many-files", "limit": MAX_FILES})
+    if len(out) >= limit:
+        skipped.append({"agent": agent["id"], "file": display(home, directory), "reason": "too-many-files", "limit": limit})
         return
     try:
-        entries = sorted(os.scandir(directory), key=lambda e: e.name)
+        entries = sorted(os.scandir(directory), key=lambda e: os.fsencode(e.name))
     except OSError:
         return
     for e in entries:
@@ -196,21 +198,21 @@ def _walk(directory: str, ext: str, depth: int, out: List[Dict[str, Any]], skipp
             skipped.append({"agent": agent["id"], "file": display(home, absolute), "reason": "symlink"})
             continue
         if e.is_dir(follow_symlinks=False):
-            _walk(absolute, ext, depth + 1, out, skipped, agent, home)
+            _walk(absolute, ext, depth + 1, out, skipped, agent, home, limit)
             continue
         if not e.is_file(follow_symlinks=False) or not e.name.endswith(ext):
             continue
         st = _lstat(absolute)
         if st is None or not stat.S_ISREG(st.st_mode):
             continue
-        if len(out) >= MAX_FILES:
-            skipped.append({"agent": agent["id"], "file": display(home, directory), "reason": "too-many-files", "limit": MAX_FILES})
+        if len(out) >= limit:
+            skipped.append({"agent": agent["id"], "file": display(home, directory), "reason": "too-many-files", "limit": limit})
             return
         out.append({"abs": absolute, "size": st.st_size, "mtime": st.st_mtime_ns / 1e6})
 
 
 def collect(agent: Dict[str, Any], home: str, env: Dict[str, str],
-            skipped: List[Dict[str, Any]]) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+            skipped: List[Dict[str, Any]], limit: int) -> Tuple[Optional[str], List[Dict[str, Any]]]:
     parts, outside = config_dir(agent, home, env)
     base: Optional[str]
     if parts:
@@ -241,7 +243,7 @@ def collect(agent: Dict[str, Any], home: str, env: Dict[str, str],
         root = real_dir_below(base, t["dir"])
         if not root:
             continue
-        _walk(root, t["ext"], 0, files, skipped, agent, home)
+        _walk(root, t["ext"], 0, files, skipped, agent, home, limit)
     return base, files
 
 
@@ -411,18 +413,19 @@ def scan_file(abs_path: str, deadline: float) -> Dict[str, Any]:
 
 
 def history(home: Optional[str] = None, env: Optional[Dict[str, str]] = None, max_seconds: Optional[int] = None,
-            _max_ms: Optional[float] = None) -> Dict[str, Any]:
+            _max_ms: Optional[float] = None, _max_files: Optional[int] = None) -> Dict[str, Any]:
     home = os.path.abspath(home or os.path.expanduser("~"))
     env = env if env is not None else dict(os.environ)
     max_s = min(MAX_SECONDS_LIMIT, max(1, int(max_seconds or DEFAULT_MAX_SECONDS)))
     started = _now_ms()
     deadline = started + (_max_ms if _max_ms is not None else max_s * 1000)  # _max_ms: tests only
+    limit = _max_files if _max_files is not None else MAX_FILES  # _max_files: tests only
 
     skipped: List[Dict[str, Any]] = []
     plan: List[Dict[str, Any]] = []
     agents: List[Dict[str, Any]] = []
     for a in AGENTS:
-        base, files = collect(a, home, env, skipped)
+        base, files = collect(a, home, env, skipped, limit)
         agents.append({"id": a["id"], "name": a["name"], "scanned": bool(base),
                        "reason": None if base else "not-found", "files": 0, "bytes": 0})
         # Newest first: the sessions most likely to hold a live key.
