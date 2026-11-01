@@ -496,6 +496,21 @@ function buildRecord(event, prevHash, plainPreview = false) {
   return { ...baseRecord, record_hash: recordHash };
 }
 
+// The last line of a ledger that is not JSON is most likely a write cut off by a crash or a full
+// disk. It is still reported as not verified (valid: false), but with truncated_tail: true so
+// the output can say so and explain how to continue. Any other problem stays a tamper report.
+const TRUNCATED_TAIL_MESSAGE = 'Last record is incomplete (the write was cut off, for example by a crash or a full disk)';
+function truncatedTailResult(total, index) {
+  return {
+    valid: false,
+    total,
+    verified: index,
+    broken_index: index,
+    error: `${TRUNCATED_TAIL_MESSAGE} at line ${index + 1}: the line is not valid JSON.`,
+    truncated_tail: true,
+  };
+}
+
 /**
  * Verifies the cryptographic integrity of the entire evidence chain.
  *
@@ -524,6 +539,7 @@ function verifyEvidenceLedger(filePath = EVIDENCE_FILE) {
     try {
       rec = JSON.parse(lines[i]);
     } catch (e) {
+      if (i === lines.length - 1) return truncatedTailResult(lines.length, i);
       return { valid: false, total: lines.length, verified: i, broken_index: i, error: `Malformed JSON at line ${i + 1}: ${e.message}` };
     }
     if (rec === null || typeof rec !== 'object' || Array.isArray(rec)) {
@@ -934,7 +950,7 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
           badge.textContent = '● SHA-256 Chain Verified (Tamper-Free)';
         } else {
           badge.className = 'status-badge badge-invalid';
-          badge.textContent = '✖ TAMPER DETECTED at record ' + v.broken_index;
+          badge.textContent = v.truncated_tail ? '✖ LAST RECORD INCOMPLETE (not verified)' : '✖ TAMPER DETECTED at record ' + v.broken_index;
         }
 
         const tbody = document.getElementById('audit-table');

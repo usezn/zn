@@ -492,6 +492,23 @@ def _build_record(event: Dict[str, Any], prev_hash: str) -> Dict[str, Any]:
     return final_record
 
 
+# The last line of a ledger that is not JSON is most likely a write cut off by a crash or a full
+# disk. It is still reported as not verified (valid: False), but with truncated_tail: True so the
+# output can say so and explain how to continue. Any other problem stays a tamper report.
+TRUNCATED_TAIL_MESSAGE = "Last record is incomplete (the write was cut off, for example by a crash or a full disk)"
+
+
+def _truncated_tail_result(total: int, index: int) -> Dict[str, Any]:
+    return {
+        "valid": False,
+        "total": total,
+        "verified": index,
+        "broken_index": index,
+        "error": f"{TRUNCATED_TAIL_MESSAGE} at line {index+1}: the line is not valid JSON.",
+        "truncated_tail": True,
+    }
+
+
 def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
     """
     Verifies the cryptographic integrity of the entire ledger chain from genesis.
@@ -513,6 +530,8 @@ def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
         try:
             rec = json.loads(line)
         except Exception as e:
+            if i == len(lines) - 1:
+                return _truncated_tail_result(len(lines), i)
             return {
                 "valid": False,
                 "total": len(lines),
