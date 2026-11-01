@@ -62,7 +62,7 @@ function makeTeamOps(ctx) {
     const v = policy.verifyEnvelope(held, t.pin, { now, org: t.org, allowExpired: true });
     if (!v.ok) return { state: 'invalid', policy: null, org: t.org, error: v.error };
     return {
-      state: v.expired ? 'expired' : 'active', policy: v.policy, org: t.org, version: v.policy.version,
+      state: v.expired ? 'expired' : 'active', clock: v.clock || undefined, policy: v.policy, org: t.org, version: v.policy.version,
       expires_at: v.policy.expires_at, etag: t.policy.etag || null, fetched_at: t.policy.fetched_at || null,
     };
   }
