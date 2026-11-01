@@ -21,7 +21,8 @@ from . import __version__
 from .rules import RULES_VERSION, evaluate, mask_token_runs
 from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact, redact_scan_secrets as _scan_redact
 from . import mcp_secrets as _mcp
-from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
+from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, evidence_file
+from .home import HomeError, account_home
 
 
 # The cloud client loads urllib, http.client and ssl. These wrappers import it
@@ -403,7 +404,7 @@ def _scan_file(file_path: Path, shown: Optional[str] = None, mcp_only: bool = Fa
 
 def _home_mcp_files() -> List[Path]:
     """The user's own MCP configuration files that exist on this computer."""
-    home = Path.home()
+    home = Path(account_home())
     xdg = Path(os.environ.get("XDG_CONFIG_HOME") or (home / ".config"))
     codex_home = Path(os.environ.get("CODEX_HOME") or (home / ".codex"))
     if sys.platform == "win32":
@@ -459,7 +460,7 @@ def _safe_text(value: Any) -> str:
 def _home_display(file_path: Path) -> str:
     """A file of the user's home as ~/..., the way the Node.js package shows it."""
     try:
-        return "~/" + file_path.relative_to(Path.home()).as_posix()
+        return "~/" + file_path.relative_to(account_home()).as_posix()
     except ValueError:
         return str(file_path)
 
@@ -758,7 +759,7 @@ def cmd_evidence(args: argparse.Namespace) -> int:
         return 0
 
     stats = get_evidence_stats()
-    print(f"\n{_lead(SHIELD)}zn Evidence Ledger Stats ({EVIDENCE_FILE})")
+    print(f"\n{_lead(SHIELD)}zn Evidence Ledger Stats ({evidence_file()})")
     print(f"  Total Events   : {stats.get('total', 0)}")
     print(f"  Blocked Drops  : {stats.get('blocks', 0)}")
     print(f"  Allowed Passes : {stats.get('allows', 0)}")
@@ -910,7 +911,7 @@ def known_commands(parser: argparse.ArgumentParser) -> frozenset[str]:
     return frozenset(parser.get_default("_subparsers").choices)
 
 
-def main() -> int:
+def _main() -> int:
     _configure_output_streams()
     first = sys.argv[1] if len(sys.argv) > 1 else None
     if first == "reach" and any(a in ("--history", "-h", "--help") or a.startswith("--max-seconds") for a in sys.argv[2:]):
@@ -952,6 +953,15 @@ def main() -> int:
     else:
         parser.print_help()
         return 0
+
+
+def main() -> int:
+    try:
+        return _main()
+    except HomeError as e:
+        # No usable home or state folder: say what to set, write nothing, no traceback.
+        sys.stderr.write(f"{e}\n")
+        return 1
 
 
 if __name__ == "__main__":

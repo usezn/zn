@@ -242,7 +242,7 @@ function normalize(raw) {
     const tooLong = String(ti.command || '').length > PATCH_SCAN_CAP;
     const scan = tooLong ? { files: [], suspicious: false } : patchScan(ti.command);
     const files = scan.files;
-    const home = os.homedir();
+    const home = require('../home').homeDir();
     const zn = files.find((f) => path.resolve(base.cwd, f).replace(/\\/g, '/').startsWith(path.join(home, '.zn').replace(/\\/g, '/')));
     input.paths = files;
     input.path = zn || files[0];
@@ -316,7 +316,7 @@ function respond(d) {
 
 function codexHome(opts = {}) {
   const env = opts.env || process.env;
-  return env.CODEX_HOME ? path.resolve(env.CODEX_HOME) : path.join(opts.home || os.homedir(), '.codex');
+  return env.CODEX_HOME ? path.resolve(env.CODEX_HOME) : path.join(opts.home || require('../home').homeDir(), '.codex');
 }
 
 function hooksFile(opts = {}) {

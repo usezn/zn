@@ -21,7 +21,7 @@ const os = require('os');
 const path = require('path');
 
 function cacheRoot(env) {
-  const home = env.ZN_HOME ? path.resolve(env.ZN_HOME) : path.join(os.homedir(), '.zn');
+  const home = require('./home').stateDir(env);
   return path.join(home, 'cache', 'compile');
 }
 

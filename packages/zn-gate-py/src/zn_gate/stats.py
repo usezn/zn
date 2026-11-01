@@ -21,9 +21,9 @@ LAYER_NAMES = {
 
 
 def zn_home() -> str:
-    """~/.zn, or the folder ZN_HOME names (the same rule as the npm package)."""
-    home = os.environ.get("ZN_HOME")
-    return os.path.abspath(home) if home else os.path.join(os.path.expanduser("~"), ".zn")
+    """~/.zn, or the folder ZN_HOME names (the same rule as the npm package). Raises HomeError when no safe folder exists."""
+    from .home import zn_home as _zn_home
+    return _zn_home()
 
 
 def stats_file() -> str:

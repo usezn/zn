@@ -38,7 +38,7 @@ const path = require('path');
 const { startMcpServer } = require('../lib/mcp');
 const { startMcpShield } = require('../lib/shield');
 const { configureEnvironments } = require('../lib/init');
-const { verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
+const { verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, evidenceFile } = require('../lib/evidence');
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, usesStoredKey, RULES_VERSION } = require('../lib/client');
 const { evaluate, redactSecrets, redactScanSecrets, redactScanRules, SECRET_PATTERNS } = require('../lib/rules');
 // A verdict from the cloud or the ledger can come in any case; compare it the way the MCP server does.
@@ -417,7 +417,7 @@ ${ruleLine(process.env, 77)}\n
 
 // The user's own MCP configuration files that exist on this computer.
 function homeMcpFiles() {
-  const home = os.homedir();
+  const home = require('../lib/home').homeDir();
   const xdg = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
   const codexHome = process.env.CODEX_HOME || path.join(home, '.codex');
   const claudeDesktop = process.platform === 'win32'
@@ -453,7 +453,7 @@ function homeMcpFiles() {
 // user's own MCP configs (--include-home) outside it is shown as ~/...
 function displayPath(filePath, homeFiles) {
   if (homeFiles && homeFiles.has(filePath)) {
-    let realHome = os.homedir();
+    let realHome = require('../lib/home').homeDir();
     try { realHome = fs.realpathSync(realHome); } catch (e) { /* keep it */ }
     const fromHome = path.relative(realHome, realFolderOf(filePath));
     if (!fromHome.startsWith('..') && !path.isAbsolute(fromHome)) return '~/' + fromHome.split(path.sep).join('/');
@@ -1176,7 +1176,7 @@ ${ruleLine(process.env, 60)}\n`);
         process.exitCode = 2;
         return;
       }
-      const res = exportEvidenceLedger(EVIDENCE_FILE, format);
+      const res = exportEvidenceLedger(evidenceFile(), format);
       if (!res.valid) process.stderr.write(`Tamper detected: ${res.error}\n${recoveryHint()}\n`);
       if (options.output) {
         try {
@@ -1201,7 +1201,7 @@ ${ruleLine(process.env, 60)}\n`);
       const verification = verifyEvidenceLedger();
       process.stdout.write(`
 ${sym(process.env, '🔒')}Cryptographic Evidence Ledger Verification:
-  Ledger Path   : ${EVIDENCE_FILE}
+  Ledger Path   : ${evidenceFile()}
   Total Records : ${verification.total}
   Integrity     : ${verification.valid ? sym(process.env, '✔', col.green) + col.green('ALL SHA-256 HASHES VERIFIED (IMMUTABLE)') : sym(process.env, '✖', col.red) + col.red('TAMPER DETECTED AT RECORD ' + verification.broken_index)}
 \n`);
@@ -1214,7 +1214,7 @@ ${sym(process.env, '🔒')}Cryptographic Evidence Ledger Verification:
 
     const stats = getEvidenceStats();
     process.stdout.write(`
-${sym(process.env, '🛡️', undefined, '  ')}zn Evidence Ledger Stats (${EVIDENCE_FILE})
+${sym(process.env, '🛡️', undefined, '  ')}zn Evidence Ledger Stats (${evidenceFile()})
 ${ruleLine(process.env, 51)}
   Total Events  : ${stats.total}
   Blocked Drops : ${stats.blocks}
@@ -1346,7 +1346,7 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
       if (cc.detect()) {
         const path = require('path');
         // The user-scope MCP servers live in .claude.json (in CLAUDE_CONFIG_DIR when set).
-        const claudeJson = process.env.CLAUDE_CONFIG_DIR ? path.join(cc.configDir(), '.claude.json') : path.join(require('os').homedir(), '.claude.json');
+        const claudeJson = process.env.CLAUDE_CONFIG_DIR ? path.join(cc.configDir(), '.claude.json') : path.join(require('../lib/home').homeDir(), '.claude.json');
         let mcp = null;
         try { mcp = (JSON.parse(require('fs').readFileSync(claudeJson, 'utf8')).mcpServers || {}).secrets || null; } catch (_) { /* not registered */ }
         const notes = require('../lib/agents/managed-policy').claudeCodePolicyWarnings({

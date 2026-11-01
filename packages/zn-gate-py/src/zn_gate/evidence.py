@@ -24,10 +24,23 @@ def _redact(text: str) -> str:
     from .rules import mask_token_runs, redact_secrets  # local import avoids import cycles
     return mask_token_runs(redact_secrets(text)[0])
 
-from .stats import zn_home  # noqa: E402  (one rule for the state folder: ~/.zn or ZN_HOME)
+from .home import HomeError, zn_home  # noqa: E402  (one rule for the state folder: ~/.zn or ZN_HOME)
 
-ZN_DIR = zn_home()
-EVIDENCE_FILE = os.path.join(ZN_DIR, "evidence.jsonl")
+
+def evidence_file() -> str:
+    """The ledger path. Resolved when it is used, never when the module loads: with no usable home folder the
+    error reaches the caller instead of a path being built from nothing."""
+    return os.path.join(zn_home(), "evidence.jsonl")
+
+
+def __getattr__(name: str) -> str:  # module attribute kept for callers of the old constants
+    if name == "EVIDENCE_FILE":
+        return evidence_file()
+    if name == "ZN_DIR":
+        return zn_home()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 GENESIS_HASH = "0" * 64
 
 
@@ -59,8 +72,9 @@ _last_warn: Optional[float] = None
 _WS = b" \t\r"  # the only whitespace trimmed around a line (the Node package does the same)
 
 
-def recovery_hint(file_path: str = EVIDENCE_FILE) -> str:
+def recovery_hint(file_path: Optional[str] = None) -> str:
     """Tells the user how to get logging going again after damage."""
+    file_path = file_path or evidence_file()
     damaged = os.path.join(os.path.dirname(file_path), "evidence.damaged.jsonl")
     if os.name == "nt":
         cmd = f'move "{file_path}" "{damaged}"'
@@ -120,11 +134,12 @@ def _corrupt_result(total: int, index: int, error: str) -> Dict[str, Any]:
     return {"valid": False, "total": total, "verified": index, "broken_index": index, "error": error}
 
 
-def get_last_hash(file_path: str = EVIDENCE_FILE) -> str:
+def get_last_hash(file_path: Optional[str] = None) -> str:
     """Reads the record_hash of the last line in the ledger (only the end of the file is read).
     A missing or empty file is the start of a new chain (genesis). If the last line cannot be
     read or trusted this raises EvidenceLedgerError: it never falls back to genesis, which would
     silently restart the chain. Damage earlier in the file is for verify_evidence_ledger to find."""
+    file_path = file_path or evidence_file()
     if not os.path.exists(file_path):
         return GENESIS_HASH
     last = _read_last_line(file_path)
@@ -400,7 +415,7 @@ def _canonical_ascii(record: Dict[str, Any]) -> str:
 _last_write_warn: Optional[float] = None
 
 
-def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
+def log_evidence(event: Dict[str, Any], file_path: Optional[str] = None,
                  lock_wait: float = LOCK_WAIT) -> Optional[Dict[str, Any]]:
     """
     Appends a cryptographically hash-chained evidence record to the ledger.
@@ -415,6 +430,16 @@ def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
     event starts a new chain.
     """
     global _last_warn, _last_write_warn
+    if file_path is None:
+        try:
+            file_path = evidence_file()
+        except HomeError as e:
+            # No usable state folder: nothing is written (never into the current folder), the caller is not broken.
+            now = time.monotonic()
+            if _last_write_warn is None or now - _last_write_warn >= WARN_INTERVAL:
+                _last_write_warn = now
+                sys.stderr.write(f"zn-gate: {e} Events are not being recorded.\n")
+            return None
     lock_path = file_path + ".lock"
     token: Optional[str] = None
     try:
@@ -494,11 +519,12 @@ def _build_record(event: Dict[str, Any], prev_hash: str) -> Dict[str, Any]:
     return final_record
 
 
-def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
+def verify_evidence_ledger(file_path: Optional[str] = None) -> Dict[str, Any]:
     """
     Verifies the cryptographic integrity of the entire ledger chain from genesis.
     Returns { "valid": bool, "total": int, "verified": int, "broken_index": Optional[int], "error": Optional[str] }
     """
+    file_path = file_path or evidence_file()
     if not os.path.exists(file_path):
         return {"valid": True, "total": 0, "verified": 0, "broken_index": None, "error": None}
 
@@ -561,8 +587,9 @@ def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
     return {"valid": True, "total": len(lines), "verified": len(lines), "broken_index": None, "error": None}
 
 
-def get_evidence_stats(file_path: str = EVIDENCE_FILE, limit: int = 50) -> Dict[str, Any]:
+def get_evidence_stats(file_path: Optional[str] = None, limit: int = 50) -> Dict[str, Any]:
     """Generates aggregated stats from the evidence ledger."""
+    file_path = file_path or evidence_file()
     if not os.path.exists(file_path):
         return {
             "total": 0,
@@ -633,7 +660,7 @@ def export_evidence_ledger(file_path: Optional[str] = None, format: str = "jsonl
     Exports the evidence ledger into JSONL or CSV with cryptographic verification.
     Suitable for enterprise compliance audits (SOC 2, ISO 27001, EU AI Act Art. 12).
     """
-    target_path = file_path if file_path else EVIDENCE_FILE
+    target_path = file_path if file_path else evidence_file()
     norm_format = "csv" if (format or "jsonl").lower() == "csv" else "jsonl"
 
     if not os.path.exists(target_path):

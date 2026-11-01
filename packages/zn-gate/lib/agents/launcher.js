@@ -126,7 +126,7 @@ function warnText(agentId) {
 function launcherDir(opts = {}) {
   const env = opts.env || process.env;
   if (env.ZN_HOOK_DIR) return path.resolve(env.ZN_HOOK_DIR);
-  const base = env.ZN_HOME ? path.resolve(env.ZN_HOME) : path.join(opts.home || os.homedir(), '.zn');
+  const base = require('../home').stateDir(env, opts.home);
   return path.join(base, 'hooks');
 }
 

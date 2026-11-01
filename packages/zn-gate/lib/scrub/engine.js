@@ -13,7 +13,7 @@
  *     vault: VaultClient (lib/vault/client.js or any object with the same calls)
  *   Optional ctx fields:
  *     cwd          project root for .env* / .znrules (defaults to project when it is a directory)
- *     env, home    sources for the exact-value layer (default process.env, os.homedir())
+ *     env, home    sources for the exact-value layer (default process.env, the validated home folder)
  *     exact        false to disable the exact-value layer
  *     exactFiles   false to read the environment only (no credential files)
  *     exactValues  [{name, type, value|values}] extra exact values (scan uses these)

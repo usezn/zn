@@ -1939,7 +1939,7 @@ function audit(opts) {
     if (auditFile(rec, out)) { scanned++; countFor(rec); }
   }
   if (o.includeHome) {
-    const home = o.home || os.homedir();
+    const home = o.home || require('../home').homeDir();
     for (const rec of homeFiles(home, env)) {
       rec.root = root;
       if (!wanted(rec.readers, rec.agent)) continue;

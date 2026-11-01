@@ -8,15 +8,18 @@ const crypto = require('crypto');
 // append that does not need them (a hook block, see _plainPreview in logEvidence) stays cheap.
 
 // The same folder as stats, pins, the vault and the config: ~/.zn, or ZN_HOME when it is set.
-const ZN_DIR = require('./stats').znHome();
-const EVIDENCE_FILE = path.join(ZN_DIR, 'evidence.jsonl');
+// Resolved when it is used, never when the module loads: with no usable home folder the error then reaches the
+// caller (a hook refuses with the message) instead of crashing every command.
+function evidenceFile() {
+  return path.join(require('./stats').znHome(), 'evidence.jsonl');
+}
 const GENESIS_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
 
 // The ledger directory is private to the user; modes are POSIX only (ignored on Windows).
 const LEDGER_DIR_MODE = 0o700;
 const LEDGER_FILE_MODE = 0o600;
 
-function ensureZnDir(filePath = EVIDENCE_FILE) {
+function ensureZnDir(filePath = evidenceFile()) {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true, mode: LEDGER_DIR_MODE });
@@ -265,7 +268,7 @@ let lastWarnAt = null;
 let lastWriteWarnAt = null;
 
 /** Tells the user how to get logging going again after damage. */
-function recoveryHint(filePath = EVIDENCE_FILE) {
+function recoveryHint(filePath = evidenceFile()) {
   const damaged = path.join(path.dirname(filePath), 'evidence.damaged.jsonl');
   const cmd = process.platform === 'win32' ? `move "${filePath}" "${damaged}"` : `mv "${filePath}" "${damaged}"`;
   return `To start a new log and keep the old file for review, move it aside (${cmd}); the next event starts a new chain.`;
@@ -358,7 +361,7 @@ function readLastLine(filePath) {
  * trusted this throws EvidenceLedgerError: it never falls back to genesis, which would
  * silently restart the chain. Damage earlier in the file is for verifyEvidenceLedger to find.
  */
-function getLastHash(filePath = EVIDENCE_FILE) {
+function getLastHash(filePath = evidenceFile()) {
   if (!fs.existsSync(filePath)) {
     return GENESIS_HASH;
   }
@@ -395,8 +398,8 @@ function getLastHash(filePath = EVIDENCE_FILE) {
  *   returns null (with a warning) when the log cannot be written (permissions, disk) or the
  *   write lock stays busy for 2 seconds; it never throws for a log problem.
  */
-function logEvidence(event, filePath = EVIDENCE_FILE, opts = {}) {
-  if (filePath === EVIDENCE_FILE && !opts.noStats) {
+function logEvidence(event, filePath = evidenceFile(), opts = {}) {
+  if (filePath === evidenceFile() && !opts.noStats) {
     require('./stats').record({
       layer: 'shield', agent: event.agent || event.agent_environment || 'other', checked: 1,
       blocked: String(event.verdict || '').toLowerCase() === 'block' ? 1 : 0,
@@ -503,7 +506,7 @@ function buildRecord(event, prevHash, plainPreview = false) {
  * @param {string} [filePath] - Optional ledger path
  * @returns {object} { valid: boolean, total: number, verified: number, broken_index: number|null, error: string|null }
  */
-function verifyEvidenceLedger(filePath = EVIDENCE_FILE) {
+function verifyEvidenceLedger(filePath = evidenceFile()) {
   if (!fs.existsSync(filePath)) {
     return { valid: true, total: 0, verified: 0, broken_index: null, error: null };
   }
@@ -563,8 +566,8 @@ function verifyEvidenceLedger(filePath = EVIDENCE_FILE) {
 /**
  * Generates aggregated metrics from the ledger.
  */
-function getEvidenceStats(filePathOrLimit = EVIDENCE_FILE, maybeLimit = 50) {
-  let filePath = EVIDENCE_FILE;
+function getEvidenceStats(filePathOrLimit = evidenceFile(), maybeLimit = 50) {
+  let filePath = evidenceFile();
   let limit = 50;
 
   if (typeof filePathOrLimit === 'number') {
@@ -635,7 +638,7 @@ function getEvidenceStats(filePathOrLimit = EVIDENCE_FILE, maybeLimit = 50) {
  * @param {('jsonl'|'csv')} [format='jsonl']
  * @returns {{ content: string, format: string, valid: boolean, tip_hash: string, total: number }}
  */
-function exportEvidenceLedger(filePath = EVIDENCE_FILE, format = 'jsonl') {
+function exportEvidenceLedger(filePath = evidenceFile(), format = 'jsonl') {
   const normFormat = (format || 'jsonl').toLowerCase() === 'csv' ? 'csv' : 'jsonl';
 
   if (!fs.existsSync(filePath)) {
@@ -748,7 +751,7 @@ function renderAuditRow(r) {
 /**
  * Starts a zero-dependency local dashboard at 127.0.0.1:<port> (loopback only)
  */
-function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
+function startEvidenceUi(port = 3100, filePath = evidenceFile()) {
   const server = require('http').createServer((req, res) => {
     // Only answer requests addressed to the loopback name and port, so a web
     // page cannot reach the dashboard through DNS rebinding.
@@ -979,7 +982,8 @@ module.exports = {
   startEvidenceUi,
   escapeHtml,
   renderAuditRow,
-  EVIDENCE_FILE,
+  evidenceFile,
+  get EVIDENCE_FILE() { return evidenceFile(); },
   GENESIS_HASH,
   _testHooks: testHooks,
 };

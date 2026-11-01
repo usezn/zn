@@ -167,7 +167,7 @@ function gitRootOf(dir) {
 function projectPlaces(cwd, env, win) {
   const e = env || process.env;
   const here = cwd || process.cwd();
-  const home = realKey(e.HOME || e.USERPROFILE || os.homedir(), win);
+  const home = realKey(e.HOME || e.USERPROFILE || require('./home').analysisHome(), win);
   const out = [];
   for (const d of [here, gitRootOf(here), e.CLAUDE_PROJECT_DIR]) {
     if (!d || !path.isAbsolute(String(d))) continue;
@@ -193,7 +193,7 @@ function inProject(real, places) {
 // (those live under a prefix such as /usr/local, ~/.nvm or ~/.npm-global). Counts as the project for a program's real file.
 function inHomeModules(real, env, win) {
   const e = env || process.env;
-  return insideOrSame(real, realKey(path.join(e.HOME || e.USERPROFILE || os.homedir(), 'node_modules'), win));
+  return insideOrSame(real, realKey(path.join(e.HOME || e.USERPROFILE || require('./home').analysisHome(), 'node_modules'), win));
 }
 
 /** Whether the real file of a program found on the PATH is in the project (cwd, its git work tree, CLAUDE_PROJECT_DIR) or in
@@ -393,7 +393,7 @@ function isInside(child, parent) {
 function writableBy(real) {
   if (!real) return null;
   if (isWin) {
-    const roots = [os.homedir(), os.tmpdir(), process.env.LOCALAPPDATA, process.env.APPDATA].filter(Boolean);
+    const roots = [require('./home').analysisHome(), os.tmpdir(), process.env.LOCALAPPDATA, process.env.APPDATA].filter(Boolean);
     for (const r of roots) {
       if (isInside(String(real).toLowerCase(), path.resolve(r).toLowerCase())) return path.resolve(r);
     }

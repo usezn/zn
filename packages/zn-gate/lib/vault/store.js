@@ -39,8 +39,7 @@ const STALE_DAYS = 30;
 
 function znHome(opts) {
   if (opts && opts.home) return path.resolve(opts.home);
-  if (process.env.ZN_HOME) return path.resolve(process.env.ZN_HOME);
-  return path.join(os.homedir(), '.zn');
+  return require('../home').znHome();
 }
 
 function paths(opts) {

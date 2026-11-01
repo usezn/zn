@@ -334,7 +334,7 @@ function respond(d) {
 /** Copilot's user folder: $COPILOT_HOME, else ~/.copilot. */
 function copilotHome(opts = {}) {
   const env = opts.env || process.env;
-  return env.COPILOT_HOME || path.join(opts.home || os.homedir(), '.copilot');
+  return env.COPILOT_HOME || path.join(opts.home || require('../home').homeDir(), '.copilot');
 }
 
 function hooksFile(opts = {}) {

@@ -191,7 +191,7 @@ function normalize(raw) {
     if (!text) return unreadable('the patch');
     const tooLong = text.length > PATCH_SCAN_CAP;
     const scan = tooLong ? { files: [], suspicious: false } : patchScan(text);
-    const home = os.homedir();
+    const home = require('../home').homeDir();
     const zn = scan.files.find((f) => path.resolve(cwd, f).replace(/\\/g, '/').startsWith(path.join(home, '.zn').replace(/\\/g, '/')));
     return {
       ...ev, tool: 'write', input: { paths: scan.files, path: zn || scan.files[0], tooLong, unparsed: !tooLong && (scan.files.length === 0 || scan.suspicious), texts: [] },
@@ -279,7 +279,7 @@ function respond(d) {
 /* ------------------------ install / uninstall ---------------------- */
 
 function configFile(opts = {}) {
-  return path.join(opts.home || os.homedir(), '.zcode', 'cli', 'config.json');
+  return path.join(opts.home || require('../home').homeDir(), '.zcode', 'cli', 'config.json');
 }
 
 /** The program and arguments zn writes into a "process" entry, or null for a plain command string. */
@@ -379,7 +379,7 @@ function mcpServerConfig(opts = {}) {
  */
 function enabledStateFile(opts = {}) {
   const env = opts.env || process.env;
-  const base = env.ZN_HOME ? path.resolve(env.ZN_HOME) : path.join(opts.home || os.homedir(), '.zn');
+  const base = require('../home').stateDir(env, opts.home);
   return path.join(base, 'state', 'zcode-hooks-enabled.json');
 }
 
@@ -599,7 +599,7 @@ function configWarnings(opts = {}) {
  * root is set only for a plugin of ours: its folder holds .zcode-plugin/plugin.json and scripts/zn-hook.sh.
  */
 function pluginState(opts = {}) {
-  const base = path.join(opts.home || os.homedir(), '.zcode', 'cli');
+  const base = path.join(opts.home || require('../home').homeDir(), '.zcode', 'cli');
   const out = { root: null, id: null, version: null, enabled: false, pluginsOff: false, listed: false };
   let list;
   try {
@@ -628,7 +628,7 @@ function pluginState(opts = {}) {
 
 function detect(opts = {}) {
   if (whichSync('zcode', (opts.env || process.env).PATH || '')) return true;
-  return fs.existsSync(path.join(opts.home || os.homedir(), '.zcode'));
+  return fs.existsSync(path.join(opts.home || require('../home').homeDir(), '.zcode'));
 }
 
 module.exports = {

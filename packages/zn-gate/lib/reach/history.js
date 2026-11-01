@@ -285,7 +285,7 @@ function scanFile(engine, abs, deadline) {
 }
 
 function history(opts = {}) {
-  const home = path.resolve(opts.home || os.homedir());
+  const home = path.resolve(opts.home || require('../home').homeDir());
   const env = opts.env || process.env;
   const maxSeconds = Math.min(MAX_SECONDS_LIMIT, Math.max(1, Number(opts.maxSeconds) || DEFAULT_MAX_SECONDS));
   const started = Date.now();

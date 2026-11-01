@@ -21,9 +21,9 @@ const TYPE_RE = /^[A-Z0-9](?:[A-Z0-9_]{0,62}[A-Z0-9])?$/;
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const LAYERS = new Set(['hook', 'shield', 'mcp', 'broker', 'cli']);
 
+// One rule for the state folder, shared by every module (see home.js): ZN_HOME, else <home>/.zn, else an error.
 function znHome() {
-  if (process.env.ZN_HOME) return path.resolve(process.env.ZN_HOME);
-  return path.join(os.homedir(), '.zn');
+  return require('./home').znHome();
 }
 
 function statsFile() {

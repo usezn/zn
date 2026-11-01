@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-30.1';
+const POLICY_RULES_VERSION = '2026-11-01.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -294,7 +294,7 @@ function agentContext(home, cwd, env) {
 function contextOf(opts = {}) {
   // A caller that classifies many words passes the context it already built.
   if (opts.ctx) return opts.ctx;
-  const home = opts.home || os.homedir();
+  const home = opts.home || require('../home').analysisHome();
   const cwd = opts.cwd || process.cwd();
   const env = opts.env || process.env;
   return { home, cwd, env, creds: credentialEnvPaths(env, home, cwd), agent: agentContext(home, cwd, env) };
@@ -387,7 +387,7 @@ function classifyResolved(abs, ctx) {
 
 /** The absolute path a typed path names, after ~ and variables are expanded. */
 function resolvedOf(p, opts = {}) {
-  const home = opts.home || os.homedir();
+  const home = opts.home || require('../home').analysisHome();
   const cwd = opts.cwd || process.cwd();
   return path.resolve(cwd, stripStreams(expandEnv(expandHome(p, home), opts.env || process.env).text));
 }
@@ -2281,7 +2281,7 @@ function bashDenial(cmd, opts = {}) {
 const FIND_PROTECTED_NAME_RE = /^\.?(?:zn|gemini|zcode|claude|codex|cursor|agents)$|^(?:plugins|antigravity-cli|cli|config|installed_plugins\.json|known_marketplaces\.json|config\.json)$/i;
 function findDeleteDenial(words, opts) {
   const ctx = opts.ctx || contextOf(opts);
-  const home = opts.home || os.homedir();
+  const home = opts.home || require('../home').analysisHome();
   const env = opts.env || process.env;
   const cwd = path.resolve(opts.cwd || process.cwd());
   const homes = (ctx.agent && ctx.agent.homes) || [keyOf(slash(path.resolve(home)))];
@@ -2316,7 +2316,7 @@ function findDeleteDenial(words, opts) {
    later value would matter are covered by the targets check (protectedElsewhere). */
 const ASSIGN_WORD_RE = /(?:^|[\s;&|(){}])(?:(?:export|declare|typeset|local|readonly)\s+(?:-\w+\s+)*)?([A-Za-z_][A-Za-z0-9_]{0,63})=("[^"]*"|'[^']*'|(?:\$\([^)]*\)|`[^`]*`|[^\s;&|()<>`])*)/g;
 function shellAssignments(cmd, opts) {
-  const home = opts.home || os.homedir();
+  const home = opts.home || require('../home').analysisHome();
   const env = opts.env || process.env;
   const out = {};
   const unknown = new Set();
@@ -2655,7 +2655,7 @@ function bareHead(h) {
    may lead to (a cd that fails leaves the command where it was, so earlier places stay). `unknown` is set when a cd goes
    somewhere zn cannot follow (cd -, cd $DIR, cd $(...)); `moved` when the command has any cd at all. */
 function cdBasesOf(readings, opts) {
-  const home = opts.home || os.homedir();
+  const home = opts.home || require('../home').analysisHome();
   const env = opts.env || process.env;
   const cwd = path.resolve(opts.cwd || process.cwd());
   const all = new Set([cwd]);
@@ -2724,7 +2724,7 @@ function dotenvElsewhereDenial(text, opts, kind = 'dotenv') {
 }
 
 function dotenvElsewhereOf(text, opts, kind = 'dotenv') {
-  const home = opts.home || os.homedir();
+  const home = opts.home || require('../home').analysisHome();
   const env = opts.env || process.env;
   const expanded = expandEnv(expandHome(text, home), env).text;
   const missing = !fs.existsSync(resolvedOf(text, opts));

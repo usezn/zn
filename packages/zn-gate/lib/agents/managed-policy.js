@@ -246,7 +246,7 @@ function codexManagesZn(hooks) {
 function codexPolicyWarnings(opts = {}) {
   const platform = opts.platform || process.platform;
   const env = opts.env || process.env;
-  const home = opts.codexHome || path.join(require('os').homedir(), '.codex');
+  const home = opts.codexHome || path.join(require('../home').homeDir(), '.codex');
   const reqFile = opts.requirementsFile || codexRequirementsFile(platform, env);
   const managedFile = opts.managedConfigFile || codexManagedConfigFile(platform, home);
   const userFile = opts.userConfig || path.join(home, 'config.toml');

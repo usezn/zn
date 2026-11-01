@@ -162,7 +162,7 @@ async function agentsOf(root, home, env) {
 /** Everything the agents on this machine can reach. */
 async function reach(opts = {}) {
   const root = path.resolve(opts.root || '.');
-  const home = opts.home || os.homedir();
+  const home = opts.home || require('../home').homeDir();
   const env = opts.env || process.env;
   const findings = [];
   const add = (f) => findings.push(f);
@@ -258,7 +258,7 @@ async function reach(opts = {}) {
 const MAX_MEMORY_BYTES = 1024 * 1024;
 
 function memoryFile(home, env) {
-  return path.join(env.ZN_HOME ? path.resolve(env.ZN_HOME) : path.join(home, '.zn'), 'reach-last.json');
+  return path.join(require('../home').stateDir(env, home), 'reach-last.json');
 }
 
 /**

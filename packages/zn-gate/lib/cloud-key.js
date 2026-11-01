@@ -116,8 +116,7 @@ function last4(key) {
 /* ------------------------------ marker ------------------------------ */
 
 function znHome() {
-  if (process.env.ZN_HOME) return path.resolve(process.env.ZN_HOME);
-  return path.join(require('os').homedir(), '.zn');
+  return require('./home').znHome();
 }
 
 function configFile() {

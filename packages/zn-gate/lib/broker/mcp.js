@@ -115,7 +115,7 @@ function denied(message) {
  */
 function createSecretsServer(opts = {}) {
   const cwd = opts.cwd || process.cwd();
-  const home = opts.home || os.homedir();
+  const home = opts.home || require('../home').homeDir();
   const project = deps.findProjectRoot(cwd);
   const agent = opts.agent || process.env.ZN_AGENT || 'mcp';
   // Only an id from the MCP configuration zn wrote (`secrets-mcp --agent`)

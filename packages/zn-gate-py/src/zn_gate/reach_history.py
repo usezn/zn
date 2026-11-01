@@ -25,6 +25,8 @@ import sys
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from .home import account_home
+
 VERSION = 1
 DEFAULT_MAX_SECONDS = 120
 MAX_SECONDS_LIMIT = 3600
@@ -374,7 +376,7 @@ def scan_file(abs_path: str, deadline: float) -> Dict[str, Any]:
 
 def history(home: Optional[str] = None, env: Optional[Dict[str, str]] = None, max_seconds: Optional[int] = None,
             _max_ms: Optional[float] = None) -> Dict[str, Any]:
-    home = os.path.abspath(home or os.path.expanduser("~"))
+    home = os.path.abspath(home or account_home())
     env = env if env is not None else dict(os.environ)
     max_s = min(MAX_SECONDS_LIMIT, max(1, int(max_seconds or DEFAULT_MAX_SECONDS)))
     started = time.time() * 1000

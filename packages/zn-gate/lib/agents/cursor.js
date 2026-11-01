@@ -174,7 +174,7 @@ function respond(d) {
 
 function hooksFile(opts = {}) {
   if ((opts.scope || 'user') === 'project') return path.join(path.resolve(opts.projectDir || process.cwd()), '.cursor', 'hooks.json');
-  return path.join(opts.home || os.homedir(), '.cursor', 'hooks.json');
+  return path.join(opts.home || require('../home').homeDir(), '.cursor', 'hooks.json');
 }
 
 function strip(list) {
@@ -275,7 +275,7 @@ function uninstall(opts = {}) {
 
 function detect(opts = {}) {
   if (whichSync('cursor', (opts.env || process.env).PATH || '')) return true;
-  return fs.existsSync(path.join(opts.home || os.homedir(), '.cursor'));
+  return fs.existsSync(path.join(opts.home || require('../home').homeDir(), '.cursor'));
 }
 
 module.exports = {

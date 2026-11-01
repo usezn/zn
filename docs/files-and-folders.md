@@ -6,6 +6,8 @@ A short list of the files and folders that the commands below touch, taken from 
 
 zn-gate keeps the vault and its settings in a `.zn` folder in your home folder (`~/.zn`).
 
+To keep it somewhere else, set `ZN_HOME` to a folder (an absolute path is best). Without `ZN_HOME`, your home folder must be an absolute path that is not empty and not `/`. If neither is usable (for example a container user with no home folder, or `HOME` empty or relative), zn-gate writes nothing, stops with a message that names `HOME` and `ZN_HOME`, and the agent hooks block the action. In that case set `ZN_HOME`, for example `ZN_HOME=/workspace/.zn`.
+
 | Path | What it is |
 | --- | --- |
 | The vault files | Your stored secrets, encrypted. |

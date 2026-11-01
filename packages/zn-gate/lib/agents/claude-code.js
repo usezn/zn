@@ -272,7 +272,7 @@ function respondInner(d, ev) {
 function configDir(opts = {}) {
   const env = opts.env || process.env;
   if (env.CLAUDE_CONFIG_DIR) return path.resolve(env.CLAUDE_CONFIG_DIR);
-  return path.join(opts.home || os.homedir(), '.claude');
+  return path.join(opts.home || require('../home').homeDir(), '.claude');
 }
 
 function settingsFile(opts = {}) {
@@ -573,7 +573,7 @@ function isZnSecretsServer(s) {
  * server there is zn's, false when it is someone else's, undefined when there is none, null when unreadable. */
 function userMcpServerIsOurs(opts = {}) {
   const env = opts.env || process.env;
-  const file = env.CLAUDE_CONFIG_DIR ? path.join(configDir(opts), '.claude.json') : path.join(opts.home || os.homedir(), '.claude.json');
+  const file = env.CLAUDE_CONFIG_DIR ? path.join(configDir(opts), '.claude.json') : path.join(opts.home || require('../home').homeDir(), '.claude.json');
   let data;
   try {
     data = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
@@ -620,7 +620,7 @@ function isBareZnSecrets(s) {
 function znMcpServerKind(server, cwd, opts = {}) {
   if (server !== MCP_SERVER_NAME) return null;
   const env = opts.env || process.env;
-  const file = env.CLAUDE_CONFIG_DIR ? path.join(configDir(opts), '.claude.json') : path.join(opts.home || os.homedir(), '.claude.json');
+  const file = env.CLAUDE_CONFIG_DIR ? path.join(configDir(opts), '.claude.json') : path.join(opts.home || require('../home').homeDir(), '.claude.json');
   const data = readJsonFile(file);
   if (data === null) return null;
   const userServers = data && typeof data.mcpServers === 'object' && data.mcpServers ? data.mcpServers : {};

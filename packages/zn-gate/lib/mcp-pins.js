@@ -44,13 +44,12 @@ function accountHome() {
     const h = os.userInfo().homedir;
     if (h) return h;
   } catch (_) { /* no passwd entry */ }
-  return os.homedir();
+  return require('./home').homeDir();
 }
 
 /** ~/.zn as the environment names it ($HOME, ZN_HOME): where pins are kept. */
 function znHome() {
-  if (process.env.ZN_HOME) return path.resolve(process.env.ZN_HOME);
-  return path.join(os.homedir(), '.zn');
+  return require('./home').znHome();
 }
 
 function pinsDir() {

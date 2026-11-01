@@ -193,7 +193,7 @@ function respond(d) {
 
 function settingsFile(opts = {}) {
   if ((opts.scope || 'user') === 'project') return path.join(path.resolve(opts.projectDir || process.cwd()), '.gemini', 'settings.json');
-  return path.join(opts.home || os.homedir(), '.gemini', 'settings.json');
+  return path.join(opts.home || require('../home').homeDir(), '.gemini', 'settings.json');
 }
 
 /** The path of the system settings file the docs name (Linux and macOS). */
@@ -287,7 +287,7 @@ function uninstall(opts = {}) {
 }
 
 function detect(opts = {}) {
-  const home = opts.home || os.homedir();
+  const home = opts.home || require('../home').homeDir();
   const env = opts.env || process.env;
   if (whichSync('gemini', env.PATH || '')) return true;
   return ['settings.json', 'oauth_creds.json', 'GEMINI.md', 'tmp'].some((f) => fs.existsSync(path.join(home, '.gemini', f)));

@@ -632,7 +632,7 @@ def test_export_missing_ledger(tmp_path):
 
 
 def test_export_uses_default_file_when_none_given(tmp_path):
-    with mock.patch.object(evidence, "EVIDENCE_FILE", str(tmp_path / "none")):
+    with mock.patch.object(evidence, "evidence_file", lambda: str(tmp_path / "none")):
         assert export_evidence_ledger()["total"] == 0
 
 

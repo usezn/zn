@@ -21,7 +21,7 @@ const os = require('os');
  */
 
 function getKnownEnvironments() {
-  const home = os.homedir();
+  const home = require('./home').homeDir();
   const isWin = process.platform === 'win32';
   const isMac = process.platform === 'darwin';
   const xdgConfig = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
@@ -366,7 +366,7 @@ function sameRealDir(a, b) {
  * config roots the known environments use (XDG, APPDATA, CODEX_HOME).
  */
 function homeScopeRoots() {
-  const roots = [os.homedir()];
+  const roots = [require('./home').homeDir()];
   for (const v of [process.env.XDG_CONFIG_HOME, process.env.APPDATA, process.env.CODEX_HOME]) {
     if (v && path.isAbsolute(v)) roots.push(v);
   }
@@ -441,7 +441,7 @@ function resolveConfig(filePath, scope) {
   if (st.isFile()) return { target: path.join(parents.dir, path.basename(filePath)), dir: parents.dir };
   if (!st.isSymbolicLink()) return { reason: 'config is not a regular file' };
   const real = realOrNull(filePath);
-  const home = realOrNull(os.homedir());
+  const home = realOrNull(require('./home').homeDir());
   const cwd = realOrNull(process.cwd());
   if (!real || !home || !isRegularFile(real)) return { reason: 'config is a symlink to something other than a regular file' };
   if (!isInside(real, home)) {

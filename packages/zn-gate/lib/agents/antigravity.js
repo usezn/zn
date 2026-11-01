@@ -203,8 +203,8 @@ function searchOf(words) {
  */
 function homeOf(t) {
   // A leading ~ is the home folder the hook sees, not a folder named "~". On Windows ~\ counts too.
-  if (t === '~' || t.startsWith('~/')) return path.join(os.homedir(), t.slice(1));
-  if (process.platform === 'win32' && t.startsWith('~\\')) return path.join(os.homedir(), t.slice(2).replace(/\\/g, '/'));
+  if (t === '~' || t.startsWith('~/')) return path.join(require('../home').homeDir(), t.slice(1));
+  if (process.platform === 'win32' && t.startsWith('~\\')) return path.join(require('../home').homeDir(), t.slice(2).replace(/\\/g, '/'));
   return t;
 }
 
@@ -349,7 +349,7 @@ function respond(d) {
 
 function hooksFile(opts = {}) {
   if ((opts.scope || 'user') === 'project') return path.join(path.resolve(opts.projectDir || process.cwd()), '.agents', 'hooks.json');
-  return path.join(opts.home || os.homedir(), '.gemini', 'config', 'hooks.json');
+  return path.join(opts.home || require('../home').homeDir(), '.gemini', 'config', 'hooks.json');
 }
 
 /** Removes zn's handlers from every named hook; returns true when something was removed. */
@@ -497,7 +497,7 @@ function uninstall(opts = {}) {
 }
 
 function detect(opts = {}) {
-  const home = opts.home || os.homedir();
+  const home = opts.home || require('../home').homeDir();
   return fs.existsSync(path.join(home, '.gemini', 'antigravity')) ||
     fs.existsSync(path.join(home, '.gemini', 'antigravity-cli')) ||
     fs.existsSync(path.join(home, '.gemini', 'config'));

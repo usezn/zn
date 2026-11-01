@@ -299,7 +299,7 @@ export const ZnGate = async ({ directory }) => ({
 
 function configDir(opts = {}) {
   const env = opts.env || process.env;
-  return path.join(env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : path.join(opts.home || os.homedir(), '.config'), 'opencode');
+  return path.join(env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : path.join(opts.home || require('../home').homeDir(), '.config'), 'opencode');
 }
 
 function pluginPath(opts = {}) {

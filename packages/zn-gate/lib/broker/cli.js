@@ -62,7 +62,7 @@ function makeIo(io = {}) {
     stderr: io.stderr || process.stderr,
     env: io.env || process.env,
     cwd: io.cwd || process.cwd(),
-    home: io.home || os.homedir(),
+    home: io.home || require('../home').homeDir(),
     vault: io.vault,
     readSecret: io.readSecret,
     confirm: io.confirm,

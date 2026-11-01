@@ -1700,7 +1700,7 @@ function oversizeEvent(agentId, adapter, text, why = 'the event on stdin is too 
  * hooks.whenUnavailable "allow" in ~/.zn/config.json, such events pass, as
  * they do when the engine is missing.
  */
-function refuseInput(agentId, why) {
+function refuseInput(agentId, why, message) {
   if (failModeOf({}) === 'open') {
     process.stderr.write('zn hook: ' + why + '; passed through (hooks.whenUnavailable is "allow")\n');
     // Antigravity denies the call when the hook prints nothing, so passing it through takes an explicit answer.
@@ -1710,7 +1710,7 @@ function refuseInput(agentId, why) {
   // Claude Code and Codex show this stderr to the model, so it never says how to
   // let actions pass unchecked (docs/compat.md documents that for the user).
   // A check that ran out of time gets the same step as every other timeout; an event zn cannot read, the reinstall step.
-  const msg = 'zn: could not read this action (' + why + '), so it was blocked. ' + (why === SUPERVISOR_REASON ? TIMEOUT_STEP : fixHint(agentId));
+  const msg = message || ('zn: could not read this action (' + why + '), so it was blocked. ' + (why === SUPERVISOR_REASON ? TIMEOUT_STEP : fixHint(agentId)));
   process.stderr.write('zn hook: ' + msg + '\n');
   if (agentId === 'cursor') process.stdout.write(JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }));
   // Antigravity does not document its exit codes, so its deny answer is printed as well.
@@ -2013,6 +2013,18 @@ async function handleEvent(args, state, readText) {
   }
   state.stopEvent = raw.hook_event_name === 'Stop';
   state.event = raw.hook_event_name;
+  // No usable state folder (no home, an empty or relative HOME, HOME=/): nothing may be written and the action is blocked
+  // with the words that say what to set. A Stop event is only warned about: exit 2 there makes the agent continue.
+  try {
+    require('../home').znHome();
+  } catch (err) {
+    if (!err || err.name !== 'HomeError') throw err;
+    if (state.stopEvent) {
+      process.stderr.write('zn hook: ' + err.message + ' The last answer was not checked.' + String.fromCharCode(10));
+      return;
+    }
+    return refuseInput(agentId, 'no usable state folder', 'zn: ' + err.message + ' This action was blocked.');
+  }
   const disarm = armCodexFailClosed(agentId, raw.hook_event_name) || armAntigravityFailClosed(agentId, raw);
   try {
     const res = await handle(adapter, raw);

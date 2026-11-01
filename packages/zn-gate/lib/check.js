@@ -1385,7 +1385,7 @@ function nodeWarnings(opts, env) {
  * (each result then has checked: false, and "protected" means set up with no problem found).
  */
 async function check(opts = {}) {
-  const home = opts.home || os.homedir();
+  const home = opts.home || require('./home').homeDir();
   const env = opts.env || process.env;
   const cwd = opts.cwd || process.cwd();
   if (opts.live === false) {

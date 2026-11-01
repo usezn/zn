@@ -77,7 +77,7 @@ function wrappedConfigs(envList) {
  * opts: home, env, cwd, envList (tests).
  */
 async function plan(opts = {}) {
-  const home = opts.home || require('os').homedir();
+  const home = opts.home || require('./home').homeDir();
   const env = opts.env || process.env;
   const cwd = opts.cwd || process.cwd();
   const zc = require('./check');

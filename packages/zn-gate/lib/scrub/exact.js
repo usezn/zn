@@ -280,13 +280,13 @@ function fromZnrules(dir) {
  * collectSources({env, cwd, home, files}) -> [{name, type, value, origin}]
  *   env   environment to inspect (default process.env)
  *   cwd   project root for .env* / .znrules / project .npmrc (optional)
- *   home  home directory (default os.homedir())
+ *   home  home directory (default: the validated home folder)
  *   files false to skip every file source (environment only)
  */
 function collectSources(opts) {
   const o = opts || {};
   const env = o.env || process.env;
-  const home = o.home || os.homedir();
+  const home = o.home || require('../home').analysisHome();
   const out = fromEnv(env);
   if (o.files !== false) {
     out.push(...fromDotenvFiles(o.cwd));

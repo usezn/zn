@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-31.1';
+const SCRUB_RULES_VERSION = '2026-11-01.1';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
