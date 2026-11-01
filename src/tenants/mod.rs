@@ -251,15 +251,15 @@ impl TenantStore {
                     params![id, "Default Org", GLOBAL_NAMESPACE, hash, "superadmin", created_at],
                 )?;
 
-                println!("\n\x1b[32;1m🛡️ zn Initialized Successfully!\x1b[0m");
-                println!("\x1b[33mNo superadmin tenant found. A new one has been seeded.\x1b[0m");
-                println!("Source: {}", source);
+                eprintln!("\n\x1b[32;1m🛡️ zn Initialized Successfully!\x1b[0m");
+                eprintln!("\x1b[33mNo superadmin tenant found. A new one has been seeded.\x1b[0m");
+                eprintln!("Source: {}", source);
                 match (&seed, written_to) {
-                    (SeedKey::Generated(_), Some(path)) => println!(
+                    (SeedKey::Generated(_), Some(path)) => eprintln!(
                         "\x1b[32;1mSuperAdmin API key written to {}\x1b[0m (only your user can read it).\n\x1b[31;1mIMPORTANT: copy it somewhere safe, then delete the file.\x1b[0m\n",
                         path.display()
                     ),
-                    (SeedKey::Generated(_), None) => println!(
+                    (SeedKey::Generated(_), None) => eprintln!(
                         "\x1b[33mThe generated SuperAdmin key was not saved. Set ZN_API_KEY to choose the key.\x1b[0m\n"
                     ),
                     (SeedKey::FromEnv(_), _) => {}
