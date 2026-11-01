@@ -113,6 +113,34 @@ test('sync with no network: no internal code on stdout or stderr, next step give
   assert.match(r.stderr, /\[zn\] details: ZN_TEAM_NETWORK/);
 });
 
+test('sync with no network and an expired saved policy: one more line says strict mode, same exit code', async () => {
+  fake.teamSync = async () => ({ policy: { status: 'offline', error: 'ZN_TEAM_NETWORK' }, upload: { status: 'offline', uploaded: 0, pending: 1 } });
+  fake.teamInfo = async () => ({ joined: true, policy: { state: 'expired', version: 7, expires_at: '2026-10-30T12:00:00Z' } });
+  const r = await run(['team', 'sync']);
+  assert.strictEqual(r.code, 1);
+  assert.strictEqual(r.stderr, '[zn] Could not reach the zn server. Nothing was changed. Check your internet connection and run again: zn team sync\n' +
+    '[zn] Your saved organization policy (version 7) expired on 2026-10-30T12:00:00Z, so this machine is in strict mode (only restrictions apply) until a sync works.\n');
+  assert.ok(!/ZN_TEAM_NETWORK/.test(r.stdout + r.stderr));
+  assert.strictEqual(r.stdout, '');
+});
+
+test('sync with no network and a valid saved policy: no strict mode line', async () => {
+  fake.teamSync = async () => ({ policy: { status: 'offline', error: 'ZN_TEAM_NETWORK' }, upload: { status: 'offline', uploaded: 0, pending: 1 } });
+  fake.teamInfo = async () => ({ joined: true, policy: { state: 'active', version: 7, expires_at: '2026-11-08T12:00:00Z' } });
+  const r = await run(['team', 'sync']);
+  assert.strictEqual(r.code, 1);
+  assert.strictEqual(r.stderr, '[zn] Could not reach the zn server. Nothing was changed. Check your internet connection and run again: zn team sync\n');
+});
+
+test('sync with no network and the vault locked: the cache decides, never a crash', async () => {
+  fake.teamSync = async () => ({ policy: { status: 'offline', error: 'ZN_TEAM_NETWORK' }, upload: { status: 'offline', uploaded: 0, pending: 1 } });
+  fake.teamInfo = async () => { throw new Error('vault is locked'); };
+  const r = await run(['team', 'sync']);
+  assert.strictEqual(r.code, 1);
+  assert.ok(!/strict mode/.test(r.stderr), 'no HOME policy here, so no strict mode line: ' + r.stderr);
+  assert.match(r.stderr, /^\[zn\] Could not reach the zn server\. Nothing was changed\./);
+});
+
 test('sync with an inactive organization says so and does not blame a missing policy', async () => {
   fake.teamSync = async () => ({ policy: { status: 'none' }, upload: { status: 'inactive', uploaded: 0, pending: 3 } });
   const r = await run(['team', 'sync']);

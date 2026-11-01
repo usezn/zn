@@ -246,7 +246,7 @@ patterns are skipped on the machine, and all custom detectors together get
 | Situation | What happens |
 |---|---|
 | No network, policy still valid (policies are valid for 7 days) | The policy keeps applying. Audit records wait in `~/.zn/audit.jsonl` and are uploaded later. The automatic sync keeps the reason it failed (`zn team status` shows it under "Last sync") and writes one audit record, then at most one more every 6 hours while it keeps failing. |
-| No network for longer than the policy's validity | Strict mode: the restrictions keep applying; anything the organization had opened is withdrawn until a fresh policy arrives. `zn team status` says so. |
+| No network for longer than the policy's validity | Strict mode: the restrictions keep applying; anything the organization had opened is withdrawn until a fresh policy arrives. `zn team status` and `zn team sync` say so (sync adds one line: the saved policy expired on that date, and the machine is in strict mode until a sync works). |
 | A downloaded policy fails a check (signature, key, organization, expiry, older version, same version with other content) | It is refused and the last accepted policy stays. The refusal is recorded in the audit log. |
 | An admin removes this machine | Uploads stop. `zn team status` shows "removed from org". The last policy applies until it expires, then strict mode. |
 | The vault is locked | Nothing is downloaded or uploaded until `zn unlock`. The last accepted policy still applies to every use of a secret, which needs the vault unlocked anyway. |

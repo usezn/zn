@@ -157,6 +157,7 @@ test('closed port: zn team sync says the server was not reached, exits 1, keeps 
   assert.strictEqual(r.status, 1, r.stdout + r.stderr);
   assert.match(r.stderr, /Could not reach the zn server\. Nothing was changed\./);
   assert.match(r.stderr, /zn team sync/);
+  assert.doesNotMatch(r.stderr, /strict mode/, 'a valid cached policy is not called strict mode');
   assert.doesNotMatch(r.stdout + r.stderr, /Policy: (updated|current)/);
   assert.ok(!/ECONNREFUSED|stack|at .*\.js:\d+/.test(r.stdout + r.stderr), 'no raw error in the default output');
   assert.ok(r.ms < 8000, 'fails fast on a closed port: ' + r.ms + ' ms');
@@ -232,6 +233,7 @@ test('policy expired and no network: strict mode, restrictions and detectors sta
     const sync = await run(['team', 'sync']);
     assert.strictEqual(sync.status, 1);
     assert.match(sync.stderr, /Could not reach the zn server/);
+    assert.match(sync.stderr, /expired on \d{4}-\d\d-\d\dT[^,]*, so this machine is in strict mode \(only restrictions apply\) until a sync works\./);
     // Restrictions keep applying.
     const codex = await request('codex', '__ZN_PROD_DB_URL__', 'http://127.0.0.1:9/x');
     assert.strictEqual(codex.isError, true);
