@@ -35,6 +35,9 @@ MAX_DEPTH = 6
 MAX_FILES = 50000
 MAX_LISTED = 200
 MAX_STRINGS_PER_LINE = 200000
+# A very long line is scanned in slices of about this many characters, with the deadline checked between slices,
+# so one huge line cannot run far past --max-seconds. Lines shorter than this are scanned whole.
+SLICE_CHARS = 4 * 1024 * 1024
 
 # Agents whose history is a plain JSON Lines file and documented. Cursor and OpenCode keep theirs in a
 # database (SQLite), which this version does not read: they are reported as not scanned.
@@ -277,7 +280,32 @@ def _cut_markers(text: str, known: set) -> str:
     return " ".join(pieces)
 
 
-def scan_line(line: str, counts: Dict[str, int]) -> None:
+class _TimeUp(Exception):
+    """Raised between slices of a long line when the deadline has passed."""
+
+
+def _now_ms() -> float:
+    return time.time() * 1000
+
+
+def _slices(text: str):
+    """Yields the text whole when it is short, else slices cut at a line break or a space when one is near."""
+    n = len(text)
+    if n <= SLICE_CHARS:
+        yield text
+        return
+    pos = 0
+    while pos < n:
+        end = min(pos + SLICE_CHARS, n)
+        if end < n:
+            cut = max(text.rfind("\n", pos, end), text.rfind(" ", pos, end))
+            if cut >= pos and cut > end - 65536:
+                end = cut + 1
+        yield text[pos:end]
+        pos = end
+
+
+def scan_line(line: str, counts: Dict[str, int], expired: Optional[Callable[[], bool]] = None) -> None:
     """Adds the secret types found in one line to counts ({TYPE: n}). Values are dropped here."""
     text = line
     if line.lstrip()[:1] in ("{", "["):
@@ -289,18 +317,25 @@ def scan_line(line: str, counts: Dict[str, int]) -> None:
         return
     from . import rules
     types = _types()
-    text = _cut_markers(text, set(types.values()) | {"URL_PASSWORD"})
-    _redacted, detections = rules.redact_secrets(text)
-    for d in detections:
-        t = types.get(d["rule"])
-        if t is None:
-            continue
-        counts[t] = counts.get(t, 0) + 1
+    known = set(types.values()) | {"URL_PASSWORD"}
+    first = True
+    for piece in _slices(text):
+        if not first and expired is not None and expired():
+            raise _TimeUp()
+        first = False
+        _redacted, detections = rules.redact_secrets(_cut_markers(piece, known))
+        for d in detections:
+            t = types.get(d["rule"])
+            if t is None:
+                continue
+            counts[t] = counts.get(t, 0) + 1
 
 
 def scan_file(abs_path: str, deadline: float) -> Dict[str, Any]:
     """Stream one file. Returns {counts, bytes, complete, reason}.
-    `deadline` is a timestamp in ms: past it the file is left half read and reported so."""
+    `deadline` is a timestamp in ms: past it the file is left half read and reported so. The deadline is checked
+    after every chunk that was read (never on the final empty read, so a file read to the end is complete) and
+    between slices of a very long line."""
     counts: Dict[str, int] = {}
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
     try:
@@ -318,16 +353,16 @@ def scan_file(abs_path: str, deadline: float) -> Dict[str, Any]:
         dropping = False
 
         def flush(b: bytes) -> None:
-            scan_line(b.decode("utf-8", errors="replace"), counts)
+            scan_line(b.decode("utf-8", errors="replace"), counts, lambda: _now_ms() > deadline)
 
         while True:
-            if time.time() * 1000 > deadline:
-                complete = False
-                reason = "time-limit"
-                break
             buf = os.read(fd, CHUNK)
             n = len(buf)
             if n <= 0:
+                break
+            if _now_ms() > deadline:
+                complete = False
+                reason = "time-limit"
                 break
             nbytes += n
             start = 0
@@ -361,6 +396,9 @@ def scan_file(abs_path: str, deadline: float) -> Dict[str, Any]:
                     carry_len += rest
         if carry_len > 0 and reason != "time-limit":
             flush(b"".join(carry))
+    except _TimeUp:
+        complete = False
+        reason = "time-limit"
     except Exception:  # noqa: BLE001 - any read failure is reported, never raised
         complete = False
         reason = reason or "unreadable"
@@ -377,7 +415,7 @@ def history(home: Optional[str] = None, env: Optional[Dict[str, str]] = None, ma
     home = os.path.abspath(home or os.path.expanduser("~"))
     env = env if env is not None else dict(os.environ)
     max_s = min(MAX_SECONDS_LIMIT, max(1, int(max_seconds or DEFAULT_MAX_SECONDS)))
-    started = time.time() * 1000
+    started = _now_ms()
     deadline = started + (_max_ms if _max_ms is not None else max_s * 1000)  # _max_ms: tests only
 
     skipped: List[Dict[str, Any]] = []
@@ -401,7 +439,7 @@ def history(home: Optional[str] = None, env: Optional[Dict[str, str]] = None, ma
     by_agent: Dict[str, Dict[str, Any]] = {entry["id"]: entry for entry in agents}
     for f in plan:
         shown = display(home, f["abs"])
-        if time_limit_hit or time.time() * 1000 > deadline:
+        if time_limit_hit or _now_ms() > deadline:
             time_limit_hit = True
             not_reached += 1
             if len(incomplete) < MAX_LISTED:

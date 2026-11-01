@@ -30,6 +30,9 @@ const MAX_DEPTH = 6;
 const MAX_FILES = 50000;
 const MAX_LISTED = 200;
 const MAX_STRINGS_PER_LINE = 200000;
+// A very long line is scanned in slices of about this many characters, with the deadline checked between slices,
+// so one huge line cannot run far past --max-seconds. Lines shorter than this are scanned whole.
+const SLICE_CHARS = 4 * 1024 * 1024;
 
 // Agents whose history is a plain JSON Lines file and documented. Cursor and OpenCode keep theirs in a
 // database (SQLite), which this version does not read: they are reported as not scanned.
@@ -204,7 +207,25 @@ function strings(v, out) {
 }
 
 /** Adds the secret types found in one line to counts ({ TYPE: n }). Values are dropped here. */
-function scanLine(engine, line, counts) {
+class TimeUp extends Error {}
+
+function slices(text) {
+  if (text.length <= SLICE_CHARS) return [text];
+  const out = [];
+  let pos = 0;
+  while (pos < text.length) {
+    let end = Math.min(pos + SLICE_CHARS, text.length);
+    if (end < text.length) {
+      const cut = Math.max(text.lastIndexOf('\n', end - 1), text.lastIndexOf(' ', end - 1));
+      if (cut >= pos && cut > end - 65536) end = cut + 1;
+    }
+    out.push(text.slice(pos, end));
+    pos = end;
+  }
+  return out;
+}
+
+function scanLine(engine, line, counts, expired) {
   let text = line;
   const t = line.trimStart().charCodeAt(0);
   if (t === 123 || t === 91) { // { or [
@@ -213,18 +234,24 @@ function scanLine(engine, line, counts) {
     } catch (_) { text = line; }
   }
   if (text.length < 8) return;
-  const spans = engine.scan(text, { exact: false, pii: false });
-  for (const s of spans) {
-    if (s.source === 'pii') continue;
-    counts[s.type] = (counts[s.type] || 0) + 1;
+  const parts = slices(text);
+  for (let i = 0; i < parts.length; i++) {
+    if (i > 0 && expired && expired()) throw new TimeUp();
+    const spans = engine.scan(parts[i], { exact: false, pii: false });
+    for (const s of spans) {
+      if (s.source === 'pii') continue;
+      counts[s.type] = (counts[s.type] || 0) + 1;
+    }
   }
 }
 
 /**
  * Stream one file. Returns { counts, bytes, complete, reason }.
- * `deadline` is a timestamp in ms: past it the file is left half read and reported so.
+ * `deadline` is a timestamp in ms: past it the file is left half read and reported so. It is checked after every
+ * chunk that was read (never on the final empty read, so a file read to the end is complete) and between slices
+ * of a very long line. `now` is the clock (tests only).
  */
-function scanFile(engine, abs, deadline) {
+function scanFile(engine, abs, deadline, now = Date.now) {
   const counts = {};
   let fd;
   try {
@@ -242,11 +269,11 @@ function scanFile(engine, abs, deadline) {
     let carry = [];
     let carryLen = 0;
     let dropping = false;
-    const flush = (b) => scanLine(engine, b.toString('utf8'), counts);
+    const flush = (b) => scanLine(engine, b.toString('utf8'), counts, () => now() > deadline);
     for (;;) {
-      if (Date.now() > deadline) { complete = false; reason = 'time-limit'; break; }
       const n = fs.readSync(fd, buf, 0, CHUNK, null);
       if (n <= 0) break;
+      if (now() > deadline) { complete = false; reason = 'time-limit'; break; }
       bytes += n;
       let start = 0;
       for (;;) {
@@ -275,9 +302,9 @@ function scanFile(engine, abs, deadline) {
       }
     }
     if (carryLen > 0 && reason !== 'time-limit') flush(Buffer.concat(carry));
-  } catch (_) {
+  } catch (e) {
     complete = false;
-    reason = reason || 'unreadable';
+    reason = e instanceof TimeUp ? 'time-limit' : (reason || 'unreadable');
   } finally {
     try { fs.closeSync(fd); } catch (_) { /* closed */ }
   }

@@ -279,3 +279,47 @@ test('a 300 MB history is scanned in streaming mode', { skip: process.env.ZN_HIS
   assert.ok(r.totals.bytes_scanned >= 300 * 1024 * 1024);
   assert.ok(rssGrowthMb < 400);
 });
+
+// Deadline handling with a fake clock and a stub engine that counts one finding per call.
+function fakeNow(okCalls) {
+  let n = 0;
+  return () => (++n <= okCalls ? 0 : 1e15);
+}
+
+function stubEngine() {
+  const e = { calls: 0, scan() { e.calls++; return [{ type: 'AWS_KEY', source: 'rule' }]; } };
+  return e;
+}
+
+function scanWith(t, text, now, engine) {
+  const { _internal } = require('../lib/reach/history');
+  const { home } = machine(t);
+  const abs = put(home, 'f.jsonl', text);
+  return _internal.scanFile(engine, abs, 1, now);
+}
+
+test('a file read to the end is complete even if the deadline passes before the empty read', (t) => {
+  const engine = stubEngine();
+  const r = scanWith(t, 'first line here\nlast line here', fakeNow(1), engine);
+  assert.equal(r.complete, true);
+  assert.equal(r.reason, null);
+  assert.equal(engine.calls, 2); // the last line, which has no newline, is flushed too
+});
+
+test('a deadline in the middle of a file reports time-limit with partial results', (t) => {
+  const engine = stubEngine();
+  const line = 'x'.repeat(99) + '\n';
+  const r = scanWith(t, line.repeat(30000), fakeNow(1), engine); // about 3 MB: three chunks
+  assert.equal(r.complete, false);
+  assert.equal(r.reason, 'time-limit');
+  assert.ok(engine.calls > 0 && engine.calls < 30000);
+});
+
+test('one very long line stops within a bounded amount after the deadline', (t) => {
+  const engine = stubEngine();
+  const text = 'filler words '.repeat(500000) + '\n'; // about 6.5 MB, more than one slice
+  const r = scanWith(t, text, fakeNow(2), engine); // chunk check ok, first slice boundary ok, the next is past it
+  assert.equal(r.complete, false);
+  assert.equal(r.reason, 'time-limit');
+  assert.ok(engine.calls <= 2);
+});
