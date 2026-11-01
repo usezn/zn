@@ -634,6 +634,12 @@ MCP servers are tool servers your agent talks to. zn-shield sits between your ag
 
 **What to do:** keep the real value out of that file. For a header or URL value, use an environment variable your agent supports and keep the real value in your own shell settings. For other values, `zn secret set NAME`, then put `__ZN_NAME__` in the file. Rotate the value if the file was ever committed or shared.
 
+#### "usage: zn-gate pins approve `<server>`|--all" / "zn-gate pins approve runs only in your own terminal" / "Not approved: what you typed did not match" / "zn-gate pins: `<reason>`"
+
+**What happened:** `zn-gate pins approve` accepts the changed tools of an MCP server again, and only a person at a terminal may do that. The messages mean: the command needs a server name or `--all`; it ran somewhere other than your own terminal (for example through an agent); what you typed to confirm did not match; or the reason after `zn-gate pins:`. Nothing was approved.
+
+**What to do:** run `zn-gate pins` to see the servers and their full keys, then run `zn-gate pins approve <server>` (or `--all`) in your own terminal and type the confirmation exactly as asked. See also [shield tools changed](#zn-shield-tools-changed--zn-shield-tools-refused).
+
 ### A rule blocked text that looked like an attack
 
 #### "zn-gate blocked `<target>`. Reason: `<description>` (rule: `<id>`)"
