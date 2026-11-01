@@ -2,6 +2,28 @@
 
 Branch `fix/zcode-plugin-windows` at e08aa22b (the plugin starts a `/bin/sh` hook and a PowerShell hook for every event). Official ZCode 3.16.3, its own headless runtime (`resources/glm/zcode.cjs`, run as the app runs it), fake local model provider, fictitious values only. The plugin is the one built from the branch (`plugins/tools/build-plugin-repo.js --target zcode`) with the published zn-gate 1.14.1 tarball (sha256 813bc6ffabd961fab9f1bd32cd71070bf34177aac4069dd8558ec3182d77c9de).
 
+## Rerun on 2026-11-01: `origin/next` (033af8db9) and the 1.15.0-rc.1 tag (148b03975)
+
+Same official app (3.16.3.8992, `.deb` sha256 `128132b195977fd0a8c8a6c295cf42fe159222d7a5c5efefd8b5f00ef88ab8b6` on Debian 12; installer sha256 `B4FCCC1EAD9922D9066E083D53D3BF92BDEAC3124767D4352FD0583E5399382F` on Windows Server 2022), same kits (`kit/`, `kit-windows/`), fictitious values only, throw-away VMs. The plugin is built from the sha under test with `build-plugin-repo.js --target zcode` (it vendors zn-gate 1.14.1, the release the plugin is pinned to) and `zn-gate check` is the one packed from the same sha (next) or the published 1.15.0-rc.1 tarball.
+
+| Run | sha | OS | Result |
+|---|---|---|---|
+| E1, I1, J2 and the rest of the 29 cases | next 033af8db9 | Linux | 29 of 29 pass (I1 and J2: protected, J2 notes the double check) |
+| E1, I1, J2 and the rest of the 29 cases | 1.15.0-rc.1 | Linux | 28 of 29 pass (I1 and J2 pass); the failure is A0, which expects 8 listed hooks and finds 4 because that tag has no PowerShell hook |
+| the 16 cases of the Windows kit, E1 included | next 033af8db9 | Windows | 16 of 16 pass; **E1 now passes** (`zn-gate check` reports the plugin as protected) |
+| the 16 cases of the Windows kit, E1 included | 1.15.0-rc.1 | Windows | 3 of the 10 cases that ran pass (the script stops where it looks for the PowerShell hook, which that tag does not have), E1 fails: the tag has only the `/bin/sh` hook, which cannot start on Windows, so ZCode runs every call unchecked (the `.env` and `~/.aws/credentials` reads and the MCP call with a key succeed) and `zn-gate check` says "NOT protected" |
+
+The Windows kit has no I1 or J2 case (they need the `zn hooks install` pty); E1 is its check of `zn-gate check` with the plugin alone. The PowerShell hook and the E1 fix are in `next` only, not in 1.15.0-rc.1 or `release/1.15.0`.
+
+### Hook cost measured on this rerun (`durationMs`)
+
+| System | Hook | First call of a session | Later calls |
+|---|---|---|---|
+| Linux (c6i.large) | `/bin/sh` hook | 1.4 to 1.6 s | 0.23 to 0.25 s |
+| Windows (t3.large) | PowerShell hook | the first UserPromptSubmit hit the 30 s timeout in both Windows runs of next (a hook that times out lets the prompt through); a tool call right after took 5.4 s | 2.4 to 2.7 s per hook (PreToolUse, PostToolUse) |
+
+The `/bin/sh` hook on Windows fails in 0.15 to 0.8 s and never blocks. These Windows figures are higher than the 0.75 s per call of the earlier run on another machine type.
+
 ## Windows (Windows Server 2022, 3.16.3.8992)
 
 - Installer: https://cdn-zcode.z.ai/zcode/electron/releases/3.16.3/windows-x64/ZCode-3.16.3-win-x64.exe, sha256 `B4FCCC1EAD9922D9066E083D53D3BF92BDEAC3124767D4352FD0583E5399382F`, 190777144 bytes, Authenticode signature Valid; silent install (`/S`). `zcode.cjs` sha256 `97490D0F06A7A225D54D47817ACF4B4859CDB268B59F2490CAAEDA982BEF063A` (the same file as in the Linux package); runtime zcode-cli 0.17.0.
