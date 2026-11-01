@@ -105,3 +105,64 @@ test('the agent-level environment check refuses the same variables', () => {
     assert.equal(patterns.classifyEnv(k, v), null, k);
   }
 });
+
+test('a decoy assignment before the real key or value does not hide it', () => {
+  for (const c of [
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_KEY_0=diff.external GIT_CONFIG_VALUE_0='cat ~/.aws/credentials;:' git diff",
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.external GIT_CONFIG_VALUE_0=cat GIT_CONFIG_VALUE_0='cat ~/.aws/credentials;:' git diff",
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_VALUE_0=cat GIT_CONFIG_KEY_0=diff.external GIT_CONFIG_VALUE_0='cat ~/.aws/credentials;:' git diff",
+    "export GIT_CONFIG_KEY_0=user.name; GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='cat ~/.aws/credentials;:' git log",
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name; GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='cat ~/.aws/credentials;:' git log",
+  ]) {
+    assert.ok(denied(c), 'allowed: ' + c);
+  }
+  // git reads only the decimal index: KEY_00 is not read, so a KEY_00 decoy cannot hide KEY_0 and is not judged itself.
+  assert.ok(denied("GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_00=user.name GIT_CONFIG_KEY_0=diff.external GIT_CONFIG_VALUE_0='cat ~/.aws/credentials;:' git diff"));
+  assert.equal(denied('GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_00=core.pager GIT_CONFIG_VALUE_00=x GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=x git commit'), null);
+});
+
+test('more keys that run a program are read as code', () => {
+  for (const [k, v] of [
+    ['trailer.t.command', 'cat ~/.aws/credentials;:'], ['interactive.diffFilter', 'cat ~/.aws/credentials;:'],
+    ['sendemail.sendmailCmd', 'cat ~/.aws/credentials;:'], ['sendemail.toCmd', 'cat ~/.aws/credentials;:'],
+    ['sendemail.ccCmd', 'cat ~/.aws/credentials;:'], ['sendemail.headerCmd', 'cat ~/.aws/credentials;:'],
+    ['sendemail.smtpServer', '/tmp/mailer;cat ~/.aws/credentials'],
+  ]) {
+    assert.ok(denied('GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=' + k + " GIT_CONFIG_VALUE_0='" + v + "' git log"), 'allowed env: ' + k);
+    assert.ok(denied('git -c ' + k + "='" + v + "' log"), 'allowed -c: ' + k);
+    assert.deepEqual(patterns.classifyEnv('GIT_CONFIG_KEY_0', k), { kind: 'code' }, k);
+  }
+});
+
+test('git -c and --config-env pairs that run a program are read as code', () => {
+  for (const c of [
+    "git -c diff.external='cat ~/.aws/credentials;:' diff",
+    "git -c core.pager='cat ~/.aws/credentials;:' log",
+    "git -C . -c core.pager='cat ~/.aws/credentials #' log",
+    "sudo git -c alias.x='!cat ~/.aws/credentials;:' x",
+    "git -c core.hooksPath=hooks commit",
+    "git -c core.pager=$P log",
+    "git --config-env=core.pager=P log",
+    "P='cat ~/.aws/credentials;:' git --config-env=core.pager=P log",
+    "git --config-env core.pager=P log",
+  ]) {
+    assert.ok(denied(c), 'allowed: ' + c);
+  }
+  for (const c of [
+    'git -c core.pager=cat log',
+    'git -c user.name=x -c user.email=x@example.com commit -m msg',
+    'git -c core.fsmonitor=false status',
+    'git -c pager.log=false log',
+    'git -c alias.st=status st',
+    "P=cat git --config-env=core.pager=P log",
+    'git -c color.ui=always log',
+  ]) {
+    assert.equal(denied(c), null, 'refused: ' + c + ' -> ' + denied(c));
+  }
+});
+
+test('GIT_CONFIG_GLOBAL to a file says that zn does not read the file', () => {
+  const msg = denied('GIT_CONFIG_GLOBAL=~/.gitconfig-work git commit');
+  assert.ok(msg && /configuration file/.test(msg) && !/chosen in the command line/.test(msg), String(msg));
+  assert.ok(denied('GIT_CONFIG_SYSTEM=evil.cfg git log'));
+});
