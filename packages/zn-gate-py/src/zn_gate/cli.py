@@ -512,10 +512,20 @@ def _prune_info(name: str, parent: str) -> Optional[Dict[str, Any]]:
     return {"silent": False, "reason": reason}
 
 
+def _scan_path_missing_message(abs_path: str) -> str:
+    # The same text as the npm package.
+    return f"Target path does not exist: {abs_path}. Check the spelling and the folder you run zn-gate from, then try again."
+
+
 def cmd_scan(args: argparse.Namespace) -> int:
     target_path = Path(args.path)
     if not target_path.exists():
-        print(f"Error: target path not found: {target_path}. Check the spelling and the folder you run zn-gate from, then try again.", file=sys.stderr)
+        abs_path = os.path.abspath(args.path)
+        message = _scan_path_missing_message(abs_path)
+        print(f"Error: {message}", file=sys.stderr)
+        # With --format json a consumer gets an error object on stdout, not an empty stream.
+        if getattr(args, "format", "text") == "json":
+            print(json.dumps({"error": {"code": "path_not_found", "message": message, "path": abs_path}}, indent=2))
         return 1
 
     files_to_scan: List[Path] = []

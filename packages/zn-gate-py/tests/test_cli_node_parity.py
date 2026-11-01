@@ -1,4 +1,5 @@
 """The Python CLI and the Node CLI agree on the version and on basic exit codes."""
+import json
 import os
 import re
 import shutil
@@ -53,3 +54,16 @@ def test_unknown_command_exits_1_with_the_same_message():
     assert node.returncode == py.returncode == 1
     assert node.stderr == py.stderr
     assert "Unknown command: bogus" in py.stderr
+
+
+def test_missing_scan_path_json_error_is_the_same_in_both(tmp_path):
+    missing = str(tmp_path / "does-not-exist")
+    node, py = _node("scan", missing, "--format", "json"), _py("scan", missing, "--format", "json")
+    assert node.returncode == py.returncode == 1
+    assert node.stdout == py.stdout
+    assert node.stderr == py.stderr
+    body = json.loads(py.stdout)
+    assert set(body["error"]) == {"code", "message", "path"}
+    assert body["error"]["code"] == "path_not_found"
+    assert body["error"]["path"] == os.path.abspath(missing)
+    assert py.stderr == "Error: " + body["error"]["message"] + "\n"

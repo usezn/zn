@@ -41,7 +41,7 @@ def _scan(path, fmt="text", **kw):
 
 def test_scan_missing_path(tmp_path, capsys):
     assert _scan(tmp_path / "nope") == 1
-    assert "target path not found" in capsys.readouterr().err
+    assert "Target path does not exist" in capsys.readouterr().err
 
 
 def test_scan_empty_directory(tmp_path, capsys):

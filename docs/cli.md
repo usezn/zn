@@ -199,6 +199,20 @@ Exit codes: `0` nothing found and everything that matched was read, `1` somethin
 
 A scan never reports a clean result for something it could not read. A folder it cannot open is listed under "Directories not scanned" (reason: cannot be read), in `skipped_dirs` for `--format json` and as a notice for `--format github`. If no file was read at all, the output says "No files were scanned" (a `warning` field in JSON) and the text report shows `NOTHING SCANNED` instead of `PASSED`. The exit code is `3` in that case, so a CI job cannot pass on a scan that looked at nothing; a path that does not exist exits `1`. The same exit code `3` applies when a file was skipped (2 MiB or larger, cannot be read, not a regular file, or a binary `.key` file) or a folder could not be opened, because the result does not cover everything that matched. Folders skipped by name (such as `node_modules`) do not count. Links found inside the folder are not followed and are not listed. Pass `--allow-partial` to accept skipped files and folders (exit `0`, still listed; `--format json` has `"incomplete": true`). Python also has `--no-fail`, which always exits `0`. The Node (`npx zn-gate`) and Python (`pip install zn-gate`) versions give the same exit codes and the same JSON fields (`skipped_dirs`, `warning`) for these cases; the text report differs in its wording and in how it prints paths.
 
+A path that does not exist exits `1`. The message on stderr is the same in the npm and the Python package. With `--format json`, the output on stdout is then an error object instead of an empty stream, with the same fields in both packages:
+
+```json
+{
+  "error": {
+    "code": "path_not_found",
+    "message": "Target path does not exist: /path/to/folder. Check the spelling and the folder you run zn-gate from, then try again.",
+    "path": "/path/to/folder"
+  }
+}
+```
+
+`path` is the absolute path that was looked up.
+
 ### `audit`
 
 ```bash

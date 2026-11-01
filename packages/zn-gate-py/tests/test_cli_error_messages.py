@@ -94,7 +94,7 @@ def test_missing_scan_path_names_the_next_step(tmp_path, capsys):
     assert cli.cmd_scan(_scan_ns(tmp_path / "nope.txt")) == 1
     err = capsys.readouterr().err
     assert err.count("\n") == 1  # still one line
-    assert "target path not found" in err and "Check the spelling" in err
+    assert "Target path does not exist" in err and "Check the spelling" in err
 
 
 @needs_non_root

@@ -566,11 +566,21 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
   return filesToScan;
 }
 
+// The message of a scan whose path does not exist: the same text in the npm and the Python package.
+function scanPathMissingMessage(resolved) {
+  return `Target path does not exist: ${resolved}. Check the spelling and the folder you run zn-gate from, then try again.`;
+}
+
 async function handleScan(targetPath, options) {
   const resolved = path.resolve(targetPath || '.');
+  const wantsJson = Boolean(options.formatGiven) && String(options.format).toLowerCase() === 'json';
   if (!fs.existsSync(resolved)) {
-    process.stderr.write(`Error: Target path does not exist: ${resolved}\n`);
-    process.exit(1);
+    const message = scanPathMissingMessage(resolved);
+    process.stderr.write(`Error: ${message}\n`);
+    // With --format json a consumer gets an error object on stdout, not an empty stream.
+    if (wantsJson) process.stdout.write(JSON.stringify({ error: { code: 'path_not_found', message, path: resolved } }, null, 2) + '\n');
+    process.exitCode = 1;
+    return;
   }
 
   const format = options.formatGiven ? String(options.format).toLowerCase() : 'text';

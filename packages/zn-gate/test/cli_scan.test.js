@@ -406,6 +406,27 @@ test('scan of an empty folder or a missing path never says PASSED without readin
   }
 });
 
+test('scan of a missing path with --format json prints an error object on stdout, the same message on stderr', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-scan-json-err-'));
+  try {
+    const missing = path.join(dir, 'does-not-exist');
+    const res = scanJson([missing, '--format', 'json']);
+    assert.strictEqual(res.status, 1, res.stderr);
+    const body = JSON.parse(res.stdout);
+    assert.deepStrictEqual(Object.keys(body), ['error']);
+    assert.deepStrictEqual(Object.keys(body.error), ['code', 'message', 'path']);
+    assert.strictEqual(body.error.code, 'path_not_found');
+    assert.strictEqual(body.error.path, path.resolve(missing));
+    assert.strictEqual(res.stderr, `Error: ${body.error.message}\n`);
+    // Without --format json stdout stays empty, as before.
+    const text = scanJson([missing]);
+    assert.strictEqual(text.status, 1);
+    assert.strictEqual(text.stdout, '');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 for (const [label, cwdIsReal] of [['cwd is the real folder, target goes through a link', true], ['cwd goes through a link, target is the real folder', false]]) {
   test(`scan shows clean relative paths: ${label}`, (t) => {
     const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-scan-link-')));
