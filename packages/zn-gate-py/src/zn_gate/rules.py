@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-31.6
+RULES_VERSION: 2026-10-31.7
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-10-31.6"
+RULES_VERSION = "2026-10-31.7"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -193,7 +193,7 @@ def _test_multi_zh(text: str) -> bool:
 INJECTION_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     ('pi:ignore_previous', _rc(_override_rule_source('ignore'), re.IGNORECASE), 'Override prior instructions'),
     ('pi:disregard', _rc(_override_rule_source('disregard'), re.IGNORECASE), 'Disregard instructions'),
-    ('pi:forget', _rc(r"""(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))""", re.IGNORECASE), 'Forget-context attack'),
+    ('pi:forget', _rc(r"""(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))|(?<![A-Za-z0-9_])(?<!n't )(?<!n’t )(?<!not )(?<!never )(?<!ever )(?<!dont )forget\s+(?:(?:(?:the|my|these|those|our|its|their)\s+)?(?:(?:previous|prior|above|earlier|preceding|foregoing|original|initial|existing|system|safety|security|former|developer)\s+){1,2}(?:instructions?|guidelines?|directives?|guardrails?|directions)|(?:the\s+)?(?:instructions|guardrails|directives))(?![A-Za-z0-9_])""", re.IGNORECASE), 'Forget-context attack'),
     ('pi:identity_override', _rc(r'you\s+are\s+now', re.IGNORECASE), 'Identity override'),
     ('pi:new_instructions', _rc(r'new\s+instructions?:', re.IGNORECASE), 'Instruction replacement'),
     ('pi:system_tag', _rc(r"""(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system(?![A-Za-z0-9_])[^<>]*>""", re.IGNORECASE), 'Fake system tag'),
