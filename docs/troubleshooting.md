@@ -687,9 +687,9 @@ To see where these rules apply, and what happens when the file is not valid, rea
 
 **What to do:** run `zn-gate --help` to see the commands. Examples: `zn-gate scan .`, `zn-gate scan . --format json`, `zn-gate analyze "some text"`.
 
-#### "[zn-gate] Fatal error"
+#### Any other message that ends a command with an error
 
-**What happened:** zn-gate stopped because of a problem it did not expect. The text after it says what.
+**What happened:** zn-gate stopped because of a problem it did not expect. It prints that problem's own message, with no zn-gate prefix, and exits with code 1. Run the command again with `ZN_VERBOSE=1` to see zn-gate's error code next to the message, when there is one.
 
 **Is it safe?** Nothing was changed by that failure.
 
