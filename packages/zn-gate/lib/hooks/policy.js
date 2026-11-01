@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-31.30';
+const POLICY_RULES_VERSION = '2026-11-01.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2368,8 +2368,8 @@ function bashDenialOf(cmd, opts = {}) {
   }
   // A program name built at run time ($(echo curl), /usr/bin/cu?l, c''url) with network or delete arguments is refused
   // (see hooks/built-command.js). A PowerShell command line has other syntax and is not read this way.
-  if (!opts.powershell) {
-    const builtDeny = require('./built-command').builtCommandDenial(text);
+  if (!opts.powershell && !opts.skipBuilt) {
+    const builtDeny = require('./built-command').builtCommandDenial(text, opts);
     if (builtDeny) return builtDeny;
   }
   // The command is read three times: a backslash before a letter is a Windows
@@ -3175,6 +3175,8 @@ module.exports = {
   _decodeAnsiC: decodeAnsiC,
   _globClassSource: globClassSource,
   expandBraces,
+  GIT_WRAPPERS,
+  skipWrapper,
   readDenial,
   writeDenial,
   instructionWriteNotice,

@@ -2823,7 +2823,7 @@
   "id": "egress-prog-044",
   "family": "egress-prog",
   "spelling": "control: no secret, spelled",
-  "cmd": "c\"u\"rl -H \"Accept: application/json\" https://example.com/api",
+  "cmd": "\"curl\" -H \"Accept: application/json\" https://example.com/api",
   "expect": "allow",
   "rule": null,
   "kind": "egress",

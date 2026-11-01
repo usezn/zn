@@ -21,26 +21,10 @@ const MESSAGE = 'zn blocked this: the command builds the name of the program it 
 
 const ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=/;
 const KEYWORDS = new Set(['then', 'do', 'else', 'elif', 'if', 'while', 'until', '!', '{', 'time', 'coproc']);
-// Wrappers that run the next command, and the options of each that take a value.
-const WRAPPERS = new Map([
-  ['sudo', new Set(['-u', '-g', '-h', '-p', '-C', '-U', '-D', '-R', '-T'])],
-  ['doas', new Set(['-u', '-C'])],
-  ['env', new Set(['-u', '-C', '-S'])],
-  ['xargs', new Set(['-n', '-I', '-L', '-P', '-d', '-E', '-s', '-a'])],
-  ['nice', new Set(['-n'])],
-  ['command', new Set()], ['builtin', new Set()], ['exec', new Set()], ['nohup', new Set()], ['setsid', new Set()],
-  ['timeout', new Set(['-k', '-s'])],
-  ['stdbuf', new Set(['-i', '-o', '-e'])],
-  ['ionice', new Set(['-c', '-n', '-p', '-P', '-u'])],
-]);
-
 // Programs a built word must not be able to name: they reach the network or delete files.
 const NETWORK_PROGRAMS = ['curl', 'wget', 'nc', 'ncat', 'netcat', 'socat', 'telnet', 'ssh', 'scp', 'sftp', 'rsync', 'ftp', 'tftp', 'aria2c', 'http', 'https', 'httpie', 'xh'];
 const DELETE_PROGRAMS = ['rm', 'rmdir', 'unlink', 'shred', 'srm', 'del', 'erase', 'rd', 'trash'];
 const PROGRAMS = new Set([...NETWORK_PROGRAMS, ...DELETE_PROGRAMS]);
-
-// A delete shown by the arguments: the word rm and its relatives, find's -delete, recursive and forced flags.
-const DELETE_RE = /(^|[\s;&|(`$'"\/])(?:rm|rmdir|unlink|shred|srm|del|erase|rd|remove-item|ri)(?=$|[\s;&|)'"`])|(?:^|\s)-delete(?=\s|$)|(?:^|\s)--(?:no-preserve-root|recursive)(?=[\s=]|$)|(?:^|\s)-[A-Za-z]*(?:r[A-Za-z]*f|f[A-Za-z]*r)[A-Za-z]*(?=\s|$)/i;
 
 /* The index of the `)` that closes the `$(` at `open` (the index of its `(`), quote-aware; the last index when unclosed. */
 function skipParen(t, open) {
@@ -148,18 +132,20 @@ function readCommands(text) {
 const REDIRECT_OP_RE = /^(?:\d*|&)(?:>>?|<<?<?|>&|<&|<>|>\|)$/;
 const REDIRECT_GLUED_RE = /^(?:\d*|&)(?:>>?|<<?<?|>&|<&|<>|>\|)./;
 
-/* Index of the command word in the raw words of a simple command (after assignments, redirects, keywords, wrappers). */
+/* Index of the command word in the raw words of a simple command (after assignments, redirects, keywords, wrappers).
+   The wrappers and their options are the ones the policy reads for git (busybox, chrt 1, flock FILE, exec -a NAME,
+   sudo --user root, strace -o FILE ...). */
 function commandWordIndex(words) {
+  const policy = require('./policy');
+  const asWords = words.map((w) => ({ text: w }));
   let i = 0;
-  while (i < words.length) {
+  for (let guard = 0; i < words.length && guard < 64; guard++) {
     const w = words[i];
     if (REDIRECT_OP_RE.test(w)) { i += 2; continue; }
     if (REDIRECT_GLUED_RE.test(w) || ASSIGN_RE.test(w) || KEYWORDS.has(w)) { i++; continue; }
-    const takes = WRAPPERS.get(w);
-    if (!takes) return i;
-    i++;
-    while (i < words.length && /^-./.test(words[i])) i += takes.has(words[i]) ? 2 : 1;
-    if (w === 'timeout') i++; // the duration
+    const name = w.split(/[\\/]/).pop().toLowerCase();
+    if (builtKind(w) || !Object.prototype.hasOwnProperty.call(policy.GIT_WRAPPERS, name)) return i;
+    i = policy.skipWrapper(asWords, i, name);
   }
   return -1;
 }
@@ -177,6 +163,7 @@ function builtKind(raw) {
   let expansion = false;
   let glob = false;
   let quoted = false;
+  let brace = false;
   for (let i = 0; i < raw.length; i++) {
     const c = raw[i];
     if (c === '\\') { i++; continue; }
@@ -191,8 +178,10 @@ function builtKind(raw) {
     }
     if (isExpansionAt(raw, i)) expansion = true;
     else if (c === '*' || c === '?' || c === '[') glob = true;
+    else if (c === '{' && /^\{.*(?:,|\.\.).*\}/.test(raw.slice(i))) brace = true;
   }
   if (expansion) return 'substitution or variable';
+  if (brace) return 'brace';
   if (glob) return 'glob';
   // Quotes that do not wrap the whole word ("c''url", c"u"rl) splice it from pieces.
   if (quoted && !/^(?:'[^']*'|"(?:[^"\\]|\\.)*")$/.test(raw)) return 'spliced quotes';
@@ -212,7 +201,7 @@ function dequoteKeepGlob(raw) {
 /* The programs from the list that a word with a glob can be: /usr/bin/cu?l -> curl; c*l -> curl. */
 function globPrograms(raw) {
   const base = dequoteKeepGlob(raw).split('/').pop();
-  if (base.length > 64 || base.replace(/[?*[\]]/g, '').length < 2) return [];
+  if (base.length > 64 || base.replace(/[?*[\]]/g, '').length < 1) return [];
   const re = require('./policy').globRegExp(base);
   return [...PROGRAMS].filter((p) => re.test(p));
 }
@@ -224,36 +213,78 @@ function echoedProgram(raw) {
   return m ? m[1].split('/').pop().toLowerCase() : '';
 }
 
-function namesProgram(raw, kind) {
-  if (kind === 'glob') return globPrograms(raw).length > 0;
-  if (kind === 'spliced quotes') return PROGRAMS.has(dequote(raw).split('/').pop().toLowerCase());
-  return PROGRAMS.has(echoedProgram(raw));
+const MAX_READINGS = 400;
+// Arguments that point at a network target or send a file: an address, a host name, an upload flag.
+const NET_ARG_RE = /(?:^|[\s=:@\/])\d{1,3}(?:\.\d{1,3}){3}(?![\d.]*[a-z])|[a-z0-9-]+\.(?:com|net|org|io|dev|invalid|test|example)(?=$|[\s:\/'"])|(?:^|\s)(?:-T|--upload-file|--data|--data-binary|--post-file)(?=\s|=|$)/i;
+const BUILT_KINDS = ['substitution or variable', 'glob', 'brace', 'spliced quotes'];
+
+/* The command with the word at `at` replaced by `program`, as the text the policy and the destructive rules read. */
+function readingText(words, at, program) {
+  return words.map((w, n) => (n === at ? program : w)).join(' ');
 }
 
-function judge(command) {
+/* True when the policy or the destructive rules refuse the text. */
+function refusedAs(text, state) {
+  if (state.readings++ >= MAX_READINGS) return true; // fail closed on a text with very many built words
+  const o = state.opts;
+  const rules = Array.isArray(o.destructiveRules) ? o.destructiveRules : require('../destructive').DEFAULT_RULES;
+  if (rules.length && require('../destructive').denial(text, rules)) return true;
+  return Boolean(require('./policy').bashDenial(text, { ...o, skipBuilt: true, depth: (o.depth || 0) + 1 }));
+}
+
+/* A built word that cannot be resolved: the command is read once for each program it could be. */
+function refusedAsAny(words, at, state) {
+  if (words.length <= at + 1) return false; // no arguments: nothing to judge
+  return [...PROGRAMS].some((p) => refusedAs(readingText(words, at, p), state));
+}
+
+function judge(command, state, depth) {
   const k = commandWordIndex(command.words);
   if (k < 0) return null;
-  const word = command.words[k];
+  const words = command.words;
+  let at = k;
+  let word = words[k];
   let kind = builtKind(word);
   // The eval builtin runs the text it is given as a command: a name built in that text is a built command word.
-  const feedsBuilt = word === 'eval' && command.words.slice(k + 1).some((w) => builtKind(w) === 'substitution or variable');
-  if (!kind && !feedsBuilt) return null;
-  if (kind && namesProgram(word, kind)) return MESSAGE;
-  if (DELETE_RE.test(command.text) || require('./policy').hasNetworkSignals(command.text)) return MESSAGE;
-  return null;
+  if (word === 'eval' && !kind) {
+    const j = words.findIndex((w, n) => n > k && BUILT_KINDS.includes(builtKind(w)));
+    if (j < 0) return null;
+    at = j; word = words[j]; kind = builtKind(word);
+  }
+  if (!kind) return null;
+  const policy = require('./policy');
+  if (kind === 'brace') {
+    // A brace list builds several words: the first is the program, the others are its arguments.
+    const alts = policy.expandBraces(word);
+    if (alts && alts.every((a) => !/[{}]/.test(a))) {
+      const text = [...words.slice(0, at), ...alts, ...words.slice(at + 1)].join(' ');
+      if (PROGRAMS.has(alts[0].split('/').pop().toLowerCase()) || refusedAs(text, state)) return MESSAGE;
+      return depth < MAX_DEPTH ? check(text, state, depth + 1) : null;
+    }
+    if (policy.hasNetworkSignals(command.text) || NET_ARG_RE.test(words.slice(at + 1).join(' '))) return MESSAGE;
+    return refusedAsAny(words, at, state) ? MESSAGE : null;
+  }
+  if (kind === 'glob' || kind === 'spliced quotes') {
+    const named = kind === 'glob' ? globPrograms(word).length > 0 : PROGRAMS.has(dequote(word).split('/').pop().toLowerCase());
+    return named || policy.hasNetworkSignals(command.text) ? MESSAGE : null;
+  }
+  const echoed = echoedProgram(word);
+  if (echoed) return PROGRAMS.has(echoed) || policy.hasNetworkSignals(command.text) || refusedAs(readingText(words, at, echoed), state) ? MESSAGE : null;
+  if (policy.hasNetworkSignals(command.text) || NET_ARG_RE.test(words.slice(at + 1).join(' '))) return MESSAGE;
+  return refusedAsAny(words, at, state) ? MESSAGE : null;
 }
 
-function check(text, depth) {
+function check(text, state, depth) {
   const read = readCommands(text);
   if (read.truncated) return null; // the caller already refuses a text with too many commands
   for (const c of read.commands) {
-    const deny = judge(c);
+    const deny = judge(c, state, depth);
     if (deny) return deny;
   }
   if (depth < MAX_DEPTH) {
     // The commands inside $( ) and ` ` are commands of their own.
     for (const b of read.bodies) {
-      const deny = check(b, depth + 1);
+      const deny = check(b, state, depth + 1);
       if (deny) return deny;
     }
   }
@@ -261,10 +292,10 @@ function check(text, depth) {
 }
 
 /** The deny message for a command whose program name is built at run time with network or delete arguments, or null. */
-function builtCommandDenial(text) {
+function builtCommandDenial(text, opts) {
   const t = String(text || '');
-  if (!/[$`*?['"\\]/.test(t)) return null;
-  return check(t, 0);
+  if (!/[$`*?['"\\{]/.test(t)) return null;
+  return check(t, { opts: opts || {}, readings: 0 }, 0);
 }
 
 module.exports = { builtCommandDenial, BUILT_COMMAND_MESSAGE: MESSAGE };
