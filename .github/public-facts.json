@@ -242,7 +242,7 @@
   "fields": [
     {
       "id": "short description (npm)",
-      "value": "The local security layer for coding agents. zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot. No account, and nothing is sent by default.",
+      "value": "The local security layer for coding agents. zn-gate guards your secrets, your data and your systems while you use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot. No account, and nothing is sent by default; the optional cloud check uses the Galvanize 3 classifier.",
       "files": [
         {
           "file": "packages/zn-gate/package.json",
