@@ -239,6 +239,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     elapsed_ms = (time.perf_counter() - t0) * 1000
     res["latency_ms"] = round(elapsed_ms, 2)
 
+    if res.get("degraded"):
+        print("[zn-gate] Warning: the cloud model was unavailable, so this verdict comes from the local rules only.",
+              file=sys.stderr)
     print(json.dumps(res, indent=2))
 
     return 2 if res.get("verdict") == "block" else 0

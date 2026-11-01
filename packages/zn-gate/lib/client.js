@@ -129,6 +129,14 @@ function cloudVerdict(parsed) {
   return { ...parsed, ...UNKNOWN_CLOUD_VERDICT };
 }
 
+// When the gate could not reach its model, it still answers from the rules alone and says so in decided_by ("ml-error...").
+// That answer is not a model verdict: it is marked degraded so callers can tell it apart.
+const DEGRADED_REASON = 'model unavailable, rules only';
+function degradedFields(cloudRes) {
+  const decidedBy = typeof cloudRes.decided_by === 'string' ? cloudRes.decided_by.trim().toLowerCase() : '';
+  return decidedBy.startsWith('ml-error') ? { degraded: true, degraded_reason: DEGRADED_REASON } : {};
+}
+
 function analyzeCloud(input, apiKey, endpointUrl, timeoutMs = 4000, extra = {}) {
   return new Promise((resolve, reject) => {
     const url = new URL(endpointUrl);
@@ -248,6 +256,7 @@ async function analyze(input, options = {}) {
       ...cloudRes,
       mode: 'hybrid-cloud',
       secrets_redacted_before_upload: detections.length,
+      ...degradedFields(cloudRes),
     };
     if (urlIgnored) out.note = 'The saved key is only sent to api.usezn.com, so the custom URL was ignored. Use --key or ZN_API_KEY to send to another URL.';
     if (cloudRes.long_input && cloudRes.long_input.capped) {

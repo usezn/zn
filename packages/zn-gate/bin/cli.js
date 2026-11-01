@@ -1318,6 +1318,9 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     }
 
     const result = await analyze(textToAnalyze, options);
+    if (result.degraded) {
+      process.stderr.write('[zn-gate] Warning: the cloud model was unavailable, so this verdict comes from the local rules only.\n');
+    }
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     process.exit(isBlockVerdict(result.verdict) ? 2 : 0);
   }
