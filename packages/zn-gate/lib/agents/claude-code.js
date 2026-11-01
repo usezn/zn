@@ -90,6 +90,14 @@ const HOOK_TIMEOUT_S = 15;
 // zn's launcher script (lib/agents/launcher.js) is ours too: '<dir>/zn-hook-claude-code.sh' <Event>
 const OUR_COMMAND_RE = /(\bhook claude-code|hooks[\\/]runner\.js["']? claude-code|zn-hook-claude-code\.sh["']? [A-Za-z]+)\s*$/;
 const MCP_SERVER_NAME = 'secrets';
+// `claude mcp` is a CLI that zn runs at install and uninstall: a CLI that never answers must not hang the command.
+const CLAUDE_MCP_TIMEOUT_MS = 30000;
+function claudeMcpSpawn(claude, args, opts) {
+  return spawnSync(claude, args, { encoding: 'utf8', windowsHide: true, env: require('../exe').programEnv(opts.env || process.env),
+    timeout: opts.mcpTimeoutMs || CLAUDE_MCP_TIMEOUT_MS, killSignal: 'SIGKILL' });
+}
+function timedOut(r) { return !!(r.error && r.error.code === 'ETIMEDOUT'); }
+function mcpSeconds(opts) { return (opts.mcpTimeoutMs || CLAUDE_MCP_TIMEOUT_MS) / 1000; }
 
 const TOOL_MAP = {
   Bash: 'bash',
@@ -447,9 +455,10 @@ function installMcp(opts, report) {
   }
   // Only absolute PATH entries outside the project: a `claude` script that starts with `#!/usr/bin/env node`
   // looks node up there.
-  const r = spawnSync(claude, ['mcp', 'add-json', '--scope', 'user', MCP_SERVER_NAME, JSON.stringify({ type: 'stdio', ...conf })],
-    { encoding: 'utf8', windowsHide: true, env: require('../exe').programEnv(opts.env || process.env) });
+  const r = claudeMcpSpawn(claude, ['mcp', 'add-json', '--scope', 'user', MCP_SERVER_NAME, JSON.stringify({ type: 'stdio', ...conf })], opts);
   if (r.status === 0) report.mcp = 'claude mcp (user scope)';
+  else if (timedOut(r)) report.warnings.push('`claude mcp add-json` did not answer within ' + mcpSeconds(opts) + ' seconds, so zn stopped it. ' +
+    'Check with `claude mcp list`; if the MCP server is missing, register it yourself with: ' + manual);
   else report.warnings.push('`claude mcp add-json` failed (' + String(r.stderr || r.stdout || r.error || '').trim().slice(0, 300) + '): register the MCP server yourself with: ' + manual);
 }
 
@@ -545,8 +554,9 @@ function uninstall(opts = {}) {
       } else if (claude && /\.(?:cmd|bat)$/i.test(claude)) {
         report.warnings.push('`claude` is a batch file (' + path.basename(claude) + '), which zn does not run through cmd.exe: remove the MCP server yourself with: claude mcp remove --scope user ' + MCP_SERVER_NAME);
       } else if (claude) {
-        spawnSync(claude, ['mcp', 'remove', '--scope', 'user', MCP_SERVER_NAME],
-          { encoding: 'utf8', windowsHide: true, env: require('../exe').programEnv(opts.env || process.env) });
+        const removed = claudeMcpSpawn(claude, ['mcp', 'remove', '--scope', 'user', MCP_SERVER_NAME], opts);
+        if (timedOut(removed)) report.warnings.push('`claude mcp remove` did not answer within ' + mcpSeconds(opts) + ' seconds, so zn stopped it: ' +
+          'remove zn\'s MCP server yourself with: claude mcp remove --scope user ' + MCP_SERVER_NAME);
       } else if (ours === true) {
         report.warnings.push('`claude` is not on your PATH: remove zn\'s MCP server yourself with: claude mcp remove --scope user ' + MCP_SERVER_NAME);
       }
