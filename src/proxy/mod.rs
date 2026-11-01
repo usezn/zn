@@ -399,7 +399,18 @@ impl McpPool {
 
     /// Auto-discover MCP configurations from standard locations
     pub fn auto_discover() -> Result<Self> {
-        let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"))?;
+        let home = match crate::config::home_dir() {
+            Ok(home) => home.to_string_lossy().into_owned(),
+            Err(why) => {
+                info!("MCP auto-discovery skipped: {}", why);
+                let mut pool = Self::new(HashMap::new());
+                pool.notices = vec![format!(
+                    "MCP auto-discovery is off: {}. It looks for ~/.claude/mcp_servers.json, so set HOME to your home folder (ZN_HOME does not change where MCP servers are read from).",
+                    why
+                )];
+                return Ok(pool);
+            }
+        };
 
         // Only search in user-controlled directories
         let search_paths = [
@@ -1030,6 +1041,27 @@ Content-Length: 0
         assert!(
             msg.contains("mcp_servers.json") && msg.contains("ends too early"),
             "{msg}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod auto_discover_tests {
+    use super::*;
+    use crate::config::test_env::with_env_vars;
+
+    #[test]
+    fn auto_discover_without_home_is_an_empty_pool_with_a_notice() {
+        let pool = with_env_vars(
+            &[("HOME", None), ("USERPROFILE", None)],
+            McpPool::auto_discover,
+        );
+        let pool = pool.expect("a missing HOME must not be a hard error");
+        assert!(pool.configs.is_empty());
+        assert!(
+            pool.notices().iter().any(|n| n.contains("HOME")),
+            "notices: {:?}",
+            pool.notices()
         );
     }
 }

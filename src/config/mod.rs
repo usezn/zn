@@ -361,8 +361,49 @@ impl Default for AuditConfig {
     }
 }
 
+/// The user's home folder: `HOME`, else `USERPROFILE` (Windows). An empty value counts as
+/// unset. A value that is not an absolute path is an error, never a base for relative paths.
+pub fn home_dir() -> std::result::Result<std::path::PathBuf, String> {
+    for var in ["HOME", "USERPROFILE"] {
+        if let Some(value) = std::env::var_os(var).filter(|v| !v.is_empty()) {
+            let path = std::path::PathBuf::from(&value);
+            if path.is_absolute() {
+                return Ok(path);
+            }
+            return Err(format!(
+                "{var} is set to \"{}\", which is not an absolute path",
+                path.display()
+            ));
+        }
+    }
+    Err("HOME and USERPROFILE are not set".to_string())
+}
+
+/// zn's own data folder: `ZN_HOME` when set, else `<home>/.zn`. Relative values are errors.
+pub fn zn_data_dir() -> std::result::Result<std::path::PathBuf, String> {
+    if let Some(value) = std::env::var_os("ZN_HOME").filter(|v| !v.is_empty()) {
+        let path = std::path::PathBuf::from(&value);
+        if path.is_absolute() {
+            return Ok(path);
+        }
+        return Err(format!(
+            "ZN_HOME is set to \"{}\", which is not an absolute path",
+            path.display()
+        ));
+    }
+    home_dir().map(|home| home.join(".zn")).map_err(|e| {
+        format!(
+            "{e}. Set ZN_HOME to an absolute folder zn may write, for example ZN_HOME=/var/lib/zn"
+        )
+    })
+}
+
 fn default_db_path() -> String {
-    "zn.db".to_string()
+    match zn_data_dir() {
+        Ok(dir) => dir.join("zn.db").to_string_lossy().into_owned(),
+        // Empty: AuditVault::new refuses it and says why (see open_vault).
+        Err(_) => String::new(),
+    }
 }
 fn default_max_logs() -> usize {
     50
@@ -1683,5 +1724,102 @@ mod parse_message_tests {
             notices[0].contains("ZN_PORT=\"abc\"") && notices[0].contains("9090"),
             "{notices:?}"
         );
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_env {
+    use std::ffi::OsString;
+    use std::sync::Mutex;
+
+    /// Serializes the tests that change process environment variables.
+    static LOCK: Mutex<()> = Mutex::new(());
+
+    /// Runs `f` with each variable set (`Some`) or removed (`None`), then restores
+    /// the previous values, also when `f` panics.
+    pub(crate) fn with_env_vars<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
+        let _lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        struct Restore(Vec<(String, Option<OsString>)>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                for (key, value) in self.0.drain(..) {
+                    match value {
+                        Some(v) => std::env::set_var(&key, v),
+                        None => std::env::remove_var(&key),
+                    }
+                }
+            }
+        }
+        let saved = vars
+            .iter()
+            .map(|(k, _)| (k.to_string(), std::env::var_os(k)))
+            .collect();
+        let _restore = Restore(saved);
+        for (key, value) in vars {
+            match value {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+        f()
+    }
+}
+
+#[cfg(test)]
+mod home_path_tests {
+    use super::test_env::with_env_vars;
+    use super::*;
+
+    #[test]
+    fn default_db_path_is_absolute_when_zn_home_is_set() {
+        let zn_home = std::env::temp_dir().join("zn-home-test");
+        let zn_home = zn_home.to_string_lossy().into_owned();
+        let p = with_env_vars(
+            &[
+                ("HOME", None),
+                ("USERPROFILE", None),
+                ("ZN_HOME", Some(zn_home.as_str())),
+            ],
+            || AuditConfig::default().db_path,
+        );
+        assert!(Path::new(&p).is_absolute(), "db_path is {p:?}");
+    }
+
+    #[test]
+    fn default_db_path_is_in_home_zn_folder_without_zn_home() {
+        let home = std::env::temp_dir().join("zn-user-home");
+        let home_str = home.to_string_lossy().into_owned();
+        let p = with_env_vars(
+            &[
+                ("HOME", Some(home_str.as_str())),
+                ("USERPROFILE", None),
+                ("ZN_HOME", None),
+            ],
+            || AuditConfig::default().db_path,
+        );
+        assert_eq!(Path::new(&p), home.join(".zn").join("zn.db").as_path());
+    }
+
+    #[test]
+    fn default_db_path_is_empty_and_zn_home_is_named_without_any_home() {
+        let vars: [(&str, Option<&str>); 3] =
+            [("HOME", None), ("USERPROFILE", None), ("ZN_HOME", None)];
+        let p = with_env_vars(&vars, || AuditConfig::default().db_path);
+        assert!(p.is_empty(), "db_path is {p:?}");
+        let err = with_env_vars(&vars, zn_data_dir).unwrap_err();
+        assert!(err.contains("HOME") && err.contains("ZN_HOME"), "{err}");
+    }
+
+    #[test]
+    fn relative_zn_home_is_refused() {
+        let p = with_env_vars(
+            &[
+                ("HOME", None),
+                ("USERPROFILE", None),
+                ("ZN_HOME", Some("relative/zn")),
+            ],
+            || AuditConfig::default().db_path,
+        );
+        assert!(p.is_empty(), "db_path is {p:?}");
     }
 }

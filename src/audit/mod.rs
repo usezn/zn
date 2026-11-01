@@ -214,6 +214,14 @@ impl AuditVault {
     }
 
     fn open_vault(db_path: &str, encryption_key: Option<&str>) -> Result<Self> {
+        if db_path.trim().is_empty() {
+            // An empty path would open a temporary database that is lost on exit.
+            let why = match crate::config::zn_data_dir() {
+                Err(e) => e,
+                Ok(_) => "audit.db_path is empty".to_string(),
+            };
+            return Err(anyhow!("zn cannot open its audit database: {}", why));
+        }
         info!("Initializing AuditVault at: {}", db_path);
 
         let mut conn = Connection::open(db_path)
@@ -2437,5 +2445,22 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap()
+    }
+}
+
+#[cfg(test)]
+mod empty_db_path_tests {
+    use super::*;
+    use crate::config::test_env::with_env_vars;
+
+    #[test]
+    fn empty_db_path_without_any_home_is_refused_and_zn_home_is_named() {
+        let vars: [(&str, Option<&str>); 3] =
+            [("HOME", None), ("USERPROFILE", None), ("ZN_HOME", None)];
+        let msg = with_env_vars(&vars, || match AuditVault::new("", None) {
+            Ok(_) => panic!("an empty audit database path must not open a temporary database"),
+            Err(e) => format!("{e:#}"),
+        });
+        assert!(msg.contains("ZN_HOME") && msg.contains("HOME"), "{msg}");
     }
 }

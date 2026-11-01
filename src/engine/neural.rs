@@ -98,7 +98,9 @@ pub fn shared_engine(cfg: &FusionConfig) -> Option<Arc<NeuralEngine>> {
     }
     FUSION_ENGINE
         .get_or_init(|| {
-            match NeuralEngine::new(&crate::ai::embedder::expand_tilde(&cfg.model_path)) {
+            let loaded = crate::ai::embedder::expand_tilde(&cfg.model_path)
+                .and_then(|dir| NeuralEngine::new(&dir));
+            match loaded {
                 Ok(e) => {
                     info!("FUSION: neural camera loaded (model_id={})", cfg.model_id);
                     Some(Arc::new(e))

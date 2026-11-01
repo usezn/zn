@@ -439,9 +439,10 @@ async fn start_proxy(args: Args) -> Result<()> {
     // Initialize Neural Core
     log::info("🧠 Initializing Neural Core (Candle)...")?;
     let fast_boot = std::env::var("ZN_FAST_BOOT").is_ok();
-    let model_dir = std::env::var("ZN_NEURAL_MODEL_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| zn::ai::embedder::expand_tilde(&zn_config.neural.model_path));
+    let model_dir = match std::env::var("ZN_NEURAL_MODEL_PATH") {
+        Ok(path) => Ok(PathBuf::from(path)),
+        Err(_) => zn::ai::embedder::expand_tilde(&zn_config.neural.model_path),
+    };
     let backend: Arc<dyn zn::ai::ModelBackend> = if fast_boot || !zn_config.neural.enabled {
         let dim = if zn_config.neural.dim > 0 {
             zn_config.neural.dim
@@ -454,7 +455,11 @@ async fn start_proxy(args: Args) -> Result<()> {
         ))?;
         Arc::new(zn::ai::FastBootBackend::new(dim))
     } else {
-        match zn::ai::CandleBert::new(&model_dir) {
+        let loaded = match &model_dir {
+            Ok(dir) => zn::ai::CandleBert::new(dir),
+            Err(e) => Err(anyhow::anyhow!("{e:#}")),
+        };
+        match loaded {
             Ok(b) => {
                 log::info(format!("✅ Neural Core Active: [{}]", b.name()))?;
                 Arc::new(b)
@@ -480,7 +485,10 @@ async fn start_proxy(args: Args) -> Result<()> {
         model_id: zn_config.neural.model_id.clone(),
         version: "initial".to_string(),
         dim: backend.dim() as i64,
-        path: model_dir.to_string_lossy().to_string(),
+        path: model_dir
+            .as_ref()
+            .map(|dir| dir.to_string_lossy().to_string())
+            .unwrap_or_default(),
         metrics: String::new(),
         status: "active".to_string(),
         created_at: chrono::Utc::now().timestamp(),
@@ -720,9 +728,10 @@ async fn build_pipeline() -> Result<AnalyzerPipeline> {
 
     // Initialize neural backend (fast boot if model unavailable)
     let fast_boot = std::env::var("ZN_FAST_BOOT").is_ok();
-    let model_dir = std::env::var("ZN_NEURAL_MODEL_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| zn::ai::embedder::expand_tilde(&config.neural.model_path));
+    let model_dir = match std::env::var("ZN_NEURAL_MODEL_PATH") {
+        Ok(path) => Ok(PathBuf::from(path)),
+        Err(_) => zn::ai::embedder::expand_tilde(&config.neural.model_path),
+    };
 
     let backend: Arc<dyn zn::ai::ModelBackend> = if fast_boot || !config.neural.enabled {
         let dim = if config.neural.dim > 0 {
@@ -732,7 +741,7 @@ async fn build_pipeline() -> Result<AnalyzerPipeline> {
         };
         Arc::new(zn::ai::FastBootBackend::new(dim))
     } else {
-        match zn::ai::CandleBert::new(&model_dir) {
+        match model_dir.and_then(|dir| zn::ai::CandleBert::new(&dir)) {
             Ok(b) => Arc::new(b),
             Err(e) => {
                 eprintln!(

@@ -282,15 +282,18 @@ async fn download_file(
     Ok(())
 }
 
-/// Expand a leading `~/` against USERPROFILE/HOME.
-pub fn expand_tilde(p: &str) -> PathBuf {
+/// Expand a leading `~/` against the home folder (HOME, or USERPROFILE on Windows). With no
+/// home folder this is an error: a model path must never fall back to the current folder.
+pub fn expand_tilde(p: &str) -> Result<PathBuf> {
     if let Some(rest) = p.strip_prefix("~/") {
-        let home = std::env::var_os("USERPROFILE")
-            .or_else(|| std::env::var_os("HOME"))
-            .unwrap_or_else(|| ".".into());
-        return Path::new(&home).join(rest);
+        let home = crate::config::home_dir().map_err(|e| {
+            E::msg(format!(
+                "cannot expand \"{p}\": {e}. Set HOME to your home folder, or set ZN_NEURAL_MODEL_PATH to an absolute folder (ZN_HOME does not change where models are read from)"
+            ))
+        })?;
+        return Ok(home.join(rest));
     }
-    PathBuf::from(p)
+    Ok(PathBuf::from(p))
 }
 
 fn normalize_l2(v: &Tensor) -> candle_core::Result<Tensor> {
@@ -568,5 +571,37 @@ mod tests {
             assert_eq!(sha.len(), 64);
             assert!(sha.bytes().all(|c| c.is_ascii_hexdigit()));
         }
+    }
+}
+
+#[cfg(test)]
+mod expand_tilde_tests {
+    use super::*;
+    use crate::config::test_env::with_env_vars;
+
+    #[test]
+    fn expand_tilde_without_home_is_an_error_naming_home() {
+        let r = with_env_vars(&[("HOME", None), ("USERPROFILE", None)], || {
+            expand_tilde("~/.zn/models/m")
+        });
+        let msg = format!(
+            "{:#}",
+            r.expect_err("must not fall back to the current folder")
+        );
+        assert!(msg.contains("HOME") && msg.contains("ZN_HOME"), "{msg}");
+    }
+
+    #[test]
+    fn expand_tilde_uses_home_and_keeps_other_paths() {
+        let home = std::env::temp_dir().join("zn-user-home");
+        let home_str = home.to_string_lossy().into_owned();
+        let got = with_env_vars(
+            &[("HOME", Some(home_str.as_str())), ("USERPROFILE", None)],
+            || expand_tilde("~/models/m"),
+        )
+        .unwrap();
+        assert_eq!(got, home.join("models").join("m"));
+        let abs = with_env_vars(&[("HOME", None)], || expand_tilde("/abs/m")).unwrap();
+        assert_eq!(abs, PathBuf::from("/abs/m"));
     }
 }
