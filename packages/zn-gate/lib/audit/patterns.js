@@ -306,7 +306,7 @@ function safeUrl(url) {
 
 // Git configuration keys that make git run a program or load more configuration (shared with the shell policy through
 // this file only for the agent-level check; the shell policy keeps its own table with the kind of value each takes).
-const GIT_CMD_KEY_RE = /^(?:alias\..+|core\.(?:pager|editor|sshcommand|askpass|gitproxy|alternaterefscommand|fsmonitor|hookspath)|sequence\.editor|pager\..+|diff\.external|(?:diff|merge)\..+\.(?:textconv|command|driver)|(?:difftool|mergetool)\..+\.(?:cmd|path)|credential\.(?:.+\.)?helper|filter\..+\.(?:clean|smudge|process)|gpg\.(?:.+\.)?program|gpg\.ssh\.defaultkeycommand|web\.browser|browser\..+\.cmd|man\..+\.cmd|trailer\..+\.cmd|uploadpack\.packobjectshook|remote\..+\.(?:uploadpack|receivepack|vcs)|submodule\..+\.update|protocol\.ext\.allow|include\.path|includeif\..+\.path|init\.templatedir)$/;
+const GIT_CMD_KEY_RE = /^(?:alias\..+|core\.(?:pager|editor|sshcommand|askpass|gitproxy|alternaterefscommand|fsmonitor|hookspath)|sequence\.editor|pager\..+|diff\.external|(?:diff|merge)\..+\.(?:textconv|command|driver)|(?:difftool|mergetool)\..+\.(?:cmd|path)|credential\.(?:.+\.)?helper|filter\..+\.(?:clean|smudge|process)|gpg\.(?:.+\.)?program|gpg\.ssh\.defaultkeycommand|web\.browser|browser\..+\.cmd|man\..+\.cmd|trailer\..+\.(?:cmd|command)|interactive\.difffilter|sendemail\.(?:sendmailcmd|tocmd|cccmd|headercmd|smtpserver)|uploadpack\.packobjectshook|remote\..+\.(?:uploadpack|receivepack|vcs)|submodule\..+\.update|protocol\.(?:ext\.)?allow|include\.path|includeif\..+\.path|init\.templatedir)$/;
 
 /** Classify an agent-level environment variable. */
 function classifyEnv(key, value) {
@@ -326,10 +326,14 @@ function classifyEnv(key, value) {
   if (CONFIG_DIR_ENV.has(up)) return { kind: 'confdir' };
   // GIT_CONFIG_COUNT / GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n: only a pair whose key runs a program counts (user.name is fine).
   // The key is read here; its value is not a placeholder, so a key or value zn cannot read as a literal is refused.
-  const gk = /^GIT_CONFIG_KEY_\d+$/.exec(up);
+  const gk = /^GIT_CONFIG_KEY_(?:0|[1-9]\d*)$/.exec(up);
   if (gk && GIT_CMD_KEY_RE.test(v.trim().toLowerCase())) return { kind: 'code' };
+  if (up === 'GIT_ALLOW_PROTOCOL' && v.trim() && !v.trim().split(':').every((x) => /^(?:https?|ssh|git|file)$/i.test(x.trim()))) return { kind: 'code' };
   if (/^GIT_CONFIG_(?:COUNT|VALUE_\d+)$/.test(up)) return null;
   if (CODE_ENV.has(up)) {
+    // The same quiet values the shell policy lets through: a pager or editor that only shows or does nothing.
+    if (/^(?:GIT_PAGER|PAGER|GIT_EDITOR|GIT_SEQUENCE_EDITOR|EDITOR|VISUAL)$/.test(up) && /^(?:cat|less(?:\s+-[A-Za-z]+)*|more|true|:|)$/.test(v.trim())) return null;
+    if (/^GIT_CONFIG_(?:GLOBAL|SYSTEM)$/.test(up) && /^(?:\/dev\/null|nul)$/i.test(v.trim())) return null;
     if (up === 'NODE_OPTIONS' && !/(?:^|\s)(?:-r|--require|--import|--loader|--experimental[-_]loader|--experimental[-_]policy)\b/.test(v)) return null;
     if ((up === 'NODE_TLS_REJECT_UNAUTHORIZED' || up === 'PYTHONHTTPSVERIFY') && v.trim() !== '0') return null;
     if (up === 'GIT_SSL_NO_VERIFY' && !/^(?:1|true|yes)$/i.test(v.trim())) return null;

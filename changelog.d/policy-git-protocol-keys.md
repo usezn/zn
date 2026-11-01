@@ -1,0 +1,2 @@
+### Security
+- The shell policy now also reads `git --attr-source <tree> -c ...` (the option takes a value, so a `-c` after it was skipped), refuses `protocol.allow` and `protocol.ext.allow` unless they are `never`, refuses `GIT_ALLOW_PROTOCOL` when it lists anything other than http, https, ssh, git or file, and refuses `sendemail.smtpServer` when it is a program path. The agent-level check no longer flags quiet values such as `GIT_PAGER=cat`, `GIT_EDITOR=true` or `GIT_CONFIG_GLOBAL=/dev/null`.
