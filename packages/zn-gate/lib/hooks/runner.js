@@ -54,18 +54,24 @@ const { envFlag } = require('../env-flag');
 const { shQuote, SH_QUOTE_ESCAPE, portablePath } = require('../shell-quote');
 const { znCommand, winCommandText } = require('../zn-command');
 const { hasUnsafeText } = require('../safe-text');
+const { readUserConfig } = require('../user-config');
 
 const SECRET_SOURCES = new Set(['exact', 'pattern']);
 const POST_TOOLS = new Set(['read', 'bash', 'powershell', 'monitor', 'grep', 'lsp', 'webfetch', 'mcp', 'mcpresource']);
 const SHELL_TOOLS = new Set(['bash', 'powershell']);
 const STREAM_JS = path.resolve(__dirname, '..', 'scrub', 'stream.js');
 
+// The settings file is read on every decision; the warning about an unusable
+// file is written once per process, to stderr. The verdict does not change.
+let configWarned = false;
+
 function readConfig(home) {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(home || os.homedir(), '.zn', 'config.json'), 'utf8')) || {};
-  } catch (_) {
-    return {};
+  const r = readUserConfig(path.join(home || os.homedir(), '.zn', 'config.json'));
+  if (r.error && !configWarned) {
+    configWarned = true;
+    try { process.stderr.write('zn hook: ' + r.error + '\n'); } catch (_) { /* nothing more to do */ }
   }
+  return r.config;
 }
 
 /*

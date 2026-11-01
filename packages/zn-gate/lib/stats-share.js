@@ -18,6 +18,7 @@ const path = require('path');
 const crypto = require('crypto');
 const https = require('https');
 const stats = require('./stats');
+const { readUserConfig } = require('./user-config');
 
 const ENDPOINT = 'https://api.usezn.com/v1/telemetry';
 const MAX_TYPES = 100;
@@ -31,7 +32,7 @@ function configFile() {
 }
 
 function readConfig() {
-  try { return JSON.parse(fs.readFileSync(configFile(), 'utf8')) || {}; } catch { return {}; }
+  return readUserConfig(configFile()).config;
 }
 
 function writeConfig(cfg) {

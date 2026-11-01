@@ -24,6 +24,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { readUserConfig } = require('./user-config');
 
 const KEY_RE = /^[A-Za-z0-9._-]{16,256}$/;
 const VAULT_SECRET = 'ZN_CLOUD_API_KEY';
@@ -125,7 +126,7 @@ function configFile() {
 }
 
 function readConfig() {
-  try { return JSON.parse(fs.readFileSync(configFile(), 'utf8')) || {}; } catch (_) { return {}; }
+  return readUserConfig(configFile()).config;
 }
 
 function writeConfig(cfg) {

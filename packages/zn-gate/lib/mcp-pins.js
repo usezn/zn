@@ -34,6 +34,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { readUserConfig } = require('./user-config');
 
 const MODES = ['off', 'warn', 'block']; // weakest to strictest
 const MAX_NAME = 80;
@@ -67,11 +68,7 @@ function modeName(m) {
 }
 
 function configMode(dir) {
-  try {
-    return modeName(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')).mcpPinning);
-  } catch (_) {
-    return null;
-  }
+  return modeName(readUserConfig(path.join(dir, 'config.json')).config.mcpPinning);
 }
 
 /**

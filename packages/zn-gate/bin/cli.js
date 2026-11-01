@@ -1270,6 +1270,7 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     process.env.ZN_STATS = 'off'; // the test read is not counted in zn-gate stats
     const zc = require('../lib/check');
     process.exitCode = zc.report(await zc.check({}));
+    for (const msg of require('../lib/user-config').userConfigProblems()) process.stdout.write('Settings: ' + msg + '\n\n');
     try {
       const cfg = require('../lib/rules').loadCustomConfig(true);
       if (cfg.errors.length > 0) {
@@ -1340,6 +1341,7 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
   Leaves machine  : ${cloud ? 'analyze_prompt text only, secrets redacted locally first' : 'Nothing'}
 
 `);
+    for (const msg of require('../lib/user-config').userConfigProblems()) process.stdout.write('  Settings        : ' + msg + '\n\n');
     // Claude Code settings that stop zn's hooks or its MCP server (read-only).
     try {
       const cc = require('../lib/agents/claude-code');
