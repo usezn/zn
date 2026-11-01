@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from . import __version__
-from .rules import RULES_VERSION, evaluate, mask_token_runs
+from .rules import RULES_VERSION, evaluate, mask_pii_preview, mask_token_runs
 from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact, redact_scan_secrets as _scan_redact
 from . import mcp_secrets as _mcp
 from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
@@ -191,7 +191,7 @@ def cmd_test(args: argparse.Namespace) -> int:
     t0 = time.perf_counter()
     assessment = evaluate(text)
     clean_text, findings = _dlp_redact(text)
-    clean_text = mask_token_runs(clean_text)
+    clean_text = mask_pii_preview(mask_token_runs(clean_text))
     latency_us = (time.perf_counter() - t0) * 1_000_000
 
     if args.json:

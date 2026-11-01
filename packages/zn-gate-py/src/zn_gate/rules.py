@@ -1901,6 +1901,55 @@ def mask_token_runs(text: str) -> str:
 
     return _TOKEN_RUN_RE.sub(_sub, text)
 
+
+# Values that zn-gate test prints back in its preview. Only the kinds that
+# matter for a preview are covered: password assignments, e-mail addresses,
+# IBAN, card numbers and phone numbers. IBAN and card candidates must pass
+# their checksum, so ordinary numbers stay as they are.
+_PREVIEW_PASSWORD_RE = re.compile(r"(?i)\b(password|passwd|pwd)(\s*[:=]\s*)(\S+)")
+_PREVIEW_EMAIL_RE = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9][A-Za-z0-9._%+-]{0,63}@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,24}(?![A-Za-z0-9-])")
+_PREVIEW_IBAN_RE = re.compile(r"(?<![A-Za-z0-9])[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])")
+_PREVIEW_CARD_RE = re.compile(r"(?<![0-9A-Za-z.,_-])(?:\d{4}[ -]?){2,3}\d{1,4}(?:[ -]?\d{1,3})?(?![0-9A-Za-z_]|[.,]\d)")
+_PREVIEW_PHONE_RE = re.compile(r"(?<![A-Za-z0-9+])\+[1-9](?:\d{0,2}(?:[ .-]\d{1,9}){2,6}|\d{0,2} \d{6,12}|\d{7,14})(?![0-9])")
+
+
+def _luhn_ok(digits: str) -> bool:
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        d = int(ch)
+        if i % 2:
+            d = d * 2 - 9 if d > 4 else d * 2
+        total += d
+    return total % 10 == 0
+
+
+def _iban_ok(compact: str) -> bool:
+    if not 15 <= len(compact) <= 34:
+        return False
+    moved = compact[4:] + compact[:4]
+    return int("".join(str(int(c, 36)) for c in moved)) % 97 == 1
+
+
+def mask_pii_preview(text: str) -> str:
+    """Masks password values, e-mail addresses, IBAN, card and phone numbers in a
+    text that zn-gate test prints back. Used after redact_secrets and mask_token_runs."""
+    if not text:
+        return text
+
+    def _card(m: "re.Match[str]") -> str:
+        digits = re.sub(r"[ -]", "", m.group(0))
+        return "[REDACTED_CARD]" if 13 <= len(digits) <= 19 and _luhn_ok(digits) else m.group(0)
+
+    def _iban(m: "re.Match[str]") -> str:
+        return "[REDACTED_IBAN]" if _iban_ok(m.group(0).replace(" ", "")) else m.group(0)
+
+    text = _PREVIEW_PASSWORD_RE.sub(lambda m: m.group(1) + m.group(2) + "[REDACTED_PASSWORD]", text)
+    text = _PREVIEW_EMAIL_RE.sub("[REDACTED_EMAIL]", text)
+    text = _PREVIEW_IBAN_RE.sub(_iban, text)
+    text = _PREVIEW_CARD_RE.sub(_card, text)
+    return _PREVIEW_PHONE_RE.sub("[REDACTED_PHONE]", text)
+
+
 # Tool output can be large (file reads, search results). Instead of the
 # head + tail view used by evaluate(), it is scanned in windows of
 # MAX_SCAN_CHARS that overlap by SCAN_WINDOW_OVERLAP, so a payload in the
