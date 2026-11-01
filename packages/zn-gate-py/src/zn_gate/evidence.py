@@ -282,7 +282,13 @@ def _break_stale_lock(lock_path: str, token: str) -> bool:
     try:
         os.write(fd, token.encode("utf-8"))
     except OSError:
-        pass  # best effort: without it the mutex is never released by us
+        # Without the token this process cannot release the mutex. The mutex is ours (just created
+        # with O_EXCL), so remove it and report the error instead of leaving an empty mutex behind.
+        try:
+            os.close(fd)
+        finally:
+            _unlink_lock(mutex)
+        raise
     try:
         try:
             os.close(fd)

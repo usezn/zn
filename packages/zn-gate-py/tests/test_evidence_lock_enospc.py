@@ -1,5 +1,6 @@
 import errno
 import os
+import time
 
 import pytest
 
@@ -28,6 +29,13 @@ def _fail_first_os_write(monkeypatch):
 
     monkeypatch.setattr(evidence.os, "write", fake_write)
     return state
+
+
+def _make_stale_lock(lock_path):
+    with open(lock_path, "w", encoding="ascii") as fh:
+        fh.write("999999:deadbeef")
+    old = time.time() - 3600
+    os.utime(lock_path, (old, old))
 
 
 def test_acquire_lock_enospc_removes_lock_and_raises(tmp_path, monkeypatch):
@@ -69,3 +77,37 @@ def test_normal_write_leaves_no_lock(tmp_path):
     assert record is not None
     assert record["prev_hash"] == GENESIS_HASH
     assert not os.path.exists(ledger + ".lock")
+
+
+def test_break_mutex_enospc_removes_mutex_and_next_break_works(tmp_path, monkeypatch):
+    lock_path = str(tmp_path / "evidence.jsonl.lock")
+    mutex = lock_path + ".break"
+    _make_stale_lock(lock_path)
+    _fail_first_os_write(monkeypatch)  # the first write in _break_stale_lock is the mutex token
+
+    with pytest.raises(OSError) as info:
+        evidence._break_stale_lock(lock_path, "1:aaaa")
+
+    assert info.value.errno == errno.ENOSPC
+    assert not os.path.exists(mutex)
+    assert os.path.exists(lock_path)  # the stale lock is not touched when the break fails
+
+    # Space is back: breaking the same stale lock works at once.
+    monkeypatch.undo()
+    assert evidence._break_stale_lock(lock_path, "1:aaaa") is True
+    assert not os.path.exists(lock_path)
+    assert not os.path.exists(mutex)
+
+
+def test_acquire_over_stale_lock_after_enospc_on_mutex_then_succeeds(tmp_path, monkeypatch):
+    lock_path = str(tmp_path / "evidence.jsonl.lock")
+    _make_stale_lock(lock_path)
+    _fail_first_os_write(monkeypatch)
+
+    with pytest.raises(OSError):
+        evidence._acquire_lock(lock_path, 1.0)
+    assert not os.path.exists(lock_path + ".break")
+
+    monkeypatch.undo()
+    token = evidence._acquire_lock(lock_path, 1.0)
+    assert evidence._read_lock_token(lock_path) == token
