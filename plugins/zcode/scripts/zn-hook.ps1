@@ -23,6 +23,9 @@ $ZEvent = ''
 if ($args.Count -gt 0) { $ZEvent = [string]$args[0] }
 $Deadline = 28
 $Clock = [System.Diagnostics.Stopwatch]::StartNew()
+# ZCode's timeout counts from the start of this process, and Windows PowerShell can take seconds to start on a cold machine:
+# the deadline is the time that is left of those 28 seconds, so a slow start blocks the call instead of running into the timeout.
+try { $Deadline = [Math]::Max(3, $Deadline - [int][Math]::Ceiling(((Get-Date) - [System.Diagnostics.Process]::GetCurrentProcess().StartTime).TotalSeconds)) } catch {}
 
 function Refuse([string]$why) {
   if (@('PreToolUse', 'PermissionRequest', 'UserPromptSubmit', '') -contains $ZEvent) {
@@ -104,15 +107,26 @@ function New-Info([string]$file, [string]$arguments, [bool]$electron) {
   return $i
 }
 
-# Node.js 20.19+ with the module loader the launcher needs.
-$Probe = "const v=process.versions.node.split('.').map(Number);const vm=require('vm');process.exit(((v[0]>21||(v[0]===21&&v[1]>=7)||(v[0]===20&&v[1]>=19))&&vm.constants&&vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER)?0:1)"
+# Node.js 20.19+ with the module loader the launcher needs. The probe prints its own version; the answer is read and checked
+# here, so a program that is not Node.js (cmd.exe, PowerShell, ...) and ends with exit code 0 is never taken for it.
+$Probe = "const vm=require('vm');process.stdout.write('ZNPROBE '+process.versions.node+' '+((vm.constants&&vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER)?'1':'0'))"
+function VersionOk([string]$out) {
+  $m = [regex]::Match($out.Trim(), '^ZNPROBE (\d+)\.(\d+)\.\d+ 1$')
+  if (-not $m.Success) { return $false }
+  $maj = [int]$m.Groups[1].Value
+  $min = [int]$m.Groups[2].Value
+  return ($maj -gt 21) -or ($maj -eq 21 -and $min -ge 7) -or ($maj -eq 20 -and $min -ge 19)
+}
 function NodeOk([string]$node) {
   $i = New-Info $node ('-e "' + $Probe + '"') $true
   $i.RedirectStandardOutput = $true
   $i.RedirectStandardError = $true
   $p = $null
+  $outTask = $null
   try {
     $p = [System.Diagnostics.Process]::Start($i)
+    $outTask = $p.StandardOutput.ReadToEndAsync()
+    [void]$p.StandardError.ReadToEndAsync()
     try { $p.StandardInput.Close() } catch {}
   } catch {
     return $false
@@ -121,7 +135,11 @@ function NodeOk([string]$node) {
     Stop-Tree $p
     Refuse ('the hook did not finish starting within ' + $Deadline + ' seconds.')
   }
-  return ($p.ExitCode -eq 0)
+  if ($p.ExitCode -ne 0) { return $false }
+  try {
+    if (-not $outTask.Wait(2000)) { return $false }
+    return (VersionOk ([string]$outTask.Result))
+  } catch { return $false }
 }
 
 $Node = $null
@@ -148,15 +166,25 @@ if (-not $Node) {
   if ($env:USERPROFILE) { $usual += ($env:USERPROFILE + '\.volta\bin\node.exe') }
   foreach ($c in $usual) { if (TryNode $c) { $Node = $c; break } }
 }
-# 3. the program that started this hook (ZCode's own Node.js)
+# 3. the program that started this hook (ZCode's own Node.js). The hook runs under scripts/zn-hook-win.cmd, so the parent is
+# usually cmd.exe: shells and script hosts are skipped and the chain is walked up (at most 6 levels). Whatever is picked must
+# still pass the probe above, which parses the version Node.js prints.
 if (-not $Node) {
-  $exe = $null
+  $skip = @('cmd.exe', 'powershell.exe', 'pwsh.exe', 'conhost.exe', 'wscript.exe', 'cscript.exe', 'bash.exe', 'sh.exe', 'wsl.exe', 'explorer.exe', 'services.exe', 'svchost.exe', 'wininit.exe', 'winlogon.exe')
+  $byPid = @{}
   try {
-    $me = Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId=' + $PID)
-    $parent = Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId=' + $me.ParentProcessId)
-    $exe = [string]$parent.ExecutablePath
-  } catch { $exe = $null }
-  if ($exe -and (Absolute $exe) -and (TryNode $exe)) { $Node = $exe; $AppNode = $true }
+    foreach ($pr in (Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId, ExecutablePath)) { $byPid[[int]$pr.ProcessId] = $pr }
+  } catch { $byPid = @{} }
+  $ppid = $PID
+  for ($lvl = 0; $lvl -lt 6 -and -not $Node; $lvl++) {
+    if (-not $byPid.ContainsKey($ppid)) { break }
+    $ppid = [int]$byPid[$ppid].ParentProcessId
+    if ($ppid -le 4 -or -not $byPid.ContainsKey($ppid)) { break }
+    $exe = [string]$byPid[$ppid].ExecutablePath
+    if (-not $exe -or -not (Absolute $exe)) { continue }
+    if ($skip -contains ([System.IO.Path]::GetFileName($exe).ToLowerInvariant())) { continue }
+    if (TryNode $exe) { $Node = $exe; $AppNode = $true }
+  }
 }
 if (-not $Node) { Refuse 'no Node.js 20.19 or later was found for the hook (looked in the PATH, the usual install folders and the app itself).' }
 

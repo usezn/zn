@@ -310,6 +310,17 @@ try {
     });
   }
 
+  // ZCode's 30 second hook timeout counts from the start of the PowerShell process, which can take seconds to start on a cold
+  // machine; and a program that is not Node.js must never be taken for it because it ends with exit code 0.
+  test('zn-hook.ps1 counts its deadline from the process start and reads the version Node.js prints', () => {
+    const ps = fs.readFileSync(path.join(ZC, 'scripts', 'zn-hook.ps1'), 'utf8');
+    assert.ok(/GetCurrentProcess\(\)\.StartTime/.test(ps) && /\$Deadline - /.test(ps), 'the deadline is what is left of 28 seconds since the process started');
+    assert.ok(/ZNPROBE/.test(ps) && /function VersionOk/.test(ps), 'the probe prints a version that is parsed');
+    assert.ok(!/return \(\$p\.ExitCode -eq 0\)/.test(ps), 'the exit code alone never decides');
+    for (const shell of ['cmd.exe', 'powershell.exe', 'pwsh.exe', 'conhost.exe']) assert.ok(ps.includes("'" + shell + "'"), shell + ' is skipped as a parent');
+    assert.ok((ps.match(/Get-CimInstance/g) || []).length === 1, 'one process query for the whole chain of parents');
+  });
+
   if (posix) {
     const HOOK = path.join(ZC, 'scripts', 'zn-hook.sh');
     // Small fixed parent scripts (written once, no command string built at run time); the values arrive as arguments.
