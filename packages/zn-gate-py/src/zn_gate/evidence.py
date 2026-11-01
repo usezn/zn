@@ -38,11 +38,22 @@ def _ensure_dir(file_path: str) -> None:
 
 def _open_for_append(file_path: str) -> TextIO:
     """Opens the ledger for appending. New files are created 0600 and an existing
-    file that is readable by others is restricted to 0600 (POSIX only)."""
-    fd = os.open(file_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-    if os.name == "posix" and os.fstat(fd).st_mode & 0o077:
-        os.fchmod(fd, 0o600)
-    return os.fdopen(fd, "a", encoding="utf-8")
+    file that is readable by others is restricted to 0600 (POSIX only). If the file is
+    not empty and its last byte is not a newline, a newline is written first so the next
+    record starts its own line (the caller holds the write lock)."""
+    fd = os.open(file_path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        st = os.fstat(fd)
+        if os.name == "posix" and st.st_mode & 0o077:
+            os.fchmod(fd, 0o600)
+        if st.st_size > 0:
+            os.lseek(fd, st.st_size - 1, os.SEEK_SET)
+            if os.read(fd, 1) != b"\n":
+                os.write(fd, b"\n")  # O_APPEND: always lands at the end of the file
+        return os.fdopen(fd, "a", encoding="utf-8")
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 class EvidenceLedgerError(Exception):
