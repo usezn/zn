@@ -2,6 +2,9 @@
   "sensitive_file": {
     "positives": [
       "cat .env.example && cat .env",
+      "cat .env.example,.env",
+      "gc .env.example,.env",
+      "cat {.env.example,.env}",
       "cat .env.example .env.local",
       "cat .env.example.bak",
       "cat .env.examplex",
