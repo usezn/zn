@@ -130,7 +130,7 @@ THE SOFTWARE.
 
 ## gitleaks v8.30.1 (provider token formats)
 
-Some provider token formats in `lib/scrub/patterns.js` (marked there) are taken from the default configuration of [gitleaks](https://github.com/gitleaks/gitleaks) v8.30.1 (`config/gitleaks.toml`) and rewritten for zn-gate. No gitleaks code is included.
+Some provider token formats in `lib/scrub/patterns.js` (marked there) are taken from the default configuration of [gitleaks](https://github.com/gitleaks/gitleaks) v8.30.1 (`config/gitleaks.toml`) and rewritten for zn-gate. No gitleaks code is included. The Azure AD client secret, Twilio API key and Square token formats in the same file use the token shapes of the gitleaks rules with the same names and are rewritten the same way.
 
 ```text
 MIT License

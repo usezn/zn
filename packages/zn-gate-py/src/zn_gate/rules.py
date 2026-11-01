@@ -2252,6 +2252,8 @@ def evaluate(text: Optional[str] = _NOT_GIVEN, strict: Optional[bool] = None, *,
 
 
 # Third-party notice for the provider formats marked as taken from gitleaks v8.30.1 (config/gitleaks.toml):
+# The Azure AD client secret, Twilio API key and Square token formats use the token shapes of the gitleaks rules
+# with the same names and are rewritten the same way.
 #
 # MIT License
 #
