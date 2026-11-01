@@ -9,9 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- `zn team`: when more than 8 installations left while the server could not be reached, zn-gate kept only a count and the last installation id of the dropped revocations, and the warning in `zn team status` disappeared after 30 days. It now keeps every dropped installation id and organization (up to 200, about 20 KB in the vault; older ones are only counted) and shows the warning until the server confirms the installation or you run the new `zn team dismiss-dropped <install-id>|--all` after an admin removed them from the dashboard. `zn team status --json` lists them in `revocations_dropped.installations`.
-
 ## [1.14.1] - 2026-10-28
 
 zn-gate 1.14.1 is the first 1.14 release on npm. 1.14.0 was published on PyPI but never reached npm, and npm does not let a version number be used again, so npm users get everything in the 1.14.0 section below together with this release. The npm package now declares that it is a dual-use security tool and ships a `DISCLOSURE` file that explains what it does to other programs' configuration, to Windows file permissions and to the vault. On Windows, the vault no longer starts `whoami.exe` and `icacls.exe`, and zn-gate no longer passes an execution policy argument to PowerShell. A program from the `node_modules` folder of your home folder is no longer started, and in Claude Code a user-scope `secrets` server entry that sets `NODE_OPTIONS` or `NODE_PATH` is no longer taken as zn's. The Python package changes only in its version number. Update with `npm install -g zn-gate` or `pip install -U zn-gate`, and report problems at https://github.com/usezn/zn/issues.
