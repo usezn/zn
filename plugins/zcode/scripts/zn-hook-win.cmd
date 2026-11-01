@@ -17,6 +17,11 @@ set "ZN_PS=C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
 if defined SystemRoot set "ZN_PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 if not exist "%ZN_PS%" goto refuse
 if not exist "%~dp0zn-hook.ps1" goto refuse
+rem Read the plugin files once in the background while PowerShell starts: the first call on a cold machine spends most of its
+rem time on the first read of every file (disk and virus scanner). This only reads, nothing is run from it.
+set "ZN_CMD=C:\Windows\System32\cmd.exe"
+if defined SystemRoot set "ZN_CMD=%SystemRoot%\System32\cmd.exe"
+if exist "%ZN_CMD%" if exist "%~dp0..\vendor" start "" /b "%ZN_CMD%" /d /s /c "for /r "%~dp0..\vendor" %%f in (*) do @type "%%f" >nul 2>nul" <nul >nul 2>nul
 "%ZN_PS%" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0zn-hook.ps1" %ZN_EVENT%
 set "ZN_RC=%ERRORLEVEL%"
 if "%ZN_RC%"=="0" exit /b 0

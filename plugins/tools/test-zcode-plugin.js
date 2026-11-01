@@ -325,6 +325,22 @@ try {
     assert.ok(/Refuse 'no Node\.js 20\.19 or later was found/.test(text), 'with no valid Node.js the hook blocks');
   });
 
+  // ZCode starts hooks in the project folder, where Windows looks for a program by name first: the launcher names every program it
+  // starts by full path, and its background read of the plugin files only reads. The PowerShell script counts the 30 second
+  // timeout from the start of its process.
+  test('zn-hook-win.cmd starts programs by full path only, and zn-hook.ps1 counts its deadline from the process start', () => {
+    const cmd = fs.readFileSync(path.join(ZC, 'scripts', 'zn-hook-win.cmd'), 'utf8').split(/\r?\n/).filter((l) => !/^\s*rem\b/i.test(l));
+    for (const l of cmd) {
+      assert.ok(!/(^|[\s(&|])(powershell|pwsh|cmd|node|python|wscript|cscript)(\.exe)?\s/i.test(l.replace(/"[^"]*"/g, '""')), 'a program started by name: ' + l);
+    }
+    const warm = cmd.filter((l) => /\bstart\b/i.test(l));
+    assert.strictEqual(warm.length, 1);
+    assert.ok(/start "" \/b "%ZN_CMD%" /.test(warm[0]) && /@type /.test(warm[0]) && !/(>>|copy|del|erase|move|ren|echo)/i.test(warm[0].replace(/>nul 2>nul/g, '')), 'the background step only reads: ' + warm[0]);
+    const ps = fs.readFileSync(path.join(ZC, 'scripts', 'zn-hook.ps1'), 'utf8');
+    assert.ok(/GetCurrentProcess\(\)\.StartTime/.test(ps) && /\$Deadline - /.test(ps), 'the deadline is what is left of 28 seconds since the process started');
+    assert.ok((ps.match(/Get-CimInstance/g) || []).length === 1, 'one process query for the whole chain of parents');
+  });
+
   if (posix) {
     const HOOK = path.join(ZC, 'scripts', 'zn-hook.sh');
     // Small fixed parent scripts (written once, no command string built at run time); the values arrive as arguments.

@@ -23,6 +23,9 @@ $ZEvent = ''
 if ($args.Count -gt 0) { $ZEvent = [string]$args[0] }
 $Deadline = 28
 $Clock = [System.Diagnostics.Stopwatch]::StartNew()
+# ZCode's timeout counts from the start of this process, and Windows PowerShell can take seconds to start on a cold machine:
+# the deadline is the time that is left of those 28 seconds, so a slow start blocks the call instead of running into the timeout.
+try { $Deadline = [Math]::Max(3, $Deadline - [int][Math]::Ceiling(((Get-Date) - [System.Diagnostics.Process]::GetCurrentProcess().StartTime).TotalSeconds)) } catch {}
 
 function Refuse([string]$why) {
   if (@('PreToolUse', 'PermissionRequest', 'UserPromptSubmit', '') -contains $ZEvent) {
@@ -168,16 +171,16 @@ if (-not $Node) {
 # still pass the probe above, which parses the version Node.js prints.
 if (-not $Node) {
   $skip = @('cmd.exe', 'powershell.exe', 'pwsh.exe', 'conhost.exe', 'wscript.exe', 'cscript.exe', 'bash.exe', 'sh.exe', 'wsl.exe', 'explorer.exe', 'services.exe', 'svchost.exe', 'wininit.exe', 'winlogon.exe')
+  $byPid = @{}
+  try {
+    foreach ($pr in (Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId, ExecutablePath)) { $byPid[[int]$pr.ProcessId] = $pr }
+  } catch { $byPid = @{} }
   $ppid = $PID
   for ($lvl = 0; $lvl -lt 6 -and -not $Node; $lvl++) {
-    $exe = $null
-    try {
-      $me = Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId=' + $ppid)
-      $ppid = [int]$me.ParentProcessId
-      if ($ppid -le 4) { break }
-      $parent = Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId=' + $ppid)
-      $exe = [string]$parent.ExecutablePath
-    } catch { break }
+    if (-not $byPid.ContainsKey($ppid)) { break }
+    $ppid = [int]$byPid[$ppid].ParentProcessId
+    if ($ppid -le 4 -or -not $byPid.ContainsKey($ppid)) { break }
+    $exe = [string]$byPid[$ppid].ExecutablePath
     if (-not $exe -or -not (Absolute $exe)) { continue }
     if ($skip -contains ([System.IO.Path]::GetFileName($exe).ToLowerInvariant())) { continue }
     if (TryNode $exe) { $Node = $exe; $AppNode = $true }
