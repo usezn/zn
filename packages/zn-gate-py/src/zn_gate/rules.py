@@ -1831,6 +1831,9 @@ def redact_scan_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     return redacted, first + second
 
 
+_RULE_SKIP_CHECKS: Dict[str, Tuple[Optional[str], Optional[re.Pattern[str]], Optional[re.Pattern[str]]]] = {}
+
+
 def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern[str], str]]) -> Tuple[str, List[Dict[str, Any]]]:
     if not isinstance(text, str) or not text:
         return text, []
@@ -1845,6 +1848,23 @@ def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern[str], str]]) ->
         if dirty:
             view = invisible_view(redacted)
             dirty = False
+        if view is None:
+            # One pass only: the same checks _rule_candidates starts with, so a rule
+            # that cannot match this text costs one lookup and no call.
+            skip = _RULE_SKIP_CHECKS.get(rule_id)
+            if skip is None:
+                hint_list = PROVIDER_HINTS.get(rule_id)
+                skip = _RULE_SKIP_CHECKS[rule_id] = (
+                    SECRET_PATTERN_REQUIRES.get(rule_id),
+                    re.compile('|'.join(re.escape(h) for h in hint_list)) if hint_list else None,
+                    SECRET_PATTERN_PREFILTERS.get(rule_id) or SCAN_SECRET_PREFILTERS.get(rule_id))
+            required, hints, prefilter = skip
+            if required and required not in redacted:
+                continue
+            if hints is not None and hints.search(redacted) is None:
+                continue
+            if prefilter is not None and not prefilter.search(redacted):
+                continue
         cands: List[Tuple[int, int, str, str]] = []
         value_filter = (SECRET_VALUE_FILTERS.get(rule_id) or PROVIDER_VALUE_FILTERS.get(rule_id)
                         or SCAN_SECRET_VALUE_FILTERS.get(rule_id))
