@@ -96,11 +96,23 @@ test('the most specific pending host is offered first', () => {
   assert.strictEqual(pickOpening(pending, 'host', () => false), null);
 });
 
-test('no policy, an invalid cache or no state leaves local settings alone', () => {
+test('no policy yet or no state leaves local settings alone', () => {
   const p = pol([{ secret: '*', agents: ['*'], deny: true }]);
-  for (const state of ['none', 'invalid', undefined]) {
+  for (const state of ['none', undefined]) {
     const r = effective('X', LOCAL, { policy: p, state, agent: 'codex', agentTrusted: true });
     assert.strictEqual(r.deny, false);
+    assert.deepStrictEqual(r.meta.allowHosts, LOCAL.allowHosts);
+  }
+});
+
+test('an invalid policy blocks every secret, uses nothing from its content and opens nothing', () => {
+  // Even a copy whose rules would open a host or lift every restriction is not read.
+  const opens = pol([{ secret: '*', agents: ['*'], allowHosts: ['new.example.com'] }]);
+  for (const p of [opens, null, undefined]) {
+    const r = effective('X', LOCAL, { policy: p, state: 'invalid', org: ORG, agent: 'codex', agentTrusted: true });
+    assert.strictEqual(r.deny, true);
+    assert.strictEqual(r.reason, 'policy:org_invalid');
+    assert.deepStrictEqual(r.pending, []);
     assert.deepStrictEqual(r.meta.allowHosts, LOCAL.allowHosts);
   }
 });
