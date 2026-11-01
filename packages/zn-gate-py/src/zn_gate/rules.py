@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-31.6
+RULES_VERSION: 2026-11-01.1
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-10-31.6"
+RULES_VERSION = "2026-11-01.1"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -99,7 +99,7 @@ def _rc(pattern: str, flags: int = 0) -> "re.Pattern[str]":
     return cast("re.Pattern[str]", _LazyPattern(pattern, flags))
 
 
-ZERO_WIDTH_RE = _rc(r'[\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F\u061C\u180E\u200E\u200F\u115F\u1160\u3164\uFFA0]')
+ZERO_WIDTH_RE = _rc(r'[\u0000-\u0008\u000E-\u001A\u001C-\u001F\u200B-\u200D\u2060\uFEFF\u00AD\uFE00-\uFE0F\u061C\u180E\u200E\u200F\u115F\u1160\u3164\uFFA0]')
 INVISIBLE_ASTRAL_RE = _rc(r'[\U000E0000-\U000E007F\U000E0100-\U000E01EF]')
 # Line breaks are joined only in texts up to this size (see MAX_WRAP_VIEW_CHARS in rules.js).
 MAX_WRAP_VIEW_CHARS = 1 << 20
