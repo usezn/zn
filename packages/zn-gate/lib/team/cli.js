@@ -2,7 +2,8 @@
 /**
  * zn Team on this machine:
  *
- *   zn team join <znj_token> | - | (ZN_TEAM_JOIN_TOKEN) [--api https://...] [--agent claude-code|codex|...] [--include-history]
+ *   zn team join <token>|- [--api https://...] [--agent claude-code|codex|...] [--include-history]
+ *     (or set ZN_TEAM_JOIN_TOKEN and run zn team join [options])
  *   zn team status [--json]
  *   zn team sync                      download the policy now and upload the audit log
  *   zn team leave
@@ -29,7 +30,7 @@ const { isVerbose } = require('../verbose');
 const messages = require('../messages');
 const { znCommand } = require('../zn-command');
 
-const USAGE = 'usage: zn team join <token> | zn team join - | ZN_TEAM_JOIN_TOKEN=... zn team join [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
+const USAGE = 'usage: zn team join <token>|- [--api URL] [--agent ID] [--include-history] (or set ZN_TEAM_JOIN_TOKEN and run zn team join [options]) | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
 const JOIN_TOKEN_ENV = 'ZN_TEAM_JOIN_TOKEN';
 const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE] [--unverified]';
 
@@ -62,16 +63,81 @@ function describePolicy(p) {
   return base;
 }
 
-/* First non-empty line of standard input, trimmed. Never echoed. */
-function readStdinToken() {
+/*
+ * First non-empty line of the token source, trimmed. Never echoed.
+ * On a terminal the echo is switched off while the line is read (raw mode), and the terminal mode is put back on every
+ * way out: Enter, Ctrl-D, Ctrl-C, end of input, a read error, SIGINT and process exit. Without a terminal (a pipe or a
+ * file) the line is read as it is.
+ */
+function readStdinToken(input = process.stdin, output = process.stderr) {
+  return input.isTTY ? readTerminalToken(input, output) : readPipedToken(input);
+}
+
+function readPipedToken(input) {
   return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, terminal: false });
+    const rl = readline.createInterface({ input, terminal: false });
     let done = false;
     const finish = (v) => { if (done) return; done = true; rl.close(); resolve(v); };
-    if (process.stdin.isTTY) err('Paste the join token and press Enter:');
     rl.on('line', (l) => { if (l.trim()) finish(l.trim()); });
     rl.on('close', () => finish(''));
     rl.on('error', () => finish(''));
+  });
+}
+
+// Escape sequences from arrow and function keys are dropped before the text is read.
+const TERMINAL_ESCAPES = /\x1b\[[0-9;?]*[ -\/]*[@-~]|\x1bO./g;
+
+function readTerminalToken(input, output) {
+  return new Promise((resolve) => {
+    const wasRaw = Boolean(input.isRaw);
+    const restore = () => { try { input.setRawMode(wasRaw); } catch (e) { /* the terminal is already gone */ } };
+    let buf = '';
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      input.removeListener('data', onData);
+      input.removeListener('end', onEnd);
+      input.removeListener('error', onEnd);
+      process.removeListener('SIGINT', onEnd);
+      process.removeListener('exit', restore);
+      restore();
+      input.pause();
+      output.write('\n');
+      resolve(v);
+    };
+    function onEnd() { finish(''); }
+    function onData(chunk) {
+      for (const ch of String(chunk).replace(TERMINAL_ESCAPES, '')) {
+        if (ch === '\r' || ch === '\n') {
+          const line = buf.trim();
+          if (line) return finish(line);
+          buf = '';
+        } else if (ch === '\x03') {
+          return finish(''); // Ctrl-C: give up, nothing is read
+        } else if (ch === '\x04') {
+          return finish(buf.trim()); // Ctrl-D: end of input
+        } else if (ch === '\x7f' || ch === '\b') {
+          buf = buf.slice(0, -1);
+        } else if (ch >= ' ') {
+          buf += ch;
+        }
+      }
+    }
+    try {
+      input.setRawMode(true); // no echo: the token never shows on the screen
+    } catch (e) {
+      // Fail closed: without a way to switch the echo off, the token is not read from the keyboard.
+      output.write('[zn] Cannot hide the typing on this terminal. Pipe the token in instead: printf %s "$TOKEN" | zn team join -\n');
+      return resolve('');
+    }
+    process.on('exit', restore);
+    process.on('SIGINT', onEnd);
+    input.on('data', onData);
+    input.on('end', onEnd);
+    input.on('error', onEnd);
+    output.write('Paste the join token and press Enter:\n');
+    input.resume();
   });
 }
 
@@ -162,7 +228,7 @@ async function statusCmd(args) {
   };
   if (json) { out(JSON.stringify(res, null, 2)); return 0; }
   if (!joined) {
-    out('Not in a zn organization. Join with: zn team join <token> (from your organization admin).');
+    out('Not in a zn organization. Join with: zn team join - (then paste the token from your organization admin).');
     for (const l of describeRevocations(res.revocation_pending)) out(l);
     for (const l of describeDropped(res.revocations_dropped)) out(l);
     return 0;
@@ -359,4 +425,4 @@ async function runLogExport(args) {
   }
 }
 
-module.exports = { runTeamCommand, runLogExport, describePolicy };
+module.exports = { runTeamCommand, runLogExport, describePolicy, readStdinToken };

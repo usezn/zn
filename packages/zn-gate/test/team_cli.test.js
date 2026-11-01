@@ -145,7 +145,7 @@ test('status on a machine that never joined says how to join; --json is machine 
   fake.teamInfo = async () => { throw Object.assign(new Error('locked'), { code: CODES.LOCKED }); };
   let r = await capture(() => runTeamCommand(['team', 'status']));
   assert.strictEqual(r.code, 0);
-  assert.match(r.stdout, /^Not in a zn organization\. Join with: zn team join <token>/);
+  assert.match(r.stdout, /^Not in a zn organization\. Join with: zn team join -/);
   r = await capture(() => runTeamCommand(['team']));
   assert.strictEqual(r.code, 0, 'no subcommand means status');
   r = await capture(() => runTeamCommand(['team', 'status', '--json']));
@@ -306,7 +306,7 @@ test('join asks to send the earlier audit log only with --include-history', asyn
   r = await capture(() => runTeamCommand(['team', 'join', 'znj_' + 'e'.repeat(32), '--agent', 'codex']));
   assert.ok(!('include_history' in joinArgs), 'no flag, no consent');
   r = await capture(() => runTeamCommand(['team', '--help']));
-  assert.match(r.stdout, /zn team join <token> \| zn team join - \| ZN_TEAM_JOIN_TOKEN=\.\.\. zn team join \[--api URL\] \[--agent ID\] \[--include-history\]/);
+  assert.match(r.stdout, /zn team join <token>\|- \[--api URL\] \[--agent ID\] \[--include-history\]/);
 });
 
 test('status counts only the records after the join as pending', async () => {
