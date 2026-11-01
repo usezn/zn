@@ -37,6 +37,11 @@ def add_plugin(tag):
     return r1.returncode == 0 and r2.returncode == 0, r3.stdout
 
 
+def is_win_hook(h):
+    c = h['command'].lower()
+    return 'powershell' in c or c.endswith('zn-hook-win.cmd')
+
+
 def hook_events(res):
     out = []
     for l in res['stdout'].splitlines():
@@ -97,9 +102,9 @@ def main():
     plugdir = glob_first(CACHE + '/*')
     hj = json.load(open(plugdir + '/hooks/hooks.json'))
     shutil.copy(plugdir + '/hooks/hooks.json', OUT + '/cached_hooks.json')
-    n_ps = sum(1 for ev in hj['hooks'].values() for g in ev for h in g['hooks'] if 'powershell' in h['command'].lower())
+    n_ps = sum(1 for ev in hj['hooks'].values() for g in ev for h in g['hooks'] if is_win_hook(h))
     n_sh = sum(1 for ev in hj['hooks'].values() for g in ev for h in g['hooks'] if h['command'] == '/bin/sh')
-    record('A1 installed copy has both hooks per event', '4 events x (1 /bin/sh + 1 PowerShell)', 'sh=%d powershell=%d dir=%s' % (n_sh, n_ps, plugdir), n_ps == 4 and n_sh == 4, 'cached_hooks.json')
+    record('A1 installed copy has both hooks per event', '4 events x (1 /bin/sh + 1 Windows launcher)', 'sh=%d windows=%d dir=%s' % (n_sh, n_ps, plugdir), n_ps == 4 and n_sh == 4, 'cached_hooks.json')
 
     # ---- (a)+(b): Read .env and the AWS credentials are blocked by the plugin (so the PowerShell entry started and found its root)
     res = run_zcode('b_read_env', [{'tool': 'read', 'values': v(file_path=PROJ + '/.env')}])
@@ -145,14 +150,20 @@ def main():
     zc(['plugins', 'enable', PLUGIN_ID], 'e_enable')
 
     # ---- (d): Node.js missing. Hook PATH without Node.js and Node.js out of its usual folder.
-    hook = [h for g in hj['hooks']['PreToolUse'] for h in g['hooks'] if 'powershell' in h['command'].lower()][0]
-    hook_post = [h for g in hj['hooks']['PostToolUse'] for h in g['hooks'] if 'powershell' in h['command'].lower()][0]
+    hook = [h for g in hj['hooks']['PreToolUse'] for h in g['hooks'] if is_win_hook(h)][0]
+    hook_post = [h for g in hj['hooks']['PostToolUse'] for h in g['hooks'] if is_win_hook(h)][0]
     sysr = os.environ.get('SystemRoot') or 'C:' + BS + 'Windows'
 
     def direct(h, evn, path, tag):
         e = {'SystemRoot': sysr, 'PATH': path, 'USERPROFILE': HOME.replace('/', BS), 'ZCODE_PLUGIN_ROOT': plugdir.replace('/', BS), 'TEMP': WORK.replace('/', BS) + BS + 'tmp'}
         evj = json.dumps({'hook_event_name': evn, 'session_id': 's', 'cwd': PROJ, 'tool_name': 'Bash', 'tool_input': {'command': 'dir'}})
-        r = subprocess.run([h['command']] + h['args'], input=evj, capture_output=True, text=True, env=e, cwd=PROJ, timeout=90)
+        cmdp = h['command'].replace('${ZCODE_PLUGIN_ROOT}', plugdir.replace('/', BS)).replace('/', BS)
+        if cmdp.lower().endswith('.cmd'):
+            # the way a host starts the launcher: cmd.exe on the file (no shell metacharacters in the fixed arguments)
+            line = 'cmd.exe /d /s /c ""%s" %s"' % (cmdp, ' '.join(h['args']))
+            r = subprocess.run(line, input=evj, capture_output=True, text=True, env=e, cwd=PROJ, timeout=90)
+        else:
+            r = subprocess.run([h['command']] + h['args'], input=evj, capture_output=True, text=True, env=e, cwd=PROJ, timeout=90)
         open('%s/d_direct_%s_%s.txt' % (OUT, tag, evn), 'w').write('rc=%d\n--stdout--\n%s\n--stderr--\n%s\n' % (r.returncode, r.stdout, r.stderr))
         return r
 
@@ -181,6 +192,11 @@ def main():
     finally:
         if hid:
             os.rename(moved, NODEDIR)
+    # D6: Node.js is installed but the hook PATH has no Node.js and the environment has no ProgramFiles (the hook environment of the
+    # app); the test process (python.exe) is the only ancestor and is not Node.js: the hook must block, never exit 0.
+    r = direct(hook, 'PreToolUse', sysonly, 'cmd_no_node_on_path')
+    record('D6 launcher .cmd, Node.js not on the PATH, no node.exe ancestor', 'exit 2 with a zn reason (never 0)', 'rc=%d %s' % (r.returncode, r.stderr.strip()[:200]),
+           r.returncode == 2 and 'zn' in r.stderr and 'Microsoft Windows' not in r.stdout, 'd_direct_cmd_no_node_on_path_PreToolUse.txt')
     r = direct(hook, 'PreToolUse', NODEDIR + ';' + sysonly, 'withnode')
     record('D5 (control) hook entry with Node.js back, ordinary call', 'exit 0 (allowed)', 'rc=%d %s' % (r.returncode, r.stderr.strip()[:200]), r.returncode == 0, 'd_direct_withnode_PreToolUse.txt')
 
