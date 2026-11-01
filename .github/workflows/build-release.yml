@@ -119,6 +119,11 @@ jobs:
           python-version: "3.12"
       - name: Set a reproducible build timestamp
         run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+      # npm and PyPI keep the README of each version forever: point its repository links at the tag, not at main.
+      - name: Pin the package README links to the release tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: node .release-tools/.github/scripts/pin-readme-links.js --tag "$TAG" packages/zn-gate/README.md packages/zn-gate-py/README.md
       - name: Pack the npm tarball
         working-directory: packages/zn-gate
         run: |
