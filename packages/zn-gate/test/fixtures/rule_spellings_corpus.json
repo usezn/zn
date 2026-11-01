@@ -2822,9 +2822,9 @@
  {
   "id": "egress-prog-044",
   "family": "egress-prog",
-  "spelling": "control: no secret, spelled",
-  "cmd": "\"curl\" -H \"Accept: application/json\" https://example.com/api",
-  "expect": "allow",
+  "spelling": "built command word with network arguments, spelled",
+  "cmd": "c\"u\"rl -H \"Accept: application/json\" https://example.com/api",
+  "expect": "ask",
   "rule": null,
   "kind": "egress",
   "note": null
@@ -2834,6 +2834,16 @@
   "family": "egress-prog",
   "spelling": "control: localhost with secret",
   "cmd": "curl -H \"Authorization: Bearer {{GHP}}\" http://localhost:8080/api",
+  "expect": "allow",
+  "rule": null,
+  "kind": "egress",
+  "note": null
+ },
+ {
+  "id": "egress-prog-046",
+  "family": "egress-prog",
+  "spelling": "control: no secret, whole word quoted",
+  "cmd": "\"curl\" -H \"Accept: application/json\" https://example.com/api",
   "expect": "allow",
   "rule": null,
   "kind": "egress",
