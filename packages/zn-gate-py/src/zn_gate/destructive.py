@@ -481,7 +481,12 @@ def _skip_wrapper(words: List[str], k: int, name: str) -> int:
 _SHELL_KEYWORDS = frozenset(("{", "then", "do", "else", "elif", "if", "while", "until", "!"))
 
 
-def _dollar_paren_code(text: str) -> str:
+# Largest number of pieces, and of characters in all of them, that one unclosable substitution is read as; past it the line is refused.
+_MAX_WIDE_PARTS = 64
+_MAX_WIDE_TOTAL = 512 * 1024
+
+
+def _dollar_paren_code(text: str) -> Optional[str]:
     """The text of every `$( ... )` command substitution of a command that Bash would expand (unquoted or inside double
     quotes, not inside single quotes or after a backslash), joined into one text to be read as commands, or "" when there
     is none. A `$(( ... ))` is arithmetic, not a command: its own text is skipped, but a `$( )` inside it is still read.
@@ -511,7 +516,10 @@ def _dollar_paren_code(text: str) -> str:
             i += 1
         elif ch == "$" and text[i + 1:i + 2] == "{" and (text[i + 2:i + 3].isspace() or text[i + 2:i + 3] == "|"):
             # A ${ cmd; } or ${| cmd; } (bash 5.3, ksh, mksh) runs its text as commands in the current shell: read it wide.
-            parts, last = _dollar_paren_wide(text, i + (3 if text[i + 2] == "|" else 2), quote == '"', "}")
+            wide = _dollar_paren_wide(text, i + (3 if text[i + 2] == "|" else 2), quote == '"', "}")
+            if wide is None:
+                return None
+            parts, last = wide
             bodies.extend(parts)
             i = last
         elif ch == "$" and text[i + 1:i + 2] == "(":
@@ -544,7 +552,7 @@ def _dollar_paren_code(text: str) -> str:
                         j += 1
                     elif q == '"':
                         # A $( ) or a backtick inside a double-quoted string of the body opens a nested scope where quotes restart: its quotes and parentheses cannot be paired here.
-                        if (c == "$" and text[j + 1:j + 2] == "(") or c == "`":
+                        if (c == "$" and text[j + 1:j + 2] in ("(", "{")) or c == "`":
                             unsure = True
                             break
                     else:
@@ -565,7 +573,10 @@ def _dollar_paren_code(text: str) -> str:
                                 break
                     j += 1
                 if unsure:
-                    parts, last = _dollar_paren_wide(text, i + 2, quote == '"')
+                    wide = _dollar_paren_wide(text, i + 2, quote == '"')
+                    if wide is None:
+                        return None
+                    parts, last = wide
                     bodies.extend(parts)
                     i = last
                 else:
@@ -580,8 +591,12 @@ def _is_arithmetic(text: str, start: int) -> bool:
     parenthesis closes on its own, or nothing closes it, bash reads a substitution that starts with a subshell."""
     depth = 2
     j = start
-    while j < len(text):
+    # A quote or a backtick before the close can hide a `))`: read it as code. The scan is bounded so that a run of `$((` stays linear.
+    end = min(len(text), start + 4096)
+    while j < end:
         c = text[j]
+        if c in "\"'`":
+            return False
         if c == "\\":
             j += 1
         elif c == "(":
@@ -594,7 +609,7 @@ def _is_arithmetic(text: str, start: int) -> bool:
     return False
 
 
-def _dollar_paren_wide(text: str, start: int, quoted: bool, close: str = ")") -> Tuple[List[str], int]:
+def _dollar_paren_wide(text: str, start: int, quoted: bool, close: str = ")") -> Optional[Tuple[List[str], int]]:
     """The body of a substitution the scanner cannot close with certainty: everything up to the last `)` before the closing
     double quote of the enclosing string (or the end of the text when it is not quoted), plus the text after each `)` in it,
     so that code after an early `)` is read too. Returns the texts and the index the outer scan resumes from."""
@@ -615,8 +630,12 @@ def _dollar_paren_wide(text: str, start: int, quoted: bool, close: str = ")") ->
         end = limit
     body = text[start:end]
     parts = [body]
+    total = len(body)
     k = body.find(close)
     while k >= 0:
+        total += len(body) - k - 1
+        if len(parts) >= _MAX_WIDE_PARTS or total > _MAX_WIDE_TOTAL:
+            return None
         parts.append(body[k + 1:])
         k = body.find(close, k + 1)
     return parts, (end if text[end:end + 1] == close else end - 1)
@@ -1425,6 +1444,8 @@ def _analyze(cmd: str, depth: int = 0, known: Any = None) -> Optional[str]:
     # A command substitution $( ) runs its text as commands even inside double quotes (echo "$(rm -rf ~)"); read them too.
     if depth < _MAX_DEPTH and ("$(" in text or "${" in text):
         inner = _dollar_paren_code(text)
+        if inner is None:
+            return _OVERFLOW
         inner_hit = _analyze(inner, depth + 1, known) if inner else None
         if inner_hit:
             return inner_hit

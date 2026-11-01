@@ -133,3 +133,29 @@ test('their benign twins stay allowed', () => {
     assert.equal(checkCommand(c).verdict, 'allow', c);
   }
 });
+
+test('a quote before the close of a $(( hides no code, and a ${ in a nested string opens a scope', () => {
+  for (const c of [
+    'echo "$((echo "))"; rm -rf ~) )"',
+    'echo "$((echo \'))\'; rm -rf ~) )"',
+    'echo "$(echo "${x:-")"}"; rm -rf ~)"',
+    'echo "$(echo "${x#")"}" ; rm -rf ~)"',
+    'echo "$(echo "${ echo ")"; }"; rm -rf ~)"',
+  ]) {
+    const res = checkCommand(c);
+    assert.equal(res.verdict, 'block', c);
+    assert.equal(res.rule, 'destructive:rm_root_home', c);
+  }
+});
+
+test('long runs of funsubs and $(( are refused or read, never thrown and never slow', () => {
+  for (const input of ['echo "' + '${ x; } '.repeat(12000) + '"', 'echo "' + '$(('.repeat(20000) + '"', '$(('.repeat(20000)]) {
+    const t0 = process.cpuUsage();
+    const res = checkCommand(input);
+    const used = process.cpuUsage(t0);
+    assert.ok((used.user + used.system) / 1000 < 3000, 'slow input: ' + input.slice(0, 12) + ' (' + input.length + ' chars)');
+    assert.ok(res.verdict === 'block' || res.verdict === 'allow', input.slice(0, 12));
+  }
+  // the wide read of a funsub string is refused past its cap
+  assert.equal(checkCommand('echo "' + '${ x; } '.repeat(12000) + '"').verdict, 'block');
+});

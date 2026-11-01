@@ -116,3 +116,26 @@ def test_their_benign_twins_stay_allowed():
         'echo "$(echo "a)b")"',
     ]:
         assert check_command(c).verdict == "allow", c
+
+
+def test_a_quote_before_the_close_hides_no_code_and_a_funsub_in_a_nested_string_opens_a_scope():
+    for c in [
+        'echo "$((echo "))"; rm -rf ~) )"',
+        'echo "$((echo \'))\'; rm -rf ~) )"',
+        'echo "$(echo "${x:-")"}"; rm -rf ~)"',
+        'echo "$(echo "${x#")"}" ; rm -rf ~)"',
+        'echo "$(echo "${ echo ")"; }"; rm -rf ~)"',
+    ]:
+        res = check_command(c)
+        assert res.verdict == "block", c
+        assert res.rule == "destructive:rm_root_home", c
+
+
+def test_long_runs_of_funsubs_and_arithmetic_starts_are_refused_or_read_and_stay_fast():
+    import time
+    for text in ['echo "' + "${ x; } " * 12000 + '"', 'echo "' + "$((" * 20000 + '"', "$((" * 20000]:
+        t0 = time.process_time()
+        res = check_command(text)
+        assert time.process_time() - t0 < 3, text[:12]
+        assert res.verdict in ("block", "allow")
+    assert check_command('echo "' + "${ x; } " * 12000 + '"').verdict == "block"

@@ -259,6 +259,11 @@ function backtickCode(text) {
   return bodies.join('\n');
 }
 
+// Largest number of pieces, and of characters in all of them, that one unclosable substitution is read as; past it the line is refused.
+const MAX_WIDE_PARTS = 64;
+const MAX_WIDE_TOTAL = 512 * 1024;
+const DP_OVERFLOW = Symbol('dollar-paren-overflow');
+
 /* The text of every `$( ... )` command substitution of a command that Bash would expand (unquoted or inside double
    quotes, not inside single quotes or after a backslash), joined into one text to be read as commands, or '' when there
    is none. A `$(( ... ))` is arithmetic, not a command: its own text is skipped, but a `$( )` inside it is still read.
@@ -277,6 +282,7 @@ function dollarParenCode(text) {
     // A ${ cmd; } or ${| cmd; } (bash 5.3, ksh, mksh) runs its text as commands in the current shell: read it wide, like an unclosable body.
     if (ch === '$' && text[i + 1] === '{' && /[\s|]/.test(text[i + 2] || '')) {
       const r = dollarParenWide(text, i + (text[i + 2] === '|' ? 3 : 2), quote === '"', '}');
+      if (r === null) return DP_OVERFLOW;
       for (const p of r.parts) bodies.push(p);
       i = r.last;
       continue;
@@ -298,7 +304,7 @@ function dollarParenCode(text) {
       if (c === "'" && q === '') { q = "'"; continue; }
       if (c === '$' && text[j + 1] === "'" && q === '') { q = "$'"; j++; continue; }
       // A $( ) or a backtick inside a double-quoted string of the body opens a nested scope where quotes restart: its quotes and parentheses cannot be paired here.
-      if (q === '"' && ((c === '$' && text[j + 1] === '(') || c === '`')) { unsure = true; break; }
+      if (q === '"' && ((c === '$' && (text[j + 1] === '(' || text[j + 1] === '{')) || c === '`')) { unsure = true; break; }
       if (q === '"') continue;
       // A case pattern, a comment, a here-document, a ${ } expansion or a backtick span can hold a parenthesis that does not close the substitution.
       const wordStart = j === i + 2 || /[\s;&|(]/.test(text[j - 1]);
@@ -311,6 +317,7 @@ function dollarParenCode(text) {
     }
     if (unsure) {
       const r = dollarParenWide(text, i + 2, quote === '"');
+      if (r === null) return DP_OVERFLOW;
       for (const p of r.parts) bodies.push(p);
       i = r.last;
       continue;
@@ -325,6 +332,7 @@ function dollarParenCode(text) {
    double quote of the enclosing string (or the end of the text when it is not quoted), plus the text after each `)` in
    it, so that code after an early `)` is read too. Returns the texts and the index the outer scan resumes from. */
 function dollarParenWide(text, from, quoted, close = ')') {
+  // (null = more pieces or more text than can be read: the caller refuses the line.)
   let limit = text.length;
   if (quoted) {
     let lastQuote = -1;
@@ -338,7 +346,12 @@ function dollarParenWide(text, from, quoted, close = ')') {
   if (end < from) end = limit;
   const body = text.slice(from, end);
   const parts = [body];
-  for (let k = body.indexOf(close); k >= 0; k = body.indexOf(close, k + 1)) parts.push(body.slice(k + 1));
+  let total = body.length;
+  for (let k = body.indexOf(close); k >= 0; k = body.indexOf(close, k + 1)) {
+    total += body.length - k - 1;
+    if (parts.length >= MAX_WIDE_PARTS || total > MAX_WIDE_TOTAL) return null;
+    parts.push(body.slice(k + 1));
+  }
   return { parts, last: text[end] === close ? end : end - 1 };
 }
 
@@ -346,8 +359,10 @@ function dollarParenWide(text, from, quoted, close = ')') {
    parenthesis closes on its own, or nothing closes it, bash reads a substitution that starts with a subshell. */
 function isArithmetic(text, from) {
   let depth = 2;
-  for (let j = from; j < text.length; j++) {
+  // A quote or a backtick before the close can hide a `))`: read it as code. The scan is bounded so that a run of `$((` stays linear.
+  for (let j = from, end = Math.min(text.length, from + 4096); j < end; j++) {
     const c = text[j];
+    if (c === '"' || c === "'" || c === '`') return false;
     if (c === '\\') { j++; continue; }
     if (c === '(') depth++;
     else if (c === ')' && --depth === 1) return text[j + 1] === ')';
@@ -870,6 +885,7 @@ function analyze(cmd, depth = 0, known = null) {
   // A command substitution $( ) runs its text as commands even inside double quotes (echo "$(rm -rf ~)"); read them too.
   if (depth < MAX_DEPTH && (text.includes('$(') || text.includes('${'))) {
     const inner = dollarParenCode(text);
+    if (inner === DP_OVERFLOW) return ENABLED === null || ENABLED.size > 0 ? OVERFLOW : null;
     const innerHit = inner ? analyze(inner, depth + 1, known) : null;
     if (innerHit) return innerHit;
   }
