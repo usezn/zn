@@ -183,8 +183,16 @@ def _acquire_lock(lock_path: str, wait: float = LOCK_WAIT) -> str:
             fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             try:
                 os.write(fd, token.encode("ascii"))
-            finally:
-                os.close(fd)
+            except BaseException:
+                # The lock is ours: we created it a moment ago with O_EXCL. If the token cannot be
+                # written (a full disk, ENOSPC), remove the empty lock again. Left behind, it makes
+                # every later writer wait for it and report that another process is writing.
+                try:
+                    os.close(fd)
+                finally:
+                    _unlink_lock(lock_path)
+                raise
+            os.close(fd)
             return token
         except FileExistsError:
             pass
