@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-10-30.1';
+const POLICY_RULES_VERSION = '2026-10-31.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -73,6 +73,7 @@ const CREDENTIAL_RES = [
   [/(^|\/)\.config\/gcloud\/(credentials\.db|access_tokens\.db|application_default_credentials\.json)$/, 'Google Cloud credentials'],
   [/(^|\/)\.azure\/(accessTokens\.json|msal_token_cache\.json)$/, 'Azure credentials'],
   [/(^|\/)\.zcode\/v2\/provider_config\.json$/, 'Zcode model provider credentials'],
+  [/(^|\/)(?:\.gnupg|AppData\/Roaming\/gnupg)\/.+$/i, 'GnuPG keyring'],
 ];
 
 // Credential-file variables. A path given through one of them, or equal to
