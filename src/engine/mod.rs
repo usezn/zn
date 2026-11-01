@@ -1106,9 +1106,7 @@ mod tests {
         let allowed = engine_with(1_000_000, 16 * 1024 * 1024, vec![good]);
         allowed.register_policy_from_file(&path).unwrap();
         assert!(allowed._has_policy("p"));
-        assert!(allowed
-            ._load_policy_from_bytes(wat.as_bytes(), "p")
-            .is_ok());
+        assert!(allowed._load_policy_from_bytes(wat.as_bytes(), "p").is_ok());
 
         let strict = engine_with(1_000_000, 16 * 1024 * 1024, vec!["00".repeat(32)]);
         let err = strict.register_policy_from_file(&path).unwrap_err();
@@ -1189,7 +1187,9 @@ mod tests {
         assert!(!path.exists());
         assert_eq!(e.policy_count(), 0);
 
-        let err = e.install_policy(Path::new("/"), wat.as_bytes()).unwrap_err();
+        let err = e
+            .install_policy(Path::new("/"), wat.as_bytes())
+            .unwrap_err();
         assert!(err.to_string().contains("Invalid policy filename"));
         let _ = std::fs::remove_dir_all(&dir);
     }
