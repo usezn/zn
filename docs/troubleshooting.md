@@ -815,6 +815,64 @@ When a command cannot read or write a file or folder, zn-gate says what is wrong
 
 **What to do:** nothing. To check the tools of other servers, see [shield](shield.md).
 
+### Messages from `zn team`
+
+`zn team` connects this computer to your organization's zn Team policy. Run it in your own terminal. See [team](team.md).
+
+#### "invalid join token (expected znj_...)" / "No join token given"
+
+**What happened:** the token you gave is not in the form `znj_...`, or you gave none.
+
+**What to do:** copy the token again from the invitation your administrator sent, then run `zn team join <token>`. You can also run `zn team join -` to paste it, or set `ZN_TEAM_JOIN_TOKEN`.
+
+#### "This join token is expired, already used or not valid"
+
+**What happened:** the server did not accept the token, so this computer was not connected.
+
+**What to do:** ask your organization administrator for a new invitation, then run `zn team join <new token>`.
+
+#### "Could not reach the zn server"
+
+**What happened:** zn could not reach the server. For `join`, the computer was not connected. For `sync`, nothing was changed.
+
+**What to do:** check your internet connection and run the same command again (`zn team join <token>` or `zn team sync`). Run it with `ZN_VERBOSE=1` to see the technical detail.
+
+#### "join failed (`<reason>`)" / "the server sent an invalid organization key"
+
+**What happened:** the join did not finish and this computer was not connected. The second message means the server sent a key zn could not accept.
+
+**What to do:** run `zn team join <token>` again. If it repeats, ask your administrator, or report it at [GitHub issues](https://github.com/usezn/zn/issues) with the message and your `zn-gate --version`.
+
+#### "Your admin has not published a policy yet"
+
+**What happened:** this is a notice. You are connected, but no policy exists yet, so no restrictions apply for now.
+
+**What to do:** nothing. zn checks again by itself; to check now, run `zn team sync`.
+
+#### "An admin removed this machine from the organization"
+
+**What happened:** an administrator removed this computer, so it no longer gets the policy.
+
+**What to do:** to disconnect it, run `zn team leave`. To join again, ask your administrator for a new token and run `zn team join <token>`.
+
+#### "Your organization is not active on zn right now"
+
+**What happened:** the organization is not active, so the policy cannot be updated. Nothing is lost: audit records stay on this computer and are sent when it is active again.
+
+**What to do:** ask your organization administrator. When it is active, run `zn team sync`.
+
+#### "'zn team `<word>`' is not a zn command" / "That looks like a join token"
+
+**What happened:** you typed a `zn team` word that does not exist. There is no `zn team login` or `zn team export`. If you typed a token without `join`, zn did not print it back.
+
+**What to do:** the commands are `zn team join <token>`, `zn team status`, `zn team sync` and `zn team leave`. To export the audit log, run `zn vault log export --otlp`. All options: `zn team --help`.
+
+#### "invalid request" / "nothing to approve" / "the organization policy does not ask for this"
+
+**What happened:** you tried to approve something for your organization policy, and zn did not accept it: the name, kind or value is not valid, this computer has no policy waiting for your answer, or the policy does not ask for it. Nothing was approved.
+
+**What to do:** run `zn team status` to see what, if anything, is waiting. If something should be waiting, ask your administrator.
+
 ### Where a message points you
 
 - A message that ends with "More: <https://usezn.com/docs/zn-gate/troubleshooting/>" (a vault that did not start, a damaged vault file, a failed audit log check) points to this page. [Section 5](#5-your-secret-vault-is-locked) covers the vault, and [section 10](#10-the-evidence-log--is-damaged) the logs.
