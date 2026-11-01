@@ -267,6 +267,11 @@ def _parity_corpus() -> List[Dict[str, Any]]:
     return cases + paths
 
 
+def _same_as_node(text):
+    """The Python hint adds one note that says the vault commands are npm-only; the Node.js hint has no such note."""
+    return text.replace(mcp.NPM_ONLY_NOTE, "")
+
+
 class TestNodeParity(unittest.TestCase):
     def test_python_and_node_give_the_same_results_on_the_same_configs(self):
         cases = _parity_corpus()
@@ -295,8 +300,9 @@ class TestNodeParity(unittest.TestCase):
             with self.subTest(name=name):
                 norm = mcp.normalize_name(name)
                 self.assertEqual(got, [norm, mcp.is_secret_name(norm), mcp.suggested_name(norm),
-                                       mcp.mcp_next_step("environment variable", name), mcp.mcp_next_step("argument", name),
-                                       mcp.mcp_next_step("setting", name), mcp.mcp_next_step("header", name),
+                                       _same_as_node(mcp.mcp_next_step("environment variable", name)),
+                                       _same_as_node(mcp.mcp_next_step("argument", name)),
+                                       _same_as_node(mcp.mcp_next_step("setting", name)), _same_as_node(mcp.mcp_next_step("header", name)),
                                        mcp.mcp_sample("argument", name), mcp.mcp_sample("URL", name), mcp.mcp_sample("header", name)])
 
 

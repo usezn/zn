@@ -454,6 +454,11 @@ def mcp_reason(kind: str) -> str:
     return f"Plaintext credential in an MCP server configuration ({kind})"
 
 
+# Python-only text: the Node.js package prints the same hints without it, and a test keeps the rest identical.
+NPM_ONLY_NOTE = ("move it into the zn vault with the npm package (secret, secret allow and run are commands of the npm package, "
+                 "not of this Python package): ")
+
+
 def mcp_next_step(kind: str, name: str) -> str:
     use = suggested_name(normalize_name(name))
     if kind in ("header", "URL"):
@@ -461,7 +466,7 @@ def mcp_next_step(kind: str, name: str) -> str:
                 "your agent expects (for example ${" + use + "} in Claude Code, ${env:" + use + "} in Cursor and VS Code, "
                 "{env:" + use + "} in OpenCode), keep the real value in your own shell settings or a secret manager, "
                 "and rotate it if the file was ever committed or shared.")
-    through = (f"Next: run npx -y zn-gate secret set {use} to store the value in the local vault (it asks for the value, "
+    through = (f"Next: {NPM_ONLY_NOTE}run npx -y zn-gate secret set {use} to store the value in the local vault (it asks for the value, "
                f"so it is never typed on a command line), run zn secret allow {use} --command <the server's command> so zn run "
                "may use it, take the value out of this file and start the server through zn run: set the server's command to zn "
                f"and put run, --secrets, {use}, -- and the old command first in args, so the server gets the value as the "

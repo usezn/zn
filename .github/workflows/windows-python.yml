@@ -1,18 +1,11 @@
 name: Windows checks for the Python package
 
-# Pull requests into next run Python on Ubuntu only. This workflow adds Python 3.12 on Windows when a pull
-# request changes the Python package (it has Windows-specific code: paths, file locking, the console) or the
-# rule fixtures its tests read. Not a required check. The full Python matrix, Windows included, still runs
-# on pushes to main and next, on pull requests into main and release branches, and with the full-ci label.
+# Python 3.12 on Windows for the merge queue into next (the Python package has Windows-specific code: paths, file
+# locking, the console). Pull requests into next do not run it: they run the required checks and one Windows job,
+# "Windows (Node.js 22)", because the shared runner pool is the bottleneck. Not a required check. The full Python
+# matrix, Windows included, still runs on pushes to main and next, on pull requests into main and release
+# branches, and with the full-ci label.
 on:
-  pull_request:
-    branches: [ next ]
-    types: [ opened, synchronize, reopened, ready_for_review ]
-    paths:
-      - 'packages/zn-gate-py/**'
-      - 'packages/zn-gate/test/fixtures/**'
-      - '.github/ci-test-requirements.txt'
-      - '.github/workflows/windows-python.yml'
   # The merge queue always runs it: one Windows job on the LTS version is the Windows sample of the queue.
   merge_group:
     types: [ checks_requested ]
@@ -20,9 +13,11 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request, or to next, cancels the run still going for it. Runs for main, release branches,
+# the merge queue and the schedule always complete (each has its own group).
 concurrency:
-  group: windows-python-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: windows-python-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.

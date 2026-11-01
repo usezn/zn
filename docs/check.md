@@ -328,6 +328,14 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
 
   Check that the file exists and that your user can read it, then run the check again.
 
+- **Codex hooks need your approval.** Every **OK** line for Codex CLI carries this note:
+
+  ```text
+  Codex asks you to approve new hooks with /hooks before it runs them; an OK here does not prove that Codex runs the hook until you have approved it
+  ```
+
+  Open Codex, type `/hooks` and approve zn's hooks. The check cannot see that step, and it does not change the exit code.
+
 - **Cursor.** Cursor runs the hooks of every source (enterprise, team, project and user) and merges their replies, so an enterprise `hooks.json` never turns off the zn hooks you install. These lines are about that file (the notes under an **OK** line say the same):
 
   ```text

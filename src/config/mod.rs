@@ -795,7 +795,9 @@ impl ZnConfig {
     }
 
     /// Like `load`, and also returns plain-English warnings for settings that
-    /// zn ignored: unknown keys in the file and an invalid `ZN_PORT`.
+    /// zn ignored: unknown keys in the file and an invalid `ZN_PORT`. An unknown key
+    /// inside `security` or `audit` is an error instead, because ignoring a misspelt
+    /// security setting would silently weaken it.
     ///
     /// An explicit `path` must exist and must be a `.json` file; otherwise the
     /// call fails with a message that says what to do.
@@ -815,7 +817,7 @@ impl ZnConfig {
             }
             let content = Self::read_settings_file(p)?;
             let config = Self::parse_text(&shown, &content)?;
-            notices.extend(unknown_setting_notices(&shown, &content));
+            notices.extend(checked_setting_notices(&shown, &content)?);
             config
         } else {
             // Try to load from default locations
@@ -827,7 +829,7 @@ impl ZnConfig {
                     let shown = crate::user_errors::display_path(option_path);
                     let content = Self::read_settings_file(option_path)?;
                     found = Some(Self::parse_text(&shown, &content)?);
-                    notices.extend(unknown_setting_notices(&shown, &content));
+                    notices.extend(checked_setting_notices(&shown, &content)?);
                     break;
                 }
             }
@@ -1285,6 +1287,26 @@ fn unknown_setting_notices(file: &str, content: &str) -> Vec<String> {
         .collect()
 }
 
+/// True for a setting inside the `security` or `audit` sections.
+fn is_security_setting(path: &str) -> bool {
+    path.starts_with("security.") || path.starts_with("audit.")
+}
+
+/// Like `unknown_setting_notices`, but an unknown key inside `security` or `audit` is an
+/// error that names the key and the closest valid one. Other unknown keys stay warnings.
+fn checked_setting_notices(file: &str, content: &str) -> Result<Vec<String>> {
+    let unknown = unknown_settings(content);
+    if let Some(bad) = unknown.iter().find(|u| is_security_setting(u)) {
+        let known = known_setting_paths();
+        return Err(anyhow!(crate::user_errors::unknown_security_setting(
+            file,
+            bad,
+            suggest_setting(bad, &known).as_deref()
+        )));
+    }
+    Ok(unknown_setting_notices(file, content))
+}
+
 /// Plain-English text for a settings file that cannot be parsed: the file, the
 /// setting if it is known, the line, and what to do.
 pub fn config_parse_problem(file: &str, content: &str, err: &serde_json::Error) -> String {
@@ -1570,6 +1592,51 @@ mod parse_message_tests {
     fn the_file_zn_init_writes_has_no_unknown_settings() {
         let json = serde_json::to_string_pretty(&ZnConfig::init_template()).expect("json");
         assert!(unknown_settings(&json).is_empty());
+    }
+
+    #[test]
+    fn an_unknown_key_in_security_or_audit_is_an_error() {
+        let err = checked_setting_notices("zn.json", "{\"security\": {\"block_unkown\": true}}")
+            .expect_err("a misspelt security key must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("security.block_unkown"), "{msg}");
+        let err = checked_setting_notices("zn.json", "{\"audit\": {\"encryption_enabld\": true}}")
+            .expect_err("a misspelt audit key must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("audit.encryption_enabld"), "{msg}");
+        assert!(
+            msg.contains("did you mean \"audit.encryption_enabled\""),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_key_in_another_section_is_still_a_warning() {
+        let notices = checked_setting_notices("zn.json", "{\"server\": {\"prot\": 1}}")
+            .expect("other sections only warn");
+        assert_eq!(notices.len(), 1, "{notices:?}");
+    }
+
+    #[test]
+    fn loading_a_file_with_a_misspelt_security_key_fails() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("zn.json");
+        std::fs::write(&file, "{\"audit\": {\"encryption_enabld\": false}}").expect("write");
+        let err = ZnConfig::load_with_notices(Some(&file)).expect_err("must not load");
+        assert!(err.to_string().contains("audit.encryption_enabld"), "{err}");
+    }
+
+    #[test]
+    fn the_init_template_loads_without_notices_or_errors() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("zn.json");
+        let json = serde_json::to_string_pretty(&ZnConfig::init_template()).expect("json");
+        std::fs::write(&file, json).expect("write");
+        let (_, notices) = ZnConfig::load_with_notices(Some(&file)).expect("template loads");
+        assert!(
+            notices.iter().all(|n| !n.contains("unknown")),
+            "{notices:?}"
+        );
     }
 
     #[test]

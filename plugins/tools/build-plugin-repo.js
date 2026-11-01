@@ -217,6 +217,26 @@ function withoutCompileCacheUse(rel, text) {
   }
   return uses ? rest : text;
 }
+// lib/agents/launcher.js keeps, as a string constant, the small program it starts with `node -e` to check the
+// SHA-256 of the hook runner and then run those same bytes (VERIFY_JS). That text names the "module" built-in and
+// process.mainModule, but it is never loaded by the bundle: it runs in a separate Node.js process and loads only the
+// runner file it was given. It is allowed only when the whole statement is byte for byte the reviewed one; any change
+// to it changes this hash and the build refuses it again until the new text is reviewed.
+const VERIFY_JS_FILE = /^lib\/agents\/launcher\.js$/;
+const VERIFY_JS_START = 'const VERIFY_JS = ';
+const VERIFY_JS_SHA256 = 'e6e0ba98752054297a3e8bfc630051f01c26b1fd4231dc35aa5b2111d795cd79';
+
+/** For lib/agents/launcher.js only: the text without the reviewed VERIFY_JS statement (unchanged otherwise). */
+function withoutVerifyJs(rel, text) {
+  if (!VERIFY_JS_FILE.test(rel)) return text;
+  const start = text.indexOf(VERIFY_JS_START);
+  if (start < 0 || text.indexOf(VERIFY_JS_START, start + 1) >= 0) return text;
+  const end = text.indexOf('";\n', start);
+  if (end < 0) return text;
+  const stmt = text.slice(start, end + 3);
+  if (crypto.createHash('sha256').update(stmt, 'utf8').digest('hex') !== VERIFY_JS_SHA256) return text;
+  return text.slice(0, start) + text.slice(end + 3);
+}
 const MODULE_BUILTINS = new Set(['module', 'node:module']);
 
 /**
@@ -268,7 +288,7 @@ function dynamicImports(rel, text, problems) {
     if (lit) out.push(lit[2]);
     else problems.push(rel + ': import() with a computed name cannot be checked');
   }
-  if (UNCHECKABLE.test(withoutCompileCacheUse(rel, text))) {
+  if (UNCHECKABLE.test(withoutVerifyJs(rel, withoutCompileCacheUse(rel, text)))) {
     problems.push(rel + ': uses createRequire, import.meta.resolve, process.mainModule or the "module" built-in, which cannot be checked');
   }
   return out;

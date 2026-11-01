@@ -26,6 +26,7 @@ tower-http = { version = "0.5", features = ["cors", "auth", "fs", "timeout"] }
 # Already in the tree through axum; named here to run the management API with read timeouts.
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "service"] }
+http-body-util = "0.1"
 wasmtime = { version = "48", default-features = false, features = ["anyhow", "async", "backtrace", "gc", "gc-copying", "gc-drc", "gc-null", "wat", "profiling", "parallel-compilation", "cranelift", "pooling-allocator", "demangle", "addr2line", "coredump", "debug-builtins", "runtime", "component-model", "component-model-async", "threads", "stack-switching", "std", "debug", "compile-time-builtins", "wit-parser"] }
 rusqlite = { version = "0.40", default-features = false, features = ["bundled", "cache", "fallible_uint"] }
 ratatui = "0.30"

@@ -436,5 +436,12 @@ try {
 
   process.stdout.write('1..' + n + '\n');
 } finally {
-  fs.rmSync(tmp, { recursive: true, force: true });
+  // On Windows a hook process killed at its deadline can still hold the folder for a moment; the tests are done,
+  // so cleaning up must retry and never turn a green run red.
+  try {
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  } catch (e) {
+    if (process.platform !== 'win32') throw e;
+    process.stderr.write('note: could not remove ' + tmp + ': ' + e.code + '\n');
+  }
 }

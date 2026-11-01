@@ -97,6 +97,8 @@ function startShield(limits = {}, extraEnv = {}, shieldArgs = []) {
     s.waiters.push(check);
     check();
   });
+  // stdout and stderr are separate pipes: a reply can be read before the stderr line written just before it.
+  s.err = (re) => s.wait(() => re.test(s.stderr), 'stderr ' + re);
   s.reply = (id) => s.wait(() => s.json().find((x) => !Array.isArray(x) && x.id === id), 'reply ' + id);
   s.stop = async () => {
     try { proc.stdin.end(); } catch { /* ignore */ }
@@ -134,7 +136,7 @@ test('a batch holding a bare value or a nested batch is refused: requests get th
     const batch = await s.wait(() => s.json().find((x) => Array.isArray(x)), 'batch answer');
     const invalid = { jsonrpc: '2.0', id: null, error: { code: -32600, message: '[zn-gate] Invalid request: a batch may only hold request objects.' } };
     assert.deepEqual(batch, [{ jsonrpc: '2.0', id: 7, error: { code: -32000, message: NOT_SENT_BATCH } }, invalid, invalid]);
-    assert.match(s.stderr, /BLOCKED REQUEST\] A batch from the client holds something that is not a message/);
+    await s.err(/BLOCKED REQUEST\] A batch from the client holds something that is not a message/);
     s.send(call(8, 'ok'));
     await s.reply(8);
     assert.deepEqual(s.received().length, 1, 'the refused batch never reached the server');
@@ -164,7 +166,7 @@ test('shadow mode with a full pending table sends the request on and says so on 
     s.send(call(1, 'hold'));
     s.send(call(2, 'ok'));
     assert.equal((await s.reply(2)).result.content[0].text, 'fine');
-    assert.match(s.stderr, /\[zn-shield\] 1 requests are waiting for an answer; shadow mode sends this one on without tracking it\./);
+    await s.err(/\[zn-shield\] 1 requests are waiting for an answer; shadow mode sends this one on without tracking it\./);
     assert.equal(s.received().length, 2);
   } finally { await s.stop(); }
 });
@@ -175,7 +177,7 @@ test('a client line over the cap: Invalid Request with the id, size in bytes, ne
     s.send(call(8, 'ok', { pad: 'a'.repeat(200000) }));
     const r = await s.reply(8);
     assert.deepEqual(r, { jsonrpc: '2.0', id: 8, error: { code: -32600, message: '[zn-gate] Invalid request: the message is larger than 50000 bytes.' } });
-    assert.match(s.stderr, /\[zn-shield BLOCKED REQUEST\] A message from the client was not sent: its line is longer than 50000 bytes \(2000\d\d bytes\)\./);
+    await s.err(/\[zn-shield BLOCKED REQUEST\] A message from the client was not sent: its line is longer than 50000 bytes \(2000\d\d bytes\)\./);
     s.send(call(9, 'ok'));
     await s.reply(9);
     assert.deepEqual(s.received().length, 1);
@@ -189,7 +191,7 @@ test('a client line over a cap of whole MiB is reported in MiB', async () => {
     const r = await s.reply(10);
     assert.equal(r.error.code, -32600);
     assert.equal(r.error.message, '[zn-gate] Invalid request: the message is larger than 2 MiB.');
-    assert.match(s.stderr, /its line is longer than 2 MiB \(3 MiB\)\./);
+    await s.err(/its line is longer than 2 MiB \(3 MiB\)\./);
   } finally { await s.stop(); }
 });
 
@@ -214,7 +216,7 @@ test('shape limits from the client name the limit in the error text', async () =
     s.send(Array.from({ length: 8 }, (_, i) => call(100 + i, 'ok')));
     const err = await s.wait(() => s.json().find((x) => !Array.isArray(x) && x.id === null && x.error), 'batch error');
     assert.equal(err.error.message, '[zn-gate] Invalid request: its batch holds 5 messages or more.');
-    assert.match(s.stderr, /A message from the client was not sent because its batch holds 5 messages or more\./);
+    await s.err(/A message from the client was not sent because its batch holds 5 messages or more\./);
     assert.equal(s.received().length, 0, 'none of the refused lines reached the server');
   } finally { await s.stop(); }
 });
@@ -227,7 +229,7 @@ test('a server line over the cap is dropped: the client gets the answer error wi
     assert.equal(r.error.code, -32603);
     assert.match(r.error.message, /^\[zn-gate\] The server's answer could not be checked and was not passed on: its line is longer than 100000 bytes \(300\d{3} bytes\)\.$/);
     assert.equal(r.result, undefined);
-    assert.match(s.stderr, /\[zn-shield BLOCKED SERVER MESSAGE\] A line from the server was dropped: its line is longer than 100000 bytes/);
+    await s.err(/\[zn-shield BLOCKED SERVER MESSAGE\] A line from the server was dropped: its line is longer than 100000 bytes/);
     s.send(call(6, 'ok'));
     assert.equal((await s.reply(6)).result.content[0].text, 'fine');
   } finally { await s.stop(); }
@@ -260,7 +262,7 @@ test('shadow mode: an oversized server line is not blocked and not answered; std
   try {
     s.send(call(5, 'big_line'));
     await s.wait(() => /shadow mode passes it on unchecked/.test(s.stderr), 'stderr notice');
-    assert.match(s.stderr, /\[zn-shield\] A line from the server was not checked \(its line is longer than 100000 bytes/);
+    await s.err(/\[zn-shield\] A line from the server was not checked \(its line is longer than 100000 bytes/);
     assert.ok(!s.json().some((m) => m.id === 5), 'no answer, no error');
     s.send(call(6, 'ok'));
     assert.equal((await s.reply(6)).result.content[0].text, 'fine');
@@ -302,6 +304,7 @@ test('shadow mode notes once that deep nesting was not checked and passes the va
     let v = r.result.structuredContent;
     for (let i = 0; i < 12; i++) v = v.k;
     assert.deepEqual(v, { leaf: 'x' }, 'the nested value reaches the client unchanged');
+    await s.err(/not checked: nested too deeply/);
     const notes = s.stderr.split('\n').filter((l) => l.includes('not checked: nested too deeply'));
     assert.deepEqual(notes, ['[zn-shield] tools/call structuredContent: not checked: nested too deeply (shadow mode passes it on).']);
   } finally { await s.stop(); }
