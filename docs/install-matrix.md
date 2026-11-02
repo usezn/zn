@@ -50,7 +50,7 @@ npm install -g ./zn-gate-<version>.tgz --offline
 zn hooks install claude-code
 ```
 
-The `.tgz` file contains every dependency zn-gate needs, so npm downloads nothing. Replace `claude-code` with the agent you use: `codex`, `cursor`, `opencode` or `antigravity` also work. Run the install command in a terminal window, not through your agent.
+The `.tgz` file contains every dependency zn-gate needs, so npm downloads nothing. Replace `claude-code` with the agent you use; the [compatibility page](compat.md) lists every supported agent and its name. Run the install command in a terminal window, not through your agent.
 
 **3. Check that it works**, in the same terminal:
 
