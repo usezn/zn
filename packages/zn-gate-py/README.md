@@ -30,6 +30,8 @@ python3 -m venv .venv
 
 `zn-gate` is installed inside the environment, so run it as shown, or run `source .venv/bin/activate` once in each terminal and then `zn-gate scan .` (Windows: `.venv\Scripts\activate`).
 
+No internet on this computer? See [Install on a machine without internet](https://github.com/usezn/zn/blob/main/docs/install-matrix.md#install-on-a-machine-without-internet). Those steps are for the npm package.
+
 **On Windows**, with Python from the Python install manager, there is no `pip` command, and after a plain `pip install` the `Scripts` folder is not on your PATH, so `zn-gate` is "not recognized". Use the `py` launcher and a virtual environment, and call the tools by their full path:
 
 ```powershell
