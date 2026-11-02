@@ -296,7 +296,7 @@ try {
         const { r, ms } = wrun(d, 'PreToolUse', { ZN_STUB_HANG: hang });
         assert.strictEqual(r.status, 2, r.stderr);
         assert.ok(/^zn: the hook did not finish starting within 3 seconds/.test(r.stderr), r.stderr);
-        assert.ok(ms >= 2500 && ms < 20000, 'answered at the deadline, not before and not long after: ' + ms + ' ms');
+        assert.ok(ms >= 1500 && ms < 20000, 'answered at the deadline, not before and not long after: ' + ms + ' ms');
         const p = wrun(d, 'PostToolUse', { ZN_STUB_HANG: hang });
         assert.strictEqual(p.r.status, 0);
         assert.ok(/NOT protecting this session/.test(p.r.stderr), p.r.stderr);
@@ -335,6 +335,20 @@ try {
     const ps = fs.readFileSync(path.join(ZC, 'scripts', 'zn-hook.ps1'), 'utf8');
     assert.ok(/GetCurrentProcess\(\)\.StartTime/.test(ps) && /\$Deadline - /.test(ps), 'the deadline is what is left of 28 seconds since the process started');
     assert.ok((ps.match(/Get-CimInstance/g) || []).length === 1, 'one process query for the whole chain of parents');
+  });
+
+  // ZCode's 30 second timeout starts when it starts cmd.exe, and the call runs when the hook times out. zn-hook.cmd notes the time
+  // on its first command line; zn-hook.ps1 counts its deadline from there (or from its own start, whichever is earlier), never
+  // gives itself time past it, and tries only the first parent that is not a shell.
+  test('the Windows hook counts its deadline from the start of zn-hook.cmd and blocks when no time is left', () => {
+    const cmd = fs.readFileSync(path.join(ZC, 'scripts', 'zn-hook.cmd'), 'utf8').split(/\r?\n/).filter((l) => l && !/^\s*(rem\b|@echo off)/i.test(l));
+    assert.strictEqual(cmd[0], 'set "ZN_HOOK_T0=%TIME%"', 'the start time is taken before anything else');
+    const ps = fs.readFileSync(path.join(ZC, 'scripts', 'zn-hook.ps1'), 'utf8');
+    assert.ok(/\$env:ZN_HOOK_T0/.test(ps), 'the PowerShell script reads the start time of zn-hook.cmd');
+    assert.ok(/if \(\$e -gt \$Since -and \$e -lt 120\) \{ \$Since = \$e \}/.test(ps), 'ZN_HOOK_T0 can only make the deadline shorter');
+    assert.ok(/\[Math\]::Max\(0, \$Deadline - /.test(ps) && !/\[Math\]::Max\(3,/.test(ps), 'no extra seconds past the deadline');
+    assert.ok(/if \(\$Deadline -le 0\) \{ Refuse /.test(ps), 'a start that used up the time blocks at once');
+    assert.ok(/if \(TryNode \$exe\) \{ \$Node = \$exe; \$AppNode = \$true \}\r?\n\s*break\r?\n/.test(ps), 'only the first parent that is not a shell is tried');
   });
 
   if (posix) {

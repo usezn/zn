@@ -1,4 +1,6 @@
 @echo off
+rem The time of day this file started: ZCode's 30 second timeout runs from about here, and the deadlines count from it.
+set "ZN_HOOK_T0=%TIME%"
 rem zn-gate hook for the ZCode desktop app on Windows, fast path (plugin copy). The counterpart of zn-hook.ps1.
 rem
 rem Windows PowerShell takes 0.5 to 3 seconds to start, more than the integrity check of the plugin itself. This file
