@@ -337,7 +337,7 @@ ZZ-PROJECT-[0-9]{4}
 
 With this file, a tool call whose arguments contain `ZZ-PROJECT-4821` is blocked by the shield or the guard, with the rule `custom:banned_pattern`. Upper case and lower case both match. A call with the text `list the files in src` is allowed.
 
-### Local audit log
+### Local decision log
 
 `zn-gate shield` appends every decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a secret-redacted preview. It detects accidental or partial edits. It is not tamper-proof against someone with write access to the file, who can recompute the whole chain.
 
