@@ -676,7 +676,7 @@ zn-gate team dismiss-dropped <install-id>
 zn-gate team dismiss-dropped --all
 ```
 
-Forgets installations whose revocation was dropped because more than 8 installations left while the server could not be reached. Run it only after an organization admin removed them from the dashboard: until then their tokens still work on the server, and `team status` keeps warning (the warning does not expire). It is confirmed on the vault's own channel. Exit `2` when neither an installation id nor `--all` is given. See [zn Team](team.md#leaving).
+Forgets installations whose revocation was dropped because more than 8 installations left while the server could not be reached. Run it only after an organization admin removed them from the dashboard: until then their tokens still work on the server, and `team status` keeps warning (the warning does not expire). You confirm it in the vault's own prompt (a system dialog, or the `zn unlock --foreground` terminal), never in the agent. Exit `2` when neither an installation id nor `--all` is given. See [zn Team](team.md#leaving).
 
 #### `team managed-config`
 
