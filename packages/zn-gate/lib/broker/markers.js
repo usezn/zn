@@ -130,8 +130,9 @@ function isInside(child, parent) {
  */
 function checkResolvedExecutable(resolved, projectRoot, resolvedReal) {
   if (!resolved) return 'command not found on PATH';
-  // The caller passes the real path it already resolved, so it is not resolved twice.
-  const real = resolvedReal || realOf(resolved);
+  // Both sides in the native real form: a Windows 8.3 short name, a subst or mapped drive and a \\?\ prefix all
+  // name the same folder in more than one way, and a PATH entry may use any of them.
+  const real = realOf(resolvedReal || resolved);
   const tmp = realOf(os.tmpdir());
   if (isInside(real, tmp)) return 'resolves to a file in the temp directory';
   // Both the name as found on PATH and the real file are compared with the
@@ -139,7 +140,7 @@ function checkResolvedExecutable(resolved, projectRoot, resolvedReal) {
   // /private/var) must still count as the project.
   if (projectRoot) {
     const root = realOf(projectRoot);
-    if ([resolved, real].some((p) => isInside(p, root) || isInside(p, projectRoot))) {
+    if ([resolved, realOf(resolved), real].some((p) => isInside(p, root) || isInside(p, projectRoot))) {
       return 'resolves to a file inside the project, which the agent can edit';
     }
   }

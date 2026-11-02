@@ -253,6 +253,28 @@ test('zn run refuses proxy-mode secrets, unknown secrets and agent-planted binar
   assert.match(e3.text(), /temp directory/);
 });
 
+// A Windows folder has a long and, often, a short 8.3 name: a binary planted in the temp folder is refused whichever
+// of the two names the PATH entry uses.
+test('zn run refuses a binary planted in the temp folder through its long and its short Windows name', { skip: process.platform !== 'win32' }, async (t) => {
+  const { execFileSync } = require('node:child_process');
+  const dir = tempDir(t, 'zn-plant-name-');
+  fs.writeFileSync(path.join(dir, 'psql.cmd'), '@echo %*\r\n');
+  let short = '';
+  try {
+    short = execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/c', 'for %I in ("' + dir + '") do @echo %~sI'], { encoding: 'utf8' }).trim();
+  } catch (_) { /* no short names on this volume */ }
+  const forms = [dir, path.join(os.tmpdir(), path.basename(dir))];
+  if (short && short.toLowerCase() !== dir.toLowerCase()) forms.push(short);
+  for (const form of forms) {
+    const vault = await setup();
+    await vault.setSecret('DB_PASSWORD', PG, { mode: 'env', allowCommands: ['psql'] });
+    const err = sink();
+    const code = await runBroker(['--secrets', 'DB_PASSWORD', '--', 'psql'], { vault, env: { PATH: form }, stdout: sink(), stderr: err, stdin: { isTTY: false } });
+    assert.equal(code, 77, 'PATH ' + form + ': ' + err.text());
+    assert.match(err.text(), /temp directory/);
+  }
+});
+
 test('first use is confirmed by the vault, never on the command terminal, and only once', async () => {
   const args = ['--secrets', 'DB_PASSWORD', '--', NODE, '-e', 'console.log(1)'];
   let asked = 0;
