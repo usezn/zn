@@ -679,19 +679,26 @@ fn nanp_spans(text: &str) -> Vec<(usize, usize)> {
 }
 
 /// Token shapes the gateway also keeps out of its own logs and audit rows:
-/// cloud, code-host, payment and chat credentials, and private key blocks.
-/// Each match is replaced whole.
+/// cloud, code-host, payment, AI-provider and chat credentials, webhook URLs,
+/// and private key blocks. Each match is replaced whole.
 fn token_re() -> &'static Regex {
     static TOKEN_REGEX: OnceLock<Regex> = OnceLock::new();
     TOKEN_REGEX.get_or_init(|| {
         Regex::new(concat!(
-            r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)",
+            r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----|$)",
             r"|(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}",
+            r"|(?i:aws_?secret_?access_?key)[\x22']?[ \t]*[:=][ \t]*[\x22']?[A-Za-z0-9/+=]{40}",
+            r"|AIza[0-9A-Za-z_-]{35}",
+            r"|glpat-[A-Za-z0-9_-]{20,}",
             r"|github_pat_[A-Za-z0-9_]{22,255}",
             r"|gh[pousr]_[A-Za-z0-9]{20,255}",
+            r"|sk-(?:proj|ant)-[A-Za-z0-9_-]{20,}",
             r"|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{8,}",
             r"|whsec_[A-Za-z0-9]{16,}",
             r"|xox[abprs]-[A-Za-z0-9-]{10,}",
+            r"|xapp-[A-Za-z0-9-]{10,}",
+            r"|hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+",
+            r"|discord(?:app)?\.com/api(?:/v[0-9]+)?/webhooks/[0-9]+/[A-Za-z0-9_-]+",
         ))
         .unwrap()
     })
@@ -700,13 +707,17 @@ fn token_re() -> &'static Regex {
 fn iban_re() -> &'static Regex {
     static IBAN_REGEX: OnceLock<Regex> = OnceLock::new();
     IBAN_REGEX.get_or_init(|| {
-        Regex::new(r"[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?").unwrap()
+        Regex::new(r"(?i)[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?").unwrap()
     })
 }
 
 /// ISO 13616 mod-97 check on a candidate (spaces allowed).
 fn iban_valid(raw: &str) -> bool {
-    let compact: String = raw.chars().filter(|c| *c != ' ').collect();
+    let compact: String = raw
+        .chars()
+        .filter(|c| *c != ' ')
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
     if !(15..=34).contains(&compact.len()) {
         return false;
     }
@@ -1760,6 +1771,35 @@ mod table_parity_tests {
             ["xo", "xb-123456789012-example0123456789"].concat(),
             "GB82 WEST 1234 5698 7654 32".to_string(),
             "GB82WEST12345698765432".to_string(),
+            "gb82 west 1234 5698 7654 32".to_string(),
+            [
+                "aws_secret_",
+                "access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            ]
+            .concat(),
+            ["AI", "zaSyA-0123456789abcdefghijklmnopqrstuv"].concat(),
+            ["gl", "pat-0123456789abcdefghij"].concat(),
+            ["xa", "pp-1-A0123456789-0123456789-abcdef0123"].concat(),
+            [
+                "https://hooks.",
+                "slack.com/services/T0EXAMPLE1/B0EXAMPLE1/abcdefghijklmnop0123",
+            ]
+            .concat(),
+            [
+                "https://disc",
+                "ord.com/api/webhooks/123456789012345678/abcdefghij_EXAMPLE-0123",
+            ]
+            .concat(),
+            ["sk-", "proj-EXAMPLEEXAMPLE0123456789"].concat(),
+            ["sk-", "ant-api03-EXAMPLEEXAMPLE0123456789"].concat(),
+            [
+                "-----BEGIN PGP PRIV",
+                "ATE KEY BLOCK-----\n",
+                "lQdGBFexampleexample\n",
+                "-----END PGP PRIV",
+                "ATE KEY BLOCK-----",
+            ]
+            .concat(),
             [
                 "eyJhbGciOiJIUzI1NiJ9",
                 "eyJzdWIiOiJleGFtcGxlIn0",

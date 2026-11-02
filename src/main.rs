@@ -1337,7 +1337,13 @@ async fn process_mcp_message(
                                 Scrubber::redact_for_log(&e.to_string())
                             ))
                             .ok();
-                            ("DENIED".to_string(), Some(format!("error: {}", e)))
+                            (
+                                "DENIED".to_string(),
+                                Some(format!(
+                                    "error: {}",
+                                    Scrubber::redact_for_log(&e.to_string())
+                                )),
+                            )
                         }
                     }
                 }

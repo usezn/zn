@@ -477,8 +477,8 @@ fn an_invalid_config_exits_non_zero_with_a_plain_message() {
 
 /// Fake values of every kind the gateway knows, in one call.
 const FAKE_VALUES: &[&str] = &[
-    "AKIAIOSFODNN7EXAMPLE",
-    "ghp_0123456789abcdefghijABCDEFGHIJ012345",
+    concat!("AK", "IAIOSFODNN7EXAMPLE"),
+    concat!("gh", "p_0123456789abcdefghijABCDEFGHIJ012345"),
     // Split so the source holds no token-shaped literal.
     concat!("sk_", "live_EXAMPLEEXAMPLE0123456789"),
     concat!("xo", "xb-123456789012-example0123456789"),
@@ -529,7 +529,7 @@ fn logs_and_audit_rows_never_hold_secrets_and_stdout_has_no_logs() {
         },
         &[("ZN_DB_KEY", DB_KEY)],
     );
-    let tool = "no_such_ghp_0123456789abcdefghijABCDEFGHIJ012345";
+    let tool = concat!("no_such_gh", "p_0123456789abcdefghijABCDEFGHIJ012345");
     gw.send(&json!({
         "jsonrpc": "2.0",
         "id": 7,
@@ -548,9 +548,9 @@ fn logs_and_audit_rows_never_hold_secrets_and_stdout_has_no_logs() {
     let fwd = frame.to_string();
     assert_eq!(frame["params"]["name"], json!(tool));
     for kept in [
-        "AKIAIOSFODNN7EXAMPLE",
-        "ghp_0123456789abcdefghijABCDEFGHIJ012345",
-        "xoxb-123456789012",
+        concat!("AK", "IAIOSFODNN7EXAMPLE"),
+        concat!("gh", "p_0123456789abcdefghijABCDEFGHIJ012345"),
+        concat!("xo", "xb-123456789012"),
     ] {
         assert!(
             fwd.contains(kept),
