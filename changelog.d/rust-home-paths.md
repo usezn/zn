@@ -1,2 +1,3 @@
 ### Fixed
 - The gateway no longer falls back to the current folder when HOME (and USERPROFILE on Windows) is not set. The model path now fails with a message that names HOME, the audit database defaults to an absolute folder under ZN_HOME or HOME/.zn instead of a relative zn.db, and MCP auto-discovery without a home folder starts with an empty server list and a notice instead of an environment error. ZN_HOME must be an absolute path.
+- The gateway creates the folder of its audit database (`~/.zn` by default) on first start, readable only by the user on Unix, instead of failing to open the database. The old `zn.db` in the start folder is no longer opened: to keep it, move it to `~/.zn/zn.db` or set `ZN_DB_PATH` to it (see the Rust gateway docs).

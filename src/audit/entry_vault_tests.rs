@@ -317,6 +317,21 @@ fn db_path_returns_the_configured_path() {
 
 #[test]
 fn new_fails_for_unopenable_path() {
+    // The folder cannot be created: a regular file sits where it would go.
+    let dir = TempDir::new().unwrap();
+    let blocker = dir.path().join("not-a-folder");
+    std::fs::write(&blocker, b"x").unwrap();
+    let path = blocker
+        .join("missing-subdir")
+        .join("audit.db")
+        .to_string_lossy()
+        .into_owned();
+    let err = AuditVault::new(&path, None).err().expect("refused");
+    assert!(format!("{err:#}").contains("ZN_HOME"), "{err:#}");
+}
+
+#[test]
+fn new_creates_a_missing_folder() {
     let dir = TempDir::new().unwrap();
     let path = dir
         .path()
@@ -324,7 +339,7 @@ fn new_fails_for_unopenable_path() {
         .join("audit.db")
         .to_string_lossy()
         .into_owned();
-    assert!(AuditVault::new(&path, None).is_err());
+    assert!(AuditVault::new(&path, None).is_ok());
 }
 
 #[test]

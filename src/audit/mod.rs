@@ -178,6 +178,32 @@ pub fn payload_if_enabled(store_payloads: bool, payload: impl Into<String>) -> O
 /// Plain-English text for a database that could not be opened. The file
 /// system is asked what is wrong with the file, because the database library
 /// only says that it "unable to open database file".
+/// Creates the folder that holds the audit database when it is missing (the default `~/.zn` on a
+/// first start), readable only by the user on Unix (0700). A folder that exists is left as it is.
+fn create_db_folder(db_path: &str) -> Result<()> {
+    if db_path == ":memory:" || db_path.starts_with("file:") {
+        return Ok(());
+    }
+    let parent = match std::path::Path::new(db_path).parent() {
+        Some(p) if !p.as_os_str().is_empty() && !p.exists() => p,
+        _ => return Ok(()),
+    };
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(parent).map_err(|e| {
+        anyhow!(
+            "zn cannot create the folder for its audit database ({}): {}. Create it, or set ZN_HOME or ZN_DB_PATH to a folder zn may write",
+            parent.display(),
+            e
+        )
+    })
+}
+
 fn audit_open_problem(db_path: &str, raw: &str) -> String {
     let probe = std::fs::OpenOptions::new()
         .append(true)
@@ -223,6 +249,7 @@ impl AuditVault {
             return Err(anyhow!("zn cannot open its audit database: {}", why));
         }
         info!("Initializing AuditVault at: {}", db_path);
+        create_db_folder(db_path)?;
 
         let mut conn = Connection::open(db_path)
             .map_err(|e| anyhow!(audit_open_problem(db_path, &e.to_string())))?;
@@ -1129,6 +1156,41 @@ fn scrub_legacy_neighbours(conn: &mut Connection) -> Result<usize> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn missing_database_folder_is_created_private() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let dir = base.path().join("home").join(".zn");
+        let db = dir.join("zn.db");
+        let vault =
+            AuditVault::new(db.to_str().unwrap(), None).expect("vault opens in a new folder");
+        assert_eq!(vault.count().unwrap(), 0);
+        assert!(db.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "folder mode is {mode:o}");
+        }
+    }
+
+    #[test]
+    fn existing_database_folder_keeps_its_mode() {
+        let base = tempfile::tempdir().expect("tempdir");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(base.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let db = base.path().join("zn.db");
+        AuditVault::new(db.to_str().unwrap(), None).expect("vault");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(base.path()).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o755);
+        }
+    }
 
     fn temp_db_path() -> String {
         format!("test_audit_{}.db", Uuid::new_v4())

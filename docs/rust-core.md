@@ -6,11 +6,24 @@ It is **experimental** and **not distributed**: nothing you install with `npx zn
 
 The Rust gateway reads `ZN_API_KEY` as the key for its own management API. It never contacts `api.usezn.com`.
 
-On first start, with an empty database, the gateway seeds a default organisation with a super-admin key: `ZN_API_KEY` if it is set, otherwise a random key. A random key is written to `zn-superadmin-key.txt` next to the audit database (`zn.db` by default), readable only by your user (mode 0600 on Unix; on Windows the file inherits the permissions of its directory). Copy it somewhere safe, then delete the file. The key is never printed, so it does not end up in terminal scrollback or container logs; earlier versions printed a generated key to stdout. If the file cannot be written, the gateway does not start and seeds nothing.
+On first start, with an empty database, the gateway seeds a default organisation with a super-admin key: `ZN_API_KEY` if it is set, otherwise a random key. A random key is written to `zn-superadmin-key.txt` next to the audit database (`~/.zn/zn.db` by default, or `zn.db` in `ZN_HOME` when it is set), readable only by your user (mode 0600 on Unix; on Windows the file inherits the permissions of its directory). Copy it somewhere safe, then delete the file. The key is never printed, so it does not end up in terminal scrollback or container logs; earlier versions printed a generated key to stdout. If the file cannot be written, the gateway does not start and seeds nothing.
 
 The gateway's rules do not cover shell commands the way the [destructive-command check](destructive-commands.md) of `zn-gate` does. Its restricted-command rule blocks any call that contains the word `rm`, `dd`, `chmod`, `chown`, `mkfs`, `format`, `shutdown` or `reboot`, whatever the target, so it also blocks harmless commands such as `rm -rf ./build`. It has no rule for a download piped into a shell, a download written over a shell startup file, a fork bomb, or writing to a disk device with a redirect (`cat /dev/zero > /dev/sda`). Do not rely on it to stop destructive commands: use `zn-gate`.
 
 > For agent protection (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, Gemini CLI (experimental), LangChain, CrewAI), use `zn-gate` (Node.js) or `zn-gate` on PyPI (Python). They need no compilation.
+
+## Audit database location (November 2026)
+
+The audit database now lives in zn's own folder: `~/.zn/zn.db`, or `zn.db` in `ZN_HOME` when that is set (`ZN_HOME` must be an absolute path). On first start the gateway creates the folder, readable only by your user on Unix (mode 0700). Earlier versions opened `zn.db` in the folder the gateway was started from; that file is no longer opened, and a gateway started with no home folder and no `ZN_HOME` refuses to start instead of falling back to the current folder.
+
+**Upgrading:** to keep your tenants and audit log, stop the gateway and either move the old file (and `zn-superadmin-key.txt` if you still have it) into the new folder:
+
+```bash
+mkdir -p ~/.zn && chmod 700 ~/.zn
+mv zn.db ~/.zn/zn.db
+```
+
+or keep it where it is and point the gateway at it with `ZN_DB_PATH=/absolute/path/to/zn.db` (or `audit.db_path` in the configuration file). If you do neither, the gateway starts with a new, empty database and seeds a new default organisation.
 
 ## Hardening (October 2026)
 
@@ -89,12 +102,12 @@ A token with a bad signature, another algorithm, past its expiry or before its `
 
 ### Tenants with a blank key
 
-Earlier versions could seed the default organisation with the hash of an empty key when `ZN_API_KEY` was set but empty (for example `ZN_API_KEY=` from an unset compose variable). Blank keys are now refused, so that tenant can no longer authenticate, and since the database already has tenants no new one is seeded. The gateway logs a warning at startup naming each such tenant (never a key). To fix it, either set a non-blank `ZN_API_KEY` (it works as the legacy super-admin key), or give the tenant a new key in the audit database (`ZN_DB_PATH`, `zn.db` by default) while the gateway is stopped:
+Earlier versions could seed the default organisation with the hash of an empty key when `ZN_API_KEY` was set but empty (for example `ZN_API_KEY=` from an unset compose variable). Blank keys are now refused, so that tenant can no longer authenticate, and since the database already has tenants no new one is seeded. The gateway logs a warning at startup naming each such tenant (never a key). To fix it, either set a non-blank `ZN_API_KEY` (it works as the legacy super-admin key), or give the tenant a new key in the audit database (`ZN_DB_PATH`, `~/.zn/zn.db` by default) while the gateway is stopped:
 
 ```bash
 NEW_KEY=$(openssl rand -hex 32)
 HASH=$(printf %s "$NEW_KEY" | sha256sum | cut -d' ' -f1)
-sqlite3 zn.db "UPDATE tenants SET api_key_hash = '$HASH' WHERE id = '<tenant id from the warning>';"
+sqlite3 ~/.zn/zn.db "UPDATE tenants SET api_key_hash = '$HASH' WHERE id = '<tenant id from the warning>';"
 ```
 
 ### MCP WebSocket token
