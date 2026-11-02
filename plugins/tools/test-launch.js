@@ -647,6 +647,92 @@ try {
     assert.match(JSON.parse(r.stdout).systemMessage, /zn hooks uninstall claude-code/);
   });
 
+  // The parallel tree check must give the same answer as the sequential one on every kind of tree.
+  const treeTools = require(LAUNCHER);
+  const makeTree = (name) => {
+    const dir = path.join(tmp, 'par-' + name);
+    const lock = { files: {} };
+    for (let i = 0; i < 40; i++) {
+      const rel = 'lib/d' + (i % 5) + '/f' + i + '.js';
+      const body = 'module.exports=' + i + ';';
+      write(path.join(dir, rel), body);
+      lock.files[rel] = crypto.createHash('sha256').update(body).digest('hex');
+    }
+    return { dir, lock };
+  };
+  const sameAnswer = async (c, what, want) => {
+    const a = treeTools.readVerified(c.dir, c.lock);
+    const b = await treeTools.readVerifiedAsync(c.dir, c.lock);
+    assert.strictEqual(Boolean(b.files), Boolean(a.files), what);
+    if (want) {
+      assert.match(a.error, want, what);
+      assert.match(b.error, want, what);
+    }
+    if (a.files) assert.deepStrictEqual([...b.files.keys()].sort(), [...a.files.keys()].sort(), what);
+    return b;
+  };
+  const asyncTests = [];
+  const atest = (name, fn) => asyncTests.push([name, fn]);
+  atest('parallel check: a good tree of more files than the read concurrency gives the same files as the sequential check', async () => {
+    const c = makeTree('good');
+    const r = await sameAnswer(c, 'good');
+    assert.strictEqual(r.files.size, 40);
+    assert.strictEqual(r.files.get('lib/d3/f3.js').toString(), 'module.exports=3;');
+  });
+  atest('parallel check: one changed byte in any file is refused, like the sequential check', async () => {
+    for (const rel of ['lib/d0/f0.js', 'lib/d4/f39.js', 'lib/d2/f22.js']) {
+      const c = makeTree('chg-' + rel.replace(/\W/g, ''));
+      fs.appendFileSync(path.join(c.dir, rel), ' ');
+      await sameAnswer(c, rel, new RegExp(rel.replace(/\./g, '\\.') + ' was changed'));
+    }
+  });
+  atest('parallel check: an extra file, an extra directory, a missing file and a link are refused, like the sequential check', async () => {
+    let c = makeTree('extra-file');
+    write(path.join(c.dir, 'lib', 'd1', 'extra.js'), 'x');
+    await sameAnswer(c, 'extra file', /unexpected file lib\/d1\/extra\.js/);
+    c = makeTree('extra-dir');
+    fs.mkdirSync(path.join(c.dir, 'node_modules'));
+    await sameAnswer(c, 'extra dir', /unexpected directory node_modules/);
+    c = makeTree('missing');
+    fs.rmSync(path.join(c.dir, 'lib', 'd1', 'f1.js'));
+    await sameAnswer(c, 'missing', /f1\.js is missing/);
+    if (!WIN) {
+      c = makeTree('link');
+      fs.rmSync(path.join(c.dir, 'lib', 'd2', 'f2.js'));
+      fs.symlinkSync(path.join(c.dir, 'lib', 'd3', 'f3.js'), path.join(c.dir, 'lib', 'd2', 'f2.js'));
+      await sameAnswer(c, 'link', /f2\.js is a symbolic link/);
+    }
+  });
+  atest('parallel check: when several files changed, the first one in walk order is reported', async () => {
+    const c = makeTree('two-changed');
+    fs.appendFileSync(path.join(c.dir, 'lib', 'd4', 'f39.js'), ' ');
+    fs.appendFileSync(path.join(c.dir, 'lib', 'd0', 'f0.js'), ' ');
+    const a = treeTools.readVerified(c.dir, c.lock);
+    const b = await treeTools.readVerifiedAsync(c.dir, c.lock);
+    assert.strictEqual(b.error, a.error);
+  });
+  atest('parallel check: a file that cannot be read refuses the hook (exit 2) and does not let the call run', async () => {
+    const c = makeTree('unreadable');
+    fs.rmSync(path.join(c.dir, 'lib', 'd0', 'f0.js'));
+    fs.mkdirSync(path.join(c.dir, 'lib', 'd0', 'f0.js'));
+    const b = await treeTools.readVerifiedAsync(c.dir, c.lock);
+    assert.ok(b.error, 'a directory where a locked file should be is refused');
+  });
+  atest('the launcher asks for a larger file thread pool unless the caller set one', async () => {
+    const src = fs.readFileSync(LAUNCHER, 'utf8');
+    assert.match(src, /if \(!process\.env\.UV_THREADPOOL_SIZE\) process\.env\.UV_THREADPOOL_SIZE = '16';/);
+  });
+  (async () => {
+    for (const [name, fn] of asyncTests) {
+      await fn();
+      n++;
+      process.stdout.write('ok ' + n + ' - ' + name + '\n');
+    }
+    process.stdout.write('1..' + n + '\n');
+  })().catch((err) => {
+    process.stderr.write(String((err && err.stack) || err) + '\n');
+    process.exitCode = 1;
+  });
   test('unknown agent is a usage error', () => {
     assert.strictEqual(run(['hook', 'other']).status, 1);
   });
@@ -663,6 +749,5 @@ try {
     assert.ok(r.stderr.includes('hook <' + ids.join('|') + '>'), r.stderr);
   });
 } finally {
-  fs.rmSync(tmp, { recursive: true, force: true });
+  process.on('exit', () => fs.rmSync(tmp, { recursive: true, force: true }));
 }
-process.stdout.write('1..' + n + '\n');

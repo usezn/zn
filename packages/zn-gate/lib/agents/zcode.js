@@ -92,6 +92,19 @@ function pluginWindowsArgs(event) {
   const script = "try { & ([scriptblock]::Create([IO.File]::ReadAllText($env:ZCODE_PLUGIN_ROOT + '/scripts/zn-hook.ps1'))) '" + event + "' } catch { [Console]::Error.WriteLine('" + msg + "'); exit " + (blocks ? 2 : 0) + ' }; exit ' + (blocks ? 2 : 0);
   return ['-NoProfile', '-NonInteractive', '-Command', script];
 }
+/* The entry hooks.json ships for Windows is the system cmd.exe on scripts/zn-hook.cmd, which starts Node.js directly (Windows PowerShell
+ * alone takes 0.5 to 3 seconds to start) and, when Node.js is not where the installer puts it, runs the PowerShell command above, so
+ * the answer is the same. Measured on Windows Server 2022 with Node.js spawning cmd.exe the way ZCode starts a hook (no shell, an
+ * arguments list): the program must be written with backslashes (with a slash cmd.exe reads "/Windows" as a switch and refuses), a
+ * double quote in an argument reaches cmd.exe as \" and breaks it, and a path with a space needs quotes, which Node.js adds
+ * around an argument that holds a space. So the script path is an argument of its own with a trailing space (the quotes Node.js adds
+ * keep a plugin folder with a space in it in one piece, and Windows ignores the space at the end of a file name). `||` blocks, or
+ * lets a PostToolUse call run, when the file cannot be run at all. Older plugin versions ship the PowerShell entry; zn-gate check
+ * accepts both. */
+const PLUGIN_WIN_CMD = 'C:\\Windows\\System32\\cmd.exe';
+function pluginWindowsCmdArgs(event) {
+  return ['/d', '/c', 'call', '%ZCODE_PLUGIN_ROOT%\\scripts\\zn-hook.cmd ', event, '||', 'exit', '/b', event !== 'PostToolUse' ? '2' : '0'];
+}
 // Tools whose output can hold a secret: the built-in ones that print file or command text, and every MCP tool.
 const POST_MATCHER = '^(Bash|Read|Grep|WebFetch)$|^mcp__.*';
 const EVENTS = ['PreToolUse', 'PermissionRequest', 'UserPromptSubmit', 'PostToolUse'];
@@ -643,6 +656,8 @@ module.exports = {
   HOOK_TIMEOUT_MS,
   LAUNCHER_DEADLINE_S,
   PLUGIN_WIN_POWERSHELL,
+  PLUGIN_WIN_CMD,
+  pluginWindowsCmdArgs,
   pluginWindowsArgs,
   HOOK_STATUS,
   PRE_MATCHER,

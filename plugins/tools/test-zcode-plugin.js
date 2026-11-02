@@ -46,8 +46,8 @@ try {
       assert.strictEqual(mine[event][0].hooks.length, 2);
       const w = mine[event][0].hooks[1];
       assert.strictEqual(w.type, 'process', event + ': no shell between ZCode and PowerShell');
-      assert.strictEqual(w.command, adapter.PLUGIN_WIN_POWERSHELL, event + ': PowerShell by its full path');
-      assert.deepStrictEqual(w.args, adapter.pluginWindowsArgs(event));
+      assert.strictEqual(w.command, adapter.PLUGIN_WIN_CMD, event + ': cmd.exe by its full path');
+      assert.deepStrictEqual(w.args, adapter.pluginWindowsCmdArgs(event));
       assert.strictEqual(w.timeoutMs, adapter.HOOK_TIMEOUT_MS, event + ' Windows timeout');
       assert.strictEqual(w.statusMessage, adapter.HOOK_STATUS);
       assert.ok(!('onFailure' in w) && !('async' in w) && !('enabled' in w), event + ': a key ZCode does not document or one that turns the hook off');
@@ -431,6 +431,36 @@ try {
       assert.strictEqual(r.status, 0);
       assert.strictEqual(r.stdout, '{"ok":true}');
       assert.ok(ms < 1900, 'the watchdog does not delay a finished hook: ' + ms + ' ms');
+    });
+  }
+
+  // scripts/zn-hook.cmd (the entry hooks.json runs on Windows): it cannot run here, so these read it. The Windows tests below run it.
+  {
+    const cmdText = fs.readFileSync(path.join(ZC, 'scripts', 'zn-hook.cmd'), 'latin1');
+    const ps1Text = fs.readFileSync(path.join(ZC, 'scripts', 'zn-hook.ps1'), 'latin1');
+    const adapterMsg = adapter.pluginWindowsArgs('PreToolUse')[3];
+    test('zn-hook.cmd has CRLF line ends (labels and goto fail with bare LF) and only ASCII', () => {
+      assert.ok(!/(^|[^\r])\n/.test(cmdText), 'a bare LF');
+      assert.ok(/^[\x09\x0a\x0d\x20-\x7e]*$/.test(cmdText), 'non ASCII');
+    });
+    test('zn-hook.cmd refuses with the same words as the PowerShell launcher and the inline command of hooks.json', () => {
+      const block = /This call was blocked because zn could not check it\. Ask the user to fix it, or to turn off the zn-gate plugin in ZCode/;
+      assert.match(cmdText, block);
+      assert.match(ps1Text, block);
+      assert.ok(cmdText.includes('zn is NOT protecting this session: '));
+      assert.ok(ps1Text.includes('zn is NOT protecting this session: '));
+      // The fallback runs the same inline command as the manifest entry, with the event and the exit code filled in.
+      const inline = adapter.pluginWindowsArgs('PreToolUse')[3];
+      const head = inline.slice(0, inline.indexOf("'PreToolUse'"));
+      assert.ok(cmdText.includes(head.replace(/\$env:/g, '$env:')), 'inline command differs from pluginWindowsArgs');
+      assert.ok(adapterMsg.includes('the plugin launcher (scripts/zn-hook.ps1) could not run. This call was blocked'));
+    });
+    test('zn-hook.cmd only passes exit codes 0 and 2 through, and a link or an unsuitable Node.js is not used', () => {
+      assert.match(cmdText, /if "%ZN_RC%"=="0" exit \/b 0/);
+      assert.match(cmdText, /if "%ZN_RC%"=="2" exit \/b 2/);
+      assert.match(cmdText, /dir \/a:l \/b "%ZN_NODE%" >nul 2>nul && goto :slow/);
+      assert.match(cmdText, /USE_MAIN_CONTEXT_DEFAULT_LOADER/);
+      assert.ok(!/%PATH%/i.test(cmdText), 'the fast path never searches the PATH');
     });
   }
 
