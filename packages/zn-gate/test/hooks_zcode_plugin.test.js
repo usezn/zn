@@ -43,14 +43,15 @@ const writeCfg = (home, obj) => {
 const readCfg = (home) => JSON.parse(fs.readFileSync(cfgFile(home), 'utf8'));
 
 // A plugin folder as ZCode leaves it in its cache. The stub hook denies a request that names ".env" and allows any other.
-function installPlugin(home, { script = true, manifest = true, id = ID, hooks = (h) => h } = {}) {
+function installPlugin(home, { script = true, manifest = true, id = ID, hooks = (h) => h, realWindowsEntry = false } = {}) {
   const root = path.join(base(home), 'plugins', 'cache', 'usezn', 'zn-gate', '1.14.0');
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
   fs.mkdirSync(path.join(root, '.zcode-plugin'), { recursive: true });
   if (manifest) fs.writeFileSync(path.join(root, '.zcode-plugin', 'plugin.json'), '{"name":"zn-gate","version":"1.14.0"}');
   if (hooks) {
     fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
-    fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooks(asPowerShell(fs.readFileSync(REPO_HOOKS, 'utf8'))));
+    const shipped = fs.readFileSync(REPO_HOOKS, 'utf8');
+    fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooks(realWindowsEntry ? shipped : asPowerShell(shipped)));
   }
   if (script) {
     fs.writeFileSync(path.join(root, 'scripts', 'zn-hook.sh'),
@@ -58,8 +59,9 @@ function installPlugin(home, { script = true, manifest = true, id = ID, hooks = 
       { mode: 0o755 });
   }
   if (script) {
-    // zn-gate check only looks for this file (the tests that run a Windows hook use the PowerShell entry and the script below).
-    fs.writeFileSync(path.join(root, 'scripts', 'zn-hook.cmd'), '@echo off\r\nexit /b 0\r\n');
+    // The Windows counterpart for the cmd.exe entry (realWindowsEntry): cmd.exe runs it from the plugin folder; findstr reads the event.
+    fs.writeFileSync(path.join(root, 'scripts', 'zn-hook.cmd'),
+      '@echo off\r\nfindstr /l /c:".env" >nul\r\nif errorlevel 1 exit /b 0\r\necho {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: .env holds plain-text secrets."}}\r\nexit /b 0\r\n');
     // The Windows counterpart of the stub above: PowerShell reads it from the plugin folder and runs it as a script block.
     fs.writeFileSync(path.join(root, 'scripts', 'zn-hook.ps1'),
       "$in = [Console]::In.ReadToEnd()\nif ($in -match '\\.env') { [Console]::Out.Write('{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"zn: .env holds plain-text secrets.\"}}') }\nexit 0\n");
@@ -128,6 +130,22 @@ test('zn-gate check: the plugin alone protects ZCode, with hooks.enabled false, 
   }
   // Without live checks only the setup is read.
   assert.notEqual((await find(false)).state, 'not-set-up');
+});
+
+// zn-gate check starts the cmd.exe entry of the shipped manifest exactly as ZCode does: the program by its full path, the
+// arguments with ${ZCODE_PLUGIN_ROOT} filled in, no shell. A user folder with a space, &, parentheses, ^ or % in its name
+// stays one path; ZCODE_PLUGIN_ROOT is not needed by that line.
+test('zn-gate check on Windows: the shipped cmd.exe entry runs from a user folder with a space, &, parentheses, ^ or %', { skip: posix && 'Windows only' }, async (t) => {
+  const check = require('../lib/check');
+  for (const prefix of ['zn-zcp Jane Doe (Work) & Co-', 'zn-zcp a^b 100%-']) {
+    const home = tempDir(t, prefix);
+    const cwd = tempDir(t, 'zn-zcp-cmd-cwd-');
+    installPlugin(home, { realWindowsEntry: true });
+    writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } } });
+    const r = (await check.check({ home, cwd, env: { ...process.env, HOME: home }, live: true })).results.find((x) => x.id === 'zcode');
+    assert.equal(r.state, 'protected', prefix + ' ' + r.problem);
+    assert.equal(r.verified, true, prefix);
+  }
 });
 
 test('zn-gate check: a plugin that is turned off, with nothing else of zn running, is NOT protected', async (t) => {
@@ -466,7 +484,12 @@ test('zn-gate check reads the two-entry manifest for the system it runs on: both
       flag: (h) => { h.args = ['/d', '/v:on'].concat(h.args.slice(1)); },
       noSpace: (h) => { h.args = h.args.map((a) => a.replace('zn-hook.cmd ', 'zn-hook.cmd')); },
       extra: (h) => { h.args = h.args.concat(['&', 'del', 'x']); },
-      outside: (h) => { h.args = h.args.map((a) => a.replace('%ZCODE_PLUGIN_ROOT%\\scripts', '%ZCODE_PLUGIN_ROOT%\\..')); },
+      outside: (h) => { h.args = h.args.map((a) => a.replace('${ZCODE_PLUGIN_ROOT}\\scripts', '${ZCODE_PLUGIN_ROOT}\\..')); },
+      // The earlier form: %ZCODE_PLUGIN_ROOT% stays as it is when the variable is not set (a path in the project) and `call`
+      // doubles ^ and expands % again.
+      envVar: (h) => { h.args = h.args.map((a) => a.replace('${ZCODE_PLUGIN_ROOT}', '%ZCODE_PLUGIN_ROOT%')); },
+      call: (h) => { h.args = ['/d', '/c', 'call', h.args[3], h.args[4], '||', 'exit', '/b', h.args[9]]; },
+      relative: (h) => { h.args = h.args.map((a) => a.replace('${ZCODE_PLUGIN_ROOT}\\', '')); },
       program: (h) => { h.command = 'C:\\Temp\\cmd.exe'; },
       slash: (h) => { h.command = 'C:/Windows/System32/cmd.exe'; },
     };

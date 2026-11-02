@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Windows helpers of the ZCode e2e kit (the app headless runtime, fake local provider, FICTITIOUS values only).
-env: ZC_CLI (zcode.cjs), KIT, OUT, WORK, ZC_APPDIR. zn-gate is installed under WORK/npm."""
+env: ZC_CLI (zcode.cjs), KIT, OUT, WORK, ZC_APPDIR, ZC_HOME (the user folder, WORK/home by default; a folder with spaces,
+&, parentheses, ^ or % tests how the plugin hooks start from there). zn-gate is installed under WORK/npm."""
 import os, sys, json, time, shutil, subprocess, hashlib, re, copy
 
 KIT = os.environ.get('KIT', os.path.dirname(os.path.abspath(__file__)))
@@ -11,7 +12,7 @@ NPM = WORK + '/npm'
 APPDIR = os.environ.get('ZC_APPDIR', 'C:/ZCodeApp')
 BUILTIN = APPDIR + '/resources/config/provider/zcode-builtin.json'
 PYEXE = sys.executable
-HOME = WORK + '/home'
+HOME = os.environ.get('ZC_HOME') or WORK + '/home'
 PROJ = WORK + '/proj'
 import shutil as _sh
 NODE = _sh.which('node') or 'C:/Program Files/nodejs/node.exe'

@@ -39,7 +39,7 @@ def add_plugin(tag):
 
 def is_win_hook(h):
     c = h['command'].lower()
-    return 'powershell' in c or c.endswith('zn-hook-win.cmd')
+    return 'powershell' in c or c.endswith('cmd.exe') or c.endswith('zn-hook-win.cmd')
 
 
 def hook_events(res):
@@ -82,7 +82,7 @@ def glob_first(pat):
 
 
 def awscmd():
-    return 'type ' + HOME.replace('/', BS) + BS + '.aws' + BS + 'credentials'
+    return 'type "' + HOME.replace('/', BS) + BS + '.aws' + BS + 'credentials"'
 
 
 def main():
@@ -163,7 +163,9 @@ def main():
             line = 'cmd.exe /d /s /c ""%s" %s"' % (cmdp, ' '.join(h['args']))
             r = subprocess.run(line, input=evj, capture_output=True, text=True, env=e, cwd=PROJ, timeout=90)
         else:
-            r = subprocess.run([h['command']] + h['args'], input=evj, capture_output=True, text=True, env=e, cwd=PROJ, timeout=90)
+            # as ZCode starts a process hook: ${ZCODE_PLUGIN_ROOT} filled in, no shell
+            args = [a.replace('${ZCODE_PLUGIN_ROOT}', plugdir.replace('/', BS)) for a in h['args']]
+            r = subprocess.run([h['command']] + args, input=evj, capture_output=True, text=True, env=e, cwd=PROJ, timeout=90)
         open('%s/d_direct_%s_%s.txt' % (OUT, tag, evn), 'w').write('rc=%d\n--stdout--\n%s\n--stderr--\n%s\n' % (r.returncode, r.stdout, r.stderr))
         return r
 
