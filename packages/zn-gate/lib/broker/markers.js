@@ -171,8 +171,18 @@ function checkResolvedExecutable(resolved, projectRoot, resolvedReal) {
 // The native form also expands a Windows 8.3 short name: os.tmpdir() can be C:\Users\LONGNA~1\..., and a file
 // planted in the long form of that folder must still count as inside it.
 function realOf(p) {
-  try { return fs.realpathSync.native(p); } catch (_) { /* fall back to the JavaScript form */ }
-  try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); }
+  try { return fs.realpathSync.native(p); } catch (_) { /* not there: resolve the part that is */ }
+  // A path that does not exist (yet) still names its folders in a short, linked or other form: take the native real
+  // form of the deepest folder that exists and add the rest, so it compares like the temp and project folders.
+  let head = path.resolve(p);
+  const rest = [];
+  for (;;) {
+    const parent = path.dirname(head);
+    if (parent === head) return path.resolve(p);
+    rest.unshift(path.basename(head));
+    head = parent;
+    try { return path.join(fs.realpathSync.native(head), ...rest); } catch (_) { /* go one folder up */ }
+  }
 }
 
 /* ------------------------------ hosts ------------------------------ */
