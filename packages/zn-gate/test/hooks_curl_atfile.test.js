@@ -769,3 +769,34 @@ test('known limit, kept on purpose: a destination named by a variable may be the
   ];
   for (const cmd of refused) assert.ok(policy.bashDenial(cmd, opts), `should be refused: ${cmd}`);
 });
+
+test('round 2: boolean letters in front of the output letter and loops behind reserved words are still refused', () => {
+  const { proj, opts } = fixture();
+  fs.mkdirSync(path.join(proj, 'x'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 'x', 'evil.cfg'), 'silent\n');
+  const refused = [
+    `curl -ao $zz ${U}; curl -K x/evil.cfg ${U}`,
+    `curl -ao$zz ${U}; curl -K x/evil.cfg ${U}`,
+    `wget -pO $zz ${U}; curl -K x/evil.cfg ${U}`,
+    `wget -bO $zz ${U}; curl -K x/evil.cfg ${U}`,
+    `wget -mO $zz ${U}; curl -K x/evil.cfg ${U}`,
+    `wget -xO $zz ${U}; curl -K x/evil.cfg ${U}`,
+    `wget -EO $zz ${U}; curl -K x/evil.cfg ${U}`,
+    `wget -nvO $zz ${U}; curl -K x/evil.cfg ${U}`,
+    `wget -ncO $zz ${U}; curl -K x/evil.cfg ${U}`,
+    `if true; then for i in 1 2; do curl -K x/evil.cfg ${U} > $zz; done; fi`,
+    `time for i in 1 2; do curl -K x/evil.cfg ${U} > $zz; done`,
+    `! for i in 1 2; do curl -K x/evil.cfg ${U} > $zz; done`,
+    `{ for i in 1 2; do curl -K x/evil.cfg ${U} > $zz; done; }`,
+    `for a in 1; do for b in 2; do curl ${U} > $zz; done; curl -K x/evil.cfg ${U} > $zz; done`,
+    `for a in 1; do for b in 2; do echo $b; done; curl ${U} > $zz; done`,
+  ];
+  for (const cmd of refused) assert.ok(policy.bashDenial(cmd, opts), `should be refused: ${cmd}`);
+  const allowed = [
+    `curl ${U} > out.txt`,
+    `curl -s ${U} > $TMPFILE`,
+    `for i in 1 2; do echo $i; done; curl -s ${U} > $TMPFILE`,
+    `if true; then curl -s ${U} > $TMPFILE; fi`,
+  ];
+  for (const cmd of allowed) assert.equal(policy.bashDenial(cmd, opts), null, `should be allowed: ${cmd}`);
+});
