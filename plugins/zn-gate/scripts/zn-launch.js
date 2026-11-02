@@ -797,6 +797,39 @@ function refuseOversize(text) {
   refuseHook('The event on stdin is too large to check.');
 }
 
+/*
+ * The hook's own deadline, for agents that let a call run when its hook times out. ZCode stops waiting for a hook after 30
+ * seconds (the timeoutMs of the plugin's hooks.json) and then lets the call run, so the zcode hook refuses by itself 28
+ * seconds after it started, like scripts/zn-hook.sh and scripts/zn-hook.ps1 do. "Started" is the start of this process
+ * or, when scripts/zn-hook.cmd started it on Windows, the time that file noted on its first line (ZN_HOOK_T0, the time
+ * of day as cmd.exe prints it), whichever is earlier: ZN_HOOK_T0 can only make the deadline shorter.
+ */
+const HOOK_DEADLINE_MS = { zcode: 28000 };
+
+function hookElapsedMs() {
+  let ms = process.uptime() * 1000;
+  const m = /^\s*(\d{1,2})\D(\d{2})\D(\d{2})\D(\d{2})\s*$/.exec(String(process.env.ZN_HOOK_T0 || ''));
+  if (m) {
+    const now = new Date();
+    const t0 = ((+m[1] * 60 + +m[2]) * 60 + +m[3]) * 1000 + +m[4] * 10;
+    let e = ((now.getHours() * 60 + now.getMinutes()) * 60 + now.getSeconds()) * 1000 + now.getMilliseconds() - t0;
+    if (e < 0) e += 86400000;
+    if (e > ms && e < 120000) ms = e;
+  }
+  return ms;
+}
+
+function armHookDeadline(agent) {
+  const limit = HOOK_DEADLINE_MS[agent];
+  if (!limit) return;
+  const timer = setTimeout(() => {
+    refuseHook('zn-gate did not answer within ' + limit / 1000 + ' seconds of the start of the hook.');
+    process.exit(2);
+  }, Math.max(0, limit - hookElapsedMs()));
+  // The deadline never keeps the process alive: a hook that has answered exits as before.
+  timer.unref();
+}
+
 function runHook(agent) {
   if (!SUPPORTED_AGENTS.has(agent)) {
     process.stderr.write('zn plugin: unknown agent "' + agent + '"\n');
@@ -805,6 +838,7 @@ function runHook(agent) {
   }
   hook.agent = agent;
   process.on('exit', (code) => { process.exitCode = finishHook(code); });
+  armHookDeadline(agent);
   const onError = (err) => {
     refuseHook('zn-gate failed (' + ((err && err.message) || String(err)) + ').');
     // Exit now: whatever was running is in an unknown state.
