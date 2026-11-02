@@ -69,6 +69,11 @@ function describePolicy(p) {
  * way out: Enter, Ctrl-D, Ctrl-C, end of input, a read error, SIGINT and process exit. Without a terminal (a pipe or a
  * file) the line is read as it is.
  */
+/* How to pipe the token in, in the shell people use on this system (printf is not there on Windows). */
+function pipeExample(platform = process.platform) {
+  return platform === 'win32' ? '$env:TOKEN | zn team join -' : 'printf %s "$TOKEN" | zn team join -';
+}
+
 function readStdinToken(input = process.stdin, output = process.stderr) {
   return input.isTTY ? readTerminalToken(input, output) : readPipedToken(input);
 }
@@ -128,7 +133,7 @@ function readTerminalToken(input, output) {
       input.setRawMode(true); // no echo: the token never shows on the screen
     } catch (e) {
       // Fail closed: without a way to switch the echo off, the token is not read from the keyboard.
-      output.write('[zn] Cannot hide the typing on this terminal. Pipe the token in instead: printf %s "$TOKEN" | zn team join -\n');
+      output.write(`[zn] Cannot hide the typing on this terminal. Pipe the token in instead: ${pipeExample()}\n`);
       return resolve('');
     }
     process.on('exit', restore);
@@ -152,7 +157,7 @@ async function joinTokenFrom(args, io) {
   if (arg && arg !== '-' && !arg.startsWith('--')) return { token: arg, via: 'argument' };
   if (arg === '-') {
     const t = await (io.readStdin || readStdinToken)();
-    return t ? { token: t, via: 'stdin' } : { error: 'no join token on standard input. Pipe it in, for example: printf %s "$TOKEN" | zn team join -' };
+    return t ? { token: t, via: 'stdin' } : { error: `no join token on standard input. Pipe it in, for example: ${pipeExample()}` };
   }
   const env = String((io.env || process.env)[JOIN_TOKEN_ENV] || '').trim();
   return env ? { token: env, via: 'env' } : {};
@@ -425,4 +430,4 @@ async function runLogExport(args) {
   }
 }
 
-module.exports = { runTeamCommand, runLogExport, describePolicy, readStdinToken };
+module.exports = { runTeamCommand, runLogExport, describePolicy, readStdinToken, pipeExample };

@@ -151,3 +151,10 @@ test('not a terminal and nothing on standard input: resolves empty', async () =>
   p.end();
   assert.strictEqual(await v, '');
 });
+
+test('the pipe-in example fits the shell of the system', () => {
+  const { pipeExample } = require('../lib/team/cli.js');
+  assert.match(pipeExample('linux'), /^printf %s "\$TOKEN" \| zn team join -$/);
+  assert.match(pipeExample('darwin'), /^printf /);
+  assert.equal(pipeExample('win32'), '$env:TOKEN | zn team join -');
+});
