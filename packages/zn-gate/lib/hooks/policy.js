@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-01.7';
+const POLICY_RULES_VERSION = '2026-11-02.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1542,56 +1542,270 @@ function parseCurlConfig(content, opts, depth) {
 /* The expansions of one word of a command that may rewrite a curl configuration. $HOME and ${HOME} are the home folder.
    ${NAME:-literal} and ${NAME-literal} of a variable that zn does not track, with a plain literal default, are that
    literal. $PWD and ${PWD} stay for the caller. Every other expansion (positional and special parameters, a variable
-   zn does not resolve, a variable with an operator, ${HOME:-x}, ${PWD:-x}) may be empty or any folder: it becomes a
-   marker. A marker glued after other text becomes `*`; a marker that starts the word is a leading expansion, returned
-   with the text that follows it. { refuse: true } for $OLDPWD, which zn cannot follow. */
+   zn does not resolve, a variable with an operator, ${HOME:-x}, ${PWD:-x}, a default that holds another expansion such
+   as ${a:-${b}}) may be empty or any folder: it becomes a marker. ${...} is read to its matching brace; a ${ that is
+   never closed makes the rest of the word unknown. `marked` is the word with its markers; in `text` and `lead` each
+   marker is `*`. A word that starts with a marker is a leading expansion, returned as `lead` with the text that
+   follows it. { refuse: true } for $OLDPWD, which zn cannot follow. */
 const UNKNOWN_EXP = '\u0001';
+const OLDPWD_RE = /(?:^|\$\{?)OLDPWD(?![A-Za-z0-9_])/;
+function expansionValue(inner) {
+  if (OLDPWD_RE.test(inner)) return null;
+  if (/^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*])$/.test(inner)) return inner === 'PWD' || inner === 'ZN_HOME' ? '${' + inner + '}' : UNKNOWN_EXP;
+  const m = /^([A-Za-z_][A-Za-z0-9_]*)(?::?-)([A-Za-z0-9_.\/-]*)$/.exec(inner);
+  if (m && !/^(?:HOME|PWD|OLDPWD)$/.test(m[1])) return m[2];
+  return UNKNOWN_EXP;
+}
 function resolveWordExpansions(c, home) {
-  let s = String(c).replace(/\$\{HOME\}|\$HOME(?![A-Za-z0-9_])/g, () => home);
-  if (!s.includes('$')) return { text: s };
-  let refuse = false;
-  s = s.replace(/\$\{([^}]*)\}|\$([A-Za-z_][A-Za-z0-9_]*|[0-9@*])/g, (all, inner, bare) => {
-    const name = inner !== undefined ? inner : bare;
-    if (/^OLDPWD$/.test(name) || /^OLDPWD[^A-Za-z0-9_]/.test(name)) { refuse = true; return all; }
-    if (inner === undefined || /^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*])$/.test(inner)) {
-      return name === 'PWD' || name === 'ZN_HOME' ? all : UNKNOWN_EXP;
+  const src = String(c).replace(/\$\{HOME\}|\$HOME(?![A-Za-z0-9_])/g, () => home);
+  if (!src.includes('$')) return { text: src, marked: src };
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch !== '$') { out += ch; i++; continue; }
+    if (src[i + 1] === '{') {
+      let depth = 1;
+      let j = i + 2;
+      for (; j < src.length; j++) {
+        if (src[j] === '{') depth++;
+        else if (src[j] === '}' && --depth === 0) break;
+      }
+      if (depth > 0) {
+        if (OLDPWD_RE.test(src.slice(i + 2))) return { refuse: true };
+        out += UNKNOWN_EXP;
+        break;
+      }
+      const v = expansionValue(src.slice(i + 2, j));
+      if (v === null) return { refuse: true };
+      out += v;
+      i = j + 1;
+      continue;
     }
-    const m = /^([A-Za-z_][A-Za-z0-9_]*)(?::?-)([A-Za-z0-9_.\/-]*)$/.exec(inner);
-    if (m && !/^(?:HOME|PWD|OLDPWD)$/.test(m[1])) return m[2];
-    return UNKNOWN_EXP;
-  });
-  if (refuse) return { refuse: true };
-  if (!s.includes(UNKNOWN_EXP)) return { text: s };
-  if (s.startsWith(UNKNOWN_EXP)) return { lead: s.replace(/^\u0001+/, '').replace(/\u0001/g, '*') };
-  return { text: s.replace(/\u0001/g, '*') };
+    const bare = /^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*])/.exec(src.slice(i + 1));
+    if (!bare) { out += ch; i++; continue; }
+    const name = bare[0];
+    if (name === 'OLDPWD') return { refuse: true };
+    out += name === 'PWD' || name === 'ZN_HOME' ? '$' + name : UNKNOWN_EXP;
+    i += 1 + name.length;
+  }
+  if (!out.includes(UNKNOWN_EXP)) return { text: out, marked: out };
+  if (out.startsWith(UNKNOWN_EXP)) return { lead: out.replace(/^\u0001+/, '').replace(/\u0001/g, '*'), marked: out, unknown: true };
+  return { text: out.replace(/\u0001/g, '*'), marked: out, unknown: true };
 }
 
-/* True when a word that starts with an expansion zn cannot resolve (any folder) followed by `tail` may name one of the
-   wanted paths: the tail ends the path or a folder that holds it. */
-function leadingExpansionHolds(tail, want) {
-  const t = slash(tail).replace(/\/+$/, '');
-  if (!t) return false;
-  const re = new RegExp(t.replace(/[.+^${}()|\\]/g, '\\$&').replace(/\?/g, '[^/]').replace(/\*/g, '[^/]*') + '$');
-  return want.some((q) => {
-    let a = slash(q);
-    while (a && a !== '/') {
-      if (re.test(a)) return true;
-      a = a.slice(0, Math.max(a.lastIndexOf('/'), 0));
-    }
-    return false;
-  });
+/* Whether the last name of a path (with its markers, see resolveWordExpansions) may be one of `names`. A path that ends
+   in a folder (x/, x/., x/..) names no file. `loose`: a name with an unresolved expansion or a wildcard may be any
+   name; otherwise only the name as written (each item of a {a,b} list) counts. */
+function lastNameMayBe(marked, names, loose) {
+  const s = slash(String(marked));
+  if (!s || s.endsWith('/')) return false;
+  const seg = s.slice(s.lastIndexOf('/') + 1);
+  if (seg === '.' || seg === '..') return false;
+  if (/[\u0001*?[]/.test(seg)) return loose;
+  const list = seg.includes('{') ? braceNames(seg) : [seg];
+  if (list === null) return loose;
+  return list.some((n) => names.has(n));
 }
+
+// Programs that copy, move or link files into a destination, and the short options of each that take a value.
+const COPY_PROGS_RE = /^(?:cp|mv|install|ln|rsync|gcp|gmv|ginstall|gln)$/;
+const COPY_SHORT_VALUES = { install: 'Smog', ginstall: 'Smog', rsync: 'efBMT', cp: 'S', gcp: 'S', mv: 'S', gmv: 'S', ln: 'S', gln: 'S' };
+const COPY_LONG_VALUES = new Set(['--suffix', '--mode', '--owner', '--group', '--rsh', '--exclude', '--include', '--filter',
+  '--files-from', '--exclude-from', '--include-from', '--password-file', '--log-file', '--rsync-path', '--partial-dir',
+  '--compare-dest', '--link-dest', '--copy-dest', '--temp-dir', '--block-size', '--remote-option', '--chmod', '--chown',
+  '--backup-dir', '--out-format', '--max-size', '--min-size', '--timeout', '--bwlimit', '--info', '--debug', '--iconv']);
+const TAR_SHORT_VALUES = 'fCTXbHINgKLV';
+
+/* The words of a command that are the destination of a write and hold an expansion zn does not resolve, where that write
+   can put a curl configuration in place (`names`: the file names a configuration may have): a redirect target (> and
+   >>), a tee file, dd of=, a sed -i file, the folder an archive is extracted into (tar -x -C, unzip -d, 7z -o), and the
+   destination of cp, mv, install, ln and rsync when the copy is recursive (cp -r/-a, rsync -r/-a), moves a folder,
+   names a source that may be a configuration (its name is one of `names`, or holds an unresolved expansion or a
+   wildcard) or names a destination file that may be one. Words are judged by where they sit in the command, never by
+   the folders the expansion might stand for. */
+function unresolvedConfigDestinations(readings, names, opts) {
+  const out = new Set();
+  const home = opts.home || os.homedir();
+  const cwd = path.resolve(opts.cwd || process.cwd());
+  const unknown = (v) => { const rr = resolveWordExpansions(v, home); return rr.refuse || rr.unknown ? rr : null; };
+  for (const r of readings) {
+    const groups = [];
+    for (let i = 0; i < r.length;) {
+      let j = i;
+      while (j < r.length && r[j].seq === r[i].seq) j++;
+      const group = r.slice(i, j);
+      groups.push({ group, prog: programOfGroup(group) });
+      i = j;
+    }
+    const curls = groups.filter((g) => g.prog && g.prog.name === 'curl').length;
+    for (const { group, prog } of groups) {
+      // The shell opens a redirect of curl's own command before curl starts: it can empty that curl's configuration
+      // but not give it options. That only matters when no other curl in the command reads the file afterwards.
+      const ownCurl = curls === 1 && prog && prog.name === 'curl' && prog.at >= 0;
+      if (!ownCurl) for (const w of group) if (w.redirectTarget && unknown(String(w.text))) out.add(w);
+      if (!prog || prog.at < 0) continue;
+      const name = prog.name;
+      const args = group.slice(prog.at + 1).filter((w) => !w.redirectTarget && !REDIRECT_OP_WORD_RE.test(String(w.text)));
+      const txt = (w) => String(w.text);
+      const dest = (w, v) => { if (unknown(v)) out.add(w); };
+      if (name === 'tee') {
+        for (const w of args) if (!/^-/.test(txt(w))) dest(w, txt(w));
+      } else if (name === 'dd') {
+        for (const w of args) if (/^of=/.test(txt(w))) dest(w, txt(w).slice(3));
+      } else if (/^g?sed$/.test(name)) {
+        let inPlace = false;
+        let script = false;
+        const files = [];
+        let ended = false;
+        for (let k = 0; k < args.length; k++) {
+          const t = txt(args[k]);
+          if (!ended && t === '--') { ended = true; continue; }
+          if (!ended && /^--/.test(t)) {
+            if (/^--in-place/.test(t)) inPlace = true;
+            if (/^--(?:expression|file)(?:=|$)/.test(t)) { script = true; if (!t.includes('=')) k++; }
+            continue;
+          }
+          if (!ended && /^-./.test(t)) {
+            for (let q = 1; q < t.length; q++) {
+              if (t[q] === 'i') { inPlace = true; break; }
+              if ('efl'.includes(t[q])) { if (t[q] !== 'l') script = true; if (q === t.length - 1) k++; break; }
+            }
+            continue;
+          }
+          if (!script) { script = true; continue; }
+          files.push(args[k]);
+        }
+        if (inPlace) for (const w of files) dest(w, txt(w));
+      } else if (/^(?:tar|gtar|bsdtar)$/.test(name)) {
+        let extract = false;
+        const dirs = [];
+        for (let k = 0; k < args.length; k++) {
+          const t = txt(args[k]);
+          if (/^--(?:extract|get)$/.test(t)) { extract = true; continue; }
+          if (/^--directory=/.test(t)) { dirs.push([args[k], t.slice(12)]); continue; }
+          if (t === '--directory') { if (args[k + 1]) dirs.push([args[k + 1], txt(args[k + 1])]); k++; continue; }
+          if (/^--/.test(t)) continue;
+          const cluster = t.startsWith('-') ? t.slice(1) : (k === 0 ? t : '');
+          for (let q = 0; q < cluster.length; q++) {
+            if (cluster[q] === 'x') extract = true;
+            if (TAR_SHORT_VALUES.includes(cluster[q])) {
+              if (!t.startsWith('-')) continue;
+              const rest = cluster.slice(q + 1);
+              if (cluster[q] === 'C') dirs.push(rest ? [args[k], rest] : [args[k + 1], args[k + 1] ? txt(args[k + 1]) : '']);
+              if (!rest) k++;
+              break;
+            }
+          }
+        }
+        if (extract) for (const [w, v] of dirs) if (w) dest(w, v);
+      } else if (/^(?:unzip|funzip|bsdunzip)$/.test(name)) {
+        for (let k = 0; k < args.length; k++) {
+          const t = txt(args[k]);
+          if (!/^-[^-]/.test(t)) continue;
+          for (let q = 1; q < t.length; q++) {
+            if (t[q] === 'd' || t[q] === 'P') {
+              const rest = t.slice(q + 1);
+              if (t[q] === 'd') { if (rest) dest(args[k], rest); else if (args[k + 1]) dest(args[k + 1], txt(args[k + 1])); }
+              if (!rest) k++;
+              break;
+            }
+          }
+        }
+      } else if (/^(?:7z|7za|7zr|7zz)$/.test(name)) {
+        for (const w of args) if (/^-o./.test(txt(w))) dest(w, txt(w).slice(2));
+      } else if (COPY_PROGS_RE.test(name)) {
+        const base = name.replace(/^g(?=cp|mv|install|ln)/, '');
+        const shortValues = COPY_SHORT_VALUES[name] || '';
+        let recursive = false;
+        let dirsOnly = false;
+        let target = null;
+        const operands = [];
+        let ended = false;
+        for (let k = 0; k < args.length; k++) {
+          const t = txt(args[k]);
+          if (!ended && t === '--') { ended = true; continue; }
+          if (!ended && /^--/.test(t)) {
+            if (/^--(?:recursive|archive)$/.test(t) && (base === 'cp' || base === 'rsync')) recursive = true;
+            if (t === '--directory' && base === 'install') dirsOnly = true;
+            if (/^--target-directory=/.test(t)) target = [args[k], t.slice(19)];
+            else if (t === '--target-directory') { if (args[k + 1]) target = [args[k + 1], txt(args[k + 1])]; k++; }
+            else if (COPY_LONG_VALUES.has(t)) k++;
+            continue;
+          }
+          if (!ended && /^-./.test(t)) {
+            for (let q = 1; q < t.length; q++) {
+              const c = t[q];
+              if ((c === 'r' || c === 'R' || c === 'a') && (base === 'cp' || base === 'rsync')) recursive = true;
+              if (c === 'd' && base === 'install') dirsOnly = true;
+              if (c === 't' && base !== 'rsync') {
+                const rest = t.slice(q + 1);
+                if (rest) target = [args[k], rest];
+                else { if (args[k + 1]) target = [args[k + 1], txt(args[k + 1])]; k++; }
+                break;
+              }
+              if (shortValues.includes(c)) { if (q === t.length - 1) k++; break; }
+            }
+            continue;
+          }
+          operands.push(args[k]);
+        }
+        if (dirsOnly) continue;
+        let destWord;
+        let destValue;
+        let sources;
+        if (target) { [destWord, destValue] = target; sources = operands; }
+        else {
+          if (operands.length < 2) continue;
+          destWord = operands[operands.length - 1];
+          destValue = txt(destWord);
+          sources = operands.slice(0, -1);
+        }
+        const rd = unknown(destValue);
+        if (!rd) continue;
+        // rsync to another host (host:path) writes nothing here.
+        if (base === 'rsync' && /^[^/]*:/.test(slash(rd.marked || destValue))) continue;
+        const sourceMayBe = sources.some((s) => {
+          const v = txt(s);
+          const rs = resolveWordExpansions(v, home);
+          if (rs.refuse) return true;
+          if (lastNameMayBe(rs.marked, names, true)) return true;
+          // mv moves a folder with everything in it.
+          if (base === 'mv' && (/[\\/]$/.test(v) || folderExists(rs.text, home, cwd))) return true;
+          return false;
+        });
+        if (recursive || sourceMayBe || (!target && lastNameMayBe(rd.marked, names, true))) out.add(destWord);
+      }
+    }
+  }
+  return out;
+}
+
+function folderExists(p, home, cwd) {
+  if (!p || /[*?[{$]/.test(p)) return false;
+  try { return fs.statSync(path.resolve(cwd, expandHome(p, home))).isDirectory(); } catch (_) { return false; }
+}
+
+/* pathsNamedElsewhere answers this when the only reason is a write to a place built from an expansion zn does not
+   resolve, so the denial can say how to avoid it. */
+const NAMED_THROUGH_EXPANSION = 'expansion';
+// The names curl reads its default configuration from.
+const CURL_CONFIG_NAMES = ['.curlrc', '_curlrc', 'curlrc'];
 
 /* True when a word of the command other than curl's own -K/--config value (and other than a cd target) may name one
    of the given paths, so the command may write that file before curl reads it: the path itself (cat > cfg <<EOF, cp,
    mv, ln -sf, sed -i, dd of=cfg), a folder that holds it (cp evil.cfg x/, cp -r dir/. ~/, rsync, cp -t x) or a
-   pattern that may match it (stat*.cfg, static.{cfg,x}, x/*, ~/.c*). */
+   pattern that may match it (stat*.cfg, static.{cfg,x}, x/*, ~/.c*). NAMED_THROUGH_EXPANSION when a write goes to a
+   destination built from an expansion zn does not resolve and can put a configuration there (see
+   unresolvedConfigDestinations), or a word that starts with such an expansion ends in a configuration's name. */
 function pathsNamedElsewhere(readings, paths, opts) {
   if (!paths.length) return false;
   const want = [...new Set(paths.map((q) => path.resolve(q)))];
   const wantSet = new Set(want);
   const home = opts.home || os.homedir();
   const dirs = curlBaseDirs(opts) || [path.resolve(opts.cwd || process.cwd())];
+  const names = new Set([...CURL_CONFIG_NAMES, ...want.map((q) => path.basename(q))]);
+  const receivers = unresolvedConfigDestinations(readings, names, opts);
   const holds = (abs) => {
     if (wantSet.has(abs)) return true;
     const pre = abs.endsWith(path.sep) ? abs : abs + path.sep;
@@ -1606,11 +1820,10 @@ function pathsNamedElsewhere(readings, paths, opts) {
       const w = r[wi];
       if (w.curlCfgValue) continue;
       if (CD_CMDS.has(bareHead(w.head).toLowerCase())) continue;
+      if (receivers.has(w)) return NAMED_THROUGH_EXPANSION;
       const t = String(w.text).replace(/^["']+|["']+$/g, '');
       if (!t || /^[a-z][a-z0-9+.-]*:\/\//i.test(t)) continue;
       let cands = new Set();
-      const prog0 = path.basename(bareHead(w.head)).toLowerCase();
-      let folderWord = /^(?:cp|mv|install|ln|rsync|gcp|gmv|ginstall|gln)$/.test(prog0);
       if (/^-/.test(t)) {
         // An option that holds a folder: --target-directory=DIR, --directory=DIR, and a glued short option of the
         // programs that write into a folder (cp/mv/install/ln -tDIR, tar -CDIR).
@@ -1624,10 +1837,7 @@ function pathsNamedElsewhere(readings, paths, opts) {
         if (/^(?:unzip|funzip|bsdunzip)$/.test(prog) && (m = /^-[A-Za-z]*?d(.+)$/.exec(t))) cands.add(m[1]);
         if (/^(?:7z|7za|7zr|7zz)$/.test(prog) && (m = /^-o(.+)$/.exec(t))) cands.add(m[1]);
         if (!cands.size) continue;
-        folderWord = true;
       } else {
-        const pv = wi > 0 ? String(r[wi - 1].text) : '';
-        if (/^(?:-[A-Za-z]*[Ctd]|--target-directory|--directory)$/.test(pv)) folderWord = true;
         cands.add(t);
         const eq = t.indexOf('=');
         if (eq >= 0) { cands.add(t.slice(eq + 1)); cands.add(t.slice(t.lastIndexOf('=') + 1)); }
@@ -1635,19 +1845,18 @@ function pathsNamedElsewhere(readings, paths, opts) {
       // $PWD and ${PWD} are the folder the command is in (each place a cd may lead to); $OLDPWD is not known, so a word
       // that names a folder through it is taken to name the configuration.
       if ([...cands].some((c) => /\$\{?OLDPWD\b/.test(c))) return true;
-      // Expansions of variables zn does not resolve (${HOME:-~}, ${PWD%/}, ${!v}, ${1:-.}, ${@}, $zz, ${HOME}${zz}): an
-      // unset variable is empty, so they may name any folder. A word that is only such an expansion counts when it is the
-      // destination folder of a program that writes into one; a word with a literal tail counts when the tail ends a
-      // wanted path or a folder that holds one. A default that is a plain literal (${DIR:-.}) is that literal.
+      // Expansions of variables zn does not resolve (${HOME:-~}, ${PWD%/}, ${!v}, ${1:-.}, ${@}, $zz, ${a:-${b}}): an
+      // unset variable is empty, so they may name any folder. A write into such a place was judged above by where it
+      // sits in the command. A word that starts with one is otherwise only refused when it ends in a configuration's
+      // name; an expansion glued after other text becomes a wildcard there. A default that is a plain literal
+      // (${DIR:-.}) is that literal.
       {
-        const home0 = opts.home || os.homedir();
         const next = new Set();
         for (const c of cands) {
-          const rr = resolveWordExpansions(c, home0);
+          const rr = resolveWordExpansions(c, home);
           if (rr.refuse) return true;
           if (rr.lead === undefined) { next.add(rr.text); continue; }
-          if (!slash(rr.lead).replace(/\/+$/, '')) { if (folderWord) return true; continue; }
-          if (leadingExpansionHolds(rr.lead, want)) return true;
+          if (lastNameMayBe(rr.marked, names, false)) return NAMED_THROUGH_EXPANSION;
         }
         cands = next;
       }
@@ -1775,6 +1984,18 @@ function markCurlConfigValues(readings) {
   }
 }
 
+/* Marks curl's word when another word of the command may write a configuration it reads (see pathsNamedElsewhere).
+   False when nothing does. */
+function markConfigNamed(curlWord, why) {
+  if (!why) return false;
+  if (why === NAMED_THROUGH_EXPANSION) curlWord.curlConfigExpansionWrite = true;
+  else curlWord.curlConfigUnreadable = true;
+  return true;
+}
+
+// curl options whose value may be @file (or name=@file, name@file): the file's content is sent.
+const CURL_AT_FILE_OPTS_RE = /^(?:-[A-Za-z0-9#:]*[dFH]|--data|--data-binary|--data-raw|--data-ascii|--data-urlencode|--json|--form|--url-query|--header)$/;
+
 function markCurlWords(readings, opts = {}, cmdText = '') {
   markCurlConfigValues(readings);
   for (const r of readings) {
@@ -1826,6 +2047,7 @@ function markCurlWords(readings, opts = {}, cmdText = '') {
         for (let m = prog.at + 1; m < group.length; m++) {
           group[m].curl = true;
           if (group[m - 1] && CURL_NAME_AT_FILE_OPTS.has(group[m - 1].text)) group[m].urlencode = true;
+          if (group[m - 1] && CURL_AT_FILE_OPTS_RE.test(String(group[m - 1].text))) group[m].curlAtValue = true;
           // -T, a short-option cluster that ends in T (-sT, -vsT) or --upload-file: the next word is the file to upload.
           if (group[m - 1] && (/^-[A-Za-z0-9#:]*T$/.test(group[m - 1].text) || group[m - 1].text === '--upload-file')) group[m].upload = true;
           // -K / --config (also in a cluster, glued or with =): where curl reads more options from.
@@ -1836,22 +2058,21 @@ function markCurlWords(readings, opts = {}, cmdText = '') {
           else if (/^-[A-Za-z0-9#:]*?K(.+)$/.test(t)) cfg = /^-[A-Za-z0-9#:]*?K(.+)$/.exec(t)[1];
           if (cfg !== null) {
             const c = curlConfigFile(cfg, opts);
-            if (c.refuse || curlConfigNamedElsewhere(readings, c.paths, opts)) curlWord.curlConfigUnreadable = true;
-            else configs.push(c);
+            if (!markConfigNamed(curlWord, c.refuse || curlConfigNamedElsewhere(readings, c.paths, opts))) configs.push(c);
           }
         }
         // curl reads ~/.curlrc (or $CURL_HOME/.curlrc, $XDG_CONFIG_HOME/curlrc) unless -q/--disable comes first.
         const first = group[prog.at + 1] ? String(group[prog.at + 1].text) : '';
         if (first !== '-q' && first !== '--disable') {
           // A curlrc written by this command, or the folders curl looks in changed by it, cannot be checked.
-          if (curlrcWritten(readings, group) || curlHomeChanged(readings) || pathsNamedElsewhere(readings, curlDefaultConfigPlaces(opts), opts) ||
+          const placesNamed = pathsNamedElsewhere(readings, curlDefaultConfigPlaces(opts), opts);
+          if (curlrcWritten(readings, group) || curlHomeChanged(readings) || (placesNamed && placesNamed !== NAMED_THROUGH_EXPANSION) ||
             /(?:^|[\s;&|(`])(?:export\s+|declare\s+-x\s+|env\s+(?:-\S+\s+)*)?(?:CURL_HOME|XDG_CONFIG_HOME|HOME)\+?=/.test(cmdText)) {
             curlWord.curlConfigUnreadable = true;
-          }
+          } else markConfigNamed(curlWord, placesNamed);
           for (const f of curlDefaultConfigs(opts)) {
             const c = curlConfigFile(f, opts);
-            if (c.refuse || curlConfigNamedElsewhere(readings, c.paths, opts)) curlWord.curlConfigUnreadable = true;
-            else configs.push(c);
+            if (!markConfigNamed(curlWord, c.refuse || curlConfigNamedElsewhere(readings, c.paths, opts))) configs.push(c);
           }
         }
         if (configs.length) curlWord.curlConfigContents = configs;
@@ -1923,6 +2144,7 @@ function atFilesOf(text) {
 
 const BRACE_EXPANSION_CAP = 64;
 const CURL_CONFIG_UNREADABLE_MESSAGE = 'zn: this curl command reads its options from a place zn cannot check (standard input, a pipe or a value built at run time such as -K - or -K "$VAR"; a configuration file that does not exist yet, that this command writes, or that names curl variables; or a CURL_HOME, XDG_CONFIG_HOME or HOME this command changes), so zn cannot see which files it sends, and it was blocked. Next step: write the curl options on the command line, or in a configuration file that already exists, and run curl in its own command.';
+const CURL_CONFIG_EXPANSION_WRITE_MESSAGE = 'zn: this command writes to a place named by a variable zn cannot resolve, and a curl in the same command reads a configuration file (-K, or ~/.curlrc by default) that the write could replace, so zn cannot see which files curl sends, and it was blocked. Next step: give curl -q as its first option so it skips the default configuration, write the file to a fixed path, or run curl in its own command.';
 const CURL_UPLOAD_UNKNOWN_MESSAGE = 'zn: this curl command uploads a file whose name is built at run time ($(...), backticks or an unknown variable), so zn cannot check it, and it was blocked. Next step: name the file to upload literally.';
 const GLOB_TOO_LARGE_MESSAGE = 'zn: this command uploads files named by a pattern that stands for more names than zn checks, so it was blocked. Next step: name the files to upload one by one.';
 
@@ -2035,6 +2257,18 @@ function atFileWords(words, env = {}) {
     }
     // An upload name built at run time ($(...), backticks, a variable zn does not know) cannot be checked.
     if (w.upload && /[$`]/.test(known(text))) dynamicUpload = true;
+    // The same for a file sent with @file (-d @f, -F name=@f, --data-urlencode name@f), apart or glued to its option.
+    if (w.curl && !w.configText) {
+      const atBuilt = (v, urlencode) => {
+        const f = curlFileOf(v, urlencode);
+        return f !== null && /[$`]/.test(known(f).replace(/\$\{PWD\}|\$PWD(?![A-Za-z0-9_])/g, ''));
+      };
+      let lm;
+      if (w.curlAtValue && atBuilt(text, w.urlencode)) dynamicUpload = true;
+      else if ((lm = /^-[A-Za-z0-9#:]*?[dFH](.+)$/.exec(text)) && !text.startsWith('--') && atBuilt(lm[1], false)) dynamicUpload = true;
+      else if ((lm = /^--(data|data-binary|data-raw|data-ascii|data-urlencode|json|form|url-query|header)=(.*)$/.exec(text)) &&
+        atBuilt(lm[2], lm[1] === 'data-urlencode' || lm[1] === 'url-query')) dynamicUpload = true;
+    }
     // ~1, ~+2, ~-1: a directory-stack entry zn does not know, in a curl word.
     if (w.curl && !w.configText && DIR_STACK_RE.test(text)) dynamicUpload = true;
     if (w.curl && /^-[A-Za-z0-9#:]*?T./.test(text) && !text.startsWith('--') && /[$`]/.test(known(text.replace(/^-[A-Za-z0-9#:]*?T/, '')))) dynamicUpload = true;
@@ -3109,6 +3343,7 @@ function bashDenialOf(cmd, opts = {}) {
   markLinkWords(readings);
   markCurlWords(readings, opts, text);
   if (words.some((x) => x.curlConfigUnreadable)) return CURL_CONFIG_UNREADABLE_MESSAGE;
+  if (words.some((x) => x.curlConfigExpansionWrite)) return CURL_CONFIG_EXPANSION_WRITE_MESSAGE;
   // The content of a curl configuration file zn could read (-K file, ~/.curlrc) is read like a word of the command:
   // its upload-file, -T, data @file and form lines name files that are sent.
   for (const x of words.slice()) {
