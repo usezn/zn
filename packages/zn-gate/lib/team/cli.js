@@ -71,7 +71,10 @@ function describePolicy(p) {
  */
 /* How to pipe the token in, in the shell people use on this system (printf is not there on Windows). */
 function pipeExample(platform = process.platform) {
-  return platform === 'win32' ? '$env:TOKEN | zn team join -' : 'printf %s "$TOKEN" | zn team join -';
+  // cmd.exe has no pipe that keeps the token out of the history: there the environment variable is the way.
+  return platform === 'win32'
+    ? '$env:TOKEN | zn team join - (PowerShell), or set ZN_TEAM_JOIN_TOKEN and run zn team join (cmd.exe)'
+    : 'printf %s "$TOKEN" | zn team join -';
 }
 
 function readStdinToken(input = process.stdin, output = process.stderr) {
