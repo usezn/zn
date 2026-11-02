@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { Writable } = require('stream');
 
@@ -272,6 +273,29 @@ test('zn run refuses a binary planted in the temp folder through its long and it
     const code = await runBroker(['--secrets', 'DB_PASSWORD', '--', 'psql'], { vault, env: { PATH: form }, stdout: sink(), stderr: err, stdin: { isTTY: false } });
     assert.equal(code, 77, 'PATH ' + form + ': ' + err.text());
     assert.match(err.text(), /temp directory/);
+  }
+});
+
+// The temp folder comes from TMPDIR, TEMP and TMP, which the agent controls: pointing them elsewhere does not let a
+// binary planted in the system temp folder run with the secret.
+test('zn run refuses a binary planted in the temp folder when TMPDIR, TEMP and TMP point elsewhere', async (t) => {
+  // Planted in the fixed system temp folder, whatever TMPDIR says where the tests run.
+  const systemTemp = process.platform === 'win32' ? path.join(os.userInfo().homedir, 'AppData', 'Local', 'Temp') : '/tmp';
+  const dir = tempDir(t, 'zn-plant-env-', systemTemp);
+  const name = process.platform === 'win32' ? 'psql.cmd' : 'psql';
+  fs.writeFileSync(path.join(dir, name), process.platform === 'win32' ? '@echo %*\r\n' : '#!/bin/sh\necho "$@"\n', { mode: 0o755 });
+  const elsewhere = path.join(dir, 'no-such-temp');
+  const saved = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP };
+  for (const k of Object.keys(saved)) process.env[k] = elsewhere;
+  try {
+    const vault = await setup();
+    await vault.setSecret('DB_PASSWORD', PG, { mode: 'env', allowCommands: ['psql'] });
+    const err = sink();
+    const code = await runBroker(['--secrets', 'DB_PASSWORD', '--', 'psql'], { vault, env: { PATH: dir, TMPDIR: elsewhere, TEMP: elsewhere, TMP: elsewhere }, stdout: sink(), stderr: err, stdin: { isTTY: false } });
+    assert.equal(code, 77, err.text());
+    assert.match(err.text(), /temp directory/);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 });
 
