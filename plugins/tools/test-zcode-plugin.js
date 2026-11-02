@@ -423,7 +423,15 @@ try {
     assert.ok(!cmd.some((l) => /\bstart\b/i.test(l)), 'nothing runs in the background');
     const ps = fs.readFileSync(path.join(ZC, 'scripts', 'zn-hook.ps1'), 'utf8');
     assert.ok(/GetCurrentProcess\(\)\.StartTime/.test(ps) && /\$Deadline - /.test(ps), 'the deadline is what is left of 28 seconds since the process started');
-    assert.ok((ps.match(/Get-CimInstance/g) || []).length === 1, 'one process query for the whole chain of parents');
+    // Windows PowerShell finds a command (Get-Date, New-Object, Get-CimInstance, ...) by reading its module folders, which
+    // without the module cache can take most of the 30 seconds: the script calls only its own functions, the language and .NET.
+    const code = ps.split(/\r?\n/).filter((l) => !/^\s*#/.test(l)).join('\n');
+    const own = new Set([...code.matchAll(/^function ([A-Za-z]+-[A-Za-z]+)/gm)].map((m) => m[1]));
+    const commands = [...code.matchAll(/\b[A-Z][a-z]+-[A-Z][A-Za-z]+\b/g)].map((m) => m[0]).filter((c) => !own.has(c));
+    assert.deepStrictEqual(commands, [], 'PowerShell commands that are looked up in modules');
+    // The parents are read one process at a time, with a wait that ends before the deadline.
+    assert.ok(/\[wmisearcher\]\('SELECT ParentProcessId FROM Win32_Process WHERE ProcessId = '/.test(ps), 'one process per query');
+    assert.ok(/AsyncWaitHandle\.WaitOne\(\$wait\)/.test(ps) && /\$wait = \(Left\) - 2000/.test(ps), 'the parent lookup has a time limit');
   });
 
   // ZCode's 30 second timeout starts when it starts cmd.exe, and the call runs when the hook times out. zn-hook.cmd notes the time
