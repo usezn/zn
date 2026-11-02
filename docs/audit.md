@@ -167,7 +167,7 @@ CRITICAL  ZNA007  .claude/settings.json:3  [claude]
 1 finding (1 critical, 0 high, 0 medium, 0 low) in 1 file. Failing: severity >= high.
 ```
 
-Colors are used only on a terminal and never when `NO_COLOR` is set or `TERM=dumb`. Control
+Colors are used only on a terminal and never when `NO_COLOR` is set or `TERM=dumb`. Emoji and box-drawing characters are replaced by short ASCII markers such as `[ok]` and `[!]` outside a terminal and when `CI` is set. Control
 characters and escape sequences from the repository (in evidence, details and
 file names) are printed as `\x1b`, never sent to the terminal.
 
