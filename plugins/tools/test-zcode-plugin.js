@@ -606,6 +606,18 @@ try {
       assert.ok(!code.some((l) => /(^|[(&|])\s*call\s/i.test(l)), 'no call (it doubles ^ and expands % again)');
     });
 
+    test('both Windows paths have the same deadline, and the README says which', () => {
+      const launch = fs.readFileSync(path.join(ROOT, 'plugins', 'zn-gate', 'scripts', 'zn-launch.js'), 'utf8');
+      const m = /const HOOK_DEADLINE_MS = \{ zcode: (\d+) \};/.exec(launch);
+      assert.ok(m, 'the launcher has a deadline for the zcode hook (the fast path starts it directly)');
+      assert.strictEqual(Number(m[1]), adapter.LAUNCHER_DEADLINE_S * 1000);
+      assert.ok(/^\$Deadline = (\d+)$/m.exec(ps1Text)[1] === String(adapter.LAUNCHER_DEADLINE_S), 'the PowerShell path');
+      assert.ok(/process\.env\.ZN_HOOK_T0/.test(launch), 'the launcher counts from the start of zn-hook.cmd too');
+      const readme = fs.readFileSync(path.join(ZC, 'README.md'), 'utf8').replace(/\s+/g, ' ');
+      assert.ok(readme.includes('if zn has not answered ' + adapter.LAUNCHER_DEADLINE_S + ' seconds after the hook started, the hook blocks the call'), 'README');
+      assert.ok(!/same deadline/.test(readme), 'README');
+    });
+
     // How the Windows entry reaches cmd.exe. ZCode starts a process hook with Node.js (no shell): ${ZCODE_PLUGIN_ROOT} is replaced
     // with the plugin folder and Windows gets one command line, built by quoting every argument that holds a space, a tab or a
     // double quote (libuv's rule, written out below). cmd.exe /c then reads that line: outside double quotes, & | < > ( ) ^ are

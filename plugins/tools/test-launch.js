@@ -250,6 +250,41 @@ try {
     installPackage();
   });
 
+  // ZCode lets a call run when its hook times out (30 seconds): the zcode hook refuses by itself 28 seconds after the hook
+  // started, counted from ZN_HOOK_T0 (the time of day scripts/zn-hook.cmd noted on Windows) when that is earlier than the start
+  // of the launcher. Here the hook "started" 26.5 seconds ago and zn-gate never answers.
+  test('the zcode hook refuses at its deadline, counted from ZN_HOOK_T0, when zn-gate hangs; other agents and a bad value keep theirs', () => {
+    write(path.join(pkgDir, 'lib', 'hooks', 'runner.js'), 'exports.main = () => new Promise(() => { setInterval(() => {}, 1000); });\n');
+    setLock({ package: 'zn-gate', version: '9.9.9', files: { ...files, 'lib/hooks/runner.js': sha(path.join(pkgDir, 'lib', 'hooks', 'runner.js')) } });
+    const pad = (v, k = 2) => String(v).padStart(k, '0');
+    const tod = (ago) => {
+      const d = new Date(Date.now() - ago);
+      return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) + ',' + pad(Math.floor(d.getMilliseconds() / 10));
+    };
+    const timed = (args, env, timeout) => {
+      const t0 = Date.now();
+      const r = spawnSync(process.execPath, [path.join(pluginTest, 'zn-launch.js'), ...args], {
+        input: '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}', encoding: 'utf8', timeout,
+        env: { PATH: binDir, HOME: home, USERPROFILE: home, SystemRoot: process.env.SystemRoot || '', ...env },
+      });
+      return { r, ms: Date.now() - t0 };
+    };
+    const a = timed(['hook', 'zcode'], { ZN_HOOK_T0: tod(26500) }, 20000);
+    refused(a.r, /zn-gate did not answer within 28 seconds of the start of the hook/);
+    assert.ok(a.ms >= 1000 && a.ms < 10000, 'refused at the deadline: ' + a.ms + ' ms');
+    // Without ZN_HOOK_T0, or with a value that is not a time of the last two minutes, the 28 seconds count from the launcher's
+    // own start: still running after 3 seconds.
+    for (const t0 of [undefined, 'later', tod(600000), tod(-5000)]) {
+      const b = timed(['hook', 'zcode'], t0 === undefined ? {} : { ZN_HOOK_T0: t0 }, 3000);
+      assert.strictEqual(b.r.status, null, String(t0) + ': ended early: ' + b.r.stderr);
+    }
+    // The deadline is the zcode hook's: another agent's hook is not cut at 28 seconds by it.
+    const c = timed(['hook', 'claude-code'], { ZN_HOOK_T0: tod(29000) }, 3000);
+    assert.strictEqual(c.r.status, null, 'claude-code ended early: ' + c.r.stderr);
+    setLock({ package: 'zn-gate', version: '9.9.9', files });
+    installPackage();
+  });
+
   // A refused tool output must be replaced, not just answered with exit 2:
   // Claude Code and Codex pass the original output on to the model on exit 2.
   // AWS's documented example key, allowlisted in .gitleaks.toml.
