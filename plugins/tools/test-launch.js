@@ -285,6 +285,41 @@ try {
     installPackage();
   });
 
+  // A timer cannot fire while zn-gate keeps the launcher's thread busy: the watchdog thread ends the process instead, still
+  // before ZCode's 30 second timeout, and the exit code is not 0 (the plugin's hook scripts block on it).
+  test('the zcode hook is ended at its deadline when zn-gate never gives the thread back, and its refusal is written', () => {
+    write(path.join(pkgDir, 'lib', 'hooks', 'runner.js'), 'exports.main = () => { for (;;) { /* busy */ } };\n');
+    setLock({ package: 'zn-gate', version: '9.9.9', files: { ...files, 'lib/hooks/runner.js': sha(path.join(pkgDir, 'lib', 'hooks', 'runner.js')) } });
+    const pad = (v, k = 2) => String(v).padStart(k, '0');
+    const tod = (ago) => {
+      const d = new Date(Date.now() - ago);
+      return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) + ',' + pad(Math.floor(d.getMilliseconds() / 10));
+    };
+    const timed = (env, timeout) => {
+      const t0 = Date.now();
+      const r = spawnSync(process.execPath, [path.join(pluginTest, 'zn-launch.js'), 'hook', 'zcode'], {
+        input: '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}', encoding: 'utf8', timeout,
+        env: { PATH: binDir, HOME: home, USERPROFILE: home, SystemRoot: process.env.SystemRoot || '', ZN_HOOK_T0: tod(26500), ...env },
+      });
+      return { r, ms: Date.now() - t0 };
+    };
+    setConfig({});
+    const a = timed({}, 20000);
+    assert.ok(!a.r.error, 'still running at 20 s: ' + (a.r.error && a.r.error.message));
+    assert.ok(a.r.status !== 0, 'exit code 0 lets the call run: ' + a.r.stderr);
+    assert.match(a.r.stderr, /zn-gate did not answer within 28 seconds of the start of the hook\. Until then zn cannot check this call, so it is refused/);
+    assert.strictEqual(a.r.stdout, '', 'nothing of zn-gate reached the agent');
+    // 1.5 seconds were left of the 28, plus the watchdog's grace.
+    assert.ok(a.ms >= 1000 && a.ms < 10000, 'ended at the deadline: ' + a.ms + ' ms');
+    // With hooks.whenUnavailable "allow" the user chose to let calls run when zn cannot check them: no watchdog.
+    setConfig({ hooks: { whenUnavailable: 'allow' } });
+    const b = timed({}, 4000);
+    assert.strictEqual(b.r.status, null, 'whenUnavailable allow: ended early: ' + b.r.stderr);
+    setConfig({});
+    setLock({ package: 'zn-gate', version: '9.9.9', files });
+    installPackage();
+  });
+
   // A refused tool output must be replaced, not just answered with exit 2:
   // Claude Code and Codex pass the original output on to the model on exit 2.
   // AWS's documented example key, allowlisted in .gitleaks.toml.
