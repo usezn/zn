@@ -15,7 +15,7 @@ FAKE_KEY = "fake-key-for-tests"
 ENDPOINT = "https://example.com/v30/analyze"
 TEXT = "The quarterly report lists the shipping dates for each warehouse."
 REASON = "model unavailable, rules only"
-WARN = "the cloud model was unavailable"
+WARN = "the cloud model was unavailable, so this verdict comes from the cloud gate fallback rules, not from its model"
 ZN_VARS = ("ZN_API_KEY", "ZN_CLOUD", "ZN_LOCAL_ONLY", "ZN_API_URL", "ZN_STAGE", "ZN_LONG_INPUT", "ZN_VERBOSE", "DEBUG")
 
 

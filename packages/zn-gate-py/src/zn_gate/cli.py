@@ -240,7 +240,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     res["latency_ms"] = round(elapsed_ms, 2)
 
     if res.get("degraded"):
-        print("[zn-gate] Warning: the cloud model was unavailable, so this verdict comes from the local rules only.",
+        print("[zn-gate] Warning: the cloud model was unavailable, so this verdict comes from the cloud gate fallback rules, not from its model.",
               file=sys.stderr)
     print(json.dumps(res, indent=2))
 

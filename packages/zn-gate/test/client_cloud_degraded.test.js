@@ -84,7 +84,7 @@ test('zn-gate analyze prints one warning line on stderr for a degraded answer, a
       execFile(process.execPath, [cli, 'analyze', TEXT], { env }, (err, stdout, stderr) => resolve({ stdout, stderr }));
     });
   };
-  const warn = 'the cloud model was unavailable';
+  const warn = 'the cloud model was unavailable, so this verdict comes from the cloud gate fallback rules, not from its model';
   const degraded = await run({ verdict: 'allow', confidence: 0.2, rule: 'none', decided_by: 'ml-error' });
   assert.equal(JSON.parse(degraded.stdout).degraded, true);
   assert.equal(degraded.stderr.split('\n').filter((l) => l.includes(warn)).length, 1, degraded.stderr);
