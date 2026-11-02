@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-01.1
+ * RULES_VERSION: 2026-11-02.1
  */
 
-const RULES_VERSION = '2026-11-01.1';
+const RULES_VERSION = '2026-11-02.1';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1605,9 +1605,9 @@ const MIN_INVISIBLE_CHECK_CHARS = 64 * 1024;
 const MAX_INVISIBLE_CHARS = 200000;
 const INVISIBLE_BLOCK_REASON = 'Output is mostly invisible characters';
 
-// The characters invisibleStats counts or pairs up: the invisible ones and any high surrogate (the start of a
+// The characters invisibleStats counts or pairs up: the invisible ones (C0 control characters included) and any high surrogate (the start of a
 // pair). A text with none of them has nothing to count, and one native scan says so far faster than the loop.
-const INVISIBLE_STATS_CANDIDATE_RE = /[\u00AD\u061C\u115F\u1160\u180E\u200B-\u200F\u2060\u3164\uFEFF\uFE00-\uFE0F\uFFA0\uD800-\uDBFF]/;
+const INVISIBLE_STATS_CANDIDATE_RE = /[\u0000-\u0008\u000E-\u001A\u001C-\u001F\u00AD\u061C\u115F\u1160\u180E\u200B-\u200F\u2060\u3164\uFEFF\uFE00-\uFE0F\uFFA0\uD800-\uDBFF]/;
 
 function invisibleStats(text, budget) {
   const n = text.length;
@@ -1616,7 +1616,15 @@ function invisibleStats(text, budget) {
   let pairs = 0;
   for (let i = 0; i < n; i++) {
     const c = text.charCodeAt(i);
-    if (c < 0xAD) continue;
+    if (c < 0xAD) {
+      // C0 control characters are invisible for matching (lib/invisible.js CONTROL_CLASS), as in Python: all but
+      // tab, line feed, vertical tab, form feed, carriage return and ESC.
+      if (c < 0x20 && (c <= 0x08 || (c >= 0x0E && c !== 0x1B))) {
+        count++;
+        if (count > budget) break;
+      }
+      continue;
+    }
     if ((c >= 0x200B && c <= 0x200F) || c === 0x2060 || c === 0xFEFF || c === 0xAD || (c >= 0xFE00 && c <= 0xFE0F) || c === 0x61C || c === 0x180E || c === 0x115F || c === 0x1160 || c === 0x3164 || c === 0xFFA0) {
       count++;
     } else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < n) {
