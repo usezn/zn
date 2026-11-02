@@ -1,0 +1,4 @@
+### Fixed
+- The ZCode plugin's Windows hook starts reliably and answers in time. ZCode stops waiting for a hook after 30 seconds and then lets the call run, so the hook now blocks the call by itself 28 seconds after it started, counted from the moment ZCode started it, on both the direct Node.js path and the PowerShell one (before, a slow PowerShell start or a stuck check could run past the timeout).
+- The ZCode plugin's Windows hook works from a user folder with a space, `&`, parentheses, `^` or `%` in its name, and always runs the scripts of the plugin folder: never a file of the same name in the project, also when `ZCODE_PLUGIN_ROOT` is not set.
+- When the ZCode plugin's Windows hook finds no usable Node.js, it blocks the call. It no longer takes the Windows command interpreter or another shell that started it for Node.js.
