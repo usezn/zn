@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-02.3';
+const POLICY_RULES_VERSION = '2026-11-02.4';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1624,15 +1624,12 @@ const TAR_SHORT_VALUES = 'fCTXbHINgKLV';
    names a source that may be a configuration (its name is one of `names`, or holds an unresolved expansion or a
    wildcard) or names a destination file that may be one. Words are judged by where they sit in the command, never by
    the folders the expansion might stand for. */
-// Short options of curl and wget that take a value: the rest of their cluster (or the next word) is that value.
-const CURL_SHORT_VALUES = 'ACDEFHKPQTUXYabcdemortuwxyz';
-const WGET_SHORT_VALUES = 'AIBDEOPQRTUXYabeghilmnoptwx';
-/* The [word, value] pairs of the file that curl -o/--output (also in a cluster: -so f, -sof) or wget
-   -O/--output-document writes. `args` are the words after the program. */
+/* The [word, value] pairs of the file that curl -o/--output or wget -O/--output-document writes. `args` are the words
+   after the program. Fail closed on short options: when the output letter appears anywhere in a short cluster (-so,
+   -ao, -pO, -nvO), the text after it and the next word are both taken as the file, whatever the other letters are. */
 function outputTargets(args, prog) {
   const res = [];
   const short = prog === 'curl' ? 'o' : 'O';
-  const values = prog === 'curl' ? CURL_SHORT_VALUES : WGET_SHORT_VALUES;
   const longRe = prog === 'curl' ? /^--out(?:p(?:u(?:t)?)?)?(?:=(.*))?$/ : /^--output-d[a-z]*(?:=(.*))?$/;
   for (let k = 0; k < args.length; k++) {
     const t = String(args[k].text);
@@ -1645,16 +1642,11 @@ function outputTargets(args, prog) {
       continue;
     }
     if (!/^-./.test(t)) continue;
-    for (let q = 1; q < t.length; q++) {
-      const c = t[q];
-      if (!values.includes(c)) continue;
-      const rest = t.slice(q + 1);
-      if (c === short) {
-        if (rest) res.push([args[k], rest]);
-        else if (args[k + 1]) { res.push([args[k + 1], String(args[k + 1].text)]); k++; }
-      } else if (!rest) k++;
-      break;
-    }
+    const at = t.indexOf(short, 1);
+    if (at < 0) continue;
+    const rest = t.slice(at + 1);
+    if (rest) res.push([args[k], rest]);
+    if (args[k + 1]) res.push([args[k + 1], String(args[k + 1].text)]);
   }
   return res;
 }
@@ -1677,7 +1669,9 @@ function unresolvedConfigDestinations(readings, names, opts) {
     // Which groups sit inside a for/while/until loop: the curl of an earlier pass can write what a later pass reads.
     let loopDepth = 0;
     for (const g of groups) {
-      const first = g.group.map((w) => String(w.text).replace(/^[({]+/, '')).find((t) => t && !ASSIGNMENT_RE.test(t)) || '';
+      // The first word that is not an assignment or a reserved word that can stand in front of a command.
+      const first = g.group.map((w) => String(w.text).replace(/^[({]+/, '')).find((t) => t && !ASSIGNMENT_RE.test(t) &&
+        !/^(?:then|do|else|elif|if|time|!|\{)$/.test(t)) || '';
       if (/^(?:for|while|until|select)$/.test(first)) loopDepth++;
       g.inLoop = loopDepth > 0;
       if (first === 'done') loopDepth = Math.max(0, loopDepth - 1);
