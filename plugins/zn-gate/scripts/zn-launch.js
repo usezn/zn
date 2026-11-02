@@ -78,6 +78,10 @@ const NODE_HINT = 'the zn-gate plugin needs Node.js 20.19 or later with vm.const
 // agents. plugins/tools/test-launch.js fails when an id here is not an adapter of the package.
 const SUPPORTED_AGENTS = new Set(['claude-code', 'codex', 'cursor', 'zcode']);
 
+// Node's file reads go through a pool of 4 threads unless asked otherwise; the parallel tree check (READ_CONCURRENCY) wants more.
+// It is read when the pool starts, so it is set before the first asynchronous file operation. The child processes inherit it.
+if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = '16';
+
 // zn-gate starts child processes with this process's environment; a preload
 // set through NODE_OPTIONS or a module path in NODE_PATH must not reach them.
 delete process.env.NODE_OPTIONS;
@@ -168,17 +172,16 @@ function candidates(lock) {
 /* --------------------------- verification --------------------------- */
 
 /**
- * Read the whole package tree and compare it with the lock file.
- * Returns {files: Map<rel, Buffer>} or {error}.
+ * Walk the package tree and require exactly the files of the lock file: no extra file or directory, no symbolic link,
+ * nothing that is not a regular file. `onFile(rel, abs)` is called for every locked file found, in walk order, and
+ * returns true to stop the walk. Returns the problems found (the first one ends the walk).
  */
-function readVerified(dir, lock) {
-  const expected = lock.files;
+function walkTree(dir, expected, onFile) {
   const dirs = new Set(['']);
   for (const rel of Object.keys(expected)) {
     const parts = rel.split('/');
     for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join('/'));
   }
-  const files = new Map();
   const problems = [];
   const walk = (rel) => {
     const abs = rel ? path.join(dir, ...rel.split('/')) : dir;
@@ -198,16 +201,29 @@ function readVerified(dir, lock) {
         else problems.push('unexpected directory ' + r);
       } else if (st.isFile()) {
         if (!Object.prototype.hasOwnProperty.call(expected, r)) problems.push('unexpected file ' + r);
-        else {
-          const buf = fs.readFileSync(path.join(abs, name));
-          if (crypto.createHash('sha256').update(buf).digest('hex') !== expected[r]) problems.push(r + ' was changed');
-          else files.set(r, buf);
-        }
+        else onFile(r, path.join(abs, name), problems);
       } else problems.push(r + ' is not a regular file');
       if (problems.length) return;
     }
   };
   walk('');
+  return problems;
+}
+
+const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+
+/**
+ * Read the whole package tree and compare it with the lock file.
+ * Returns {files: Map<rel, Buffer>} or {error}.
+ */
+function readVerified(dir, lock) {
+  const expected = lock.files;
+  const files = new Map();
+  const problems = walkTree(dir, expected, (r, abs, probs) => {
+    const buf = fs.readFileSync(abs);
+    if (sha256(buf) !== expected[r]) probs.push(r + ' was changed');
+    else files.set(r, buf);
+  });
   if (!problems.length) {
     const missing = Object.keys(expected).find((r) => !files.has(r));
     if (missing) problems.push(missing + ' is missing');
@@ -216,11 +232,48 @@ function readVerified(dir, lock) {
   return { files };
 }
 
+// Files read at the same time by readVerifiedAsync. On Windows every first open of a file waits for the virus scanner,
+// so reading the 238 files of the tree one after another is what makes the first call of a session slow.
+const READ_CONCURRENCY = 16;
+
+/**
+ * The same check as readVerified, with the file contents read at the same time. The structure walk (names, types,
+ * links) is the same code and runs first; then every locked file is read and compared with its digest. All files are
+ * read and compared before the answer, and the first problem in walk order is reported. Returns a promise of
+ * {files: Map<rel, Buffer>} or {error}.
+ */
+async function readVerifiedAsync(dir, lock) {
+  const expected = lock.files;
+  const list = [];
+  const problems = walkTree(dir, expected, (r, abs) => { list.push([r, abs]); });
+  if (problems.length) return { error: problems[0] };
+  const files = new Map();
+  const changed = new Set();
+  let next = 0;
+  const reader = async () => {
+    while (next < list.length) {
+      const [r, abs] = list[next++];
+      const buf = await fs.promises.readFile(abs);
+      if (sha256(buf) !== expected[r]) changed.add(r);
+      else files.set(r, buf);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, list.length) }, reader));
+  const bad = list.find(([r]) => changed.has(r));
+  if (bad) return { error: bad[0] + ' was changed' };
+  const missing = Object.keys(expected).find((r) => !files.has(r));
+  if (missing) return { error: missing + ' is missing' };
+  return { files };
+}
+
 /**
  * Find the package and verify it. Every candidate is tried; the first one
  * that matches the lock file wins. Returns {dir, files} or {error}.
+ * The search is a generator that asks its driver to read each candidate
+ * (`yield <dir>` gets the result of the reader back), so verify() and
+ * verifyAsync() run the same steps with a sync and a parallel reader.
  */
-function verify(lock) {
+function* verifySteps(lock) {
   if (!NODE_OK) return { error: NODE_HINT };
   if (Object.keys(lock.files).length === 0) {
     return { error: 'this plugin build has no file digests for zn-gate ' + lock.version + ' (development build), so it cannot run. ' +
@@ -261,12 +314,26 @@ function verify(lock) {
       reasons.push(real + ' holds zn-gate ' + (pkg.version || 'of an unknown version'));
       continue;
     }
-    const res = readVerified(real, lock);
+    const res = yield real;
     if (res.files) return { dir: real, files: res.files };
     reasons.push(real + ' does not match the published zn-gate ' + lock.version + ': ' + res.error);
   }
   if (!reasons.length) return { error: 'zn-gate ' + lock.version + ' is not installed (not in the plugin folder, and no zn-gate executable on PATH). ' + installHint(lock) };
   return { error: 'this plugin needs zn-gate ' + lock.version + ', but ' + reasons.join('; ') + '. ' + installHint(lock) };
+}
+
+function verify(lock) {
+  const steps = verifySteps(lock);
+  let st = steps.next();
+  while (!st.done) st = steps.next(readVerified(st.value, lock));
+  return st.value;
+}
+
+async function verifyAsync(lock) {
+  const steps = verifySteps(lock);
+  let st = steps.next();
+  while (!st.done) st = steps.next(await readVerifiedAsync(st.value, lock));
+  return st.value;
 }
 
 /* ------------------------- in-memory loader ------------------------- */
@@ -752,13 +819,17 @@ function runHook(agent) {
     try { hook.event = JSON.parse(hook.raw.replace(/^﻿/, '')); } catch (_) { hook.event = null; }
     captureStdio(hook.raw);
     const lock = loadLock();
-    const res = verify(lock);
-    if (res.error) return refuseHook(res.error);
-    guardModules(res.dir, res.files, lock, false);
-    const runner = makeLoader(res.dir, res.files).load('lib/hooks/runner.js');
-    // The runner reads the event from (the replacement) stdin and writes its answer.
-    Promise.resolve(runner.main([agent])).catch((err) => {
-      refuseHook('zn-gate failed (' + ((err && err.message) || String(err)) + ').');
+    // The check reads the files at the same time (see READ_CONCURRENCY); the hook answers after it, as before.
+    verifyAsync(lock).then((res) => {
+      if (res.error) return refuseHook(res.error);
+      guardModules(res.dir, res.files, lock, false);
+      const runner = makeLoader(res.dir, res.files).load('lib/hooks/runner.js');
+      // The runner reads the event from (the replacement) stdin and writes its answer.
+      return Promise.resolve(runner.main([agent])).catch((err) => {
+        refuseHook('zn-gate failed (' + ((err && err.message) || String(err)) + ').');
+      });
+    }).catch((err) => {
+      refuseHook('zn-gate failed to load (' + ((err && err.message) || String(err)) + ').');
     });
   } catch (err) {
     refuseHook('zn-gate failed to load (' + ((err && err.message) || String(err)) + ').');
@@ -870,6 +941,6 @@ function main(argv) {
   process.exitCode = 1;
 }
 
-module.exports = { verify, loadLock, makeLoader, readVerified, znGateMcpEnv, guardModules };
+module.exports = { verify, verifyAsync, loadLock, makeLoader, readVerified, readVerifiedAsync, znGateMcpEnv, guardModules };
 
 if (require.main === module) main(process.argv.slice(2));

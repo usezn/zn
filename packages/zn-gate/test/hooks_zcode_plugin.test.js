@@ -24,6 +24,14 @@ const HI = posix ? 0 : 1;
 const SYSPATH = posix ? '/usr/bin:/bin' : (process.env.SystemRoot || 'C:\\Windows') + '\\System32';
 const ID = 'zn-gate@usezn';
 // The plugin's real manifest in this repository.
+// The Windows entry of the shipped manifest is cmd.exe on scripts/zn-hook.cmd; the entry earlier plugin versions shipped is the system
+// PowerShell on an inline command. The tests below that run a stub hook or tamper with that entry use the earlier form (asPowerShell);
+// zn-gate check accepts both, and the two-entry test reads the real one.
+const asPowerShell = (text) => {
+  const j = JSON.parse(text);
+  for (const [event, groups] of Object.entries(j.hooks)) for (const g of groups) { g.hooks[1].command = zc.PLUGIN_WIN_POWERSHELL; g.hooks[1].args = zc.pluginWindowsArgs(event); }
+  return JSON.stringify(j, null, 2);
+};
 const REPO_HOOKS = path.join(__dirname, '..', '..', '..', 'plugins', 'zcode', 'hooks', 'hooks.json');
 
 const base = (home) => path.join(home, '.zcode', 'cli');
@@ -42,7 +50,7 @@ function installPlugin(home, { script = true, manifest = true, id = ID, hooks = 
   if (manifest) fs.writeFileSync(path.join(root, '.zcode-plugin', 'plugin.json'), '{"name":"zn-gate","version":"1.14.0"}');
   if (hooks) {
     fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
-    fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooks(fs.readFileSync(REPO_HOOKS, 'utf8')));
+    fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooks(asPowerShell(fs.readFileSync(REPO_HOOKS, 'utf8'))));
   }
   if (script) {
     fs.writeFileSync(path.join(root, 'scripts', 'zn-hook.sh'),
@@ -50,6 +58,8 @@ function installPlugin(home, { script = true, manifest = true, id = ID, hooks = 
       { mode: 0o755 });
   }
   if (script) {
+    // zn-gate check only looks for this file (the tests that run a Windows hook use the PowerShell entry and the script below).
+    fs.writeFileSync(path.join(root, 'scripts', 'zn-hook.cmd'), '@echo off\r\nexit /b 0\r\n');
     // The Windows counterpart of the stub above: PowerShell reads it from the plugin folder and runs it as a script block.
     fs.writeFileSync(path.join(root, 'scripts', 'zn-hook.ps1'),
       "$in = [Console]::In.ReadToEnd()\nif ($in -match '\\.env') { [Console]::Out.Write('{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"zn: .env holds plain-text secrets.\"}}') }\nexit 0\n");
@@ -216,7 +226,7 @@ test('the ZCode plugin manifest starts every hook (sh and PowerShell) by its ful
   for (const [event, groups] of Object.entries(hooks)) {
     for (const g of groups) for (const h of g.hooks) {
       assert.equal(h.type, 'process', event);
-      assert.ok(path.posix.isAbsolute(h.command) || /^[A-Za-z]:\//.test(h.command), event + ' starts ' + h.command + ' by name');
+      assert.ok(path.posix.isAbsolute(h.command) || /^[A-Za-z]:[\\/]/.test(h.command), event + ' starts ' + h.command + ' by name');
     }
   }
 });
@@ -307,7 +317,7 @@ test('zn-gate check: on Windows, a changed /bin/sh entry is judged too, not hidd
 test('the ZCode plugin hook, started as ZCode starts it, runs no planted sh or node (relative or empty PATH entry)', (t) => {
   const { spawnSync } = require('child_process');
   const pluginRoot = path.join(__dirname, '..', '..', '..', 'plugins', 'zcode');
-  const pre = JSON.parse(fs.readFileSync(REPO_HOOKS, 'utf8')).hooks.PreToolUse[0].hooks[HI];
+  const pre = JSON.parse(asPowerShell(fs.readFileSync(REPO_HOOKS, 'utf8'))).hooks.PreToolUse[0].hooks[HI];
   const args = pre.args.map((a) => a.split('${ZCODE_PLUGIN_ROOT}').join(pluginRoot));
   const { cwd, marker } = plantPrograms(t);
   const event = JSON.stringify({ hook_event_name: 'PreToolUse', cwd, tool_name: 'Read', tool_input: { file_path: path.join(cwd, '.env') } });
@@ -440,9 +450,31 @@ test('zn-gate check reads the two-entry manifest for the system it runs on: both
     for (const groups of Object.values(j.hooks)) for (const g of groups) fn(g.hooks[index]);
     return JSON.stringify(j);
   };
+  const changePs = (index, fn) => {
+    const j = JSON.parse(asPowerShell(real));
+    for (const groups of Object.values(j.hooks)) for (const g of groups) fn(g.hooks[index]);
+    return JSON.stringify(j);
+  };
+  // The earlier PowerShell entry is still the hook the plugin ships (an installed older version), and the same entry with the script
+  // changed is not; the cmd.exe entry is judged the same way.
+  {
+    const old = _internal.zcodeRelevant(read(asPowerShell(real)), true);
+    assert.equal(old.bare, null, 'the earlier PowerShell entry: ' + (old.bare && old.bare.byName));
+    const bad = {
+      script: (h) => { h.args = h.args.map((a) => a.replace('zn-hook.cmd', 'other.cmd')); },
+      flag: (h) => { h.args = ['/d', '/v:on'].concat(h.args.slice(1)); },
+      noSpace: (h) => { h.args = h.args.map((a) => a.replace('zn-hook.cmd ', 'zn-hook.cmd')); },
+      extra: (h) => { h.args = h.args.concat(['&', 'del', 'x']); },
+      outside: (h) => { h.args = h.args.map((a) => a.replace('%ZCODE_PLUGIN_ROOT%\\scripts', '%ZCODE_PLUGIN_ROOT%\\..')); },
+      program: (h) => { h.command = 'C:\\Temp\\cmd.exe'; },
+      slash: (h) => { h.command = 'C:/Windows/System32/cmd.exe'; },
+    };
+    for (const [name, fn] of Object.entries(bad)) assert.ok(_internal.zcodeRelevant(read(change(1, fn)), true).bare, name + ': a changed cmd.exe entry is flagged on Windows');
+    assert.equal(_internal.zcodeRelevant(read(change(1, bad.script)), false).bare, null, 'a changed cmd.exe entry is not judged on macOS and Linux');
+  }
   const tamperedSh = change(0, (h) => { h.args = ['${ZCODE_PLUGIN_ROOT}/scripts/other.sh', h.args[1]]; });
-  const tamperedPs = change(1, (h) => { h.args = h.args.slice(0, 3).concat(h.args[3].replace('zn-hook.ps1', 'other.ps1')); });
-  const otherWinPath = change(1, (h) => { h.command = 'C:/Temp/powershell.exe'; });
+  const tamperedPs = changePs(1, (h) => { h.args = h.args.slice(0, 3).concat(h.args[3].replace('zn-hook.ps1', 'other.ps1')); });
+  const otherWinPath = changePs(1, (h) => { h.command = 'C:/Temp/powershell.exe'; });
   assert.equal(_internal.zcodeRelevant(read(tamperedSh), true).bare, null, 'a changed sh entry is not judged on Windows');
   assert.ok(_internal.zcodeRelevant(read(tamperedSh), false).bare, 'a changed sh entry is judged on macOS and Linux');
   assert.equal(_internal.zcodeRelevant(read(tamperedPs), false).bare, null, 'a changed PowerShell entry is not judged on macOS and Linux');
@@ -450,7 +482,7 @@ test('zn-gate check reads the two-entry manifest for the system it runs on: both
   for (const win of [true]) assert.ok(_internal.zcodeRelevant(read(otherWinPath), win).bare, "another program at a Windows path is not the shipped hook");
   // A Windows path of another program is not "by name", and is not accepted either.
   const j = JSON.parse(real);
-  j.hooks.PreToolUse[0].hooks[0].command = 'C:\\Windows\\System32\\cmd.exe';
+  j.hooks.PreToolUse[0].hooks[0].command = 'C:\\Windows\\System32\\wscript.exe';
   const m = _internal.zcodeRelevant(read(JSON.stringify(j)), true);
   assert.match(m.bare.byName, /not a system shell running a script inside the plugin folder/);
   // The same through check on this system.
