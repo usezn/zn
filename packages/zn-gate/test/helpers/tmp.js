@@ -12,7 +12,8 @@ function removeDir(dir) {
 // `t` is the node:test context of the test that owns the directory.
 function tempDir(t, prefix, base = os.tmpdir()) {
   // realpath: on macOS os.tmpdir() is under /var, a link to /private/var, and tools report the real path.
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(base, prefix)));
+  // The native form also expands a Windows 8.3 short name (RUNNER~1), whose "~" zn refuses in a path it must run.
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(base, prefix)));
   t.after(() => removeDir(dir));
   return dir;
 }
