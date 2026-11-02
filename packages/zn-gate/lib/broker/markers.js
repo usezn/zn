@@ -146,7 +146,10 @@ function checkResolvedExecutable(resolved, projectRoot, resolvedReal) {
   return null;
 }
 
+// The native form also expands a Windows 8.3 short name: os.tmpdir() can be C:\Users\LONGNA~1\..., and a file
+// planted in the long form of that folder must still count as inside it.
 function realOf(p) {
+  try { return fs.realpathSync.native(p); } catch (_) { /* fall back to the JavaScript form */ }
   try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); }
 }
 
