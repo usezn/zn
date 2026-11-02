@@ -97,13 +97,23 @@ function pluginWindowsArgs(event) {
  * the answer is the same. Measured on Windows Server 2022 with Node.js spawning cmd.exe the way ZCode starts a hook (no shell, an
  * arguments list): the program must be written with backslashes (with a slash cmd.exe reads "/Windows" as a switch and refuses), a
  * double quote in an argument reaches cmd.exe as \" and breaks it, and a path with a space needs quotes, which Node.js adds
- * around an argument that holds a space. So the script path is an argument of its own with a trailing space (the quotes Node.js adds
- * keep a plugin folder with a space in it in one piece, and Windows ignores the space at the end of a file name). `||` blocks, or
- * lets a PostToolUse call run, when the file cannot be run at all. Older plugin versions ship the PowerShell entry; zn-gate check
- * accepts both. */
+ * around an argument that holds a space. So the script path is an argument of its own with a trailing space: the quotes Node.js
+ * adds keep the whole path one word for cmd.exe, also with a space, &, parentheses or ^ in a folder name, and Windows ignores the
+ * space at the end of a file name.
+ * - The path is ${ZCODE_PLUGIN_ROOT}, which ZCode replaces with the plugin folder before it starts the process (as in the /bin/sh
+ *   entry), never %ZCODE_PLUGIN_ROOT%: when that variable is not set cmd.exe leaves the text as it is, and the relative path it
+ *   gives would be looked up in the project folder, where a repository could have placed a file of that name.
+ * - It is grouped in ( ) instead of started with `call`: with `call` cmd.exe reads the line a second time, doubles every ^ and
+ *   expands % again, so a folder name with ^ or % would point somewhere else. The ( ) also keeps the first character of the line
+ *   from being a quote, which cmd.exe /c would remove together with the last one. cmd.exe still replaces %NAME% in the line when
+ *   a variable NAME is set: a folder name holding such a pair (not a single %) gives a path that does not exist, and the call is
+ *   blocked.
+ * - `||` blocks, or lets a PostToolUse call run, when the file cannot be run at all.
+ * zn-gate check fills in ${ZCODE_PLUGIN_ROOT} the same way and starts exactly this program with these arguments. Older plugin
+ * versions ship the PowerShell entry; zn-gate check accepts both. */
 const PLUGIN_WIN_CMD = 'C:\\Windows\\System32\\cmd.exe';
 function pluginWindowsCmdArgs(event) {
-  return ['/d', '/c', 'call', '%ZCODE_PLUGIN_ROOT%\\scripts\\zn-hook.cmd ', event, '||', 'exit', '/b', event !== 'PostToolUse' ? '2' : '0'];
+  return ['/d', '/c', '(', '${ZCODE_PLUGIN_ROOT}\\scripts\\zn-hook.cmd ', event, ')', '||', 'exit', '/b', event !== 'PostToolUse' ? '2' : '0'];
 }
 // Tools whose output can hold a secret: the built-in ones that print file or command text, and every MCP tool.
 const POST_MATCHER = '^(Bash|Read|Grep|WebFetch)$|^mcp__.*';

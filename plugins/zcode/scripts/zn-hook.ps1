@@ -1,13 +1,14 @@
 # zn-gate hook for the ZCode desktop app on Windows (plugin copy). The counterpart of zn-hook.sh.
 #
-# hooks.json starts this file with a small inline PowerShell command that reads it and runs it as a script block, so no
-# execution policy (Restricted, AllSigned, a group policy) can stop it from running. It does one job: it runs
+# scripts/zn-hook.cmd (and, in earlier plugin versions, hooks.json) starts this file with a small inline PowerShell command
+# that reads it and runs it as a script block, so no execution policy (Restricted, AllSigned, a group policy) can stop it
+# from running. It does one job: it runs
 # zn-launch.js, which checks the zn-gate copy shipped inside this plugin byte for byte and runs it, and when anything stops
 # that from happening (no usable Node.js, a missing file, an unexpected exit code, a hang) it blocks instead of letting the
 # call run: exit code 2 on PreToolUse, PermissionRequest and UserPromptSubmit, a warning only on the other events.
 #
 # Usage (as the inline command runs it): the event name is the only argument; the event JSON arrives on stdin;
-# ZCODE_PLUGIN_ROOT names the plugin folder.
+# ZN_HOOK_DIR (the scripts folder, set by zn-hook.cmd) or else ZCODE_PLUGIN_ROOT names where the plugin is.
 #
 # Node.js, in this order: node.exe in the absolute PATH entries of the hook outside the project (never one in the project
 # folder, its git work tree or a node_modules folder), the usual install folders, and the program that runs ZCode's agent
@@ -101,7 +102,10 @@ foreach ($e in ([string]$env:PATH).Split(';')) {
 if ($Safe.Count -eq 0) { [void]$Safe.Add($env:SystemRoot + '\System32') }
 $env:PATH = ($Safe -join ';')
 
+# The plugin folder: the parent of the folder scripts/zn-hook.cmd ran from (ZN_HOOK_DIR, set by that file) or, for the
+# PowerShell entry of earlier plugin versions, ZCODE_PLUGIN_ROOT. Never a path relative to the folder the hook runs in.
 $Root = $env:ZCODE_PLUGIN_ROOT
+if ($env:ZN_HOOK_DIR) { $Root = [System.IO.Path]::GetDirectoryName(([string]$env:ZN_HOOK_DIR).TrimEnd('\', '/')) }
 $Launch = $null
 if ($Root -and (Absolute $Root)) { $Launch = (Full $Root) + '\scripts\zn-launch.js' }
 if (-not $Launch -or -not [System.IO.File]::Exists($Launch)) { Refuse 'the plugin launcher (scripts/zn-launch.js) is missing.' }
