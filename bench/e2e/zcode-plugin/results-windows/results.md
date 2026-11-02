@@ -1,3 +1,21 @@
+# ZCode plugin on Windows: the cmd.exe hook from user folders with special characters
+
+Release port of `fix/zcode-win-rc2` onto `release/1.15.0` at 129748782 (the plugin's Windows entry is `C:\Windows\System32\cmd.exe /d /c ( "${ZCODE_PLUGIN_ROOT}\scripts\zn-hook.cmd " <event> ) || exit /b <2 or 0>`). Official ZCode 3.16.3.8992 on Microsoft Windows Server 2022 Datacenter 10.0.20348, installer sha256 `B4FCCC1EAD9922D9066E083D53D3BF92BDEAC3124767D4352FD0583E5399382F`, Authenticode signature Valid, its own headless runtime (`resources/glm/zcode.cjs`, sha256 `97490D0F06A7A225D54D47817ACF4B4859CDB268B59F2490CAAEDA982BEF063A`), fake local model provider, fictitious values only. The plugin is built from that commit (`plugins/tools/build-plugin-repo.js --target zcode`) with the published zn-gate 1.14.1 tarball; `zn-gate check` is the 1.15.0-rc.1 package of that commit. Each row is the whole case list (A0 to H, as in the table below) run with the ZCode user folder (`ZC_HOME`) set to that folder, so the plugin is installed and its hooks start from there.
+
+| Folder | User folder | Pass | Fail | Result |
+|---|---|---|---|---|
+| plain | `C:\work\home` | 17 | 0 | PASS |
+| space | `C:\work\Jane Doe` | 17 | 0 | PASS |
+| amp | `C:\work\R&D` | 17 | 0 | PASS |
+| parens | `C:\work\Jane(Work)` | 17 | 0 | PASS |
+| caret | `C:\work\a^b` | 17 | 0 | PASS |
+| pct | `C:\work\100%` | 17 | 0 | PASS |
+| mixed | `C:\work\Jane Doe (Work) & Co` | 17 | 0 | PASS |
+
+The same kit with the earlier entry (a `.cmd` file as the hook's command) failed 6 cases in the space, `&` and mixed folders: the hook could not start and the calls ran. Hook durations in the default folder (ms, first call first): [2345, 7133, 55, 160, 1253, 37, 1230, 41, 76, 1223, 47, 1245, 19].
+
+Per folder: `windows-folders/<folder>/results.md`.
+
 # ZCode plugin on Windows and Linux: results on the branch
 
 Branch `fix/zcode-plugin-windows` at e08aa22b (the plugin starts a `/bin/sh` hook and a PowerShell hook for every event). Official ZCode 3.16.3, its own headless runtime (`resources/glm/zcode.cjs`, run as the app runs it), fake local model provider, fictitious values only. The plugin is the one built from the branch (`plugins/tools/build-plugin-repo.js --target zcode`) with the published zn-gate 1.14.1 tarball (sha256 813bc6ffabd961fab9f1bd32cd71070bf34177aac4069dd8558ec3182d77c9de).
