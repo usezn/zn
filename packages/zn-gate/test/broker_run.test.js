@@ -299,6 +299,21 @@ test('zn run refuses a binary planted in the temp folder when TMPDIR, TEMP and T
   }
 });
 
+test('on Windows the system temp folder and the profile temp folder are always among the temp folders', { skip: process.platform !== 'win32' }, () => {
+  const roots = markers.tempRoots().map((r) => r.toLowerCase());
+  const systemTemp = fs.realpathSync.native('\\\\?\\GLOBALROOT\\SystemRoot\\Temp').toLowerCase();
+  assert.ok(roots.includes(systemTemp), systemTemp + ' not in ' + roots.join(', '));
+  const profileTemp = fs.realpathSync.native(path.join(os.userInfo().homedir, 'AppData', 'Local', 'Temp')).toLowerCase();
+  assert.ok(roots.includes(profileTemp), profileTemp + ' not in ' + roots.join(', '));
+});
+
+test('on POSIX the fixed system temp folders are always among the temp folders', { skip: process.platform === 'win32' }, () => {
+  const roots = markers.tempRoots();
+  for (const d of ['/tmp', '/var/tmp', '/dev/shm']) {
+    if (fs.existsSync(d)) assert.ok(roots.includes(fs.realpathSync.native(d)), d + ' not in ' + roots.join(', '));
+  }
+});
+
 test('first use is confirmed by the vault, never on the command terminal, and only once', async () => {
   const args = ['--secrets', 'DB_PASSWORD', '--', NODE, '-e', 'console.log(1)'];
   let asked = 0;

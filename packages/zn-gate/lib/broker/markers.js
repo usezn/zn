@@ -152,7 +152,7 @@ function isInside(child, parent) {
  */
 function checkResolvedExecutable(resolved, projectRoot, resolvedReal) {
   if (!resolved) return 'command not found on PATH';
-  // Both sides in the native real form: a Windows 8.3 short name, a subst or mapped drive and a \\?\ prefix all
+  // Both sides in the native real form: a Windows 8.3 short name, a subst drive and a \\?\ prefix all
   // name the same folder in more than one way, and a PATH entry may use any of them.
   const real = realOf(resolvedReal || resolved);
   if (tempRoots().some((tmp) => isInside(real, tmp))) return 'resolves to a file in the temp directory';
@@ -200,6 +200,7 @@ function isLoopbackHost(host) {
 }
 
 module.exports = {
+  tempRoots,
   MARKER_SOURCE,
   markerRegex,
   markerFor,
