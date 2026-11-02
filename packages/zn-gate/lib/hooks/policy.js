@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-01.22';
+const POLICY_RULES_VERSION = '2026-11-02.33';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2350,6 +2350,19 @@ function shellAssignments(cmd, opts) {
  * GIT_CONFIG_KEY_0=user.name.
  */
 const GIT_ENV_PRESCAN_RE = /GIT_|PAGER|EDITOR|VISUAL|LESSOPEN|LESSCLOSE|SSH_ASKPASS|\s-c\s|--config-env/i;
+// A word whose value zn cannot read before the shell expands it ($X, ${X}, $-, $(cmd), `cmd`).
+const GIT_UNREAD_WORD_RE = /\$(?:[{(A-Za-z_]|[-?#$!@*0-9])|`/;
+// The variable references of a word, removed to see what the word starts with when they expand to nothing.
+const GIT_EXPANSION_RE = /\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$[-?#$!@*0-9]/g;
+// Options of a git subcommand that take a program to run, or configuration pairs (git clone -c), with the
+// subcommands that read them. Long options may be shortened, as git accepts any unambiguous prefix.
+const GIT_SUB_CODE_OPTS = {
+  clone: ['--upload-pack'], fetch: ['--upload-pack'], pull: ['--upload-pack'], 'ls-remote': ['--upload-pack'],
+  'fetch-pack': ['--upload-pack', '--exec'], push: ['--receive-pack', '--exec'], 'send-pack': ['--receive-pack', '--exec'],
+  archive: ['--exec'],
+};
+const GIT_SUB_SHORT_CODE = { clone: '-u' };
+const GIT_SUB_CONFIG = { clone: ['-c', '--config'] };
 // Variables whose whole value is a command line (the pager and editors also when git falls back to them).
 const GIT_CODE_ENV = new Set(['GIT_PAGER', 'PAGER', 'GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'EDITOR', 'VISUAL', 'GIT_SSH_COMMAND', 'GIT_SSH',
   'GIT_ASKPASS', 'SSH_ASKPASS', 'GIT_EXTERNAL_DIFF', 'GIT_PROXY_COMMAND', 'LESSOPEN', 'LESSCLOSE']);
@@ -2427,12 +2440,22 @@ function gitConfigParameterPairs(value) {
 
 /* The configuration pairs of git's own options in one simple command: -c name=value and --config-env=name=VAR
    (also with the value in the next word). Each is [name, value] or [name, {envVar}]. */
-function gitDashConfigPairs(w) {
+function gitDashConfigPairs(w, env) {
   const out = [];
   const g = gitStart(w);
   if (g < 0) return out;
-  for (let k = g + 1; k < w.length; k++) {
-    const t = w[k].text;
+  // A word with a variable the environment does not set may become -c once the shell has expanded it ($X-c with X
+  // empty): it is reported as unreadable.
+  const word = (k) => {
+    const raw = w[k].text;
+    if (!GIT_UNREAD_WORD_RE.test(raw)) return raw;
+    const x = expandEnv(raw, env || {}).text;
+    return GIT_UNREAD_WORD_RE.test(x) ? null : x;
+  };
+  let k = g + 1;
+  for (; k < w.length; k++) {
+    const t = word(k);
+    if (t === null) { out.push([null, { unread: true }]); return out; }
     if (!t.startsWith('-')) break;
     let spec = null;
     let viaEnv = false;
@@ -2442,7 +2465,53 @@ function gitDashConfigPairs(w) {
     const val = eq < 0 ? '' : spec.slice(eq + 1);
     out.push([name, viaEnv ? { envVar: val } : val]);
   }
+  if (k < w.length) gitSubcommandPairs(w, k, word, out);
   return out;
+}
+
+/* The program-running options (git fetch --upload-pack=<cmd>) and configuration pairs (git clone -c k=v) of the
+   subcommand at w[s], added to out as [null, {code}] and [name, value]. */
+function gitSubcommandPairs(w, s, word, out) {
+  const sub = String(word(s) || '').toLowerCase();
+  const longCode = GIT_SUB_CODE_OPTS[sub] || [];
+  const config = GIT_SUB_CONFIG[sub] || [];
+  const short = GIT_SUB_SHORT_CODE[sub];
+  if (!longCode.length && !config.length) return;
+  // A long option as typed (without =value) names one of these when it is at least --xyz and a prefix of it.
+  const longOf = (name, list) => list.find((o) => o.startsWith('--') && name.length >= 5 && o.startsWith(name));
+  for (let k = s + 1; k < w.length; k++) {
+    const raw = w[k].text;
+    if (raw === '--') return;
+    // A word zn cannot read is refused where it may become an option ($X--upload-pack=...); elsewhere it is an
+    // argument (git push origin $BRANCH).
+    const t = word(k);
+    if (t === null) {
+      if (raw.replace(GIT_EXPANSION_RE, '').startsWith('-')) { out.push([null, { unread: true }]); return; }
+      continue;
+    }
+    if (!t.startsWith('-')) continue;
+    const eq = t.indexOf('=');
+    const name = eq < 0 ? t : t.slice(0, eq);
+    const next = () => (k + 1 < w.length ? word(++k) : '');
+    let kind = null;
+    let value;
+    if (name.startsWith('--')) {
+      if (longOf(name, longCode)) kind = 'code';
+      else if (longOf(name, config)) kind = 'config';
+      if (!kind) continue;
+      value = eq < 0 ? next() : t.slice(eq + 1);
+    } else if (config.includes('-c') && t.startsWith('-c')) {
+      kind = 'config';
+      value = t.length > 2 ? t.slice(2) : next();
+    } else if (short && t.startsWith(short)) {
+      kind = 'code';
+      value = t.length > short.length ? t.slice(short.length) : next();
+    } else continue;
+    if (value === null) { out.push([null, { unread: true }]); return; }
+    if (kind === 'code') { out.push([null, { code: value }]); continue; }
+    const e = value.indexOf('=');
+    out.push([e < 0 ? value : value.slice(0, e), e < 0 ? '' : value.slice(e + 1)]);
+  }
 }
 
 function gitEnvScan(readings, text, opts) {
@@ -2459,7 +2528,7 @@ function gitEnvScan(readings, text, opts) {
       while (end < r.length && r[end].seq === r[start].seq) end++;
       const words = [];
       gitEnvAssignmentWords(r.slice(start, end), words);
-      for (const pr of gitDashConfigPairs(r.slice(start, end))) { if (++seen > 256) return { deny: TOO_MANY_MESSAGE, codes: [] }; dashPairs.push(pr); }
+      for (const pr of gitDashConfigPairs(r.slice(start, end), env)) { if (++seen > 256) return { deny: TOO_MANY_MESSAGE, codes: [] }; dashPairs.push(pr); }
       for (const t of words) {
         if (++seen > 256) return { deny: TOO_MANY_MESSAGE, codes: [] };
         const eq = t.indexOf('=');
@@ -2569,6 +2638,13 @@ function gitEnvScan(readings, text, opts) {
   // git -c name=value and git --config-env=name=VAR.
   for (const [k, raw] of dashPairs) {
     let value;
+    if (raw && raw.unread) return { deny: GIT_ENV_MESSAGE('a git option zn cannot read before the shell expands it'), codes: [] };
+    if (raw && typeof raw === 'object' && 'code' in raw) {
+      const c = literal(raw.code);
+      if (c === null) return { deny: GIT_ENV_MESSAGE('a git option that runs a program, to a value zn cannot read'), codes: [] };
+      if (c.trim()) codes.push(c.trim());
+      continue;
+    }
     if (raw && typeof raw === 'object') {
       const names = found.filter(([n]) => n === raw.envVar).map(([, x]) => x);
       const x = names.length ? names[names.length - 1] : env[raw.envVar];
@@ -2624,7 +2700,7 @@ function bashDenialOf(cmd, opts = {}) {
   const codes = new Set();
   for (const r of readings) shellCodesOf(r, codes);
   // Environment variables that make git (or the pager and editor it starts) run a command: their values are code.
-  if (GIT_ENV_PRESCAN_RE.test(text)) {
+  if (GIT_ENV_PRESCAN_RE.test(text) || readings.some((r) => r.some((w) => wordIsGit(w.text)))) {
     const ge = gitEnvScan(readings, text, opts);
     if (ge.deny) return ge.deny;
     for (const c of ge.codes) codes.add(c);

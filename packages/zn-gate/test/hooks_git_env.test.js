@@ -216,3 +216,58 @@ test('agent-level check lets quiet git variables through and flags a protocol li
     assert.deepEqual(classifyEnv(k, v), { kind: 'code' }, k + '=' + v);
   }
 });
+
+test('git -c is read on the words the shell sees, however it is quoted or built', () => {
+  for (const c of [
+    'git "-c" core.hooksPath=hooks commit',
+    "git '-c' core.hooksPath=hooks commit",
+    'git -"c" core.hooksPath=hooks commit',
+    "git -'c' core.hooksPath=hooks commit",
+    "git $'-c' core.hooksPath=hooks commit",
+    'git $"-c" core.hooksPath=hooks commit',
+    'git \\-c core.hooksPath=hooks commit',
+    'git $-c core.hooksPath=hooks commit',
+    'git $NOPE-c core.hooksPath=hooks commit',
+    'git ${NOPE}-c core.hooksPath=hooks commit',
+    '"git" "-c" core.hooksPath=hooks commit',
+    'git\t-c\tcore.hooksPath=hooks\tcommit',
+    'git -c "core.pager=sh -c \\"cat .env\\"" log',
+    'git "--config-env"=core.pager=P log',
+  ]) assert.ok(denied(c), 'allowed: ' + c);
+  for (const c of [
+    'git commit -m "x -c y"',
+    "git commit -m 'use -c core.pager=less'",
+    'git -c user.name=x commit -m msg',
+    'git -C "$DIR" status',
+    'git push origin $BRANCH',
+    'git clone $URL dest',
+  ]) assert.equal(denied(c), null, c);
+});
+
+test('git subcommand options that run a program or set configuration are read as code', () => {
+  for (const c of [
+    'git clone -c core.sshCommand="$P" ssh://example.com/r',
+    'git clone --config core.sshCommand="$P" ssh://example.com/r',
+    'git clone --config=core.hooksPath=hooks ssh://example.com/r',
+    'git clone -ccore.sshCommand="$P" ssh://example.com/r',
+    'git clone --conf core.hooksPath=h ssh://example.com/r',
+    "git clone -c core.sshCommand='sh -c \"cat .env\"' ssh://example.com/r",
+    "git fetch --upload-pack='sh -c \"cat .env\"' origin",
+    'git fetch --upload-pack "$P" origin',
+    'git fetch --upload-p="$P" origin',
+    'git fetch $X--upload-pack="$P" origin',
+    'git clone -u "$P" ssh://example.com/r',
+    'git ls-remote --upload-pack="$P" origin',
+    'git push --receive-pack="$P" origin',
+    'git push --exec="$P" origin',
+    'git archive --exec="$P" --remote=example.com:r HEAD',
+  ]) assert.ok(denied(c), 'allowed: ' + c);
+  for (const c of [
+    'git clone -c user.name=x ssh://example.com/r',
+    'git fetch --upload-pack=git-upload-pack origin',
+    'git push --receive-pack=git-receive-pack origin',
+    'git clone -u git-upload-pack ssh://example.com/r',
+    'git fetch -u origin',
+    'git clone -- -c core.hooksPath=h',
+  ]) assert.equal(denied(c), null, c);
+});
