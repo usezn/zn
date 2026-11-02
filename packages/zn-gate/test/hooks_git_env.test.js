@@ -271,3 +271,38 @@ test('git subcommand options that run a program or set configuration are read as
     'git clone -- -c core.hooksPath=h',
   ]) assert.equal(denied(c), null, c);
 });
+
+test('git option values: an unquoted variable that may split is refused, the quoted form and resolved values stay allowed', () => {
+  const dflt = (c) => policy.bashDenial(c, { home: os.homedir(), cwd: proj, env: { HOME: '/home/x', PWD: proj, SAFE: 'sub' } });
+  const opts1 = ['-C', '--git-dir', '--work-tree', '--namespace', '--exec-path', '--super-prefix', '--config-env', '-c'];
+  for (const o of opts1) {
+    for (const v of ['$X', '${X}']) {
+      assert.ok(dflt('git ' + o + ' ' + v + ' status'), 'allowed: ' + o + ' ' + v);
+      assert.ok(dflt('git ' + o + '\t' + v + '\tstatus'), 'allowed tab: ' + o + ' ' + v);
+    }
+  }
+  for (const o of ['--git-dir', '--work-tree', '--namespace', '--exec-path', '--super-prefix']) {
+    for (const v of ['$X', '${X}', 'a/$X']) assert.ok(dflt('git ' + o + '=' + v + ' log'), 'allowed glued: ' + o + '=' + v);
+  }
+  const msg = dflt('git -C $DIR status');
+  assert.ok(msg && /quote the variable/.test(msg), String(msg));
+  assert.ok(dflt('export DIR="x -c core.pager=evil"; git -C $DIR status'));
+  assert.ok(dflt('DIR="x -c core.pager=evil"; git -C $DIR status'));
+  assert.ok(dflt('git -C $(pwd) status'));
+  assert.ok(dflt('git -C "$@" status'));
+  for (const c of [
+    'git -C "$DIR" status', "git -C '$DIR' status",
+    'git --git-dir="$GD" log', 'git --git-dir "$GD" log', 'git --work-tree="$WT" status', 'git --work-tree "$WT" status',
+    'git --namespace "$N" log', 'git --exec-path="$P" status',
+    'git -C $SAFE status', 'git -C ${SAFE} status', 'git --git-dir=$SAFE/.git log', 'git -C $PWD status', 'git -C $HOME status',
+    'git -C sub status', 'git --git-dir=.git --work-tree=. status', 'git -C . log --oneline',
+    'git push origin $BRANCH', 'git checkout $BRANCH', 'git log $REF',
+  ]) {
+    assert.equal(dflt(c), null, 'refused: ' + c + ' -> ' + dflt(c));
+  }
+});
+
+test('git --git-dir=$GD log is refused unquoted and allowed quoted (the quoted form is the allowed one)', () => {
+  assert.ok(denied('git --git-dir=$GD log'));
+  assert.equal(denied('git --git-dir="$GD" log'), null);
+});

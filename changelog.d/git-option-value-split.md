@@ -1,0 +1,2 @@
+### Fixed
+- A value of a git global option that comes from a variable the shell may split into several words is now blocked: `git -C $DIR status`, `git --git-dir $GD log`, `git --work-tree=$WT status` (also `--namespace`, `--exec-path`, `--super-prefix`, `--config-env`, `--attr-source` and `-c`), where `DIR` could hold `x -c core.pager=...`. Quote the variable (`git -C "$DIR" status`, `git --git-dir="$GD" log`) and the command is allowed; so are values zn can resolve to one word and arguments of a subcommand (`git push origin $BRANCH`).

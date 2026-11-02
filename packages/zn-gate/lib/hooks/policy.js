@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-02.33';
+const POLICY_RULES_VERSION = '2026-11-02.41';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1269,6 +1269,40 @@ function dequoteFragment(frag, posix) {
 /** Every word of the whole command (rough), with a flag for > / >> targets and the command name of its segment. */
 // Enough simple commands for any command under SHELL_SCAN_CAP (each takes at least two characters).
 const SIMPLE_COMMANDS_MAX = 50000;
+/* Whether a word as typed has an expansion outside quotes ($X, ${X}, $(cmd), `cmd`, "$@"): the shell splits its result
+   into words and expands patterns in them. Inside double quotes the result stays one word; in single quotes it is text. */
+function hasBareExpansion(raw) {
+  const s = String(raw);
+  const starts = (i) => /[A-Za-z_{(]/.test(s[i + 1] || '') || /[-?#$!@*0-9]/.test(s[i + 1] || '');
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '\\') { i += 2; continue; }
+    if (c === "'") { const e = s.indexOf("'", i + 1); if (e < 0) return false; i = e + 1; continue; }
+    if (c === '`') return true;
+    if (c === '$' && s[i + 1] === "'") {
+      i += 2;
+      while (i < s.length && s[i] !== "'") i += s[i] === '\\' ? 2 : 1;
+      i++;
+      continue;
+    }
+    if (c === '"' || (c === '$' && s[i + 1] === '"')) {
+      i += c === '"' ? 1 : 2;
+      while (i < s.length && s[i] !== '"') {
+        if (s[i] === '\\') { i += 2; continue; }
+        if (s[i] === '`' || (s[i] === '$' && s[i + 1] === '(')) return true;
+        if (s[i] === '$' && s[i + 1] === '@') return true;
+        i++;
+      }
+      i++;
+      continue;
+    }
+    if (c === '$' && starts(i)) return true;
+    i++;
+  }
+  return false;
+}
+
 function allWords(cmd, posix = false) {
   const out = [];
   let rest = String(cmd);
@@ -1299,7 +1333,7 @@ function allWords(cmd, posix = false) {
         targetRaw = raw.slice(glued.at + glued.len);
         t = dequoteFragment(targetRaw, posix);
         // `cat ~/.ssh/id_rsa>x` reads the file before it writes x: the part before the operator is checked as a word.
-        if (gluedOp) out.push({ text: dequoteFragment(prefixRaw, posix), redirectTarget: afterOp, head, seq: guard, sub, gitArgs, git: gi >= 0 });
+        if (gluedOp) out.push({ text: dequoteFragment(prefixRaw, posix), redirectTarget: afterOp, head, seq: guard, sub, gitArgs, git: gi >= 0, bare: hasBareExpansion(prefixRaw) });
       }
       // Input redirections: <file, 0<file, <>file (read and write), {fd}<file.
       t = t.replace(/^(?:[0-9]*|\*)(?:>\||>>?)/, '').replace(/^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?/, '');
@@ -1309,7 +1343,7 @@ function allWords(cmd, posix = false) {
         const typed = targetRaw.replace(/^(?:[0-9]*|\*)(?:>\||>>?)/, '');
         if (/^[A-Za-z]:\\/.test(typed) && !/['"]/.test(typed)) t = typed;
       }
-      out.push({ text: t, redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0 });
+      out.push({ text: t, redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0, bare: hasBareExpansion(targetRaw) || (targetRaw.endsWith('$') && rest[w.end] === '(') });
     }
     rest = rest.slice(scan.end + 1);
   }
@@ -2353,6 +2387,8 @@ const GIT_ENV_PRESCAN_RE = /GIT_|PAGER|EDITOR|VISUAL|LESSOPEN|LESSCLOSE|SSH_ASKP
 // A word whose value zn cannot read before the shell expands it ($X, ${X}, $-, $(cmd), `cmd`).
 const GIT_UNREAD_WORD_RE = /\$(?:[{(A-Za-z_]|[-?#$!@*0-9])|`/;
 // The variable references of a word, removed to see what the word starts with when they expand to nothing.
+// A long git option with its value in the same word (--git-dir=<dir>).
+const GIT_GLUED_VALUE_RE = /^--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env|attr-source)=/;
 const GIT_EXPANSION_RE = /\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$[-?#$!@*0-9]/g;
 // Options of a git subcommand that take a program to run, or configuration pairs (git clone -c), with the
 // subcommands that read them. Long options may be shortened, as git accepts any unambiguous prefix.
@@ -2452,14 +2488,32 @@ function gitDashConfigPairs(w, env) {
     const x = expandEnv(raw, env || {}).text;
     return GIT_UNREAD_WORD_RE.test(x) ? null : x;
   };
+  // The value of a git option (-C <dir>, --git-dir=<dir>) is one word only when the shell does not split it. A bare
+  // expansion that zn cannot resolve, or that resolves to more than one word, can bring in more options (-c ...).
+  // In double quotes it stays one word and is a plain value.
+  const splits = (k, text) => {
+    // The scan ends a word at the bracket of $(cmd): what is left of it is a word that ends with $.
+    if (!w[k] || !w[k].bare || !(GIT_UNREAD_WORD_RE.test(text) || text.endsWith('$'))) return false;
+    const x = expandEnv(text, env || {}).text;
+    return GIT_UNREAD_WORD_RE.test(x) || x.endsWith('$') || /[\s*?[]/.test(x);
+  };
   let k = g + 1;
   for (; k < w.length; k++) {
+    const gl = GIT_GLUED_VALUE_RE.exec(w[k].text);
+    if (gl) {
+      if (splits(k, w[k].text.slice(gl[0].length))) { out.push([null, { split: true }]); return out; }
+      // Quoted: the value is one word, whatever it holds. A glued --config-env=name=VAR still reads as a pair below.
+      if (!w[k].text.startsWith('--config-env=')) continue;
+    }
     const t = word(k);
     if (t === null) { out.push([null, { unread: true }]); return out; }
     if (!t.startsWith('-')) break;
     let spec = null;
     let viaEnv = false;
-    if (t === '-c') { spec = w[++k] ? w[k].text : ''; } else if (t === '--config-env') { viaEnv = true; spec = w[++k] ? w[k].text : ''; } else if (t.startsWith('--config-env=')) { viaEnv = true; spec = t.slice(13); } else if (GIT_VALUE_OPTS.has(t)) { k++; continue; } else continue;
+    if (t === '-c' || t === '--config-env') {
+      if (w[k + 1] && splits(k + 1, w[k + 1].text)) { out.push([null, { split: true }]); return out; }
+    }
+    if (t === '-c') { spec = w[++k] ? w[k].text : ''; } else if (t === '--config-env') { viaEnv = true; spec = w[++k] ? w[k].text : ''; } else if (t.startsWith('--config-env=')) { viaEnv = true; spec = t.slice(13); } else if (GIT_VALUE_OPTS.has(t)) { if (w[k + 1] && splits(k + 1, w[k + 1].text)) { out.push([null, { split: true }]); return out; } k++; continue; } else continue;
     const eq = spec.indexOf('=');
     const name = eq < 0 ? spec : spec.slice(0, eq);
     const val = eq < 0 ? '' : spec.slice(eq + 1);
@@ -2638,6 +2692,7 @@ function gitEnvScan(readings, text, opts) {
   // git -c name=value and git --config-env=name=VAR.
   for (const [k, raw] of dashPairs) {
     let value;
+    if (raw && typeof raw === 'object' && raw.split === true) return { deny: 'zn: a git option in this command takes a value from a variable that is not quoted, so the shell may split it into several words and add options such as -c, and zn cannot tell what it will contain, so it was blocked. Next step: quote the variable ("$DIR", --git-dir="$GD") or write the value out.', codes: [] };
     if (raw && raw.unread) return { deny: GIT_ENV_MESSAGE('a git option zn cannot read before the shell expands it'), codes: [] };
     if (raw && typeof raw === 'object' && 'code' in raw) {
       const c = literal(raw.code);
