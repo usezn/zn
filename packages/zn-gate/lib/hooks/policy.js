@@ -1318,7 +1318,7 @@ function allWords(cmd, posix = false) {
         const typed = targetRaw.replace(/^(?:[0-9]*|\*)(?:>\||>>?)/, '');
         if (/^[A-Za-z]:\\/.test(typed) && !/['"]/.test(typed)) t = typed;
       }
-      out.push({ text: t, redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0 });
+      out.push({ text: t, redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0, opAfter: scan.operator });
     }
     rest = rest.slice(scan.end + 1);
   }
@@ -1624,6 +1624,41 @@ const TAR_SHORT_VALUES = 'fCTXbHINgKLV';
    names a source that may be a configuration (its name is one of `names`, or holds an unresolved expansion or a
    wildcard) or names a destination file that may be one. Words are judged by where they sit in the command, never by
    the folders the expansion might stand for. */
+// Short options of curl and wget that take a value: the rest of their cluster (or the next word) is that value.
+const CURL_SHORT_VALUES = 'ACDEFHKPQTUXYabcdemortuwxyz';
+const WGET_SHORT_VALUES = 'AIBDEOPQRTUXYabeghilmnoptwx';
+/* The [word, value] pairs of the file that curl -o/--output (also in a cluster: -so f, -sof) or wget
+   -O/--output-document writes. `args` are the words after the program. */
+function outputTargets(args, prog) {
+  const res = [];
+  const short = prog === 'curl' ? 'o' : 'O';
+  const values = prog === 'curl' ? CURL_SHORT_VALUES : WGET_SHORT_VALUES;
+  const longRe = prog === 'curl' ? /^--out(?:p(?:u(?:t)?)?)?(?:=(.*))?$/ : /^--output-d[a-z]*(?:=(.*))?$/;
+  for (let k = 0; k < args.length; k++) {
+    const t = String(args[k].text);
+    if (t === '--') break;
+    if (/^--/.test(t)) {
+      const m = longRe.exec(t);
+      if (!m) continue;
+      if (m[1] !== undefined) res.push([args[k], m[1]]);
+      else if (args[k + 1]) { res.push([args[k + 1], String(args[k + 1].text)]); k++; }
+      continue;
+    }
+    if (!/^-./.test(t)) continue;
+    for (let q = 1; q < t.length; q++) {
+      const c = t[q];
+      if (!values.includes(c)) continue;
+      const rest = t.slice(q + 1);
+      if (c === short) {
+        if (rest) res.push([args[k], rest]);
+        else if (args[k + 1]) { res.push([args[k + 1], String(args[k + 1].text)]); k++; }
+      } else if (!rest) k++;
+      break;
+    }
+  }
+  return res;
+}
+
 function unresolvedConfigDestinations(readings, names, opts) {
   const out = new Set();
   const home = opts.home || os.homedir();
@@ -1639,10 +1674,23 @@ function unresolvedConfigDestinations(readings, names, opts) {
       i = j;
     }
     const curls = groups.filter((g) => g.prog && g.prog.name === 'curl').length;
-    for (const { group, prog } of groups) {
+    // Which groups sit inside a for/while/until loop: the curl of an earlier pass can write what a later pass reads.
+    let loopDepth = 0;
+    for (const g of groups) {
+      const first = g.group.map((w) => String(w.text).replace(/^[({]+/, '')).find((t) => t && !ASSIGNMENT_RE.test(t)) || '';
+      if (/^(?:for|while|until|select)$/.test(first)) loopDepth++;
+      g.inLoop = loopDepth > 0;
+      if (first === 'done') loopDepth = Math.max(0, loopDepth - 1);
+    }
+    const lastCurl = groups.reduce((acc, g, k) => (g.prog && g.prog.name === 'curl' ? k : acc), -1);
+    for (let gi = 0; gi < groups.length; gi++) {
+      const { group, prog, inLoop } = groups[gi];
+      const readsConfig = !!prog && prog.name === 'curl' &&
+        group.some((w) => w.curlCfgValue || /^-[A-Za-z0-9#:]*K|^--config(?:=|$)/.test(String(w.text)));
       // The shell opens a redirect of curl's own command before curl starts: it can empty that curl's configuration
-      // but not give it options. That only matters when no other curl in the command reads the file afterwards.
-      const ownCurl = curls === 1 && prog && prog.name === 'curl' && prog.at >= 0;
+      // but not give it options. That only matters when no other curl in the command reads the file afterwards, and
+      // not when the command loops (the next pass reads what the last one wrote) or that curl reads a -K file.
+      const ownCurl = curls === 1 && !inLoop && !readsConfig && prog && prog.name === 'curl' && prog.at >= 0;
       if (!ownCurl) for (const w of group) if (w.redirectTarget && unknown(String(w.text))) out.add(w);
       if (!prog || prog.at < 0) continue;
       const name = prog.name;
@@ -1650,7 +1698,23 @@ function unresolvedConfigDestinations(readings, names, opts) {
       const txt = (w) => String(w.text);
       const dest = (w, v) => { if (unknown(v)) out.add(w); };
       if (name === 'tee') {
-        for (const w of args) if (!/^-/.test(txt(w))) dest(w, txt(w));
+        // `curl ... | tee FILE` only takes curl's own output: that curl has already read its configuration, so FILE
+        // cannot change it unless the command loops or another curl runs after it.
+        // The scanner ends a command at the & of `2>&1`, so the pipe may follow a lone fd word (`curl ... 2>&1 | tee F`).
+        let pi = gi - 1;
+        const fdWord = (g) => g && g.group.length === 1 && /^[0-9]+$/.test(String(g.group[0].text));
+        if (fdWord(groups[pi]) && pi > 0 && groups[pi - 1].group[0].seq === groups[pi].group[0].seq - 1 &&
+            groups[pi - 1].group[groups[pi - 1].group.length - 1].opAfter === '&') pi--;
+        const prev = groups[pi];
+        const fed = !!prev && !!prev.prog && prev.prog.name === 'curl' && !inLoop && !prev.inLoop && gi > lastCurl &&
+          prev.group[0].seq === groups[gi - 1].group[0].seq - (gi - 1 - pi) &&
+          groups[gi - 1].group[groups[gi - 1].group.length - 1].opAfter === '|' &&
+          groups[gi - 1].group[0].seq === group[0].seq - 1;
+        if (!fed) for (const w of args) if (!/^-/.test(txt(w))) dest(w, txt(w));
+      } else if (name === 'curl' || name === 'wget') {
+        // curl -o/--output and wget -O/--output-document write a file when the download ends. A lone curl has read its
+        // configuration by then (unless the command loops or it reads a -K file); any other curl may read the file.
+        if (!(name === 'curl' && curls === 1 && !inLoop && !readsConfig)) for (const [w, v] of outputTargets(args, name)) dest(w, v);
       } else if (name === 'dd') {
         for (const w of args) if (/^of=/.test(txt(w))) dest(w, txt(w).slice(3));
       } else if (/^g?sed$/.test(name)) {
@@ -1994,7 +2058,7 @@ function markConfigNamed(curlWord, why) {
 }
 
 // curl options whose value may be @file (or name=@file, name@file): the file's content is sent.
-const CURL_AT_FILE_OPTS_RE = /^(?:-[A-Za-z0-9#:]*[dFH]|--data|--data-binary|--data-raw|--data-ascii|--data-urlencode|--json|--form|--url-query|--header)$/;
+const CURL_AT_FILE_OPTS_RE = /^(?:-[A-Za-z0-9#:]*[dFH]|--data|--data-binary|--data-ascii|--data-urlencode|--json|--form|--url-query|--header)$/;
 
 function markCurlWords(readings, opts = {}, cmdText = '') {
   markCurlConfigValues(readings);
