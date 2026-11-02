@@ -22,10 +22,23 @@ $ProgressPreference = 'SilentlyContinue'
 $ZEvent = ''
 if ($args.Count -gt 0) { $ZEvent = [string]$args[0] }
 $Deadline = 28
+$Total = $Deadline
 $Clock = [System.Diagnostics.Stopwatch]::StartNew()
-# ZCode's timeout counts from the start of this process, and Windows PowerShell can take seconds to start on a cold machine:
-# the deadline is the time that is left of those 28 seconds, so a slow start blocks the call instead of running into the timeout.
-try { $Deadline = [Math]::Max(3, $Deadline - [int][Math]::Ceiling(((Get-Date) - [System.Diagnostics.Process]::GetCurrentProcess().StartTime).TotalSeconds)) } catch {}
+# ZCode's timeout counts from the moment it starts the hook, and Windows PowerShell can take seconds to start on a cold
+# machine: the deadline is the time that is left of those 28 seconds, so a slow start blocks the call instead of running into
+# the timeout. The time is counted from the start of this process or, when scripts/zn-hook.cmd started it, from the first
+# line of that file (ZN_HOOK_T0, the time of day cmd.exe read there), whichever is earlier. ZN_HOOK_T0 can only make the
+# deadline shorter.
+try {
+  $Since = ((Get-Date) - [System.Diagnostics.Process]::GetCurrentProcess().StartTime).TotalSeconds
+  if ([string]$env:ZN_HOOK_T0 -match '^\s*(\d{1,2})\D(\d{2})\D(\d{2})\D(\d{2})\s*$') {
+    $t0 = [int]$Matches[1] * 3600 + [int]$Matches[2] * 60 + [int]$Matches[3] + [int]$Matches[4] / 100
+    $e = (Get-Date).TimeOfDay.TotalSeconds - $t0
+    if ($e -lt 0) { $e += 86400 }
+    if ($e -gt $Since -and $e -lt 120) { $Since = $e }
+  }
+  $Deadline = [Math]::Max(0, $Deadline - [int][Math]::Ceiling($Since))
+} catch {}
 
 function Refuse([string]$why) {
   if (@('PreToolUse', 'PermissionRequest', 'UserPromptSubmit', '') -contains $ZEvent) {
@@ -37,6 +50,8 @@ function Refuse([string]$why) {
 }
 
 function Left() { return [int][Math]::Max(0, ($Deadline * 1000) - $Clock.ElapsedMilliseconds) }
+
+if ($Deadline -le 0) { Refuse ('the hook took too long to start to finish within ' + $Total + ' seconds.') }
 
 function Full([string]$p) {
   try { return [System.IO.Path]::GetFullPath($p).TrimEnd('\', '/') } catch { return $null }
@@ -133,7 +148,7 @@ function NodeOk([string]$node) {
   }
   if (-not $p.WaitForExit((Left))) {
     Stop-Tree $p
-    Refuse ('the hook did not finish starting within ' + $Deadline + ' seconds.')
+    Refuse ('the hook did not finish starting within ' + $Total + ' seconds.')
   }
   if ($p.ExitCode -ne 0) { return $false }
   try {
@@ -167,8 +182,9 @@ if (-not $Node) {
   foreach ($c in $usual) { if (TryNode $c) { $Node = $c; break } }
 }
 # 3. the program that started this hook (ZCode's own Node.js). The hook runs under scripts/zn-hook.cmd, so the parent is
-# usually cmd.exe: shells and script hosts are skipped and the chain is walked up (at most 6 levels). Whatever is picked must
-# still pass the probe above, which parses the version Node.js prints.
+# usually cmd.exe: shells and script hosts are skipped and the chain is walked up (at most 6 levels) to the first program that
+# is not one of them, the only one tried. Whatever is picked must still pass the probe above, which parses the version
+# Node.js prints.
 if (-not $Node) {
   $skip = @('cmd.exe', 'powershell.exe', 'pwsh.exe', 'conhost.exe', 'wscript.exe', 'cscript.exe', 'bash.exe', 'sh.exe', 'wsl.exe', 'explorer.exe', 'services.exe', 'svchost.exe', 'wininit.exe', 'winlogon.exe')
   $byPid = @{}
@@ -184,6 +200,7 @@ if (-not $Node) {
     if (-not $exe -or -not (Absolute $exe)) { continue }
     if ($skip -contains ([System.IO.Path]::GetFileName($exe).ToLowerInvariant())) { continue }
     if (TryNode $exe) { $Node = $exe; $AppNode = $true }
+    break
   }
 }
 if (-not $Node) { Refuse 'no Node.js 20.19 or later was found for the hook (looked in the PATH, the usual install folders and the app itself).' }
@@ -208,7 +225,7 @@ if ($started) {
   try { $p.StandardInput.Close() } catch {}
   if ($p.WaitForExit((Left))) { $rc = $p.ExitCode } else {
     Stop-Tree $p
-    Refuse ('the hook did not finish starting within ' + $Deadline + ' seconds.')
+    Refuse ('the hook did not finish starting within ' + $Total + ' seconds.')
   }
 }
 if ($rc -eq 0 -or $rc -eq 2) { exit $rc }
