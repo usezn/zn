@@ -9,7 +9,8 @@ from unittest import mock
 from zn_gate import evidence
 
 
-def test_full_disk_warning_names_the_log_in_plain_words(tmp_path, capsys):
+def test_full_disk_warning_names_the_log_in_plain_words(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(evidence, "_last_write_warn", None)
     path = str(tmp_path / "evidence.jsonl")
     err = OSError(errno.ENOSPC, "No space left on device")
     event = {"verdict": "block", "rule": "R", "tool_name": "t", "agent": "a"}
