@@ -335,20 +335,33 @@ test('zn-gate check: on Windows, a changed /bin/sh entry is judged too, not hidd
 test('the ZCode plugin hook, started as ZCode starts it, runs no planted sh or node (relative or empty PATH entry)', (t) => {
   const { spawnSync } = require('child_process');
   const pluginRoot = path.join(__dirname, '..', '..', '..', 'plugins', 'zcode');
-  const pre = JSON.parse(asPowerShell(fs.readFileSync(REPO_HOOKS, 'utf8'))).hooks.PreToolUse[0].hooks[HI];
-  const args = pre.args.map((a) => a.split('${ZCODE_PLUGIN_ROOT}').join(pluginRoot));
+  const shipped = fs.readFileSync(REPO_HOOKS, 'utf8');
+  // On Windows both entries: the shipped cmd.exe one and the PowerShell one of earlier plugin versions.
+  const entries = [JSON.parse(asPowerShell(shipped)).hooks.PreToolUse[0].hooks[HI]];
+  if (!posix) entries.unshift(JSON.parse(shipped).hooks.PreToolUse[0].hooks[HI]);
   const { cwd, marker } = plantPrograms(t);
   const event = JSON.stringify({ hook_event_name: 'PreToolUse', cwd, tool_name: 'Read', tool_input: { file_path: path.join(cwd, '.env') } });
   const paths = posix ? ['.:/usr/bin:/bin', ':/usr/bin:/bin'] : ['.;' + SYSPATH, ';' + SYSPATH];
-  for (const PATH of paths) {
-    // ZCode gives the hook the plugin folder in ZCODE_PLUGIN_ROOT (the Windows entry reads its script there).
+  let args = [];
+  for (const pre of entries) for (const PATH of paths) {
+    args = pre.args.map((a) => a.split('${ZCODE_PLUGIN_ROOT}').join(pluginRoot));
+    const what = path.basename(pre.command) + ' ' + PATH;
+    // ZCode gives the hook the plugin folder in ZCODE_PLUGIN_ROOT (the Windows entry reads its script there). Few other
+    // variables, as a host with a small environment gives them: no LOCALAPPDATA (so no PowerShell module cache) and no
+    // ProgramFiles (so the cmd.exe entry takes its PowerShell path).
     const env = posix ? { PATH, HOME: cwd } : { PATH, SystemRoot: process.env.SystemRoot, USERPROFILE: cwd, ZCODE_PLUGIN_ROOT: pluginRoot };
+    const t0 = Date.now();
     const r = spawnSync(pre.command, args, { cwd, input: event, encoding: 'utf8', env, timeout: 40000, windowsHide: true });
-    assert.equal(r.error, undefined, PATH + ': ' + (r.error && r.error.message));
-    assert.equal(fs.existsSync(marker), false, PATH + ': planted ' + (fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim() : '') + ' ran');
+    const ms = Date.now() - t0;
+    // The hook may refuse before it reads its input; the write of the event then fails with EPIPE, which is not a failure here.
+    assert.ok(!r.error || r.error.code === 'EPIPE', what + ': ' + (r.error && r.error.message));
+    assert.equal(fs.existsSync(marker), false, what + ': planted ' + (fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim() : '') + ' ran');
     // This checkout has no verified zn-gate copy inside the plugin folder, so the hook refuses (exit 2), as it must:
     // never the planted program's exit 0.
-    assert.equal(r.status, 2, PATH + ': ' + r.stderr);
+    assert.equal(r.status, 2, what + ': ' + r.stderr);
+    // ZCode lets the call run when the hook takes 30 seconds: the answer comes well before the hook's 28 second deadline.
+    assert.ok(ms < 28000, what + ': the hook answered after ' + ms + ' ms');
+    t.diagnostic(what + ': ' + ms + ' ms');
   }
   if (!posix) return;
   // Before the fix: the same lookup by name picks the planted shell (what the review measured).
@@ -437,7 +450,7 @@ test('zn-gate check: only the PreToolUse hook the ZCode plugin ships counts; a d
       assert.equal(r.state, 'not-protected', hooks.toString());
       assert.ok(!r.verified);
       // On Windows a changed PowerShell entry is read as a program the plugin does not ship, and the one case that only changes the matcher as a hook that is not the shipped one.
-      assert.match(r.problem, posix ? /is not the hook the plugin ships \(`\/bin\/sh \$\{ZCODE_PLUGIN_ROOT\}\/scripts\/zn-hook\.sh PreToolUse`/ : /is not the Windows hook the plugin ships|is not the hook the plugin ships \(`powershell\.exe|a pattern the shell or the host expands/);
+      assert.match(r.problem, posix ? /is not the hook the plugin ships \(`\/bin\/sh \$\{ZCODE_PLUGIN_ROOT\}\/scripts\/zn-hook\.sh PreToolUse`/ : /is not the Windows hook the plugin ships|is not the hook the plugin ships \(`(?:cmd|powershell)\.exe \.\.\. scripts\/zn-hook\.(?:cmd|ps1) PreToolUse`|a pattern the shell or the host expands/);
       assert.match(r.fix, /install the zn-gate plugin again in ZCode/);
     }
   }

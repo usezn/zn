@@ -16,7 +16,10 @@
 # is Node.js 20.19 or later (21.7 or later on 21).
 #
 # Start deadline: the hooks of this plugin have a 30-second timeout and a call whose hook timed out ran, so after 28
-# seconds the hook answers like it does when the check fails and stops the Node.js it started.
+# seconds the hook answers like it does when the check fails and stops the Node.js it started. Every wait has a limit taken
+# from the time that is left. The script uses no PowerShell command (Get-Date, New-Object, Get-CimInstance, ...), only the
+# language and .NET: Windows PowerShell finds a command by reading its module folders, and without its module cache (a new
+# user, or a hook started with few environment variables) that alone can take most of the 30 seconds.
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -31,23 +34,25 @@ $Clock = [System.Diagnostics.Stopwatch]::StartNew()
 # line of that file (ZN_HOOK_T0, the time of day cmd.exe read there), whichever is earlier. ZN_HOOK_T0 can only make the
 # deadline shorter.
 try {
-  $Since = ((Get-Date) - [System.Diagnostics.Process]::GetCurrentProcess().StartTime).TotalSeconds
+  $Since = ([DateTime]::Now - [System.Diagnostics.Process]::GetCurrentProcess().StartTime).TotalSeconds
   if ([string]$env:ZN_HOOK_T0 -match '^\s*(\d{1,2})\D(\d{2})\D(\d{2})\D(\d{2})\s*$') {
     $t0 = [int]$Matches[1] * 3600 + [int]$Matches[2] * 60 + [int]$Matches[3] + [int]$Matches[4] / 100
-    $e = (Get-Date).TimeOfDay.TotalSeconds - $t0
+    $e = [DateTime]::Now.TimeOfDay.TotalSeconds - $t0
     if ($e -lt 0) { $e += 86400 }
     if ($e -gt $Since -and $e -lt 120) { $Since = $e }
   }
   $Deadline = [Math]::Max(0, $Deadline - [int][Math]::Ceiling($Since))
 } catch {}
 
+# The process ends here at once ([Environment]::Exit), also when a lookup given up at its time limit is still running in the
+# background.
 function Refuse([string]$why) {
   if (@('PreToolUse', 'PermissionRequest', 'UserPromptSubmit', '') -contains $ZEvent) {
     [Console]::Error.WriteLine('zn: ' + $why + ' This call was blocked because zn could not check it. Ask the user to fix it, or to turn off the zn-gate plugin in ZCode (Settings, Plugins).')
-    exit 2
+    [Environment]::Exit(2)
   }
   [Console]::Error.WriteLine('zn is NOT protecting this session: ' + $why)
-  exit 0
+  [Environment]::Exit(0)
 }
 
 function Left() { return [int][Math]::Max(0, ($Deadline * 1000) - $Clock.ElapsedMilliseconds) }
@@ -64,7 +69,7 @@ function Absolute([string]$p) { return ($p -match '^[A-Za-z]:[\\/]') -or ($p -ma
 # (CLAUDE_PROJECT_DIR, CURSOR_PROJECT_DIR) and the git work tree around the hook's folder, and any node_modules folder.
 # Your home folder and the drive root never count as the project: everything would be untrusted there.
 $HomeDir = Full $env:USERPROFILE
-$Roots = New-Object System.Collections.ArrayList
+$Roots = [System.Collections.ArrayList]::new()
 function AddRoot([string]$p) {
   if (-not $p) { return }
   $f = Full $p
@@ -95,7 +100,7 @@ function TrustedDir([string]$dir) {
 
 # Only absolute, trusted PATH entries, for this script and everything it starts: a relative or empty entry points into the
 # folder the session runs in (the project), where a node.exe of its own could have been placed.
-$Safe = New-Object System.Collections.ArrayList
+$Safe = [System.Collections.ArrayList]::new()
 foreach ($e in ([string]$env:PATH).Split(';')) {
   if ($e -and (Absolute $e) -and (TrustedDir $e)) { [void]$Safe.Add($e.TrimEnd('\', '/')) }
 }
@@ -117,7 +122,7 @@ function Stop-Tree($p) {
 }
 
 function New-Info([string]$file, [string]$arguments, [bool]$electron) {
-  $i = New-Object System.Diagnostics.ProcessStartInfo
+  $i = [System.Diagnostics.ProcessStartInfo]::new()
   $i.FileName = $file
   $i.Arguments = $arguments
   $i.UseShellExecute = $false
@@ -189,18 +194,38 @@ if (-not $Node) {
 # usually cmd.exe: shells and script hosts are skipped and the chain is walked up (at most 6 levels) to the first program that
 # is not one of them, the only one tried. Whatever is picked must still pass the probe above, which parses the version
 # Node.js prints.
+# The chain is read from WMI one process at a time (not a list of every process), in a runspace of its own: the hook waits
+# for it only until 2 seconds before its deadline, so a WMI service that is slow to answer or to start cannot hold the hook
+# past it (no parent is then tried, and the hook blocks).
 if (-not $Node) {
   $skip = @('cmd.exe', 'powershell.exe', 'pwsh.exe', 'conhost.exe', 'wscript.exe', 'cscript.exe', 'bash.exe', 'sh.exe', 'wsl.exe', 'explorer.exe', 'services.exe', 'svchost.exe', 'wininit.exe', 'winlogon.exe')
-  $byPid = @{}
-  try {
-    foreach ($pr in (Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId, ExecutablePath)) { $byPid[[int]$pr.ProcessId] = $pr }
-  } catch { $byPid = @{} }
-  $ppid = $PID
-  for ($lvl = 0; $lvl -lt 6 -and -not $Node; $lvl++) {
-    if (-not $byPid.ContainsKey($ppid)) { break }
-    $ppid = [int]$byPid[$ppid].ParentProcessId
-    if ($ppid -le 4 -or -not $byPid.ContainsKey($ppid)) { break }
-    $exe = [string]$byPid[$ppid].ExecutablePath
+  $chain = @()
+  $wait = (Left) - 2000
+  if ($wait -gt 0) {
+    try {
+      $lookup = [PowerShell]::Create([System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault2())
+      [void]$lookup.AddScript({
+        param([int]$id, [string[]]$skip)
+        # The program of each ancestor, from the parent of this process up, until the first one that is not a shell.
+        for ($n = 0; $n -lt 6; $n++) {
+          $row = $null
+          foreach ($o in ([wmisearcher]('SELECT ParentProcessId FROM Win32_Process WHERE ProcessId = ' + $id)).Get()) { $row = $o }
+          if (-not $row) { break }
+          $id = [int]$row.ParentProcessId
+          if ($id -le 4) { break }
+          $exe = $null
+          foreach ($o in ([wmisearcher]('SELECT ExecutablePath FROM Win32_Process WHERE ProcessId = ' + $id)).Get()) { $exe = [string]$o.ExecutablePath }
+          if ($null -eq $exe) { break }
+          [string]$exe
+          if ($exe -and -not ($skip -contains ([System.IO.Path]::GetFileName($exe).ToLowerInvariant()))) { break }
+        }
+      }).AddArgument($PID).AddArgument($skip)
+      $async = $lookup.BeginInvoke()
+      if ($async.AsyncWaitHandle.WaitOne($wait)) { $chain = @($lookup.EndInvoke($async)) }
+    } catch { $chain = @() }
+  }
+  for ($lvl = 0; $lvl -lt 6 -and $lvl -lt $chain.Count -and -not $Node; $lvl++) {
+    $exe = [string]$chain[$lvl]
     if (-not $exe -or -not (Absolute $exe)) { continue }
     if ($skip -contains ([System.IO.Path]::GetFileName($exe).ToLowerInvariant())) { continue }
     if (TryNode $exe) { $Node = $exe; $AppNode = $true }
