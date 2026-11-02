@@ -48,4 +48,11 @@ function cpuMsSince(start) {
   return (c.user + c.system) / 1000;
 }
 
-module.exports = { budget, scale, spin, hookTimeoutMs, cpuNow, cpuMsSince };
+// A limit that is looser on Windows, where file and process work of the same check takes several times longer than on
+// the Linux reference (a 90 KB patch took 1.5 s there, 100 KB of here-document 33 ms). It still fails a check that
+// became quadratic, which takes orders of magnitude longer.
+function budgetWin(limitMs, winLimitMs) {
+  return budget(process.platform === 'win32' ? winLimitMs : limitMs);
+}
+
+module.exports = { budget, budgetWin, scale, spin, hookTimeoutMs, cpuNow, cpuMsSince };

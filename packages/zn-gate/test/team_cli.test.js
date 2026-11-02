@@ -29,6 +29,7 @@ const { CODES } = require('../lib/errors');
 const policy = require('../lib/team/policy');
 const store = require('../lib/vault/store');
 const { runTeamCommand, runLogExport } = require('../lib/team/cli');
+const { winRe } = require('./helpers/wincmd');
 
 test.after(() => fs.rmSync(HOME, { recursive: true, force: true }));
 test.beforeEach(() => {
@@ -126,7 +127,7 @@ test('a failed join exits 1 and names the reason; a locked vault adds the unlock
   fake.teamJoin = async () => { throw Object.assign(new Error('vault is locked'), { code: CODES.LOCKED }); };
   r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'd'.repeat(32) } }));
   assert.strictEqual(r.code, 1);
-  assert.match(r.stderr, /^\[zn\] vault is locked; run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`\n$/);
+  assert.match(r.stderr, winRe(/^\[zn\] vault is locked; run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`\n$/));
   // A message that already says how to unlock is not given the hint a second time.
   fake.teamJoin = async () => { throw Object.assign(new Error('vault is locked; run `zn unlock`'), { code: CODES.LOCKED }); };
   r = await capture(() => runTeamCommand(['team', 'join'], { env: { ZN_TEAM_JOIN_TOKEN: 'znj_' + 'd'.repeat(32) } }));
@@ -202,7 +203,7 @@ test('status with a locked vault reads the copies on disk and says the vault is 
   assert.strictEqual(r.code, 0);
   assert.match(r.stdout, /Organization: Example Org \(org_Example12345678\)/);
   assert.match(r.stdout, /Policy:       none received yet/);
-  assert.match(r.stdout, /The vault is locked: policy downloads and uploads resume after `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`\./);
+  assert.match(r.stdout, winRe(/The vault is locked: policy downloads and uploads resume after `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`\./));
   r = await capture(() => runTeamCommand(['team', 'status', '--json']));
   const j = JSON.parse(r.stdout);
   assert.strictEqual(j.joined, true);
@@ -291,7 +292,7 @@ test('sync with a locked vault exits 1 with the unlock hint', async () => {
   fake.teamSync = async () => { throw Object.assign(new Error('the vault is not running'), { code: CODES.LOCKED }); };
   const r = await capture(() => runTeamCommand(['team', 'sync']));
   assert.strictEqual(r.code, 1);
-  assert.match(r.stderr, /^\[zn\] the vault is not running; run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`\n$/);
+  assert.match(r.stderr, winRe(/^\[zn\] the vault is not running; run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock`\n$/));
 });
 
 test('join asks to send the earlier audit log only with --include-history', async () => {

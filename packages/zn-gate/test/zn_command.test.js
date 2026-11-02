@@ -4,10 +4,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { znCommand, znOnPath, PACKAGE_VERSION } = require('../lib/zn-command');
+const { znCommand, znOnPath, cliName, PACKAGE_VERSION } = require('../lib/zn-command');
 
 const isWin = process.platform === 'win32';
-const npx = 'npx -y zn-gate@' + PACKAGE_VERSION;
+const zn = cliName('zn');
+const npx = cliName('npx') + ' -y zn-gate@' + PACKAGE_VERSION;
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'zn-command-'));
@@ -31,8 +32,8 @@ test('uses the short form when zn is on PATH', () => {
     fakeZn(dir);
     const env = envFor([dir]);
     assert.equal(znOnPath(env), true);
-    assert.equal(znCommand('env shadow .env', { env }), 'zn env shadow .env');
-    assert.equal(znCommand('', { env }), 'zn');
+    assert.equal(znCommand('env shadow .env', { env }), zn + ' env shadow .env');
+    assert.equal(znCommand('', { env }), zn);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -78,7 +79,7 @@ test('finds zn in a later absolute PATH entry', () => {
   try {
     fakeZn(dir);
     const env = envFor([empty, dir]);
-    assert.equal(znCommand('status', { env }), 'zn status');
+    assert.equal(znCommand('status', { env }), zn + ' status');
   } finally {
     fs.rmSync(empty, { recursive: true, force: true });
     fs.rmSync(dir, { recursive: true, force: true });

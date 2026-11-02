@@ -337,17 +337,21 @@ test('zn-gate check: a ZCode process hook counts only as an absolute sh or node 
     for (const groups of Object.values(j.hooks)) for (const g of groups) for (const x of g.hooks) { x.command = cmd; x.args = args(x.args); }
     return JSON.stringify(j);
   };
+  // A case marked posixOnly changes the /bin/sh entry, which the plugin ships for macOS and Linux: on Windows that entry is not
+  // judged at all (the PowerShell entry is), so there the same edit is not a failure. The Windows reading of such edits is the
+  // test 'on Windows, a changed /bin/sh entry is judged too'.
   const cases = [
     [swap('/usr/bin/env', (a) => ['sh', ...a]), /`env`, which looks the program/],
-    [swap('/bin/sh', (a) => ['-c', 'sh ' + a.join(' ')]), /code given inline \(`sh -c`\)/],
-    [swap('/bin/sh', (a) => ['-o', 'errexit', '-c', 'sh ' + a.join(' ')]), /code given inline \(`sh -c`\)/],
+    [swap('/bin/sh', (a) => ['-c', 'sh ' + a.join(' ')]), /code given inline \(`sh -c`\)/, true],
+    [swap('/bin/sh', (a) => ['-o', 'errexit', '-c', 'sh ' + a.join(' ')]), /code given inline \(`sh -c`\)/, true],
     [swap('/usr/bin/nohup', (a) => ['sh', ...a]), /not a system shell running a script inside the plugin folder/],
-    [swap('/bin/sh', (a) => ['scripts/zn-hook.sh', a[1]]), /not a system shell running a script inside the plugin folder/],
-    [swap('/bin/sh', (a) => ['./scripts/zn-hook.sh', a[1]]), /not a system shell running a script inside the plugin folder/],
-    [swap('/bin/sh', () => ['-s']), /not a system shell running a script inside the plugin folder/],
-    [swap('/bin/sh', () => []), /not a system shell running a script inside the plugin folder/],
+    [swap('/bin/sh', (a) => ['scripts/zn-hook.sh', a[1]]), /not a system shell running a script inside the plugin folder/, true],
+    [swap('/bin/sh', (a) => ['./scripts/zn-hook.sh', a[1]]), /not a system shell running a script inside the plugin folder/, true],
+    [swap('/bin/sh', () => ['-s']), /not a system shell running a script inside the plugin folder/, true],
+    [swap('/bin/sh', () => []), /not a system shell running a script inside the plugin folder/, true],
   ];
-  for (const [hooks, re] of cases) {
+  for (const [hooks, re, posixOnly] of cases) {
+    if (posixOnly && !posix) continue;
     const home = tempDir(t, 'zn-zcp-wl-');
     installPlugin(home, { hooks });
     writeCfg(home, { plugins: { enabledPlugins: { [ID]: true } } });
@@ -370,6 +374,8 @@ test('zn-gate check: a ZCode hook with a non-system sh, a pattern, or a script l
     [(h) => h.split('scripts/zn-hook.sh').join('scripts/link.sh'), 'link', /not a file inside the plugin folder/],
   ];
   for (const [hooks, kind, re] of cases) {
+    // The link case edits the /bin/sh entry's script, which is not judged on Windows (its PowerShell entry runs zn-hook.ps1).
+    if (kind === 'link' && !posix) continue;
     const home = tempDir(t, 'zn-zcp-strict-');
     const root = installPlugin(home, { hooks });
     if (kind === 'link') {

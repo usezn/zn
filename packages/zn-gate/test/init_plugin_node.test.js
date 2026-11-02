@@ -15,6 +15,7 @@ const { check, _internal } = require('../lib/check');
 const { tempDir } = require('./helpers/tmp');
 const { writePluginManifest } = require('./helpers/claude_plugin');
 const { WIN, gitBashExe } = require('./helpers/git_bash');
+const { winCmd, winCmdRe } = require('./helpers/wincmd');
 
 // On Windows the zn-gate plugin of Claude Code runs in Git Bash. These tests run there with a Git Bash given the way Claude Code
 // documents (CLAUDE_CODE_GIT_BASH_PATH), and are skipped only when the computer has none; the Windows tests without Git Bash are below.
@@ -84,7 +85,7 @@ test('init: the skipped plugin is said in one line, once', async (t) => {
   const lines = out.split('\n').filter((l) => /plugin skipped/.test(l));
   assert.equal(lines.length, 1);
   assert.match(lines[0], /^Claude Code plugin skipped: it needs Node\.js 20\.19 or later \(you have 18\.19\.0\)\./);
-  assert.match(out, /zn hooks install claude-code/);
+  assert.match(out, winCmdRe(/zn hooks install claude-code/));
   assert.doesNotMatch(out, /claude plugin install/);
 });
 
@@ -115,13 +116,13 @@ test('init (interactive): a plugin on an older Node.js: hooks installed, checked
     // The run stand-in does what the real commands do: the hooks are written, the plugin switch is only recorded.
     run: (step) => {
       order.push(step.manual);
-      if (/^zn hooks install/.test(step.manual)) {
+      if (winCmdRe(/^zn hooks install/).test(step.manual)) {
         getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
       }
       return true;
     },
   });
-  assert.deepEqual(order, ['zn hooks install claude-code', 'claude plugin disable zn-gate@usezn']);
+  assert.deepEqual(order, [winCmd('zn hooks install claude-code'), 'claude plugin disable zn-gate@usezn']);
   assert.match(out, /check that zn's hooks for Claude Code work now: yes/);
   assert.ok(out.indexOf('plugin will be turned off') < out.indexOf('check that zn'), 'the plan comes first');
   assert.ok(out.indexOf('Claude Code plugin turned off;') > out.indexOf('check that zn'), 'the confirmation comes after the steps');
@@ -142,7 +143,7 @@ test('init: the plugin is only said to be turned off when it was; declined, or w
   await guide({
     ...m, nodeVersion: '18.19.0', stdin: { isTTY: true }, write: (s) => { out += s; }, confirm: async () => true,
     run: (step) => {
-      if (/^zn hooks install/.test(step.manual)) getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
+      if (winCmdRe(/^zn hooks install/).test(step.manual)) getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
       return !/plugin disable/.test(step.manual);
     },
   });
