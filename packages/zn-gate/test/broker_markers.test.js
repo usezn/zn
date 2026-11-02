@@ -80,7 +80,7 @@ const os = require('os');
 const path = require('path');
 
 function tmpProject() {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-markers-')));
+  return fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-markers-')));
 }
 
 test('markers written to a project file are read back and substituted', () => {
@@ -138,6 +138,17 @@ test('an empty file has no markers and is returned unchanged', () => {
     const text = fs.readFileSync(file, 'utf8');
     assert.deepEqual(m.findMarkers(text), []);
     assert.equal(m.substitute(text, new Map([['A', 'x']])), '');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a path that does not exist under the temp folder still counts as inside it, in every form of the temp folder name', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-markers-'));
+  try {
+    for (const base of [dir, fs.realpathSync.native(dir)]) {
+      assert.match(m.checkResolvedExecutable(path.join(base, 'no-such-folder', 'tool')), /temp directory/, base);
+    }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
