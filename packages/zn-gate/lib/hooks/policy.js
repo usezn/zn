@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-01.1';
+const POLICY_RULES_VERSION = '2026-11-02.31';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -362,7 +362,9 @@ function classifyResolved(abs, ctx) {
   // protect the whole home folder.
   if (ctx.znHome) {
     const zh = keyOf(slash(ctx.znHome)).replace(/\/+$/, '');
-    const wide = zh.length <= 3 || homes.some((x) => x.replace(/\/+$/, '') === zh);
+    // Only the root of a file system (/, a drive such as C:/, a network share) is refused, so a short folder such as /zn is protected.
+    const fsRoot = keyOf(slash(path.parse(ctx.znHome).root)).replace(/\/+$/, '');
+    const wide = zh === '' || zh === fsRoot || homes.some((x) => x.replace(/\/+$/, '') === zh);
     if (!wide && (s === zh || s.startsWith(zh + '/'))) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ZN_HOME' };
   }
   for (const [re, reason] of AGENT_CONFIG_RES) if (ci(re).test(s)) return { kind: 'agent_config', reason };

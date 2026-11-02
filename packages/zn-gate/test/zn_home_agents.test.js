@@ -66,6 +66,29 @@ test('policy: a ZN_HOME that is the home folder does not protect the whole home 
   assert.equal(policy.writeDenial(path.join(home, 'notes.txt'), { home, cwd: proj, env: { ZN_HOME: home } }), null);
 });
 
+test('policy: a short ZN_HOME such as /zn is protected; only a file system root is not taken', { skip: process.platform === 'win32' }, (t) => {
+  const { home, proj } = setup(t);
+  const opts = { home, cwd: proj, env: { ZN_HOME: '/zn' } };
+  assert.ok(policy.writeDenial('/zn/config.json', opts), 'write into a short ZN_HOME');
+  assert.ok(policy.writeDenial('/zn', opts), 'the short ZN_HOME folder itself');
+  assert.ok(policy.readDenial('/zn/config.json', opts), 'read of a short ZN_HOME');
+  assert.ok(policy.bashDenial('echo x > /zn/config.json', opts), 'shell redirect into a short ZN_HOME');
+  assert.equal(policy.writeDenial('/znx/config.json', opts), null, 'a folder that only starts the same stays free');
+  for (const root of ['/', '//']) {
+    assert.equal(policy.writeDenial(path.join(proj, 'a.txt'), { home, cwd: proj, env: { ZN_HOME: root } }), null, root);
+  }
+});
+
+test('policy: a short Windows ZN_HOME such as C:/zn is protected; a drive root is not taken', { skip: process.platform !== 'win32' }, (t) => {
+  const { home, proj } = setup(t);
+  const drive = path.parse(proj).root;
+  const zh = drive + 'zn';
+  const opts = { home, cwd: proj, env: { ZN_HOME: zh } };
+  assert.ok(policy.writeDenial(path.join(zh, 'config.json'), opts), 'write into a short ZN_HOME');
+  assert.ok(policy.writeDenial(zh.toLowerCase() + '/config.json', opts), 'another spelling of the same folder');
+  assert.equal(policy.writeDenial(path.join(proj, 'a.txt'), { home, cwd: proj, env: { ZN_HOME: drive } }), null, 'drive root');
+});
+
 test('Codex: a patch that adds a file into ZN_HOME is refused, the same as one into ~/.zn', async (t) => {
   const { home, proj, zhome } = setup(t);
   await withZnHome(zhome, async () => {
