@@ -133,3 +133,16 @@ test('znStateFile picks the first file in ~/.zn or ZN_HOME, and none otherwise',
     assert.equal(znStateFile([path.join(zhome, 'c.json')], proj, home), undefined);
   });
 });
+
+test('policy: the deny message names the folder zn really uses', { skip: process.platform === 'win32' }, (t) => {
+  const { home, proj } = setup(t);
+  const plain = policy.writeDenial(path.join(home, '.zn', 'config.json'), { home, cwd: proj, env: {} });
+  assert.match(plain, /^zn blocked this: ~\/\.zn is where zn keeps your secrets/);
+  const moved = policy.writeDenial('/zn/config.json', { home, cwd: proj, env: { ZN_HOME: '/zn' } });
+  assert.match(moved, /^zn blocked this: \/zn \(set by ZN_HOME; ~\/\.zn is protected too\) is where zn keeps your secrets/);
+  const inHome = policy.bashDenial('echo x > ' + path.join(home, 'state', 'config.json'), { home, cwd: proj, env: { ZN_HOME: path.join(home, 'state') } });
+  assert.match(inHome, /^zn blocked this: ~\/state \(set by ZN_HOME/);
+  const wide = policy.writeDenial(path.join(home, '.zn', 'config.json'), { home, cwd: proj, env: { ZN_HOME: home } });
+  assert.match(wide, /^zn blocked this: ~\/\.zn is where/);
+  assert.match(policy.readDenial('/zn/vault.age', { home, cwd: proj, env: { ZN_HOME: '/zn' } }), /\/zn \(set by ZN_HOME/);
+});
