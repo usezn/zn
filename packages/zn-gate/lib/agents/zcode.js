@@ -191,8 +191,8 @@ function normalize(raw) {
     if (!text) return unreadable('the patch');
     const tooLong = text.length > PATCH_SCAN_CAP;
     const scan = tooLong ? { files: [], suspicious: false } : patchScan(text);
-    const home = require('../home').homeDir();
-    const zn = scan.files.find((f) => path.resolve(cwd, f).replace(/\\/g, '/').startsWith(path.join(home, '.zn').replace(/\\/g, '/')));
+    const home = require('../home').analysisHome();
+    const zn = require('./codex').znStateFile(scan.files, cwd, home);
     return {
       ...ev, tool: 'write', input: { paths: scan.files, path: zn || scan.files[0], tooLong, unparsed: !tooLong && (scan.files.length === 0 || scan.suspicious), texts: [] },
     };
