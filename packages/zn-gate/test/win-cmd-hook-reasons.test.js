@@ -46,6 +46,8 @@ test('antigravity install on win32: the install warnings name zn-gate.cmd check'
   assert.ok(winText.includes('Run `zn-gate.cmd check` to see that the hook works.'));
   assert.doesNotMatch(winText, /[^.\w]zn-gate check/);
 
+  // The POSIX half needs a POSIX path: a Windows temp folder (C:\\...) is never one Antigravity can start there.
+  if (process.platform === 'win32') return;
   const posix = getAdapter('antigravity').install({ ...opts, home: tempDir(t, 'zn-b2304-'), platform: 'linux' });
   const posixText = posix.warnings.join('\n');
   assert.ok(posixText.includes('Run `zn-gate check` to see that the hook works.'));
