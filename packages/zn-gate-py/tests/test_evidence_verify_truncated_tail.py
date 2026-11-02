@@ -96,3 +96,72 @@ def test_cli_still_reports_tamper_for_hash_mismatch(capsys):
     err = capsys.readouterr().err
     assert "Tamper detected:" in err
     assert "INCOMPLETE" not in err
+
+
+def _tail_case(tmp_path, mutate, incomplete):
+    p = _ledger(tmp_path)
+    mutate(p)
+    res = verify_evidence_ledger(p)
+    assert res["valid"] is False
+    if incomplete:
+        assert res["truncated_tail"] is True
+        assert INCOMPLETE in res["error"]
+    else:
+        assert "truncated_tail" not in res
+        assert INCOMPLETE not in res["error"]
+
+
+def _last_start(text):
+    return text[:-1].rfind("\n") + 1
+
+
+def _append(p, s):
+    _write_bytes(p, _read_bytes(p) + s.encode("utf-8"))
+
+
+def test_garbage_with_trailing_newline_is_tamper(tmp_path):
+    _tail_case(tmp_path, lambda p: _append(p, "garbage\n"), False)
+
+
+def test_fake_unfinished_record_with_trailing_newline_is_tamper(tmp_path):
+    _tail_case(tmp_path, lambda p: _append(p, '{"id":"ev_fake","timestamp":"20\n'), False)
+
+
+def test_cut_off_record_that_ends_with_newline_is_tamper(tmp_path):
+    def m(p):
+        t = _read_bytes(p).decode("utf-8")
+        _write_bytes(p, (t[:-41] + "\n").encode("utf-8"))
+    _tail_case(tmp_path, m, False)
+
+
+def test_last_record_edited_valid_json_is_tamper(tmp_path):
+    def m(p):
+        t = _read_bytes(p).decode("utf-8")
+        i = _last_start(t)
+        _write_bytes(p, (t[:i] + t[i:].replace("example-2", "example-X")).encode("utf-8"))
+    _tail_case(tmp_path, m, False)
+
+
+def test_last_record_edited_invalid_json_is_tamper(tmp_path):
+    def m(p):
+        t = _read_bytes(p).decode("utf-8")
+        _write_bytes(p, t.replace("example-2", 'example-2"{').encode("utf-8"))
+    _tail_case(tmp_path, m, False)
+
+
+def test_non_record_text_without_newline_is_tamper(tmp_path):
+    _tail_case(tmp_path, lambda p: _append(p, "garbage"), False)
+
+
+def test_invalid_json_not_starting_like_a_record_without_newline_is_tamper(tmp_path):
+    def m(p):
+        t = _read_bytes(p).decode("utf-8")
+        _write_bytes(p, (t[:_last_start(t)] + '{"foo":"bar').encode("utf-8"))
+    _tail_case(tmp_path, m, False)
+
+
+def test_genuine_cut_is_still_incomplete(tmp_path):
+    def m(p):
+        t = _read_bytes(p)
+        _write_bytes(p, t[:-60])
+    _tail_case(tmp_path, m, True)

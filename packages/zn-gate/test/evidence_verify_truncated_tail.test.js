@@ -102,3 +102,50 @@ test('evidence --verify prints the incomplete-record explanation and exits 1', (
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+// A cut-off line counts only if it is the last line, the file does not end with a newline and the
+// line starts like a written record. Everything else is tamper.
+function tailCase(name, mutate, incomplete) {
+  test(name, () => {
+    const { dir, file } = tmpLedger(3);
+    try {
+      mutate(file);
+      const v = verifyEvidenceLedger(file);
+      assert.equal(v.valid, false);
+      if (incomplete) {
+        assert.equal(v.truncated_tail, true);
+        assert.match(v.error, INCOMPLETE);
+      } else {
+        assert.equal(v.truncated_tail, undefined);
+        assert.doesNotMatch(v.error, INCOMPLETE);
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+const lastLineStart = (text) => text.slice(0, -1).lastIndexOf('\n') + 1;
+
+tailCase('garbage line with a trailing newline is tamper', (f) => fs.appendFileSync(f, 'garbage\n'), false);
+tailCase('a fake unfinished record with a trailing newline is tamper', (f) => fs.appendFileSync(f, '{"id":"ev_fake","timestamp":"20\n'), false);
+tailCase('a cut-off record that still ends with a newline is tamper', (f) => {
+  const t = fs.readFileSync(f, 'utf8');
+  fs.writeFileSync(f, t.slice(0, -41) + '\n');
+}, false);
+tailCase('last record edited, still valid JSON, is tamper', (f) => {
+  const t = fs.readFileSync(f, 'utf8');
+  fs.writeFileSync(f, t.slice(0, lastLineStart(t)) + t.slice(lastLineStart(t)).replace('example-2', 'example-X'));
+}, false);
+tailCase('last record edited into invalid JSON (newline kept) is tamper', (f) => {
+  const t = fs.readFileSync(f, 'utf8');
+  fs.writeFileSync(f, t.replace('example-2', 'example-2"{'));
+}, false);
+tailCase('non-record text without a trailing newline is tamper', (f) => fs.appendFileSync(f, 'garbage'), false);
+tailCase('invalid JSON that does not start like a record, no newline, is tamper', (f) => {
+  const t = fs.readFileSync(f, 'utf8');
+  fs.writeFileSync(f, t.slice(0, lastLineStart(t)) + '{"foo":"bar');
+}, false);
+tailCase('a genuine cut (prefix of a real record, no trailing newline) is incomplete', (f) => {
+  const t = fs.readFileSync(f, 'utf8');
+  fs.writeFileSync(f, t.slice(0, -60));
+}, true);

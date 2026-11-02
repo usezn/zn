@@ -498,6 +498,28 @@ def _build_record(event: Dict[str, Any], prev_hash: str) -> Dict[str, Any]:
 TRUNCATED_TAIL_MESSAGE = "Last record is incomplete (the write was cut off, for example by a crash or a full disk)"
 
 
+# A last line that is not JSON counts as a write cut off by a crash or a full disk only if it is
+# the last line, the file does not end with a newline (every complete write does), and the line
+# starts like a written record. Anything else stays a tamper report.
+_RECORD_START = '{"id":"ev_'
+
+
+def _ends_with_newline(file_path: str) -> bool:
+    try:
+        with open(file_path, "rb") as f:
+            size = f.seek(0, os.SEEK_END)
+            if size == 0:
+                return True
+            f.seek(size - 1)
+            return f.read(1) == b"\n"
+    except OSError:
+        return True
+
+
+def _is_cut_tail(file_path: str, line: str) -> bool:
+    return line.startswith(_RECORD_START) and not _ends_with_newline(file_path)
+
+
 def _truncated_tail_result(total: int, index: int) -> Dict[str, Any]:
     return {
         "valid": False,
@@ -530,7 +552,7 @@ def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
         try:
             rec = json.loads(line)
         except Exception as e:
-            if i == len(lines) - 1:
+            if i == len(lines) - 1 and _is_cut_tail(file_path, line):
                 return _truncated_tail_result(len(lines), i)
             return {
                 "valid": False,

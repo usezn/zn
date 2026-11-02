@@ -496,9 +496,30 @@ function buildRecord(event, prevHash, plainPreview = false) {
   return { ...baseRecord, record_hash: recordHash };
 }
 
-// The last line of a ledger that is not JSON is most likely a write cut off by a crash or a full
-// disk. It is still reported as not verified (valid: false), but with truncated_tail: true so
-// the output can say so and explain how to continue. Any other problem stays a tamper report.
+// A last line that is not JSON counts as a write cut off by a crash or a full disk only if it is
+// the last line, the file does not end with a newline (every complete write does), and the line
+// starts like a written record. It is still reported as not verified (valid: false), but with
+// truncated_tail: true so the output can say so and explain how to continue. Anything else
+// (text with a trailing newline, an edited record, text that is not a record) stays a tamper report.
+const RECORD_START = '{"id":"ev_';
+function endsWithNewline(filePath) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const size = fs.fstatSync(fd).size;
+    if (size === 0) return true;
+    const b = Buffer.alloc(1);
+    fs.readSync(fd, b, 0, 1, size - 1);
+    return b[0] === 0x0a;
+  } catch {
+    return true;
+  } finally {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch { /* ignore */ }
+  }
+}
+function isCutTail(filePath, line) {
+  return line.startsWith(RECORD_START) && !endsWithNewline(filePath);
+}
 const TRUNCATED_TAIL_MESSAGE = 'Last record is incomplete (the write was cut off, for example by a crash or a full disk)';
 function truncatedTailResult(total, index) {
   return {
@@ -539,7 +560,7 @@ function verifyEvidenceLedger(filePath = EVIDENCE_FILE) {
     try {
       rec = JSON.parse(lines[i]);
     } catch (e) {
-      if (i === lines.length - 1) return truncatedTailResult(lines.length, i);
+      if (i === lines.length - 1 && isCutTail(filePath, lines[i])) return truncatedTailResult(lines.length, i);
       return { valid: false, total: lines.length, verified: i, broken_index: i, error: `Malformed JSON at line ${i + 1}: ${e.message}` };
     }
     if (rec === null || typeof rec !== 'object' || Array.isArray(rec)) {
