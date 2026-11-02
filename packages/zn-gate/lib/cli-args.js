@@ -143,7 +143,7 @@ function simpleOptionSpec(args) {
     if (first === 'vault' && second === 'log' && third === 'export') key = 'vault log export';
   }
   if (!Object.prototype.hasOwnProperty.call(SIMPLE_OPTIONS, key)) return null;
-  const code = /^(secret|env|vault log)( |$)/.test(key) ? 64 : 2;
+  const code = /^(secret|env) /.test(key) || key === 'vault log' ? 64 : 2;
   return { label: key, options: SIMPLE_OPTIONS[key], code };
 }
 
@@ -152,7 +152,8 @@ function simpleOptionSpec(args) {
 function simpleOptionProblem(args) {
   const spec = simpleOptionSpec(args);
   if (!spec) return null;
-  const allowed = ['-h', '--help', '-V', '--version'].concat(spec.options);
+  // --verbose is a global option (docs/cli.md), so every command accepts it.
+  const allowed = ['-h', '--help', '-V', '--version', '--verbose'].concat(spec.options);
   for (let i = 1; i < args.length; i++) {
     const tok = args[i];
     if (tok === '--') break;

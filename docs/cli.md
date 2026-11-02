@@ -126,7 +126,7 @@ Shows that zn stops your agent from reading a fake secret, in a temporary folder
 
 Aliases: `doctor`.
 
-Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`.
+Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. `2` an option the command does not take. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`.
 
 ### `status`
 
@@ -142,7 +142,7 @@ Shows the version, the rules version, whether the optional cloud check is on and
 zn-gate test
 ```
 
-Runs the local self-test on built-in examples (attacks and ordinary developer text). It never uses the network. Exit codes: `0` all passed, `1` at least one example failed.
+Runs the local self-test on built-in examples (attacks and ordinary developer text). It never uses the network. Exit codes: `0` all passed, `1` at least one example failed, `2` an option the command does not take.
 
 ### `version`
 
@@ -150,7 +150,7 @@ Runs the local self-test on built-in examples (attacks and ordinary developer te
 zn-gate version
 ```
 
-Prints the version and the versions of the rules. Exit code `0`. `-V` and `--version` do the same.
+Prints the version and the versions of the rules. Exit code `0`, or `2` when you give an option the command does not take. `-V` and `--version` do the same.
 
 ### `connect`
 
@@ -537,7 +537,7 @@ Runs zn-gate as an MCP server (stdio) with the tools `analyze_prompt`, `check_to
 zn-gate shield -- <command> [args...]
 ```
 
-Wraps any external MCP server and checks its traffic. Example: `zn-gate shield -- uvx mcp-server-fetch`. Exit code `1` when no command is given, or when the program cannot be started (it is not installed, not on your `PATH`, or not executable); in that case it prints which program is missing and how to install it. Otherwise it ends when the wrapped server ends.
+Wraps any external MCP server and checks its traffic. Example: `zn-gate shield -- uvx mcp-server-fetch`. Exit code `2` when you give an option before `--` that the command does not take. Exit code `1` when no command is given, or when the program cannot be started (it is not installed, not on your `PATH`, or not executable); in that case it prints which program is missing and how to install it. Otherwise it ends when the wrapped server ends.
 
 Aliases: `mcp-shield`, `wrap`.
 
