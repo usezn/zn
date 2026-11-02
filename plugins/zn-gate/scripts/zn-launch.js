@@ -684,9 +684,13 @@ function refuseHook(why) {
     hook.refusal = { pass: true, msg: 'zn plugin: ' + why + ' Event passed through (hooks.whenUnavailable is "allow").' };
     return;
   }
-  const msg = 'zn plugin: ' + why + ' Until then zn cannot check this call, so it is refused. ' +
-    'To let events pass while zn-gate is unavailable, set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.';
+  const msg = refusalText(why);
   hook.refusal = { msg, ...refusalFor(msg) };
+}
+
+function refusalText(why) {
+  return 'zn plugin: ' + why + ' Until then zn cannot check this call, so it is refused. ' +
+    'To let events pass while zn-gate is unavailable, set {"hooks": {"whenUnavailable": "allow"}} in ~/.zn/config.json.';
 }
 
 function writeAll(fd, data) {
@@ -819,15 +823,47 @@ function hookElapsedMs() {
   return ms;
 }
 
+/*
+ * A timer only fires when this thread is free. Work that keeps it busy (a read of stdin that never ends, or zn-gate stuck in
+ * code that never returns) would hold the answer past the agent's timeout, so a watchdog thread backs the timer up: if the
+ * process is still running HOOK_WATCHDOG_GRACE_MS after the deadline, it writes the refusal to stderr and ends the process
+ * at once. The exit code is then not 2 (1 on Windows, a kill signal elsewhere); the plugin's hook scripts block on any exit
+ * code other than 0 and 2. With hooks.whenUnavailable "allow" there is no watchdog: the agent's own timeout lets the call run.
+ */
+const HOOK_WATCHDOG_GRACE_MS = 700;
+const WATCHDOG_SOURCE = "'use strict';\n" +
+  "const { workerData } = require('worker_threads');\n" +
+  "const fs = require('fs');\n" +
+  "setTimeout(() => {\n" +
+  "  try { fs.writeSync(2, workerData.msg); } catch (_) { /* nothing more can be done */ }\n" +
+  "  process.kill(process.pid, 'SIGKILL');\n" +
+  "}, workerData.ms);\n";
+
+function startHookWatchdog(ms, why) {
+  if (whenUnavailableAllows()) return;
+  try {
+    const { Worker } = require('worker_threads');
+    const w = new Worker(WATCHDOG_SOURCE, { eval: true, workerData: { ms, msg: refusalText(why) + '\n' }, env: {}, stdout: true, stderr: true });
+    w.on('error', () => { /* the timer on this thread still applies */ });
+    // The watchdog never keeps the process alive: a hook that has answered exits as before.
+    w.unref();
+  } catch (_) {
+    // No worker thread (an unusual build of Node.js): the timer on this thread still applies.
+  }
+}
+
 function armHookDeadline(agent) {
   const limit = HOOK_DEADLINE_MS[agent];
   if (!limit) return;
+  const why = 'zn-gate did not answer within ' + limit / 1000 + ' seconds of the start of the hook.';
+  const left = Math.max(0, limit - hookElapsedMs());
   const timer = setTimeout(() => {
-    refuseHook('zn-gate did not answer within ' + limit / 1000 + ' seconds of the start of the hook.');
+    refuseHook(why);
     process.exit(2);
-  }, Math.max(0, limit - hookElapsedMs()));
+  }, left);
   // The deadline never keeps the process alive: a hook that has answered exits as before.
   timer.unref();
+  startHookWatchdog(left + HOOK_WATCHDOG_GRACE_MS, why);
 }
 
 function runHook(agent) {
