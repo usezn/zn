@@ -25,8 +25,8 @@ A command that succeeds exits with `0`. A command that is not listed here with a
 | `status` | `0` | Always `0`. |
 | `test` | `0`, `1` | `0` all built-in examples passed; `1` at least one failed. |
 | `version` | `0` | Always `0`. |
-| `connect` | `0`, `1`, `2` | `0` connected or already connected; `1` nothing was saved; `2` the command was used wrongly. |
-| `disconnect` | `0`, `1`, `2` | `0` the local setting was removed or there was nothing to remove; `1` something was not done; `2` the command was used wrongly. |
+| `connect` | `0`, `1`, `2` | `0` connected or already connected; `1` nothing was saved, including when `~/.zn/config.json` exists but cannot be used (for example it is not valid JSON): the file is left as it was; `2` the command was used wrongly. |
+| `disconnect` | `0`, `1`, `2` | `0` the local setting was removed or there was nothing to remove; `1` something was not done, including when `~/.zn/config.json` exists but cannot be used (for example it is not valid JSON): the file is left as it was; `2` the command was used wrongly. |
 
 ## Scan and review
 
@@ -66,7 +66,8 @@ A command that succeeds exits with `0`. A command that is not listed here with a
 |---|---|---|
 | `evidence --verify` | `1` | `1` when the SHA-256 chain was changed. |
 | `stats` | `0`, `2` | `0` done; `2` wrong usage. |
-| `stats share on` | `1` | `1` when you do not confirm. |
+| `stats share on` | `1` | `1` when you do not confirm, or when `~/.zn/config.json` exists but cannot be used (for example it is not valid JSON): the file is left as it was. |
+| `stats share off` | `1` | `1` when `~/.zn/config.json` exists but cannot be used (for example it is not valid JSON): the file is left as it was. |
 | `report` | `0`, `2` | `0` done; `2` wrong usage. |
 
 ## zn Team

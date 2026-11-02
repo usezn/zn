@@ -164,7 +164,7 @@ If you are already connected, it says so and changes nothing. `--reconnect` repl
 
 Problems are printed on the error output, in plain words with one next step. If usezn.com cannot be reached (no internet connection) or is not answering, nothing is saved and the message tells you to check your connection or try again in a few minutes. If a setting of your terminal could change how the key travels (for example `NODE_OPTIONS`), the message names it and says how to remove it. If the computer has no system keychain and the vault is locked, the message tells you to run `unlock` first and then `connect` again.
 
-Exit codes: `0` connected (or already connected), `1` nothing was saved (you said no, cancelled, the key was not accepted, the key could not be checked or stored, or there is no terminal), `2` the command was used wrongly (an option it does not know, or the key on the command line).
+Exit codes: `0` connected (or already connected), `1` nothing was saved (you said no, cancelled, the key was not accepted, the key could not be checked or stored, there is no terminal, or `~/.zn/config.json` exists but cannot be used (for example it is not valid JSON)), `2` the command was used wrongly (an option it does not know, or the key on the command line). When the settings file cannot be used, `connect` says so before it stores anything and leaves the file as it was.
 
 ### `disconnect`
 
@@ -176,7 +176,7 @@ Turns the cloud check off and removes the saved key from this computer. Unless y
 
 It always removes zn's own connect setting, so `connect` no longer says you are connected. If the system keychain cannot be reached, zn says so, and tells you to delete the item named `zn-cloud` in your keychain app and to revoke the key at usezn.com/api-keys. That case still exits `0`. If the key is kept in the zn vault and the vault is locked, nothing is removed: unlock the vault and run the command again.
 
-Exit codes: `0` the local setting was removed (or there was nothing to remove), `1` something was not done (no terminal, the vault is locked, a revoke you asked for did not happen), `2` the command was used wrongly.
+Exit codes: `0` the local setting was removed (or there was nothing to remove), `1` something was not done (no terminal, the vault is locked, a revoke you asked for did not happen, or `~/.zn/config.json` exists but cannot be used (for example it is not valid JSON)), `2` the command was used wrongly. When the settings file cannot be used, nothing is removed or revoked and the file is left as it was.
 
 ## Scan and review
 
@@ -582,7 +582,7 @@ Controls the optional sharing of pseudonymous daily counts. It is off by default
 zn-gate stats share on
 ```
 
-Explains what would be shared and asks you to confirm. Exit `1` if you do not confirm.
+Explains what would be shared and asks you to confirm. Exit `1` if you do not confirm. Exit `1` too, without asking, if `~/.zn/config.json` exists but cannot be used (for example it is not valid JSON): zn-gate says why and leaves the file as it was.
 
 #### `stats share off`
 
@@ -590,7 +590,7 @@ Explains what would be shared and asks you to confirm. Exit `1` if you do not co
 zn-gate stats share off
 ```
 
-Turns sharing off.
+Turns sharing off. Exit `1` if `~/.zn/config.json` exists but cannot be used (for example it is not valid JSON): zn-gate says why and leaves the file as it was.
 
 #### `stats share status`
 
