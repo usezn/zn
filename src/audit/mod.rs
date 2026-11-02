@@ -175,9 +175,6 @@ pub fn payload_if_enabled(store_payloads: bool, payload: impl Into<String>) -> O
     }
 }
 
-/// Plain-English text for a database that could not be opened. The file
-/// system is asked what is wrong with the file, because the database library
-/// only says that it "unable to open database file".
 /// Creates the folder that holds the audit database when it is missing (the default `~/.zn` on a
 /// first start), readable only by the user on Unix (0700). A folder that exists is left as it is.
 fn create_db_folder(db_path: &str) -> Result<()> {
@@ -204,6 +201,9 @@ fn create_db_folder(db_path: &str) -> Result<()> {
     })
 }
 
+/// Plain-English text for a database that could not be opened. The file
+/// system is asked what is wrong with the file, because the database library
+/// only says that it "unable to open database file".
 fn audit_open_problem(db_path: &str, raw: &str) -> String {
     let probe = std::fs::OpenOptions::new()
         .append(true)
