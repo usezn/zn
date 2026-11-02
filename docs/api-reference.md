@@ -77,6 +77,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 - Options: `apiKey`, `apiUrl`, `stage` (`'v30'` or `'prod'`), `timeout` (**milliseconds**; default 4000, or 12000 for text over 1,000 characters), `localOnly`, `longInput` (`'windows'` or `'off'`), `strict`.
 - Returns: `Promise<{ verdict, confidence, rule, reason, engine, rules_version, mode, ... }>`. `mode` is `'hybrid-local-fastpath'` (a local rule blocked, no network), `'oss-local'` (cloud not enabled), or `'hybrid-cloud'` (the cloud answered; `secrets_redacted_before_upload` counts the redactions).
 - If the cloud call fails or no key can be read, it resolves with the local result, `mode: 'oss-local'`, `fallback: true` and `cloud_error` (a message). It does not throw.
+- If the service answers with a verdict other than allow or block, the result is a block with `rule: 'cloud:unknown-verdict'` (not a fallback).
 
 ### `analyzeLocal(text, options)`
 

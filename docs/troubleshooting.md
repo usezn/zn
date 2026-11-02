@@ -17,6 +17,7 @@ Run every command in your own terminal, not through your AI agent. New here? Sta
 - [Your agent ignores zn's hooks on a managed computer](#9-your-agent-ignores-zns-hooks-on-a-managed-computer)
 - ["the evidence log ... is damaged"](#10-the-evidence-log--is-damaged)
 - [The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)
+- [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
 - [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
 
 ## 1. Node.js is too old
@@ -92,6 +93,8 @@ More in [secrets](secrets.md). If it asks for a terminal to enter the passphrase
 
 **If `zn vault verify` says the audit log did not pass its check:** do not delete or edit the log. It is the record of what the vault did, and a change to it is what the check finds. Keep a copy of `~/.zn/audit.jsonl`, then open an issue; `zn vault verify` with `ZN_VERBOSE=1` prints the reason. If the message says the log "was changed behind the vault", and you have looked into it (for example you know a disk problem or a restore cut the log), run `zn vault verify --acknowledge` in your own terminal to accept the log as it is now; the warning stays in the log. If it says the log "does not verify on its own", the chain itself is broken and cannot be accepted.
 
+For the other messages of `zn unlock`, `zn lock` and `zn forget` (cancelled prompts, passphrases that do not match, `--ttl` and `--idle`, the clipboard), see [Messages from the vault commands](#messages-from-the-vault-commands-zn-unlock-zn-lock-zn-forget).
+
 **If you forgot the passphrase:** nobody can recover it, zn included. That is what keeps your secrets safe. After three wrong passphrases in a row (other errors do not count), `zn unlock` points you to the way out:
 
 ```text
@@ -139,6 +142,8 @@ Nothing was saved.
 1. Create a new analysis-only key on the connect page named in the message. Do not use a full-access key.
 2. Run `zn-gate connect` and paste the key at the hidden prompt. Never put the key on the command line.
 3. To turn the cloud check off at any time: `zn-gate disconnect`.
+
+For `Could not save the key` and everything about `disconnect` and `--revoke`, see [Messages from connect and disconnect](#messages-from-zn-gate-connect-and-zn-gate-disconnect).
 
 More in [connect](connect.md). You do not need `connect` to use zn-gate: without it everything stays on your machine.
 
@@ -629,6 +634,12 @@ MCP servers are tool servers your agent talks to. zn-shield sits between your ag
 
 **What to do:** keep the real value out of that file. For a header or URL value, use an environment variable your agent supports and keep the real value in your own shell settings. For other values, `zn secret set NAME`, then put `__ZN_NAME__` in the file. Rotate the value if the file was ever committed or shared.
 
+#### "usage: zn-gate pins approve `<server>`|--all" / "zn-gate pins approve runs only in your own terminal" / "Not approved: what you typed did not match" / "zn-gate pins: `<reason>`"
+
+**What happened:** `zn-gate pins approve` accepts the changed tools of an MCP server again, and only a person at a terminal may do that. The messages mean: the command needs a server name or `--all`; it ran somewhere other than your own terminal (for example through an agent); what you typed to confirm did not match; or the reason after `zn-gate pins:`. Nothing was approved.
+
+**What to do:** run `zn-gate pins` to see the servers and their full keys, then run `zn-gate pins approve <server>` (or `--all`) in your own terminal and type the confirmation exactly as asked. See also [shield tools changed](#zn-shield-tools-changed--zn-shield-tools-refused).
+
 ### A rule blocked text that looked like an attack
 
 #### "zn-gate blocked `<target>`. Reason: `<description>` (rule: `<id>`)"
@@ -687,9 +698,9 @@ To see where these rules apply, and what happens when the file is not valid, rea
 
 **What to do:** run `zn-gate --help` to see the commands. Examples: `zn-gate scan .`, `zn-gate scan . --format json`, `zn-gate analyze "some text"`.
 
-#### "[zn-gate] Fatal error"
+#### Any other message that ends a command with an error
 
-**What happened:** zn-gate stopped because of a problem it did not expect. The text after it says what.
+**What happened:** zn-gate stopped because of a problem it did not expect. It prints that problem's own message, with no zn-gate prefix, and exits with code 1. Run the command again with `ZN_VERBOSE=1` to see zn-gate's error code next to the message, when there is one.
 
 **Is it safe?** Nothing was changed by that failure.
 
@@ -727,6 +738,278 @@ your Copilot user settings have "disableAllHooks" turned on; the docs do not say
 **Is it safe?** The first line means protection is back on. For the second, check that zn still runs.
 
 **What to do:** for the first, nothing. For the second, remove the setting if you did not set it on purpose, then run `npx -y zn-gate check` again. The [check page](check.md#copilot-cli-settings-switch-the-hooks-off) explains the other Copilot lines.
+
+### Messages about files and folders
+
+When a command cannot read or write a file or folder, zn-gate says what is wrong with the path in plain words. The same sentences come from commands that write something, such as `init`, the vault commands, `scan --output` and `evidence --output`. Nothing is half written: zn writes a file through a temporary one and puts it in place at the end. Run the command again with `ZN_VERBOSE=1` to see the system's error code next to the message.
+
+#### "Your account is not allowed to read or change `<path>`"
+
+**What happened:** your computer would not let you open or change that file or folder.
+
+**What to do:** check who owns `<path>` and its permissions (on macOS or Linux, `ls -ld <path>` shows them), fix them or choose a path you own, then run the command again.
+
+#### "`<path>` does not exist, or a folder on its path is missing" / "A part of the path `<path>` is a file where a folder should be" / "`<path>` is a folder where a file should be"
+
+**What happened:** the path does not lead where the command needs. Either something on the way is missing, or a file stands where a folder should be, or a folder stands where a file should be.
+
+**What to do:** check the spelling and create any missing folder. For the second message, move or remove the file that is in the way. For the third, give a file name instead of a folder. In the Python package, the first message adds "Create the folder first, or choose another --output path". Then run the command again.
+
+#### "The disk that holds `<path>` is full" / "Your disk quota is used up, so `<path>` cannot be written" / "`<path>` is on a read-only disk"
+
+**What happened:** the file could not be written because the disk has no room left, your storage quota is used up, or the disk only allows reading.
+
+**What to do:** free some space, or choose a path on a disk you can write to, then run the command again. Your files are untouched.
+
+#### "The folder path `<path>` is too long" / "The links in the path `<path>` lead in a circle"
+
+**What happened:** the path is too long for your system (on Windows the limit is about 260 characters, and the message says so), or it goes through links that point back to each other.
+
+**What to do:** move the folder to a shorter path, or choose another path without circular links, then run the command again.
+
+### Messages when the gateway starts (`zn start`)
+
+`zn start` runs the zn gateway, which reads tool calls on its input and checks them. Most of these messages stop it before it starts and name the setting that fixes the problem. Settings live in `zn.json`; `zn init` writes a settings file that lists every setting zn knows.
+
+#### "zn could not prepare its policy folder" / "zn could not watch its policy folder" / "zn cannot start: its policy folder ... does not exist and could not be created"
+
+**What happened:** zn keeps its security policy files in a policy folder and could not read, create or watch it. The message gives the reason, such as a permission problem.
+
+**What to do:** run zn from a folder you own, or set `"engine.policy_dir"` in `zn.json` to a folder you can write to. For the "watch" message, also check that your user can read the folder. Then start zn again.
+
+#### "zn cannot write to its data folder"
+
+**What happened:** zn keeps a private key file (`ref.key`) in its data folder and cannot write there.
+
+**What to do:** run zn from a folder you own, or fix the permissions of the folder named in the message, then start zn again.
+
+#### "zn cannot write to its audit database" / "zn cannot open its audit database" / "zn cannot create its audit database" / "zn could not open its audit database"
+
+**What happened:** zn could not use the file where it records what it checked. The message tells which case it is: the file is read-only, nobody may write to the file or its folder, the folder does not exist, or another reason (which it gives).
+
+**What to do:** make the file or folder writable, create the missing folder, or choose another place with `--db-path` (or `"audit.db_path"` in `zn.json`). For the last message, also check that no other program has the file open. Then start zn again.
+
+#### "the settings file `<file>` does not exist" / "the settings file `<file>` is not a JSON file"
+
+**What happened:** you pointed zn at a settings file with `--config`, and it is not there or is not JSON. zn reads JSON only, so the name must end in `.json`.
+
+**What to do:** check the path, or create a settings file with `zn init`, then start zn again.
+
+#### "`<file>`: unknown setting `<name>` was ignored" / "`<file>`: unknown setting `<name>`. Settings in the security and audit sections are not ignored"
+
+**What happened:** the settings file has a setting zn does not know, usually a typo. In most sections zn ignores it and carries on. In the `security` and `audit` sections zn stops instead, because a typo there would silently weaken a protection.
+
+**What to do:** if the message says "did you mean", use that name. Otherwise compare with the file that `zn init` writes, fix the name, and start zn again.
+
+#### "ZN_PORT=`<value>` is not a valid port number"
+
+**What happened:** the `ZN_PORT` setting of your terminal is not a number from 0 to 65535, so zn ignored it and used the port from its settings (the message says which).
+
+**What to do:** set `ZN_PORT` to a valid number, or remove it.
+
+#### "MCP server `<name>` was skipped"
+
+**What happened:** zn skipped one server of your MCP servers file. Either its command is not one zn starts (the message lists the allowed commands), or the server has neither a `command` nor a `url`.
+
+**What to do:** edit the entry in your MCP servers file: use an allowed command (for example `"command": "npx"`), or give the server a command or a url. The other servers still load.
+
+#### "zn could not read the MCP servers file" / "zn could not reach MCP server" / "zn could not start MCP server"
+
+**What happened:** zn could not read your MCP servers file (no servers are loaded from it until it is fixed), could not reach a server at its url after several attempts, or could not start a server's command. The message gives the reason.
+
+**What to do:** fix the file named in the message. For a server that is not reached, check that it is running and that its url is right. For one that does not start, check that its command is installed and on your PATH.
+
+#### "`<n>` upstream MCP server(s) found in your MCP servers file, but `zn start` does not forward calls to them"
+
+**What happened:** this is a notice, not a failure. `zn start` checks each tool call it reads on its input and writes the checked message to its output; it does not pass calls on to the servers in your file.
+
+**What to do:** nothing. To check the tools of other servers, see [shield](shield.md).
+
+### Messages from `zn team`
+
+`zn team` connects this computer to your organization's zn Team policy. Run it in your own terminal. See [team](team.md).
+
+#### "invalid join token (expected znj_...)" / "No join token given"
+
+**What happened:** the token you gave is not in the form `znj_...`, or you gave none.
+
+**What to do:** copy the token again from the invitation your administrator sent, then run `zn team join <token>`. You can also run `zn team join -` to paste it, or set `ZN_TEAM_JOIN_TOKEN`.
+
+#### "This join token is expired, already used or not valid"
+
+**What happened:** the server did not accept the token, so this computer was not connected.
+
+**What to do:** ask your organization administrator for a new invitation, then run `zn team join <new token>`.
+
+#### "Could not reach the zn server"
+
+**What happened:** zn could not reach the server. For `join`, the computer was not connected. For `sync`, nothing was changed.
+
+**What to do:** check your internet connection and run the same command again (`zn team join <token>` or `zn team sync`). Run it with `ZN_VERBOSE=1` to see the technical detail.
+
+#### "join failed (`<reason>`)" / "the server sent an invalid organization key"
+
+**What happened:** the join did not finish and this computer was not connected. The second message means the server sent a key zn could not accept.
+
+**What to do:** run `zn team join <token>` again. If it repeats, ask your administrator, or report it at [GitHub issues](https://github.com/usezn/zn/issues) with the message and your `zn-gate --version`.
+
+#### "Your admin has not published a policy yet"
+
+**What happened:** this is a notice. You are connected, but no policy exists yet, so no restrictions apply for now.
+
+**What to do:** nothing. zn checks again by itself; to check now, run `zn team sync`.
+
+#### "An admin removed this machine from the organization"
+
+**What happened:** an administrator removed this computer, so it no longer gets the policy.
+
+**What to do:** to disconnect it, run `zn team leave`. To join again, ask your administrator for a new token and run `zn team join <token>`.
+
+#### "Your organization is not active on zn right now"
+
+**What happened:** the organization is not active, so the policy cannot be updated. Nothing is lost: audit records stay on this computer and are sent when it is active again.
+
+**What to do:** ask your organization administrator. When it is active, run `zn team sync`.
+
+#### "'zn team `<word>`' is not a zn command" / "That looks like a join token"
+
+**What happened:** you typed a `zn team` word that does not exist. There is no `zn team login` or `zn team export`. If you typed a token without `join`, zn did not print it back.
+
+**What to do:** the commands are `zn team join <token>`, `zn team status`, `zn team sync` and `zn team leave`. To export the audit log, run `zn vault log export --otlp`. All options: `zn team --help`.
+
+#### "invalid request" / "nothing to approve" / "the organization policy does not ask for this"
+
+**What happened:** you tried to approve something for your organization policy, and zn did not accept it: the name, kind or value is not valid, this computer has no policy waiting for your answer, or the policy does not ask for it. Nothing was approved.
+
+**What to do:** run `zn team status` to see what, if anything, is waiting. If something should be waiting, ask your administrator.
+
+### Messages from the vault commands (`zn unlock`, `zn lock`, `zn forget`)
+
+The vault being locked, damaged or refusing a keychain are in [section 5](#5-your-secret-vault-is-locked). These are the other messages of the vault commands.
+
+#### "Cancelled: nothing was entered" / "Cancelled: no passphrase was entered"
+
+**What happened:** a hidden prompt was closed (for example with Ctrl+C) before you entered anything. Nothing was changed.
+
+**What to do:** run the command again when you are ready (`zn unlock` for the passphrase).
+
+#### "The two passphrases do not match"
+
+**What happened:** when the vault is created, zn asks for the passphrase twice and the two did not match. Nothing was created.
+
+**What to do:** run `zn unlock` again and type the same passphrase both times.
+
+#### "invalid duration" / "The --ttl and --idle times must be between 1m and 24h"
+
+**What happened:** `zn unlock --ttl` or `--idle` was not a time such as `30m` or `8h`, or it was outside the range from 1 minute to 24 hours. Nothing was done.
+
+**What to do:** use a number followed by `s`, `m` or `h` within the range, for example `zn unlock --ttl 8h --idle 30m`.
+
+#### "Unknown vault backend"
+
+**What happened:** the name after `--backend` is not one zn knows. The message lists the names that work.
+
+**What to do:** use one of the listed names, for example `zn unlock --backend passphrase`.
+
+#### "Lock the vault first"
+
+**What happened:** `zn forget` removes what zn stored for a project, and the unlocked vault may hold that project in memory.
+
+**What to do:** run `zn lock`, then `zn forget` again.
+
+#### "The vault is already unlocked"
+
+**What happened:** you ran `zn unlock` while the vault is open. There is nothing to do.
+
+**What to do:** nothing. To unlock it again, run `zn lock` in your own terminal first.
+
+#### "could not read the clipboard"
+
+**What happened:** a command that takes `--clipboard` (such as `zn secret set`) could not read the value you copied. The message lists what it tried, or says Windows PowerShell 5.1 was not found.
+
+**What to do:** copy the value again, or run the command without `--clipboard` and type the value at the hidden prompt.
+
+#### "zn could not find Windows PowerShell" / "zn could not start the system program that holds its key"
+
+**What happened:** zn needs a system program to use your keychain (Windows PowerShell for the Windows Credential Manager) and could not find or start it.
+
+**What to do:** close the terminal, open a new one and try again. If it keeps failing, create the vault with a passphrase: `zn unlock --backend passphrase`.
+
+### Messages from `zn-gate connect` and `zn-gate disconnect`
+
+The problems with the key you paste are in [section 7](#7-zn-gate-connect-does-not-accept-your-key). These are the others. `disconnect` removes the key from this computer and can also revoke it, so it stops working everywhere.
+
+#### "Cancelled. Nothing was saved."
+
+**What happened:** you closed the key prompt before finishing.
+
+**What to do:** run `zn-gate connect` again when you are ready.
+
+#### "Could not save the key: `<reason>`"
+
+**What happened:** the key was valid but zn could not store it in the system keychain or the vault. Nothing was kept.
+
+**What to do:** read the reason, fix what it names, then run `zn-gate connect` again. Run `zn-gate connect` again with `ZN_VERBOSE=1` for more detail.
+
+#### "Could not read the saved key from the zn vault, so nothing was removed or revoked"
+
+**What happened:** `zn-gate disconnect` needs the saved key to revoke it, and the vault is locked.
+
+**What to do:** run `zn unlock`, then `zn-gate disconnect` again. To only remove the local copy, run `zn-gate disconnect --no-revoke`, and revoke the key yourself on the dashboard the message names.
+
+#### "Could not remove the saved key from the zn vault"
+
+**What happened:** the key could not be removed from the vault, so it is still saved.
+
+**What to do:** unlock the vault with `zn unlock` if the reason says it is locked, then run `zn-gate disconnect` again.
+
+#### "Removed the connect setting from zn" ... "Could not clean your system keychain"
+
+**What happened:** the cloud check is off, but zn could not reach your system keychain, so a saved key may still be there.
+
+**What to do:** open your keychain app and delete the item named `zn-cloud`. If you did not revoke the key, the message also tells you where to revoke it.
+
+#### "Could not read the saved key from your system keychain, so it was not revoked"
+
+**What happened:** you asked for `--revoke`, but the keychain would not give zn the key. The local setting was still removed.
+
+**What to do:** revoke the key yourself on the dashboard the message names.
+
+#### "key `<key>` was not revoked" / "key `<key>` may still work" / "usezn.com did not accept key `<key>`" / "usezn.com cannot revoke key `<key>` from here"
+
+**What happened:** `zn-gate disconnect --revoke` removed the key from this computer but could not revoke it on usezn.com: no connection, the site not answering, or the site not accepting the key (it may already be revoked). The key is shown shortened.
+
+**Is it safe?** The key may still work until it is revoked. The dashboard link in the message is the sure way.
+
+**What to do:** check your internet connection and run `zn-gate disconnect --revoke` again, or revoke the key on the dashboard shown in the message.
+
+### Messages from the Python package
+
+The `zn-gate` command of the Python package protects agents you build yourself. Some commands live only in the npm package.
+
+#### "zn-gate `<command>` is in the npm package, not in this Python package" / "zn-gate `<command>` is a command of the npm package, not of this Python package" / "zn-gate help is not a command"
+
+**What happened:** you ran a command that only the npm package has, such as `init`, `hooks`, `report`, `connect` or `disconnect`. Nothing was changed. The message prints the command that works.
+
+**What to do:** run it with Node.js 18 or later, for example `npx -y zn-gate init`. To see the help of the npm package, run `npx -y zn-gate --help`.
+
+#### "Error: target path not found"
+
+**What happened:** `zn-gate scan` could not find the path you gave. The Node form of this message is "Target path does not exist".
+
+**What to do:** check the spelling and the folder you run `zn-gate` from, then run it again.
+
+#### "zn-gate stats: --days must be between 1 and `<n>`"
+
+**What happened:** `zn-gate stats --days` takes a whole number of days up to the limit in the message. Nothing was shown.
+
+**What to do:** run it again with a number in that range, for example `zn-gate stats --days 7`.
+
+#### "Error: the export was not saved"
+
+**What happened:** `zn-gate evidence --output` could not write the file. The rest of the message says why, in the same words as [Messages about files and folders](#messages-about-files-and-folders).
+
+**What to do:** follow that message, or choose another `--output` path, then run it again.
 
 ### Where a message points you
 

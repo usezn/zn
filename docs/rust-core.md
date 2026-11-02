@@ -159,7 +159,7 @@ The server (`zn start`) needs two things inside a container. It listens on `127.
 
 ```bash
 echo '{"server":{"bind_address":"0.0.0.0"}}' > zn.json
-docker run --rm -i -p 127.0.0.1:9090:9090 -e ZN_API_KEY=<your-key>   -v "$PWD/zn.json:/data/zn.json:ro" zn start
+docker run --rm -i -p 127.0.0.1:9090:9090 -e ZN_API_KEY=<your-key> -v "$PWD/zn.json:/data/zn.json:ro" zn start
 curl -H "X-API-Key: <your-key>" http://127.0.0.1:9090/api/v1/health
 ```
 
