@@ -3,11 +3,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const launcher = require('../lib/agents/launcher');
 const { getAdapter } = require('../lib/agents');
+const { tempDir } = require('./helpers/tmp');
 
 // Commands printed by a hook: the lines that print a reason or a warning (not the header comment).
 const printed = (script) => script.split('\n').filter((l) => l.includes('printf')).join('\n');
@@ -32,8 +31,8 @@ test('launcher script on linux keeps the plain forms', () => {
 });
 
 test('antigravity install on win32: the install warnings name zn-gate.cmd check', (t) => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-b2304-'));
-  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  // tempDir gives the long form of the path: a Windows 8.3 short name (RUNNER~1) holds a "~", which the Antigravity install refuses.
+  const home = tempDir(t, 'zn-b2304-');
   const opts = {
     home,
     nodePath: 'C:\Program Files\nodejs\node.exe',
@@ -45,7 +44,9 @@ test('antigravity install on win32: the install warnings name zn-gate.cmd check'
   assert.ok(winText.includes('Run `zn-gate.cmd check` to see that the hook works.'));
   assert.doesNotMatch(winText, /[^.\w]zn-gate check/);
 
-  const posix = getAdapter('antigravity').install({ ...opts, home: fs.mkdtempSync(path.join(os.tmpdir(), 'zn-b2304-')), platform: 'linux' });
+  // The POSIX half needs a POSIX path: a Windows temp folder (C:\\...) is never one Antigravity can start there.
+  if (process.platform === 'win32') return;
+  const posix = getAdapter('antigravity').install({ ...opts, home: tempDir(t, 'zn-b2304-'), platform: 'linux' });
   const posixText = posix.warnings.join('\n');
   assert.ok(posixText.includes('Run `zn-gate check` to see that the hook works.'));
   assert.ok(!posixText.includes('.cmd'));

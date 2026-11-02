@@ -30,6 +30,7 @@ const withBash = (m) => { if (WIN && GIT_BASH) m.env.CLAUDE_CODE_GIT_BASH_PATH =
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const VERSION = require('../package.json').version;
 const { budget } = require('./helpers/time_budget');
+const { winCmd, winCmdRe } = require('./helpers/wincmd');
 const ZN = path.resolve('/opt/npm/bin/zn');
 const NPM = path.resolve('/opt/npm/bin/npm');
 
@@ -130,9 +131,9 @@ test('guide: without a terminal it only prints the steps and runs nothing', asyn
   assert.equal(ran, 0);
   assert.equal(code, 1);
   assert.match(out.text(), /only prints the steps\. Nothing was changed\./);
-  assert.match(out.text(), /zn hooks install codex/);
-  assert.match(out.text(), /npx -y zn-gate check/);
-  assert.match(out.text(), /zn-gate init --wrap-mcp/);
+  assert.match(out.text(), winCmdRe(/zn hooks install codex/));
+  assert.match(out.text(), winCmdRe(/npx -y zn-gate check/));
+  assert.match(out.text(), winCmdRe(/zn-gate init --wrap-mcp/));
 });
 
 test('guide: when an AI agent runs it, it only prints the steps, also in a terminal', async (t) => {
@@ -156,7 +157,7 @@ test('guide: in a terminal each step is confirmed, run, and the result is checke
   };
   const code = await guide({ ...m, temporary: false, stdin: tty, write: out.write, run, confirm: async (q) => { asked.push(q); return true; } });
   assert.equal(asked.length, 1);
-  assert.match(asked[0], /zn hooks install codex/);
+  assert.match(asked[0], winCmdRe(/zn hooks install codex/));
   assert.match(out.text(), /OK Codex CLI\s+blocked the \.env file/);
   assert.equal(code, 0);
 });
@@ -188,7 +189,7 @@ test('guide: a step the person declines is skipped and shown for later', async (
   const code = await guide({ ...m, temporary: false, stdin: tty, write: out.write, run: () => { ran++; return true; }, confirm: async () => false });
   assert.equal(ran, 0);
   assert.equal(code, 1);
-  assert.match(out.text(), /skipped\. You can run it later: zn hooks install codex/);
+  assert.match(out.text(), winCmdRe(/skipped\. You can run it later: zn hooks install codex/));
 });
 
 test('guide: nothing found, and everything already protected', async (t) => {
@@ -440,17 +441,17 @@ test('guide: after repairing the hooks next to a broken plugin, the plugin is tu
     // The hooks step "succeeds"; it really repairs the hooks only in the second round.
     const run = (step) => {
       ran.push(step.manual);
-      if (repairs && step.manual === 'zn hooks install claude-code') {
+      if (repairs && step.manual === winCmd('zn hooks install claude-code')) {
         getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
       }
       return true;
     };
     await guide({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false, stdin: tty, write: out.write, confirm: async () => true, run });
     if (repairs) {
-      assert.deepEqual(ran, ['zn hooks install claude-code', 'claude plugin disable zn-gate@usezn']);
+      assert.deepEqual(ran, [winCmd('zn hooks install claude-code'), 'claude plugin disable zn-gate@usezn']);
       assert.match(out.text(), /check that zn's hooks for Claude Code work now: yes/);
     } else {
-      assert.deepEqual(ran, ['zn hooks install claude-code']);
+      assert.deepEqual(ran, [winCmd('zn hooks install claude-code')]);
       assert.match(out.text(), /check that zn's hooks for Claude Code work now: not yet \(.+\)\. The zn-gate plugin was left on\./);
     }
   }
