@@ -75,7 +75,7 @@ A command that succeeds exits with `0`. A command that is not listed here with a
 | Command | Codes | Meaning |
 |---|---|---|
 | `team` and `team status` | `0`, `1`, `2` | `0` done; `1` an error; `2` wrong usage or an option the command does not take. |
-| `team sync` | `1` | `1` when the policy is rejected or the machine was removed. |
+| `team sync` | `0`, `1`, `2` | `0` a valid policy applied and nothing failed to upload; `1` when the policy is rejected, the machine was removed, the server cannot be reached or an upload failed; `2` wrong usage or an option the command does not take. |
 
 ## GitHub Action
 
