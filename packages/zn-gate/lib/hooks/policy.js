@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-02.41';
+const POLICY_RULES_VERSION = '2026-11-02.43';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1290,8 +1290,14 @@ function hasBareExpansion(raw) {
       i += c === '"' ? 1 : 2;
       while (i < s.length && s[i] !== '"') {
         if (s[i] === '\\') { i += 2; continue; }
-        if (s[i] === '`' || (s[i] === '$' && s[i + 1] === '(')) return true;
+        // "$@" and "${a[@]}" give one word per item; "$X", "$(cmd)" and "`cmd`" stay one word.
         if (s[i] === '$' && s[i + 1] === '@') return true;
+        if (s[i] === '$' && s[i + 1] === '{') {
+          const e = s.indexOf('}', i + 2);
+          if (e < 0 || s.slice(i + 2, e).includes('@')) return true;
+          i = e + 1;
+          continue;
+        }
         i++;
       }
       i++;
@@ -1300,6 +1306,42 @@ function hasBareExpansion(raw) {
     if (c === '$' && starts(i)) return true;
     i++;
   }
+  return false;
+}
+
+/* Whether a word as typed has a pattern or a brace list outside quotes (*, ?, [...], @(...), {a,b}, {1..3}): the
+   shell may turn it into several words, or into a word that starts with "-". Expansions are left out ($?, ${X}).
+   The scan ends a word at the bracket of @(...) (also a PowerShell array): the caller checks the character after it. */
+function hasBarePattern(raw) {
+  const s = String(raw);
+  let bare = '';
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '\\') { bare += '_'; i += 2; continue; }
+    if (c === "'" || c === '"' || (c === '$' && (s[i + 1] === "'" || s[i + 1] === '"'))) {
+      const q = c === '$' ? s[i + 1] : c;
+      const escapes = q === '"' || c === '$';
+      i += c === '$' ? 2 : 1;
+      while (i < s.length && s[i] !== q) i += escapes && s[i] === '\\' ? 2 : 1;
+      i++;
+      bare += '_';
+      continue;
+    }
+    if (c === '$' && s[i + 1] === '{') {
+      const e = s.indexOf('}', i + 2);
+      if (e < 0) return true;
+      bare += '_';
+      i = e + 1;
+      continue;
+    }
+    if (c === '$' && /[-?#$!@*0-9A-Za-z_]/.test(s[i + 1] || '')) { bare += '_'; i += 2; continue; }
+    bare += c;
+    i++;
+  }
+  if (/[*?[]|[@!+]\(/.test(bare)) return true;
+  // A brace list: { and } with a comma or .. between them and no other brace (one pass, no backtracking).
+  for (const m of bare.matchAll(/\{[^{}]*\}/g)) if (m[0].includes(',') || m[0].includes('..')) return true;
   return false;
 }
 
@@ -1333,7 +1375,7 @@ function allWords(cmd, posix = false) {
         targetRaw = raw.slice(glued.at + glued.len);
         t = dequoteFragment(targetRaw, posix);
         // `cat ~/.ssh/id_rsa>x` reads the file before it writes x: the part before the operator is checked as a word.
-        if (gluedOp) out.push({ text: dequoteFragment(prefixRaw, posix), redirectTarget: afterOp, head, seq: guard, sub, gitArgs, git: gi >= 0, bare: hasBareExpansion(prefixRaw) });
+        if (gluedOp) out.push({ text: dequoteFragment(prefixRaw, posix), redirectTarget: afterOp, head, seq: guard, sub, gitArgs, git: gi >= 0, bare: hasBareExpansion(prefixRaw), pattern: hasBarePattern(prefixRaw) });
       }
       // Input redirections: <file, 0<file, <>file (read and write), {fd}<file.
       t = t.replace(/^(?:[0-9]*|\*)(?:>\||>>?)/, '').replace(/^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?<>?/, '');
@@ -1343,7 +1385,7 @@ function allWords(cmd, posix = false) {
         const typed = targetRaw.replace(/^(?:[0-9]*|\*)(?:>\||>>?)/, '');
         if (/^[A-Za-z]:\\/.test(typed) && !/['"]/.test(typed)) t = typed;
       }
-      out.push({ text: t, redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0, bare: hasBareExpansion(targetRaw) || (targetRaw.endsWith('$') && rest[w.end] === '(') });
+      out.push({ text: t, redirectTarget: isRedirTarget, head, seq: guard, sub, gitArgs, git: gi >= 0, bare: hasBareExpansion(targetRaw) || (targetRaw.endsWith('$') && rest[w.end] === '('), pattern: hasBarePattern(targetRaw) || (/[@!+*?]$/.test(targetRaw) && rest[w.end] === '(') });
     }
     rest = rest.slice(scan.end + 1);
   }
@@ -2389,6 +2431,12 @@ const GIT_UNREAD_WORD_RE = /\$(?:[{(A-Za-z_]|[-?#$!@*0-9])|`/;
 // The variable references of a word, removed to see what the word starts with when they expand to nothing.
 // A long git option with its value in the same word (--git-dir=<dir>).
 const GIT_GLUED_VALUE_RE = /^--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env|attr-source)=/;
+// A command that sets IFS (IFS=/, read IFS, ${IFS:=x}): the shell may then split an expansion on any character.
+const GIT_IFS_SET_RE = /(?:^|[^A-Za-z0-9_$])IFS(?![A-Za-z0-9_])/;
+// A command that changes directory: $PWD and $OLDPWD no longer hold the values zn reads from the environment.
+const GIT_DIR_CHANGE_RE = /(?:^|[^A-Za-z0-9_.\/-])(?:cd|pushd|popd|chdir|sl|set-location|push-location|pop-location)(?![A-Za-z0-9_.\/-])/i;
+// PowerShell variables the command sets ($X = ...): their value is not the environment's.
+const PS_VAR_SET_RE = /\$([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)/g;
 const GIT_EXPANSION_RE = /\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$[-?#$!@*0-9]/g;
 // Options of a git subcommand that take a program to run, or configuration pairs (git clone -c), with the
 // subcommands that read them. Long options may be shortened, as git accepts any unambiguous prefix.
@@ -2476,7 +2524,7 @@ function gitConfigParameterPairs(value) {
 
 /* The configuration pairs of git's own options in one simple command: -c name=value and --config-env=name=VAR
    (also with the value in the next word). Each is [name, value] or [name, {envVar}]. */
-function gitDashConfigPairs(w, env) {
+function gitDashConfigPairs(w, env, shell = {}) {
   const out = [];
   const g = gitStart(w);
   if (g < 0) return out;
@@ -2492,28 +2540,42 @@ function gitDashConfigPairs(w, env) {
   // expansion that zn cannot resolve, or that resolves to more than one word, can bring in more options (-c ...).
   // In double quotes it stays one word and is a plain value.
   const splits = (k, text) => {
+    if (!w[k] || !w[k].bare) return false;
+    // Once the command sets IFS, an expansion may split on any character: none is read as one word.
+    if (shell.ifs) return true;
     // The scan ends a word at the bracket of $(cmd): what is left of it is a word that ends with $.
-    if (!w[k] || !w[k].bare || !(GIT_UNREAD_WORD_RE.test(text) || text.endsWith('$'))) return false;
+    if (!(GIT_UNREAD_WORD_RE.test(text) || text.endsWith('$'))) return false;
     const x = expandEnv(text, env || {}).text;
     return GIT_UNREAD_WORD_RE.test(x) || x.endsWith('$') || /[\s*?[]/.test(x);
   };
+  // A word before the subcommand, or the value of a git option, that the shell may turn into several words: a split
+  // expansion, a pattern or a brace list outside quotes, PowerShell splatting (@args, @(...)) or a cmd.exe %NAME%,
+  // which cmd.exe puts in before it reads quotes.
+  const many = (k) => {
+    if (!w[k]) return false;
+    if (w[k].pattern || splits(k, w[k].text)) return true;
+    if (/^@[A-Za-z_(]/.test(w[k].text)) return true;
+    for (const m of String(w[k].text).matchAll(/%([A-Za-z_][A-Za-z0-9_]*)%/g)) {
+      const v = (env || {})[m[1]];
+      if (v === undefined || /[\s"%^&|<>]/.test(v)) return true;
+    }
+    return false;
+  };
   let k = g + 1;
   for (; k < w.length; k++) {
-    const gl = GIT_GLUED_VALUE_RE.exec(w[k].text);
-    if (gl) {
-      if (splits(k, w[k].text.slice(gl[0].length))) { out.push([null, { split: true }]); return out; }
-      // Quoted: the value is one word, whatever it holds. A glued --config-env=name=VAR still reads as a pair below.
-      if (!w[k].text.startsWith('--config-env=')) continue;
-    }
+    if (many(k)) { out.push([null, { split: true }]); return out; }
+    // Quoted, a glued value (--git-dir="$GD") is one word, whatever it holds. A glued --config-env=name=VAR still
+    // reads as a pair below.
+    if (GIT_GLUED_VALUE_RE.test(w[k].text) && !w[k].text.startsWith('--config-env=')) continue;
     const t = word(k);
     if (t === null) { out.push([null, { unread: true }]); return out; }
     if (!t.startsWith('-')) break;
     let spec = null;
     let viaEnv = false;
     if (t === '-c' || t === '--config-env') {
-      if (w[k + 1] && splits(k + 1, w[k + 1].text)) { out.push([null, { split: true }]); return out; }
+      if (many(k + 1)) { out.push([null, { split: true }]); return out; }
     }
-    if (t === '-c') { spec = w[++k] ? w[k].text : ''; } else if (t === '--config-env') { viaEnv = true; spec = w[++k] ? w[k].text : ''; } else if (t.startsWith('--config-env=')) { viaEnv = true; spec = t.slice(13); } else if (GIT_VALUE_OPTS.has(t)) { if (w[k + 1] && splits(k + 1, w[k + 1].text)) { out.push([null, { split: true }]); return out; } k++; continue; } else continue;
+    if (t === '-c') { spec = w[++k] ? w[k].text : ''; } else if (t === '--config-env') { viaEnv = true; spec = w[++k] ? w[k].text : ''; } else if (t.startsWith('--config-env=')) { viaEnv = true; spec = t.slice(13); } else if (GIT_VALUE_OPTS.has(t)) { if (many(k + 1)) { out.push([null, { split: true }]); return out; } k++; continue; } else continue;
     const eq = spec.indexOf('=');
     const name = eq < 0 ? spec : spec.slice(0, eq);
     const val = eq < 0 ? '' : spec.slice(eq + 1);
@@ -2573,6 +2635,20 @@ function gitEnvScan(readings, text, opts) {
   const env = opts.env || process.env;
   const found = [];
   const dashPairs = [];
+  // How the shell reads the words of the git options. IFS set anywhere in the command (or in a command around it), or
+  // set in the environment to other characters. $PWD and $OLDPWD are not read after a change of directory anywhere in
+  // the command (a loop may run a later cd first), nor PowerShell variables the command sets.
+  const gitShell = { ifs: Boolean(opts.gitIfs) || GIT_IFS_SET_RE.test(text) || (env.IFS !== undefined && env.IFS !== ' \t\n') };
+  let gitEnv = env;
+  {
+    const psSet = [...text.matchAll(PS_VAR_SET_RE)].map((m) => m[1]).filter((n) => n.toLowerCase() !== 'env');
+    const moved = Boolean(opts.gitDirChanged) || GIT_DIR_CHANGE_RE.test(text);
+    if (moved || psSet.length) {
+      gitEnv = { ...env };
+      if (moved) { delete gitEnv.PWD; delete gitEnv.OLDPWD; }
+      for (const n of psSet) delete gitEnv[n];
+    }
+  }
   // Assignment words, per simple command, in every reading of the command line.
   let seen = 0;
   for (const r of readings) {
@@ -2582,7 +2658,7 @@ function gitEnvScan(readings, text, opts) {
       while (end < r.length && r[end].seq === r[start].seq) end++;
       const words = [];
       gitEnvAssignmentWords(r.slice(start, end), words);
-      for (const pr of gitDashConfigPairs(r.slice(start, end), env)) { if (++seen > 256) return { deny: TOO_MANY_MESSAGE, codes: [] }; dashPairs.push(pr); }
+      for (const pr of gitDashConfigPairs(r.slice(start, end), gitEnv, gitShell)) { if (++seen > 256) return { deny: TOO_MANY_MESSAGE, codes: [] }; dashPairs.push(pr); }
       for (const t of words) {
         if (++seen > 256) return { deny: TOO_MANY_MESSAGE, codes: [] };
         const eq = t.indexOf('=');
@@ -2692,7 +2768,7 @@ function gitEnvScan(readings, text, opts) {
   // git -c name=value and git --config-env=name=VAR.
   for (const [k, raw] of dashPairs) {
     let value;
-    if (raw && typeof raw === 'object' && raw.split === true) return { deny: 'zn: a git option in this command takes a value from a variable that is not quoted, so the shell may split it into several words and add options such as -c, and zn cannot tell what it will contain, so it was blocked. Next step: quote the variable ("$DIR", --git-dir="$GD") or write the value out.', codes: [] };
+    if (raw && typeof raw === 'object' && raw.split === true) return { deny: 'zn: a git option in this command, or its value, comes from a variable, a pattern or a brace list that is not quoted, so the shell may turn it into several words and add options such as -c, and zn cannot tell what it will contain, so it was blocked. Next step: quote the variable or pattern ("$DIR", --git-dir="$GD") or write the value out.', codes: [] };
     if (raw && raw.unread) return { deny: GIT_ENV_MESSAGE('a git option zn cannot read before the shell expands it'), codes: [] };
     if (raw && typeof raw === 'object' && 'code' in raw) {
       const c = literal(raw.code);
@@ -2732,6 +2808,9 @@ function bashDenialOf(cmd, opts = {}) {
   if (!depth || !opts.budget) opts.budget = { until: Date.now() + CHECK_BUDGET_MS, disk: CHECK_BUDGET_DISK };
   // The bodies of the here-documents read as data are data, not command-line words, and are dropped first.
   const text = stripHeredocs(cmd, opts.budget);
+  // A shell this command runs (sh -c "...") inherits a changed directory and, through bash -c, may see IFS set here.
+  if (GIT_IFS_SET_RE.test(text)) opts.gitIfs = true;
+  if (GIT_DIR_CHANGE_RE.test(text)) opts.gitDirChanged = true;
   // Destructive shell commands (see lib/destructive.js). The runner passes the rules from the user's settings; with no
   // list, the two default rules apply. The bodies of data here-documents are not shell code and are not read.
   {

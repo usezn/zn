@@ -306,3 +306,58 @@ test('git --git-dir=$GD log is refused unquoted and allowed quoted (the quoted f
   assert.ok(denied('git --git-dir=$GD log'));
   assert.equal(denied('git --git-dir="$GD" log'), null);
 });
+
+test('git option words the shell may turn into several words: IFS, a change of directory, patterns, braces, splatting', () => {
+  const dflt = (c) => policy.bashDenial(c, { home: os.homedir(), cwd: proj, env: { HOME: '/home/x', PWD: proj, OLDPWD: proj, SAFE: 'sub' } });
+  for (const c of [
+    // IFS set anywhere in the command splits an expansion on other characters.
+    'D=sub/-c/core.pager=evil; IFS=/; git -C $D status',
+    'IFS=/; git -C $SAFE status',
+    'IFS=/ git --git-dir=$SAFE log',
+    'IFS=/ bash -c \'git -C $SAFE status\'',
+    'read -r IFS < f; git -C $SAFE status',
+    // $PWD and $OLDPWD after a change of directory.
+    'cd "a -c core.pager=evil"; git -C $PWD status',
+    'cd "a -c core.pager=evil" && git -C ${PWD} status',
+    'pushd "a -c core.pager=evil"; git -C $OLDPWD status',
+    'for i in 1 2; do git -C $PWD status; cd "a -c core.pager=evil"; done',
+    'cd "a -c core.pager=evil"; sh -c \'git -C $PWD status\'',
+    // Brace lists and patterns in a value or before the subcommand.
+    'git -C {.,-c,core.pager=evil} status',
+    'git -C {a..c} status',
+    'git -C [,c-]* status',
+    'git -C a* status',
+    'git -C sub? status',
+    'git {-c,core.pager=evil} status',
+    'git -c {core.pager=a,-c,core.pager=evil} status',
+    'git --git-dir={a,-c} log',
+    // A variable that resolves to several words before the subcommand.
+    'X="-c core.pager=evil"; git $X status',
+    // Quoted forms that still give several words.
+    'git -C "${A[@]}" status',
+    'git -C "${@}" status',
+    // PowerShell splatting and cmd.exe variables.
+    'git @X status',
+    'git -C @X status',
+    "git @('-c','core.pager=evil') status",
+    'git -C %X% status',
+  ]) {
+    assert.ok(dflt(c), 'allowed: ' + c);
+  }
+  for (const c of [
+    'git -C "$(git rev-parse --show-toplevel)" status',
+    'git -C "$(pwd)" status',
+    'git -C "`pwd`" status',
+    'git --git-dir="$(git rev-parse --git-dir)" log',
+    'git -C "$PWD" status',
+    'cd sub && git -C "$PWD" status',
+    'git -C $PWD status',
+    'git -C "{a,b}" status',
+    'git -C "$SAFE" status',
+    'git log {a,b}',
+    'git -C ./sub log --format=%H',
+    'while IFS= read -r d; do git -C "$d" status; done < list',
+  ]) {
+    assert.equal(dflt(c), null, 'refused: ' + c + ' -> ' + dflt(c));
+  }
+});
