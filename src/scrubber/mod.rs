@@ -687,7 +687,7 @@ fn token_re() -> &'static Regex {
         Regex::new(concat!(
             r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----|$)",
             r"|(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}",
-            r"|(?i:aws_?secret_?access_?key)[\x22']?[ \t]*[:=][ \t]*[\x22']?[A-Za-z0-9/+=]{40}",
+            r"|(?i:(?:aws_?)?secret_?access_?key)[\x22']?[ \t]*[:=][ \t]*[\x22']?[A-Za-z0-9/+=]{40}",
             r"|AIza[0-9A-Za-z_-]{35}",
             r"|glpat-[A-Za-z0-9_-]{20,}",
             r"|github_pat_[A-Za-z0-9_]{22,255}",
@@ -1775,6 +1775,12 @@ mod table_parity_tests {
             [
                 "aws_secret_",
                 "access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            ]
+            .concat(),
+            // The JSON form of temporary credentials, with no aws prefix on the key.
+            [
+                "\"SecretAccess",
+                "Key\": \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"",
             ]
             .concat(),
             ["AI", "zaSyA-0123456789abcdefghijklmnopqrstuv"].concat(),
