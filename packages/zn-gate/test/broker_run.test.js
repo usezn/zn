@@ -262,17 +262,18 @@ test('zn run refuses a binary planted in the temp folder through its long and it
   fs.writeFileSync(path.join(dir, 'psql.cmd'), '@echo %*\r\n');
   let short = '';
   try {
-    short = execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/c', 'for %I in ("' + dir + '") do @echo %~sI'], { encoding: 'utf8' }).trim();
+    // windowsVerbatimArguments: Node would otherwise escape the quotes around the folder for a C program, not for cmd.exe.
+    short = execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/c', 'for %I in ("' + dir + '") do @echo %~sI'], { encoding: 'utf8', windowsVerbatimArguments: true }).trim();
   } catch (_) { /* no short names on this volume */ }
   const forms = [dir, path.join(os.tmpdir(), path.basename(dir))];
-  if (short && short.toLowerCase() !== dir.toLowerCase()) forms.push(short);
+  if (short && short.toLowerCase() !== dir.toLowerCase() && fs.existsSync(path.join(short, 'psql.cmd'))) forms.push(short);
   for (const form of forms) {
     const vault = await setup();
     await vault.setSecret('DB_PASSWORD', PG, { mode: 'env', allowCommands: ['psql'] });
     const err = sink();
     const code = await runBroker(['--secrets', 'DB_PASSWORD', '--', 'psql'], { vault, env: { PATH: form }, stdout: sink(), stderr: err, stdin: { isTTY: false } });
     assert.equal(code, 77, 'PATH ' + form + ': ' + err.text());
-    assert.match(err.text(), /temp directory/);
+    assert.match(err.text(), /temp directory/, 'PATH ' + form);
   }
 });
 
