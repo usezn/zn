@@ -1,6 +1,6 @@
 'use strict';
 // The commands with a fixed option list refuse an option they do not take: they name it, list the options of the
-// command and exit 2 (64 for the secret, env and vault log commands, as docs/exit-codes.md says). Nothing goes to stdout.
+// command and exit 2 (64 for the secret and env commands and vault log, as docs/exit-codes.md says). Nothing goes to stdout.
 // The options each command documents keep working.
 const test = require('node:test');
 const assert = require('node:assert');
@@ -59,7 +59,7 @@ const REJECTED = [
   [['team', 'leave', '--bogus'], 2, 'takes no options'],
   [['team', 'join', '--bogus'], 2, '--api, --agent, --include-history'],
   [['vault', 'log', '--bogus'], 64, '--since'],
-  [['vault', 'log', 'export', '--bogus'], 64, '--otlp, --since, --out, --unverified'],
+  [['vault', 'log', 'export', '--bogus'], 2, '--otlp, --since, --out, --unverified'],
   [['secret', 'list', '--bogus'], 64, 'takes no options'],
   [['secret', 'set', 'FAKE_NAME', '--bogus'], 64, '--mode, --in, --host, --command, --type, --force, --clipboard'],
   [['secrets', 'allow', 'FAKE_NAME', '--bogus'], 64, '--host, --in, --replace, --mode, --command'],
@@ -133,7 +133,7 @@ test('simpleOptionProblem names the option, lists the options and sets the exit 
   assert.strictEqual(p.code, 2);
   assert.strictEqual(p.message, 'unknown option "--bogus". The options of zn-gate evidence are --verify, --ui, --export, --format, --output, --port, --tail.');
   assert.strictEqual(simpleOptionProblem(['secret', 'set', 'X', '--bogus']).code, 64);
-  assert.strictEqual(simpleOptionProblem(['vault', 'log', 'export', '--bogus']).code, 64);
+  assert.strictEqual(simpleOptionProblem(['vault', 'log', 'export', '--bogus']).code, 2);
 });
 
 test('an unknown option is read by name, including the part after an equals sign', () => {
@@ -146,4 +146,23 @@ test('commands outside the list are not checked here', () => {
   assert.strictEqual(simpleOptionProblem(['hook', 'claude-code', '--bogus']), null);
   assert.strictEqual(simpleOptionProblem(['vault', 'unlock', '--bogus']), null);
   assert.strictEqual(simpleOptionProblem(['team', 'unknownsub', '--bogus']), null);
+});
+
+test('the global --verbose is accepted by every command with a fixed option list', () => {
+  for (const args of [['evidence'], ['report'], ['stats'], ['pins'], ['version'], ['team', 'sync'], ['secret', 'list'], ['env', 'unshadow'], ['vault', 'log'], ['vault', 'log', 'export'], ['secrets-mcp']]) {
+    const spec = simpleOptionProblem(args.concat(['--verbose']));
+    assert.strictEqual(spec, null, args.join(' ') + ' --verbose must not be refused');
+  }
+});
+
+test('vault log export refuses an unknown option with 2, like its own usage error; vault log keeps 64', () => {
+  assert.strictEqual(simpleOptionProblem(['vault', 'log', 'export', '--bogus']).code, 2);
+  assert.strictEqual(simpleOptionProblem(['vault', 'log', '--bogus']).code, 64);
+  assert.strictEqual(simpleOptionProblem(['secret', 'set', '--bogus']).code, 64);
+  assert.strictEqual(simpleOptionProblem(['env', 'shadow', '--bogus']).code, 64);
+  assert.strictEqual(run(['vault', 'log', 'export', '--bogus']).status, 2);
+});
+
+test('evidence --verbose is not refused', () => {
+  assert.notStrictEqual(run(['evidence', '--verbose']).status, 2);
 });
