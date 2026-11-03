@@ -499,10 +499,13 @@ function withhold(v) {
 // BEGIN top-level scan (the same text is in plugins/zn-gate/scripts/zn-launch.js and in packages/zn-gate/lib/hooks/runner.js; a test keeps the two equal)
 // The metadata of an event too large to parse: the keys of the TOP-LEVEL object that decide what the event is,
 // whatever their order and wherever they are in the text that was read (the first occurrence of each, with its
-// value when that is a short string, otherwise true). One pass, linear in the text, memory bounded by the
+// value when that is a short string, null when that is null, otherwise true). One pass, linear in the text, memory bounded by the
 // longest key or value kept (256 characters): strings are skipped as they are met and JSON depth is tracked, so a
 // key inside the tool arguments or the tool output, or text in a string that looks like a key, is never taken.
-// Returns null when the text is not the start of a JSON object.
+// Returns null when the text is not the start of a JSON object. A key that appears twice at the top level (JSON.parse
+// keeps the last value, this keeps the first, so the event can be read two ways) is listed under keys[REPEATED]
+// (at most 8 names; keys longer than 256 characters are not compared).
+const REPEATED = Symbol('repeated');
 const TOP_KEYS = new Set(['hook_event_name', 'hookEventName', 'hook', 'tool_name', 'toolName', 'tool_response', 'toolResult', 'tool_result', 'tool_output']);
 
 function unescapeShort(s) {
@@ -511,7 +514,7 @@ function unescapeShort(s) {
 }
 
 function readShortString(text, k) {
-  if (text.charCodeAt(k) !== 34) return true;
+  if (text.charCodeAt(k) !== 34) return text.startsWith('null', k) && !/[A-Za-z0-9_]/.test(text.charAt(k + 4)) ? null : true;
   const end = Math.min(text.length, k + 257);
   for (let j = k + 1; j < end; j++) {
     const d = text.charCodeAt(j);
@@ -523,6 +526,9 @@ function readShortString(text, k) {
 
 function topLevelKeys(text) {
   const keys = Object.create(null);
+  const repeated = [];
+  keys[REPEATED] = repeated;
+  const seen = new Set();
   const n = text.length;
   let i = 0;
   while (i < n && text.charCodeAt(i) <= 32) i++;
@@ -538,12 +544,14 @@ function topLevelKeys(text) {
         else if (d === 34) break;
       }
       if (j >= n) break; // the text ends inside this string
-      if (depth === 1 && j - i <= 65) {
-        const key = unescapeShort(text.slice(i + 1, j));
-        if (TOP_KEYS.has(key) && !(key in keys)) {
-          let k = j + 1;
-          while (k < n && text.charCodeAt(k) <= 32) k++;
-          if (text.charCodeAt(k) === 58) {
+      if (depth === 1 && j - i <= 257) {
+        let k = j + 1;
+        while (k < n && text.charCodeAt(k) <= 32) k++;
+        if (text.charCodeAt(k) === 58) { // a string followed by a colon is a key
+          const key = unescapeShort(text.slice(i + 1, j));
+          if (seen.has(key)) { if (repeated.length < 8 && !repeated.includes(key)) repeated.push(key); }
+          else seen.add(key);
+          if (TOP_KEYS.has(key) && !(key in keys)) {
             k++;
             while (k < n && text.charCodeAt(k) <= 32) k++;
             keys[key] = readShortString(text, k);

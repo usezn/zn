@@ -943,8 +943,8 @@ function postDeadlineMs(agentId) {
 const DEADLINE = Symbol('deadline');
 
 /** The result of a promise, or DEADLINE when `at` (a Date.now() value) comes first. The promise is left to finish on its own. */
-function raceDeadline(promise, at) {
-  const ms = at - Date.now();
+function raceDeadline(promise, at, now = Date.now) {
+  const ms = at - now();
   promise.catch(() => {});
   if (ms <= 0) return Promise.resolve(DEADLINE);
   let timer;
@@ -965,7 +965,11 @@ async function decidePost(ev, d, agentId, opts = {}) {
   }
   if (ev.output === undefined || ev.output === null) return { decision: 'allow' };
   const posInt = (v, dflt) => (Number.isInteger(v) && v > 0 ? v : dflt);
-  const deadlineAt = Date.now() + posInt(opts.postDeadlineMs, postDeadlineMs(agentId));
+  // The budget starts when the hook received the event (opts.startedAt), so what happens before this point
+  // (reading the event, normalizing it, the Codex command check) counts too. `now` is a clock; only tests set it.
+  const now = typeof opts.now === 'function' ? opts.now : Date.now;
+  const startedAt = Number.isFinite(opts.startedAt) ? opts.startedAt : now();
+  const deadlineAt = startedAt + posInt(opts.postDeadlineMs, postDeadlineMs(agentId));
   let room = posInt(opts.postScanCap, POST_SCAN_CAP);
   const tokenCap = posInt(opts.postTokenCap, POST_TOKEN_CAP);
   const engine = d.engine();
@@ -1001,12 +1005,12 @@ async function decidePost(ev, d, agentId, opts = {}) {
   };
   const check = async (s) => {
     if (s === POST_WITHHELD || s.length === 0) return s;
-    if (s.length >= 8 && (stopped || Date.now() >= deadlineAt)) return withhold(s, true);
+    if (s.length >= 8 && (stopped || now() >= deadlineAt)) return withhold(s, true);
     if (s.length >= 8 && s.length > room) return withhold(s, false);
     // Scanning counts the values this string would add to the vault.
     if (scanCtx === null) {
-      if (s.length < 8 && (stopped || Date.now() >= deadlineAt)) return s;
-      scanCtx = typeof engine.prepare === 'function' ? await raceDeadline(engine.prepare(ctx), deadlineAt) : ctx;
+      if (s.length < 8 && (stopped || now() >= deadlineAt)) return s;
+      scanCtx = typeof engine.prepare === 'function' ? await raceDeadline(engine.prepare(ctx), deadlineAt, now) : ctx;
       if (scanCtx === DEADLINE) { abandoned = true; return s.length < 8 ? s : withhold(s, true); }
       hasShort = shortIn(scanCtx);
       // One request to the vault for every string that will be scanned, not one for each.
@@ -1019,7 +1023,7 @@ async function decidePost(ev, d, agentId, opts = {}) {
           budget -= t.length;
           todo.push(t);
         }
-        const warmed = await raceDeadline(engine.warm(scanCtx, todo), deadlineAt);
+        const warmed = await raceDeadline(engine.warm(scanCtx, todo), deadlineAt, now);
         if (warmed === DEADLINE) { abandoned = true; scanCtx = DEADLINE; return s.length < 8 && !hasShort ? s : withhold(s, true); }
         scanCtx = warmed;
       }
@@ -1030,7 +1034,7 @@ async function decidePost(ev, d, agentId, opts = {}) {
     // The vault did not answer: this string was not checked against its values, so it is not passed (like a deadline).
     let found;
     try {
-      found = await raceDeadline(scanOf(engine, s, scanCtx), deadlineAt);
+      found = await raceDeadline(scanOf(engine, s, scanCtx), deadlineAt, now);
     } catch (err) {
       if (err && err.vaultFailed) return withhold(s, true);
       throw err;
@@ -1042,7 +1046,7 @@ async function decidePost(ev, d, agentId, opts = {}) {
       if (seen.size > tokenCap) return withhold(s, true);
     }
     room -= s.length;
-    const res = await raceDeadline(typeof engine.tokenizeWith === 'function' ? engine.tokenizeWith(s, ctx, spans) : engine.tokenize(s, ctx), deadlineAt);
+    const res = await raceDeadline(typeof engine.tokenizeWith === 'function' ? engine.tokenizeWith(s, ctx, spans) : engine.tokenize(s, ctx), deadlineAt, now);
     if (res === DEADLINE) { abandoned = true; return withhold(s, true); }
     if (!res || typeof res.text !== 'string') throw deps.znError('ZN_ENGINE', 'tokenize returned an unexpected shape');
     if (res.locked) locked = true;
@@ -1449,6 +1453,8 @@ function unreadablePre(ev, agentId) {
  * opts: {engine, vault, failMode, home}
  */
 async function handle(adapter, rawEvent, opts = {}) {
+  // The post-tool time budget runs from here (or from opts.startedAt when the caller took the instant earlier).
+  if (!Number.isFinite(opts.startedAt)) opts = { ...opts, startedAt: (typeof opts.now === 'function' ? opts.now : Date.now)() };
   const mode = failModeOf(opts);
   let ev = null;
   let decision;
@@ -1578,10 +1584,13 @@ function readStdin() {
 // BEGIN top-level scan (the same text is in plugins/zn-gate/scripts/zn-launch.js and in packages/zn-gate/lib/hooks/runner.js; a test keeps the two equal)
 // The metadata of an event too large to parse: the keys of the TOP-LEVEL object that decide what the event is,
 // whatever their order and wherever they are in the text that was read (the first occurrence of each, with its
-// value when that is a short string, otherwise true). One pass, linear in the text, memory bounded by the
+// value when that is a short string, null when that is null, otherwise true). One pass, linear in the text, memory bounded by the
 // longest key or value kept (256 characters): strings are skipped as they are met and JSON depth is tracked, so a
 // key inside the tool arguments or the tool output, or text in a string that looks like a key, is never taken.
-// Returns null when the text is not the start of a JSON object.
+// Returns null when the text is not the start of a JSON object. A key that appears twice at the top level (JSON.parse
+// keeps the last value, this keeps the first, so the event can be read two ways) is listed under keys[REPEATED]
+// (at most 8 names; keys longer than 256 characters are not compared).
+const REPEATED = Symbol('repeated');
 const TOP_KEYS = new Set(['hook_event_name', 'hookEventName', 'hook', 'tool_name', 'toolName', 'tool_response', 'toolResult', 'tool_result', 'tool_output']);
 
 function unescapeShort(s) {
@@ -1590,7 +1599,7 @@ function unescapeShort(s) {
 }
 
 function readShortString(text, k) {
-  if (text.charCodeAt(k) !== 34) return true;
+  if (text.charCodeAt(k) !== 34) return text.startsWith('null', k) && !/[A-Za-z0-9_]/.test(text.charAt(k + 4)) ? null : true;
   const end = Math.min(text.length, k + 257);
   for (let j = k + 1; j < end; j++) {
     const d = text.charCodeAt(j);
@@ -1602,6 +1611,9 @@ function readShortString(text, k) {
 
 function topLevelKeys(text) {
   const keys = Object.create(null);
+  const repeated = [];
+  keys[REPEATED] = repeated;
+  const seen = new Set();
   const n = text.length;
   let i = 0;
   while (i < n && text.charCodeAt(i) <= 32) i++;
@@ -1617,12 +1629,14 @@ function topLevelKeys(text) {
         else if (d === 34) break;
       }
       if (j >= n) break; // the text ends inside this string
-      if (depth === 1 && j - i <= 65) {
-        const key = unescapeShort(text.slice(i + 1, j));
-        if (TOP_KEYS.has(key) && !(key in keys)) {
-          let k = j + 1;
-          while (k < n && text.charCodeAt(k) <= 32) k++;
-          if (text.charCodeAt(k) === 58) {
+      if (depth === 1 && j - i <= 257) {
+        let k = j + 1;
+        while (k < n && text.charCodeAt(k) <= 32) k++;
+        if (text.charCodeAt(k) === 58) { // a string followed by a colon is a key
+          const key = unescapeShort(text.slice(i + 1, j));
+          if (seen.has(key)) { if (repeated.length < 8 && !repeated.includes(key)) repeated.push(key); }
+          else seen.add(key);
+          if (TOP_KEYS.has(key) && !(key in keys)) {
             k++;
             while (k < n && text.charCodeAt(k) <= 32) k++;
             keys[key] = readShortString(text, k);
@@ -1651,14 +1665,16 @@ function topLevelKeys(text) {
 const OVERSIZE_POST = {
   'claude-code': { isPost: (k) => k.hook_event_name === 'PostToolUse' || (k.hook_event_name === undefined && k.tool_response !== undefined), tool: 'bash', shape: (t) => t },
   codex: { isPost: (k) => k.hook_event_name === 'PostToolUse' || (k.hook_event_name === undefined && k.tool_response !== undefined), tool: 'bash', shape: (t) => t },
-  // Copilot has two shapes: with an event name, that decides; the Copilot CLI one has none, and then the
-  // result is a key of the event (it can come after the arguments, in which case it cannot be seen here and the
-  // event is refused).
+  // Copilot has two shapes, read as its adapter reads them (lib/agents/copilot.js, eventName): with an event
+  // name, that decides, in either spelling of the first letter; the Copilot CLI one has none, and then the
+  // result is a key of the event whose value is not null (it can come after the arguments, in which case it
+  // cannot be seen here and the event is refused).
   copilot: {
     isPost: (k) => {
-      const named = k.hook_event_name !== undefined ? k.hook_event_name : k.hookEventName;
-      if (named !== undefined) return named === 'PostToolUse';
-      return k.toolResult !== undefined || k.tool_result !== undefined;
+      const named = k.hook_event_name || k.hookEventName;
+      if (typeof named === 'string' && named) return named.charAt(0).toLowerCase() + named.slice(1) === 'postToolUse';
+      const has = (key) => k[key] !== undefined && k[key] !== null;
+      return has('toolResult') || has('tool_result');
     },
     tool: 'bash',
     shape: (t) => t,
@@ -1672,9 +1688,16 @@ const OVERSIZE_POST = {
 // An event over POST_STDIN_CAP characters cannot be parsed in time. A post-tool event is answered with the
 // fixed notice in place of the output; anything else is refused like any event zn cannot read. A Stop event
 // is never refused (exit 2 would make the agent go on with its answer): it passes with a warning.
-function oversizeEvent(agentId, adapter, text, why = 'the event on stdin is too large to check') {
+const OVERSIZE_WHY = 'the event on stdin is too large to check';
+function oversizeEvent(agentId, adapter, text, why = OVERSIZE_WHY) {
   const spec = OVERSIZE_POST[agentId];
   const keys = topLevelKeys(text);
+  // A key repeated at the top level can be read two ways (JSON.parse keeps the last, the scan the first): refused.
+  // Only a Stop event whose own name is not repeated passes with a warning, as below.
+  const repeated = keys ? keys[REPEATED] : [];
+  if (repeated.length && !(keys.hook_event_name === 'Stop' && !repeated.includes('hook_event_name') && (agentId === 'claude-code' || agentId === 'codex'))) {
+    return refuseInput(agentId, why === OVERSIZE_WHY ? why + ' and repeats a key' : why);
+  }
   if (keys && keys.hook_event_name === 'Stop' && (agentId === 'claude-code' || agentId === 'codex')) {
     process.stderr.write('zn hook: could not check this Stop event, so the last answer was not checked\n');
     return;
@@ -1980,6 +2003,7 @@ function stopFailSafe(err) {
 }
 
 async function handleEvent(args, state, readText) {
+  const startedAt = Date.now(); // the instant the hook received the event: the post-tool time budget starts here
   const agentId = args[0];
   let adapter;
   try {
@@ -2012,9 +2036,19 @@ async function handleEvent(args, state, readText) {
   }
   state.stopEvent = raw.hook_event_name === 'Stop';
   state.event = raw.hook_event_name;
+  // A key repeated at the top level can be read two ways (JSON.parse keeps the last, the scan the first), so the
+  // event is refused whatever its size. A Stop event (by the name JSON.parse gives it) is never blocked here.
+  const top = topLevelKeys(text);
+  if (top && top[REPEATED].length) {
+    if (state.stopEvent) {
+      process.stderr.write('zn hook: could not read this Stop event, so the last answer was not checked\n');
+      return;
+    }
+    return refuseInput(agentId, 'the event on stdin repeats a key');
+  }
   const disarm = armCodexFailClosed(agentId, raw.hook_event_name) || armAntigravityFailClosed(agentId, raw);
   try {
-    const res = await handle(adapter, raw);
+    const res = await handle(adapter, raw, { startedAt });
     if (res.stderr) process.stderr.write(res.stderr + ' (fail-open: event passed through)\n');
     try { require('../vault/client').close(); } catch (_) { /* not loaded */ }
     if (res.output !== null && res.output !== undefined) {
