@@ -293,7 +293,7 @@ test('git option values: an unquoted variable that may split is refused, the quo
   for (const c of [
     'git -C "$DIR" status', "git -C '$DIR' status",
     'git --git-dir="$GD" log', 'git --git-dir "$GD" log', 'git --work-tree="$WT" status', 'git --work-tree "$WT" status',
-    'git --namespace "$N" log', 'git --exec-path="$P" status',
+    'git --namespace "$N" log',
     'git -C $SAFE status', 'git -C ${SAFE} status', 'git --git-dir=$SAFE/.git log', 'git -C $PWD status', 'git -C $HOME status',
     'git -C sub status', 'git --git-dir=.git --work-tree=. status', 'git -C . log --oneline',
     'git push origin $BRANCH', 'git checkout $BRANCH', 'git log $REF',
@@ -420,4 +420,24 @@ test('IFS and cd spelled with quotes, a backslash, ANSI-C strings or an indirect
   ]) {
     assert.equal(dflt(c), null, 'refused: ' + c + ' -> ' + dflt(c));
   }
+});
+
+test('git --exec-path=<dir> is judged like GIT_EXEC_PATH: only the system git programs folder is allowed', () => {
+  const env = { HOME: '/home/x', PWD: proj, SYS: '/usr/lib/git-core', EVIL: '/tmp/x' };
+  const d = (c) => policy.bashDenial(c, { home: os.homedir(), cwd: proj, env });
+  for (const c of [
+    'git --exec-path=/tmp/x status', 'git --exec-path=./bin log', 'git --exec-path=bin status', "git --exec-path='/tmp/x' status",
+    'git --exec-path="$P" status', 'git --exec-path=$P status', 'git --exec-path="$EVIL" status', 'git --exec-path=$HOME/bin status',
+    'git --exec-path=/usr/lib/git-core/../../../tmp/x status', 'git -C . --exec-path=/tmp/x status', 'git --exec-path= status',
+    'git --exec-path="C:/Users/x/bin" status',
+  ]) {
+    const m = d(c);
+    // An unquoted variable is refused before that, by the rule for values the shell may split.
+    assert.ok(m && (/--exec-path/.test(m) || /\$P |\$HOME/.test(c)), 'allowed: ' + c + ' -> ' + m);
+  }
+  for (const c of [
+    'git --exec-path', 'git --exec-path=/usr/lib/git-core status', 'git --exec-path=/usr/libexec/git-core/ status',
+    'git --exec-path="/usr/lib/git-core" log', 'git --exec-path="$SYS" status', 'git --exec-path=/opt/homebrew/libexec/git-core status',
+    'git --exec-path="C:/Program Files/Git/mingw64/libexec/git-core" status', 'git status', 'git log --oneline',
+  ]) assert.equal(d(c), null, c);
 });

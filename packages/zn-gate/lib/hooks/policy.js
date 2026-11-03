@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-03.1';
+const POLICY_RULES_VERSION = '2026-11-03.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2473,6 +2473,21 @@ function gitKeyKind(key) {
 }
 const GIT_LOAD_MESSAGE = (name) => 'zn: this command sets ' + name + ', which makes git read a configuration file or helper zn does not read, and that file could make git run a program, ' +
   'so it was blocked. Next step: drop the variable or set it to /dev/null; tell the user if you need it.';
+const GIT_EXEC_PATH_MESSAGE = 'zn: this command runs git with --exec-path set to a folder that is not the git programs folder of the system, and git would run its own ' +
+  'programs from there, so it was blocked. Next step: drop --exec-path (git --exec-path with no value only prints the folder); tell the user if you need it.';
+// The folders git installs its own programs in (git --exec-path prints one of them). Any other --exec-path value lets git run
+// programs from a folder the command chooses.
+const GIT_SYSTEM_EXEC_PATHS = new Set([
+  '/usr/lib/git-core', '/usr/libexec/git-core', '/usr/lib64/git-core', '/usr/local/libexec/git-core', '/opt/homebrew/libexec/git-core',
+  '/library/developer/commandlinetools/usr/libexec/git-core', '/applications/xcode.app/contents/developer/usr/libexec/git-core',
+  'c:/program files/git/mingw64/libexec/git-core', 'c:/program files/git/mingw64/lib/git-core',
+]);
+function gitSystemExecPath(dir) {
+  const d = String(dir).trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  const low = d.toLowerCase();
+  // Case only matters on Linux: the Windows and macOS folders are compared without it.
+  return GIT_SYSTEM_EXEC_PATHS.has(d) || (/^(?:[a-z]:\/|\/library\/|\/applications\/)/.test(low) && GIT_SYSTEM_EXEC_PATHS.has(low));
+}
 const GIT_ENV_MESSAGE = (what) => 'zn: this command sets ' + what + ', which makes git run a program chosen in the command line, and zn cannot tell that it is safe, ' +
   'so it was blocked. Next step: run the program yourself, or set it only to a plain value (GIT_PAGER=cat); tell the user if you need it.';
 
@@ -2566,6 +2581,8 @@ function gitDashConfigPairs(w, env, shell = {}) {
     if (many(k)) { out.push([null, { split: true }]); return out; }
     // Quoted, a glued value (--git-dir="$GD") is one word, whatever it holds. A glued --config-env=name=VAR still
     // reads as a pair below.
+    // --exec-path=<dir> chooses the folder git runs its own programs from, like GIT_EXEC_PATH: it is judged below.
+    if (w[k].text.startsWith('--exec-path=')) { out.push([null, { execPath: w[k].text.slice(12).replace(/^(["'])(.*)\1$/s, '$2') }]); continue; }
     if (GIT_GLUED_VALUE_RE.test(w[k].text) && !w[k].text.startsWith('--config-env=')) continue;
     const t = word(k);
     if (t === null) { out.push([null, { unread: true }]); return out; }
@@ -2844,6 +2861,11 @@ function gitEnvScan(readings, text, opts) {
     let value;
     if (raw && typeof raw === 'object' && raw.split === true) return { deny: 'zn: a git option in this command, or its value, comes from a variable, a pattern or a brace list that is not quoted, so the shell may turn it into several words and add options such as -c, and zn cannot tell what it will contain, so it was blocked. Next step: quote the variable or pattern ("$DIR", --git-dir="$GD") or write the value out.', codes: [] };
     if (raw && raw.unread) return { deny: GIT_ENV_MESSAGE('a git option zn cannot read before the shell expands it'), codes: [] };
+    if (raw && typeof raw === 'object' && 'execPath' in raw) {
+      const x = literal(raw.execPath);
+      if (x === null || !gitSystemExecPath(x)) return { deny: GIT_EXEC_PATH_MESSAGE, codes: [] };
+      continue;
+    }
     if (raw && typeof raw === 'object' && 'code' in raw) {
       const c = literal(raw.code);
       if (c === null) return { deny: GIT_ENV_MESSAGE('a git option that runs a program, to a value zn cannot read'), codes: [] };
