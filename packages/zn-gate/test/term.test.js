@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { plainText, colorEnabled, styles, sym, ruleLine } = require('../lib/term');
+const { plainText, colorEnabled, symbolsEnabled, styles, sym, ruleLine } = require('../lib/term');
 
 const tty = { isTTY: true };
 const pipe = { isTTY: false };
@@ -37,18 +37,46 @@ test('styles: returns plain strings without a TTY or with NO_COLOR', () => {
   assert.strictEqual(styles(pipe, {}).green(42), '42');
 });
 
-test('sym: symbol with gap, colored by style, empty in plain text', () => {
-  assert.strictEqual(sym({}, '✔'), '✔ ');
-  assert.strictEqual(sym({}, '✔', null, '  '), '✔  ');
-  assert.strictEqual(sym({}, '✔', (s) => '<' + s + '>'), '<✔> ');
-  assert.strictEqual(sym({ NO_COLOR: '1' }, '✔'), '');
-  assert.strictEqual(sym({ TERM: 'dumb' }, '✔', (s) => s), '');
+test('sym: symbol with gap, colored by style, on a terminal', () => {
+  assert.strictEqual(sym({}, '✔', null, ' ', tty), '✔ ');
+  assert.strictEqual(sym({}, '✔', null, '  ', tty), '✔  ');
+  assert.strictEqual(sym({}, '✔', (s) => '<' + s + '>', ' ', tty), '<✔> ');
 });
 
-test('ruleLine: box characters, or dashes in plain text', () => {
-  assert.strictEqual(ruleLine({}, 4), '────');
-  assert.strictEqual(ruleLine({ NO_COLOR: '1' }, 4), '----');
-  assert.strictEqual(ruleLine({}, 0), '');
+test('sym: an ASCII marker where symbols are off, never a symbol', () => {
+  assert.strictEqual(sym({}, '✔', null, ' ', pipe), '[ok] ');
+  assert.strictEqual(sym({}, '✖', null, ' ', pipe), '[x] ');
+  assert.strictEqual(sym({}, '!', null, '  ', pipe), '[!]  ');
+  assert.strictEqual(sym({}, '↳', null, ' ', pipe), '-> ');
+  assert.strictEqual(sym({}, '🛡️', undefined, '  ', pipe), '[+]  ');
+  assert.strictEqual(sym({}, '🔒', undefined, ' ', pipe), '[ok] ');
+  assert.strictEqual(sym({}, '✔', null, '', pipe), '[ok]');
+  assert.strictEqual(sym({ NO_COLOR: '1' }, '✔', null, ' ', tty), '[ok] ');
+  assert.strictEqual(sym({ TERM: 'dumb' }, '✖', (s) => s, ' ', tty), '[x] ');
+  assert.strictEqual(sym({ CI: 'true' }, '✔', null, ' ', tty), '[ok] ');
+});
+
+test('sym: a symbol with no ASCII marker is left out where symbols are off', () => {
+  assert.strictEqual(sym({}, '?', null, ' ', pipe), '');
+});
+
+test('ruleLine: box characters on a terminal, dashes otherwise', () => {
+  assert.strictEqual(ruleLine({}, 4, tty), '────');
+  assert.strictEqual(ruleLine({}, 4, pipe), '----');
+  assert.strictEqual(ruleLine({ NO_COLOR: '1' }, 4, tty), '----');
+  assert.strictEqual(ruleLine({ CI: '1' }, 4, tty), '----');
+  assert.strictEqual(ruleLine({}, 0, tty), '');
+});
+
+test('symbolsEnabled: a terminal, no plain-text request, no CI', () => {
+  assert.strictEqual(symbolsEnabled({}, tty), true);
+  assert.strictEqual(symbolsEnabled({}, pipe), false);
+  assert.strictEqual(symbolsEnabled({}, undefined), false);
+  assert.strictEqual(symbolsEnabled({ NO_COLOR: '1' }, tty), false);
+  assert.strictEqual(symbolsEnabled({ TERM: 'dumb' }, tty), false);
+  assert.strictEqual(symbolsEnabled({ CI: 'true' }, tty), false);
+  assert.strictEqual(symbolsEnabled({ CI: '' }, tty), true);
+  assert.strictEqual(symbolsEnabled({ FORCE_COLOR: '1' }, pipe), false);
 });
 
 test('plainText: FORCE_COLOR does not change the answer', () => {
@@ -88,23 +116,26 @@ test('styles: TERM=dumb on a terminal gives plain text', () => {
 });
 
 test('sym: FORCE_COLOR does not change symbols, NO_COLOR still wins', () => {
-  assert.strictEqual(sym({ FORCE_COLOR: '1' }, '✔'), '✔ ');
-  assert.strictEqual(sym({ FORCE_COLOR: '1', NO_COLOR: '1' }, '✔'), '');
-  assert.strictEqual(sym({ NO_COLOR: '1' }, '✔', null, '  '), '');
+  assert.strictEqual(sym({ FORCE_COLOR: '1' }, '✔', null, ' ', tty), '✔ ');
+  assert.strictEqual(sym({ FORCE_COLOR: '1', NO_COLOR: '1' }, '✔', null, ' ', tty), '[ok] ');
+  assert.strictEqual(sym({ NO_COLOR: '1' }, '✔', null, '  ', tty), '[ok]  ');
+  assert.strictEqual(sym({ FORCE_COLOR: '1' }, '✔', null, ' ', pipe), '[ok] ');
 });
 
 test('sym: an undefined environment and an empty gap', () => {
-  assert.strictEqual(sym(undefined, '✔'), '✔ ');
-  assert.strictEqual(sym({}, '✔', null, ''), '✔');
+  assert.strictEqual(sym(undefined, '✔', null, ' ', tty), '✔ ');
+  assert.strictEqual(sym({}, '✔', null, '', tty), '✔');
+  assert.strictEqual(sym(undefined, '✔', null, ' ', pipe), '[ok] ');
 });
 
 test('ruleLine: narrow widths and plain text', () => {
-  assert.strictEqual(ruleLine({}, 1), '─');
-  assert.strictEqual(ruleLine({ NO_COLOR: '1' }, 1), '-');
-  assert.strictEqual(ruleLine({ NO_COLOR: '1' }, 0), '');
-  assert.strictEqual(ruleLine({ TERM: 'dumb' }, 3), '---');
-  assert.strictEqual(ruleLine({ FORCE_COLOR: '1' }, 2), '──');
-  assert.strictEqual(ruleLine(undefined, 2), '──');
+  assert.strictEqual(ruleLine({}, 1, tty), '─');
+  assert.strictEqual(ruleLine({ NO_COLOR: '1' }, 1, tty), '-');
+  assert.strictEqual(ruleLine({ NO_COLOR: '1' }, 0, tty), '');
+  assert.strictEqual(ruleLine({ TERM: 'dumb' }, 3, tty), '---');
+  assert.strictEqual(ruleLine({ FORCE_COLOR: '1' }, 2, tty), '──');
+  assert.strictEqual(ruleLine(undefined, 2, tty), '──');
+  assert.strictEqual(ruleLine(undefined, 2, pipe), '--');
 });
 
 test('ruleLine: a negative width is rejected', () => {

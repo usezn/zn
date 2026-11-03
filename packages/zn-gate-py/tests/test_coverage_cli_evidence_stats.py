@@ -313,15 +313,34 @@ def test_scan_key_begin_and_end_on_one_line_is_left_to_line_pass(tmp_path):
 
 # ------------------------------------------------------------ console output
 
+def _terminal(encoding):
+    return SimpleNamespace(encoding=encoding, isatty=lambda: True)
+
+
 def test_icon_falls_back_to_ascii(monkeypatch):
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.delenv("TERM", raising=False)
-    ascii_stream = SimpleNamespace(encoding="ascii")
+    monkeypatch.delenv("CI", raising=False)
+    ascii_stream = _terminal("ascii")
     assert cli._icon(cli.SHIELD, ascii_stream) == "[+]"
     assert cli._icon(cli.CHECK, ascii_stream) == "[ok]"
     assert cli._icon("☃", ascii_stream) == ""
-    assert cli._icon(cli.ALERT, SimpleNamespace(encoding="no-such-codec")) == "[!]"
-    assert cli._icon(cli.LOCK, SimpleNamespace(encoding=None)) == cli.LOCK
+    assert cli._icon(cli.ALERT, _terminal("no-such-codec")) == "[!]"
+    assert cli._icon(cli.LOCK, _terminal(None)) == cli.LOCK
+
+
+def test_icon_is_ascii_off_a_terminal_or_in_ci(monkeypatch):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("TERM", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    utf8 = _terminal("utf-8")
+    assert cli._icon(cli.SHIELD, utf8) == cli.SHIELD
+    assert cli._icon(cli.SHIELD, SimpleNamespace(encoding="utf-8")) == "[+]"
+    assert cli._icon(cli.SHIELD, io.StringIO()) == "[+]"
+    monkeypatch.setenv("CI", "true")
+    assert cli._icon(cli.SHIELD, utf8) == "[+]"
+    monkeypatch.setenv("CI", "")
+    assert cli._icon(cli.SHIELD, utf8) == cli.SHIELD
 
 
 def test_configure_output_streams_replaces_errors():
