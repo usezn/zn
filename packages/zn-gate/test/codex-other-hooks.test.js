@@ -11,11 +11,10 @@ const path = require('path');
 const { tempDir } = require('./helpers/tmp');
 const { findOtherHooks, _internal } = require('../lib/codex-other-hooks');
 
-const MB = 1024 * 1024;
 const VARS = ['HOME', 'XDG_CONFIG_HOME', 'USERPROFILE', 'CODEX_HOME'];
 
 function isolate(t) {
-  const home = tempDir(t, 'zn-r233-home-');
+  const home = tempDir(t, 'zn-other-hooks-home-');
   const saved = {};
   for (const v of VARS) {
     saved[v] = process.env[v];
@@ -32,7 +31,7 @@ function isolate(t) {
 // A fresh Codex folder (the codexHome argument) with the environment isolated.
 function codexHome(t) {
   isolate(t);
-  return tempDir(t, 'zn-r233-codex-');
+  return tempDir(t, 'zn-other-hooks-codex-');
 }
 
 function writeHooks(dir, tree) {
@@ -124,7 +123,7 @@ test('malformed or unexpected hook files give no hit and no exception', (t) => {
 
 test('the codex home is searched before the project .codex folder', (t) => {
   const home = codexHome(t);
-  const project = tempDir(t, 'zn-r233-project-');
+  const project = tempDir(t, 'zn-other-hooks-project-');
   writeHooks(path.join(project, '.codex'), under('PreToolUse', group('Bash', 'other-tool project')));
   writeHooks(home, under('PreToolUse', group('Bash', 'other-tool home')));
   assert.equal(findOtherHooks(home, project).file, path.join(home, 'hooks.json'));
@@ -132,14 +131,14 @@ test('the codex home is searched before the project .codex folder', (t) => {
 
 test('the project .codex folder is searched when the codex home has no other hook', (t) => {
   const home = codexHome(t);
-  const project = tempDir(t, 'zn-r233-project-');
+  const project = tempDir(t, 'zn-other-hooks-project-');
   writeHooks(home, under('PreToolUse', group('Bash', 'node "/opt/zn/lib/hooks/runner.js" codex')));
   writeHooks(path.join(project, '.codex'), under('PreToolUse', group('Bash', 'other-tool project')));
   assert.equal(findOtherHooks(home, project).file, path.join(project, '.codex', 'hooks.json'));
 });
 
 test('a project dir that is the codex home parent is read without a crash', (t) => {
-  const project = tempDir(t, 'zn-r233-project-');
+  const project = tempDir(t, 'zn-other-hooks-project-');
   const home = path.join(project, '.codex');
   writeHooks(home, under('PreToolUse', group('Bash', 'other-tool once')));
   assert.equal(findOtherHooks(home, project).file, path.join(home, 'hooks.json'));
