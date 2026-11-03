@@ -4,3 +4,11 @@ rules:
   # and rewriting it is a style change with no security effect.
   self-repository:
     disable: true
+  # A "zizmor: ignore" comment on a "uses:" line stops Dependabot from rewriting the version
+  # comment after it, so these exceptions live here instead.
+  cache-poisoning:
+    ignore:
+      # rust-cache: release pushes set lookup-only, so they neither restore nor save a cache.
+      - rust.yml
+      # actions/cache: the step is skipped on release pushes by its "if".
+      - leak-bench.yml
