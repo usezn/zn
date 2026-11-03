@@ -4,8 +4,8 @@
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "process", "command": "/bin/sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "UserPromptSubmit"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" },
-          { "type": "process", "command": "C:\\Windows\\System32\\cmd.exe", "args": ["/d", "/c", "(", "${ZCODE_PLUGIN_ROOT}\\scripts\\zn-hook.cmd ","UserPromptSubmit", ")", "||", "exit", "/b", "2"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
+          { "type": "process", "command": "/bin/sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "UserPromptSubmit"], "timeoutMs": 300000, "statusMessage": "zn: checking for secrets" },
+          { "type": "process", "command": "C:\\Windows\\System32\\cmd.exe", "args": ["/d", "/c", "(", "${ZCODE_PLUGIN_ROOT}\\scripts\\zn-hook.cmd ","UserPromptSubmit", ")", "||", "exit", "/b", "2"], "timeoutMs": 300000, "statusMessage": "zn: checking for secrets" }
         ]
       }
     ],
@@ -13,8 +13,8 @@
       {
         "matcher": "*",
         "hooks": [
-          { "type": "process", "command": "/bin/sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PreToolUse"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" },
-          { "type": "process", "command": "C:\\Windows\\System32\\cmd.exe", "args": ["/d", "/c", "(", "${ZCODE_PLUGIN_ROOT}\\scripts\\zn-hook.cmd ","PreToolUse", ")", "||", "exit", "/b", "2"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
+          { "type": "process", "command": "/bin/sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PreToolUse"], "timeoutMs": 300000, "statusMessage": "zn: checking for secrets" },
+          { "type": "process", "command": "C:\\Windows\\System32\\cmd.exe", "args": ["/d", "/c", "(", "${ZCODE_PLUGIN_ROOT}\\scripts\\zn-hook.cmd ","PreToolUse", ")", "||", "exit", "/b", "2"], "timeoutMs": 300000, "statusMessage": "zn: checking for secrets" }
         ]
       }
     ],
@@ -22,8 +22,8 @@
       {
         "matcher": "*",
         "hooks": [
-          { "type": "process", "command": "/bin/sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PermissionRequest"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" },
-          { "type": "process", "command": "C:\\Windows\\System32\\cmd.exe", "args": ["/d", "/c", "(", "${ZCODE_PLUGIN_ROOT}\\scripts\\zn-hook.cmd ","PermissionRequest", ")", "||", "exit", "/b", "2"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
+          { "type": "process", "command": "/bin/sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PermissionRequest"], "timeoutMs": 300000, "statusMessage": "zn: checking for secrets" },
+          { "type": "process", "command": "C:\\Windows\\System32\\cmd.exe", "args": ["/d", "/c", "(", "${ZCODE_PLUGIN_ROOT}\\scripts\\zn-hook.cmd ","PermissionRequest", ")", "||", "exit", "/b", "2"], "timeoutMs": 300000, "statusMessage": "zn: checking for secrets" }
         ]
       }
     ],
@@ -31,8 +31,8 @@
       {
         "matcher": "^(Bash|Read|Grep|WebFetch)$|^mcp__.*",
         "hooks": [
-          { "type": "process", "command": "/bin/sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PostToolUse"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" },
-          { "type": "process", "command": "C:\\Windows\\System32\\cmd.exe", "args": ["/d", "/c", "(", "${ZCODE_PLUGIN_ROOT}\\scripts\\zn-hook.cmd ","PostToolUse", ")", "||", "exit", "/b", "0"], "timeoutMs": 30000, "statusMessage": "zn: checking for secrets" }
+          { "type": "process", "command": "/bin/sh", "args": ["${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh", "PostToolUse"], "timeoutMs": 300000, "statusMessage": "zn: checking for secrets" },
+          { "type": "process", "command": "C:\\Windows\\System32\\cmd.exe", "args": ["/d", "/c", "(", "${ZCODE_PLUGIN_ROOT}\\scripts\\zn-hook.cmd ","PostToolUse", ")", "||", "exit", "/b", "0"], "timeoutMs": 300000, "statusMessage": "zn: checking for secrets" }
         ]
       }
     ]
