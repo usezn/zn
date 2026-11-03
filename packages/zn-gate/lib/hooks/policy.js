@@ -2499,15 +2499,17 @@ const GIT_LOAD_MESSAGE = (name) => 'zn: this command sets ' + name + ', which ma
   'so it was blocked. Next step: drop the variable or set it to /dev/null; tell the user if you need it.';
 const GIT_EXEC_PATH_MESSAGE = 'zn: this command runs git with --exec-path set to a folder that is not the git programs folder of the system, and git would run its own ' +
   'programs from there, so it was blocked. Next step: drop --exec-path (git --exec-path with no value only prints the folder); tell the user if you need it.';
-// The folders git installs its own programs in (git --exec-path prints one of them). Any other --exec-path value lets git run
-// programs from a folder the command chooses.
+// The folders git installs its own programs in (git --exec-path prints one of them), owned by the system. Any other --exec-path
+// value lets git run programs from a folder the command chooses. Homebrew's and /usr/local folders are left out: the user owns
+// them on macOS.
 const GIT_SYSTEM_EXEC_PATHS = new Set([
-  '/usr/lib/git-core', '/usr/libexec/git-core', '/usr/lib64/git-core', '/usr/local/libexec/git-core', '/opt/homebrew/libexec/git-core',
+  '/usr/lib/git-core', '/usr/libexec/git-core', '/usr/lib64/git-core',
   '/library/developer/commandlinetools/usr/libexec/git-core', '/applications/xcode.app/contents/developer/usr/libexec/git-core',
   'c:/program files/git/mingw64/libexec/git-core', 'c:/program files/git/mingw64/lib/git-core',
 ]);
 function gitSystemExecPath(dir) {
-  const d = String(dir).trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  // No trimming: git reads " /usr/lib/git-core" as a folder inside the working folder.
+  const d = String(dir).replace(/\\/g, '/').replace(/\/+$/, '');
   const low = d.toLowerCase();
   // Case only matters on Linux: the Windows and macOS folders are compared without it.
   return GIT_SYSTEM_EXEC_PATHS.has(d) || (/^(?:[a-z]:\/|\/library\/|\/applications\/)/.test(low) && GIT_SYSTEM_EXEC_PATHS.has(low));
@@ -2605,8 +2607,13 @@ function gitDashConfigPairs(w, env, shell = {}) {
     if (many(k)) { out.push([null, { split: true }]); return out; }
     // Quoted, a glued value (--git-dir="$GD") is one word, whatever it holds. A glued --config-env=name=VAR still
     // reads as a pair below.
-    // --exec-path=<dir> chooses the folder git runs its own programs from, like GIT_EXEC_PATH: it is judged below.
-    if (w[k].text.startsWith('--exec-path=')) { out.push([null, { execPath: w[k].text.slice(12).replace(/^(["'])(.*)\1$/s, '$2') }]); continue; }
+    // --exec-path=<dir> chooses the folder git runs its own programs from, like GIT_EXEC_PATH: it is judged below. The word is read
+    // as git gets it: with a variable the command sets resolved ("$X" with X=--exec-path=...) and its quotes removed.
+    {
+      const seen = w[k].text.startsWith('--exec-path=') ? w[k].text : word(k);
+      const plain = seen === null ? null : String(seen).replace(/["']/g, '');
+      if (plain !== null && plain.startsWith('--exec-path=')) { out.push([null, { execPath: plain.slice(12) }]); continue; }
+    }
     if (GIT_GLUED_VALUE_RE.test(w[k].text) && !w[k].text.startsWith('--config-env=')) continue;
     const t = word(k);
     if (t === null) { out.push([null, { unread: true }]); return out; }
