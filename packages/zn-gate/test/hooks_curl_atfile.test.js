@@ -800,3 +800,35 @@ test('round 2: boolean letters in front of the output letter and loops behind re
   ];
   for (const cmd of allowed) assert.equal(policy.bashDenial(cmd, opts), null, `should be allowed: ${cmd}`);
 });
+
+test('time with options and coproc in front of a command do not hide the curl output and loop checks', () => {
+  const { proj, opts } = fixture();
+  fs.mkdirSync(path.join(proj, 'x'), { recursive: true });
+  fs.writeFileSync(path.join(proj, 'x', 'evil.cfg'), 'silent\n');
+  const shapes = [
+    `curl -o $zz ${U}; curl -K x/evil.cfg ${U}`,
+    `wget -O $zz ${U}; curl -K x/evil.cfg ${U}`,
+    `curl -K x/evil.cfg ${U} > $zz`,
+    `for i in 1 2; do curl ${U} > $zz; done`,
+    `while true; do curl ${U} -o $zz; done`,
+    `until false; do curl ${U} | tee $zz; done`,
+  ];
+  const prefixes = ['', 'time ', 'time -p ', 'time -- ', 'time -p -- ', 'coproc ', 'coproc NAME { '];
+  for (const shape of shapes) {
+    for (const prefix of prefixes) {
+      const cmd = prefix.endsWith('{ ') ? `${prefix}${shape}; }` : prefix + shape;
+      assert.ok(policy.bashDenial(cmd, opts), `should be refused: ${cmd}`);
+    }
+  }
+  const allowed = [
+    'time -p ls',
+    'time -p -- ls',
+    'coproc cat',
+    'coproc NAME { cat; }',
+    `time -p curl -o $OUT ${U}`,
+    `coproc curl -s ${U} > $TMPFILE`,
+    `coproc NAME { curl -s ${U} > $TMPFILE; }`,
+    `time -p for i in 1 2; do echo $i; done; curl -s ${U} > $TMPFILE`,
+  ];
+  for (const cmd of allowed) assert.equal(policy.bashDenial(cmd, opts), null, `should be allowed: ${cmd}`);
+});

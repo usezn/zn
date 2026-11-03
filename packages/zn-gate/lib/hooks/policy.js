@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-03.1';
+const POLICY_RULES_VERSION = '2026-11-03.4';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1401,6 +1401,7 @@ function programOfGroup(group) {
     if (!t || ASSIGNMENT_RE.test(t) || PROGRAM_KEYWORDS.has(t)) { k++; continue; }
     const name = programName(t.replace(/^[\\]+/, ''));
     if (Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, name)) { k = skipWrapper(group, k, name); continue; }
+    if (name === 'coproc') { k = afterCoprocName(group, k + 1); continue; }
     return { name, at: k };
   }
   // The guard ran out with words left (dozens of assignments or wrappers): the program is unknown, so every word is
@@ -1651,6 +1652,31 @@ function outputTargets(args, prog) {
   return res;
 }
 
+/* Compound commands can start behind `time` (with its -p and --) and `coproc` (with its optional name): `time -p for ...`,
+   `coproc NAME { while ...; }`. leadingKeyword is the first word of a command that is not one of those prefixes. */
+const COPROC_COMPOUND_START = /^(?:\{|\(|for|while|until|if|case|select)$/;
+// Index of the word after `coproc`: its name is skipped only when a compound command follows it.
+function afterCoprocName(group, k) {
+  if (k + 1 < group.length && /^[A-Za-z_][A-Za-z0-9_]*$/.test(String(group[k].text)) &&
+      COPROC_COMPOUND_START.test(String(group[k + 1].text))) return k + 1;
+  return k;
+}
+function leadingKeyword(group) {
+  let k = 0;
+  while (k < group.length) {
+    const t = String(group[k].text).replace(/^[({]+/, '');
+    if (!t || ASSIGNMENT_RE.test(t) || /^(?:then|do|else|elif|if|!|\{)$/.test(t)) { k++; continue; }
+    if (t === 'time') {
+      k++;
+      while (k < group.length && /^-/.test(String(group[k].text))) { const end = String(group[k].text) === '--'; k++; if (end) break; }
+      continue;
+    }
+    if (t === 'coproc') { k = afterCoprocName(group, k + 1); continue; }
+    return t;
+  }
+  return '';
+}
+
 function unresolvedConfigDestinations(readings, names, opts) {
   const out = new Set();
   const home = opts.home || os.homedir();
@@ -1670,8 +1696,7 @@ function unresolvedConfigDestinations(readings, names, opts) {
     let loopDepth = 0;
     for (const g of groups) {
       // The first word that is not an assignment or a reserved word that can stand in front of a command.
-      const first = g.group.map((w) => String(w.text).replace(/^[({]+/, '')).find((t) => t && !ASSIGNMENT_RE.test(t) &&
-        !/^(?:then|do|else|elif|if|time|!|\{)$/.test(t)) || '';
+      const first = leadingKeyword(g.group);
       if (/^(?:for|while|until|select)$/.test(first)) loopDepth++;
       g.inLoop = loopDepth > 0;
       if (first === 'done') loopDepth = Math.max(0, loopDepth - 1);
