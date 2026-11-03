@@ -1,3 +1,23 @@
+# ZCode plugin on Windows: stuck hooks, a planted node.exe and a missing environment
+
+Branch `fix/zcode-win-rc2` at 8c878100c (the plugin's hooks stop by themselves 26 seconds after ZCode starts them). Official ZCode 3.16.3.8992 on Microsoft Windows Server 2022 Datacenter 10.0.20348 (same installer and `zcode.cjs` hashes as below), fake local model provider, fictitious values only, built-in Administrator account. The plugin is built from that commit with the published zn-gate 1.14.1 tarball.
+
+Folder runs (the case list A0 to H with `ZC_HOME` in that folder): plain 26 pass (the 17 cases plus I1 to I7), space, amp, parens, caret, pct and mixed 17 pass each, no failure.
+
+| Case | Expected | Observed | Result |
+|---|---|---|---|
+| I1 zn-gate inside the plugin never answers on PreToolUse (direct Node.js path): Read .env | blocked by the hook before ZCode's 30 second timeout | blocked after 26,102 ms, value not returned | PASS |
+| I2 zn-gate inside the plugin never gives its thread back (direct Node.js path) | same | blocked after 26,976 ms (the watchdog thread ended it) | PASS |
+| I3 the same, PowerShell path (no ProgramFiles) | same | blocked after 27,670 ms | PASS |
+| I4 node.exe planted in the project, PATH into the project, PowerShell path: Read .env, Read a.txt | .env blocked, a.txt read, nothing started from the project | as expected; no program started from the project folder (process creation audit) | PASS |
+| I5 the same, direct Node.js path | same | as expected | PASS |
+| I6 (information) the app without SystemRoot and ProgramFiles | observe only | the app made no model request, so no tool ran | PASS |
+| I7 hook entry without SystemRoot, ProgramFiles and ZCODE_PLUGIN_ROOT | no Node.js: exit 2; with Node.js: .env denied, a.txt allowed | exit 2 in 2,593 ms; deny; allow | PASS |
+
+Hook durations are ZCode's own `durationMs` of the Windows entry. With the earlier 28 second deadline, the same kit measured 28,147, 28,884 and 29,991 ms for I1 to I3: stopping a stuck hook can take up to 2 seconds after the deadline, which left ZCode's 30 second timeout only milliseconds on the PowerShell path. The `/bin/sh` entry of every event fails to start on Windows (30 to 2,700 ms, never a decision) and is not counted.
+
+Plugin tests on the same machine (Node.js 22.23.4): `plugins/tools/test-launch.js` 59 pass, `plugins/tools/test-zcode-plugin.js` 28 pass, `packages/zn-gate/test/hooks_zcode_plugin.test.js` 15 pass and 2 fail. The two failures ("a ZCode process hook counts only as an absolute sh or node on a script inside the plugin folder" and "a ZCode hook with a non-system sh, a pattern, or a script linked out of the plugin is NOT protected") fail on the wording of the reason only: `zn-gate check` still reports not protected. They fail the same way at the earlier commit and pass on the Windows CI runner of `next`; the VM gives the temp folder in its short form (`ADMINI~1`). The test that ran past its time limit before ("runs no planted sh or node") now passes in 10.2 seconds.
+
 # ZCode plugin on Windows: the cmd.exe hook from user folders with special characters
 
 Release port of `fix/zcode-win-rc2` onto `release/1.15.0` at 129748782 (the plugin's Windows entry is `C:\Windows\System32\cmd.exe /d /c ( "${ZCODE_PLUGIN_ROOT}\scripts\zn-hook.cmd " <event> ) || exit /b <2 or 0>`). Official ZCode 3.16.3.8992 on Microsoft Windows Server 2022 Datacenter 10.0.20348, installer sha256 `B4FCCC1EAD9922D9066E083D53D3BF92BDEAC3124767D4352FD0583E5399382F`, Authenticode signature Valid, its own headless runtime (`resources/glm/zcode.cjs`, sha256 `97490D0F06A7A225D54D47817ACF4B4859CDB268B59F2490CAAEDA982BEF063A`), fake local model provider, fictitious values only. The plugin is built from that commit (`plugins/tools/build-plugin-repo.js --target zcode`) with the published zn-gate 1.14.1 tarball; `zn-gate check` is the 1.15.0-rc.1 package of that commit. Each row is the whole case list (A0 to H, as in the table below) run with the ZCode user folder (`ZC_HOME`) set to that folder, so the plugin is installed and its hooks start from there.
