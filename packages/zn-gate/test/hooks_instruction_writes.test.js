@@ -230,3 +230,67 @@ test('a write to an instruction file that carries a secret marker asks once, wit
   assert.match(r.reason, /__ZN_AWS_KEY_1__/);
   assert.equal((await decide(setup(t, { hooks: { strict: true } }), 'Write', { file_path: path.join(env.proj, 'CLAUDE.md'), content: 'key=__ZN_AWS_KEY_1__\n' })).decision, 'deny');
 });
+
+test('python -c and node -e code that writes a quoted instruction file name asks', async (t) => {
+  const env = setup(t);
+  const asks = [
+    `python3 -c "open('CLAUDE.md','w').write('Example note.')"`,
+    `python3 -c 'open("AGENTS.md", "a").write("Example note.")'`,
+    `python -c "open('./CLAUDE.md','wb').write(b'Example')"`,
+    `python3 -c "open('docs/../CLAUDE.md','x')"`,
+    `python3 -c "open('~/notes/CLAUDE.md','w').write('Example')"`,
+    `python3 -c "open(file='GEMINI.md', mode='w').write('Example')"`,
+    `python3 -c "open('.cursorrules', encoding='utf-8', mode='a')"`,
+    `python3 -c "with open('CLAUDE.md','w') as f: f.write('Example')"`,
+    `python3 -c "from pathlib import Path; Path('GEMINI.md').write_text('Example')"`,
+    `python3 -c "import pathlib; pathlib.Path('.github/copilot-instructions.md').write_bytes(b'Example')"`,
+    `python3 -c "from pathlib import Path; Path('.cursor/rules/x.mdc').open('w').write('Example')"`,
+    `sudo python3 -c "open('CLAUDE.md','w')"`,
+    `node -e "require('fs').writeFileSync('CLAUDE.md','Example')"`,
+    `node -e 'require("fs").writeFileSync("AGENTS.md","Example")'`,
+    `node -e "require('fs').writeFile('./CLAUDE.md','Example',()=>{})"`,
+    `node -e "require('fs').appendFileSync('docs/../CLAUDE.md','Example')"`,
+    `node -e "require('fs').appendFile('MEMORY.md','Example',()=>{})"`,
+    `node -e "require('fs').promises.writeFile('.windsurfrules','Example')"`,
+    `node -e "require('fs').createWriteStream('~/notes/CLAUDE.md').end('Example')"`,
+    `node --eval "const fs=require('fs'); fs.writeFileSync('GEMINI.md','Example')"`,
+  ];
+  for (const command of asks) {
+    const r = await decide(env, 'Bash', { command });
+    assert.equal(r.decision, 'ask', command);
+    assert.match(r.reason, /standing instructions in later sessions\. Approve only if you asked for this change\./, command);
+  }
+  const strict = setup(t, { hooks: { agentInstructionWrites: 'deny' } });
+  assert.equal((await decide(strict, 'Bash', { command: asks[0] })).decision, 'deny');
+  assert.equal((await decide(strict, 'Bash', { command: asks[12] })).decision, 'deny');
+  const off = setup(t, { hooks: { agentInstructionWrites: 'off' } });
+  assert.equal((await decide(off, 'Bash', { command: asks[0] })).decision, 'allow');
+});
+
+test('python -c and node -e code that only reads, or writes another file, is allowed', async (t) => {
+  const env = setup(t);
+  const allows = [
+    `python3 -c "print(open('CLAUDE.md').read())"`,
+    `python3 -c "print(open('CLAUDE.md','r').read())"`,
+    `python3 -c "print(open('CLAUDE.md','rb').read())"`,
+    `python3 -c "print(open('CLAUDE.md', mode='r').read())"`,
+    `python3 -c "open('notes.txt','w').write('Example')"`,
+    `python3 -c "open('docs/CLAUDE.md.txt','w')"`,
+    `python3 -c "name='CLAUDE.md'; open(name,'w')"`,
+    `python3 -c "from pathlib import Path; print(Path('CLAUDE.md').read_text())"`,
+    `python3 -c "from pathlib import Path; Path('notes.txt').write_text('Example')"`,
+    `python3 -c "from pathlib import Path; print(Path('AGENTS.md').open('r').read())"`,
+    `python3 -c "reopen('CLAUDE.md','w')"`,
+    `python3 -c "import json; print(json.dumps({'file': 'CLAUDE.md'}))"`,
+    `python3 script.py "open('CLAUDE.md','w')"`,
+    `node -e "console.log(require('fs').readFileSync('CLAUDE.md','utf8'))"`,
+    `node -e "require('fs').writeFileSync('notes.txt','Example')"`,
+    `node -e "require('fs').writeFileSync(process.argv[1],'Example')"`,
+    `node -e "require('fs').createReadStream('CLAUDE.md').pipe(process.stdout)"`,
+    `node -e "console.log(require('fs').existsSync('AGENTS.md'))"`,
+    `node script.js "fs.writeFileSync('CLAUDE.md','x')"`,
+  ];
+  for (const command of allows) {
+    assert.equal((await decide(env, 'Bash', { command })).decision, 'allow', command);
+  }
+});
