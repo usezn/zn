@@ -33,8 +33,10 @@
  *    bundled would be looked up in parent node_modules folders the plugin
  *    does not control. Code that reaches Node's module system another way
  *    cannot be checked and is refused: import() with a computed name,
- *    createRequire, import.meta.resolve, process.mainModule, and the
- *    "module" built-in.
+ *    createRequire, import.meta.resolve, process.mainModule, the
+ *    "module" built-in, eval, the Function constructor (also reached
+ *    through .constructor), and require() of a package whose name is
+ *    not a plain quoted string.
  * 4. The plugin files are copied unchanged: the shared ones from
  *    plugins/zn-gate, the README, SECURITY and PROVENANCE files of the plugin
  *    repository from plugins/claude-dir. scripts/zn-gate.lock.json lists the
@@ -279,6 +281,167 @@ function importCalls(text) {
   return calls;
 }
 
+// Ways to run code from a string, or to name a module, that the rules above cannot see. The bundle needs none of
+// them, so each is refused: eval (called, indirect, or kept in a variable), the Function constructor, the
+// constructor of a constructor, and a require() whose argument is not a plain quoted name (a template literal, a
+// concatenation such as 'mod' + 'ule', an escape such as '\x6dodule') or that is kept in a variable. A relative
+// name that starts with "./" or "../" may be built at run time: it can only name a file, which the launcher
+// resolves among the verified files. A property named eval (obj.eval(), { eval: 1 }) or a method definition
+// (eval(a) { ... }) is not eval, and instanceof Function / Function.prototype do not construct anything.
+// The scan reads tokens (comments, strings, template literals and regular expressions are told apart from code),
+// but it is not a full parser: a regular expression is told from a division by the token before it, and code that
+// is rebuilt at run time from pieces through other objects cannot be seen. A file that cannot be read to the end
+// is refused.
+const GLOBAL_OBJECTS = new Set(['globalThis', 'global', 'window', 'self']);
+const BEFORE_EXPRESSION = new Set(['return', 'typeof', 'case', 'do', 'else', 'in', 'of', 'instanceof', 'new', 'delete', 'void', 'throw', 'yield', 'await']);
+
+/** Tokens of JavaScript source ({ t: 'id' | 'str' | 'tpl' | 're' | 'num' | 'p', v, i }), or null if it cannot be read. */
+function tokenize(text) {
+  const toks = [];
+  const stack = []; // the brace depth outside each open ${ } of a template
+  const n = text.length;
+  let depth = 0;
+  let i = 0;
+  const template = () => {
+    const start = i;
+    while (i < n) {
+      if (text[i] === '\\') i += 2;
+      else if (text[i] === '`') { toks.push({ t: 'tpl', v: text.slice(start, i), i: start }); i++; return true; }
+      else if (text[i] === '$' && text[i + 1] === '{') {
+        toks.push({ t: 'tpl', v: text.slice(start, i), i: start });
+        i += 2;
+        stack.push(depth);
+        depth = 0;
+        return true;
+      } else i++;
+    }
+    return false;
+  };
+  if (text.startsWith('#!')) while (i < n && text[i] !== '\n') i++;
+  while (i < n) {
+    const c = text[i];
+    if (/\s/.test(c)) { i++; continue; }
+    if (c === '/' && text[i + 1] === '/') { while (i < n && text[i] !== '\n') i++; continue; }
+    if (c === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      if (end < 0) return null;
+      i = end + 2;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < n && text[j] !== c) {
+        if (text[j] === '\\') { if (text[j + 1] === '\r' && text[j + 2] === '\n') j++; j++; }
+        else if (text[j] === '\n') return null;
+        j++;
+      }
+      if (j >= n) return null;
+      toks.push({ t: 'str', v: text.slice(i + 1, j), i });
+      i = j + 1;
+      continue;
+    }
+    if (c === '`') { i++; if (!template()) return null; continue; }
+    if (c === '}' && stack.length && depth === 0) { depth = stack.pop(); i++; if (!template()) return null; continue; }
+    if (/[A-Za-z_$\u0080-￿]/.test(c)) {
+      let j = i + 1;
+      while (j < n && /[\w$\u0080-￿]/.test(text[j])) j++;
+      toks.push({ t: 'id', v: text.slice(i, j), i });
+      i = j;
+      continue;
+    }
+    if (/\d/.test(c) || (c === '.' && /\d/.test(text[i + 1] || ''))) {
+      let j = i + 1;
+      while (j < n && /[\w.]/.test(text[j])) j++;
+      toks.push({ t: 'num', v: text.slice(i, j), i });
+      i = j;
+      continue;
+    }
+    if (c === '\\') return null; // an escape in a name (eval)
+    if (c === '/') {
+      const prev = toks[toks.length - 1];
+      const regex = !prev || prev.t === 'p' && prev.v !== ')' && prev.v !== ']' || prev.t === 'id' && BEFORE_EXPRESSION.has(prev.v);
+      if (regex) {
+        let j = i + 1;
+        let inClass = false;
+        while (j < n && (inClass || text[j] !== '/')) {
+          if (text[j] === '\n') return null;
+          if (text[j] === '\\') j++;
+          else if (text[j] === '[') inClass = true;
+          else if (text[j] === ']') inClass = false;
+          j++;
+        }
+        if (j >= n) return null;
+        j++;
+        while (j < n && /[a-z]/i.test(text[j])) j++;
+        toks.push({ t: 're', v: '', i });
+        i = j;
+        continue;
+      }
+    }
+    if (text.startsWith('...', i)) { toks.push({ t: 'p', v: '...', i }); i += 3; continue; }
+    if (c === '{') depth++;
+    else if (c === '}') depth--;
+    toks.push({ t: 'p', v: c, i });
+    i++;
+  }
+  return stack.length ? null : toks;
+}
+
+/** Problems with eval, the Function constructor and require() calls whose name is not a plain quoted string. */
+function codeFromTextProblems(rel, text) {
+  const toks = tokenize(text);
+  if (!toks) return [rel + ': cannot be read to check for eval, the Function constructor and computed require() names'];
+  const found = new Set();
+  const isP = (k, v) => !!toks[k] && toks[k].t === 'p' && toks[k].v === v;
+  const isId = (k, v) => !!toks[k] && toks[k].t === 'id' && (v === undefined || toks[k].v === v);
+  const keyStart = (k) => k < 0 || isP(k, '{') || isP(k, ',');
+  // name(params) { on one line: a method definition. A call followed by a block on the same line does not parse.
+  const methodDefinition = (k) => {
+    if (!isP(k + 1, '(')) return false;
+    if (!(keyStart(k - 1) || isP(k - 1, ';') || isP(k - 1, '}') || isId(k - 1, 'async') || isId(k - 1, 'static'))) return false;
+    let d = 0;
+    for (let j = k + 1; j < toks.length; j++) {
+      if (isP(j, '(')) d++;
+      else if (isP(j, ')') && --d === 0) return isP(j + 1, '{') && !text.slice(toks[j].i, toks[j + 1].i).includes('\n');
+    }
+    return false;
+  };
+  for (let k = 0; k < toks.length; k++) {
+    const tk = toks[k];
+    const member = isP(k - 1, '.');
+    if (tk.t === 'id' && (tk.v === 'eval' || tk.v === 'Function')) {
+      const what = tk.v === 'eval' ? 'uses eval' : 'uses the Function constructor';
+      if (member) {
+        if (isId(k - 2) && GLOBAL_OBJECTS.has(toks[k - 2].v)) found.add(rel + ': ' + what + ', which could load code that cannot be checked');
+      } else if (isP(k + 1, ':') && keyStart(k - 1)) {
+        // an object key
+      } else if (tk.v === 'Function' && (isId(k - 1, 'instanceof') || isId(k - 1, 'typeof') || isP(k + 1, '.'))) {
+        // instanceof Function, typeof Function, Function.prototype
+      } else if (methodDefinition(k)) {
+        // eval(a) { ... } defines a method, not a call
+      } else {
+        found.add(rel + ': ' + what + ', which could load code that cannot be checked');
+      }
+    } else if (tk.t === 'id' && GLOBAL_OBJECTS.has(tk.v) && isP(k + 1, '[')) {
+      found.add(rel + ': reads a member of ' + tk.v + ' by a computed name, which could reach eval or Function');
+    } else if (tk.t === 'id' && tk.v === 'constructor' && isP(k + 1, '.') && isId(k + 2, 'constructor')) {
+      found.add(rel + ': reaches a constructor through another constructor, which could load code that cannot be checked');
+    } else if (tk.t === 'str' && /^(?:eval|Function|constructor)$/.test(tk.v) && isP(k - 1, '[') && isP(k + 1, ']')
+      && (toks[k - 2] && (toks[k - 2].t === 'str' || toks[k - 2].t === 'id' && !BEFORE_EXPRESSION.has(toks[k - 2].v) || isP(k - 2, ')') || isP(k - 2, ']')))) {
+      found.add(rel + ': reads "' + tk.v + '" by name from an object, which could load code that cannot be checked');
+    } else if (tk.t === 'id' && tk.v === 'require' && (!member || isId(k - 2, 'module'))) {
+      const next = toks[k + 1];
+      const arg = toks[k + 2];
+      if (isP(k + 1, '.') && isId(k + 2) && /^(?:main|resolve|cache)$/.test(arg.v)) continue;
+      if (isId(k - 1, 'typeof') || isP(k + 1, ':') && keyStart(k - 1)) continue;
+      const plain = next && next.t === 'p' && next.v === '(' && arg && arg.t === 'str' && !arg.v.includes('\\') && isP(k + 3, ')');
+      const relative = next && next.t === 'p' && next.v === '(' && arg && (arg.t === 'str' || arg.t === 'tpl') && /^\.\.?\//.test(arg.v);
+      if (!plain && !relative) found.add(rel + ': require() with a name that is not a plain quoted string, or require kept in a variable, cannot be checked');
+    }
+  }
+  return [...found];
+}
+
 /** import() specifiers of a file; problems for calls whose name is not a plain string. */
 function dynamicImports(rel, text, problems) {
   const out = [];
@@ -288,6 +451,7 @@ function dynamicImports(rel, text, problems) {
     if (lit) out.push(lit[2]);
     else problems.push(rel + ': import() with a computed name cannot be checked');
   }
+  problems.push(...codeFromTextProblems(rel, withoutVerifyJs(rel, text)));
   if (UNCHECKABLE.test(withoutVerifyJs(rel, withoutCompileCacheUse(rel, text)))) {
     problems.push(rel + ': uses createRequire, import.meta.resolve, process.mainModule or the "module" built-in, which cannot be checked');
   }

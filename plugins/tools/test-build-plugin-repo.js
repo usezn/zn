@@ -192,6 +192,59 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       }
       // Only lib/compile-cache.js may use the exception.
       await rejects({ ...BASE, 'lib/extra.js': "const mod = require('module');\nmod.enableCompileCache('/x');\n" }, /module. built-in/);
+      // Code from a string, and require() names that are not plain, are refused in any bundled file.
+      for (const file of ['lib/extra.js', 'lib/compile-cache.js', 'node_modules/dep/extra.js']) {
+        const bad = async (code, re) => rejects({ ...BASE, [file]: code }, re);
+        await bad("eval('req' + 'uire')('mod' + 'ule');\n", /uses eval/);
+        await bad("(0, eval)('1');\n", /uses eval/);
+        await bad("globalThis.eval('1');\n", /uses eval/);
+        await bad("const e = eval;\n", /uses eval/);
+        await bad("const mod = require('module');\nmod.enableCompileCache();\neval('m' + 'od');\n", /uses eval/);
+        await bad("Function('return 1')();\n", /Function constructor/);
+        await bad("new Function('a', 'return a');\n", /Function constructor/);
+        await bad("const F = Function;\n", /Function constructor/);
+        await bad("globalThis['Func' + 'tion']('1');\n", /computed name/);
+        await bad("x['constructor']('1');\n", /by name from an object/);
+        await bad("(() => {}).constructor.constructor('return 1');\n", /through another constructor/);
+        await bad("require(`module`).createRequire(__filename);\n", /not a plain quoted string/);
+        await bad("require(`${'mod'}ule`);\n", /not a plain quoted string/);
+        await bad("require('mod' + 'ule');\n", /not a plain quoted string/);
+        await bad("require('\\x6dodule');\n", /not a plain quoted string/);
+        await bad("const n = 'module'; require(n);\n", /not a plain quoted string/);
+        await bad("const r = require; r('fs');\n", /not a plain quoted string/);
+        await bad("module.require(`module`);\n", /not a plain quoted string/);
+        await bad("ev\\u0061l('1');\n", /cannot be read/);
+        await bad("const s = 'unterminated;\n", /cannot be read/);
+        // code inside a template substitution is read too
+        await bad("const s = `a ${eval('1')} b`;\n", /uses eval/);
+      }
+      // Normal code, and look-alikes, still pass.
+      await build({
+        ...BASE,
+        'lib/extra.js': [
+          "const fs = require('fs');",
+          "const x = require('./x.js');",
+          "const y = require('../lib/' + name);",
+          "const z = require(`./sub/${name}.js`);",
+          "if (require.main === module) { require.resolve('./x.js'); }",
+          "const has = typeof require === 'function';",
+          "// eval('x') and Function('y') in a comment, require(`module`)",
+          "/* eval('x') */",
+          "const text = \"eval(x) Function(y) require(`module`)\";",
+          "const re = /eval\\(|Function\\(/;",
+          "const tpl = `eval(x) ${1 + 1} Function(y)`;",
+          "function evaluate(a) { return a; }",
+          "function myFunction(a) { return a; }",
+          "const o = { eval: 1, Function: 2, require: 3 };",
+          "const p = Poly.monomial.eval(coeffs, x);",
+          "const isFn = (v) => v instanceof Function || Function.prototype.isPrototypeOf(v);",
+          "class K { eval(a, b = 1) { return a; } static Function() {} }",
+          "const k = new this.constructor();",
+          "const words = new Set(['eval', 'Function', 'constructor']);",
+          'const half = a / 2; const n = a.eval / 3;',
+          '',
+        ].join('\n'),
+      });
       // Comments between import and the parenthesis do not hide the call.
       await rejects({ ...BASE, 'lib/extra.js': "import /* c */ ('left-pad');\n" }, /left-pad would be loaded from outside the bundle/);
       await rejects({ ...BASE, 'lib/extra.js': "import // c\n('left-pad');\n" }, /left-pad would be loaded from outside the bundle/);
