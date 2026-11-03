@@ -415,6 +415,15 @@ For these reasons, zn is installed correctly, but a setting stops your agent fro
 
 - **ZCode's MCP support is off.** This is a note under an **OK** line, not a NOT protected line: `"features.mcp"` is false in <file>. We read that setting as "ZCode does not start zn's `secrets` MCP server", but we did not test what it does in the ZCode desktop app. The hooks still work.
 
+- **A Codex hooks file is too large to check.**
+
+  ```text
+  zn could not check <file> for another hook that runs before Codex calls: the file is larger than 256 KB, so zn did not read it
+  make that file smaller, or move its hooks out of it, then run `zn-gate check` again
+  ```
+
+  zn reads at most 256 KB of `hooks.json` or `config.toml`. A larger file is reported instead of skipped, so that it cannot hide another tool's hook.
+
 ### Gemini CLI settings switch the hook off
 
 - **Hooks are turned off, or zn's hook is on the disabled list.**
