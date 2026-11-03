@@ -22,6 +22,10 @@ const adapter = require(path.join(ROOT, 'packages', 'zn-gate', 'lib', 'agents', 
 // launcher of zn hooks install zcode: on a slow Windows machine, stopping a stuck hook took up to 2 seconds after a 28 second
 // deadline, which left ZCode's 30 second timeout only milliseconds. It stays above the hook's own 25 second answer deadline.
 const PLUGIN_DEADLINE_S = 26;
+// The timeout the plugin sets on its hooks in ZCode, which runs a call whose hook timed out. Far above the deadline: on a
+// Windows machine whose CPU was busy, a hook stopped at its deadline took up to 98 seconds to end. `zn hooks install zcode`
+// keeps its own 30 second timeout.
+const PLUGIN_TIMEOUT_MS = 300000;
 const posix = process.platform !== 'win32';
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-zcode-plugin-')));
 
@@ -52,7 +56,7 @@ try {
       assert.strictEqual(w.type, 'process', event + ': no shell between ZCode and PowerShell');
       assert.strictEqual(w.command, adapter.PLUGIN_WIN_CMD, event + ': cmd.exe by its full path');
       assert.deepStrictEqual(w.args, adapter.pluginWindowsCmdArgs(event));
-      assert.strictEqual(w.timeoutMs, adapter.HOOK_TIMEOUT_MS, event + ' Windows timeout');
+      assert.strictEqual(w.timeoutMs, PLUGIN_TIMEOUT_MS, event + ' Windows timeout');
       assert.strictEqual(w.statusMessage, adapter.HOOK_STATUS);
       assert.ok(!('onFailure' in w) && !('async' in w) && !('enabled' in w), event + ': a key ZCode does not document or one that turns the hook off');
       const h = mine[event][0].hooks[0];
@@ -60,7 +64,7 @@ try {
       // By its full path: ZCode looks a bare name up on its PATH, where a relative or empty entry finds the project's files.
       assert.strictEqual(h.command, '/bin/sh');
       assert.deepStrictEqual(h.args, ['${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh', event]);
-      assert.strictEqual(h.timeoutMs, adapter.HOOK_TIMEOUT_MS, event + ' timeout');
+      assert.strictEqual(h.timeoutMs, PLUGIN_TIMEOUT_MS, event + ' timeout');
       assert.strictEqual(h.statusMessage, adapter.HOOK_STATUS);
       assert.ok(!('onFailure' in h) && !('async' in h) && !('enabled' in h), event + ': a key ZCode does not document or one that turns the hook off');
     }
@@ -397,7 +401,7 @@ try {
       });
     }
 
-    test('zn-hook.ps1 has a start deadline under ZCode\'s 30 second hook timeout', () => {
+    test('zn-hook.ps1 has a start deadline far under the timeout the plugin sets in ZCode', () => {
       const m = /^\$Deadline = (\d+)$/m.exec(fs.readFileSync(PS1, 'utf8'));
       assert.ok(m, 'Deadline is set');
       assert.strictEqual(Number(m[1]), PLUGIN_DEADLINE_S);
@@ -545,7 +549,7 @@ try {
       }
     });
 
-    test('zn-hook.sh has a start deadline under ZCode\'s 30 second hook timeout', () => {
+    test('zn-hook.sh has a start deadline far under the timeout the plugin sets in ZCode', () => {
       const m = /^DEADLINE=(\d+)$/m.exec(fs.readFileSync(HOOK, 'utf8'));
       assert.ok(m, 'DEADLINE is set');
       assert.strictEqual(Number(m[1]), PLUGIN_DEADLINE_S, 'DEADLINE is the plugin deadline');

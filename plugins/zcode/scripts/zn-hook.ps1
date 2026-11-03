@@ -15,11 +15,12 @@
 # (the app's own Node.js, started with ELECTRON_RUN_AS_NODE=1: the parent of this process). A candidate is used only if it
 # is Node.js 20.19 or later (21.7 or later on 21).
 #
-# Start deadline: the hooks of this plugin have a 30-second timeout and a call whose hook timed out ran, so after 26
+# Start deadline: a call whose hook timed out runs in ZCode, so after 26
 # seconds the hook answers like it does when the check fails and stops the Node.js it started. Every wait has a limit taken
 # from the time that is left. The script uses no PowerShell command (Get-Date, New-Object, Get-CimInstance, ...), only the
 # language and .NET: Windows PowerShell finds a command by reading its module folders, and without its module cache (a new
-# user, or a hook started with few environment variables) that alone can take most of the 30 seconds.
+# user, or a hook started with few environment variables) that alone can take most of the 26 seconds. The plugin gives its
+# hooks 5 minutes in ZCode (hooks.json), far more than this deadline: a busy CPU can slow the end of a hook down by a minute.
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'

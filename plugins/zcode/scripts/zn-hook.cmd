@@ -1,5 +1,5 @@
 @echo off
-rem The time of day this file started: ZCode's 30 second timeout runs from about here, and the deadlines count from it.
+rem The time of day this file started: ZCode's timeout for the hook runs from about here, and the deadlines count from it.
 set "ZN_HOOK_T0=%TIME%"
 rem zn-gate hook for the ZCode desktop app on Windows, fast path (plugin copy). The counterpart of zn-hook.ps1.
 rem
@@ -8,7 +8,8 @@ rem starts Node.js without it when Node.js is where the installer puts it (%Prog
 rem an administrator can write to), and in every other case runs zn-hook.ps1 through PowerShell, exactly as before.
 rem The check is the same in both paths: zn-launch.js verifies the zn-gate copy of the plugin byte for byte and runs it.
 rem Nothing here decides anything about the call. Both paths answer by themselves (they block) 26 seconds after this file
-rem started, before ZCode's 30 second timeout, because ZCode lets a call run when its hook times out.
+rem started. ZCode lets a call run when its hook times out, so the plugin gives its hooks 5 minutes (hooks.json): on a
+rem machine whose CPU is busy, a hook that has to stop at its deadline can take a minute or more to end.
 rem
 rem Usage (hooks.json): cmd.exe /d /c ( "<plugin folder>\scripts\zn-hook.cmd " <Event> ) || exit /b <2 or 0>
 rem The event JSON arrives on stdin. Exit 0 lets the call run and exit 2 blocks it. Anything else, a Node.js that cannot
