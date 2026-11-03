@@ -361,3 +361,49 @@ test('git option words the shell may turn into several words: IFS, a change of d
     assert.equal(dflt(c), null, 'refused: ' + c + ' -> ' + dflt(c));
   }
 });
+
+test('a quoted variable in a git option keeps the verdict of the subcommand; anything that may complete -c stays refused', () => {
+  for (const c of [
+    'git --git-dir="$GD" log',
+    'git --git-dir="$GD" --work-tree="$WT" status',
+    'git "--git-dir=$GD" log',
+    'git --git-dir="${GD}"/x show HEAD',
+    'git --git-dir="$HOME/.cfg/" --work-tree="$HOME" status',
+    'git -C "$DIR" status',
+    "git --git-dir='$GD' log",
+    'git "--namespace=$X" log',
+  ]) assert.equal(denied(c), null, c);
+  for (const c of [
+    'git "--config-env=$X" log',
+    'git --config-env="core.pager=$X" log',
+    'git --config-env="$X" log',
+    'git "--config-env=${X}" log',
+    'git "--git-dir$X" log',
+    'git --git-dir"$X" log',
+    'git "--git-dir${X}" log',
+    'git "-C$X" status',
+    'git -"C$X" status',
+    'git -C"${X}" status',
+    'git "--$X" log',
+    'git "--git$X" log',
+    'git --git-dir=$GD log',
+    'git --git-dir=$GD --work-tree=$WT status',
+    'git --work-tree=$WT rev-parse HEAD',
+    'git -C$DIR status',
+    'git --git-dir=${GD} show HEAD',
+    'git --git-dir="$GD"/$X log',
+    'git --git-dir="$GD" -c diff.external="$P" diff',
+    "git --git-dir=\"$GD\" -c core.sshCommand='cat ~/.aws/credentials;:' fetch",
+    'git "$X-c" diff.external=cat diff',
+    'git "-$X" diff.external=cat diff',
+    'git "--c$X=diff.external=cat" diff',
+    'git "--config-$X=diff.external=cat" diff',
+    'git $X-c diff.external=cat diff',
+    'git $SUB log',
+    'git "$SUB" log',
+    'git --git-dir="$GD" $SUB',
+    'git --git-dir="$GD" cl$X -c core.sshCommand="$P" ssh://example.com/r',
+    'git --git-dir="$GD" fetch --upload-pack="$P" origin',
+  ]) assert.ok(denied(c), 'allowed: ' + c);
+  assert.match(denied('git --git-dir=$GD log'), /quote the variable/);
+});
