@@ -216,6 +216,29 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
         await bad("new (() => 0).constructor('return 1');\n", /\.constructor member/);
         await bad("module.constructor._load('left-pad');\n", /module\.constructor/);
         await bad("const m = module.constructor;\n", /module\.constructor/);
+        await bad("(() => 0)?.constructor?.('return 1')();\n", /\.constructor member/);
+        await bad("(() => 0)?.constructor('return 1')();\n", /\.constructor member/);
+        await bad("const C = ok && (() => 0).constructor\nC('return 1')();\n", /\.constructor member/);
+        await bad("const C = ok || (() => 0).constructor\nC('return 1')();\n", /\.constructor member/);
+        await bad("const C = ok ? (() => 0).constructor : other;\n", /\.constructor member/);
+        await bad("const get = () => (() => 0).constructor;\n", /\.constructor member/);
+        await bad("(function () { return new this.constructor('return 1'); }).call(() => 0)();\n", /\.constructor member/);
+        await bad("const C = (() => 0).constructor.bind(null);\n", /\.constructor member/);
+        await bad("(function () { return new this.constructor({ toString: f }); }).call(() => 0);\n", /\.constructor member/);
+        await bad("(function () { return new this.constructor({ dkLen: 1, toString: f }); }).call(() => 0);\n", /\.constructor member/);
+        await bad("const { constructor: C } = () => 0;\nC('return 1')();\n", /destructuring/);
+        await bad("let C; ({ constructor: C } = () => 0);\n", /destructuring/);
+        await bad("function f({ eval: e }) {}\n", /destructuring/);
+        await bad("function f({ Function: F }) {}\n", /destructuring/);
+        await bad("function f(a, { constructor: C }, b) {}\n", /destructuring/);
+        await bad("const f = ({ eval: e }) => e;\n", /destructuring/);
+        await bad("const f = async ({ a: { Function: F } }) => F;\n", /destructuring/);
+        await bad("(() => 0)[`constructor`]('return 1')();\n", /by name from an object/);
+        await bad("globalThis[`eval`]('1');\n", /by name from an object|computed name/);
+        await bad("x[`Function`]('1');\n", /by name from an object/);
+        await bad("process.binding('contextify');\n", /process\.binding/);
+        await bad("process._linkedBinding('x');\n", /process\.binding/);
+        await bad("const b = process . binding;\n", /process\.binding/);
         await bad("require('vm').runInThisContext('1');\n", /"vm" built-in/);
         await bad("require('node:vm');\n", /"vm" built-in/);
         await bad("require('worker_threads');\n", /"worker_threads" built-in/);
@@ -261,6 +284,13 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
           "const isFn = (v) => v instanceof Function || Function.prototype.isPrototypeOf(v);",
           "class K { eval(a, b = 1) { return a; } static Function() {} }",
           "const k = new this.constructor();",
+          "const k2 = Object.keys({ a: 1 }).length && new this.constructor();",
+          "const guard = fn.constructor && fn.constructor.name;",
+          "class H { clone(to) { to ||= new this.constructor({ dkLen: outputLen }); return to; } }",
+          "const isObj = x.constructor === Object, ne = y?.constructor !== Object;",
+          "const o5 = { constructor: 1 }, o6 = [{ eval: 1 }];",
+          "function g(a = { eval: 1 }, b) { return a; }",
+          "const keep = { Function: 1 }; f({ eval: 2 }, 3);",
           "const same = x.constructor === Object || y.constructor !== Object || z.constructor == Array;",
           "const nm = new Foo().constructor.name; const nm2 = x.constructor.name;",
           "const o2 = { eval: 1 }; const o3 = [{ Function: 2 }], o4 = 3;",

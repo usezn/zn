@@ -33,7 +33,8 @@
  *    bundled would be looked up in parent node_modules folders the plugin
  *    does not control. Code that reaches Node's module system another way
  *    cannot be checked and is refused: import() with a computed name,
- *    createRequire, import.meta.resolve, process.mainModule, the
+ *    createRequire, import.meta.resolve, process.mainModule,
+ *    process.binding, the
  *    "module" built-in, eval, the Function constructor (also reached
  *    through .constructor or destructuring), the vm and worker_threads
  *    built-ins, and require() of a package whose name is
@@ -191,7 +192,7 @@ function esmRequests(sources) {
 // The word import, not as a property (obj.import) or part of a name.
 const IMPORT_WORD = /(?<![.\w$])import\b/g;
 const LITERAL_ARG = /^\s*(['"])([^'"\n]+)\1\s*\)/;
-const UNCHECKABLE = /\bcreateRequire\b|\bimport\.meta\.resolve\b|\bprocess\.mainModule\b|\brequire\s*\(\s*(['"])(?:node:)?module\1/;
+const UNCHECKABLE = /\bcreateRequire\b|\bimport\.meta\.resolve\b|\bprocess\.mainModule\b|\bprocess\s*\.\s*(?:binding|_linkedBinding)\b|\brequire\s*\(\s*(['"])(?:node:)?module\1/;
 // The one file of the package that may use the exception below.
 const COMPILE_CACHE_FILE = /^lib\/compile-cache\.js$/;
 const MODULE_REQUIRE = /\brequire\s*\(\s*(['"])(?:node:)?module\1\s*\)/g;
@@ -421,17 +422,40 @@ function codeFromTextProblems(rel, text) {
     }
   }
   const singleEquals = (k) => isP(k, '=') && !isP(k + 1, '=') && !isP(k + 1, '>');
-  // True when the object pattern that holds token k is the left side of an assignment: { eval: e } = obj.
+  // True when the object pattern that holds token k is the left side of an assignment ({ eval: e } = obj) or sits in
+  // a function parameter list (function f({ eval: e }) {}, ({ eval: e }) => 1, catch ({ eval: e }) {}).
   const inPattern = (k) => {
     let o = enclosing[k];
-    while (o >= 0 && (isP(o, '{') || isP(o, '['))) {
+    let child = -1;
+    while (o >= 0) {
+      if (isP(o, '(')) {
+        // the pattern is a parameter itself (after "(" or ","), not a default value after "="
+        const c = match[o];
+        return c >= 0 && child >= 0 && (isP(child - 1, '(') || isP(child - 1, ',') || isP(child - 1, '...'))
+          && (isP(c + 1, '{') || isP(c + 1, '=') && isP(c + 2, '>'));
+      }
+      if (!isP(o, '{') && !isP(o, '[')) return false;
       const c = match[o];
       if (c < 0) return false;
       if (singleEquals(c + 1)) return true;
-      if (isP(c + 1, ',') || isP(c + 1, '}') || isP(c + 1, ']')) o = enclosing[o];
+      if (isP(c + 1, ',') || isP(c + 1, '}') || isP(c + 1, ']') || isP(c + 1, ')')) { child = o; o = enclosing[o]; }
       else return false;
     }
     return false;
+  };
+  // A .constructor member is read-only in x.constructor === Object (also !==, ==, !=), in the truthiness test
+  // x.constructor && x.constructor.name, and in x.constructor.name; new this.constructor() builds a copy of the same
+  // class (with no argument, or the dkLen object below). Every other use could hand over the Function constructor, so it is refused.
+  const readOnlyConstructor = (k) => {
+    if (isP(k + 1, '=') && isP(k + 2, '=')) return true;
+    if (isP(k + 1, '!') && isP(k + 2, '=')) return true;
+    if (isP(k + 1, '&') && isP(k + 2, '&')) return true;
+    if (isP(k + 1, '.') && isId(k + 2, 'name')) return true;
+    if (!isP(k + 1, '(') || !isId(k - 2, 'this') || !isId(k - 3, 'new')) return false;
+    if (isP(k + 2, ')')) return true;
+    // the bundled @noble/hashes copies a hash with new this.constructor({ dkLen: outputLen }): an object holding only
+    // dkLen cannot stand for the body of a function
+    return isP(k + 2, '{') && isId(k + 3, 'dkLen') && isP(k + 4, ':') && isId(k + 5) && isP(k + 6, '}') && isP(k + 7, ')');
   };
   for (let k = 0; k < toks.length; k++) {
     const tk = toks[k];
@@ -456,13 +480,11 @@ function codeFromTextProblems(rel, text) {
       found.add(rel + ': reaches the module loader through module.constructor, which cannot be checked');
     } else if (tk.t === 'id' && tk.v === 'constructor' && isP(k + 1, '.') && isId(k + 2, 'constructor')) {
       found.add(rel + ': reaches a constructor through another constructor, which could load code that cannot be checked');
-    } else if (tk.t === 'id' && tk.v === 'constructor' && member && !isP(k + 1, ':')
-      && (isP(k + 1, '(') || isP(k + 1, '[') || isP(k + 1, ';') || isP(k + 1, ',') || isP(k + 1, ')') || isP(k + 1, ']') || isP(k + 1, '}')
-        || singleEquals(k + 1) || isP(k + 1, '.') && isId(k + 2) && /^(?:call|apply|bind)$/.test(toks[k + 2].v))
-      && !(isP(k + 1, '(') && isId(k - 2, 'this') && isId(k - 3, 'new'))) {
-      // new this.constructor() builds a copy of the same class; anything else called or stored could be the Function constructor
-      found.add(rel + ': calls or stores a .constructor member, which could be the Function constructor');
-    } else if (tk.t === 'str' && /^(?:eval|Function|constructor)$/.test(tk.v) && isP(k - 1, '[') && isP(k + 1, ']')
+    } else if (tk.t === 'id' && tk.v === 'constructor' && isP(k + 1, ':') && keyStart(k - 1) && inPattern(k)) {
+      found.add(rel + ': takes constructor out of an object by destructuring, which could load code that cannot be checked');
+    } else if (tk.t === 'id' && tk.v === 'constructor' && member && !readOnlyConstructor(k)) {
+      found.add(rel + ': uses a .constructor member other than a comparison, a truthiness test or .name, which could be the Function constructor');
+    } else if ((tk.t === 'str' || tk.t === 'tpl' && text[tk.i + tk.v.length] === '`') && /^(?:eval|Function|constructor)$/.test(tk.v) && isP(k - 1, '[') && isP(k + 1, ']')
       && (toks[k - 2] && (toks[k - 2].t === 'str' || toks[k - 2].t === 'id' && !BEFORE_EXPRESSION.has(toks[k - 2].v) || isP(k - 2, ')') || isP(k - 2, ']')))) {
       found.add(rel + ': reads "' + tk.v + '" by name from an object, which could load code that cannot be checked');
     } else if (tk.t === 'id' && tk.v === 'require' && (!member || isId(k - 2, 'module'))) {
@@ -490,7 +512,7 @@ function dynamicImports(rel, text, problems) {
   }
   problems.push(...codeFromTextProblems(rel, withoutVerifyJs(rel, text)));
   if (UNCHECKABLE.test(withoutVerifyJs(rel, withoutCompileCacheUse(rel, text)))) {
-    problems.push(rel + ': uses createRequire, import.meta.resolve, process.mainModule or the "module" built-in, which cannot be checked');
+    problems.push(rel + ': uses createRequire, import.meta.resolve, process.mainModule, process.binding or the "module" built-in, which cannot be checked');
   }
   return out;
 }
