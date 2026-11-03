@@ -1,0 +1,2 @@
+### Security
+- The shell policy reads git's `-c` and `--config-env` options on the words the shell passes to git, not on the raw command text, so a quoted or escaped spelling (`git "-c" ...`, `git -"c" ...`, `git $'-c' ...`, `git \-c ...`) is checked like `git -c`. A git option built from a variable zn cannot read (`git $X-c ...`) is refused. `git clone -c` and `--config`, and the options that name a program for the remote side (`--upload-pack`, `--receive-pack`, `--exec`, and `git clone -u`), are read the same way.
