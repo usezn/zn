@@ -1656,7 +1656,13 @@ function topLevelKeys(text) {
 // no such key is not told apart from a pre-tool event, so it is refused (exit 2, or Cursor's deny) like any event
 // zn cannot read: letting it pass would let a blocking event through.
 const OVERSIZE_POST = {
-  'claude-code': { isPost: (k) => k.hook_event_name === 'PostToolUse' || (k.hook_event_name === undefined && k.tool_response !== undefined), tool: 'bash', shape: (t) => t },
+  // Claude Code ignores a replacement whose shape differs from the result of a built-in tool, so Bash (and any
+  // tool not known to be an MCP one) gets the shape of its own result; MCP output is not validated.
+  'claude-code': {
+    isPost: (k) => k.hook_event_name === 'PostToolUse' || (k.hook_event_name === undefined && k.tool_response !== undefined),
+    tool: 'bash',
+    shape: (t, k) => (typeof k.tool_name === 'string' && k.tool_name.startsWith('mcp__') ? t : { stdout: t, stderr: '', interrupted: false }),
+  },
   codex: { isPost: (k) => k.hook_event_name === 'PostToolUse' || (k.hook_event_name === undefined && k.tool_response !== undefined), tool: 'bash', shape: (t) => t },
   // Copilot has two shapes: with an event name, that decides; the Copilot CLI one has none, and then the
   // result is a key of the event (it can come after the arguments, in which case it cannot be seen here and the
@@ -1692,7 +1698,7 @@ function oversizeEvent(agentId, adapter, text, why = 'the event on stdin is too 
   // adapter's own notice (stats.withheld), never the withheld one.
   const note = why === SUPERVISOR_REASON && agentId === 'zcode' ? POST_TIMEOUT_NOTE : POST_CAP_NOTE;
   const stats = agentId === 'zcode' && why !== SUPERVISOR_REASON ? { withheld: true } : undefined;
-  const output = adapter.respond({ decision: 'allow', updatedOutput: spec.shape(POST_WITHHELD), message: note, event, stats });
+  const output = adapter.respond({ decision: 'allow', updatedOutput: spec.shape(POST_WITHHELD, keys), message: note, event, stats });
   if (output !== null && output !== undefined) process.stdout.write(JSON.stringify(output));
 }
 
