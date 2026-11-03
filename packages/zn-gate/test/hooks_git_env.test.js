@@ -361,3 +361,63 @@ test('git option words the shell may turn into several words: IFS, a change of d
     assert.equal(dflt(c), null, 'refused: ' + c + ' -> ' + dflt(c));
   }
 });
+
+test('a variable that the same command writes (read, for, select, printf -v, mapfile, declare, eval) is not read from the environment', () => {
+  const dflt = (c) => policy.bashDenial(c, { home: os.homedir(), cwd: proj, env: { HOME: '/home/x', PWD: proj, OLDPWD: proj, SAFE: 'sub' } });
+  for (const c of [
+    "read SAFE <<< '. -c core.fsmonitor=x'; git -C $SAFE status",
+    "read -r SAFE <<< '. -c core.fsmonitor=x'; git -C $SAFE status",
+    "for SAFE in '. -c core.fsmonitor=x'; do git -C $SAFE status; done",
+    "select SAFE in '. -c core.fsmonitor=x'; do git -C $SAFE status; done",
+    "printf -v SAFE '. -c core.fsmonitor=x'; git -C $SAFE status",
+    "mapfile -t SAFE <<< '. -c core.fsmonitor=x'; git -C $SAFE status",
+    "readarray SAFE <<< '. -c core.fsmonitor=x'; git -C $SAFE status",
+    "declare S\\AFE='. -c core.fsmonitor=x'; git -C $SAFE status",
+    "export S\\AFE='. -c core.fsmonitor=x'; git -C $SAFE status",
+    "eval S\\AFE=\\'. -c core.fsmonitor=x\\'; git -C $SAFE status",
+    "declare SAFE='. -c core.fsmonitor=x'; git -C $SAFE status",
+    "read -p 'x' -a SAFE <<< '. -c core.fsmonitor=x'; git -C $SAFE status",
+    "getopts ab SAFE; git -C $SAFE status",
+  ]) {
+    assert.ok(dflt(c), 'allowed: ' + c);
+  }
+  for (const c of [
+    'git -C "$PWD" status',
+    'git -C $SAFE status',
+    'cd repo && git log',
+    'IFS=, read -r a b <<< "$x"; echo "$a"',
+    'for f in *.txt; do git add "$f"; done',
+    'while read -r d; do git -C "$d" fetch; done < list',
+    'export PATH=$HOME/bin:$PATH; git -C "$PWD" status',
+    'git -C "$PWD" status',
+  ]) {
+    assert.equal(dflt(c), null, 'refused: ' + c + ' -> ' + dflt(c));
+  }
+});
+
+test('IFS and cd spelled with quotes, a backslash, ANSI-C strings or an indirect name still count', () => {
+  const dflt = (c) => policy.bashDenial(c, { home: os.homedir(), cwd: proj, env: { HOME: '/home/x', PWD: proj, OLDPWD: proj, SAFE: 'sub' } });
+  for (const c of [
+    'printf -v IF\\S /; D=./-c/core.fsmonitor=x; git -C $D status',
+    'declare IF""S=/; D=./-c/core.fsmonitor=x; git -C $D status',
+    "declare IF''S=/; D=./-c/core.fsmonitor=x; git -C $D status",
+    'export IF\\S=/; D=./-c/core.fsmonitor=x; git -C $D status',
+    'read IF\\S <<< /; D=./-c/core.fsmonitor=x; git -C $D status',
+    'eval IF\\S=/; D=./-c/core.fsmonitor=x; git -C $D status',
+    'declare -n r=IF\\S; r=/; D=./-c/core.fsmonitor=x; git -C $D status',
+    'n=IF; printf -v "${n}S" /; D=./-c/core.fsmonitor=x; git -C $D status',
+    "declare $'\\x49FS=/'; D=./-c/core.fsmonitor=x; git -C $D status",
+    "c''d '. -c core.fsmonitor=x'; git -C $PWD status",
+    "c\\d '. -c core.fsmonitor=x'; git -C $PWD status",
+    "\"c\"d '. -c core.fsmonitor=x'; git -C $PWD status",
+  ]) {
+    assert.ok(dflt(c), 'allowed: ' + c);
+  }
+  for (const c of [
+    'git -C "$PWD" status',
+    'git commit -m "it\'s done" && git -C "$PWD" log',
+    'git commit -m "a\\"b"; git -C $SAFE status',
+  ]) {
+    assert.equal(dflt(c), null, 'refused: ' + c + ' -> ' + dflt(c));
+  }
+});

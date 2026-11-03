@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-02.43';
+const POLICY_RULES_VERSION = '2026-11-03.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2630,6 +2630,75 @@ function gitSubcommandPairs(w, s, word, out) {
   }
 }
 
+// The text with quotes and backslashes removed: `IF\S`, `IF""S`, `c''d` read as IFS and cd after the shell's own quote removal.
+function gitPlainText(text) {
+  return String(text).replace(/\$'/g, '$').replace(/["'\\]/g, '');
+}
+// An ANSI-C string with an escape ($'\x49FS') can spell any name: read it as if IFS were set and the directory changed.
+const GIT_ANSI_ESCAPE_RE = /\$'[^']*\\/;
+const GIT_PLAIN_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?$/;
+const GIT_WRITE_SKIP = new Set(['do', 'then', 'else', 'elif', 'if', 'while', 'until', '!', 'time', '{', '}', 'command', 'builtin', 'sudo', 'env']);
+const GIT_READ_ARG_OPTS = new Set(['-d', '-n', '-N', '-p', '-t', '-u', '-i']);
+const GIT_MAPFILE_ARG_OPTS = new Set(['-d', '-n', '-O', '-s', '-u', '-C', '-c']);
+
+/* The variables a command may write other than by NAME=value: read, mapfile, readarray, printf -v, for and select
+   loops, getopts, declare, typeset, local, export and readonly. `all` is true when a target is not a plain name
+   (a quote left in it, an expansion) or the command has eval: any variable may then have been written, IFS included.
+   Read on the text without quotes and backslashes. */
+function gitWrittenNames(plain) {
+  const names = new Set();
+  let all = /(?:^|[^A-Za-z0-9_.\/-])eval(?![A-Za-z0-9_.\/-])/.test(plain);
+  const add = (w) => {
+    if (!w) return;
+    if (!GIT_PLAIN_NAME_RE.test(w)) { all = true; return; }
+    names.add(w.replace(/\[.*$/, ''));
+  };
+  for (const seg of plain.split(/[;&|\n()]+/)) {
+    let words = seg.trim().split(/\s+/).filter(Boolean);
+    const lt = words.findIndex((w) => w.startsWith('<') || w.startsWith('>'));
+    if (lt >= 0) words = words.slice(0, lt);
+    let i = 0;
+    while (i < words.length && (GIT_WRITE_SKIP.has(words[i]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]))) i++;
+    const cmd = words[i];
+    const rest = words.slice(i + 1);
+    if (!cmd) continue;
+    if (cmd === 'read') {
+      for (let k = 0; k < rest.length; k++) {
+        const w = rest[k];
+        if (GIT_READ_ARG_OPTS.has(w)) { k++; continue; }
+        if (w === '-a') { add(rest[++k]); continue; }
+        if (w.startsWith('-')) continue;
+        add(w);
+      }
+    } else if (cmd === 'mapfile' || cmd === 'readarray') {
+      for (let k = 0; k < rest.length; k++) {
+        const w = rest[k];
+        if (GIT_MAPFILE_ARG_OPTS.has(w)) { k++; continue; }
+        if (w.startsWith('-')) continue;
+        add(w);
+        break;
+      }
+    } else if (cmd === 'printf') {
+      if (rest[0] === '-v') add(rest[1]);
+      else if (rest[0] && /^-v./.test(rest[0])) add(rest[0].slice(2));
+    } else if (cmd === 'for' || cmd === 'select') {
+      add(rest[0]);
+    } else if (cmd === 'getopts') {
+      add(rest[1]);
+    } else if (/^(?:declare|typeset|local|export|readonly)$/.test(cmd)) {
+      const nameref = rest.some((w) => /^-[A-Za-z]*n/.test(w));
+      for (const w of rest) {
+        if (w.startsWith('-')) continue;
+        const eq = w.indexOf('=');
+        add(eq < 0 ? w : w.slice(0, eq));
+        // declare -n r=NAME: writing r writes NAME.
+        if (nameref && eq >= 0) add(w.slice(eq + 1).replace(/[^A-Za-z0-9_\[\]$].*$/, ''));
+      }
+    }
+  }
+  return { names, all };
+}
+
 function gitEnvScan(readings, text, opts) {
   const home = opts.home || os.homedir();
   const env = opts.env || process.env;
@@ -2638,15 +2707,20 @@ function gitEnvScan(readings, text, opts) {
   // How the shell reads the words of the git options. IFS set anywhere in the command (or in a command around it), or
   // set in the environment to other characters. $PWD and $OLDPWD are not read after a change of directory anywhere in
   // the command (a loop may run a later cd first), nor PowerShell variables the command sets.
-  const gitShell = { ifs: Boolean(opts.gitIfs) || GIT_IFS_SET_RE.test(text) || (env.IFS !== undefined && env.IFS !== ' \t\n') };
+  const plain = gitPlainText(text);
+  const ansi = GIT_ANSI_ESCAPE_RE.test(text);
+  const written = gitWrittenNames(plain);
+  const gitShell = { ifs: Boolean(opts.gitIfs) || ansi || written.all || GIT_IFS_SET_RE.test(text) || GIT_IFS_SET_RE.test(plain) || (env.IFS !== undefined && env.IFS !== ' \t\n') };
   let gitEnv = env;
   {
     const psSet = [...text.matchAll(PS_VAR_SET_RE)].map((m) => m[1]).filter((n) => n.toLowerCase() !== 'env');
-    const moved = Boolean(opts.gitDirChanged) || GIT_DIR_CHANGE_RE.test(text);
-    if (moved || psSet.length) {
+    const moved = Boolean(opts.gitDirChanged) || ansi || GIT_DIR_CHANGE_RE.test(text) || GIT_DIR_CHANGE_RE.test(plain);
+    if (written.all) gitEnv = {};
+    else if (moved || psSet.length || written.names.size) {
       gitEnv = { ...env };
       if (moved) { delete gitEnv.PWD; delete gitEnv.OLDPWD; }
       for (const n of psSet) delete gitEnv[n];
+      for (const n of written.names) delete gitEnv[n];
     }
   }
   // Assignment words, per simple command, in every reading of the command line.
@@ -2809,8 +2883,11 @@ function bashDenialOf(cmd, opts = {}) {
   // The bodies of the here-documents read as data are data, not command-line words, and are dropped first.
   const text = stripHeredocs(cmd, opts.budget);
   // A shell this command runs (sh -c "...") inherits a changed directory and, through bash -c, may see IFS set here.
-  if (GIT_IFS_SET_RE.test(text)) opts.gitIfs = true;
-  if (GIT_DIR_CHANGE_RE.test(text)) opts.gitDirChanged = true;
+  {
+    const plainText = gitPlainText(text);
+    if (GIT_IFS_SET_RE.test(text) || GIT_IFS_SET_RE.test(plainText) || GIT_ANSI_ESCAPE_RE.test(text) || gitWrittenNames(plainText).all) opts.gitIfs = true;
+    if (GIT_DIR_CHANGE_RE.test(text) || GIT_DIR_CHANGE_RE.test(plainText) || GIT_ANSI_ESCAPE_RE.test(text)) opts.gitDirChanged = true;
+  }
   // Destructive shell commands (see lib/destructive.js). The runner passes the rules from the user's settings; with no
   // list, the two default rules apply. The bodies of data here-documents are not shell code and are not read.
   {
