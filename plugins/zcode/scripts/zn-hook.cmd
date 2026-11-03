@@ -7,7 +7,7 @@ rem Windows PowerShell takes 0.5 to 3 seconds to start, more than the integrity 
 rem starts Node.js without it when Node.js is where the installer puts it (%ProgramFiles%\nodejs\node.exe, a folder only
 rem an administrator can write to), and in every other case runs zn-hook.ps1 through PowerShell, exactly as before.
 rem The check is the same in both paths: zn-launch.js verifies the zn-gate copy of the plugin byte for byte and runs it.
-rem Nothing here decides anything about the call. Both paths answer by themselves (they block) 28 seconds after this file
+rem Nothing here decides anything about the call. Both paths answer by themselves (they block) 26 seconds after this file
 rem started, before ZCode's 30 second timeout, because ZCode lets a call run when its hook times out.
 rem
 rem Usage (hooks.json): cmd.exe /d /c ( "<plugin folder>\scripts\zn-hook.cmd " <Event> ) || exit /b <2 or 0>
