@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-31.6
+RULES_VERSION: 2026-11-03.1
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-10-31.6"
+RULES_VERSION = "2026-11-03.1"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -579,6 +579,121 @@ def invisible_view(text: str) -> Optional[Tuple[str, 'array[int]']]:
     parts.append(text[pos:])
     mapping.append(len(text))
     return ''.join(parts), mapping
+
+
+# Shell quoting and percent-encoding hide a secret without changing what a shell or a URL parser
+# reads (AKIA""rest, 'AKIA''rest', %41KIArest, api_key%3Dvalue). The credential rules also run on a
+# view of the text with adjacent same-type quote pairs between word characters removed and valid
+# %XX sequences decoded when the byte is a printable, non-space ASCII character; the redacted spans
+# are mapped back to the original text, so the whole original word or encoded value is replaced.
+# Same as normalisedView in lib/scrub/normalize.js. One left-to-right pass; at most
+# MAX_NORMALISE_DECODES sequences are decoded, the rest stays literal.
+MAX_NORMALISE_DECODES = 200000
+_NORMALISE_RE = _rc(r"""%[0-9A-Fa-f]{2}|(?<=[0-9A-Za-z_+/.%-])(?=(["'])\1)""")
+_NORMALISE_WORD_EXTRA = '_-+/.%'
+
+
+def _normalise_wordish(c: str) -> bool:
+    return (c.isascii() and c.isalnum()) or c in _NORMALISE_WORD_EXTRA
+
+
+def normalised_view(text: str) -> Optional[Tuple[str, 'array[int]', 'array[int]']]:
+    """(clean, starts, ends) for a text with shell-split quotes or percent-encoding, or None when
+    the view would be the text itself. starts[i] and ends[i] are the span of the original text that
+    clean[i] stands for; starts[len(clean)] and ends[len(clean)] are len(text)."""
+    n = len(text)
+    search = _NORMALISE_RE.search
+    m = search(text)
+    if m is None:
+        return None
+    starts = array('q')
+    ends = array('q')
+    parts: List[str] = []
+    pos = 0
+    decodes = 0
+    changed = False
+    while m is not None:
+        i = m.start()
+        if text[i] == '%':
+            if decodes < MAX_NORMALISE_DECODES:
+                b = int(text[i + 1:i + 3], 16)
+                if 0x20 < b < 0x7f:
+                    if i > pos:
+                        parts.append(text[pos:i])
+                        starts.extend(range(pos, i))
+                        ends.extend(range(pos + 1, i + 1))
+                    parts.append(chr(b))
+                    starts.append(i)
+                    ends.append(i + 3)
+                    decodes += 1
+                    changed = True
+                    pos = i + 3
+                    m = search(text, pos)
+                    continue
+        else:
+            ch = text[i]
+            j = i
+            while j + 1 < n and text[j] == ch and text[j + 1] == ch:
+                j += 2
+            if j < n and _normalise_wordish(text[j]):
+                if i > pos:
+                    parts.append(text[pos:i])
+                    starts.extend(range(pos, i))
+                    ends.extend(range(pos + 1, i + 1))
+                changed = True
+                pos = j
+                m = search(text, pos)
+                continue
+        m = search(text, i + 1)
+    if not changed:
+        return None
+    if n > pos:
+        parts.append(text[pos:n])
+        starts.extend(range(pos, n))
+        ends.extend(range(pos + 1, n + 1))
+    starts.append(n)
+    ends.append(n)
+    return ''.join(parts), starts, ends
+
+
+class _Origin:
+    """Where each character of a text being redacted came from: its index in the text the redaction
+    started from, or a negative number for a character that a redaction wrote."""
+
+    def __init__(self, n: int) -> None:
+        self.orig = array('q', range(n))
+        self.rules: List[str] = []
+
+    def apply(self, edits: List[Tuple[int, int, str]], rules: List[str]) -> None:
+        out = array('q')
+        last = 0
+        for (start, end, new), rule in zip(edits, rules):
+            out.extend(self.orig[last:start])
+            self.rules.append(rule)
+            out.extend(array('q', [-len(self.rules)]) * len(new))
+            last = end
+        out.extend(self.orig[last:])
+        self.orig = out
+
+    def spans(self, redacted: str, n: int) -> List[Tuple[int, int, str, str]]:
+        """(start, end, replacement, rule) for each run the redactions wrote: the span of the starting
+        text it replaced (between the kept characters on both sides) and the text that replaced it."""
+        orig = self.orig
+        out: List[Tuple[int, int, str, str]] = []
+        i = 0
+        total = len(orig)
+        while i < total:
+            if orig[i] >= 0:
+                i += 1
+                continue
+            j = i
+            while j < total and orig[j] < 0:
+                j += 1
+            before = orig[i - 1] + 1 if i > 0 else 0
+            after = orig[j] if j < total else n
+            out.append((before, after, redacted[i:j], self.rules[-orig[i] - 1]))
+            i = j
+        return out
 
 
 def _clean_value(text: str) -> str:
@@ -1450,6 +1565,51 @@ def _aws_secret_context(text: str, start: int, end: int) -> bool:
     return _AWS_WORDS_RE.search(window) is not None and _SECRET_WORD_RE.search(window) is not None
 
 
+# A sensitive key assigned a value inside a JSON string, where the value quotes carry a backslash
+# (`export api_key=\\"value\\"`), and a secret passed as a URL query parameter (`?api_key=value`,
+# `&token=value`). Same as the generic assignment and the query entry of patterns.js; the plain
+# quoted and unquoted assignments stay with the shared rules.
+_SCRUB_KEY_NAMES = (r'(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|private[_-]?key|'
+                    r'client[_-]?secret|auth[_-]?token|credentials?)')
+SCRUB_LAST_PATTERNS.extend([
+    ("secret:credential_assignment#escaped", _rc(
+        r'(' + _SCRUB_KEY_NAMES + r'[A-Za-z0-9_]{0,64}(?:\\{0,2}["\'])?\s{0,64}(?:=>|:=|=|:)\s{0,64}\\{1,2}["\'`])'
+        r'([^"\'`\s\\]{12,200})(\\{1,2}["\'`])', re.IGNORECASE | re.ASCII), r'\1[REDACTED_SECRET]\3'),
+    ("secret:credential_query#scrub", _rc(
+        r'([?&](?:[A-Za-z0-9_.-]{0,64}[_.-])?' + _SCRUB_KEY_NAMES + r'[A-Za-z0-9_]{0,64}=)([^&#\s"\'`\\]{12,})',
+        re.IGNORECASE | re.ASCII), r'\1[REDACTED_SECRET]'),
+])
+_SCRUB_SLUG_RE = _rc(r'[a-z]+(?:[_.-][a-z]+)+', re.IGNORECASE | re.ASCII)
+_SCRUB_REFERENCE_START_RE = _rc(r'(?:process\.env|os\.environ|\$|\{|%|<|https?:)')
+_SCRUB_QUERY_REFERENCE_START_RE = _rc(r'(?:\$|\{|%7B|%3C|<|https?:)', re.IGNORECASE | re.ASCII)
+_SCRUB_CODE_CHAR_RE = _rc(r'[()\[\]{};,]')
+_SCRUB_ZN_MARKER_RE = _rc(r'__ZN_[A-Z0-9_]+__')
+
+
+def _escaped_assignment_not_secret(v: str, prefix: str) -> bool:
+    """patterns.js generic assignment check, inverted: True means the value is not a secret."""
+    return not (not _pv_placeholder(v) and _pv_random(v, 3, 3.7) and _SCRUB_SLUG_RE.fullmatch(v) is None
+                and _SCRUB_REFERENCE_START_RE.match(v) is None and _SCRUB_CODE_CHAR_RE.search(v) is None)
+
+
+def _query_credential_not_secret(v: str, prefix: str) -> bool:
+    """patterns.js query-parameter check, inverted: True means the value is not a secret."""
+    return not (not _pv_placeholder(v) and _pv_random(v, 2, 3.0) and _SCRUB_SLUG_RE.fullmatch(v) is None
+                and _SCRUB_QUERY_REFERENCE_START_RE.match(v) is None and _SCRUB_ZN_MARKER_RE.search(v) is None)
+
+
+PROVIDER_VALUE_FILTERS.update({
+    "secret:credential_assignment#escaped": _escaped_assignment_not_secret,
+    "secret:credential_query#scrub": _query_credential_not_secret,
+})
+_SCRUB_KEY_PREFILTER = _rc(r'pass|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|auth', re.IGNORECASE | re.ASCII)
+# Prefilters of the entries above; SECRET_PATTERN_PREFILTERS stays the rules.js table.
+SCRUB_PATTERN_PREFILTERS: Dict[str, re.Pattern[str]] = {
+    "secret:credential_assignment#escaped": _SCRUB_KEY_PREFILTER,
+    "secret:credential_query#scrub": _SCRUB_KEY_PREFILTER,
+}
+
+
 PROVIDER_CONTEXT_CHECKS: Dict[str, Any] = {
     "secret:aws_secret_key#scrub": _aws_secret_context,
 }
@@ -1634,7 +1794,7 @@ def _find_quoted_credentials(text: str) -> List[Tuple[int, int, str]]:
     return found
 
 
-def _redact_quoted_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+def _redact_quoted_credentials(text: str, track: Optional[_Origin] = None) -> Tuple[str, List[Dict[str, Any]]]:
     """Redacts the values found by _find_quoted_credentials, on the text and on
     the text without invisible characters (as every other rule)."""
     if not text or _KV_PREFILTER_RE.search(text) is None:
@@ -1661,26 +1821,68 @@ def _redact_quoted_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
         return text, []
     detections: List[Dict[str, Any]] = []
     edits: List[Tuple[int, int, str]] = []
+    rule_ids: List[str] = []
     for start, end, rule_id, new in _merge_candidates(cands):
         detections.append({"rule": rule_id, "start": start, "end": end})
         edits.append((start, end, new))
-    return _apply_edits(text, edits), detections
+        rule_ids.append(rule_id)
+    return _apply_edits(text, edits, track, rule_ids), detections
+
+
+def _redact_credentials_in(text: str, track: Optional[_Origin]) -> Tuple[str, List[Dict[str, Any]]]:
+    redacted, first = _redact_quoted_credentials(text, track)
+    redacted, rest = _redact_with(
+        redacted, SCRUB_FIRST_PATTERNS + SECRET_PATTERNS + PROVIDER_SECRET_PATTERNS + SCRUB_LAST_PATTERNS, track)
+    return redacted, first + rest
+
+
+def _redact_scan_in(text: str, track: Optional[_Origin]) -> Tuple[str, List[Dict[str, Any]]]:
+    redacted, first = _redact_credentials_in(text, track)
+    redacted, second = _redact_with(redacted, SCAN_SECRET_PATTERNS, track)
+    return redacted, first + second
+
+
+def _redact_normalised(text: str, run: Callable[[str, Optional[_Origin]], Tuple[str, List[Dict[str, Any]]]]
+                       ) -> Tuple[str, List[Dict[str, Any]]]:
+    """`run` on the text, then on its normalised view (shell-split quotes, percent-encoding): what
+    the view redacts is replaced in the text over the whole original word or encoded value."""
+    redacted, detections = run(text, None)
+    view = normalised_view(redacted)
+    if view is None:
+        return redacted, detections
+    clean, starts, ends = view
+    track = _Origin(len(clean))
+    clean_redacted, _ = run(clean, track)
+    if clean_redacted == clean:
+        return redacted, detections
+    edits: List[Tuple[int, int, str]] = []
+    found: List[Dict[str, Any]] = []
+    for first, last, new, rule_id in track.spans(clean_redacted, len(clean)):
+        if last <= first:
+            continue
+        start, end = starts[first], ends[last - 1]
+        edits.append((start, end, new))
+        found.append({"rule": rule_id.partition("#")[0], "start": start, "end": end})
+    if not edits:
+        return redacted, detections
+    return _apply_edits(redacted, edits), detections + found
 
 
 def _redact_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     """The quoted values first (the other rules read one word and would leave
     the rest of `"api_key":"abcdefghijkl mno pqr"` behind), then SECRET_PATTERNS
-    and the provider formats."""
+    and the provider formats; then the same on the normalised view of the text."""
     if not isinstance(text, str) or not text:
         return text, []
-    redacted, first = _redact_quoted_credentials(text)
-    redacted, rest = _redact_with(
-        redacted, SCRUB_FIRST_PATTERNS + SECRET_PATTERNS + PROVIDER_SECRET_PATTERNS + SCRUB_LAST_PATTERNS)
-    return redacted, first + rest
+    return _redact_normalised(text, _redact_credentials_in)
 
 
-def _apply_edits(text: str, edits: List[Tuple[int, int, str]]) -> str:
-    """Replaces the (start, end, replacement) spans, in ascending order, in text."""
+def _apply_edits(text: str, edits: List[Tuple[int, int, str]], track: Optional[_Origin] = None,
+                 rules: Optional[List[str]] = None) -> str:
+    """Replaces the (start, end, replacement) spans, in ascending order, in text. With `track`, the
+    edits are also recorded there, with the rule id of each in `rules`."""
+    if track is not None and rules is not None:
+        track.apply(edits, rules)
     parts = []
     last = 0
     for start, end, new in edits:
@@ -1749,7 +1951,8 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
         hints = PROVIDER_HINTS.get(rule_id)
         if hints and not any(h in hay for h in hints):
             continue
-        prefilter = SECRET_PATTERN_PREFILTERS.get(rule_id) or SCAN_SECRET_PREFILTERS.get(rule_id)
+        prefilter = (SECRET_PATTERN_PREFILTERS.get(rule_id) or SCRUB_PATTERN_PREFILTERS.get(rule_id)
+                     or SCAN_SECRET_PREFILTERS.get(rule_id))
         if prefilter is not None and not prefilter.search(hay):
             continue
         for m in pattern.finditer(hay):
@@ -1826,12 +2029,13 @@ def redact_scan_secrets(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     """redact_secrets plus SCAN_SECRET_PATTERNS, for `zn-gate scan`: the scan
     rules run on the text redact_secrets already redacted (redactScanSecrets in
     rules.js, with the provider formats in between as the Node.js scan does)."""
-    redacted, first = _redact_credentials(text)
-    redacted, second = _redact_with(redacted, SCAN_SECRET_PATTERNS)
-    return redacted, first + second
+    if not isinstance(text, str) or not text:
+        return text, []
+    return _redact_normalised(text, _redact_scan_in)
 
 
-def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern[str], str]]) -> Tuple[str, List[Dict[str, Any]]]:
+def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern[str], str]],
+                 track: Optional[_Origin] = None) -> Tuple[str, List[Dict[str, Any]]]:
     if not isinstance(text, str) or not text:
         return text, []
 
@@ -1853,10 +2057,12 @@ def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern[str], str]]) ->
         if not cands:
             continue
         edits: List[Tuple[int, int, str]] = []
+        rule_ids: List[str] = []
         for start, end, found_rule, new in _merge_candidates(cands):
             detections.append({"rule": found_rule.partition("#")[0], "start": start, "end": end})
             edits.append((start, end, new))
-        redacted = _apply_edits(redacted, edits)
+            rule_ids.append(found_rule)
+        redacted = _apply_edits(redacted, edits, track, rule_ids)
         dirty = True
 
     return redacted, detections
