@@ -165,7 +165,8 @@ function scan(text, ctx) {
   // union is resolved as one set of spans.
   const direct = scanText(text, c);
   const view = invisibleView(text);
-  const norm = normalisedView(text);
+  // ctx.normalise === false leaves the normalised view to the caller (redactSecrets in lib/rules.js does it for every rule).
+  const norm = c.normalise === false ? null : normalisedView(text);
   if (!view && !norm) return direct;
   let all = direct;
   if (view) {

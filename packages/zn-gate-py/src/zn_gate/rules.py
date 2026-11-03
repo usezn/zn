@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-03.1
+RULES_VERSION: 2026-11-03.18
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-03.1"
+RULES_VERSION = "2026-11-03.18"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -667,7 +667,7 @@ class _Origin:
     def apply(self, edits: List[Tuple[int, int, str]], rules: List[str]) -> None:
         out = array('q')
         last = 0
-        for (start, end, new), rule in zip(edits, rules):
+        for (start, end, new), rule in zip(edits, rules, strict=True):
             out.extend(self.orig[last:start])
             self.rules.append(rule)
             out.extend(array('q', [-len(self.rules)]) * len(new))

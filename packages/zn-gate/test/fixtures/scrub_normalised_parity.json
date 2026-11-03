@@ -1,230 +1,339 @@
 {
-  "comment": "Whether the scrubber redacts anything in each text. The Node.js scrubber (lib/scrub/engine.js scan) and the Python redact_secrets must agree on every case. Fake values only.",
+  "comment": "Texts with fake values and what the secret redaction returns for each. The Node.js redactSecrets and redactScanSecrets (lib/rules.js) and the Python redact_secrets and redact_scan_secrets must return exactly the text in \"output\" and \"scan_output\" (the same as \"output\" when it is absent). \"redacted\" says whether the Node.js scrubber (lib/scrub/engine.js scan) finds a secret in the text. It differs from \"output\" != \"input\" only for quoted token and password values, which the scan rules redact and redactSecrets leaves alone, encoded or not.",
   "cases": [
     {
       "name": "aws key split by empty double quotes",
       "input": "echo AKIA\"\"IOSFODNN7EXAMPLE",
+      "output": "echo [REDACTED_AWS_KEY]",
       "redacted": true
     },
     {
       "name": "aws key split by single quote pairs, quoted",
       "input": "echo 'AKIA''IOSFODNN7EXAMPLE'",
+      "output": "echo '[REDACTED_AWS_KEY]'",
       "redacted": true
     },
     {
       "name": "aws key split by double quote pairs, quoted",
       "input": "echo \"AKIA\"\"IOSFODNN7EXAMPLE\"",
+      "output": "echo \"[REDACTED_AWS_KEY]\"",
       "redacted": true
     },
     {
       "name": "aws key split twice",
       "input": "echo AKIA''IOS''FODNN7EXAMPLE",
+      "output": "echo [REDACTED_AWS_KEY]",
       "redacted": true
     },
     {
       "name": "assignment split, single quoted",
       "input": "api_key='fakeSecret''Value1234'",
+      "output": "api_key='[REDACTED_SECRET]'",
       "redacted": true
     },
     {
       "name": "assignment split, unquoted",
       "input": "api_key=fakeSecret\"\"Value1234",
+      "output": "api_key=[REDACTED_SECRET]",
       "redacted": true
     },
     {
       "name": "assignment split, double quoted",
       "input": "api_key=\"fakeSecret\"\"Value1234\"",
+      "output": "api_key=\"[REDACTED_SECRET]\"",
       "redacted": true
     },
     {
       "name": "assignment split three times",
       "input": "export api_key='fake''Secret''Value1234'",
+      "output": "export api_key='[REDACTED_SECRET]'",
       "redacted": true
     },
     {
       "name": "aws key with one encoded letter",
       "input": "%41KIAIOSFODNN7EXAMPLE",
+      "output": "[REDACTED_AWS_KEY]",
       "redacted": true
     },
     {
       "name": "aws key fully encoded",
       "input": "key %41%4B%49%41%49%4F%53%46%4F%44%4E%4E%37%45%58%41%4D%50%4C%45",
+      "output": "key [REDACTED_AWS_KEY]",
       "redacted": true
     },
     {
       "name": "assignment value with one encoded letter",
       "input": "api_key=%66akeSecretValue1234",
+      "output": "api_key=[REDACTED_SECRET]",
       "redacted": true
     },
     {
       "name": "assignment value fully encoded",
       "input": "api_key=%66%61%6B%65%53%65%63%72%65%74%56%61%6C%75%65%31%32%33%34",
+      "output": "api_key=[REDACTED_SECRET]",
       "redacted": true
     },
     {
       "name": "encoded equals sign",
       "input": "api_key%3DfakeSecretValue1234",
+      "output": "api_key=[REDACTED_SECRET]",
       "redacted": true
     },
     {
       "name": "encoded equals sign and value in a query",
       "input": "?x=1&api_key%3D%66%61%6B%65%53%65%63%72%65%74%56%61%6C%75%65%31%32%33%34",
+      "output": "?x=1&api_key=[REDACTED_SECRET]",
       "redacted": true
     },
     {
       "name": "escaped quotes: export",
       "input": "{\"cmd\": \"export api_key=\\\"fakeSecretValue1234\\\"\"}",
+      "output": "{\"cmd\": \"export api_key=\\\"[REDACTED_SECRET]\\\"\"}",
       "redacted": true
     },
     {
       "name": "escaped quotes: env prefix",
       "input": "{\"cmd\": \"API_KEY=\\\"fakeSecretValue1234\\\" node app.js\"}",
+      "output": "{\"cmd\": \"API_KEY=\\\"[REDACTED_SECRET]\\\" node app.js\"}",
       "redacted": true
     },
     {
       "name": "escaped quotes: nested json",
       "input": "{\"body\": \"{\\\"api_key\\\": \\\"fakeSecretValue1234\\\"}\"}",
+      "output": "{\"body\": \"{\\\"api_key\\\": \\\"[REDACTED_SECRET]\\\"}\"}",
       "redacted": true
     },
     {
       "name": "escaped quotes: curl body",
       "input": "curl -d '{\\\"client_secret\\\":\\\"fakeSecretValue1234\\\"}'",
+      "output": "curl -d '{\\\"client_secret\\\":\\\"[REDACTED_SECRET]\\\"}'",
       "redacted": true
     },
     {
       "name": "escaped quotes: double backslash",
       "input": "export token=\\\\\"fakeSecretValue1234\\\\\"",
+      "output": "export token=\\\\\"[REDACTED_SECRET]\\\\\"",
       "redacted": true
     },
     {
       "name": "query: api_key first",
       "input": "https://example.com/p?api_key=fakeSecretValue1234&x=1",
+      "output": "https://example.com/p?api_key=[REDACTED_SECRET]",
       "redacted": true
     },
     {
       "name": "query: token last",
       "input": "https://example.com/p?x=1&token=fakeSecretValue1234",
+      "output": "https://example.com/p?x=1&token=[REDACTED_SECRET]",
       "redacted": true
     },
     {
       "name": "query: access_token before a fragment",
       "input": "https://example.com/p?access_token=fakeSecretValue1234#frag",
+      "output": "https://example.com/p?access_token=[REDACTED_SECRET]#frag",
       "redacted": true
     },
     {
       "name": "query: client_secret in a request line",
       "input": "GET /v1/items?client_secret=fakeSecretValue1234 HTTP/1.1",
+      "output": "GET /v1/items?client_secret=[REDACTED_SECRET] HTTP/1.1",
       "redacted": true
     },
     {
       "name": "query: apikey in quotes",
       "input": "\"https://example.com/p?apikey=fakeSecretValue1234\"",
+      "output": "\"https://example.com/p?apikey=[REDACTED_SECRET]\"",
       "redacted": true
     },
     {
       "name": "escaped quotes: short value",
       "input": "{\"cmd\": \"export api_key=\\\"short\\\"\"}",
+      "output": "{\"cmd\": \"export api_key=\\\"short\\\"\"}",
       "redacted": false
     },
     {
       "name": "escaped quotes: placeholder",
       "input": "{\"cmd\": \"export api_key=\\\"your-api-key-here\\\"\"}",
+      "output": "{\"cmd\": \"export api_key=\\\"your-api-key-here\\\"\"}",
       "redacted": false
     },
     {
       "name": "escaped quotes: reference",
       "input": "{\"cmd\": \"export api_key=\\\"${API_KEY_VALUE}\\\"\"}",
+      "output": "{\"cmd\": \"export api_key=\\\"${API_KEY_VALUE}\\\"\"}",
       "redacted": false
     },
     {
       "name": "escaped quotes: not a secret name",
       "input": "{\"cmd\": \"export log_level=\\\"fakeSecretValue1234\\\"\"}",
+      "output": "{\"cmd\": \"export log_level=\\\"fakeSecretValue1234\\\"\"}",
       "redacted": false
     },
     {
       "name": "query: other parameters",
       "input": "https://example.com/p?page=2&sort=name&q=fakeSecretValue1234",
+      "output": "https://example.com/p?page=2&sort=name&q=fakeSecretValue1234",
       "redacted": false
     },
     {
       "name": "query: short value",
       "input": "https://example.com/p?token=short",
+      "output": "https://example.com/p?token=short",
       "redacted": false
     },
     {
       "name": "query: placeholder",
       "input": "https://example.com/p?api_key=your-api-key-here",
+      "output": "https://example.com/p?api_key=your-api-key-here",
       "redacted": false
     },
     {
       "name": "query: reference",
       "input": "https://example.com/p?api_key=${API_KEY_FROM_ENV}",
+      "output": "https://example.com/p?api_key=${API_KEY_FROM_ENV}",
       "redacted": false
     },
     {
       "name": "query: encoded template",
       "input": "https://example.com/p?token=%7B%7Btoken_value%7D%7D",
+      "output": "https://example.com/p?token=%7B%7Btoken_value%7D%7D",
       "redacted": false
     },
     {
       "name": "query: unrelated names",
       "input": "https://example.com/p?next=/login&password_min_length=12",
+      "output": "https://example.com/p?next=/login&password_min_length=12",
       "redacted": false
     },
     {
       "name": "query: key is not a secret name",
       "input": "https://example.com/p?key=fakeSecretValue1234",
+      "output": "https://example.com/p?key=fakeSecretValue1234",
       "redacted": false
     },
     {
       "name": "query: descriptive name",
       "input": "https://example.com/p?token=some-descriptive-token-name",
+      "output": "https://example.com/p?token=some-descriptive-token-name",
       "redacted": false
     },
     {
       "name": "plain quoted strings",
       "input": "echo \"hello\" \"world\"",
+      "output": "echo \"hello\" \"world\"",
       "redacted": false
     },
     {
       "name": "plain single quoted strings",
       "input": "echo 'a' 'b'",
+      "output": "echo 'a' 'b'",
       "redacted": false
     },
     {
       "name": "empty json strings",
       "input": "{\"name\": \"\", \"x\": \"\"}",
+      "output": "{\"name\": \"\", \"x\": \"\"}",
       "redacted": false
     },
     {
       "name": "empty string argument",
       "input": "echo \"\"",
+      "output": "echo \"\"",
       "redacted": false
     },
     {
       "name": "encoded spaces in a url",
       "input": "GET /a%20b/c%20d?q=hello%20world HTTP/1.1",
+      "output": "GET /a%20b/c%20d?q=hello%20world HTTP/1.1",
       "redacted": false
     },
     {
       "name": "encoded delimiters in a query",
       "input": "https://example.com/search?q=a%2Fb%26c",
+      "output": "https://example.com/search?q=a%2Fb%26c",
       "redacted": false
     },
     {
       "name": "encoded backslashes in a path",
       "input": "path=C:%5CUsers%5Cdemo",
+      "output": "path=C:%5CUsers%5Cdemo",
       "redacted": false
     },
     {
       "name": "percent sign in prose",
       "input": "discount is 50% off",
+      "output": "discount is 50% off",
       "redacted": false
     },
     {
       "name": "invalid percent sequences",
       "input": "bad %zz and %4",
+      "output": "bad %zz and %4",
       "redacted": false
+    },
+    {
+      "name": "github token split by empty quotes",
+      "input": "echo gh\"\"p_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8",
+      "output": "echo [REDACTED_GITHUB_TOKEN]",
+      "redacted": true
+    },
+    {
+      "name": "anthropic key split by empty quotes",
+      "input": "echo sk-ant-api03-xxxxxxxxxx\"\"Fq9Zt2Lm8Pw4Rk7Vn3Hs6Jd1",
+      "output": "echo [REDACTED_ANTHROPIC_KEY]",
+      "redacted": true
+    },
+    {
+      "name": "anthropic key after an encoded equals sign",
+      "input": "auth_token%3Dsk-ant-api03-xxxxxxxxxxFq9Zt2Lm8Pw4Rk7Vn3Hs6Jd1",
+      "output": "auth_token%3D[REDACTED_ANTHROPIC_KEY]",
+      "redacted": true
+    },
+    {
+      "name": "assignment value split by empty quotes",
+      "input": "api_key=fake\"\"SecretValue1234XyZ",
+      "output": "api_key=[REDACTED_SECRET]",
+      "redacted": true
+    },
+    {
+      "name": "json-escaped export of a key with an unrelated name",
+      "input": "{\"cmd\":\"export next_page_token=\\\"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\\\"\"}",
+      "output": "{\"cmd\":\"export next_page_token=\\\"[REDACTED_SECRET]\\\"\"}",
+      "redacted": true
+    },
+    {
+      "name": "json-escaped export of an aws id with one encoded letter",
+      "input": "{\"cmd\":\"export api_key=\\\"AKIAIOSFODNN7E%58AMPLE\\\"\"}",
+      "output": "{\"cmd\":\"export api_key=\\\"[REDACTED_SECRET]\\\"\"}",
+      "redacted": true
+    },
+    {
+      "name": "quoted token with one encoded letter (scan rule only)",
+      "input": "token: \"wJalrXUtnFEMI/K7MDENG/bPxRfiCY%45XAMPLEKEY\"",
+      "output": "token: \"wJalrXUtnFEMI/K7MDENG/bPxRfiCY%45XAMPLEKEY\"",
+      "scan_output": "token: \"[REDACTED_SECRET]\"",
+      "redacted": true
+    },
+    {
+      "name": "quoted password with one encoded letter (scan rule only)",
+      "input": "password: \"fake%53ecretValue1234XyZ\"",
+      "output": "password: \"fake%53ecretValue1234XyZ\"",
+      "scan_output": "password: \"[REDACTED_SECRET]\"",
+      "redacted": true
+    },
+    {
+      "name": "quoted token, plain (scan rule only)",
+      "input": "token: \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"",
+      "output": "token: \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"",
+      "scan_output": "token: \"[REDACTED_SECRET]\"",
+      "redacted": true
+    },
+    {
+      "name": "quoted password, plain (scan rule only)",
+      "input": "password: \"fakeSecretValue1234XyZ\"",
+      "output": "password: \"fakeSecretValue1234XyZ\"",
+      "scan_output": "password: \"[REDACTED_SECRET]\"",
+      "redacted": true
     }
   ]
 }

@@ -1,8 +1,9 @@
 """A secret split by shell quoting (AKIA""rest, 'a''b') or written with percent-encoding (%41KIA...,
 api_key%3Dvalue) is redacted as a whole, a secret under a sensitive key inside a JSON string (backslash-escaped
 quotes) and a secret in a URL query parameter are redacted, and ordinary quotes and %20 stay untouched. Same
-behaviour as the Node.js scrubber (packages/zn-gate/lib/scrub/normalize.js, patterns.js); the cases of
-packages/zn-gate/test/fixtures/scrub_normalised_parity.json are read by both. Fake values only."""
+behaviour as the Node.js redactSecrets and redactScanSecrets (packages/zn-gate/lib/rules.js, which read the
+normalised view of lib/scrub/normalize.js); the cases of packages/zn-gate/test/fixtures/scrub_normalised_parity.json,
+with the exact redacted text of each, are read by both. Fake values only."""
 
 import json
 import time
@@ -186,19 +187,64 @@ class LinearTimeTests(unittest.TestCase):
             self.assertLess(took, 5.0, "took %.2f s on a %d-character input" % (took, len(text)))
 
 
+class ExactTextTests(unittest.TestCase):
+    """Texts on which the two engines once differed: the redacted text is the same, label included."""
+
+    def test_provider_keys_split_by_quotes_or_encoded(self) -> None:
+        self.assertEqual(redact('echo gh""p_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8'), "echo [REDACTED_GITHUB_TOKEN]")
+        self.assertEqual(redact('echo sk-ant-api03-xxxxxxxxxx""Fq9Zt2Lm8Pw4Rk7Vn3Hs6Jd1'), "echo [REDACTED_ANTHROPIC_KEY]")
+        self.assertEqual(redact("auth_token%3Dsk-ant-api03-xxxxxxxxxxFq9Zt2Lm8Pw4Rk7Vn3Hs6Jd1"),
+                         "auth_token%3D[REDACTED_ANTHROPIC_KEY]")
+        self.assertEqual(redact('api_key=fake""SecretValue1234XyZ'), "api_key=" + SECRET)
+
+    def test_escaped_assignments(self) -> None:
+        key = "wJalrXUtnFEMI/K7MDENG/" + "bPxRfiCYEXAMPLEKEY"
+        self.assertEqual(redact('{"cmd":"export next_page_token=' + ESC + key + ESC + '"}'),
+                         '{"cmd":"export next_page_token=' + ESC + SECRET + ESC + '"}')
+        self.assertEqual(redact('{"cmd":"export api_key=' + ESC + "AKIAIOSFODNN7E%58AMPLE" + ESC + '"}'),
+                         '{"cmd":"export api_key=' + ESC + SECRET + ESC + '"}')
+        self.assertEqual(redact('{"cmd":"export AWS_SECRET_ACCESS_KEY=' + ESC + key + ESC + '"}'),
+                         '{"cmd":"export AWS_SECRET_ACCESS_KEY=' + ESC + "[REDACTED_AWS_SECRET]" + ESC + '"}')
+        self.assertEqual(redact("the aws secret is " + key), "the aws secret is [REDACTED_AWS_SECRET]")
+
+    def test_quoted_token_and_password_are_a_scan_rule_encoded_or_not(self) -> None:
+        for text in (
+            'token: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"',
+            'token: "wJalrXUtnFEMI/K7MDENG/bPxRfiCY%45XAMPLEKEY"',
+            'password: "fake%53ecretValue1234XyZ"',
+        ):
+            self.assertEqual(redact(text), text, text)
+            self.assertNotEqual(redact_scan_secrets(text)[0], text, text)
+
+    def test_the_view_is_decoded_once(self) -> None:
+        self.assertEqual(redact("%2541KIAIOSFODNN7EXAMPLE"), "%2541KIAIOSFODNN7EXAMPLE")
+
+    def test_one_megabyte_stays_fast(self) -> None:
+        for unit in ("%41", 'a""', "word "):
+            text = unit * (1000000 // len(unit) + 1)
+            t0 = time.perf_counter()
+            redact_secrets(text)
+            redact_scan_secrets(text)
+            took = time.perf_counter() - t0
+            self.assertLess(took, 10.0, "took %.2f s on 1 MB of %r" % (took, unit))
+
+
 class NodeParityFixtureTests(unittest.TestCase):
-    """The cases of the fixture the Node.js scrubber test reads: redacted or not, the engines agree."""
+    """The cases of the fixture the Node.js test reads: the output of both pairs is the text of the fixture."""
 
     def test_shared_fixture(self) -> None:
         if not FIXTURE.exists():
             self.skipTest("packages/zn-gate is not next to this package")
         cases = json.loads(FIXTURE.read_text(encoding="utf-8"))["cases"]
-        self.assertGreaterEqual(len(cases), 40)
+        self.assertGreaterEqual(len(cases), 50)
         for case in cases:
+            want = case["output"]
+            want_scan = case.get("scan_output", want)
             out, found = redact_secrets(case["input"])
-            self.assertEqual(out != case["input"], case["redacted"], case["name"])
-            self.assertEqual(bool(found), case["redacted"], case["name"])
+            self.assertEqual(out, want, case["name"])
+            self.assertEqual(bool(found), want != case["input"], case["name"])
             scanned = redact_scan_secrets(case["input"])[0]
+            self.assertEqual(scanned, want_scan, case["name"] + " (scan)")
             self.assertEqual(scanned != case["input"], case["redacted"], case["name"] + " (scan)")
 
 

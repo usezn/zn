@@ -5,13 +5,14 @@ const linearRegex = require('./linear-regex');
 const { ZERO_WIDTH_RE, INVISIBLE_ASTRAL_RE, spaceInvisible, spaceInvisibleForMatch } = require('./invisible');
 const path = require('path');
 const { envFlag } = require('./env-flag');
+const { normalisedView } = require('./scrub/normalize');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-31.6
+ * RULES_VERSION: 2026-11-03.18
  */
 
-const RULES_VERSION = '2026-11-03.1';
+const RULES_VERSION = '2026-11-03.18';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1442,7 +1443,7 @@ function upperBound(a, x) {
 
 // Redacts the values found by findQuotedCredentials, on the text and on the text
 // without invisible characters (as every other rule).
-function redactQuotedCredentials(text) {
+function redactQuotedCredentials(text, track) {
   if (typeof text !== 'string' || !text || !KV_PREFILTER_RE.test(text)) return { sanitized: text, detections: [] };
   const view = invisibleView(text);
   const passes = view ? [[text, null], [view.clean, view.map]] : [[text, null]];
@@ -1465,33 +1466,171 @@ function redactQuotedCredentials(text) {
   const detections = [];
   let out = '';
   let last = 0;
-  for (const e of mergeCandidates(cands)) {
+  const merged = mergeCandidates(cands);
+  for (const e of merged) {
     out += text.slice(last, e.start) + e.text;
     last = e.end;
     detections.push({ rule: e.rule, index: e.start });
   }
+  if (track) track.apply(merged);
   return { sanitized: out + text.slice(last), detections };
 }
 
 // The quoted values first (the other rules read one word and would leave the
-// rest of a value behind), then SECRET_PATTERNS.
-function redactCredentials(text) {
-  const quoted = redactQuotedCredentials(text);
-  const rest = redactWith(quoted.sanitized, SECRET_PATTERNS);
+// rest of a value behind), then SECRET_PATTERNS. `track` (an Origin) records
+// where each character of the result came from, for the normalised pass.
+function redactCredentials(text, track) {
+  const quoted = redactQuotedCredentials(text, track);
+  const rest = redactWith(quoted.sanitized, SECRET_PATTERNS, track);
   if (quoted.detections.length === 0) return rest;
   return { sanitized: rest.sanitized, detections: quoted.detections.concat(rest.detections) };
+}
+
+// Shell quoting and percent-encoding hide a secret without changing what a shell or a URL parser reads
+// (AKIA""rest, 'AKIA''rest', %41KIArest, api_key%3Dvalue). redactSecrets and redactScanSecrets run
+// every rule on the text and then on its normalised view (lib/scrub/normalize.js: adjacent same-type
+// quote pairs between word characters removed, %XX decoded when the byte is a printable, non-space ASCII
+// character); what the view redacts is replaced in the text over the whole original word or encoded
+// value. The Python package does the same (_redact_normalised in rules.py).
+//
+// Where each character of a text that is being redacted came from: its index in the text the
+// redaction started from, or a negative number for a character that a redaction wrote.
+class Origin {
+  constructor(n) {
+    this.orig = new Int32Array(n);
+    for (let i = 0; i < n; i++) this.orig[i] = i;
+    this.rules = [];
+  }
+
+  // Records edits [{start, end, text, rule}], in ascending order, made to the current text.
+  apply(edits) {
+    let size = this.orig.length;
+    for (const e of edits) size += e.text.length - (e.end - e.start);
+    const out = new Int32Array(size);
+    let o = 0;
+    let last = 0;
+    for (const e of edits) {
+      out.set(this.orig.subarray(last, e.start), o);
+      o += e.start - last;
+      this.rules.push(e.rule);
+      out.fill(-this.rules.length, o, o + e.text.length);
+      o += e.text.length;
+      last = e.end;
+    }
+    out.set(this.orig.subarray(last), o);
+    this.orig = out;
+  }
+
+  // [{before, after, text, rule}] for each run the redactions wrote: the span of the starting text it
+  // replaced (between the kept characters on both sides) and the text that replaced it.
+  spans(redacted, n) {
+    const orig = this.orig;
+    const out = [];
+    const total = orig.length;
+    let i = 0;
+    while (i < total) {
+      if (orig[i] >= 0) {
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j < total && orig[j] < 0) j++;
+      const before = i > 0 ? orig[i - 1] + 1 : 0;
+      const after = j < total ? orig[j] : n;
+      out.push({ before, after, text: redacted.slice(i, j), rule: this.rules[-orig[i] - 1] });
+      i = j;
+    }
+    return out;
+  }
+}
+
+// `run(text, track)` on the text, then on its normalised view.
+function redactNormalised(text, run) {
+  const first = run(text, null);
+  if (typeof text !== 'string' || typeof first.sanitized !== 'string' || !first.sanitized) return first;
+  const view = normalisedView(first.sanitized);
+  if (!view) return first;
+  const track = new Origin(view.clean.length);
+  const second = run(view.clean, track);
+  if (second.sanitized === view.clean) return first;
+  const edits = [];
+  for (const s of track.spans(second.sanitized, view.clean.length)) {
+    if (s.after <= s.before) continue;
+    edits.push({ start: view.starts[s.before], end: view.ends[s.after - 1], text: s.text, rule: s.rule });
+  }
+  if (edits.length === 0) return first;
+  let out = '';
+  let last = 0;
+  const detections = first.detections.slice();
+  for (const e of edits) {
+    out += first.sanitized.slice(last, e.start) + e.text;
+    last = e.end;
+    detections.push({ rule: e.rule, index: e.start });
+  }
+  return { sanitized: out + first.sanitized.slice(last), detections };
+}
+
+// A sensitive key assigned a value inside a JSON string, where the value quotes carry a backslash
+// (`export api_key=\"value\"`), and a secret passed as a URL query parameter (`?api_key=value`,
+// `&token=value`). The same as the generic assignment and query entries of scrub/patterns.js; the plain
+// quoted and unquoted assignments stay with SECRET_PATTERNS. They run last in redactSecrets, as
+// SCRUB_LAST_PATTERNS do in the Python package.
+const caseless = (word) => word.replace(/[a-z]/g, (c) => '[' + c + c.toUpperCase() + ']');
+const SCRUB_KEY_NAMES = '(?:' + [
+  caseless('password'), caseless('passwd'), caseless('pwd'), caseless('secret'), caseless('token'),
+  caseless('api') + '[_-]?' + caseless('key'), caseless('apikey'), caseless('access') + '[_-]?' + caseless('key'),
+  caseless('private') + '[_-]?' + caseless('key'), caseless('client') + '[_-]?' + caseless('secret'),
+  caseless('auth') + '[_-]?' + caseless('token'), caseless('credential') + '[Ss]?',
+].join('|') + ')';
+const SCRUB_KEY_PREFILTER = /pass|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential|auth/i;
+const SCRUB_SLUG_RE = /^[A-Za-z]+(?:[_.-][A-Za-z]+)+$/;
+const SCRUB_REFERENCE_START_RE = /^(?:process\.env|os\.environ|\$|\{|%|<|https?:)/;
+const SCRUB_QUERY_REFERENCE_START_RE = /^(?:\$|\{|%7B|%3C|<|https?:)/i;
+const SCRUB_CODE_CHAR_RE = /[()\[\]{};,]/;
+const SCRUB_ZN_MARKER_RE = /__ZN_[A-Z0-9_]+__/;
+
+// The checks of the scrubber entries (a true result means the value is not a secret).
+function escapedAssignmentNotSecret(v) {
+  const { isPlaceholder, looksRandom } = require('./scrub/patterns');
+  return !(!isPlaceholder(v) && looksRandom(v, 3, 3.7) && !SCRUB_SLUG_RE.test(v) &&
+    !SCRUB_REFERENCE_START_RE.test(v) && !SCRUB_CODE_CHAR_RE.test(v));
+}
+
+function queryCredentialNotSecret(v) {
+  const { isPlaceholder, looksRandom } = require('./scrub/patterns');
+  return !(!isPlaceholder(v) && looksRandom(v, 2, 3.0) && !SCRUB_SLUG_RE.test(v) &&
+    !SCRUB_QUERY_REFERENCE_START_RE.test(v) && !SCRUB_ZN_MARKER_RE.test(v));
+}
+
+// \s of the Python package (re.ASCII).
+const WS = '[ \\t\\n\\r\\f\\v]';
+const NOT_WS = ' \\t\\n\\r\\f\\v';
+const SCRUB_LAST_PATTERNS = [
+  { id: 'secret:credential_assignment', pattern: new RegExp(
+    '(' + SCRUB_KEY_NAMES + '[A-Za-z0-9_]{0,64}(?:\\\\{0,2}["\'])?' + WS + '{0,64}(?:=>|:=|=|:)' + WS + '{0,64}\\\\{1,2}["\'`])' +
+    '([^"\'`' + NOT_WS + '\\\\]{12,200})(\\\\{1,2}["\'`])', 'gu'),
+  replacement: '$1[REDACTED_SECRET]$3', valueFilter: escapedAssignmentNotSecret, prefilter: SCRUB_KEY_PREFILTER },
+  { id: 'secret:credential_query', pattern: new RegExp(
+    '([?&](?:[A-Za-z0-9_.-]{0,64}[_.-])?' + SCRUB_KEY_NAMES + '[A-Za-z0-9_]{0,64}=)([^&#' + NOT_WS + '"\'`\\\\]{12,})', 'gu'),
+  replacement: '$1[REDACTED_SECRET]', valueFilter: queryCredentialNotSecret, prefilter: SCRUB_KEY_PREFILTER },
+];
+
+// The rules of lib/rules.js and the scrubber provider formats on one text (no normalised pass).
+function redactSecretsOnce(text, track) {
+  const first = redactCredentials(text, track);
+  if (typeof first.sanitized !== 'string' || !first.sanitized) return first;
+  const second = redactProviderFormats(first.sanitized, track);
+  const third = redactWith(second.sanitized, SCRUB_LAST_PATTERNS, track);
+  if (second.detections.length === 0 && third.detections.length === 0) return first;
+  return { sanitized: third.sanitized, detections: first.detections.concat(second.detections, third.detections) };
 }
 
 // Redacts secrets. Every rule runs on the original text and on the text without
 // invisible characters (see ruleCandidates), and the redacted spans are the union
 // of what both find, so a secret split by a zero-width or tag character is
-// redacted whole. Texts without invisible characters are handled as before.
+// redacted whole. Then the same on the normalised view of the text (see Origin).
 function redactSecrets(text) {
-  const first = redactCredentials(text);
-  if (typeof first.sanitized !== 'string' || !first.sanitized) return first;
-  const second = redactProviderFormats(first.sanitized);
-  if (second.detections.length === 0) return first;
-  return { sanitized: second.sanitized, detections: first.detections.concat(second.detections) };
+  return redactNormalised(text, redactSecretsOnce);
 }
 
 // Scrubber secret types that count as provider formats, with the rule id the
@@ -1508,6 +1647,7 @@ const SCRUB_PROVIDER_RULES = new Map([
   'BEARER_TOKEN',
 ].map((t) => [t, 'secret:' + t.toLowerCase()]).concat([
   ['AWS_KEY', 'secret:aws_key_id'],
+  ['AWS_SECRET', 'secret:aws_secret_key'],
   ['URL_PASSWORD', 'secret:url_password'],
   ['DB_PASSWORD', 'secret:url_password'],
 ]));
@@ -1519,20 +1659,26 @@ const SCRUB_PROVIDER_LABELS = new Map([['DB_PASSWORD', 'URL_PASSWORD']]);
 // The provider token formats of the scrubber engine (GitLab, Slack, Stripe,
 // Google, npm, ...), run on text the SECRET_PATTERNS already redacted. The
 // engine is required here, not at the top, because it requires this file.
-function redactProviderFormats(text) {
+function redactProviderFormats(text, track) {
   // Only the provider types take part in the overlap resolution: a wider span of another type (such as
   // a NAME=value assignment) would otherwise win it, be dropped here, and leave the key unredacted.
-  const spans = require('./scrub/engine').scan(text, { exact: false, pii: false, types: SCRUB_PROVIDER_RULES })
+  // The scrubber's own normalised view is off: redactNormalised does that pass for every rule.
+  const spans = require('./scrub/engine').scan(text, { exact: false, pii: false, normalise: false, types: SCRUB_PROVIDER_RULES })
     .sort((a, b) => a.start - b.start || b.end - a.end);
   const detections = [];
+  const edits = [];
   let out = '';
   let last = 0;
   for (const s of spans) {
     if (s.start < last) continue;
-    detections.push({ rule: SCRUB_PROVIDER_RULES.get(s.type), index: s.start });
-    out += text.slice(last, s.start) + `[REDACTED_${SCRUB_PROVIDER_LABELS.get(s.type) || s.type}]`;
+    const rule = SCRUB_PROVIDER_RULES.get(s.type);
+    const replacement = `[REDACTED_${SCRUB_PROVIDER_LABELS.get(s.type) || s.type}]`;
+    detections.push({ rule, index: s.start });
+    edits.push({ start: s.start, end: s.end, text: replacement, rule });
+    out += text.slice(last, s.start) + replacement;
     last = s.end;
   }
+  if (track && edits.length > 0) track.apply(edits);
   return { sanitized: out + text.slice(last), detections };
 }
 
@@ -1543,13 +1689,17 @@ function redactScanRules(text) {
 }
 
 // redactSecrets plus SCAN_SECRET_PATTERNS, for the lines `zn-gate scan` prints.
-function redactScanSecrets(text) {
-  const first = redactCredentials(text);
-  const second = redactWith(first.sanitized, SCAN_SECRET_PATTERNS);
+function redactScanOnce(text, track) {
+  const first = redactSecretsOnce(text, track);
+  const second = redactWith(first.sanitized, SCAN_SECRET_PATTERNS, track);
   return { sanitized: second.sanitized, detections: first.detections.concat(second.detections) };
 }
 
-function redactWith(text, patterns) {
+function redactScanSecrets(text) {
+  return redactNormalised(text, redactScanOnce);
+}
+
+function redactWith(text, patterns, track) {
   if (typeof text !== 'string' || !text) {
     return { sanitized: text, detections: [] };
   }
@@ -1568,11 +1718,13 @@ function redactWith(text, patterns) {
     if (cands.length === 0) continue;
     let out = '';
     let last = 0;
-    for (const e of mergeCandidates(cands)) {
+    const merged = mergeCandidates(cands);
+    for (const e of merged) {
       out += sanitized.slice(last, e.start) + e.text;
       last = e.end;
       detections.push({ rule: e.rule, index: e.start });
     }
+    if (track) track.apply(merged);
     sanitized = out + sanitized.slice(last);
     dirty = true;
   }
