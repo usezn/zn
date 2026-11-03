@@ -44,7 +44,6 @@
 if (require.main === module) require('../compile-cache').enable();
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const policy = require('./policy');
 const markers = require('../broker/markers');
