@@ -432,6 +432,8 @@ stop malware running as the same user (see above).
 - **Optional cloud check unavailable** (no connection, timeout, a service error, or a
   saved key that cannot be read): the prompt is checked by the local rules alone
   and the result says `fallback: true`. This path does not fail closed.
+- **Optional cloud check answers with an unknown verdict** (neither allow nor block):
+  the text is blocked (rule `cloud:unknown-verdict`). This path fails closed.
 - **Vault locked:** the hooks still run the scrubber without it. They redact
   patterns, PII and values found in local files with irreversible markers. The
   broker refuses to fill any value.
