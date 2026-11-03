@@ -2,12 +2,12 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const crypto = require('crypto');
 // rules (with the scrubber engine behind it), term and http are loaded where they are used, so an
 // append that does not need them (a hook block, see _plainPreview in logEvidence) stays cheap.
 
-const ZN_DIR = path.join(os.homedir(), '.zn');
+// The same folder as stats, pins, the vault and the config: ~/.zn, or ZN_HOME when it is set.
+const ZN_DIR = require('./stats').znHome();
 const EVIDENCE_FILE = path.join(ZN_DIR, 'evidence.jsonl');
 const GENESIS_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
 

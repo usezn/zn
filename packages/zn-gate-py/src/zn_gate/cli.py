@@ -127,8 +127,10 @@ ALERT = "\U0001f6a8"
 CHECK = "\u2705"
 LOCK = "\U0001f512"
 
-# Plain markers used when the console cannot encode the symbols above, for
-# example a Windows console with a legacy code page such as cp1252.
+# Plain markers used wherever the symbols above are off: a pipe or file, plain-text
+# requests (NO_COLOR, TERM=dumb), CI runs, and consoles that cannot encode them
+# (for example a Windows console with a legacy code page such as cp1252).
+# Same markers as the Node package (lib/term.js).
 _ASCII_MARKERS = {SHIELD: "[+]", ALERT: "[!]", CHECK: "[ok]", LOCK: "[ok]"}
 
 
@@ -151,16 +153,27 @@ def _configure_output_streams() -> None:
 
 def _plain_text() -> bool:
     """True when the environment asks for plain text: NO_COLOR set to any non-empty
-    value (no-color.org) or TERM=dumb. Symbols are then left out; the words next to
-    them carry the same meaning."""
+    value (no-color.org) or TERM=dumb."""
     return bool(os.environ.get("NO_COLOR")) or os.environ.get("TERM") == "dumb"
 
 
+def _is_terminal(stream: Any) -> bool:
+    isatty = getattr(stream, "isatty", None)
+    try:
+        return bool(isatty and isatty())
+    except (OSError, ValueError):
+        return False
+
+
 def _icon(symbol: str, stream: Any = None) -> str:
-    """Return `symbol` if the stream can encode it, else a plain ASCII marker ('' in plain text)."""
-    if _plain_text():
-        return ""
+    """Return `symbol` where symbols are on, else its plain ASCII marker ('' if it has none).
+
+    Symbols are on only on a terminal that is not asked for plain text, not in CI
+    (CI set to any non-empty value), and only when the stream can encode them.
+    """
     stream = stream if stream is not None else sys.stdout
+    if _plain_text() or os.environ.get("CI") or not _is_terminal(stream):
+        return _ASCII_MARKERS.get(symbol, "")
     encoding = getattr(stream, "encoding", None) or "utf-8"
     try:
         symbol.encode(encoding)
@@ -206,7 +219,7 @@ def cmd_test(args: argparse.Namespace) -> int:
         # DLP filter is reported on its own line and does not turn an ALLOW
         # into a BLOCK.
         status_icon = f"{_lead(SHIELD)}ALLOW" if assessment.allowed else f"{_lead(ALERT)}BLOCK"
-        print(f"\n{status_icon} | Verdict: {assessment.verdict.upper()} (latency: {latency_us:.1f}µs)")
+        print(f"\n{status_icon} | Verdict: {assessment.verdict.upper()} (latency: {latency_us:.1f} us)")
         print(f"Rule:       {assessment.rule}")
         if assessment.reason:
             print(f"Reason:     {assessment.reason}")
@@ -239,6 +252,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     elapsed_ms = (time.perf_counter() - t0) * 1000
     res["latency_ms"] = round(elapsed_ms, 2)
 
+    if res.get("degraded"):
+        print("[zn-gate] Warning: the cloud model was unavailable, so this verdict comes from the cloud gate fallback rules, not from its model.",
+              file=sys.stderr)
     print(json.dumps(res, indent=2))
 
     return 2 if res.get("verdict") == "block" else 0
@@ -657,7 +673,7 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
             **({"warning": nothing} if nothing else {}),
         }, indent=2))
     else:
-        print(f"\n{_lead(SHIELD)}zn-gate Security Scanner — Scanned {scanned} files")
+        print(f"\n{_lead(SHIELD)}zn-gate Security Scanner - Scanned {scanned} files")
         if nothing:
             print(f"{_lead(ALERT)}{_safe_text(nothing)}")
         if skipped:

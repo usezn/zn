@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-02.42';
+const POLICY_RULES_VERSION = '2026-11-03.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -297,7 +297,9 @@ function contextOf(opts = {}) {
   const home = opts.home || os.homedir();
   const cwd = opts.cwd || process.cwd();
   const env = opts.env || process.env;
-  return { home, cwd, env, creds: credentialEnvPaths(env, home, cwd), agent: agentContext(home, cwd, env) };
+  // zn's own folder when ZN_HOME moves it: protected like ~/.zn (the default folder is always protected as well).
+  const znHome = env.ZN_HOME ? path.resolve(env.ZN_HOME) : null;
+  return { home, cwd, env, znHome, creds: credentialEnvPaths(env, home, cwd), agent: agentContext(home, cwd, env) };
 }
 
 /**
@@ -355,6 +357,15 @@ function classifyResolved(abs, ctx) {
   for (const h of homes) {
     const prefix = h.endsWith('/') ? h : h + '/';          // a home of "/" is its own prefix
     if (s === prefix + '.zn' || s.startsWith(prefix + '.zn/')) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ~/.zn' };
+  }
+  // A ZN_HOME that moves zn's folder elsewhere. A value that is a home folder or a drive root is not taken: it would
+  // protect the whole home folder.
+  if (ctx.znHome) {
+    const zh = keyOf(slash(ctx.znHome)).replace(/\/+$/, '');
+    // Only the root of a file system (/, a drive such as C:/, a network share) is refused, so a short folder such as /zn is protected.
+    const fsRoot = keyOf(slash(path.parse(ctx.znHome).root)).replace(/\/+$/, '');
+    const wide = zh === '' || zh === fsRoot || homes.some((x) => x.replace(/\/+$/, '') === zh);
+    if (!wide && (s === zh || s.startsWith(zh + '/'))) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ZN_HOME' };
   }
   for (const [re, reason] of AGENT_CONFIG_RES) if (ci(re).test(s)) return { kind: 'agent_config', reason };
   for (const h of homes) {
@@ -1594,8 +1605,21 @@ function adminCommand(cmd) {
 // longer than the agent waits for the hook, and a hook that times out lets the
 // command run unchecked.
 const SHELL_SCAN_CAP = 100 * 1024; // characters
+/* The folder named in the vault message: ~/.zn, or the ZN_HOME folder (with ~ for the home folder) when it moves zn's
+   folder and is protected, that is, it is not empty, a file system root or a home folder. */
+function vaultFolder(opts) {
+  const env = opts.env || process.env;
+  if (!env.ZN_HOME) return '~/.zn';
+  const home = opts.home || os.homedir();
+  const zh = path.resolve(env.ZN_HOME);
+  const same = (a, b) => keyOf(slash(a)).replace(/\/+$/, '') === keyOf(slash(b)).replace(/\/+$/, '');
+  if (same(zh, path.parse(zh).root) || same(zh, home)) return '~/.zn';
+  const rel = path.relative(home, zh);
+  const shown = rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? '~/' + rel.split(path.sep).join('/') : slash(zh);
+  return shown + ' (set by ZN_HOME; ~/.zn is protected too)';
+}
 function vaultMessage(opts = {}) {
-  return 'zn blocked this: ~/.zn is where zn keeps your secrets, so agents may not read or change it. ' +
+  return 'zn blocked this: ' + vaultFolder(opts) + ' is where zn keeps your secrets, so agents may not read or change it. ' +
     'Next step: to use a secret in a command, run it with `' + znCommand('run --secrets NAME -- <command>', opts) + '` so the program gets the value as an environment variable; ' +
     'for a web request, use the secrets_http_request tool with __ZN_NAME__ where the value goes; to add a secret, ask the user to run `' +
     znCommand('secret set NAME', opts) + '` in their own terminal.';

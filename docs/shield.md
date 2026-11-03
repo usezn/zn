@@ -9,7 +9,7 @@ For each wrapped server the shield:
 3. **Checks tool output.** Secrets are redacted, and output that carries an injection is replaced by a short notice.
    The same check covers the other text the server sends to the agent: notifications, requests such as sampling, resource and prompt contents (text blobs too), the descriptions in resource and prompt lists, the initialize instructions, completion values, error messages, and the structured content, embedded resources and resource links of tool results. A line from the server that is not valid JSON is dropped (shadow mode passes it on and reports it). JSON-RPC batches are checked message by message in both directions.
 4. **Pins the tools.** It remembers what each tool looked like the first time and flags any tool that changes later (see [Tool pinning](#tool-pinning)).
-5. **Records each decision** in the local audit log (`~/.zn/evidence.jsonl`; check it with `npx -y zn-gate evidence --verify`, and see [how the log works](architecture.md)).
+5. **Records each decision** in the local decision log (`~/.zn/evidence.jsonl`; check it with `npx -y zn-gate evidence --verify`, and see [how the log works](architecture.md)).
 
 ## Wrap one server: `shield`
 
@@ -74,7 +74,7 @@ In shadow mode:
 - Tool descriptions and parameter descriptions that would be neutralized are left as the server sent them.
 - Tool output is forwarded untouched: no secret is redacted and no output is replaced. This is the one place where shadow mode lets a secret reach the agent, so use it to evaluate, not as a protection.
 - Tool pinning still detects changes and logs them, but it does not mark, remove or refuse any tool, whatever the pinning mode is.
-- Every detection is written to the audit log.
+- Every detection is written to the decision log.
 
 Review what the shield found with:
 
@@ -112,7 +112,7 @@ Pins belong to a server's command line. A server key is computed from the progra
 | `block` | The tool is removed from the list, and any call to a tool that is not approved is refused with an error, even when the agent calls it from a list it saved earlier. Use this mode when you want a hard stop. |
 | `off` | No pinning. |
 
-Every change is also written to the audit log. Tools flagged as duplicate or without a name are removed in `block` mode and reported in both modes.
+Every change is also written to the decision log. Tools flagged as duplicate or without a name are removed in `block` mode and reported in both modes.
 
 Set the mode in `~/.zn/config.json`:
 
@@ -156,7 +156,7 @@ If what you typed does not match, nothing changes and you can run the command ag
 
 1. The agent asks the server for its tools. The shield compares the list with the pins and flags the changed tool.
 2. In `warn` mode the agent sees the tool with a notice in front of its description. In `block` mode the tool is not in the list, and a call to it returns an error that tells the agent to ask you to review the tool and run `zn-gate pins approve` in your own terminal.
-3. The shield writes `[zn-shield TOOLS CHANGED] <tools>: new or changed since the tools of this server were approved` with the exact command to run, and records the event in the audit log.
+3. The shield writes `[zn-shield TOOLS CHANGED] <tools>: new or changed since the tools of this server were approved` with the exact command to run, and records the event in the decision log.
 4. You review the tool and either run `pins approve`, or remove the server.
 
 If the pins file of a server cannot be read or written, the shield treats every tool of that list as unapproved until the pins work again, and says so on stderr. A corrupt pins file is moved aside (`.corrupt-<time>`) and never trusted again silently.
@@ -179,4 +179,4 @@ Pins live in `~/.zn/mcp-pins/`, one file per server, readable only by your accou
 - Pinning protects only servers that run through `zn-gate shield`. Remote (URL) servers are not covered.
 - The checks look at what goes in and out of a tool. They do not decide which tools an agent should have. After wrapping, keep only the tools your agent needs and put destructive operations behind explicit approval.
 
-More: [Protect MCP servers on usezn.com](https://usezn.com/docs/zn-gate/shield), [what zn-gate cannot do](threat-model.md), [how the audit log works](architecture.md).
+More: [Protect MCP servers on usezn.com](https://usezn.com/docs/zn-gate/shield), [what zn-gate cannot do](threat-model.md), [how the decision log works](architecture.md).

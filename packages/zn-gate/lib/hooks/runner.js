@@ -44,7 +44,6 @@
 if (require.main === module) require('../compile-cache').enable();
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const policy = require('./policy');
 const markers = require('../broker/markers');
@@ -62,7 +61,7 @@ const STREAM_JS = path.resolve(__dirname, '..', 'scrub', 'stream.js');
 
 function readConfig(home) {
   try {
-    return JSON.parse(fs.readFileSync(path.join(home || os.homedir(), '.zn', 'config.json'), 'utf8')) || {};
+    return JSON.parse(fs.readFileSync(path.join(home ? path.join(home, '.zn') : require('../stats').znHome(), 'config.json'), 'utf8')) || {};
   } catch (_) {
     return {};
   }
@@ -2033,7 +2032,7 @@ async function handleEvent(args, state, readText) {
   }
 }
 
-module.exports = { handle, main, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop };
+module.exports = { readConfig, handle, main, mapStrings, decidePre, decidePost, INVISIBLE_CHARS_RE, postDeadlineMs, POST_STDIN_CAP, POST_TOKEN_CAP, POST_SCAN_CAP, topLevelKeys, decidePrompt, decideExpansion, decideStop };
 
 // Direct entry (`node lib/hooks/runner.js <agent>`): what installed hooks call,
 // so a hook does not pay for loading the rest of the CLI.

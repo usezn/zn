@@ -220,7 +220,7 @@ COMMANDS:
                       endpoint overrides, permissions, instructions, planted executables
                       [--format text|json|sarif] [--output FILE] [--fail-on high]
                       [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
-  evidence            Query the local hash-chained audit log and run the UI dashboard
+  evidence            Query the local hash-chained decision log and run the UI dashboard
   logs                Tail or inspect security event logs
   mcp                 Run as standalone bidirectional MCP server for AI agents
   analyze <text>      Inspect a prompt from the CLI (local; cloud only with ZN_CLOUD=1 + key)
@@ -354,14 +354,14 @@ EXAMPLES:
   npx -y zn-gate evidence --verify
   npx -y zn-gate evidence --ui
 
-Learn more & documentation at https://usezn.com · GitHub: https://github.com/usezn/zn
+Learn more & documentation at https://usezn.com | GitHub: https://github.com/usezn/zn
 `);
 }
 
 async function runTestSuite(options) {
   process.stdout.write(`
 ${sym(process.env, '🛡️', undefined, '  ')}Running zn-gate v${VERSION} Self-Test Suite
-Engine: Local rules (the self-test never uses the network) · Rules: ${RULES_VERSION}
+Engine: Local rules (the self-test never uses the network) | Rules: ${RULES_VERSION}
 Evaluating ${TEST_VECTORS.length} curated test vectors (${TEST_VECTORS.filter(v => v.type === 'attack').length} attacks + ${TEST_VECTORS.filter(v => v.type === 'benign').length} benign developer scenarios)...\n
 `);
 
@@ -1318,6 +1318,9 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     }
 
     const result = await analyze(textToAnalyze, options);
+    if (result.degraded) {
+      process.stderr.write('[zn-gate] Warning: the cloud model was unavailable, so this verdict comes from the cloud gate fallback rules, not from its model.\n');
+    }
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     process.exit(isBlockVerdict(result.verdict) ? 2 : 0);
   }
