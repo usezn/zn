@@ -460,12 +460,12 @@ test('git --exec-path=<dir> is judged like GIT_EXEC_PATH: only the system git pr
     'git --exec-path=/opt/homebrew/libexec/git-core status', 'git --exec-path=/usr/local/libexec/git-core status',
   ]) {
     const m = d(c);
-    // An unquoted variable is refused before that, by the rule for values the shell may split.
-    assert.ok(m && (/--exec-path/.test(m) || /\$P |\$HOME|git \$X /.test(c)), 'allowed: ' + c + ' -> ' + m);
+    // An unquoted variable, or one set before git on the same line, is refused before that by the rules for values zn cannot read.
+    assert.ok(m && (/--exec-path/.test(m) || /\$P |\$HOME|^X2?=/.test(c)), 'allowed: ' + c + ' -> ' + m);
   }
   for (const c of [
     'git --exec-path', 'git --exec-path=/usr/lib/git-core status', 'git --exec-path=/usr/libexec/git-core/ status',
-    'git --exec-path="/usr/lib/git-core" log', 'git --exec-path="$SYS" status', 'X=--exec-path=/usr/lib/git-core; git "$X" status', "git --exec-path='C:\\Program Files\\Git\\mingw64\\libexec\\git-core' status",
+    'git --exec-path="/usr/lib/git-core" log', 'git --exec-path="$SYS" status', "git --exec-path='C:\\Program Files\\Git\\mingw64\\libexec\\git-core' status",
     'git --exec-path="C:/Program Files/Git/mingw64/libexec/git-core" status', 'git status', 'git log --oneline',
   ]) assert.equal(d(c), null, c);
 });
