@@ -148,11 +148,14 @@ def tool_msgs(prov_log):
     return n, msgs
 
 
-def run_zcode(name, steps, prompt='run the test', cfg_edit=None, with_zn_path=False, mode='yolo', timeout=150):
+def run_zcode(name, steps, prompt='run the test', cfg_edit=None, with_zn_path=False, mode='yolo', timeout=150, env_extra=None, env_drop=(), prep=None):
+    """env_extra / env_drop change the app's environment (which its hooks get); prep() runs after the project is reset."""
     cd = '%s/cases/%s' % (OUT, name)
     shutil.rmtree(cd, ignore_errors=True)
     os.makedirs(cd)
     reset_project()
+    if prep:
+        prep()
     saved_cfg = open(CFG).read()
     if cfg_edit:
         c = json.load(open(CFG))
@@ -165,6 +168,10 @@ def run_zcode(name, steps, prompt='run the test', cfg_edit=None, with_zn_path=Fa
                             stdout=open(cd + '/provider.out', 'w'), stderr=subprocess.STDOUT)
     time.sleep(0.7)
     env = sh_env({'ZC_HOOK_LOG': cd + '/hook.jsonl', 'ZC_HOOK_MODE': WORK + '/hook_mode', 'ZCODE_LOG_CONSOLE': '1'}, with_zn_path)
+    env.update(env_extra or {})
+    for k in env_drop:
+        for key in [x for x in env if x.lower() == k.lower()]:
+            del env[key]
     args = [ZCN, CLI, '--prompt', prompt, '--cwd', PROJ, '--output-format', 'stream-json', '--no-color', '--mode', mode]
     t0 = time.time()
     try:
