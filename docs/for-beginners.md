@@ -27,7 +27,7 @@ It also does these things on your machine:
 - **Hides secrets.** The agent sees a stand-in called a marker, such as `__ZN_AWS_KEY_1__`. The real value stays in an encrypted **vault** on your machine. `zn run` fills in the value only for a command you approved.
 - **Redacts.** When it recognises a secret or personal data in text, the model sees a marker or `[REDACTED_...]` instead of the value.
 - **Blocks some reads.** With hooks installed, it blocks reads of secret files and pasted secrets. A **hook** is a small check your agent runs before or after it reads a file, runs a command or gets your prompt.
-- **Keeps a record.** Each assessment goes to a local audit log, `~/.zn/evidence.jsonl`.
+- **Keeps a record.** Each assessment goes to a local decision log, `~/.zn/evidence.jsonl`.
 
 ## What it never does
 
@@ -36,7 +36,7 @@ It also does these things on your machine:
 - It is not a sandbox. It checks what an agent's hooks can see, and it does not stop a program from touching other things.
 - It does not judge whether a shell command or a query is destructive in the tool-call check. That check is text-based.
 - It does not protect everywhere equally. It works where the agent gives it enough information, and [Agent compatibility](compat.md) shows what each agent allows.
-- Its audit log is not tamper-proof. The hash chain detects accidental or partial edits, but someone who can write to the file can recompute it.
+- Its decision log is not tamper-proof. The hash chain detects accidental or partial edits, but someone who can write to the file can recompute it.
 
 ## The one optional online part
 

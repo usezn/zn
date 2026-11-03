@@ -220,7 +220,7 @@ COMMANDS:
                       endpoint overrides, permissions, instructions, planted executables
                       [--format text|json|sarif] [--output FILE] [--fail-on high]
                       [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
-  evidence            Query the local hash-chained audit log and run the UI dashboard
+  evidence            Query the local hash-chained decision log and run the UI dashboard
   logs                Tail or inspect security event logs
   mcp                 Run as standalone bidirectional MCP server for AI agents
   analyze <text>      Inspect a prompt from the CLI (local; cloud only with ZN_CLOUD=1 + key)

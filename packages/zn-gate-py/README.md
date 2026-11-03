@@ -281,7 +281,7 @@ providers:
     label: "zn-gate"
 ```
 
-### Local audit log
+### Local decision log
 
 <!-- snippet-test -->
 ```python
