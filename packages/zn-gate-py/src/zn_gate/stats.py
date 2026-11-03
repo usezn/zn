@@ -20,10 +20,14 @@ LAYER_NAMES = {
 }
 
 
-def stats_file() -> str:
+def zn_home() -> str:
+    """~/.zn, or the folder ZN_HOME names (the same rule as the npm package)."""
     home = os.environ.get("ZN_HOME")
-    base = os.path.abspath(home) if home else os.path.join(os.path.expanduser("~"), ".zn")
-    return os.path.join(base, "stats.json")
+    return os.path.abspath(home) if home else os.path.join(os.path.expanduser("~"), ".zn")
+
+
+def stats_file() -> str:
+    return os.path.join(zn_home(), "stats.json")
 
 
 def load(path: Optional[str] = None) -> Dict[str, Any]:

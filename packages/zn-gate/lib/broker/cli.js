@@ -161,7 +161,7 @@ async function secretList(args, io) {
     out(io, '  ' + parts.join('  '));
   }
   try {
-    const lines = fs.readFileSync(path.join(io.home, '.zn', 'requests.jsonl'), 'utf8').trim().split('\n').filter(Boolean);
+    const lines = fs.readFileSync(path.join(process.env.ZN_HOME ? require('../stats').znHome() : path.join(io.home, '.zn'), 'requests.jsonl'), 'utf8').trim().split('\n').filter(Boolean);
     const have = new Set(list.map((s) => s.name));
     const pending = [...new Map(lines.map((l) => { try { const r = JSON.parse(l); return [r.name, r]; } catch (_) { return [null, null]; } })).values()]
       .filter((r) => r && r.name && !have.has(r.name));
