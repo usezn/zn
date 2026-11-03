@@ -416,8 +416,32 @@ test('IFS and cd spelled with quotes, a backslash, ANSI-C strings or an indirect
   for (const c of [
     'git -C "$PWD" status',
     'git commit -m "it\'s done" && git -C "$PWD" log',
-    'git commit -m "a\\"b"; git -C $SAFE status',
+    // An escaped quote in an earlier command does not count as IFS; the variable is quoted, since git is not the first command.
+    'git commit -m "a\\"b"; git -C "$SAFE" status',
   ]) {
     assert.equal(dflt(c), null, 'refused: ' + c + ' -> ' + dflt(c));
   }
+});
+
+test('git option values: the environment is trusted for an unquoted value only when git is the first command of the line', () => {
+  const env = { HOME: '/home/x', PWD: proj, SAFE: 'sub' };
+  const d = (c) => policy.bashDenial(c, { home: os.homedir(), cwd: proj, env });
+  for (const c of [
+    '<<< ". -c core.fsmonitor=x" read SAFE; git -C $SAFE status',
+    'time -p read SAFE <<< ". -c core.fsmonitor=x"; git -C $SAFE status',
+    'command -p read SAFE <<< ". -c core.fsmonitor=x"; git -C $SAFE status',
+    '$read SAFE <<< ". -c core.fsmonitor=x"; git -C $SAFE status',
+    'r=read; $r SAFE <<< ". -c core.fsmonitor=x"; git -C $SAFE status',
+    '$declare $IFS=/; git -C $SAFE status',
+    '. ./x.sh; git -C $SAFE status', 'source x.sh; git -C $SAFE status',
+    "trap 'SAFE=\". -c core.fsmonitor=x\"' DEBUG; git -C $SAFE status",
+    'SAFE+=" -c core.fsmonitor=x"; git -C $SAFE status', 'SAFE[0]=". -c core.fsmonitor=x"; git -C $SAFE status',
+    ': ${SAFE=". -c core.fsmonitor=x"}; git -C $SAFE status',
+    'true && git -C $SAFE status', 'git status; git -C $SAFE log',
+  ]) assert.ok(d(c), 'allowed: ' + c);
+  for (const c of [
+    'git -C $SAFE status', 'git -C ${SAFE} status', 'git -C $HOME status',
+    'true && git -C "$SAFE" status', 'git status; git -C "$SAFE" log', 'cd repo && git log',
+    'for f in *.txt; do git add "$f"; done', 'while read -r d; do git -C "$d" fetch; done',
+  ]) assert.equal(d(c), null, c);
 });

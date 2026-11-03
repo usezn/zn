@@ -2756,7 +2756,10 @@ function gitEnvScan(readings, text, opts) {
       while (end < r.length && r[end].seq === r[start].seq) end++;
       const words = [];
       gitEnvAssignmentWords(r.slice(start, end), words);
-      for (const pr of gitDashConfigPairs(r.slice(start, end), gitEnv, gitShell)) { if (++seen > 256) return { deny: TOO_MANY_MESSAGE, codes: [] }; dashPairs.push(pr); }
+      // The environment is trusted for an unquoted value only when git is the first simple command of the line: anything
+      // that runs before it (a read, a loop, a source, a trap, an assignment in any spelling) can rewrite the variable in ways
+      // zn does not follow, so there the value is read as one that may split.
+      for (const pr of gitDashConfigPairs(r.slice(start, end), start === 0 ? gitEnv : {}, gitShell)) { if (++seen > 256) return { deny: TOO_MANY_MESSAGE, codes: [] }; dashPairs.push(pr); }
       for (const t of words) {
         if (++seen > 256) return { deny: TOO_MANY_MESSAGE, codes: [] };
         const eq = t.indexOf('=');
