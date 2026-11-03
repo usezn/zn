@@ -359,8 +359,8 @@ test('the ZCode plugin hook, started as ZCode starts it, runs no planted sh or n
     // This checkout has no verified zn-gate copy inside the plugin folder, so the hook refuses (exit 2), as it must:
     // never the planted program's exit 0.
     assert.equal(r.status, 2, what + ': ' + r.stderr);
-    // ZCode lets the call run when the hook takes 30 seconds: the answer comes well before the hook's 28 second deadline.
-    assert.ok(ms < 28000, what + ': the hook answered after ' + ms + ' ms');
+    // ZCode lets the call run when the hook takes 30 seconds: the answer comes well before the hook's 26 second deadline.
+    assert.ok(ms < 26000, what + ': the hook answered after ' + ms + ' ms');
     t.diagnostic(what + ': ' + ms + ' ms');
   }
   if (!posix) return;
