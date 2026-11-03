@@ -78,6 +78,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 - Returns: `Promise<{ verdict, confidence, rule, reason, engine, rules_version, mode, ... }>`. `mode` is `'hybrid-local-fastpath'` (a local rule blocked, no network), `'oss-local'` (cloud not enabled), or `'hybrid-cloud'` (the cloud answered; `secrets_redacted_before_upload` counts the redactions).
 - If the cloud call fails or no key can be read, it resolves with the local result, `mode: 'oss-local'`, `fallback: true` and `cloud_error` (a message). It does not throw.
 - If the service answers with a verdict other than allow or block, the result is a block with `rule: 'cloud:unknown-verdict'` (not a fallback).
+- If the cloud answers but its model was unavailable, so the verdict comes from the rules alone (the cloud's `decided_by` starts with `ml-error`), the result keeps `mode: 'hybrid-cloud'` and the cloud's verdict, and adds `degraded: true` with `degraded_reason: 'model unavailable, rules only'`. Treat such a result as a rules-only check if you need the model's opinion. `zn-gate analyze` also prints one warning line on stderr.
 
 ### `analyzeLocal(text, options)`
 
@@ -276,6 +277,7 @@ except GuardBlockError as e:
 - `timeout` is in **seconds** (default 4.0, or 12.0 for text over 1,000 characters); the Node option is in milliseconds.
 - Returns a dict with `verdict`, `confidence`, `rule`, `reason`, `engine`, `rules_version` and `mode`: `'hybrid-local-fastpath'`, `'oss-local'` or `'hybrid-cloud'`, as in Node.
 - If the cloud call fails it returns the local result with `mode: 'oss-local-fallback'`, `fallback: True` and `cloud_error`. Node reports the same case as `mode: 'oss-local'` with `fallback: true`.
+- If the cloud answers but its model was unavailable, so the verdict comes from the rules alone (`decided_by` starts with `ml-error`), the result keeps `mode: 'hybrid-cloud'` and adds `degraded: True` with `degraded_reason: 'model unavailable, rules only'`. Node reports the same as `degraded: true`. Treat such a result as a rules-only check if you need the model's opinion. `zn-gate analyze` also prints one warning line on stderr.
 - `api_url` and `stage` (`'v30'` or `'prod'`) can be passed as keyword arguments, like `apiUrl` and `stage` in Node; they pick the endpoint as `resolve_endpoint` does. The `endpoint` argument wins over both.
 - Unlike Node, it does not use a key saved by `zn-gate connect`: pass `api_key` or set `ZN_API_KEY` together with `ZN_CLOUD=1`.
 
