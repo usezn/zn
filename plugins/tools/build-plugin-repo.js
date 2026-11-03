@@ -35,7 +35,8 @@
  *    cannot be checked and is refused: import() with a computed name,
  *    createRequire, import.meta.resolve, process.mainModule, the
  *    "module" built-in, eval, the Function constructor (also reached
- *    through .constructor), and require() of a package whose name is
+ *    through .constructor or destructuring), the vm and worker_threads
+ *    built-ins, and require() of a package whose name is
  *    not a plain quoted string.
  * 4. The plugin files are copied unchanged: the shared ones from
  *    plugins/zn-gate, the README, SECURITY and PROVENANCE files of the plugin
@@ -240,6 +241,8 @@ function withoutVerifyJs(rel, text) {
   return text.slice(0, start) + text.slice(end + 3);
 }
 const MODULE_BUILTINS = new Set(['module', 'node:module']);
+// Built-ins that run code from a string or in another context; the bundle needs neither.
+const CODE_BUILTINS = new Set(['vm', 'node:vm', 'worker_threads', 'node:worker_threads']);
 
 /**
  * True for a method named import ("async import(key, format) { ... }"): it
@@ -406,6 +409,30 @@ function codeFromTextProblems(rel, text) {
     }
     return false;
   };
+  // enclosing[k]: index of the bracket that holds token k; match[o]: index of the closer of the opener at o.
+  const enclosing = new Array(toks.length).fill(-1);
+  const match = new Array(toks.length).fill(-1);
+  {
+    const open = [];
+    for (let k = 0; k < toks.length; k++) {
+      if (isP(k, ')') || isP(k, ']') || isP(k, '}')) { const o = open.pop(); if (o !== undefined) match[o] = k; }
+      enclosing[k] = open.length ? open[open.length - 1] : -1;
+      if (isP(k, '(') || isP(k, '[') || isP(k, '{')) open.push(k);
+    }
+  }
+  const singleEquals = (k) => isP(k, '=') && !isP(k + 1, '=') && !isP(k + 1, '>');
+  // True when the object pattern that holds token k is the left side of an assignment: { eval: e } = obj.
+  const inPattern = (k) => {
+    let o = enclosing[k];
+    while (o >= 0 && (isP(o, '{') || isP(o, '['))) {
+      const c = match[o];
+      if (c < 0) return false;
+      if (singleEquals(c + 1)) return true;
+      if (isP(c + 1, ',') || isP(c + 1, '}') || isP(c + 1, ']')) o = enclosing[o];
+      else return false;
+    }
+    return false;
+  };
   for (let k = 0; k < toks.length; k++) {
     const tk = toks[k];
     const member = isP(k - 1, '.');
@@ -414,7 +441,8 @@ function codeFromTextProblems(rel, text) {
       if (member) {
         if (isId(k - 2) && GLOBAL_OBJECTS.has(toks[k - 2].v)) found.add(rel + ': ' + what + ', which could load code that cannot be checked');
       } else if (isP(k + 1, ':') && keyStart(k - 1)) {
-        // an object key
+        // an object key, unless it names what a destructuring pattern takes: const { eval: e } = globalThis
+        if (inPattern(k)) found.add(rel + ': takes ' + tk.v + ' out of an object by destructuring, which could load code that cannot be checked');
       } else if (tk.v === 'Function' && (isId(k - 1, 'instanceof') || isId(k - 1, 'typeof') || isP(k + 1, '.'))) {
         // instanceof Function, typeof Function, Function.prototype
       } else if (methodDefinition(k)) {
@@ -424,8 +452,16 @@ function codeFromTextProblems(rel, text) {
       }
     } else if (tk.t === 'id' && GLOBAL_OBJECTS.has(tk.v) && isP(k + 1, '[')) {
       found.add(rel + ': reads a member of ' + tk.v + ' by a computed name, which could reach eval or Function');
+    } else if (tk.t === 'id' && tk.v === 'constructor' && member && isId(k - 2, 'module')) {
+      found.add(rel + ': reaches the module loader through module.constructor, which cannot be checked');
     } else if (tk.t === 'id' && tk.v === 'constructor' && isP(k + 1, '.') && isId(k + 2, 'constructor')) {
       found.add(rel + ': reaches a constructor through another constructor, which could load code that cannot be checked');
+    } else if (tk.t === 'id' && tk.v === 'constructor' && member && !isP(k + 1, ':')
+      && (isP(k + 1, '(') || isP(k + 1, '[') || isP(k + 1, ';') || isP(k + 1, ',') || isP(k + 1, ')') || isP(k + 1, ']') || isP(k + 1, '}')
+        || singleEquals(k + 1) || isP(k + 1, '.') && isId(k + 2) && /^(?:call|apply|bind)$/.test(toks[k + 2].v))
+      && !(isP(k + 1, '(') && isId(k - 2, 'this') && isId(k - 3, 'new'))) {
+      // new this.constructor() builds a copy of the same class; anything else called or stored could be the Function constructor
+      found.add(rel + ': calls or stores a .constructor member, which could be the Function constructor');
     } else if (tk.t === 'str' && /^(?:eval|Function|constructor)$/.test(tk.v) && isP(k - 1, '[') && isP(k + 1, ']')
       && (toks[k - 2] && (toks[k - 2].t === 'str' || toks[k - 2].t === 'id' && !BEFORE_EXPRESSION.has(toks[k - 2].v) || isP(k - 2, ')') || isP(k - 2, ']')))) {
       found.add(rel + ': reads "' + tk.v + '" by name from an object, which could load code that cannot be checked');
@@ -436,6 +472,7 @@ function codeFromTextProblems(rel, text) {
       if (isId(k - 1, 'typeof') || isP(k + 1, ':') && keyStart(k - 1)) continue;
       const plain = next && next.t === 'p' && next.v === '(' && arg && arg.t === 'str' && !arg.v.includes('\\') && isP(k + 3, ')');
       const relative = next && next.t === 'p' && next.v === '(' && arg && (arg.t === 'str' || arg.t === 'tpl') && /^\.\.?\//.test(arg.v);
+      if (plain && CODE_BUILTINS.has(arg.v)) found.add(rel + ': loads the "' + arg.v.replace(/^node:/, '') + '" built-in, which can run code that cannot be checked');
       if (!plain && !relative) found.add(rel + ': require() with a name that is not a plain quoted string, or require kept in a variable, cannot be checked');
     }
   }
@@ -512,6 +549,7 @@ function packageProvides(files, pkgDir, sub) {
 /** Problems with one specifier imported by the bundled file rel. */
 function resolveProblem(files, rel, spec) {
   if (MODULE_BUILTINS.has(spec)) return rel + ': imports the "module" built-in, which cannot be checked';
+  if (CODE_BUILTINS.has(spec)) return rel + ': imports the "' + spec.replace(/^node:/, '') + '" built-in, which can run code that cannot be checked';
   if (BUILTINS.has(spec)) return null;
   if (spec.startsWith('/') || /^[a-z]+:/i.test(spec)) return rel + ': ' + spec + ' is not a bundled module';
   if (spec.startsWith('.')) {

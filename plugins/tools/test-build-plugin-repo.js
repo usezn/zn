@@ -206,6 +206,27 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
         await bad("globalThis['Func' + 'tion']('1');\n", /computed name/);
         await bad("x['constructor']('1');\n", /by name from an object/);
         await bad("(() => {}).constructor.constructor('return 1');\n", /through another constructor/);
+        await bad("(() => {}).constructor('return 1')();\n", /\.constructor member/);
+        await bad("(function () {}).constructor('return 1');\n", /\.constructor member/);
+        await bad("[].map.constructor('return 1');\n", /\.constructor member/);
+        await bad("const F = (() => 0).constructor;\nF('return 1');\n", /\.constructor member/);
+        await bad("const F = (() => 0).constructor, y = 1;\n", /\.constructor member/);
+        await bad("(() => 0).constructor.call(null, 'return 1');\n", /\.constructor member/);
+        await bad("x.constructor = y;\n", /\.constructor member/);
+        await bad("new (() => 0).constructor('return 1');\n", /\.constructor member/);
+        await bad("module.constructor._load('left-pad');\n", /module\.constructor/);
+        await bad("const m = module.constructor;\n", /module\.constructor/);
+        await bad("require('vm').runInThisContext('1');\n", /"vm" built-in/);
+        await bad("require('node:vm');\n", /"vm" built-in/);
+        await bad("require('worker_threads');\n", /"worker_threads" built-in/);
+        await bad("require('node:worker_threads');\n", /"worker_threads" built-in/);
+        await bad("import('node:vm');\n", /"vm" built-in/);
+        await bad("const { eval: e } = globalThis;\ne('1');\n", /destructuring/);
+        await bad("const { Function: F } = globalThis;\n", /destructuring/);
+        await bad("const { Function: F } = someObject;\n", /destructuring/);
+        await bad("let e; ({ eval: e } = window);\n", /destructuring/);
+        await bad("const { a, b: { eval: e } } = obj;\n", /destructuring/);
+        await bad("const [{ Function: F }] = list;\n", /destructuring/);
         await bad("require(`module`).createRequire(__filename);\n", /not a plain quoted string/);
         await bad("require(`${'mod'}ule`);\n", /not a plain quoted string/);
         await bad("require('mod' + 'ule');\n", /not a plain quoted string/);
@@ -240,6 +261,11 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
           "const isFn = (v) => v instanceof Function || Function.prototype.isPrototypeOf(v);",
           "class K { eval(a, b = 1) { return a; } static Function() {} }",
           "const k = new this.constructor();",
+          "const same = x.constructor === Object || y.constructor !== Object || z.constructor == Array;",
+          "const nm = new Foo().constructor.name; const nm2 = x.constructor.name;",
+          "const o2 = { eval: 1 }; const o3 = [{ Function: 2 }], o4 = 3;",
+          "const q = { eval: e => e, Function: 1 }; q.eval(1);",
+          "class M { eval(a) { return a; } }",
           "const words = new Set(['eval', 'Function', 'constructor']);",
           'const half = a / 2; const n = a.eval / 3;',
           '',
@@ -254,6 +280,8 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       await rejects({ ...BASE, 'lib/extra.js': "process.mainModule.require('x');\n" }, /process\.mainModule/);
       await rejects({ ...BASE, 'lib/extra.js': "const M = require('node:module');\n" }, /"module" built-in/);
       await rejects(esm("import M from 'module';\n"), /"module" built-in/);
+      await rejects(esm("import vm from 'node:vm';\n"), /"vm" built-in/);
+      await rejects(esm("import { Worker } from 'worker_threads';\n"), /"worker_threads" built-in/);
       // "exports": the first active condition decides; "require" alone does not serve import; no "../" targets.
       const pkgWith = (exportsField) => ({
         ...BASE,
