@@ -1304,3 +1304,103 @@ test('personal data: asked for the secrets server, for a plugin server name and 
   // A secret is denied even for the detector server.
   assert.equal(decisionOf(await run(preTool('mcp__plugin_zn-gate_zn-gate__analyze_prompt', { text: AWS }, dir), { engine: piiEngine })), 'deny');
 });
+
+const ZN_DETECTOR = { command: 'npx', args: ['-y', 'zn-gate', 'mcp'] };
+
+test('personal data: not asked for the user-scope detector server, still asked for an impostor, a third party and the vault', async (t) => {
+  const dir = tmpProject(t);
+  claudeConfig(t, { claudeJson: { mcpServers: { 'zn-gate': ZN_DETECTOR, zn: { command: 'zn', args: ['mcp'] }, secrets: ZN_SECRETS, crm: { command: 'node', args: ['/opt/crm-example/server.js'] } } } });
+  const note = { text: 'write to jane@example.com' };
+  assert.equal(adapter.normalize(preTool('mcp__zn-gate__analyze_prompt', note, dir)).mcp.ours, 'analyze');
+  assert.equal(decisionOf(await run(preTool('mcp__zn-gate__analyze_prompt', note, dir), { engine: piiEngine })), 'allow');
+  assert.equal(decisionOf(await run(preTool('mcp__zn__analyze_prompt', note, dir), { engine: piiEngine })), 'allow');
+  // A secret is still denied for the detector server.
+  assert.equal(decisionOf(await run(preTool('mcp__zn-gate__analyze_prompt', { text: AWS }, dir), { engine: piiEngine })), 'deny');
+  // The vault server sends data to URLs: still asked.
+  assert.equal(decisionOf(await run(preTool(VAULT_TOOL, { ...VAULT_CALL, body: note.text }, dir), { engine: piiEngine })), 'ask');
+  // A third-party server is still asked, and so is one with the detector's tool name.
+  assert.equal(decisionOf(await run(preTool('mcp__crm__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+  assert.equal(decisionOf(await run(preTool('mcp__other__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+  // The detector name never makes a vault tool ours, and a vault name never makes a detector tool ours.
+  assert.equal(adapter.normalize(preTool('mcp__zn-gate__secrets_http_request', {}, dir)).mcp.ours, undefined);
+  assert.equal(adapter.normalize(preTool('mcp__secrets__analyze_prompt', {}, dir)).mcp.ours, undefined);
+});
+
+test('personal data: a project-defined server named zn or zn-gate is not trusted', async (t) => {
+  const dir = tmpProject(t);
+  claudeConfig(t, { claudeJson: { mcpServers: { 'zn-gate': ZN_DETECTOR, zn: { command: 'zn', args: ['mcp'] } } } });
+  const note = { text: 'write to jane@example.com' };
+  // A project .mcp.json redefines the name, even with zn's own command: no trust.
+  fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { zn: { command: 'node', args: ['./collect.js'] }, 'zn-gate': ZN_DETECTOR } }));
+  assert.equal(decisionOf(await run(preTool('mcp__zn__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+  assert.equal(decisionOf(await run(preTool('mcp__zn-gate__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+  // A name only in the project (nothing in user scope) is not trusted either.
+  claudeConfig(t, { claudeJson: { mcpServers: {} } });
+  assert.equal(adapter.normalize(preTool('mcp__zn__analyze_prompt', note, dir)).mcp.ours, undefined);
+  // A user-scope entry that is not zn's command, or has the word only in its env, is not trusted.
+  claudeConfig(t, { claudeJson: { mcpServers: { zn: { command: 'node', args: ['/opt/x.js'], env: { NOTE: 'mcp' } }, 'zn-gate': { command: 'npx', args: ['-y', 'other-pkg', 'mcp'] } } } });
+  fs.rmSync(path.join(dir, '.mcp.json'));
+  assert.equal(decisionOf(await run(preTool('mcp__zn__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+  assert.equal(decisionOf(await run(preTool('mcp__zn-gate__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+  // A program that only carries zn-gate's cli path in its arguments is not zn's.
+  claudeConfig(t, { claudeJson: { mcpServers: { zn: { command: '/opt/other-example/run', args: ['/x/zn-gate/bin/cli.js', 'mcp'] } } } });
+  assert.equal(decisionOf(await run(preTool('mcp__zn__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+  // A server reached by URL is never zn's.
+  claudeConfig(t, { claudeJson: { mcpServers: { zn: { url: 'https://example.com/mcp', command: 'zn', args: ['mcp'] } } } });
+  assert.equal(decisionOf(await run(preTool('mcp__zn__analyze_prompt', note, dir), { engine: piiEngine })), 'ask');
+});
+
+test('mcp server kind: a server of the same name in managed-mcp.json revokes trust', (t) => {
+  const dir = tmpProject(t);
+  const managed = tempDir(t, 'zn-managed-');
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS, 'zn-gate': ZN_DETECTOR } } });
+  const o = { argv: [], managedDir: managed };
+  assert.equal(adapter.znMcpServerKind('secrets', dir, o), 'secrets');
+  assert.equal(adapter.znMcpServerKind('zn-gate', dir, o), 'analyze');
+  fs.writeFileSync(path.join(managed, 'managed-mcp.json'), JSON.stringify({ mcpServers: { crm: { command: 'node', args: ['/opt/crm.js'] } } }));
+  assert.equal(adapter.znMcpServerKind('secrets', dir, o), 'secrets');
+  fs.writeFileSync(path.join(managed, 'managed-mcp.json'), JSON.stringify({ mcpServers: { secrets: { command: 'node', args: ['/opt/x.js'] }, 'zn-gate': { command: 'node', args: ['/opt/y.js'] } } }));
+  assert.equal(adapter.znMcpServerKind('secrets', dir, o), null);
+  assert.equal(adapter.znMcpServerKind('zn-gate', dir, o), null);
+  // An unreadable managed file is not trusted past.
+  fs.writeFileSync(path.join(managed, 'managed-mcp.json'), '{ not json');
+  assert.equal(adapter.znMcpServerKind('secrets', dir, o), null);
+});
+
+test('mcp server kind: a server given with --mcp-config (file or JSON) revokes trust', (t) => {
+  const dir = tmpProject(t);
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS, 'zn-gate': ZN_DETECTOR } } });
+  const base = { managedDir: tempDir(t, 'zn-managed-') };
+  const bad = { mcpServers: { secrets: { command: 'node', args: ['/opt/x.js'] } } };
+  const file = path.join(dir, 'extra.json');
+  fs.writeFileSync(file, JSON.stringify(bad));
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '-p', 'hi']] }), 'secrets');
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '--mcp-config', 'extra.json']] }), null);
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['sh', '-c', 'x'], ['claude', '--mcp-config=' + file]] }), null);
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '--mcp-config', JSON.stringify(bad), '--verbose']] }), null);
+  // Several values after one flag; the name in the last one counts.
+  assert.equal(adapter.znMcpServerKind('zn-gate', dir, { ...base, argv: [['claude', '--mcp-config', 'extra.json', JSON.stringify({ mcpServers: { 'zn-gate': { command: 'node' } } })]] }), null);
+  // A server of another name there changes nothing; an unreadable value is not trusted past.
+  fs.writeFileSync(file, JSON.stringify({ mcpServers: { crm: { command: 'node' } } }));
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '--mcp-config', 'extra.json']] }), 'secrets');
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '--mcp-config', 'missing.json']] }), null);
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '--mcp-config', '{ not json']] }), null);
+});
+
+test('mcp server kind: the real process lookup finds --mcp-config of an ancestor (Linux)', { skip: process.platform !== 'linux' }, (t) => {
+  const dir = tmpProject(t);
+  const cfg = claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS } } });
+  const file = path.join(dir, 'extra.json');
+  fs.writeFileSync(file, JSON.stringify({ mcpServers: { secrets: { command: 'node', args: ['/opt/x.js'] } } }));
+  const probe = 'const a=require(' + JSON.stringify(path.resolve(__dirname, '../lib/agents/claude-code')) + ');' +
+    'process.stdout.write(String(a.znMcpServerKind("secrets",' + JSON.stringify(dir) + ',{managedDir:' + JSON.stringify(dir) + '})));';
+  const home = tempDir(t, 'zn-home-');
+  const env = { ...process.env, HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home, CLAUDE_CONFIG_DIR: cfg };
+  // No flag anywhere above the probe: trusted.
+  const r = spawnSync('node', ['-e', probe], { env, encoding: 'utf8' });
+  assert.equal(r.stdout, 'secrets');
+  // A parent process that carries the flag in its command line, with the probe as its child: not trusted.
+  const parent = 'process.stdout.write(require("child_process").spawnSync("node",["-e",' + JSON.stringify(probe) + '],{encoding:"utf8"}).stdout)';
+  const r2 = spawnSync('node', ['-e', parent, '--', '--mcp-config', file], { env, encoding: 'utf8' });
+  assert.equal(r2.stdout, 'null');
+});
