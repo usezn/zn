@@ -101,7 +101,10 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
   server with the same name, such as
   one in a project's `.mcp.json` or a local-scope entry, is checked like any other, also when its
   command is `zn secrets-mcp` (Claude Code looks `zn` up on its `PATH`, where a project folder can come
-  first). A project install (`--project`) adds no MCP server. The zn-gate plugin
+  first). A server with that name in your organization's `managed-mcp.json`, or passed with `--mcp-config`
+  (read on Linux), counts like a project entry. Personal data is not asked about in calls to zn's own
+  detector server, the user-scope `zn-gate` (or `zn`) entry that runs `zn-gate mcp`, under the same
+  conditions (a secret is still blocked). A project install (`--project`) adds no MCP server. The zn-gate plugin
   registers no MCP server since version 1.14.0. Hooks installed by an earlier zn-gate keep the old
   matcher, which skips MCP tools, until you run `zn hooks install claude-code` again.
 - **`@file` mentions**: Claude Code does not run Read hooks for them, so zn
