@@ -14,6 +14,18 @@ fn has_separator(command: &str) -> bool {
     command.contains('\\') || command.contains('/') || command.contains(':')
 }
 
+/// True for a folder that does not depend on the current directory: `C:\x` or `C:/x` (drive and
+/// root) or a UNC path `\\server\share`. `.`, `bin`, `C:bin` (relative to the drive's current
+/// folder) and `\bin` (root of the current drive) all depend on where the gateway was started.
+fn is_absolute_windows(dir: &str) -> bool {
+    let b = dir.as_bytes();
+    let slash = |c: u8| c == b'\\' || c == b'/';
+    if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && slash(b[2]) {
+        return true;
+    }
+    b.len() >= 3 && slash(b[0]) && slash(b[1]) && !slash(b[2])
+}
+
 fn join(dir: &str, name: &str) -> String {
     if dir.ends_with('\\') || dir.ends_with('/') {
         format!("{dir}{name}")
@@ -23,8 +35,9 @@ fn join(dir: &str, name: &str) -> String {
 }
 
 /// Find the file Windows would run for `command`, searching `path_var` (`;`-separated) and trying
-/// the extensions of `pathext`. The current directory is not searched, so a file with the name of a
-/// tool dropped in the folder you started the gateway from is never picked up.
+/// the extensions of `pathext`. Only absolute PATH entries are searched: never the current folder
+/// and never a relative entry, so a file with the name of a tool dropped in the folder you started
+/// the gateway from is never picked up.
 /// `is_file` says whether a candidate exists.
 pub fn resolve_windows_command(
     command: &str,
@@ -62,7 +75,9 @@ pub fn resolve_windows_command(
 
     for dir in path_var.unwrap_or("").split(';') {
         let dir = dir.trim().trim_matches('"');
-        if dir.is_empty() {
+        // A relative entry (`.`, `node_modules\.bin`, `C:bin`, `\bin`) would be searched from the
+        // folder the gateway runs in, which is the user's project, so a project could plant a tool.
+        if dir.is_empty() || !is_absolute_windows(dir) {
             continue;
         }
         for n in &names {
@@ -175,6 +190,77 @@ mod tests {
         assert!(resolve_windows_command("npx", Some("C:\\bin"), None, &f).is_err());
         assert!(resolve_windows_command("npx", Some(""), None, &f).is_err());
         assert!(resolve_windows_command("npx", None, None, &f).is_err());
+    }
+
+    #[test]
+    fn relative_path_entries_are_never_searched() {
+        let f = files(&[
+            "npx.CMD",
+            ".\\npx.CMD",
+            "node_modules\\.bin\\npx.CMD",
+            "C:bin\\npx.CMD",
+            "\\bin\\npx.CMD",
+            "bin\\npx.CMD",
+        ]);
+        let path = ".;node_modules\\.bin;C:bin;\\bin;bin;\"C:bin\"";
+        assert!(resolve_windows_command("npx", Some(path), None, &f).is_err());
+        // An absolute entry later in PATH still works.
+        let f = files(&["C:bin\\npx.CMD", "C:\\good\\npx.CMD"]);
+        let path = "C:bin;C:\\good";
+        assert_eq!(
+            resolve_windows_command("npx", Some(path), None, &f).unwrap(),
+            "C:\\good\\npx.CMD"
+        );
+    }
+
+    #[test]
+    fn absolute_entries_are_recognised() {
+        for ok in [
+            "C:\\bin",
+            "c:/bin",
+            "D:\\",
+            "\\\\server\\share\\bin",
+            "\\\\?\\C:\\bin",
+        ] {
+            assert!(is_absolute_windows(ok), "{ok}");
+        }
+        for bad in [
+            "", ".", "..", "bin", "C:", "C:bin", "\\bin", "/bin", "\\\\", "\\\\\\x",
+        ] {
+            assert!(!is_absolute_windows(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_folder_with_spaces_resolves_and_keeps_its_spaces() {
+        let f = files(&["C:\\Program Files\\nodejs\\npx.CMD"]);
+        let got =
+            resolve_windows_command("npx", Some("C:\\Program Files\\nodejs"), None, &f).unwrap();
+        assert_eq!(got, "C:\\Program Files\\nodejs\\npx.CMD");
+        assert!(is_batch_file(&got));
+        assert!(check_batch_args(&got, &["-y".to_string(), "a b".to_string()]).is_ok());
+    }
+
+    // The standard library runs a .cmd through cmd.exe and quotes the program path itself, so a
+    // folder with a space must start and pass its arguments through.
+    #[cfg(windows)]
+    #[test]
+    fn a_cmd_file_in_a_folder_with_spaces_starts() {
+        let dir = std::env::temp_dir().join(format!("zn cmd test {}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("tool.cmd"), "@echo off\r\necho got %1 %2\r\n").unwrap();
+        let program =
+            resolve_windows_command("tool", Some(dir.to_str().unwrap()), Some(".CMD"), &|p| {
+                std::path::Path::new(p).is_file()
+            })
+            .unwrap();
+        let out = std::process::Command::new(&program)
+            .args(["one", "two"])
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).contains("got one two"));
     }
 
     #[test]
