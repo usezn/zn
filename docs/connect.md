@@ -6,7 +6,7 @@ npx -y zn-gate connect
 
 (or `zn-gate connect` if you installed it with `npm i -g zn-gate`).
 
-zn-gate works fully on your computer, needs no account and sends nothing. This command is optional. It adds one thing: when you or your agent use the `analyze_prompt` tool (or `zn-gate analyze`), the text, with detected secrets hidden first, is also checked by the Galvanize 2 classifier at usezn.com. Hooks, file and secret protection, the shield and every other command stay local and never use it.
+zn-gate works fully on your computer, needs no account and sends nothing. This command is optional. It adds one thing: when you or your agent use the `analyze_prompt` tool (or `zn-gate analyze`), the text, with detected secrets hidden first, is also checked by the Galvanize 3 classifier at usezn.com. Hooks, file and secret protection, the shield and every other command stay local and never use it.
 
 ## What `zn-gate connect` does
 
