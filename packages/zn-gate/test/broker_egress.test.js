@@ -203,3 +203,104 @@ test('the proxy refuses a request that is not an absolute URL or CONNECT (no for
     await proxy.close();
   }
 });
+
+// Raw request through the proxy; resolves {status, headers}.
+function viaProxy(proxy, { method = 'GET', path, headers = {} }) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: proxy.port, method, path, headers, agent: false }, (res) => {
+      res.resume();
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+test('plain http: the upstream gets the listed target as Host, not the client Host header', async () => {
+  let seenHost = null;
+  const up = await listen((req, res) => { seenHost = req.headers.host; res.writeHead(200, { 'Content-Length': 2 }); res.end('ok'); });
+  const proxy = await egress.startEgressProxy(egress.parseAllowList('127.0.0.1:' + portOf(up)), {});
+  try {
+    const r = await viaProxy(proxy, { path: 'http://127.0.0.1:' + portOf(up) + '/x', headers: { Host: 'evil.example.com' } });
+    assert.equal(r.status, 200);
+    assert.equal(seenHost, '127.0.0.1:' + portOf(up));
+  } finally {
+    await proxy.close();
+    up.close();
+  }
+});
+
+test('a client that aborts closes the upstream connection', async () => {
+  let upstreamSocket = null;
+  const up = await listen(() => { /* never answers */ });
+  up.on('connection', (s) => { upstreamSocket = s; });
+  const proxy = await egress.startEgressProxy(egress.parseAllowList('127.0.0.1:' + portOf(up)), {});
+  try {
+    const req = http.request({ host: '127.0.0.1', port: proxy.port, method: 'GET', path: 'http://127.0.0.1:' + portOf(up) + '/hang', agent: false });
+    req.on('error', () => {});
+    req.end();
+    for (let i = 0; i < 100 && !upstreamSocket; i++) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(upstreamSocket, 'the proxy reached the upstream');
+    const closed = new Promise((resolve) => upstreamSocket.once('close', resolve));
+    req.destroy();
+    await Promise.race([closed, new Promise((_, rej) => setTimeout(() => rej(new Error('upstream still open after the client aborted')), 3000))]);
+  } finally {
+    await proxy.close();
+    up.close();
+  }
+});
+
+test('CONNECT matches the host in upper case and with a trailing dot', async () => {
+  const up = await upstream();
+  const proxy = await egress.startEgressProxy(egress.parseAllowList('localhost:' + portOf(up)), {});
+  try {
+    for (const name of ['LOCALHOST', 'localhost.', 'LocalHost.']) {
+      const status = await new Promise((resolve, reject) => {
+        const req = http.request({ host: '127.0.0.1', port: proxy.port, method: 'CONNECT', path: name + ':' + portOf(up) });
+        req.on('connect', (res, sock) => { sock.destroy(); resolve(res.statusCode); });
+        req.on('error', reject);
+        req.end();
+      });
+      assert.equal(status, 200, name);
+    }
+  } finally {
+    await proxy.close();
+    up.close();
+  }
+});
+
+test('a 30x redirect to a host that is not listed is returned to the client, not followed', async () => {
+  const other = await upstream();
+  const first = await listen((req, res) => {
+    first.hits++;
+    res.writeHead(302, { Location: 'http://127.0.0.1:' + portOf(other) + '/', 'Content-Length': 0 });
+    res.end();
+  });
+  const proxy = await egress.startEgressProxy(egress.parseAllowList('127.0.0.1:' + portOf(first)), {});
+  try {
+    const r = await viaProxy(proxy, { path: 'http://127.0.0.1:' + portOf(first) + '/' });
+    assert.equal(r.status, 302);
+    assert.equal(first.hits, 1);
+    assert.equal(other.hits, 0, 'the redirect target was never contacted');
+    const refused = await viaProxy(proxy, { path: r.headers.location });
+    assert.equal(refused.status, 403, 'following it by hand is refused');
+    assert.equal(other.hits, 0);
+  } finally {
+    await proxy.close();
+    first.close();
+    other.close();
+  }
+});
+
+test('egressEnv removes npm and global-agent proxy settings, in any case', () => {
+  const env = egress.egressEnv({
+    PATH: '/bin', npm_config_proxy: 'http://x.example.test', NPM_CONFIG_HTTPS_PROXY: 'http://x.example.test',
+    npm_config_noproxy: 'example.test', GLOBAL_AGENT_HTTP_PROXY: 'http://x.example.test', global_agent_no_proxy: 'example.test',
+    NO_PROXY: 'example.test', npm_config_registry: 'https://registry.example.test',
+  }, 'http://127.0.0.1:1');
+  assert.equal(env.PATH, '/bin');
+  assert.equal(env.npm_config_registry, 'https://registry.example.test', 'unrelated npm settings stay');
+  for (const k of Object.keys(env)) assert.doesNotMatch(k, /^(npm_config_(proxy|https_proxy|noproxy)|global_agent_)/i, k);
+  assert.equal(env.NO_PROXY, undefined);
+  assert.equal(env.HTTPS_PROXY, 'http://127.0.0.1:1');
+});

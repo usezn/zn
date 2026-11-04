@@ -599,5 +599,6 @@ A tool that an adapter reports only as a generic file access (some Gemini CLI, C
 Hermes Agent and the Cursor CLI. Gemini CLI has experimental hooks (see its entry above).
 
 `zn run --egress-allow` (opt-in) limits which hosts a command reaches over HTTP(S) through a local proxy. It
-covers programs that honour the proxy variables, not programs that ignore them, raw sockets or DNS; see
+covers programs that read the proxy variables (in Node, only versions that honour `NODE_USE_ENV_PROXY`), not
+programs that ignore them, raw sockets or DNS; see
 [Egress allowlist for `zn run`](secrets.md#egress-allowlist-for-zn-run).

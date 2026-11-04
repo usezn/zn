@@ -5,7 +5,8 @@
  *
  * A small HTTP proxy on 127.0.0.1 (random port). The child gets it through
  * HTTP_PROXY / HTTPS_PROXY / ALL_PROXY, so curl, gh, Python requests/urllib
- * and Node SDKs send their requests to it. It opens CONNECT tunnels and
+ * and axios send their requests to it, and so does Node when its version
+ * honours NODE_USE_ENV_PROXY (older Node ignores it). It opens CONNECT tunnels and
  * absolute-form http:// requests only to the listed hosts, answers 403 to
  * anything else (before any DNS lookup), and logs the refused host, never the
  * request body or headers.
@@ -21,6 +22,8 @@ const { znError } = require('../deps');
 
 const USAGE_HINT = '--egress-allow takes HOST or HOST:PORT, comma separated (for example api.example.com,api.example.org:8443)';
 const HOST_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/;
+// Idle time after which a proxied plain-HTTP upstream or tunnel is closed.
+const IDLE_MS = 60000;
 const SAFE_LOG_HOST = /^[a-z0-9.:[\]-]{1,260}$/;
 
 function normHost(h) {
@@ -120,18 +123,25 @@ function startEgressProxy(allow, opts = {}) {
     const headers = { ...req.headers };
     delete headers['proxy-connection'];
     delete headers['proxy-authorization'];
+    // The Host header names the listed target, whatever the client sent.
+    headers.host = target.host;
     const out = http.request({
       host, port, method: req.method, path: target.pathname + target.search, headers, agent: false,
+      timeout: IDLE_MS,
     }, (up) => {
       res.writeHead(up.statusCode, up.headers);
       up.pipe(res);
     });
     sockets.add(out);
     out.once('close', () => sockets.delete(out));
+    out.on('timeout', () => out.destroy());
     out.on('error', () => {
       if (!res.headersSent) res.writeHead(502, { Connection: 'close' });
       res.end();
     });
+    // A client that goes away (or stalls) must not leave the upstream open.
+    res.on('close', () => { if (!out.destroyed) out.destroy(); });
+    req.on('aborted', () => out.destroy());
     req.pipe(out);
   });
 
@@ -145,6 +155,8 @@ function startEgressProxy(allow, opts = {}) {
       return;
     }
     const up = net.connect({ host: auth.host, port: auth.port });
+    up.setTimeout(IDLE_MS, () => up.destroy());
+    client.setTimeout(IDLE_MS, () => client.destroy());
     up.on('error', () => {
       client.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n');
     });
@@ -175,10 +187,12 @@ function startEgressProxy(allow, opts = {}) {
   });
 }
 
-/** The child's environment with the proxy set and any caller proxy setting removed (NO_PROXY included). */
+/** The child's environment with the proxy set and any caller proxy setting removed (NO_PROXY, npm and global-agent settings included). */
 function egressEnv(env, proxyUrl) {
   const out = { ...env };
-  for (const k of Object.keys(out)) if (/^(http|https|all|no)_proxy$/i.test(k)) delete out[k];
+  for (const k of Object.keys(out)) {
+    if (/^(http|https|all|no)_proxy$/i.test(k) || /^npm_config_(proxy|https_proxy|noproxy)$/i.test(k) || /^global_agent_/i.test(k)) delete out[k];
+  }
   for (const k of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) out[k] = proxyUrl;
   out.NODE_USE_ENV_PROXY = '1';
   return out;
