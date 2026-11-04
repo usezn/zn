@@ -802,13 +802,13 @@ function refuseOversize(text) {
 }
 
 /*
- * The hook's own deadline, for agents that let a call run when its hook times out. ZCode stops waiting for a hook after 30
- * seconds (the timeoutMs of the plugin's hooks.json) and then lets the call run, so the zcode hook refuses by itself 26
- * seconds after it started, like scripts/zn-hook.sh and scripts/zn-hook.ps1 do. "Started" is the start of this process
+ * The hook's own deadline, for agents that let a call run when its hook times out. ZCode stops waiting for a hook after 5
+ * minutes (the timeoutMs of the plugin's hooks.json) and then lets the call run, so the zcode hook refuses by itself 120
+ * seconds after it started (an ordinary check on a busy CPU can take most of a minute), like scripts/zn-hook.sh and scripts/zn-hook.ps1 do. "Started" is the start of this process
  * or, when scripts/zn-hook.cmd started it on Windows, the time that file noted on its first line (ZN_HOOK_T0, the time
  * of day as cmd.exe prints it), whichever is earlier: ZN_HOOK_T0 can only make the deadline shorter.
  */
-const HOOK_DEADLINE_MS = { zcode: 26000 };
+const HOOK_DEADLINE_MS = { zcode: 120000 };
 
 function hookElapsedMs() {
   let ms = process.uptime() * 1000;
@@ -818,7 +818,7 @@ function hookElapsedMs() {
     const t0 = ((+m[1] * 60 + +m[2]) * 60 + +m[3]) * 1000 + +m[4] * 10;
     let e = ((now.getHours() * 60 + now.getMinutes()) * 60 + now.getSeconds()) * 1000 + now.getMilliseconds() - t0;
     if (e < 0) e += 86400000;
-    if (e > ms && e < 120000) ms = e;
+    if (e > ms && e < 300000) ms = e;
   }
   return ms;
 }

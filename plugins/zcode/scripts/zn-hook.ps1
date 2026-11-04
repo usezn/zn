@@ -15,22 +15,23 @@
 # (the app's own Node.js, started with ELECTRON_RUN_AS_NODE=1: the parent of this process). A candidate is used only if it
 # is Node.js 20.19 or later (21.7 or later on 21).
 #
-# Start deadline: a call whose hook timed out runs in ZCode, so after 26
+# Start deadline: a call whose hook timed out runs in ZCode, so after 120
 # seconds the hook answers like it does when the check fails and stops the Node.js it started. Every wait has a limit taken
 # from the time that is left. The script uses no PowerShell command (Get-Date, New-Object, Get-CimInstance, ...), only the
 # language and .NET: Windows PowerShell finds a command by reading its module folders, and without its module cache (a new
-# user, or a hook started with few environment variables) that alone can take most of the 26 seconds. The plugin gives its
-# hooks 5 minutes in ZCode (hooks.json), far more than this deadline: a busy CPU can slow the end of a hook down by a minute.
+# user, or a hook started with few environment variables) that alone can take many seconds. The deadline is 2 minutes because
+# on a busy CPU an ordinary check can take most of a minute; the plugin gives its hooks 5 minutes in ZCode (hooks.json), far
+# more than this deadline: a busy CPU can slow the end of a stopped hook down by a minute.
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $ZEvent = ''
 if ($args.Count -gt 0) { $ZEvent = [string]$args[0] }
-$Deadline = 26
+$Deadline = 120
 $Total = $Deadline
 $Clock = [System.Diagnostics.Stopwatch]::StartNew()
 # ZCode's timeout counts from the moment it starts the hook, and Windows PowerShell can take seconds to start on a cold
-# machine: the deadline is the time that is left of those 26 seconds, so a slow start blocks the call instead of running into
+# machine: the deadline is the time that is left of those 120 seconds, so a slow start blocks the call instead of running into
 # the timeout. The time is counted from the start of this process or, when scripts/zn-hook.cmd started it, from the first
 # line of that file (ZN_HOOK_T0, the time of day cmd.exe read there), whichever is earlier. ZN_HOOK_T0 can only make the
 # deadline shorter.

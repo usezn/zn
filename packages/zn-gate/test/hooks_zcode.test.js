@@ -846,11 +846,12 @@ test('launcher deadline: a hook that answers in time gets the input and its exit
 });
 
 // Windows: install writes no sh launcher (see 'Windows launcher: install gives ZCode the deadline' below for its PowerShell form).
-test('install writes the zcode launcher with a deadline 2 s under the hook timeout; other agents\' launchers have none', { skip: !posix }, (t) => {
+test('install writes the zcode launcher with a deadline far under the entry timeout; other agents\' launchers have none', { skip: !posix }, (t) => {
   const home = tempDir(t, 'zn-zc-deadline-text-');
   zc.install({ home, nodePath: '/usr/bin/node' });
   const text = fs.readFileSync(launcher.launcherFile('zcode', { home, env: process.env }), 'utf8');
-  assert.equal(zc.LAUNCHER_DEADLINE_S, zc.HOOK_TIMEOUT_S - 2);
+  assert.equal(zc.LAUNCHER_DEADLINE_S, 120);
+  assert.ok(zc.LAUNCHER_DEADLINE_S * 1000 * 2 <= zc.ENTRY_TIMEOUT_MS, 'room to stop a stuck hook before ZCode gives up');
   assert.match(text, new RegExp('sleep ' + zc.LAUNCHER_DEADLINE_S + ' &'));
   assert.doesNotMatch(launcher.unixScript('codex', '/usr/bin/node', RUNNER), /zn_run/);
 });
