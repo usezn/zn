@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-04.35
+RULES_VERSION: 2026-11-04.36
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-04.35"
+RULES_VERSION = "2026-11-04.36"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -411,7 +411,7 @@ RULE_TESTERS: Dict[str, Any] = {
 
 EXFIL_VERB_SOURCE = r'(?<![A-Za-z0-9_])(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)(?![A-Za-z0-9_])'
 EXFIL_VERBS = _rc(EXFIL_VERB_SOURCE, re.IGNORECASE)
-CRED_OBJECTS = _rc(r"""(?<![A-Za-z0-9_])(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)(?![A-Za-z0-9_])|(?:^|\s|['"`/\\,])\.env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?![A-Za-z0-9_.\-$*?\[{%~]))(?:\.[a-z0-9]+)?(?![A-Za-z0-9_])""", re.IGNORECASE)
+CRED_OBJECTS = _rc(r"""(?<![A-Za-z0-9_])(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)(?![A-Za-z0-9_])|(?:^|\s|['"`/\\,])\.env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?(?![A-Za-z0-9_])""", re.IGNORECASE)
 
 # The verb must start a clause (an instruction, not a description such as
 # "this library reads tokens from ...") or be followed by "me"/"us", and the
@@ -443,7 +443,7 @@ ADVISORY_RULES: List[Tuple[str, Any, str]] = [
 # Protected files and the path view: same rules and steps as rules.js
 # (testSensitivePath). The view is lexical only: it never touches the file
 # system, so symbolic links and Windows short (8.3) names are not resolved.
-SENSITIVE_PATH_RE = _rc(r"""(?:^|[\s"'`(\[\/}]|\$[A-Za-z0-9_]+|\$[@*#$!?-])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?![A-Za-z0-9_.\-$*?\[{%~]))|authorized_keys)|aws\/credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?![A-Za-z0-9_.\-$*?\[{%~]))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE)
+SENSITIVE_PATH_RE = _rc(r"""(?:^|[\s"'`(\[\/}]|\$[A-Za-z0-9_]+|\$[@*#$!?-])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws\/credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE)
 PATH_HOME_VAR_RE = _rc(r'\$\{(?:env:)?(?:home|userprofile)\}|\$(?:env:)?(?:home|userprofile)(?![a-z0-9_])|%(?:userprofile|home)%|%homedrive%%homepath%')
 PATH_CWD_VAR_RE = _rc(r'\$\{(?:env:)?pwd\}|\$(?:env:)?pwd(?![a-z0-9_])|%cd%')
 PATH_WORD_SPLIT_RE = _rc(r"""[ \t\r\n\f\v|&;<>()\[\]{}`,]+""")
@@ -492,7 +492,7 @@ def sensitive_path_view(text: str) -> str:
 
 # The text as written: next to the path view, this keeps the home, drive and
 # variable prefixes the view does not need.
-SENSITIVE_PATH_TEXT_RE = _rc(r"""(?:^|[\s"'`(\[@,\/\\])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?![A-Za-z0-9_.\-$*?\[{%~]))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?![A-Za-z0-9_.\-$*?\[{%~]))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?![A-Za-z0-9_.\-$*?\[{%~]))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?![A-Za-z0-9_.\-$*?\[{%~]))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE)
+SENSITIVE_PATH_TEXT_RE = _rc(r"""(?:^|[\s"'`(\[@,\/\\])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE)
 
 
 def _test_sensitive_path(text: str) -> bool:

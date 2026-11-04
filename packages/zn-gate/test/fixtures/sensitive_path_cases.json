@@ -660,6 +660,416 @@
       "kind": "base",
       "path": "~/.ssh/id_rsa.pub",
       "expect": "allow"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example`printf '\\056env'`",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example$(printf '\\056env')",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example$(id)",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example`id`",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example!",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example#",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example=",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example+",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example^",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example@",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example\\",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example!!",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example$'x'",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example${IFS}",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.sample`printf '\\056env'`",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.sample$(printf '\\056env')",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.sample$(id)",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.sample`id`",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.sample!",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.sample#",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.sample=",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.sample+",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.sample^",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.sample@",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.sample\\",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.sample!!",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.sample$'x'",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.sample${IFS}",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.template`printf '\\056env'`",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.template$(printf '\\056env')",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.template$(id)",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.template`id`",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.template!",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.template#",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.template=",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.template+",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.template^",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.template@",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.template\\",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.template!!",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.template$'x'",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.template${IFS}",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.local.example`printf '\\056env'`",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub`printf '\\056env'`",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.local.example$(printf '\\056env')",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub$(printf '\\056env')",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.local.example$(id)",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub$(id)",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.local.example`id`",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub`id`",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.local.example!",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub!",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.local.example#",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub#",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.local.example=",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub=",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.local.example+",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub+",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.local.example^",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub^",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.local.example@",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub@",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.local.example\\",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub\\",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.local.example!!",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub!!",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.local.example$'x'",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub$'x'",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.local.example${IFS}",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub${IFS}",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_ed25519.pub`id`",
+      "expect": "block"
+    },
+    {
+      "kind": "template",
+      "path": ".env.example ",
+      "expect": "allow"
+    },
+    {
+      "kind": "template",
+      "path": ".env.example;",
+      "expect": "allow"
+    },
+    {
+      "kind": "template",
+      "path": ".env.example&&",
+      "expect": "allow"
+    },
+    {
+      "kind": "template",
+      "path": ".env.example|",
+      "expect": "allow"
+    },
+    {
+      "kind": "template",
+      "path": ".env.example)",
+      "expect": "allow"
+    },
+    {
+      "kind": "template",
+      "path": ".env.example\n",
+      "expect": "allow"
+    },
+    {
+      "kind": "base",
+      "path": "~/.ssh/id_rsa.pub ",
+      "expect": "allow"
+    },
+    {
+      "kind": "base",
+      "path": "~/.ssh/id_rsa.pub;",
+      "expect": "allow"
+    },
+    {
+      "kind": "base",
+      "path": "~/.ssh/id_rsa.pub&&",
+      "expect": "allow"
+    },
+    {
+      "kind": "base",
+      "path": "~/.ssh/id_rsa.pub|",
+      "expect": "allow"
+    },
+    {
+      "kind": "base",
+      "path": "~/.ssh/id_rsa.pub)",
+      "expect": "allow"
     }
   ]
 }

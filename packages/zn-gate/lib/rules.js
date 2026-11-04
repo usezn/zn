@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-04.35
+ * RULES_VERSION: 2026-11-04.36
  */
 
-const RULES_VERSION = '2026-11-04.35';
+const RULES_VERSION = '2026-11-04.36';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -281,7 +281,7 @@ const EVASION_RULES = [
 
 const EXFIL_VERB_SOURCE = '(?<![A-Za-z0-9_])(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)(?![A-Za-z0-9_])';
 const CRED_OBJECT_SOURCE =
-  '(?<![A-Za-z0-9_])(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)(?![A-Za-z0-9_])|(?:^|\\s|[\'"\`/\\\\,])\\.env(?!(?:\\.[a-z0-9]+)?\\.(?:example|sample|template)(?![A-Za-z0-9_.\\-$*?\\[{%~]))(?:\\.[a-z0-9]+)?(?![A-Za-z0-9_])';
+  '(?<![A-Za-z0-9_])(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)(?![A-Za-z0-9_])|(?:^|\\s|[\'"\`/\\\\,])\\.env(?!(?:\\.[a-z0-9]+)?\\.(?:example|sample|template)(?=$|[\\s;&|()<>,:"\']))(?:\\.[a-z0-9]+)?(?![A-Za-z0-9_])';
 
 // The verb must start a clause (an instruction, not a description such as
 // "this library reads tokens from ...") or be followed by "me"/"us", and the
@@ -336,7 +336,7 @@ function matchesRule(rule, text) {
 //   - ~user becomes ~; ./, repeated separators and dir/.. are collapsed;
 //   - trailing dots and spaces of every segment are dropped (Windows).
 // Every step is linear in the length of the text.
-const SENSITIVE_PATH_RE = /(?:^|[\s"'`(\[\/}]|\$[A-Za-z0-9_]+|\$[@*#$!?-])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?![A-Za-z0-9_.\-$*?\[{%~]))|authorized_keys)|aws\/credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?![A-Za-z0-9_.\-$*?\[{%~]))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i;
+const SENSITIVE_PATH_RE = /(?:^|[\s"'`(\[\/}]|\$[A-Za-z0-9_]+|\$[@*#$!?-])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws\/credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i;
 const PATH_HOME_VAR_RE = /\$\{(?:env:)?(?:home|userprofile)\}|\$(?:env:)?(?:home|userprofile)(?![a-z0-9_])|%(?:userprofile|home)%|%homedrive%%homepath%/g;
 const PATH_CWD_VAR_RE = /\$\{(?:env:)?pwd\}|\$(?:env:)?pwd(?![a-z0-9_])|%cd%/g;
 const PATH_WORD_SPLIT_RE = /[ \t\r\n\f\v|&;<>()\[\]{}`,]+/;
@@ -392,7 +392,7 @@ function sensitivePathView(text) {
 
 // The text as written: next to the path view, this keeps the home, drive and
 // variable prefixes the view does not need.
-const SENSITIVE_PATH_TEXT_RE = /(?:^|[\s"'`(\[@,\/\\])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?![A-Za-z0-9_.\-$*?\[{%~]))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?![A-Za-z0-9_.\-$*?\[{%~]))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?![A-Za-z0-9_.\-$*?\[{%~]))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?![A-Za-z0-9_.\-$*?\[{%~]))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i;
+const SENSITIVE_PATH_TEXT_RE = /(?:^|[\s"'`(\[@,\/\\])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i;
 
 function testSensitivePath(text) {
   return SENSITIVE_PATH_TEXT_RE.test(text) || SENSITIVE_PATH_RE.test(text) || SENSITIVE_PATH_RE.test(sensitivePathView(text));
