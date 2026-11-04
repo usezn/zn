@@ -554,3 +554,8 @@ stop malware running as the same user (see above).
   rules are a guardrail against mistakes, not a sandbox.
 - **Latency:** each hook is a short Node process. Measured about 78 ms p50 per
   tool call on a Windows desktop (`bench/HOOK_LATENCY.md`).
+
+## Next steps
+
+- [Compatibility](compat.md): which agents and platforms zn works with, and how well.
+- [Architecture](architecture.md): how the hooks, scrubber and vault fit together behind these limits.
