@@ -34,6 +34,52 @@ python -m pip install -e .
 python -m pytest tests/ -v
 ```
 
+## Run the required checks locally
+
+A pull request into `next` must pass these checks. Run the matching commands before you push. All commands start from the repository root unless a `cd` says otherwise. The check names are the ones you see on the pull request.
+
+Windows notes: use PowerShell, and run each command on its own line (Windows PowerShell 5.1 has no `&&`). Where the workflow calls `python3`, use `python` (or `py`). On Windows, `npm` tools that CI starts from `node_modules/.bin` have a `.cmd` shim. Commands marked "bash" need Git Bash or WSL on Windows.
+
+| Check | Commands | Linux and macOS | Windows (PowerShell) |
+| --- | --- | --- | --- |
+| Node.js 18, 22 and 24 tests and benchmarks | `cd packages/zn-gate`, `npm ci --ignore-scripts`, `npm test`, `node test/integration/test_agent_workflows.js`; then, from the root, `node bench/bench_node.js` | Same | Same. Only your installed Node.js version runs; CI runs 18, 22 and 24. |
+| Python 3.12 tests and benchmarks | `python -m pip install --require-hashes -r .github/ci-test-requirements.txt`, `python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py`, `cd packages/zn-gate-py`, `python -m pytest tests/ -v`; then, from the root, `python bench/bench_python.py` | Same | Same |
+| Lint (eslint, ruff, mypy) | See the Lint commands below | Same | Same, with `eslint.cmd` |
+| Public facts | `node .github/scripts/check-public-facts.mjs`, `cd packages/zn-gate`, `npm run check:rules`; for a pull request also `git fetch origin next` and `node .github/scripts/check-rule-versions.mjs origin/next` | Same | Same |
+| leak bench | `bash packages/zn-gate/test/fixtures/benign/fetch_corpus.sh`, `node packages/zn-gate/test/fixtures/benign/build_manifest.js --verify`, `node bench/rules_fp_gate.js`, `node packages/zn-gate/test/fixtures/fake_secrets.js --selftest`, `node bench/leak_bench.js --require-engine --json leak_bench_results.json` | Same | The corpus download is a bash script (needs `bash`, `curl`, `tar`): run it in Git Bash, or let CI run this check. The `node` commands run in PowerShell. |
+| Windows (Node.js 22) | `cd packages/zn-gate`, `npm ci --ignore-scripts`, `npm test`, `node test/vault.test.js`; then, from the root, `node plugins/tools/test-launch.js` | Same | Same, with Node.js 22 installed. This is the check that runs the suite on Windows; the native keychain step of `node test/vault.test.js` needs `ZN_TEST_NATIVE_KEYCHAIN=1` and runs only in CI. |
+| scrubber + vault | `cd packages/zn-gate`, `npm ci --ignore-scripts`, then `node test/contract.test.js`, `node test/scrub_patterns.test.js`, `node test/scrub_structured.test.js`, `node test/scrub_exact.test.js`, `node test/scrub_engine.test.js`, `node test/vault.test.js` | Same | Same. The CLI smoke step and the native keychain steps run only in CI. |
+| Python package (build, twine check, install) | `python -m build --no-isolation packages/zn-gate-py --outdir dist-check`, `python -m twine check --strict dist-check/*`, `python -I .github/scripts/check-python-pack.py dist-check/*.whl dist-check/*.tar.gz` | Needs `build` and `twine` installed | Runs in CI. The workflow also rebuilds twice and compares checksums with bash tools. |
+| npm package (pack, inspect, install) | `cd packages/zn-gate`, `npm ci --ignore-scripts`, `npm pack --json --pack-destination <dir> > <dir>/pack.json`, then from the root `node .github/scripts/check-npm-pack.js <dir>/pack.json packages/zn-gate` | Same | Runs in CI. The workflow checks the tarball with bash. |
+| build, test, clippy, fmt (Rust) | `cargo fmt --all -- --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo build --locked`, `cargo test --locked` | Needs Rust stable and `protoc` 29 or later | Same commands, if you install Rust and `protoc`. CI runs them on Ubuntu. |
+
+CI skips the Node.js, Python, leak bench, scrubber and package checks (they report success) when a pull request changes only documentation or only the Rust gateway.
+
+### Lint commands
+
+```bash
+cd .github/eslint
+npm ci --ignore-scripts
+cd ../../packages/zn-gate
+../../.github/eslint/node_modules/.bin/eslint -c ../../.github/eslint/eslint.config.mjs --max-warnings 0 .
+cd ../zn-gate-py
+python -m pip install --require-hashes -r ../../.github/ci-test-requirements.txt
+python -m ruff check .
+python -m mypy
+python -m mypy --strict src/zn_gate/__init__.py src/zn_gate/rules.py src/zn_gate/guard.py src/zn_gate/client.py src/zn_gate/evidence.py typing_check/check_public_api.py
+```
+
+On Windows, run these in PowerShell on separate lines and call `..\..\.github\eslint\node_modules\.bin\eslint.cmd` with the same arguments. CI installs ruff and mypy from `.github/ci-test-requirements.txt` with pinned hashes; use that file with `--require-hashes` if you want the same versions.
+
+### Doc snippets
+
+If you edit a marked snippet, list and run them with `python .github/scripts/doc-snippets.py list` and `python .github/scripts/doc-snippets.py run`. The network-isolated mode (`--netns`) works only on Linux with `sudo`; elsewhere, CI runs it.
+
+## Your first pull request and draft pull requests
+
+- The first pull request from a fork waits for a maintainer to approve the workflow runs. The repository requires this approval for every outside contributor, so the checks show as waiting until a maintainer selects "Approve and run". Nothing is wrong with your change.
+- A draft pull request does not run the required checks, except Public facts. They stay pending until you mark the pull request as ready for review; then they start.
+
 ## Adding New Rules
 
 When adding new detection rules:
