@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-04.34
+RULES_VERSION: 2026-11-04.35
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-04.34"
+RULES_VERSION = "2026-11-04.35"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -443,7 +443,7 @@ ADVISORY_RULES: List[Tuple[str, Any, str]] = [
 # Protected files and the path view: same rules and steps as rules.js
 # (testSensitivePath). The view is lexical only: it never touches the file
 # system, so symbolic links and Windows short (8.3) names are not resolved.
-SENSITIVE_PATH_RE = _rc(r"""(?:^|[\s"'`(\[\/])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?![A-Za-z0-9_.\-$*?\[{%~]))|authorized_keys)|aws\/credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?![A-Za-z0-9_.\-$*?\[{%~]))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE)
+SENSITIVE_PATH_RE = _rc(r"""(?:^|[\s"'`(\[\/}]|\$[A-Za-z0-9_]+|\$[@*#$!?-])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?![A-Za-z0-9_.\-$*?\[{%~]))|authorized_keys)|aws\/credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?![A-Za-z0-9_.\-$*?\[{%~]))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE)
 PATH_HOME_VAR_RE = _rc(r'\$\{(?:env:)?(?:home|userprofile)\}|\$(?:env:)?(?:home|userprofile)(?![a-z0-9_])|%(?:userprofile|home)%|%homedrive%%homepath%')
 PATH_CWD_VAR_RE = _rc(r'\$\{(?:env:)?pwd\}|\$(?:env:)?pwd(?![a-z0-9_])|%cd%')
 PATH_WORD_SPLIT_RE = _rc(r"""[ \t\r\n\f\v|&;<>()\[\]{}`,]+""")

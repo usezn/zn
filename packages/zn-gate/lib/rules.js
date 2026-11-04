@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-04.34
+ * RULES_VERSION: 2026-11-04.35
  */
 
-const RULES_VERSION = '2026-11-04.34';
+const RULES_VERSION = '2026-11-04.35';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -336,7 +336,7 @@ function matchesRule(rule, text) {
 //   - ~user becomes ~; ./, repeated separators and dir/.. are collapsed;
 //   - trailing dots and spaces of every segment are dropped (Windows).
 // Every step is linear in the length of the text.
-const SENSITIVE_PATH_RE = /(?:^|[\s"'`(\[\/])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?![A-Za-z0-9_.\-$*?\[{%~]))|authorized_keys)|aws\/credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?![A-Za-z0-9_.\-$*?\[{%~]))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i;
+const SENSITIVE_PATH_RE = /(?:^|[\s"'`(\[\/}]|\$[A-Za-z0-9_]+|\$[@*#$!?-])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?![A-Za-z0-9_.\-$*?\[{%~]))|authorized_keys)|aws\/credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?![A-Za-z0-9_.\-$*?\[{%~]))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i;
 const PATH_HOME_VAR_RE = /\$\{(?:env:)?(?:home|userprofile)\}|\$(?:env:)?(?:home|userprofile)(?![a-z0-9_])|%(?:userprofile|home)%|%homedrive%%homepath%/g;
 const PATH_CWD_VAR_RE = /\$\{(?:env:)?pwd\}|\$(?:env:)?pwd(?![a-z0-9_])|%cd%/g;
 const PATH_WORD_SPLIT_RE = /[ \t\r\n\f\v|&;<>()\[\]{}`,]+/;

@@ -493,6 +493,56 @@
     },
     {
       "kind": "combined",
+      "path": "cat $IFS.env",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "cat x$IFS.env",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "cat ${IFS}.env",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "cat .env.example $IFS.env",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "cat $1.env",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "cat $@.env",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "cat $$.env",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "cat \"$IFS\".env",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "cat $IFS$9.env",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "cat $APP.env",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
       "path": ".env.example*",
       "expect": "block"
     },
