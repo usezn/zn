@@ -520,6 +520,7 @@ function makeOps(state, ctl) {
     const trusted = purpose === 'http' && o.agentTrusted === true && agentId !== null;
     const [eff] = await team.effectiveList([localOf(inner, s)], agentId, trusted);
     if (eff && eff.deny) {
+      if (eff.denyReason === 'policy:org_invalid') return refuse('policy:org_invalid', 'secret ' + inner + ' is blocked: ' + messages.TEAM_POLICY_UNVERIFIED);
       return refuse('policy:org_deny', 'secret ' + inner + ' is blocked by your organization policy. Next step: do not use this secret here. If the task needs it, review the organization policy, or, if you are an agent, ask the user.');
     }
     const meta = eff || localOf(inner, s);
