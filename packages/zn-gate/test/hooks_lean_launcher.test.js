@@ -56,7 +56,7 @@ test('the POSIX launchers are byte for byte what they were before the lean launc
   const seen = [];
   for (const agent of AGENTS) {
     for (const [name, o] of [['plain', {}], ['d13', { deadlineS: 13 }], ['d13soft', { deadlineS: 13, deadlineSoft: true }], ['d28', { deadlineS: 28 }]]) {
-      const text = launcher.unixScript(agent, '/usr/bin/node', '/opt/zn/runner.js', { ...o, runnerDigest: 'a'.repeat(64) });
+      const text = launcher.unixScript(agent, '/usr/bin/node', '/opt/zn/runner.js', { ...o, runnerDigest: 'a'.repeat(64), platform: 'linux' });
       assert.equal(crypto.createHash('sha256').update(text).digest('hex'), fixture[agent + '/' + name], agent + '/' + name);
       seen.push(agent + '/' + name);
     }
