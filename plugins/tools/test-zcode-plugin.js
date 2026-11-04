@@ -21,7 +21,7 @@ const adapter = require(path.join(ROOT, 'packages', 'zn-gate', 'lib', 'agents', 
 // The plugin's own start deadline, on every path (zn-hook.sh, zn-hook.ps1 and the launcher). It is 2 seconds earlier than the
 // launcher of zn hooks install zcode: on a slow Windows machine, stopping a stuck hook took up to 2 seconds after a 28 second
 // deadline, which left ZCode's 30 second timeout only milliseconds. It stays above the hook's own 25 second answer deadline.
-const PLUGIN_DEADLINE_S = 26;
+const PLUGIN_DEADLINE_S = 120;
 // The timeout the plugin sets on its hooks in ZCode, which runs a call whose hook timed out. Far above the deadline: on a
 // Windows machine whose CPU was busy, a hook stopped at its deadline took up to 98 seconds to end. `zn hooks install zcode`
 // keeps its own 30 second timeout.
@@ -209,16 +209,16 @@ try {
       spawnSync(fastNode, ['-e', 'process.exit(require("vm").constants && require("vm").constants.USE_MAIN_CONTEXT_DEFAULT_LOADER ? 0 : 1)']).status === 0;
     const PATHS = fastOk ? ['powershell', 'fast'] : ['powershell'];
     const stubLaunch = "let d = '';\nprocess.stdin.on('data', (c) => { d += c; });\nprocess.stdin.on('end', () => {\n  if (process.env.ZN_STUB_HANG === 'launch') { setTimeout(() => {}, 300000); return; }\n  if (process.env.ZN_STUB_MARK) require('fs').writeFileSync(process.env.ZN_STUB_MARK, __filename);\n  process.stdout.write((process.env.ZN_STUB_OUT || '') + (process.env.ZN_STUB_ECHO ? d : ''));\n  process.exit(Number(process.env.ZN_STUB_RC || 0));\n});\n";
-    function wfixture(name, { launcher = true, deadline = 26, ps1 = true, cmd = true } = {}) {
+    function wfixture(name, { launcher = true, deadline = 120, ps1 = true, cmd = true } = {}) {
       const dir = path.join(tmp, name);
       fs.mkdirSync(path.join(dir, 'scripts'), { recursive: true });
       if (launcher) fs.writeFileSync(path.join(dir, 'scripts', 'zn-launch.js'), stubLaunch);
       if (cmd) fs.writeFileSync(path.join(dir, 'scripts', 'zn-hook.cmd'), fs.readFileSync(CMD, 'latin1').replace(/\r?\n/g, '\r\n'), 'latin1');
       if (ps1) {
         const text = fs.readFileSync(PS1, 'utf8');
-        assert.ok(text.includes('$Deadline = 26'));
+        assert.ok(text.includes('$Deadline = 120'));
         // Test copy only: the shipped script has no setting for the deadline.
-        fs.writeFileSync(path.join(dir, 'scripts', 'zn-hook.ps1'), text.replace('$Deadline = 26', '$Deadline = ' + deadline));
+        fs.writeFileSync(path.join(dir, 'scripts', 'zn-hook.ps1'), text.replace('$Deadline = 120', '$Deadline = ' + deadline));
       }
       return dir;
     }
@@ -431,7 +431,7 @@ try {
     }
     assert.ok(!cmd.some((l) => /\bstart\b/i.test(l)), 'nothing runs in the background');
     const ps = fs.readFileSync(path.join(ZC, 'scripts', 'zn-hook.ps1'), 'utf8');
-    assert.ok(/GetCurrentProcess\(\)\.StartTime/.test(ps) && /\$Deadline - /.test(ps), 'the deadline is what is left of 26 seconds since the process started');
+    assert.ok(/GetCurrentProcess\(\)\.StartTime/.test(ps) && /\$Deadline - /.test(ps), 'the deadline is what is left of 120 seconds since the process started');
     // Windows PowerShell finds a command (Get-Date, New-Object, Get-CimInstance, ...) by reading its module folders, which
     // without the module cache can take most of the 30 seconds: the script calls only its own functions, the language and .NET.
     const code = ps.split(/\r?\n/).filter((l) => !/^\s*#/.test(l)).join('\n');
@@ -480,9 +480,9 @@ try {
       fs.mkdirSync(path.join(dir, 'bin'));
       fs.writeFileSync(path.join(dir, 'scripts', 'zn-launch.js'), '// stub');
       const text = fs.readFileSync(HOOK, 'utf8');
-      assert.ok(/^DEADLINE=26$/m.test(text));
+      assert.ok(/^DEADLINE=120$/m.test(text));
       // Test copy only: the shipped script has no setting for the deadline.
-      fs.writeFileSync(path.join(dir, 'scripts', 'zn-hook.sh'), text.replace(/^DEADLINE=26$/m, 'DEADLINE=' + deadline));
+      fs.writeFileSync(path.join(dir, 'scripts', 'zn-hook.sh'), text.replace(/^DEADLINE=120$/m, 'DEADLINE=' + deadline));
       fs.writeFileSync(path.join(dir, 'bin', 'node'), '#!/bin/sh\nif [ "$1" = "-e" ]; then [ "$ZN_STUB_HANG" = probe ] && exec sleep 300; exit 0; fi\n[ "$ZN_STUB_HANG" = launch ] && exec sleep 300\ncat >/dev/null\nprintf "%s" "$ZN_STUB_OUT"\nexit "${ZN_STUB_RC:-0}"\n', { mode: 0o755 });
       return dir;
     };
@@ -554,7 +554,7 @@ try {
       assert.ok(m, 'DEADLINE is set');
       assert.strictEqual(Number(m[1]), PLUGIN_DEADLINE_S, 'DEADLINE is the plugin deadline');
       assert.ok(Number(m[1]) <= adapter.LAUNCHER_DEADLINE_S, 'DEADLINE is not later than the launcher deadline of zn hooks install zcode');
-      assert.ok(Number(m[1]) * 1000 < adapter.HOOK_TIMEOUT_MS);
+      assert.ok(Number(m[1]) * 1000 * 2 <= adapter.ENTRY_TIMEOUT_MS, 'room to stop a stuck hook before ZCode gives up');
     });
 
     for (const hang of ['probe', 'launch']) {

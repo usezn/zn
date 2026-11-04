@@ -250,9 +250,9 @@ try {
     installPackage();
   });
 
-  // ZCode lets a call run when its hook times out (30 seconds): the zcode hook refuses by itself 26 seconds after the hook
+  // ZCode lets a call run when its hook times out (5 minutes): the zcode hook refuses by itself 120 seconds after the hook
   // started, counted from ZN_HOOK_T0 (the time of day scripts/zn-hook.cmd noted on Windows) when that is earlier than the start
-  // of the launcher. Here the hook "started" 26.5 seconds ago and zn-gate never answers.
+  // of the launcher. Here the hook "started" 116.5 seconds ago and zn-gate never answers.
   test('the zcode hook refuses at its deadline, counted from ZN_HOOK_T0, when zn-gate hangs; other agents and a bad value keep theirs', () => {
     write(path.join(pkgDir, 'lib', 'hooks', 'runner.js'), 'exports.main = () => new Promise(() => { setInterval(() => {}, 1000); });\n');
     setLock({ package: 'zn-gate', version: '9.9.9', files: { ...files, 'lib/hooks/runner.js': sha(path.join(pkgDir, 'lib', 'hooks', 'runner.js')) } });
@@ -269,24 +269,24 @@ try {
       });
       return { r, ms: Date.now() - t0 };
     };
-    const a = timed(['hook', 'zcode'], { ZN_HOOK_T0: tod(24500) }, 20000);
-    refused(a.r, /zn-gate did not answer within 26 seconds of the start of the hook/);
+    const a = timed(['hook', 'zcode'], { ZN_HOOK_T0: tod(116500) }, 20000);
+    refused(a.r, /zn-gate did not answer within 120 seconds of the start of the hook/);
     assert.ok(a.ms >= 1000 && a.ms < 10000, 'refused at the deadline: ' + a.ms + ' ms');
-    // Without ZN_HOOK_T0, or with a value that is not a time of the last two minutes, the 26 seconds count from the launcher's
+    // Without ZN_HOOK_T0, or with a value that is not a time of the last five minutes, the 120 seconds count from the launcher's
     // own start: still running after 3 seconds.
     for (const t0 of [undefined, 'later', tod(600000), tod(-5000)]) {
       const b = timed(['hook', 'zcode'], t0 === undefined ? {} : { ZN_HOOK_T0: t0 }, 3000);
       assert.strictEqual(b.r.status, null, String(t0) + ': ended early: ' + b.r.stderr);
     }
-    // The deadline is the zcode hook's: another agent's hook is not cut at 26 seconds by it.
-    const c = timed(['hook', 'claude-code'], { ZN_HOOK_T0: tod(29000) }, 3000);
+    // The deadline is the zcode hook's: another agent's hook is not cut at 120 seconds by it.
+    const c = timed(['hook', 'claude-code'], { ZN_HOOK_T0: tod(121000) }, 3000);
     assert.strictEqual(c.r.status, null, 'claude-code ended early: ' + c.r.stderr);
     setLock({ package: 'zn-gate', version: '9.9.9', files });
     installPackage();
   });
 
   // A timer cannot fire while zn-gate keeps the launcher's thread busy: the watchdog thread ends the process instead, still
-  // before ZCode's 30 second timeout, and the exit code is not 0 (the plugin's hook scripts block on it).
+  // before ZCode's 5 minute timeout, and the exit code is not 0 (the plugin's hook scripts block on it).
   test('the zcode hook is ended at its deadline when zn-gate never gives the thread back, and its refusal is written', () => {
     write(path.join(pkgDir, 'lib', 'hooks', 'runner.js'), 'exports.main = () => { for (;;) { /* busy */ } };\n');
     setLock({ package: 'zn-gate', version: '9.9.9', files: { ...files, 'lib/hooks/runner.js': sha(path.join(pkgDir, 'lib', 'hooks', 'runner.js')) } });
@@ -299,7 +299,7 @@ try {
       const t0 = Date.now();
       const r = spawnSync(process.execPath, [path.join(pluginTest, 'zn-launch.js'), 'hook', 'zcode'], {
         input: '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}', encoding: 'utf8', timeout,
-        env: { PATH: binDir, HOME: home, USERPROFILE: home, SystemRoot: process.env.SystemRoot || '', ZN_HOOK_T0: tod(24500), ...env },
+        env: { PATH: binDir, HOME: home, USERPROFILE: home, SystemRoot: process.env.SystemRoot || '', ZN_HOOK_T0: tod(116500), ...env },
       });
       return { r, ms: Date.now() - t0 };
     };
@@ -307,9 +307,9 @@ try {
     const a = timed({}, 20000);
     assert.ok(!a.r.error, 'still running at 20 s: ' + (a.r.error && a.r.error.message));
     assert.ok(a.r.status !== 0, 'exit code 0 lets the call run: ' + a.r.stderr);
-    assert.match(a.r.stderr, /zn-gate did not answer within 26 seconds of the start of the hook\. Until then zn cannot check this call, so it is refused/);
+    assert.match(a.r.stderr, /zn-gate did not answer within 120 seconds of the start of the hook\. Until then zn cannot check this call, so it is refused/);
     assert.strictEqual(a.r.stdout, '', 'nothing of zn-gate reached the agent');
-    // 1.5 seconds were left of the 26, plus the watchdog's grace.
+    // 1.5 seconds were left of the 120, plus the watchdog's grace.
     assert.ok(a.ms >= 1000 && a.ms < 10000, 'ended at the deadline: ' + a.ms + ' ms');
     // With hooks.whenUnavailable "allow" the user chose to let calls run when zn cannot check them: no watchdog.
     setConfig({ hooks: { whenUnavailable: 'allow' } });
