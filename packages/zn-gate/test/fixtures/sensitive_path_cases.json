@@ -485,6 +485,131 @@
       "kind": "combined",
       "path": "~/.ssh/id_rsa.pub-private",
       "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "cat .env.example$IFS.env",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example*",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example?",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example[.]local",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example{,.local}",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example%",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example~",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.example$IFS",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.template*",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.sample?",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": ".env.local.example*",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub$IFS",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub*",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub?",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub[",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub{,}",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub%",
+      "expect": "block"
+    },
+    {
+      "kind": "combined",
+      "path": "~/.ssh/id_rsa.pub~",
+      "expect": "block"
+    },
+    {
+      "kind": "template",
+      "path": ".env.example",
+      "expect": "allow"
+    },
+    {
+      "kind": "template",
+      "path": "./.env.example",
+      "expect": "allow"
+    },
+    {
+      "kind": "template",
+      "path": "dir/../.env.example",
+      "expect": "allow"
+    },
+    {
+      "kind": "template",
+      "path": ".env.sample",
+      "expect": "allow"
+    },
+    {
+      "kind": "template",
+      "path": ".env.template",
+      "expect": "allow"
+    },
+    {
+      "kind": "template",
+      "path": ".env.local.example",
+      "expect": "allow"
+    },
+    {
+      "kind": "base",
+      "path": "~/.ssh/id_rsa.pub",
+      "expect": "allow"
     }
   ]
 }

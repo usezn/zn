@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-04.20';
+const POLICY_RULES_VERSION = '2026-11-04.21';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -51,7 +51,7 @@ function slash(p) {
 }
 
 const DOTENV_BASENAME_RE = /^\.env(\.[A-Za-z0-9_.-]+)?$/;
-const DOTENV_SAFE_RE = /\.(example|sample|template|dist|defaults|schema)$/i;
+const DOTENV_SAFE_RE = /\.(example|sample|template)$/i;
 // Private keys kept outside ~/.ssh, for example in a project: an SSH key name is one wherever it is;
 // a key container (.p12, .pfx) holds one; a .pem or .key file may be a public certificate, so its content decides.
 const SSH_KEY_BASENAME_RE = /^id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?$/;
@@ -2527,18 +2527,32 @@ const PS_ONLY_READERS = new Set(['gc', 'get-content', 'select-string', 'sls', 'i
 function psListWords(words, opts) {
   const out = [];
   let prev = null;
+  const readerOf = (h) => {
+    const head = bareHead(h || '').toLowerCase().replace(/\.exe$/, '');
+    return PS_LIST_READERS.has(head) && (opts.powershell === true || PS_ONLY_READERS.has(head));
+  };
+  // PowerShell on Windows takes a backslash as a path separator (gc .\.env), but on another host the file ".\.env" does not exist
+  // and the read would be let through; the same word with "/" is judged too.
+  const push = (x, head) => {
+    out.push(x);
+    if (typeof x.text === 'string' && x.text.indexOf('\\') >= 0 && x.text.length <= 4096 && readerOf(head)) out.push({ ...x, text: slash(x.text) });
+  };
   for (const w of words) {
-    out.push(w);
+    push(w, w.head);
     // @('a','b'): the opening bracket starts a new command, so the word after "@" takes the head of the "@".
     const lead = prev && prev.text === '@' ? prev : w;
+    const before = prev;
     prev = w;
     if (typeof w.text !== 'string' || w.text.indexOf(',') < 0 || w.text.length > 4096) continue;
-    const head = bareHead(lead.head || '').toLowerCase().replace(/\.exe$/, '');
-    if (!PS_LIST_READERS.has(head) || !(opts.powershell === true || PS_ONLY_READERS.has(head))) continue;
+    // gc ('a','b') and gc -Path ('a','b'): the bracket starts a new command too, so the word has itself as head and the
+    // reader is the word before it.
+    if (!readerOf(lead.head) && !(before && typeof before.text === 'string' && readerOf(before.head))) continue;
     const inner = w.text.replace(/^@?\(/, '').replace(/\)$/, '');
     const parts = inner.split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
-    if (parts.length < 2) continue;
-    for (const part of parts) out.push({ ...w, text: part });
+    // A word that starts or ends with a comma is part of a list that goes on in the next or the previous word (gc a ,b).
+    const open = /^,|,$/.test(inner.trim());
+    if (parts.length < 2 && !open) continue;
+    for (const part of parts) push({ ...w, text: part }, w.head);
   }
   return out;
 }

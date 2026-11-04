@@ -43,7 +43,17 @@
       "cat ../.env",
       "cat /srv/app/.env",
       "head -3 ./.env.production",
-      "cat .env"
+      "cat .env",
+      "cat .env.example$IFS.env",
+      "cat .env.example*",
+      "cat .env.example?",
+      "cat .env.example[.]local",
+      "cat .env.example{,.local}",
+      "cat .env.example%",
+      "cat .env.example~",
+      "cat .env.example${IFS}.env",
+      "cat .env.template*",
+      "cat ./.env.example$IFS./.env"
     ],
     "benign": [
       "cat .env.example",
@@ -183,6 +193,9 @@
     ]
   },
   "env_template_allow": [
+    "cat .env.example README.md",
+    "cat .env.example && ls",
+    "cat dir/../.env.example",
     "cat .env.example",
     "cat ./.env.example",
     "cat .env.sample",

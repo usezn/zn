@@ -27,8 +27,17 @@ const DENY = [
   "cat @('.env.example','.env')", "gc @('.env.example','.env')", "type @('.env.example','.env')",
   'Get-Content .env.example,.env', 'Select-String -Path .env.example,.env -Pattern TOKEN',
   'gc ./.env.example,./.env', 'gc dir/../.env.example,dir/../.env',
+  // A list that is split by spaces or written inside plain brackets.
+  'gc .env.example ,.env', 'gc .env.example , .env', 'gc -Path .env.example ,.env', 'gc .env ,.env.example',
+  'gc (".env.example",".env")', "gc ('.env.example','.env')", 'gc (".env.example" , ".env")', 'gc ( ".env.example" , ".env" )',
+  'gc -Path (".env.example",".env")', "gc -Path ('.env.example','.env')", 'gc -Path ".env.example",".env"',
+  "gc -Path '.env.example' ,'.env'", 'Get-Content (".env.example",".env")', 'Select-String -Path (".env.example",".env") -Pattern TOKEN',
+  'cat (".env.example",".env")', "type ('.env.example', '.env')", 'gc ./.env.example ,./.env',
+  // PowerShell on Windows reads a backslash as a separator, so the path is judged with "/" too.
+  'gc .\\.env', "gc '.\\.env'", 'gc ".\\.env"', 'gc .\\.env.example,.\\.env',
 ];
-const ALLOW = ['gc ./.env.example', 'gc dir/../.env.example', 'gc .env.example', 'cat .env.example', 'gc .env.example,README.md', 'cat .env.example, README.md'];
+const ALLOW = ['gc (".env.example","README.md")', "gc ('.env.example','README.md')", 'gc README.md ,.env.example', 'gc .env.example ,README.md',
+  'gc -Path .env.example ,README.md', 'gc .\\.env.example', 'gc ./.env.example', 'gc dir/../.env.example', 'gc .env.example', 'cat .env.example', 'gc .env.example,README.md', 'cat .env.example, README.md'];
 
 for (const ps of [true, false]) {
   test('PowerShell list reads of a real .env are blocked (powershell: ' + ps + ')', (t) => {
