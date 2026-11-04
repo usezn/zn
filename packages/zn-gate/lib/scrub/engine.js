@@ -178,13 +178,43 @@ function scan(text, ctx) {
   // Shell-split quotes and percent-encoding: scanned as one decoded view; a
   // span covers the whole original word or encoded value.
   if (norm) {
-    all = all.concat(scanText(norm.clean, c).map((s) => ({
-      ...s,
-      start: norm.starts[s.start],
-      end: s.end > s.start ? norm.ends[s.end - 1] : norm.starts[s.start],
-    })));
+    for (const [from, to] of normWindows(norm, c)) {
+      all = all.concat(scanText(from === 0 && to === norm.clean.length ? norm.clean : norm.clean.slice(from, to), c).map((s) => {
+        const a = s.start + from;
+        return { ...s, start: norm.starts[a], end: s.end > s.start ? norm.ends[s.end + from - 1] : norm.starts[a] };
+      }));
+    }
   }
   return resolveOverlaps(all);
+}
+
+// Only the text around a changed spot can give a span the direct scan did not
+// find, so the decoded view is rescanned in windows (the changed offsets plus
+// NORM_MARGIN characters each side, widened to whole lines and merged) instead
+// of in full. A vault that matches remotely answers per full text, so there
+// the whole view is scanned.
+const NORM_MARGIN = 512;
+function normWindows(norm, c) {
+  const text = norm.clean;
+  const n = text.length;
+  if (c.vaultRemote) return [[0, n]];
+  const out = [];
+  let from = -1;
+  let to = -1;
+  for (const m of norm.marks) {
+    if (m - NORM_MARGIN <= to && from >= 0) {
+      // overlaps the open window: extend it
+    } else {
+      if (from >= 0) out.push([from, to]);
+      from = Math.max(0, m - NORM_MARGIN);
+      from = from === 0 ? 0 : text.lastIndexOf('\n', from - 1) + 1;
+    }
+    let e = Math.min(n, m + NORM_MARGIN);
+    if (e < n) { const nl = text.indexOf('\n', e); e = nl < 0 ? n : nl; }
+    if (e > to) to = e;
+  }
+  if (from >= 0) out.push([from, to]);
+  return out;
 }
 
 function scanText(text, c) {
