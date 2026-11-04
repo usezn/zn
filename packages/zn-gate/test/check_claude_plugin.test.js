@@ -71,5 +71,5 @@ test('claudePlugin: the plugin switched off in settings.json is reported as off'
   const root = s.install('with', true);
   s.list({ version: 2, plugins: { [ID]: [{ scope: 'user', installPath: root }] } });
   s.settings({ enabledPlugins: { [ID]: false } });
-  assert.deepEqual(claudePlugin(s.home, s.env), { root, off: true });
+  assert.deepEqual(claudePlugin(s.home, s.env), { root, off: true, version: '' });
 });
