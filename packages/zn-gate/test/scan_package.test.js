@@ -40,6 +40,18 @@ function tarEntry(name, body, type = '0', linkname = '') {
   return Buffer.concat([h, body, pad]);
 }
 
+// An extended (pax) header record: "<length> <key>=<value>", where the length counts itself.
+function paxEntry(type, fields) {
+  let body = '';
+  for (const [k, v] of Object.entries(fields)) {
+    const rest = ' ' + k + '=' + v + '\n';
+    let len = rest.length + 1;
+    while (String(len).length + rest.length !== len) len = String(len).length + rest.length;
+    body += len + rest;
+  }
+  return tarEntry('PaxHeader/x', Buffer.from(body), type);
+}
+
 function tgz(parts) {
   return zlib.gzipSync(Buffer.concat([...parts, Buffer.alloc(1024)]));
 }
@@ -60,6 +72,18 @@ function startRegistry() {
   const escaping = tgz([
     tarEntry('package/package.json', Buffer.from(JSON.stringify({ name: 'zn-fixture-escape', version: '1.0.0' }))),
     tarEntry('package/../../zn-fixture-escaped.txt', Buffer.from('outside the folder\n')),
+  ]);
+  // Archives npm reads differently from a stop-at-the-first-zero-block reader: the second file is hidden.
+  const hidden = tarEntry('package/dist/evil.js', Buffer.from('module.exports = { description: ' + JSON.stringify(INJECTION) + ' };'));
+  const afterZeros = tgz([
+    tarEntry('package/package.json', Buffer.from(JSON.stringify({ name: 'zn-fixture-zeros', version: '1.0.0' }))),
+    Buffer.alloc(512),
+    hidden,
+  ]);
+  const paxSize = tgz([
+    tarEntry('package/package.json', Buffer.from(JSON.stringify({ name: 'zn-fixture-paxsize', version: '1.0.0' }))),
+    paxEntry('x', { size: '0' }),
+    tarEntry('package/data.bin', hidden),
   ]);
   const pj = (name, extra) => tarEntry('package/package.json', Buffer.from(JSON.stringify({ name, version: '1.0.0', ...extra })));
   const file = (rel, text) => tarEntry('package/' + rel, Buffer.from(text));
@@ -102,6 +126,8 @@ function startRegistry() {
     'zn-fixture-injected-1.0.0.tgz': injected,
     'zn-fixture-linked-1.0.0.tgz': linked,
     'zn-fixture-escape-1.0.0.tgz': escaping,
+    'zn-fixture-zeros-1.0.0.tgz': afterZeros,
+    'zn-fixture-paxsize-1.0.0.tgz': paxSize,
     'zn-fixture-deep-1.0.0.tgz': deep,
     'zn-fixture-cleandirs-1.0.0.tgz': cleanDirs,
     'zn-fixture-big-1.0.0.tgz': big,
@@ -130,6 +156,8 @@ function startRegistry() {
     'zn-fixture-injected': { version: '1.0.0', file: 'zn-fixture-injected-1.0.0.tgz', buf: injected },
     'zn-fixture-linked': { version: '1.0.0', file: 'zn-fixture-linked-1.0.0.tgz', buf: linked },
     'zn-fixture-escape': { version: '1.0.0', file: 'zn-fixture-escape-1.0.0.tgz', buf: escaping },
+    'zn-fixture-zeros': { version: '1.0.0', file: 'zn-fixture-zeros-1.0.0.tgz', buf: afterZeros },
+    'zn-fixture-paxsize': { version: '1.0.0', file: 'zn-fixture-paxsize-1.0.0.tgz', buf: paxSize },
     // The registry gives a checksum that does not match the tarball.
     'zn-fixture-badsum': { version: '1.0.0', file: 'zn-fixture-clean-1.0.0.tgz', buf: clean, integrity: integrityOf(injected) },
     // The registry gives no checksum at all.
@@ -314,6 +342,51 @@ test('a path that leaves the package folder is refused, and nothing is written o
     assert.ok(!fs.existsSync(path.join(box.dir, 'zn-fixture-escaped.txt')), 'a file was written outside the folder');
     assert.deepStrictEqual(fs.readdirSync(box.tmp), [], 'the temporary folder was not removed');
   });
+});
+
+test('a zero block in the middle of the archive hides nothing: exit 2, never PASSED', async () => {
+  await withRegistry(async ({ base, box }) => {
+    const r = await runCli(['scan', '--package', 'zn-fixture-zeros@1.0.0'], envFor(base, box));
+    assert.strictEqual(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, /data after its end marker/);
+    assert.ok(!/PASSED/.test(r.stdout), r.stdout);
+    assert.deepStrictEqual(fs.readdirSync(box.tmp), []);
+  });
+});
+
+test('a pax header with a size is refused: exit 2, never PASSED', async () => {
+  await withRegistry(async ({ base, box }) => {
+    const r = await runCli(['scan', '--package', 'zn-fixture-paxsize@1.0.0'], envFor(base, box));
+    assert.strictEqual(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, /extended header \(size\)/);
+    assert.ok(!/PASSED/.test(r.stdout), r.stdout);
+    assert.deepStrictEqual(fs.readdirSync(box.tmp), []);
+  });
+});
+
+test('extractTarball refuses archives it could read differently from npm', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-extract-test-'));
+  const pjson = tarEntry('package/package.json', Buffer.from('{}'));
+  const file = tarEntry('package/a.md', Buffer.from('x\n'));
+  try {
+    const bad = {
+      'a zero block, then more entries': tgz([pjson, Buffer.alloc(512), file]),
+      'a global header with a path': tgz([pjson, paxEntry('g', { path: 'x' }), file]),
+      'a pax link path': tgz([pjson, paxEntry('x', { linkpath: 'x' }), file]),
+      'a pax record cut short': tgz([pjson, tarEntry('PaxHeader/x', Buffer.from('99 size=0\n'), 'x'), file]),
+      'data after the zero blocks': zlib.gzipSync(Buffer.concat([pjson, Buffer.alloc(1024), file])),
+      'a cut-off last block': zlib.gzipSync(Buffer.concat([pjson, Buffer.from('garbage')])),
+    };
+    for (const [what, buf] of Object.entries(bad)) {
+      assert.throws(() => extractTarball(buf, dir), PackageError, what);
+    }
+    // Ordinary archives still unpack: one end marker, or none at all.
+    assert.strictEqual(extractTarball(tgz([pjson, file]), dir).files, 2);
+    assert.strictEqual(extractTarball(zlib.gzipSync(Buffer.concat([pjson, file])), dir).files, 2);
+    assert.strictEqual(extractTarball(tgz([pjson, paxEntry('x', { path: 'package/b.md' }), file]), dir).files, 2);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('usage errors exit 2 before any download', async () => {

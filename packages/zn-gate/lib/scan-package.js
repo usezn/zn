@@ -191,9 +191,9 @@ function parsePax(body) {
   let off = 0;
   while (off < body.length) {
     const sp = body.indexOf(0x20, off);
-    if (sp === -1) break;
+    if (sp === -1) throw new PackageError('the archive is damaged (bad extended header)');
     const len = parseInt(body.toString('utf8', off, sp), 10);
-    if (!(len > 0)) break;
+    if (!(len > 0) || off + len > body.length) throw new PackageError('the archive is damaged (bad extended header)');
     const rec = body.toString('utf8', sp + 1, off + len - 1);
     const eq = rec.indexOf('=');
     if (eq > 0) out[rec.slice(0, eq)] = rec.slice(eq + 1);
@@ -234,7 +234,12 @@ function extractTarball(gz, dest, opts = { windows: process.platform === 'win32'
   let count = 0;
   while (off + 512 <= tar.length) {
     const h = tar.subarray(off, off + 512);
-    if (h.every((b) => b === 0)) break;
+    if (h.every((b) => b === 0)) {
+      // npm's reader stops only at two zero blocks in a row and goes on after a single one, so everything
+      // after the first zero block must be zeros too. Anything else could be a file npm installs and we do not read.
+      if (!tar.subarray(off).every((b) => b === 0)) throw new PackageError('the archive has data after its end marker. Nothing was scanned.');
+      return { files: count, notUnpacked };
+    }
     // The checksum field counts as eight spaces.
     let sum = 0;
     for (let i = 0; i < 512; i++) sum += (i >= 148 && i < 156) ? 0x20 : h[i];
@@ -251,8 +256,18 @@ function extractTarball(gz, dest, opts = { windows: process.platform === 'win32'
     const body = tar.subarray(off, off + size);
     off += Math.ceil(size / 512) * 512;
 
-    if (type === 'x') { pax = parsePax(body); continue; }
-    if (type === 'g') continue;
+    if (type === 'x' || type === 'g') {
+      // Only a path is used here. A size, link or other structural key would change how npm reads the entries
+      // that follow, so such a header is refused rather than read differently.
+      const rec = parsePax(body);
+      for (const key of Object.keys(rec)) {
+        if (key === 'size' || key === 'linkpath' || (type === 'g' && key === 'path')) {
+          throw new PackageError('the archive has an extended header (' + key + ') this scan does not follow. It is refused, not scanned.');
+        }
+      }
+      if (type === 'x') pax = rec;
+      continue;
+    }
     if (type === 'L') { longName = cstr(body, 0, body.length); continue; }
     if (pax && pax.path) name = pax.path;
     if (longName) name = longName;
@@ -292,6 +307,8 @@ function extractTarball(gz, dest, opts = { windows: process.platform === 'win32'
       notUnpacked.push({ path: shown, reason: String((err && err.code) || 'write error').slice(0, 40) });
     }
   }
+  // No end marker: whatever is left must be zeros, otherwise the archive is cut off in the middle of an entry.
+  if (!tar.subarray(off).every((b) => b === 0)) throw new PackageError('the archive is damaged (no end marker)');
   return { files: count, notUnpacked };
 }
 
