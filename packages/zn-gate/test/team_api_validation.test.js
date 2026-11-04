@@ -427,7 +427,8 @@ test('signed policy: the signature object must have exactly alg, kid and sig in 
     { alg: 'Ed25519', kid, sig: null },
     { alg: 'Ed25519', kid, sig: [sig] },
     { alg: 'Ed25519', kid: 'XYZ', sig },
-    { alg: 'Ed25519', kid: kid.toUpperCase(), sig },
+    // An upper-case hex letter makes the kid invalid; a random kid can be all digits, so one is put in.
+    { alg: 'Ed25519', kid: 'A' + kid.slice(1).toUpperCase(), sig },
     { alg: 'Ed25519', kid: hex(16), sig },
     { alg: 'Ed25519', kid, sig: 'A'.repeat(200000) },
   ];
