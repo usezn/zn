@@ -270,6 +270,25 @@ redacted too, for every prefix (`AKIA`, `ASIA`, `ABIA`, `ACCA`). A real key id
 is never skipped because of how it ends, and redacting a documentation
 example costs nothing.
 
+## Egress allowlist for `zn run`
+
+Off by default. `zn run --egress-allow HOST[:PORT],... -- <command>` starts a
+proxy on `127.0.0.1` (random port) for the command's lifetime and sets
+`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` (and lowercase forms) to it, with
+`NODE_USE_ENV_PROXY=1`. `NO_PROXY` is removed, so the command cannot route
+around the proxy with it. The proxy opens CONNECT tunnels and `http://`
+requests only to the listed hosts. Other requests get 403 before any DNS
+lookup, and zn logs the refused host and port (never the body or headers).
+
+- An entry is an exact host name or IP address. `api.example.com` does not
+  allow `x.api.example.com` or `localhost`. Without a port, every port is
+  allowed; `host:443` allows only that port.
+- It covers programs that read the proxy variables (curl, gh, Python requests
+  and urllib, Node SDKs).
+- It does not cover programs that ignore the variables, raw sockets, DNS
+  lookups made by the program itself, or a command that unsets the variables.
+  It is a guard for well-behaved tools, not a sandbox.
+
 ## Useful commands
 
 | Command | What it does |
