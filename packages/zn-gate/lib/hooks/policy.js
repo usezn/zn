@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-03.2';
+const POLICY_RULES_VERSION = '2026-11-04.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2361,6 +2361,92 @@ function shellAssignments(cmd, opts) {
   return { env: Object.keys(out).length ? out : null, unknown };
 }
 
+/* Aliases a command line defines and then calls. A shell alias (alias x='...'; x) and a git alias (git config alias.y '!...'
+   && git y, git -c alias.y='!...' y) are read here: each call is replaced by the body, and the result is checked as a
+   command of its own, so what the alias runs is judged like the same words typed out. A body that starts with a
+   variable or a command substitution cannot be read before it runs; a line that calls such an alias is refused.
+   Aliases defined by an earlier command or by a startup file are not known here. */
+const ALIAS_WORD = '(?:[^\\s\'";&|()<>]|\'[^\']*\'|"[^"]*")+';
+const SHELL_ALIAS_RE = new RegExp('(?:^|[\\s;&|(){}])alias\\s+(?:-\\S+\\s+)*([A-Za-z0-9_.:@+-]+)=(' + ALIAS_WORD + ')', 'g');
+const GIT_ALIAS_RE = new RegExp('(["\'])alias\\.([A-Za-z0-9_-]+)=((?:(?!\\1)[\\s\\S])*)\\1|alias\\.([A-Za-z0-9_-]+)(?:=|\\s+)(' + ALIAS_WORD + ')', 'g');
+const ALIAS_OPAQUE_MESSAGE = 'zn: this command defines an alias whose body starts with a variable or a command substitution and then calls it, so ' +
+  'what it runs cannot be read before it runs and it was blocked. Next step: write the command out without the alias, or tell the user.';
+const MAX_ALIAS_DEFS = 16;
+const MAX_ALIAS_ROUNDS = 3;
+
+function aliasBody(raw) {
+  const s = String(raw);
+  const m = /^(["'])([\s\S]*)\1$/.exec(s);
+  return m ? m[2] : s;
+}
+function aliasOpaque(body) {
+  return /^\s*(?:[$`]|![ \t]*[$`])/.test(body);
+}
+function aliasDefs(text) {
+  const defs = [];
+  for (const m of text.matchAll(SHELL_ALIAS_RE)) {
+    if (defs.length >= MAX_ALIAS_DEFS) break;
+    defs.push({ git: false, name: m[1], body: aliasBody(m[2]), end: m.index + m[0].length });
+  }
+  if (/\bgit\b/.test(text)) {
+    for (const m of text.matchAll(GIT_ALIAS_RE)) {
+      if (defs.length >= MAX_ALIAS_DEFS) break;
+      defs.push({ git: true, name: m[2] || m[4], body: aliasBody(m[3] !== undefined ? m[3] : m[5]), start: m.index, end: m.index + m[0].length });
+    }
+  }
+  return defs;
+}
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/* The line after one definition with each later call replaced by its body; null when nothing is called. */
+function expandOne(text, def, seen) {
+  if (seen.has(def.git + def.name)) return null;
+  const name = escapeRe(def.name);
+  const head = '(^|[;&|(\\n{]\\s*|\\b(?:then|do|else)\\s+)';
+  const after = '(?=[\\s;&|)]|$)';
+  let called = false;
+  let tail = text.slice(def.end);
+  if (def.git) {
+    const opts = '((?:\\s+(?:-[Cc]\\s+' + ALIAS_WORD + '|--[^\\s=]+(?:=\\S+)?|-[A-Za-z]\\S*))*)';
+    const re = new RegExp(head + 'git' + opts + '\\s+' + name + after, 'g');
+    // The call is after the definition, or is the same git command that sets it (git -c alias.y=... y).
+    const swapped = text.replace(re, (all, pre, o, at) => {
+      if (at + all.length <= def.end || (at >= def.start && at < def.end)) return all;
+      called = true;
+      return def.body.startsWith('!') ? pre + def.body.slice(1) : pre + 'git' + o + ' ' + def.body;
+    });
+    return called ? swapped : null;
+  } else {
+    tail = tail.replace(new RegExp(head + name + after, 'g'), (all, pre) => { called = true; return pre + def.body; });
+  }
+  return called ? text.slice(0, def.end) + tail : null;
+}
+/* {texts: [...], opaque: bool} for the line, or null when it defines no alias it later calls. */
+function expandLineAliases(text) {
+  if (!/alias/.test(text)) return null;
+  const texts = [];
+  let opaque = false;
+  let level = [text];
+  const seen = new Set();
+  for (let round = 0; round < MAX_ALIAS_ROUNDS && level.length; round++) {
+    const next = [];
+    const used = new Set();
+    for (const t of level) {
+      for (const def of aliasDefs(t)) {
+        const out = expandOne(t, def, seen);
+        if (out === null) continue;
+        used.add(def.git + def.name);
+        if (aliasOpaque(def.body)) opaque = true;
+        texts.push(out);
+        next.push(out);
+        if (texts.length >= 64) return { texts, opaque: true };
+      }
+    }
+    for (const k of used) seen.add(k);
+    level = next;
+  }
+  return texts.length ? { texts, opaque } : null;
+}
+
 function bashDenialOf(cmd, opts = {}) {
   if (String(cmd || '').length > SHELL_SCAN_CAP) return TOO_LONG_MESSAGE;
   const admin = adminCommand(cmd);
@@ -2380,6 +2466,19 @@ function bashDenialOf(cmd, opts = {}) {
   if (!depth || !opts.budget) opts.budget = { until: Date.now() + CHECK_BUDGET_MS, disk: CHECK_BUDGET_DISK };
   // The bodies of the here-documents read as data are data, not command-line words, and are dropped first.
   const text = stripHeredocs(cmd, opts.budget);
+  // Aliases the line defines and then calls (alias x='...'; x, git config alias.y '!...' && git y) are read as their bodies.
+  if (!opts.aliasesRead) {
+    const aliased = expandLineAliases(text);
+    if (aliased) {
+      if (aliased.opaque) return ALIAS_OPAQUE_MESSAGE;
+      if (depth >= SHELL_CODE_DEPTH) return TOO_NESTED_MESSAGE;
+      for (const expanded of aliased.texts) {
+        if (overBudget(opts.budget, 5)) return TOO_SLOW_MESSAGE;
+        const deny = bashDenialOf(expanded, { ...opts, depth: depth + 1, aliasesRead: true });
+        if (deny) return deny;
+      }
+    }
+  }
   // Destructive shell commands (see lib/destructive.js). The runner passes the rules from the user's settings; with no
   // list, the two default rules apply. The bodies of data here-documents are not shell code and are not read.
   {
@@ -2406,7 +2505,7 @@ function bashDenialOf(cmd, opts = {}) {
     if (depth >= SHELL_CODE_DEPTH) return TOO_NESTED_MESSAGE;
     for (const code of codes) {
       if (overBudget(opts.budget, 5)) return TOO_SLOW_MESSAGE;
-      const deny = bashDenialOf(code, { ...opts, depth: depth + 1 });
+      const deny = bashDenialOf(code, { ...opts, depth: depth + 1, aliasesRead: false });
       if (deny) return deny;
     }
   }

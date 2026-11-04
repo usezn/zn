@@ -514,6 +514,11 @@ stop malware running as the same user (see above).
   `@noble` and `@scure` dependencies (MIT). They ship inside the npm package at the exact
   versions of the lockfile (`bundleDependencies`), so installing zn-gate does
   not resolve them from the registry. No other runtime dependency.
+- **Aliases in one command line:** when a command line defines a shell alias or a git alias and then calls it
+  (`alias x='...'; x`, `git config alias.y '!...' && git y`, `git -c alias.y='!...' y`), the hook checks the line
+  with the alias body in place of the call, and blocks a call whose body starts with a variable or a command
+  substitution. Aliases defined by an earlier command, a startup file or a git config file are not known to the
+  hook, and neither is a body built at run time.
 - **Monitor commands** run as `bash -c` behind the scrubber's pipe. The
   functions and aliases of the agent's shell snapshot are not loaded there, so a
   monitor that depends on them will not work.
