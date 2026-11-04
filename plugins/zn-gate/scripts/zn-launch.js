@@ -804,7 +804,7 @@ function refuseOversize(text) {
 /*
  * The hook's own deadline, for agents that let a call run when its hook times out. ZCode stops waiting for a hook after 5
  * minutes (the timeoutMs of the plugin's hooks.json) and then lets the call run, so the zcode hook refuses by itself 120
- * seconds after it started (an ordinary check on a busy CPU can take most of a minute), like scripts/zn-hook.sh and scripts/zn-hook.ps1 do. "Started" is the start of this process
+ * seconds after it started (with every CPU busy an ordinary check took up to 131 seconds as ZCode times it), like scripts/zn-hook.sh and scripts/zn-hook.ps1 do. "Started" is the start of this process
  * or, when scripts/zn-hook.cmd started it on Windows, the time that file noted on its first line (ZN_HOOK_T0, the time
  * of day as cmd.exe prints it), whichever is earlier: ZN_HOOK_T0 can only make the deadline shorter.
  */
