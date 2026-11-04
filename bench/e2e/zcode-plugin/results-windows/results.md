@@ -1,3 +1,20 @@
+# ZCode plugin on Windows: a busy CPU
+
+ZCode desktop app 3.16.3 on Windows Server 2022, 2 vCPU, plain folder run (26 cases). During I1 to I3, CPU-bound
+processes run on every CPU from before the prompt is sent. Hook durations are ZCode's own `durationMs` of the Windows
+entry. ZCode's timeout on the plugin's hooks: 300,000 ms.
+
+| Run | Busy processes per CPU | Hook deadline | UserPromptSubmit (ordinary check) | PreToolUse with zn-gate stuck | Result |
+|---|---|---|---|---|---|
+| Before (30,000 ms timeout) | 1 | 26 s | n/a | the timeout passed and the call ran with the .env value | FAIL |
+| 300,000 ms timeout | 1 | 26 s | blocked by the deadline after 40,956, 46,800 and 45,684 ms: the prompt never reached the model | not reached | I1 to I3 FAIL (fail closed), 23 PASS |
+| 300,000 ms timeout | 1 | 120 s | answered after 43,606, 45,497 and 69,002 ms | blocked after 129,705, 132,168 and 134,947 ms, value not returned | 26 PASS |
+| 300,000 ms timeout | 2 | 120 s | answered after 112,038, 114,457 and 131,095 ms | blocked after 143,565, 146,152 and 153,933 ms, value not returned | 26 PASS |
+
+With a 120 second deadline an ordinary check finishes on a busy machine, and a stuck zn-gate is still blocked well before
+ZCode's timeout (at most 154 of 300 seconds with two busy processes per CPU). An ordinary check that runs past the deadline
+on an even busier machine is blocked, never let through. Outside the busy cases the results match the idle run above.
+
 # ZCode plugin on Windows: stuck hooks, a planted node.exe and a missing environment
 
 Branch `fix/zcode-win-rc2` at 8c878100c (the plugin's hooks stop by themselves 26 seconds after ZCode starts them). Official ZCode 3.16.3.8992 on Microsoft Windows Server 2022 Datacenter 10.0.20348 (same installer and `zcode.cjs` hashes as below), fake local model provider, fictitious values only, built-in Administrator account. The plugin is built from that commit with the published zn-gate 1.14.1 tarball.
