@@ -30,6 +30,9 @@ const MAX_DEPTH = 6;
 const MAX_FILES = 50000;
 const MAX_LISTED = 200;
 const MAX_STRINGS_PER_LINE = 200000;
+// A very long line is scanned in slices of about this many characters, with the deadline checked between slices,
+// so one huge line cannot run far past --max-seconds. Lines shorter than this are scanned whole.
+const SLICE_CHARS = 4 * 1024 * 1024;
 
 // Agents whose history is a plain JSON Lines file and documented. Cursor and OpenCode keep theirs in a
 // database (SQLite), which this version does not read: they are reported as not scanned.
@@ -127,33 +130,39 @@ function display(home, abs) {
   return clean(abs);
 }
 
-function walk(dir, ext, depth, out, skipped, agent, home) {
+// Entries are visited in byte order of their names (UTF-8), the same order as the Python package. readdir returns
+// the order of the directory on disk, which differs between machines, and the cap below cuts the walk short.
+function byNameBytes(a, b) {
+  return Buffer.compare(Buffer.from(a.name, 'utf8'), Buffer.from(b.name, 'utf8'));
+}
+
+function walk(dir, ext, depth, out, skipped, agent, home, limit) {
   if (depth > MAX_DEPTH) {
     skipped.push({ agent: agent.id, file: display(home, dir), reason: 'too-deep', limit: MAX_DEPTH });
     return;
   }
-  if (out.length >= MAX_FILES) {
-    skipped.push({ agent: agent.id, file: display(home, dir), reason: 'too-many-files', limit: MAX_FILES });
+  if (out.length >= limit) {
+    skipped.push({ agent: agent.id, file: display(home, dir), reason: 'too-many-files', limit });
     return;
   }
   let entries;
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }).sort(byNameBytes); } catch (_) { return; }
   for (const e of entries) {
     const abs = path.join(dir, e.name);
     if (e.isSymbolicLink()) { skipped.push({ agent: agent.id, file: display(home, abs), reason: 'symlink' }); continue; }
-    if (e.isDirectory()) { walk(abs, ext, depth + 1, out, skipped, agent, home); continue; }
+    if (e.isDirectory()) { walk(abs, ext, depth + 1, out, skipped, agent, home, limit); continue; }
     if (!e.isFile() || !e.name.endsWith(ext)) continue;
     const st = lstatOrNull(abs);
     if (!st || !st.isFile()) continue;
-    if (out.length >= MAX_FILES) {
-      skipped.push({ agent: agent.id, file: display(home, dir), reason: 'too-many-files', limit: MAX_FILES });
+    if (out.length >= limit) {
+      skipped.push({ agent: agent.id, file: display(home, dir), reason: 'too-many-files', limit });
       return;
     }
     out.push({ abs, size: st.size, mtime: st.mtimeMs });
   }
 }
 
-function collect(agent, home, env, skipped) {
+function collect(agent, home, env, skipped, limit) {
   const c = configDir(agent, home, env);
   let base;
   let basePath;
@@ -182,7 +191,7 @@ function collect(agent, home, env, skipped) {
   for (const t of agent.trees) {
     const root = realDirBelow(base, t.dir);
     if (!root) continue;
-    walk(root, t.ext, 0, files, skipped, agent, home);
+    walk(root, t.ext, 0, files, skipped, agent, home, limit);
   }
   return { base, files };
 }
@@ -204,7 +213,25 @@ function strings(v, out) {
 }
 
 /** Adds the secret types found in one line to counts ({ TYPE: n }). Values are dropped here. */
-function scanLine(engine, line, counts) {
+class TimeUp extends Error {}
+
+function slices(text) {
+  if (text.length <= SLICE_CHARS) return [text];
+  const out = [];
+  let pos = 0;
+  while (pos < text.length) {
+    let end = Math.min(pos + SLICE_CHARS, text.length);
+    if (end < text.length) {
+      const cut = Math.max(text.lastIndexOf('\n', end - 1), text.lastIndexOf(' ', end - 1));
+      if (cut >= pos && cut > end - 65536) end = cut + 1;
+    }
+    out.push(text.slice(pos, end));
+    pos = end;
+  }
+  return out;
+}
+
+function scanLine(engine, line, counts, expired) {
   let text = line;
   const t = line.trimStart().charCodeAt(0);
   if (t === 123 || t === 91) { // { or [
@@ -213,18 +240,24 @@ function scanLine(engine, line, counts) {
     } catch (_) { text = line; }
   }
   if (text.length < 8) return;
-  const spans = engine.scan(text, { exact: false, pii: false });
-  for (const s of spans) {
-    if (s.source === 'pii') continue;
-    counts[s.type] = (counts[s.type] || 0) + 1;
+  const parts = slices(text);
+  for (let i = 0; i < parts.length; i++) {
+    if (i > 0 && expired && expired()) throw new TimeUp();
+    const spans = engine.scan(parts[i], { exact: false, pii: false });
+    for (const s of spans) {
+      if (s.source === 'pii') continue;
+      counts[s.type] = (counts[s.type] || 0) + 1;
+    }
   }
 }
 
 /**
  * Stream one file. Returns { counts, bytes, complete, reason }.
- * `deadline` is a timestamp in ms: past it the file is left half read and reported so.
+ * `deadline` is a timestamp in ms: past it the file is left half read and reported so. It is checked after every
+ * chunk that was read (never on the final empty read, so a file read to the end is complete) and between slices
+ * of a very long line. `now` is the clock (tests only).
  */
-function scanFile(engine, abs, deadline) {
+function scanFile(engine, abs, deadline, now = Date.now) {
   const counts = {};
   let fd;
   try {
@@ -242,11 +275,11 @@ function scanFile(engine, abs, deadline) {
     let carry = [];
     let carryLen = 0;
     let dropping = false;
-    const flush = (b) => scanLine(engine, b.toString('utf8'), counts);
+    const flush = (b) => scanLine(engine, b.toString('utf8'), counts, () => now() > deadline);
     for (;;) {
-      if (Date.now() > deadline) { complete = false; reason = 'time-limit'; break; }
       const n = fs.readSync(fd, buf, 0, CHUNK, null);
       if (n <= 0) break;
+      if (now() > deadline) { complete = false; reason = 'time-limit'; break; }
       bytes += n;
       let start = 0;
       for (;;) {
@@ -275,9 +308,9 @@ function scanFile(engine, abs, deadline) {
       }
     }
     if (carryLen > 0 && reason !== 'time-limit') flush(Buffer.concat(carry));
-  } catch (_) {
+  } catch (e) {
     complete = false;
-    reason = reason || 'unreadable';
+    reason = e instanceof TimeUp ? 'time-limit' : (reason || 'unreadable');
   } finally {
     try { fs.closeSync(fd); } catch (_) { /* closed */ }
   }
@@ -290,13 +323,14 @@ function history(opts = {}) {
   const maxSeconds = Math.min(MAX_SECONDS_LIMIT, Math.max(1, Number(opts.maxSeconds) || DEFAULT_MAX_SECONDS));
   const started = Date.now();
   const deadline = started + (Number.isFinite(opts._maxMs) ? opts._maxMs : maxSeconds * 1000); // _maxMs: tests only
+  const limit = Number.isInteger(opts._maxFiles) ? opts._maxFiles : MAX_FILES; // _maxFiles: tests only
   const engine = require('../scrub/engine');
 
   const skipped = [];
   const plan = [];
   const agents = [];
   for (const a of AGENTS) {
-    const c = collect(a, home, env, skipped);
+    const c = collect(a, home, env, skipped, limit);
     agents.push({ id: a.id, name: a.name, scanned: !!c.base, reason: c.base ? null : 'not-found', files: 0, bytes: 0 });
     // Newest first: the sessions most likely to hold a live key.
     c.files.sort((x, y) => y.mtime - x.mtime);
