@@ -14,6 +14,7 @@ const path = require('path');
 
 const { getAdapter } = require('../lib/agents');
 const { tempDir } = require('./helpers/tmp');
+const { spawnAsync } = require('./helpers/spawn_async');
 
 const zc = getAdapter('zcode');
 const posix = process.platform !== 'win32';
@@ -304,18 +305,22 @@ test('zn-gate check: on Windows, a changed /bin/sh entry is judged too, not hidd
 // The reproduction of the 1.14.0 review: with a relative or empty PATH entry, the host's own lookup of the first
 // program in the manifest picked a planted `sh`, and a shell picked a planted `node`. The real plugin manifest and
 // script, started the way ZCode starts a process hook (no shell, the project as working folder), run nothing planted.
-test('the ZCode plugin hook, started as ZCode starts it, runs no planted sh or node (relative or empty PATH entry)', (t) => {
+test('the ZCode plugin hook, started as ZCode starts it, runs no planted sh or node (relative or empty PATH entry)', async (t) => {
   const { spawnSync } = require('child_process');
   const pluginRoot = path.join(__dirname, '..', '..', '..', 'plugins', 'zcode');
   const pre = JSON.parse(fs.readFileSync(REPO_HOOKS, 'utf8')).hooks.PreToolUse[0].hooks[HI];
   const args = pre.args.map((a) => a.split('${ZCODE_PLUGIN_ROOT}').join(pluginRoot));
-  const { cwd, marker } = plantPrograms(t);
-  const event = JSON.stringify({ hook_event_name: 'PreToolUse', cwd, tool_name: 'Read', tool_input: { file_path: path.join(cwd, '.env') } });
+  const eventFor = (cwd) => JSON.stringify({ hook_event_name: 'PreToolUse', cwd, tool_name: 'Read', tool_input: { file_path: path.join(cwd, '.env') } });
   const paths = posix ? ['.:/usr/bin:/bin', ':/usr/bin:/bin'] : ['.;' + SYSPATH, ';' + SYSPATH];
-  for (const PATH of paths) {
+  // Each PATH entry has its own folder and planted programs, and the two hook starts overlap. On Windows each start is the
+  // system PowerShell, which is slow, so one after the other they added up to the whole test's time.
+  const runs = paths.map((PATH) => {
+    const { cwd, marker } = plantPrograms(t);
     // ZCode gives the hook the plugin folder in ZCODE_PLUGIN_ROOT (the Windows entry reads its script there).
     const env = posix ? { PATH, HOME: cwd } : { PATH, SystemRoot: process.env.SystemRoot, USERPROFILE: cwd, ZCODE_PLUGIN_ROOT: pluginRoot };
-    const r = spawnSync(pre.command, args, { cwd, input: event, encoding: 'utf8', env, timeout: 40000, windowsHide: true });
+    return spawnAsync(pre.command, args, { cwd, env, input: eventFor(cwd), timeout: 40000 }).then((r) => ({ PATH, marker, r }));
+  });
+  for (const { PATH, marker, r } of await Promise.all(runs)) {
     // The hook may refuse before it reads its input; the write of the event then fails with EPIPE, which is not a failure here.
     assert.ok(!r.error || r.error.code === 'EPIPE', PATH + ': ' + (r.error && r.error.message));
     assert.equal(fs.existsSync(marker), false, PATH + ': planted ' + (fs.existsSync(marker) ? fs.readFileSync(marker, 'utf8').trim() : '') + ' ran');
@@ -325,7 +330,8 @@ test('the ZCode plugin hook, started as ZCode starts it, runs no planted sh or n
   }
   if (!posix) return;
   // Before the fix: the same lookup by name picks the planted shell (what the review measured).
-  const before = spawnSync('sh', args, { cwd, input: event, encoding: 'utf8', env: { PATH: '.:/usr/bin:/bin', HOME: cwd } });
+  const { cwd, marker } = plantPrograms(t);
+  const before = spawnSync('sh', args, { cwd, input: eventFor(cwd), encoding: 'utf8', env: { PATH: '.:/usr/bin:/bin', HOME: cwd } });
   assert.equal(before.status, 0);
   assert.match(fs.readFileSync(marker, 'utf8'), /^sh$/m, 'the lookup by name did not pick the planted sh');
 });
