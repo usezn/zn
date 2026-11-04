@@ -1316,15 +1316,19 @@ mod tests {
         // Hold this instance's connection, as a long store would.
         let slot = Arc::clone(&m.conn);
         let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
         let holder = std::thread::spawn(move || {
             let _guard = slot.lock().unwrap();
             locked_tx.send(()).unwrap();
-            std::thread::sleep(SEARCH_DEADLINE * 2);
+            // Held until the search has given up (or the test failed and dropped the sender).
+            let _ = release_rx.recv();
         });
         locked_rx.recv().unwrap();
         let start = Instant::now();
         let err = m.search(NS, "a", &[0.0], 1).await.unwrap_err();
-        assert!(start.elapsed() < SEARCH_DEADLINE + Duration::from_millis(500));
+        let elapsed = start.elapsed();
+        drop(release_tx);
+        assert!(elapsed < SEARCH_DEADLINE + Duration::from_millis(500));
         assert!(matches!(
             err.downcast_ref::<MemoryError>(),
             Some(MemoryError::SearchDeadline(_))

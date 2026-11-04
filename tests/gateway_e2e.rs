@@ -96,6 +96,8 @@ struct Gateway {
     stderr: Arc<Mutex<String>>,
     /// Non-empty stdout lines that are not JSON-RPC frames (log or banner text).
     stray_stdout: Arc<Mutex<Vec<String>>>,
+    /// The thread draining stderr; joined before the captured text is read after an exit.
+    stderr_thread: Option<thread::JoinHandle<()>>,
     dir: PathBuf,
 }
 
@@ -178,7 +180,7 @@ impl Gateway {
         // Keep stderr drained (a full pipe would stall the gateway) and available for failures.
         let stderr = Arc::new(Mutex::new(String::new()));
         let stderr_sink = Arc::clone(&stderr);
-        thread::spawn(move || {
+        let stderr_thread = thread::spawn(move || {
             for line in BufReader::new(stderr_pipe).lines().map_while(Result::ok) {
                 let mut sink = stderr_sink.lock().unwrap();
                 if sink.len() < 64 * 1024 {
@@ -221,6 +223,7 @@ impl Gateway {
             client,
             stderr,
             stray_stdout,
+            stderr_thread: Some(stderr_thread),
             dir,
         }
     }
@@ -230,15 +233,12 @@ impl Gateway {
     fn wait_until_ready(&mut self) -> Result<(), String> {
         let deadline = Instant::now() + BOOT;
         loop {
-            if let Some(status) = self.child.try_wait().unwrap() {
-                let text = self.stderr_text();
-                if text.contains(&format!("Port {} is already in use", self.port)) {
-                    return Err(format!("port {} taken ({status:?})", self.port));
-                }
-                panic!("zn exited early ({status:?}): {text}");
-            }
+            self.check_exit()?;
             let last = http_get(self.port, "/api/v1/health", Some(API_KEY));
             if let Ok((200, _)) = last {
+                // The 200 may have come from another test's gateway that owns this port. If our child has
+                // exited since, that is a lost port (retry), not a ready gateway.
+                self.check_exit()?;
                 return Ok(());
             }
             assert!(
@@ -248,6 +248,22 @@ impl Gateway {
             );
             thread::sleep(Duration::from_millis(100));
         }
+    }
+
+    /// Ok while the child runs. Err when it exited because its port was taken (the caller retries); any
+    /// other exit fails the test. The stderr drain is joined first, so the text is complete.
+    fn check_exit(&mut self) -> Result<(), String> {
+        let Some(status) = self.child.try_wait().unwrap() else {
+            return Ok(());
+        };
+        if let Some(drain) = self.stderr_thread.take() {
+            let _ = drain.join();
+        }
+        let text = self.stderr_text();
+        if text.contains(&format!("Port {} is already in use", self.port)) {
+            return Err(format!("port {} taken ({status:?})", self.port));
+        }
+        panic!("zn exited early ({status:?}): {text}");
     }
 
     fn stderr_text(&self) -> String {
