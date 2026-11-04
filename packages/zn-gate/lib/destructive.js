@@ -25,7 +25,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-29.5';
+const COMMAND_RULES_VERSION = '2026-11-04.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -45,6 +45,9 @@ const MAX_CHARS = 200 * 1024;
 const QUOTE_SCAN_MAX = 20000;
 
 const ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+// Reserved words a shell reads before the command that runs: `if`, `then`, `else`, `elif`, `while`, `until`,
+// `do`, a `{` group and a leading `!`. The command after them is checked like any other.
+const LEAD_KEYWORDS = new Set(['if', 'then', 'else', 'elif', 'while', 'until', 'do', '{', '!']);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'ash', 'mksh', 'rbash']);
 const POWERSHELLS = new Set(['pwsh', 'powershell']);
 const DOWNLOADERS = new Set(['curl', 'wget', 'iwr', 'irm', 'invoke-webrequest', 'invoke-restmethod', 'aria2c', 'fetch']);
@@ -130,9 +133,9 @@ const isPipe = (sep) => sep === '|' || sep === '|&';
 /* The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...). */
 function unwrap(args) {
   let i = 0;
-  for (let guard = 0; guard < 8 && i < args.length; guard++) {
+  for (let guard = 0; guard < 16 && i < args.length; guard++) {
     const a = args[i];
-    if (ASSIGN_RE.test(a)) { i++; continue; }
+    if (ASSIGN_RE.test(a) || LEAD_KEYWORDS.has(a)) { i++; continue; }
     const name = programName(a);
     if (name === 'sudo' || name === 'doas') {
       i++;

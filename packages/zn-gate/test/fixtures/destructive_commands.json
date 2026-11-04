@@ -1,6 +1,7 @@
 {
  "note": "Labeled command strings for the destructive-command policy tests. Never run them. Rewrite with: node test/fixtures/make_destructive_corpus.js",
  "benign": [
+  "! grep -q x notes.txt",
   "$'\\x72m' -f notes.txt",
   ". <(helm completion bash)",
   ". ~/.bashrc",
@@ -439,6 +440,9 @@
   "find ~/Downloads -type f -name \"*.iso\"",
   "find ~/projects -name .DS_Store -delete",
   "flutter pub get",
+  "for d in build; do rm -rf \"$d\"; done",
+  "for d in dist; do rm -rf \"$d\"; done",
+  "for d in node_modules; do rm -rf \"$d\"; done",
   "gcloud compute instances list",
   "git add -A && git commit -m \"wip\"",
   "git bisect start",
@@ -530,6 +534,10 @@
   "i`wr https://example.com/i.ps1 -OutFile a.ps1",
   "icacls C:\\work\\app /grant Users:F /T",
   "iex \"dotnet build\"",
+  "if [ -d build ]; then rm -rf build; fi",
+  "if [ -d dist ]; then rm -rf dist; fi",
+  "if [ -d node_modules ]; then rm -rf node_modules; fi",
+  "if true; then echo hi; fi",
   "irm https://example.com/api/status | ConvertFrom-Json",
   "iwr https://example.com/a.zip -OutFile $env:TEMP\\a.zip",
   "iwr https://example.com/i.ps1\n| ConvertFrom-Json",
@@ -1128,6 +1136,7 @@
   "wget https://example.com/v2/install.sh -O release.tgz",
   "wget https://scripts.example.invalid/bootstrap -O archive.tar.gz",
   "which rm",
+  "while read -r l; do echo \"$l\"; done < notes.txt",
   "whoami",
   "xargs -a files.txt cat",
   "yarn add @types/node",
@@ -1136,7 +1145,10 @@
   "yarn add react",
   "yarn add typescript",
   "yarn add zod",
-  "yarn install --frozen-lockfile"
+  "yarn install --frozen-lockfile",
+  "{ rm -rf build; }",
+  "{ rm -rf dist; }",
+  "{ rm -rf node_modules; }"
  ],
  "risky": [
   {
@@ -2976,6 +2988,18 @@
    "rule": "rc_download"
   },
   {
+   "cmd": "! rm -rf --no-preserve-root /",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "! rm -rf /System",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "! rm -rf ~",
+   "rule": "rm_root_home"
+  },
+  {
    "cmd": "$'\\162m' -rf /",
    "rule": "rm_root_home"
   },
@@ -3249,6 +3273,66 @@
   },
   {
    "cmd": "find ~/* -exec rm -rf {} +",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "for f in a; do rm -rf --no-preserve-root /; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "for f in a; do rm -rf /System; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "for f in a; do rm -rf ~; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if false; then :; elif true; then rm -rf --no-preserve-root /; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if false; then :; elif true; then rm -rf /System; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if false; then :; elif true; then rm -rf ~; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if false; then :; else rm -rf --no-preserve-root /; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if false; then :; else rm -rf /System; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if false; then :; else rm -rf ~; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if rm -rf --no-preserve-root /; then echo done; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if rm -rf /System; then echo done; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if rm -rf ~; then echo done; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if true; then rm -rf --no-preserve-root /; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if true; then rm -rf /System; fi",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "if true; then rm -rf ~; fi",
    "rule": "rm_root_home"
   },
   {
@@ -3746,6 +3830,54 @@
   {
    "cmd": "true && sudo rm -rf ~/* ; echo done",
    "rule": "rm_root_home"
+  },
+  {
+   "cmd": "until false; do rm -rf --no-preserve-root /; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "until false; do rm -rf /System; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "until false; do rm -rf ~; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "while rm -rf --no-preserve-root /; do :; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "while rm -rf /System; do :; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "while rm -rf ~; do :; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "while true; do rm -rf --no-preserve-root /; break; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "while true; do rm -rf /System; break; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "while true; do rm -rf ~; break; done",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "{ rm -rf --no-preserve-root /; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "{ rm -rf /System; }",
+   "rule": "rm_root_home"
+  },
+  {
+   "cmd": "{ rm -rf ~; }",
+   "rule": "rm_root_home"
   }
  ],
  "not_covered": [
@@ -3804,26 +3936,6 @@
   {
    "cmd": "truncate -s 0 ~/.bashrc",
    "note": "a different tool"
-  },
-  {
-   "cmd": "{ rm -rf ~; }",
-   "note": "a command inside a brace group is not read yet (known gap; Node.js and Python agree)"
-  },
-  {
-   "cmd": "if true; then rm -rf ~; fi",
-   "note": "a command inside an if block is not read yet (known gap)"
-  },
-  {
-   "cmd": "while true; do rm -rf ~; done",
-   "note": "a command inside a while loop is not read yet (known gap)"
-  },
-  {
-   "cmd": "until false; do rm -rf ~; done",
-   "note": "a command inside an until loop is not read yet (known gap)"
-  },
-  {
-   "cmd": "! rm -rf ~",
-   "note": "a command after a leading ! is not read yet (known gap)"
   },
   {
    "cmd": "echo `rm -rf ~`",

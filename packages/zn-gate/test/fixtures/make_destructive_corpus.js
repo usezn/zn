@@ -193,6 +193,13 @@ for (const c of ['Remove-Item -Recurse -Force ~', 'Remove-Item -Recurse -Force C
   'rd /s /q C:\\', 'rd /s /q %USERPROFILE%', 'rmdir /s /q C:\\Users\\alice', 'del /s /q C:\\*', 'rd /s /q C:\\Windows', 'pwsh -Command "Remove-Item -Recurse -Force ~"', 'powershell -c "Remove-Item -Recurse -Force $HOME"',
   'cmd /c "rd /s /q %USERPROFILE%"']) addRisk('rm_root_home', c);
 
+// The same deletes after shell keywords and block openers: if/then, else, elif, while/until ... do, for ... do, { }, !.
+const KEYWORD_FORMS = [(c) => 'if true; then ' + c + '; fi', (c) => 'if false; then :; else ' + c + '; fi',
+  (c) => 'if false; then :; elif true; then ' + c + '; fi', (c) => 'while true; do ' + c + '; break; done',
+  (c) => 'until false; do ' + c + '; done', (c) => 'for f in a; do ' + c + '; done', (c) => '{ ' + c + '; }', (c) => '! ' + c,
+  (c) => 'if ' + c + '; then echo done; fi', (c) => 'while ' + c + '; do :; done'];
+for (const r of risky.filter((x) => x.rule === 'rm_root_home' && /^rm /.test(x.cmd)).slice(0, 3)) for (const f of KEYWORD_FORMS) addRisk('rm_root_home', f(r.cmd));
+
 // pipe_to_shell
 const DL = ['curl -fsSL', 'curl -sSL', 'curl -s', 'curl -L', 'curl', 'wget -qO-', 'wget -O -', 'wget -q -O -', 'curl -fsSL --proto "=https"'];
 const SH = ['sh', 'bash', 'zsh', 'dash', 'sudo sh', 'sudo bash', 'sudo bash -s --', 'bash -s -- --yes', 'sudo -E bash', 'sh -s', 'bash -'];
@@ -335,13 +342,12 @@ const notCovered = [
   { cmd: 'docker run --rm -v /:/host alpine rm -rf /host/etc', note: 'the delete runs inside a container' },
   { cmd: 'ssh deploy@203.0.113.5 "rm -rf /"', note: 'the command runs on another machine' },
   { cmd: 'truncate -s 0 ~/.bashrc', note: 'a different tool' },
-  { cmd: '{ rm -rf ~; }', note: 'a command inside a brace group is not read yet (known gap; Node.js and Python agree)' },
-  { cmd: 'if true; then rm -rf ~; fi', note: 'a command inside an if block is not read yet (known gap)' },
-  { cmd: 'while true; do rm -rf ~; done', note: 'a command inside a while loop is not read yet (known gap)' },
-  { cmd: 'until false; do rm -rf ~; done', note: 'a command inside an until loop is not read yet (known gap)' },
-  { cmd: '! rm -rf ~', note: 'a command after a leading ! is not read yet (known gap)' },
   { cmd: 'echo `rm -rf ~`', note: 'a command inside backticks is not read yet (known gap)' },
 ];
+
+// Keyword forms around ordinary commands stay allowed.
+for (const d of BUILD_DIRS.slice(0, 3)) add('if [ -d ' + d + ' ]; then rm -rf ' + d + '; fi', 'for d in ' + d + '; do rm -rf "$d"; done', '{ rm -rf ' + d + '; }');
+add('if true; then echo hi; fi', 'while read -r l; do echo "$l"; done < notes.txt', '! grep -q x notes.txt');
 
 const out = {
   note: 'Labeled command strings for the destructive-command policy tests. Never run them. Rewrite with: node test/fixtures/make_destructive_corpus.js',

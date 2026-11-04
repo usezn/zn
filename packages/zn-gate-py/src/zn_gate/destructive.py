@@ -28,7 +28,7 @@ from typing import Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-29.5"
+COMMAND_RULES_VERSION = "2026-11-04.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -317,13 +317,17 @@ def _is_pipe(sep: Optional[str]) -> bool:
     return sep in ("|", "|&")
 
 
+# Reserved words a shell reads before the command that runs (same set as destructive.js).
+_LEAD_KEYWORDS = frozenset(('if', 'then', 'else', 'elif', 'while', 'until', 'do', '{', '!'))
+
+
 def _unwrap(args: List[str]) -> List[str]:
     i = 0
     guard = 0
-    while guard < 8 and i < len(args):
+    while guard < 16 and i < len(args):
         guard += 1
         a = args[i]
-        if _ASSIGN_RE.match(a):
+        if _ASSIGN_RE.match(a) or a in _LEAD_KEYWORDS:
             i += 1
             continue
         name = _program_name(a)
