@@ -168,6 +168,7 @@ Pins live in `~/.zn/mcp-pins/`, one file per server, readable only by your accou
 ## Limits
 
 - Pinning covers tool definitions (names, descriptions and parameters). It does not check the server's code.
+- The wrapped server does not get zn-gate's own secrets, nor the AI agents' credentials (such as `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`) unless you name them in `ZN_SHIELD_PASS_ENV`, for example `ZN_SHIELD_PASS_ENV=OPENAI_API_KEY` in the server's MCP configuration. Other variables are passed as they are.
 - Tool results are checked in full up to 32 MB. A larger result is removed and the agent is told to ask the tool for a smaller part (a page or a line range).
 - Text nested more than 8 levels deep in a server message or in a tool result's structured content is not checked. It is replaced by a notice, so the agent does not get it unchecked; in shadow mode it is passed on unchanged, and the shield writes one line to stderr saying the message was not fully checked.
 - Lines are capped before they are read in full: a line over 64 MiB from the server (32 MiB from the client) is dropped, in shadow mode too, because it cannot be held in memory to be checked. A message nested more than 128 levels, with more than 4 million values, or in a batch of 1000 messages or more is refused with a JSON-RPC error; when the server sends such a batch, each request it was answering gets its own error. While a lot of server output waits to be checked, the shield stops reading from the server.

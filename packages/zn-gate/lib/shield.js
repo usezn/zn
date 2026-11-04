@@ -209,6 +209,29 @@ function startFailureMessage(command, err) {
   return `[zn-shield ERROR] Failed to start wrapped server '${name}': ${err && err.message}`;
 }
 
+// Credentials of the AI agents themselves. A wrapped server gets them only when the user names them in
+// ZN_SHIELD_PASS_ENV (comma-separated).
+const AGENT_CREDENTIALS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'OPENAI_API_KEY',
+  'CODEX_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'CURSOR_API_KEY', 'COPILOT_GITHUB_TOKEN'];
+
+/**
+ * The environment of the wrapped server: the shield's own, minus zn-gate's secrets (ZN_* names with KEY, TOKEN,
+ * SECRET or PASS, never passed) and the agents' credentials (passed only when listed in ZN_SHIELD_PASS_ENV).
+ * Returns { env, dropped } with the names left out.
+ */
+function childEnv(env) {
+  const keep = new Set(String(env.ZN_SHIELD_PASS_ENV || '').split(',').map((x) => x.trim().toUpperCase()).filter(Boolean));
+  const out = {};
+  const dropped = [];
+  for (const [k, v] of Object.entries(env)) {
+    const upper = k.toUpperCase();
+    if (/^ZN_/.test(upper) && /(KEY|TOKEN|SECRET|PASS)/.test(upper) && upper !== 'ZN_SHIELD_PASS_ENV') { dropped.push(k); continue; }
+    if (AGENT_CREDENTIALS.includes(upper) && !keep.has(upper)) { dropped.push(k); continue; }
+    out[k] = v;
+  }
+  return { env: out, dropped };
+}
+
 /**
  * Starts an MCP Security Shield proxy over stdio.
  * Intercepts JSON-RPC 2.0 messages between the client (stdin/stdout)
@@ -247,9 +270,14 @@ function startMcpShield(command, args, options = {}) {
   }
   // The server gets the same PATH (absolute entries only, and on Windows no current-folder search), so a wrapper such as
   // `cmd /c npx ...` or `sh -c ...` cannot start a program from the project folder either.
+  const { env: serverEnv, dropped } = childEnv(process.env);
+  const agentCreds = dropped.filter((k) => AGENT_CREDENTIALS.includes(k.toUpperCase()));
+  if (agentCreds.length) {
+    process.stderr.write(`[zn-shield] Not passed to the wrapped server: ${agentCreds.join(', ')} (AI agent credentials). If the server needs one, set ZN_SHIELD_PASS_ENV=${agentCreds[0]} in its MCP configuration.\n`);
+  }
   const child = spawn(file, args, {
     stdio: ['pipe', 'pipe', 'inherit'],
-    env: exe.programEnv(process.env),
+    env: exe.programEnv(serverEnv),
   });
 
   child.on('error', (err) => {
@@ -1483,4 +1511,4 @@ function collectResultStrings(result, tooBig) {
   return { strings: out, overflow: false };
 }
 
-module.exports = { SHIELD_RESULT_SCAN_CHARS, startMcpShield, startFailureMessage };
+module.exports = { SHIELD_RESULT_SCAN_CHARS, childEnv, startMcpShield, startFailureMessage };
