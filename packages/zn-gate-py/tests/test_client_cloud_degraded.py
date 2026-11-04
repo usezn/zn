@@ -52,7 +52,7 @@ class TestCloudDegraded(unittest.TestCase):
         return opener
 
     def _analyze(self, reply):
-        with mock.patch.object(client.urllib.request, "urlopen", self._reply(reply)):
+        with mock.patch.object(client, "_open", self._reply(reply)):
             return client.analyze(TEXT, endpoint=ENDPOINT)
 
     def test_ml_error_is_degraded_and_keeps_the_verdict(self):
@@ -84,7 +84,7 @@ class TestCloudDegraded(unittest.TestCase):
     def test_cli_prints_one_warning_line_only_when_degraded(self):
         def run(reply):
             out, err = io.StringIO(), io.StringIO()
-            with mock.patch.object(client.urllib.request, "urlopen", self._reply(reply)), \
+            with mock.patch.object(client, "_open", self._reply(reply)), \
                     mock.patch("sys.argv", ["zn-gate", "analyze", TEXT]), \
                     contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 cli.main()
