@@ -310,10 +310,14 @@ fn redact_secret(caps: &regex::Captures) -> String {
 }
 
 fn card_re() -> &'static Regex {
-    // 13-19 digits in groups of four, optionally separated by spaces or dashes.
+    // 13-19 digits in groups of four, optionally separated by spaces or dashes, or the
+    // American Express 4-6-5 grouping (prefix 34 or 37, one separator kind used twice).
     // ASCII digits only ([0-9]): `\d` in the regex crate also matches other scripts' digits.
     CREDIT_CARD_REGEX.get_or_init(|| {
-        Regex::new(r"(?:[0-9]{4}[ -]?){2,3}[0-9]{1,4}(?:[ -]?[0-9]{1,3})?").unwrap()
+        Regex::new(
+            r"3[47][0-9]{2} [0-9]{6} [0-9]{5}|3[47][0-9]{2}-[0-9]{6}-[0-9]{5}|(?:[0-9]{4}[ -]?){2,3}[0-9]{1,4}(?:[ -]?[0-9]{1,3})?",
+        )
+        .unwrap()
     })
 }
 
@@ -1457,6 +1461,30 @@ mod tests {
                 "{opener}: backslashes {t_slashes:?} vs filler {t_filler:?}"
             );
             assert!(t_slashes < std::time::Duration::from_secs(60), "{opener}");
+        }
+    }
+
+    #[test]
+    fn test_amex_4_6_5_grouping() {
+        for (input, expected) in [
+            ("Amex 3782 822463 10005", "Amex [CARD_REDACTED]"),
+            ("Amex 3782-822463-10005.", "Amex [CARD_REDACTED]."),
+            ("a 3714 496353 98431, b", "a [CARD_REDACTED], b"),
+        ] {
+            assert_eq!(Scrubber::scrub(input), expected, "{input}");
+        }
+        for input in [
+            "Amex 3782 822463 10006",  // fails Luhn
+            "Amex 3782 822463-10005",  // mixed separators
+            "order 4012 345678 90123", // not an Amex prefix
+            "build 2026 110400 12345", // date-like group
+            "call 0034 600123 45678",  // phone-like group
+            "Amex 3782 822463 100055", // too many digits
+        ] {
+            assert!(
+                !Scrubber::scrub(input).contains("[CARD_REDACTED]"),
+                "{input}"
+            );
         }
     }
 

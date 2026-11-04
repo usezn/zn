@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-01.1
+RULES_VERSION: 2026-11-04.1
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-01.1"
+RULES_VERSION = "2026-11-04.1"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1913,7 +1913,7 @@ _PREVIEW_PASSWORD_RE = _rc(r"(?i)\b(password|passwd|pwd)(\s*[:=]\s*)(\S+)")
 _PII_EMAIL_DOMAIN_RE = _rc(r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,24}(?![A-Za-z0-9-])", re.ASCII)
 _PII_PHONE_RE = _rc(r"(?<![A-Za-z0-9+])\+[1-9](?:\d{0,2}(?:[ .-]\d{1,9}){2,6}|\d{0,2} \d{6,12}|\d{7,14})(?![0-9])", re.ASCII)
 _PII_IBAN_RE = _rc(r"(?<![A-Za-z0-9])[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])", re.ASCII)
-_PII_CARD_RE = _rc(r"(?<![0-9A-Za-z.,_-])(?:\d{4}[ -]?){2,3}\d{1,4}(?:[ -]?\d{1,3})?(?![0-9A-Za-z_]|[.,]\d)", re.ASCII)
+_PII_CARD_RE = _rc(r"(?<![0-9A-Za-z.,_-])(?:3[47]\d{2} \d{6} \d{5}|3[47]\d{2}-\d{6}-\d{5}|(?:\d{4}[ -]?){2,3}\d{1,4}(?:[ -]?\d{1,3})?)(?![0-9A-Za-z_]|[.,]\d)", re.ASCII)
 _PII_DNI_RE = _rc(r"(?<![A-Za-z0-9_.-])\d{8}-?[A-Z](?![A-Za-z0-9_])", re.ASCII)
 _PII_NIE_RE = _rc(r"(?<![A-Za-z0-9_.-])[XYZ]-?\d{7}-?[A-Z](?![A-Za-z0-9_])", re.ASCII)
 _PII_SSN_RE = _rc(r"(?<![0-9A-Za-z.-])\d{3}-\d{2}-\d{4}(?![0-9A-Za-z]|-\d)", re.ASCII)

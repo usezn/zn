@@ -312,6 +312,8 @@ test('PII look-alikes in code are not PII', () => {
     'version 2026-10-11 build 1234567890123',
     'uuid 550e8400-e29b-41d4-a716-446655440000',
     'x = 1234567812345678 # not a card network',
+    'order 4012 345678 90123 and ref 5678 901234 56789 and build 2026 110400 12345',
+    'amex-like 3782 822463 10006 fails the checksum, 3782 822463-10005 mixes separators',
     'call +1234567890 for a demo',
     'ref 12345678A is not a DNI',
     'date 2026-10-11',

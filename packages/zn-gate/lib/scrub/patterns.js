@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-31.1';
+const SCRUB_RULES_VERSION = '2026-11-04.1';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -944,7 +944,7 @@ const PII = [
     re: re('(?<![A-Za-z0-9])[A-Z]{2}\\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])'),
     check: (v) => ibanValid(v) },
   { type: 'CARD', key: 'card', hints: null, prefilter: /\d{4}/,
-    re: re('(?<![0-9A-Za-z.,_-])(?:\\d{4}[ -]?){2,3}\\d{1,4}(?:[ -]?\\d{1,3})?(?![0-9A-Za-z_]|[.,]\\d)'),
+    re: re('(?<![0-9A-Za-z.,_-])(?:3[47]\\d{2} \\d{6} \\d{5}|3[47]\\d{2}-\\d{6}-\\d{5}|(?:\\d{4}[ -]?){2,3}\\d{1,4}(?:[ -]?\\d{1,3})?)(?![0-9A-Za-z_]|[.,]\\d)'),
     check: (v) => {
       const sep = v.match(/[ -]/g);
       if (sep && new Set(sep).size > 1) return false;
