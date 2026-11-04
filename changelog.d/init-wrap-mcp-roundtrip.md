@@ -1,0 +1,2 @@
+### Fixed
+- `zn-gate init --wrap-mcp` no longer rewrites a config file when that would change a number in it (such as 12345678901234567890 or 1.0); it tells you to add zn-gate by hand instead. It also keeps the file's line endings (CRLF stays CRLF), keeps a comment after an edited line in the Codex `config.toml`, and stops if another program saved the file while it was working, instead of overwriting that change.
