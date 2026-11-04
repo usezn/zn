@@ -30,22 +30,10 @@ const GHP = generateAll(8360, { perType: 1, piiPerType: 1 }).secrets.find((s) =>
 // Case ids that a shell runs as the dangerous command (or that must ask) and the rules still allow.
 const KNOWN_GAPS = new Set([
   'egress-dotenv-001', 'egress-dotenv-002', 'egress-dotenv-003', 'egress-dotenv-004',
-  'egress-file-009', 'egress-prog-006', 'egress-prog-008', 'egress-prog-010',
-  'egress-prog-011', 'egress-prog-026', 'egress-prog-027', 'egress-prog-028',
-  'egress-prog-030', 'egress-prog-038', 'egress-prog-040', 'pts-prog-008',
-  'pts-prog-010', 'pts-prog-011', 'pts-prog-025', 'pts-prog-026',
-  'pts-prog-027', 'pts-prog-028', 'pts-prog-029', 'pts-prog-030',
-  'pts-shell-010', 'pts-shell-020', 'pts-shell-021', 'pts-shell-022',
-  'pts-shell-035', 'pts-shell-036', 'pts-shell-040', 'pts-subst-010',
-  'pts-subst-011', 'pts-subst-012', 'pts-subst-013', 'pts-subst-014',
-  'pts-subst-015', 'pts-subst-016', 'pts-subst-017', 'pts-subst-018',
-  'pts-subst-019', 'pts-subst-020', 'pts-subst-021', 'pts-subst-022',
-  'pts-subst-023', 'pts-subst-024', 'pts-subst-025', 'pts-subst-028',
-  'pts-subst-029', 'pts-subst-031', 'rc-prog-008', 'rc-prog-010',
-  'rc-prog-011', 'rc-prog-025', 'rc-prog-026', 'rc-target-011',
-  'rc-target-012', 'rc-target-025', 'rc-target-026', 'rc-target-027',
-  'rc-target-029', 'rc-target-037', 'rc-target-044', 'rc-target-047',
-  'rc-target-048', 'rc-target-049', 'rc-target-050', 'rc-target-051',
+  'egress-file-009', 'pts-prog-008', 'pts-prog-010', 'pts-prog-011', 'pts-shell-010',
+  'pts-shell-022', 'pts-subst-013', 'pts-subst-014', 'pts-subst-015', 'pts-subst-020',
+  'pts-subst-021', 'pts-subst-022', 'pts-subst-023', 'pts-subst-024', 'pts-subst-025',
+  'rc-prog-008', 'rc-prog-010', 'rc-prog-011', 'rc-target-011', 'rc-target-012', 'rc-target-025',
 ]);
 
 const REPORT = {};

@@ -24,11 +24,11 @@ The Node.js and Python versions give the same answer on the shared test corpus
 from __future__ import annotations
 
 import re
-from typing import Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tuple
+from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-29.5"
+COMMAND_RULES_VERSION = "2026-10-31.2"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -82,12 +82,22 @@ _RC_PS_RE = re.compile(r"^\$profile(?:\.\w+)?\Z|(?:^|[\\/])(?:microsoft\.powersh
 
 _QUOTED_RE = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
 _FORK_BOMB_RE = re.compile(r"(?<![\w:])([A-Za-z_:][\w:]*)\s*\(\s*\)\s*\{\s*\1\s*\|\s*\1\s*&\s*\}\s*;?\s*\1(?!\w)", _A)
+# The downloader inside the substitution may be written \curl, env curl, command -p curl or /usr/bin/curl, and the shell
+# /bin/sh or env sh. Every quantifier below is over a class that cannot also match the separator after it, so the scan is linear.
+_SUBST_DL = r"(?:(?:env|command|exec|nohup)\s+(?:(?:-\S*|\w+=\S*)\s+)*)?\\?(?:[\w.~-]*/)*(?:c\\?u\\?r\\?l|w\\?g\\?e\\?t)\b"
+_SUBST_SHELL = r"(?:[\w.~-]*/)*(?:ba|z|da|k)?sh"
 _SHELL_RUNS_DOWNLOAD_RE = re.compile(
-    r"(?:^|[\s;&|(])(?:eval|(?:ba|z|da|k)?sh\s+(?:-\w+\s+)*-\w*c)\s+[\"']?(?:\$\(|`)\s*(?:curl|wget)\b", _A
+    r"(?:^|[\s;&|(])(?:eval|" + _SUBST_SHELL + r"\s+(?:-\w+\s+)*-\w*c)\s+[\"']?(?:\$\(|`)\s*" + _SUBST_DL, _A
 )
 _SOURCE_DOWNLOAD_RE = re.compile(
-    r"(?:^|[\s;&|(])(?:source|\.|(?:ba|z|da|k)?sh)\s+(?:-\w+\s+)*<\(\s*(?:curl|wget)\b", _A
+    r"(?:^|[\s;&|(])(?:source|\.|" + _SUBST_SHELL + r")\s+(?:-\w+\s+)*<\(\s*" + _SUBST_DL, _A
 )
+# A shell that reads its program from a substitution on stdin: bash < <(curl URL), sh <<< "$(curl URL)".
+_SHELL_STDIN_DOWNLOAD_RE = re.compile(
+    r"(?:^|[\s;&|(])" + _SUBST_SHELL + r"\s+(?:-\S*\s+)*(?:<\s*<\(|<<<\s*[\"']?(?:\$\(|`))\s*" + _SUBST_DL, _A
+)
+# After a pipe the next command may follow a line break or be a group: curl URL |<nl>sh, curl URL | (sh).
+_PIPE_LEAD_RE = re.compile(r"(?:\s|\()+", _A)
 _PS_PIPE_RE = re.compile(
     r"\b(?:iwr|irm|invoke-webrequest|invoke-restmethod|curl|wget)\b[^|;\n]{0,300}\|\s*(?:iex|invoke-expression)\b"
     r"|\bdownloadstring\([^)]{0,300}\)\s*\|\s*(?:iex|invoke-expression)\b",
@@ -195,6 +205,7 @@ def _scan_first(s: str, posix: bool = False) -> Tuple[int, List[str], Optional[s
     quote: Optional[str] = None
     i = 0
     n = len(s)
+    raw_gt = -1  # index of the last unquoted, unescaped '>' that went into the word
     while i < n:
         ch = s[i]
         if quote == "'":
@@ -247,6 +258,12 @@ def _scan_first(s: str, posix: bool = False) -> Tuple[int, List[str], Optional[s
             cur.append(ch)
             i += 1
             continue
+        # `>|` is one redirection (it overrides noclobber), not a `>` followed by a pipe. Same rule as scanFirstCommand
+        # in lib/hooks/policy.js: `>>|` is still split (bash rejects it, Node allows it).
+        if ch == "|" and raw_gt == i - 1 and cur is not None and not "".join(cur).endswith(">>"):
+            cur.append(ch)
+            i += 1
+            continue
         if ch in ";&|\n()":
             if cur is not None:
                 words.append("".join(cur))
@@ -260,6 +277,8 @@ def _scan_first(s: str, posix: bool = False) -> Tuple[int, List[str], Optional[s
         if cur is None:
             cur = []
         cur.append(ch)
+        if ch == ">":
+            raw_gt = i
         i += 1
     if cur is not None:
         words.append("".join(cur))
@@ -288,12 +307,19 @@ def _decode_ansi_c(cmd: str) -> str:
     return _ANSI_C_RE.sub(word, cmd).replace('$"', '"')
 
 
+class _Segs(list):
+    """The simple commands of a line as (words, sep) pairs; raws holds the text of each one that has a backtick (else '')."""
+
+    raws: List[str]
+
+
 def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], Optional[str]]], bool]:
     rest = re.sub(r"(\d*[<>]+)&(\d+|-)", r"\1_\2", str(cmd), flags=_A)
     rest = re.sub(r"&>>?", ">", rest)
     # A drive root C:\ before a space is a path, not an escaped space.
     rest = re.sub(r"(^|[\s\"'])([A-Za-z]:)\\(?=\s|\Z)", r"\1\2/", rest)
-    out: List[Tuple[List[str], Optional[str]]] = []
+    out = _Segs()
+    out.raws = []
     guard = 0
     while rest and guard < _MAX_SEGMENTS:
         guard += 1
@@ -308,7 +334,13 @@ def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], O
                 sep = "|&"
                 adv += 1
         out.append((words, sep))
+        raw = rest[:end]
+        out.raws.append(raw if "`" in raw else "")
         rest = rest[adv:]
+        if sep in ("|", "|&"):
+            lead = _PIPE_LEAD_RE.match(rest)
+            if lead:
+                rest = rest[lead.end():]
     # Unread text left over: the caller must not treat the commands read so far as the whole line.
     return out, bool(rest)
 
@@ -317,21 +349,241 @@ def _is_pipe(sep: Optional[str]) -> bool:
     return sep in ("|", "|&")
 
 
-def _unwrap(args: List[str]) -> List[str]:
+# Literal variables assigned earlier on the same command line (X=curl; $X URL | sh, S=sh; curl URL | $S,
+# T=~/.bashrc; curl URL >> $T, export X=curl). Nothing is evaluated: a value is text copied from an earlier assignment,
+# and a variable not assigned on the line stays as it is. Linear and capped.
+_MAX_ASSIGNMENTS = 256  # one more and the line is refused
+_MAX_VALUE = 8192  # a longer value is not kept (the variable stays unknown)
+_MAX_EXPANDED = 256 * 1024  # total text added by substitutions; past it the rest stays unresolved
+_VAR_ASSIGN_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)\Z")
+_VAR_REF_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+_VAR_SOLE_REF_RE = re.compile(r"^\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))\Z")
+_DECLARERS = frozenset(("export", "declare", "typeset", "readonly", "local"))
+
+
+def _join_backticks(words: List[str]) -> List[str]:
+    """An assignment whose value is a `...` substitution is split into words by the tokenizer (X=`curl URL`): the words
+    up to the closing backtick are joined into the value again. One pass."""
+    out: List[str] = []
+    changed = False
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if _VAR_ASSIGN_RE.match(w) and w.count("`") % 2 == 1:
+            changed = True
+            while i + 1 < len(words) and w.count("`") % 2 == 1:
+                i += 1
+                w += " " + words[i]
+        out.append(w)
+        i += 1
+    return out if changed else words
+
+
+class _Vars:
+    __slots__ = ("vars", "assignments", "expanded", "overflow")
+
+    def __init__(self) -> None:
+        self.vars: Dict[str, str] = {}
+        self.assignments = 0
+        self.expanded = 0
+        self.overflow = False
+
+    def substitute(self, word: str) -> str:
+        if not self.vars or "$" not in word:
+            return word
+
+        def fill(m: "re.Match[str]") -> str:
+            v = self.vars.get(m.group(1) or m.group(2))
+            if v is None:
+                return m.group(0)
+            self.expanded += len(v)
+            return m.group(0) if self.expanded > _MAX_EXPANDED else v
+
+        return _VAR_REF_RE.sub(fill, word)
+
+    def apply(self, words: List[str], sep: Optional[str]) -> List[str]:
+        """The words of one simple command with the known variables filled in, and any assignment it makes recorded.
+        An assignment in a pipe or a background command runs in a subshell and is not recorded."""
+        out = words
+        if self.vars:
+            out = [self.substitute(w) for w in words]
+            # A command word that is just a variable ($X url, | $S) is split on blanks, as an unquoted expansion is.
+            if words:
+                m = _VAR_SOLE_REF_RE.match(words[0])
+                if m and (m.group(1) or m.group(2)) in self.vars:
+                    out = out[0].split() + out[1:]
+        if sep in ("|", "|&", "&"):
+            return out
+        out = _join_backticks(out)
+        i = 0
+        if out and out[0] in _DECLARERS:
+            i = 1
+            while i < len(out) and re.match(r"^-[A-Za-z]+\Z", out[i]):
+                i += 1
+        if i >= len(out):
+            return out
+        if not all(_VAR_ASSIGN_RE.match(w) for w in out[i:]):
+            return out
+        for w in out[i:]:
+            m = _VAR_ASSIGN_RE.match(w)
+            assert m is not None
+            self.assignments += 1
+            if self.assignments > _MAX_ASSIGNMENTS:
+                self.overflow = True
+                return out
+            if len(m.group(2)) > _MAX_VALUE:
+                self.vars.pop(m.group(1), None)
+            else:
+                self.vars[m.group(1)] = m.group(2)
+        return out
+
+
+# The wrappers that only run the next command, with the short options of each that take a value. One list for the
+# download-and-run rule (here) and the egress check (Node only); it is the same table as the Node policy's.
+_WRAPPERS = {
+    "sudo": "ugphCDrtUTR", "doas": "uC", "env": "uCS", "command": "", "nohup": "", "time": "fo", "builtin": "", "exec": "a",
+    "nice": "n", "timeout": "sk", "xargs": "IinLPdEsa", "setsid": "", "ionice": "cnpPu", "stdbuf": "ioe", "busybox": "",
+    "chrt": "", "taskset": "c", "chroot": "ug", "runuser": "ugGsT", "unbuffer": "", "strace": "eopsuEaOSbPIX",
+    "ltrace": "eopsunal", "nsenter": "tSG", "flock": "wE",
+}
+# Wrappers that take positional arguments before the command: chrt <priority>, taskset <mask> (not with -c), chroot <newroot>, flock <lock>.
+_WRAPPER_POSITIONAL = {"chrt": 1, "taskset": 1, "chroot": 1, "flock": 1}
+_WRAPPER_LONG_VALUE = frozenset((
+    "--user", "--group", "--chdir", "--unset", "--max-args", "--max-procs", "--replace", "--delimiter", "--arg-file", "--eof",
+    "--signal", "--kill-after", "--split-string", "--cpu-list", "--host", "--prompt", "--close-from", "--role", "--type",
+))
+
+
+def _skip_wrapper(words: List[str], k: int, name: str) -> int:
+    """The index of the word after a wrapper and its options (and the values some take), env's assignments and timeout's duration."""
+    value_opts = _WRAPPERS[name]
+    saw_c = False
+    k += 1
+    while k < len(words):
+        t = words[k]
+        if t == "--":
+            k += 1
+            break
+        if t.startswith("--") and len(t) > 2:
+            k += 2 if "=" not in t and t in _WRAPPER_LONG_VALUE else 1
+            continue
+        if t.startswith("-") and len(t) > 1:
+            if t == "-c":
+                saw_c = True
+            k += 2 if re.match(r"^-[A-Za-z]+\Z", t) and t[-1] in value_opts else 1
+            continue
+        if _ASSIGN_RE.match(t) or (name == "timeout" and re.match(r"^[0-9.]+[smhd]?\Z", t)):
+            k += 1
+            continue
+        break
+    if name in _WRAPPER_POSITIONAL and k < len(words) and not (name == "taskset" and saw_c):
+        k += _WRAPPER_POSITIONAL[name]
+    return k
+
+
+# Words that start a command without being one: a group, the branches of if / while / until / for, and negation.
+_SHELL_KEYWORDS = frozenset(("{", "then", "do", "else", "elif", "if", "while", "until", "!"))
+
+
+def _backtick_code(text: str) -> str:
+    """The text of every unquoted or double-quoted `...` command substitution of a command, joined into one text to be
+    read as commands, or "" when there is none. An escaped backtick inside one is a nested substitution."""
+    bodies: List[str] = []
+    quote = ""
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if quote == "'":
+            if ch == "'":
+                quote = ""
+        elif ch == "\\":
+            i += 1
+        elif ch == '"':
+            quote = "" if quote == '"' else '"'
+        elif ch == "'" and quote == "":
+            quote = "'"
+        elif ch == "`":
+            body: List[str] = []
+            j = i + 1
+            while j < n and text[j] != "`":
+                if text[j] == "\\" and j + 1 < n and text[j + 1] in ("`", "\\"):
+                    j += 1
+                body.append(text[j])
+                j += 1
+            bodies.append("".join(body))
+            i = j
+        i += 1
+    return "\n".join(bodies)
+
+
+def _in_dir(known: Any, dirs: List[str]) -> Any:
+    """The folder a command runs in when it is wrapped in env -C / sudo -D: dirs are the words of its chdir options in
+    order, each read from the folder before it (an anchored word wins, a relative one follows the earlier one); known is
+    the folder before the command (None = unknown)."""
+    for d in dirs:
+        if known is _CWD_OVERFLOW:
+            return known
+        known = _folder_of(d) if _ANCHORED_RE.match(d) else _folder_rel(known, d)
+    return known
+
+
+def _add_dir(dirs: List[str], w: Optional[str]) -> None:
+    if w:
+        dirs.append(w)
+
+
+# Programs that only run another command: more than 32 of them in a row is refused, not read.
+_WRAPPER_CAP_NAMES = frozenset(("sudo", "doas", "env", "command", "exec", "nohup", "time", "builtin", "setsid", "nice", "ionice", "timeout"))
+
+
+def _unwrap_dir(args: List[str]) -> Tuple[List[str], List[str], bool, List[str]]:
+    """The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...) and shell
+    keywords, with the words of the env -C / --chdir and sudo -D / --chdir options and whether more wrappers than can be
+    followed were met (the line is then refused), and the strings of env -S / --split-string."""
     i = 0
     guard = 0
-    while guard < 8 and i < len(args):
+    chdir: List[str] = []
+    splits: List[str] = []
+    overflow = False
+    while i < len(args):
         guard += 1
+        # Assignments and keywords can repeat without limit (! ! ! rm -rf ~): they are skipped, not counted as wrappers.
+        # So are the words that only introduce a command: function NAME { ...; } (the body is read like any other
+        # commands, called or not) and coproc [NAME] { ...; } / coproc CMD (the command runs as a background job).
+        while i < len(args):
+            w = args[i]
+            if _ASSIGN_RE.match(w) or w in _SHELL_KEYWORDS:
+                i += 1
+            elif w == "function" and i + 1 < len(args):
+                i += 2
+            elif w == "coproc":
+                i += 2 if i + 2 < len(args) and args[i + 2] in _SHELL_KEYWORDS else 1
+            else:
+                break
+        if i >= len(args):
+            break
         a = args[i]
-        if _ASSIGN_RE.match(a):
-            i += 1
-            continue
         name = _program_name(a)
+        # The guard is used up and the next word is still a wrapper: the rest cannot be read, so the line is refused.
+        if guard > 32:
+            overflow = name in _WRAPPER_CAP_NAMES or name in _WRAPPERS
+            break
         if name in ("sudo", "doas"):
             i += 1
             while i < len(args) and args[i].startswith("-"):
                 f = args[i]
                 i += 1
+                if f in ("-D", "--chdir"):
+                    _add_dir(chdir, args[i] if i < len(args) else None)
+                    i += 1
+                    continue
+                if re.match(r"^-D.", f):
+                    _add_dir(chdir, f[2:])
+                    continue
+                if f.startswith("--chdir="):
+                    _add_dir(chdir, f[8:])
+                    continue
                 if f in _SUDO_ARG_FLAGS:
                     i += 1
             continue
@@ -340,30 +592,60 @@ def _unwrap(args: List[str]) -> List[str]:
             while i < len(args) and (args[i].startswith("-") or _ASSIGN_RE.match(args[i])):
                 f = args[i]
                 i += 1
-                if f in ("-u", "-C", "-S"):
-                    i += 1
+                if not f.startswith("-"):
+                    continue
+                i = _env_option(f, args, i, chdir, splits)
             continue
-        if name in ("command", "exec", "nohup", "time", "builtin", "setsid"):
-            i += 1
-            while i < len(args) and args[i].startswith("-"):
-                i += 1
-            continue
-        if name in ("nice", "ionice"):
-            i += 1
-            while i < len(args) and args[i].startswith("-"):
-                f = args[i]
-                i += 1
-                if f in ("-n", "-c"):
-                    i += 1
-            continue
-        if name == "timeout":
-            i += 1
-            while i < len(args) and args[i].startswith("-"):
-                i += 1
-            i += 1
+        # Every other wrapper of the shared list (nohup, nice, ionice, timeout, stdbuf, command, exec, xargs, busybox ...).
+        if name in _WRAPPERS:
+            i = _skip_wrapper(args, i, name)
             continue
         break
-    return args[i:]
+    return args[i:], chdir, overflow, splits
+
+
+_ENV_LONG = ("ignore-environment", "null", "unset", "chdir", "split-string", "argv0", "debug", "default-signal",
+             "ignore-signal", "block-signal", "list-signal-handling", "version", "help")
+_ENV_LONG_VALUE = ("unset", "chdir", "split-string", "argv0")
+
+
+def _env_option(f: str, args: List[str], i: int, chdir: list, splits: List[str]) -> int:
+    """One env option word f (args[i - 1]); returns the index of the next word. Read like GNU env (getopt_long "+C:iS:u:v0a:"):
+    a short cluster is walked letter by letter, and C, S, u or a take the rest of the cluster or the next word as their value;
+    a long option may be an unambiguous prefix (--split-s, --chd). The -S string is kept for a second reading."""
+    def take(kind: str, val, has_val: bool) -> None:
+        nonlocal i
+        if not has_val:
+            val = args[i] if i < len(args) else None
+            i += 1
+        if val is None:
+            return
+        if kind == "C":
+            _add_dir(chdir, val)
+        elif kind == "S":
+            splits.append(val)
+
+    if f.startswith("--"):
+        eq = f.find("=")
+        key = f[2:] if eq < 0 else f[2:eq]
+        if not key:
+            return i
+        names = [n for n in _ENV_LONG if n.startswith(key)]
+        name = key if key in names else (names[0] if len(names) == 1 else None)
+        if name in _ENV_LONG_VALUE:
+            take("C" if name == "chdir" else "S" if name == "split-string" else "u", None if eq < 0 else f[eq + 1:], eq >= 0)
+        return i
+    for k in range(1, len(f)):
+        c = f[k]
+        if c in "CSua":
+            take(c, f[k + 1:], k + 1 < len(f))
+            break
+    return i
+
+
+def _unwrap(args: List[str]) -> List[str]:
+    """The words of a command after wrappers and shell keywords."""
+    return _unwrap_dir(args)[0]
 
 
 def _resolve_dots(t: str) -> str:
@@ -558,8 +840,152 @@ def _reads_script_from_stdin(kind: str, rest: List[str]) -> bool:
     return True
 
 
-def _check_simple(words: List[str], depth: int) -> Optional[str]:
-    args = _unwrap(words)
+_CD_HEADS = frozenset(("cd", "chdir", "pushd", "set-location", "sl", "push-location"))
+_ANCHORED_RE = re.compile(r"^(?:[\\/~$%]|[A-Za-z]:)")
+_NOT_CD = object()
+# A folder path longer than this (after "." and ".." are resolved) is not followed: the line is refused instead.
+_MAX_CWD_CHARS = 4096
+_CWD_OVERFLOW = object()
+# A folder that stepped above the home folder or a drive root is unknown, and treated as protected for the rest of the line.
+_CWD_LOST = object()
+
+
+class _Folder:
+    """The folder a line has reached, kept as an immutable chain: an anchor (the root, a drive, a home word) and the
+    segments below it, newest first. A cd adds or drops one segment, so the cost of a step does not depend on how long
+    the folder is. kind is "root", "drive", "home" or "other" (a variable or ~user the line cannot see through)."""
+
+    __slots__ = ("kind", "a", "up", "seg", "n", "len")
+
+    def __init__(self, kind: str, a: str, up: Any = None, seg: str = "", n: int = 0, length: int = 0) -> None:
+        self.kind = kind
+        self.a = a
+        self.up = up
+        self.seg = seg
+        self.n = n
+        self.len = length or len(a)
+
+
+def _folder_step(f: Any, seg: str) -> Any:
+    """One step from folder f (a _Folder, _CWD_LOST or None): a segment name, "." or "..". Returns the new folder,
+    _CWD_LOST, None (unknown) or _CWD_OVERFLOW."""
+    if f is None or f is _CWD_LOST or f is _CWD_OVERFLOW:
+        return f
+    if seg in ("", "."):
+        return f
+    if seg == "..":
+        if f.n > 0:
+            return f.up
+        if f.kind == "home":
+            return _CWD_LOST
+        return None if f.kind == "other" else f
+    length = f.len + len(seg) + 1
+    if length > _MAX_CWD_CHARS:
+        return _CWD_OVERFLOW
+    return _Folder(f.kind, f.a, f, seg, f.n + 1, length)
+
+
+def _folder_walk(f: Any, path: str) -> Any:
+    for seg in path.split("/"):
+        f = _folder_step(f, seg)
+        if f is None or f is _CWD_LOST or f is _CWD_OVERFLOW:
+            return f
+    return f
+
+
+def _folder_of(word: str) -> Any:
+    """The folder an anchored word names (absolute, drive, home or variable)."""
+    t = re.sub(r"/{2,}", "/", str(word).rstrip().replace("\\", "/"))
+    drive = re.match(r"^[A-Za-z]:(?:/|\Z)", t)
+    if t.startswith("/"):
+        return _folder_walk(_Folder("root", "/"), t[1:])
+    if drive:
+        return _folder_walk(_Folder("drive", t[:2] + "/"), t[drive.end():])
+    first = t.split("/")[0]
+    kind = "home" if first.lower() in _HOME_WORDS else "other"
+    return _folder_walk(_Folder(kind, first + "/"), t[len(first) + 1:])
+
+
+def _folder_text(f: Any, m: int) -> str:
+    """The text of the last m segments of folder f, as a path; when segments are left out it starts at a made-up anchor."""
+    segs = []
+    g = f
+    i = 0
+    while i < m and g.n > 0:
+        segs.append(g.seg)
+        g = g.up
+        i += 1
+    segs.reverse()
+    base = "/__" if g.n > 0 else ("" if g.kind == "root" else g.a.rstrip("/"))
+    return base + ("/" + "/".join(segs) if segs else "")
+
+
+def _cd_target(args: List[str], cwd: Any) -> Any:
+    """The working folder a cd or pushd leaves behind: a _Folder, _CWD_LOST, or None when it cannot be known (cd -, a
+    relative folder from an unknown place, popd). cwd is the folder before the command (None = unknown). Returns
+    _NOT_CD when the words are not a directory change."""
+    if not args:
+        return _NOT_CD
+    head = _program_name(args[0])
+    if head in ("popd", "pop-location"):
+        return None
+    if head not in _CD_HEADS:
+        return _NOT_CD
+    # cmd.exe's /d (change the drive too) is an option, not the folder.
+    ops = [
+        w for w in args[1:]
+        if (not re.match(r"^-[A-Za-z]+\Z", w) or w == "-") and not (head in ("cd", "chdir") and w.lower() == "/d")
+    ]
+    if ops and ops[0] == "--":
+        ops = ops[1:]
+    # A bare cd goes home; a bare pushd swaps directories, which is not known here.
+    if not ops:
+        return None if head in ("pushd", "push-location") else _folder_of("~")
+    t = ops[0]
+    if t == "-":
+        return None
+    # Anchored words (absolute, drive, home or variable) name the folder on their own; a relative word follows the old folder.
+    if _ANCHORED_RE.match(t):
+        return _folder_of(t)
+    return _folder_rel(cwd, t)
+
+
+def _folder_rel(cwd: Any, w: str) -> Any:
+    """A relative folder word followed from the folder cwd (None = unknown)."""
+    if cwd is None:
+        return None
+    return _folder_walk(cwd, w.rstrip().replace("\\", "/"))
+
+
+def _from_cwd(cwd: Any, word: str) -> str:
+    """A word read from the folder cwd: relative words are joined to it, anchored words are kept. Only as many trailing
+    segments of the folder as the word's ".." can reach (plus four) are written out: a protected folder is at most three
+    segments deep, so the rest cannot change the answer."""
+    if not cwd or not word or _ANCHORED_RE.match(word):
+        return word
+    if cwd is _CWD_LOST:
+        return "/"
+    ups = sum(1 for s in re.split(r"[\\/]", word) if s == "..")
+    return _folder_text(cwd, ups + 4) + "/" + word
+
+
+def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[str]:
+    args, chdir, overflow, splits = _unwrap_dir(words)
+    if overflow:
+        return _OVERFLOW
+    if chdir:
+        known = _in_dir(known, chdir)
+        if known is _CWD_OVERFLOW:
+            return _OVERFLOW
+    # env -S "rm -rf ~": the split strings (env joins their words in order) are a command line of its own, followed by
+    # the words after them. One reading for all of them, so the cost does not multiply with the number of -S options.
+    if splits and depth < _MAX_DEPTH:
+        tail = " ".join("'" + w.replace("'", "'\\''") + "'" for w in args)
+        # The string is read as the rest of an env command, so env options inside it (-i, -u NAME, -C DIR, -S) are read too.
+        text = " ".join(re.sub(r"\\[_tnvfr]", " ", x) for x in splits)
+        hit = _analyze("env " + text + " " + tail, depth + 1, known)
+        if hit:
+            return hit
     if not args:
         return None
     head = _program_name(args[0])
@@ -580,8 +1006,16 @@ def _check_simple(words: List[str], depth: int) -> Optional[str]:
         k = next((j for j, w in enumerate(rest) if re.match(r"^/[ck]\Z", w, re.I)), -1)
         if k >= 0:
             code = " ".join(rest[k + 1:])
+    # The code is a download in a substitution (X="$(curl URL)"; sh -c "$X"): the same as sh -c "$(curl URL)".
+    if (
+        code is not None
+        and (head in _SHELLS or head in ("su", "eval"))
+        and re.match(r"^\s*(?:\$\(|`)", code)
+        and _SHELL_RUNS_DOWNLOAD_RE.search('sh -c "' + code + '"')
+    ):
+        return "pipe_to_shell"
     if code is not None and depth < _MAX_DEPTH:
-        hit = _analyze(code, depth + 1)
+        hit = _analyze(code, depth + 1, known)
         if hit:
             return hit
 
@@ -591,7 +1025,7 @@ def _check_simple(words: List[str], depth: int) -> Optional[str]:
         return "rm_root_home"
 
     if head in _RM_HEADS:
-        if any(_recursive_flag(w, head) for w in rest) and any(_dangerous_path(w) for w in _operands(rest, head)):
+        if any(_recursive_flag(w, head) for w in rest) and any(_dangerous_path(_from_cwd(known, w)) for w in _operands(rest, head)):
             return "rm_root_home"
     if head == "find":
         paths: List[str] = []
@@ -599,18 +1033,21 @@ def _check_simple(words: List[str], depth: int) -> Optional[str]:
             if w.startswith("-") or w == "(" or w == "!":
                 break
             paths.append(w)
+        # After a cd to a protected folder, a find with no path starts at ".".
+        if known and not paths:
+            paths.append(".")
         delete = "-delete" in rest or any(
             w == "-exec" and re.match(r"^(?:rm|shred)\Z", _program_name(rest[j + 1] if j + 1 < len(rest) else ""))
             for j, w in enumerate(rest)
         )
         filtered = any(_FIND_TESTS.match(w) for w in rest)
-        if delete and not filtered and any(_dangerous_path(w) for w in paths):
+        if delete and not filtered and any(_dangerous_path(_from_cwd(known, w)) for w in paths):
             return "rm_root_home"
     if head in ("chmod", "chown", "chgrp"):
         if any(re.match(r"^-[A-Za-z]*R[A-Za-z]*\Z", w) or w == "--recursive" for w in rest):
             ops = _operands(rest, head)
             mode = ops[0] if ops else ""
-            targets = [d for d in (_dangerous_path(w) for w in ops[1:]) if d]
+            targets = [d for d in (_dangerous_path(_from_cwd(known, w)) for w in ops[1:]) if d]
             if "root" in targets or "system" in targets:
                 return "perm_root"
             if head == "chmod" and "home" in targets and _world_writable(mode):
@@ -690,17 +1127,39 @@ def _brace_alts(w: str) -> Optional[List[str]]:
     return _expand_braces(_SEQ_RE.sub(_expand_seq, str(w)))
 
 
-def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str]:
+def _strip_redirects(words: List[str]) -> List[str]:
+    """The words of a command without its redirections and their targets (>> ~/.bashrc curl URL is curl URL)."""
+    out: List[str] = []
+    skip = False
+    for w in words:
+        if skip:
+            skip = False
+            continue
+        if re.match(r"^\d*[<>]>?\|?\Z", w, _A):
+            skip = True
+            continue
+        if re.match(r"^\d*[<>]>?\|?[^<>(\s]", w, _A):
+            continue
+        out.append(w)
+    return out
+
+
+def _segment_dir(known: Any, d: Optional[List[str]]) -> Any:
+    """The folder a segment of a pipeline runs in: known (None = unknown) moved by an env -C / sudo -D in front of it."""
+    return _in_dir(known, d) if d else known
+
+
+def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional[str] = None) -> Optional[str]:
     heads = []
     for words, _sep in pipe:
-        a = _unwrap(words)
+        a, d, _ovf, _spl = _unwrap_dir(_strip_redirects(words))
         alts = _brace_alts(a[0]) if a else [""]
         names = [_program_name(x) for x in (alts if alts is not None else [str(a[0])])]
-        heads.append((a, names[0], names, alts is None))
+        heads.append((a, names[0], names, alts is None, _segment_dir(known, d)))
     first_dl = next((j for j, h in enumerate(heads) if h[3] or any(n in _DOWNLOADERS for n in h[2])), -1)
     if first_dl >= 0:
         for j in range(first_dl + 1, len(pipe)):
-            args, head, names, overflow = heads[j]
+            args, head, names, overflow, _dir = heads[j]
             # an interpreter that reads its program from the pipe (python3, python3 -, node, perl, ruby)
             interp = "" if overflow or any(n in _SHELLS for n in names) else next((k for k in map(_interpreter_kind, names) if k), "")
             if interp:
@@ -727,10 +1186,15 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
                     target = w
                 elif re.match(r"^(?:--output|--output-document|-OutFile)[=:]", w, re.I):
                     target = re.sub(r"^[^=:]*[=:]", "", w, count=1)
+                elif re.match(r"^-[A-Za-z]*?[oO]\S", w):
+                    target = re.sub(r"^-[A-Za-z]*?[oO]", "", w, count=1)  # curl -o$HOME/.bashrc
                 elif heads[j][1] == "tee" and not w.startswith("-") and i > 0:
                     target = w
+                elif heads[j][1] == "dd" and w.startswith("of="):
+                    target = w[3:]
                 if target is not None:
-                    alts = _brace_alts(target)
+                    # A relative file is read from the folder an earlier cd, pushd or env -C moved to.
+                    alts = _brace_alts(_from_cwd(heads[j][4], target))
                     if alts is None or any(_is_rc_path(t) for t in alts):
                         return "rc_download"
     for words, _sep in pipe:
@@ -740,22 +1204,53 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
     return None
 
 
-def _check_segments(segs: List[Tuple[List[str], Optional[str]]], depth: int) -> Optional[str]:
+# Most backtick substitutions read from a changed folder in one command line; past it the line is refused.
+_MAX_TICK_READS = 200
+
+
+def _check_segments(
+    segs: List[Tuple[List[str], Optional[str]]], depth: int, cwd0: Any = None
+) -> Optional[str]:
+    """cwd0 is the folder a cd or pushd earlier in the same command line moved to (None = unknown). A cd inside a pipeline or a background command runs in a subshell and does not count."""
     pipe: List[Tuple[List[str], Optional[str]]] = []
-    for words, sep in segs:
-        hit = _check_simple(words, depth)
+    known = cwd0  # the folder reached so far: a _Folder, _CWD_LOST, or None when unknown
+    raws = getattr(segs, "raws", None)
+    ticks = 0
+    var_scope = _Vars()
+    for idx, (words, sep) in enumerate(segs):
+        # Literal variables assigned earlier on the line are filled in (X=curl; $X url | sh).
+        words = var_scope.apply(words, sep)
+        if var_scope.overflow:
+            return _OVERFLOW
+        hit = _check_simple(words, depth, known)
         if hit:
             return hit
+        # A command substitution in backticks starts in the folder the line has reached, like $( ) and sh -c. While the folder
+        # is still the one the line started in, the whole-line reading in _analyze() has already covered it.
+        if raws and raws[idx] and known is not cwd0 and depth < _MAX_DEPTH:
+            ticks += 1
+            if ticks > _MAX_TICK_READS:
+                return _OVERFLOW
+            inner = _backtick_code(raws[idx])
+            inner_hit = _analyze(inner, depth + 1, known) if inner else None
+            if inner_hit:
+                return inner_hit
+        if sep not in ("|", "|&", "&"):
+            to = _cd_target(_unwrap(words), known)
+            if to is _CWD_OVERFLOW:
+                return _OVERFLOW
+            if to is not _NOT_CD:
+                known = to
         pipe.append((words, sep))
         if not _is_pipe(sep):
-            hit2 = _check_pipeline(pipe)
+            hit2 = _check_pipeline(pipe, known)
             if hit2:
                 return hit2
             pipe = []
-    return _check_pipeline(pipe) if pipe else None
+    return _check_pipeline(pipe, known) if pipe else None
 
 
-def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
+def _analyze(cmd: str, depth: int = 0, known: Any = None) -> Optional[str]:
     text = str(cmd)
     if len(text) > _MAX_CHARS:
         return _OVERFLOW
@@ -771,6 +1266,7 @@ def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
     if (
         _SHELL_RUNS_DOWNLOAD_RE.search(text)
         or _SOURCE_DOWNLOAD_RE.search(bare)
+        or _SHELL_STDIN_DOWNLOAD_RE.search(text)
         or _PS_PIPE_RE.search(ps_bare)
         or _PS_CALL_RE.search(ps_bare)
     ):
@@ -778,20 +1274,26 @@ def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
     if _PS_DISK_RE.search(bare):
         return "disk_overwrite"
     segs, truncated = _segments_of(text)
-    hit = _check_segments(segs, depth)
+    hit = _check_segments(segs, depth, known)
     if hit:
         return hit
+    # A command substitution in backticks runs its text as commands (echo `rm -rf ~`); read them like a sh -c string.
+    if depth < _MAX_DEPTH and "`" in text:
+        inner = _backtick_code(text)
+        inner_hit = _analyze(inner, depth + 1, known) if inner else None
+        if inner_hit:
+            return inner_hit
     # POSIX reading: an unquoted backslash escapes the next character and is removed (r\m, cu\rl, .bash\rc). The Windows
     # reading above keeps it as a path separator and runs first, so this one only adds blocks: any rule it hits counts.
     if "\\" in text:
-        posix_hit = _check_segments(_segments_of(text, True)[0], depth)
+        posix_hit = _check_segments(_segments_of(text, True)[0], depth, known)
         if posix_hit:
             return posix_hit
     # ANSI-C quoting: bash reads $'\x63url' as curl. The words are decoded the way bash does, then read again; as above,
     # this reading only adds a block, and only for the rules that name a program, a file or a path ($'\x73h',
     # $'.bash\x72c', $'\x72m' -rf $'\x7e').
     if "$'" in text:
-        ansi_hit = _check_segments(_segments_of(_decode_ansi_c(text), True)[0], depth)
+        ansi_hit = _check_segments(_segments_of(_decode_ansi_c(text), True)[0], depth, known)
         if ansi_hit in ("pipe_to_shell", "rc_download", "rm_root_home"):
             return ansi_hit
     # Fail closed: never allow a line whose tail was not read.

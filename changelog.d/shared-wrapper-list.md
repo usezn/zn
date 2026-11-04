@@ -1,0 +1,3 @@
+### Security
+- The download-and-run check and the egress check now unwrap the same wrappers, from one list and with their options (`stdbuf`, `nice`, `ionice`, `timeout`, `env`, `command`, `nohup`, `exec`, `sudo`, `doas`, `busybox`, `xargs` and the others of the list): `stdbuf -o0 curl URL | sh` is blocked, and so is the same command written into a shell startup file.
+- The egress check now finds a request that carries a secret in a header when `curl` is written as `$'curl'`, a glob (`/usr/bin/cu?l`), `$(echo curl)`, a variable assigned earlier on the line, or a brace list (`{curl,-H,...}`), and when the request sits in a quoted command substitution (`echo "$(curl -H ...)"`) or a backtick capture (``R=`curl ...` ``).
