@@ -72,6 +72,10 @@ For example, a p50 of 54 and a p95 of 56.1 mean the hook usually takes about 54 
 57 ms. Compare a row with the 24 ms that a bare `node -e ""` takes in the same run: that is the part of the
 wait that is Node.js starting, not zn. See [How it is measured](#how-it-is-measured) above for the full method.
 
+## The hook launcher on Windows
+
+Claude Code, Antigravity and Gemini CLI start their hook through a small launcher script, which runs in Git Bash on Windows. Starting a program is slower on Windows, and Windows Defender scans each one, so what the launcher starts matters. On a Windows Server 2022 test machine with Defender on, a hook call through the launcher of earlier versions took a median of 383 ms (95th percentile 499 ms), against 132 ms (144 ms) for the check alone. The Windows launcher now starts one Node.js process and nothing else (the check runs in a worker thread of it, and the timer is in the main thread: at the deadline the process is killed at once, even if the check is stuck in a blocking system call, and the launcher script writes the block), and took a median of 204 ms (95th percentile 220 ms) before the check moved into a worker thread, which costs a few tens of milliseconds more. It keeps the same rules: a call is still blocked when zn-gate or Node.js is missing, when zn-gate changed since the hooks were installed, when the check fails or does not confirm its answer, or when it runs too long. One case is covered only by the agent's own hook timeout: a hang while Node.js itself starts, before zn-gate can start its timer. Run `zn hooks install` again, or update zn-gate, to switch an existing launcher to the new one.
+
 ## The budget in CI
 
 The `Hook latency` workflow runs this benchmark on every pull request that changes the hook code. Each case

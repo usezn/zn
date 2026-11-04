@@ -43,8 +43,19 @@ test('refresh: the launcher keeps its deadline options, and Windows (Claude Code
   assert.match(out, /refreshed hook launchers for claude-code/);
   const text = fs.readFileSync(ctx.file, 'utf8');
   assert.match(text, new RegExp("^ZN_SHA='" + launcher.runnerSha(ctx.runner) + "'$", 'm'));
+  // On Windows the launcher moves to the lean one (shell built-ins and one node), with the same deadline.
+  assert.match(text, /^ZN_DEADLINE_S=9$/m);
+  assert.doesNotMatch(text, /\/bin\/sleep/);
+});
+
+test('refresh: off Windows the launcher keeps its kind and its deadline options', { skip: !posix }, (t) => {
+  const ctx = setup(t);
+  launcher.writeLauncher('claude-code', process.execPath, ctx.runner, { env: ctx.env, home: ctx.home, deadlineS: 9, deadlineSoft: true, runnerDigest: '00'.repeat(32) });
+  refresh.main({ env: ctx.env, home: ctx.home, runnerPath: ctx.runner, platform: 'linux', out: () => {} });
+  const text = fs.readFileSync(ctx.file, 'utf8');
   assert.match(text, /\/bin\/sleep 9 & ZN_SP=/);
   assert.ok(text.includes('[ -x /bin/sleep ] || { zn_cap "$@"; return 0; }'));
+  assert.doesNotMatch(text, /ZN_DEADLINE_S=/);
 });
 
 function post(ctx, extra = {}) {
