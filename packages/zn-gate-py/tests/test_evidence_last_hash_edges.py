@@ -1,6 +1,5 @@
 """Edge cases for get_last_hash and recovery_hint: one entry, no final newline,
 a whitespace-only file, a damaged last line and a ledger folder that does not exist."""
-import json
 import os
 
 import pytest
