@@ -173,6 +173,8 @@ Only the rules listed in [Destructive commands](https://github.com/usezn/zn/blob
 
 Runnable example with Microsoft Semantic Kernel: [examples/semantic-kernel-agent](https://github.com/usezn/zn/tree/main/examples/semantic-kernel-agent).
 
+The secret-file check reads the text of a path only. It does not follow symbolic links and does not expand Windows short names (such as `PROGRA~1`), so a link or short name that points at a protected file is not recognised. Keep secrets in the zn vault (the npm package's `zn env shadow .env`) or outside the project folder.
+
 ### LangChain / LangGraph
 
 The integration is tested against `langchain-core` 1.3.3 and the current 1.x release; 1.3.3 is the minimum supported version, because earlier releases have a known high severity advisory.

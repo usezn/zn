@@ -26,8 +26,9 @@ const DENY = [
   "cat '.env.example','.env'", "gc '.env.example','.env'", "type '.env.example','.env'",
   "cat @('.env.example','.env')", "gc @('.env.example','.env')", "type @('.env.example','.env')",
   'Get-Content .env.example,.env', 'Select-String -Path .env.example,.env -Pattern TOKEN',
+  'gc ./.env.example,./.env', 'gc dir/../.env.example,dir/../.env',
 ];
-const ALLOW = ['gc .env.example', 'cat .env.example', 'gc .env.example,README.md', 'cat .env.example, README.md'];
+const ALLOW = ['gc ./.env.example', 'gc dir/../.env.example', 'gc .env.example', 'cat .env.example', 'gc .env.example,README.md', 'cat .env.example, README.md'];
 
 for (const ps of [true, false]) {
   test('PowerShell list reads of a real .env are blocked (powershell: ' + ps + ')', (t) => {
