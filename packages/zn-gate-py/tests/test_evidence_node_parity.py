@@ -159,7 +159,7 @@ def test_many_confidences_verify_both_ways(tmp_path):
     p = _py_write(tmp_path, events)
     assert py_ev.verify_evidence_ledger(str(n))["valid"]
     assert _node_verify(tmp_path, p)["valid"]
-    for rec_n, rec_p, v in zip(_records(n), _records(p), values):
+    for rec_n, rec_p, v in zip(_records(n), _records(p), values, strict=True):
         assert rec_n["confidence"] == rec_p["confidence"] == v
 
 

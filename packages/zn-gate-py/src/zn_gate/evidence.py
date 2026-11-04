@@ -417,6 +417,7 @@ def _js_number(x: float) -> str:
     from decimal import Decimal
 
     sign, digit_tuple, exp = Decimal(repr(x)).as_tuple()
+    assert isinstance(exp, int)  # a finite float, so never 'n', 'N' or 'F'
     all_digits = "".join(map(str, digit_tuple))
     digits = all_digits.rstrip("0") or "0"
     # Decimal point position: value = 0.<digits> * 10**n
@@ -437,7 +438,7 @@ def _serialize(record: Dict[str, Any], ascii_only: bool = False, js_numbers: boo
     swap = js_numbers and isinstance(conf, float) and math.isfinite(conf) and not conf.is_integer()
     text = json.dumps({**record, "confidence": _CONF_MARK} if swap else record,
                       separators=(",", ":"), ensure_ascii=ascii_only)
-    if swap:
+    if swap and isinstance(conf, float):
         text = text.replace('"' + _CONF_MARK + '"', _js_number(conf), 1)
     return text if ascii_only else _LONE_SURROGATE.sub(lambda m: "\\u%04x" % ord(m.group()), text)
 

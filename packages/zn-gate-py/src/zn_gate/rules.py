@@ -1969,7 +1969,7 @@ def _iban_ok(raw: str) -> bool:
 
 def _dni_ok(raw: str) -> bool:
     m = re.fullmatch(r"([0-9]{8})([A-Z])", raw.replace("-", "").upper())
-    return bool(m) and _DNI_LETTERS[int(m.group(1)) % 23] == m.group(2)
+    return m is not None and _DNI_LETTERS[int(m.group(1)) % 23] == m.group(2)
 
 
 def _nie_ok(raw: str) -> bool:

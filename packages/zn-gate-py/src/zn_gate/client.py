@@ -27,6 +27,10 @@ from .verbose import is_verbose
 DEFAULT_ENDPOINT = "https://api.usezn.com/v30/analyze"
 
 
+# The stdlib's own "no timeout given" marker; typeshed does not declare it.
+_DEFAULT_TIMEOUT: Any = socket.__dict__["_GLOBAL_DEFAULT_TIMEOUT"]
+
+
 def _bounded_getaddrinfo(host: Any, port: Any, timeout: Optional[float]) -> Any:
     """socket.getaddrinfo that gives up after `timeout` seconds.
 
@@ -52,16 +56,16 @@ def _bounded_getaddrinfo(host: Any, port: Any, timeout: Optional[float]) -> Any:
     return box["result"]
 
 
-def _create_connection(address: Any, timeout: Any = socket._GLOBAL_DEFAULT_TIMEOUT, source_address: Any = None) -> socket.socket:
+def _create_connection(address: Any, timeout: Any = _DEFAULT_TIMEOUT, source_address: Any = None) -> socket.socket:
     """socket.create_connection with a bounded name lookup (same signature)."""
     host, port = address
-    wait = None if timeout is socket._GLOBAL_DEFAULT_TIMEOUT else timeout
+    wait = None if timeout is _DEFAULT_TIMEOUT else timeout
     last: Optional[OSError] = None
     for family, kind, proto, _canon, sockaddr in _bounded_getaddrinfo(host, port, wait):
         sock = None
         try:
             sock = socket.socket(family, kind, proto)
-            if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+            if timeout is not _DEFAULT_TIMEOUT:
                 sock.settimeout(timeout)
             if source_address:
                 sock.bind(source_address)
@@ -79,7 +83,7 @@ class _BoundedHTTPSConnection(http.client.HTTPSConnection):
     # certificate check) and sends it as the Host header, so connecting to a resolved address is safe.
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._create_connection = _create_connection  # type: ignore[attr-defined]
+        self._create_connection = _create_connection
 
 
 class _BoundedHTTPSHandler(urllib.request.HTTPSHandler):
