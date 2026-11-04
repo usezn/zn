@@ -74,6 +74,7 @@ const { whichSync } = require('../broker/markers');
 const { shQuote, portablePath } = require('../shell-quote');
 const { claudeCodePolicyWarnings } = require('./managed-policy');
 const cfg = require('./config-file');
+const { configParseError } = require('../config-parse');
 const { hooksOf } = cfg;
 const launcher = require('./launcher');
 const { isSecretsToolName } = require('../broker/secrets-tools');
@@ -304,14 +305,23 @@ function hookCommand(opts = {}) {
 }
 
 function readJson(file) {
-  let data;
+  let text;
   try {
-    const text = fs.readFileSync(file, 'utf8');
-    data = text.replace(/^\uFEFF/, '').trim() ? cfg.parseJson(text) : {};
+    text = fs.readFileSync(file, 'utf8');
   } catch (err) {
     if (err.code === 'ENOENT') return {};
     // A file that cannot be read (no permission, a folder in its place) is not a parse error.
     throw new Error(require('../errors').fsErrorText(err, file) || 'cannot parse ' + file + ': ' + err.message);
+  }
+  let data;
+  if (text.replace(/^\uFEFF/, '').trim()) {
+    try {
+      data = cfg.parseJson(text);
+    } catch (err) {
+      throw new Error(configParseError(file, text, err));
+    }
+  } else {
+    data = {};
   }
   if (data === null || typeof data !== 'object' || Array.isArray(data)) {
     throw new Error(file + ' must hold a JSON object, not ' + (data === null ? 'null' : Array.isArray(data) ? 'an array' : typeof data) + ' (left unchanged)');

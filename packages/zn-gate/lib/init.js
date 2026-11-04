@@ -4,6 +4,24 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { fsErrorText } = require('./errors');
+const { configParseError } = require('./config-parse');
+
+// What to tell the user to do by hand when a config cannot be parsed (the file is never rewritten then).
+const WRAP_BY_HAND = 'wrap the MCP servers by hand with zn-gate shield (see docs/shield.md)';
+
+/**
+ * JSON.parse with the plain-language error of lib/config-parse.js. A file that
+ * does not parse is "manual": zn-gate does not rewrite it. The caller strips the BOM.
+ */
+function parseConfigJson(raw, file) {
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    const err = new Error(configParseError(file, raw, e, WRAP_BY_HAND));
+    err.manual = true;
+    throw err;
+  }
+}
 
 /*
  * Config formats (verified against each agent's official docs, 2026-10-11):
@@ -75,7 +93,7 @@ function shieldArgv(originalArgv, options) {
 // ---------------------------------------------------------------------------
 const mcpServersJson = {
   list(raw, env) {
-    const json = JSON.parse(raw);
+    const json = parseConfigJson(raw, env.filePath);
     const srvs = json[env.key || 'mcpServers'] || {};
     return Object.entries(srvs).map(([name, cfg]) => {
       const command = (cfg && cfg.command) || '';
@@ -84,7 +102,7 @@ const mcpServersJson = {
     });
   },
   shield(raw, env, options) {
-    const json = JSON.parse(raw);
+    const json = parseConfigJson(raw, env.filePath);
     const srvs = json[env.key || 'mcpServers'] || {};
     let modified = false;
     for (const cfg of Object.values(srvs)) {
@@ -103,13 +121,7 @@ const mcpServersJson = {
 // Adapter: OpenCode  { mcp: { name: { type: "local", command: [..] } } }
 // ---------------------------------------------------------------------------
 function parseStrictJson(raw, filePath) {
-  try {
-    return JSON.parse(raw);
-  } catch (e) {
-    const err = new Error(`${path.basename(filePath)} is not strict JSON (comments/trailing commas?). Not rewriting it; add zn-gate manually.`);
-    err.manual = true;
-    throw err;
-  }
+  return parseConfigJson(raw, filePath);
 }
 
 const opencodeJson = {
@@ -309,7 +321,8 @@ function scanEnvironments(customEnvList = null) {
 
     if (exists) {
       try {
-        const raw = fs.readFileSync(env.filePath, 'utf8');
+        // A leading byte order mark is not part of the JSON: it is dropped here and put back when the file is written.
+        const raw = fs.readFileSync(env.filePath, 'utf8').replace(/^﻿/, '');
         servers = adapterFor(env).list(raw, env);
       } catch (e) {
         servers = [{ name: 'error', error: e.message }];
@@ -650,14 +663,15 @@ function configureEnvironments(options = {}) {
     }
 
     try {
-      const raw = fs.readFileSync(env.filePath, 'utf8');
-      const { modified, content, manual } = adapterFor(env).shield(raw, env, options);
+      const text = fs.readFileSync(env.filePath, 'utf8');
+      const bom = text.charCodeAt(0) === 0xFEFF; // kept: the file is written back with the same first bytes
+      const { modified, content, manual } = adapterFor(env).shield(bom ? text.slice(1) : text, env, options);
 
       let backup;
       if (modified && !options.dryRun) {
         backup = path.join(resolved.dir, `${path.basename(env.filePath)}.bak.${Date.now()}`);
         createBackup(resolved.target, backup);
-        atomicWrite(resolved.target, content);
+        atomicWrite(resolved.target, (bom ? '﻿' : '') + content);
       }
 
       if (modified) {
