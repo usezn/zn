@@ -216,6 +216,9 @@ COMMANDS:
   shield, mcp-shield  Wrap and protect ANY external MCP server (uvx, npx, node, python)
   scan <path>         Recursively audit prompt templates, markdown, skills, and configs for injection traps and secrets
                       [--format text|json|github] (matched values are never printed)
+  scan --package NAME[@VERSION]
+                      Audit an npm package (MCP server or skill) before you add it: it is downloaded from the
+                      registry and unpacked to a temporary folder, never installed or run. Text output only.
   audit [path]        Review a repository's agent configs before you open it: hooks, MCP servers,
                       endpoint overrides, permissions, instructions, planted executables
                       [--format text|json|sarif] [--output FILE] [--fail-on high]
@@ -595,7 +598,7 @@ async function handleScan(targetPath, options) {
   }
   if (format === 'text') process.stdout.write(`
 ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Static Security Audit
-Target  : ${safeText(resolved)}
+Target  : ${safeText(options.targetLabel || resolved)}
 Scope   : ${options.includeCode ? 'All files (prompts + code)' : 'Prompt templates, docs, configs (use --code to scan source)'}
 Files   : ${files.length} file(s) queued for audit\n
 `);
@@ -825,6 +828,56 @@ ${ruleLine(process.env, 77)}\n
   process.exitCode = coverageExit();
 }
 
+// `scan --package NAME[@VERSION]`: the npm package is downloaded and unpacked into a temporary folder (never
+// installed, never run). The folder gets the same scan as `scan <path>` (with source files) and the agent-config
+// audit of lib/audit. Exit 1 on findings, 3 when something was not read, 2 when the package could not be fetched.
+async function runScanPackage(args, options) {
+  const fail = (msg) => {
+    process.stderr.write('zn-gate scan: ' + msg + '\n');
+    return 2;
+  };
+  const i = args.findIndex((a) => a === '--package' || a.startsWith('--package='));
+  const spec = args[i].startsWith('--package=') ? args[i].slice('--package='.length) : args[i + 1];
+  if (!spec || spec.startsWith('--')) return fail('--package needs an npm package name, as --package NAME or --package NAME@VERSION');
+  const extra = [];
+  for (let k = 1; k < args.length; k++) {
+    if (args[k] === '--package') { k++; continue; }
+    if (args[k].startsWith('--')) { if (COMMAND_OPTIONS.scan.value.includes(args[k])) k++; continue; }
+    extra.push(args[k]);
+  }
+  if (extra.length) return fail('--package scans the package from the registry: leave out the folder argument (' + extra[0].slice(0, 40) + ')');
+  if (options.includeHome) return fail('--include-home cannot be used with --package');
+  if (options.formatGiven && String(options.format).toLowerCase() !== 'text') return fail('--package supports only --format text for now');
+
+  const { fetchPackageForScan } = require('../lib/scan-package');
+  let pkg;
+  try {
+    pkg = await fetchPackageForScan(spec);
+  } catch (err) {
+    return fail(err.message);
+  }
+  const label = 'npm ' + pkg.name + '@' + pkg.version;
+  try {
+    process.exitCode = undefined;
+    await handleScan(pkg.dir, { ...options, includeCode: true, targetLabel: label });
+    const scanCode = process.exitCode || 0;
+    const audit = require('../lib/audit');
+    const auditReport = require('../lib/audit/report');
+    const result = audit.audit({ root: pkg.dir, agents: ['all'], includeHome: false, env: process.env });
+    const summary = auditReport.summarize(result, 'high');
+    if (result.findings.length) {
+      process.stdout.write('\nConfig audit: ' + result.findings.length + ' finding(s) in ' + label + '\n\n');
+      process.stdout.write(auditReport.toText(result, { toolVersion: VERSION, failOn: 'high', displayRoot: label, color: false }));
+    } else {
+      process.stdout.write('\nConfig audit: no findings in ' + label + '\n');
+    }
+    if (summary.failed || scanCode === 1) return 1;
+    return scanCode;
+  } finally {
+    pkg.cleanup();
+  }
+}
+
 // Secrets broker and agent hooks. Dispatched before the global option parsing
 // so flags after `zn run --` belong to the child command, untouched.
 const BROKER_COMMANDS = new Set(['run', 'hook', 'secrets-mcp', 'secret', 'secrets', 'env', 'hooks', 'uninstall']);
@@ -941,9 +994,9 @@ const CLOUD_VALUE_OPTIONS = ['--key', '--stage', '--url', '--long-input'];
 const CLOUD_FLAG_OPTIONS = ['--local-only', '--verbose'];
 const COMMAND_OPTIONS = {
   scan: {
-    value: ['--format', '--include', '--exclude', ...CLOUD_VALUE_OPTIONS],
+    value: ['--format', '--include', '--exclude', '--package', ...CLOUD_VALUE_OPTIONS],
     flag: ['--code', '--all', '--allow-partial', '--include-home', ...CLOUD_FLAG_OPTIONS],
-    listed: ['--format', '--include', '--exclude', '--code', '--all', '--allow-partial', '--include-home'],
+    listed: ['--format', '--include', '--exclude', '--code', '--all', '--allow-partial', '--include-home', '--package'],
   },
   analyze: {
     value: CLOUD_VALUE_OPTIONS,
@@ -1161,6 +1214,10 @@ ${ruleLine(process.env, 60)}\n`);
     return;
   }
 
+  if (command === 'scan' && args.some((a) => a === '--package' || a.startsWith('--package='))) {
+    process.exitCode = await runScanPackage(args, options);
+    return;
+  }
   if (command === 'scan') {
     const targetPath = scanTargetOf(args);
     await handleScan(targetPath, options);
