@@ -1222,7 +1222,7 @@ async function serve(opts) {
           } catch (err) {
             const code = err && typeof err.code === 'string' && err.code.startsWith('ZN_') ? err.code : 'ZN_ERROR';
             // Never echo arbitrary error text: it could carry a value.
-            const message = err && err.code && err.code.startsWith('ZN_') ? String(err.message).slice(0, 200) : 'internal error';
+            const message = err && err.code && err.code.startsWith('ZN_') ? String(err.message).slice(0, 200) : (vaultFsMessage(err) || 'internal error');
             send({ id, ok: false, error: { code, message } });
           }
         });
@@ -1428,4 +1428,12 @@ if (require.main === module && process.argv.includes('--serve')) {
   daemonMain(process.argv.slice(2));
 }
 
-module.exports = { serve, unlock, unlockForeground, lock, isRunning, endpoint, DEFAULT_TTL_MS, DEFAULT_IDLE_MS, PROTOCOL, DESTINATION_POLICY, assertPrivateEndpoint };
+/* A disk or permission failure of the vault, in the plain sentences of lib/errors.js, or null for any other error.
+ * Only the code is passed on: the vault file is named as "the vault" (write errors carry no path), so no internal
+ * detail reaches the person. Values never appear here. */
+function vaultFsMessage(err) {
+  if (!err || typeof err !== 'object') return null;
+  return require('../errors').fsErrorText({ code: err.code, errno: err.errno }, 'the vault');
+}
+
+module.exports = { serve, unlock, unlockForeground, lock, isRunning, endpoint, DEFAULT_TTL_MS, DEFAULT_IDLE_MS, PROTOCOL, DESTINATION_POLICY, assertPrivateEndpoint, vaultFsMessage };
