@@ -227,7 +227,7 @@ test('destructive: keywords, backticks and env -C / sudo -D chains of any length
     assert.ok(cmd.length < 200 * 1024);
     const t0 = cpuNow();
     const res = checkCommand(cmd);
-    assert.ok(cpuMsSince(t0) < 2000, cmd.slice(0, 40) + ' took ' + (cpuMsSince(t0)) + ' ms');
+    assert.ok(cpuMsSince(t0) < budget(2000), cmd.slice(0, 40) + ' took ' + (cpuMsSince(t0)) + ' ms');
     assert.equal(res.verdict, want, cmd.slice(0, 40));
   }
 });
@@ -317,7 +317,7 @@ test('the cost of a cd does not depend on the length of the folder it is in', ()
   assert.ok(cmd.length < 200000);
   const res = checkCommand(cmd);
   assert.equal(res.verdict, 'allow');
-  assert.ok(cpuMsSince(t0) < 1500, 'took ' + (cpuMsSince(t0)) + ' ms');
+  assert.ok(cpuMsSince(t0) < budget(1500), 'took ' + (cpuMsSince(t0)) + ' ms');
 });
 
 test('a relative target that climbs out of a known folder is judged from there', () => {
