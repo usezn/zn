@@ -86,12 +86,144 @@ function hooksOf(data, file) {
   return data.hooks;
 }
 
-function backup(file) {
-  if (!fs.existsSync(file)) return null;
+/** How many zn backups of one config file are kept (the newest ones); older ones are removed on each new backup. */
+const KEEP_BACKUPS = 3;
+const ABSENT_SUFFIX = '-absent';
+const ABSENT = Object.freeze({ absent: true });
+
+/** A new backup name next to the file, never an existing one (two backups in the same second get -2, -3...). */
+function newBackupPath(file, absent) {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '');
-  const dest = file + '.bak-zn-' + stamp;
-  fs.copyFileSync(file, dest);
+  const tail = absent ? ABSENT_SUFFIX : '';
+  let dest = file + '.bak-zn-' + stamp + tail;
+  for (let n = 2; fs.existsSync(dest); n++) dest = file + '.bak-zn-' + stamp + '-' + n + tail;
   return dest;
+}
+
+/**
+ * The zn backups of a file, newest first: [{ path, absent }]. A backup with the -absent suffix is an empty marker that
+ * records that the file did not exist before install.
+ */
+function backupsOf(file) {
+  const dir = path.dirname(file);
+  const prefix = path.basename(file) + '.bak-zn-';
+  let names;
+  try { names = fs.readdirSync(dir); } catch (_) { return []; }
+  const out = [];
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue;
+    const p = path.join(dir, name);
+    let st;
+    try { st = fs.statSync(p); } catch (_) { continue; }
+    if (st.isFile()) out.push({ path: p, absent: name.endsWith(ABSENT_SUFFIX), mtime: st.mtimeMs });
+  }
+  out.sort((a, b) => (b.mtime - a.mtime) || (a.path < b.path ? 1 : a.path > b.path ? -1 : 0));
+  return out;
+}
+
+/** Keeps the KEEP_BACKUPS newest zn backups of a file and removes the rest. */
+function pruneBackups(file, keep = KEEP_BACKUPS) {
+  for (const b of backupsOf(file).slice(keep)) {
+    try { fs.unlinkSync(b.path); } catch (_) { /* already gone */ }
+  }
+}
+
+/**
+ * Copies the file before zn changes it and returns the copy's path, or null when the file did not exist (an empty marker
+ * is written instead, so uninstall knows install created the file). Only the newest KEEP_BACKUPS copies are kept.
+ */
+function backup(file) {
+  if (!fs.existsSync(file)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(newBackupPath(file, true), '');
+    pruneBackups(file);
+    return null;
+  }
+  const dest = newBackupPath(file, false);
+  fs.copyFileSync(file, dest);
+  pruneBackups(file);
+  return dest;
+}
+
+function canonical(v) {
+  if (Array.isArray(v)) return '[' + v.map(canonical).join(',') + ']';
+  if (v !== null && typeof v === 'object') return '{' + Object.keys(v).sort().map((k) => JSON.stringify(k) + ':' + canonical(v[k])).join(',') + '}';
+  return JSON.stringify(v);
+}
+
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+/**
+ * Wraps a strip(data) helper that may tidy up data it did not change: the wrapper changes data only when strip reports
+ * that it removed something, which uninstallJson relies on.
+ */
+function ifChanged(strip) {
+  return (data) => {
+    if (!strip(JSON.parse(JSON.stringify(data)))) return false;
+    strip(data);
+    return true;
+  };
+}
+
+/** The keys install adds to a file that had none: "version": 1 and an empty "hooks" object. */
+function isInstallLeftover(data) {
+  return Object.keys(data).every((k) => (k === 'version' && data.version === 1) || (k === 'hooks' && isPlainObject(data.hooks) && Object.keys(data.hooks).length === 0));
+}
+
+/**
+ * The file as it was before zn's install: the newest zn backup that holds no zn entry (removeOurs reports none), or
+ * ABSENT when install created the file, or undefined when no such backup is left.
+ */
+function originalOf(file, removeOurs) {
+  for (const b of backupsOf(file)) {
+    if (b.absent) return ABSENT;
+    let text;
+    try { text = fs.readFileSync(b.path, 'utf8'); } catch (_) { continue; }
+    let data;
+    try { data = text.replace(/^﻿/, '').trim() ? parseJson(text) : {}; } catch (_) { continue; }
+    if (!isPlainObject(data) || removeOurs(data)) continue;
+    return { data, text };
+  }
+  return undefined;
+}
+
+/** True when the data, minus the keys install adds to a file that had none, equals the original. */
+function sameAsOriginal(data, original) {
+  const d = { ...data };
+  if (!('version' in original) && d.version === 1) delete d.version;
+  if (!('hooks' in original) && isPlainObject(d.hooks) && Object.keys(d.hooks).length === 0) delete d.hooks;
+  return canonical(d) === canonical(original);
+}
+
+/**
+ * Uninstall for a JSON config zn edits. removeOurs(data) takes zn's entries out of data in place and returns true when it
+ * removed any (and changes nothing when it removed none). Then:
+ * - install created the file and only zn's keys are left: the file is deleted;
+ * - the file is as install left it (no other key changed) and the original is known: the original bytes come back,
+ *   so a one-line file, a pre-existing "{}" and the indentation are kept as they were;
+ * - anything else: zn's entries are removed and the rest is written back as it was.
+ * Returns { action: 'unchanged' | 'deleted' | 'restored' | 'written', backup }.
+ */
+function uninstallJson(file, removeOurs, read = readJson) {
+  if (!fs.existsSync(file)) return { action: 'unchanged', backup: null };
+  const data = read(file);
+  if (!removeOurs(data)) return { action: 'unchanged', backup: null };
+  const original = originalOf(file, removeOurs);
+  const copy = backup(file);
+  if (original === ABSENT && isInstallLeftover(data)) {
+    fs.unlinkSync(file);
+    return { action: 'deleted', backup: copy };
+  }
+  if (original && original !== ABSENT && sameAsOriginal(data, original.data)) {
+    const target = realFile(file);
+    const mode = fs.statSync(target).mode & 0o777;
+    writeFileAtomic(target, original.text, mode);
+    return { action: 'restored', backup: copy };
+  }
+  writeJson(file, data);
+  return { action: 'written', backup: copy };
 }
 
 /** Where the config really lives: an existing symlink is followed, so the link itself stays as it is. */
@@ -156,4 +288,4 @@ function isOurs(command, agentId) {
   return script !== null && re.test(script);
 }
 
-module.exports = { readJson, parseJson, stringifyJson, formatJson, detectStyle, hooksOf, backup, writeJson, quoteArg, runnerPath, hookCommand, hookCommandWindows, isOurs };
+module.exports = { readJson, parseJson, stringifyJson, formatJson, detectStyle, hooksOf, backup, backupsOf, pruneBackups, uninstallJson, ifChanged, writeJson, quoteArg, runnerPath, hookCommand, hookCommandWindows, isOurs, KEEP_BACKUPS };

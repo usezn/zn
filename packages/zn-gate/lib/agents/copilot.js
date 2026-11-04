@@ -587,19 +587,11 @@ function install(opts = {}) {
 function uninstall(opts = {}) {
   const file = hooksFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
-  if (!fs.existsSync(file)) return report;
-  const data = cfg.readJson(file);
-  const before = JSON.stringify(data);
-  if (!stripOurs(data) || JSON.stringify(data) === before) return report;
-  report.backup = cfg.backup(file);
-  report.removed = 1;
-  const hooksLeft = isObj(data.hooks) ? Object.keys(data.hooks).length : 0;
-  const others = Object.keys(data).filter((k) => k !== 'version' && k !== 'hooks' && k !== 'disableAllHooks');
-  if (!hooksLeft && !others.length) {
-    fs.unlinkSync(file);
-  } else {
-    if (!hooksLeft) delete data.hooks;
-    cfg.writeJson(file, data);
+  // A file install created is deleted; a file that existed comes back as it was (see cfg.uninstallJson).
+  const res = cfg.uninstallJson(file, cfg.ifChanged(stripOurs));
+  if (res.action !== 'unchanged') {
+    report.backup = res.backup;
+    report.removed = 1;
   }
   return report;
 }
