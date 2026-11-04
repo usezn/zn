@@ -1,6 +1,7 @@
 """Direct tests for the rc path and world-writable mode helpers."""
 
 import os
+import sys
 
 import pytest
 
@@ -35,10 +36,12 @@ def test_other_files_are_not_rc_paths(tmp_path):
 
 @pytest.mark.parametrize("mode,expected", [(0o777, True), (0o775, False), (0o755, False)])
 def test_world_writable_for_modes_of_a_temporary_file(tmp_path, mode, expected):
-    f = tmp_path / "example.sh"
-    f.write_text("echo hi\n")
-    os.chmod(f, mode)
-    text = format(os.stat(f).st_mode & 0o777, "o")
-    assert text == format(mode, "o")
+    text = format(mode, "o")
+    if sys.platform != "win32":
+        # Windows keeps only a read-only flag (666 or 444), so the mode of a real file is checked on POSIX only.
+        f = tmp_path / "example.sh"
+        f.write_text("echo hi\n")
+        os.chmod(f, mode)
+        assert format(os.stat(f).st_mode & 0o777, "o") == text
     assert _world_writable(text) is expected
     assert _world_writable("0" + text) is expected

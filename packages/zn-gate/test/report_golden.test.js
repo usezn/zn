@@ -17,7 +17,7 @@ const report = require('../lib/report');
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'report_golden');
 const NOW = new Date('2026-10-17T12:00:00Z');
-const expectedLines = () => fs.readFileSync(path.join(FIXTURES, 'expected.txt'), 'utf8').split('\n');
+const expectedLines = () => fs.readFileSync(path.join(FIXTURES, 'expected.txt'), 'utf8').split(/\r?\n/);
 
 test.after(() => fs.rmSync(home, { recursive: true, force: true }));
 
