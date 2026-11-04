@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-04.1';
+const POLICY_RULES_VERSION = '2026-11-04.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1723,13 +1723,21 @@ function installRemoval(cmd) {
 
 // A path to the installed package built while the command runs, such as "$(npm root -g)/zn-gate/lib/hooks/runner.js":
 // it cannot be resolved here, so a command that writes or removes something with such a path is refused.
-const VAR_BASE_ZN_RE = /(?:\$\(|\$\{|\$[A-Za-z_]|`|%[A-Za-z_]+%|\$env:)[^;&|\n]*[\\/](?:node_modules[\\/])?zn-gate(?:[\\/@]|["'\s)`]|$)/i;
+// Matched in two linear steps instead of one pattern with an unbounded span between the two parts, which rescanned the rest
+// of the segment from every start: the earliest variable start, then the package folder anywhere after it. No length bound,
+// so a path of any length is judged the same way.
+const VAR_START_RE = /(?:\$\(|\$\{|\$[A-Za-z_]|`|%[A-Za-z_]+%|\$env:)/;
+const ZN_FOLDER_RE = /[\\/](?:node_modules[\\/])?zn-gate(?:[\\/@]|["'\s)`]|$)/i;
+function varBaseZn(seg) {
+  const m = VAR_START_RE.exec(seg);
+  return m !== null && ZN_FOLDER_RE.test(seg.slice(m.index + m[0].length));
+}
 const WRITE_VERB_RE = /(?:^|[\s;&|(`])(?:sudo\s+)?(?:rm|mv|unlink|rmdir|ln|cp|install|rsync|truncate|shred|chmod|chown|tee|sed|dd|touch|mkdir|del|erase|rd|ri|remove-item|move-item|copy-item|set-content|out-file)(?:\s|$)|>/i;
 function installPathViaVariable(cmd) {
   const text = String(cmd || '');
   if (!/zn-gate/i.test(text)) return false;
   for (const seg of text.split(/[;&|\n]+/)) {
-    if (VAR_BASE_ZN_RE.test(seg) && WRITE_VERB_RE.test(seg)) return true;
+    if (varBaseZn(seg) && WRITE_VERB_RE.test(seg)) return true;
   }
   return false;
 }
