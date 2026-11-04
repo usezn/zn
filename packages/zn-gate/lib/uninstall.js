@@ -8,7 +8,7 @@
  * terminal, exactly like `zn hooks install`) removes it:
  *   - the zn-gate plugin of Claude Code;
  *   - zn's hooks of every agent, for your user and for the current project;
- *   - MCP servers wrapped by `zn-gate init --wrap-mcp` (the saved copy is put back);
+ *   - MCP servers wrapped by `zn-gate init --wrap-mcp` (each one gets its original command back, in place);
  *   - the vault, only after a second, separate confirmation (default no).
  * .env files that `zn env shadow` filled with markers are never edited: the
  * values live in the vault, and `zn env unshadow` is what puts them back.
@@ -54,20 +54,18 @@ function shadowedFiles(cwd) {
   return found;
 }
 
-/* MCP configs with servers wrapped by `zn-gate init --wrap-mcp`, and the saved copy to put back. */
-function wrappedConfigs(envList) {
+/* MCP configs with servers wrapped by `zn-gate init --wrap-mcp`, to be un-wrapped in place. */
+function wrappedConfigs(envList, cwd) {
   const init = require('./init');
   const list = [];
-  for (const e of init.scanEnvironments(envList || null)) {
+  for (const e of init.scanEnvironments(envList || null, cwd)) {
     if (!e.exists) continue;
     // zn's own "secrets" server also names zn-gate; only a server wrapped with `shield` counts.
     const wrapped = e.servers.filter((s) => s.shielded && !s.error && /\bshield\b/.test([s.command || '', ...(s.args || [])].join(' ')));
     if (!wrapped.length) continue;
-    // Same pick and same safety checks as the restore itself (init.latestBackup / resolveConfig):
-    // the file named in the plan is the file that is put back; an unsafe config is not offered.
-    const unsafe = init.resolveConfig(e.filePath, e.scope).reason || null;
-    const backup = unsafe ? null : init.latestBackup(e.filePath, e.scope);
-    list.push({ env: e, name: e.name, file: e.filePath, servers: wrapped.length, backup, unsafe });
+    // Same safety checks as the revert itself (init.resolveConfig): an unsafe config is not offered.
+    const unsafe = init.resolveConfig(e.filePath, e.scope, cwd).reason || null;
+    list.push({ env: e, name: e.name, file: e.filePath, servers: wrapped.length, unsafe });
   }
   return list;
 }
@@ -103,7 +101,7 @@ async function plan(opts = {}) {
   const found = purge.targets(vaultOpts);
   return {
     agents,
-    wrapped: wrappedConfigs(opts.envList),
+    wrapped: wrappedConfigs(opts.envList, cwd),
     shadowed: shadowedFiles(cwd),
     vault: { exists: found.files.length > 0, home: store.paths(vaultOpts).home, lines: purge.describe(found, vaultOpts) },
     vaultOpts,
@@ -132,9 +130,9 @@ function printPlan(p, io) {
   if (p.wrapped.length) {
     out(io, '  MCP servers wrapped by zn-gate init --wrap-mcp');
     for (const w of p.wrapped) {
-      out(io, '    - ' + w.name + ' (' + w.servers + ' wrapped): ' + (w.backup
-        ? w.file + ' goes back to the copy saved before wrapping (' + w.backup + '); changes made to that file since are lost'
-        : w.file + (w.unsafe ? ' cannot be restored safely (' + w.unsafe + '), so it is left as it is' : ' has no saved copy, so it is left as it is') + ': remove the "zn-gate shield" wrapping by hand'));
+      out(io, '    - ' + w.name + ' (' + w.servers + ' wrapped): ' + (w.unsafe
+        ? w.file + ' cannot be changed safely (' + w.unsafe + '), so it is left as it is: remove the "zn-gate shield" wrapping by hand'
+        : w.file + ': each wrapped server gets its original command back; everything else in that file stays as it is'));
     }
   }
   if (p.vault.exists) {
@@ -166,7 +164,7 @@ async function removeVault(p, io) {
     return 'failed';
   }
   if (await daemon.isRunning(o)) {
-    out(io, 'The vault was kept: it is unlocked. Run `zn lock`, then `zn-gate uninstall` again.');
+    out(io, 'The vault was kept: it is unlocked. Run `zn-gate lock`, then `zn-gate uninstall` again.');
     return 'failed';
   }
   // Files first, the key last: if a file cannot be removed, the key stays and what is left still opens.
@@ -214,12 +212,12 @@ async function run(args, io) {
   const ask = io.confirm || ((q) => tty.confirm(q, { stdin: io.stdin, stderr: io.stderr }));
   if (p.agents.length || p.wrapped.length) {
     if (!(await ask('Remove what is listed above?'))) { out(io, 'Nothing was changed.'); return 1; }
-    // Wrapped MCP first: putting a saved copy back must not undo the hook removal that follows.
-    const withBackup = p.wrapped.filter((w) => w.backup);
-    if (withBackup.length) {
-      const r = require('./init').configureEnvironments({ revert: true, envList: withBackup.map((w) => w.env) });
+    // Wrapped MCP first, so the hook removal that follows is not mixed up with it.
+    const safe = p.wrapped.filter((w) => !w.unsafe);
+    if (safe.length) {
+      const r = require('./init').configureEnvironments({ revert: true, projectDir: io.cwd, envList: safe.map((w) => w.env) });
       for (const act of r.actions) {
-        out(io, '  ' + act.env + ': ' + (act.status === 'reverted' ? 'put back from ' + act.from : act.status));
+        out(io, '  ' + act.env + ': ' + (act.status === 'reverted' ? 'original command put back for ' + act.serversCount + ' server' + (act.serversCount === 1 ? '' : 's') : act.status));
         if (act.status !== 'reverted') failed++;
       }
     }
@@ -243,8 +241,8 @@ async function run(args, io) {
         else { out(io, '  ' + a.name + ': the plugin was not removed. Run it yourself: ' + s.manual); failed++; }
       }
     }
-    // Look again: a config wrapped twice, or one with no saved copy, is still wrapped.
-    const still = wrappedConfigs(io.envList);
+    // Look again: a server wrapped in a form zn-gate did not write is still wrapped.
+    const still = wrappedConfigs(io.envList, io.cwd);
     if (still.length) {
       out(io, '');
       out(io, 'Still wrapped by zn-gate shield (do this yourself):');

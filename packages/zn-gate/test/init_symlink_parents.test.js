@@ -90,7 +90,8 @@ test('a symlinked parent that stays inside home still works', opts, () => {
     assert.equal(path.dirname(r.actions[0].backup), dot);
     const rv = configureEnvironments({ envList: env(f), revert: true });
     assert.equal(rv.actions[0].status, 'reverted');
-    assert.equal(fs.readFileSync(path.join(dot, 'mcp.json'), 'utf8'), CFG);
+    // The un-wrap rewrites the file, which ends with a newline.
+    assert.equal(fs.readFileSync(path.join(dot, 'mcp.json'), 'utf8'), CFG + '\n');
   });
 });
 

@@ -51,7 +51,7 @@ npx -y zn-gate init --shadow
 # Wrap and enforce
 npx -y zn-gate init --wrap-mcp
 
-# Restore the original files from the backups
+# Put the original commands back
 npx -y zn-gate init --revert
 ```
 
