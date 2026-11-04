@@ -39,6 +39,11 @@ function clipboardUnreadable(tried) {
     'Copy the value again, or run the command without --clipboard to type it at the hidden prompt.';
 }
 
+function clipboardTimedOut(tried, timeoutMs) {
+  return 'could not read the clipboard: ' + tried.join(', ') + ' did not answer within ' + timeoutMs / 1000 + ' seconds and was stopped. ' +
+    'Copy the value again, or run the command without --clipboard to type it at the hidden prompt.';
+}
+
 /* ------------------------------ the vault ------------------------------ */
 
 function invalidDuration(value) {
@@ -344,7 +349,7 @@ function teamJoinFailed(why) {
 }
 
 module.exports = {
-  agentNote, agentRefusal, notInteractive, PROMPT_CANCELLED, CLIPBOARD_NO_POWERSHELL, clipboardUnreadable,
+  agentNote, agentRefusal, notInteractive, PROMPT_CANCELLED, CLIPBOARD_NO_POWERSHELL, clipboardUnreadable, clipboardTimedOut,
   invalidDuration, DURATION_RANGE, unknownBackend, unlockNeedsTerminal, FOREGROUND_NEEDS_TERMINAL,
   PASSPHRASE_NEEDS_TERMINAL, passphraseCancelled, passphraseMismatch, passphraseStdinEmpty, forgetLockFirst, vaultAlreadyUnlocked,
   keychainProblem, secretToolMissing, powershellMissing, keychainHelperFailed, keychainLostKey,
