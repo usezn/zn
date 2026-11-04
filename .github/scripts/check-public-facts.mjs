@@ -72,9 +72,17 @@ export function getPath(obj, path) {
 }
 
 /** Files whose pinned references are checked: tracked Markdown and JSON, minus the excluded prefixes. */
+
 export function pinnedFiles(all, exclude) {
   return all.filter((f) => /\.(md|json)$/.test(f) && !exclude.some((p) => f === p || f.startsWith(p)));
 }
+
+/** Public surfaces where a plugin marketplace is added: every `marketplace add usezn/zn` there must name a release tag. */
+export function marketplaceFiles(all) {
+  return all.filter((f) => /\.md$/.test(f) && (f === 'README.md' || /^packages\/[^/]+\/README\.md$/.test(f) || /^plugins\/.*README\.md$/.test(f) || f.startsWith('docs/')));
+}
+// The short form and the URL form (with or without .git); `usezn/zn-other` is another repository.
+const MARKETPLACE_ADD = /marketplace add (?:https:\/\/github\.com\/)?usezn\/zn(?:\.git)?(?![\w/.-])(@v\S*|#v\S*|\s+--ref\s+v\S*)?/g;
 
 /**
  * All differences between the facts and the files, as readable lines (empty = consistent).
@@ -182,6 +190,18 @@ export function check(facts, files, read, options = {}) {
         const line = s.slice(0, m.index).split('\n').length;
         errors.push(`${f}:${line}: pins ${m[0]}, public-facts.json${docsLabel} says ${docs}`);
       }
+    }
+  }
+
+  // Adding the plugin marketplace without a tag follows the default branch, so every command that adds it names a tag
+  // (the version of the tag itself is checked above, with the other pins).
+  for (const f of marketplaceFiles(files)) {
+    const s = text(f);
+    if (s === null) continue;
+    for (const m of s.matchAll(MARKETPLACE_ADD)) {
+      if (m[1]) continue;
+      const line = s.slice(0, m.index).split('\n').length;
+      errors.push(`${f}:${line}: "${m[0]}" has no release tag: use usezn/zn@v<version> (Claude Code) or usezn/zn --ref v<version> (Codex)`);
     }
   }
 
