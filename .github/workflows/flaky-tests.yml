@@ -1,0 +1,160 @@
+name: Flaky test tracker
+
+# Runs the Node.js and Python test suites three times on ubuntu-latest and windows-latest, then lists the tests
+# whose result changes between the runs (flaky tests). Node.js 22 and Python 3.12 only, to keep the runner
+# minutes small. This workflow reports only: no flaky test fails it, and it gates no merge. The result is the
+# job summary and the artifact "flaky-test-report" (flaky-report.json and flaky-report.md). Each run's raw JUnit
+# XML is kept for 14 days in the artifacts "junit-<os>-<suite>".
+on:
+  schedule:
+    # Weekly, Monday 05:17 UTC. A scheduled run uses the workflow file of the default branch.
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flaky-tests-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  # Retry npm and pip downloads instead of failing a run on one network error.
+  NPM_CONFIG_FETCH_RETRIES: "5"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000"
+  PIP_RETRIES: "5"
+  PIP_TIMEOUT: "60"
+
+jobs:
+  run-suite:
+    name: ${{ matrix.suite }} suite x3 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        suite: [node, python]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The integration branch: the default branch of this repository is main, and the suites under test live in next.
+          ref: ${{ github.event_name == 'schedule' && 'next' || '' }}
+      - name: Use Node.js 22
+        if: matrix.suite == 'node'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          package-manager-cache: false
+          node-version: 22
+      - name: Install zn-gate dependencies
+        if: matrix.suite == 'node'
+        working-directory: packages/zn-gate
+        run: npm ci --ignore-scripts
+      - name: Set up Python 3.12
+        if: matrix.suite == 'python'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          # No pip cache: the test tools are small and hash-pinned, as in ci.yml.
+      - name: Install package and test dependencies
+        if: matrix.suite == 'python'
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python -m pip install --require-hashes -r .github/ci-test-requirements.txt
+          python -m pip install --no-deps --no-build-isolation -e packages/zn-gate-py
+      - name: Run the Node.js suite three times
+        if: matrix.suite == 'node'
+        working-directory: packages/zn-gate
+        env:
+          OS_NAME: ${{ matrix.os }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/junit"
+          # The files that test/run-all.js runs under node --test: every *.test.js, the plain-node files and the
+          # integration test.
+          read -r -a files <<< "$(node -e "const fs=require('fs');const plain=require('./test/runner-plain.json');const all=new Set([...fs.readdirSync('test').filter(f=>f.endsWith('.test.js')),...plain,'integration/test_agent_workflows.js']);process.stdout.write([...all].sort().map(f=>'test/'+f).join(' '))")"
+          for run in 1 2 3; do
+            # The exit code is ignored on purpose: a failing run is the data this workflow collects.
+            node --test --test-reporter=junit --test-reporter-destination="$RUNNER_TEMP/junit/${OS_NAME}--node--run$run.xml" "${files[@]}" || true
+          done
+      - name: Run the Python suite three times
+        if: matrix.suite == 'python'
+        working-directory: packages/zn-gate-py
+        env:
+          OS_NAME: ${{ matrix.os }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/junit"
+          for run in 1 2 3; do
+            # The exit code is ignored on purpose, as above. The framework tests skip here (no ZN_REQUIRE_FRAMEWORKS).
+            python -m pytest tests/ -q -p no:cacheprovider --junitxml="$RUNNER_TEMP/junit/${OS_NAME}--python--run$run.xml" || true
+          done
+      - name: Check that the three run files were written
+        env:
+          OS_NAME: ${{ matrix.os }}
+          SUITE: ${{ matrix.suite }}
+        run: |
+          for run in 1 2 3; do
+            if [ ! -s "$RUNNER_TEMP/junit/${OS_NAME}--${SUITE}--run$run.xml" ]; then
+              echo "::error::run $run wrote no JUnit file"
+              exit 1
+            fi
+          done
+      - name: Upload the run results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-${{ matrix.os }}-${{ matrix.suite }}
+          path: ${{ runner.temp }}/junit/
+          if-no-files-found: error
+          retention-days: 14
+
+  report:
+    name: Flaky test report
+    needs: run-suite
+    # Runs even when a suite job failed: the report then says which runs are missing.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Harden the runner (egress audit)
+        if: runner.os == 'Linux'
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event_name == 'schedule' && 'next' || '' }}
+      - name: Use Node.js 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          package-manager-cache: false
+          node-version: 22
+      - name: Unit tests of the report script
+        run: node --test .github/scripts/flaky-report.test.mjs
+      - name: Download the run results
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: junit-*
+          path: ${{ runner.temp }}/junit-in
+          merge-multiple: true
+      - name: Build the flaky-test report
+        run: node .github/scripts/flaky-report.mjs --in "$RUNNER_TEMP/junit-in" --out "$RUNNER_TEMP/flaky-report" --expected-runs 3
+      - name: Write the job summary
+        run: cat "$RUNNER_TEMP/flaky-report/flaky-report.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flaky-test-report
+          path: ${{ runner.temp }}/flaky-report/
+          if-no-files-found: error
+          retention-days: 90
