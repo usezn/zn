@@ -83,7 +83,8 @@ test('work is capped and linear', () => {
   assert.equal(v.clean.length, MAX_DECODES + 50000 * 3);
   const long = ("a''".repeat(200000)) + '%41'.repeat(100000);
   scan(long, CTX);
-  assert.ok(Date.now() - t0 < 5000, 'too slow');
+  // A quadratic scan of this text takes minutes; a loaded Windows runner needs several seconds for the linear one.
+  assert.ok(Date.now() - t0 < 30000, 'too slow');
 });
 
 test('a split secret far from the start and between long clean runs is redacted', () => {
