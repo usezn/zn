@@ -1,0 +1,1 @@
+{"days":{"2026-10-14":{"hook:claude-code":{"checked":20,"blocked":9,"redacted":20,"detections":{"AWS_KEY":14,"GITHUB_TOKEN":6}}},"2026-10-15":{"hook:cursor":{"checked":5,"blocked":3,"warned":2,"redacted":11,"detections":{"DB_PASSWORD":8}}}},"events":{}}

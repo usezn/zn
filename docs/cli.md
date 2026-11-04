@@ -64,6 +64,22 @@ The commands that start a long-running server (`mcp`, `shield`, `secrets-mcp`) e
 
 ## Settings
 
+### Settings at a glance
+
+| Setting | Default | What it changes |
+|---|---|---|
+| `ZN_API_KEY` or `--key <api_key>` | Not stated | API key for the optional cloud check (`analyze`, `analyze_prompt`). |
+| `ZN_CLOUD=1` | Off: nothing leaves your machine | Turns the optional cloud check on. |
+| `ZN_LOCAL_ONLY=true` or `--local-only` | Not stated | Never uses the cloud, even when `ZN_CLOUD=1` is set. |
+| `ZN_STAGE` or `--stage <v30\|prod>` | `v30` | Cloud stage. |
+| `ZN_API_URL` or `--url <url>` | Not stated | Uses another cloud address. |
+| `--long-input <windows\|off>` | `windows` (overlapping windows, up to 20) | How long texts are sent to the cloud check; `off` sends only the first 512 tokens. |
+| `ZN_STATS=off` | Not stated | Turns off the local counts shown by `stats` and `report`. |
+| `ZN_VERBOSE=1` or `--verbose` | Not stated | Prints debug messages to the error output. |
+| `NO_COLOR` | Not stated | Turns off colors. |
+
+The table below gives the full description of each setting.
+
 | Setting | Effect |
 |---|---|
 | `ZN_API_KEY` or `--key <api_key>` | API key for the optional cloud check. Used only by `analyze` and `analyze_prompt`, and only when the cloud check is on. |

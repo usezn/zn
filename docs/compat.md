@@ -1,5 +1,13 @@
 # Agent compatibility
 
+## Limits at a glance
+
+- An event zn cannot read is refused, except the Codex `Stop` event, which is never blocked.
+- The unlocked vault answers any program of your user, so lock it when you do not need it.
+- Approved scripts, and every program on macOS and Windows, are started by path right after zn's last check.
+
+Details for each: [Limits that apply to every agent](#limits-that-apply-to-every-agent).
+
 What the secrets scrubber and broker can do in each agent. zn-gate is not a sandbox: what it covers
 depends on what each agent's hooks can see and block; formats were checked against each agent's official
 documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is in [`bench/e2e/`](../bench/e2e/).

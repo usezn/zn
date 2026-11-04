@@ -40,7 +40,7 @@ RUN cargo build --locked --release
 # --- Stage 2: runtime --------------------------------------------------------
 # Debian 13 (trixie) distroless: the Debian 12 images are no longer rebuilt, so they keep
 # an unpatched libssl3. The binary is built on bookworm (older glibc) and runs unchanged here.
-FROM gcr.io/distroless/cc-debian13@sha256:d74d144baa124dd9defd01d71872bb56c49d4441dba6153ccf790364f97e64b1
+FROM gcr.io/distroless/cc-debian13@sha256:58e12be899275afaa05f1b03051ab19037ed7f252528e57a3a9ad7e220a62578
 
 COPY --from=builder /build/target/release/zn /zn
 
