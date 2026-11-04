@@ -80,7 +80,7 @@ test('in a real process the X25519 warning is not printed and another one is', (
 test('the empty-stdin message names the command to pipe into', () => {
   const text = require('../lib/messages').passphraseStdinEmpty();
   // The command is `zn` on PATH, or `npx -y zn-gate@<version>` when it is not (see lib/zn-command.js).
-  assert.match(text, /^No passphrase was read from standard input\. Pipe it in, for example: printf '%s' "\$PASS" \| (zn|npx -y zn-gate@\S+) unlock --passphrase-stdin$/);
+  assert.match(text, /^No passphrase was read from standard input\. Pipe it in, for example: printf '%s' "\$PASS" \| (zn|npx(?:\.cmd)? -y zn-gate@\S+) unlock --passphrase-stdin$/);
 });
 
 function cleanEnv(home) {
@@ -94,7 +94,7 @@ test('unlock with an empty stdin says no passphrase was read, with the same exit
       input: '', encoding: 'utf8', env: cleanEnv(home), timeout: 60000,
     });
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /No passphrase was read from standard input\. Pipe it in, for example: printf '%s' "\$PASS" \| (zn|npx -y zn-gate@\S+) unlock --passphrase-stdin/);
+    assert.match(r.stderr, /No passphrase was read from standard input\. Pipe it in, for example: printf '%s' "\$PASS" \| (zn|npx(?:\.cmd)? -y zn-gate@\S+) unlock --passphrase-stdin/);
     assert.doesNotMatch(r.stderr, /at least 12/);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
