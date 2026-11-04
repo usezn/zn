@@ -21,6 +21,20 @@ The local pieces:
 - **Encrypted vault.** Keeps the real values of your secrets on your machine. The agent works with stable markers such as `__ZN_AWS_KEY_1__`, and `zn run` puts a value in the environment of a command only when you approved it.
 - **Hash-chained decision log.** Records each assessment in `~/.zn/evidence.jsonl`.
 
+## One tool call, step by step
+
+Here is one tool call from the agent to the answer, using only what is described on this page:
+
+1. The agent gets a prompt. `analyze_prompt` checks it first for prompt injection, jailbreaks and requests to read files or exfiltrate data.
+2. The agent decides to call a tool, for example one on an MCP server.
+3. Before the tool runs, `check_tool_call` reads the arguments as text. It looks for injection wording, requests for secrets, secret-file names and secrets, which it masks.
+4. If the arguments pass, the tool runs. If you approved a command, `zn run` fills in the real value of a secret marker such as `__ZN_AWS_KEY_1__` at that point. The agent itself only works with the marker.
+5. After the tool runs and before the model sees the output, `check_tool_result` looks for indirect injection hidden in it. Secrets and personal data are redacted.
+6. The model sees the cleaned output, with a marker or `[REDACTED_...]` text in place of any removed value, and gives its answer.
+7. Each assessment is recorded in the hash-chained audit log at `~/.zn/evidence.jsonl`.
+
+All of these checks use the local engine. Tool arguments and tool output never leave the machine. See [Key Architectural Principles](#key-architectural-principles) for the details.
+
 ## How it attaches to your agent
 
 - **Local hooks.** For Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app and GitHub Copilot (and, as an experimental adapter, Gemini CLI), `zn hooks install <agent>` registers zn-gate's hooks, so it also sees the agent's built-in tools: it blocks reads of secret files and pasted secrets, and scrubs shell output and file contents. (In Cursor, only MCP tool output is scrubbed; in Antigravity and ZCode desktop app, no tool output is rewritten.) What each agent allows is in [Agent compatibility](compat.md).

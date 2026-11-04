@@ -63,6 +63,26 @@ The `version` input is the exact `zn-gate` version that gets installed; ranges a
 
 ## Inputs
 
+### Inputs at a glance
+
+No input is required. Each one has a default, and an empty default means the input is off. The examples are fake values.
+
+| Input | Required | Default | Example |
+|---|---|---|---|
+| `mode` | No | `scan` | `audit` |
+| `version` | No | set by the release | `1.13.1` |
+| `path` | No | `.` | `docs` |
+| `fail-on-threat` | No | `true` | `'false'` |
+| `severity-threshold` | No | `high` | `medium` |
+| `fail-on` | No | empty | `high` |
+| `agents` | No | empty (all) | `claude,cursor` |
+| `format` | No | `github` | `sarif` |
+| `sarif-file` | No | empty | `results/zn-gate.sarif` |
+| `package-sha256` | No | empty | `0000...0000` (the 64-character hash of the wheel) |
+| `npm-integrity` | No | empty | `sha512-AAAA...` (the integrity of the tarball) |
+
+The full description of each input follows.
+
 | Input | Default | What it does |
 |---|---|---|
 | `mode` | `scan` | `scan`, `audit` or `both`. |

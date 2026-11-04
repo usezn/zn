@@ -100,6 +100,49 @@ Short meanings of words used in the zn-gate docs.
 
 **Managed configuration** (`team managed-config`): settings files that an administrator deploys to all machines, for example with MDM (mobile device management), so the hooks run for every developer.
 
+**Launcher script**: the small script under `~/.zn/hooks` that an agent's hook goes through. It is shared by every profile of the same agent on your machine, so `hooks uninstall` leaves it in place. See [the command list](cli.md#hooks-uninstall) and [Check that it works](check.md).
+
+**Fail on** (`--fail-on`): the lowest severity of a finding that makes `audit` or `reach` exit with `1`. For `audit` it is `low`, `medium`, `high` (default), `critical` or `none`; for `reach` the default is `none`, so it is a report. See the [command list](cli.md).
+
+**Evidence** (`evidence`): the local hash-chained log of what zn-gate decided. `--verify` checks the chain. See the [command list](cli.md).
+
 **Stats**: local counts of what zn-gate did on your machine (`stats`). They are not sent unless you turn on `stats share`.
+
+## Worked examples
+
+These examples show terms from this page. The values are fake.
+
+**Marker and shadow.** A `.env` file holds a secret value:
+
+```text
+STRIPE_KEY=sk_example_not_a_real_key
+PORT=3000
+```
+
+In your own terminal, run:
+
+```bash
+zn env shadow .env
+```
+
+The value moves into the vault and the file keeps a marker. Your agent sees only this:
+
+```text
+STRIPE_KEY=__ZN_STRIPE_KEY__
+PORT=3000
+```
+
+`zn env unshadow` restores the original from the encrypted copy. See [Secrets](secrets.md#2-move-your-env-values-into-the-vault).
+
+**Dry run.** Add `--dry-run` to see what a command would change. For example, `zn-gate uninstall --dry-run` prints the plan (each agent, with the file paths) and changes nothing. Run the command again without `--dry-run` to do it. See the [command line reference](cli.md#uninstall).
+
+**Exit code.** Run the check, then read the exit code:
+
+```bash
+npx -y zn-gate check
+echo $?
+```
+
+The check prints one line for each agent, such as `OK Claude Code  blocked the .env file and allowed the ordinary file.` It exits with `0` only when every agent that is set up for your user is protected. See [Check that it works](check.md).
 
 For setup steps, start with the [README](../README.md#install).
