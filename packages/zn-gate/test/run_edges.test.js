@@ -24,9 +24,14 @@ test('batchInvocation: more arguments than originals counts as changed', () => {
 });
 
 test('batchInvocation: fewer arguments than originals is not treated as changed', () => {
-  // Only the arguments that are passed are compared; with no cmd.exe on this
-  // platform the outcome is still a policy denial, never a crash.
-  denied(() => batchInvocation(BAT, ['a'], ['a', 'b']), WIN ? undefined : /could not find the system cmd\.exe/);
+  // Only the arguments that are passed are compared. Without cmd.exe on this
+  // platform the outcome is a policy denial, never a crash.
+  if (WIN) {
+    // With cmd.exe present, only the arguments passed are compared, so the call is allowed.
+    assert.doesNotThrow(() => batchInvocation(BAT, ['a'], ['a', 'b']));
+  } else {
+    denied(() => batchInvocation(BAT, ['a'], ['a', 'b']), /could not find the system cmd\.exe/);
+  }
 });
 
 test('batchInvocation: each metacharacter is refused alone, including carriage return', () => {
