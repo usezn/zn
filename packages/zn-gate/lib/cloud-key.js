@@ -125,7 +125,7 @@ function configFile() {
 }
 
 function readConfig() {
-  try { return JSON.parse(fs.readFileSync(configFile(), 'utf8')) || {}; } catch (_) { return {}; }
+  try { return JSON.parse(fs.readFileSync(configFile(), 'utf8').replace(/^\uFEFF/, '')) || {}; } catch (_) { return {}; }
 }
 
 function writeConfig(cfg) {

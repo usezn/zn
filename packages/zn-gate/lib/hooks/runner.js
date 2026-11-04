@@ -61,7 +61,7 @@ const STREAM_JS = path.resolve(__dirname, '..', 'scrub', 'stream.js');
 
 function readConfig(home) {
   try {
-    return JSON.parse(fs.readFileSync(path.join(home ? path.join(home, '.zn') : require('../stats').znHome(), 'config.json'), 'utf8')) || {};
+    return JSON.parse(fs.readFileSync(path.join(home ? path.join(home, '.zn') : require('../stats').znHome(), 'config.json'), 'utf8').replace(/^\uFEFF/, '')) || {};
   } catch (_) {
     return {};
   }
