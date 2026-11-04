@@ -307,7 +307,7 @@ def _decode_ansi_c(cmd: str) -> str:
     return _ANSI_C_RE.sub(word, cmd).replace('$"', '"')
 
 
-class _Segs(list):
+class _Segs(List[Any]):
     """The simple commands of a line as (words, sep) pairs; raws holds the text of each one that has a backtick (else '')."""
 
     raws: List[str]
@@ -609,11 +609,11 @@ _ENV_LONG = ("ignore-environment", "null", "unset", "chdir", "split-string", "ar
 _ENV_LONG_VALUE = ("unset", "chdir", "split-string", "argv0")
 
 
-def _env_option(f: str, args: List[str], i: int, chdir: list, splits: List[str]) -> int:
+def _env_option(f: str, args: List[str], i: int, chdir: List[Any], splits: List[str]) -> int:
     """One env option word f (args[i - 1]); returns the index of the next word. Read like GNU env (getopt_long "+C:iS:u:v0a:"):
     a short cluster is walked letter by letter, and C, S, u or a take the rest of the cluster or the next word as their value;
     a long option may be an unambiguous prefix (--split-s, --chd). The -S string is kept for a second reading."""
-    def take(kind: str, val, has_val: bool) -> None:
+    def take(kind: str, val: Any, has_val: bool) -> None:
         nonlocal i
         if not has_val:
             val = args[i] if i < len(args) else None
