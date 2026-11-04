@@ -53,6 +53,8 @@ function styles(stream, env) {
  * A symbol followed by its gap (for example "✔ "). `style` colors the symbol.
  * Where symbols are off (see symbolsEnabled), the ASCII marker for it takes its
  * place ("[ok]" for "✔"), or nothing when the symbol has no marker.
+ * `stream` is the stream the line is written to: pass process.stderr for stderr
+ * lines. It defaults to process.stdout.
  */
 function sym(env, ch, style, gap = ' ', stream = process.stdout) {
   if (!symbolsEnabled(env, stream)) {
@@ -62,7 +64,10 @@ function sym(env, ch, style, gap = ' ', stream = process.stdout) {
   return (style ? style(ch) : ch) + gap;
 }
 
-/** A horizontal rule: box-drawing characters where symbols are on, dashes otherwise. */
+/**
+ * A horizontal rule: box-drawing characters where symbols are on, dashes otherwise.
+ * `stream` is the stream the line is written to (process.stdout by default).
+ */
 function ruleLine(env, width, stream = process.stdout) {
   return (symbolsEnabled(env, stream) ? '─' : '-').repeat(width);
 }

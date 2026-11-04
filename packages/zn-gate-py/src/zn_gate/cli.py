@@ -170,6 +170,8 @@ def _icon(symbol: str, stream: Any = None) -> str:
 
     Symbols are on only on a terminal that is not asked for plain text, not in CI
     (CI set to any non-empty value), and only when the stream can encode them.
+    `stream` is the stream the line is written to: pass sys.stderr for stderr
+    lines. It defaults to sys.stdout.
     """
     stream = stream if stream is not None else sys.stdout
     if _plain_text() or os.environ.get("CI") or not _is_terminal(stream):
