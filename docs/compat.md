@@ -515,8 +515,9 @@ installs, and the plugins keep a plain command. Agent by agent:
   answer with exit code 0; the zn-gate plugin's script instead writes the warning as
   plain text on stderr with exit code 0, and ZCode does not document whether it
   shows that text). The launcher also
-  stops a hook that has not finished after 28 seconds (2 seconds under the 30-second
-  timeout zn sets on its hook entries) and blocks the call, on Windows too. If ZCode cannot
+  stops a hook that has not finished after 2 minutes and blocks the call, on Windows
+  too; zn sets a 5-minute timeout on its hook entries, so a busy computer has time to
+  end the hook before ZCode gives up. If ZCode cannot
   start the launcher itself (the file deleted or not executable), the call goes
   ahead unchecked.
 
