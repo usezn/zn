@@ -1414,6 +1414,9 @@ test('detector server shape: only the installed launcher is accepted, loose shap
   };
   // Accepted: this Node.js with a zn-gate bin/cli.js, by absolute path, outside the project.
   assert.equal(kindOf({ command: process.execPath, args: [ZN_CLI, 'mcp'] }), 'analyze');
+  // Rejected: the entry takes no other argument after mcp.
+  assert.equal(kindOf({ command: process.execPath, args: [ZN_CLI, 'mcp', '--extra'] }), null, 'an extra argument');
+  assert.equal(kindOf({ command: process.execPath, args: [ZN_CLI, 'mcp', 'secrets-mcp'] }), null, 'a second subcommand');
   // Rejected: a zn or zn-gate looked up on the PATH, and a bare node with a relative cli.js.
   assert.equal(kindOf({ command: 'zn', args: ['mcp'] }), null);
   assert.equal(kindOf({ command: 'zn-gate', args: ['mcp'] }), null);

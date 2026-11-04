@@ -765,6 +765,8 @@ function isInstalledZnServer(s, sub, opts = {}) {
   if (!s || typeof s !== 'object' || s.url || typeof s.command !== 'string') return false;
   const args = Array.isArray(s.args) ? s.args.map(String) : [];
   if (args[1] !== sub || !path.isAbsolute(s.command) || !path.isAbsolute(args[0] || '')) return false;
+  // The detector server takes no other argument: an entry that adds one is not the plain launcher.
+  if (sub === 'mcp' && args.length !== 2) return false;
   const node = realOf(s.command);
   const cli = realOf(args[0]);
   if (!node || !cli) return false;
