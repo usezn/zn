@@ -425,14 +425,24 @@ async function prepare(ctx) {
   return c;
 }
 
+/* The texts scan() reads for `text`: itself, without invisible characters, and decoded (split quotes, %XX). The vault
+ * daemon is asked about each one, so scanText finds an answer for every view. */
+function textsToFetch(text) {
+  const out = [text];
+  const view = invisibleView(text);
+  if (view) out.push(view.clean);
+  const norm = normalisedView(text);
+  if (norm && !out.includes(norm.clean)) out.push(norm.clean);
+  return out;
+}
+
 /* scan() for a prepared context, with the vault's matches: the daemon says where its values occur in the text (and in
  * the text without invisible characters, which scan() also reads). -> {spans}. When the vault does not answer it throws
  * (ZN_LOCKED, vaultFailed): a text scanned without the vault's values would look clean, so the caller must hold the
  * text back (the post-hook withholds it, the other hooks follow their fail mode, the stream writes a notice). */
 async function scanChecked(text, c) {
   if (!c.vaultRemote || text.length === 0) return { spans: scan(text, c) };
-  const view = invisibleView(text);
-  const want = view ? [text, view.clean] : [text];
+  const want = textsToFetch(text);
   const memo = c.vaultMemo;
   const missing = memo ? want.filter((t) => !memo.has(t)) : want;
   const got = missing.length ? await fetchVaultSpans(c, missing) : { map: new Map(), failed: false };
@@ -453,9 +463,7 @@ async function warm(ctx, texts) {
   const all = new Set();
   for (const t of texts) {
     if (typeof t !== 'string' || t.length === 0 || (t.length < MIN_LENGTH && !(c.vaultRemote.shortCount > 0))) continue;
-    all.add(t);
-    const view = invisibleView(t);
-    if (view) all.add(view.clean);
+    for (const w of textsToFetch(t)) all.add(w);
   }
   if (all.size === 0) return c;
   const { map, failed } = await fetchVaultSpans(c, [...all]);
