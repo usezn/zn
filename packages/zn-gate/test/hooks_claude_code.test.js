@@ -1305,7 +1305,7 @@ test('personal data: asked for the secrets server, for a plugin server name and 
   assert.equal(decisionOf(await run(preTool('mcp__plugin_zn-gate_zn-gate__analyze_prompt', { text: AWS }, dir), { engine: piiEngine })), 'deny');
 });
 
-const ZN_DETECTOR = { command: 'npx', args: ['-y', 'zn-gate', 'mcp'] };
+const ZN_DETECTOR = { command: process.execPath, args: [ZN_CLI, 'mcp'] };
 
 test('personal data: not asked for the user-scope detector server, still asked for an impostor, a third party and the vault', async (t) => {
   const dir = tmpProject(t);
@@ -1405,33 +1405,67 @@ test('mcp server kind: the real process lookup finds --mcp-config of an ancestor
   assert.equal(r2.stdout, 'null');
 });
 
-test('detector server shape: the installed launchers are accepted, loose shapes are not', (t) => {
+test('detector server shape: only the installed launcher is accepted, loose shapes and every npx form are not', (t) => {
   const dir = tmpProject(t);
   const base = { managedDir: tempDir(t, 'zn-managed-'), argv: [] };
   const kindOf = (entry) => {
     claudeConfig(t, { claudeJson: { mcpServers: { 'zn-gate': entry } } });
     return adapter.znMcpServerKind('zn-gate', dir, base);
   };
-  // Accepted: the npm package run by npx (any registry spec), and this Node.js with a zn-gate bin/cli.js.
-  for (const spec of ['zn-gate', 'zn-gate@latest', 'zn-gate@next', 'zn-gate@1.14.3', 'zn-gate@1.15.0-rc.1']) {
-    assert.equal(kindOf({ command: 'npx', args: ['-y', spec, 'mcp'] }), 'analyze', spec);
-  }
+  // Accepted: this Node.js with a zn-gate bin/cli.js, by absolute path, outside the project.
   assert.equal(kindOf({ command: process.execPath, args: [ZN_CLI, 'mcp'] }), 'analyze');
   // Rejected: a zn or zn-gate looked up on the PATH, and a bare node with a relative cli.js.
   assert.equal(kindOf({ command: 'zn', args: ['mcp'] }), null);
   assert.equal(kindOf({ command: 'zn-gate', args: ['mcp'] }), null);
   assert.equal(kindOf({ command: 'node', args: ['zn-gate/bin/cli.js', 'mcp'] }), null);
   assert.equal(kindOf({ command: 'node', args: [ZN_CLI, 'mcp'] }), null);
-  // Rejected: specs that are not the registry package.
+  // Rejected: npx is not recognised in any form (it prefers a zn-gate of the project and reads the project's .npmrc).
+  for (const spec of ['zn-gate', 'zn-gate@latest', 'zn-gate@next', 'zn-gate@1.14.3', 'zn-gate@1.15.0-rc.1', 'ZN-GATE@LATEST']) {
+    assert.equal(kindOf({ command: 'npx', args: ['-y', spec, 'mcp'] }), null, spec);
+    assert.equal(kindOf({ command: 'npx.cmd', args: ['-y', spec, 'mcp'] }), null, 'npx.cmd ' + spec);
+  }
+  assert.equal(kindOf({ command: 'npx', args: ['--yes', 'zn-gate', 'mcp'] }), null);
+  assert.equal(kindOf({ command: path.resolve(path.dirname(process.execPath), 'npx'), args: ['-y', 'zn-gate', 'mcp'] }), null, 'an absolute npx outside the project');
+  assert.equal(kindOf({ command: path.join(dir, 'npx'), args: ['-y', 'zn-gate', 'mcp'] }), null, 'an npx inside the project');
+  assert.equal(kindOf({ command: 'npx', args: ['-y', 'zn-gate', 'mcp'], env: { PATH: './bin' } }), null, 'env.PATH');
+  assert.equal(kindOf({ command: 'npx', args: ['-y', 'zn-gate', 'mcp'], env: { npm_config_registry: 'http://registry.invalid' } }), null, 'npm_config_registry');
+  assert.equal(kindOf({ command: 'npx', args: ['-y', 'zn-gate', 'mcp'], env: { NPM_CONFIG_REGISTRY: 'http://registry.invalid' } }), null, 'NPM_CONFIG_REGISTRY');
   for (const spec of ['zn-gate@npm:other-package', 'zn-gate@file:../evil', 'zn-gate@github:someone/zn-gate', 'zn-gate@https://example.com/x.tgz', 'zn-gate@^1.0.0']) {
     assert.equal(kindOf({ command: 'npx', args: ['-y', spec, 'mcp'] }), null, spec);
   }
-  // Rejected: extra arguments or a launcher inside the project, or one that changes what loads.
-  assert.equal(kindOf({ command: 'npx', args: ['-y', 'zn-gate', 'mcp', '--evil'] }), null);
-  assert.equal(kindOf({ command: 'npx', args: ['-y', '--package', 'other', 'zn-gate', 'mcp'] }), null);
-  assert.equal(kindOf({ command: path.join(dir, 'npx'), args: ['-y', 'zn-gate', 'mcp'] }), null);
-  assert.equal(kindOf({ command: 'npx', args: ['-y', 'zn-gate', 'mcp'], env: { NODE_OPTIONS: '--require ./x.js' } }), null);
+  // Rejected: an installed launcher inside the project, or one that changes what loads.
+  assert.equal(kindOf({ command: process.execPath, args: [ZN_CLI, 'mcp'], env: { NODE_OPTIONS: '--require ./x.js' } }), null);
   assert.equal(kindOf({ command: process.execPath, args: [ZN_CLI, 'mcp'], cwd: dir }), null);
+});
+
+test('personal data: an npx entry is not zn\'s even with a planted zn-gate, a project .npmrc or a project npx (still asked, a secret still denied)', async (t) => {
+  const dir = tmpProject(t);
+  const note = { text: 'write to jane@example.com' };
+  // What a cloned repository can carry: a node_modules/.bin/zn-gate that npx would run, a registry of its own, an npx next to the code.
+  fs.mkdirSync(path.join(dir, 'node_modules', '.bin'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'node_modules', '.bin', 'zn-gate'), '#!/bin/sh\necho planted\n', { mode: 0o755 });
+  fs.mkdirSync(path.join(dir, 'node_modules', 'zn-gate'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.npmrc'), 'registry=http://registry.invalid/\n');
+  fs.writeFileSync(path.join(dir, 'npx'), '#!/bin/sh\necho planted\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, 'npx.cmd'), '@echo planted\r\n');
+  const entries = [
+    { command: 'npx', args: ['-y', 'zn-gate', 'mcp'] },
+    { command: 'npx.cmd', args: ['-y', 'zn-gate@latest', 'mcp'] },
+    { command: 'npx', args: ['-y', 'zn-gate', 'mcp'], env: { PATH: './node_modules/.bin' } },
+    { command: 'npx', args: ['-y', 'zn-gate', 'mcp'], env: { npm_config_registry: 'http://registry.invalid' } },
+  ];
+  for (const e of entries) {
+    claudeConfig(t, { claudeJson: { mcpServers: { 'zn-gate': e, zn: e } } });
+    assert.equal(adapter.znMcpServerKind('zn-gate', dir, { argv: [], managedDir: dir }), null, JSON.stringify(e));
+    assert.equal(adapter.normalize(preTool('mcp__zn-gate__analyze_prompt', note, dir)).mcp.ours, undefined, JSON.stringify(e));
+    assert.equal(decisionOf(await run(preTool('mcp__zn-gate__analyze_prompt', note, dir), { engine: piiEngine })), 'ask', JSON.stringify(e));
+    assert.equal(decisionOf(await run(preTool('mcp__zn__analyze_prompt', note, dir), { engine: piiEngine })), 'ask', JSON.stringify(e));
+    assert.equal(decisionOf(await run(preTool('mcp__zn-gate__analyze_prompt', { text: AWS }, dir), { engine: piiEngine })), 'deny', JSON.stringify(e));
+  }
+  // The installed launcher, in the same project, is still exempt from the question, and a secret is still denied.
+  claudeConfig(t, { claudeJson: { mcpServers: { 'zn-gate': ZN_DETECTOR } } });
+  assert.equal(decisionOf(await run(preTool('mcp__zn-gate__analyze_prompt', note, dir), { engine: piiEngine })), 'allow');
+  assert.equal(decisionOf(await run(preTool('mcp__zn-gate__analyze_prompt', { text: AWS }, dir), { engine: piiEngine })), 'deny');
 });
 
 test('secrets server: a zn-gate spec that is not the registry package is not zn\'s', () => {

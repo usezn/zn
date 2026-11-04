@@ -557,9 +557,10 @@ function uninstall(opts = {}) {
   return report;
 }
 
-/* The only package specs that mean the npm registry's zn-gate: no alias (`zn-gate@npm:other`), no `file:`, `github:`
- * or URL spec, no tag other than latest or next. */
-const NPX_SPEC = /^zn-gate(?:@(?:latest|next|\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?))?$/i;
+/* The only package specs that mean the npm registry's zn-gate (zn's own servers it registered with npx): no alias
+ * (`zn-gate@npm:other`), no `file:`, `github:` or URL spec, no tag other than latest or next. Package names and dist-tags
+ * are lower case, so no case folding. */
+const NPX_SPEC = /^zn-gate(?:@(?:latest|next|\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?))?$/;
 
 /* zn's own "secrets" server: `secrets-mcp` as an argument of zn-gate's bin/cli.js, of `zn`/`zn-gate`, or of `npx zn-gate`.
  * A server that only mentions the word (another package, a note in env) is someone else's. */
@@ -623,21 +624,16 @@ function isBareZnSecrets(s) {
   return (s.command === 'zn' || s.command === 'zn-gate') && args[0] === 'secrets-mcp';
 }
 
-/* zn's own detector server (`zn-gate mcp`: analyze_prompt, check_tool_call, check_tool_result), registered by the user
- * with `claude mcp add zn-gate -- npx -y zn-gate mcp` (or under the name `zn`). Its command must be zn's own. */
+/* zn's own detector server (`zn-gate mcp`: analyze_prompt, check_tool_call, check_tool_result): the user-scope entry named
+ * `zn-gate` or `zn` that runs this Node.js with a zn-gate bin/cli.js, by absolute path, outside the project (the shape
+ * `isInstalledZnServer` checks). An `npx` entry is not recognised in any form: Claude Code starts a user-scope server with the
+ * project as its working folder, so npx would run a `node_modules/.bin/zn-gate` the project carries, read the project's
+ * .npmrc registry, and a relative `npx` is found through the PATH or, on Windows, the project folder. It is checked like any
+ * other server. */
 const DETECTOR_SERVER_NAMES = ['zn-gate', 'zn'];
 const DETECTOR_TOOL_NAMES = ['analyze_prompt', 'check_tool_call', 'check_tool_result'];
 
 function isZnDetectorServer(s, opts = {}) {
-  if (!s || typeof s !== 'object' || s.url || typeof s.command !== 'string') return false;
-  const args = Array.isArray(s.args) ? s.args.map(String) : [];
-  // `claude mcp add zn-gate -- npx -y zn-gate mcp`: the registry package only, run by npx itself (never `zn`/`zn-gate` or
-  // `node` looked up on the PATH). An absolute npx must be outside the project like the node of the installed shape.
-  const cmd = path.basename(s.command.replace(/\\/g, '/')).replace(/\.(?:cmd|exe|ps1)$/i, '').toLowerCase();
-  if (cmd === 'npx' && args.length === 3 && (args[0] === '-y' || args[0] === '--yes') && NPX_SPEC.test(args[1]) && args[2] === 'mcp') {
-    return launcherEnvIsClean(s, opts, path.isAbsolute(s.command) ? [s.command] : []);
-  }
-  // The installed shape of the secrets server: this Node.js and a zn-gate bin/cli.js, by absolute path, outside the project.
   return isInstalledZnServer(s, 'mcp', opts);
 }
 
