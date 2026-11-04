@@ -25,7 +25,8 @@ def test_break_stale_lock_removes_a_lock_left_by_a_dead_process(tmp_path):
 def test_break_stale_lock_keeps_a_fresh_lock_and_asks_for_a_retry(tmp_path):
     lock = _file(tmp_path / "ledger.lock", "5:alive")
     assert evidence._break_stale_lock(lock, TOKEN) is True
-    assert open(lock).read() == "5:alive"
+    with open(lock) as f:
+        assert f.read() == "5:alive"
     assert not os.path.exists(lock + ".break")
 
 
@@ -40,7 +41,8 @@ def test_break_stale_lock_gives_up_when_a_fresh_mutex_exists(tmp_path):
     mutex = _file(tmp_path / "ledger.lock.break", "9:other")
     assert evidence._break_stale_lock(lock, TOKEN) is False
     assert os.path.exists(lock)
-    assert open(mutex).read() == "9:other"
+    with open(mutex) as f:
+        assert f.read() == "9:other"
 
 
 def test_break_stale_lock_sweeps_old_leftovers_but_not_other_files(tmp_path):
@@ -61,7 +63,8 @@ def test_reclaim_stale_mutex_removes_an_old_mutex_and_leaves_no_copy(tmp_path):
 def test_reclaim_stale_mutex_leaves_a_fresh_mutex_alone(tmp_path):
     mutex = _file(tmp_path / "ledger.lock.break", "9:alive")
     evidence._reclaim_stale_mutex(mutex, TOKEN)
-    assert open(mutex).read() == "9:alive"
+    with open(mutex) as f:
+        assert f.read() == "9:alive"
     assert os.listdir(tmp_path) == ["ledger.lock.break"]
 
 
@@ -84,7 +87,8 @@ def test_reclaim_stale_mutex_puts_back_a_mutex_that_became_fresh(tmp_path, monke
 
     monkeypatch.setitem(evidence._test_hooks, "before_mutex_reclaim", touch)
     evidence._reclaim_stale_mutex(mutex, TOKEN)
-    assert open(mutex).read() == "1:dead"
+    with open(mutex) as f:
+        assert f.read() == "1:dead"
     assert os.listdir(tmp_path) == ["ledger.lock.break"]
 
 

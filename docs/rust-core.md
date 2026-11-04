@@ -133,18 +133,23 @@ The first time a new version opens a file written by an earlier one, it upgrades
 
 A search runs on the request path, so it is tried once and gives up after one second; the request then goes on without a nearest neighbour. Failures are logged as a warning at most once every ten minutes, and at debug level in between.
 
-## Building from Source
+## Build it yourself
 
-### Prerequisites
+1. Install the prerequisites:
+   - Rust 1.95 or later (`cargo`); CI uses 1.99.0 and the Dockerfile builds with `rust:1-bookworm`
+   - `protoc` 29 or later
+   - OpenSSL / libssl-dev
+2. Build the gateway from the repository root:
 
-- Rust 1.95 or later (`cargo`); CI uses 1.99.0 and the Dockerfile builds with `rust:1-bookworm`
-- `protoc` 29 or later
-- OpenSSL / libssl-dev
+   ```bash
+   cargo build --release
+   ```
 
-```bash
-cargo build --release
-./target/release/zn --help
-```
+3. Check that the binary runs:
+
+   ```bash
+   ./target/release/zn --help
+   ```
 
 ## Running in Docker
 

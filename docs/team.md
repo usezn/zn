@@ -21,6 +21,26 @@ control of their own machine can leave the organization or stop zn-gate; the
 dashboard shows each machine's last policy version and last upload, so a
 machine that stops reporting is visible.
 
+## Roles in a team
+
+**Lead.** The lead is the organization admin who sets zn Team up. The lead
+gives each developer a join token (`znj_...`), publishes the organization
+policy, and can deploy zn-gate's hooks to every machine with device
+management (`zn team managed-config` only prints the files). The dashboard
+shows each machine's last policy version and last upload. The lead can
+remove a machine, after which its uploads stop. The policy can block or warn
+about a secret, narrow its hosts and commands, and more, as listed in
+[What the organization can change on this machine](#what-the-organization-can-change-on-this-machine);
+it can never read secret values.
+
+**Member.** A member is a developer on their own machine. A member unlocks
+the vault (`zn unlock`), joins with the token (`zn team join`), checks the
+organization name in the vault's dialog against what the lead sent, and
+chooses Deny if they did not start the command. A member can look at
+`zn team status`, run `zn team sync`, and disconnect the machine with
+`zn team leave`. Only a member can approve, on their own machine, a secret
+going to a host that their local settings do not allow.
+
 ## Commands
 
 | Command | What it does |
