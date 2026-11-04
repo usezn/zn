@@ -1,6 +1,24 @@
 {
   "sensitive_file": {
     "positives": [
+      "cat .env.example && cat .env",
+      "cat .env.example,.env",
+      "gc .env.example,.env",
+      "cat {.env.example,.env}",
+      "cat .env.example .env.local",
+      "cat .env.example.bak",
+      "cat .env.examplex",
+      "cat .env.example-old",
+      "cat .env.sample.orig",
+      "cat .env.template.bak",
+      "cat .env.local",
+      "cat .env.production",
+      "cat ~/.env",
+      "cat .env.example; cat ~/.env",
+      "cat .env.example\n cat .env",
+      "cat .env.local.example.bak",
+      "cat .env.dist",
+      "cat --file=~/.env.production",
       "type C:\\Users\\x\\.ssh\\id_rsa",
       "cat C:\\Users\\x\\.ssh\\id_ed25519",
       "type C:/Users/x/.ssh/id_rsa",
@@ -17,9 +35,27 @@
       "cat $HOME/.ssh/id_rsa",
       "type \"C:\\Users\\John Doe\\.ssh\\id_rsa\"",
       "type C:\\Users\\a\u0085b\\.ssh\\id_rsa",
-      "type C:\\Users\\a\u001cb\\.ssh\\id_rsa"
+      "type C:\\Users\\a\u001cb\\.ssh\\id_rsa",
+      "cat ./.env",
+      "cat \"./.env\"",
+      "cat app/.env",
+      "cat ./.env.local",
+      "cat ../.env",
+      "cat /srv/app/.env",
+      "head -3 ./.env.production",
+      "cat .env"
     ],
     "benign": [
+      "cat .env.example",
+      "head -n 20 .env.sample",
+      "cat .env.template",
+      "cat .env.local.example",
+      "cat .ENV.EXAMPLE",
+      "grep -n API_KEY .env.example",
+      "sed -n 1,5p .env.production.sample",
+      "less \"./.env.example\"",
+      "cat ~/app/.env.example",
+      "cat /home/x/app/.env.template",
       "type C:\\Users\\x\\.ssh\\known_hosts",
       "type C:\\Users\\x\\Documents\\readme.txt",
       "dir C:\\Users\\x\\.sshkeys\\notes.txt",
@@ -145,5 +181,13 @@
         "12"
       ]
     ]
-  }
+  },
+  "env_template_allow": [
+    "cat .env.example",
+    "cat ./.env.example",
+    "cat .env.sample",
+    "head -5 .env.template",
+    "cat app/.env.example",
+    "cat .env.local.example"
+  ]
 }
