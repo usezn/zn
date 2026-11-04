@@ -145,5 +145,49 @@
         "12"
       ]
     ]
+  },
+  "sensitive_file_windows_prefixes": {
+    "positives": [
+      "type \\\\?\\C:\\Users\\example\\.aws\\credentials",
+      "type \\\\.\\C:\\Users\\example\\.aws\\credentials",
+      "type \\\\?\\C:\\Users\\example\\.ssh\\id_rsa",
+      "type \\\\.\\C:\\Users\\example\\.ssh\\id_rsa",
+      "type \\\\?\\C:\\Users\\example\\.ssh\\id_ed25519",
+      "type \\\\.\\C:\\Users\\example\\.ssh\\id_ed25519",
+      "type \\\\?\\C:\\Users\\example\\.ssh\\authorized_keys",
+      "type \\\\.\\C:\\Users\\example\\.ssh\\authorized_keys",
+      "type \\\\?\\C:\\Users\\example\\.env",
+      "type \\\\.\\C:\\Users\\example\\.env.local",
+      "type \\\\localhost\\C$\\Users\\example\\.aws\\credentials",
+      "type \\\\127.0.0.1\\C$\\Users\\example\\.ssh\\id_rsa",
+      "type \\\\?\\UNC\\localhost\\C$\\Users\\example\\.aws\\credentials",
+      "type \\\\?\\GLOBALROOT\\Device\\HarddiskVolume3\\Users\\example\\.ssh\\id_rsa",
+      "type \\\\.\\GLOBALROOT\\Device\\HarddiskVolume3\\Users\\example\\.aws\\credentials",
+      "type \\\\?\\Volume{01234567-89ab-cdef-0123-456789abcdef}\\Users\\example\\.aws\\credentials",
+      "type \\\\?\\Volume{01234567-89ab-cdef-0123-456789abcdef}\\Users\\example\\.env",
+      "type \"\\\\?\\C:\\Users\\Jane Example\\.ssh\\id_rsa\"",
+      "read --path=\\\\?\\C:\\Users\\example\\.aws\\credentials",
+      "type C:\\Users\\example\\.aws.\\credentials",
+      "type C:\\Users\\example\\.aws...\\credentials",
+      "type C:\\Users\\example\\.ssh.\\id_rsa",
+      "type %USERPROFILE%\\.ssh.\\id_rsa",
+      "type ~\\.aws.\\credentials",
+      "type \\\\?\\C:\\Users\\example\\.aws.\\credentials"
+    ],
+    "benign": [
+      "type \\\\?\\C:\\Users\\example\\Documents\\notes.txt",
+      "type \\\\.\\C:\\Users\\example\\project\\README.md",
+      "type \\\\localhost\\C$\\Users\\example\\Documents\\notes.txt",
+      "type \\\\?\\UNC\\localhost\\C$\\Users\\example\\project\\main.py",
+      "type \\\\?\\GLOBALROOT\\Device\\HarddiskVolume3\\Users\\example\\Documents\\a.txt",
+      "type \\\\?\\Volume{01234567-89ab-cdef-0123-456789abcdef}\\Users\\example\\Documents\\a.txt",
+      "type \\\\?\\C:\\Users\\example\\.ssh\\known_hosts",
+      "type \\\\?\\C:\\Users\\example\\.aws\\config",
+      "type \\\\?\\C:\\Users\\example\\.aws.bak\\credentials",
+      "type C:\\Users\\example\\.aws.bak\\credentials",
+      "type \\\\?\\C:\\Users\\example\\.sshkeys\\notes.txt",
+      "type \\\\?\\C:\\Users\\example\\.awsome\\credentials.md",
+      "type C:\\Users\\example\\.ssh.\\known_hosts"
+    ]
   }
 }

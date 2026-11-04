@@ -21,6 +21,17 @@ class RulesR3R6Tests(unittest.TestCase):
         for text in CASES["sensitive_file"]["benign"]:
             self.assertNotEqual(rules.evaluate(text).rule, "path:sensitive_file", text)
 
+    def test_sensitive_files_behind_windows_prefixes_shares_and_folder_dots(self):
+        group = CASES["sensitive_file_windows_prefixes"]
+        self.assertGreater(len(group["positives"]), 20)
+        self.assertGreater(len(group["benign"]), 8)
+        for text in group["positives"]:
+            r = rules.evaluate(text)
+            self.assertEqual(r.verdict, "block", text)
+            self.assertEqual(r.rule, "path:sensitive_file", text)
+        for text in group["benign"]:
+            self.assertNotEqual(rules.evaluate(text).rule, "path:sensitive_file", text)
+
     def test_hidden_tag_needs_a_really_hidden_element(self):
         for text in CASES["hidden_tag"]["positives"]:
             self.assertTrue(rules._test_hidden_tag(text), text)

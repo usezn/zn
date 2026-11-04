@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-10-31.6
+ * RULES_VERSION: 2026-11-04.3
  */
 
-const RULES_VERSION = '2026-10-31.6';
+const RULES_VERSION = '2026-11-04.3';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -320,10 +320,13 @@ function matchesRule(rule, text) {
   return rule.test ? rule.test(text) : rule.pattern.test(text);
 }
 
+// The home folder may be written with a Windows long or device prefix, a UNC admin share,
+// a GLOBALROOT device or a Volume GUID path, and the .aws or .ssh folder may end in
+// dots (Windows drops them). Same patterns as rules.py.
 const SENSITIVE_PATH_RULES = [
   {
     id: 'path:sensitive_file',
-    pattern: /(?:^|[\s"'`(\[@])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i,
+    pattern: /(?:^|[\s"'`(\[@])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|(?:[\/\\]{2}[?.][\/\\](?:UNC[\/\\][^\t\n\f\r \/\\"\']+[\/\\][A-Za-z]\$|GLOBALROOT[\/\\]Device[\/\\][^\t\n\f\r \/\\"\']+|Volume\{[0-9a-f-]+\}|[A-Za-z]:)|[\/\\]{2}[^\t\n\f\r \/\\"\']+[\/\\][A-Za-z]\$|[A-Za-z]:)[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh\.*[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws\.*[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|(?:[\/\\]{2}[?.][\/\\](?:UNC[\/\\][^\t\n\f\r \/\\"\']+[\/\\][A-Za-z]\$|GLOBALROOT[\/\\]Device[\/\\][^\t\n\f\r \/\\"\']+|Volume\{[0-9a-f-]+\}|[A-Za-z]:)|[\/\\]{2}[^\t\n\f\r \/\\"\']+[\/\\][A-Za-z]\$|[A-Za-z]:)[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh\.*[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws\.*[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i,
     description: 'Targeting sensitive system credentials or environment file',
   },
 ];

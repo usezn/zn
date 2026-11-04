@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-31.6
+RULES_VERSION: 2026-11-04.3
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-10-31.6"
+RULES_VERSION = "2026-11-04.3"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -440,10 +440,13 @@ ADVISORY_RULES: List[Tuple[str, Any, str]] = [
     ('indirect:hidden_tag', _test_hidden_tag_anywhere, 'Hidden element in markup followed by instruction-like words'),
 ]
 
+# The home folder may be written with a Windows long or device prefix, a UNC admin share,
+# a GLOBALROOT device or a Volume GUID path, and the .aws or .ssh folder may end in
+# dots (Windows drops them). Same patterns as rules.js.
 SENSITIVE_PATH_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'path:sensitive_file',
-        _rc(r"""(?:^|[\s"'`(\[@])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
+        _rc(r"""(?:^|[\s"'`(\[@])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|(?:[\/\\]{2}[?.][\/\\](?:UNC[\/\\][^\t\n\f\r \/\\"\']+[\/\\][A-Za-z]\$|GLOBALROOT[\/\\]Device[\/\\][^\t\n\f\r \/\\"\']+|Volume\{[0-9a-f-]+\}|[A-Za-z]:)|[\/\\]{2}[^\t\n\f\r \/\\"\']+[\/\\][A-Za-z]\$|[A-Za-z]:)[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh\.*[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws\.*[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|(?:[\/\\]{2}[?.][\/\\](?:UNC[\/\\][^\t\n\f\r \/\\"\']+[\/\\][A-Za-z]\$|GLOBALROOT[\/\\]Device[\/\\][^\t\n\f\r \/\\"\']+|Volume\{[0-9a-f-]+\}|[A-Za-z]:)|[\/\\]{2}[^\t\n\f\r \/\\"\']+[\/\\][A-Za-z]\$|[A-Za-z]:)[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh\.*[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws\.*[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
         'Targeting sensitive system credentials or environment file',
     ),
 ]

@@ -24,6 +24,19 @@ test('sensitive files are matched with Windows and mixed separators', () => {
   }
 });
 
+test('sensitive files are matched behind Windows prefixes, admin shares and folder dots', () => {
+  const group = CASES.sensitive_file_windows_prefixes;
+  assert.ok(group.positives.length > 20 && group.benign.length > 8);
+  for (const text of group.positives) {
+    const r = rules.evaluate(text);
+    assert.equal(r.verdict, 'block', text);
+    assert.equal(r.rule, 'path:sensitive_file', text);
+  }
+  for (const text of group.benign) {
+    assert.notEqual(rules.evaluate(text).rule, 'path:sensitive_file', text);
+  }
+});
+
 test('indirect:hidden_tag needs an element that is really hidden', () => {
   for (const text of CASES.hidden_tag.positives) assert.equal(hiddenRule.test(text), true, text);
   for (const text of CASES.hidden_tag.benign) assert.equal(hiddenRule.test(text), false, text);
