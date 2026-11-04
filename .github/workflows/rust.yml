@@ -127,6 +127,9 @@ jobs:
       - name: test private_file
         if: steps.scope.outputs.rust == 'true'
         run: cargo test --locked --lib private_file
+      - name: test the proxy starts a .cmd MCP server
+        if: runner.os == 'Windows' && steps.scope.outputs.rust == 'true'
+        run: 'cargo test --locked --lib proxy::'
 
   scope:
     name: Rust scope

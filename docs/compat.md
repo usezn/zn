@@ -109,7 +109,10 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
   server with the same name, such as
   one in a project's `.mcp.json` or a local-scope entry, is checked like any other, also when its
   command is `zn secrets-mcp` (Claude Code looks `zn` up on its `PATH`, where a project folder can come
-  first). A project install (`--project`) adds no MCP server. The zn-gate plugin
+  first). A server with that name in your organization's `managed-mcp.json`, or passed with `--mcp-config`
+  (read on Linux), counts like a project entry. Personal data is not asked about in calls to zn's own
+  detector server, the user-scope `zn-gate` (or `zn`) entry that runs `zn-gate mcp`, under the same
+  conditions (a secret is still blocked). A project install (`--project`) adds no MCP server. The zn-gate plugin
   registers no MCP server since version 1.14.0. Hooks installed by an earlier zn-gate keep the old
   matcher, which skips MCP tools, until you run `zn hooks install claude-code` again.
 - **`@file` mentions**: Claude Code does not run Read hooks for them, so zn
@@ -545,7 +548,7 @@ Without help, a hook that cannot start would block the tool call with no message
 
 Agents read some files at the start of every session as standing instructions or memory. Text written there outlives the session, so zn asks before the agent writes to them: `MEMORY.md`, `SOUL.md`, `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`, `.cursorrules`, `.windsurfrules`, `.cursor/rules/*`, `.github/copilot-instructions.md` and Claude Code's memory folders (`~/.claude/projects/*/memory/*`). Reading them is always allowed. The message names the file and says to approve only if you asked for the change.
 
-What counts as a write: the file tools (Write, Edit, MultiEdit, NotebookEdit and their equivalents), a shell redirection (`>`, `>>`), `tee`, `cp`, `mv`, `install`, `rsync`, `dd of=`, `touch`, `truncate`, an in-place `sed -i` or `perl -i`, a download saved with `curl -o` / `--output` or `wget -O` / `--output-document`, and the PowerShell writers (`Set-Content`, `Add-Content`, `Out-File`, `Copy-Item`, `Move-Item`). Only the command word counts, after `sudo`, `env`, `nohup`, `time`, `xargs` and variable assignments, so `grep -n patch CLAUDE.md` is a read. A copy or move into a directory (`cp CLAUDE.md sub/`, `cp -t sub CLAUDE.md`) is checked under the name the file gets there. Links are followed. Code run by an interpreter (`python -c "open(...)"`) is not read, and neither are writers zn does not know, such as `sponge` or `awk -i inplace`.
+What counts as a write: the file tools (Write, Edit, MultiEdit, NotebookEdit and their equivalents), a shell redirection (`>`, `>>`), `tee`, `cp`, `mv`, `install`, `rsync`, `dd of=`, `touch`, `truncate`, an in-place `sed -i` or `perl -i`, a download saved with `curl -o` / `--output` or `wget -O` / `--output-document`, and the PowerShell writers (`Set-Content`, `Add-Content`, `Out-File`, `Copy-Item`, `Move-Item`). Only the command word counts, after `sudo`, `env`, `nohup`, `time`, `xargs` and variable assignments, so `grep -n patch CLAUDE.md` is a read. A copy or move into a directory (`cp CLAUDE.md sub/`, `cp -t sub CLAUDE.md`) is checked under the name the file gets there. Links are followed. A quoted instruction-file name inside a `python -c` or `node -e` one-liner is also checked, when it is given to a write call (`open('CLAUDE.md', 'w')`, `Path('CLAUDE.md').write_text(...)`, `fs.writeFileSync('CLAUDE.md', ...)`, `fs.appendFile`, `fs.createWriteStream`); opening it to read does not count. A name built in the code or held in a variable is not read, other code run by an interpreter is not read, and neither are writers zn does not know, such as `sponge` or `awk -i inplace`.
 
 Claude Code saves automatic memory under `~/.claude/projects/*/memory`, so it asks each time it saves there. In `claude -p`, GitHub Copilot autopilot and other modes without a person to answer, a question counts as a refusal. A file directly in an agent's own configuration folder, such as `~/.claude/CLAUDE.md`, was already refused outright and stays refused.
 
