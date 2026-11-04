@@ -159,6 +159,9 @@ pub fn fold_system1(input: &str) -> String {
 /// Python rules (packages/zn-gate/lib/invisible.js). A test compares it with
 /// packages/zn-gate/test/fixtures/invisible_chars.json.
 pub const INVISIBLE_RANGES: &[(u32, u32)] = &[
+    (0x0000, 0x0008),
+    (0x000E, 0x001A),
+    (0x001C, 0x001F),
     (0x00AD, 0x00AD),
     (0x061C, 0x061C),
     (0x115F, 0x1160),

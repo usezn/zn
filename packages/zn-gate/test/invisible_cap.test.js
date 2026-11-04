@@ -141,3 +141,22 @@ test('post-tool output that is mostly invisible is withheld by the hook', async 
   const ok = await run('hello world');
   assert.notEqual(ok.output && ok.output.decision, 'block');
 });
+
+test('C0 control characters count as invisible, as in the Python package', () => {
+  // 100,000 NUL characters: all invisible, over the 64 KB minimum.
+  assert.equal(tooInvisible(['\u0000'.repeat(100000)]), true);
+  assert.equal(scanWindows('\u0000'.repeat(100000)).rule, 'size:invisible');
+  // More than 200,000 of them in a long text is blocked whatever the rest is.
+  assert.equal(tooInvisible([('x'.repeat(99) + '\u0001').repeat(200001)]), true);
+  // A quarter invisible stays allowed.
+  assert.equal(tooInvisible(['\u0001abc'.repeat(30000)]), false);
+  // Whitespace controls and ESC (ANSI colour) are not counted.
+  assert.equal(tooInvisible(['\u001b[0mok\r\n\t'.repeat(20000)]), false);
+  assert.equal(tooInvisible(['\t\n\v\f\r\u001b'.repeat(40000)]), false);
+});
+
+test('a very long run of NUL characters is blocked quickly', () => {
+  const t0 = Date.now();
+  assert.equal(tooInvisible(['\u0000'.repeat(4 * 1024 * 1024)]), true);
+  assert.ok(Date.now() - t0 < MAX_MS, 'took ' + (Date.now() - t0) + ' ms');
+});
