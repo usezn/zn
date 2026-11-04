@@ -157,7 +157,7 @@ test('elided values are not flagged', () => {
   assert.ok(!flagged('API_KEY=' + V + '…'));
 });
 
-test('elided Bearer tokens are not flagged; a full one still is (B-1948)', () => {
+test('elided Bearer tokens are not flagged; a full one still is', () => {
   const tok = ['ab', 'c1', '23', 'q7w8e9r0'].join('');   // 14 chars, digits: a full token is masked
   assert.deepEqual(names('Authorization: Bearer ' + tok), ['AUTHORIZATION']);
   assert.deepEqual(values('Authorization: Bearer ' + tok + '.'), [tok]);

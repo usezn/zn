@@ -64,7 +64,7 @@ test('analyze with --option=value says to use two arguments', () => {
 });
 
 test('scan with an unknown option names it, lists its options and exits 2', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-b2247-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-cli-unknown-options-'));
   try {
     const r = run(['scan', '--bogus'], { cwd: dir });
     assert.strictEqual(r.status, 2, r.stderr);
@@ -89,7 +89,7 @@ test('scan with --format=json says to use two arguments', () => {
 });
 
 test('scan reads the folder that comes after its options', () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-b2247-'));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-cli-unknown-options-'));
   const empty = path.join(base, 'empty');
   const target = path.join(base, 'target');
   fs.mkdirSync(empty);
@@ -105,7 +105,7 @@ test('scan reads the folder that comes after its options', () => {
 });
 
 test('scan -- takes a folder whose name starts with dashes', () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-b2247-'));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-cli-unknown-options-'));
   const target = path.join(base, '--odd');
   fs.mkdirSync(target);
   try {
@@ -119,7 +119,7 @@ test('scan -- takes a folder whose name starts with dashes', () => {
 });
 
 test('scan accepts its own options without reporting an unknown option', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-b2247-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-cli-unknown-options-'));
   try {
     fs.writeFileSync(path.join(dir, 'README.md'), '# Notes\n\nNothing to see here.\n');
     const r = run(['scan', dir, '--code', '--allow-partial', '--exclude', 'legacy', '--include', '.rst']);
