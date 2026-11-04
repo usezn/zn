@@ -832,6 +832,8 @@ test('a state left by a crash before the config was written does not leak into t
   assert.equal(fs.readFileSync(cliFile(home), 'utf8'), text, 'enabled goes back to false, not to "not set"');
 });
 
+// These tests run the sh launcher with a stand-in `node` that is a shell script. writeLauncher writes the lean launcher by default on
+// Windows, which starts a real Node.js, so each call below asks for the sh launcher with lean: false.
 function fakeNode(t, body) {
   const dir = tempDir(t, 'zn-zc-fakenode-');
   const f = path.join(dir, 'node');
@@ -842,7 +844,7 @@ function fakeNode(t, body) {
 test('launcher deadline: a hook stuck on start-up is answered before ZCode would time out (exit 2 / deny), with no wait for the stuck process', { skip: needSh }, (t) => {
   const home = tempDir(t, 'zn-zc-deadline-');
   const slow = fakeNode(t, 'cat >/dev/null; exec sleep 60');
-  const file = launcher.writeLauncher('zcode', slow, RUNNER, { home, env: process.env, deadlineS: 1 });
+  const file = launcher.writeLauncher('zcode', slow, RUNNER, { home, env: process.env, lean: false, deadlineS: 1 });
   const env = { PATH: process.env.PATH, HOME: home };
   for (const ev of ['PreToolUse', 'PermissionRequest', 'UserPromptSubmit']) {
     const t0 = Date.now();
@@ -859,14 +861,14 @@ test('launcher deadline: a hook stuck on start-up is answered before ZCode would
 test('launcher deadline: a hook that answers in time gets the input and its exit code and output pass through; nothing lingers', { skip: needSh }, (t) => {
   const home = tempDir(t, 'zn-zc-deadline-ok-');
   const echo = fakeNode(t, 'cat; printf ok > "$ZN_HOOK_ACK"; exit 0');
-  const file = launcher.writeLauncher('zcode', echo, RUNNER, { home, env: process.env, deadlineS: 30 });
+  const file = launcher.writeLauncher('zcode', echo, RUNNER, { home, env: process.env, lean: false, deadlineS: 30 });
   const t0 = Date.now();
   const r = spawnLauncher(file, ['PreToolUse'], { input: '{"a":1}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
   assert.equal(r.status, 0);
   assert.equal(r.stdout, '{"a":1}');
   assert.ok(Date.now() - t0 < 8000, 'returns at once, it does not wait for the 30 s timer');
   const two = fakeNode(t, 'cat >/dev/null; echo refused >&2; exit 2');
-  const f2 = launcher.writeLauncher('zcode', two, RUNNER, { home: tempDir(t, 'zn-zc-deadline-2-'), env: process.env, deadlineS: 30 });
+  const f2 = launcher.writeLauncher('zcode', two, RUNNER, { home: tempDir(t, 'zn-zc-deadline-2-'), env: process.env, lean: false, deadlineS: 30 });
   const r2 = spawnLauncher(f2, ['PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
   assert.equal(r2.status, 2);
   assert.match(r2.stderr, /refused/);
@@ -929,7 +931,7 @@ test('launcher deadline: a grandchild that holds the output open neither keeps t
   for (const [name, status, body] of cases) {
     const pidFile = path.join(home, 'pid-' + status);
     const node = fakeNode(t, body.replace('PIDFILE', pidFile));
-    const file = launcher.writeLauncher('zcode', node, RUNNER, { home: tempDir(t, 'zn-zc-gc-h-'), env: process.env, deadlineS: 1 });
+    const file = launcher.writeLauncher('zcode', node, RUNNER, { home: tempDir(t, 'zn-zc-gc-h-'), env: process.env, lean: false, deadlineS: 1 });
     const t0 = Date.now();
     const r = spawnLauncher(file, ['PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
     assert.equal(r.status, status, name + ' ' + r.stderr);
@@ -944,7 +946,7 @@ test('launcher deadline: a grandchild that holds the output open neither keeps t
 test('launcher deadline: a hook that ignores TERM is killed (KILL) one second after the deadline', { skip: needSh }, (t) => {
   const home = tempDir(t, 'zn-zc-deadline-kill-');
   const stubborn = fakeNode(t, "trap '' TERM; cat >/dev/null; while :; do /bin/sleep 1; done");
-  const file = launcher.writeLauncher('zcode', stubborn, RUNNER, { home, env: process.env, deadlineS: 2 });
+  const file = launcher.writeLauncher('zcode', stubborn, RUNNER, { home, env: process.env, lean: false, deadlineS: 2 });
   const t0 = Date.now();
   const r = spawnLauncher(file, ['PreToolUse'], { input: '{}', encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home }, timeout: 20000 });
   assert.equal(r.status, 2, r.stderr);
@@ -958,7 +960,7 @@ test('launcher deadline: a TERM sent to the launcher removes its private tempora
   const home = tempDir(t, 'zn-zc-term-');
   const tmp = tempDir(t, 'zn-zc-term-tmp-');
   const hook = fakeNode(t, 'cat >/dev/null; sleep 30');
-  const file = launcher.writeLauncher('zcode', hook, RUNNER, { home, env: process.env, deadlineS: 3 });
+  const file = launcher.writeLauncher('zcode', hook, RUNNER, { home, env: process.env, lean: false, deadlineS: 3 });
   const { spawn } = require('child_process');
   const child = spawn(file, ['PreToolUse'], { env: { PATH: process.env.PATH, HOME: home, TMPDIR: tmp }, stdio: ['pipe', 'ignore', 'ignore'] });
   const closed = new Promise((resolve) => child.on('close', (code, sig) => resolve({ code, sig })));
@@ -976,7 +978,7 @@ test('launcher deadline: a timer that cannot start blocks without running the ho
   const home = tempDir(t, 'zn-zc-deadline-notimer-');
   const marker = path.join(home, 'ran');
   const hook = fakeNode(t, 'touch ' + marker + '; cat; exit 0');
-  const file = launcher.writeLauncher('zcode', hook, RUNNER, { home, env: process.env, deadlineS: 5 });
+  const file = launcher.writeLauncher('zcode', hook, RUNNER, { home, env: process.env, lean: false, deadlineS: 5 });
   const text = fs.readFileSync(file, 'utf8');
   assert.ok(text.includes('/bin/sleep 5 &'), 'the timer is /bin/sleep with an absolute path');
   fs.writeFileSync(file, text.split('/bin/sleep').join('/nonexistent/sleep'), { mode: 0o755 });

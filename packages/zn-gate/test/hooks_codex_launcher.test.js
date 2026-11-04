@@ -164,7 +164,9 @@ test('codex install on Windows: a user install writes no sh launcher, each event
     assert.ok(cfg.isOurs(h.commandWindows, 'codex'), ev + ' is recognized as zn\'s');
   }
   codex.uninstall({ env, home, removeLauncher: true });
-  const left = JSON.parse(fs.readFileSync(codex.hooksFile({ env }), 'utf8')).hooks || {};
+  // zn created this file, so the uninstall gives the machine back as it was: no file. A file with other hooks would stay, minus zn's.
+  const hooksPath = codex.hooksFile({ env });
+  const left = fs.existsSync(hooksPath) ? JSON.parse(fs.readFileSync(hooksPath, 'utf8')).hooks || {} : {};
   for (const groups of Object.values(left)) for (const g of groups) for (const h of g.hooks || []) assert.ok(!cfg.isOurs(h.command, 'codex') && !cfg.isOurs(h.commandWindows, 'codex'));
   const proj = tempDir(t, 'zn-b93-proj-');
   codex.install({ scope: 'project', projectDir: proj, env, home, mcp: false });
