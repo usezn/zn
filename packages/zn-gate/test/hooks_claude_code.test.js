@@ -1309,7 +1309,7 @@ const ZN_DETECTOR = { command: 'npx', args: ['-y', 'zn-gate', 'mcp'] };
 
 test('personal data: not asked for the user-scope detector server, still asked for an impostor, a third party and the vault', async (t) => {
   const dir = tmpProject(t);
-  claudeConfig(t, { claudeJson: { mcpServers: { 'zn-gate': ZN_DETECTOR, zn: { command: 'zn', args: ['mcp'] }, secrets: ZN_SECRETS, crm: { command: 'node', args: ['/opt/crm-example/server.js'] } } } });
+  claudeConfig(t, { claudeJson: { mcpServers: { 'zn-gate': ZN_DETECTOR, zn: { command: process.execPath, args: [ZN_CLI, 'mcp'] }, secrets: ZN_SECRETS, crm: { command: 'node', args: ['/opt/crm-example/server.js'] } } } });
   const note = { text: 'write to jane@example.com' };
   assert.equal(adapter.normalize(preTool('mcp__zn-gate__analyze_prompt', note, dir)).mcp.ours, 'analyze');
   assert.equal(decisionOf(await run(preTool('mcp__zn-gate__analyze_prompt', note, dir), { engine: piiEngine })), 'allow');
@@ -1403,4 +1403,62 @@ test('mcp server kind: the real process lookup finds --mcp-config of an ancestor
   const parent = 'process.stdout.write(require("child_process").spawnSync("node",["-e",' + JSON.stringify(probe) + '],{encoding:"utf8"}).stdout)';
   const r2 = spawnSync('node', ['-e', parent, '--', '--mcp-config', file], { env, encoding: 'utf8' });
   assert.equal(r2.stdout, 'null');
+});
+
+test('detector server shape: the installed launchers are accepted, loose shapes are not', (t) => {
+  const dir = tmpProject(t);
+  const base = { managedDir: tempDir(t, 'zn-managed-'), argv: [] };
+  const kindOf = (entry) => {
+    claudeConfig(t, { claudeJson: { mcpServers: { 'zn-gate': entry } } });
+    return adapter.znMcpServerKind('zn-gate', dir, base);
+  };
+  // Accepted: the npm package run by npx (any registry spec), and this Node.js with a zn-gate bin/cli.js.
+  for (const spec of ['zn-gate', 'zn-gate@latest', 'zn-gate@next', 'zn-gate@1.14.3', 'zn-gate@1.15.0-rc.1']) {
+    assert.equal(kindOf({ command: 'npx', args: ['-y', spec, 'mcp'] }), 'analyze', spec);
+  }
+  assert.equal(kindOf({ command: process.execPath, args: [ZN_CLI, 'mcp'] }), 'analyze');
+  // Rejected: a zn or zn-gate looked up on the PATH, and a bare node with a relative cli.js.
+  assert.equal(kindOf({ command: 'zn', args: ['mcp'] }), null);
+  assert.equal(kindOf({ command: 'zn-gate', args: ['mcp'] }), null);
+  assert.equal(kindOf({ command: 'node', args: ['zn-gate/bin/cli.js', 'mcp'] }), null);
+  assert.equal(kindOf({ command: 'node', args: [ZN_CLI, 'mcp'] }), null);
+  // Rejected: specs that are not the registry package.
+  for (const spec of ['zn-gate@npm:other-package', 'zn-gate@file:../evil', 'zn-gate@github:someone/zn-gate', 'zn-gate@https://example.com/x.tgz', 'zn-gate@^1.0.0']) {
+    assert.equal(kindOf({ command: 'npx', args: ['-y', spec, 'mcp'] }), null, spec);
+  }
+  // Rejected: extra arguments or a launcher inside the project, or one that changes what loads.
+  assert.equal(kindOf({ command: 'npx', args: ['-y', 'zn-gate', 'mcp', '--evil'] }), null);
+  assert.equal(kindOf({ command: 'npx', args: ['-y', '--package', 'other', 'zn-gate', 'mcp'] }), null);
+  assert.equal(kindOf({ command: path.join(dir, 'npx'), args: ['-y', 'zn-gate', 'mcp'] }), null);
+  assert.equal(kindOf({ command: 'npx', args: ['-y', 'zn-gate', 'mcp'], env: { NODE_OPTIONS: '--require ./x.js' } }), null);
+  assert.equal(kindOf({ command: process.execPath, args: [ZN_CLI, 'mcp'], cwd: dir }), null);
+});
+
+test('secrets server: a zn-gate spec that is not the registry package is not zn\'s', () => {
+  const cc = require('../lib/agents/claude-code');
+  assert.equal(cc.isZnSecretsServer({ command: 'npx', args: ['-y', 'zn-gate@1.14.3', 'secrets-mcp'] }), true);
+  assert.equal(cc.isZnSecretsServer({ command: 'npx', args: ['-y', 'zn-gate@npm:other', 'secrets-mcp'] }), false);
+  assert.equal(cc.isZnSecretsServer({ command: 'npx', args: ['-y', 'zn-gate@file:../x', 'secrets-mcp'] }), false);
+  assert.equal(cc.isZnSecretsServer({ command: 'npx', args: ['-y', 'zn-gate@github:a/b', 'secrets-mcp'] }), false);
+});
+
+test('mcp server kind: --mcp-config stops at a prompt argument, so secrets tools keep working', (t) => {
+  const dir = tmpProject(t);
+  claudeConfig(t, { claudeJson: { mcpServers: { secrets: ZN_SECRETS, 'zn-gate': ZN_DETECTOR } } });
+  const base = { managedDir: tempDir(t, 'zn-managed-') };
+  const good = path.join(dir, 'cfg.json');
+  fs.writeFileSync(good, JSON.stringify({ mcpServers: { crm: { command: 'node', args: ['/opt/crm.js'] } } }));
+  // The prompt after the file is not read as a config file.
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '--mcp-config', 'cfg.json', 'fix the tests']] }), 'secrets');
+  assert.equal(adapter.znMcpServerKind('zn-gate', dir, { ...base, argv: [['claude', '--mcp-config', 'cfg.json', 'fix the tests']] }), 'analyze');
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '--mcp-config', JSON.stringify({ mcpServers: {} }), 'fix the tests']] }), 'secrets');
+  // A config that does redefine the name before the prompt still revokes trust, and so does an unreadable first value.
+  fs.writeFileSync(good, JSON.stringify({ mcpServers: { secrets: { command: 'node', args: ['/opt/x.js'] } } }));
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '--mcp-config', 'cfg.json', 'fix the tests']] }), null);
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '--mcp-config', 'missing.json', 'fix the tests']] }), null);
+  // A second file after the first is still read.
+  const second = path.join(dir, 'second.json');
+  fs.writeFileSync(good, JSON.stringify({ mcpServers: { crm: { command: 'node' } } }));
+  fs.writeFileSync(second, JSON.stringify({ mcpServers: { secrets: { command: 'node', args: ['/opt/x.js'] } } }));
+  assert.equal(adapter.znMcpServerKind('secrets', dir, { ...base, argv: [['claude', '--mcp-config', 'cfg.json', 'second.json', 'fix the tests']] }), null);
 });

@@ -557,6 +557,10 @@ function uninstall(opts = {}) {
   return report;
 }
 
+/* The only package specs that mean the npm registry's zn-gate: no alias (`zn-gate@npm:other`), no `file:`, `github:`
+ * or URL spec, no tag other than latest or next. */
+const NPX_SPEC = /^zn-gate(?:@(?:latest|next|\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?))?$/i;
+
 /* zn's own "secrets" server: `secrets-mcp` as an argument of zn-gate's bin/cli.js, of `zn`/`zn-gate`, or of `npx zn-gate`.
  * A server that only mentions the word (another package, a note in env) is someone else's. */
 function isZnSecretsServer(s) {
@@ -568,7 +572,7 @@ function isZnSecretsServer(s) {
   const cmd = path.basename(String(s.command || '').replace(/\\/g, '/')).replace(/\.(?:cmd|exe|ps1)$/i, '').toLowerCase();
   if (/(?:^|\/)zn-gate\/bin\/cli\.js$/i.test(prev)) return true;
   if (i === 0 && (cmd === 'zn' || cmd === 'zn-gate')) return true;
-  return /^zn-gate(?:@[^\s]+)?$/i.test(prev) && (cmd === 'npx' || cmd === 'npm');
+  return NPX_SPEC.test(prev) && (cmd === 'npx' || cmd === 'npm');
 }
 
 /* The user-scope MCP servers live in .claude.json (in CLAUDE_CONFIG_DIR when set): true when the "secrets"
@@ -624,17 +628,17 @@ function isBareZnSecrets(s) {
 const DETECTOR_SERVER_NAMES = ['zn-gate', 'zn'];
 const DETECTOR_TOOL_NAMES = ['analyze_prompt', 'check_tool_call', 'check_tool_result'];
 
-function isZnDetectorServer(s) {
-  if (!s || typeof s !== 'object' || s.url) return false;
+function isZnDetectorServer(s, opts = {}) {
+  if (!s || typeof s !== 'object' || s.url || typeof s.command !== 'string') return false;
   const args = Array.isArray(s.args) ? s.args.map(String) : [];
-  const i = args.indexOf('mcp');
-  if (i < 0) return false;
-  const prev = i > 0 ? args[i - 1].replace(/\\/g, '/') : '';
-  const cmd = path.basename(String(s.command || '').replace(/\\/g, '/')).replace(/\.(?:cmd|exe|ps1)$/i, '').toLowerCase();
-  if (/(?:^|\/)zn-gate\/bin\/cli\.js$/i.test(prev)) return cmd === 'node';
-  if (i === 0 && (cmd === 'zn' || cmd === 'zn-gate')) return true;
-  const pkg = args.slice(0, i).filter((a) => !a.startsWith('-'));
-  return (cmd === 'npx' || cmd === 'npm') && pkg.length === 1 && /^zn-gate(?:@[^\s]+)?$/i.test(pkg[0]) && i === args.indexOf(pkg[0]) + 1;
+  // `claude mcp add zn-gate -- npx -y zn-gate mcp`: the registry package only, run by npx itself (never `zn`/`zn-gate` or
+  // `node` looked up on the PATH). An absolute npx must be outside the project like the node of the installed shape.
+  const cmd = path.basename(s.command.replace(/\\/g, '/')).replace(/\.(?:cmd|exe|ps1)$/i, '').toLowerCase();
+  if (cmd === 'npx' && args.length === 3 && (args[0] === '-y' || args[0] === '--yes') && NPX_SPEC.test(args[1]) && args[2] === 'mcp') {
+    return launcherEnvIsClean(s, opts, path.isAbsolute(s.command) ? [s.command] : []);
+  }
+  // The installed shape of the secrets server: this Node.js and a zn-gate bin/cli.js, by absolute path, outside the project.
+  return isInstalledZnServer(s, 'mcp', opts);
 }
 
 /* The --mcp-config values (JSON text or file paths) of the claude process, read from the hook's ancestors. Linux only:
@@ -655,6 +659,10 @@ function ancestorArgv(opts) {
   return out;
 }
 
+function isFile(f) {
+  try { return fs.statSync(f).isFile(); } catch (_) { return false; }
+}
+
 /* Servers defined by --mcp-config, or null when a value cannot be read (the caller then trusts nothing). */
 function cliMcpServers(server, cwd, opts) {
   const found = [];
@@ -664,7 +672,12 @@ function cliMcpServers(server, cwd, opts) {
       if (argv[i].startsWith('--mcp-config=')) values = [argv[i].slice('--mcp-config='.length)];
       else if (argv[i] === '--mcp-config') {
         values = [];
-        for (let j = i + 1; j < argv.length && !argv[j].startsWith('--'); j += 1) values.push(argv[j]);
+        // The first value must be readable (else not trusted). After it, stop at the first value that is neither JSON
+        // nor an existing file: it is the prompt (`claude --mcp-config cfg.json "fix the tests"`).
+        for (let j = i + 1; j < argv.length && !argv[j].startsWith('--'); j += 1) {
+          if (j > i + 1 && !/^\s*[{[]/.test(argv[j]) && !isFile(path.resolve(cwd || process.cwd(), argv[j]))) break;
+          values.push(argv[j]);
+        }
       }
       if (!values) continue;
       for (const v of values) {
@@ -731,7 +744,7 @@ function znMcpServerKind(server, cwd, opts = {}) {
   }
   if (overrides.length) return null;
   // The detector server: only the user-scope entry, and only when no other entry uses the name at all.
-  if (detector) return userServers[server] !== undefined && isZnDetectorServer(userServers[server]) ? 'analyze' : null;
+  if (detector) return userServers[server] !== undefined && isZnDetectorServer(userServers[server], { ...opts, env, cwd: path.resolve(cwd || process.cwd()) }) ? 'analyze' : null;
   return isInstalledSecretsServer(userServers[server], { ...opts, env, cwd: path.resolve(cwd || process.cwd()) }) ? 'secrets' : null;
 }
 
@@ -749,18 +762,28 @@ function realOf(p) {
  * Any zn-gate copy counts, not only the one running this hook: the plugin loads zn-gate from its own vendor folder
  * while the server was registered from the npm package. */
 function isInstalledSecretsServer(s, opts = {}) {
+  return isInstalledZnServer(s, 'secrets-mcp', opts);
+}
+
+function isInstalledZnServer(s, sub, opts = {}) {
   if (!s || typeof s !== 'object' || s.url || typeof s.command !== 'string') return false;
   const args = Array.isArray(s.args) ? s.args.map(String) : [];
-  if (args[1] !== 'secrets-mcp' || !path.isAbsolute(s.command) || !path.isAbsolute(args[0] || '')) return false;
+  if (args[1] !== sub || !path.isAbsolute(s.command) || !path.isAbsolute(args[0] || '')) return false;
   const node = realOf(s.command);
   const cli = realOf(args[0]);
   if (!node || !cli) return false;
   const win = process.platform === 'win32';
   if (!(win ? /^node\.exe$/ : /^node$/).test(path.basename(node))) return false;
   if (!cli.split(path.sep).join('/').endsWith('/zn-gate/bin/cli.js')) return false;
+  return launcherEnvIsClean(s, opts, [node, cli]);
+}
+
+/* None of `files` inside the project, and nothing in the entry changes what the launcher loads. */
+function launcherEnvIsClean(s, opts, files) {
+  const win = process.platform === 'win32';
   const places = require('../exe').projectPlaces(opts.cwd || process.cwd(), opts.env || process.env, win);
   const inside = (p, d) => { const rel = path.relative(d, p); return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)); };
-  if (places.some((d) => inside(node, d) || inside(cli, d))) return false;
+  if (files.some((f) => places.some((d) => inside(realOf(f) || path.resolve(f), d)))) return false;
   // Nothing in the entry may change what that Node.js loads: no NODE_OPTIONS or NODE_PATH, no LD_PRELOAD, LD_AUDIT, LD_LIBRARY_PATH, DYLD_* or OPENSSL_CONF (they load code into any program), and no folder to run in
   // that is inside the project.
   const env = s.env && typeof s.env === 'object' ? Object.keys(s.env) : [];
