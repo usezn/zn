@@ -1,19 +1,19 @@
 requests to the provider: 7 (7 agent turns)
 
 step 1: exec_command {"cmd":"cat .env"}
-  result: Chunk ID: 3c4293 Wall time: 0.0000 seconds Process exited with code 0 Original token count: 19 Output: DB_PASSWORD=__ZN_DB_PASSWORD__ GITHUB_TOKEN=__ZN_GITHUB_TOKEN__ PORT=3000 
+  result: Chunk ID: 93647d Wall time: 0.0015 seconds Process exited with code 0 Original token count: 19 Output: DB_PASSWORD=__ZN_DB_PASSWORD__ GITHUB_TOKEN=__ZN_GITHUB_TOKEN__ PORT=3000 
 
 step 2: exec_command {"cmd":"cat config/settings.yml"}
   result: region: eu-west-1 aws_access_key_id: __ZN_AWS_KEY_1__ aws_secret_access_key: __ZN_AWS_SECRET_1__ retries: 3 [zn: 2 secret value(s) in this output were replaced with __ZN_ tokens (AWS_KEY, AWS_SECRET). Real values stay on this machine; use the tokens as they are.]
 
 step 3: exec_command {"cmd":"node -e \"console.log('db:', process.argv[1])\" __ZN_DB_PASSWORD__"}
-  result: Command blocked by PreToolUse hook: zn: this command uses a stored secret. Run it through zn instead, exactly like this: zn run -- node -e "console.log('db:', process.argv[1])" __ZN_DB_PASSWORD__ (zn puts the value only into that process, if the user allowed this command for the secret).. Command: node -e "console.log('db:', process.argv[1])" __ZN_DB_PASSWORD__
+  result: Command blocked by PreToolUse hook: zn: a secret marker in the arguments of a command is not filled in, because the value would show in the process list and in command-line logs. Next step: give the program the secret as an environment variable with `zn run --secrets NAME -- <command>` and have the program read it from there (for example psql reads PGPASSWORD). For web requests, use the secrets_http_request tool of the zn "secrets" MCP server.. Command: node -e "console.log('db:', process.argv[1])" __ZN_DB_PASSWORD__
 
-step 4: exec_command {"cmd":"zn run -- node -e \"console.log('db:', process.argv[1])\" __ZN_DB_PASSWORD__"}
-  result: Chunk ID: 380734 Wall time: 0.3443 seconds Process exited with code 0 Original token count: 39 Output: zn run: first use of DB_PASSWORD with `node`: confirm it in the zn vault prompt (dialog or the `zn unlock --foreground` terminal) db: __ZN_DB_PASSWORD__ 
+step 4: exec_command {"cmd":"zn run --secrets DB_PASSWORD -- node -e \"console.log('db:', process.env.DB_PASSWORD)\""}
+  result: Chunk ID: d5b98d Wall time: 0.0000 seconds Process exited with code 0 Original token count: 39 Output: zn run: first use of DB_PASSWORD with `node`: confirm it in the zn vault prompt (dialog or the `zn unlock --foreground` terminal) db: __ZN_DB_PASSWORD__ 
 
-step 5: exec_command {"cmd":"zn run -- python3 -c \"import sys; print('db:', sys.argv[1])\" __ZN_DB_PASSWORD__"}
-  result: Chunk ID: b7d1a7 Wall time: 0.0115 seconds Process exited with code 77 Original token count: 60 Output: zn run: first use of DB_PASSWORD with `python3`: confirm it in the zn vault prompt (dialog or the `zn unlock --foreground` terminal) zn run: [ZN_POLICY_DENIED] first use of DB_PASSWORD with `python3` was not approved (declined by the user) 
+step 5: exec_command {"cmd":"zn run --secrets DB_PASSWORD -- python3 -c \"import os; print('db:', os.environ['DB_PASSWORD'])\""}
+  result: Chunk ID: a6de12 Wall time: 0.0000 seconds Process exited with code 77 Original token count: 104 Output: zn run: first use of DB_PASSWORD with `python3`: confirm it in the zn vault prompt (dialog or the `zn unlock --foreground` terminal) zn run: Not allowed: first use of DB_PASSWORD with `python3` was not approved (declined by the user. Next step: nothing was changed. Do not retry the same request; finish the task another way.). Nothing was run or sent. Do not retry the same request; finish the task another way. 
 
 step 6: exec_command {"cmd":"cat ~/.aws/credentials"}
-  result: Command blocked by PreToolUse hook: zn: reading AWS credentials file (~/.aws/credentials) is blocked so secret values never reach the model. If a command needs it, ask the user to add the value with `zn secret set <NAME>` and use the __ZN_<NAME>__ marker.. Command: cat ~/.aws/credentials
+  result: Command blocked by PreToolUse hook: zn: ~/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `zn secret set NAME`, then run the command with `zn run --secrets NAME -- <command>` so the program gets it as an environment variable.. Command: cat ~/.aws/credentials
