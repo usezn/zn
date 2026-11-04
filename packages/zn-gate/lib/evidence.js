@@ -28,8 +28,19 @@ function ensureZnDir(filePath = EVIDENCE_FILE) {
  * the open descriptor before the line is written (POSIX only), so a symlink
  * swapped in between cannot redirect the chmod.
  */
+// True when the file is not empty and its last byte is not a newline, e.g. an editor or a cut-off
+// write left the last record without its line break. The caller holds the write lock.
+function lastByteIsNotNewline(fd) {
+  const size = fs.fstatSync(fd).size;
+  if (size === 0) return false;
+  const last = Buffer.alloc(1);
+  fs.readSync(fd, last, 0, 1, size - 1);
+  return last[0] !== 0x0a;
+}
+
 function appendLedgerLine(filePath, line) {
-  const fd = fs.openSync(filePath, 'a', LEDGER_FILE_MODE);
+  // 'a+' (append and read) so the last byte can be checked; every write still goes to the end.
+  const fd = fs.openSync(filePath, 'a+', LEDGER_FILE_MODE);
   try {
     if (process.platform !== 'win32') {
       try {
@@ -38,6 +49,9 @@ function appendLedgerLine(filePath, line) {
         // Best effort: a file system without POSIX modes keeps its own.
       }
     }
+    // Without this, a record appended to a ledger that lacks its final newline would join the
+    // previous line and verify would report Malformed JSON.
+    if (lastByteIsNotNewline(fd)) fs.writeSync(fd, '\n', null, 'utf8');
     fs.writeSync(fd, line, null, 'utf8');
   } finally {
     fs.closeSync(fd);
