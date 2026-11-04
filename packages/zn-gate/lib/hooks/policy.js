@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-04.2';
+const POLICY_RULES_VERSION = '2026-11-04.4';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -118,8 +118,10 @@ const HOME_PLUGIN_RES = [
   [/^(\.gemini\/config\/config\.json|\.zcode(\/cli)?|\.gemini(\/config|\/antigravity-cli)?)$/, 'the agent configuration and plugin state'],
 ];
 
-// zn's own code and the Claude Code plugin that runs it. An agent that could overwrite them could turn every hook
-// into a no-op (one write of `process.exit(0)` over runner.js), so writes are refused like the agent configuration.
+// zn's own code and the Claude Code plugin that runs it. An agent that could overwrite them could change or switch off
+// the checks of every hook (one write over the hook code, such as lib/hooks/policy.js, or over the plugin's hook
+// definitions), so writes are refused like the agent configuration. (The launcher already refuses a runner.js whose
+// hash differs from the installed one; the modules the runner loads are not hashed.)
 // Reads stay allowed. The package that is running is added at run time (see installContext).
 const ZN_INSTALL_RES = [
   // Any global prefix (npm-global, nvm, /usr/lib, /usr/local/lib, Homebrew, %APPDATA%\npm) and any project install.
@@ -316,6 +318,7 @@ function agentContext(home, cwd, env) {
 }
 
 let packageKeysCache = null;
+let checkoutKeysCache = null;
 /**
  * Where the zn-gate package that is running lives, found from this module (not from the PATH or the settings, which an
  * agent may change): the whole folder is protected. A source checkout is left out (an agent may work on zn-gate itself
@@ -334,6 +337,20 @@ function packageRootKeys(override) {
   return override ? keysOf(root) : keys;
 }
 
+/** The folder of the source checkout zn is running from (its git root), or [] for an install: files in it are the project's own. */
+function checkoutRootKeys() {
+  const root = path.resolve(__dirname, '..', '..');
+  const mode = caseInsensitive() ? 'i' : 'c';
+  if (checkoutKeysCache && checkoutKeysCache.mode === mode) return checkoutKeysCache.keys;
+  let keys = [];
+  if (packageRootKeys().length === 0) {
+    const top = projectRootOf(root);
+    if (fs.existsSync(path.join(top, '.git'))) keys = keysOf(top);
+  }
+  checkoutKeysCache = { mode, keys };
+  return keys;
+}
+
 /** The plugin and package folders and the PATH folders that must not be written (keys, not spelled as typed). */
 function installContext(home, cwd, env, opts) {
   const dirs = [];
@@ -343,10 +360,13 @@ function installContext(home, cwd, env, opts) {
   if (env.CLAUDE_PLUGIN_ROOT) add(env.CLAUDE_PLUGIN_ROOT, 'the Claude Code plugin files');
   if (env.CLAUDE_CODE_PLUGIN_CACHE_DIR) add(env.CLAUDE_CODE_PLUGIN_CACHE_DIR, 'the Claude Code plugin files');
   const binDirs = new Set();
-  for (const k of [path.join(home, '.local', 'bin'), path.join(home, 'bin')]) for (const x of keysOf(k)) binDirs.add(x);
+  // A PATH folder inside the source checkout zn is running from (a developer's PATH=$PWD/bin:$PATH) holds the project's own files.
+  const checkout = checkoutRootKeys();
+  const inCheckout = (x) => checkout.some((c) => x === c || x.startsWith(c + '/'));
+  for (const k of [path.join(home, '.local', 'bin'), path.join(home, 'bin')]) for (const x of keysOf(k)) if (!inCheckout(x)) binDirs.add(x);
   for (const raw of String(env.PATH || env.Path || '').split(path.delimiter)) {
     if (!raw || !path.isAbsolute(raw.trim())) continue;
-    for (const x of keysOf(raw.trim())) binDirs.add(x);
+    for (const x of keysOf(raw.trim())) if (!inCheckout(x)) binDirs.add(x);
   }
   return { dirs, binDirs };
 }
@@ -1672,15 +1692,30 @@ function npmExecInit(text) {
 /*
  * Commands that remove or switch off zn: uninstalling the package (npm, pnpm, yarn, bun, volta, pip, pipx, uv, ...), and
  * `claude plugin disable|uninstall zn-gate` or removing the usezn marketplace. They are the user's decision, like
- * `zn-gate uninstall`. Read per simple command, token by token (linear), so they are found inside `sh -c "..."`, after
- * sudo or env prefixes, with the options anywhere. Returns the command to name in the message, or null.
+ * `zn-gate uninstall`. They are read on the words of each simple command as the shell reads them (quotes, escapes and
+ * $'...' removed, so z''n-gate is zn-gate), in one pass with no limit on the number of words, after sudo, env, timeout and
+ * the other words that run what follows them, with the options anywhere. The words of a message, a search pattern or a
+ * document (git commit -m "...", grep "...", echo "...") are not a command and are not read. A shell inside the command
+ * (sh -c "...") is read as a command of its own (shellCodesOf); the strings of inline code (python -c, node -e) are read
+ * as text, and so is all the text of a command that starts a shell to read it (echo "..." | sh). A removal whose name cannot be
+ * read is refused too: a variable, a substitution, or names that come from a pipe (xargs, parallel, find -exec).
+ * Returns {what, unresolved} to name in the message, or null.
  */
 const PKG_HEADS = new Set(['npm', 'pnpm', 'yarn', 'yarnpkg', 'bun', 'cnpm', 'volta', 'pip', 'pip3', 'pipx', 'uv', 'pipenv', 'poetry', 'conda', 'mamba', 'micromamba', 'python', 'python3', 'py']);
 const PKG_REMOVE_WORDS = new Set(['uninstall', 'remove', 'rm', 'un', 'unlink', 'r', 'delete']);
 const PLUGIN_REMOVE_WORDS = new Set(['disable', 'uninstall', 'remove', 'rm', 'delete']);
+const PKG_SUBCOMMANDS = new Set(['tool', 'pip', 'global']);
 const ZN_PKG_TOKEN_RE = /^zn[-_.]gate(?:[@=<>!~[].*)?$/i;
 const SEGMENT_SPLIT_RE = /[;&|\n`()]+/;
-const MAX_SEGMENT_TOKENS = 200;
+// Words that run the words after them: the command that follows is the one read. xargs, parallel and find -exec run it
+// with names that are read at run time.
+const RUN_PREFIX_WORDS = new Set(['sudo', 'doas', 'pkexec', 'env', 'command', 'nohup', 'time', 'exec', 'builtin', 'nice', 'ionice', 'timeout',
+  'stdbuf', 'setsid', 'npx', 'pnpx', 'bunx', 'corepack', 'if', 'then', 'else', 'elif', 'while', 'until', 'do', '!', '{', 'cmd', 'call', 'start', 'xargs', 'parallel', 'find']);
+const STDIN_NAMES_WORDS = new Set(['xargs', 'parallel']);
+const EXEC_OPTION_RE = /^-(?:exec|execdir|ok|okdir)$/;
+// A name that is only known when the command runs.
+const UNREAD_NAME_RE = /[$`]|%[A-Za-z_][A-Za-z0-9_]*%/;
+const REDIRECT_START_RE = /^(?:[0-9]*|\*)(?:>\||>>?|<<?)/;
 
 function bareProgram(tok) {
   return path.basename(String(tok).replace(/\\/g, '/')).replace(/\.(?:exe|cmd|ps1|bat|js|cjs|mjs)$/i, '').toLowerCase();
@@ -1689,61 +1724,196 @@ function cleanToken(t) {
   return t.replace(/^["'\\]+|["'\\]+$/g, '');
 }
 
-function installRemoval(cmd) {
-  const text = String(cmd || '');
-  if (!/zn[-_.]gate|usezn/i.test(text)) return null;
-  for (const seg of text.split(SEGMENT_SPLIT_RE)) {
-    if (!/zn[-_.]gate|usezn/i.test(seg)) continue;
-    const toks = seg.split(/\s+/).map(cleanToken).filter(Boolean).slice(0, MAX_SEGMENT_TOKENS);
-    for (let i = 0; i < toks.length; i++) {
-      const head = bareProgram(toks[i]);
-      if (head === 'claude' || head === 'claude-code') {
-        const rest = toks.slice(i + 1);
-        const at = rest.findIndex((t) => /^plugins?$/i.test(t));
-        if (at < 0) continue;
-        const sub = rest.slice(at + 1);
-        const mk = sub.findIndex((t) => /^marketplaces?$/i.test(t));
-        if (mk >= 0) {
-          const mrm = sub.findIndex((t, j) => j > mk && PLUGIN_REMOVE_WORDS.has(t.toLowerCase()));
-          if (mrm >= 0 && sub.slice(mrm + 1).some((t) => /^usezn(?:$|[@/])/i.test(t))) return 'claude plugin marketplace remove usezn';
+/* claude [options] plugin[s] ... : one pass over the words after the program. */
+function pluginRemoval(toks, h, stdin, literalOnly) {
+  let plugin = false;
+  let market = -1;
+  let rm = -1;
+  let verb = '';
+  let mrm = -1;
+  let mverb = '';
+  for (let j = h + 1; j < toks.length; j++) {
+    const t = toks[j];
+    if (!plugin) { if (/^plugins?$/i.test(t)) plugin = true; continue; }
+    // The words after the first removal word are what is removed.
+    if (rm >= 0 && /^zn-gate(?:@.*)?$/i.test(t)) return { what: 'claude plugin ' + (verb === 'disable' ? 'disable' : 'uninstall') + ' zn-gate' };
+    if (mrm >= 0 && /^usezn(?:$|[@/])/i.test(t)) return { what: 'claude plugin marketplace ' + mverb + ' usezn' };
+    if (!literalOnly && rm >= 0 && UNREAD_NAME_RE.test(t)) return { what: 'claude plugin ' + (mrm >= 0 ? 'marketplace ' : '') + (mrm >= 0 ? mverb : verb), unresolved: true };
+    const low = t.toLowerCase();
+    if (market < 0 && /^marketplaces?$/.test(low)) market = j;
+    if (PLUGIN_REMOVE_WORDS.has(low)) {
+      if (rm < 0) { rm = j; verb = low; }
+      if (market >= 0 && mrm < 0 && j > market) { mrm = j; mverb = low; }
+    }
+  }
+  if (!literalOnly && stdin && rm >= 0) return { what: 'claude plugin ' + (mrm >= 0 ? 'marketplace ' + mverb : verb), unresolved: true };
+  return null;
+}
+
+/* npm, pnpm, yarn, bun, volta, pip, pipx, uv, python -m pip ... : one pass over the words after the program. */
+function packageRemoval(toks, h, head, stdin, literalOnly) {
+  const python = /^(?:python|py)[0-9.]*$/.test(head);
+  let verbAt = -1;
+  let verb = '';
+  let module = '';
+  let pip = false;
+  let eligible = false;
+  const mid = [];
+  const label = () => [module || head, ...mid.filter((w) => PKG_SUBCOMMANDS.has(w)), verb].join(' ');
+  for (let j = h + 1; j < toks.length; j++) {
+    const t = toks[j];
+    const low = t.toLowerCase();
+    if (verbAt < 0) {
+      if (PKG_REMOVE_WORDS.has(low)) {
+        verbAt = j;
+        verb = low;
+        // An unreadable name is refused only for the package tools themselves (not for `python script.py remove $x`) and only
+        // when the removal word is among the first words, where a package manager has its subcommand.
+        eligible = (!python || pip) && mid.length <= 2;
+        continue;
+      }
+      if (!t.startsWith('-')) {
+        if (/^(?:pip[0-9.]*|pipx|uv)$/.test(low)) {
+          pip = true;
+          if (python && !module) { module = low; continue; }
         }
-        const rm = sub.findIndex((t) => PLUGIN_REMOVE_WORDS.has(t.toLowerCase()));
-        if (rm >= 0 && sub.slice(rm + 1).some((t) => /^zn-gate(?:@.*)?$/i.test(t))) return 'claude plugin ' + (sub[rm].toLowerCase() === 'disable' ? 'disable' : 'uninstall') + ' zn-gate';
-      } else if (PKG_HEADS.has(head) || /^(?:pip|python)[0-9.]+$/.test(head)) {
-        const rest = toks.slice(i + 1);
-        const rm = rest.findIndex((t) => PKG_REMOVE_WORDS.has(t.toLowerCase()));
-        if (rm >= 0 && rest.slice(rm + 1).some((t) => ZN_PKG_TOKEN_RE.test(path.basename(t.replace(/\\/g, '/'))))) {
-          return head + ' ' + (rest[rm].toLowerCase() === 'remove' ? 'remove' : 'uninstall') + ' zn-gate';
-        }
+        if (mid.length < 4) mid.push(low);
+      }
+      continue;
+    }
+    if (ZN_PKG_TOKEN_RE.test(path.basename(t.replace(/\\/g, '/')))) return { what: label() + ' zn-gate' };
+    if (!literalOnly && eligible && UNREAD_NAME_RE.test(t)) return { what: label(), unresolved: true };
+  }
+  if (!literalOnly && stdin && verbAt >= 0 && eligible) return { what: label(), unresolved: true };
+  return null;
+}
+
+/* The words of one simple command, in one pass. `literalOnly`: the words come from the text of inline code, where a
+   variable is the code's own and only a literal name is read. */
+function removalInTokens(toks, literalOnly, text) {
+  let prefixed = false; // a word that runs what follows was seen
+  let stdin = false; // ... and the names it runs with come from a pipe or a find
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    if (ASSIGNMENT_RE.test(t)) continue;
+    if (EXEC_OPTION_RE.test(t)) { prefixed = true; stdin = true; continue; }
+    const prog = bareProgram(t);
+    // The words of a text that a shell will run: echo and printf only print the command that follows.
+    if (RUN_PREFIX_WORDS.has(prog) || (text && (prog === 'echo' || prog === 'printf'))) { prefixed = true; if (STDIN_NAMES_WORDS.has(prog)) stdin = true; continue; }
+    let hit = null;
+    if (prog === 'claude' || prog === 'claude-code') hit = pluginRemoval(toks, i, stdin, literalOnly);
+    else if (PKG_HEADS.has(prog) || /^(?:pip|python)[0-9.]+$/.test(prog)) hit = packageRemoval(toks, i, prog, stdin, literalOnly);
+    if (hit) return hit;
+    // Any other first word is the command (echo, grep, git, ...) and what follows are its arguments.
+    if (!prefixed) return null;
+  }
+  return null;
+}
+
+/* The text of inline code or of a command a shell will read: split at the separators, words split at blanks. */
+function removalInCode(str, text) {
+  // printf spells a line break as a backslash and n; the shell that reads the text removes the quotes in it.
+  const src = text ? str.replace(/\\[nrt]/g, ' ').replace(/["']/g, '') : str;
+  if (!/zn[-_.]gate|usezn/i.test(src)) return null;
+  for (const seg of src.split(SEGMENT_SPLIT_RE)) {
+    const hit = removalInTokens(seg.split(/\s+/).map(cleanToken).filter(Boolean), true, text);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/* A shell started with no script to run, which reads its commands from the input or from a -c string
+   (sh, bash -s, sudo bash, sh -c "$(echo ...)"): then the text printed into it is a command. */
+function shellReadsText(toks) {
+  const at = toks.findIndex((x) => SHELL_NAMES.has(bareProgram(x)));
+  if (at < 0) return false;
+  for (let i = 0; i < at; i++) if (!(ASSIGNMENT_RE.test(toks[i]) || RUN_PREFIX_WORDS.has(bareProgram(toks[i])) || toks[i].startsWith('-'))) return false;
+  const rest = toks.slice(at + 1);
+  return rest.every((x) => x.startsWith('-')) || rest.some((x) => SHELL_C_FLAG_RE.test(x));
+}
+
+/* `readings` come from allWords: the words with their quotes removed, grouped by simple command (seq). */
+function installRemovalOfWords(readings) {
+  for (const words of readings) {
+    const groups = [];
+    let reads = false; // a shell in the command reads text
+    for (let k = 0; k < words.length;) {
+      const seq = words[k].seq;
+      const toks = [];
+      for (; k < words.length && words[k].seq === seq; k++) {
+        const w = words[k];
+        if (w.redirectTarget || !w.text || REDIRECT_START_RE.test(w.text)) continue;
+        toks.push(w.text);
+      }
+      groups.push(toks);
+      let hit = removalInTokens(toks, false);
+      if (!hit && toks.some((x) => CODE_CMDS_RE.test(bareProgram(x)))) {
+        for (const x of toks) if (/\s/.test(x) && (hit = removalInCode(x, false))) break;
+      }
+      if (hit) return hit;
+      if (!reads && shellReadsText(toks)) reads = true;
+    }
+    if (reads) {
+      for (const toks of groups) {
+        let hit = removalInTokens(toks, true, true);
+        if (!hit) for (const x of toks) if (/\s/.test(x) && (hit = removalInCode(x, true))) break;
+        if (hit) return hit;
       }
     }
   }
   return null;
 }
 
-// A path to the installed package built while the command runs, such as "$(npm root -g)/zn-gate/lib/hooks/runner.js":
-// it cannot be resolved here, so a command that writes or removes something with such a path is refused.
-// Matched in two linear steps instead of one pattern with an unbounded span between the two parts, which rescanned the rest
-// of the segment from every start: the earliest variable start, then the package folder anywhere after it. No length bound,
-// so a path of any length is judged the same way.
+/*
+ * A path to the installed package built while the command runs, such as "$(npm root -g)/zn-gate/lib/hooks/runner.js":
+ * it cannot be resolved here, so a command that writes or removes something with such a path is refused. Only a path that
+ * is built from the folder of a package install is meant, so work in a checkout of zn-gate with variables in the command
+ * (sed -i "s/$OLD/new/" packages/zn-gate/..., mkdir -p $OUT/zn-gate) is not refused. It is refused when, after a variable,
+ * a substitution or a backtick, the same segment (quotes removed) names
+ *   - node_modules/zn-gate (where every npm install puts the package), or
+ *   - zn-gate right after the end of a command substitution or a backtick pair (the folder `npm root -g` prints), or
+ *   - zn-gate right after a variable that the same command sets from a substitution or from another variable (`R=$(npm
+ *     root -g); rm -rf $R/zn-gate`), or after a ${...} with more in it than a name.
+ * A variable the command does not set is not followed: $OUT/zn-gate is the project's own. Matched in linear steps:
+ * the earliest start, then one scan for each way a folder can follow; no length bound on the path.
+ */
 const VAR_START_RE = /(?:\$\(|\$\{|\$[A-Za-z_]|`|%[A-Za-z_]+%|\$env:)/;
-const ZN_FOLDER_RE = /[\\/](?:node_modules[\\/])?zn-gate(?:[\\/@]|["'\s)`]|$)/i;
-function varBaseZn(seg) {
+const ZN_AFTER = String.raw`(?=[\\/@\s)\`]|$)`;
+const NM_ZN_RE = new RegExp(String.raw`(?<![A-Za-z0-9_.-])node_modules[\\/]zn-gate` + ZN_AFTER, 'i');
+const SUBST_END_ZN_RE = new RegExp(String.raw`[)\`][\\/](?:node_modules[\\/])?zn-gate` + ZN_AFTER, 'i');
+const NAMED_ZN_RE = new RegExp(String.raw`(?:\$\{([^}]{1,256})\}|\$env:([A-Za-z_][A-Za-z0-9_]*)|\$([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%)[\\/]zn-gate` + ZN_AFTER, 'gi');
+function varBaseZn(seg, unknown) {
   const m = VAR_START_RE.exec(seg);
-  return m !== null && ZN_FOLDER_RE.test(seg.slice(m.index + m[0].length));
+  if (m === null) return false;
+  if (NM_ZN_RE.test(seg.slice(m.index + m[0].length))) return true;
+  const sub = seg.search(/\$\(|`/);
+  if (sub >= 0 && SUBST_END_ZN_RE.test(seg.slice(sub + 1))) return true;
+  NAMED_ZN_RE.lastIndex = m.index;
+  for (let n = NAMED_ZN_RE.exec(seg); n !== null; n = NAMED_ZN_RE.exec(seg)) {
+    const name = n[1] !== undefined ? n[1] : (n[2] || n[3] || n[4]);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || unknown.has(name)) return true;
+  }
+  return false;
 }
 const WRITE_VERB_RE = /(?:^|[\s;&|(`])(?:sudo\s+)?(?:rm|mv|unlink|rmdir|ln|cp|install|rsync|truncate|shred|chmod|chown|tee|sed|dd|touch|mkdir|del|erase|rd|ri|remove-item|move-item|copy-item|set-content|out-file)(?:\s|$)|>/i;
-function installPathViaVariable(cmd) {
-  const text = String(cmd || '');
-  if (!/zn-gate/i.test(text)) return false;
-  for (const seg of text.split(/[;&|\n]+/)) {
-    if (varBaseZn(seg) && WRITE_VERB_RE.test(seg)) return true;
+function installPathViaVariable(cmd, unknown) {
+  const quotesOut = String(cmd || '').replace(/["']/g, '');
+  // Read with a backslash as a path separator (Windows) and as an escape (z\n-gate).
+  for (const text of [quotesOut, quotesOut.replace(/\\/g, '')]) {
+    if (!/zn-gate/i.test(text)) continue;
+    for (const seg of text.split(/[;&|\n]+/)) {
+      if (varBaseZn(seg, unknown || new Set()) && WRITE_VERB_RE.test(seg)) return true;
+    }
   }
   return false;
 }
 
-function installRemovalMessage(what) {
-  return 'zn blocked this: `' + what + '` removes or switches off zn\'s protection for your coding agent, which is the user\'s decision. ' +
+function installRemovalMessage(hit) {
+  if (hit.unresolved) {
+    return 'zn blocked this: `' + hit.what + '` with a name that zn cannot read (a variable, a substitution or names from a pipe) could remove or switch off ' +
+      'zn\'s protection for your coding agent, which is the user\'s decision. Next step: ask the user to run it themselves in their own terminal.';
+  }
+  return 'zn blocked this: `' + hit.what + '` removes or switches off zn\'s protection for your coding agent, which is the user\'s decision. ' +
     'Next step: ask the user to run it themselves in their own terminal.';
 }
 const INSTALL_PATH_MESSAGE = 'zn blocked this: the command writes or removes something inside the installed zn-gate package through a path built while it runs, ' +
@@ -2521,12 +2691,10 @@ function bashDenialOf(cmd, opts = {}) {
   if (String(cmd || '').length > SHELL_SCAN_CAP) return TOO_LONG_MESSAGE;
   const admin = adminCommand(cmd);
   if (admin) return adminDenial(admin, opts, cmd);
-  const removal = installRemoval(cmd);
-  if (removal) return installRemovalMessage(removal);
-  if (installPathViaVariable(cmd)) return INSTALL_PATH_MESSAGE;
   if (keychainQuery(cmd, opts.env || process.env)) return KEYCHAIN_MESSAGE;
   // Variables the command sets itself (X=$HOME; rm -rf $X/.zn, export D=~/.zn) are expanded like the environment's.
   const assigned = shellAssignments(cmd, opts);
+  if (installPathViaVariable(cmd, assigned.unknown)) return INSTALL_PATH_MESSAGE;
   if (assigned.env || assigned.unknown.size) {
     const env = { ...(opts.env || process.env), ...(assigned.env || {}) };
     for (const name of assigned.unknown) delete env[name];
@@ -2558,6 +2726,9 @@ function bashDenialOf(cmd, opts = {}) {
   if (/\$['"]/.test(text)) readings.push(allWords(decodeAnsiC(text), true));
   // A reading that could not be split to the end is refused, not checked in part.
   if (readings.some((r) => r.truncated)) return TOO_MANY_MESSAGE;
+  // Removing zn or switching its plugin off, read on the words of each simple command.
+  const removal = installRemovalOfWords(readings);
+  if (removal) return installRemovalMessage(removal);
   const words = readings.flat();
   const codes = new Set();
   for (const r of readings) shellCodesOf(r, codes);

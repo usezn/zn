@@ -60,8 +60,8 @@ not seen. Paths are checked after `~`, variables and symlinks are resolved,
 and globs and brace lists are checked against the files that exist now and
 against the names they could match.
 
-The same protection covers zn's own install, so an agent cannot switch the hooks off by
-replacing the code that runs them. Writes, moves and removals are refused for the files of the
+The same protection covers zn's own install, so an agent cannot change or switch off the code
+that runs the hooks. Writes, moves and removals are refused for the files of the
 Claude Code plugin (everything under `~/.claude/plugins`, such as `installed_plugins.json`, the
 marketplace clone and the plugin's `scripts/zn-launch.js`, `hooks/hooks.json` and lock file, plus
 the folders `CLAUDE_PLUGIN_ROOT`, `CLAUDE_CODE_PLUGIN_CACHE_DIR` and `CLAUDE_CONFIG_DIR/plugins`
@@ -71,12 +71,42 @@ Homebrew, `/usr/lib` and `/usr/local/lib` global prefixes and `npx` caches. They
 a file named `zn`, `zn-gate`, `zn-mcp` (also `.cmd`, `.ps1`) in a folder on the PATH
 (for example `~/.local/bin` or `~/bin`) and for any file named `zn-hook-*`, because such a file
 would run in place of zn. A source checkout of zn-gate is not protected, so an agent can still
-work on zn-gate itself. Reading these files is allowed. The hooks also refuse the commands
-that remove zn or switch its plugin off: `npm`, `pnpm`, `yarn`, `bun` or `volta` uninstall or remove
-of `zn-gate`, `pip`, `pipx` or `uv` uninstall of `zn-gate`, `claude plugin disable` or
-`uninstall zn-gate`, and `claude plugin marketplace remove usezn`. Like `zn hooks uninstall`, they are
-for you to run in your own terminal; installing other packages and listing plugins still work.
-As above, a write the hooks cannot read as a word of the command is not seen.
+work on zn-gate itself: that includes a PATH folder inside the checkout zn runs from, and commands
+that use variables on files of the checkout (`sed -i "s/$OLD/new/" packages/zn-gate/...`,
+`mkdir -p $OUT/zn-gate`). Reading these files is allowed.
+
+The hooks also refuse the commands that remove zn or switch its plugin off: `npm`, `pnpm`, `yarn`,
+`bun` or `volta` uninstall or remove of `zn-gate`, `pip`, `pipx` or `uv` uninstall of `zn-gate`,
+`claude plugin disable` or `uninstall zn-gate`, and `claude plugin marketplace remove usezn`. Like
+`zn hooks uninstall`, they are for you to run in your own terminal; installing other packages and
+listing plugins still work. These commands are read on the words of each simple command as the
+shell reads them, so quotes and escapes in the name (`z''n-gate`, `zn\-gate`), `sudo`, `env`,
+`timeout` and similar prefixes, `sh -c "..."` and any number of other words do not hide them. A
+removal whose name the hooks cannot read is refused as well: a variable, a substitution or a pipe
+(`claude plugin disable $P`, `npm uninstall -g $(...)`, `echo zn-gate | xargs claude plugin
+disable`, `find ... -exec npm uninstall {} +`). That also refuses an ordinary `npm uninstall`, `pip
+uninstall` or `uv ... uninstall` that takes a variable. The text of such a command in a message,
+a search pattern or a document (`git commit -m "..."`, `grep "..."`, `echo "..." >> README.md`) is not
+a command and is allowed. In the code of an inline script (`python -c`, `node -e`) only a literal
+name is read.
+
+A path to the installed package built while a command runs is refused when the command writes or
+removes: a path with `node_modules/zn-gate` after a variable or a substitution, `zn-gate` right
+after a command substitution or backticks (`rm -rf "$(npm root -g)/zn-gate"`), and `zn-gate` after
+a variable that the same command sets from a substitution or another variable. A variable that
+the command does not set (`$OUT/zn-gate`) is not followed.
+
+What this does not cover. A write the hooks cannot read as a word of the command (a path built
+inside a script or inline code, or with a variable set outside the command) is not seen, and the
+protection is for the npm install that runs the hooks (the Python package does not run them). Not
+covered either, because refusing them would also stop ordinary work in a project: removing or
+overwriting a folder that holds the install (the whole `node_modules` or the npm prefix, also as
+`node_modules/zn-gate/..`), extracting an archive into it (`tar -C`, `unzip -d`, `cp -r`), a glob
+in a relative path after a `cd` into it (`cd .../node_modules && rm -rf zn*`), `find ... -delete`
+below it, and installing another build of the package (`npm install -g ./other`, `npm link`,
+another version). The launcher already checks that `runner.js` is the one that was installed and
+does not run it otherwise; the other modules of the package are not checked that way, which is what
+the protection above is for.
 
 The hooks also ask before the agent writes to the files where it keeps memory and
 standing instructions: `MEMORY.md`, `SOUL.md`, `AGENTS.md`, `CLAUDE.md`,

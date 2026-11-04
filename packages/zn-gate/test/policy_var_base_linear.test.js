@@ -55,11 +55,11 @@ test('a path built while the command runs is still refused, at any length', () =
   for (const n of [0, 10, 1023, 1024, 1025, 5000, 40000]) {
     const pad = 'a'.repeat(n);
     for (const cmd of [
-      'rm -r "$(npm root -g)' + pad + '/zn-gate/lib"',
+      'rm -r "$(npm root -g)"/zn-gate/' + pad + '/lib',
       'rm -r $BASE/' + pad + '/node_modules/zn-gate',
-      'echo x > ${P}/' + pad + '/zn-gate/lib/hooks/runner.js',
-      'rm -r `npm root -g`/' + pad + '/zn-gate',
-      'rm -r %APPDATA%\\' + pad + '\\zn-gate\\lib',
+      'echo x > ${P}/' + pad + '/node_modules/zn-gate/lib/hooks/runner.js',
+      'rm -r `npm root -g`/zn-gate/' + pad,
+      'rm -r %APPDATA%\\' + pad + '\\node_modules\\zn-gate\\lib',
     ]) {
       assert.ok(policy.bashDenial(cmd, O), 'allowed: ' + cmd.slice(0, 60) + ' (pad ' + n + ')');
     }

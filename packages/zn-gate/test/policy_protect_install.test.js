@@ -1,8 +1,8 @@
 'use strict';
 /*
  * zn's own install is off limits to the agent's write tools and shell: the Claude Code plugin files, the installed
- * zn-gate package (one write of process.exit(0) over runner.js would turn every hook into a no-op), a file named like
- * the zn command in a PATH folder, and the commands that uninstall zn or switch the plugin off. Reads stay allowed.
+ * zn-gate package (a write over the hook code, such as lib/hooks/policy.js, would change every check), a file named
+ * like the zn command in a PATH folder, and the commands that uninstall zn or switch the plugin off. Reads stay allowed.
  * Everything runs in a temporary home; nothing here touches the real ~/.claude, ~/.zn or ~/.local/bin.
  */
 process.env.ZN_STATS = 'off';
@@ -316,4 +316,154 @@ test('the denial of a file names what is protected and asks the user', (t) => {
   const msg = policy.writeDenial(path.join(home, '.claude', 'plugins', 'installed_plugins.json'), opts);
   assert.match(msg, /^zn: the (?:Claude Code plugin files|agent plugins) \(/);
   assert.match(msg, /Ask the user to make this change/);
+});
+
+// ---- Quote splicing, variables, xargs, long commands (the removal check reads the words as the shell does) ----
+
+const SPLICED_REMOVALS = [
+  "claude plugin disable z''n-gate", 'claude plugin disable zn"-gate"', 'claude plugin disable zn\\-gate@usezn', "claude plugin disable 'zn'-gate",
+  'claude plugin disable "zn-gate"@usezn', 'claude plugin uninstall z""n-gate', "claude plugin disable zn$'\\x2d'gate",
+  "claude plugin marketplace remove use''zn", 'claude plugin marketplace remove "use"zn', 'claude plugin marketplace rm us\\ezn',
+  "npm uninstall -g z''n-gate", 'npm uninstall -g zn"-"gate', "pip uninstall zn''_gate", "pipx uninstall z'n-g'ate", "python3 -m pip uninstall -y z''n-gate",
+  "sudo -u root npm uninstall -g z''n-gate", "timeout 20 claude plugin disable zn'-'gate", "env -i HOME=/x claude plugin disable z''n-gate",
+  "sh -c \"claude plugin disable z''n-gate\"", "bash -c 'npm uninstall -g zn\"-gate\"'", 'if true; then claude plugin disable z""n-gate; fi',
+];
+const VARIABLE_REMOVALS = [
+  'P=zn-gate; claude plugin disable $P', 'claude plugin disable ${P}', 'claude plugin disable "$P"', 'claude plugin disable $(echo zn-gate)',
+  'claude plugin disable `echo zn-gate`', 'claude plugin uninstall "$(printf zn-gate)@usezn"', 'M=usezn; claude plugin marketplace remove $M',
+  'claude plugin marketplace remove "$(echo usezn)"', 'npm uninstall -g $(echo zn-gate)', 'npm uninstall -g $PKG', 'npm rm -g `echo zn-gate`',
+  'pip uninstall -y $NAME', 'python3 -m pip uninstall $(echo zn-gate)', 'uv tool uninstall ${T}', 'yarn global remove $P', 'pnpm remove -g "$P"',
+  "bash -c 'P=zn-gate; claude plugin disable $P'", 'claude plugin disable %P%',
+];
+const STDIN_REMOVALS = [
+  'echo zn-gate | xargs claude plugin disable', 'printf zn-gate | xargs -n1 claude plugin uninstall', 'echo usezn | xargs claude plugin marketplace remove',
+  'xargs -a list.txt npm uninstall -g', 'echo zn-gate | xargs npm uninstall -g', 'echo zn-gate | xargs -I{} pip uninstall -y {}',
+  'echo zn-gate | sudo xargs npm rm -g', 'find . -name zn-gate -exec npm uninstall -g {} +', 'echo zn-gate | parallel claude plugin disable',
+];
+const manyTokens = (n, mk) => Array.from({ length: n }, (_, i) => mk(i)).join(' ');
+const LONG_REMOVALS = [
+  'env ' + manyTokens(250, (i) => 'X' + i + '=1') + ' claude plugin disable zn-gate',
+  'env ' + manyTokens(250, (i) => 'X' + i + '=1') + ' npm uninstall -g zn-gate',
+  'npm uninstall -g ' + manyTokens(250, (i) => 'pkg' + i) + ' zn-gate',
+  'claude plugin disable ' + manyTokens(250, (i) => 'pkg' + i) + ' zn-gate',
+  'claude plugin marketplace remove ' + manyTokens(250, (i) => 'm' + i) + ' usezn',
+  'sudo ' + manyTokens(1000, (i) => '-o' + i) + ' pip uninstall zn-gate',
+  manyTokens(5000, (i) => 'A' + i + '=1') + ' npm uninstall -g zn-gate',
+];
+
+test('quote splicing, escapes and wrappers do not hide the commands that remove zn', (t) => {
+  const { opts } = setup(t);
+  for (const cmd of SPLICED_REMOVALS) assert.match(String(policy.bashDenial(cmd, opts)), /zn blocked this/, cmd);
+});
+
+test('a name that is a variable, a substitution or input from a pipe is refused when it follows a removal', (t) => {
+  const { opts } = setup(t);
+  for (const cmd of [...VARIABLE_REMOVALS, ...STDIN_REMOVALS]) {
+    const deny = policy.bashDenial(cmd, opts);
+    assert.match(String(deny), /zn blocked this/, cmd);
+    assert.match(deny, /ask the user to run it themselves in their own terminal/, cmd);
+  }
+});
+
+test('a removal after hundreds of words is still seen (no word limit)', (t) => {
+  const { opts } = setup(t);
+  for (const cmd of LONG_REMOVALS) assert.match(String(policy.bashDenial(cmd, opts)), /zn blocked this/, cmd.slice(0, 60) + ' (' + cmd.length + ' chars)');
+});
+
+test('inline code that runs a removal is still refused', (t) => {
+  const { opts } = setup(t);
+  for (const cmd of [
+    `python3 -c "import os; os.system('npm uninstall -g zn-gate')"`,
+    `node -e "require('child_process').execSync('claude plugin disable zn-gate')"`,
+    `ruby -e 'system("pip uninstall -y zn-gate")'`,
+  ]) assert.match(String(policy.bashDenial(cmd, opts)), /zn blocked this/, cmd);
+});
+
+test('the words of a removal inside a string, a message or a document are not a command', (t) => {
+  const { opts } = setup(t);
+  for (const cmd of [
+    'grep -rn "npm uninstall -g zn-gate" docs', 'git commit -m "docs: pip uninstall zn-gate and claude plugin disable zn-gate"',
+    'git commit -m "uninstall zn-gate"', 'echo "npm uninstall -g zn-gate" >> README.md', "printf 'claude plugin marketplace remove usezn\\n' > notes.txt",
+    'echo claude plugin disable zn-gate', 'cat > docs/uninstall.md <<EOF\nnpm uninstall -g zn-gate\nclaude plugin disable zn-gate\nEOF',
+    'rg "pip uninstall zn-gate" -g "*.md"', 'git log --grep="npm uninstall zn-gate"', 'gh pr create --title "Protect zn" --body "blocks npm uninstall -g zn-gate"',
+    'npm uninstall left-pad && echo done', 'echo $P | xargs echo', 'echo zn-gate | xargs echo', 'echo a | xargs npm install',
+    'claude plugin list $P', 'claude plugin install "$P"', 'claude plugin disable other-plugin', 'npm install -g $PKG', 'python3 build.py remove $X',
+  ]) assert.equal(policy.bashDenial(cmd, opts), null, cmd);
+});
+
+test('the message names the command that was read, not a made-up one', (t) => {
+  const { opts } = setup(t);
+  const msg = (cmd) => String(policy.bashDenial(cmd, opts));
+  assert.match(msg('python3 -m pip uninstall zn-gate'), /`pip uninstall zn-gate`/);
+  assert.doesNotMatch(msg('python3 -m pip uninstall zn-gate'), /python3? uninstall/);
+  assert.match(msg('uv tool uninstall zn-gate'), /`uv tool uninstall zn-gate`/);
+  assert.match(msg('uv pip uninstall zn-gate'), /`uv pip uninstall zn-gate`/);
+  assert.match(msg('npm rm -g zn-gate'), /`npm rm zn-gate`/);
+  assert.match(msg('claude plugin disable zn-gate'), /`claude plugin disable zn-gate`/);
+  assert.match(msg('claude plugin marketplace remove usezn'), /`claude plugin marketplace remove usezn`/);
+  assert.match(msg('echo zn-gate | xargs npm uninstall -g'), /`npm uninstall`/);
+});
+
+test('the removal check takes time linear in the command (no word limit, no rescans)', (t) => {
+  const { opts } = setup(t);
+  for (const [name, unit, tail] of [
+    ['npm', 'npm ', ''], ['claude', 'claude ', ''], ['plugin', 'claude plugin ', ''], ['remove words', 'claude plugin disable ', ''],
+    ['variables', '$a ', ''], ['prefixes', 'sudo ', 'npm uninstall left-pad'], ['assignments', 'A=1 ', 'claude plugin list'], ['pip', 'python3 -m pip uninstall ', ''],
+  ]) {
+    const prefix = name === 'variables' ? 'npm uninstall ' : '';
+    const cmd = (prefix + unit.repeat(Math.ceil(90000 / unit.length))).slice(0, 90000) + tail;
+    const t0 = Date.now();
+    policy.bashDenial(cmd, opts);
+    assert.ok(Date.now() - t0 < 5000, name + ' took ' + (Date.now() - t0) + ' ms');
+  }
+});
+
+test('a removal printed into a shell, run by npx or in a heredoc is refused; text that no shell reads is not', (t) => {
+  const { opts } = setup(t);
+  for (const cmd of [
+    'echo "claude plugin disable zn-gate" | bash', 'echo npm uninstall -g zn-gate | sh', "printf 'pip uninstall -y zn-gate\\n' | sudo sh", 'echo "npm uninstall -g z\'\'n-gate" | bash -s',
+    'sh -c "$(echo claude plugin disable zn-gate)"', 'npx --yes npm uninstall -g zn-gate', 'corepack npm uninstall -g zn-gate', 'bash <<EOF\nnpm uninstall -g zn-gate\nEOF',
+    'cat <<EOF | sh\nclaude plugin disable zn-gate\nEOF', 'eval claude plugin disable z\'\'n-gate',
+  ]) assert.match(String(policy.bashDenial(cmd, opts)), /zn blocked this/, cmd);
+  for (const cmd of [
+    'echo "npm uninstall -g zn-gate" | tee notes.txt', 'git commit -m "npm uninstall zn-gate" && bash run.sh', 'bash run.sh', 'echo "claude plugin disable zn-gate" | grep plugin',
+    'cat docs/uninstall.md | sh -n', 'echo hello | bash',
+  ]) assert.equal(policy.bashDenial(cmd, opts), null, cmd);
+});
+
+// ---- Paths built while the command runs ----
+
+test('work on a checkout of zn-gate with variables in the command stays allowed', (t) => {
+  const { opts } = setup(t);
+  for (const cmd of [
+    'sed -i "s/$OLD/new/" packages/zn-gate/lib/hooks/policy.js', 'cp "$TMPDIR/x.js" packages/zn-gate/test/x.test.js', 'echo "$X" > packages/zn-gate/README.md',
+    'cp $HOME/a.txt docs/zn-gate/notes.md', 'mkdir -p $OUT/zn-gate', 'mkdir -p ${OUT}/zn-gate/lib', 'cp -r build "$DEST/zn-gate"', 'touch %TEMP%\\zn-gate\\x.txt',
+    'cp x $env:TEMP\\zn-gate\\x', 'rm -rf "$TMPDIR"/zn-gate-test', 'git -C "$REPO" checkout -- packages/zn-gate/package.json', 'echo $(date) >> packages/zn-gate/CHANGELOG.md',
+    'git commit -m "uninstall zn-gate"', 'sed -i "s/a/$B/" $(git rev-parse --show-toplevel)/packages/zn-gate/lib/x.js', 'cp $A $B && mkdir -p zn-gate',
+  ]) assert.equal(policy.bashDenial(cmd, opts), null, cmd);
+});
+
+test('a path to the installed package built while the command runs is still refused', (t) => {
+  const { opts } = setup(t);
+  for (const cmd of [
+    'rm -rf "$(npm root -g)/zn-gate"', 'rm -rf $(npm root -g)/zn-gate', 'rm -rf `npm root -g`/zn-gate', 'rm -rf "$(npm root -g)"/zn-gate/lib',
+    'echo x > "$(npm root -g)/zn-gate/lib/hooks/runner.js"', 'rm -rf $NPM_PREFIX/lib/node_modules/zn-gate', 'rm -rf ${P}/lib/node_modules/zn-gate/',
+    'rm -rf %APPDATA%\\npm\\node_modules\\zn-gate', 'rm -rf $env:APPDATA\\npm\\node_modules\\zn-gate\\lib', 'R=$(npm root -g); rm -rf $R/zn-gate',
+    'R=`npm root -g`; echo x > ${R}/zn-gate/lib/hooks/runner.js', 'R=$(npm root -g) && mv "$R/zn-gate" /x', "cp x \"$(npm root -g)/z''n-gate/lib/a.js\"",
+    'rm -rf "$(npm root -g)"/zn"-"gate', 'rm -rf ${X:-$(npm root -g)}/zn-gate',
+  ]) assert.match(String(policy.bashDenial(cmd, opts)), /zn blocked this/, cmd);
+});
+
+// ---- PATH folders inside a source checkout of zn-gate ----
+
+test('a PATH folder inside the source checkout of zn-gate does not make its own files off limits', (t) => {
+  const { home, project } = setup(t);
+  const root = path.resolve(__dirname, '..');
+  if (!fs.existsSync(path.join(root, '..', '..', '.git'))) return t.skip('not a git checkout');
+  const env = { PATH: [path.join(root, 'bin'), path.join(home, '.local', 'bin')].join(path.delimiter) };
+  const opts = { home, cwd: project, env };
+  assert.equal(policy.writeDenial(path.join(root, 'bin', 'zn-gate.js'), opts), null);
+  assert.equal(policy.writeDenial(path.join(root, 'bin', 'zn'), opts), null);
+  // other PATH folders count as before
+  assert.match(String(policy.writeDenial(path.join(home, '.local', 'bin', 'zn'), opts)), /named like the zn command/);
 });
