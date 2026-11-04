@@ -9,10 +9,10 @@ const { normalisedView } = require('./scrub/normalize');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-03.18
+ * RULES_VERSION: 2026-11-03.19
  */
 
-const RULES_VERSION = '2026-11-03.18';
+const RULES_VERSION = '2026-11-03.19';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -1617,12 +1617,17 @@ const SCRUB_LAST_PATTERNS = [
 
 // The rules of lib/rules.js and the scrubber provider formats on one text (no normalised pass).
 function redactSecretsOnce(text, track) {
-  const first = redactCredentials(text, track);
-  if (typeof first.sanitized !== 'string' || !first.sanitized) return first;
+  // GitHub tokens and long OpenAI keys go first, as in the Python package, so a token assigned to a
+  // secret-looking name is labelled as the token and a longer one is redacted whole, with a trailing hyphen.
+  const zero = typeof text === 'string' && text ? redactProviderFormats(text, track, SCRUB_FIRST_RULES) : { sanitized: text, detections: [] };
+  const first = redactCredentials(zero.sanitized, track);
+  if (typeof first.sanitized !== 'string' || !first.sanitized) {
+    return zero.detections.length === 0 ? first : { sanitized: first.sanitized, detections: zero.detections.concat(first.detections) };
+  }
   const second = redactProviderFormats(first.sanitized, track);
   const third = redactWith(second.sanitized, SCRUB_LAST_PATTERNS, track);
-  if (second.detections.length === 0 && third.detections.length === 0) return first;
-  return { sanitized: third.sanitized, detections: first.detections.concat(second.detections, third.detections) };
+  if (zero.detections.length === 0 && second.detections.length === 0 && third.detections.length === 0) return first;
+  return { sanitized: third.sanitized, detections: zero.detections.concat(first.detections, second.detections, third.detections) };
 }
 
 // Redacts secrets. Every rule runs on the original text and on the text without
@@ -1646,24 +1651,36 @@ const SCRUB_PROVIDER_RULES = new Map([
   'ONEPASSWORD_SA_TOKEN', 'AGE_SECRET_KEY', 'ALIBABA_KEY_ID', 'ARTIFACTORY_KEY', 'CLOUDFLARE_ORIGIN_CA_KEY', 'DYNATRACE_TOKEN', 'EASYPOST_KEY', 'FLYIO_TOKEN', 'GRAFANA_TOKEN', 'TERRAFORM_CLOUD_TOKEN', 'HEROKU_KEY_V2', 'NOTION_TOKEN', 'PERPLEXITY_KEY', 'PLANETSCALE_TOKEN', 'POSTMAN_KEY', 'PREFECT_KEY', 'PULUMI_TOKEN', 'README_KEY', 'RUBYGEMS_KEY', 'BREVO_KEY', 'SENTRY_USER_TOKEN', 'SHIPPO_KEY', 'OPENSHIFT_TOKEN', 'TEAMS_WEBHOOK',
   'BEARER_TOKEN',
 ].map((t) => [t, 'secret:' + t.toLowerCase()]).concat([
+  ['GITHUB_TOKEN', 'secret:github_token'],
+  ['GITHUB_PAT', 'secret:github_token'],
+  ['JWT', 'secret:jwt_token'],
   ['AWS_KEY', 'secret:aws_key_id'],
   ['AWS_SECRET', 'secret:aws_secret_key'],
   ['URL_PASSWORD', 'secret:url_password'],
   ['DB_PASSWORD', 'secret:url_password'],
 ]));
 
+// The provider rules that run before every other one (SCRUB_FIRST_PATTERNS of the Python package).
+const SCRUB_FIRST_RULES = new Map([['GITHUB_TOKEN', 'secret:github_token'], ['GITHUB_PAT', 'secret:github_token'], ['OPENAI_KEY', 'secret:openai_key'],
+  ['ZN_API_KEY', 'secret:zn_api_key'], ['JWT', 'secret:jwt_token']]);
+
+// Keys the early OpenAI rule leaves to secret:openai_key of SECRET_PATTERNS, as in the Python package:
+// the Helicone, sp-, cp- and similar forms and a body that starts with a 7-character group.
+const SCRUB_FIRST_SKIP = new Map([['OPENAI_KEY', /^sk-(?:ant-|helicone-|(?:eu|cp|gov|rl|sp|lf|[Nn]one)-|(?!svcacct-)[a-z0-9]{7}-)/]]);
+
 // The scrubber types a URL password as DB_PASSWORD or URL_PASSWORD by scheme;
 // the Python package has one rule and one label for every scheme.
-const SCRUB_PROVIDER_LABELS = new Map([['DB_PASSWORD', 'URL_PASSWORD']]);
+const SCRUB_PROVIDER_LABELS = new Map([['DB_PASSWORD', 'URL_PASSWORD'], ['GITHUB_PAT', 'GITHUB_TOKEN']]);
 
 // The provider token formats of the scrubber engine (GitLab, Slack, Stripe,
 // Google, npm, ...), run on text the SECRET_PATTERNS already redacted. The
 // engine is required here, not at the top, because it requires this file.
-function redactProviderFormats(text, track) {
+function redactProviderFormats(text, track, rules) {
+  rules = rules || SCRUB_PROVIDER_RULES;
   // Only the provider types take part in the overlap resolution: a wider span of another type (such as
   // a NAME=value assignment) would otherwise win it, be dropped here, and leave the key unredacted.
   // The scrubber's own normalised view is off: redactNormalised does that pass for every rule.
-  const spans = require('./scrub/engine').scan(text, { exact: false, pii: false, normalise: false, types: SCRUB_PROVIDER_RULES })
+  const spans = require('./scrub/engine').scan(text, { exact: false, pii: false, normalise: false, types: rules })
     .sort((a, b) => a.start - b.start || b.end - a.end);
   const detections = [];
   const edits = [];
@@ -1671,7 +1688,9 @@ function redactProviderFormats(text, track) {
   let last = 0;
   for (const s of spans) {
     if (s.start < last) continue;
-    const rule = SCRUB_PROVIDER_RULES.get(s.type);
+    const skip = rules === SCRUB_FIRST_RULES && SCRUB_FIRST_SKIP.get(s.type);
+    if (skip && skip.test(text.slice(s.start, s.end))) continue;
+    const rule = rules.get(s.type);
     const replacement = `[REDACTED_${SCRUB_PROVIDER_LABELS.get(s.type) || s.type}]`;
     detections.push({ rule, index: s.start });
     edits.push({ start: s.start, end: s.end, text: replacement, rule });

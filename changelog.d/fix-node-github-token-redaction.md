@@ -1,0 +1,2 @@
+### Fixed
+- The Node.js secret redaction (`redactSecrets`, and the lines `zn-gate scan` prints) now redacts GitHub tokens longer than 40 characters, fine-grained `github_pat_` tokens, short JSON Web Tokens and long `sk-proj-` keys that end in a hyphen, as the Python package already did, and labels a zn API key or a JWT in an `Authorization: Bearer` header as that key type in both packages. The shared test corpus now covers these forms.

@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-03.18
+RULES_VERSION: 2026-11-03.19
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-03.18"
+RULES_VERSION = "2026-11-03.19"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1544,12 +1544,13 @@ SCRUB_FIRST_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     # GitHub tokens of up to 255 characters, and fine-grained tokens longer than 82.
     ("secret:github_token#scrub", _rc(_TB + r'gh[pousr]_[A-Za-z0-9]{36,255}' + _TA), "[REDACTED_GITHUB_TOKEN]"),
     ("secret:github_token#scrub_pat", _rc(_TB + r'github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59,}' + _TA), "[REDACTED_GITHUB_TOKEN]"),
-]
-
-SCRUB_LAST_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
+    # These two run before the shared Authorization: Bearer rule, so a zn key or a JWT in a header gets its own label.
     ("secret:zn_api_key", _rc(_TB + r'zn_[0-9a-f]{48}' + _TA), "[REDACTED_ZN_API_KEY]"),
     # A JWT whose parts are shorter than the shared rule asks for (8 characters after eyJ, a 16-character signature).
     ("secret:jwt_token#scrub", _rc(_TB + r'eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}' + _TA), "[REDACTED_JWT]"),
+]
+
+SCRUB_LAST_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
     # 40 base64 characters after the words "aws" and "secret" (the CLI's SecretAccessKey, prose, a config file).
     ("secret:aws_secret_key#scrub", _rc(_B64_B + r'[A-Za-z0-9+/]{40}' + _B64_A), "[REDACTED_AWS_SECRET]"),
     # A private key whose END line was cut off: the header and the base64 lines after it.
