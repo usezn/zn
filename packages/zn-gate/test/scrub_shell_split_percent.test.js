@@ -85,3 +85,16 @@ test('work is capped and linear', () => {
   scan(long, CTX);
   assert.ok(Date.now() - t0 < 5000, 'too slow');
 });
+
+test('a split secret far from the start and between long clean runs is redacted', () => {
+  const clean = 'plain code line without secrets\n'.repeat(400);
+  const text = clean + 'echo AKIA""IOSFODNN7EXAMPLE\n' + clean + 'x=%41KIAIOSFODNN7EXAMPLE\n' + clean;
+  const out = redacted(text);
+  assert.equal(out, clean + 'echo #\n' + clean + 'x=#\n' + clean);
+});
+
+test('a joined quote pair or stray percent far from any secret leaves the verdict unchanged', () => {
+  const text = ("x = ''\ny = a''b\nz = 100%d\n" + 'plain\n'.repeat(3000));
+  assert.deepEqual(scan(text, CTX), []);
+  assert.equal(normalisedView('plain text, "" and %zz and 100%'), null);
+});
