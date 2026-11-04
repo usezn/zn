@@ -109,11 +109,19 @@ function breakStaleLock(lockPath, token) {
   let fd;
   try {
     fd = fs.openSync(mutex, 'wx', LEDGER_FILE_MODE);
-    try { fs.writeSync(fd, token); } catch { /* best effort: without it the mutex is never released by us */ }
   } catch {
     // Another breaker is working. A mutex left by a dead process is removed after a while.
     reclaimStaleMutex(mutex, token);
     return false;
+  }
+  try {
+    fs.writeSync(fd, token);
+  } catch (e) {
+    // Without the token this process cannot release the mutex. The mutex is ours (just created
+    // with 'wx'), so remove it and report the error instead of leaving an empty mutex behind.
+    try { fs.closeSync(fd); } catch { /* best effort */ }
+    try { fs.unlinkSync(mutex); } catch { /* best effort */ }
+    throw e;
   }
   try {
     try { fs.closeSync(fd); } catch { /* best effort */ }
