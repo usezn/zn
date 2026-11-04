@@ -12,7 +12,7 @@ name: Release
 # job waits for the approval, so the GitHub Release is only created once the
 # package is live. PyPI does not wait for npm.
 #
-# - Tag push (vX.Y.Z or vX.Y.Z-beta.N): verify, then build in the reusable
+# - Tag push (vX.Y.Z, or a pre-release such as vX.Y.Z-rc.1 or vX.Y.Z-beta.1): verify, then build in the reusable
 #   build-release.yml, then wait for approval on the "release" environment
 #   before anything is signed, attested or published (signing, the two publish
 #   jobs and the GitHub Release each ask for that approval).

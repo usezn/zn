@@ -13,8 +13,7 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request, or to next, cancels the run still going for it. Runs for main, release branches,
-# the merge queue and the schedule always complete (each has its own group).
+# Only the merge queue triggers this workflow, so every run has its own group and always completes.
 concurrency:
   group: windows-python-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
@@ -30,10 +29,9 @@ env:
 jobs:
   windows-python:
     name: Windows (Python 3.12)
-    # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    # It also skips when zn CI already runs its full matrix (Windows Python 3.12 included): a pull request
-    # labelled full-ci, and a merge queue into main or a release branch. Only the merge queue into next
-    # and unlabelled pull requests into next need this job.
+    # Only the merge queue into next needs this job: a merge queue into main or a release branch skips it, because
+    # zn CI already runs its full matrix there (Windows Python 3.12 included). The pull_request conditions below
+    # (draft, full-ci label) are inert: this workflow has no pull_request trigger.
     if: >-
       (github.event_name != 'pull_request' || (github.event.pull_request.draft == false &&
       !contains(github.event.pull_request.labels.*.name, 'full-ci'))) &&

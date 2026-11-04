@@ -251,7 +251,7 @@ jobs:
 
   # The coverage report for the Python package, off the pull request path: "Python 3.12 tests & benchmarks
   # (ubuntu-latest)" above is a required check and runs plain pytest, so the tracing slowdown and the
-  # report upload never delay a merge. Runs on pushes to main and next, on the daily schedule and on
+  # report upload never delay a merge. Runs on every push (main, next and release branches), on the daily schedule and on
   # manual runs; it is not a required check. Report only, no threshold.
   python-coverage:
     name: Python 3.12 coverage report (ubuntu-latest)
