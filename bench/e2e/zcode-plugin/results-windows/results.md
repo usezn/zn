@@ -1,3 +1,17 @@
+# ZCode on Windows: hooks installed by `zn hooks install zcode`, a busy CPU
+
+Same app, VM and setup as the plugin runs below, from 7f8a8c9d0 (recorded in each run's log), with the plugin never
+installed. `zn hooks install zcode` wrote 4 events, every entry with a 300,000 ms timeout, and the Windows launcher with a
+120 s deadline. A stuck zn-gate was injected into the installed runner on PreToolUse: one that never answers and one that
+never gives its thread back, on the recorded runner path and on the fallback path through `zn`.
+
+| Busy processes per CPU | UserPromptSubmit (ordinary check) | PreToolUse with zn-gate stuck | Result |
+|---|---|---|---|
+| 1 | answered after 32,736, 34,217 and 41,302 ms | blocked after 139,655, 159,689 and 139,741 ms, value not returned | 3/3 PASS |
+| 2 | answered after 60,214, 78,172 and 87,399 ms | blocked after 160,976, 181,386 and 164,498 ms, value not returned | 3/3 PASS |
+
+The longest stuck hook ended after 181 seconds, inside ZCode's 300 second timeout.
+
 # ZCode plugin on Windows: a busy CPU
 
 ZCode desktop app 3.16.3 on Windows Server 2022, 2 vCPU, plain folder run (26 cases). During I1 to I3, CPU-bound
