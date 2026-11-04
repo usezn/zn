@@ -20,8 +20,9 @@
 # from the time that is left. The script uses no PowerShell command (Get-Date, New-Object, Get-CimInstance, ...), only the
 # language and .NET: Windows PowerShell finds a command by reading its module folders, and without its module cache (a new
 # user, or a hook started with few environment variables) that alone can take many seconds. The deadline is 2 minutes because
-# on a busy CPU an ordinary check can take most of a minute; the plugin gives its hooks 5 minutes in ZCode (hooks.json), far
-# more than this deadline: a busy CPU can slow the end of a stopped hook down by a minute.
+# on a busy CPU an ordinary check took up to 131 seconds as ZCode times it (process start and end included); the plugin gives
+# its hooks 5 minutes in ZCode (hooks.json), more than this deadline: with every CPU busy a stuck hook was blocked after at
+# most 154 seconds.
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'

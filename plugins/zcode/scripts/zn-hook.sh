@@ -16,8 +16,9 @@
 #
 # Start deadline: this plugin sets a 5-minute timeout on its hooks (hooks.json, timeoutMs), and in our tests a
 # call whose hook timed out ran. So a Node.js that hangs while the hook starts (the version probe or the launch) must not run into that
-# timeout: DEADLINE seconds (120: room for an ordinary check on a busy CPU, which took most of a minute on Windows; the 5
-# minutes leave room for stopping a stuck hook, which took more than a minute there) after the script starts, the hook answers like it does when the check fails (block, or only
+# timeout: DEADLINE seconds (120: room for an ordinary check on a busy CPU, which ZCode timed at up to 131 seconds on
+# Windows, process start and end included; the 5 minutes leave room for a stuck hook, blocked after at most 154 seconds
+# there) after the script starts, the hook answers like it does when the check fails (block, or only
 # a warning on PostToolUse) and stops the Node.js it started. A watchdog sends this shell a signal; Node.js runs in the
 # background and the shell waits for it, because a shell only handles a signal once its foreground command is done.
 # Without a `sleep` program there is no watchdog, and the other refusals still apply.

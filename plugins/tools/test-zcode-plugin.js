@@ -23,8 +23,8 @@ const adapter = require(path.join(ROOT, 'packages', 'zn-gate', 'lib', 'agents', 
 // 154 seconds after it started, far under ZCode's timeout. It stays above the hook's own 25 second answer deadline.
 const PLUGIN_DEADLINE_S = 120;
 // The timeout the plugin sets on its hooks in ZCode, which runs a call whose hook timed out. Far above the deadline: on a
-// Windows machine whose CPU was busy, a hook stopped at its deadline took up to a minute to end. `zn hooks install zcode`
-// writes the same timeout.
+// Windows machine with every CPU busy, a stuck hook was blocked after at most 154 seconds (181 for the hooks `zn hooks
+// install zcode` writes, with the same timeout).
 const PLUGIN_TIMEOUT_MS = 300000;
 const posix = process.platform !== 'win32';
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-zcode-plugin-')));

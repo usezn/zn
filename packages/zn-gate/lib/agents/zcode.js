@@ -70,15 +70,16 @@ const id = 'zcode';
 const HOOK_TIMEOUT_S = 30;
 const HOOK_TIMEOUT_MS = HOOK_TIMEOUT_S * 1000;
 // The timeoutMs written on zn's entries (ZCode's documented default is 60000). ZCode lets a call run when its hook times out,
-// and on a Windows machine with a busy CPU starting and stopping a hook took up to 98 seconds in our tests, so ZCode's
+// and on a Windows machine with every CPU busy ZCode timed an ordinary check at up to 131 seconds and a stuck hook that zn
+// then blocked at up to 154 seconds (the plugin) and 181 seconds (hooks installed this way) in our tests, so ZCode's
 // timeout is set far above zn's own budget: the hook still answers (or blocks) by itself within HOOK_TIMEOUT_S once it runs.
 // ZCode reads it with no upper limit. Same value as the plugin's hooks.json.
 const ENTRY_TIMEOUT_MS = 300000;
 const HOOK_STATUS = 'zn: checking for secrets';
 // The launcher's own deadline: the call runs when a hook times out, and the runner arms its watchdog only after it has
-// started, so a hook stuck on start-up is answered (blocked) by the launcher. 2 minutes, like the plugin: on a busy CPU an
-// ordinary check took most of a minute in our tests, and stopping a stuck hook took up to a minute more, still far under
-// ENTRY_TIMEOUT_MS.
+// started, so a hook stuck on start-up is answered (blocked) by the launcher. 2 minutes, like the plugin: with every CPU
+// busy ZCode timed an ordinary check at up to 131 seconds and a stuck hook at up to 181 seconds until it was blocked in our
+// tests, still under ENTRY_TIMEOUT_MS.
 const LAUNCHER_DEADLINE_S = 120;
 // Matchers: "*" (or none) matches every tool; a name list is only letters, digits, underscores and "|"; anything else is a regex.
 const PRE_MATCHER = '*';
