@@ -1,7 +1,6 @@
 'use strict';
 /*
- * A ninth pending revocation pushes the oldest one out of the vault (the list keeps 8). That is no longer silent:
- * one audit record per dropped entry, and a warning in `zn team status` (info.revocations_dropped, never a token).
+ * Pending revocations are never dropped: up to 64 are kept and a further leave is refused.
  */
 const test = require('node:test');
 const assert = require('node:assert');
@@ -12,20 +11,8 @@ const path = require('path');
 const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-team-rev-dropped-'));
 process.env.ZN_HOME = path.join(HOME, '.zn');
 
-// cli.js takes createClient when it loads: replace it first.
-const clientModule = require('../lib/vault/client');
-let fake = {};
-clientModule.createClient = () => new Proxy({}, {
-  get(target, prop) {
-    if (prop === 'close') return () => {};
-    if (typeof fake[prop] === 'function') return fake[prop];
-    return () => { throw Object.assign(new Error('unexpected call ' + String(prop)), { code: 'ZN_TEST' }); };
-  },
-});
-
 const { startFakeTeamServer } = require('./helpers/fake_team_server');
 const { makeTeamOps } = require('../lib/team/daemon-ops');
-const { runTeamCommand } = require('../lib/team/cli');
 
 const DAY = 86400000;
 let cloud;
@@ -33,7 +20,6 @@ let cloud;
 test.before(async () => { cloud = await startFakeTeamServer(); });
 test.after(async () => { await cloud.close(); fs.rmSync(HOME, { recursive: true, force: true }); });
 test.beforeEach(() => {
-  fake = {};
   cloud.setOrgActive(true);
   cloud.setLeaveMode({ status: 503 });
   fs.rmSync(process.env.ZN_HOME, { recursive: true, force: true });
@@ -60,59 +46,41 @@ async function joinAndLeave(m) {
   return r.install_id;
 }
 
-async function capture(fn) {
-  const o = process.stdout.write;
-  let stdout = '';
-  process.stdout.write = (s) => { stdout += s; return true; };
-  try { const code = await fn(); return { code, stdout }; } finally { process.stdout.write = o; }
+function seed(m, n) {
+  m.secrets.pendingRevocations = [];
+  for (let i = 0; i < n; i += 1) {
+    m.secrets.pendingRevocations.push({
+      org: 'org_Example12345678', install_id: 'inst-' + i, api_base: cloud.base, install_token: 'zni_fake' + i,
+      since: new Date().toISOString(), tries: 1, next_try_at: new Date(Date.now() + DAY).toISOString(),
+    });
+  }
 }
 
-test('eight pending revocations are all kept and nothing is reported as dropped', async () => {
-  const m = await machine();
-  for (let i = 0; i < 8; i += 1) await joinAndLeave(m);
-  assert.strictEqual(m.secrets.pendingRevocations.length, 8);
-  assert.strictEqual(m.secrets.revocationsDropped, undefined);
-  assert.ok(!m.audit.some((a) => a.reason === 'team_revocation_dropped'));
-  assert.strictEqual((await m.o.teamInfo()).revocations_dropped, undefined);
-});
-
-test('the ninth drops the oldest, leaves an audit record and a warning in teamInfo and in `zn team status`', async () => {
+test('more than eight pending revocations are all kept, nothing is dropped', async () => {
   const m = machine();
   const ids = [];
-  for (let i = 0; i < 9; i += 1) ids.push(await joinAndLeave(m));
-  assert.strictEqual(m.secrets.pendingRevocations.length, 8);
-  assert.ok(!m.secrets.pendingRevocations.some((r) => r.install_id === ids[0]), 'the oldest is the one dropped');
-  const dropped = m.audit.filter((a) => a.reason === 'team_revocation_dropped');
-  assert.strictEqual(dropped.length, 1);
-  assert.strictEqual(dropped[0].decision, 'error');
-  const info = await m.o.teamInfo();
-  assert.strictEqual(info.joined, false);
-  assert.strictEqual(info.revocations_dropped.count, 1);
-  assert.strictEqual(info.revocations_dropped.last_install_id, ids[0]);
-  assert.ok(!JSON.stringify(info).includes(m.secrets.pendingRevocations[0].install_token), 'no token in the view');
-
-  fake.teamInfo = () => m.o.teamInfo();
-  const r = await capture(() => runTeamCommand(['team', 'status']));
-  assert.strictEqual(r.code, 0);
-  assert.match(r.stdout, /WARNING: 1 pending revocation was dropped/);
-  assert.match(r.stdout, new RegExp('installation ' + ids[0]));
-  assert.match(r.stdout, /remove it from the dashboard/);
-  const j = await capture(() => runTeamCommand(['team', 'status', '--json']));
-  assert.strictEqual(JSON.parse(j.stdout).revocations_dropped.count, 1);
+  for (let i = 0; i < 10; i += 1) ids.push(await joinAndLeave(m));
+  assert.deepStrictEqual(m.secrets.pendingRevocations.map((r) => r.install_id), ids);
 });
 
-test('the count grows with each drop, and the warning goes away after 30 days', async () => {
+test('at the limit of 64 nothing is dropped: the next leave is refused with the next step and the machine stays joined', async () => {
   const m = machine();
-  for (let i = 0; i < 10; i += 1) await joinAndLeave(m);
-  assert.strictEqual(m.secrets.revocationsDropped.count, 2);
-  assert.strictEqual(m.audit.filter((a) => a.reason === 'team_revocation_dropped').length, 2);
-  assert.strictEqual((await m.o.teamInfo()).revocations_dropped.count, 2);
-  m.secrets.revocationsDropped.last_at = new Date(Date.now() - 31 * DAY).toISOString();
-  assert.strictEqual((await m.o.teamInfo()).revocations_dropped, undefined);
+  seed(m, 63);
+  const last = await joinAndLeave(m);
+  assert.strictEqual(m.secrets.pendingRevocations.length, 64);
+  assert.strictEqual(m.secrets.pendingRevocations[63].install_id, last);
+  await m.o.teamJoin({ join_token: cloud.createJoinToken({ maxUses: 5 }), api_base: cloud.base });
+  await assert.rejects(m.o.teamLeave(), /cannot leave another organization yet: 64 earlier leaves.*zn team sync.*admin/s);
+  assert.strictEqual(m.secrets.pendingRevocations.length, 64);
+  assert.strictEqual(m.secrets.pendingRevocations[0].install_id, 'inst-0', 'the oldest is still there');
+  assert.ok(m.secrets.team, 'the machine is still joined');
 });
 
-test('status says nothing about drops when none happened', async () => {
-  fake.teamInfo = async () => ({ joined: false });
-  const r = await capture(() => runTeamCommand(['team', 'status']));
-  assert.ok(!/dropped/.test(r.stdout));
+test('a vault from an older version with more than 64 records keeps all of them and refuses a further leave', async () => {
+  const m = machine();
+  seed(m, 70);
+  await m.o.teamJoin({ join_token: cloud.createJoinToken({ maxUses: 5 }), api_base: cloud.base });
+  await assert.rejects(m.o.teamLeave(), /cannot leave another organization yet/);
+  assert.strictEqual(m.secrets.pendingRevocations.length, 70);
+  assert.strictEqual((await m.o.teamInfo()).revocations.length, 70);
 });
