@@ -23,7 +23,8 @@ def test_acquire_raises_when_the_lock_stays_busy(tmp_path):
         f.write("1:other")
     with pytest.raises(EvidenceLockError, match="another process is writing"):
         evidence._acquire_lock(lock, wait=0.05)
-    assert open(lock).read() == "1:other"
+    with open(lock) as f:
+        assert f.read() == "1:other"
 
 
 def test_log_evidence_turns_it_into_a_warning_and_none(tmp_path, capsys):

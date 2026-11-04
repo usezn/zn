@@ -5,6 +5,7 @@ You use an AI coding agent (Claude Code, Codex CLI, Cursor, OpenCode, Antigravit
 ## Before you start
 
 > **Checklist**
+>
 > - **Node.js:** 22 LTS is recommended. 18 or later works for the hooks and the CLI. The Claude Code plugin needs 20.19 or later.
 > - **An agent:** at least one of Claude Code, Codex CLI, Cursor or OpenCode. Antigravity is experimental.
 > - **No account and no API key** are needed.
