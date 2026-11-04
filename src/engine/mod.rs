@@ -490,7 +490,11 @@ impl ZnEngine {
             let policy_name = entry.key();
             let module = entry.value();
             if !self.check_tool_call(module, tool_name, arguments, agent_id.clone())? {
-                warn!("Policy '{}' DENIED tool call: {}", policy_name, tool_name);
+                warn!(
+                    "Policy '{}' DENIED tool call: {}",
+                    policy_name,
+                    crate::scrubber::Scrubber::redact_for_log(tool_name)
+                );
                 return Ok(false);
             }
         }
@@ -585,7 +589,9 @@ impl ZnEngine {
             if consumed > self.config.gas_limit / 2 {
                 warn!(
                     "High gas consumption for tool '{}': {} / {}",
-                    tool_name, consumed, self.config.gas_limit
+                    crate::scrubber::Scrubber::redact_for_log(tool_name),
+                    consumed,
+                    self.config.gas_limit
                 );
             }
         }
