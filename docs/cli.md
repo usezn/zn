@@ -191,7 +191,7 @@ zn-gate scan [path] [--format text|json|github] [--all] [--include .rst,.xml] [-
 
 Looks through prompt templates, markdown, skills and configs for injection traps and secrets. `path` defaults to the current folder. Matched values are never printed.
 
-- `--format`: `text` (default), `json`, or `github` (workflow annotations for CI).
+- `--format`: `text` (default), `json`, or `github` (workflow annotations for CI). The Node and Python versions take the same values. `scan` has no SARIF output; `zn-gate audit --format sarif` (npm package) covers agent configs instead. Any other value exits `2`.
 - `--all` (or `--code`): include source code files.
 - `--include`: more file extensions to scan.
 - `--exclude`: more folders to skip.
