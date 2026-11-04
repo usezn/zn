@@ -6,7 +6,11 @@
  * Nothing in the package is run. There is no install, no lifecycle script and no require of its files:
  * the registry is read with plain HTTPS GET requests, the tarball is checked against the checksum the
  * registry gave, and the archive is unpacked by the code below (regular files and folders only; links,
- * devices and paths that leave the folder are refused).
+ * devices and paths that leave the folder are refused; a file that cannot be written is reported, and the
+ * scan is then incomplete). The tarball must come from the registry's own address, and redirects (at most
+ * three) must stay on it.
+ *
+ *   describePackage(dir, safe) -> lines      (what npm would run for the package: read as text, never run)
  *
  *   parsePackageSpec(spec)  -> { name, version }            (throws PackageError)
  *   fetchPackageForScan(spec, { registry? })
@@ -28,7 +32,13 @@ const MAX_METADATA_BYTES = 5 * 1024 * 1024;
 const MAX_TARBALL_BYTES = 50 * 1024 * 1024;
 const MAX_UNPACKED_BYTES = 200 * 1024 * 1024;
 const MAX_ENTRIES = 20000;
-const NAME_RE = /^(?:@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*$/;
+// New npm names are lower-case; some old ones (JSONStream) have capitals and are still on the registry. Only
+// characters that need no escaping in a URL are accepted (the scope slash is the one escaped by the caller).
+// "~" is not accepted: npm itself refuses it in a name.
+const NAME_RE = /^(?:@[A-Za-z0-9-][A-Za-z0-9._-]*\/)?[A-Za-z0-9-][A-Za-z0-9._-]*$/;
+const MAX_REDIRECTS = 3;
+const MAX_PACKAGE_JSON_BYTES = 1024 * 1024;
+const MAX_COMMAND_SHOWN = 300;
 const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/;
 const HASH_ORDER = ['sha512', 'sha384', 'sha256', 'sha1'];
 
@@ -48,31 +58,84 @@ function parsePackageSpec(spec) {
   return { name, version };
 }
 
+// Plain http is accepted for this machine only. A URL writes the IPv6 loopback address as "[::1]".
+function isLocalHost(hostname) {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+}
+
+function isAllowedProtocol(u) {
+  return u.protocol === 'https:' || (u.protocol === 'http:' && isLocalHost(u.hostname));
+}
+
 function registryBase(env) {
   const raw = String(env.ZN_NPM_REGISTRY || DEFAULT_REGISTRY).replace(/\/+$/, '');
   let u;
   try { u = new URL(raw); } catch (_) { throw new PackageError('ZN_NPM_REGISTRY is not a URL'); }
-  const local = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]';
-  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && local)) {
+  if (!isAllowedProtocol(u)) {
     throw new PackageError('ZN_NPM_REGISTRY must be an https address (plain http is accepted for localhost only)');
   }
   return u.href.replace(/\/+$/, '');
 }
 
-// Reads a response body with a size cap; a body over the cap is refused, not cut.
+const tooLarge = (what, max) => new PackageError(what + ' is too large to scan (over ' + Math.round(max / 1048576) + ' MiB)');
+
+// Reads a response body with a size cap; a body over the cap is refused, not cut. The download stops at the cap,
+// also when the registry sends no content-length.
 async function readCapped(res, max, what) {
   const declared = Number(res.headers.get('content-length') || 0);
-  if (declared > max) throw new PackageError(what + ' is too large to scan (over ' + Math.round(max / 1048576) + ' MiB)');
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.length > max) throw new PackageError(what + ' is too large to scan (over ' + Math.round(max / 1048576) + ' MiB)');
-  return buf;
+  if (declared > max) throw tooLarge(what, max);
+  if (!res.body || typeof res.body.getReader !== 'function') {
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > max) throw tooLarge(what, max);
+    return buf;
+  }
+  const reader = res.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > max) {
+        await reader.cancel().catch(() => {});
+        throw tooLarge(what, max);
+      }
+      chunks.push(Buffer.from(value.buffer, value.byteOffset, value.length));
+    }
+  } finally {
+    try { reader.releaseLock(); } catch (_) { /* already released */ }
+  }
+  return Buffer.concat(chunks, total);
 }
 
-async function get(url, what, max) {
+/**
+ * The address a redirect leads to, resolved against the one it came from. It must have the origin the request
+ * started from (same scheme, host and port), so a redirect never leaves the registry or drops to plain http.
+ */
+function checkRedirect(from, location, origin) {
+  let u;
+  try { u = new URL(location, from); } catch (_) { throw new PackageError('the registry redirected to an address that is not a URL'); }
+  if (!isAllowedProtocol(u) || u.origin !== origin) {
+    throw new PackageError('the registry redirected to an address that is not its own (' + u.origin + '); not followed');
+  }
+  return u.href;
+}
+
+// GET with the answer capped. Redirects are followed by hand, at most MAX_REDIRECTS, each one to the same origin.
+async function get(url, what, max, origin) {
   let res;
+  let current = url;
   try {
-    res = await fetch(url, { headers: { accept: 'application/json' }, redirect: 'follow', signal: AbortSignal.timeout(TIMEOUT_MS) });
+    for (let hop = 0; ; hop++) {
+      res = await fetch(current, { headers: { accept: 'application/json' }, redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT_MS) });
+      if (res.status < 300 || res.status > 399 || !res.headers.get('location')) break;
+      if (hop >= MAX_REDIRECTS) throw new PackageError('the registry sent too many redirects for ' + what + '. Nothing was scanned.');
+      await (res.body ? res.body.cancel().catch(() => {}) : Promise.resolve());
+      current = checkRedirect(current, res.headers.get('location'), origin);
+    }
   } catch (err) {
+    if (err instanceof PackageError) throw err;
     const cause = (err && err.cause && (err.cause.code || err.cause.message)) || (err && err.name) || 'unknown error';
     throw new PackageError('could not reach the registry for ' + what + ' (' + String(cause).slice(0, 80) + '). Nothing was scanned; try again when you are online.');
   }
@@ -84,7 +147,7 @@ async function get(url, what, max) {
 function checkTarballUrl(url) {
   let u;
   try { u = new URL(url); } catch (_) { throw new PackageError('the registry gave a tarball address that is not a URL'); }
-  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1'))) {
+  if (!isAllowedProtocol(u)) {
     throw new PackageError('the registry gave a tarball address that is not https');
   }
   return u.href;
@@ -154,7 +217,9 @@ function relativePath(name) {
  * Unpacks a gzipped tarball into an empty folder. Only regular files and folders are written. A link,
  * a device or a fifo makes the whole package refused (it is not scanned, not skipped in silence).
  */
-function extractTarball(gz, dest) {
+function extractTarball(gz, dest, opts = { windows: process.platform === 'win32' }) {
+  const notUnpacked = [];
+  const written = new Set();
   let tar;
   try {
     tar = zlib.gunzipSync(gz, { maxOutputLength: MAX_UNPACKED_BYTES });
@@ -204,14 +269,36 @@ function extractTarball(gz, dest) {
     if (target !== root && !target.startsWith(root + path.sep)) {
       throw new PackageError('the package has a file path that leaves its folder');
     }
-    if (type === '5') {
-      fs.mkdirSync(target, { recursive: true });
-    } else {
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, body);
+    const shown = rel.join('/');
+    // A name this system cannot write is not skipped in silence: it is listed, and the scan is incomplete.
+    if (opts.windows && unsafeOnWindows(rel)) {
+      notUnpacked.push({ path: shown, reason: 'a name Windows cannot write' });
+      continue;
+    }
+    try {
+      if (type === '5') {
+        fs.mkdirSync(target, { recursive: true });
+      } else {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        // On a file system that ignores case, a second name that differs only by case would replace the first.
+        if (written.has(shown) === false && fs.existsSync(target)) {
+          notUnpacked.push({ path: shown, reason: 'same name as another file, apart from letter case' });
+          continue;
+        }
+        fs.writeFileSync(target, body);
+        written.add(shown);
+      }
+    } catch (err) {
+      notUnpacked.push({ path: shown, reason: String((err && err.code) || 'write error').slice(0, 40) });
     }
   }
-  return { files: count };
+  return { files: count, notUnpacked };
+}
+
+// Names Windows cannot create: device names (NUL, CON, COM1...), a colon (NTFS streams), characters it forbids,
+// and a trailing dot or space. `parts` are the path segments.
+function unsafeOnWindows(parts) {
+  return parts.some((p) => /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(p) || /[<>:"|?*]/.test(p) || /[. ]$/.test(p));
 }
 
 /**
@@ -224,26 +311,83 @@ async function fetchPackageForScan(spec, opts = {}) {
   const encoded = name.replace('/', '%2F');
   const label = name + '@' + version;
 
-  const doc = JSON.parse((await get(base + '/' + encoded + '/' + encodeURIComponent(version), label, MAX_METADATA_BYTES)).toString('utf8'));
+  const origin = new URL(base).origin;
+  const body = await get(base + '/' + encoded + '/' + encodeURIComponent(version), label, MAX_METADATA_BYTES, origin);
+  let doc;
+  try {
+    doc = JSON.parse(body.toString('utf8'));
+  } catch (_) {
+    throw new PackageError('the registry answered with something that is not JSON for ' + label + '. Nothing was scanned.');
+  }
   if (!doc || doc.name !== name || typeof doc.version !== 'string' || !doc.dist || typeof doc.dist.tarball !== 'string') {
     throw new PackageError('the registry gave no usable metadata for ' + label + '. Nothing was scanned.');
   }
   const expected = expectedChecksum(doc.dist);
   if (!expected) throw new PackageError('the registry gave no checksum for ' + label + '; refusing to scan an unverified tarball.');
   const tarballUrl = checkTarballUrl(doc.dist.tarball);
+  // The checksum comes from the same registry, so the tarball must come from there too.
+  if (new URL(tarballUrl).origin !== origin) {
+    throw new PackageError('the registry gave a tarball address that is not on the registry\'s own address (' + new URL(tarballUrl).origin + '). Nothing was downloaded or scanned.');
+  }
 
-  const gz = await get(tarballUrl, doc.name + '@' + doc.version + ' (tarball)', MAX_TARBALL_BYTES);
+  const gz = await get(tarballUrl, doc.name + '@' + doc.version + ' (tarball)', MAX_TARBALL_BYTES, origin);
   verifyChecksum(gz, expected);
 
   const dir = fs.mkdtempSync(path.join(opts.tmpBase || os.tmpdir(), 'zn-scan-pkg-'));
   const cleanup = () => fs.rmSync(dir, { recursive: true, force: true });
+  let unpacked;
   try {
-    extractTarball(gz, dir);
+    unpacked = extractTarball(gz, dir);
   } catch (err) {
     cleanup();
     throw err;
   }
-  return { name, version: doc.version, dir, cleanup };
+  return { name, version: doc.version, dir, cleanup, notUnpacked: unpacked.notUnpacked };
 }
 
-module.exports = { PackageError, parsePackageSpec, fetchPackageForScan, extractTarball, registryBase };
+/**
+ * What npm would run, and what it would put on your path, if you installed the package in `dir`: read from its
+ * package.json as text, never run. Returns the lines to print (they are not findings and do not change the
+ * exit code). `safe` makes a string printable (control characters of a package never reach the terminal).
+ */
+function describePackage(dir, safe) {
+  const lines = [];
+  const clip = (s) => (s.length > MAX_COMMAND_SHOWN ? s.slice(0, MAX_COMMAND_SHOWN) + ' [...]' : s);
+  let pkg = null;
+  const file = path.join(dir, 'package.json');
+  try {
+    if (fs.statSync(file).size > MAX_PACKAGE_JSON_BYTES) throw new Error('large');
+    pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (_) {
+    pkg = null;
+  }
+  if (!pkg || typeof pkg !== 'object' || Array.isArray(pkg)) {
+    lines.push('Install scripts: unknown (package.json is missing, too large or not valid JSON, so they were not listed)');
+    return lines;
+  }
+  const scripts = pkg.scripts && typeof pkg.scripts === 'object' && !Array.isArray(pkg.scripts) ? pkg.scripts : {};
+  const command = (n) => (typeof scripts[n] === 'string' ? scripts[n] : null);
+  const run = ['preinstall', 'install', 'postinstall'].filter((n) => command(n) !== null);
+  if (run.length) {
+    lines.push('Install scripts (npm runs these when you install it):');
+    for (const n of run) lines.push('  ' + n + ': ' + safe(clip(command(n))));
+  } else {
+    lines.push('Install scripts: none (no preinstall, install or postinstall)');
+  }
+  if (command('prepare') !== null) {
+    lines.push('Other script: prepare: ' + safe(clip(command('prepare'))) + ' (npm runs it when a package is installed from git, not from the registry)');
+  }
+  if (!run.includes('preinstall') && !run.includes('install') && fs.existsSync(path.join(dir, 'binding.gyp'))) {
+    lines.push('Native build: binding.gyp is present and no install script is set, so npm runs "node-gyp rebuild" when you install it.');
+  }
+  let bin = [];
+  if (typeof pkg.bin === 'string') bin = [[String(pkg.name || '').split('/').pop(), pkg.bin]];
+  else if (pkg.bin && typeof pkg.bin === 'object' && !Array.isArray(pkg.bin)) bin = Object.entries(pkg.bin).filter(([, v]) => typeof v === 'string');
+  if (bin.length) {
+    const shown = bin.slice(0, 20).map(([k, v]) => safe(clip(k)) + ' -> ' + safe(clip(v)));
+    lines.push('Commands it adds (bin): ' + shown.join('; ') + (bin.length > 20 ? '; ... and ' + (bin.length - 20) + ' more' : ''));
+  }
+  return lines;
+}
+
+module.exports = { PackageError, parsePackageSpec, fetchPackageForScan, extractTarball, registryBase, checkTarballUrl, checkRedirect, unsafeOnWindows, describePackage };
