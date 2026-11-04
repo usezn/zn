@@ -767,7 +767,10 @@ def cmd_evidence(args: argparse.Namespace) -> int:
                 return 1
             print(f"Exported {res.get('total')} records to {args.output} (Integrity: {'VALID' if res.get('valid') else 'TAMPERED'}).")
         else:
-            print(out_content)
+            # The content already ends with a newline (or is empty when the
+            # ledger has no records); print() would add a blank line, which
+            # Node's process.stdout.write does not.
+            sys.stdout.write(out_content)
         if not res.get("total") and res.get("valid"):
             print("Note: there are no evidence records yet, so the export is empty. "
                   "Run a check first, for example: zn-gate test \"some text\", then export again.", file=sys.stderr)
