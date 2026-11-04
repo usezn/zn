@@ -18,13 +18,13 @@ const { spawnSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..', '..');
 const ZC = path.join(ROOT, 'plugins', 'zcode');
 const adapter = require(path.join(ROOT, 'packages', 'zn-gate', 'lib', 'agents', 'zcode.js'));
-// The plugin's own start deadline, on every path (zn-hook.sh, zn-hook.ps1 and the launcher). It is 2 seconds earlier than the
-// launcher of zn hooks install zcode: on a slow Windows machine, stopping a stuck hook took up to 2 seconds after a 28 second
-// deadline, which left ZCode's 30 second timeout only milliseconds. It stays above the hook's own 25 second answer deadline.
+// The plugin's own start deadline, on every path (zn-hook.sh, zn-hook.ps1 and the launcher), the same as the launcher of zn hooks
+// install zcode. On a Windows machine with every CPU busy an ordinary check took up to 131 seconds and a stuck hook ended up to
+// 154 seconds after it started, far under ZCode's timeout. It stays above the hook's own 25 second answer deadline.
 const PLUGIN_DEADLINE_S = 120;
 // The timeout the plugin sets on its hooks in ZCode, which runs a call whose hook timed out. Far above the deadline: on a
-// Windows machine whose CPU was busy, a hook stopped at its deadline took up to 98 seconds to end. `zn hooks install zcode`
-// keeps its own 30 second timeout.
+// Windows machine whose CPU was busy, a hook stopped at its deadline took up to a minute to end. `zn hooks install zcode`
+// writes the same timeout.
 const PLUGIN_TIMEOUT_MS = 300000;
 const posix = process.platform !== 'win32';
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'zn-zcode-plugin-')));
@@ -423,7 +423,7 @@ try {
   });
 
   // ZCode starts hooks in the project folder, where Windows looks for a program by name first: the launcher names every program it
-  // starts by full path. The PowerShell script counts the 30 second timeout from the start of its process.
+  // starts by full path. The PowerShell script counts its deadline from the start of its process.
   test('zn-hook.cmd starts programs by full path only, and zn-hook.ps1 counts its deadline from the process start', () => {
     const cmd = fs.readFileSync(path.join(ZC, 'scripts', 'zn-hook.cmd'), 'utf8').split(/\r?\n/).filter((l) => !/^\s*rem\b/i.test(l));
     for (const l of cmd) {
@@ -433,7 +433,7 @@ try {
     const ps = fs.readFileSync(path.join(ZC, 'scripts', 'zn-hook.ps1'), 'utf8');
     assert.ok(/GetCurrentProcess\(\)\.StartTime/.test(ps) && /\$Deadline - /.test(ps), 'the deadline is what is left of 120 seconds since the process started');
     // Windows PowerShell finds a command (Get-Date, New-Object, Get-CimInstance, ...) by reading its module folders, which
-    // without the module cache can take most of the 30 seconds: the script calls only its own functions, the language and .NET.
+    // without the module cache can take many seconds: the script calls only its own functions, the language and .NET.
     const code = ps.split(/\r?\n/).filter((l) => !/^\s*#/.test(l)).join('\n');
     const own = new Set([...code.matchAll(/^function ([A-Za-z]+-[A-Za-z]+)/gm)].map((m) => m[1]));
     const commands = [...code.matchAll(/\b[A-Z][a-z]+-[A-Z][A-Za-z]+\b/g)].map((m) => m[0]).filter((c) => !own.has(c));
@@ -443,7 +443,7 @@ try {
     assert.ok(/AsyncWaitHandle\.WaitOne\(\$wait\)/.test(ps) && /\$wait = \(Left\) - 2000/.test(ps), 'the parent lookup has a time limit');
   });
 
-  // ZCode's 30 second timeout starts when it starts cmd.exe, and the call runs when the hook times out. zn-hook.cmd notes the time
+  // ZCode's timeout starts when it starts cmd.exe, and the call runs when the hook times out. zn-hook.cmd notes the time
   // on its first command line; zn-hook.ps1 counts its deadline from there (or from its own start, whichever is earlier), never
   // gives itself time past it, and tries only the first parent that is not a shell.
   test('the Windows hook counts its deadline from the start of zn-hook.cmd and blocks when no time is left', () => {

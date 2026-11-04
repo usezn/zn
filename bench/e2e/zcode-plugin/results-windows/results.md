@@ -2,7 +2,9 @@
 
 ZCode desktop app 3.16.3 on Windows Server 2022, 2 vCPU, plain folder run (26 cases). During I1 to I3, CPU-bound
 processes run on every CPU from before the prompt is sent. Hook durations are ZCode's own `durationMs` of the Windows
-entry. ZCode's timeout on the plugin's hooks: 300,000 ms.
+entry. ZCode's timeout on the plugin's hooks: 300,000 ms. The kits were built from a1ac3ddc7; for the 120 s runs the
+deadline was set to 120 s in zn-launch.js, zn-hook.ps1 and zn-hook.sh, the values of aa08d9264 (whose start-time window
+for the batch file's note is 300 s instead of 120 s).
 
 | Run | Busy processes per CPU | Hook deadline | UserPromptSubmit (ordinary check) | PreToolUse with zn-gate stuck | Result |
 |---|---|---|---|---|---|

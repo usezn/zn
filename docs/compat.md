@@ -516,8 +516,8 @@ installs, and the plugins keep a plain command. Agent by agent:
   plain text on stderr with exit code 0, and ZCode does not document whether it
   shows that text). The launcher also
   stops a hook that has not finished after 2 minutes and blocks the call, on Windows
-  too; zn sets a 5-minute timeout on its hook entries, so a busy computer has time to
-  end the hook before ZCode gives up. If ZCode cannot
+  too; zn sets a 5-minute timeout on its hook entries. If a hook takes longer than
+  5 minutes (a very busy computer), ZCode runs the call. If ZCode cannot
   start the launcher itself (the file deleted or not executable), the call goes
   ahead unchecked.
 
