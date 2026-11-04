@@ -151,3 +151,17 @@ def test_analyze_parser_defaults_to_json_and_accepts_the_flag():
     parser = cli.build_parser()
     assert parser.parse_args(["analyze", "hi"]).json is False
     assert parser.parse_args(["analyze", "--json", "hi"]).json is True
+
+
+def test_analyze_json_has_the_shared_fields_plus_latency():
+    fake = {"verdict": "allow", "confidence": 0.99, "engine": "oss-local", "mode": "local",
+            "reason": "", "rule": "", "rules_version": "test"}
+    ns = argparse.Namespace(text="hi", key=None, stage=None, url=None, local_only=True,
+                            long_input=None, json=True)
+    out = io.StringIO()
+    with mock.patch.object(cli, "analyze", return_value=dict(fake)), contextlib.redirect_stdout(out):
+        code = cli.cmd_analyze(ns)
+    assert code == 0
+    data = json.loads(out.getvalue())
+    assert set(fake) <= set(data)
+    assert "latency_ms" in data
