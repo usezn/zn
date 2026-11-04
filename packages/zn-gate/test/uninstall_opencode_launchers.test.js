@@ -87,10 +87,11 @@ test('uninstall: the launcher scripts of every agent and the empty folder are re
   const m = machine(t);
   for (const d of ['.claude', '.codex', '.cursor', '.gemini']) fs.mkdirSync(path.join(m.home, d), { recursive: true });
   for (const id of ['claude-code', 'codex', 'cursor', 'gemini']) install(m, id);
-  assert.ok(fs.readdirSync(hooksDir(m)).length >= 4);
+  // Codex writes no launcher script on Windows (its hook is an inline PowerShell command).
+  assert.ok(fs.readdirSync(hooksDir(m)).length >= (process.platform === 'win32' ? 3 : 4));
   const dry = io(m);
   assert.equal(await dispatch('uninstall', ['--dry-run'], dry.o), 0);
-  assert.ok(dry.out().includes(launcherOf(m, 'codex')), dry.out());
+  assert.ok(dry.out().includes(launcherOf(m, 'claude-code')), dry.out());
   const c = io(m);
   assert.equal(await dispatch('uninstall', [], c.o), 0, c.out());
   assert.equal(fs.existsSync(hooksDir(m)), false, 'the empty hooks folder is removed');
@@ -98,25 +99,25 @@ test('uninstall: the launcher scripts of every agent and the empty folder are re
 
 test('uninstall: files in the hooks folder that zn did not write stay, and so does the folder', async (t) => {
   const m = machine(t);
-  fs.mkdirSync(path.join(m.home, '.codex'), { recursive: true });
-  install(m, 'codex');
+  fs.mkdirSync(path.join(m.home, '.claude'), { recursive: true });
+  install(m, 'claude-code');
   const mine = path.join(hooksDir(m), 'my-notes.txt');
   const lookalike = launcherOf(m, 'gemini');
   fs.writeFileSync(mine, 'keep\n');
   fs.writeFileSync(lookalike, '#!/bin/sh\necho mine\n');
   const c = io(m);
   assert.equal(await dispatch('uninstall', [], c.o), 0, c.out());
-  assert.equal(fs.existsSync(launcherOf(m, 'codex')), false);
+  assert.equal(fs.existsSync(launcherOf(m, 'claude-code')), false);
   assert.equal(fs.readFileSync(mine, 'utf8'), 'keep\n');
   assert.equal(fs.readFileSync(lookalike, 'utf8'), '#!/bin/sh\necho mine\n');
 });
 
 test('uninstall: a launcher left behind with no hooks pointing to it is removed too', async (t) => {
   const m = machine(t);
-  fs.mkdirSync(path.join(m.home, '.codex'), { recursive: true });
-  install(m, 'codex');
-  fs.unlinkSync(path.join(m.home, '.codex', 'hooks.json'));
-  assert.ok(fs.existsSync(launcherOf(m, 'codex')));
+  fs.mkdirSync(path.join(m.home, '.claude'), { recursive: true });
+  install(m, 'claude-code');
+  fs.unlinkSync(path.join(m.home, '.claude', 'settings.json'));
+  assert.ok(fs.existsSync(launcherOf(m, 'claude-code')));
   const c = io(m);
   assert.equal(await dispatch('uninstall', [], c.o), 0, c.out());
   assert.equal(fs.existsSync(hooksDir(m)), false);
@@ -135,10 +136,10 @@ test('hooks uninstall opencode removes the user plugin and keeps a foreign one',
 
 test('hooks uninstall of a project leaves the user launcher alone', async (t) => {
   const m = machine(t);
-  fs.mkdirSync(path.join(m.home, '.codex'), { recursive: true });
-  install(m, 'codex');
-  install(m, 'codex', 'project');
+  fs.mkdirSync(path.join(m.home, '.claude'), { recursive: true });
+  install(m, 'claude-code');
+  install(m, 'claude-code', 'project');
   const a = io(m);
-  assert.equal(await dispatch('hooks', ['uninstall', 'codex', '--project'], a.o), 0, a.err());
-  assert.ok(fs.existsSync(launcherOf(m, 'codex')));
+  assert.equal(await dispatch('hooks', ['uninstall', 'claude-code', '--project'], a.o), 0, a.err());
+  assert.ok(fs.existsSync(launcherOf(m, 'claude-code')));
 });
