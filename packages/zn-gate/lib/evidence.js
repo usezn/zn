@@ -253,13 +253,48 @@ function releaseLock(lockPath, token) {
 }
 
 // Canonical serialization of a record for hashing. Node writes UTF-8 as is; Python used to
-// escape non-ASCII as \uXXXX. Verification accepts both forms, so a log written by either
-// package (or by an older version) verifies in both. New records use the plain form.
-function canonical(record) {
-  return JSON.stringify(record);
+// escape non-ASCII as \uXXXX, and Python writes a small float such as 1e-05 where JavaScript
+// writes 0.00001. New records use the plain JavaScript form (the Python package writes the same
+// text); verification also accepts the ASCII-escaped form and the Python number form, so a log
+// written by either package (or by an older version) verifies in both.
+const CONF_MARK = '@@zn-confidence@@';
+
+// The text Python's repr gives for a finite non-integer float (what json.dumps writes).
+function pythonNumber(x) {
+  const [mant, expText] = x.toExponential().split('e');
+  const exp = Number(expText);
+  const neg = mant.startsWith('-');
+  const digits = mant.replace('-', '').replace('.', '');
+  let out;
+  if (exp >= -4 && exp < 16) {
+    if (exp < 0) out = '0.' + '0'.repeat(-exp - 1) + digits;
+    else if (digits.length <= exp + 1) out = digits + '0'.repeat(exp + 1 - digits.length);
+    else out = digits.slice(0, exp + 1) + '.' + digits.slice(exp + 1);
+  } else {
+    out = digits[0] + (digits.length > 1 ? '.' + digits.slice(1) : '') + 'e' + (exp < 0 ? '-' : '+') + String(Math.abs(exp)).padStart(2, '0');
+  }
+  return (neg ? '-' : '') + out;
 }
-function canonicalAscii(record) {
-  return JSON.stringify(record).replace(/[\u007f-￿]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+
+function serialize(record, { ascii = false, pyNumbers = false } = {}) {
+  let text;
+  if (pyNumbers && typeof record.confidence === 'number' && Number.isFinite(record.confidence) && !Number.isInteger(record.confidence)) {
+    text = JSON.stringify({ ...record, confidence: CONF_MARK }).replace('"' + CONF_MARK + '"', pythonNumber(record.confidence));
+  } else {
+    text = JSON.stringify(record);
+  }
+  return ascii ? text.replace(/[\u007f-￿]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')) : text;
+}
+function canonical(record) {
+  return serialize(record);
+}
+function canonicalForms(record) {
+  return [
+    serialize(record),
+    serialize(record, { ascii: true }),
+    serialize(record, { pyNumbers: true }),
+    serialize(record, { ascii: true, pyNumbers: true }),
+  ];
 }
 
 const HASH_RE = /^[0-9a-f]{64}$/;
@@ -470,7 +505,11 @@ function buildRecord(event, prevHash, plainPreview = false) {
   // Note: a payload with a lone surrogate hashes as U+FFFD here and as '?' in the Python package,
   // so payload_sha256 differs between the two for such text; record_hash and verification are
   // not affected.
-  const payloadStr = typeof event.payload === 'string' ? event.payload : JSON.stringify(event.payload || '');
+  // A missing or null payload is the empty string; any other non-string payload is its compact JSON
+  // (so 0 is "0" and false is "false"), as in the Python package.
+  const payloadStr = typeof event.payload === 'string'
+    ? event.payload
+    : (event.payload === undefined || event.payload === null ? '' : JSON.stringify(event.payload));
   const payloadSha256 = crypto.createHash('sha256').update(payloadStr).digest('hex');
 
   const baseRecord = {
@@ -489,8 +528,9 @@ function buildRecord(event, prevHash, plainPreview = false) {
     verdict: event.verdict || 'allow',
     rule: event.rule || null,
     reason: event.reason || null,
-    confidence: event.confidence || 1.0,
-    latency_us: event.latency_us || 0,
+    // A confidence of 0 is kept as 0; only a missing or non-numeric one defaults to 1.
+    confidence: typeof event.confidence === 'number' && Number.isFinite(event.confidence) ? event.confidence : 1.0,
+    latency_us: typeof event.latency_us === 'number' && Number.isFinite(event.latency_us) ? Math.trunc(event.latency_us) : 0,
     engine: event.engine || 'oss-deterministic',
     prev_hash: prevHash,
   };
@@ -550,8 +590,9 @@ function verifyEvidenceLedger(filePath = EVIDENCE_FILE) {
 
     const { record_hash, ...baseRecord } = rec;
     const hashOf = (text) => crypto.createHash('sha256').update(expectedPrevHash + ':' + text).digest('hex');
-    // Records written by Python (or older versions) may have non-ASCII escaped: accept both forms.
-    if (hashOf(canonical(baseRecord)) !== record_hash && hashOf(canonicalAscii(baseRecord)) !== record_hash) {
+    // Records written by Python (or older versions) may have non-ASCII escaped or a small
+    // confidence written the Python way: accept every form.
+    if (!canonicalForms(baseRecord).some((text) => hashOf(text) === record_hash)) {
       return {
         valid: false,
         total: lines.length,
