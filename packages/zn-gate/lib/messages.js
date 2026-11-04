@@ -75,6 +75,10 @@ function passphraseCancelled() {
   return 'Cancelled: no passphrase was entered. Run `' + zn('unlock') + '` again when you are ready.';
 }
 
+function passphraseStdinEmpty() {
+  return 'No passphrase was read from standard input. Pipe it in, for example: printf \'%s\' "$PASS" | ' + zn('unlock --passphrase-stdin');
+}
+
 function passphraseMismatch() {
   return 'The two passphrases do not match. Nothing was created; run `' + zn('unlock') + '` again.';
 }
@@ -342,7 +346,7 @@ function teamJoinFailed(why) {
 module.exports = {
   agentNote, agentRefusal, notInteractive, PROMPT_CANCELLED, CLIPBOARD_NO_POWERSHELL, clipboardUnreadable,
   invalidDuration, DURATION_RANGE, unknownBackend, unlockNeedsTerminal, FOREGROUND_NEEDS_TERMINAL,
-  PASSPHRASE_NEEDS_TERMINAL, passphraseCancelled, passphraseMismatch, forgetLockFirst, vaultAlreadyUnlocked,
+  PASSPHRASE_NEEDS_TERMINAL, passphraseCancelled, passphraseMismatch, passphraseStdinEmpty, forgetLockFirst, vaultAlreadyUnlocked,
   keychainProblem, secretToolMissing, powershellMissing, keychainHelperFailed, keychainLostKey,
   verboseDetail, vaultStartTimeout, vaultStartExited, vaultNotAnswering, auditFailed, vaultLockedBecause,
   CONNECT_KEY_ON_COMMAND_LINE, CONNECT_CANCELLED, CONNECT_NOT_A_KEY, CONNECT_REJECTED,
