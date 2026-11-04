@@ -65,9 +65,15 @@ const id = 'zcode';
  * the agent from the environment: it comes from the launcher the hook runs, `runner.js zcode`). zn only ever answers deny on
  * PermissionRequest. Not tested: Windows with ZCode itself, macOS, the desktop app.
  * ---------------------------------------------------------------------------------------------------------------- */
-// ZCode's documented default is 60000. zn sets 30000 on its entries; zn's runner answers by itself 5 seconds before this (lib/hooks/runner.js).
+// zn's own time budget for one hook: the launcher blocks by itself 2 seconds before it and zn's runner answers a post-tool
+// check 5 seconds before it (lib/hooks/runner.js).
 const HOOK_TIMEOUT_S = 30;
 const HOOK_TIMEOUT_MS = HOOK_TIMEOUT_S * 1000;
+// The timeoutMs written on zn's entries (ZCode's documented default is 60000). ZCode lets a call run when its hook times out,
+// and on a Windows machine with a busy CPU starting and stopping a hook took up to 98 seconds in our tests, so ZCode's
+// timeout is set far above zn's own budget: the hook still answers (or blocks) by itself within HOOK_TIMEOUT_S once it runs.
+// ZCode reads it with no upper limit. Same value as the plugin's hooks.json.
+const ENTRY_TIMEOUT_MS = 300000;
 const HOOK_STATUS = 'zn: checking for secrets';
 // The launcher's own deadline: assumed (not documented): the call runs when a hook times out, and the runner arms its watchdog only after it has
 // started, so a hook stuck on start-up is answered (blocked) by the launcher 2 seconds before ZCode gives up.
@@ -342,7 +348,7 @@ function stripOurs(groups) {
  * same three steps are an inline PowerShell script. A command given by the caller keeps the plain command.
  */
 function handlerFor(opts = {}) {
-  const base = { timeoutMs: HOOK_TIMEOUT_MS, statusMessage: HOOK_STATUS };
+  const base = { timeoutMs: ENTRY_TIMEOUT_MS, statusMessage: HOOK_STATUS };
   if (opts.command) return () => ({ type: 'command', command: opts.command, ...base });
   const platform = opts.platform || process.platform;
   const node = opts.nodePath || process.execPath;
@@ -664,6 +670,7 @@ module.exports = {
   capabilities: { ask: 'pre_tool', rewriteInput: false, rewriteOutput: false },
   HOOK_TIMEOUT_S,
   HOOK_TIMEOUT_MS,
+  ENTRY_TIMEOUT_MS,
   LAUNCHER_DEADLINE_S,
   PLUGIN_WIN_POWERSHELL,
   PLUGIN_WIN_CMD,

@@ -290,6 +290,9 @@ test('the watchdog answers before ZCode\'s own timeout', () => {
   assert.equal(zc.HOOK_TIMEOUT_MS, zc.HOOK_TIMEOUT_S * 1000);
   assert.ok(zc.HOOK_TIMEOUT_MS < 60000, 'below ZCode\'s default timeout of 60000 ms');
   assert.ok(runner.postDeadlineMs('zcode') < zc.HOOK_TIMEOUT_MS);
+  // ZCode runs a call whose hook timed out: its timeout must leave a slow (busy CPU) start and stop far behind zn's own budget.
+  assert.equal(zc.ENTRY_TIMEOUT_MS, 300000);
+  assert.ok(zc.ENTRY_TIMEOUT_MS >= 4 * zc.HOOK_TIMEOUT_MS);
 });
 
 for (const [event, payload, check] of [
@@ -340,10 +343,10 @@ test('install (user) writes the four events with process hooks, turns hooks on, 
     if (WIN) {
       // Windows: the same three steps as an inline PowerShell script, no launcher file.
       const sq = require('../lib/shell-quote');
-      assert.deepEqual({ ...g.hooks[0], args: g.hooks[0].args.slice(0, 3) }, { type: 'process', command: sq.powershellExe(), args: ['-NoProfile', '-NonInteractive', '-EncodedCommand'], timeoutMs: zc.HOOK_TIMEOUT_MS, statusMessage: zc.HOOK_STATUS });
+      assert.deepEqual({ ...g.hooks[0], args: g.hooks[0].args.slice(0, 3) }, { type: 'process', command: sq.powershellExe(), args: ['-NoProfile', '-NonInteractive', '-EncodedCommand'], timeoutMs: zc.ENTRY_TIMEOUT_MS, statusMessage: zc.HOOK_STATUS });
       assert.match(sq.windowsCommandScript(zc.commandText(g.hooks[0])), new RegExp(' # zn hook zcode$'));
     } else {
-      assert.deepEqual(g.hooks[0], { type: 'process', command: file, args: [ev], timeoutMs: zc.HOOK_TIMEOUT_MS, statusMessage: zc.HOOK_STATUS });
+      assert.deepEqual(g.hooks[0], { type: 'process', command: file, args: [ev], timeoutMs: zc.ENTRY_TIMEOUT_MS, statusMessage: zc.HOOK_STATUS });
     }
   }
   assert.equal(data.hooks.events.PreToolUse[1].matcher, '*');
