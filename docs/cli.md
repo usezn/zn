@@ -45,7 +45,7 @@ Without installing, use `npx -y zn-gate <command>`. This page writes `zn-gate` i
 
 This page describes the npm package. The Python package (`pip install zn-gate`) has a smaller command line: see [The Python package](#the-python-package) at the end.
 
-`zn-gate --help` (or `-h`) prints the short help. `zn-gate version`, `zn-gate -v`, `zn-gate -V` and `zn-gate --version` print the version.
+`zn-gate --help` (or `-h`) prints the short help. `zn-gate version`, `zn-gate -v`, `zn-gate -V` and `zn-gate --version` print the version. The flags count only before a command: `zn-gate scan . -V` hands `-V` to `scan`, which rejects it as an unknown option (the npm and Python packages behave the same).
 
 ## Exit codes
 
@@ -155,7 +155,7 @@ Runs the local self-test on built-in examples (attacks and ordinary developer te
 zn-gate version
 ```
 
-Prints the version and the versions of the rules. Exit code `0`. `-v`, `-V` and `--version` do the same.
+Prints the version and the versions of the rules. Exit code `0`. `-v`, `-V` and `--version` do the same when they come before a command.
 
 ### `connect`
 
