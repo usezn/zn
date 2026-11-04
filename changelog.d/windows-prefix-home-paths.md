@@ -1,0 +1,2 @@
+### Security
+- The protected-path checks now recognise the zn vault and audit log, package registry tokens, and agent plugin folders when a Windows path is written with a long or device prefix (\\?\C:\... or \\.\C:\...) or through the administrative share of the local computer (\\localhost\C$\...), including inside quoted shell commands. Short (8.3) folder names are still resolved by asking the file system, not from the text.

@@ -104,13 +104,14 @@ const ZN_STATE = (p) => [...CREDENTIAL(p), ...AGENT_CONFIG(p)];
 const DOTENV = (p) => [policy.classifyPath(p, O)];
 
 // target: [relative path from the home folder, what the checks must refuse, the forms that are not refused yet]
-const PREFIXES = ['long prefix', 'device prefix', 'long UNC prefix to the admin share', 'admin share', 'long prefix and stream',
-  'long prefix and short last name'];
+// Prefix and admin-share spellings are refused now. A short (8.3) name cannot be placed from the text: Windows
+// resolves it where the file exists (nativeTargetOf), which only a real Windows run can show.
+const PREFIXES = ['long prefix and short last name'];
 const SHORT_FOLDERS = ['short folder names', 'short folder and last names', 'short home folder', 'long prefix and short last name'];
 const TARGETS = {
   'aws credentials': ['.aws/credentials', CREDENTIAL, ['long prefix and short last name']],
   'ssh private key': ['.ssh/id_rsa', CREDENTIAL, []],
-  'claude settings': ['.claude/settings.json', AGENT_CONFIG, ['long prefix and short last name']],
+  'claude settings': ['.claude/settings.json', AGENT_CONFIG, []],
   'codex config': ['.codex/config.toml', AGENT_CONFIG, ['short folder names', 'short folder and last names']],
   'package registry token': ['.npmrc', CREDENTIAL, PREFIXES],
   'zn vault': ['.zn/vault.json', ZN_STATE, [...PREFIXES, ...SHORT_FOLDERS]],
@@ -137,7 +138,7 @@ for (const [label, [rel, check, gaps]] of Object.entries(TARGETS)) {
   });
   if (gaps.length) {
     // Spellings that name the same file but are not refused yet. The names are listed, so a fix turns the todo green.
-    test(label + ': spellings that are not refused yet', { todo: 'not refused yet' }, () => {
+    test(label + ': spellings that are not refused yet', { todo: "not refused yet" }, () => {
       const names = gaps.filter((g, i) => gaps.indexOf(g) === i);
       const all = asWindows(() => spellings(rel).filter(([n]) => names.includes(n)).map(([n, t]) => [n, check(t)]));
       assert.deepEqual(all.filter(([, r]) => r.some((x) => !x)).map(([n]) => n), []);

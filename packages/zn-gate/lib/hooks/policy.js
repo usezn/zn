@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-03.2';
+const POLICY_RULES_VERSION = '2026-11-04.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -349,11 +349,25 @@ function protectedElsewhere(text, opts) {
   return bases.unknown ? homeRelClass(t) : null;
 }
 
+/* A slashed Windows path without the spellings that only add a way in to the same place: the long and device prefixes
+   (//?/C:/x, //./C:/x), the long UNC form (//?/UNC/host/share/x) and the administrative share of this computer
+   (//localhost/C$/x is C:/x). Text only: a short (8.3) name cannot be placed from the text, so it is left to the
+   resolution that asks the file system (nativeTargetOf). Elsewhere a path is returned as it is. */
+function plainWindows(s) {
+  if (process.platform !== 'win32') return s;
+  let t = /^\/\/[?.]\/UNC\//i.test(s) ? s.replace(/^\/\/[?.]\/UNC\//i, '//') : s.replace(/^\/\/[?.]\//, '');
+  t = t.replace(/^\/\/(?:localhost|127\.0\.0\.1)\/([a-z])\$(?=\/|$)/i, '$1:');
+  return t;
+}
+
 function classifyResolved(abs, ctx) {
   const { home, creds, agent } = ctx;
-  const s = keyOf(slash(abs));
-  const h = keyOf(slash(path.resolve(home)));
-  const homes = agent.homes || [h];
+  const s0 = keyOf(slash(abs));
+  // The home comparisons use the plain spelling of the path and of the home folder.
+  const s = plainWindows(s0);
+  const h0 = keyOf(slash(path.resolve(home)));
+  const h = plainWindows(h0);
+  const homes = (agent.homes || [h0]).map(plainWindows);
   for (const h of homes) {
     const prefix = h.endsWith('/') ? h : h + '/';          // a home of "/" is its own prefix
     if (s === prefix + '.zn' || s.startsWith(prefix + '.zn/')) return { kind: 'zn_state', reason: 'zn keeps its vault and audit log in ~/.zn' };
@@ -361,7 +375,7 @@ function classifyResolved(abs, ctx) {
   // A ZN_HOME that moves zn's folder elsewhere. A value that is a home folder or a drive root is not taken: it would
   // protect the whole home folder.
   if (ctx.znHome) {
-    const zh = keyOf(slash(ctx.znHome)).replace(/\/+$/, '');
+    const zh = plainWindows(keyOf(slash(ctx.znHome))).replace(/\/+$/, '');
     // Only the root of a file system (/, a drive such as C:/, a network share) is refused, so a short folder such as /zn is protected.
     const fsRoot = keyOf(slash(path.parse(ctx.znHome).root)).replace(/\/+$/, '');
     const wide = zh === '' || zh === fsRoot || homes.some((x) => x.replace(/\/+$/, '') === zh);
@@ -1179,7 +1193,11 @@ const DQ_ESCAPABLE = /["\\$`\n]/;
  *   substitution: true if $( or ` appears inside the first command
  *   words[].text is the word with quotes removed (approximation of bash)
  */
-function scanFirstCommand(cmd, posix = false) {
+function scanFirstCommand(cmd, mode = false) {
+  // mode true: every backslash escapes (bash). mode 'win': no backslash escapes, as in cmd.exe and PowerShell, where
+  // \\?\C:\x and \\localhost\C$\x keep their two leading backslashes. false: a backslash before a letter is kept.
+  const literal = mode === 'win';
+  const posix = mode === true;
   const s = String(cmd);
   const words = [];
   let i = 0;
@@ -1202,7 +1220,7 @@ function scanFirstCommand(cmd, posix = false) {
       continue;
     }
     if (quote === '"') {
-      if (ch === '\\' && i + 1 < s.length) {
+      if (ch === '\\' && i + 1 < s.length && !literal) {
         if (!DQ_ESCAPABLE.test(s[i + 1])) { pushChar(ch, i); continue; }
         pushChar(s[i + 1], i);
         i++;
@@ -1213,6 +1231,7 @@ function scanFirstCommand(cmd, posix = false) {
       pushChar(ch, i);
       continue;
     }
+    if (ch === '\\' && i + 1 < s.length && literal) { pushChar(ch, i); continue; }
     if (ch === '\\' && i + 1 < s.length) {
       if (s[i + 1] === '\n') { i++; continue; }
       // A backslash before a letter or a dot is kept: on Windows it is the path
@@ -2394,6 +2413,8 @@ function bashDenialOf(cmd, opts = {}) {
   // path separator or a bash escape, and a PowerShell backtick is an escape too.
   // A word protected in any reading is refused.
   const readings = [allWords(text, false), allWords(text, true), allWords(text.replace(/`(.)/gs, '$1'), false)];
+  // On Windows a fourth reading keeps every backslash, so a path typed as \\?\C:\x or \\localhost\C$\x is read as typed.
+  if (process.platform === 'win32') readings.push(allWords(text, 'win'));
   // Bash $'...' quoting spells characters as escapes ($'\x2eenv' is .env), and $"..." is a plain "...":
   // a fourth reading with them decoded.
   if (/\$['"]/.test(text)) readings.push(allWords(decodeAnsiC(text), true));
