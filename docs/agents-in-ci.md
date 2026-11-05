@@ -94,13 +94,13 @@ ZNA019 cannot tell a workflow that is safe from one that is merely filtered, so 
 - It uses `pull_request`, so a pull request from a fork gets no secrets (rule 1).
 - `permissions: {}` at the top, then only the scopes each job needs (rules 2 and 10).
 - The first job runs the zn-gate Action in `mode: both` with SARIF output and uploads the result to code scanning. It reads the pull request's files and holds no secret (rule 3).
-- The second job is the only one with a secret. It starts after the first one, only for branches of the same repository, and uses an environment (`coding-agent`) that you set up with required reviewers and the secret `AGENT_API_KEY` (rules 3 and 4).
+- The second job is the only one with a secret. It starts after the first one, only for branches of the same repository, and uses an environment (`coding-agent`) that you set up with required reviewers and the secret `AGENT_API_KEY` (rules 3 and 4). The agent job runs `./ci/run-agent.sh` from the pull request's own checkout, so anyone who can push a branch to the repository can change that script: the required reviewer of the `coding-agent` environment is the only barrier, and the reviewer must read the whole diff, scripts included, before approving. Keep `AGENT_API_KEY` only as a secret of that environment, not also as a repository secret: a repository-level copy would reach the job without the approval.
 - The agent gets no pull request text: no title, description or branch name appears in the workflow (rule 5).
 - Every action is pinned by commit SHA, checkout keeps no credentials, and each job has a timeout and a concurrency group (rules 7, 8 and 9).
 
 The step that starts the agent calls a script, `./ci/run-agent.sh`, that you write: replace it with your agent's own action or command. Create the `coding-agent` environment in the repository settings before the first run.
 
-The Action line pins a release by commit SHA, as on the [GitHub Action page](github-action.md#minimal-workflow). Take the SHA of the release you want from the [releases page](https://github.com/usezn/zn/releases). When you move to a newer release, set `version` to the same release. `zn audit` reports nothing for this workflow: its only trigger is `pull_request`. Actionlint and zizmor, the linters this repository runs on its own workflows, report no findings on it either.
+The Action line pins a release by commit SHA, as on the [GitHub Action page](github-action.md#minimal-workflow). Take the SHA of the release you want from the [releases page](https://github.com/usezn/zn/releases). When you move to a newer release, set `version` to the same release. `zn audit` reports nothing for this workflow: its only trigger is `pull_request`.
 
 ## Where the zn-gate Action and `zn run` fit
 
@@ -111,7 +111,7 @@ The Action line pins a release by commit SHA, as on the [GitHub Action page](git
 | `mode` | `audit` reads agent configuration and workflows (ZNA019 included), `scan` looks for prompt-injection traps and leaked secrets in files, `both` runs the two |
 | `format` | `sarif` writes a file you upload to code scanning; `github` shows annotations on the pull request |
 | `severity-threshold` | Lowest audit severity that fails the step (default `high`; the example sets `medium`) |
-| `fail-on` | Overrides the two inputs above; `none` never fails |
+| `fail-on` | When set, overrides `fail-on-threat` and `severity-threshold`; `none` never fails |
 | `version` | Exact zn-gate version to install; set it to the release you pinned |
 
 Its output `sarif-file` is the path to pass to `github/codeql-action/upload-sarif`. Give the job `contents: read`, plus `security-events: write` for the upload, as in the example. On a pull request from a fork GitHub may not allow the upload; the audit still runs and still sets the status of the job.
