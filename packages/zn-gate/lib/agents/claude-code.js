@@ -381,6 +381,10 @@ function ourHooks(command) {
     UserPromptSubmit: { hooks: [{ ...h('UserPromptSubmit'), onFailure: 'block' }] },
     // A typed skill or command expands after UserPromptSubmit; this checks the expanded text.
     UserPromptExpansion: { hooks: [{ ...h('UserPromptExpansion'), onFailure: 'block' }] },
+    // A settings or skill file that changes during the session (a change can be blocked), and an instruction file that goes into
+    // context (only recorded). Neither has onFailure: a hook that cannot run leaves the session as it was.
+    ConfigChange: { hooks: [h('ConfigChange')] },
+    InstructionsLoaded: { hooks: [h('InstructionsLoaded')] },
   };
 }
 

@@ -76,6 +76,30 @@ includes PowerShell and Claude Code's Monitor tool) is blocked, because zn
 could not check it within the time the agent waits for the hook. The same
 limit applies to a patch (`apply_patch`) in Codex and OpenCode.
 
+## Settings, skills and instruction files that change in Claude Code
+
+zn registers two more Claude Code hooks, `ConfigChange` and `InstructionsLoaded`
+(builds that have these events; an older Claude Code ignores them). Neither has
+`onFailure`: a hook that cannot run leaves the session as it was.
+
+- **`ConfigChange`** runs when a settings or skill file changes during a session.
+  zn blocks the change, so the new file does not take effect, when a project or
+  local settings file (`.claude/settings.json`, `.claude/settings.local.json`) now
+  has a critical `zn audit` finding (for example a download piped into a shell, or
+  the model endpoint moved to another server), or when a skill file now holds
+  text that tries to instruct the agent. The message names the file, the rule and
+  the line, and says to run `zn audit`. Your own user settings and managed policy
+  settings are not blocked: Claude Code applies policy settings whatever a hook
+  says. Claude Code shows no message for a blocked change; it only writes a line
+  to its debug log, so check the evidence log or run `zn audit` if a change seems
+  to have no effect.
+- **`InstructionsLoaded`** runs when `CLAUDE.md` or a `.claude/rules/*.md` file goes
+  into context. Claude Code cannot be told to hold the file back and discards the
+  output of this hook, so zn only records a file that holds text trying to
+  instruct the agent: a block in the evidence log (`hook-instructions_loaded-...`),
+  with the name of the rule and never the text. Files over 1 MiB are not read.
+  `AGENTS.md` that Claude Code reads directly is not reported by this event.
+
 ## Skills, commands and @file in Claude Code
 
 - **Typed skills and commands**: `UserPromptSubmit` sees only what you typed, not
