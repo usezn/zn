@@ -143,6 +143,26 @@ test('all five steps pass: exit 0 and the final line', { skip }, () => {
   } finally { cleanup(r); }
 });
 
+test('every npm command is pinned to the public registry', { skip }, () => {
+  const r = run(['1.14.1'], { fakeVersion: '1.14.1' });
+  try {
+    assert.strictEqual(r.status, 0, r.out);
+    const npmCalls = r.calls.split('\n').filter((l) => l.startsWith('npm '));
+    assert.strictEqual(npmCalls.length, 3, r.calls);
+    for (const l of npmCalls) assert.match(l, /--registry=https:\/\/registry\.npmjs\.org\//, l);
+  } finally { cleanup(r); }
+});
+
+test('--print shows the registry on every npm command', { skip }, () => {
+  const r = run(['--print', '1.14.1']);
+  try {
+    assert.strictEqual(r.status, 0, r.out);
+    const lines = r.out.split('\n').filter((l) => /\bnpm (install|audit|view)\b/.test(l));
+    assert.strictEqual(lines.length, 3, r.out);
+    for (const l of lines) assert.match(l, /--registry=https:\/\/registry\.npmjs\.org\//, l);
+  } finally { cleanup(r); }
+});
+
 test('the signer workflow, identity, tag and PyPI version follow the release', { skip }, () => {
   let r = run(['1.12.0'], { fakeVersion: '1.12.0' });
   try {

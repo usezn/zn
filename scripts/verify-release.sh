@@ -304,9 +304,9 @@ S4="4/5"
 N4="npm provenance"
 if [ "$PRINT" -eq 1 ]; then
   echo "[$S4] $N4 (in a new empty project directory)"
-  show npm install --ignore-scripts --no-audit --no-fund "zn-gate@${VERSION}"
-  show npm audit signatures
-  show npm view "zn-gate@${VERSION}" dist.attestations
+  show npm install --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ "zn-gate@${VERSION}"
+  show npm audit signatures --registry=https://registry.npmjs.org/
+  show npm view "zn-gate@${VERSION}" dist.attestations --registry=https://registry.npmjs.org/
 elif ! have npm; then
   cannot "$S4" "$N4" "npm missing"
 else
@@ -314,13 +314,13 @@ else
   mkdir -p -- "$NPM_DIR"
   printf '{"name":"zn-gate-verify","version":"0.0.0","private":true}\n' > "$NPM_DIR/package.json"
   npm_reason=""
-  if ! (cd "$NPM_DIR" && attempt npm npm install --ignore-scripts --no-audit --no-fund "zn-gate@${VERSION}"); then
+  if ! (cd "$NPM_DIR" && attempt npm npm install --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ "zn-gate@${VERSION}"); then
     npm_reason="npm install of zn-gate@${VERSION} failed"
   elif ! grep -Fq "\"version\": \"${VERSION}\"" "$NPM_DIR/node_modules/zn-gate/package.json" 2> /dev/null; then
     npm_reason="the installed package is not version ${VERSION}"
-  elif ! (cd "$NPM_DIR" && attempt npm npm audit signatures); then
+  elif ! (cd "$NPM_DIR" && attempt npm npm audit signatures --registry=https://registry.npmjs.org/); then
     npm_reason="npm audit signatures failed"
-  elif ! (cd "$NPM_DIR" && npm view "zn-gate@${VERSION}" dist.attestations > "$OUT" 2>&1) || ! grep -q '[^[:space:]]' "$OUT"; then
+  elif ! (cd "$NPM_DIR" && npm view "zn-gate@${VERSION}" dist.attestations --registry=https://registry.npmjs.org/ > "$OUT" 2>&1) || ! grep -q '[^[:space:]]' "$OUT"; then
     npm_reason="npm shows no attestations for zn-gate@${VERSION}"
   fi
   if [ -z "$npm_reason" ]; then pass "$S4" "$N4"; else fail "$S4" "$N4" "$npm_reason"; fi
