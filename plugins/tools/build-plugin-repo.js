@@ -224,7 +224,7 @@ function withoutCompileCacheUse(rel, text) {
 // to it changes this hash and the build refuses it again until the new text is reviewed.
 const VERIFY_JS_FILE = /^lib\/agents\/launcher\.js$/;
 const VERIFY_JS_START = 'const VERIFY_JS = ';
-const VERIFY_JS_SHA256 = 'e6e0ba98752054297a3e8bfc630051f01c26b1fd4231dc35aa5b2111d795cd79';
+const VERIFY_JS_SHA256 = '7ea036036c345f46790337ce78cc46cbaeaac4a417cdcd35b62e096ce07cca10';
 
 /** For lib/agents/launcher.js only: the text without the reviewed VERIFY_JS statement (unchanged otherwise). */
 function withoutVerifyJs(rel, text) {
