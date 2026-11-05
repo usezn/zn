@@ -450,6 +450,12 @@ def _canonical(record: Dict[str, Any]) -> str:
     return _serialize(record, js_numbers=True)
 
 
+def _canonical_ascii(record: Dict[str, Any]) -> str:
+    """The older Python form (non-ASCII escaped as \\uXXXX) that earlier versions hashed.
+    Verification accepts it so existing logs stay valid; new records use _canonical."""
+    return _serialize(record, ascii_only=True)
+
+
 def _canonical_forms(record: Dict[str, Any]) -> List[str]:
     """Every form a record may have been hashed in: the current one, the older Python forms
     (non-ASCII escaped as \\uXXXX; small numbers as Python writes them, 1e-05) and their mix.
