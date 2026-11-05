@@ -222,3 +222,73 @@ test('manifest: after an update the install step rewrites the list, and the hook
   assert.equal(r.status, 0, r.stderr);
   assert.equal(/^ZN_FILES='([^']+)'$/m.exec(fs.readFileSync(s.file, 'utf8'))[1], launcher.treeManifest(s.runner));
 });
+
+// --- zn-gate check reads the whole list ---
+
+const { check } = require('../lib/check');
+
+async function claudeResult(t, s) {
+  const cwd = tempDir(t, 'zn-manifest-cwd-');
+  return (await check({ home: s.home, env: s.env, cwd })).results.find((x) => x.id === 'claude-code');
+}
+
+test('check: the intact package is protected and has nothing to say about its files', { skip: !posix }, async (t) => {
+  const s = realPackage(t);
+  const r = await claudeResult(t, s);
+  assert.equal(r.state, 'protected', r.problem);
+  assert.ok(!r.notes.some((n) => /files|launcher records/.test(n)), r.notes.join('\n'));
+});
+
+test('check: a changed file nothing has loaded yet is reported, with the file name and the repair', { skip: !posix }, async (t) => {
+  const s = realPackage(t);
+  fs.appendFileSync(s.p('lib/team/cli.js'), '// edited\n');
+  assert.equal(s.run().status, 0, 'the hook itself does not load that file');
+  const r = await claudeResult(t, s);
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /changed since the hooks were installed \(lib\/team\/cli\.js no longer match the launcher\)/);
+  assert.match(r.fix, /zn hooks install claude-code/);
+});
+
+test('check: a deleted file and a package that is no longer a plain list are reported', { skip: !posix }, async (t) => {
+  const s = realPackage(t);
+  fs.rmSync(s.p('lib/team/cli.js'));
+  let r = await claudeResult(t, s);
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /lib\/team\/cli\.js/);
+  const s2 = realPackage(t);
+  fs.symlinkSync(s2.p('lib/rules.js'), s2.p('lib/linked.js'));
+  r = await claudeResult(t, s2);
+  assert.equal(r.state, 'not-protected');
+  assert.match(r.problem, /\(files\)/);
+});
+
+test('check: a file added since install is a note, not a block', { skip: !posix }, async (t) => {
+  const s = realPackage(t);
+  fs.writeFileSync(s.p('lib/extra.js'), 'module.exports = 1;\n');
+  const r = await claudeResult(t, s);
+  assert.equal(r.state, 'protected', r.problem);
+  assert.ok(r.notes.some((n) => /lib\/extra\.js/.test(n) && /zn hooks install claude-code/.test(n)), r.notes.join('\n'));
+});
+
+test('check: a launcher that records only the runner says so when the package could have been listed', { skip: !posix }, async (t) => {
+  const s = realPackage(t);
+  // Written with no list, as for a package whose files could not be listed then.
+  launcher.writeLauncher('claude-code', process.execPath, s.runner, { env: s.env, home: s.home, manifest: '' });
+  assert.match(fs.readFileSync(s.file, 'utf8'), /^ZN_FILES='-'$/m);
+  let r = await claudeResult(t, s);
+  assert.equal(r.state, 'protected', r.problem);
+  assert.ok(r.notes.some((n) => /records the zn-gate runner but not the other files/.test(n) && /zn hooks install claude-code/.test(n)), r.notes.join('\n'));
+  // A launcher written by an older zn-gate has no ZN_FILES line at all.
+  fs.writeFileSync(s.file, fs.readFileSync(s.file, 'utf8').replace(/^ZN_FILES=.*\n/m, ''), { mode: 0o755 });
+  r = await claudeResult(t, s);
+  assert.ok(r.notes.some((n) => /records the zn-gate runner but not the other files/.test(n)), r.notes.join('\n'));
+});
+
+test('check: a package that cannot be listed at all (runner elsewhere) is not nagged about it', { skip: !posix }, async (t) => {
+  const base = fs.realpathSync(tempDir(t, 'zn-manifest-flat-check-'));
+  const runner = path.join(base, 'runner.js');
+  fs.writeFileSync(runner, ACK + "process.stdout.write('{}'); process.exit(0);\n");
+  const i = install(base, runner);
+  const r = (await check({ home: i.home, env: i.env, cwd: tempDir(t, 'zn-manifest-cwd-') })).results.find((x) => x.id === 'claude-code');
+  assert.ok(!r.notes.some((n) => /records the zn-gate runner/.test(n)), r.notes.join('\n'));
+});
