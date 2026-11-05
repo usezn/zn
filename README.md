@@ -165,6 +165,8 @@ claude mcp add zn-gate -- npx -y zn-gate mcp     # Claude Code
 codex mcp add zn-gate -- npx -y zn-gate mcp      # Codex CLI
 ```
 
+In Claude Code, this `npx` form is treated like any other MCP server: a call that carries personal data is asked about first. Only an entry that runs the installed zn-gate by absolute path skips that question (see `docs/compat.md`).
+
 Cursor (`~/.cursor/mcp.json`) and other editors: `{ "mcpServers": { "zn-gate": { "command": "npx", "args": ["-y", "zn-gate", "mcp"] } } }`. OpenCode (`~/.config/opencode/opencode.json`): `{ "mcp": { "zn-gate": { "type": "local", "command": ["npx", "-y", "zn-gate", "mcp"], "enabled": true } } }`.
 
 **Protect the MCP servers you already use.** `init` finds them in your agent configs, writes a backup, and wraps each local server with the zn-gate proxy:
