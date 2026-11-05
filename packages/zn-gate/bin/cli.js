@@ -827,6 +827,12 @@ ${ruleLine(process.env, 77)}\n
     for (const s of files.skipped.slice(0, 20)) process.stdout.write(`  ${safeText(displayPath(s.file, homeFiles))} (${safeText(s.reason)})\n`);
     if (files.skipped.length > 20) process.stdout.write(`  ... and ${files.skipped.length - 20} more\n`);
     process.stdout.write('\n');
+    // A package is scanned with no way to accept partial coverage, so a big bundled file (common with bundlers) always
+    // ends the scan with exit 3: say why, and what to do.
+    if (options.displayBase && files.skipped.some((s) => s.reason === '2 MiB or larger')) {
+      process.stdout.write('Why exit 3: a file of 2 MiB or larger is not read, and --allow-partial is not accepted for a package, so a package with such a file is never reported as clean.\n' +
+        'What to do: read the large file yourself, or scan the source repository the package is built from, before you add or run this package.\n\n');
+    }
   }
   if (files.skippedDirs.length) {
     process.stdout.write(`Directories not scanned (${files.skippedDirs.length}):\n`);

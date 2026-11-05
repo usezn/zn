@@ -106,6 +106,11 @@ function startRegistry() {
     pj('zn-fixture-big'),
     file('dist/bundle.js', '//' + 'a'.repeat(2 * 1024 * 1024 + 16) + '\n'),
   ]);
+  const big3 = tgz([
+    pj('zn-fixture-big3'),
+    file('index.js', code('Adds two numbers.')),
+    file('dist/server.js', '//' + 'a'.repeat(3 * 1024 * 1024) + '\n'),
+  ]);
   const scripts = tgz([
     pj('zn-fixture-scripts', {
       scripts: { preinstall: 'node pre.js', postinstall: 'echo \u001b[31mred && node post.js', prepare: 'node build.js', test: 'node t.js' },
@@ -142,6 +147,7 @@ function startRegistry() {
     'zn-fixture-deep-1.0.0.tgz': deep,
     'zn-fixture-cleandirs-1.0.0.tgz': cleanDirs,
     'zn-fixture-big-1.0.0.tgz': big,
+    'zn-fixture-big3-1.0.0.tgz': big3,
     'zn-fixture-scripts-1.0.0.tgz': scripts,
     'zn-fixture-plain-1.0.0.tgz': plain,
     'zn-fixture-bundled-1.0.0.tgz': bundled,
@@ -152,6 +158,7 @@ function startRegistry() {
     'zn-fixture-deep': { version: '1.0.0', file: 'zn-fixture-deep-1.0.0.tgz', buf: deep },
     'zn-fixture-cleandirs': { version: '1.0.0', file: 'zn-fixture-cleandirs-1.0.0.tgz', buf: cleanDirs },
     'zn-fixture-big': { version: '1.0.0', file: 'zn-fixture-big-1.0.0.tgz', buf: big },
+    'zn-fixture-big3': { version: '1.0.0', file: 'zn-fixture-big3-1.0.0.tgz', buf: big3 },
     'zn-fixture-scripts': { version: '1.0.0', file: 'zn-fixture-scripts-1.0.0.tgz', buf: scripts },
     'zn-fixture-plain': { version: '1.0.0', file: 'zn-fixture-plain-1.0.0.tgz', buf: plain },
     'zn-fixture-bundled': { version: '1.0.0', file: 'zn-fixture-bundled-1.0.0.tgz', buf: bundled },
@@ -483,7 +490,37 @@ test('a file the scan cannot read in a package is incomplete coverage: exit 3, n
     assert.ok(!/PASSED/.test(r.stdout), r.stdout);
     assert.match(r.stdout, /INCOMPLETE/);
     assert.match(r.stdout, /dist\/bundle\.js \(2 MiB or larger\)/);
+    // The message says why the exit code is 3 and what to do about it.
+    assert.match(r.stdout, /Why exit 3: a file of 2 MiB or larger is not read, and --allow-partial is not accepted for a package/);
+    assert.match(r.stdout, /What to do: read the large file yourself, or scan the source repository the package is built from/);
+    assert.ok(r.stdout.indexOf('Not scanned (') < r.stdout.indexOf('Why exit 3'), 'the explanation follows the list of files');
   });
+});
+
+test('a 3 MiB bundled file: exit 3, never PASSED, with the explanation; a small unread file gets no such explanation', async () => {
+  await withRegistry(async ({ base, box }) => {
+    const r = await runCli(['scan', '--package', 'zn-fixture-big3'], envFor(base, box));
+    assert.strictEqual(r.status, 3, r.stdout + r.stderr);
+    assert.ok(!/PASSED/.test(r.stdout), r.stdout);
+    assert.match(r.stdout, /dist\/server\.js \(2 MiB or larger\)/);
+    assert.match(r.stdout, /Why exit 3:/);
+    const blocked = await runCli(['scan', '--package', 'zn-fixture-blocked'], envFor(base, box));
+    assert.ok(!/Why exit 3:/.test(blocked.stdout), 'a file that could not be unpacked is not a size problem');
+  });
+});
+
+test('scan <folder> with a 3 MiB file does not print the package explanation', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-scan-bigfolder-test-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'notes.md'), 'Adds two numbers.\n');
+    fs.writeFileSync(path.join(dir, 'big.md'), '//' + 'a'.repeat(3 * 1024 * 1024) + '\n');
+    const r = require('child_process').spawnSync(process.execPath, [path.join(__dirname, '..', 'bin', 'cli.js'), 'scan', dir], { encoding: 'utf8' });
+    assert.strictEqual(r.status, 3, r.stdout + r.stderr);
+    assert.match(r.stdout, /big\.md \(2 MiB or larger\)/);
+    assert.ok(!/Why exit 3:/.test(r.stdout), 'the explanation is for packages only');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('--allow-partial cannot turn a partly read package into a pass', async () => {
