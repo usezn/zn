@@ -79,7 +79,7 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   The last form is a Codex CLI or Claude Code hook that goes through zn's launcher script, which blocks the agent's tool calls and prompts (instead of letting them run unchecked) when the Node.js it was installed with is gone. The launcher never runs a `zn` it finds on your PATH instead. Until you repair it, the agent cannot run commands.
 
-  A second form appears when the zn-gate files changed after the hooks were installed (the launcher keeps the SHA-256 of the runner file and of every other file the hook loads, the code and data under `lib/`, `package.json` and `bin/cli.js`, and runs a file only if it still matches):
+  A second form appears when the zn-gate files changed after the hooks were installed (the launcher keeps the SHA-256 of the runner file and of every other file the hook loads, the code and data under `lib/`, `package.json` and `bin/cli.js`, and runs a file only if it still matches; the inline PowerShell hooks on Windows check neither the runner nor the other files):
 
   ```text
   its hook is blocking tool calls and prompts: zn-gate changed since the hooks were installed (<path> no longer matches the launcher), so zn will not run it
