@@ -96,5 +96,20 @@ class TestUnknownFlag(unittest.TestCase):
                 self.assertEqual(proc.stdout, "")
 
 
+class TestUnknownSubcommand(unittest.TestCase):
+    def test_unknown_subcommand_exits_1_with_a_hint_on_stderr(self):
+        proc = _zn("no-such-command")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("Unknown command: no-such-command", proc.stderr)
+        self.assertIn("Run 'zn-gate --help' for usage.", proc.stderr)
+        self.assertEqual(proc.stdout, "")
+
+    def test_npm_only_subcommand_exits_2_and_points_to_npm(self):
+        proc = _zn("init")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("is in the npm package", proc.stderr)
+        self.assertEqual(proc.stdout, "")
+
+
 if __name__ == "__main__":
     unittest.main()

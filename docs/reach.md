@@ -265,11 +265,19 @@ finding.
 
 With `--remember`, reach writes one small file: `~/.zn/reach-last.json`, or
 `reach-last.json` in the folder that `ZN_HOME` names when that variable is set.
-For each folder it keeps the high, medium and low counts and the date of the
-run. The key is a SHA-256 hash of the absolute folder path, cut to 32
-characters, so the file holds no path, file name or value. At most 200 folders
-are kept; the oldest go first. The next `--remember` run in the same folder
-then shows, for example, `(last time, 2026-10-17: 2 high, 1 medium, 0 low)`.
+
+For each folder, the file keeps:
+
+- the high, medium and low counts
+- the date of the run
+
+The key is a SHA-256 hash of the absolute folder path, cut to 32 characters.
+So the file holds no path, file name or value.
+
+At most 200 folders are kept. The oldest go first.
+
+The next `--remember` run in the same folder then shows, for example,
+`(last time, 2026-10-17: 2 high, 1 medium, 0 low)`.
 
 Without `--remember`, reach writes no file.
 

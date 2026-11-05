@@ -17,7 +17,8 @@ const report = require('../lib/report');
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'report_golden');
 const NOW = new Date('2026-10-17T12:00:00Z');
-const expectedLines = () => fs.readFileSync(path.join(FIXTURES, 'expected.txt'), 'utf8').split('\n');
+// A Windows checkout may turn the stored text into CRLF lines; the report itself always writes LF.
+const expectedLines = () => fs.readFileSync(path.join(FIXTURES, 'expected.txt'), 'utf8').replace(/\r\n/g, '\n').split('\n');
 
 test.after(() => fs.rmSync(home, { recursive: true, force: true }));
 

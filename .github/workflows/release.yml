@@ -560,21 +560,9 @@ jobs:
           TAG: ${{ needs.verify.outputs.tag }}
         run: |
           set -euo pipefail
-          awk -v v="$NPM_VERSION" '
-            index($0, "## [" v "]") == 1 { on = 1; next }
-            on && /^## \[/ { exit }
-            on { print }
-          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
-          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
-            echo "::error::No section for $NPM_VERSION in CHANGELOG.md"
-            exit 1
-          fi
-          {
-            echo
-            echo "---"
-            echo
-            echo "How to verify these files: [docs/verify-release.md](https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/docs/verify-release.md)"
-          } >> "$RUNNER_TEMP/notes.md"
+          # GitHub rejects a release body over 125,000 characters: longer notes leave out the Fixed list and
+          # link the full CHANGELOG.md section instead (see the script).
+          node .github/scripts/release-notes.mjs --version "$NPM_VERSION" --tag "$TAG" --repo "$GITHUB_REPOSITORY" > "$RUNNER_TEMP/notes.md"
       - name: Check that the tag still points to the verified commit
         env:
           TAG: ${{ needs.verify.outputs.tag }}
