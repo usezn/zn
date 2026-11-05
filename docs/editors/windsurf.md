@@ -78,6 +78,18 @@ Restart Windsurf, then ask the agent to call `zn_status` (or look for the zn-gat
 
 `npx -y zn-gate check` does not test this setup: it checks hooks, and zn-gate does not install hooks for Windsurf yet. See [Check that it works](../check.md).
 
+### What `status` and `check` tell you
+
+Both commands are described in [Check that it works](../check.md). Run them in a terminal, not in Windsurf:
+
+```bash
+npx -y zn-gate status
+npx -y zn-gate check
+```
+
+- `zn-gate status` shows the active detection engine, whether the optional cloud check is on, and whether a key was saved by `zn-gate connect` (never the key itself). It does not show whether Windsurf started the zn-gate MCP server.
+- `zn-gate check` tests the hooks of the agents it knows. Windsurf is not one of them, so a line for another agent such as Claude Code or Cursor says nothing about Windsurf. For Windsurf, use the `zn_status` call or the tool list above.
+
 ## Uninstall
 
 Open the settings file you edited in Install, delete the `zn-gate` entry (and any wrapper you added around another MCP server with `zn-gate shield`, putting back its original command), save the file and restart Windsurf. No other part of zn-gate is installed by these steps, and none of this changes your code. To remove the program itself, run `npm uninstall -g zn-gate` if you installed it globally. See [Remove zn-gate](../uninstall.md).
@@ -95,3 +107,10 @@ All messages: [Troubleshooting](../troubleshooting.md).
 
 - MCP in Cascade: <https://docs.devin.ai/desktop/cascade/mcp>
 - Cascade hooks: <https://docs.devin.ai/desktop/cascade/hooks>
+
+## Related pages
+
+- [Check that it works](../check.md): what `zn-gate check` tests, and why it does not test this Windsurf setup.
+- [Remove zn-gate](../uninstall.md): the one-step uninstall and how to remove zn-gate piece by piece.
+- [Troubleshooting](../troubleshooting.md): the messages people most often meet, and what to do about each.
+- [Install, verify and uninstall by agent](../by-agent.md): a short list of steps for each supported agent.
