@@ -50,6 +50,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 |---|---|---|
 | [zn Team](team.md) | Organization policy, audit upload and OpenTelemetry export on a developer machine | Team admins, developers on a team |
 | [GitHub Action](github-action.md) | Audit agent configs and scan prompts on every pull request | Maintainers |
+| [Coding agents in CI](agents-in-ci.md) | Run an agent in a workflow without letting an issue or a pull request expose your secrets, with a hardened example | Maintainers |
 
 ## How it works
 
