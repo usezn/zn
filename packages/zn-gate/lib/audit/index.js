@@ -431,9 +431,17 @@ function checkHookUrls(ctx, tree, keyPath) {
     const what = (h.event ? '"' + h.event + '" ' : '') + h.type + ' hook';
     const where = host ? P.safeUrl(h.url) : 'a URL that could not be read';
     const env = h.envVars.length ? ' It forwards ' + (h.envVars.length === 1 ? 'the environment variable ' : 'the environment variables ') + h.envVars.slice(0, 5).join(', ') + (h.envVars.length > 5 ? ' and ' + (h.envVars.length - 5) + ' more' : '') + ' in its headers.' : '';
-    const sev = capHome(ctx, loop ? 'medium' : 'high');
-    ctx.add('ZNA022', sev, line, what + ' sends every matching tool event to ' + where + (loop ? ' (a local address).' : '.') + env);
+    // Your own user file is low whatever the address; a project file is medium for a local address, high otherwise.
+    const sev = ctx.home ? 'low' : (loop ? 'medium' : 'high');
+    ctx.add('ZNA022', sev, line, what + ' sends every matching tool event to ' + where + (loop ? ' (a local address).' : '.') + env, { evidence: hookEvidence(ctx, line, String(h.url)) });
   }
+}
+
+/** Evidence for a hook URL: its line with the URL replaced by scheme and host (never the path or query). */
+function hookEvidence(ctx, ln, url) {
+  const shown = P.safeUrl(url);
+  const raw = ctx.redactedLine(ln);
+  return raw.includes(url) ? raw.split(url).join(shown) : '"url": ' + JSON.stringify(shown);
 }
 
 function checkDownloadRun(ctx, command, line, what) {
