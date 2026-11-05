@@ -80,7 +80,10 @@ function segmentsOf(cmd) {
       const next = rest[scan.end + 1];
       if (next === sep || (sep === '|' && next === '&')) adv++;
     }
-    out.push(scan.words.map((w) => w.text));
+    const ws = scan.words.map((w) => w.text);
+    // A brace group `{ cmd; }` runs in the current shell: read its first command as the line's own, like `( ... )`.
+    while (ws.length && ws[0] === '{') ws.shift();
+    out.push(ws);
     rest = rest.slice(adv);
   }
   return out;
@@ -179,7 +182,7 @@ const REGISTRY_NAME_RE = new RegExp('(?<![A-Za-z0-9_])' + REGISTRY_ASSIGN_RE.sou
 const CONFIG_FILE = '(?:\\.npmrc|\\.yarnrc(?:\\.yml)?|bunfig\\.toml|pip\\.conf|pip\\.ini|uv\\.toml)';
 /* A registry config file written in the command line: a redirect to it, or tee/cp/mv/ln/install/touch/sed -i naming it. */
 const CONFIG_WRITE_RES = [
-  new RegExp('>>?\\s*["\']?[^\\s"\'|;&<>]*' + CONFIG_FILE + '(?![A-Za-z0-9_.-])', 'i'),
+  new RegExp('>[>|]?\\s*["\']?[^\\s"\'|;&<>]*' + CONFIG_FILE + '(?![A-Za-z0-9_.-])', 'i'),
   new RegExp('(?:^|[\\s;&|(])(?:tee|cp|mv|ln|install|touch|sed|dd|truncate|set-content|add-content|out-file|new-item|copy-item|move-item)\\b[^\\n;&|]*?[^\\s"\'|;&<>]*' + CONFIG_FILE + '(?![A-Za-z0-9_.-])', 'i'),
 ];
 const REGISTRY_KEY_RE = /registry|index-url|index_url|find-links|npmregistryserver|userconfig|globalconfig|extra-index|--index\b/i;
