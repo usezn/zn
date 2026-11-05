@@ -54,7 +54,7 @@ const NPM_REGISTRY_RE = /^--(?:(?:@[^=\s]+:)?registry|config\.registry|userconfi
 const PIP_REGISTRY_RE = /^(?:--index-url|-i|--extra-index-url|--index|--default-index|-f|--find-links|--config-file)(?:=|$)/;
 // Settings a command can carry in front of it (`VAR=x pip install y`, `env VAR=x ...`) that name another registry or a
 // settings file. The value must not be empty.
-const REGISTRY_ASSIGN_RE = /^(?:npm_config_(?:@[^=\s]+:)?registry|npm_config_(?:user|global)config|yarn_npm_registry_server|pip_(?:index_url|extra_index_url|find_links|config_file)|uv_(?:index(?:_url)?|index_[a-z0-9_]+|default_index|extra_index_url|find_links|config_file))=./i;
+const REGISTRY_ASSIGN_RE = /^(?:npm_config_(?:@[^=\s]+:)?registry|npm_config_(?:user|global)config|yarn_npm_registry_server|bun_config_registry|yarn_registry|pip_(?:index_url|extra_index_url|find_links|config_file)|uv_(?:index(?:_url)?|index_[a-z0-9_]+|default_index|extra_index_url|find_links|config_file))=./i;
 
 const NPM_HEADS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 const NPM_SUBCOMMANDS = new Set(['install', 'i', 'add', 'in', 'ins', 'inst', 'insta', 'instal']);
@@ -175,6 +175,45 @@ function pypiNormalise(name) {
 }
 
 /*
+ * True when the command line, read as a whole, changes the registry or index for installs that come LATER in it (or
+ * that it cannot place): `export PIP_INDEX_URL=x && pip install y`, a bare `VAR=x;` segment, `declare -x`, `$env:VAR=x`,
+ * `npm|pnpm|yarn|bun config set registry x`, `pip|uv config set ...index... x`. When it does, every install in the
+ * command is treated as private, wherever the setting stands (before or after the install): a skipped lookup is
+ * harmless, a private name sent to the public registry is not. A setting in front of ONE command (`VAR=x echo hi && pip
+ * install y`) only counts for that command and is handled in installsOf.
+ */
+function setsRegistry(command, depth = 0) {
+  const text = String(command == null ? '' : command);
+  if (!text || text.length > MAX_CHARS || depth > 2) return false;
+  const bare = (w) => String(w).replace(/^\$env:/i, '').replace(/^["'']+/, '');
+  for (const seg of segmentsOf(text)) {
+    if (!seg.length) continue;
+    const un = unwrap(seg);
+    // Only assignments (no command after them): the shell keeps them for the rest of the line.
+    if (!un.words.length && un.registry) return true;
+    const w0 = un.words.length ? programName(un.words[0]) : '';
+    if (['export', 'declare', 'typeset', 'readonly', 'local', 'setenv', 'set'].includes(w0) && un.words.slice(1).some((w) => REGISTRY_ASSIGN_RE.test(bare(w)))) return true;
+    if (!un.words.length && seg.some((w) => REGISTRY_ASSIGN_RE.test(bare(w)))) return true;
+    // `$env:PIP_INDEX_URL = "x"` split in words, or `Set-Item env:NAME x`: conservative on any mention with a value.
+    if (/^(?:\$env:|set-item|\[environment\]::setenvironmentvariable)/i.test(String(seg[0])) && seg.some((w) => REGISTRY_ASSIGN_RE.test(bare(w) + '=x') || REGISTRY_ASSIGN_RE.test(bare(w)))) return true;
+    if (NPM_HEADS.has(w0) || PIP_HEAD_RE.test(w0) || w0 === 'uv' || w0 === 'pipx' || PYTHON_HEAD_RE.test(w0)) {
+      const r = un.words.slice(1);
+      const c = r.findIndex((w) => w === 'config' || w === 'c');
+      if (c >= 0 && r.slice(c + 1).some((w) => /^(?:set|edit)$/.test(w))) {
+        const keyed = r.slice(c + 1).some((w) => /registry|index|find-links|userconfig|globalconfig/i.test(w));
+        if (keyed || r.slice(c + 1).includes('edit')) return true;
+      }
+    }
+    if (SHELLS.has(w0)) {
+      const rest = un.words.slice(1);
+      const k = rest.findIndex((w) => /^-[A-Za-z]*c$/.test(w));
+      if (k >= 0 && typeof rest[k + 1] === 'string' && setsRegistry(rest[k + 1], depth + 1)) return true;
+    }
+  }
+  return false;
+}
+
+/*
  * The installs by name in a command: [{ eco: 'npm' | 'pypi', name, raw, legacyCase, registry }].
  * `registry` is true when the same command names another registry (--registry, --index-url ...).
  */
@@ -182,6 +221,7 @@ function installsOf(command, depth = 0) {
   const text = String(command == null ? '' : command);
   if (!text || text.length > MAX_CHARS || depth > 2) return [];
   const found = [];
+  const wholeCommand = setsRegistry(text, depth);
   for (const seg of segmentsOf(text)) {
     const un = unwrap(seg);
     const words = un.words;
@@ -212,7 +252,8 @@ function installsOf(command, depth = 0) {
       mark();
     }
   }
-  return found.slice(0, MAX_NAMES);
+  const all = wholeCommand ? found.map((f) => ({ ...f, registry: true })) : found;
+  return all.slice(0, MAX_NAMES);
 }
 
 /* The first word that is not a flag (or a flag's value): { word, index } or null. */

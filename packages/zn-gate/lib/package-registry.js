@@ -200,7 +200,7 @@ function privateRegistry(eco, opts = {}) {
   const cwd = opts.cwd;
   const home = opts.home;
   if (eco === 'npm') {
-    if (env.NPM_CONFIG_REGISTRY || env.npm_config_registry || env.YARN_NPM_REGISTRY_SERVER) return true;
+    if (env.NPM_CONFIG_REGISTRY || env.npm_config_registry || env.YARN_NPM_REGISTRY_SERVER || env.BUN_CONFIG_REGISTRY || env.YARN_REGISTRY) return true;
     for (const dir of [cwd, home]) {
       if (!dir) continue;
       const text = readSmall(path.join(dir, '.npmrc')) + '\n' + readSmall(path.join(dir, '.yarnrc.yml')) + '\n' + readSmall(path.join(dir, '.yarnrc')) + '\n'
