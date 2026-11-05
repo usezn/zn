@@ -692,9 +692,6 @@ async function decidePre(ev, d, agentId, opts) {
     // The command writes a file the agent reads as standing instructions: ask (a deny in strict mode).
     const instruction = instructionNotice && instructionNotice.hit;
     if (instruction && instructionMode === 'deny') return { decision: 'deny', message: instruction.deny };
-    // After the deny above: a command that ends in a deny makes no registry request.
-    const pkg = await packageInstallCheck(original, opts, ev.cwd);
-    const finish = (r) => withPackage(withEgress(r, egress), pkg);
     const withInstruction = (r) => {
       if (!instruction) return r;
       return r.decision === 'ask' ? { ...r, soft: false, confirm: true, message: (r.message ? r.message + ' ' : '') + instruction.ask } : { decision: 'ask', message: instruction.ask };
@@ -707,6 +704,9 @@ async function decidePre(ev, d, agentId, opts) {
       : policy.wrapWithZnRun(command);
     // Neither wrapper rewrites a command any more: a marker in the arguments is refused with guidance.
     if (!wrap.ok) return { decision: 'deny', message: wrap.reason };
+    // After every deny above: a command that ends in a deny makes no registry request.
+    const pkg = await packageInstallCheck(original, opts, ev.cwd);
+    const finish = (r) => withPackage(withEgress(r, egress), pkg);
 
     const detected = markers.findMarkers(command).filter((m) => m.detected);
     let context;

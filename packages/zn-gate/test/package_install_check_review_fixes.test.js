@@ -33,6 +33,10 @@ test('N6: a command that ends in a deny makes no registry request', async (t) =>
   const denied = await run('npm i some-invented-package && echo rules >> AGENTS.md', { instructionWrites: 'deny' });
   assert.equal(denied.decision.decision, 'deny');
   assert.deepEqual(calls, [], 'no request for a command that is denied');
+  // A command the secret wrapper refuses (a secret marker after the first command) also makes no request.
+  const refused = await run('npm i some-invented-package && echo __ZN_DB_PW__', {});
+  assert.equal(refused.decision.decision, 'deny');
+  assert.deepEqual(calls, [], 'no request for a command the wrapper refuses');
   // Control: without the deny the same command does reach the (fake) fetcher.
   await run('npm i some-invented-package', {});
   assert.equal(calls.length, 1);
