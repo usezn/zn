@@ -156,7 +156,7 @@
     },
     "audit": {
       "version_const": "AUDIT_RULES_VERSION",
-      "version": "2026-10-30.1",
+      "version": "2026-11-05.1",
       "ids": [
         "ZNA001",
         "ZNA002",
@@ -179,6 +179,7 @@
         "ZNA019",
         "ZNA020",
         "ZNA021",
+        "ZNA022",
         "patterns.CRED_FLAG_NAME",
         "patterns.CRED_FLAG_ONLY",
         "patterns.INTERPRETERS",
@@ -205,7 +206,7 @@
         "patterns.weakening"
       ],
       "sha256": {
-        "lib/audit/rules.js": "0b4f5e96a50f2122adcaa4bcdea3ed1f540686b5fde641f7815881a624d0dcc3",
+        "lib/audit/rules.js": "8df608fedad6d1c2c32d73790bf2eea5e56205af7cd716771b8050fd9fba1571",
         "lib/audit/patterns.js": "e758c777211da759a6973260363f3ddac41a37156171886bed624d97f18cdf46"
       }
     },

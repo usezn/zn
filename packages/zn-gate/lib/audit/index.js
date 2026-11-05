@@ -395,6 +395,47 @@ function hookCommands(tree) {
   return out;
 }
 
+/** Every hook that posts tool events to a URL under a hooks tree: [{url, type, event, envVars}]. */
+function hookUrls(tree) {
+  const out = [];
+  function walk(node, event, depth) {
+    if (depth > 8 || node == null) return;
+    if (Array.isArray(node)) { for (const n of node) walk(n, event, depth + 1); return; }
+    if (typeof node !== 'object') return;
+    const type = typeof node.type === 'string' ? node.type.toLowerCase() : '';
+    const url = typeof node.url === 'string' ? node.url.trim() : '';
+    if (url && (type === 'http' || type === 'agent' || type === 'webhook')) {
+      const names = new Set(Array.isArray(node.allowedEnvVars) ? node.allowedEnvVars.filter((x) => typeof x === 'string' && x) : []);
+      if (node.headers && typeof node.headers === 'object' && !Array.isArray(node.headers)) {
+        for (const v of Object.values(node.headers)) {
+          if (typeof v !== 'string') continue;
+          for (const m of v.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g)) names.add(m[1]);
+        }
+      }
+      out.push({ url, type, event, envVars: [...names] });
+    }
+    for (const [k, v] of Object.entries(node)) {
+      if (v && typeof v === 'object') walk(v, event || k, depth + 1);
+    }
+  }
+  walk(tree, null, 0);
+  return out;
+}
+
+function checkHookUrls(ctx, tree, keyPath) {
+  for (const h of hookUrls(tree)) {
+    if (P.isPlaceholder(h.url)) continue;
+    const host = P.hostOf(h.url);
+    const loop = Boolean(host) && P.isLoopback(host);
+    const line = ctx.locate(keyPath.concat(h.event ? [h.event] : []), h.url);
+    const what = (h.event ? '"' + h.event + '" ' : '') + h.type + ' hook';
+    const where = host ? P.safeUrl(h.url) : 'a URL that could not be read';
+    const env = h.envVars.length ? ' It forwards ' + (h.envVars.length === 1 ? 'the environment variable ' : 'the environment variables ') + h.envVars.slice(0, 5).join(', ') + (h.envVars.length > 5 ? ' and ' + (h.envVars.length - 5) + ' more' : '') + ' in its headers.' : '';
+    const sev = capHome(ctx, loop ? 'medium' : 'high');
+    ctx.add('ZNA022', sev, line, what + ' sends every matching tool event to ' + where + (loop ? ' (a local address).' : '.') + env);
+  }
+}
+
 function checkDownloadRun(ctx, command, line, what) {
   const hit = P.downloadAndRun(command);
   if (!hit) return false;
@@ -412,6 +453,7 @@ function checkAutoRun(ctx, command, line, what) {
 }
 
 function checkHooks(ctx, tree, keyPath) {
+  checkHookUrls(ctx, tree, keyPath);
   for (const h of hookCommands(tree)) {
     const line = ctx.locate(keyPath.concat(h.event ? [h.event] : []), h.command);
     if (isOurHook(h.command, ctx)) {
