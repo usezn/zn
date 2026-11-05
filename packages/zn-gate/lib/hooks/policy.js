@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-05.3';
+const POLICY_RULES_VERSION = '2026-11-05.5';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -134,6 +134,18 @@ const keyOf = (s) => {
 // path segment is a stream (a drive letter stays). Elsewhere a colon is a valid name character, so only the
 // explicit `::$DATA` style suffix is dropped.
 const ADS_TYPE_RE = /(?::[^\\/:*?"<>|]*)?:\$(?:DATA|INDEX_ALLOCATION|BITMAP)$/i;
+// The text before the first colon that is not inside a cmd variable pair: %NAME:~0,5% and !NAME:old=new! keep their modifier, which is not a stream.
+function cutAtStream(seg) {
+  let pct = false;
+  let bang = false;
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (c === '%') pct = !pct;
+    else if (c === '!') bang = !bang;
+    else if (c === ':' && !pct && !bang) return seg.slice(0, i);
+  }
+  return seg;
+}
 function stripStreams(text) {
   if (typeof text !== 'string') return text;
   const win = process.platform === 'win32';
@@ -141,8 +153,8 @@ function stripStreams(text) {
   return text.split(/([\\/]+)/).map((seg, i) => {
     if (win) {
       if (/^[A-Za-z]:$/.test(seg)) return seg;
-      if (i === 0 && /^[A-Za-z]:/.test(seg)) return seg.slice(0, 2) + dropTrailingDotsSpaces(seg.slice(2).replace(/:.*$/, ''));
-      return dropTrailingDotsSpaces(seg.replace(/:.*$/, ''));
+      if (i === 0 && /^[A-Za-z]:/.test(seg)) return seg.slice(0, 2) + dropTrailingDotsSpaces(cutAtStream(seg.slice(2)));
+      return dropTrailingDotsSpaces(cutAtStream(seg));
     }
     return seg.replace(ADS_TYPE_RE, '');
   }).join('');

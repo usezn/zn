@@ -339,3 +339,34 @@ test('a cmd variable with a modifier is never expanded, even when the variable i
   // The command sets the variable with a modifier in its value: unknown, so a .env behind it is refused.
   assert.ok(policy.bashDenial('set D=%E:~0,1% && type !D!.env', o), 'a value that holds a modified variable');
 });
+
+// The same forms on a Windows host: there a colon in a name starts an NTFS stream, which must not cut a cmd modifier off the variable.
+function asWin(fn) {
+  const desc = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+  try {
+    return fn();
+  } finally {
+    Object.defineProperty(process, 'platform', desc);
+  }
+}
+
+test('a cmd variable with a modifier before a .env name is refused on Windows too, and ordinary names stay allowed', (t) => {
+  const o = project(t);
+  const known = { ...o, env: { D: 'app1/' } };
+  const missed = [];
+  const refused = [];
+  asWin(() => {
+    for (const env of [o, known]) {
+      for (const cmd of ['type !D:~0!.env', 'type %D:~0,99%.env', 'type !D:x=y!.env', 'type %D:x=y%.env', 'cmd /v:on /c type !D:~0!.env', 'type %D:a=b%.env',
+        'type "!D:~0!.env"', 'type ".\\%D:~0,99%.env"', 'copy !D:~0,1!.env x.txt', 'type < %D:x=y%.env', 'Get-Content -Path:%D:~0,99%.env']) {
+        if (!policy.bashDenial(cmd, env)) missed.push(cmd);
+      }
+      for (const cmd of ['type !D:~0!notes.txt', 'type %D:~0,99%notes.txt', 'type %D:x=y%.env.example', 'type notes.txt', 'echo %D:~0,2%']) {
+        if (policy.bashDenial(cmd, env)) refused.push(cmd);
+      }
+    }
+  });
+  assert.deepEqual(missed, [], 'a .env behind a modified variable is refused on Windows');
+  assert.deepEqual(refused, [], 'an ordinary file is allowed');
+});
