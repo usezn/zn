@@ -166,6 +166,30 @@ test('refresh: as root through sudo with nothing refreshed, one line on stderr s
   assert.equal(fs.existsSync(path.join(empty, '.zn')), false, 'nothing is written');
 });
 
+test('refresh: the sudo notice needs root and a SUDO_USER that is a non-empty string other than root (fake env objects)', { skip: !posix }, (t) => {
+  const ctx = setup(t);
+  const empty = tempDir(t, 'zn-refresh-fakeenv-');
+  const bare = { ...ctx, home: empty, env: { HOME: empty, ZN_HOME: path.join(empty, '.zn'), PATH: process.env.PATH } };
+  const cases = [
+    [{ uid: 0, env: { SUDO_USER: 'someone' } }, true, 'root with SUDO_USER'],
+    [{ uid: 0, env: { SUDO_USER: 'a' } }, true, 'a one-letter user name'],
+    [{ uid: 0, env: { SUDO_USER: '' } }, false, 'an empty SUDO_USER'],
+    [{ uid: 0, env: { SUDO_USER: 'root' } }, false, 'SUDO_USER is root'],
+    [{ uid: 0, env: { SUDO_USER: 1000 } }, false, 'a SUDO_USER that is not a string'],
+    [{ uid: 0, env: { SUDO_USER: undefined } }, false, 'SUDO_USER present but undefined'],
+    [{ uid: 1, env: { SUDO_USER: 'someone' } }, false, 'uid 1'],
+    [{ uid: -1, env: { SUDO_USER: 'someone' } }, false, 'a negative uid'],
+    [{ uid: null, env: { SUDO_USER: 'someone' } }, false, 'no uid (a platform without getuid)'],
+    [{ uid: 0, env: { SUDO_UID: '1000', SUDO_GID: '1000' } }, false, 'only SUDO_UID and SUDO_GID'],
+  ];
+  for (const [extra, expected, why] of cases) {
+    const r = sudoRun(bare, extra);
+    assert.equal(r.err !== '', expected, why);
+    assert.equal(r.out, '', why + ': nothing on stdout');
+  }
+  assert.equal(fs.existsSync(path.join(empty, '.zn')), false, 'nothing is written');
+});
+
 test('refresh: no sudo notice without root, without SUDO_USER, or when a launcher was refreshed', { skip: !posix }, (t) => {
   const ctx = setup(t);
   assert.equal(sudoRun(ctx, { uid: 1000, env: { SUDO_USER: 'someone' } }).err, '');
