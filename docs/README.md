@@ -57,6 +57,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 |---|---|---|
 | [Architecture](architecture.md) | The three checks, the local engine and how zn-gate attaches to an agent | Developers, security reviewers |
 | [Threat model](threat-model.md) | What the scrubber and broker protect against, and what they do not | Security reviewers |
+| [Hardware-backed vault key (proposal)](hardware-backed-vault-key.md) | An idea for tying the vault key to a security key, TPM or Secure Enclave; not built | Security reviewers |
 | [Performance](performance.md) | How long the agent hooks take, with the script to reproduce it | Developers |
 | [API reference](api-reference.md) | Node.js and Python functions | Developers |
 | [Verify a release](verify-release.md) | Check signatures and build provenance of a download | Security-minded users |
