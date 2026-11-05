@@ -701,6 +701,32 @@ test('findings show the path inside the package, never the temporary folder', as
   });
 });
 
+test('unpacking for Windows lists a name it cannot write as not read, and still writes the others', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-extract-win-test-'));
+  try {
+    const names = ['package/NUL', 'package/src/CON.txt', 'package/com1.md', 'package/a:stream.md', 'package/trailing.dot.', 'package/trailing space ', 'package/bad?name.md'];
+    const archive = tgz([
+      tarEntry('package/package.json', Buffer.from('{}')),
+      tarEntry('package/src/ok.md', Buffer.from('Adds two numbers.\n')),
+      ...names.map((n) => tarEntry(n, Buffer.from('Adds two numbers.\n'))),
+    ]);
+    const r = extractTarball(archive, dir, { windows: true });
+    assert.deepStrictEqual(r.notUnpacked.map((n) => n.path).sort(), ['NUL', 'a:stream.md', 'bad?name.md', 'com1.md', 'src/CON.txt', 'trailing space ', 'trailing.dot.'].sort());
+    assert.ok(r.notUnpacked.every((n) => n.reason === 'a name Windows cannot write'));
+    assert.ok(fs.existsSync(path.join(dir, 'src', 'ok.md')), 'a normal file is written');
+    for (const n of ['NUL', 'com1.md', 'trailing.dot.']) assert.ok(!fs.existsSync(path.join(dir, n)), n + ' was written');
+    // The same archive on a system that can write these names (not Windows): nothing is listed.
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-extract-posix-test-'));
+    try {
+      assert.deepStrictEqual(extractTarball(archive, dir2, { windows: false }).notUnpacked, []);
+    } finally {
+      fs.rmSync(dir2, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('names that Windows cannot write are recognised', () => {
   for (const bad of ['nul', 'NUL.md', 'aux/x.js', 'a/CON.txt', 'com1', 'lpt9.js', 'a:b.md', 'a/b:stream', 'dir./x', 'x.', 'x ']) {
     assert.ok(unsafeOnWindows(bad.split('/')), bad);
