@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-03.2';
+const POLICY_RULES_VERSION = '2026-11-05.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2397,6 +2397,17 @@ function bashDenialOf(cmd, opts = {}) {
   // Bash $'...' quoting spells characters as escapes ($'\x2eenv' is .env), and $"..." is a plain "...":
   // a fourth reading with them decoded.
   if (/\$['"]/.test(text)) readings.push(allWords(decodeAnsiC(text), true));
+  // And with the expansions that leave nothing dropped, and with cmd.exe's carets removed (see dropEmptyExpansions).
+  {
+    const emptied = dropEmptyExpansions(text, opts.env || process.env);
+    const bases = emptied === text ? [text] : [text, emptied];
+    if (emptied !== text) readings.push(allWords(emptied, false), allWords(emptied, true));
+    for (const b of bases) {
+      if (!cmdCaretsApply(b)) continue;
+      const c = dropCmdCarets(b);
+      readings.push(allWords(c, false), allWords(c, true));
+    }
+  }
   // A reading that could not be split to the end is refused, not checked in part.
   if (readings.some((r) => r.truncated)) return TOO_MANY_MESSAGE;
   const words = readings.flat();
@@ -2519,6 +2530,40 @@ const NAME_VALUE_RE = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}=/;
 const ANSI_C_SIMPLE = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', "'": "'", '"': '"', '?': '?' };
 
 /* The command with each bash $'...' word decoded and quoted again as a plain '...' word, and $"..." read as "...". */
+/**
+ * Two more readings of a command, for words a shell or cmd.exe rewrites before the program sees them.
+ *  - cmd.exe: `^` escapes the next character outside double quotes, and a `^` at the end of a line joins it to the next one,
+ *    so `type .e^nv` opens `.env`. Read only where cmd.exe is in play (Windows, or the text names cmd or a batch file): in a
+ *    POSIX shell `^` is an ordinary character, and `grep ^.env notes.md` must stay allowed.
+ *  - Expansions that leave nothing: an unset or empty variable, `${VAR:0:0}`, `${VAR:-}`, `$@`, `$*` and an empty command
+ *    substitution, so `.en${EMPTY}v` and `.e${HOME:0:0}nv` open `.env`. The variable values are the ones the hook sees.
+ * The original text is still read as typed; these are extra readings, so a word protected in any of them is refused.
+ */
+const CMD_CONTEXT_RE = /\bcmd(?:\.exe)?\b|\.(?:bat|cmd)\b/i;
+function cmdCaretsApply(text) {
+  return text.indexOf('^') >= 0 && (process.platform === 'win32' || CMD_CONTEXT_RE.test(text));
+}
+function dropCmdCarets(text) {
+  return text.replace(/\^\r?\n/g, '').replace(/\^(.?)/gs, '$1');
+}
+// ${NAME}, ${NAME:-word}, ${NAME-word}, ${NAME:+word}, ${NAME+word}, ${NAME:off} and ${NAME:off:len} (offset and length without a sign: a
+// negative one needs a space or parentheses, which this does not read), $@, $* and an empty command substitution.
+const EMPTY_EXPANSION_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*|[@*])(?:(:?[-+])([^}$`"'\\]*)|:([0-9]+)(?::([0-9]+))?)?\}|\$[@*]|\$\(\s*(?:true|:)?\s*\)|`\s*(?:true|:)?\s*`/g;
+function dropEmptyExpansions(text, env) {
+  if (!/[$`]/.test(text)) return text;
+  return text.replace(EMPTY_EXPANSION_RE, (m, name, op, word, off, len) => {
+    if (!name) return '';
+    const isSet = Object.prototype.hasOwnProperty.call(env, name) && env[name] != null;
+    const v = isSet ? String(env[name]) : '';
+    if (op) {
+      const set = op[0] === ':' ? v !== '' : isSet;
+      return op.endsWith('-') ? (set ? v : word) : (set ? word : '');
+    }
+    if (off === undefined) return v;
+    return len === undefined ? v.slice(Number(off)) : v.substr(Number(off), Number(len));
+  });
+}
+
 function decodeAnsiC(cmd) {
   return cmd.replace(/\$'((?:[^'\\]|\\[\s\S])*)'/g, (m, body) => {
     const text = body.replace(/\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|[0-7]{1,3}|c[\s\S]|[\s\S])/g, (e, x) => {

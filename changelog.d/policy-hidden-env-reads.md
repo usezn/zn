@@ -1,0 +1,2 @@
+### Fixed
+- The command policy now also refuses a `.env` read whose name is spelled by cmd.exe or the shell instead of by the text: cmd.exe caret escapes (`type .e^nv`, read wherever cmd or a batch file is named, and always on Windows), and expansions that leave nothing or a fixed word (`cat .en${UNSET}v`, `cat .e${HOME:0:0}nv`, `cat .e${UNSET:-n}v`, `$@`, an empty `$(true)`). Ordinary uses of `^` in a POSIX shell, and trailing dots on POSIX systems, are still allowed.
