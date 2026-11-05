@@ -876,6 +876,8 @@ async function runScanPackage(args, options) {
     return fail(err.message);
   }
   const label = 'npm ' + pkg.name + '@' + pkg.version;
+  // An interrupted scan must not leave the unpacked package in the temporary folder.
+  const stopCleanupOnSignal = require('../lib/scan-package').cleanupOnSignal(pkg.cleanup);
   try {
     const auditReport = require('../lib/audit/report');
     // The package is read in full: no folder is skipped by name (node_modules, dist, build...), the code
@@ -899,6 +901,7 @@ async function runScanPackage(args, options) {
     if (summary.failed || scanCode === 1) return 1;
     return scanCode;
   } finally {
+    stopCleanupOnSignal();
     pkg.cleanup();
   }
 }

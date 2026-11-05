@@ -465,4 +465,22 @@ function describePackage(dir, safe) {
   return lines;
 }
 
-module.exports = { PackageError, parsePackageSpec, fetchPackageForScan, extractTarball, registryBase, checkTarballUrl, checkRedirect, unsafeOnWindows, describePackage };
+/**
+ * Removes the unpacked package when the scan is interrupted (Ctrl+C, SIGTERM): the handler runs `cleanup`, then ends the
+ * process with the usual 128 + signal number. Returns a function that takes the handlers off again (call it when the scan
+ * ends normally, before the normal cleanup). No effect on Windows, where Node.js reports Ctrl+C but not these signals.
+ */
+function cleanupOnSignal(cleanup) {
+  const codes = { SIGINT: 130, SIGTERM: 143 };
+  const handlers = Object.keys(codes).map((sig) => {
+    const h = () => {
+      try { cleanup(); } catch (_) { /* nothing more to do */ }
+      process.exit(codes[sig]);
+    };
+    process.once(sig, h);
+    return [sig, h];
+  });
+  return () => { for (const [sig, h] of handlers) process.removeListener(sig, h); };
+}
+
+module.exports = { PackageError, parsePackageSpec, fetchPackageForScan, extractTarball, registryBase, checkTarballUrl, checkRedirect, unsafeOnWindows, describePackage, cleanupOnSignal };
