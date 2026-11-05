@@ -73,6 +73,8 @@ test('check: every agent installed for the user blocks .env and allows an ordina
     if (r.id !== 'opencode') assert.equal(r.verified, true, `${r.id}: installed hook not run`);
   }
   assert.equal(res.removed, true);
+  // Gemini CLI support is experimental: its name in the report must keep saying so.
+  assert.match(byId(res, 'gemini').name, /experimental/);
   const { s, code } = textOf(res);
   assert.equal(code, 0);
   assert.match(s, /OK Claude Code\s+blocked the \.env file and allowed the ordinary file/);
