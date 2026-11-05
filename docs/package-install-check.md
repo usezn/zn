@@ -30,7 +30,7 @@ Set `hooks.packageInstallCheck` in `~/.zn/config.json`:
 {"hooks": {"packageInstallCheck": "offline"}}
 ```
 
-The environment variable `ZN_PACKAGE_CHECK=offline` turns on the offline mode for one shell. The environment can only add the offline mode: `ZN_PACKAGE_CHECK=online` is read as `offline`, and `ZN_PACKAGE_CHECK=off` does not turn off what the config file turned on. A project an agent works in can set environment variables, so it must not be able to make zn-gate contact a registry. Only your config file turns the online mode on.
+The environment variable `ZN_PACKAGE_CHECK=offline` turns on the offline mode for one shell. The environment can only add the offline mode: `ZN_PACKAGE_CHECK=online` is read as `offline`, and `ZN_PACKAGE_CHECK=off` does not turn off what the config file turned on. A project an agent works in can set environment variables, so it must not be able to make zn-gate contact a registry. Only your config file turns the online mode on (this assumes a project an agent works in does not set `ZN_HOME`, the variable that moves zn-gate's config folder).
 
 ## What is checked
 
@@ -48,6 +48,7 @@ Not checked in this version:
 - **One-off runs** (`npx`, `uvx`, `pipx run`). They run a package without installing it, and they are not read yet.
 - **Installs without a name**: `npm ci`, `npm install` alone, `pip install -r file`, `pip install -e .`, local paths, URLs, `git+...` sources and archives (`.tgz`, `.whl`, `.zip`).
 - Packages that a script or a project file installs for you (`package.json`, `requirements.txt`).
+- **npm aliases** (`npm i name@npm:other`) and **`yarn workspace <workspace> add <name>`**. They are skipped.
 
 ## What it looks for
 
@@ -94,9 +95,15 @@ List names that should never be questioned in `hooks.packageInstallAllow`. An en
 - `https://registry.npmjs.org/<name>` for npm (a scoped name is sent as `@scope%2Fname`);
 - `https://pypi.org/pypi/<name>/json` for PyPI.
 
-The request has no cookies, no account and no header except `Accept`. It carries no command, path, project name or other data. The name is checked against the characters a registry allows before it is put in the URL. A redirect is not followed, a reply over 4 MiB is dropped, and a lookup that takes more than 2 seconds is given up. Names on the bundled list, names that look like a well-known one, names you allowed, and npm names with capital letters are not looked up.
+The request has no cookies, no account and no header except `Accept`. It carries no command, path, project name or other data. The name is checked against the characters a registry allows before it is put in the URL. A redirect is not followed, a reply over 4 MiB is dropped, and a lookup that takes more than 2 seconds is given up. At most 8 names of one command are looked up; the others are noted in the decision log as having had no lookup ("too many names"). Names on the bundled list, names that look like a well-known one, names you allowed, and npm names with capital letters are not looked up.
 
-If you use another registry, zn-gate does not send your names to the public one. It does not look up a name when the command itself names another registry or a settings file (`--registry`, `--@scope:registry=`, `--config.registry=`, `--userconfig`, `--index-url`, `-i`, `--extra-index-url`, `--index`, `-f`, `--find-links`, `--config-file`, or an inline variable in front of the command, also after `env` or `sudo env`: `NPM_CONFIG_REGISTRY`, `NPM_CONFIG_USERCONFIG`, `YARN_NPM_REGISTRY_SERVER`, `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`, `PIP_FIND_LINKS`, `PIP_CONFIG_FILE`, `UV_INDEX`, `UV_INDEX_URL`, `UV_INDEX_<name>`, `UV_DEFAULT_INDEX`, `UV_EXTRA_INDEX_URL`, `UV_FIND_LINKS`, `UV_CONFIG_FILE`), or when an `.npmrc` (in the project folder or your home folder), `pip.conf`, `uv.toml`, `pyproject.toml` index setting or an environment variable such as `NPM_CONFIG_REGISTRY` or `PIP_INDEX_URL` names a registry other than the public one. If your private setup is somewhere zn-gate does not read, do not use online mode.
+If you use another registry, zn-gate does not send your names to the public one. It does not look up a name when the command itself names another registry or a settings file (`--registry`, `--@scope:registry=`, `--config.registry=`, `--userconfig`, `--index-url`, `-i`, `--extra-index-url`, `--index`, `-f`, `--find-links`, `--config-file`, or an inline variable in front of the command, also after `env` or `sudo env`: `NPM_CONFIG_REGISTRY`, `NPM_CONFIG_USERCONFIG`, `YARN_NPM_REGISTRY_SERVER`, `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`, `PIP_FIND_LINKS`, `PIP_CONFIG_FILE`, `UV_INDEX`, `UV_INDEX_URL`, `UV_INDEX_<name>`, `UV_DEFAULT_INDEX`, `UV_EXTRA_INDEX_URL`, `UV_FIND_LINKS`, `UV_CONFIG_FILE`), or when an `.npmrc` (in the project folder or your home folder), `pip.conf`, `uv.toml`, `pyproject.toml` index setting or an environment variable such as `NPM_CONFIG_REGISTRY` or `PIP_INDEX_URL` names a registry other than the public one. zn-gate reads exactly these settings, and only in online mode:
+
+- npm, pnpm, Yarn, Bun: `.npmrc`, `.yarnrc`, `.yarnrc.yml` and `bunfig.toml` (also `.bunfig.toml`) in the folder the agent works in and in your home folder; the file named by `NPM_CONFIG_USERCONFIG`.
+- pip and uv: `~/.config/pip/pip.conf`, `~/.pip/pip.conf`, `~/pip/pip.ini`, `~/Library/Application Support/pip/pip.conf`, `~/AppData/Roaming/pip/pip.ini`, `%APPDATA%\pip\pip.ini`, `$XDG_CONFIG_HOME/pip/pip.conf`, `$XDG_CONFIG_HOME/uv/uv.toml`, `~/.config/uv/uv.toml`, `$VIRTUAL_ENV/pip.conf`, `/etc/pip.conf`, `uv.toml`, `pip.conf` and `pyproject.toml` in the working folder, and the files named by `PIP_CONFIG_FILE` and `UV_CONFIG_FILE`.
+- The process environment variables listed above.
+
+It does **not** read the npm global config (`$PREFIX/etc/npmrc`), an `.npmrc` in a parent of the working folder, or other settings files. If your private setup is somewhere zn-gate does not read, do not use online mode.
 
 Answers are kept for one day in `~/.zn/package-registry-cache.json` (only the name, whether it exists and the date of its first release; the file is private to you). If it cannot be read or written, the check goes on without it. If a lookup fails for any reason (no network, a timeout, an error from the registry, an answer zn-gate does not understand), **no question is asked**, and a note goes to the decision log.
 
