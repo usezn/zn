@@ -174,6 +174,26 @@ function pypiNormalise(name) {
   return String(name).toLowerCase().replace(/[-_.]+/g, '-');
 }
 
+/* Registry/config variable NAMES (no value), derived from REGISTRY_ASSIGN_RE, for the Windows and PowerShell forms. */
+const REGISTRY_NAME_RE = new RegExp('(?<![A-Za-z0-9_])' + REGISTRY_ASSIGN_RE.source.slice(1, -2) + '(?![A-Za-z0-9_])', 'i');
+const CONFIG_FILE = '(?:\\.npmrc|\\.yarnrc(?:\\.yml)?|bunfig\\.toml|pip\\.conf|pip\\.ini|uv\\.toml)';
+/* A registry config file written in the command line: a redirect to it, or tee/cp/mv/ln/install/touch/sed -i naming it. */
+const CONFIG_WRITE_RES = [
+  new RegExp('>>?\\s*["\']?[^\\s"\'|;&<>]*' + CONFIG_FILE + '(?![A-Za-z0-9_.-])', 'i'),
+  new RegExp('(?:^|[\\s;&|(])(?:tee|cp|mv|ln|install|touch|sed|dd|truncate|set-content|add-content|out-file|new-item|copy-item|move-item)\\b[^\\n;&|]*?[^\\s"\'|;&<>]*' + CONFIG_FILE + '(?![A-Za-z0-9_.-])', 'i'),
+];
+const REGISTRY_KEY_RE = /registry|index-url|index_url|find-links|npmregistryserver|userconfig|globalconfig|extra-index|--index\b/i;
+const PIP_INDEX_FLAG_RE = /^(?:--index-url|--extra-index-url|--index|--default-index|--find-links|-f|-i)(?:=|$)/;
+
+/* True when one segment sets a registry variable the Windows / PowerShell way. Whitespace, quotes and case tolerant. */
+function winSetsRegistry(seg) {
+  const joined = seg.join(' ').replace(/["'`]/g, ' ');
+  if (!REGISTRY_NAME_RE.test(joined)) return false;
+  if (/^\s*(?:set-item|new-item|set-itemproperty|setx|\[(?:system\.)?environment\]::setenvironmentvariable)\b/i.test(joined)) return true;
+  if (/^\s*\$env:/i.test(joined) && /=/.test(joined)) return true;
+  return /\bsetenvironmentvariable\b/i.test(joined);
+}
+
 /*
  * True when the command line, read as a whole, changes the registry or index for installs that come LATER in it (or
  * that it cannot place): `export PIP_INDEX_URL=x && pip install y`, a bare `VAR=x;` segment, `declare -x`, `$env:VAR=x`,
@@ -185,7 +205,11 @@ function pypiNormalise(name) {
 function setsRegistry(command, depth = 0) {
   const text = String(command == null ? '' : command);
   if (!text || text.length > MAX_CHARS || depth > 2) return false;
-  const bare = (w) => String(w).replace(/^\$env:/i, '').replace(/^["'']+/, '');
+  const bare = (w) => String(w).replace(/^\$?env:/i, '').replace(/^["'']+/, '');
+  // A registry config file written earlier or later in the same line (also inside sh -c: the raw text holds it).
+  if (CONFIG_WRITE_RES.some((re) => re.test(text))) return true;
+  // .NET call written as SetEnvironmentVariable("NAME", ...): the parentheses hide it from the word reader, so read the raw text.
+  if (new RegExp('setenvironmentvariable\\s*\\(\\s*["\']?\\s*' + REGISTRY_NAME_RE.source, 'i').test(text)) return true;
   for (const seg of segmentsOf(text)) {
     if (!seg.length) continue;
     const un = unwrap(seg);
@@ -196,6 +220,14 @@ function setsRegistry(command, depth = 0) {
     if (!un.words.length && seg.some((w) => REGISTRY_ASSIGN_RE.test(bare(w)))) return true;
     // `$env:PIP_INDEX_URL = "x"` split in words, or `Set-Item env:NAME x`: conservative on any mention with a value.
     if (/^(?:\$env:|set-item|\[environment\]::setenvironmentvariable)/i.test(String(seg[0])) && seg.some((w) => REGISTRY_ASSIGN_RE.test(bare(w) + '=x') || REGISTRY_ASSIGN_RE.test(bare(w)))) return true;
+    if (winSetsRegistry(seg)) return true;
+    if (NPM_HEADS.has(w0) && un.words.slice(1).some((w) => NPM_REGISTRY_RE.test(w))) return true;
+    if ((PIP_HEAD_RE.test(w0) || w0 === 'uv' || w0 === 'pipx' || PYTHON_HEAD_RE.test(w0)) && un.words.slice(1).some((w) => PIP_INDEX_FLAG_RE.test(w))) return true;
+    if (NPM_HEADS.has(w0)) {
+      const r0 = un.words.slice(1);
+      const si = r0.indexOf('set');
+      if (si >= 0 && r0.slice(si + 1).some((w) => REGISTRY_KEY_RE.test(w))) return true;
+    }
     if (NPM_HEADS.has(w0) || PIP_HEAD_RE.test(w0) || w0 === 'uv' || w0 === 'pipx' || PYTHON_HEAD_RE.test(w0)) {
       const r = un.words.slice(1);
       const c = r.findIndex((w) => w === 'config' || w === 'c');
