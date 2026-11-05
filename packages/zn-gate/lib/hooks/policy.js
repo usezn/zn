@@ -2549,7 +2549,29 @@ function dropCmdCarets(text) {
 // ${NAME}, ${NAME:-word}, ${NAME-word}, ${NAME:+word}, ${NAME+word}, ${NAME:off} and ${NAME:off:len} (offset and length without a sign: a
 // negative one needs a space or parentheses, which this does not read), $@, $* and an empty command substitution.
 const EMPTY_EXPANSION_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*|[@*])(?:(:?[-+])([^}$`"'\\]*)|:([0-9]+)(?::([0-9]+))?)?\}|\$[@*]|\$\(\s*(?:true|:)?\s*\)|`\s*(?:true|:)?\s*`/g;
+// cmd.exe: %NAME:~off,len% and %NAME:old=new% (and the !NAME...! forms of delayed expansion) give a piece of the value or a replaced one.
+const CMD_SLICE_RE = /%([A-Za-z_][A-Za-z0-9_]*):~([0-9]+)(?:,([0-9]+))?%|!([A-Za-z_][A-Za-z0-9_]*):~([0-9]+)(?:,([0-9]+))?!/g;
+const CMD_REPLACE_RE = /%([A-Za-z_][A-Za-z0-9_]*):([^%!=~*\r\n][^%!=\r\n]*)=([^%!\r\n]*)%|!([A-Za-z_][A-Za-z0-9_]*):([^%!=~*\r\n][^%!=\r\n]*)=([^%!\r\n]*)!/g;
+function dropCmdExpansions(text, env) {
+  const val = (name) => {
+    const k = Object.keys(env).find((e) => e.toUpperCase() === name.toUpperCase());   // cmd variable names ignore case
+    return k !== undefined && env[k] != null ? String(env[k]) : '';
+  };
+  return text
+    .replace(CMD_SLICE_RE, (m, n1, o1, l1, n2, o2, l2) => {
+      const v = val(n1 || n2);
+      const off = Number(n1 ? o1 : o2);
+      const len = n1 ? l1 : l2;
+      return len === undefined ? v.slice(off) : v.substr(off, Number(len));
+    })
+    .replace(CMD_REPLACE_RE, (m, n1, a1, b1, n2, a2, b2) => {
+      const v = val(n1 || n2);
+      const from = n1 ? a1 : a2;
+      return v.replace(new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), () => (n1 ? b1 : b2));
+    });
+}
 function dropEmptyExpansions(text, env) {
+  if (/[%!]/.test(text) && (process.platform === 'win32' || CMD_CONTEXT_RE.test(text))) text = dropCmdExpansions(text, env);
   if (!/[$`]/.test(text)) return text;
   return text.replace(EMPTY_EXPANSION_RE, (m, name, op, word, off, len) => {
     if (!name) return '';

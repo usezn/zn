@@ -173,3 +173,21 @@ test('a long run of carets or expansions costs time in proportion to its length'
     assert.ok(ms < 5000, 'took ' + ms + ' ms');
   }
 });
+
+test('cmd substring and replacement modifiers inside a name: refused on Windows and wherever cmd is named', () => {
+  const { opts } = project();
+  const env = { ...opts.env, OS: 'Windows_NT', SHORT: 'ab' };
+  const o = { ...opts, env };
+  asPlatform('win32', () => {
+    for (const c of ['type .e%OS:~0,0%nv', 'type .en%UNSET:~0,0%v', 'type .e%os:~0,0%nv', 'type .en%OS:~99%v', 'type .e%SHORT:ab=%nv', 'type .e%SHORT:ab=n%v',
+      'cmd /v:on /c type .e!OS:~0,0!nv', 'cmd /v:on /c type .e!SHORT:ab=!nv', 'type .env.l%OS:~0,0%ocal', 'type .e%OS:~0,0%%OS:~0,0%nv']) {
+      assert.match(policy.bashDenial(c, o) || '', DENIED, c);
+    }
+    for (const c of ['type notes%OS:~0,0%.md', 'type %OS:~0,3%', 'echo %SHORT:ab=cd%', 'type no%OS:~0,0%tes.md']) assert.equal(policy.bashDenial(c, o), null, c);
+  });
+  asPlatform('linux', () => {
+    for (const c of ['cmd /c type .e%OS:~0,0%nv', 'cmd.exe /c "type .en%UNSET:~0,0%v"']) assert.match(policy.bashDenial(c, o) || '', DENIED, c);
+    // Not cmd: the text is an ordinary word in a POSIX shell.
+    assert.equal(policy.bashDenial('echo .e%OS:~0,0%nv', o), null);
+  });
+});
