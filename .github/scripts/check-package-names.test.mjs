@@ -76,3 +76,11 @@ test('parseArgs: defaults, flags and bad input', () => {
   assert.throws(() => parseArgs(['--nope']));
   assert.throws(() => parseArgs(['--min-days', 'x']));
 });
+
+test('request options pin certificate checks and send only Accept', async () => {
+  const { requestOptions } = await import('./check-package-names.mjs');
+  const o = requestOptions(new URL('https://pypi.org/pypi/requests/json'), 5000);
+  assert.equal(o.rejectUnauthorized, true);
+  assert.equal(o.method, 'GET');
+  assert.deepEqual(Object.keys(o.headers), ['Accept']);
+});

@@ -69,12 +69,17 @@ export function classify(eco, res, now, minDays) {
   return ageDays < minDays ? { state: 'young', ageDays } : { state: 'ok', ageDays };
 }
 
+/** Options of one request: certificate checks are explicit, nothing but Accept is sent. */
+export function requestOptions(u, timeoutMs = TIMEOUT_MS) {
+  return { hostname: u.hostname, path: u.pathname, method: 'GET', agent: false, timeout: timeoutMs, rejectUnauthorized: true, headers: { Accept: 'application/json' } };
+}
+
 /** The real fetch: https GET, no redirects, capped size and time. Resolves { status, body }; rejects with Error. */
 export function httpsFetch(url, { timeoutMs = TIMEOUT_MS, maxBytes = MAX_BYTES } = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     if (u.protocol !== 'https:' || !HOSTS.has(u.hostname)) { reject(new Error('host not allowed')); return; }
-    const req = https.request({ hostname: u.hostname, path: u.pathname, method: 'GET', agent: false, timeout: timeoutMs, headers: { Accept: 'application/json' } }, (res) => {
+    const req = https.request(requestOptions(u, timeoutMs), (res) => {
       const status = res.statusCode;
       if (status !== 200 && status !== 404) { res.resume(); resolve({ status, body: '' }); return; }
       const chunks = [];
