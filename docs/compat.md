@@ -86,12 +86,15 @@ Claude Code builds that have these events use them.
 - **`ConfigChange`** runs when a settings or skill file changes during a session.
   zn blocks the change, so the new file does not take effect, when a project
   settings file (`.claude/settings.json`) now has a critical `zn audit` finding
-  that is new since zn last saw that file in the session (for example a download
-  piped into a shell, or the model endpoint moved to another server), or when a
-  skill file now holds text a person cannot see (Unicode tag characters or
-  bidirectional overrides). A finding the file already had, and the first change zn
-  sees of a file, are allowed: `zn audit` reported them when the folder was
-  opened. A skill that quotes a prompt-injection example is allowed. The message
+  that is new since the start of the session (for example a download piped into a
+  shell, or the model endpoint moved to another server), or when a skill file now
+  holds text a person cannot see (Unicode tag characters or bidirectional
+  overrides). zn takes the starting point at the first tool call or prompt of the
+  session, before it can change anything; a finding the file already had then is
+  allowed, because `zn audit` reported it when the folder was opened. Without a
+  starting point (the session began before the hooks were installed) any critical
+  finding blocks, and a blocked finding is never remembered as allowed. A skill
+  that quotes a prompt-injection example is allowed. The message
   names the file, the rule and the line (for a settings file), and says to run
   `zn audit`. Your own user settings, your local settings
   (`.claude/settings.local.json`) and managed policy settings are not blocked:

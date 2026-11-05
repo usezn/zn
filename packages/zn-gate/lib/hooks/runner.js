@@ -1134,13 +1134,40 @@ function readReportedFile(file) {
   }
 }
 
+const SETTINGS_REL = '.claude/settings.json';
+function criticalKeys(findings, rel) {
+  return (findings || []).filter((f) => f.severity === 'critical' && String(f.file || '').split(path.sep).join('/') === rel)
+    .map((f) => String(f.id) + '|' + rel + '|' + require('crypto').createHash('sha256').update(String(f.detail || f.evidence || f.title || '')).digest('hex').slice(0, 12));
+}
+
+/**
+ * The baseline of the project settings file, taken once per session at the first PreToolUse or UserPromptSubmit event, which fires before
+ * the tool or the prompt can change anything (Claude Code has no SessionStart hook registered here). What the audit finds then is what the
+ * person opened the folder with (zn audit reported it); a later change is judged against it. Any problem leaves no baseline, and without a
+ * baseline a critical finding blocks.
+ */
+function recordConfigBaseline(ev, opts) {
+  try {
+    if (!ev.sessionId || typeof ev.cwd !== 'string' || !path.isAbsolute(ev.cwd)) return;
+    const sf = seenFile(ev, 'config-change', opts);
+    if (!sf || fs.existsSync(sf)) return;
+    const root = ev.cwd;
+    const result = require('../audit').audit({ root, agents: ['claude'], includeHome: false, env: process.env, noPrune: true });
+    writeSeen(sf, ['file|' + SETTINGS_REL].concat(criticalKeys(result.findings, SETTINGS_REL)));
+  } catch (_) {
+    /* no baseline */
+  }
+}
+
 /** The file that remembers, for one session, what a hook has already seen (kept in the zn state folder, owner only). */
 function seenFile(ev, name, opts) {
+  if (!ev.sessionId) return null;
   const base = opts && opts.home ? path.join(opts.home, '.zn') : require('../stats').znHome();
   const id = require('crypto').createHash('sha256').update(String(ev.sessionId || '')).digest('hex').slice(0, 16);
   return path.join(base, 'state', name + '-' + id + '.json');
 }
 function readSeen(file) {
+  if (!file) return [];
   try {
     const j = JSON.parse(fs.readFileSync(file, 'utf8'));
     return Array.isArray(j) ? j.filter((x) => typeof x === 'string') : [];
@@ -1149,6 +1176,7 @@ function readSeen(file) {
   }
 }
 function writeSeen(file, list) {
+  if (!file) return;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     fs.writeFileSync(file, JSON.stringify(list.slice(-500)), { mode: 0o600 });
@@ -1199,21 +1227,18 @@ function decideConfigChange(ev, opts) {
   }
   const rel = path.relative(root, file).split(path.sep).join('/');
   const critical = (result.findings || []).filter((f) => f.severity === 'critical' && String(f.file || '').split(path.sep).join('/') === rel);
-  if (!critical.length) {
-    const sf0 = seenFile(ev, 'config-change', opts);
-    const prev0 = readSeen(sf0);
-    if (!prev0.includes('file|' + rel)) writeSeen(sf0, prev0.concat(['file|' + rel]));
-    return { decision: 'allow' };
-  }
-  // Only what is new since the hook last saw this file counts.
   const sf = seenFile(ev, 'config-change', opts);
   const prev = readSeen(sf);
-  // The key holds what the finding says (the address it points to, the command), not its line: an edit that moves it stays known.
-  const keys = critical.map((f) => String(f.id) + '|' + rel + '|' + require('crypto').createHash('sha256').update(String(f.detail || f.evidence || f.title || '')).digest('hex').slice(0, 12));
   const known = prev.includes('file|' + rel);
-  writeSeen(sf, prev.concat(known ? [] : ['file|' + rel], keys.filter((k) => !prev.includes(k))));
-  if (!known) return { decision: 'allow' };
-  const fresh = critical.filter((f, i) => !prev.includes(keys[i]));
+  if (!critical.length) {
+    if (sf && !known) writeSeen(sf, prev.concat(['file|' + rel]));
+    return { decision: 'allow' };
+  }
+  // Only a finding that is new since the baseline of the session counts. Without a baseline (no session id, or the session began before
+  // this hook was installed) every critical finding blocks. A blocked finding is never remembered: the next edit is judged the same way.
+  // The key holds what the finding says (the address it points to, the command), not its line: an edit that moves it stays known.
+  const keys = criticalKeys(critical, rel);
+  const fresh = known ? critical.filter((f, i) => !prev.includes(keys[i])) : critical;
   if (!fresh.length) return { decision: 'allow' };
   const first = fresh[0];
   return {
@@ -1584,9 +1609,9 @@ async function handle(adapter, rawEvent, opts = {}) {
     if (ev && ev.event) guardNativeText(ev);
     await injectTestFault();
     if (!ev || !ev.event) decision = { decision: 'allow' };
-    else if (ev.event === 'pre_tool') decision = unreadablePre(ev, adapter.id) || await decidePre(ev, d, adapter.id, opts);
+    else if (ev.event === 'pre_tool') { if (adapter.id === 'claude-code') recordConfigBaseline(ev, opts); decision = unreadablePre(ev, adapter.id) || await decidePre(ev, d, adapter.id, opts); }
     else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id, opts);
-    else if (ev.event === 'user_prompt') decision = await decidePrompt(ev, d, adapter.id);
+    else if (ev.event === 'user_prompt') { if (adapter.id === 'claude-code') recordConfigBaseline(ev, opts); decision = await decidePrompt(ev, d, adapter.id); }
     else if (ev.event === 'stop') decision = await decideStop(ev, d, adapter.id, opts);
     else if (ev.event === 'session_start') decision = { decision: 'allow', context: SESSION_CONTEXT() };
     else if (ev.event === 'prompt_expansion') decision = await decideExpansion(ev, d, adapter.id);
