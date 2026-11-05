@@ -77,6 +77,13 @@ replaced with tokens. Reads of `.env` files with real values, credential files
 (`~/.aws/credentials`, `~/.ssh/id_*`, `~/.npmrc`…) and zn's own `~/.zn` are
 blocked.
 
+Template files named `.env.example`, `.env.sample` or `.env.template` (also with a
+middle part, such as `.env.local.example`) can be read, because they are meant to
+hold placeholders. Any other name, such as `.env.example.bak`, `.env.examplex` or
+`.env.local`, stays blocked. zn judges these commands by the file name; it does not
+open the file, and it does not follow a symbolic link. Keep real values out of
+template files.
+
 ### Name, address and username
 
 Besides checksummed personal data (cards, IBAN, national IDs, e-mail, phone), the
