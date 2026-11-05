@@ -1,2 +1,4 @@
 # Shell scripts are run by `sh`, which rejects CRLF: keep LF in every checkout, Windows included.
 *.sh text eol=lf
+# Batch files need CRLF (labels and goto fail with bare LF): keep it in every checkout.
+*.cmd text eol=crlf

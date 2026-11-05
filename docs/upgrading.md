@@ -152,8 +152,9 @@ installs, and the plugins keep a plain command. Agent by agent:
   when a hook cannot start or times out (not tested). With the user install (the only one
   ZCode has), the launcher exits 2 with the repair step on tool calls, permission
   requests and prompts, and after a tool has run zn only warns. The launcher also
-  stops a hook that has not finished after 28 seconds (2 seconds under the 30-second
-  timeout zn sets on its hook entries) and blocks the call, on Windows too. If ZCode cannot
+  stops a hook that has not finished after 2 minutes and blocks the call, on Windows
+  too; zn sets a 5-minute timeout on its hook entries. If a hook takes longer than
+  5 minutes (a very busy computer), ZCode runs the call. If ZCode cannot
   start the launcher itself (the file deleted or not executable), the call goes
   ahead unchecked.
 
