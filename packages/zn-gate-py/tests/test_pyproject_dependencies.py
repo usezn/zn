@@ -2,9 +2,14 @@
 points at a framework that has a module in zn_gate/integrations."""
 
 import re
-import tomllib
+import sys
 import unittest
 from pathlib import Path
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # Python 3.10 has no tomllib; tomli is the same parser
+    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 INTEGRATIONS = ROOT / "src" / "zn_gate" / "integrations"
