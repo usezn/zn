@@ -1,5 +1,7 @@
 # Verifying a zn-gate release
 
+After you have checked a version, see [Upgrading zn-gate](upgrading.md) for what to do next.
+
 Every zn-gate release published by the
 [`Release` workflow](../.github/workflows/release.yml) is built once from a
 tag in this repository. The first such release is the first one published
