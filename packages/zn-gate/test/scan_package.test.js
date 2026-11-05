@@ -113,6 +113,12 @@ function startRegistry() {
     }),
     file('index.js', code('Adds two numbers.')),
   ]);
+  const bundled = tgz([
+    pj('zn-fixture-bundled', { bundleDependencies: ['inner-dep', '../escape', 'missing-dep'] }),
+    file('index.js', code('Adds two numbers.')),
+    file('node_modules/inner-dep/package.json', JSON.stringify({ name: 'inner-dep', version: '1.0.0', scripts: { postinstall: 'node steal.js' } })),
+    file('node_modules/inner-dep/index.js', code('Adds two numbers.')),
+  ]);
   const plain = tgz([pj('zn-fixture-plain'), file('index.js', code('Adds two numbers.'))]);
   const native = tgz([pj('zn-fixture-native'), file('binding.gyp', '{}\n'), file('index.js', code('Adds two numbers.'))]);
   // A file that cannot be unpacked: a path below a file.
@@ -133,6 +139,7 @@ function startRegistry() {
     'zn-fixture-big-1.0.0.tgz': big,
     'zn-fixture-scripts-1.0.0.tgz': scripts,
     'zn-fixture-plain-1.0.0.tgz': plain,
+    'zn-fixture-bundled-1.0.0.tgz': bundled,
     'zn-fixture-native-1.0.0.tgz': native,
     'zn-fixture-blocked-1.0.0.tgz': blocked,
   };
@@ -142,6 +149,7 @@ function startRegistry() {
     'zn-fixture-big': { version: '1.0.0', file: 'zn-fixture-big-1.0.0.tgz', buf: big },
     'zn-fixture-scripts': { version: '1.0.0', file: 'zn-fixture-scripts-1.0.0.tgz', buf: scripts },
     'zn-fixture-plain': { version: '1.0.0', file: 'zn-fixture-plain-1.0.0.tgz', buf: plain },
+    'zn-fixture-bundled': { version: '1.0.0', file: 'zn-fixture-bundled-1.0.0.tgz', buf: bundled },
     'zn-fixture-native': { version: '1.0.0', file: 'zn-fixture-native-1.0.0.tgz', buf: native },
     'zn-fixture-blocked': { version: '1.0.0', file: 'zn-fixture-blocked-1.0.0.tgz', buf: blocked },
     // An old package name with capital letters.
@@ -533,6 +541,17 @@ test('the postinstall of the fixture package is listed too', async () => {
     const r = await runCli(['scan', '--package', 'zn-fixture-clean'], envFor(base, box));
     assert.strictEqual(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stdout, /Install scripts \(npm runs these when you install it\):\n {2}postinstall: node -e /);
+  });
+});
+
+test('the install scripts of bundled dependencies are listed, and an unreadable one is said', async () => {
+  await withRegistry(async ({ base, box }) => {
+    const r = await runCli(['scan', '--package', 'zn-fixture-bundled'], envFor(base, box));
+    assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /Install scripts of dependencies bundled in the package \(npm runs these too\):\n {2}inner-dep postinstall: node steal\.js\n/);
+    assert.match(r.stdout, /Bundled dependencies whose install scripts could not be read, so they were not listed: missing-dep/);
+    assert.ok(!r.stdout.includes('escape'), 'a name that is a path is never read');
+    assert.ok(!fs.existsSync(box.marker));
   });
 });
 

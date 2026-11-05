@@ -39,6 +39,8 @@ const NAME_RE = /^(?:@[A-Za-z0-9-][A-Za-z0-9._-]*\/)?[A-Za-z0-9-][A-Za-z0-9._-]*
 const MAX_REDIRECTS = 3;
 const MAX_PACKAGE_JSON_BYTES = 1024 * 1024;
 const MAX_COMMAND_SHOWN = 300;
+const MAX_BUNDLED_LISTED = 50;
+const BUNDLED_NAME = /^(@[a-z0-9~][a-z0-9._~-]*\/)?[a-z0-9~][a-z0-9._~-]*$/;
 const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/;
 const HASH_ORDER = ['sha512', 'sha384', 'sha256', 'sha1'];
 
@@ -403,6 +405,34 @@ function describePackage(dir, safe) {
   if (bin.length) {
     const shown = bin.slice(0, 20).map(([k, v]) => safe(clip(k)) + ' -> ' + safe(clip(v)));
     lines.push('Commands it adds (bin): ' + shown.join('; ') + (bin.length > 20 ? '; ... and ' + (bin.length - 20) + ' more' : ''));
+  }
+  // Dependencies bundled inside the package are installed with it, and npm runs their install scripts too.
+  const declared = Array.isArray(pkg.bundleDependencies) ? pkg.bundleDependencies : Array.isArray(pkg.bundledDependencies) ? pkg.bundledDependencies : [];
+  const names = declared.filter((n) => typeof n === 'string' && BUNDLED_NAME.test(n)).slice(0, MAX_BUNDLED_LISTED);
+  const bundledRun = [];
+  const bundledUnknown = [];
+  for (const n of names) {
+    try {
+      const f = path.join(dir, 'node_modules', ...n.split('/'), 'package.json');
+      if (fs.statSync(f).size > MAX_PACKAGE_JSON_BYTES) throw new Error('large');
+      const dep = JSON.parse(fs.readFileSync(f, 'utf8'));
+      const s = dep && typeof dep.scripts === 'object' && dep.scripts && !Array.isArray(dep.scripts) ? dep.scripts : {};
+      for (const k of ['preinstall', 'install', 'postinstall']) {
+        if (typeof s[k] === 'string') bundledRun.push('  ' + safe(n) + ' ' + k + ': ' + safe(clip(s[k])));
+      }
+    } catch (_) {
+      bundledUnknown.push(safe(n));
+    }
+  }
+  if (bundledRun.length) {
+    lines.push('Install scripts of dependencies bundled in the package (npm runs these too):');
+    lines.push(...bundledRun);
+  }
+  if (bundledUnknown.length) {
+    lines.push('Bundled dependencies whose install scripts could not be read, so they were not listed: ' + bundledUnknown.join(', '));
+  }
+  if (declared.length > names.length && declared.length > MAX_BUNDLED_LISTED) {
+    lines.push('Bundled dependencies: only the first ' + MAX_BUNDLED_LISTED + ' are checked for install scripts');
   }
   return lines;
 }
