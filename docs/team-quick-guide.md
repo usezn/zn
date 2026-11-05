@@ -83,3 +83,14 @@ This writes the local audit log as OpenTelemetry logs. It needs no account.
 
 - [zn Team on a developer machine](team.md): the full page, including what is sent to the server.
 - [Command line reference](cli.md): every command, option and exit code.
+
+## Where each step is explained
+
+| Section on this page | Full page |
+|---|---|
+| What each developer does | [Commands in team.md](team.md#commands), [`team join` in cli.md](cli.md#team-join) |
+| Commands your team will use | [Commands in team.md](team.md#commands), [zn Team in cli.md](cli.md#zn-team) |
+| Write a policy | [The organization policy in team.md](team.md#the-organization-policy) |
+| Offline and removal | [Offline, expiry and removal in team.md](team.md#offline-expiry-and-removal), [Remove zn-gate](uninstall.md) |
+| Run the hooks on every machine | [Deploy zn-gate's hooks to every machine](team.md#deploy-zn-gates-hooks-to-every-machine-managed-settings), [`team managed-config` in cli.md](cli.md#team-managed-config) |
+| Export the audit log | [Export the audit log to OpenTelemetry](team.md#export-the-audit-log-to-opentelemetry), [`vault log export` in cli.md](cli.md#vault-log-export) |

@@ -6,8 +6,9 @@ const fs = require('fs');
 const path = require('path');
 const { PATCHED_MINIMUM, EOL_BELOW } = require('../lib/node-support');
 
-const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
-const guide = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'docs', 'first-5-minutes.md'), 'utf8');
+// Read with LF line endings also when a Windows checkout made them CRLF.
+const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8').replace(/\r\n/g, '\n');
+const guide = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'docs', 'first-5-minutes.md'), 'utf8').replace(/\r\n/g, '\n');
 
 // The text of one section, up to the next heading.
 function section(text, heading) {
