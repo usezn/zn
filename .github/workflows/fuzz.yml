@@ -55,7 +55,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Harden the runner (egress audit)
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
       - name: Check the time budget
@@ -74,7 +74,7 @@ jobs:
           toolchain: ${{ env.FUZZ_NIGHTLY }}
       - name: Install protoc 29.3 (checksum verified)
         uses: ./.github/actions/setup-protoc
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: fuzz
           # Same rule as the Rust workflow: only main saves a cache (each one is several GB).
@@ -122,7 +122,7 @@ jobs:
         working-directory: packages/zn-gate
     steps:
       - name: Harden the runner (egress audit)
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
       - name: Check the time budget
