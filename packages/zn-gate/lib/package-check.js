@@ -44,10 +44,17 @@ const PIP_VALUE_FLAGS = new Set(['-r', '--requirement', '--requirements', '-c', 
   '--config-settings', '-C', '--progress-bar', '--cache-dir', '--upgrade-strategy', '--report', '--trusted-host', '--proxy', '--retries',
   '--timeout', '--exists-action', '--cert', '--client-cert', '--log', '--use-feature', '--use-deprecated', '--root-user-action',
   '--keyring-provider', '--resolution', '--python-preference', '--link-mode', '--group', '--optional', '--package', '--extra', '--suffix',
-  '--pip-args', '--spec', '--constraints']);
+  '--pip-args', '--spec', '--constraints',
+  // uv flags that take a value (their value is a folder, a mode or a pin, never a package name)
+  '--index-strategy', '--project', '--directory', '--prerelease', '--python-platform', '--torch-backend', '--bounds', '--rev', '--tag',
+  '--branch', '--marker', '-m', '--config-file']);
 // A command that names another registry: the public registry is never asked about its packages.
-const NPM_REGISTRY_RE = /^--registry(?:=|$)/;
-const PIP_REGISTRY_RE = /^(?:--index-url|-i|--extra-index-url|--index|--default-index|-f|--find-links)(?:=|$)/;
+// (--userconfig, --globalconfig, --config-file name a settings file zn-gate does not read: treated as another registry.)
+const NPM_REGISTRY_RE = /^--(?:(?:@[^=\s]+:)?registry|config\.registry|userconfig|globalconfig)(?:=|$)/;
+const PIP_REGISTRY_RE = /^(?:--index-url|-i|--extra-index-url|--index|--default-index|-f|--find-links|--config-file)(?:=|$)/;
+// Settings a command can carry in front of it (`VAR=x pip install y`, `env VAR=x ...`) that name another registry or a
+// settings file. The value must not be empty.
+const REGISTRY_ASSIGN_RE = /^(?:npm_config_(?:@[^=\s]+:)?registry|npm_config_(?:user|global)config|yarn_npm_registry_server|pip_(?:index_url|extra_index_url|find_links|config_file)|uv_(?:index(?:_url)?|index_[a-z0-9_]+|default_index|extra_index_url|find_links|config_file))=./i;
 
 const NPM_HEADS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 const NPM_SUBCOMMANDS = new Set(['install', 'i', 'add', 'in', 'ins', 'inst', 'insta', 'instal']);
@@ -82,9 +89,11 @@ function segmentsOf(cmd) {
 /* The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...). */
 function unwrap(args) {
   let i = 0;
+  let registry = false;
+  const seen = (w) => { if (REGISTRY_ASSIGN_RE.test(w)) registry = true; };
   for (let guard = 0; guard < 8 && i < args.length; guard++) {
     const a = args[i];
-    if (ASSIGN_RE.test(a)) { i++; continue; }
+    if (ASSIGN_RE.test(a)) { seen(a); i++; continue; }
     const name = programName(a);
     if (name === 'sudo' || name === 'doas') {
       i++;
@@ -93,7 +102,7 @@ function unwrap(args) {
     }
     if (name === 'env') {
       i++;
-      while (i < args.length && (args[i].startsWith('-') || ASSIGN_RE.test(args[i]))) { const f = args[i++]; if (f === '-u' || f === '-C' || f === '-S') i++; }
+      while (i < args.length && (args[i].startsWith('-') || ASSIGN_RE.test(args[i]))) { const f = args[i++]; seen(f); if (f === '-u' || f === '-C' || f === '-S') i++; }
       continue;
     }
     if (name === 'command' || name === 'exec' || name === 'nohup' || name === 'time' || name === 'builtin' || name === 'setsid') {
@@ -114,7 +123,7 @@ function unwrap(args) {
     }
     break;
   }
-  return args.slice(i);
+  return { words: args.slice(i), registry };
 }
 
 /*
@@ -174,26 +183,33 @@ function installsOf(command, depth = 0) {
   if (!text || text.length > MAX_CHARS || depth > 2) return [];
   const found = [];
   for (const seg of segmentsOf(text)) {
-    const words = unwrap(seg);
+    const un = unwrap(seg);
+    const words = un.words;
     if (!words.length) continue;
+    // An inline registry variable means the names come from another registry: never ask the public one.
+    const start = found.length;
+    const mark = () => { if (un.registry) for (let k = start; k < found.length; k++) found[k] = { ...found[k], registry: true }; };
     const head = programName(words[0]);
     const rest = words.slice(1);
     if (SHELLS.has(head)) {
       const c = rest.findIndex((w) => /^-[A-Za-z]*c$/.test(w));
       if (c >= 0 && typeof rest[c + 1] === 'string') found.push(...installsOf(rest[c + 1], depth + 1));
+      mark();
       continue;
     }
-    if (NPM_HEADS.has(head)) { found.push(...npmInstalls(head, rest)); continue; }
-    if (PIP_HEAD_RE.test(head)) { found.push(...pipInstalls(rest)); continue; }
+    if (NPM_HEADS.has(head)) { found.push(...npmInstalls(head, rest)); mark(); continue; }
+    if (PIP_HEAD_RE.test(head)) { found.push(...pipInstalls(rest)); mark(); continue; }
     if (PYTHON_HEAD_RE.test(head)) {
       const m = rest.indexOf('-m');
       if (m >= 0 && rest[m + 1] === 'pip') found.push(...pipInstalls(rest.slice(m + 2)));
+      mark();
       continue;
     }
-    if (head === 'uv') { found.push(...uvInstalls(rest)); continue; }
+    if (head === 'uv') { found.push(...uvInstalls(rest)); mark(); continue; }
     if (head === 'pipx') {
       const sub = firstPositional(rest, PIP_VALUE_FLAGS);
       if (sub && sub.word === 'install' && !rest.includes('--spec')) found.push(...pypiList(rest.slice(sub.index + 1)));
+      mark();
     }
   }
   return found.slice(0, MAX_NAMES);
