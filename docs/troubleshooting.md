@@ -255,7 +255,7 @@ You may see this when the npm install takes too long:
     npm install -g zn-gate@<version>
 ```
 
-**What it means:** zn-gate gives the npm install 3 minutes and then stops it. A slow connection, or a network that accepts the connection and never answers, can cause this. The install may be half done. On Windows, zn-gate starts npm's own script directly, so the stop reaches npm itself and not only the command shell that started it.
+**What it means:** zn-gate gives the npm install 3 minutes and then stops it. A slow connection, or a network that accepts the connection and never answers, can cause this. The install may be half done. On Windows, with the usual Node.js folder layout, zn-gate starts npm's own script directly, so the stop reaches npm itself and not only the command shell that started it.
 
 **What to do:**
 
