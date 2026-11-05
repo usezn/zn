@@ -591,6 +591,14 @@ zn-gate stats share on|off|status|show
 
 What zn-gate did on this machine: local counts for the last `--days` days (1 to 90, default 30). Exit codes: `0` done, `2` wrong usage.
 
+With `--json`, the output is one JSON object with the same counts and these extra fields:
+
+- `sharing`: `true` when sharing of pseudonymous daily counts is on.
+- `sent_days`: the days whose counts were really uploaded during this run. It is `[]` when sharing is off or nothing was pending.
+- `send_failed`: the number of days whose upload failed during this run. They are tried again the next time you run `stats`.
+
+When sharing is on, `stats` sends each complete day (every day before today) that has not been sent yet. The text output prints `Shared pseudonymous counts for <day>.` only for the days in `sent_days`, and it prints `<n> day(s) could not be shared; they will be tried next time.` when `send_failed` is more than `0`.
+
 #### `stats share`
 
 ```bash
