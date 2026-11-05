@@ -381,6 +381,8 @@ zn-gate env <shadow|unshadow> ...
 
 Groups the two commands below. Run `zn-gate env --help` for the short usage.
 
+Exit codes (both commands): `0` done (also when there was nothing to move, or with `--dry-run`, or with `--help`), `1` an error (for example the file or the vault could not be read), or `env unshadow` when you answered no, `64` wrong usage (an unknown subcommand or option, or a missing or malformed `--backup`), `77` there is no interactive terminal, or an AI agent ran it: nothing was changed.
+
 #### `env shadow`
 
 ```bash
@@ -549,6 +551,8 @@ zn-gate mcp
 ```
 
 Runs zn-gate as an MCP server (stdio) with the tools `analyze_prompt`, `check_tool_call` and `check_tool_result`.
+
+Exit codes: it runs until its input is closed, then exits `0`.
 
 ### `shield`
 

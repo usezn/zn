@@ -39,6 +39,15 @@ If you installed or updated with `sudo`, run `zn hooks install <agent>` again as
 If `zn-gate check` says an agent is not protected, it also prints the command
 that fixes it.
 
+### Upgrade methods
+
+| Method | Command | Then |
+|---|---|---|
+| npm (global install) | `npm install -g zn-gate` | Run `zn-gate check`. |
+| pip (Python package) | `pip install -U zn-gate` | Run `zn-gate check`. |
+| npx | `npx -y zn-gate ...` | Nothing to update. |
+| Claude Code plugin | `/plugin` inside Claude Code, or `claude plugin update zn-gate@usezn` in your terminal | Start a new Claude Code session. |
+
 ## Run `zn hooks install <agent>` again when a release changes the hook
 
 The hooks of `zn hooks install` (Claude Code, Codex CLI, Cursor, ZCode desktop app) are written into

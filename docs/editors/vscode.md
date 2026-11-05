@@ -68,6 +68,17 @@ zn-gate has not run inside the VS Code app: the sections above are what the docu
 
 If the project holds zn-gate's Claude Code hooks (`zn hooks install claude-code --project` wrote `.claude/settings.json`), the Copilot harness (VS Code and Copilot CLI) can run both files for the same tool call, with no setting needed. Both give the same answer, and the check takes about twice as long (measured by running both installed hooks the way the documented harness starts them; not in VS Code or Copilot CLI: two Node.js starts, 91 ms and 101 ms for one call). `zn-gate check` says so. Keep the Copilot hook: if you do not use Claude Code in this project, run `zn hooks uninstall claude-code --project`; if you do, leave both in place (the only cost is time). Do not remove the Copilot hook: it is the one that checks Copilot's own tool names.
 
+## Questions people ask
+
+**What does zn-gate protect in VS Code?**
+It gives the agent checks for a prompt, a tool call or a tool result, and it can check your other MCP servers if you wrap them. See [What zn-gate protects in VS Code](#what-zn-gate-protects-in-vs-code-and-what-it-does-not) and [Check the output of your other MCP servers](#check-the-output-of-your-other-mcp-servers).
+
+**What does it not protect?**
+It does not block reads of `.env` and credential files, does not remove secrets from shell output or file contents, and does not block a secret pasted into the chat. See [the table above](#what-zn-gate-protects-in-vs-code-and-what-it-does-not).
+
+**How do I undo it?**
+Delete the `zn-gate` entry from the settings file you edited, put back the original command of any server you wrapped, and restart VS Code. See [Uninstall](#uninstall).
+
 ## Technical reference
 
 ### Where the configuration lives

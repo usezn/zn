@@ -38,6 +38,7 @@ scope ci-scope.sh false "docs-only change to a file no test reads skips" docs/gl
 scope ci-scope.sh false "Markdown at the repository root skips" README.md
 scope ci-scope.sh true  "docs/cli.md (read by a test) runs" docs/cli.md
 scope ci-scope.sh true  "docs/api-reference.md (read by a test) runs" docs/api-reference.md
+scope ci-scope.sh true  "docs/commands-cheatsheet.md (read by a test) runs" docs/commands-cheatsheet.md
 scope ci-scope.sh true  "docs/check.md (read by a test) runs" docs/check.md
 scope ci-scope.sh true  "docs/audit.md (read by a test) runs" docs/audit.md
 scope ci-scope.sh true  "docs file read by a test plus an unread one runs" docs/glossary.md docs/cli.md

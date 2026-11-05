@@ -66,6 +66,18 @@ Short meanings of words used in the zn-gate docs.
 
 **Stdio**: standard input and output, the plain text channels of a program. MCP servers started by an agent talk over them.
 
+**Marketplace**: a catalog from which Claude Code installs plugins. You add the zn marketplace once, then install the zn-gate plugin from it.
+
+**PATH entry**: a folder in the list your terminal searches for commands. If the folder with `zn-gate` is not on the list, the terminal says the command is not found.
+
+**Project root**: the top folder of your project, usually the one that holds `.git`. zn-gate looks for project settings and the `.env` file there.
+
+**Worktree**: an extra working folder of the same Git repository, with its own checked-out branch. Agents often use one to work apart from your main copy.
+
+**Release candidate**: a build made before a release so that it can be tested. If testing finds no problem, it becomes the release.
+
+**Lock file**: a file, such as `package-lock.json`, that records the exact versions of the packages a project installed, so every install gives the same result.
+
 **Hook event**: a moment when an agent calls its hooks, such as `PreToolUse` (before a tool runs), `PostToolUse` (after it ran) or `UserPromptSubmit` (when you send a prompt). The names differ a little between agents. See [Agent compatibility](compat.md#codex-cli-hook-events).
 
 **Matcher**: the pattern in a hook setting that says which tools the hook runs for.
