@@ -97,8 +97,8 @@ depends on the agent and on how the hooks were installed. A user install
 (`~/.zn/hooks/zn-hook-<agent>.sh`; on Windows, for Codex CLI, Cursor, Gemini CLI
 and Antigravity, the same steps written inline in PowerShell). It runs the
 Node.js it was installed with, while its runner and the other zn-gate files it
-loads still have the SHA-256 recorded at install time (never a `zn` from the PATH, except in the inline PowerShell
-hooks on Windows), else it answers the
+loads still have the SHA-256 recorded at install time (the inline PowerShell hooks on Windows check neither the runner
+nor the other files; never a `zn` from the PATH, except in those inline PowerShell hooks on Windows), else it answers the
 block itself, without Node.js. A project install (`--project`) names `zn` on
 the PATH inside a short start guard (`sh -c`, PowerShell on Windows) that gives
 the same block when `zn` or Node.js is missing or fails, so it behaves like a
