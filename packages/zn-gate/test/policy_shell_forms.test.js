@@ -263,8 +263,11 @@ test('a .env behind a cmd delayed expansion or another variable is refused and a
   const missed = [];
   const refused = [];
   const dotenv = ['!D!.env', '"!D!.env"', '!D!\\.env', '!D!/.env', 'app1/!D!.env', '!D!!E!.env', '!D!.env.local',
-    '%D%.env', '"%D%.env"', '%D%.env.local', '$D.env', '${D}.env'];
-  const ordinary = ['!D!notes.txt', '%D%notes.txt', '!D!', 'app1/!D!', '!D!.env.example', '%D%.env.example', '!D!.environment', '$D.envrc'];
+    '%D%.env', '"%D%.env"', '%D%.env.local', '$D.env', '${D}.env',
+    // cmd modifiers: a substring or a replacement of the variable
+    '!D:~0!.env', '%D:~0,99%.env', '!D:x=y!.env', '%D:x=y%.env', '"%D:~0,99%.env"', '!D:~0,99!.env.local', '%D:~-1%.env'];
+  const ordinary = ['!D!notes.txt', '%D%notes.txt', '!D!', 'app1/!D!', '!D!.env.example', '%D%.env.example', '!D!.environment', '$D.envrc',
+    '!D:~0!notes.txt', '%D:~0,99%notes.txt', '!D:x=y!notes.txt', '%D:x=y%notes.txt', '!D:~0!', '%D:~0,99%.env.example', '!D:~0!.environment'];
   const reads = [...WIN_READS, ...PS_COLON_READS, (w) => 'cmd /v:on /c type ' + w, (w) => 'cmd /v:on /c "type ' + w + '"'];
   for (const p of dotenv) {
     for (const read of reads) {
@@ -306,4 +309,33 @@ test('decoding $-quoting stays linear on long input', () => {
     policy._decodeAnsiC("cat $'" + body + "'");
     assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 1500, 'too slow');
   }
+});
+
+// A word that is a PowerShell colon value and also a --name=value word: both readings are judged (a regression of the colon branch).
+test('a colon word that holds an equals sign refuses a .env in either reading', (t) => {
+  const o = project(t);
+  const missed = [];
+  const refused = [];
+  for (const cmd of ['tool -X:a=.env', 'tool -p:EnvFile=.env', 'cat -X:y=.env', 'tool -X:a=app1/.env', 'tool "-p:EnvFile=.env"', 'tool -X:a=b=.env',
+    'gc -Path:.env', 'tool --kubeconfig=.env', 'tool -X:a=\'.env\'']) {
+    if (!policy.bashDenial(cmd, o)) missed.push(cmd);
+  }
+  for (const cmd of ['msbuild -p:Configuration=Release', 'dotnet build -p:Version=1.0', 'tool -X:a=notes.txt', 'tool -p:EnvFile=notes.txt', 'tool -X:a=.env.example',
+    'gc -Path:notes.txt -Encoding:UTF8', 'robocopy . out /XF:x', 'tool -X:a=b']) {
+    if (policy.bashDenial(cmd, o)) refused.push(cmd);
+  }
+  assert.deepEqual(missed, [], 'a .env behind a colon word with an equals sign is refused');
+  assert.deepEqual(refused, [], 'an ordinary value is allowed');
+});
+
+test('a cmd variable with a modifier is never expanded, even when the variable is known', (t) => {
+  const o = project(t);
+  const known = { ...o, env: { D: 'app1/', E: 'zzz' } };
+  assert.ok(policy.bashDenial('type !D:~0!.env', known), 'type !D:~0!.env');
+  assert.ok(policy.bashDenial('type %D:~0,99%.env', known), 'type %D:~0,99%.env');
+  assert.ok(policy.bashDenial('cmd /v:on /c type !D:x=y!.env', known), 'cmd /v:on /c type !D:x=y!.env');
+  assert.equal(policy.bashDenial('type %D:~0,99%notes.txt', known), null, 'an ordinary file behind a modifier');
+  assert.equal(policy.bashDenial('type !E:x=y!', known), null, 'a modifier alone');
+  // The command sets the variable with a modifier in its value: unknown, so a .env behind it is refused.
+  assert.ok(policy.bashDenial('set D=%E:~0,1% && type !D!.env', o), 'a value that holds a modified variable');
 });
