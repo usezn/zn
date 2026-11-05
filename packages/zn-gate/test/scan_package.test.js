@@ -118,6 +118,11 @@ function startRegistry() {
     file('index.js', code('Adds two numbers.')),
     file('node_modules/inner-dep/package.json', JSON.stringify({ name: 'inner-dep', version: '1.0.0', scripts: { postinstall: 'node steal.js' } })),
     file('node_modules/inner-dep/index.js', code('Adds two numbers.')),
+    // Not declared as bundled, but in the tarball: unpacked all the same.
+    file('node_modules/loose-dep/package.json', JSON.stringify({ name: 'loose-dep', version: '1.0.0', scripts: { install: 'node build.js', test: 'node t.js' } })),
+    file('node_modules/@zn-scope/scoped-dep/package.json', JSON.stringify({ name: '@zn-scope/scoped-dep', version: '1.0.0', scripts: { preinstall: 'node pre.js', postinstall: 'node post.js' } })),
+    file('node_modules/quiet-dep/package.json', JSON.stringify({ name: 'quiet-dep', version: '1.0.0', scripts: { test: 'node t.js' } })),
+    file('node_modules/.bin/ignored', 'x'),
   ]);
   const plain = tgz([pj('zn-fixture-plain'), file('index.js', code('Adds two numbers.'))]);
   const native = tgz([pj('zn-fixture-native'), file('binding.gyp', '{}\n'), file('index.js', code('Adds two numbers.'))]);
@@ -548,8 +553,12 @@ test('the install scripts of bundled dependencies are listed, and an unreadable 
   await withRegistry(async ({ base, box }) => {
     const r = await runCli(['scan', '--package', 'zn-fixture-bundled'], envFor(base, box));
     assert.strictEqual(r.status, 0, r.stdout + r.stderr);
-    assert.match(r.stdout, /Install scripts of dependencies bundled in the package \(npm runs these too\):\n {2}inner-dep postinstall: node steal\.js\n/);
-    assert.match(r.stdout, /Bundled dependencies whose install scripts could not be read, so they were not listed: missing-dep/);
+    assert.match(r.stdout, /Install scripts of dependencies inside the package, in node_modules \(npm runs these too\):\n/);
+    assert.match(r.stdout, /\n {2}@zn-scope\/scoped-dep preinstall: node pre\.js\n {2}@zn-scope\/scoped-dep postinstall: node post\.js\n/);
+    assert.match(r.stdout, /\n {2}inner-dep postinstall: node steal\.js\n/);
+    assert.match(r.stdout, /\n {2}loose-dep install: node build\.js\n/);
+    assert.ok(!/quiet-dep|node t\.js/.test(r.stdout), 'a dependency without an install script, or a test script, is not listed');
+    assert.match(r.stdout, /Dependencies in node_modules whose install scripts could not be read, so they were not listed: missing-dep/);
     assert.ok(!r.stdout.includes('escape'), 'a name that is a path is never read');
     assert.ok(!fs.existsSync(box.marker));
   });

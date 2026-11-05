@@ -365,6 +365,30 @@ async function fetchPackageForScan(spec, opts = {}) {
 }
 
 /**
+ * Names of the packages inside the package's own node_modules folder (`name` and `@scope/name`), one level deep, read
+ * from the unpacked folder. Links and names that are not package names are skipped; at most `limit` are returned.
+ */
+function nestedPackageNames(dir, limit) {
+  const names = [];
+  const nm = path.join(dir, 'node_modules');
+  const subdirs = (d) => {
+    try { return fs.readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort(); } catch (_) { return []; }
+  };
+  for (const n of subdirs(nm)) {
+    if (names.length >= limit) break;
+    if (n.startsWith('@')) {
+      for (const m of subdirs(path.join(nm, n))) {
+        if (names.length >= limit) break;
+        if (BUNDLED_NAME.test(n + '/' + m)) names.push(n + '/' + m);
+      }
+    } else if (BUNDLED_NAME.test(n)) {
+      names.push(n);
+    }
+  }
+  return names;
+}
+
+/**
  * What npm would run, and what it would put on your path, if you installed the package in `dir`: read from its
  * package.json as text, never run. Returns the lines to print (they are not findings and do not change the
  * exit code). `safe` makes a string printable (control characters of a package never reach the terminal).
@@ -408,7 +432,11 @@ function describePackage(dir, safe) {
   }
   // Dependencies bundled inside the package are installed with it, and npm runs their install scripts too.
   const declared = Array.isArray(pkg.bundleDependencies) ? pkg.bundleDependencies : Array.isArray(pkg.bundledDependencies) ? pkg.bundledDependencies : [];
-  const names = declared.filter((n) => typeof n === 'string' && BUNDLED_NAME.test(n)).slice(0, MAX_BUNDLED_LISTED);
+  const declaredNames = declared.filter((n) => typeof n === 'string' && BUNDLED_NAME.test(n));
+  // Every package found in node_modules counts, declared as bundled or not: whatever is in the tarball is unpacked.
+  const all = [...new Set([...declaredNames, ...nestedPackageNames(dir, MAX_BUNDLED_LISTED + 1)])];
+  const names = all.slice(0, MAX_BUNDLED_LISTED);
+  const overflow = all.length > MAX_BUNDLED_LISTED;
   const bundledRun = [];
   const bundledUnknown = [];
   for (const n of names) {
@@ -425,14 +453,14 @@ function describePackage(dir, safe) {
     }
   }
   if (bundledRun.length) {
-    lines.push('Install scripts of dependencies bundled in the package (npm runs these too):');
+    lines.push('Install scripts of dependencies inside the package, in node_modules (npm runs these too):');
     lines.push(...bundledRun);
   }
   if (bundledUnknown.length) {
-    lines.push('Bundled dependencies whose install scripts could not be read, so they were not listed: ' + bundledUnknown.join(', '));
+    lines.push('Dependencies in node_modules whose install scripts could not be read, so they were not listed: ' + bundledUnknown.join(', '));
   }
-  if (declared.length > names.length && declared.length > MAX_BUNDLED_LISTED) {
-    lines.push('Bundled dependencies: only the first ' + MAX_BUNDLED_LISTED + ' are checked for install scripts');
+  if (overflow) {
+    lines.push('Dependencies in node_modules: only the first ' + MAX_BUNDLED_LISTED + ' are checked for install scripts');
   }
   return lines;
 }
