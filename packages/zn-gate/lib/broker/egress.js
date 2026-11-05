@@ -127,7 +127,7 @@ function startEgressProxy(allow, opts = {}) {
     headers.host = target.host;
     const out = http.request({
       host, port, method: req.method, path: target.pathname + target.search, headers, agent: false,
-      timeout: IDLE_MS,
+      autoSelectFamily: true, timeout: IDLE_MS,
     }, (up) => {
       res.writeHead(up.statusCode, up.headers);
       up.pipe(res);
@@ -154,7 +154,7 @@ function startEgressProxy(allow, opts = {}) {
       client.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
       return;
     }
-    const up = net.connect({ host: auth.host, port: auth.port });
+    const up = net.connect({ host: auth.host, port: auth.port, autoSelectFamily: true });
     up.setTimeout(IDLE_MS, () => up.destroy());
     client.setTimeout(IDLE_MS, () => client.destroy());
     up.on('error', () => {

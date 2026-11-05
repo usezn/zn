@@ -52,33 +52,38 @@ function portOf(server) {
 
 // The child asks the proxy for each target and prints what came back.
 const CHILD = `
-const http = require('http');
+// Plain sockets, not http.request: with NODE_USE_ENV_PROXY=1 a Node.js child sends its own http requests through the proxy variable.
+const net = require('net');
 const proxy = new URL(process.env.HTTP_PROXY);
 const pp = Number(proxy.port);
 const { ALLOW_PORT, REFUSED_PORT } = process.env;
+const statusOf = (text) => { const m = /^HTTP\\/1\\.[01] (\\d+)/.exec(text); return m ? Number(m[1]) : 0; };
 function get(target) {
   return new Promise((resolve) => {
-    const req = http.request({ host: '127.0.0.1', port: pp, method: 'GET', path: target, agent: false }, (res) => {
-      let b = '';
-      res.on('data', (d) => { b += d; });
-      res.on('end', () => resolve({ status: res.statusCode, body: b }));
-    });
-    req.on('error', (e) => resolve({ error: e.code }));
-    req.end();
+    const s = net.connect(pp, '127.0.0.1');
+    let b = '';
+    s.on('data', (d) => { b += d; });
+    s.on('error', (e) => resolve({ error: e.code }));
+    s.on('close', () => resolve({ status: statusOf(b), body: b.split('\\r\\n\\r\\n')[1] }));
+    s.write('GET ' + target + ' HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n');
   });
 }
 function connect(authority) {
   return new Promise((resolve) => {
-    const req = http.request({ host: '127.0.0.1', port: pp, method: 'CONNECT', path: authority });
-    req.on('connect', (res, sock) => {
-      if (res.statusCode !== 200) { sock.destroy(); resolve({ status: res.statusCode }); return; }
-      let b = '';
-      sock.on('data', (d) => { b += d; });
-      sock.on('end', () => resolve({ status: 200, body: b.split('\\r\\n\\r\\n')[1] }));
-      sock.write('GET /ok HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n');
+    const s = net.connect(pp, '127.0.0.1');
+    let b = '';
+    let sent = false;
+    s.on('data', (d) => {
+      b += d;
+      if (!sent && b.includes('\\r\\n\\r\\n')) {
+        if (statusOf(b) !== 200) { s.destroy(); resolve({ status: statusOf(b) }); return; }
+        sent = true;
+        s.write('GET /ok HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n');
+      }
     });
-    req.on('error', (e) => resolve({ error: e.code }));
-    req.end();
+    s.on('error', (e) => resolve({ error: e.code }));
+    s.on('close', () => { if (sent) resolve({ status: 200, body: b.split('\\r\\n\\r\\n')[2] }); });
+    s.write('CONNECT ' + authority + ' HTTP/1.1\\r\\nHost: ' + authority + '\\r\\n\\r\\n');
   });
 }
 (async () => {
