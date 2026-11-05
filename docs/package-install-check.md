@@ -119,6 +119,7 @@ Each question, and each online lookup that gave no answer, is written to the [de
 - The bundled list is a **starter list** written by hand. It ages, it is not complete, and it can miss a popular package or flag a legitimate name that is one letter from a popular one. Add such a name to `hooks.packageInstallAllow`.
 - Offline mode cannot know whether a name exists. Online mode can, but only for names it is allowed to look up (see above).
 - It is a guardrail, not a sandbox: it reads the text of a command. An install that a script performs, or a name the shell builds at run time (`npm i $PKG`), is not seen.
+- The online lookup uses the system and Node.js trust store, including `NODE_EXTRA_CA_CERTS`, so a project could add a certificate authority through its environment; the effect is limited to silencing a question, because the check never blocks.
 - The Python package (`zn-gate` on PyPI) does not install hooks, so this check is part of the Node.js hooks only.
 
 ## Cost
