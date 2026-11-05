@@ -213,7 +213,7 @@ Example: [protect the tools of a Vercel AI SDK agent](https://github.com/usezn/z
 **Galvanize: prompt-injection detection**
 
 - Today, local: a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides (CVE-2021-42574), comment splicing and Base64. It checks prompts, tool arguments, tool output and MCP tool descriptions.
-- Today, optional cloud: the Galvanize 3 classifier ([announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=npm&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), has open weights under Apache-2.0) can also check prompts sent to `analyze_prompt`, only with `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed before sending; personal data and a secret it does not recognize are sent as written.
+- Today, optional cloud: the Galvanize 3 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-3); [announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=npm&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), also has open weights under Apache-2.0) can also check prompts sent to `analyze_prompt`, only with `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed before sending; personal data and a secret it does not recognize are sent as written.
 - Roadmap: running Galvanize locally inside zn-gate.
 
 **Scan: audit what your agent is about to trust**
