@@ -184,6 +184,61 @@ function destructiveRulesOf(opts) {
 }
 
 /*
+ * Package install check (see lib/package-check.js). Off by default: with the check off nothing of it is loaded and
+ * the decisions are exactly the ones without it. A command that installs a package by name asks the user when the
+ * name looks like a well-known package, and, in the online mode, when the registry does not know it or it is new.
+ * It never blocks. The question is "soft": an agent that cannot ask (Codex CLI, Cursor's preToolUse, OpenCode, Gemini
+ * CLI) runs the command, and the finding is still written to the decision log.
+ *
+ * ~/.zn/config.json, {"hooks": {"packageInstallCheck": "off" | "offline" | "online", "packageInstallAllow": [...],
+ * "packageInstallNewDays": 14}}. ZN_PACKAGE_CHECK=offline turns on the offline mode from the environment (never
+ * the online one: see lib/package-check-settings.js).
+ */
+const PACKAGE_COMMAND_RE = /\b(?:npm|pnpm|yarn|bun|pip3?|pipx|uv|python3?|py)\b/i;
+
+async function packageInstallCheck(command, opts, cwd) {
+  const st = require('../package-check-settings').settingsOf(readConfig(opts.home).hooks, opts.packageInstallCheck, process.env.ZN_PACKAGE_CHECK);
+  if (st.mode === 'off' || !PACKAGE_COMMAND_RE.test(command)) return null;
+  try {
+    const pc = require('../package-check');
+    let lookup;
+    if (st.mode === 'online') {
+      const reg = require('../package-registry');
+      const stateDir = opts.home ? path.join(opts.home, '.zn') : require('../stats').znHome();
+      lookup = (items) => {
+        // A name is asked of the public registry only when the user's own settings do not point at another one.
+        const ctx = { cwd, home: opts.home || require('os').homedir(), env: process.env };
+        const privateEco = {};
+        const usable = items.filter((i) => !(i.eco in privateEco ? privateEco[i.eco] : (privateEco[i.eco] = reg.privateRegistry(i.eco, ctx))));
+        return reg.lookupMany(usable, { fetch: opts.packageFetch, now: opts.packageNow, stateDir });
+      };
+    }
+    const res = await pc.check(command, { mode: st.mode, allow: st.allow, newDays: st.newDays, lookup });
+    const records = res.findings.map((f) => ({
+      rule: 'hook-package-check-' + (f.kind === 'not_found' ? 'not-found' : f.kind === 'new_package' ? 'new' : 'look-alike'),
+      reason: pc.sentenceOf(f),
+    })).concat(res.unavailable.map((u) => ({
+      rule: 'hook-package-check-unavailable',
+      reason: 'the registry lookup for ' + (u.eco === 'pypi' ? 'Python package' : 'npm package') + ' `' + u.name + '` gave no answer (' + u.why + '), so no question was asked',
+    })));
+    const message = pc.messageOf(res.findings);
+    return message || records.length ? { message, records } : null;
+  } catch (_) {
+    // An optional check never stops a command because it failed.
+    return null;
+  }
+}
+
+/* The package check joined to the decision the rest of the checks made for the same call. It only adds a question. */
+function withPackage(res, pkg) {
+  if (!pkg) return res;
+  const records = { packageCheck: pkg.records };
+  if (!pkg.message || res.decision === 'deny') return { ...res, ...records };
+  if (res.decision === 'ask') return { ...res, message: (res.message ? res.message + ' ' : '') + pkg.message.replace(/^zn: /, 'Also, '), ...records };
+  return { decision: 'ask', soft: true, message: (res.message ? res.message + ' ' : '') + (res.message ? pkg.message.replace(/^zn: /, 'Also, ') : pkg.message), ...records };
+}
+
+/*
  * Writes to the files where an agent keeps memory and standing instructions (MEMORY.md, AGENTS.md, CLAUDE.md,
  * .cursor/rules and the others in lib/hooks/policy.js) ask the user. Returns "ask" (the default), "deny" or "off".
  *
@@ -634,6 +689,8 @@ async function decidePre(ev, d, agentId, opts) {
     const egress = egressMode === 'off' ? null
       : await egressCheck(ev, d, agentId, egressMode, policy.egressParts(original, { powershell: tool === 'powershell', allow: () => egressAllowOf(opts) }), 'command');
     if (egress && egress.decision === 'deny') return egress;
+    const pkg = await packageInstallCheck(original, opts, ev.cwd);
+    const finish = (r) => withPackage(withEgress(r, egress), pkg);
     // The command writes a file the agent reads as standing instructions: ask (a deny in strict mode).
     const instruction = instructionNotice && instructionNotice.hit;
     if (instruction && instructionMode === 'deny') return { decision: 'deny', message: instruction.deny };
@@ -675,12 +732,12 @@ async function decidePre(ev, d, agentId, opts) {
         // A command that carries markers always asks, even when nothing was rewritten
         // (already wrapped in `zn run` by the agent, or tokens kept unresolved).
         // Never let it run on the user's allow rules alone.
-        return withEgress(withInstruction({ decision: 'ask', soft: true, message: 'zn: this command contains secret placeholders (such as __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + ', so it needs your approval before it runs.', context }), egress);
+        return finish(withInstruction({ decision: 'ask', soft: true, message: 'zn: this command contains secret placeholders (such as __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + ', so it needs your approval before it runs.', context }));
       }
-      return withEgress(withInstruction(notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' }), egress);
+      return finish(withInstruction(notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' }));
     }
     // kind tells adapters that cannot rewrite input what the rewrite was for.
-    return withEgress(withInstruction({ decision: 'ask', updatedInput: { command }, kind: 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context }), egress);
+    return finish(withInstruction({ decision: 'ask', updatedInput: { command }, kind: 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context }));
   }
 
   if ((tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') && Array.isArray(input.texts)) {
@@ -1524,6 +1581,7 @@ function countHook(agentId, ev, decision, opts = {}) {
 function recordEvidence(agentId, ev, decision, opts = {}) {
   try {
     if (!ev || !ev.event || !decision || ev.permissionRequest) return;
+    if (Array.isArray(decision.packageCheck) && decision.packageCheck.length) recordPackageCheck(agentId, ev, decision.packageCheck, opts);
     const denied = decision.decision === 'deny' && !decision.failClosed;
     const stats = decision.stats || {};
     const redacted = ev.event === 'post_tool' && decision.decision === 'allow' && stats.redacted > 0;
@@ -1549,6 +1607,32 @@ function recordEvidence(agentId, ev, decision, opts = {}) {
     }, file, { lockWaitMs: 500, noStats: true, _plainPreview: true });
   } catch (e) {
     try { process.stderr.write('zn-gate: could not record the block in the evidence log (' + (e && e.code || 'error') + ').' + String.fromCharCode(10)); } catch (_) { /* nothing more to do */ }
+  }
+}
+
+/*
+ * The package install check writes one record per finding, or per lookup that gave no answer. Like the others, it holds
+ * no command: the rule id and a sentence that names the package (a registry name, cut down to its own characters).
+ * The verdict is "allow": the check only asks, it never blocks. A problem with the ledger never changes the decision.
+ */
+function recordPackageCheck(agentId, ev, records, opts) {
+  try {
+    const evidence = require('../evidence');
+    const file = opts.home ? path.join(opts.home, '.zn', 'evidence.jsonl') : undefined;
+    for (const r of records.slice(0, 8)) {
+      evidence.logEvidence({
+        agent: agentId,
+        phase: 'hook-' + ev.event,
+        tool_name: ev.tool || ev.event,
+        payload: JSON.stringify({ event: ev.event, tool: ev.tool || null, rule: r.rule }),
+        verdict: 'allow',
+        rule: r.rule,
+        reason: r.reason,
+        engine: 'zn-hook',
+      }, file, { lockWaitMs: 500, noStats: true, _plainPreview: true });
+    }
+  } catch (e) {
+    /* the decision is already made */
   }
 }
 
