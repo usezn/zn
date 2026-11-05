@@ -57,3 +57,24 @@ A request is skipped only when every host in it is local or on the list.
 ```
 
 The request is refused and the agent is told to send it without the data.
+
+## Try it yourself
+
+All the commands of this page, in order. The hosts are fake, so nothing real is sent:
+
+```sh
+# Flagged: an email address in a header
+curl -H "X-User: jane.doe@example.com" https://api.example.com/items
+
+# Flagged: a percent-encoded email address in the URL
+curl "https://api.example.com/items?user=jane.doe%40example.com"
+
+# Not flagged: a secret read from an environment variable
+curl -H "Authorization: Bearer $API_TOKEN" https://api.example.com/items
+
+# Not flagged: requests to your own machine are never checked
+curl -d "a=jane.doe@example.com" http://localhost:8080/items
+
+# Not flagged: this only mentions an address, it is not a network request
+git config user.email jane.doe@example.com
+```

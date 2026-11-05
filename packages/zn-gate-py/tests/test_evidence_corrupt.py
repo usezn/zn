@@ -711,3 +711,59 @@ def test_stale_break_mutex_from_a_dead_breaker_is_reclaimed(tmp_path):
     assert log_evidence({"payload": "x"}, file_path=p, lock_wait=2.0) is not None
     assert verify_evidence_ledger(p)["total"] == 2
     assert [n for n in os.listdir(tmp_path) if ".lock" in n] == []
+
+
+def _read_lines(p):
+    with open(p, "rb") as f:
+        return f.read().split(b"\n")[:-1]
+
+
+def _write_lines(p, lines):
+    with open(p, "wb") as f:
+        f.write(b"\n".join(lines) + b"\n")
+
+
+def test_changed_middle_entry_reports_its_line(tmp_path):
+    p = _ledger(tmp_path, n=4)
+    lines = _read_lines(p)
+    rec = json.loads(lines[1])
+    rec["payload"] = "changed-example"
+    lines[1] = json.dumps(rec, separators=(",", ":")).encode()
+    _write_lines(p, lines)
+    res = verify_evidence_ledger(p)
+    assert res["valid"] is False
+    assert res["broken_index"] == 1 and res["verified"] == 1
+    assert "Tamper detected at line 2" in res["error"]
+
+
+def test_removed_middle_entry_reports_the_line_after_the_gap(tmp_path):
+    p = _ledger(tmp_path, n=4)
+    lines = _read_lines(p)
+    del lines[1]
+    _write_lines(p, lines)
+    res = verify_evidence_ledger(p)
+    assert res["valid"] is False
+    assert res["total"] == 3
+    assert res["broken_index"] == 1
+    assert "Broken chain link at line 2" in res["error"]
+
+
+def test_swapped_entries_report_the_first_swapped_line(tmp_path):
+    p = _ledger(tmp_path, n=4)
+    lines = _read_lines(p)
+    lines[1], lines[2] = lines[2], lines[1]
+    _write_lines(p, lines)
+    res = verify_evidence_ledger(p)
+    assert res["valid"] is False
+    assert res["broken_index"] == 1
+    assert "line 2" in res["error"]
+
+
+def test_text_garbage_appended_at_the_end_reports_its_line(tmp_path):
+    p = _ledger(tmp_path, n=3)
+    _append(p, b"this is not a record\n")
+    res = verify_evidence_ledger(p)
+    assert res["valid"] is False
+    assert res["total"] == 4
+    assert res["broken_index"] == 3 and res["verified"] == 3
+    assert "Malformed JSON at line 4" in res["error"]
