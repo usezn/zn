@@ -1119,6 +1119,81 @@ function hasPrivateKey(text) {
   return false;
 }
 
+// The most a changed configuration or instruction file is read: a file over it is not checked here (zn audit reports it).
+const CHANGED_FILE_CAP = 1024 * 1024;
+
+/** The text of a file the agent reports as changed or loaded, or null when it is not a plain file we can read within the cap. */
+function readReportedFile(file) {
+  try {
+    if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
+    const st = fs.lstatSync(file);
+    if (!st.isFile() || st.size > CHANGED_FILE_CAP) return null;
+    return fs.readFileSync(file, 'utf8');
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * ConfigChange (Claude Code): a settings or skill file changed during the session. The change is blocked, so the new file does not
+ * take effect, when
+ *  - a project or local settings file now has a critical audit finding (a download piped into a shell, a model endpoint moved to
+ *    another server, ...): the same rules `zn audit` applies when a folder is opened, so an edit made during the session cannot do
+ *    what the audit refuses at the start; or
+ *  - a skill file now holds text that tries to instruct the agent (the local injection rules).
+ * Policy settings cannot be blocked (Claude Code applies them anyway) and your own user settings are yours to edit: both are allowed.
+ */
+function decideConfigChange(ev) {
+  const source = ev.configSource;
+  const file = ev.filePath;
+  if (source === 'skills') {
+    const text = readReportedFile(file);
+    if (text === null) return { decision: 'allow' };
+    const v = require('../rules').evaluate(text);
+    if (v && v.verdict === 'block') {
+      return {
+        decision: 'deny', kinds: ['config-change-skill'],
+        message: 'zn: this change to a skill file was not applied: the file now holds text that tries to instruct the agent (' + String(v.rule || 'injection').slice(0, 60) + '). ' +
+          'Open ' + path.basename(file) + ', remove that text, and save it again.',
+      };
+    }
+    return { decision: 'allow' };
+  }
+  if (source !== 'project_settings' && source !== 'local_settings') return { decision: 'allow' };
+  if (typeof file !== 'string' || !path.isAbsolute(file) || !/(^|[\\/])\.claude[\\/][^\\/]+$/.test(file)) return { decision: 'allow' };
+  const root = path.dirname(path.dirname(file));
+  let result;
+  try {
+    result = require('../audit').audit({ root, agents: ['claude'], includeHome: false, env: process.env, noPrune: true });
+  } catch (_) {
+    return { decision: 'allow' };
+  }
+  const rel = path.relative(root, file).split(path.sep).join('/');
+  const critical = (result.findings || []).filter((f) => f.severity === 'critical' && String(f.file || '').split(path.sep).join('/') === rel);
+  if (!critical.length) return { decision: 'allow' };
+  const first = critical[0];
+  return {
+    decision: 'deny', kinds: ['config-change-' + String(first.id || 'audit').toLowerCase()],
+    message: 'zn: this change to ' + rel + ' was not applied: ' + String(first.title || first.id).slice(0, 120) + ' (' + String(first.id) + ', line ' + (first.line || '?') + ')' +
+      (critical.length > 1 ? ' and ' + (critical.length - 1) + ' more critical finding(s)' : '') + '. Run `zn audit` to see it, fix the file, and save it again.',
+  };
+}
+
+/**
+ * InstructionsLoaded (Claude Code): an instruction file (CLAUDE.md, .claude/rules/*.md) went into context. Claude Code cannot be told to
+ * hold it back, so this only records it: a file that holds text trying to instruct the agent is written to the evidence log as a block
+ * of kind instructions-injection (nothing is printed: Claude Code discards the output of this event).
+ */
+function decideInstructionsLoaded(ev) {
+  const text = readReportedFile(ev.filePath);
+  if (text === null) return { decision: 'allow' };
+  const v = require('../rules').evaluate(text);
+  if (v && v.verdict === 'block') {
+    return { decision: 'deny', kinds: ['instructions-injection'], message: 'zn: ' + path.basename(ev.filePath) + ' holds text that tries to instruct the agent (' + String(v.rule || 'injection').slice(0, 60) + ').' };
+  }
+  return { decision: 'allow' };
+}
+
 async function decideExpansion(ev, d, agentId) {
   return decidePromptText(ev, d, agentId, true);
 }
@@ -1464,6 +1539,8 @@ async function handle(adapter, rawEvent, opts = {}) {
     else if (ev.event === 'stop') decision = await decideStop(ev, d, adapter.id, opts);
     else if (ev.event === 'session_start') decision = { decision: 'allow', context: SESSION_CONTEXT() };
     else if (ev.event === 'prompt_expansion') decision = await decideExpansion(ev, d, adapter.id);
+    else if (ev.event === 'config_change') decision = decideConfigChange(ev);
+    else if (ev.event === 'instructions_loaded') decision = decideInstructionsLoaded(ev);
     else decision = { decision: 'allow' };
   } catch (err) {
     decision = failDecision(ev, err, mode, adapter.id);
