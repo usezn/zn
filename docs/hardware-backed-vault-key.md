@@ -12,7 +12,7 @@ The [threat model](threat-model.md) says plainly where this stops: malware runni
 
 Make the vault key, or a key that wraps it, usable only with help from hardware that does not hand the key out:
 
-- **Secure Enclave on macOS.** Secure Enclave keys are non-exportable P-256 keys whose use can be tied to user presence or biometry (see Apple's Security documentation).
+- **Secure Enclave on macOS.** Secure Enclave keys are non-exportable P-256 keys whose use can be tied to user presence or biometry (see Apple's [Protecting keys with the Secure Enclave](https://developer.apple.com/documentation/security/protecting-keys-with-the-secure-enclave)).
 - **TPM on Windows and Linux.** On Windows, the Microsoft Platform Crypto Provider creates TPM-protected keys whose private material is non-removable and unique to that TPM. On Linux, systemd can encrypt credentials with a key derived from the local TPM2 chip, a key on disk, or both.
 - **A FIDO2 security key, through the `hmac-secret` extension.** The platform asks the authenticator for a secret that is specific to one credential. The authenticator computes it from a salt the platform supplies and a random value it never reveals. This is part of the CTAP 2.2 specification and the W3C WebAuthn Level 3 specification.
 
@@ -45,7 +45,6 @@ Make the vault key, or a key that wraps it, usable only with help from hardware 
 
 ## Open questions
 
-- **To verify before publishing any claim about Apple:** the Secure Enclave statement above comes from secondary sources and must be checked against Apple's official documentation.
 - Which PCRs, if any, a Linux TPM credential should be bound to. The systemd documentation consulted does not say which PCRs it uses.
 - Which algorithms, API names and minimum hardware each platform supports, and how it behaves on older machines.
 - Linux desktops without a TPM, WSL, virtual machines and cloud runners: what works there?
