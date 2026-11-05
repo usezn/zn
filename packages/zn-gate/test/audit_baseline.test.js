@@ -98,3 +98,21 @@ test('a damaged baseline is no baseline', (t) => {
     assert.equal(loadBaseline(home, dir), null, bad);
   }
 });
+
+test('the order of the arguments of a command is part of it', (t) => {
+  const dir = project(t, { '.mcp.json': { mcpServers: { a: { command: 'node', args: ['one', 'two'] } } } });
+  const base = extractSurface(dir);
+  fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { a: { command: 'node', args: ['two', 'one'] } } }));
+  assert.deepEqual(diffSurface(base, extractSurface(dir)).changed, ['.mcp.json#mcp:a']);
+});
+
+test('only a task that runs when the folder opens is part of the surface', (t) => {
+  const dir = project(t, { '.vscode/tasks.json': { tasks: [{ label: 'default', command: 'x', runOptions: { reevaluateOnRerun: true } }, { label: 'later', command: 'y', runOptions: { runOn: 'default' } }, { label: 'auto', command: 'z', runOptions: { runOn: 'folderOpen' } }] } });
+  assert.deepEqual(Object.keys(extractSurface(dir)), ['.vscode/tasks.json#task:auto']);
+});
+
+test('a file over the size cap is not read, even when it is valid JSON', (t) => {
+  const big = '{"mcpServers":{"a":{"command":"node"}},"pad":"' + 'x'.repeat(1024 * 1024) + '"}';
+  const dir = project(t, { '.mcp.json': big });
+  assert.deepEqual(extractSurface(dir), {});
+});
