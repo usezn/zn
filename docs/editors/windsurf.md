@@ -107,3 +107,10 @@ All messages: [Troubleshooting](../troubleshooting.md).
 
 - MCP in Cascade: <https://docs.devin.ai/desktop/cascade/mcp>
 - Cascade hooks: <https://docs.devin.ai/desktop/cascade/hooks>
+
+## Related pages
+
+- [Check that it works](../check.md): what `zn-gate check` tests, and why it does not test this Windsurf setup.
+- [Remove zn-gate](../uninstall.md): the one-step uninstall and how to remove zn-gate piece by piece.
+- [Troubleshooting](../troubleshooting.md): the messages people most often meet, and what to do about each.
+- [Install, verify and uninstall by agent](../by-agent.md): a short list of steps for each supported agent.
