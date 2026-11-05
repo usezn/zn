@@ -50,6 +50,7 @@
   - [`guard_pydantic_ai_toolset(toolset, on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`](#guard_pydantic_ai_toolsettoolset-on_blockreturn-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone)
   - [`ZnLlamaGuard(on_block='raise', mask_secrets=True, raise_on_violation=None, fallback=None)`](#znllamaguardon_blockraise-mask_secretstrue-raise_on_violationnone-fallbacknone)
   - [`call_api(prompt, options=None, context=None) -> dict`](#call_apiprompt-optionsnone-contextnone---dict)
+  - [Typing](#typing)
 
 ## Node.js (`zn-gate`)
 
@@ -375,3 +376,16 @@ No framework is required to import them. Each one uses the same rules as `check_
 ### `call_api(prompt, options=None, context=None) -> dict`
 
 - Promptfoo provider entry point (`promptfoo_provider` is the same function). It runs `evaluate` on the prompt and returns `{ output, tokenUsage, cost, cached, metadata }`: `output` starts with `[BLOCKED]` or `[ALLOWED]`, and `metadata` has `verdict`, `rule`, `reason`, `confidence`, `latency_ms` and `allowed`. In `promptfooconfig.yaml`: `id: 'python:zn_gate.integrations.promptfoo:call_api'`.
+
+### Typing
+
+- The package ships a `py.typed` marker (PEP 561), so type checkers use the inline type hints.
+- The modules that define the public API are checked with `mypy --strict` in CI, together with a file of type-level assertions that fails when a public signature changes shape.
+- `@guard` keeps the decorated function's signature: a type checker and `inspect.signature()` see the same parameters and return type as the undecorated function.
+- `sanitize_tool_result(tool_name, content)` returns `SanitizedToolResult`, a `TypedDict` with the keys `tool_name`, `safe_to_ingest`, `truncated`, `assessment`, `secrets_redacted` and `sanitized_content`:
+
+```python
+from zn_gate import sanitize_tool_result
+result = sanitize_tool_result("search_docs", "Refund policy: 30 days.")  # SanitizedToolResult
+print(result["safe_to_ingest"], result["sanitized_content"])  # True Refund policy: 30 days.
+```
