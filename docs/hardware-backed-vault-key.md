@@ -22,8 +22,8 @@ Make the vault key, or a key that wraps it, usable only with help from hardware 
 
 | Threat | Covered? | Why |
 |---|---|---|
-| The vault key copied from the keychain or the disk by another program or from a backup | Yes, if the key cannot be exported | The key would only work on that hardware |
-| A stolen disk or copied files used on another machine | Yes, for a key bound to that machine's TPM or enclave | The private material is unique to the device |
+| The vault key copied from the keychain or the disk by another program or from a backup | The aim, if the key cannot be exported (to verify on each platform) | The key would only work on that hardware |
+| A stolen disk or copied files used on another machine | The aim, for a key bound to that machine's TPM or enclave (to verify on each platform) | The private material is meant to be unique to the device |
 | A program running as you that asks the hardware to unlock while you are present | **No** | The hardware cannot tell which program is asking. A touch or biometry prompt would help only if you notice an unexpected one |
 | Malware on the machine after the vault is unlocked | **No** | The decrypted secrets are in the process's memory, as the threat model describes |
 | A compromised operating system or administrator | **No** | It can ask the hardware too |
