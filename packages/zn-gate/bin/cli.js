@@ -218,8 +218,9 @@ COMMANDS:
                       [--format text|json|github] (matched values are never printed)
   scan --package NAME[@VERSION]
                       Audit an npm package (MCP server or skill) before you add it: it is downloaded from the
-                      registry and read in full (node_modules and dist too), never installed or run; the
-                      install scripts npm would run are listed. Text output only.
+                      registry and its text, config and code files are scanned (node_modules and dist too;
+                      other file types are not), never installed or run; the install scripts npm would
+                      run are listed. Text output only.
   audit [path]        Review a repository's agent configs before you open it: hooks, MCP servers,
                       endpoint overrides, permissions, instructions, planted executables
                       [--format text|json|sarif] [--output FILE] [--fail-on high]
