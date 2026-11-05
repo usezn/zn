@@ -38,6 +38,11 @@ function urlFor(eco, name) {
   return null;
 }
 
+/* The options of the one request: certificate checks are set explicitly, so NODE_TLS_REJECT_UNAUTHORIZED in the environment cannot switch them off. */
+function requestOptions(u, timeoutMs) {
+  return { hostname: u.hostname, path: u.pathname, method: 'GET', agent: false, timeout: timeoutMs, rejectUnauthorized: true, headers: { Accept: 'application/json' } };
+}
+
 /* The real fetch: https.request, no redirects, no cookies, capped size, short timeout. Resolves { status, body }. */
 function httpsFetch(url, { timeoutMs = TIMEOUT_MS, maxBytes = MAX_BYTES } = {}) {
   const https = require('https');
@@ -47,10 +52,7 @@ function httpsFetch(url, { timeoutMs = TIMEOUT_MS, maxBytes = MAX_BYTES } = {}) 
     if (u.protocol !== 'https:' || !HOSTS.has(u.hostname) || u.username || u.password) { reject(new Error('host not allowed')); return; }
     let done = false;
     const finish = (fn, v) => { if (!done) { done = true; clearTimeout(timer); fn(v); } };
-    const req = https.request({
-      hostname: u.hostname, path: u.pathname, method: 'GET', agent: false, timeout: timeoutMs,
-      headers: { Accept: 'application/json' },
-    }, (res) => {
+    const req = https.request(requestOptions(u, timeoutMs), (res) => {
       const status = res.statusCode;
       // A redirect is not followed: it has no verdict.
       if (status !== 200 && status !== 404) { res.resume(); finish(resolve, { status, body: '' }); return; }
@@ -148,6 +150,7 @@ async function lookupMany(items, opts = {}) {
   const cache = file ? readCache(file) : {};
   const out = new Map();
   const todo = [];
+  for (const it of items.slice(MAX_NAMES)) out.set(it.eco + ':' + it.name, { error: 'too many names' });
   for (const it of items.slice(0, MAX_NAMES)) {
     const key = it.eco + ':' + it.name;
     const hit = cache[key];
@@ -200,8 +203,12 @@ function privateRegistry(eco, opts = {}) {
     if (env.NPM_CONFIG_REGISTRY || env.npm_config_registry || env.YARN_NPM_REGISTRY_SERVER) return true;
     for (const dir of [cwd, home]) {
       if (!dir) continue;
-      const text = readSmall(path.join(dir, '.npmrc')) + '\n' + readSmall(path.join(dir, '.yarnrc.yml'));
-      for (const m of text.matchAll(/^\s*(?:@[\w.-]+:)?registry\s*=\s*(\S+)/gim)) if (!NPM_HOST_OK.test(m[1])) return true;
+      const text = readSmall(path.join(dir, '.npmrc')) + '\n' + readSmall(path.join(dir, '.yarnrc.yml')) + '\n' + readSmall(path.join(dir, '.yarnrc')) + '\n'
+        + readSmall(path.join(dir, 'bunfig.toml')) + '\n' + readSmall(path.join(dir, '.bunfig.toml')) + '\n'
+        + (env.NPM_CONFIG_USERCONFIG || env.npm_config_userconfig ? readSmall(env.NPM_CONFIG_USERCONFIG || env.npm_config_userconfig) : '');
+      for (const m of text.matchAll(/^\s*(?:@[\w.-]+:)?registry\s*=\s*["']?([^\s"']+)/gim)) if (!NPM_HOST_OK.test(m[1])) return true;
+      // yarn v1: registry "https://..."
+      for (const m of text.matchAll(/^\s*"?(?:@[\w.-]+:)?registry"?\s+"?(https?:[^\s"]+)/gim)) if (!NPM_HOST_OK.test(m[1])) return true;
       for (const m of text.matchAll(/^\s*npmRegistryServer\s*:\s*(\S+)/gim)) if (!NPM_HOST_OK.test(m[1].replace(/['"]/g, ''))) return true;
       if (/^\s*(?:npmScopes|npmRegistries)\s*:/m.test(text)) return true;
     }
@@ -211,7 +218,12 @@ function privateRegistry(eco, opts = {}) {
     if (env[v]) return true;
   }
   const files = [];
-  if (home) files.push(path.join(home, '.config', 'pip', 'pip.conf'), path.join(home, '.pip', 'pip.conf'), path.join(home, 'pip', 'pip.ini'), path.join(home, '.config', 'uv', 'uv.toml'));
+  if (home) files.push(path.join(home, '.config', 'pip', 'pip.conf'), path.join(home, '.pip', 'pip.conf'), path.join(home, 'pip', 'pip.ini'), path.join(home, '.config', 'uv', 'uv.toml'),
+    path.join(home, 'Library', 'Application Support', 'pip', 'pip.conf'), path.join(home, 'AppData', 'Roaming', 'pip', 'pip.ini'));
+  if (env.XDG_CONFIG_HOME) files.push(path.join(env.XDG_CONFIG_HOME, 'pip', 'pip.conf'), path.join(env.XDG_CONFIG_HOME, 'uv', 'uv.toml'));
+  if (env.APPDATA) files.push(path.join(env.APPDATA, 'pip', 'pip.ini'));
+  if (env.VIRTUAL_ENV) files.push(path.join(env.VIRTUAL_ENV, 'pip.conf'));
+  for (const v of ['PIP_CONFIG_FILE', 'UV_CONFIG_FILE']) if (env[v]) files.push(env[v]);
   if (cwd) files.push(path.join(cwd, 'uv.toml'), path.join(cwd, 'pip.conf'));
   files.push('/etc/pip.conf');
   for (const f of files) if (/^\s*(?:index-url|extra-index-url|find-links|default-index|index)\b/im.test(readSmall(f))) return true;
@@ -219,4 +231,4 @@ function privateRegistry(eco, opts = {}) {
   return false;
 }
 
-module.exports = { lookupMany, urlFor, httpsFetch, createdOf, privateRegistry, CACHE_FILE, TTL_MS, TIMEOUT_MS, MAX_BYTES };
+module.exports = { lookupMany, urlFor, httpsFetch, requestOptions, createdOf, privateRegistry, CACHE_FILE, TTL_MS, TIMEOUT_MS, MAX_BYTES };

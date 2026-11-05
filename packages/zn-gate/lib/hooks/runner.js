@@ -689,11 +689,12 @@ async function decidePre(ev, d, agentId, opts) {
     const egress = egressMode === 'off' ? null
       : await egressCheck(ev, d, agentId, egressMode, policy.egressParts(original, { powershell: tool === 'powershell', allow: () => egressAllowOf(opts) }), 'command');
     if (egress && egress.decision === 'deny') return egress;
-    const pkg = await packageInstallCheck(original, opts, ev.cwd);
-    const finish = (r) => withPackage(withEgress(r, egress), pkg);
     // The command writes a file the agent reads as standing instructions: ask (a deny in strict mode).
     const instruction = instructionNotice && instructionNotice.hit;
     if (instruction && instructionMode === 'deny') return { decision: 'deny', message: instruction.deny };
+    // After the deny above: a command that ends in a deny makes no registry request.
+    const pkg = await packageInstallCheck(original, opts, ev.cwd);
+    const finish = (r) => withPackage(withEgress(r, egress), pkg);
     const withInstruction = (r) => {
       if (!instruction) return r;
       return r.decision === 'ask' ? { ...r, soft: false, confirm: true, message: (r.message ? r.message + ' ' : '') + instruction.ask } : { decision: 'ask', message: instruction.ask };
