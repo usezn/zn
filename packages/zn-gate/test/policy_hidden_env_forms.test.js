@@ -43,7 +43,7 @@ const DENIED = /holds plain-text|was not read because/;
 test('cmd.exe caret escapes: every spelling of .env is refused on Windows', () => {
   const { opts } = project();
   asPlatform('win32', () => {
-    for (const c of ['type .e^nv', 'type ^.env', 'type .^env', 'type .env^', 'type .en^v', 'type ".e^nv"', 'type .^e^n^v',
+    for (const c of ['type .e^nv', 'type ^.env', 'type .^env', 'type .env^', 'type .en^v', 'type .^e^n^v', 'type .e^"n"v', 'cmd /c "type .e^nv"',
       'type .env.l^ocal', 'cmd /c type .e^nv', 'copy .e^nv x.txt', 'type < .e^nv']) {
       assert.match(policy.bashDenial(c, opts) || '', DENIED, c);
     }
@@ -70,7 +70,8 @@ test('a caret at the end of a line joins the next line (cmd.exe)', () => {
 test('a caret in a POSIX shell is an ordinary character: nothing new is refused', () => {
   const { opts } = project();
   asPlatform('linux', () => {
-    for (const c of ['grep ^foo notes.md', 'grep ^.env notes.md', 'cat notes.md', 'echo a^b', 'type .e^nv', 'cat .e^nv']) {
+    for (const c of ['grep ^foo notes.md', 'grep ^.env notes.md', 'cat notes.md', 'echo a^b', 'type .e^nv', 'cat .e^nv', 'grep ^.env cmd/notes.md', 'ls cmd/ && grep ^.env README.md',
+      'go build ./cmd/app && grep ^x notes.md']) {
       assert.equal(policy.bashDenial(c, opts), null, c);
     }
   });
@@ -79,7 +80,7 @@ test('a caret in a POSIX shell is an ordinary character: nothing new is refused'
 test('carets that do not hide a protected name stay allowed on Windows', () => {
   const { opts } = project();
   asPlatform('win32', () => {
-    for (const c of ['type no^tes.md', 'echo 1 ^& 2', 'type ^"notes.md^"']) assert.equal(policy.bashDenial(c, opts), null, c);
+    for (const c of ['type no^tes.md', 'echo 1 ^& 2', 'type ^"notes.md^"', 'type ".e^nv"', 'findstr /r "^.env" notes.md', 'findstr "^x" notes.md']) assert.equal(policy.bashDenial(c, opts), null, c);
   });
 });
 
@@ -91,7 +92,7 @@ test('expansions that leave nothing: an unset variable, an empty slice, an empty
         'cat .e$@nv', 'cat .e$*nv', 'cat .e${@}nv', 'cat .e${*:0:0}nv', 'cat .e$(true)nv', 'cat .e$(:)nv',
         'cat .e$()nv', 'cat .e`true`nv', 'cat .e``nv', 'cat .e${SHORT:2}nv', 'cat .e${SHORT:9:3}nv', 'cat .e${UNSET-}nv', 'cat .env.l${UNSET}ocal',
         'cat .e${EMPTY}${EMPTY}nv', 'cat .${EMPTY}env', 'cat .e${UNSET:-n}v', 'cat .e${UNSET-n}v', 'cat .e${EMPTY:-n}${EMPTY}v',
-        'cat .e${HOME:+n}v', 'cat .e${SHORT:+n}v', 'cat .e${UNSET:+x}nv', 'cat .e${UNSET+x}nv', 'cat .e${UNSET:-n}${UNSET:-v}',
+        'cat .e${HOME:+n}v', 'cat .e${SHORT:+n}v', 'cat .e${UNSET:+x}nv', 'cat .e${UNSET+x}nv', 'cat .e${UNSET:-n}${UNSET:-v}', 'cat .e${HOME:-n}v', 'cat .e${SHORT:-n}v', 'cat .e${BLANK-n}v',
         'cat .e${BLANK:-n}v', 'cat .en${BLANK-x}v', 'cat .e${BLANK:+x}nv', 'cat .en${BLANK}v']) {
         assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ': ' + c);
       }
@@ -110,8 +111,8 @@ test('expansions inside nested shells, redirects and other commands are read the
 test('expansions that keep their text stay allowed', () => {
   const { opts } = project();
   for (const c of ['cat notes${EMPTY}.md', 'echo ${HOME:0:0}', 'echo ${HOME:0:2}x', 'cat ${PATH:0:0}notes.md', 'echo ${SHORT:1}', 'echo $@', 'echo $(true)',
-    'cat notes.md${UNSET:-}', 'echo ${UNSET:-fallback}', 'echo ${SHORT:-1:2}', 'cat ${UNSET:-notes.md}', 'cat .e${HOME:-n}v', 'cat .e${SHORT:-n}v',
-    'echo ${UNSET:+x}', 'echo ${SHORT:+x}', 'cat .e${BLANK-n}v']) {
+    'cat notes.md${UNSET:-}', 'echo ${UNSET:-fallback}', 'echo ${SHORT:-1:2}', 'cat ${UNSET:-notes.md}',
+    'echo ${UNSET:+x}', 'echo ${SHORT:+x}']) {
     assert.equal(policy.bashDenial(c, opts), null, c);
   }
 });
@@ -189,5 +190,50 @@ test('cmd substring and replacement modifiers inside a name: refused on Windows 
     for (const c of ['cmd /c type .e%OS:~0,0%nv', 'cmd.exe /c "type .en%UNSET:~0,0%v"']) assert.match(policy.bashDenial(c, o) || '', DENIED, c);
     // Not cmd: the text is an ordinary word in a POSIX shell.
     assert.equal(policy.bashDenial('echo .e%OS:~0,0%nv', o), null);
+  });
+});
+
+test('more spellings of an expansion that leaves nothing or a fixed word (every one reads .env in bash)', () => {
+  const { opts } = project();
+  for (const plat of ['linux', 'win32']) {
+    asPlatform(plat, () => {
+      for (const c of ['cat .e$UNSET""nv', "cat .e$UNSET''nv", 'cat .e$UNSET\\nv', 'cat .e$1nv', 'cat .e${1}nv', 'cat .e${HOME::0}nv', 'cat .e${HOME: -0:0}nv',
+        'cat .e${HOME:(0):0}nv', 'cat .e${HOME/*/}nv', 'cat .e${HOME%%*}nv', 'cat .e${HOME##*}nv', 'cat .en$(echo)v', 'cat .en$(printf "")v', 'cat .e${UNSET:-"n"}v',
+        'cat .e${UNSET:=n}v', 'cat .e${UNSET:-${UNSET2}}nv', 'cat .e${UNSET:-${UNSET2:-n}}v', 'cat .e$#nv', 'cat .e$?nv'.replace('$?', '$@'), 'cat .e$((0))nv'.replace('$((0))', '$(())'),
+        'cat .e`echo`nv', 'cat .e${UNSET:-\'n\'}v', 'cat .e$UNSET${UNSET2}nv', 'cat .en${UNSET:-zzz}v', 'cat .e${HOME:-zzz}nv', 'cat .e${UNSET:+zzz}nv', 'cat .e${PATH}${UNSET}nv'.replace('${PATH}', '${UNSET3}')]) {
+        assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ': ' + c);
+      }
+    });
+  }
+});
+
+test('an unbalanced unit leaves the rest of the text as it was and never throws', () => {
+  const { opts } = project();
+  for (const c of ['cat ${UNSET', 'cat $(echo', 'cat `echo', 'echo ${', 'echo $', 'echo $((1', 'cat notes.md ${']) {
+    assert.doesNotThrow(() => policy.bashDenial(c, opts), c);
+  }
+});
+
+test('cmd %VAR% units: refused on Windows and wherever cmd is named, undefined or empty variables and negative offsets included', () => {
+  const { opts } = project();
+  const o = { ...opts, env: { ...opts.env, OS: 'Windows_NT', BLANK: '' } };
+  asPlatform('win32', () => {
+    for (const c of ['type .e%OS:~0,0%nv', 'type .e%OS:~10,0%nv', 'type .e%OS:~-1,0%nv', 'type .e%BLANK%nv', 'type .e%NOPE%nv', 'cmd /v:on /c type .e!OS:~0,0!nv',
+      'type .e%NOPE%^nv'.replace('^', ''), 'type .e%NOPE%%NOPE2%nv', 'type %NOPE%.env', 'type .%NOPE:x=y%env', 'type .e^n%NOPE%v', 'type .e%NOPE%^n^v'.replace('%^n^v', '%nv')]) {
+      assert.match(policy.bashDenial(c, o) || '', DENIED, c);
+    }
+    for (const c of ['type notes%NOPE%.md', 'echo %OS%', 'type no%NOPE%tes.md']) assert.equal(policy.bashDenial(c, o), null, c);
+  });
+  asPlatform('linux', () => {
+    for (const c of ['cmd /c type .e%NOPE%nv', 'run.bat type .e%NOPE%nv']) assert.match(policy.bashDenial(c, o) || '', DENIED, c);
+    assert.equal(policy.bashDenial('echo .e%NOPE%nv', o), null);
+  });
+});
+
+test('cmd is cmd.exe only in command position: a folder named cmd is not', () => {
+  const { opts } = project();
+  asPlatform('linux', () => {
+    for (const c of ['grep ^.env cmd/notes.md', 'cat cmd/main.go ^x', 'cd cmd && grep ^.env notes.md', 'go run ./cmd/zn ^.env']) assert.equal(policy.bashDenial(c, opts), null, c);
+    for (const c of ['cmd /c type .e^nv', 'ls && cmd.exe /c type .e^nv', '(cmd /c type .e^nv)', 'C:\\Windows\\System32\\cmd.exe /c type .e^nv']) assert.match(policy.bashDenial(c, opts) || '', DENIED, c);
   });
 });

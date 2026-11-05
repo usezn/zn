@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-05.4';
+const POLICY_RULES_VERSION = '2026-11-05.6';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2397,14 +2397,18 @@ function bashDenialOf(cmd, opts = {}) {
   // Bash $'...' quoting spells characters as escapes ($'\x2eenv' is .env), and $"..." is a plain "...":
   // a fourth reading with them decoded.
   if (/\$['"]/.test(text)) readings.push(allWords(decodeAnsiC(text), true));
-  // And with the expansions that leave nothing dropped, and with cmd.exe's carets removed (see dropEmptyExpansions).
+  // And with the expansions that leave nothing (or a fixed word) taken out, the cmd variable units taken out, and cmd.exe's carets removed
+  // after that (cmd expands % before it reads carets). The first two do not depend on the environment the hook sees.
   {
-    const emptied = dropEmptyExpansions(text, opts.env || process.env);
-    const bases = emptied === text ? [text] : [text, emptied];
-    if (emptied !== text) readings.push(allWords(emptied, false), allWords(emptied, true));
-    for (const b of bases) {
-      if (!cmdCaretsApply(b)) continue;
-      const c = dropCmdCarets(b);
+    const variants = new Set([text]);
+    const add = (t) => { variants.add(t); };
+    add(dropEmptyExpansions(text, opts.env || process.env));
+    if (/[$`]/.test(text)) { add(stripExpansions(text, false)); add(stripExpansions(text, true)); }
+    if (/[%!]/.test(text) && cmdContext(text)) for (const v of [...variants]) add(stripCmdVars(v));
+    for (const v of [...variants]) if (v !== text) readings.push(allWords(v, false), allWords(v, true));
+    for (const v of [...variants]) {
+      if (!cmdCaretsApply(v)) continue;
+      const c = dropCmdCarets(v.replace(/(\/[ck]\s+)"([\s\S]*)"(\s*)$/i, '$1$2$3'));
       readings.push(allWords(c, false), allWords(c, true));
     }
   }
@@ -2529,7 +2533,6 @@ function bashDenialOf(cmd, opts = {}) {
 const NAME_VALUE_RE = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}=/;
 const ANSI_C_SIMPLE = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', "'": "'", '"': '"', '?': '?' };
 
-/* The command with each bash $'...' word decoded and quoted again as a plain '...' word, and $"..." read as "...". */
 /**
  * Two more readings of a command, for words a shell or cmd.exe rewrites before the program sees them.
  *  - cmd.exe: `^` escapes the next character outside double quotes, and a `^` at the end of a line joins it to the next one,
@@ -2539,12 +2542,86 @@ const ANSI_C_SIMPLE = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\
  *    substitution, so `.en${EMPTY}v` and `.e${HOME:0:0}nv` open `.env`. The variable values are the ones the hook sees.
  * The original text is still read as typed; these are extra readings, so a word protected in any of them is refused.
  */
-const CMD_CONTEXT_RE = /\bcmd(?:\.exe)?\b|\.(?:bat|cmd)\b/i;
-function cmdCaretsApply(text) {
-  return text.indexOf('^') >= 0 && (process.platform === 'win32' || CMD_CONTEXT_RE.test(text));
+const CMD_CONTEXT_RE = /(?:^|[;&|(\"'`])\s*(?:(?:sudo|env|call|start|exec|nohup|time|xargs|command|wine)\s+(?:-\S+\s+)*)*(?:\S*[\\/])?(?:cmd(?:\.exe)?|[^\s;&|()\"'`]*\.(?:bat|cmd))(?=\s|$|[\"'])/i;
+function cmdContext(text) {
+  return process.platform === 'win32' || CMD_CONTEXT_RE.test(text);
 }
+function cmdCaretsApply(text) {
+  return text.indexOf('^') >= 0 && cmdContext(text);
+}
+// A caret outside double quotes escapes the next character (an escaped quote does not open a quote); inside double quotes it is literal.
 function dropCmdCarets(text) {
-  return text.replace(/\^\r?\n/g, '').replace(/\^(.?)/gs, '$1');
+  let out = '';
+  let inQuote = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') { inQuote = !inQuote; out += c; continue; }
+    if (c === '^' && !inQuote) {
+      const nx = text[i + 1];
+      if (nx === undefined) break;
+      if (nx === '\r' && text[i + 2] === '\n') { i += 2; continue; }
+      if (nx === '\n') { i++; continue; }
+      out += nx;
+      i++;
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
+// Every cmd variable unit, with or without a modifier, taken out whole: its value is not known here (an undefined one is empty in a batch file).
+const CMD_VAR_UNIT_RE = /%[A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?%|![A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?!/g;
+function stripCmdVars(text) {
+  return text.replace(CMD_VAR_UNIT_RE, '');
+}
+/**
+ * The text with every shell expansion unit taken out whole, whatever the environment holds (a variable the hook sees may differ from the
+ * agent's shell): balanced ${...} (any operator, nested), $NAME, $1, $@ $* $# $? $$ $!, balanced $(...) and backticks. With
+ * `useDefaults`, ${NAME:-word}, ${NAME-word}, ${NAME:=word}, ${NAME=word}, ${NAME:+word} and ${NAME+word} become their word (quotes
+ * removed, nested units read the same way). An unbalanced unit leaves the rest of the text as it was.
+ */
+function stripExpansions(text, useDefaults) {
+  const n = text.length;
+  let out = '';
+  let i = 0;
+  while (i < n) {
+    const c = text[i];
+    if (c === '`') {
+      const j = text.indexOf('`', i + 1);
+      if (j < 0) { out += text.slice(i); break; }
+      i = j + 1;
+      continue;
+    }
+    if (c !== '$' || i + 1 >= n) { out += c; i++; continue; }
+    const d = text[i + 1];
+    if (d === '{' || d === '(') {
+      let depth = 1;
+      let j = i + 2;
+      for (; j < n && depth > 0; j++) {
+        const ch = text[j];
+        if (ch === '{' || ch === '(') depth++;
+        else if (ch === '}' || ch === ')') depth--;
+      }
+      if (depth > 0) { out += text.slice(i); break; }
+      const content = text.slice(i + 2, j - 1);
+      if (d === '{' && useDefaults) {
+        const m = /^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*])(:?[-=+])([\s\S]*)$/.exec(content);
+        if (m) out += stripExpansions(m[2], true).replace(/["']/g, '');
+      }
+      i = j;
+      continue;
+    }
+    if (/[A-Za-z_]/.test(d)) {
+      let j = i + 1;
+      while (j < n && /[A-Za-z0-9_]/.test(text[j])) j++;
+      i = j;
+      continue;
+    }
+    if (/[0-9@*#?$!]/.test(d)) { i += 2; continue; }
+    out += c;
+    i++;
+  }
+  return out;
 }
 // ${NAME}, ${NAME:-word}, ${NAME-word}, ${NAME:+word}, ${NAME+word}, ${NAME:off} and ${NAME:off:len} (offset and length without a sign: a
 // negative one needs a space or parentheses, which this does not read), $@, $* and an empty command substitution.
@@ -2571,7 +2648,7 @@ function dropCmdExpansions(text, env) {
     });
 }
 function dropEmptyExpansions(text, env) {
-  if (/[%!]/.test(text) && (process.platform === 'win32' || CMD_CONTEXT_RE.test(text))) text = dropCmdExpansions(text, env);
+  if (/[%!]/.test(text) && cmdContext(text)) text = dropCmdExpansions(text, env);
   if (!/[$`]/.test(text)) return text;
   return text.replace(EMPTY_EXPANSION_RE, (m, name, op, word, off, len) => {
     if (!name) return '';
@@ -2586,6 +2663,7 @@ function dropEmptyExpansions(text, env) {
   });
 }
 
+/* The command with each bash $'...' word decoded and quoted again as a plain '...' word, and $"..." read as "...". */
 function decodeAnsiC(cmd) {
   return cmd.replace(/\$'((?:[^'\\]|\\[\s\S])*)'/g, (m, body) => {
     const text = body.replace(/\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|[0-7]{1,3}|c[\s\S]|[\s\S])/g, (e, x) => {
