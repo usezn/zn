@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-06.2';
+const POLICY_RULES_VERSION = '2026-11-06.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2427,6 +2427,9 @@ function bashDenialOf(cmd, opts = {}) {
     add(dropEmptyExpansions(text, opts.env || process.env));
     if (/[$`]/.test(text)) { add(stripExpansions(text, false)); add(stripExpansions(text, true)); }
     if (/[%!]/.test(text) && cmdContext(text)) for (const v of [...variants]) add(stripCmdVars(v));
+    // With delayed expansion on, cmd removes a ! that has no partner (type .e!nv opens .env), so a reading without any ! is judged too.
+    const delayed = text.indexOf('!') >= 0 && DELAYED_EXPANSION_RE.test(text) && cmdContext(text);
+    if (delayed) for (const v of [...variants]) add(v.replace(/!/g, ''));
     for (const v of [...variants]) if (v !== text) readings.push(allWords(v, false), allWords(v, true));
     for (const v of [...variants]) {
       if (!cmdCaretsApply(v)) continue;
@@ -2622,6 +2625,8 @@ const ANSI_C_SIMPLE = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\
  *    substitution, so `.en${EMPTY}v` and `.e${HOME:0:0}nv` open `.env`. The variable values are the ones the hook sees.
  * The original text is still read as typed; these are extra readings, so a word protected in any of them is refused.
  */
+// cmd /v:on (or /v), or setlocal enabledelayedexpansion.
+const DELAYED_EXPANSION_RE = /(?:^|[\s"'])\/v(?::on)?(?=[\s"']|$)|enabledelayedexpansion/i;
 const CMD_CONTEXT_RE = /(?:^|[;&|(\"'`])\s*(?:(?:sudo|env|call|start|exec|nohup|time|xargs|command|wine)\s+(?:-\S+\s+)*)*(?:\S*[\\/])?(?:cmd(?:\.exe)?|[^\s;&|()\"'`]*\.(?:bat|cmd))(?=\s|$|[\"'])/i;
 function cmdContext(text) {
   return process.platform === 'win32' || CMD_CONTEXT_RE.test(text);
@@ -2650,9 +2655,75 @@ function dropCmdCarets(text) {
   return out;
 }
 // Every cmd variable unit, with or without a modifier, taken out whole: its value is not known here (an undefined one is empty in a batch file).
-const CMD_VAR_UNIT_RE = /%[A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?%|![A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?!/g;
+// A cmd variable name is anything up to the next % or ! or colon: ProgramFiles(x86), =ExitCode, A.B and A-B are names too.
+const CMD_VAR_UNIT_RE = /%[^%!:\r\n]+(?::[^%!\r\n]*)?%|![^%!:\r\n]+(?::[^%!\r\n]*)?!/g;
 function stripCmdVars(text) {
   return text.replace(CMD_VAR_UNIT_RE, '');
+}
+const UNIT_DEPTH = 64;
+/**
+ * The index after the bracket that closes a ${...} or $(...) whose content starts at `from`, or -1 when there is none (or it is nested
+ * over UNIT_DEPTH levels). Bash honours quotes while it looks for the bracket: a `)` or `}` inside '...', "..." or after a backslash does
+ * not close the unit, and nested ${ }, $( ) and backticks are units of their own; inside $( ) a bare ( nests too.
+ */
+function unitEnd(text, from, closer, depth) {
+  if (depth > UNIT_DEPTH) return -1;
+  const n = text.length;
+  let j = from;
+  while (j < n) {
+    const ch = text[j];
+    if (ch === '\\') { j += 2; continue; }
+    if (ch === "'") {
+      const k = text.indexOf("'", j + 1);
+      if (k < 0) return -1;
+      j = k + 1;
+      continue;
+    }
+    if (ch === '`') {
+      const k = text.indexOf('`', j + 1);
+      if (k < 0) return -1;
+      j = k + 1;
+      continue;
+    }
+    if (ch === '"') {
+      j++;
+      for (;;) {
+        if (j >= n) return -1;
+        const q = text[j];
+        if (q === '\\') { j += 2; continue; }
+        if (q === '"') { j++; break; }
+        if (q === '`') {
+          const k = text.indexOf('`', j + 1);
+          if (k < 0) return -1;
+          j = k + 1;
+          continue;
+        }
+        if (q === '$' && (text[j + 1] === '{' || text[j + 1] === '(')) {
+          const e = unitEnd(text, j + 2, text[j + 1] === '{' ? '}' : ')', depth + 1);
+          if (e < 0) return -1;
+          j = e;
+          continue;
+        }
+        j++;
+      }
+      continue;
+    }
+    if (ch === '$' && (text[j + 1] === '{' || text[j + 1] === '(')) {
+      const e = unitEnd(text, j + 2, text[j + 1] === '{' ? '}' : ')', depth + 1);
+      if (e < 0) return -1;
+      j = e;
+      continue;
+    }
+    if (ch === '(' && closer === ')') {
+      const e = unitEnd(text, j + 1, ')', depth + 1);
+      if (e < 0) return -1;
+      j = e;
+      continue;
+    }
+    if (ch === closer) return j + 1;
+    j++;
+  }
+  return -1;
 }
 /**
  * The text with every shell expansion unit taken out whole, whatever the environment holds (a variable the hook sees may differ from the
@@ -2675,14 +2746,8 @@ function stripExpansions(text, useDefaults) {
     if (c !== '$' || i + 1 >= n) { out += c; i++; continue; }
     const d = text[i + 1];
     if (d === '{' || d === '(') {
-      let depth = 1;
-      let j = i + 2;
-      for (; j < n && depth > 0; j++) {
-        const ch = text[j];
-        if (ch === '{' || ch === '(') depth++;
-        else if (ch === '}' || ch === ')') depth--;
-      }
-      if (depth > 0) { out += text.slice(i); break; }
+      const j = unitEnd(text, i + 2, d === '{' ? '}' : ')', 0);
+      if (j < 0) { out += text.slice(i); break; }
       const content = text.slice(i + 2, j - 1);
       if (d === '{' && useDefaults) {
         const m = /^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*])(:?[-=+])([\s\S]*)$/.exec(content);
@@ -2707,8 +2772,8 @@ function stripExpansions(text, useDefaults) {
 // negative one needs a space or parentheses, which this does not read), $@, $* and an empty command substitution.
 const EMPTY_EXPANSION_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*|[@*])(?:(:?[-+])([^}$`"'\\]*)|:([0-9]+)(?::([0-9]+))?)?\}|\$[@*]|\$\(\s*(?:true|:)?\s*\)|`\s*(?:true|:)?\s*`/g;
 // cmd.exe: %NAME:~off,len% and %NAME:old=new% (and the !NAME...! forms of delayed expansion) give a piece of the value or a replaced one.
-const CMD_SLICE_RE = /%([A-Za-z_][A-Za-z0-9_]*):~([0-9]+)(?:,([0-9]+))?%|!([A-Za-z_][A-Za-z0-9_]*):~([0-9]+)(?:,([0-9]+))?!/g;
-const CMD_REPLACE_RE = /%([A-Za-z_][A-Za-z0-9_]*):([^%!=~*\r\n][^%!=\r\n]*)=([^%!\r\n]*)%|!([A-Za-z_][A-Za-z0-9_]*):([^%!=~*\r\n][^%!=\r\n]*)=([^%!\r\n]*)!/g;
+const CMD_SLICE_RE = /%([^%!:\r\n]+):~([0-9]+)(?:,([0-9]+))?%|!([^%!:\r\n]+):~([0-9]+)(?:,([0-9]+))?!/g;
+const CMD_REPLACE_RE = /%([^%!:\r\n]+):([^%!=~*\r\n][^%!=\r\n]*)=([^%!\r\n]*)%|!([^%!:\r\n]+):([^%!=~*\r\n][^%!=\r\n]*)=([^%!\r\n]*)!/g;
 function dropCmdExpansions(text, env) {
   const val = (name) => {
     const k = Object.keys(env).find((e) => e.toUpperCase() === name.toUpperCase());   // cmd variable names ignore case

@@ -38,7 +38,7 @@ function project() {
   return { home, proj, opts: { home, cwd: proj, env: { HOME: home, PATH: '/usr/bin:/bin', SHORT: 'ab', BLANK: '' } } };
 }
 
-const DENIED = /holds plain-text|was not read because/;
+const DENIED = /holds plain-text|was not read because|builds the path of a .env file/;
 
 test('cmd.exe caret escapes: every spelling of .env is refused on Windows', () => {
   const { opts } = project();
@@ -236,4 +236,51 @@ test('cmd is cmd.exe only in command position: a folder named cmd is not', () =>
     for (const c of ['grep ^.env cmd/notes.md', 'cat cmd/main.go ^x', 'cd cmd && grep ^.env notes.md', 'go run ./cmd/zn ^.env']) assert.equal(policy.bashDenial(c, opts), null, c);
     for (const c of ['cmd /c type .e^nv', 'ls && cmd.exe /c type .e^nv', '(cmd /c type .e^nv)', 'C:\\Windows\\System32\\cmd.exe /c type .e^nv']) assert.match(policy.bashDenial(c, opts) || '', DENIED, c);
   });
+});
+
+// --- review of #849, second round: quoted brackets, any cmd variable name, an unpaired ! under delayed expansion ---
+
+test('a quoted closing bracket does not end an expansion unit early', () => {
+  const { opts } = project();
+  for (const c of ['cat .en$(: ")")v', 'cat .en$(echo ")" >/dev/null)v', 'cat .e${U:+"}"}nv', 'cat .e${U:+")"}nv', 'cat .en$(: "(")v', "cat .e${U:+'}'}nv",
+    'cat .e${U:+\\}}nv', 'cat .en$(: \\))v', 'cat .e${U:+"$(echo })"}nv', 'cat .en$(echo $(echo ")"))v', 'cat .e${U:-"a b"}nv'.replace('a b', '')]) {
+    for (const plat of ['linux', 'win32']) asPlatform(plat, () => assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + c));
+  }
+  // deep nesting costs a bounded amount and never throws; an unbalanced quote leaves the text as it was
+  const deep = 'cat .e' + '$('.repeat(30000) + ':' + ')'.repeat(30000) + 'nv';
+  assert.doesNotThrow(() => policy.bashDenial(deep, opts));
+  assert.doesNotThrow(() => policy.bashDenial('cat .e$(: "nv', opts));
+  assert.equal(policy.bashDenial('cat notes.txt$(: ")")', opts), null);
+  assert.equal(policy.bashDenial('echo "a)" $(echo ")") b', opts), null);
+});
+
+test('cmd variable names are not only identifiers', () => {
+  const { opts } = project();
+  const o = { ...opts, env: { ...opts.env, 'ProgramFiles(x86)': 'C:\\PF' } };
+  asPlatform('win32', () => {
+    for (const c of ['type .e%ProgramFiles(x86):~0,0%nv', 'type .e%CommonProgramFiles(x86):~0,0%nv', 'type .e%=ExitCode:~0,0%nv', 'type .e%A.B%nv', 'type .e%A-B%nv',
+      'type .e%A B%nv', 'type .e!ProgramFiles(x86):~0,0!nv', 'cmd /v:on /c type .e!A.B!nv', 'type .e%ProgramFiles(x86):x=y%nv']) {
+      assert.match(policy.bashDenial(c, o) || '', DENIED, c);
+    }
+    for (const c of ['type notes.txt', 'echo 100% done', 'echo 50% of 60%', 'type notes%ProgramFiles(x86):~0,0%.txt']) assert.equal(policy.bashDenial(c, o), null, c);
+  });
+  asPlatform('linux', () => {
+    assert.match(policy.bashDenial('cmd /c type .e%ProgramFiles(x86):~0,0%nv', o) || '', DENIED);
+    assert.equal(policy.bashDenial('echo .e%ProgramFiles(x86):~0,0%nv', o), null);
+  });
+});
+
+test('cmd with delayed expansion removes an ! that has no partner', () => {
+  const { opts } = project();
+  for (const plat of ['linux', 'win32']) {
+    asPlatform(plat, () => {
+      for (const c of ['cmd /v:on /c type .e!nv', 'cmd /v:on /c type .env!', 'cmd /v:on /c type .env!::$DATA', 'cmd /v:on /c type .e!A.B!nv', 'cmd /v:on /c type .env!x!::$DATA',
+        'cmd /v:on /c type ".env!::$DATA"', 'cmd /v:on /c type .e!n!v', 'cmd /v /c type .e!nv', 'cmd /c "setlocal enabledelayedexpansion & type .e!nv"', 'cmd /v:on /c type .env^!::$DATA']) {
+        assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + c);
+      }
+      // without delayed expansion an unpaired ! is an ordinary character; ordinary uses of ! stay allowed
+      for (const c of ['cmd /c type notes!.txt', 'cmd /v:on /c echo hi!', 'cmd /v:on /c type notes.txt', 'echo done!', 'git commit -m "wow!"']) assert.equal(policy.bashDenial(c, opts), null, plat + ' ' + c);
+    });
+  }
+  asPlatform('linux', () => assert.equal(policy.bashDenial('cmd /c type .e!nv', opts), null, 'no /v:on: the ! stays'));
 });
