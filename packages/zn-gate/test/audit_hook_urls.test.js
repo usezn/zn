@@ -118,3 +118,30 @@ test('ZNA022 in your own user file is low, whether the address is remote or loca
   assert.ok(hits.every((f) => f.severity === 'low' && f.file === '~/.claude/settings.json'), JSON.stringify(hits.map((f) => [f.severity, f.file])));
   assert.ok(!JSON.stringify(hits).includes('ZNAFAKE'));
 });
+
+test('ZNA006 and ZNA007 evidence shows scheme and host, never a URL path or query', (t) => {
+  // Minified JSON: the MCP URL shares its line with the server name.
+  const mcp = build(t, {
+    '.mcp.json': '{"mcpServers":{"s":{"type":"http","url":"https://mcp.example.invalid/mcp/ZNAFAKEPATH1?k=ZNAFAKEQUERY1"}}}\n',
+  });
+  const endpoint = build(t, {
+    '.claude/settings.json': JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'https://gw.example.invalid/ZNAFAKEPATH2?k=ZNAFAKEQUERY2' } }, null, 2) + '\n',
+  });
+  const loop = build(t, {
+    '.claude/settings.json': JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8080/ZNAFAKEPATH3' } }, null, 2) + '\n',
+  });
+  const mcpHits = audit({ root: mcp, agents: ['all'], env: {} }).findings.filter((f) => f.id === 'ZNA006');
+  assert.equal(mcpHits.length, 1);
+  assert.equal(mcpHits[0].severity, 'low');
+  for (const dir of [mcp, endpoint, loop]) {
+    const res = audit({ root: dir, agents: ['all'], env: {} });
+    const hits = res.findings.filter((f) => f.id === 'ZNA006' || f.id === 'ZNA007');
+    assert.ok(hits.length >= 1, 'no ZNA006/ZNA007 finding in ' + dir);
+    assert.ok(hits.every((f) => f.evidence.includes('://')), 'evidence has no scheme and host: ' + JSON.stringify(hits.map((f) => f.evidence)));
+    assert.ok(!JSON.stringify(res).includes('ZNAFAKE'), 'a URL path or query was printed');
+    for (const args of [[dir], [dir, '--format', 'json'], [dir, '--format', 'sarif']]) {
+      const r = cli(args);
+      assert.ok(!r.stdout.includes('ZNAFAKE') && !r.stderr.includes('ZNAFAKE'), 'printed by: ' + args.join(' '));
+    }
+  }
+});

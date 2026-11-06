@@ -433,15 +433,18 @@ function checkHookUrls(ctx, tree, keyPath) {
     const env = h.envVars.length ? ' It forwards ' + (h.envVars.length === 1 ? 'the environment variable ' : 'the environment variables ') + h.envVars.slice(0, 5).join(', ') + (h.envVars.length > 5 ? ' and ' + (h.envVars.length - 5) + ' more' : '') + ' in its headers.' : '';
     // Your own user file is low whatever the address; a project file is medium for a local address, high otherwise.
     const sev = ctx.home ? 'low' : (loop ? 'medium' : 'high');
-    ctx.add('ZNA022', sev, line, what + ' sends every matching tool event to ' + where + (loop ? ' (a local address).' : '.') + env, { evidence: hookEvidence(ctx, line, String(h.url)) });
+    ctx.add('ZNA022', sev, line, what + ' sends every matching tool event to ' + where + (loop ? ' (a local address).' : '.') + env, { evidence: urlEvidence(ctx, line, String(h.url)) });
   }
 }
 
-/** Evidence for a hook URL: its line with the URL replaced by scheme and host (never the path or query). */
-function hookEvidence(ctx, ln, url) {
+/**
+ * Evidence for a URL value: its line with the value replaced by scheme and host (never the path or query).
+ * When the line does not hold the value as written, a fixed `"key": "scheme://host"` pair is shown instead.
+ */
+function urlEvidence(ctx, ln, url, key) {
   const shown = P.safeUrl(url);
   const raw = ctx.redactedLine(ln);
-  return raw.includes(url) ? raw.split(url).join(shown) : '"url": ' + JSON.stringify(shown);
+  return url && raw.includes(url) ? raw.split(url).join(shown) : JSON.stringify(key || 'url') + ': ' + JSON.stringify(shown);
 }
 
 function checkDownloadRun(ctx, command, line, what) {
@@ -484,17 +487,17 @@ function checkEnv(ctx, env, keyPath, opts) {
       // Environment of one MCP server: code loading is as bad as anywhere;
       // an endpoint or proxy redirects that server's own credentials.
       const who = 'MCP server "' + opts.server + '": ';
-      if (c.kind === 'endpoint') ctx.add('ZNA007', capHome(ctx, c.loopback ? 'low' : 'medium'), line, who + k + ' points to ' + P.safeUrl(v) + '; the server sends its requests and credentials there.', { title: 'MCP server endpoint overridden by the project' });
-      else if (c.kind === 'proxy') ctx.add('ZNA007', capHome(ctx, c.loopback ? 'low' : 'medium'), line, who + k + ' routes the server\'s traffic through ' + (c.host || 'a proxy') + '.', { title: 'MCP server traffic routed through a proxy set by the project' });
+      if (c.kind === 'endpoint') ctx.add('ZNA007', capHome(ctx, c.loopback ? 'low' : 'medium'), line, who + k + ' points to ' + P.safeUrl(v) + '; the server sends its requests and credentials there.', { title: 'MCP server endpoint overridden by the project', evidence: urlEvidence(ctx, line, String(v), k) });
+      else if (c.kind === 'proxy') ctx.add('ZNA007', capHome(ctx, c.loopback ? 'low' : 'medium'), line, who + k + ' routes the server\'s traffic through ' + (c.host || 'a proxy') + '.', { title: 'MCP server traffic routed through a proxy set by the project', evidence: urlEvidence(ctx, line, String(v), k) });
       else ctx.add('ZNA008', capHome(ctx, 'high'), line, who + k + ' is set for the server process' + (c.kind === 'confdir' ? ' and moves where it reads its configuration.' : ' and loads code or certificates into it.'));
       continue;
     }
     if (c.kind === 'endpoint') {
       const sev = capHome(ctx, c.loopback ? 'medium' : 'critical');
-      ctx.add('ZNA007', sev, line, k + ' points to ' + P.safeUrl(v) + (c.loopback ? ' (a local address)' : '') + '; the agent sends its API key and prompts there.');
+      ctx.add('ZNA007', sev, line, k + ' points to ' + P.safeUrl(v) + (c.loopback ? ' (a local address)' : '') + '; the agent sends its API key and prompts there.', { evidence: urlEvidence(ctx, line, String(v), k) });
     } else if (c.kind === 'proxy') {
       const sev = capHome(ctx, c.loopback ? 'medium' : 'high');
-      ctx.add('ZNA007', sev, line, k + ' routes the agent\'s traffic through ' + (c.host || 'a proxy') + '.', { title: 'Agent traffic routed through a proxy set by the project' });
+      ctx.add('ZNA007', sev, line, k + ' routes the agent\'s traffic through ' + (c.host || 'a proxy') + '.', { title: 'Agent traffic routed through a proxy set by the project', evidence: urlEvidence(ctx, line, String(v), k) });
     } else if (c.kind === 'confdir') {
       ctx.add('ZNA008', capHome(ctx, 'high'), line, k + ' moves where the agent reads its own configuration (to ' + v + '), so a config shipped in the repository is loaded instead of yours.', { title: 'Environment variable redirects the agent configuration' });
     } else {
@@ -508,7 +511,7 @@ function endpointValue(ctx, key, value, line) {
   const host = P.hostOf(value);
   if (!host) return;
   const loop = P.isLoopback(host);
-  ctx.add('ZNA007', capHome(ctx, loop ? 'medium' : 'critical'), line, key + ' points to ' + P.safeUrl(value) + (loop ? ' (a local address)' : '') + '; the agent sends its API key and prompts there.');
+  ctx.add('ZNA007', capHome(ctx, loop ? 'medium' : 'critical'), line, key + ' points to ' + P.safeUrl(value) + (loop ? ' (a local address)' : '') + '; the agent sends its API key and prompts there.', { evidence: urlEvidence(ctx, line, value, key) });
 }
 
 // The exact "secrets" MCP server `zn hooks install` writes: `zn secrets-mcp`
@@ -572,8 +575,8 @@ function checkMcpServers(ctx, servers, keyPath, opts) {
       const host = P.hostOf(url);
       if (host && !P.isLoopback(host)) {
         const plain = /^http:/i.test(url) || /^ws:/i.test(url);
-        if (plain) ctx.add('ZNA006', 'medium', line, 'MCP server "' + name + '" uses unencrypted ' + P.safeUrl(url) + '.');
-        else if (!ctx.home) ctx.add('ZNA006', 'low', line, 'MCP server "' + name + '" is remote: ' + P.safeUrl(url) + '.');
+        if (plain) ctx.add('ZNA006', 'medium', line, 'MCP server "' + name + '" uses unencrypted ' + P.safeUrl(url) + '.', { evidence: urlEvidence(ctx, line, url, 'url') });
+        else if (!ctx.home) ctx.add('ZNA006', 'low', line, 'MCP server "' + name + '" is remote: ' + P.safeUrl(url) + '.', { evidence: urlEvidence(ctx, line, url, 'url') });
       }
     }
   }
@@ -757,7 +760,10 @@ function checkOpencodeJson(ctx, data) {
     for (const ins of data.instructions) {
       if (typeof ins !== 'string' || !/^https?:\/\//i.test(ins)) continue;
       const plain = /^http:/i.test(ins);
-      if (plain || !ctx.home) ctx.add('ZNA006', plain ? 'medium' : 'low', ctx.locate(['instructions'], ins), 'Instructions are loaded from ' + P.safeUrl(ins) + ' and can change after review.', { title: 'Agent instructions loaded from a URL' });
+      if (plain || !ctx.home) {
+        const insLine = ctx.locate(['instructions'], ins);
+        ctx.add('ZNA006', plain ? 'medium' : 'low', insLine, 'Instructions are loaded from ' + P.safeUrl(ins) + ' and can change after review.', { title: 'Agent instructions loaded from a URL', evidence: urlEvidence(ctx, insLine, ins, 'instructions') });
+      }
     }
   }
   if (data.provider && typeof data.provider === 'object') {
