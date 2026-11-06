@@ -309,13 +309,22 @@ function safeUrl(url) {
  * Replace every URL in a text with scheme://host (never the path, query, userinfo or fragment).
  * A URL that cannot be read safely becomes "(unparsable URL)".
  */
-function maskUrls(text) {
-  return String(text == null ? '' : text).replace(/\b[a-z][a-z0-9+.-]{1,15}:(?:\\?\/){2}[^\s"'<>`]*/gi, (m) => {
-    const tail = /[)\]}.,;]+$/.exec(m);
+function maskUrls(text, keep) {
+  const kept = keep ? String(keep).replace(/\\/g, '') : null;
+  let out = String(text == null ? '' : text).replace(/\b[a-z][a-z0-9+.-]{1,15}:(?:\\?\/){2}[^\s"'<>`]*/gi, (m) => {
+    // A "]" that closes a redaction marker is part of the URL, not punctuation.
+    const tail = (m.includes('[') ? /[)}.,;]+$/ : /[)\]}.,;]+$/).exec(m);
     const core = tail ? m.slice(0, tail.index) : m;
     const clean = core.replace(/\\/g, '');
+    // The one URL a finding is about (the download URL of ZNA002) is kept, without its user and password.
+    if (kept && clean === kept) return clean.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/i, '$1') + (tail ? tail[0] : '');
     return safeUrl(clean) + (tail ? tail[0] : '');
   });
+  // user:password@host[:port] without a scheme (a proxy): never print the user or the password.
+  out = out.replace(/(^|["'\s=(,;])[^\s"'@\/:\\]+:[^\s"'@\/\\]*@([A-Za-z0-9.-]+(?::\d+)?)/g, '$1[REDACTED]@$2');
+  // Protocol-relative URLs ("//host/path"): host only.
+  out = out.replace(/(["'=(])\/\/([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?::\d+)?)[^\s"'<>`]*/g, '$1//$2');
+  return out;
 }
 
 /** Classify an agent-level environment variable. */

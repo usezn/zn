@@ -272,7 +272,8 @@ class FileCtx {
       severity = LOWER[severity] || severity;
       detail = String(detail) + IGNORED_ENV_NOTE;
     }
-    // The URL path, query, userinfo and fragment never reach a report, except where the download URL is the finding (ZNA002).
+    // The URL path, query, userinfo and fragment never reach a report (detail or evidence), except the download URL of ZNA002.
+    const keepUrl = (extra && extra.keepUrl) || null;
     const evidenceText = (extra && extra.evidence != null) ? redact(extra.evidence) : this.redactedLine(ln);
     this.out.push({
       id,
@@ -281,8 +282,8 @@ class FileCtx {
       file: this.rec.display,
       line: ln,
       title: (extra && extra.title) || rule.title,
-      detail: clip(redact(redactSpan(detail)), 600),
-      evidence: clip(id === 'ZNA002' ? evidenceText : P.maskUrls(evidenceText), EVIDENCE_MAX),
+      detail: clip(redact(P.maskUrls(redactSpan(detail), keepUrl)), 600),
+      evidence: clip(P.maskUrls(evidenceText, keepUrl), EVIDENCE_MAX),
       fix: (extra && extra.fix) || rule.fix,
       references: (extra && extra.references) || rule.references.slice(),
       _readers: (extra && extra.readers) || this.rec.readers,
@@ -454,7 +455,9 @@ function urlEvidence(ctx, ln, url, key, proxy) {
 function checkDownloadRun(ctx, command, line, what) {
   const hit = P.downloadAndRun(command);
   if (!hit) return false;
-  ctx.add('ZNA002', 'critical', line, what + ' downloads code and runs it: ' + short(command, 200));
+  // The download URL is what the finding is about and is shown without user and password; any other URL on the line is reduced.
+  const dl = /[a-z][a-z0-9+.-]{1,15}:\/\/[^\s"'<>`|;&)]*/i.exec(hit.match);
+  ctx.add('ZNA002', 'critical', line, what + ' downloads code and runs it: ' + short(command, 200), { keepUrl: dl ? dl[0] : null });
   return true;
 }
 
