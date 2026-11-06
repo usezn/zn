@@ -557,7 +557,10 @@ stop malware running as the same user (see above).
   `%NAME%` and `!NAME!` units) is read as any text, whatever the environment the hook sees holds. A path segment is refused when it holds
   such an expansion and at least two literal characters of `.env`, `.env.*` or an SSH private key name in the places they have in
   that name: `.e${X}v`, `${D}env`, `.e$(echo n)v`, `.e%X:~0,1%v`. This also refuses a few ordinary names, such as `${PREFIX}env`,
-  and a segment that ends in `.example`, `.sample` or `.template` is allowed. It does not refuse a name that is wholly inside the
+  and a segment that ends in `.example`, `.sample` or `.template` is allowed. An unquoted expansion can also split its value into
+  several words (`cat a${IFS}.env` reads `.env`), so each piece of a segment between unquoted expansions is checked as a word of its
+  own, and the `.example` ending only counts at the end of the last piece (`cat .e$(printf "nv ")v.example` is refused); inside double
+  quotes nothing is split. This also refuses `~/.ssh/id_${T}.pub`. It does not refuse a name that is wholly inside the
   expansion: `cat ${NAME}` with `NAME=.env` set by an earlier command or by the agent's environment, `cat $(cat names.txt)`, or a
   substitution that assembles the name from pieces without a literal character outside it. A variable assigned in the same line
   (`NAME=.env; cat $NAME`) is followed, and so is a substitution that only prints a word (`$(echo .env)`). Other names (for

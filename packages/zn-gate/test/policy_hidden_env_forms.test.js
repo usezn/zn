@@ -287,10 +287,32 @@ test('an expansion read as any text: ordinary uses stay allowed', () => {
   });
 });
 
+test('an unquoted expansion splits into words: each piece is checked, and the safe ending only ends a real word', () => {
+  const { opts } = project();
+  asPlatform('linux', () => {
+    for (const c of ['cat a${IFS}.env', 'cat a$IFS.env', 'cat foo${X}.env', 'cat a$(printf " ").env',
+      'cat .e$(printf "nv ")v.example', 'cat .e${X}v.example', 'cat .e${X}v.sample', 'cat .e${X}v.template', 'cat .e$X.example',
+      'cat x${IFS}id_rsa', 'cat ~/.ssh/a${IFS}id_ed25519', 'cat a${IFS}.env.local', 'cat "a"${IFS}.env']) {
+      assert.match(policy.bashDenial(c, opts) || '', /was not read because/, c);
+    }
+    // Inside double quotes the value is one word: no split, so the same lines read like any other quoted name.
+    for (const c of ['cat .e"$X"v.example', 'cat "a${IFS}.env"', 'cat "foo${X}.env"', 'cat "a$IFS.env"']) assert.equal(policy.bashDenial(c, opts), null, c);
+    assert.match(policy.bashDenial('cat ".e${X}v"', opts) || '', /was not read because/);
+    for (const c of ['cat ${HOME}/notes.md', 'cat $HOME/notes.md', 'cat config/${ENV}.json', 'cat ${APP}.env.example', 'cat "${APP}".env.example',
+      'cat ${APP}.env.sample', 'cat src/${MOD}/env.ts', 'cat ${PREFIX}/etc/environment', 'cat ${X}.envrc.txt', 'cd ${PROJECT}/environments',
+      'echo v${VERSION}', 'tar czf dist/${NAME}-${VERSION}.tgz .', 'cat a${IFS}b.txt', 'cat ${A}${B}notes', 'cat "${APP}.env.example"',
+      'cat $(pwd)/.env.example']) {
+      assert.equal(policy.bashDenial(c, opts), null, c);
+    }
+  });
+});
+
 test('known limit: a segment that keeps two letters of the name is refused even when it names something else', () => {
   const { opts } = project();
   asPlatform('linux', () => {
     // Accepted false positive: ${PREFIX}env could be .env, so it is refused. Write the name out to read it.
+    // Same for a key name cut by an unquoted expansion: id_${T}.pub could split into id_rsa and .pub.
+    assert.match(policy.bashDenial('cat ~/.ssh/id_${T}.pub', opts) || '', /was not read because/);
     assert.match(policy.bashDenial('ls ${PREFIX}env', opts) || '', /was not read because/);
   });
 });
