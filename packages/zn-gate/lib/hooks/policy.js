@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-06.3';
+const POLICY_RULES_VERSION = '2026-11-06.5';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2426,7 +2426,7 @@ function bashDenialOf(cmd, opts = {}) {
     const add = (t) => { variants.add(t); };
     add(dropEmptyExpansions(text, opts.env || process.env));
     if (/[$`]/.test(text)) { add(stripExpansions(text, false)); add(stripExpansions(text, true)); }
-    if (/[%!]/.test(text) && cmdContext(text)) for (const v of [...variants]) add(stripCmdVars(v));
+    if (/[%!]/.test(text) && cmdContext(text)) for (const v of [...variants]) { add(stripCmdVars(v)); add(stripCmdVarsNarrow(v)); }
     // With delayed expansion on, cmd removes a ! that has no partner (type .e!nv opens .env), so a reading without any ! is judged too.
     const delayed = text.indexOf('!') >= 0 && DELAYED_EXPANSION_RE.test(text) && cmdContext(text);
     if (delayed) for (const v of [...variants]) add(v.replace(/!/g, ''));
@@ -2626,7 +2626,7 @@ const ANSI_C_SIMPLE = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\
  * The original text is still read as typed; these are extra readings, so a word protected in any of them is refused.
  */
 // cmd /v:on (or /v), or setlocal enabledelayedexpansion.
-const DELAYED_EXPANSION_RE = /(?:^|[\s"'])\/v(?::on)?(?=[\s"']|$)|enabledelayedexpansion/i;
+const DELAYED_EXPANSION_RE = /\/v(?::on)?(?=[\s"'\/]|$)|enabledelayedexpansion/i;
 const CMD_CONTEXT_RE = /(?:^|[;&|(\"'`])\s*(?:(?:sudo|env|call|start|exec|nohup|time|xargs|command|wine)\s+(?:-\S+\s+)*)*(?:\S*[\\/])?(?:cmd(?:\.exe)?|[^\s;&|()\"'`]*\.(?:bat|cmd))(?=\s|$|[\"'])/i;
 function cmdContext(text) {
   return process.platform === 'win32' || CMD_CONTEXT_RE.test(text);
@@ -2656,9 +2656,15 @@ function dropCmdCarets(text) {
 }
 // Every cmd variable unit, with or without a modifier, taken out whole: its value is not known here (an undefined one is empty in a batch file).
 // A cmd variable name is anything up to the next % or ! or colon: ProgramFiles(x86), =ExitCode, A.B and A-B are names too.
+// Two readings, both judged: a name without spaces or cmd operators (the usual one: it cannot reach into the next command, so
+// `echo a! & type .e!X!nv` is read per command), and a name that may hold spaces (`%A B%`), which can pair a % or ! with one of a later command.
 const CMD_VAR_UNIT_RE = /%[^%!:\r\n]+(?::[^%!\r\n]*)?%|![^%!:\r\n]+(?::[^%!\r\n]*)?!/g;
+const CMD_VAR_UNIT_NARROW_RE = /%[^%!:\s&|<>^"]+(?::[^%!\s&|<>"]*)?%|![^%!:\s&|<>^"]+(?::[^%!\s&|<>"]*)?!/g;
 function stripCmdVars(text) {
   return text.replace(CMD_VAR_UNIT_RE, '');
+}
+function stripCmdVarsNarrow(text) {
+  return text.replace(CMD_VAR_UNIT_NARROW_RE, '');
 }
 const UNIT_DEPTH = 64;
 /**
@@ -2712,6 +2718,17 @@ function unitEnd(text, from, closer, depth) {
       const e = unitEnd(text, j + 2, text[j + 1] === '{' ? '}' : ')', depth + 1);
       if (e < 0) return -1;
       j = e;
+      continue;
+    }
+    if (closer === ')' && ch === 'c' && text.startsWith('case', j) && (j === from || /[\s;&|(]/.test(text[j - 1])) && /\s/.test(text[j + 4] || '')) {
+      // a case pattern ends in a bare ): skip the whole case ... esac (nested ones counted)
+      const words = /\b(case|esac)\b/g;
+      words.lastIndex = j + 4;
+      let open = 1;
+      let m;
+      while (open > 0 && (m = words.exec(text)) !== null) open += m[1] === 'case' ? 1 : -1;
+      if (open > 0) return -1;
+      j = words.lastIndex;
       continue;
     }
     if (ch === '(' && closer === ')') {
@@ -2772,8 +2789,8 @@ function stripExpansions(text, useDefaults) {
 // negative one needs a space or parentheses, which this does not read), $@, $* and an empty command substitution.
 const EMPTY_EXPANSION_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*|[@*])(?:(:?[-+])([^}$`"'\\]*)|:([0-9]+)(?::([0-9]+))?)?\}|\$[@*]|\$\(\s*(?:true|:)?\s*\)|`\s*(?:true|:)?\s*`/g;
 // cmd.exe: %NAME:~off,len% and %NAME:old=new% (and the !NAME...! forms of delayed expansion) give a piece of the value or a replaced one.
-const CMD_SLICE_RE = /%([^%!:\r\n]+):~([0-9]+)(?:,([0-9]+))?%|!([^%!:\r\n]+):~([0-9]+)(?:,([0-9]+))?!/g;
-const CMD_REPLACE_RE = /%([^%!:\r\n]+):([^%!=~*\r\n][^%!=\r\n]*)=([^%!\r\n]*)%|!([^%!:\r\n]+):([^%!=~*\r\n][^%!=\r\n]*)=([^%!\r\n]*)!/g;
+const CMD_SLICE_RE = /%([^%!:\s&|<>^"]+):~([0-9]+)(?:,([0-9]+))?%|!([^%!:\s&|<>^"]+):~([0-9]+)(?:,([0-9]+))?!/g;
+const CMD_REPLACE_RE = /%([^%!:\s&|<>^"]+):([^%!=~*\r\n][^%!=\r\n]*)=([^%!\r\n]*)%|!([^%!:\s&|<>^"]+):([^%!=~*\r\n][^%!=\r\n]*)=([^%!\r\n]*)!/g;
 function dropCmdExpansions(text, env) {
   const val = (name) => {
     const k = Object.keys(env).find((e) => e.toUpperCase() === name.toUpperCase());   // cmd variable names ignore case

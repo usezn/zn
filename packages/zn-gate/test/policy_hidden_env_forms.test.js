@@ -284,3 +284,37 @@ test('cmd with delayed expansion removes an ! that has no partner', () => {
   }
   asPlatform('linux', () => assert.equal(policy.bashDenial('cmd /c type .e!nv', opts), null, 'no /v:on: the ! stays'));
 });
+
+// --- review of #849, third round: a unit does not span commands; case patterns inside $( ); glued /v switches ---
+
+test('a cmd variable unit does not reach into the next command', () => {
+  const { opts } = project();
+  for (const plat of ['linux', 'win32']) {
+    asPlatform(plat, () => {
+      for (const c of ['cmd /v:on /c "echo a! & type .e!X!nv"', 'cmd /v:on /c "echo a!&type .e!X!nv"', 'cmd /c echo 5% & type .e%NOPE%nv', 'cmd /c "echo 5%&type .e%NOPE%nv"']) {
+        assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + c);
+      }
+      for (const c of ['echo 100% done & type notes.txt', 'echo 50% & echo 60% & type .env.example', 'cmd /v:on /c echo hello! & type notes.txt', 'cmd /v:on /c "type .env.example & echo done!"',
+        'set PATH=%PATH%;C:\\tools & type notes.txt', 'echo %ProgramFiles(x86)%', 'dir "%ProgramFiles(x86)%"']) {
+        assert.equal(policy.bashDenial(c, opts), null, plat + ' ' + c);
+      }
+    });
+  }
+  asPlatform('win32', () => assert.match(policy.bashDenial('type .e%A B%nv', opts) || '', DENIED, 'a name with a space is still read'));
+});
+
+test('a case pattern inside a command substitution does not end it early', () => {
+  const { opts } = project();
+  for (const c of ['cat .en$(case x in x) ;; esac)v', 'cat .en$(case x in x) : ;; esac)v', 'cat .en$(case x in a) :;; b) :;; esac)v', 'cat .en$(case x in x) case y in y) :;; esac;; esac)v',
+    'cat .e${U:-$(case x in x) ;; esac)}nv']) {
+    for (const plat of ['linux', 'win32']) asPlatform(plat, () => assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + c));
+  }
+  assert.doesNotThrow(() => policy.bashDenial('cat .en$(case x in x) ;; ', opts));
+  assert.equal(policy.bashDenial('cat notes.txt$(case x in x) ;; esac)', opts), null);
+  assert.equal(policy.bashDenial('echo $(showcase x)', opts), null);
+});
+
+test('delayed expansion is seen also with glued switches', () => {
+  const { opts } = project();
+  for (const c of ['cmd /q/v:on /c type .e!nv', 'cmd /v:on/c type .e!nv']) assert.match(policy.bashDenial(c, opts) || '', DENIED, c);
+});
