@@ -349,7 +349,7 @@ for (const f of walk('plugins').filter((x) => x.endsWith('.md'))) {
 // pin the same zn-gate release, from the registry, with no inBundle entries.
 const npmPkgFile = PLUGIN + '/package.json';
 function npmrcTurnsScriptsOff(text) {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#') && !l.startsWith(';'));
+  const lines = text.split(/[\r\n]+/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#') && !l.startsWith(';'));
   return lines.length === 1 && /^ignore-scripts\s*=\s*true$/.test(lines[0]);
 }
 const npmLockFile = PLUGIN + '/package-lock.json';

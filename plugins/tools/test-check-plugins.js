@@ -99,7 +99,7 @@ try {
     assert.ok(npmrcCase('ignore-scripts=true\n').ok, '.npmrc: LF passes');
     assert.ok(npmrcCase('ignore-scripts=true\r\n').ok, '.npmrc: CRLF passes');
     assert.ok(npmrcCase('# no scripts\r\nignore-scripts = true\r\n\r\n').ok, '.npmrc: a comment, spaces and blank lines pass');
-    for (const [label, text] of [['missing', null], ['empty', ''], ['false', 'ignore-scripts=false\n'], ['turned back on', 'ignore-scripts=true\nignore-scripts=false\n'], ['another key', 'ignore-scripts=true\nregistry=https://example.invalid/\n']]) {
+    for (const [label, text] of [['missing', null], ['empty', ''], ['false', 'ignore-scripts=false\n'], ['turned back on', 'ignore-scripts=true\nignore-scripts=false\n'], ['bare CR turns it back on', 'ignore-scripts=true\n#c\rignore-scripts=false\n'], ['another key', 'ignore-scripts=true\nregistry=https://example.invalid/\n']]) {
       const r = npmrcCase(text);
       assert.ok(!r.ok && /does not turn install scripts off|has an install script/.test(r.out), '.npmrc ' + label + ' fails: ' + r.out);
     }
