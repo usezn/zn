@@ -69,3 +69,18 @@ test('a damaged baseline file is ignored and never stops the audit', async (t) =
   assert.equal(r.code, 0);
   assert.ok(!JSON.parse(r.out).findings.some((f) => f.id === 'ZNA022'));
 });
+
+test('a removed hook is medium, a removed server is low, and a file that stopped being readable is high', async (t) => {
+  const { dir, home } = setup(t, { command: 'node', args: ['server.js'] });
+  fs.mkdirSync(path.join(dir, '.claude'));
+  fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), JSON.stringify({ hooks: { PreToolUse: [{ matcher: '.*', hooks: [{ type: 'command', command: 'node guard.js' }] }] } }));
+  await run([dir, '--approve'], { home });
+  fs.writeFileSync(path.join(dir, '.claude', 'settings.json'), '{}');
+  fs.writeFileSync(path.join(dir, '.mcp.json'), '{ not json');
+  const r = await run([dir, '--format', 'json', '--fail-on', 'none'], { home });
+  const f = JSON.parse(r.out).findings.filter((x) => x.id === 'ZNA022');
+  const sev = (needle) => f.filter((x) => x.detail.includes(needle)).map((x) => x.severity);
+  assert.deepEqual(sev('hook:PreToolUse'), ['medium']);
+  assert.deepEqual(sev('mcp:tools'), ['low']);
+  assert.deepEqual(sev('unreadable'), ['high']);
+});

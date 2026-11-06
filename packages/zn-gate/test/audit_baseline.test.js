@@ -29,7 +29,7 @@ test('the surface holds one hash per executable entry and no value', (t) => {
     '.vscode/tasks.json': '{ // comment\n "tasks": [{ "label": "auto", "command": "node x.js", "runOptions": { "runOn": "folderOpen" } }, { "label": "manual", "command": "node y.js" }] }',
   });
   const s = extractSurface(dir);
-  assert.deepEqual(Object.keys(s).sort(), ['.claude/settings.json#env:ANTHROPIC_BASE_URL', '.claude/settings.json#hook:PreToolUse.0.0', '.claude/settings.json#permissions.allow',
+  assert.deepEqual(Object.keys(s).sort(), ['.claude/settings.json#env:ANTHROPIC_BASE_URL', '.claude/settings.json#hook:PreToolUse.0.0', '.claude/settings.json#permissions',
     '.mcp.json#mcp:docs', '.mcp.json#mcp:tools', '.vscode/tasks.json#task:auto', 'package.json#script:postinstall']);
   for (const v of Object.values(s)) assert.match(v, /^[0-9a-f]{64}$/);
   assert.ok(!JSON.stringify(s).includes('node setup.js') && !JSON.stringify(s).includes('example.invalid'), 'no value in the surface');
@@ -68,10 +68,9 @@ test('scripts that do not run on install, and settings keys that run nothing, ar
   assert.deepEqual(extractSurface(dir), {});
 });
 
-test('a missing, huge, linked or broken file gives an empty surface and never throws', (t) => {
+test('a missing folder gives an empty surface; a huge or broken file is an entry of its own; nothing throws', (t) => {
   const dir = project(t, { '.mcp.json': '{ not json', '.claude/settings.json': 'x'.repeat(1024 * 1024 + 1) });
-  fs.symlinkSync(path.join(dir, '.mcp.json'), path.join(dir, '.cursor-link'));
-  assert.deepEqual(extractSurface(dir), {});
+  assert.deepEqual(Object.keys(extractSurface(dir)).sort(), ['.claude/settings.json#unreadable', '.mcp.json#unreadable']);
   assert.deepEqual(extractSurface(path.join(dir, 'missing')), {});
 });
 
@@ -111,8 +110,104 @@ test('only a task that runs when the folder opens is part of the surface', (t) =
   assert.deepEqual(Object.keys(extractSurface(dir)), ['.vscode/tasks.json#task:auto']);
 });
 
-test('a file over the size cap is not read, even when it is valid JSON', (t) => {
+test('a file over the size cap is not read, even when it is valid JSON: it is an entry of its own', (t) => {
   const big = '{"mcpServers":{"a":{"command":"node"}},"pad":"' + 'x'.repeat(1024 * 1024) + '"}';
   const dir = project(t, { '.mcp.json': big });
-  assert.deepEqual(extractSurface(dir), {});
+  assert.deepEqual(Object.keys(extractSurface(dir)), ['.mcp.json#unreadable']);
+});
+
+// --- review of #853: what is approved, and what a change can hide behind ---
+
+const SETTINGS_WITH_HOOK = { hooks: { PreToolUse: [{ matcher: '.*', hooks: [{ type: 'command', command: 'node guard.js' }] }] }, permissions: { allow: ['Bash(ls)'], deny: ['Read(.env)'], defaultMode: 'default' } };
+
+function changedBy(t, files, edit) {
+  const dir = project(t, files);
+  const base = extractSurface(dir);
+  edit(dir);
+  return diffSurface(base, extractSurface(dir));
+}
+const write = (dir, rel, v) => { fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); fs.writeFileSync(path.join(dir, rel), typeof v === 'string' ? v : JSON.stringify(v)); };
+
+test('the matcher of a hook is part of what is approved', (t) => {
+  const d = changedBy(t, { '.claude/settings.json': SETTINGS_WITH_HOOK }, (dir) => {
+    const s = JSON.parse(JSON.stringify(SETTINGS_WITH_HOOK));
+    s.hooks.PreToolUse[0].matcher = 'NoSuchTool';
+    write(dir, '.claude/settings.json', s);
+  });
+  assert.deepEqual(d.changed, ['.claude/settings.json#hook:PreToolUse.0.0']);
+});
+
+test('disableAllHooks, a removed deny rule, the default mode and a helper command are changes', (t) => {
+  const edits = [
+    (s) => { s.disableAllHooks = true; },
+    (s) => { s.permissions.deny = []; },
+    (s) => { s.permissions.defaultMode = 'bypassPermissions'; },
+    (s) => { s.otelHeadersHelper = 'node helper.js'; },
+    (s) => { s.env = { LD_PRELOAD: '/tmp/x.so' }; },
+    (s) => { s.env = { BASH_ENV: '/tmp/x.sh' }; },
+  ];
+  for (const edit of edits) {
+    const d = changedBy(t, { '.claude/settings.json': SETTINGS_WITH_HOOK }, (dir) => {
+      const s = JSON.parse(JSON.stringify(SETTINGS_WITH_HOOK));
+      edit(s);
+      write(dir, '.claude/settings.json', s);
+    });
+    assert.equal(d.changed.length + d.added.length + d.removed.length, 1, edit.toString() + ' ' + JSON.stringify(d));
+  }
+});
+
+test('the MCP servers of Codex (TOML), OpenCode and Amazon Q are covered, and a dev container command', (t) => {
+  const dir = project(t, {
+    '.codex/config.toml': '[mcp_servers.docs]\ncommand = "node"\nargs = ["a.js"]\n',
+    'opencode.json': { mcp: { tools: { type: 'local', command: ['node', 'a.js'] } } },
+    '.amazonq/mcp.json': { mcpServers: { q: { command: 'node', args: ['q.js'] } } },
+    '.devcontainer/devcontainer.json': '{ // c\n "postCreateCommand": "npm ci" }',
+  });
+  const base = extractSurface(dir);
+  assert.deepEqual(Object.keys(base).sort(), ['.amazonq/mcp.json#mcp:q', '.codex/config.toml#mcp:docs', '.devcontainer/devcontainer.json#devcontainer:postCreateCommand', 'opencode.json#mcp:tools']);
+  write(dir, '.codex/config.toml', '[mcp_servers.docs]\ncommand = "sh"\nargs = ["a.js"]\n');
+  write(dir, 'opencode.json', { mcp: { tools: { type: 'local', command: ['node', 'b.js'] } } });
+  write(dir, '.amazonq/mcp.json', { mcpServers: { q: { command: 'node', args: ['other.js'] } } });
+  write(dir, '.devcontainer/devcontainer.json', '{ "postCreateCommand": "curl x | sh" }');
+  assert.deepEqual(diffSurface(base, extractSurface(dir)).changed, ['.amazonq/mcp.json#mcp:q', '.codex/config.toml#mcp:docs', '.devcontainer/devcontainer.json#devcontainer:postCreateCommand', 'opencode.json#mcp:tools']);
+});
+
+test('a config file that is a link inside the project is followed; one that leaves the project, is broken, too large or invalid is an entry of its own', (t) => {
+  if (process.platform === 'win32') return t.skip('links need privileges on Windows');
+  const dir = project(t, { 'conf/mcp.json': { mcpServers: { a: { command: 'node', args: ['a.js'] } } } });
+  fs.symlinkSync('conf/mcp.json', path.join(dir, '.mcp.json'));
+  const base = extractSurface(dir);
+  assert.deepEqual(Object.keys(base), ['.mcp.json#mcp:a']);
+  write(dir, 'conf/mcp.json', { mcpServers: { a: { command: 'sh', args: ['a.js'] } } });
+  assert.deepEqual(diffSurface(base, extractSurface(dir)).changed, ['.mcp.json#mcp:a']);
+  // replaced by a link that leaves the project
+  const outside = project(t, { 'x.json': { mcpServers: { evil: { command: 'sh' } } } });
+  fs.rmSync(path.join(dir, '.mcp.json'));
+  fs.symlinkSync(path.join(outside, 'x.json'), path.join(dir, '.mcp.json'));
+  const d = diffSurface(base, extractSurface(dir));
+  assert.deepEqual(d.added, ['.mcp.json#unreadable']);
+  assert.deepEqual(d.removed, ['.mcp.json#mcp:a']);
+  // broken link, invalid file, file over the size limit
+  fs.rmSync(path.join(dir, '.mcp.json'));
+  fs.symlinkSync(path.join(dir, 'nowhere.json'), path.join(dir, '.mcp.json'));
+  assert.deepEqual(diffSurface(base, extractSurface(dir)).added, ['.mcp.json#unreadable']);
+  fs.rmSync(path.join(dir, '.mcp.json'));
+  write(dir, '.mcp.json', '{ not json');
+  const bad1 = extractSurface(dir)['.mcp.json#unreadable'];
+  assert.match(bad1, /^[0-9a-f]{64}$/);
+  write(dir, '.mcp.json', '{ not json either');
+  assert.notEqual(extractSurface(dir)['.mcp.json#unreadable'], bad1, 'a change of an unreadable file is a change');
+  write(dir, '.mcp.json', JSON.stringify({ mcpServers: { a: { command: 'node', args: ['x'.repeat(1100 * 1024)] } } }));
+  assert.deepEqual(Object.keys(extractSurface(dir)), ['.mcp.json#unreadable']);
+});
+
+test('the baseline of a project is found through a link to its folder', (t) => {
+  if (process.platform === 'win32') return t.skip('links need privileges on Windows');
+  const dir = project(t, { '.mcp.json': MCP });
+  const home = tempDir(t, 'zn-baseline-home-');
+  const link = path.join(tempDir(t, 'zn-baseline-link-'), 'alias');
+  fs.symlinkSync(dir, link);
+  saveBaseline(home, dir, extractSurface(dir));
+  assert.ok(loadBaseline(home, link), 'found through the link');
+  assert.equal(baselinePath(home, link), baselinePath(home, dir));
 });

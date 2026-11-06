@@ -1920,7 +1920,8 @@ function baselineFindings(root, home, out) {
   };
   for (const k of d.changed) add(k, 'high', 'changed');
   for (const k of d.added) add(k, 'high', 'added');
-  for (const k of d.removed) add(k, 'low', 'removed');
+  // A removed hook, permission or setting weakens the project; a removed server, script or task only takes something away.
+  for (const k of d.removed) add(k, /#(?:hook:|permissions|setting:)/.test(k) ? 'medium' : 'low', 'removed');
 }
 
 function normalizeAgents(list) {
