@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-06.5';
+const POLICY_RULES_VERSION = '2026-11-06.6';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2426,7 +2426,9 @@ function bashDenialOf(cmd, opts = {}) {
     const add = (t) => { variants.add(t); };
     add(dropEmptyExpansions(text, opts.env || process.env));
     if (/[$`]/.test(text)) { add(stripExpansions(text, false)); add(stripExpansions(text, true)); }
-    if (/[%!]/.test(text) && cmdContext(text)) for (const v of [...variants]) { add(stripCmdVars(v)); add(stripCmdVarsNarrow(v)); }
+    // A case pattern inside $( ) can end the unit early in the reading above: a fallback reading takes each $( to the last ) of its line.
+    if (/\$\([^\n]*\bcase\b/.test(text)) add(text.replace(/\$\([^\n]*\)/g, ''));
+    if (/[%!]/.test(text) && cmdContext(text)) for (const v of [...variants]) { add(stripCmdVarsPerCommand(v)); add(stripCmdVarsNarrow(v)); }
     // With delayed expansion on, cmd removes a ! that has no partner (type .e!nv opens .env), so a reading without any ! is judged too.
     const delayed = text.indexOf('!') >= 0 && DELAYED_EXPANSION_RE.test(text) && cmdContext(text);
     if (delayed) for (const v of [...variants]) add(v.replace(/!/g, ''));
@@ -2663,10 +2665,48 @@ const CMD_VAR_UNIT_NARROW_RE = /%[^%!:\s&|<>^"]+(?::[^%!\s&|<>"]*)?%|![^%!:\s&|<
 function stripCmdVars(text) {
   return text.replace(CMD_VAR_UNIT_RE, '');
 }
+// cmd expands a variable inside one command: the wide reading (a name may hold a space or a ^) is applied to each command on its own,
+// split at & and | and at line breaks, so `echo a! & type .e!X Y!nv` reads `!X Y!` as one unit and not `! & type .e!`.
+function stripCmdVarsPerCommand(text) {
+  return text.split(/([&|\r\n]+)/).map((seg, i) => (i % 2 ? seg : stripCmdVars(seg))).join('');
+}
 function stripCmdVarsNarrow(text) {
   return text.replace(CMD_VAR_UNIT_NARROW_RE, '');
 }
 const UNIT_DEPTH = 64;
+/** The index after the esac that closes a case whose body starts at `from` (nested case counted), or -1. Quotes, comments and escapes hide words. */
+function caseEnd(text, from) {
+  let open = 1;
+  let i = from;
+  const n = text.length;
+  while (i < n) {
+    const c = text[i];
+    if (c === '\\') { i += 2; continue; }
+    if (c === "'" || c === '"') {
+      let k = i + 1;
+      while (k < n && text[k] !== c) k += c === '"' && text[k] === '\\' ? 2 : 1;
+      i = k + 1;
+      continue;
+    }
+    if (c === '#' && (i === from || /\s/.test(text[i - 1]))) {
+      const k = text.indexOf('\n', i);
+      if (k < 0) return -1;
+      i = k + 1;
+      continue;
+    }
+    if (/[A-Za-z_]/.test(c) && (i === 0 || !/[A-Za-z0-9_]/.test(text[i - 1]))) {
+      let k = i;
+      while (k < n && /[A-Za-z0-9_]/.test(text[k])) k++;
+      const word = text.slice(i, k);
+      if (word === 'case') open++;
+      else if (word === 'esac' && --open === 0) return k;
+      i = k;
+      continue;
+    }
+    i++;
+  }
+  return -1;
+}
 /**
  * The index after the bracket that closes a ${...} or $(...) whose content starts at `from`, or -1 when there is none (or it is nested
  * over UNIT_DEPTH levels). Bash honours quotes while it looks for the bracket: a `)` or `}` inside '...', "..." or after a backslash does
@@ -2721,14 +2761,10 @@ function unitEnd(text, from, closer, depth) {
       continue;
     }
     if (closer === ')' && ch === 'c' && text.startsWith('case', j) && (j === from || /[\s;&|(]/.test(text[j - 1])) && /\s/.test(text[j + 4] || '')) {
-      // a case pattern ends in a bare ): skip the whole case ... esac (nested ones counted)
-      const words = /\b(case|esac)\b/g;
-      words.lastIndex = j + 4;
-      let open = 1;
-      let m;
-      while (open > 0 && (m = words.exec(text)) !== null) open += m[1] === 'case' ? 1 : -1;
-      if (open > 0) return -1;
-      j = words.lastIndex;
+      // a case pattern ends in a bare ): skip the whole case ... esac (nested ones counted; quoted words are not keywords)
+      const e = caseEnd(text, j + 4);
+      if (e < 0) return -1;
+      j = e;
       continue;
     }
     if (ch === '(' && closer === ')') {

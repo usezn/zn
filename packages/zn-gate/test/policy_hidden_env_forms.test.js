@@ -318,3 +318,28 @@ test('delayed expansion is seen also with glued switches', () => {
   const { opts } = project();
   for (const c of ['cmd /q/v:on /c type .e!nv', 'cmd /v:on/c type .e!nv']) assert.match(policy.bashDenial(c, opts) || '', DENIED, c);
 });
+
+// --- review of #849, fourth round: names with spaces or ^ per command; case/esac with quoted words ---
+
+test('a wide cmd variable name is read command by command', () => {
+  const { opts } = project();
+  for (const plat of ['linux', 'win32']) {
+    asPlatform(plat, () => {
+      for (const c of ['cmd /v:on /c "echo a! & type .e!X Y!nv"', 'cmd /v:on /c "echo a!|type .e!X Y!nv"', 'cmd /c "echo 5% & type .e%A B%nv"', 'cmd /c echo 5% & type .e%A^B%nv',
+        'cmd /c "echo 5%&type .e%A B%nv"']) {
+        assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + c);
+      }
+      for (const c of ['echo 100% done & type notes.txt', 'cmd /v:on /c "echo a! & type notes.txt"', 'cmd /c echo 5% & type .env.example & echo 6%']) assert.equal(policy.bashDenial(c, opts), null, plat + ' ' + c);
+    });
+  }
+});
+
+test('case and esac inside a command substitution: quoted words and comments are not keywords', () => {
+  const { opts } = project();
+  for (const c of ['cat .en$(case x in x) : "esac" ;; y) ;; esac)v', "cat .en$(case x in x) : 'esac' ;; y) ;; esac)v", 'cat .en$(case x in x) : \\esac ;; y) ;; esac)v',
+    'cat .en$(case x in x) : ;; esac; case y in y) ;; esac)v', 'cat .en$(case x in a|b) : ;; (c) : ;; esac)v']) {
+    for (const plat of ['linux', 'win32']) asPlatform(plat, () => assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + c));
+  }
+  assert.doesNotThrow(() => policy.bashDenial('cat .en$(case x in x) "esac ' + 'case '.repeat(5000), opts));
+  assert.equal(policy.bashDenial('cat notes.txt$(case x in x) "esac" ;; esac)', opts), null);
+});
