@@ -1195,6 +1195,31 @@ function startMcpShield(command, args, options = {}) {
           if (result && result.first && !flagged.size && !invalid) {
             process.stderr.write(`[zn-shield] Pinned the tools of a new MCP server (${key}): ${pins.label(command, args)}\n`);
           }
+          if (result) {
+            try {
+              const sh = pins.shadows(command, args, tools);
+              const names = (a) => a.slice(0, 10).map((x) => pins.displayName(x.tool)).join(', ');
+              if (sh.collisions.length) {
+                process.stderr.write(`[zn-shield TOOL SHADOWING] ${names(sh.collisions)}: ${sh.collisions.length === 1 ? 'has' : 'have'} the same name as an approved tool of another MCP server. ` +
+                  'The agent may call the wrong one. Check that both servers are yours.\n');
+              }
+              if (sh.mentions.length) {
+                process.stderr.write(`[zn-shield TOOL SHADOWING] ${names(sh.mentions)}: the text of ${sh.mentions.length === 1 ? 'this tool' : 'these tools'} names a tool of another MCP server. Review what it tells the model to do with it.\n`);
+              }
+              if (sh.collisions.length || sh.mentions.length) {
+                logEvidence({
+                  agent: options.agent || 'mcp-server',
+                  phase: 'tool-pin',
+                  tool_name: key,
+                  payload: names(sh.collisions.concat(sh.mentions)),
+                  verdict: 'allow',
+                  rule: 'mcp_tool_shadowing',
+                  reason: 'Tool name or text overlaps with a tool of another MCP server',
+                  engine: 'oss-deterministic',
+                });
+              }
+            } catch (_) { /* the shadowing check never stops the shield */ }
+          }
           // The approved state of the tools of this page, for later calls.
           for (const t of tools) if (t && typeof t.name === 'string') (flagged.has(t.name) ? unpinnedTools.add(t.name) : unpinnedTools.delete(t.name));
           if (flagged.size || invalid) {

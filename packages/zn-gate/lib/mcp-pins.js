@@ -103,6 +103,28 @@ function toolHash(tool) {
   return crypto.createHash('sha256').update(canonical(tool)).digest('hex');
 }
 
+/**
+ * Hashes of the parts of a tool, so a change can be named: its text (name, title, description), its parameters
+ * (inputSchema and outputSchema) and everything else (annotations, _meta, new protocol fields). Stored next to the whole-tool
+ * hash, which stays what decides whether a tool changed.
+ */
+const PART_NAMES = { t: 'description', p: 'parameters', o: 'other fields' };
+function partHashes(tool) {
+  const rest = Object.assign({}, tool);
+  const text = { name: rest.name, title: rest.title, description: rest.description };
+  const params = { inputSchema: rest.inputSchema, outputSchema: rest.outputSchema };
+  for (const k of ['name', 'title', 'description', 'inputSchema', 'outputSchema']) delete rest[k];
+  const h = (v) => crypto.createHash('sha256').update(canonical(v)).digest('hex').slice(0, 16);
+  return { t: h(text), p: h(params), o: h(rest) };
+}
+
+/** Which parts differ between the approved parts and the current ones; ['whole tool'] when no parts were recorded. */
+function changedParts(before, now) {
+  if (!before || typeof before !== 'object') return ['whole tool'];
+  const out = Object.keys(PART_NAMES).filter((k) => before[k] !== now[k]).map((k) => PART_NAMES[k]);
+  return out.length ? out : ['whole tool'];
+}
+
 /** A server name for messages: no control or format characters, bounded length. */
 function displayName(name) {
   const s = String(name).replace(/[\p{C}]/gu, '?');
@@ -204,6 +226,7 @@ function check(command, args, tools, session = {}) {
   const flagged = new Set();
   let invalid = 0;
   const current = dict();
+  const currentParts = dict();
   const counts = dict();
   for (const t of tools) {
     if (!t || typeof t !== 'object' || typeof t.name !== 'string' || !t.name) {
@@ -212,11 +235,13 @@ function check(command, args, tools, session = {}) {
     }
     counts[t.name] = (counts[t.name] || 0) + 1;
     current[t.name] = toolHash(t);
+    currentParts[t.name] = partHashes(t);
   }
   for (const [name, n] of Object.entries(counts)) {
     if (n > 1) {
       flagged.add(name);
       delete current[name];
+      delete currentParts[name];
     }
   }
   let s = loadServer(key);
@@ -229,6 +254,7 @@ function check(command, args, tools, session = {}) {
   if (!s || session.first) {
     const base = s || { command: label(command, args), pinnedAt: now, firstPinnedAt: now, tools: dict(), pending: dict() };
     Object.assign(base.tools, current);
+    base.parts = Object.assign(dict(base.parts), currentParts);
     saveServer(key, base);
     if (!s) session.first = true;
     return { first: true, flagged, invalid };
@@ -241,7 +267,8 @@ function check(command, args, tools, session = {}) {
     }
     flagged.add(name);
     if (!s.pending[name] || s.pending[name].hash !== hash) {
-      s.pending[name] = { hash, seenAt: now };
+      const known = Object.prototype.hasOwnProperty.call(s.tools, name);
+      s.pending[name] = { hash, seenAt: now, parts: currentParts[name], changed: known ? changedParts(s.parts && s.parts[name], currentParts[name]) : ['new tool'] };
       dirty = true;
     }
   }
@@ -256,6 +283,42 @@ function approvedTools(command, args) {
   const ok = dict();
   for (const name of Object.keys(s.tools)) if (!s.pending[name]) ok[name] = true;
   return ok;
+}
+
+const MENTION_MIN = 6; // a tool name this short is an ordinary word too often to mean anything in a description
+
+/**
+ * Tool shadowing across servers: the other pinned servers' approved tools against this list.
+ *   collisions: tools that carry the name of an approved tool of another server (a later server can take over calls
+ *               meant for the first)
+ *   mentions:   tools whose text names an approved tool of another server (a description that steers how that
+ *               other tool is used)
+ * Warn-only: the same name on two servers can be legitimate. Only names, never text, are returned.
+ */
+function shadows(command, args, tools) {
+  const own = serverKey(command, args);
+  const others = dict();
+  for (const k of servers()) {
+    if (k === own) continue;
+    let s;
+    try { s = loadServer(k); } catch (_) { continue; }
+    if (!s || s.corrupt) continue;
+    for (const n of Object.keys(s.tools)) if (!s.pending[n]) (others[n] = others[n] || []).push(s.command);
+  }
+  const collisions = [];
+  const mentions = [];
+  const names = Object.keys(others);
+  for (const t of tools) {
+    if (!t || typeof t !== 'object' || typeof t.name !== 'string') continue;
+    if (others[t.name]) collisions.push({ tool: t.name, servers: others[t.name].slice(0, 5) });
+    const text = [t.description, t.title, canonical(t.inputSchema)].filter((x) => typeof x === 'string').join('\n');
+    for (const n of names) {
+      if (n === t.name || n.length < MENTION_MIN || !text.includes(n)) continue;
+      const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp('(^|[^A-Za-z0-9_])' + esc + '($|[^A-Za-z0-9_])').test(text)) mentions.push({ tool: t.name, mentions: n, servers: others[n].slice(0, 5) });
+    }
+  }
+  return { collisions, mentions };
 }
 
 function servers() {
@@ -276,7 +339,11 @@ function approve(which) {
     if (!s || s.corrupt) continue;
     const names = Object.keys(s.pending);
     if (!names.length) continue;
-    for (const n of names) s.tools[n] = s.pending[n].hash;
+    s.parts = dict(s.parts);
+    for (const n of names) {
+      s.tools[n] = s.pending[n].hash;
+      if (s.pending[n].parts && typeof s.pending[n].parts === 'object') s.parts[n] = s.pending[n].parts;
+    }
     s.pending = {};
     s.pinnedAt = new Date().toISOString();
     saveServer(k, s);
@@ -289,8 +356,8 @@ function list() {
   return servers().map((key) => {
     const s = loadServer(key);
     if (!s || s.corrupt) return { key, command: '(unreadable pins file)', pinnedAt: null, tools: 0, pending: [] };
-    return { key, command: s.command, pinnedAt: s.pinnedAt, firstPinnedAt: s.firstPinnedAt || null, tools: Object.keys(s.tools).length, pending: Object.keys(s.pending).map(displayName) };
+    return { key, command: s.command, pinnedAt: s.pinnedAt, firstPinnedAt: s.firstPinnedAt || null, tools: Object.keys(s.tools).length, pending: Object.keys(s.pending).map(displayName), changes: Object.keys(s.pending).slice(0, 20).map((n) => ({ tool: displayName(n), what: Array.isArray(s.pending[n].changed) ? s.pending[n].changed.filter((x) => typeof x === 'string').map(displayName).join(' and ') : 'changed' })) };
   });
 }
 
-module.exports = { mode, check, approve, approvedTools, list, toolHash, serverKey, label, displayName, pinsDir, pinsMoved, canonical };
+module.exports = { mode, check, shadows, partHashes, approve, approvedTools, list, toolHash, serverKey, label, displayName, pinsDir, pinsMoved, canonical };
