@@ -1,6 +1,9 @@
 'use strict';
-// Bash also reads the account rc file when it is not interactive, and that file may set PATH: skip it so the guard cases are hermetic.
+// Bash reads the account ~/.bashrc when its stdin is a socket (Node's piped stdio is one) and SHLVL is unset,
+// which is how bash treats a shell started by a remote daemon such as sshd. That file may set PATH, so skip it
+// with --norc --noprofile to keep the guard cases hermetic.
 process.env.ZN_STATS = 'off';
+// Only bash needs the flags; dash and sh are spawned exactly as before.
 const shellArgs = (sh) => (/(^|\/)bash$/.test(sh) ? ['--norc', '--noprofile'] : []);
 
 // Project installs (`zn hooks install <agent> --project`) share the hooks file through the repository, so the command names `zn`
