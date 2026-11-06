@@ -3,7 +3,8 @@
 /**
  * zn run [--secrets A,B] -- <command> [args...]
  *
- * Env mode of the secrets broker (the MVP has no egress proxy):
+ * Env mode of the secrets broker. --egress-allow HOST[:PORT],... adds an
+ * opt-in egress allowlist: a local proxy the child is pointed at (egress.js):
  *   - --secrets NAME sets env NAME=value in the child, and named markers
  *     (__ZN_<NAME>__) in the environment zn run inherits are replaced by the
  *     real values. Nothing else is changed: values only ever exist inside the
@@ -43,7 +44,9 @@ const { znError, loadVault, findProjectRoot } = require('../deps');
 const { humanError } = require('../errors');
 const { znCommand } = require('../zn-command');
 
-const USAGE = 'usage: zn run [--secrets NAME[,NAME...]] [--agent ID] -- <command> [args...]';
+const { parseAllowList, startEgressProxy, egressEnv } = require('./egress');
+
+const USAGE = 'usage: zn run [--secrets NAME[,NAME...]] [--agent ID] [--egress-allow HOST[:PORT],...] -- <command> [args...]';
 
 // Settings that make the approved program, or the interpreter it starts (an
 // npm CLI is a shim that runs node), load code or files of the caller's
@@ -61,6 +64,7 @@ function splitList(v) {
 function parseRunArgs(args) {
   const secrets = [];
   let agent = null;
+  const egress = [];
   let i = 0;
   let sawDashDash = false;
   for (; i < args.length; i++) {
@@ -72,6 +76,12 @@ function parseRunArgs(args) {
       secrets.push(...splitList(v));
     } else if (a.startsWith('--secrets=')) {
       secrets.push(...splitList(a.slice('--secrets='.length)));
+    } else if (a === '--egress-allow') {
+      const v = args[++i];
+      if (v === undefined) throw znError('ZN_USAGE', USAGE);
+      egress.push(v);
+    } else if (a.startsWith('--egress-allow=')) {
+      egress.push(a.slice('--egress-allow='.length));
     } else if (a === '--agent') {
       // Set by agent hooks (for the audit log); not a security control.
       agent = String(args[++i] || '');
@@ -88,6 +98,8 @@ function parseRunArgs(args) {
   }
   const out = { secrets: [...new Set(secrets)], command };
   if (agent) out.agent = agent;
+  // Opt-in: without --egress-allow no proxy is started and nothing is set.
+  if (egress.length) out.egressAllow = parseAllowList(egress);
   return out;
 }
 
@@ -453,10 +465,14 @@ function spawnChecked(prep, opts) {
  */
 async function runBroker(args, opts = {}) {
   const stderr = opts.stderr || process.stderr;
+  let egress = null;
   try {
     const parsed = parseRunArgs(args);
     assertNoArgvMarkers(parsed);
     const env = opts.env || process.env;
+    if (parsed.egressAllow) {
+      egress = await startEgressProxy(parsed.egressAllow, { log: (m) => stderr.write(m + '\n') });
+    }
     let vault = opts.vault;
     let prep;
     if (requiredSecrets(parsed).length > 0) {
@@ -474,6 +490,7 @@ async function runBroker(args, opts = {}) {
     } else {
       prep = { argv: parsed.command, env: { ...env }, secrets: [], resolved: null };
     }
+    if (egress) prep.env = egressEnv(prep.env, egress.url);
     return await spawnMasked(prep, { ...opts, originalArgs: parsed.command });
   } catch (err) {
     stderr.write('zn run: ' + humanError(err) + '\n');
@@ -481,6 +498,9 @@ async function runBroker(args, opts = {}) {
     if (err.code === 'ZN_POLICY_DENIED') return 77;
     if (err.code === 'ZN_NOT_FOUND') return 127;
     return 1;
+  } finally {
+    // The proxy lives only as long as the child: its port is closed here.
+    if (egress) await egress.close();
   }
 }
 

