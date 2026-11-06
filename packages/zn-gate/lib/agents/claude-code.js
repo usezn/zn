@@ -154,7 +154,7 @@ function unknownToolEvent(base, toolName, ti) {
   const { pathsOf, firstString, COMMAND_KEYS, patchTextOf, patchInput, nestedCommand } = require('./copilot');
   const patch = patchTextOf(toolName, ti);
   if (patch !== undefined) return { ...base, tool: 'write', toolName, input: patchInput(patch) };
-  const cmd = firstString(ti, COMMAND_KEYS) !== undefined ? firstString(ti, COMMAND_KEYS) : nestedCommand(ti);
+  const cmd = firstString(ti, COMMAND_KEYS) !== undefined ? firstString(ti, COMMAND_KEYS) : nestedCommand(ti, base.cwd);
   if (cmd === null) return { ...base, tool: 'bash', toolName, input: { texts: [] } };
   if (cmd !== undefined) return { ...base, tool: 'bash', toolName, input: { command: cmd, texts: [] } };
   const { paths, bad } = pathsOf(ti);
@@ -356,12 +356,9 @@ function assertMcpFile(opts = {}) {
   if (fs.existsSync(file)) objectField(readJson(file), 'mcpServers', file);
 }
 
+// The shared backup (config-file.js): keeps the newest few copies and records a file that install created.
 function backup(file) {
-  if (!fs.existsSync(file)) return null;
-  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '');
-  const dest = file + '.bak-zn-' + stamp;
-  fs.copyFileSync(file, dest);
-  return dest;
+  return cfg.backup(file);
 }
 
 function stripOurs(groups) {
@@ -520,25 +517,29 @@ function uninstall(opts = {}) {
   const file = settingsFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
   assertMcpFile(opts);
-  if (fs.existsSync(file)) {
-    const data = readJson(file);
+  // Takes zn's entries out of data in place; true when it removed any.
+  const removeOurs = (data) => {
     const hooks = hooksOf(data, file);
-    const before = JSON.stringify(hooks);
+    let changed = false;
     for (const event of Object.keys(hooks)) {
       const kept = stripOurs(hooks[event]);
+      if (JSON.stringify(kept) === JSON.stringify(hooks[event])) continue;
+      changed = true;
       if (kept.length) hooks[event] = kept; else delete hooks[event];
     }
-    if (Object.keys(hooks).length === 0) delete data.hooks;
-    if (JSON.stringify(hooks) !== before) {
-      report.backup = backup(file);
-      report.removed = 1;
-      writeFileAtomic(file, cfg.stringifyJson(data), 0o644);
-      // The launcher (see commandFor) is shared by every Claude Code profile of this machine (every CLAUDE_CONFIG_DIR),
-      // so uninstalling one profile leaves it in place: deleting it would make the other profiles' hooks exit 127,
-      // which Claude Code runs through as a non-blocking error. Only the machine-wide uninstall removes it.
-      if ((opts.scope || 'user') !== 'project' && opts.removeLauncher === true) {
-        try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
-      }
+    if (changed && Object.keys(hooks).length === 0) delete data.hooks;
+    return changed;
+  };
+  // A file install created is deleted; a file that existed comes back as it was (see cfg.uninstallJson).
+  const res = cfg.uninstallJson(file, removeOurs, readJson);
+  if (res.action !== 'unchanged') {
+    report.backup = res.backup;
+    report.removed = 1;
+    // The launcher (see commandFor) is shared by every Claude Code profile of this machine (every CLAUDE_CONFIG_DIR),
+    // so uninstalling one profile leaves it in place: deleting it would make the other profiles' hooks exit 127,
+    // which Claude Code runs through as a non-blocking error. Only the machine-wide uninstall removes it.
+    if ((opts.scope || 'user') !== 'project' && opts.removeLauncher === true) {
+      try { fs.unlinkSync(launcher.launcherFile(id, opts)); } catch (_) { /* none */ }
     }
   }
   if (opts.mcp !== false) {

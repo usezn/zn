@@ -481,14 +481,11 @@ function install(opts = {}) {
 function uninstall(opts = {}) {
   const file = hooksFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
-  if (!fs.existsSync(file)) return report;
-  const data = cfg.readJson(file);
-  const before = JSON.stringify(data);
-  if (!stripOurs(data) || JSON.stringify(data) === before) return report;
-  report.backup = cfg.backup(file);
+  // A file install created is deleted; a file that existed comes back as it was (see cfg.uninstallJson).
+  const res = cfg.uninstallJson(file, cfg.ifChanged(stripOurs));
+  if (res.action === 'unchanged') return report;
+  report.backup = res.backup;
   report.removed = 1;
-  if (Object.keys(data).length === 0) fs.unlinkSync(file);
-  else cfg.writeJson(file, data);
   // The launcher (see commandFor) is shared by every config of this machine: one uninstall leaves it in place,
   // only the machine-wide uninstall (opts.removeLauncher) deletes it.
   if ((opts.scope || 'user') !== 'project' && opts.removeLauncher === true) {

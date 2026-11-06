@@ -28,7 +28,7 @@
 
 // Version of the type catalogue (secret and PII patterns, validators). Bump it
 // when a pattern, validator or type name changes; see CONTRIBUTING.md.
-const SCRUB_RULES_VERSION = '2026-10-31.1';
+const SCRUB_RULES_VERSION = '2026-10-31.2';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -218,16 +218,16 @@ function e164Valid(raw) {
 // A phone number in the text: compact E.164 or with single separators. Separated forms that look like a date,
 // an IPv4 address or a dotted version are not phone numbers.
 function phoneValid(raw) {
-  if (/[ .-]/.test(raw)) {
+  if (/[ .\u00a0\u202f\u2007-]/.test(raw)) {
     if (/\d{4}-\d{2}-\d{2}/.test(raw)) return false;
     if (/^\+\d{1,3}(?:\.\d{1,3}){3}$/.test(raw)) return false;
-    if (/^\+\d(?:[ .-]\d)+$/.test(raw)) return false;
+    if (/^\+\d(?:[ .\u00a0\u202f\u2007-]{1,2}\d)+$/.test(raw)) return false;
   }
   // A country code, one space and a compact national number (+34 600123456): the country must be one whose
   // national length is known, so a plus sign and two digit runs in a sum or a note is not a phone number.
-  const cc = /^\+(\d{1,3}) \d+$/.exec(raw);
+  const cc = /^\+(\d{1,3})[ \u00a0\u202f\u2007]{1,2}\d+$/.exec(raw);
   if (cc && cc[1] !== '1' && !E164_LENGTHS[cc[1]]) return false;
-  return e164Valid(raw.replace(/[ .-]/g, ''));
+  return e164Valid(raw.replace(/[ .\u00a0\u202f\u2007-]/g, ''));
 }
 
 function ipv4Public(raw) {
@@ -939,7 +939,7 @@ const PII = [
     } },
   // Compact E.164 (+34600123456), or + country code (1 to 3 digits) and digit groups split by single spaces, dashes
   // or dots (+34 600 123 456, +1 202-555-0143). National formats without + are not matched on purpose.
-  { type: 'PHONE', key: 'phone', hints: ['+'], re: re('(?<![A-Za-z0-9+])\\+[1-9](?:\\d{0,2}(?:[ .-]\\d{1,9}){2,6}|\\d{0,2} \\d{6,12}|\\d{7,14})(?![0-9])'), check: (v) => phoneValid(v) },
+  { type: 'PHONE', key: 'phone', hints: ['+'], re: re('(?<![A-Za-z0-9+])\\+[1-9](?:\\d{0,2}(?:(?:[ .\\u00a0\\u202f\\u2007-]|[ \\u00a0\\u202f\\u2007]{2})\\d{1,9}){2,6}|\\d{0,2}[ \\u00a0\\u202f\\u2007]{1,2}\\d{6,12}|\\d{7,14})(?![0-9])'), check: (v) => phoneValid(v) },
   { type: 'IBAN', key: 'iban', hints: null, prefilter: /[A-Z]{2}\d{2}/,
     re: re('(?<![A-Za-z0-9])[A-Z]{2}\\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])'),
     check: (v) => ibanValid(v) },

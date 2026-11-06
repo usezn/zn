@@ -265,19 +265,25 @@ function install(opts = {}) {
 function uninstall(opts = {}) {
   const file = settingsFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
-  if (!fs.existsSync(file)) return report;
-  const data = cfg.readJson(file);
-  const hooks = cfg.hooksOf(data, file);
-  const before = JSON.stringify(hooks);
-  for (const event of Object.keys(hooks)) {
-    const kept = stripOurs(hooks[event]);
-    if (Array.isArray(kept) && kept.length === 0) delete hooks[event]; else hooks[event] = kept;
-  }
-  if (JSON.stringify(hooks) === before) return report;
-  if (Object.keys(hooks).length === 0) delete data.hooks; else data.hooks = hooks;
-  report.backup = cfg.backup(file);
+  // Takes zn's entries out of data in place; true when it removed any.
+  const removeOurs = (data) => {
+    const hooks = cfg.hooksOf(data, file);
+    let changed = false;
+    for (const event of Object.keys(hooks)) {
+      const kept = stripOurs(hooks[event]);
+      if (JSON.stringify(kept) === JSON.stringify(hooks[event])) continue;
+      changed = true;
+      if (Array.isArray(kept) && kept.length === 0) delete hooks[event]; else hooks[event] = kept;
+    }
+    if (!changed) return false;
+    if (Object.keys(hooks).length === 0) delete data.hooks; else data.hooks = hooks;
+    return true;
+  };
+  // A file install created is deleted; a file that existed comes back as it was (see cfg.uninstallJson).
+  const res = cfg.uninstallJson(file, removeOurs);
+  if (res.action === 'unchanged') return report;
+  report.backup = res.backup;
   report.removed = 1;
-  cfg.writeJson(file, data);
   // The launcher (see commandFor) is shared by every config of this machine: one uninstall leaves it in place,
   // only the machine-wide uninstall (opts.removeLauncher) deletes it.
   if ((opts.scope || 'user') !== 'project' && opts.removeLauncher === true) {

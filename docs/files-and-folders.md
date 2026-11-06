@@ -40,7 +40,7 @@ More: [uninstall](uninstall.md), [CLI reference](cli.md).
 ## Hooks and settings of your agents
 
 - `zn-gate hooks install <agent>` adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. A backup of the settings file is written first. With `--project`, it writes the shared files of the folder you are in.
-- `zn-gate hooks uninstall <agent>` removes them again and also writes a backup first. It leaves the launcher script under `~/.zn/hooks` in place.
+- `zn-gate hooks uninstall <agent>` removes them again and also writes a backup first. If nothing else in the file changed since install, the file comes back exactly as it was (one line or indented, and an empty `{}` that was there before stays). A file that install created is deleted. If you changed other settings since, only zn's entries are removed. It leaves the launcher script under `~/.zn/hooks` in place. zn keeps the three newest backups of each settings file and removes older ones.
 - `zn-gate init --wrap-mcp` wraps MCP servers and saves a copy of each config first. `zn-gate init --revert` puts the saved copy back, and changes made to that file since are lost.
 
 More: [CLI reference](cli.md), [remove by hand](editors/remove-by-hand.md).
