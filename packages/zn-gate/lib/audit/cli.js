@@ -9,12 +9,13 @@
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { colorEnabled } = require('../term');
 const { audit, AGENTS } = require('./index');
 const report = require('./report');
 
-const USAGE = 'usage: zn audit [path] [--format text|json|sarif] [--output <file>] [--fail-on low|medium|high|critical|none] [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]';
+const USAGE = 'usage: zn audit [path] [--format text|json|sarif] [--output <file>] [--fail-on low|medium|high|critical|none] [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home] [--approve]';
 const FORMATS = ['text', 'json', 'sarif'];
 const FAIL_ON = ['low', 'medium', 'high', 'critical', 'none'];
 
@@ -24,13 +25,14 @@ class UsageError extends Error {}
 const LOG_MOVED = '`zn audit` reviews agent configs; the secret-use log is `zn vault log` (alias `zn secret log`)';
 
 function parseArgs(args) {
-  const opts = { path: null, format: 'text', output: null, failOn: 'high', agents: ['all'], includeHome: false, help: false };
+  const opts = { path: null, format: 'text', output: null, failOn: 'high', agents: ['all'], includeHome: false, approve: false, help: false };
   const takesValue = { '--format': 'format', '--output': 'output', '-o': 'output', '--fail-on': 'failOn', '--agents': 'agents' };
   for (let i = 0; i < args.length; i++) {
     const a = String(args[i]);
     if (a === '-h' || a === '--help') { opts.help = true; continue; }
     if (a === '--since' || a.startsWith('--since=')) throw new UsageError(LOG_MOVED);
     if (a === '--include-home') { opts.includeHome = true; continue; }
+    if (a === '--approve') { opts.approve = true; continue; }
     const eq = a.indexOf('=');
     const name = a.startsWith('--') && eq > 0 ? a.slice(0, eq) : a;
     if (takesValue[name]) {
@@ -80,7 +82,15 @@ async function main(args, ioIn) {
       throw new Error(opts.path === 'log' ? LOG_MOVED : 'path not found: ' + (opts.path || '.'));
     }
     if (!st.isDirectory()) throw new Error('not a directory: ' + (opts.path || '.'));
-    const result = audit({ root, agents: opts.agents, includeHome: opts.includeHome, home: io.home, env: io.env });
+    const home = io.home || os.homedir();
+    if (opts.approve) {
+      const bl = require('./baseline');
+      const surface = bl.extractSurface(root);
+      bl.saveBaseline(home, root, surface);
+      io.stdout.write('zn audit: recorded ' + Object.keys(surface).length + ' executable configuration entr' + (Object.keys(surface).length === 1 ? 'y' : 'ies') + ' as approved for this project.\n');
+      return 0;
+    }
+    const result = audit({ root, agents: opts.agents, includeHome: opts.includeHome, home: io.home, env: io.env, baselineHome: home });
     const toolVersion = require('../../package.json').version;
     const meta = {
       toolVersion,

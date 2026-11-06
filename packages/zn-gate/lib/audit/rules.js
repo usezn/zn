@@ -7,7 +7,7 @@
 
 // Version of the rule catalogue and of the command patterns in audit/patterns.js.
 // Bump it when a rule, a pattern or a rule id changes; see CONTRIBUTING.md.
-const AUDIT_RULES_VERSION = '2026-10-30.1';
+const AUDIT_RULES_VERSION = '2026-11-06.1';
 
 const SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const RANK = { none: 99, low: 1, medium: 2, high: 3, critical: 4 };
@@ -167,6 +167,13 @@ const RULES = [
     title: 'Instruction file hides text behind a long run of blank lines',
     help: 'A run of 40 or more empty or whitespace-only lines, followed by more text, pushes that text out of view for a person who opens the file and past the part of it a classifier reads. The report gives the line where the hidden text starts and the length of the run; the text is never printed.',
     fix: 'Open the file at the reported line and read what follows. Remove the blank lines, and the text too unless you wrote it.',
+    references: [],
+  },
+  {
+    id: 'ZNA022', severity: 'high', name: 'config-changed-since-approved',
+    title: 'Executable agent configuration changed since you approved it',
+    help: 'An MCP server, hook, endpoint override, permission list or install script differs from the version recorded by `zn audit --approve`. Only entry names are compared and reported; values are never printed. A removed entry is reported as low.',
+    fix: 'Review the changed entry (git diff shows what changed). If the change is yours, run `zn audit --approve` again to record it.',
     references: [],
   },
 ];
