@@ -93,7 +93,14 @@ const ZCODE_FILES = [
   ['LICENSE', PLUGIN, ZCODE_DIR + '/LICENSE'],
 ];
 const GITATTRIBUTES = '* -text\n';
-const PRUNE = /\.(?:d\.[mc]?ts|[mc]?ts|map)$/;
+// Left out of vendor/zn-gate: TypeScript sources, declarations and source maps, and what the hooks and the local MCP server
+// never load. The import check below refuses a build in which a kept ES module imports a file listed here; it does not look at `require` calls
+// (`bin/cli.js` and `lib/uninstall.js` require `lib/init-guide.js`, which only the command line runs), so a new entry needs a manual check.
+//   README.md          documentation of the package, not code
+//   lib/init-guide.js  the setup guide of the zn-gate command line (`zn-gate init`), which the plugin never runs
+//   @noble/curves      its BLS and BN254 pairing curves and the index and misc entry points that import them; zn-gate
+//                      and age-encryption use only the ed25519 and nist modules (also under @noble/post-quantum)
+const PRUNE = /\.(?:d\.[mc]?ts|[mc]?ts|map)$|^README\.md$|^lib\/init-guide\.js$|^node_modules\/(?:@noble\/post-quantum\/node_modules\/)?@noble\/curves\/(?:abstract\/(?:bls|tower)|bls12-381|bn254|misc|index)\.js$/;
 const MAX_FILES = 512;
 const MAX_TEXT_BYTES = 256 * 1024;
 const MAX_BYTES = 5 * 1024 * 1024;
