@@ -887,7 +887,8 @@ async function decideMcp(ev, d, agentId) {
     }
   }
   if (kinds.size === 0) {
-    if (piiKinds.size === 0) return { decision: 'allow' };
+    // zn's own detector server analyses the text the user asked about: no question for it.
+    if (piiKinds.size === 0 || (ev.mcp && ev.mcp.ours === 'analyze')) return { decision: 'allow' };
     // Personal data is not always wrong to send: the user decides (never a deny).
     return {
       decision: 'ask',

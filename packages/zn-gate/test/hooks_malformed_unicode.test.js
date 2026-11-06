@@ -18,6 +18,7 @@ const { getAdapter } = require('../lib/agents');
 const runner = require('../lib/hooks/runner');
 const { isUnsafeText, hasUnsafeText } = require('../lib/safe-text');
 const { tempDir } = require('./helpers/tmp');
+const { spawnAsync, runPool } = require('./helpers/spawn_async');
 
 const RUNNER = path.resolve(__dirname, '..', 'lib', 'hooks', 'runner.js');
 
@@ -91,6 +92,14 @@ function runHook(agent, event, home) {
   });
 }
 
+// The same hook start as runHook, without blocking: resolves with status, stdout and stderr.
+function runHookAsync(agent, event, home) {
+  return spawnAsync(process.execPath, [RUNNER, agent], {
+    input: JSON.stringify(event),
+    env: { ...process.env, HOME: home, USERPROFILE: home, ZN_HOOK_FAIL_MODE: '', ZN_STATS: 'off' },
+  });
+}
+
 test('every agent adapter denies malformed text before any file call, in process', async (t) => {
   const cwd = tmpHome(t);
   for (const [agent, make] of Object.entries(CASES)) {
@@ -105,17 +114,21 @@ test('every agent adapter denies malformed text before any file call, in process
   }
 });
 
-test('every agent hook process survives malformed text and blocks the action', (t) => {
-  const home = tmpHome(t);
-  const cwd = home;
+test('every agent hook process survives malformed text and blocks the action', async (t) => {
+  // One job per agent and malformed text, each with its own home folder and its events in turn. Four jobs run at a time, so the
+  // hook processes overlap (each start is slow on Windows) without sharing a folder; every result is still checked.
+  const jobs = [];
   for (const [agent, make] of Object.entries(CASES)) {
-    for (const [name, text] of Object.entries(BAD)) {
-      for (const event of make(text, cwd)) {
-        const res = runHook(agent, event, home);
-        // A crash on Windows has a status of 3221226505 (0xC0000409) or null; a block is exit 2 or a deny answer.
-        assert.ok(res.status === 0 || res.status === 2, agent + ' / ' + name + ': status ' + res.status + ' ' + res.stderr);
-        assert.ok(res.status === 2 || /deny/i.test(res.stdout), agent + ' / ' + name + ': not blocked: ' + res.stdout);
-      }
+    for (const [name, text] of Object.entries(BAD)) jobs.push({ agent, name, make, text, home: tmpHome(t), results: [] });
+  }
+  await runPool(jobs, async (job) => {
+    for (const event of job.make(job.text, job.home)) job.results.push(await runHookAsync(job.agent, event, job.home));
+  });
+  for (const { agent, name, results } of jobs) {
+    for (const res of results) {
+      // A crash on Windows has a status of 3221226505 (0xC0000409) or null; a block is exit 2 or a deny answer.
+      assert.ok(res.status === 0 || res.status === 2, agent + ' / ' + name + ': status ' + res.status + ' ' + res.stderr);
+      assert.ok(res.status === 2 || /deny/i.test(res.stdout), agent + ' / ' + name + ': not blocked: ' + res.stdout);
     }
   }
 });
