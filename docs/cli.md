@@ -461,6 +461,8 @@ zn-gate run [--secrets NAME[,NAME...]] [--agent ID] -- <command> [args...]
 
 Runs a command with markers replaced by real values, only for commands you allowed, and masks the values in its output. Everything after `--` belongs to your command. `-s` is short for `--secrets`.
 
+`--agent` names the agent that runs the command, and that name is written to the [`vault log`](#vault-log) with each use; without the option, zn takes the name from the `ZN_AGENT` environment variable. The caller reports this name itself, so it is not proof of who runs the command.
+
 Exit codes: the exit code of your command; `64` wrong usage, `77` refused (not allowed or not approved), `127` the program was not found, `1` another error.
 
 ### `unlock`
