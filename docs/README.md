@@ -32,6 +32,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | Guide | What it covers | For whom |
 |---|---|---|
 | [Destructive commands](destructive-commands.md) | Refuses commands that wipe a machine (on by default), and more, such as a download run unread, if you turn them on | Everyone |
+| [Packages your agent installs](package-install-check.md) | Optional and off by default: asks you before an agent installs a package whose name looks like a well-known one, or (online mode) does not exist or is brand new. Never blocks | Everyone |
 | [Network requests that carry personal data](egress-check.md) | Asks you before an agent sends your email address, phone number or a literal secret in a curl, wget, WebFetch or MCP request | Everyone |
 | [Protect MCP servers](shield.md) | Wrap an MCP server with the shield, shadow mode and tool pins | Everyone who uses MCP servers |
 | [Reach](reach.md) | What the coding agents on your machine can reach (secrets by name, credential files, MCP servers) | Everyone |
