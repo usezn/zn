@@ -321,7 +321,8 @@ function maskUrls(text, keep) {
     return safeUrl(clean) + (tail ? tail[0] : '');
   });
   // user:password@host[:port] without a scheme (a proxy): never print the user or the password.
-  out = out.replace(/(^|["'\s=(,;])[^\s"'@\/:\\]+:[^\s"'@\/\\]*@([A-Za-z0-9.-]+(?::\d+)?)/g, '$1[REDACTED]@$2');
+  // The user may be empty, the password may hold "/", a backslash or "@" (it ends at the last "@" of the token), and the host may be IPv6.
+  out = out.replace(/(^|["'\s=(,;\[])[^\s"'@:]*:[^\s"']*@(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(:\d+)?/g, '$1[REDACTED]@$2$3');
   // Protocol-relative URLs ("//host/path"): host only.
   out = out.replace(/(["'=(])\/\/([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?::\d+)?)[^\s"'<>`]*/g, '$1//$2');
   return out;

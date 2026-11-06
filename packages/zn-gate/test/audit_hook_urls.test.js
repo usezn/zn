@@ -237,3 +237,26 @@ test('detail never shows a URL path (ZNA001 and ZNA002) in text, JSON and SARIF'
   assert.ok(b.detail.includes('https://d.example.invalid/install.sh'), b.detail);
   assert.ok(!a.detail.includes('install.sh'), 'ZNA001 must not show the download path: ' + a.detail);
 });
+
+test('a scheme-less proxy with an empty user, an IPv6 host or odd password characters never shows user or password', (t) => {
+  const values = [
+    ':ZNAFAKEE2@p.example.invalid:8080',
+    'ZNAFAKEF1:ZNAFAKEF2@[2001:db8::1]:8080',
+    'ZNAFAKEA1:ZNAFAKEA2/ZNAFAKEA3@p.example.invalid:8080',
+    'ZNAFAKEG1:ZNAFAKEG2\\\\ZNAFAKEG3@p.example.invalid:8080',
+    'ZNAFAKEB1:ZNAFAKEB2@ZNAFAKEB3@p.example.invalid:8080',
+  ];
+  for (const v of values) {
+    const mcp = build(t, {
+      '.mcp.json': '{"mcpServers":{"a":{"command":"node","args":["x.js"],"env":{"HTTPS_PROXY":"' + v + '"}}}}\n',
+    });
+    const r = noLeak(mcp, ['ZNAFAKE']);
+    assert.ok(r.findings.some((f) => f.id === 'ZNA003'), 'ZNA003 expected for ' + v);
+    const settings = build(t, {
+      '.claude/settings.json': '{"apiKeyHelper":"node helper.js","env":{"HTTPS_PROXY":"' + v + '"}}\n',
+    });
+    noLeak(settings, ['ZNAFAKE']);
+  }
+  const out = P.maskUrls('"HTTPS_PROXY":"ZNAFAKEB1:ZNAFAKEB2@ZNAFAKEB3@p.example.invalid:8080"');
+  assert.ok(!out.includes('ZNAFAKE') && out.includes('[REDACTED]@p.example.invalid:8080'), out);
+});
