@@ -59,7 +59,7 @@ The severity is **high** when any of these holds, and **medium** otherwise:
 
 An author filter is recognised when the file mentions `author_association`, or compares `github.actor` or the comment, issue or sender login with `==`.
 
-Here is the finding for a workflow that runs an agent on `issue_comment`, with write permissions and the comment text as the prompt:
+Here is the finding for a workflow that runs an agent on `issue_comment`, with write permissions and the comment text as the prompt (the file name and line number depend on your workflow: the line is the one of the agent step):
 
 ```text
 HIGH      ZNA019  .github/workflows/agent.yml:12  [claude]
@@ -77,7 +77,7 @@ HIGH      ZNA019  .github/workflows/agent.yml:12  [claude]
 4. Set `permissions: {}` at the top and `contents: read` on the job, and add scopes only where needed.
 5. Do not use `allowed_non_write_users` or `allow_users: "*"`.
 
-After these changes the same workflow is reported as **medium**, not removed:
+After these changes the same workflow is reported as **medium**, not removed (the line moves with your edits):
 
 ```text
 MEDIUM    ZNA019  .github/workflows/agent.yml:13  [claude]
