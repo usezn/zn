@@ -297,10 +297,25 @@ function isLoopback(host) {
 function safeUrl(url) {
   try {
     const u = new URL(String(url));
+    // No host (for example "user:pass@host" read as a scheme): nothing safe to show.
+    if (!u.host || !/^[a-z][a-z0-9+.-]*:$/i.test(u.protocol) || !/^[a-z][a-z0-9+.-]*:(?:\\?\/){2}/i.test(String(url).trim())) return '(unparsable URL)';
     return u.protocol + '//' + u.host;
   } catch (_) {
     return '(unparsable URL)';
   }
+}
+
+/**
+ * Replace every URL in a text with scheme://host (never the path, query, userinfo or fragment).
+ * A URL that cannot be read safely becomes "(unparsable URL)".
+ */
+function maskUrls(text) {
+  return String(text == null ? '' : text).replace(/\b[a-z][a-z0-9+.-]{1,15}:(?:\\?\/){2}[^\s"'<>`]*/gi, (m) => {
+    const tail = /[)\]}.,;]+$/.exec(m);
+    const core = tail ? m.slice(0, tail.index) : m;
+    const clean = core.replace(/\\/g, '');
+    return safeUrl(clean) + (tail ? tail[0] : '');
+  });
 }
 
 /** Classify an agent-level environment variable. */
@@ -546,6 +561,7 @@ module.exports = {
   hostOf,
   isLoopback,
   safeUrl,
+  maskUrls,
   claudePermission,
   exfiltration,
   weakening,

@@ -277,7 +277,9 @@ object, the same entries as the "Directories not read" list in the text report. 
 start with `~/`. `agent` is the agent that reads the file (`any` when several
 do). `evidence` is the matching line, cut to 160 characters, with secrets
 replaced by `[REDACTED:<TYPE>]`. URLs in `detail` and `evidence` lose their user,
-password, query string and fragment.
+password, path, query string and fragment: only `scheme://host[:port]` is shown
+(the download URL of ZNA002 is the one exception), and a URL that cannot be read
+safely is shown as `(unparsable URL)`.
 
 ### SARIF
 

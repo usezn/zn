@@ -272,6 +272,8 @@ class FileCtx {
       severity = LOWER[severity] || severity;
       detail = String(detail) + IGNORED_ENV_NOTE;
     }
+    // The URL path, query, userinfo and fragment never reach a report, except where the download URL is the finding (ZNA002).
+    const evidenceText = (extra && extra.evidence != null) ? redact(extra.evidence) : this.redactedLine(ln);
     this.out.push({
       id,
       severity,
@@ -280,7 +282,7 @@ class FileCtx {
       line: ln,
       title: (extra && extra.title) || rule.title,
       detail: clip(redact(redactSpan(detail)), 600),
-      evidence: clip((extra && extra.evidence != null) ? redact(extra.evidence) : this.redactedLine(ln), EVIDENCE_MAX),
+      evidence: clip(id === 'ZNA002' ? evidenceText : P.maskUrls(evidenceText), EVIDENCE_MAX),
       fix: (extra && extra.fix) || rule.fix,
       references: (extra && extra.references) || rule.references.slice(),
       _readers: (extra && extra.readers) || this.rec.readers,
@@ -441,10 +443,12 @@ function checkHookUrls(ctx, tree, keyPath) {
  * Evidence for a URL value: its line with the value replaced by scheme and host (never the path or query).
  * When the line does not hold the value as written, a fixed `"key": "scheme://host"` pair is shown instead.
  */
-function urlEvidence(ctx, ln, url, key) {
-  const shown = P.safeUrl(url);
+function urlEvidence(ctx, ln, url, key, proxy) {
+  // A proxy may be written without a scheme (user:pass@host:port): read it as classifyEnv does.
+  const shown = P.safeUrl(proxy && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? 'http://' + url : url);
   const raw = ctx.redactedLine(ln);
-  return url && raw.includes(url) ? raw.split(url).join(shown) : JSON.stringify(key || 'url') + ': ' + JSON.stringify(shown);
+  // The line may hold other URLs: every one of them is reduced too (Ctx.add does it for each finding).
+  return url && raw.includes(url) ? P.maskUrls(raw.split(url).join(shown)) : JSON.stringify(key || 'url') + ': ' + JSON.stringify(shown);
 }
 
 function checkDownloadRun(ctx, command, line, what) {
@@ -488,7 +492,7 @@ function checkEnv(ctx, env, keyPath, opts) {
       // an endpoint or proxy redirects that server's own credentials.
       const who = 'MCP server "' + opts.server + '": ';
       if (c.kind === 'endpoint') ctx.add('ZNA007', capHome(ctx, c.loopback ? 'low' : 'medium'), line, who + k + ' points to ' + P.safeUrl(v) + '; the server sends its requests and credentials there.', { title: 'MCP server endpoint overridden by the project', evidence: urlEvidence(ctx, line, String(v), k) });
-      else if (c.kind === 'proxy') ctx.add('ZNA007', capHome(ctx, c.loopback ? 'low' : 'medium'), line, who + k + ' routes the server\'s traffic through ' + (c.host || 'a proxy') + '.', { title: 'MCP server traffic routed through a proxy set by the project', evidence: urlEvidence(ctx, line, String(v), k) });
+      else if (c.kind === 'proxy') ctx.add('ZNA007', capHome(ctx, c.loopback ? 'low' : 'medium'), line, who + k + ' routes the server\'s traffic through ' + (c.host || 'a proxy') + '.', { title: 'MCP server traffic routed through a proxy set by the project', evidence: urlEvidence(ctx, line, String(v), k, true) });
       else ctx.add('ZNA008', capHome(ctx, 'high'), line, who + k + ' is set for the server process' + (c.kind === 'confdir' ? ' and moves where it reads its configuration.' : ' and loads code or certificates into it.'));
       continue;
     }
@@ -497,7 +501,7 @@ function checkEnv(ctx, env, keyPath, opts) {
       ctx.add('ZNA007', sev, line, k + ' points to ' + P.safeUrl(v) + (c.loopback ? ' (a local address)' : '') + '; the agent sends its API key and prompts there.', { evidence: urlEvidence(ctx, line, String(v), k) });
     } else if (c.kind === 'proxy') {
       const sev = capHome(ctx, c.loopback ? 'medium' : 'high');
-      ctx.add('ZNA007', sev, line, k + ' routes the agent\'s traffic through ' + (c.host || 'a proxy') + '.', { title: 'Agent traffic routed through a proxy set by the project', evidence: urlEvidence(ctx, line, String(v), k) });
+      ctx.add('ZNA007', sev, line, k + ' routes the agent\'s traffic through ' + (c.host || 'a proxy') + '.', { title: 'Agent traffic routed through a proxy set by the project', evidence: urlEvidence(ctx, line, String(v), k, true) });
     } else if (c.kind === 'confdir') {
       ctx.add('ZNA008', capHome(ctx, 'high'), line, k + ' moves where the agent reads its own configuration (to ' + v + '), so a config shipped in the repository is loaded instead of yours.', { title: 'Environment variable redirects the agent configuration' });
     } else {
