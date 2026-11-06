@@ -348,6 +348,10 @@ for (const f of walk('plugins').filter((x) => x.endsWith('.md'))) {
 // package-lock.json (written by pin-release.js). When they exist they must
 // pin the same zn-gate release, from the registry, with no inBundle entries.
 const npmPkgFile = PLUGIN + '/package.json';
+function npmrcTurnsScriptsOff(text) {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#') && !l.startsWith(';'));
+  return lines.length === 1 && /^ignore-scripts\s*=\s*true$/.test(lines[0]);
+}
 const npmLockFile = PLUGIN + '/package-lock.json';
 const hasNpm = fs.existsSync(path.join(ROOT, npmPkgFile)) || fs.existsSync(path.join(ROOT, npmLockFile));
 if (hasNpm) {
@@ -376,7 +380,9 @@ if (hasNpm) {
     if (e.hasInstallScript) {
       // Only zn-gate's own postinstall, and only with the .npmrc that turns install scripts off in this folder.
       const npmrc = PLUGIN + '/.npmrc';
-      const off = fs.existsSync(path.join(ROOT, npmrc)) && fs.readFileSync(path.join(ROOT, npmrc), 'utf8') === 'ignore-scripts=true\n';
+      // Whatever the line ending of the checkout (Windows may write CRLF), and nothing else that could turn the setting back on: npm
+      // takes the last value of a key, so one line "ignore-scripts=true" is the only accepted content (blank lines and comments aside).
+      const off = fs.existsSync(path.join(ROOT, npmrc)) && npmrcTurnsScriptsOff(fs.readFileSync(path.join(ROOT, npmrc), 'utf8'));
       if (k !== 'node_modules/zn-gate' || !off) fail(npmLockFile + ': ' + k + ' has an install script' + (k === 'node_modules/zn-gate' ? ' and ' + npmrc + ' does not turn install scripts off' : ''));
     }
     if (!/^sha512-/.test(e.integrity || '') || !String(e.resolved || '').startsWith('https://registry.npmjs.org/')) fail(npmLockFile + ': ' + k + ' has no sha512 integrity or registry URL');
