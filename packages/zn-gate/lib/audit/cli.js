@@ -93,7 +93,7 @@ async function main(args, ioIn) {
       }
       const bl = require('./baseline');
       const surface = bl.extractSurface(root);
-      const asked = await require('../broker/approval-channel').confirmApproval('audit', root, Object.keys(surface).length + ' entries', { vault: io.vault });
+      const asked = await require('../broker/approval-channel').confirmApproval('audit', root, Object.keys(surface).length + ' entries', { vault: io.vault, env: io.env, accountVault: io.accountVault });
       if (!asked.ok) {
         io.stderr.write('zn audit: ' + String((asked.error && asked.error.message) || 'not confirmed').slice(0, 400) + '\n');
         return 2;

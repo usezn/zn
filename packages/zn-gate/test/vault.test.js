@@ -39,7 +39,8 @@ let GH_VALUE = null;
 // The daemon's out-of-band confirmation channel, answered by the test.
 const confirmations = [];
 let confirmAnswer = true;
-async function testConfirm(req) { confirmations.push(req); return confirmAnswer; }
+let confirmHold = null;     // a promise the channel waits for before it answers
+async function testConfirm(req) { confirmations.push(req); if (confirmHold) await confirmHold; return confirmAnswer; }
 
 async function startDaemon(extra) {
   srv = await daemon.serve(Object.assign({ identity, ttlMs: 60000, idleMs: 60000, confirm: testConfirm }, extra || {}));
@@ -627,6 +628,35 @@ test('vault files: forged, corrupted or missing secrets.age fail closed with a c
     if (POSIX) fs.chmodSync(p.secretsFile, 0o600);
   }
   await startDaemon();
+  await stopDaemon();
+});
+
+test('daemon: one that stops while it asks the person is not "no vault running": the approval is refused', async () => {
+  const approvalChannel = require('../lib/broker/approval-channel');
+  await startDaemon();
+  const c = clientMod.createClient({});
+  confirmHold = new Promise(() => {});
+  const asked = approvalChannel.confirmApproval('audit', '/work/app', 'x', { vault: c, env: {}, accountVault: null });
+  await sleep(300);
+  await stopDaemon();
+  const r = await asked;
+  confirmHold = null;
+  c.close();
+  assert.strictEqual(r.ok, false, 'a daemon that was killed while the prompt was open did not approve');
+  assert.match(r.error.message, /did not confirm/);
+  // with no daemon at all the terminal check stands
+  const c2 = clientMod.createClient({});
+  const down = await approvalChannel.confirmApproval('audit', '/work/app', 'x', { vault: c2, env: {}, accountVault: null });
+  c2.close();
+  assert.deepStrictEqual(down, { ok: true, via: 'terminal' });
+  // a hook's wait limit refuses before the vault is asked
+  await startDaemon();
+  const c3 = clientMod.createClient({});
+  const n0 = confirmations.length;
+  const capped = await approvalChannel.confirmApproval('audit', '/work/app', 'x', { vault: c3, env: { ZN_HOOK_VAULT_WAIT_MS: '1' }, accountVault: null });
+  assert.strictEqual(capped.ok, false);
+  assert.strictEqual(confirmations.length, n0, 'the vault was not asked');
+  c3.close();
   await stopDaemon();
 });
 

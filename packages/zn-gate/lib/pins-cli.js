@@ -68,7 +68,7 @@ async function run(args, io = {}) {
       process.stderr.write(messages.PINS_NOT_APPROVED + '\n');
       return 2;
     }
-    const asked = await require('./broker/approval-channel').confirmApproval('pins', process.cwd(), which === '--all' ? 'all servers' : 'server ' + String(which).slice(0, 16), { vault: io.vault });
+    const asked = await require('./broker/approval-channel').confirmApproval('pins', process.cwd(), which === '--all' ? 'all servers' : 'server ' + String(which).slice(0, 16), { vault: io.vault, env: io.env || process.env, accountVault: io.accountVault });
     if (!asked.ok) {
       process.stderr.write('zn-gate pins: ' + String((asked.error && asked.error.message) || 'not confirmed').slice(0, 400) + '\n');
       return 2;

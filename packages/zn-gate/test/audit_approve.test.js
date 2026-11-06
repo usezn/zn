@@ -20,7 +20,7 @@ function setup(t, mcp) {
 async function run(args, io) {
   let out = '';
   let err = '';
-  const code = await main(args, Object.assign({ stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } }, env: {}, stdin: { isTTY: true }, ancestry: () => null }, io));
+  const code = await main(args, Object.assign({ stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } }, env: {}, stdin: { isTTY: true }, ancestry: () => null, accountVault: null }, io));
   return { code, out, err };
 }
 
