@@ -70,6 +70,8 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           FULL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || github.base_ref == 'main' || startsWith(github.base_ref, 'release/') || github.event.merge_group.base_ref == 'refs/heads/main' || startsWith(github.event.merge_group.base_ref, 'refs/heads/release/') || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          # A pull request into next tests Node.js 22.x; 18.x and 24.x still report, but run their tests in the merge queue.
+          SKIP_LEG: ${{ github.event_name == 'pull_request' && github.base_ref == 'next' && !contains(github.event.pull_request.labels.*.name, 'full-ci') && matrix.node-version != '22.x' }}
         working-directory: .
         run: bash .github/scripts/ci-scope.sh
       - name: Use Node.js ${{ matrix.node-version }}
