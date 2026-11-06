@@ -1,5 +1,7 @@
 'use strict';
+// Bash also reads the account rc file when it is not interactive, and that file may set PATH: skip it so the guard cases are hermetic.
 process.env.ZN_STATS = 'off';
+const shellArgs = (sh) => (/(^|\/)bash$/.test(sh) ? ['--norc', '--noprofile'] : []);
 
 // Project installs (`zn hooks install <agent> --project`) share the hooks file through the repository, so the command names `zn`
 // on the PATH. A bare `zn hook <agent>` fails open when `zn` or Node.js cannot start (exit 127: every agent runs the call). Each
@@ -45,7 +47,7 @@ function shells() {
 
 // The agent runs the command through a shell.
 function run(command, bin, input = '{}') {
-  return spawnSync(whichSh(), ['-c', command], { input, encoding: 'utf8', env: { PATH: bin }, cwd: '/' });
+  return spawnSync(whichSh(), [...shellArgs(whichSh()), '-c', command], { input, encoding: 'utf8', env: { PATH: bin }, cwd: '/' });
 }
 
 // agent -> how the project install is made, which file it writes and where the commands are, and the blocking answer.
@@ -157,12 +159,12 @@ for (const agent of Object.keys(AGENTS)) {
         ['planted node first', mkbin(t, { shell, zn: 'echo ok' }) + ':.:' + withZn],
       ];
       for (const [name, PATH] of cases) {
-        const r = spawnSync(shell, ['-c', command], { input: '{}', encoding: 'utf8', env: { PATH }, cwd: work });
+        const r = spawnSync(shell, [...shellArgs(shell), '-c', command], { input: '{}', encoding: 'utf8', env: { PATH }, cwd: work });
         assert.ok(!/planted|^ok$/m.test(r.stdout), shell + ' ' + name + ': ' + r.stdout);
         assert.ok(blocked(r), shell + ' ' + name + ': ' + r.stdout + r.stderr);
       }
       for (const PATH of [withZn, withZn + '/']) {
-        const r = spawnSync(shell, ['-c', command], { input: '{}', encoding: 'utf8', env: { PATH }, cwd: work });
+        const r = spawnSync(shell, [...shellArgs(shell), '-c', command], { input: '{}', encoding: 'utf8', env: { PATH }, cwd: work });
         assert.equal(r.status, 0, shell + ' ' + PATH + ' ' + r.stderr);
         assert.match(r.stdout, /^ok$/m, shell + ' ' + PATH);
       }
@@ -183,7 +185,7 @@ test('the guard works with dash and bash as the outer shell', skip, (t) => {
   const shells = ['dash', 'bash'].map((n) => ['/bin', '/usr/bin'].map((d) => path.join(d, n)).find((f) => fs.existsSync(f))).filter(Boolean);
   assert.ok(shells.length >= 1);
   for (const shell of shells) {
-    const r = spawnSync(shell, ['-c', command], { input: '{}', encoding: 'utf8', env: { PATH: mkbin(t, { node: true }) } });
+    const r = spawnSync(shell, [...shellArgs(shell), '-c', command], { input: '{}', encoding: 'utf8', env: { PATH: mkbin(t, { node: true }) } });
     assert.equal(r.status, 2, shell);
     assert.match(r.stderr, /npm install -g zn-gate/);
   }
@@ -195,7 +197,7 @@ test('with the real zn hook behind it, the project command of each agent answers
   const bin = mkbin(t, { node: true, zn: 'exec "' + process.execPath + '" "' + RUNNER + '" "$2"' });
   const home = tempDir(t, 'zn-pg-real-');
   const read = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: path.join(home, '.ssh', 'id_rsa') }, cwd: home });
-  const r = spawnSync(whichSh(), ['-c', command], { input: read, encoding: 'utf8', env: { PATH: bin, HOME: home, USERPROFILE: home, ZN_STATS: 'off' } });
+  const r = spawnSync(whichSh(), [...shellArgs(whichSh()), '-c', command], { input: read, encoding: 'utf8', env: { PATH: bin, HOME: home, USERPROFILE: home, ZN_STATS: 'off' } });
   assert.match(r.stdout, /"permissionDecision":"deny"/, r.stdout + r.stderr);
   assert.match(r.stdout, /id_rsa|secrets/, r.stdout);
 });
