@@ -63,7 +63,7 @@ function parseArgs(args) {
 }
 
 async function main(args, ioIn) {
-  const io = Object.assign({ stdout: process.stdout, stderr: process.stderr, cwd: process.cwd(), env: process.env, home: undefined }, ioIn || {});
+  const io = Object.assign({ stdout: process.stdout, stderr: process.stderr, stdin: process.stdin, cwd: process.cwd(), env: process.env, home: undefined }, ioIn || {});
   let opts;
   try {
     opts = parseArgs(args || []);
@@ -84,6 +84,13 @@ async function main(args, ioIn) {
     if (!st.isDirectory()) throw new Error('not a directory: ' + (opts.path || '.'));
     const home = io.home || os.homedir();
     if (opts.approve) {
+      // Approving is the person's decision: it runs only at their own terminal, which an agent does not have (and not when an agent started it).
+      try {
+        require('../broker/tty').requireHuman('zn audit --approve', { stdin: io.stdin, env: io.env, ancestry: io.ancestry });
+      } catch (err) {
+        io.stderr.write('zn audit: ' + err.message + '\n');
+        return 2;
+      }
       const bl = require('./baseline');
       const surface = bl.extractSurface(root);
       bl.saveBaseline(home, root, surface);

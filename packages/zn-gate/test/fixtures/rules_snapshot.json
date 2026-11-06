@@ -180,6 +180,7 @@
         "ZNA020",
         "ZNA021",
         "ZNA022",
+        "ZNA023",
         "patterns.CRED_FLAG_NAME",
         "patterns.CRED_FLAG_ONLY",
         "patterns.INTERPRETERS",
@@ -206,8 +207,8 @@
         "patterns.weakening"
       ],
       "sha256": {
-        "lib/audit/rules.js": "ea18770987670981b93917afcb50cba51021a5e3b8747ef129fbeaee5fc96a4b",
-        "lib/audit/patterns.js": "e758c777211da759a6973260363f3ddac41a37156171886bed624d97f18cdf46"
+        "lib/audit/rules.js": "5e5247094e31d755d1b9f157de432778ecb9b1fe15da0645c6799e9a37f2b80b",
+        "lib/audit/patterns.js": "b524829269ab6057015c492b3ab80c02e460e3e9689eaf3abe0dcf2aaf954b93"
       }
     },
     "policy": {

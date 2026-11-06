@@ -20,7 +20,7 @@ function setup(t, mcp) {
 async function run(args, io) {
   let out = '';
   let err = '';
-  const code = await main(args, Object.assign({ stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } }, env: {} }, io));
+  const code = await main(args, Object.assign({ stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } }, env: {}, stdin: { isTTY: true }, ancestry: () => null }, io));
   return { code, out, err };
 }
 
@@ -83,4 +83,26 @@ test('a removed hook is medium, a removed server is low, and a file that stopped
   assert.deepEqual(sev('hook:PreToolUse'), ['medium']);
   assert.deepEqual(sev('mcp:tools'), ['low']);
   assert.deepEqual(sev('unreadable'), ['high']);
+});
+
+test('--approve runs only at a real terminal and not when an agent started it', async (t) => {
+  const { dir, home } = setup(t, { command: 'node', args: ['server.js'] });
+  const { baselinePath } = require('../lib/audit/baseline');
+  const noTty = await run([dir, '--approve'], { home, stdin: { isTTY: false } });
+  assert.equal(noTty.code, 2);
+  assert.match(noTty.err, /terminal|interactive/i);
+  assert.ok(!fs.existsSync(baselinePath(home, dir)), 'nothing was recorded');
+  const agent = await run([dir, '--approve'], { home, ancestry: () => 'claude' });
+  assert.equal(agent.code, 2);
+  assert.match(agent.err, /agent|claude/i);
+  assert.ok(!fs.existsSync(baselinePath(home, dir)), 'nothing was recorded');
+  const agentEnv = await run([dir, '--approve'], { home, env: { CLAUDECODE: '1' } });
+  assert.equal(agentEnv.code, 2);
+  assert.ok(!fs.existsSync(baselinePath(home, dir)));
+  const ok = await run([dir, '--approve'], { home });
+  assert.equal(ok.code, 0);
+  assert.ok(fs.existsSync(baselinePath(home, dir)));
+  // auditing itself needs no terminal
+  const plain = await run([dir, '--fail-on', 'none'], { home, stdin: { isTTY: false } });
+  assert.equal(plain.code, 0);
 });
