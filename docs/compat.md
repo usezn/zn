@@ -90,10 +90,13 @@ Claude Code builds that have these events use them.
   shell, or the model endpoint moved to another server), or when a skill file now
   holds text a person cannot see (Unicode tag characters or bidirectional
   overrides). zn takes the starting point at the first tool call or prompt of the
-  session, before it can change anything; a finding the file already had then is
-  allowed, because `zn audit` reported it when the folder was opened. Without a
-  starting point (the session began before the hooks were installed) any critical
-  finding blocks, and a blocked finding is never remembered as allowed. A skill
+  session (or at the first change it sees, if that comes first), before anything
+  can have changed it, and only for the project settings file; a finding the file
+  already had then is allowed, because `zn audit` reported it when the folder was
+  opened. Without a starting point (the session began before the hooks were
+  installed) any critical finding blocks, and a blocked finding is never remembered
+  as allowed: a change blocked before the first prompt stays blocked for the whole
+  session, even after an unrelated edit. A skill
   that quotes a prompt-injection example is allowed. The message
   names the file, the rule and the line (for a settings file), and says to run
   `zn audit`. Your own user settings, your local settings

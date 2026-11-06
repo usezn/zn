@@ -1140,22 +1140,64 @@ function criticalKeys(findings, rel) {
     .map((f) => String(f.id) + '|' + rel + '|' + require('crypto').createHash('sha256').update(String(f.detail || f.evidence || f.title || '')).digest('hex').slice(0, 12));
 }
 
+// The audit behind the baseline and the ConfigChange verdict is only about one file, the project settings file. The audit walk visits agent
+// folders (.claude, .cursor, ...) before anything else, so a small budget reaches it in any folder and keeps the first tool call of a
+// session fast (a whole home folder took 5 s).
+const SETTINGS_AUDIT = { maxEntries: 2000, timeBudgetMs: 2000 };
+function auditSettings(root) {
+  return require('../audit').audit(Object.assign({ root, agents: ['claude'], includeHome: false, env: process.env, noPrune: true }, SETTINGS_AUDIT));
+}
+
+/** The folder whose .claude/settings.json the session works with: walking up from where the first event happened, the first folder that has one,
+ *  or a git checkout, never the home folder (those are the user's own settings). The folder itself when there is none. */
+function settingsRoot(cwd, opts) {
+  const homes = [require('os').homedir(), opts && opts.home].filter(Boolean).map((h) => path.resolve(h));
+  let dir = cwd;
+  for (let i = 0; i < 40; i++) {
+    if (homes.includes(path.resolve(dir))) break;
+    if (fs.existsSync(path.join(dir, SETTINGS_REL)) || fs.existsSync(path.join(dir, '.git'))) return dir;
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return cwd;
+}
+
+// Session memory older than this is not needed any more.
+const STATE_KEEP_MS = 14 * 24 * 3600 * 1000;
+function pruneState(dir) {
+  try {
+    const cutoff = Date.now() - STATE_KEEP_MS;
+    for (const n of fs.readdirSync(dir).slice(0, 5000)) {
+      if (!/^(?:config-change|instructions-loaded)-[0-9a-f]{16}\.json$/.test(n)) continue;
+      const f = path.join(dir, n);
+      try { if (fs.statSync(f).mtimeMs < cutoff) fs.unlinkSync(f); } catch (_) { /* gone, or not ours to remove */ }
+    }
+  } catch (_) { /* nothing to clean */ }
+}
+
 /**
  * The baseline of the project settings file, taken once per session at the first PreToolUse or UserPromptSubmit event, which fires before
  * the tool or the prompt can change anything (Claude Code has no SessionStart hook registered here). What the audit finds then is what the
- * person opened the folder with (zn audit reported it); a later change is judged against it. Any problem leaves no baseline, and without a
- * baseline a critical finding blocks.
+ * person opened the folder with (zn audit reported it); a later change is judged against it. A session that already has a state file (its
+ * first ConfigChange left one) is not baselined again: a change blocked before this point must not become what the session started with.
+ * An audit that fails leaves an empty baseline, so it is not retried at every call and a critical finding blocks.
  */
 function recordConfigBaseline(ev, opts) {
   try {
     if (!ev.sessionId || typeof ev.cwd !== 'string' || !path.isAbsolute(ev.cwd)) return;
     const sf = seenFile(ev, 'config-change', opts);
     if (!sf || fs.existsSync(sf)) return;
-    const root = ev.cwd;
-    const result = require('../audit').audit({ root, agents: ['claude'], includeHome: false, env: process.env, noPrune: true });
-    writeSeen(sf, ['file|' + SETTINGS_REL].concat(criticalKeys(result.findings, SETTINGS_REL)));
+    pruneState(path.dirname(sf));
+    let keys = [];
+    try {
+      keys = criticalKeys(auditSettings(settingsRoot(ev.cwd, opts)).findings, SETTINGS_REL);
+    } catch (_) {
+      keys = [];
+    }
+    writeSeen(sf, ['file|' + SETTINGS_REL].concat(keys));
   } catch (_) {
-    /* no baseline */
+    /* no baseline: a critical finding blocks */
   }
 }
 
@@ -1194,8 +1236,10 @@ const HIDDEN_TEXT_RE = /[\u{E0000}-\u{E007F}‪-‮⁦-⁩]/u;
  *  - a project or local settings file now has a critical audit finding (a download piped into a shell, a model endpoint moved to
  *    another server, ...): the same rules `zn audit` applies when a folder is opened, so an edit made during the session cannot do
  *    what the audit refuses at the start; or
- *    Only a finding that is new since the hook last saw that file is a reason to block: a project file that already had one when the
- *    session began (the audit reported it then) can still be edited. The first change the hook sees of a file is recorded and allowed.
+ *    Only a finding that is new since the baseline of the session is a reason to block (see recordConfigBaseline): a project file that
+ *    already had one when the session began (the audit reported it then) can still be edited. A session with no baseline (no session id,
+ *    or the hooks were installed after it began) blocks every critical finding, and the first ConfigChange it sees leaves an empty
+ *    baseline, so a change blocked before the first prompt is never adopted as the starting point.
  *    Local settings (settings.local.json) are the user's own file and are never blocked; or
  *  - a skill file now holds text a person cannot see (Unicode tag characters, bidirectional overrides). A skill that quotes an
  *    injection example (a security guide, red-team notes) is allowed: the generic injection rules are not used here.
@@ -1221,7 +1265,7 @@ function decideConfigChange(ev, opts) {
   const root = path.dirname(path.dirname(file));
   let result;
   try {
-    result = require('../audit').audit({ root, agents: ['claude'], includeHome: false, env: process.env, noPrune: true });
+    result = auditSettings(root);
   } catch (_) {
     return { decision: 'allow' };
   }
@@ -1230,12 +1274,12 @@ function decideConfigChange(ev, opts) {
   const sf = seenFile(ev, 'config-change', opts);
   const prev = readSeen(sf);
   const known = prev.includes('file|' + rel);
-  if (!critical.length) {
-    if (sf && !known) writeSeen(sf, prev.concat(['file|' + rel]));
-    return { decision: 'allow' };
-  }
+  // Whatever the verdict, a session without a baseline has one from now on: empty, so no finding is ever "known" because it was blocked.
+  if (sf && !known) writeSeen(sf, prev.concat(['file|' + rel]));
+  if (!critical.length) return { decision: 'allow' };
   // Only a finding that is new since the baseline of the session counts. Without a baseline (no session id, or the session began before
   // this hook was installed) every critical finding blocks. A blocked finding is never remembered: the next edit is judged the same way.
+  // (`known` is read before the empty baseline above was written, so a first change that is blocked is blocked with every finding.)
   // The key holds what the finding says (the address it points to, the command), not its line: an edit that moves it stays known.
   const keys = criticalKeys(critical, rel);
   const fresh = known ? critical.filter((f, i) => !prev.includes(keys[i])) : critical;
