@@ -43,7 +43,9 @@ test('a command with arguments: flags and missing paths stay, an existing file i
     pins.serverKey('node', ['server.js', '--port', '9000', 'missing.js']),
     keyOf(['node', script, '--port', '9000', 'missing.js'])
   );
-  assert.strictEqual(pins.label('node', ['server.js', '--port', '9000']), 'node ' + script + ' --port 9000');
+  // The label is bounded (displayName), and a Windows temporary folder is long enough to reach the bound.
+  assert.strictEqual(pins.label('node', ['server.js', '--port', '9000']), pins.displayName('node ' + script + ' --port 9000'));
+  assert.ok(pins.label('node', ['server.js', '--port', '9000']).startsWith('node ' + script.slice(0, 40)), 'the label names the resolved file');
 });
 
 test('a command alone has the same key and label with no arguments, an empty list or null', () => {
