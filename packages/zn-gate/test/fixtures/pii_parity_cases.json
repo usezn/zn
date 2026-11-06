@@ -32,6 +32,7 @@
 {"text":"line one jane@example.com\nline two +34 600 123 456\nline three 12345678Z","spans":[["EMAIL","jane@example.com"],["PHONE","+34 600 123 456"],["DNI","12345678Z"]]},
 {"text":"unicode ñandú jane@example.com ✓ +34 600 123 456 😀 4111111111111111","spans":[["EMAIL","jane@example.com"],["PHONE","+34 600 123 456"],["CARD","4111111111111111"]]},
 {"text":"fullwidth digits ４１１１１１１１１１１１１１１１ and arabic ٤١١١١١١١١١١١١١١١١","spans":[]},
+{"text":"call +34\u00a0600\u00a0123\u00a0456 or +34  600  123  456 now","spans":[["PHONE","+34\u00a0600\u00a0123\u00a0456"],["PHONE","+34  600  123  456"]]},
 {"text":"","spans":[]},
 {"text":"x","spans":[]}
 ]}

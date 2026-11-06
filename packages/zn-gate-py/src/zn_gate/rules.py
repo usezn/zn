@@ -1976,7 +1976,7 @@ def mask_token_runs(text: str) -> str:
 # explicit header or form key with a Unicode-aware state machine.
 _PREVIEW_PASSWORD_RE = _rc(r"(?i)\b(password|passwd|pwd)(\s*[:=]\s*)(\S+)")
 _PII_EMAIL_DOMAIN_RE = _rc(r"(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,24}(?![A-Za-z0-9-])", re.ASCII)
-_PII_PHONE_RE = _rc(r"(?<![A-Za-z0-9+])\+[1-9](?:\d{0,2}(?:[ .-]\d{1,9}){2,6}|\d{0,2} \d{6,12}|\d{7,14})(?![0-9])", re.ASCII)
+_PII_PHONE_RE = _rc(r"(?<![A-Za-z0-9+])\+[1-9](?:\d{0,2}(?:(?:[ .\u00a0\u202f\u2007-]|[ \u00a0\u202f\u2007]{2})\d{1,9}){2,6}|\d{0,2}[ \u00a0\u202f\u2007]{1,2}\d{6,12}|\d{7,14})(?![0-9])", re.ASCII)
 _PII_IBAN_RE = _rc(r"(?<![A-Za-z0-9])[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?(?![A-Za-z0-9])", re.ASCII)
 _PII_CARD_RE = _rc(r"(?<![0-9A-Za-z.,_-])(?:\d{4}[ -]?){2,3}\d{1,4}(?:[ -]?\d{1,3})?(?![0-9A-Za-z_]|[.,]\d)", re.ASCII)
 _PII_DNI_RE = _rc(r"(?<![A-Za-z0-9_.-])\d{8}-?[A-Z](?![A-Za-z0-9_])", re.ASCII)
@@ -2104,17 +2104,17 @@ def _e164_ok(raw: str) -> bool:
 
 
 def _phone_ok(raw: str) -> bool:
-    if re.search(r"[ .-]", raw):
+    if re.search(r"[ .\u00a0\u202f\u2007-]", raw):
         if re.search(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", raw):
             return False
         if re.fullmatch(r"\+[0-9]{1,3}(?:\.[0-9]{1,3}){3}", raw):
             return False
-        if re.fullmatch(r"\+[0-9](?:[ .-][0-9])+", raw):
+        if re.fullmatch(r"\+[0-9](?:[ .\u00a0\u202f\u2007-]{1,2}[0-9])+", raw):
             return False
-    cc = re.fullmatch(r"\+([0-9]{1,3}) [0-9]+", raw)
+    cc = re.fullmatch(r"\+([0-9]{1,3})[ \u00a0\u202f\u2007]{1,2}[0-9]+", raw)
     if cc and cc.group(1) != "1" and cc.group(1) not in _E164_LENGTHS:
         return False
-    return _e164_ok(re.sub(r"[ .-]", "", raw))
+    return _e164_ok(re.sub(r"[ .\u00a0\u202f\u2007-]", "", raw))
 
 
 def _card_span_ok(v: str) -> bool:

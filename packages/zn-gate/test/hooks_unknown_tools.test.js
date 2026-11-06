@@ -112,6 +112,17 @@ test('create_and_run_task is judged like a shell command in both adapters', asyn
   assert.equal((await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: ok })).output, null);
 });
 
+test('a custom task shell is a bare shell name or a system shell, never a workspace file', async (t) => {
+  const dir = tempDir(t, 'zn-unknown-tools-');
+  const mk = (executable) => ({ workspaceFolder: dir, task: { label: 'x', type: 'shell', command: 'echo', args: ['hello'], options: { shell: { executable, args: ['-c'] } } } });
+  for (const exe of ['./bash', 'tools/bash', '../sh', '/tmp/bash', 'C:\\work\\bash.exe']) {
+    assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: mk(exe) })), exe);
+  }
+  for (const exe of ['bash', '/bin/bash', '/usr/bin/zsh']) {
+    assert.equal((await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: mk(exe) })).output, null, exe);
+  }
+});
+
 test('task.args are quoted like VS Code runs them: bash -c with a destructive or protected command is judged', async (t) => {
   const dir = tempDir(t, 'zn-unknown-tools-');
   const cases = [
