@@ -1,8 +1,8 @@
 name: zn CI
 
-# Pull requests into next run the checks the rulesets require, all on Ubuntu: Node.js 18.x, 22.x and 24.x
+# Pull requests into next run, all on Ubuntu, the checks the rulesets require: Node.js 18.x, 22.x and 24.x
 # (only 22.x runs its tests there; 18.x and 24.x report, and run their tests in the merge queue), Python 3.12,
-# the npm and Python package builds, the Python 3.14 warnings job and the lint job. The full matrix (Node.js
+# the npm and Python package builds and the lint job, plus the Python 3.14 warnings job, which is not required. The full matrix (Node.js
 # 18.x, 20.x, 22.x, 24.x and 26.x; Python 3.10 to 3.14, Windows and macOS) runs on pull requests into main and
 # release branches, on the merge queue for main and release branches, on pushes to main and release branches,
 # on the daily schedule, on manual runs, and on any pull request labelled full-ci. A push to next runs only the
