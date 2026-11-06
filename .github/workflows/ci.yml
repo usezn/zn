@@ -2,7 +2,8 @@ name: zn CI
 
 # Pull requests into next run the checks the rulesets require (Node.js 18.x, 22.x and 24.x, Python 3.12, the
 # npm and Python package builds), all on Ubuntu, plus one lint job. The full matrix (every Node.js and
-# Python version, Windows and macOS) runs on pushes to main, next and release branches, on the daily schedule, on manual runs,
+# Python version, Windows and macOS) runs on pushes to main and release branches (a push to next runs only what the
+# merge queue did not run on that commit), on the daily schedule, on manual runs,
 # on pull requests into main and release branches, and on any pull request labelled full-ci. Its only macOS
 # job is Python 3.12.
 on:
@@ -120,8 +121,8 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         run: node bench/bench_node.js
 
-  # Pull requests into next run Python 3.12 on Ubuntu only. Older and newer Python versions, Windows and
-  # macOS run on the push to next; label a pull request full-ci to run them before the merge.
+  # Pull requests into next run Python 3.12 on Ubuntu only. The push to next runs the entries the merge queue did not
+  # (older and newer Python versions, Windows and macOS); label a pull request full-ci to run them before the merge.
   test-python:
     name: Python ${{ matrix.python-version }} tests & benchmarks (${{ matrix.os }})
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
@@ -252,7 +253,7 @@ jobs:
 
   # The coverage report for the Python package, off the pull request path: "Python 3.12 tests & benchmarks
   # (ubuntu-latest)" above is a required check and runs plain pytest, so the tracing slowdown and the
-  # report upload never delay a merge. Runs on pushes to main and next, on the daily schedule and on
+  # report upload never delay a merge. Runs on every push (main, next and release branches), on the daily schedule and on
   # manual runs; it is not a required check. Report only, no threshold.
   python-coverage:
     name: Python 3.12 coverage report (ubuntu-latest)
