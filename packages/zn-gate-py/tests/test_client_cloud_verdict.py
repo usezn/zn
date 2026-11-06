@@ -46,7 +46,7 @@ class TestCloudVerdict(unittest.TestCase):
         def opener(req, timeout=None):
             return _Resp(raw)
 
-        with mock.patch.object(client.urllib.request, "urlopen", opener):
+        with mock.patch.object(client, "_open", opener):
             return client.analyze("The quarterly report lists the shipping dates.", endpoint=ENDPOINT)
 
     def test_case_and_spaces(self):

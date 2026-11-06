@@ -48,7 +48,7 @@ class TestCloudErrors(unittest.TestCase):
         os.environ["ZN_CLOUD"] = "1"
 
     def _run(self, opener):
-        with mock.patch.object(client.urllib.request, "urlopen", opener):
+        with mock.patch.object(client, "_open", opener):
             return client.analyze("hello there", endpoint=ENDPOINT)
 
     def _raising(self, err):

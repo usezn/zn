@@ -329,3 +329,80 @@ def test_json_equals_the_npm_package(machine):
     pt = zn(env, "reach", "--history").stdout
     nt = subprocess.run(["node", _NODE_CLI, "reach", "--history"], capture_output=True, text=True, env=node_env, timeout=120).stdout
     assert pt == nt
+
+
+def _clock(ok_calls):
+    """A fake clock: the first ok_calls reads say 'before the deadline', every later one 'long past it'."""
+    state = {"n": 0}
+
+    def now():
+        state["n"] += 1
+        return 0 if state["n"] <= ok_calls else 10 ** 15
+    return now, state
+
+
+def _write(tmp_path, text):
+    p = tmp_path / "f.jsonl"
+    p.write_text(text, encoding="utf-8", newline="")
+    return str(p)
+
+
+def test_a_file_read_to_the_end_is_complete_even_if_the_deadline_passes_before_the_empty_read(tmp_path, monkeypatch):
+    path = _write(tmp_path, "first line\nmy key " + AWS)  # no final newline: the last line is flushed at EOF
+    now, _ = _clock(1)  # the deadline passes right after the only chunk was read
+    monkeypatch.setattr(reach_history, "_now_ms", now)
+    r = reach_history.scan_file(path, deadline=1)
+    assert r["complete"] is True and r["reason"] is None
+    assert sum(r["counts"].values()) == 1
+
+
+def test_a_deadline_in_the_middle_of_a_file_reports_time_limit_with_partial_results(tmp_path, monkeypatch):
+    line = "key " + AWS + "\n"
+    path = _write(tmp_path, line * 40)
+    monkeypatch.setattr(reach_history, "CHUNK", len(line) * 5)
+    now, _ = _clock(2)  # two chunks are scanned, the third read finds the deadline passed
+    monkeypatch.setattr(reach_history, "_now_ms", now)
+    r = reach_history.scan_file(path, deadline=1)
+    assert r["complete"] is False and r["reason"] == "time-limit"
+    assert sum(r["counts"].values()) == 10  # the two scanned chunks hold 5 lines each; the rest is not read
+
+
+def test_one_very_long_line_stops_within_a_bounded_amount_after_the_deadline(tmp_path, monkeypatch):
+    from zn_gate import rules
+    path = _write(tmp_path, ("filler words " * 40 + AWS + " ") * 200 + "\n")
+    monkeypatch.setattr(reach_history, "SLICE_CHARS", 1000)
+    calls = {"n": 0}
+    real = rules.redact_secrets
+
+    def counting(text):
+        calls["n"] += 1
+        return real(text)
+    monkeypatch.setattr(rules, "redact_secrets", counting)
+    now, _ = _clock(2)  # chunk check, then the first slice boundary; the second boundary is past the deadline
+    monkeypatch.setattr(reach_history, "_now_ms", now)
+    r = reach_history.scan_file(path, deadline=1)
+    assert r["complete"] is False and r["reason"] == "time-limit"
+    assert calls["n"] <= 2  # of about 100 slices, at most the ones scanned before the deadline was seen
+
+
+def test_slicing_a_long_line_gives_the_same_counts_as_scanning_it_whole(tmp_path, monkeypatch):
+    text = ("filler words " * 40 + AWS + " " + GITHUB + " ") * 50 + "\n"
+    path = _write(tmp_path, text)
+    whole = reach_history.scan_file(path, deadline=10 ** 18)
+    monkeypatch.setattr(reach_history, "SLICE_CHARS", 2000)
+    sliced = reach_history.scan_file(path, deadline=10 ** 18)
+    assert whole["complete"] and sliced["complete"]
+    assert whole["counts"] == sliced["counts"] and sum(whole["counts"].values()) == 100
+
+
+def test_a_home_over_the_file_cap_keeps_the_same_files_as_npm(machine):
+    # Same corpus and same expected files as the npm test of the same name. Names are compared by UTF-8 bytes:
+    # U+1F600 is after U+FF01 in code points, so it is the file left out at a cap of 5.
+    home, env = machine
+    names = ["B.jsonl", "a.jsonl", "z.jsonl", "\u00e9.jsonl", "\uff01.jsonl", "\U0001f600.jsonl"]
+    for n in names:
+        put(home, ".claude/projects/p/" + n, jsonl([{"text": "key " + AWS}]))
+    r = history(home=home, env=env, _max_files=5)
+    files = sorted({f["file"].split("/")[-1] for f in r["findings"]})
+    assert files == sorted(["B.jsonl", "a.jsonl", "z.jsonl", "\u00e9.jsonl", "\uff01.jsonl"])
+    assert any(i["reason"] == "too-many-files" and i["limit"] == 5 for i in r["incomplete"])

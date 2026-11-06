@@ -1,0 +1,2 @@
+### Fixed
+- Cloud calls (`analyze` with `ZN_CLOUD`, `connect`, `disconnect --revoke`) now end within their configured time (4 s, 8 s) when the network silently drops traffic. Before, the wait for the system name lookup could last about 20 s and keep the process running. The Node package resolves the host with a cancellable resolver (the hosts file first, then the system DNS servers, then the system lookup if the name is not found) and the Python package bounds its lookup the same way; certificates, proxies and `/etc/hosts` overrides work as before.
