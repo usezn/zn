@@ -343,3 +343,25 @@ test('case and esac inside a command substitution: quoted words and comments are
   assert.doesNotThrow(() => policy.bashDenial('cat .en$(case x in x) "esac ' + 'case '.repeat(5000), opts));
   assert.equal(policy.bashDenial('cat notes.txt$(case x in x) "esac" ;; esac)', opts), null);
 });
+
+// --- review of #849, fifth round: the whole-line wide reading, and a fallback that spans lines and is linear ---
+
+test('the wide cmd name reading also covers a name that holds an operator', () => {
+  const { opts } = project();
+  for (const plat of ['linux', 'win32']) {
+    asPlatform(plat, () => {
+      for (const c of ['cmd /c "type .e% & echo :~0,0%nv"', 'cmd /v:on /c "type .e! & echo :~0,0!nv"']) assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + c);
+    });
+  }
+});
+
+test('the case fallback spans lines and costs time in proportion to the text', () => {
+  const { opts } = project();
+  for (const c of ['cat .en$(case x in x) : "esac" ;; y)\n ;; esac)v', 'cat .en$(case x in x) :\n;; y) : "esac"\n;; esac)v']) {
+    for (const plat of ['linux', 'win32']) asPlatform(plat, () => assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + JSON.stringify(c)));
+  }
+  const big = 'cat a$(case ' + '$('.repeat(40000) + ')'.repeat(40000);
+  const t0 = Date.now();
+  policy.bashDenial(big, opts);
+  assert.ok(Date.now() - t0 < 2000, 'time: ' + (Date.now() - t0) + ' ms');
+});

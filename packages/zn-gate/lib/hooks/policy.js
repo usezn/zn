@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-06.6';
+const POLICY_RULES_VERSION = '2026-11-06.9';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2426,9 +2426,13 @@ function bashDenialOf(cmd, opts = {}) {
     const add = (t) => { variants.add(t); };
     add(dropEmptyExpansions(text, opts.env || process.env));
     if (/[$`]/.test(text)) { add(stripExpansions(text, false)); add(stripExpansions(text, true)); }
-    // A case pattern inside $( ) can end the unit early in the reading above: a fallback reading takes each $( to the last ) of its line.
-    if (/\$\([^\n]*\bcase\b/.test(text)) add(text.replace(/\$\([^\n]*\)/g, ''));
-    if (/[%!]/.test(text) && cmdContext(text)) for (const v of [...variants]) { add(stripCmdVarsPerCommand(v)); add(stripCmdVarsNarrow(v)); }
+    // A case pattern inside $( ) can end the unit early in the readings above: a fallback reading takes the text from the first $( to the last ) of the command (one pass).
+    if (/\bcase\b/.test(text)) {
+      const open = text.indexOf('$(');
+      const close = text.lastIndexOf(')');
+      if (open >= 0 && close > open) add(text.slice(0, open) + text.slice(close + 1));
+    }
+    if (/[%!]/.test(text) && cmdContext(text)) for (const v of [...variants]) { add(stripCmdVars(v)); add(stripCmdVarsPerCommand(v)); add(stripCmdVarsNarrow(v)); }
     // With delayed expansion on, cmd removes a ! that has no partner (type .e!nv opens .env), so a reading without any ! is judged too.
     const delayed = text.indexOf('!') >= 0 && DELAYED_EXPANSION_RE.test(text) && cmdContext(text);
     if (delayed) for (const v of [...variants]) add(v.replace(/!/g, ''));
