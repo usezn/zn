@@ -314,11 +314,15 @@ test('the ZCode plugin hook, started as ZCode starts it, runs no planted sh or n
   const paths = posix ? ['.:/usr/bin:/bin', ':/usr/bin:/bin'] : ['.;' + SYSPATH, ';' + SYSPATH];
   // Each PATH entry has its own folder and planted programs, and the two hook starts overlap. On Windows each start is the
   // system PowerShell, which is slow, so one after the other they added up to the whole test's time.
+  // On a busy Windows runner the system PowerShell can take more than 40 s to start (CI, 2026-11-04: the same tree
+  // timed out on one run and passed on another). Windows gets more time here; a hang still fails, and the
+  // assertions are unchanged.
+  const timeout = posix ? 40000 : 90000;
   const runs = paths.map((PATH) => {
     const { cwd, marker } = plantPrograms(t);
     // ZCode gives the hook the plugin folder in ZCODE_PLUGIN_ROOT (the Windows entry reads its script there).
     const env = posix ? { PATH, HOME: cwd } : { PATH, SystemRoot: process.env.SystemRoot, USERPROFILE: cwd, ZCODE_PLUGIN_ROOT: pluginRoot };
-    return spawnAsync(pre.command, args, { cwd, env, input: eventFor(cwd), timeout: 40000 }).then((r) => ({ PATH, marker, r }));
+    return spawnAsync(pre.command, args, { cwd, env, input: eventFor(cwd), timeout }).then((r) => ({ PATH, marker, r }));
   });
   for (const { PATH, marker, r } of await Promise.all(runs)) {
     // The hook may refuse before it reads its input; the write of the event then fails with EPIPE, which is not a failure here.
