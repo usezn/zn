@@ -4,6 +4,12 @@ zn-gate is a **lightweight checkpoint on your machine**, placed between your AI 
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="diagrams/architecture-animated-dark.svg"><img alt="Architecture diagram. Untrusted input such as prompts, files, web pages and MCP servers passes through zn-gate on your machine before it reaches the agent. zn-gate checks the prompt, the tool call and the tool result, using a local rules engine, a PII and secret scrubber, an encrypted vault and a hash-chained decision log. Only with ZN_CLOUD=1 and ZN_API_KEY set, prompts with detected secrets removed go to the optional Galvanize 3 classifier at api.usezn.com." src="diagrams/architecture-animated-light.svg" width="800"></picture>
 
+**How to read this diagram**
+
+- The boxes: untrusted input (prompts, files, web, MCP) on the left, the agent and its tools on the right, and zn-gate between them with one box per check (`analyze_prompt`, `check_tool_call`, `check_tool_result`).
+- The arrows: input goes through the three checks and reaches the agent as clean input, and output comes back redacted. The bottom row (rules engine, PII and secret scrubber, encrypted vault, hash-chained audit log) is used by all three checks.
+- The cloud path: only with `ZN_CLOUD=1` and `ZN_API_KEY` set, prompts with detected secrets removed go to the Galvanize 3 classifier at `api.usezn.com`.
+
 ## Three checks, one local engine
 
 zn-gate checks each step of a tool call. The same local pieces serve all three checks:
@@ -40,6 +46,28 @@ All of these checks use the local engine. Tool arguments and tool output never l
 - **Local hooks.** For Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app and GitHub Copilot (and, as an experimental adapter, Gemini CLI), `zn hooks install <agent>` registers zn-gate's hooks, so it also sees the agent's built-in tools: it blocks reads of secret files and pasted secrets, and scrubs shell output and file contents. (In Cursor, only MCP tool output is scrubbed; in Antigravity and ZCode desktop app, no tool output is rewritten.) What each agent allows is in [Agent compatibility](compat.md).
 - **MCP server and `shield`.** In editors that only support MCP servers, zn-gate offers its checks as MCP tools (`analyze_prompt`, `check_tool_call`, `check_tool_result`) and can wrap your other MCP servers with `zn-gate shield`. See [Editors and coding agents](editors/README.md).
 - **Library.** Node.js and Python functions, and framework integrations, run the same checks inside your own code ([API reference](api-reference.md)).
+
+## Two more views of the same flow
+
+Where each check sits in a tool call, as an MCP server or as the `shield` proxy around other servers:
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="diagrams/tool-call-sequence-animated-dark.svg"><img alt="Sequence diagram. The agent sends analyze_prompt to zn-gate on your machine, which allows or blocks it. Then check_tool_call, which allows the call with secrets masked or blocks it. The agent runs the tool. The output comes back through check_tool_result or shield, and zn-gate returns it with secrets redacted, or neutralized if it carries an injection." src="diagrams/tool-call-sequence-animated-light.svg" width="800"></picture>
+
+**How to read this diagram**
+
+- The boxes: the agent, zn-gate (on your machine) and the tool or MCP server. Time runs from top to bottom.
+- The arrows going to zn-gate: `analyze_prompt` is answered with allow, or block with the rule that fired; `check_tool_call` (name, arguments) is answered with allow with secrets masked, or block.
+- The arrows after the tool runs: the output comes back through `check_tool_result` (or through `shield`) and reaches the agent with secrets redacted, or neutralized if it carries an injection.
+
+What goes where on your machine, and what can leave it:
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="diagrams/data-flow-animated-dark.svg"><img alt="Flow diagram. The agent, zn-gate and the tools or MCP servers run on your machine, and tool calls and prompts go through zn-gate. Tool output comes back redacted. Nothing leaves the machine by default. Only with ZN_CLOUD=1 and ZN_API_KEY set (or the Claude Code plugin's API key option), prompts with detected secrets removed go to api.usezn.com, the Galvanize 3 classifier." src="diagrams/data-flow-animated-light.svg" width="800"></picture>
+
+**How to read this diagram**
+
+- The boxes: the agent, zn-gate (rules engine and secret redaction) and the tools and MCP servers (files, shell, web, databases), all inside "Your machine".
+- The arrows: tool calls and prompts go to zn-gate, allowed calls reach the tools with secrets masked, and tool output comes back through zn-gate as redacted output and verdicts.
+- The cloud arrow: nothing leaves the machine by default. Only with `ZN_CLOUD=1` and `ZN_API_KEY` set, prompts with detected secrets removed go to the Galvanize 3 classifier at `api.usezn.com`.
 
 ## Key Architectural Principles
 
