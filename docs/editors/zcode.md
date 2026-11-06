@@ -40,7 +40,7 @@ What the plugin is, so you know what to expect when it is published:
 - If Node.js hangs while the plugin hook starts, the hook still answers within 28 seconds, under the 30-second timeout the plugin sets on its hooks: it blocks the call, or only warns on events that cannot block.
 - Use the plugin or `zn hooks install zcode`, not both: ZCode does not remove duplicate hooks, so every call would be checked twice. `zn hooks install zcode` warns when the plugin is on, and `zn-gate check` reports it.
 - You can turn the plugin off in Settings, Plugins. With the plugin off and `hooks.enabled` false, nothing of zn runs in ZCode, and `zn-gate check` reports it as not protected. ZCode records the switch in `~/.zcode/cli/config.json` (`plugins.enabledPlugins`), which check reads.
-- Tested on the ZCode desktop app on Linux only; macOS is not tested. The plugin's own files, under `~/.zcode/cli/plugins/`, are protected by zn's policy from the agent's file tools and shell, also when `~/.zcode` is a link to another folder. This is best effort: other programs that run as you can still change them.
+- Tested on the ZCode desktop app on Linux; macOS is not tested. The plugin's own files, under `~/.zcode/cli/plugins/`, are protected by zn's policy from the agent's file tools and shell, also when `~/.zcode` is a link to another folder. This is best effort: other programs that run as you can still change them.
 
 ## What zn-gate protects in ZCode, and what it does not
 
