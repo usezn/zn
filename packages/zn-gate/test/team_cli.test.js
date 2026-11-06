@@ -349,13 +349,13 @@ test('leave exits 1 and names every file it could not delete; success says what 
 });
 
 test('leave with a revocation the server has not taken: exit 0, says clearly that the server was not told and what happens next; stuck files still exit 1', async () => {
-  const revocation = { status: 'pending', since: '2026-10-24T10:00:00.000Z', error: 'could not reach the server' };
+  const revocation = { status: 'pending', since: '2026-10-24T10:00:00.000Z', error: 'could not reach the server', give_up_at: '2026-11-23T10:00:00.000Z' };
   fake.teamLeave = async () => ({ left: 'org_Example12345678', install_id: 'inst-0001', pending_files: [], revocation });
   let r = await capture(() => runTeamCommand(['team', 'leave']));
   assert.strictEqual(r.code, 0);
   assert.match(r.stdout, /^Left org_Example12345678\. The organization policy no longer applies on this machine\.\n/);
   assert.match(r.stdout, /The server was NOT told yet that you left \(could not reach the server\): installation inst-0001 stays on the organization's list, and its token still works there, until a retry succeeds\./);
-  assert.match(r.stdout, /no policy, no uploads, no detectors\. It retries on `zn team sync` and every 15 minutes while the vault is unlocked, until the server confirms\./);
+  assert.match(r.stdout, /no policy, no uploads, no detectors\. It retries on `zn team sync` and every 15 minutes while the vault is unlocked, and stops on 2026-11-23T10:00:00\.000Z\./);
   assert.strictEqual(r.stderr, '');
   fake.teamLeave = async () => ({ left: 'org_Example12345678', install_id: 'inst-0001', pending_files: ['/home/dev/.zn/team.json'], revocation });
   r = await capture(() => runTeamCommand(['team', 'leave']));
@@ -364,13 +364,13 @@ test('leave with a revocation the server has not taken: exit 0, says clearly tha
 });
 
 test('status shows a pending revocation with its last error and the next step, also when not in an organization, and --json carries it', async () => {
-  const rev = { org: 'org_Example12345678', org_name: 'Example Org', install_id: 'inst-0001', since: '2026-10-24T10:00:00.000Z', last_try_at: '2026-10-24T11:00:00.000Z', last_error: 'the server answered HTTP 503', tries: 3, next_try_at: null };
+  const rev = { org: 'org_Example12345678', org_name: 'Example Org', install_id: 'inst-0001', since: '2026-10-24T10:00:00.000Z', last_try_at: '2026-10-24T11:00:00.000Z', last_error: 'the server answered HTTP 503', tries: 3, next_try_at: null, give_up_at: '2026-11-23T10:00:00.000Z' };
   fake.teamInfo = async () => ({ joined: false, revocations: [rev] });
   let r = await capture(() => runTeamCommand(['team', 'status']));
   assert.strictEqual(r.code, 0);
   assert.match(r.stdout, /^Not in a zn organization\./);
   assert.match(r.stdout, /Revocation pending since 2026-10-24T10:00:00\.000Z \(installation inst-0001, org_Example12345678\): last error the server answered HTTP 503 \(last try 2026-10-24T11:00:00\.000Z\)\./);
-  assert.match(r.stdout, /Next step: `zn team sync` retries now .* keeps retrying until the server confirms/);
+  assert.match(r.stdout, /Next step: `zn team sync` retries now .* until 2026-11-23T10:00:00\.000Z, when it stops/);
   r = await capture(() => runTeamCommand(['team', 'status', '--json']));
   const j = JSON.parse(r.stdout);
   assert.strictEqual(j.joined, false);

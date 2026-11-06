@@ -115,7 +115,7 @@ With `--wrap-mcp` it finds the MCP servers in known agent configs and wraps them
 
 `--dry-run`, `--shadow` and `--revert` each select `--wrap-mcp` too.
 
-Exit codes: `0` done, or every agent found is already protected. `1` no supported agent found, or the steps were only printed; with `--wrap-mcp` also when a config could not be changed (for example the disk is full or the file is read-only). The line for that config names the file and says what to do; the file is left as it was. `2` an argument it does not know.
+Exit codes: `0` done, or every agent found is already protected. `1` no supported agent found, or the steps were only printed. `2` an argument it does not know.
 
 ### `uninstall`
 
@@ -207,7 +207,7 @@ zn-gate scan [path] [--format text|json|github] [--all] [--include .rst,.xml] [-
 
 Looks through prompt templates, markdown, skills and configs for injection traps and secrets. `path` defaults to the current folder. Matched values are never printed.
 
-- `--format`: `text` (default), `json`, or `github` (workflow annotations for CI). The Node and Python versions take the same values. `scan` has no SARIF output; `zn-gate audit --format sarif` (npm package) covers agent configs instead. Any other value exits `2`.
+- `--format`: `text` (default), `json`, or `github` (workflow annotations for CI).
 - `--all` (or `--code`): include source code files.
 - `--include`: more file extensions to scan.
 - `--exclude`: more folders to skip.
@@ -254,7 +254,7 @@ Exit codes: `0` done, `1` findings meet `--fail-on`, `2` wrong usage or a failur
 zn-gate analyze "<text>"
 ```
 
-Checks a piece of text for prompt injection and prints the answer as JSON. `--json` is accepted and changes nothing, because the answer is always JSON (the Python package takes the same flag). It is local; the optional cloud check is used only when it is on. Exit codes: `0` allowed, `1` no text given, `2` blocked.
+Checks a piece of text for prompt injection and prints the answer as JSON. It is local; the optional cloud check is used only when it is on. Exit codes: `0` allowed, `1` no text given, `2` blocked.
 
 ### `pins`
 
@@ -698,7 +698,7 @@ Downloads the policy and uploads the audit log now. Exit `0` only when a valid p
 zn-gate team leave
 ```
 
-Disconnects this machine from the organization. It first tells the server to revoke this installation (with the installation's own token), then deletes the local copies of the policy and upload state. Exit `1` when one of those files cannot be deleted; the message names it. If the server cannot take the revocation now (offline, an error, a rate limit, or an older server), the machine still leaves at once and the command exits `0`, but it prints that the server was not told yet: zn-gate keeps the token in the vault only to retry on `team sync` and while the vault is unlocked, until the server confirms, and `team status` shows the pending revocation. A revocation the server has not confirmed is never dropped, and a 65th leave is refused until some are confirmed. Earlier versions kept at most eight waiting revocations and dropped the oldest beyond that without any record, so an organization admin should review the installations in the dashboard and remove any that should be gone. See [zn Team](team.md#leaving).
+Disconnects this machine from the organization. It first tells the server to revoke this installation (with the installation's own token), then deletes the local copies of the policy and upload state. Exit `1` when one of those files cannot be deleted; the message names it. If the server cannot take the revocation now (offline, an error, a rate limit, or an older server), the machine still leaves at once and the command exits `0`, but it prints that the server was not told yet: zn-gate keeps the token in the vault only to retry on `team sync` and while the vault is unlocked, for up to 30 days, and `team status` shows the pending revocation. See [zn Team](team.md#leaving).
 
 #### `team managed-config`
 
@@ -722,15 +722,3 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 | `stats` | `--days N`, `--json` | Local counts for the last `N` days (1 to 90, default 30). There is no `stats share`. Exit `0`, or `2` if `--days` is out of range. |
 
 The other commands on this page are only in the npm package. In the Python package they print a short note and exit `2`: `init`, `check`, `doctor`, `audit`, `hooks`, `run`, `secret`, `env`, `vault`, `unlock`, `lock`, `pins`, `mcp`, `shield`, `team`, `logs` and `export` point to `npx -y zn-gate init`, and `report`, `connect` and `disconnect` point to `npx -y zn-gate <command>`. `reach` is in the npm package too, except `reach --history`, which the Python package has as well (see [reach](reach.md#history-did-your-agents-keep-a-secret-of-yours)). A command neither package knows exits `1`. To use the optional cloud check from Python, set `ZN_CLOUD=1` and `ZN_API_KEY` (or pass `--key` to `analyze`) instead of running `connect`.
-
-## JSON output
-
-When a command prints JSON, the npm and the Python package print the same fields, except for the ones in this table. Read the fields you need by name in scripts. Do not compare whole outputs byte for byte, because some values change on every run.
-
-| Package | Command | Field or behavior | Why it differs |
-|---|---|---|---|
-| Python | `analyze` | `latency_ms` on every answer, and `latency_us` on blocked texts | It is the time this run took, so it changes between runs. Compare `verdict` and `rule`, not the timings. The npm package does not print timings. |
-| Python | `test --json` | `allowed`, `secrets_detected`, `latency_us`, and `redacted_preview` when a secret was found | The npm `test` command runs its self-test instead and prints no JSON. |
-| npm | `stats --json` | `sharing`, `sent_days`, `send_failed` | Sharing pseudonymous counts is an npm-only feature (`stats share`), so only the npm output reports whether sharing is on and which days were sent. |
-
-`analyze --json` is accepted by both packages and changes nothing. Key order can differ between the two packages. `scan --format json` has the same keys in both.
