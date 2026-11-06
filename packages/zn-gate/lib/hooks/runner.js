@@ -1135,17 +1135,18 @@ function readReportedFile(file) {
 }
 
 const SETTINGS_REL = '.claude/settings.json';
-function criticalKeys(findings, rel) {
-  return (findings || []).filter((f) => f.severity === 'critical' && String(f.file || '').split(path.sep).join('/') === rel)
-    .map((f) => String(f.id) + '|' + rel + '|' + require('crypto').createHash('sha256').update(String(f.detail || f.evidence || f.title || '')).digest('hex').slice(0, 12));
+function criticalKeys(findings, rel, root) {
+  // The folder is part of the key: a finding of a parent folder's settings is not the same finding in this one.
+  const where = require('crypto').createHash('sha256').update(String(root || '')).digest('hex').slice(0, 8);
+  // A settings file that could not be checked (a link out of the project, too large) counts as critical: it is not passed as clean.
+  return (findings || []).filter((f) => (f.severity === 'critical' || f.id === 'ZNA020') && String(f.file || '').split(path.sep).join('/') === rel)
+    .map((f) => String(f.id) + '|' + rel + '|' + where + '|' + require('crypto').createHash('sha256').update(String(f.detail || f.evidence || f.title || '')).digest('hex').slice(0, 12));
 }
 
-// The audit behind the baseline and the ConfigChange verdict is only about one file, the project settings file. The audit walk visits agent
-// folders (.claude, .cursor, ...) before anything else, so a small budget reaches it in any folder and keeps the first tool call of a
-// session fast (a whole home folder took 5 s).
-const SETTINGS_AUDIT = { maxEntries: 2000, timeBudgetMs: 2000 };
-function auditSettings(root) {
-  return require('../audit').audit(Object.assign({ root, agents: ['claude'], includeHome: false, env: process.env, noPrune: true }, SETTINGS_AUDIT));
+// The audit behind the baseline and the ConfigChange verdict is about one file, the project settings file, and runs on that file alone
+// (no walk of the folder: a walk that stops after N entries can stop before the file, and a whole home folder took 5 s).
+function auditSettings(root, rel) {
+  return require('../audit').auditFileAt({ root, rel: rel || SETTINGS_REL });
 }
 
 /** The folder whose .claude/settings.json the session works with: walking up from where the first event happened, the first folder that has one,
@@ -1187,11 +1188,13 @@ function recordConfigBaseline(ev, opts) {
   try {
     if (!ev.sessionId || typeof ev.cwd !== 'string' || !path.isAbsolute(ev.cwd)) return;
     const sf = seenFile(ev, 'config-change', opts);
-    if (!sf || fs.existsSync(sf)) return;
+    if (!sf) return;
+    if (fs.existsSync(sf)) { touchSeen(sf); return; }
     pruneState(path.dirname(sf));
     let keys = [];
     try {
-      keys = criticalKeys(auditSettings(settingsRoot(ev.cwd, opts)).findings, SETTINGS_REL);
+      const root = settingsRoot(ev.cwd, opts);
+      keys = criticalKeys(auditSettings(root).findings, SETTINGS_REL, root);
     } catch (_) {
       keys = [];
     }
@@ -1207,6 +1210,10 @@ function seenFile(ev, name, opts) {
   const base = opts && opts.home ? path.join(opts.home, '.zn') : require('../stats').znHome();
   const id = require('crypto').createHash('sha256').update(String(ev.sessionId || '')).digest('hex').slice(0, 16);
   return path.join(base, 'state', name + '-' + id + '.json');
+}
+/** A session that is still in use keeps its memory: the age that pruneState goes by is the last use. */
+function touchSeen(file) {
+  try { const now = new Date(); fs.utimesSync(file, now, now); } catch (_) { /* gone */ }
 }
 function readSeen(file) {
   if (!file) return [];
@@ -1265,14 +1272,15 @@ function decideConfigChange(ev, opts) {
   const root = path.dirname(path.dirname(file));
   let result;
   try {
-    result = auditSettings(root);
+    result = auditSettings(root, path.relative(root, file).split(path.sep).join('/'));
   } catch (_) {
     return { decision: 'allow' };
   }
   const rel = path.relative(root, file).split(path.sep).join('/');
-  const critical = (result.findings || []).filter((f) => f.severity === 'critical' && String(f.file || '').split(path.sep).join('/') === rel);
+  const critical = (result.findings || []).filter((f) => (f.severity === 'critical' || f.id === 'ZNA020') && String(f.file || '').split(path.sep).join('/') === rel);
   const sf = seenFile(ev, 'config-change', opts);
   const prev = readSeen(sf);
+  if (sf && prev.length) touchSeen(sf);
   const known = prev.includes('file|' + rel);
   // Whatever the verdict, a session without a baseline has one from now on: empty, so no finding is ever "known" because it was blocked.
   if (sf && !known) writeSeen(sf, prev.concat(['file|' + rel]));
@@ -1281,7 +1289,7 @@ function decideConfigChange(ev, opts) {
   // this hook was installed) every critical finding blocks. A blocked finding is never remembered: the next edit is judged the same way.
   // (`known` is read before the empty baseline above was written, so a first change that is blocked is blocked with every finding.)
   // The key holds what the finding says (the address it points to, the command), not its line: an edit that moves it stays known.
-  const keys = criticalKeys(critical, rel);
+  const keys = criticalKeys(critical, rel, root);
   const fresh = known ? critical.filter((f, i) => !prev.includes(keys[i])) : critical;
   if (!fresh.length) return { decision: 'allow' };
   const first = fresh[0];

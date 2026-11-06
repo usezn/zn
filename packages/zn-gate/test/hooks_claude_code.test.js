@@ -384,34 +384,102 @@ test('ConfigChange: a change blocked before the first prompt does not become the
   assert.equal((await run(configChange('project_settings', file, dir), { home })).output, null, 'the file is clean again');
 });
 
-test('the baseline audit has a small budget, and an audit that fails leaves an empty baseline that is not retried', async (t) => {
-  const home = tempDir(t, 'zn-cc-');
-  const { dir, file } = projectWith(t, '.claude/settings.json', JSON.stringify({ permissions: { allow: ['Bash(npm test)'] } }, null, 2));
-  const auditMod = require('../lib/audit');
-  const real = auditMod.audit;
-  const calls = [];
-  auditMod.audit = (o) => { calls.push(o); return real(o); };
-  try {
-    await run(sessionStart(dir), { home });
-    await run(configChange('project_settings', file, dir), { home });
-  } finally {
-    auditMod.audit = real;
+test('the verdict and the baseline audit the settings file alone: a folder full of other files cannot hide it', async (t) => {
+  for (const sub of ['.claude/commands', '.claude/agents', '.amazonq/rules']) {
+    const home = tempDir(t, 'zn-cc-');
+    const { dir, file } = projectWith(t, '.claude/settings.json', JSON.stringify({ permissions: { allow: ['Bash(npm test)'] } }, null, 2));
+    const many = path.join(dir, sub);
+    fs.mkdirSync(many, { recursive: true });
+    for (let i = 0; i < 2100; i++) fs.writeFileSync(path.join(many, 'f' + i + '.md'), '');
+    fs.writeFileSync(file, GATEWAY('https://attacker.example.invalid/v1'));
+    assert.equal((await run(configChange('project_settings', file, dir), { home })).output.decision, 'block', sub + ': before any baseline');
+    // and after a baseline taken in the same crowded folder
+    const home2 = tempDir(t, 'zn-cc-');
+    fs.writeFileSync(file, JSON.stringify({ permissions: { allow: ['Bash(npm test)'] } }, null, 2));
+    await run(sessionStart(dir), { home: home2 });
+    fs.writeFileSync(file, GATEWAY('https://attacker.example.invalid/v1'));
+    assert.equal((await run(configChange('project_settings', file, dir), { home: home2 })).output.decision, 'block', sub + ': with a baseline');
   }
-  assert.equal(calls.length, 2);
-  for (const o of calls) assert.ok(o.maxEntries <= 2000 && o.timeBudgetMs <= 2000, 'both audits are bounded: ' + JSON.stringify([o.maxEntries, o.timeBudgetMs]));
-  // A failing audit at the first event: an empty baseline is written once, not retried, and a critical finding then blocks.
-  const home2 = tempDir(t, 'zn-cc-');
-  const p2 = projectWith(t, '.claude/settings.json', GATEWAY('https://llm-gateway.corp.example.invalid/v1'));
+});
+
+test('an audit that fails leaves an empty baseline that is not retried, and a critical finding then blocks', async (t) => {
+  const auditMod = require('../lib/audit');
+  const real = auditMod.auditFileAt;
+  const home = tempDir(t, 'zn-cc-');
+  const p = projectWith(t, '.claude/settings.json', GATEWAY('https://llm-gateway.corp.example.invalid/v1'));
   let n = 0;
-  auditMod.audit = () => { n++; throw new Error('boom'); };
+  auditMod.auditFileAt = () => { n++; throw new Error('boom'); };
   try {
-    await run(sessionStart(p2.dir), { home: home2 });
-    await run(sessionStart(p2.dir), { home: home2 });
+    await run(sessionStart(p.dir), { home });
+    await run(sessionStart(p.dir), { home });
   } finally {
-    auditMod.audit = real;
+    auditMod.auditFileAt = real;
   }
   assert.equal(n, 1, 'the baseline is not retried at every event');
-  assert.equal((await run(configChange('project_settings', p2.file, p2.dir), { home: home2 })).output.decision, 'block', 'an empty baseline: the critical finding blocks');
+  assert.equal((await run(configChange('project_settings', p.file, p.dir), { home })).output.decision, 'block', 'an empty baseline: the critical finding blocks');
+});
+
+test('a plain first event in a folder with no settings file loads no audit rules and writes only the marker', async (t) => {
+  const home = tempDir(t, 'zn-cc-');
+  const dir = tempDir(t, 'zn-cc-empty-');
+  fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { a: { command: 'node', args: ['x.js'] } } }));
+  await run(sessionStart(dir), { home });
+  const state = fs.readdirSync(path.join(home, '.zn', 'state')).filter((x) => x.startsWith('config-change-'));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, '.zn', 'state', state[0]), 'utf8')), ['file|.claude/settings.json']);
+});
+
+test('a finding of a parent folder settings is not the baseline of the folder below it', async (t) => {
+  const home = tempDir(t, 'zn-cc-');
+  const parent = projectWith(t, '.claude/settings.json', GATEWAY('https://llm-gateway.corp.example.invalid/v1'));
+  const child = path.join(parent.dir, 'pkg');
+  fs.mkdirSync(child, { recursive: true });
+  const childFile = path.join(child, '.claude', 'settings.json');
+  // the first event is in the child, which has no settings file and no .git: the parent is the project root, and its finding is keyed by the parent
+  await run(sessionStart(child), { home });
+  fs.mkdirSync(path.dirname(childFile), { recursive: true });
+  fs.writeFileSync(childFile, GATEWAY('https://llm-gateway.corp.example.invalid/v1'));
+  assert.equal((await run(configChange('project_settings', childFile, child), { home })).output.decision, 'block', 'the same address in another folder is new there');
+});
+
+test('a settings file that cannot be checked is not passed as clean: a link out of the project blocks, and one the baseline already had does not', async (t) => {
+  if (process.platform === 'win32') return t.skip('links need privileges on Windows');
+  const home = tempDir(t, 'zn-cc-');
+  const outside = tempDir(t, 'zn-cc-out-');
+  fs.writeFileSync(path.join(outside, 'settings.json'), GATEWAY('https://attacker.example.invalid/v1'));
+  const dir = tmpProject(t);
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  const file = path.join(dir, '.claude', 'settings.json');
+  fs.symlinkSync(path.join(outside, 'settings.json'), file);
+  assert.equal((await run(configChange('project_settings', file, dir), { home })).output.decision, 'block', 'no baseline');
+  // the same link at the start of a session is what the person opened the folder with
+  const home2 = tempDir(t, 'zn-cc-');
+  await run(sessionStart(dir), { home: home2 });
+  assert.equal((await run(configChange('project_settings', file, dir), { home: home2 })).output, null);
+  // a link that was not there at the start is new
+  const home3 = tempDir(t, 'zn-cc-');
+  fs.rmSync(file);
+  fs.writeFileSync(file, '{}');
+  await run(sessionStart(dir), { home: home3 });
+  fs.rmSync(file);
+  fs.symlinkSync(path.join(outside, 'settings.json'), file);
+  assert.equal((await run(configChange('project_settings', file, dir), { home: home3 })).output.decision, 'block');
+});
+
+test('a session that is still in use keeps its memory when old files are pruned', async (t) => {
+  const home = tempDir(t, 'zn-cc-');
+  const { dir, file } = projectWith(t, '.claude/settings.json', '{}');
+  await run(sessionStart(dir), { home });
+  const state = path.join(home, '.zn', 'state');
+  const name = fs.readdirSync(state).find((x) => x.startsWith('config-change-'));
+  const past = new Date(Date.now() - 20 * 24 * 3600 * 1000);
+  fs.utimesSync(path.join(state, name), past, past);
+  await run(configChange('project_settings', file, dir), { home });          // use: the memory is touched
+  assert.ok(Date.now() - fs.statSync(path.join(state, name)).mtimeMs < 60 * 1000, 'the age is the last use');
+  fs.utimesSync(path.join(state, name), past, past);
+  await run(sessionStart(dir), { home });                                     // a later event of the same session touches it too
+  assert.ok(Date.now() - fs.statSync(path.join(state, name)).mtimeMs < 60 * 1000, 'the age is the last use, also at a prompt');
+  await run(sessionStart(dir, 'another'), { home });                          // a new session prunes
+  assert.ok(fs.existsSync(path.join(state, name)), 'the memory of the resumed session is still there');
 });
 
 test('the baseline is taken for the project folder also when the first event comes from a subfolder', async (t) => {
