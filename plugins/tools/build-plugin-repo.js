@@ -94,7 +94,8 @@ const ZCODE_FILES = [
 ];
 const GITATTRIBUTES = '* -text\n';
 // Left out of vendor/zn-gate: TypeScript sources, declarations and source maps, and what the hooks and the local MCP server
-// never load. A file that a kept module imports is not safe to list here: the import check below refuses the build then.
+// never load. The import check below refuses a build in which a kept ES module imports a file listed here; it does not look at `require` calls
+// (`bin/cli.js` and `lib/uninstall.js` require `lib/init-guide.js`, which only the command line runs), so a new entry needs a manual check.
 //   README.md          documentation of the package, not code
 //   lib/init-guide.js  the setup guide of the zn-gate command line (`zn-gate init`), which the plugin never runs
 //   @noble/curves      its BLS and BN254 pairing curves and the index and misc entry points that import them; zn-gate

@@ -16,7 +16,7 @@ This repository is generated from [usezn/zn](https://github.com/usezn/zn) by its
 
    The sha512 integrity of the file must match `integrity` in `scripts/zn-gate.lock.json` and `npm view zn-gate@X.Y.Z dist.integrity`, and the commit the attestation names must be in the history of the `source` commit.
 
-2. Unpack it and compare it with `vendor/zn-gate`: every file in `vendor/zn-gate` must be identical to the file with the same path under `package/`. The only files of the package that are left out are TypeScript sources and declarations (`.ts`, `.mts`, `.cts`) and source maps (`.map`).
+2. Unpack it and compare it with `vendor/zn-gate`: every file in `vendor/zn-gate` must be identical to the file with the same path under `package/`. The only files of the package that are left out are: TypeScript sources and declarations (`.ts`, `.mts`, `.cts`) and source maps (`.map`); the package's `README.md`; `lib/init-guide.js`, the setup guide of the `zn-gate init` command, which the plugin never runs; and, in `node_modules/@noble/curves` and in `node_modules/@noble/post-quantum/node_modules/@noble/curves`, the files `abstract/bls.js`, `abstract/tower.js`, `bls12-381.js`, `bn254.js`, `misc.js` and `index.js`, which nothing here loads.
 
 3. Every SHA-256 in `scripts/zn-gate.lock.json` must match its file in `vendor/zn-gate`, and no other file may be there.
 

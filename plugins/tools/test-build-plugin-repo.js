@@ -554,6 +554,38 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       for (const rel of kept) assert.ok(!builder.PRUNE.test(rel), rel + ' is kept');
     });
 
+    await test('PROVENANCE.md step 2 names every file the build leaves out', async () => {
+      const text = fs.readFileSync(path.join(CLAUDE_DIR, 'PROVENANCE.md'), 'utf8');
+      const start = text.indexOf('\n2. ');
+      const step2 = text.slice(start, text.indexOf('\n\n', start + 4));
+      const alts = [];
+      let depth = 0;
+      let cur = '';
+      for (const c of builder.PRUNE.source) {
+        if (c === '(') depth++;
+        if (c === ')') depth--;
+        if (c === '|' && depth === 0) {
+          alts.push(cur);
+          cur = '';
+        } else cur += c;
+      }
+      alts.push(cur);
+      const named = (alt) => {
+        if (alt.startsWith('\\.(?:d')) return ['.ts', '.mts', '.cts', '.map'];
+        const plain = alt.replace(/^\^|\$$/g, '').replace(/\\([./])/g, '$1');
+        if (!/[()?*+[\]|]/.test(plain)) return [plain];
+        if (alt.includes('@noble\\/curves')) {
+          return ['node_modules/@noble/curves', 'node_modules/@noble/post-quantum/node_modules/@noble/curves', 'abstract/bls.js', 'abstract/tower.js', 'bls12-381.js', 'bn254.js', 'misc.js', 'index.js'];
+        }
+        return null;
+      };
+      for (const alt of alts) {
+        const names = named(alt);
+        assert.ok(names, 'PRUNE entry ' + alt + ' is not covered by this test: add it here and to PROVENANCE.md step 2');
+        for (const name of names) assert.ok(step2.includes(name), name + ' is named in PROVENANCE.md step 2');
+      }
+    });
+
     process.stdout.write('1..' + n + '\n');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
