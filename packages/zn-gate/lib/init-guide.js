@@ -115,7 +115,7 @@ async function plan(opts = {}) {
   const home = opts.home;
   const nodeVersion = opts.nodeVersion || process.versions.node;
   const nodeSt = pluginNodeStatus({ env, nodeVersion: opts.nodeVersion, hookNode: opts.hookNode });
-  const res = await check({ home, env, cwd: opts.cwd, nodeVersion, pluginNode: nodeSt });
+  const res = await check({ home, env, cwd: opts.cwd, nodeVersion, pluginNode: nodeSt, hookTimeoutMs: opts.hookTimeoutMs });
   let temporary = opts.temporary !== undefined ? opts.temporary : fromTemporaryCopy();
   const glob = opts.global || globalInstall(env);
   if (opts.temporary === undefined && !temporary && glob.pkgDir && !samePath(PKG_ROOT, glob.pkgDir)) temporary = true;
