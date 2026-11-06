@@ -365,3 +365,26 @@ test('the case fallback spans lines and costs time in proportion to the text', (
   policy.bashDenial(big, opts);
   assert.ok(Date.now() - t0 < 2000, 'time: ' + (Date.now() - t0) + ' ms');
 });
+
+// --- review of #849, sixth round: esac only as a reserved word; the fallback anchored on each $( case ... esac ) ---
+
+test('case inside a command substitution: a hyphenated word, extra substitutions and parentheses around it do not bring the bypass back', () => {
+  const { opts } = project();
+  const unit = 'case x in x) : my-esac ;; y) ;; esac';
+  const multi = 'case x in\nx) : my-esac ;;\ny) ;; esac';
+  const rows = [
+    'cat $(echo a) .en$(' + unit + ')v', 'cat .en$(' + unit + ')v $(echo b)', '(cat .en$(' + unit + ')v)', 'cat .en$(' + unit + ')v # )', 'cat .en$(' + unit + ')v; echo ")"',
+    'cat $(echo a) .en$(' + multi + ')v', 'cat .en$(' + multi + ')v $(echo b)', '(cat .en$(' + multi + ')v)', 'cat .en$(' + multi + ')v # )', 'cat .en$(' + multi + ')v; echo ")"',
+    'echo $(date) && cat .en$(' + multi + ')v', 'cat .en$(' + unit + ')v\n(echo ok)', 'cat .en$(case x in x) : x-esac ;; esac)v', 'cat .en$(case x in x) : "a esac b" ;; esac)v',
+  ];
+  for (const c of rows) {
+    for (const plat of ['linux', 'win32']) asPlatform(plat, () => assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + JSON.stringify(c)));
+  }
+  for (const c of ['echo $(date) && cat notes.txt', 'cat notes.txt$(' + unit + ')', '(echo ok); cat .env.example', 'echo $(case x in x) : ;; esac) && cat .envrc', 'cat $(echo a) $(echo b) notes.txt']) {
+    assert.equal(policy.bashDenial(c, opts), null, JSON.stringify(c));
+  }
+  const many = 'cat a' + '$(case x in x) : ;; esac)'.repeat(2000);
+  const t0 = Date.now();
+  policy.bashDenial(many, opts);
+  assert.ok(Date.now() - t0 < 2500, 'time: ' + (Date.now() - t0) + ' ms');
+});

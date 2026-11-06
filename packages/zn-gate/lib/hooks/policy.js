@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-06.9';
+const POLICY_RULES_VERSION = '2026-11-06.10';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2426,11 +2426,16 @@ function bashDenialOf(cmd, opts = {}) {
     const add = (t) => { variants.add(t); };
     add(dropEmptyExpansions(text, opts.env || process.env));
     if (/[$`]/.test(text)) { add(stripExpansions(text, false)); add(stripExpansions(text, true)); }
-    // A case pattern inside $( ) can end the unit early in the readings above: a fallback reading takes the text from the first $( to the last ) of the command (one pass).
+    // A case pattern inside $( ) can end the unit early in the readings above: fallback readings take each $( case ... up to each `esac )` after it (16 and 16 at most).
     if (/\bcase\b/.test(text)) {
-      const open = text.indexOf('$(');
-      const close = text.lastIndexOf(')');
-      if (open >= 0 && close > open) add(text.slice(0, open) + text.slice(close + 1));
+      const opens = [...text.matchAll(/\$\(\s*case\s/g)].slice(0, 16);
+      for (const o of opens) {
+        const tail = /\besac\s*\)/g;
+        tail.lastIndex = o.index + o[0].length;
+        let m;
+        let n = 0;
+        while ((m = tail.exec(text)) !== null && n++ < 16) add(text.slice(0, o.index) + text.slice(m.index + m[0].length));
+      }
     }
     if (/[%!]/.test(text) && cmdContext(text)) for (const v of [...variants]) { add(stripCmdVars(v)); add(stripCmdVarsPerCommand(v)); add(stripCmdVarsNarrow(v)); }
     // With delayed expansion on, cmd removes a ! that has no partner (type .e!nv opens .env), so a reading without any ! is judged too.
@@ -2678,6 +2683,12 @@ function stripCmdVarsNarrow(text) {
   return text.replace(CMD_VAR_UNIT_NARROW_RE, '');
 }
 const UNIT_DEPTH = 64;
+/** True when the word at `i` starts a command: at the start of the body or after ;  &  |  (  { or a line break (blanks skipped). */
+function commandStart(text, i, from) {
+  let j = i - 1;
+  while (j >= from && (text[j] === ' ' || text[j] === '\t')) j--;
+  return j < from || ';&|(\n{'.includes(text[j]);
+}
 /** The index after the esac that closes a case whose body starts at `from` (nested case counted), or -1. Quotes, comments and escapes hide words. */
 function caseEnd(text, from) {
   let open = 1;
@@ -2702,8 +2713,11 @@ function caseEnd(text, from) {
       let k = i;
       while (k < n && /[A-Za-z0-9_]/.test(text[k])) k++;
       const word = text.slice(i, k);
-      if (word === 'case') open++;
-      else if (word === 'esac' && --open === 0) return k;
+      // A reserved word only where a command starts: `my-esac` or `x esac` in an argument are words of the body.
+      if ((word === 'case' || word === 'esac') && commandStart(text, i, from)) {
+        if (word === 'case') open++;
+        else if (--open === 0) return k;
+      }
       i = k;
       continue;
     }
