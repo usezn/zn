@@ -216,6 +216,10 @@ COMMANDS:
   shield, mcp-shield  Wrap and protect ANY external MCP server (uvx, npx, node, python)
   scan <path>         Recursively audit prompt templates, markdown, skills, and configs for injection traps and secrets
                       [--format text|json|github] (matched values are never printed)
+  scan --package NAME[@VERSION]
+                      Audit an npm package (MCP server or skill) before you add it: it is downloaded from the
+                      registry and read in full (node_modules and dist too), never installed or run; the
+                      install scripts npm would run are listed. Text output only.
   audit [path]        Review a repository's agent configs before you open it: hooks, MCP servers,
                       endpoint overrides, permissions, instructions, planted executables
                       [--format text|json|sarif] [--output FILE] [--fail-on high]
@@ -453,7 +457,7 @@ function homeMcpFiles() {
 
 // A file as shown in a report: relative to the current directory; one of the
 // user's own MCP configs (--include-home) outside it is shown as ~/...
-function displayPath(filePath, homeFiles) {
+function displayPathOf(filePath, homeFiles) {
   if (homeFiles && homeFiles.has(filePath)) {
     let realHome = os.homedir();
     try { realHome = fs.realpathSync(realHome); } catch (e) { /* keep it */ }
@@ -527,7 +531,8 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
       // The directory you pass is always read, whatever its name.
       if (current !== targetPath) {
         if (userExcluded.has(base)) return;
-        if (IGNORED_DIRS.has(base)) {
+        // A downloaded package is read in full (options.noPrune): nothing is skipped by name.
+        if (!options.noPrune && IGNORED_DIRS.has(base)) {
           const pruned = pruneInfo(base, path.dirname(current));
           if (pruned) {
             if (!pruned.silent) skippedDirs.push({ dir: current, reason: pruned.reason });
@@ -544,7 +549,7 @@ function scanDirectory(targetPath, includeCode = false, options = {}) {
         return;
       }
       // Editor settings are not scanned; the MCP servers of VS Code are.
-      if (base.toLowerCase() === '.vscode') entries = entries.filter((e) => e.toLowerCase() === 'mcp.json');
+      if (!options.noPrune && base.toLowerCase() === '.vscode') entries = entries.filter((e) => e.toLowerCase() === 'mcp.json');
       for (const entry of entries) {
         walk(path.join(current, entry));
       }
@@ -582,7 +587,13 @@ async function handleScan(targetPath, options) {
   }
 
   const files = scanDirectory(resolved, options.includeCode, options);
+  // Files of a package that could not be unpacked (scan --package) are part of the skipped ones.
+  for (const s of options.extraSkipped || []) files.skipped.push(s);
   const homeFiles = new Set();
+  // A package is shown with paths inside the package, never the temporary folder it was unpacked to.
+  const displayPath = options.displayBase
+    ? (p) => path.relative(options.displayBase, p).split(path.sep).join('/')
+    : displayPathOf;
   const mcpOnly = new Set();
   if (options.includeHome) {
     for (const f of homeMcpFiles()) {
@@ -597,10 +608,12 @@ async function handleScan(targetPath, options) {
   }
   if (format === 'text') process.stdout.write(`
 ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Static Security Audit
-Target  : ${safeText(resolved)}
+Target  : ${safeText(options.targetLabel || resolved)}
 Scope   : ${options.includeCode ? 'All files (prompts + code)' : 'Prompt templates, docs, configs (use --code to scan source)'}
 Files   : ${files.length} file(s) queued for audit\n
 `);
+  // Notes that are not findings (what npm would run for a package), before the result.
+  if (format === 'text' && options.notes && options.notes.length) process.stdout.write(options.notes.join('\n') + '\n\n');
 
   let totalFindings = 0;
   const findings = [];
@@ -725,8 +738,9 @@ Files   : ${files.length} file(s) queued for audit\n
   // An empty or partial result is not a clean one. Findings exit 1; otherwise a
   // scan that read no file, or skipped a file or folder it should have read,
   // exits 3, unless --allow-partial accepts the skipped ones.
-  const nothingScanned = `No files were scanned in ${targetPath || '.'}`;
-  const unreadDirs = files.skippedDirs.filter((d) => d.reason === 'cannot be read').length;
+  const nothingScanned = `No files were scanned in ${options.targetLabel || targetPath || '.'}`;
+  // A package is read in full, so a directory that was skipped for any reason is incomplete coverage.
+  const unreadDirs = options.noPrune ? files.skippedDirs.length : files.skippedDirs.filter((d) => d.reason === 'cannot be read').length;
   const incomplete = files.skipped.length + unreadDirs > 0;
   const incompleteNote = `${files.skipped.length} file(s) and ${unreadDirs} folder(s) were not read`;
   const coverageExit = () => {
@@ -800,7 +814,7 @@ Files   : ${files.length} file(s) queued for audit\n
   let status = files.length - notRead === 0 ? 'No files were read: this is not a clean result' : 'Clean workspace';
   if (totalThreats) status = 'Review and neutralize detected vectors';
   else if (totalSecrets) status = 'Move the secrets out of these files (see "Next" for each one)';
-  else if (incomplete && files.length - notRead > 0) status = options.allowPartial ? `Partial coverage accepted with --allow-partial (${incompleteNote})` : `Incomplete: ${incompleteNote}. Exit code 3; use --allow-partial to accept`;
+  else if (incomplete && files.length - notRead > 0) status = options.allowPartial ? `Partial coverage accepted with --allow-partial (${incompleteNote})` : `Incomplete: ${incompleteNote}. Exit code 3${options.noPrune ? '' : '; use --allow-partial to accept'}`;
   process.stdout.write(`
 ${ruleLine(process.env, 77)}
 Audit Result : ${totalFindings === 0 ? (files.length - notRead === 0 ? col.yellow('NOTHING SCANNED') : incomplete ? col.yellow(options.allowPartial ? 'PASSED - NO THREATS DETECTED (PARTIAL COVERAGE)' : 'INCOMPLETE - SOME FILES WERE NOT READ') : col.green('PASSED - NO THREATS DETECTED')) : col.red(`FAILED - ${resultParts.join(', ')}`)}
@@ -825,6 +839,63 @@ ${ruleLine(process.env, 77)}\n
   // exitCode, not process.exit(): a large report written to a pipe must be
   // flushed completely before the process ends.
   process.exitCode = coverageExit();
+}
+
+// `scan --package NAME[@VERSION]`: the npm package is downloaded and unpacked into a temporary folder (never
+// installed, never run). The folder gets the same scan as `scan <path>` (with source files) and the agent-config
+// audit of lib/audit. Exit 1 on findings, 3 when something was not read, 2 when the package could not be fetched.
+async function runScanPackage(args, options) {
+  const fail = (msg) => {
+    process.stderr.write('zn-gate scan: ' + msg + '\n');
+    return 2;
+  };
+  const i = args.findIndex((a) => a === '--package' || a.startsWith('--package='));
+  const spec = args[i].startsWith('--package=') ? args[i].slice('--package='.length) : args[i + 1];
+  if (!spec || spec.startsWith('--')) return fail('--package needs an npm package name, as --package NAME or --package NAME@VERSION');
+  const extra = [];
+  for (let k = 1; k < args.length; k++) {
+    if (args[k] === '--package') { k++; continue; }
+    if (args[k].startsWith('--')) { if (COMMAND_OPTIONS.scan.value.includes(args[k])) k++; continue; }
+    extra.push(args[k]);
+  }
+  if (extra.length) return fail('--package scans the package from the registry: leave out the folder argument (' + extra[0].slice(0, 40) + ')');
+  if (options.includeHome) return fail('--include-home cannot be used with --package');
+  if (options.formatGiven && String(options.format).toLowerCase() !== 'text') return fail('--package supports only --format text for now');
+  if (options.allowPartial) return fail('--allow-partial cannot be used with --package: a package is read in full, and a part that could not be read is never reported as a pass');
+
+  const { fetchPackageForScan, describePackage } = require('../lib/scan-package');
+  let pkg;
+  try {
+    pkg = await fetchPackageForScan(spec);
+  } catch (err) {
+    return fail(err.message);
+  }
+  const label = 'npm ' + pkg.name + '@' + pkg.version;
+  try {
+    const auditReport = require('../lib/audit/report');
+    // The package is read in full: no folder is skipped by name (node_modules, dist, build...), the code
+    // extensions npm packages use are scanned, and a file that could not be unpacked counts as not read.
+    const include = [options.include, '.mjs,.cjs,.jsx,.tsx,.mts,.cts'].filter(Boolean).join(',');
+    const extraSkipped = (pkg.notUnpacked || []).map((n) => ({ file: path.join(pkg.dir, ...n.path.split('/')), reason: 'could not be unpacked: ' + n.reason }));
+    await handleScan(pkg.dir, {
+      ...options, includeCode: true, include, noPrune: true, displayBase: pkg.dir, targetLabel: label, extraSkipped,
+      notes: describePackage(pkg.dir, auditReport.safeText),
+    });
+    const scanCode = process.exitCode || 0;
+    const audit = require('../lib/audit');
+    const result = audit.audit({ root: pkg.dir, agents: ['all'], includeHome: false, env: process.env, noPrune: true });
+    const summary = auditReport.summarize(result, 'high');
+    if (result.findings.length) {
+      process.stdout.write('\nConfig audit: ' + result.findings.length + ' finding(s) in ' + label + '\n\n');
+      process.stdout.write(auditReport.toText(result, { toolVersion: VERSION, failOn: 'high', displayRoot: label, color: false }));
+    } else {
+      process.stdout.write('\nConfig audit: no findings in ' + label + '\n');
+    }
+    if (summary.failed || scanCode === 1) return 1;
+    return scanCode;
+  } finally {
+    pkg.cleanup();
+  }
 }
 
 // Secrets broker and agent hooks. Dispatched before the global option parsing
@@ -943,9 +1014,9 @@ const CLOUD_VALUE_OPTIONS = ['--key', '--stage', '--url', '--long-input'];
 const CLOUD_FLAG_OPTIONS = ['--local-only', '--verbose'];
 const COMMAND_OPTIONS = {
   scan: {
-    value: ['--format', '--include', '--exclude', ...CLOUD_VALUE_OPTIONS],
+    value: ['--format', '--include', '--exclude', '--package', ...CLOUD_VALUE_OPTIONS],
     flag: ['--code', '--all', '--allow-partial', '--include-home', ...CLOUD_FLAG_OPTIONS],
-    listed: ['--format', '--include', '--exclude', '--code', '--all', '--allow-partial', '--include-home'],
+    listed: ['--format', '--include', '--exclude', '--code', '--all', '--allow-partial', '--include-home', '--package'],
   },
   analyze: {
     value: CLOUD_VALUE_OPTIONS,
@@ -1163,6 +1234,10 @@ ${ruleLine(process.env, 60)}\n`);
     return;
   }
 
+  if (command === 'scan' && args.some((a) => a === '--package' || a.startsWith('--package='))) {
+    process.exitCode = await runScanPackage(args, options);
+    return;
+  }
   if (command === 'scan') {
     const targetPath = scanTargetOf(args);
     await handleScan(targetPath, options);
