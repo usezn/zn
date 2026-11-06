@@ -522,6 +522,12 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       const start = text.indexOf('\n4. ');
       const step4 = text.slice(start, text.indexOf('\n\n', start + 4));
       for (const [rel] of builder.PLUGIN_FILES) {
+        // An image is not named: a directory scan reads a file name in a document as a reference to an unread asset.
+        if (/\.(?:png|jpe?g|gif|webp)$/i.test(rel)) {
+          assert.ok(!text.includes(rel), rel + ' is not named in PROVENANCE.md');
+          assert.ok(step4.includes('listing icon'), 'PROVENANCE.md step 4 mentions the listing icon');
+          continue;
+        }
         assert.ok(step4.includes('`' + rel + '`'), rel + ' is named in PROVENANCE.md step 4');
       }
       for (const named of step4.match(/`[^`]+`/g) || []) {
@@ -530,6 +536,22 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
         const known = builder.PLUGIN_FILES.some(([rel]) => rel === n) || ['.gitattributes', '.github/workflows/verify.yml'].includes(n);
         assert.ok(known, n + ' in PROVENANCE.md step 4 is not a copied file');
       }
+    });
+
+    await test('the build leaves out the package README, the setup guide and the unused BLS curves, and keeps what the vault uses', async () => {
+      const left = [
+        'README.md', 'lib/init-guide.js', 'lib/x.d.ts', 'lib/x.js.map',
+        'node_modules/@noble/curves/abstract/bls.js', 'node_modules/@noble/curves/abstract/tower.js', 'node_modules/@noble/curves/bls12-381.js',
+        'node_modules/@noble/curves/bn254.js', 'node_modules/@noble/curves/misc.js', 'node_modules/@noble/curves/index.js',
+        'node_modules/@noble/post-quantum/node_modules/@noble/curves/abstract/bls.js', 'node_modules/@noble/post-quantum/node_modules/@noble/curves/index.js',
+      ];
+      const kept = [
+        'package.json', 'bin/cli.js', 'lib/init.js', 'lib/hooks/runner.js', 'docs/README.md', 'node_modules/age-encryption/README.md',
+        'node_modules/@noble/curves/ed25519.js', 'node_modules/@noble/curves/nist.js', 'node_modules/@noble/curves/abstract/edwards.js',
+        'node_modules/@noble/curves/abstract/modular.js',
+      ];
+      for (const rel of left) assert.ok(builder.PRUNE.test(rel), rel + ' is left out');
+      for (const rel of kept) assert.ok(!builder.PRUNE.test(rel), rel + ' is kept');
     });
 
     process.stdout.write('1..' + n + '\n');

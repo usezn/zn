@@ -1,2 +1,2 @@
 ### Changed
-- The plugin README explains what automated checks of the plugin may flag (listing icon and fields, detection rules that mention download-and-run commands, install advice that the plugin never runs, secret recognition) and why none of it runs on your machine.
+- The Claude Code plugin no longer bundles the package README, the setup guide of the command line tool, or the unused BLS and BN254 curves of the cryptography library, and its provenance notes no longer name the listing icon file. The plugin README explains what automated checks may still flag (listing icon and fields, detection rules that mention download-and-run commands, secret recognition) and why none of it runs on your machine.
