@@ -1,0 +1,3 @@
+### Security
+- The GitHub Copilot and ZCode hooks now block a tool call whose arguments cannot be read (text that is not valid JSON, a number, a list) on every tool, not only on the tools zn knows. Before, such a call on an unknown tool passed with no check.
+- For a tool zn does not know, the Copilot and ZCode hooks now look for commands and file paths in nested arguments, up to six levels deep, and apply the same shell, secret-file and destructive-command checks as at the top level. A command of the wrong type, or arguments nested deeper than that, are blocked. Calls that carry nothing to check still pass.

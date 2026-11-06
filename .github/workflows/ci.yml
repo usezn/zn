@@ -184,6 +184,7 @@ jobs:
         env:
           # Where the frameworks were installed above, their tests must run, not skip.
           ZN_REQUIRE_FRAMEWORKS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12') && '1' || '' }}
+        # Runs every test, the ones marked slow included: never add -m "not slow" here (local fast path only).
         run: python -m pytest tests/ -v
       - name: Run the LangChain and LlamaIndex integration tests on the oldest supported langchain-core
         # The same real-framework tests, in a separate virtual environment with langchain-core 1.3.3, the
