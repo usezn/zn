@@ -56,6 +56,21 @@ test('names that do not fit become "other"; bad numbers are ignored; a corrupt f
   assert.equal(stats.summary().total.checked, 1);
 });
 
+test('an unreadable stats file is kept as stats.damaged.json before it is replaced, once', () => {
+  reset();
+  fs.writeFileSync(stats.statsFile(), '{"version":1,"days":{"2026-10-14":{"hook:codex":');
+  stats.record({ layer: 'hook', agent: 'codex', checked: 1 });
+  const kept = path.join(path.dirname(stats.statsFile()), 'stats.damaged.json');
+  assert.equal(fs.readFileSync(kept, 'utf8'), '{"version":1,"days":{"2026-10-14":{"hook:codex":');
+  assert.equal(stats.summary().total.checked, 1);
+  fs.writeFileSync(stats.statsFile(), '{again not json');
+  stats.record({ layer: 'hook', agent: 'codex', checked: 1 });
+  assert.match(fs.readFileSync(kept, 'utf8'), /hook:codex/, 'the first damaged copy is not overwritten');
+  reset();
+  stats.record({ layer: 'hook', agent: 'codex', checked: 1 });
+  assert.equal(fs.existsSync(kept), false, 'a missing or good file leaves no copy');
+});
+
 test('days older than 90 are dropped; ZN_STATS=off records nothing', () => {
   reset();
   stats.record({ layer: 'hook', agent: 'codex', checked: 1 }, { now: new Date('2026-06-01T00:00:00Z') });
