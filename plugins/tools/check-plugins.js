@@ -373,7 +373,12 @@ if (hasNpm) {
   for (const [k, e] of Object.entries(pkgs)) {
     if (!k) continue;
     if (e.inBundle || k.startsWith('node_modules/zn-gate/')) fail(npmLockFile + ': ' + k + ' is a bundled entry (Claude Code rejects those)');
-    if (e.hasInstallScript) fail(npmLockFile + ': ' + k + ' has an install script');
+    if (e.hasInstallScript) {
+      // Only zn-gate's own postinstall, and only with the .npmrc that turns install scripts off in this folder.
+      const npmrc = PLUGIN + '/.npmrc';
+      const off = fs.existsSync(path.join(ROOT, npmrc)) && fs.readFileSync(path.join(ROOT, npmrc), 'utf8') === 'ignore-scripts=true\n';
+      if (k !== 'node_modules/zn-gate' || !off) fail(npmLockFile + ': ' + k + ' has an install script' + (k === 'node_modules/zn-gate' ? ' and ' + npmrc + ' does not turn install scripts off' : ''));
+    }
     if (!/^sha512-/.test(e.integrity || '') || !String(e.resolved || '').startsWith('https://registry.npmjs.org/')) fail(npmLockFile + ': ' + k + ' has no sha512 integrity or registry URL');
   }
 }
