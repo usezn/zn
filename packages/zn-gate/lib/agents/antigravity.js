@@ -20,12 +20,13 @@
  *    reason, overwrite, permissionOverrides}. "allow" means "proceed, deferring to the next hook or the
  *    default policy", so it is the way to say "no opinion" (never auto_approve).
  *
- * Tools named in the docs: run_command (shell), view_file, write_to_file, replace_file_content,
- * multi_replace_file_content, list_dir, find_by_name, grep_search, search_web, read_url_content,
- * and agent-management tools. The argument names are NOT documented (only that run_command takes a command
- * line), so this adapter finds the command by its likely names and finds file paths by key name
- * (anything called path, file, target, uri or dir), skipping keys that hold content. How an MCP tool is
- * named is not documented either: names that start with "mcp" are treated as MCP calls.
+ * Tools named in the official docs (https://antigravity.google/docs/hooks, checked 2026-11-06): run_command
+ * (CommandLine, Cwd), view_file (AbsolutePath), write_to_file and replace_file_content and
+ * multi_replace_file_content (TargetFile), list_dir (DirectoryPath), find_by_name (SearchDirectory),
+ * grep_search (SearchPath), search_web (query), read_url_content (Url), and agent-management tools. The
+ * argument names above are the documented ones; the adapter also finds the command by its likely names and
+ * finds file paths by key name (anything called path, file, target, uri or dir), skipping keys that hold
+ * content. The docs do not name MCP tools: names that start with "mcp" are treated as MCP calls.
  * A tool zn cannot classify gets "allow" (no opinion).
  *
  * Observed on a real Antigravity (Windows, 2026-10-20): a PreToolUse hook that fails, prints nothing,

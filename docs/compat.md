@@ -152,7 +152,9 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
 | `PreCompact` | No | Not used. |
 | `PostCompact` | No | Not used. |
 | `SessionEnd` | No | Not used. |
-| `Interrupt` | No | Not used. The documentation lists it with no matcher. |
+| `PreModelRequest` | No | Not used. Runs before each model request attempt; zn checks tool calls and prompts, not model requests. |
+| `PostModelRequest` | No | Not used. Runs after each model request attempt, with its status, error and token usage. |
+| `Interrupt` | No | Not used. Runs when you interrupt an active turn on the main thread; its output cannot prevent the interruption or restart the turn, and its default timeout is one second. The official page gives no Codex CLI version for this event (not verified). |
 
 ## Why the differences
 
@@ -309,7 +311,7 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   - `disableAllHooks` in zn's file or in `.github/copilot/settings(.local).json`
     turns the hooks off; `zn-gate check` reports it.
 - **Gemini CLI** (experimental: `zn hooks install gemini [--project]`;
-  `zn-gate check` lists it as "Gemini CLI (experimental)"). Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts on 18 June 2026; Gemini CLI keeps working with zn-gate.
+  `zn-gate check` lists it as "Gemini CLI (experimental)"). Google's blog post of 19 May 2026 says that on 18 June 2026 Gemini CLI stopped serving requests for Google AI Pro and Ultra accounts, and that Antigravity CLI keeps hooks ([source](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/), checked 2026-11-06). The post does not call Gemini CLI deprecated, replaced or legacy, so this doc does not label it so. Whether it still serves other accounts is not verified here.
   Covered: `BeforeTool` blocks reads and writes of secret files by path, shell
   commands that handle secrets, and edits of Gemini CLI's own settings files.
   zn adds its hook to `~/.gemini/settings.json` (or `.gemini/settings.json`
@@ -482,9 +484,9 @@ depends on the agent and on how the hooks were installed. A user install
 (`zn hooks install <agent>`) writes a small launcher script as the hook command
 (`~/.zn/hooks/zn-hook-<agent>.sh`; on Windows, for Codex CLI, Cursor, Gemini CLI
 and Antigravity, the same steps written inline in PowerShell). It runs the
-Node.js it was installed with, while its runner still has the SHA-256 recorded
-at install time (never a `zn` from the PATH, except in the inline PowerShell
-hooks on Windows), else it answers the
+Node.js it was installed with, while its runner and the other zn-gate files it
+loads still have the SHA-256 recorded at install time (the inline PowerShell hooks on Windows check neither the runner
+nor the other files; never a `zn` from the PATH, except in those inline PowerShell hooks on Windows), else it answers the
 block itself, without Node.js. A project install (`--project`) names `zn` on
 the PATH inside a short start guard (`sh -c`, PowerShell on Windows) that gives
 the same block when `zn` or Node.js is missing or fails, so it behaves like a

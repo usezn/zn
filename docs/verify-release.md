@@ -16,6 +16,25 @@ verified tarball. The npm package declares its content as dual-use
 (`contentPolicy` in `package.json`) and explains why in a `DISCLOSURE` file at
 the root of the package.
 
+## One command
+
+[`scripts/verify-release.sh`](../scripts/verify-release.sh) runs the checks of steps 1 to 5 below for a published version and prints `PASS`, `FAIL` or `CANNOT CHECK` for each:
+
+```sh
+git clone --depth 1 --branch v1.14.1 https://github.com/usezn/zn
+less zn/scripts/verify-release.sh   # read it first
+bash zn/scripts/verify-release.sh 1.14.1
+```
+
+Download the script from the tag you are checking and read it before you run it. Do not pipe it to a shell: a verification tool you run without reading it proves nothing.
+
+- It needs `gh`, `npm`, `sha256sum` (or `shasum`), `cosign` (or sigstore-python) and `pypi-attestations`, the tools the steps below name. It installs nothing on your system: step 4 downloads the npm package into a temporary folder, without running its scripts, and the script deletes that folder when it ends.
+- The exit status is 0 only if all five checks pass. A check that cannot run because a tool is missing is reported as `CANNOT CHECK ... NOT VERIFIED` and the exit status is not 0: there is no option to skip a check.
+- `--print` prints the commands it would run and runs none of them. `--keep DIR` keeps the downloaded files in `DIR`; otherwise they go to a temporary directory that is deleted when the script ends.
+- The version is checked before it is used: it must look like `1.14.1` or `1.15.0-rc.1`, and it must be 1.5.0-beta.2 or later (earlier versions have nothing to verify, see below).
+
+A passing run is a convenience over steps 1 to 5, not more than they prove: read [What this does and does not prove](#what-this-does-and-does-not-prove).
+
 Each release has:
 
 | File | What it is |
@@ -218,6 +237,39 @@ diff <(jq -S . attested.cdx.json) <(jq -S . zn-gate-1.12.0.cdx.json) && echo "sa
 The SBOM files also have build provenance attestations and Sigstore bundles
 (steps 2 and 3), so `gh attestation verify zn-gate-1.12.0.cdx.json --repo usezn/zn`
 works on them too.
+
+## What this does and does not prove
+
+A valid attestation or signature in steps 2 and 3 proves that the files of the GitHub Release were produced by the named workflow of the `usezn/zn` repository, from the commit the release tag points to, and that they have not changed since. Steps 4 and 5 prove less. Step 4 confirms that npm shows valid signatures and provenance attestations for this version, but the script does not check which repository, workflow or tag that provenance names. Step 5 checks the PyPI attestations of the wheel and the source archive against the `usezn/zn` repository, but not against a workflow or tag. Neither step compares the files on npm or PyPI with the files of the release. Read the provenance section of each registry page (see below) for that. The release workflow also makes a maintainer approve the release on the `release` environment before anything is signed or published, and (from 1.14.1) approve the npm stage with two-factor authentication.
+
+It does **not** prove:
+
+- **That the source or the build pipeline was free of mistakes or malicious changes.** The workflow signs whatever it builds. A bug, or a harmful change that was merged, is signed like everything else. Read the changes between releases if that matters to you (see below).
+- **That a maintainer account or the CI was not compromised before signing.** A signature says which workflow ran, not that whoever started it, approved it or changed the repository was who they should be.
+- **That the dependencies are clean.** The SBOM (step 7) lists what went into a package; it does not say that any of it is free of vulnerabilities or malware.
+- **That the build is reproducible.** The release workflow sets a fixed build timestamp, but this page does not claim that you can rebuild the same files from the tag, and none of the checks above rebuild anything.
+- **Anything about the machine you run the checks on.** If `gh`, `npm`, your shell or the script itself has been tampered with, a passing result means nothing. The checks also trust GitHub, npm, PyPI and the public Sigstore service to tell the truth.
+
+What `verify-release.sh` leaves out, on top of that:
+
+- Step 4 always talks to the public registry `https://registry.npmjs.org/`: the script passes `--registry`, so a registry set in your `.npmrc` is not used.
+- It checks the npm package from the registry (step 4) and the files of the GitHub Release (steps 1 to 3) separately. It does not compare the npm tarball with the `.tgz` of the release byte by byte. From 1.14.1 the release workflow checks that the version on npm is the verified tarball; the script does not repeat that.
+- It does not check the signed release tag (step 6) or the contents of the SBOMs (step 7). If a release has SBOM files, their build provenance attestation is checked together with the other files in step 2.
+- Step 3 checks the signature on `SHA256SUMS`. It covers the three package files only together with step 1, which the script runs for you.
+
+### Look at the run and the commit yourself
+
+- On the [npm package page](https://www.npmjs.com/package/zn-gate) and in the file details on [PyPI](https://pypi.org/project/zn-gate/), the provenance section links the version to a commit and a workflow run.
+- `gh release view vX.Y.Z --repo usezn/zn` shows the release and its files, and `git log -1 vX.Y.Z` in a clone shows the commit the tag points to.
+- `gh run list --repo usezn/zn --workflow release.yml` lists the runs of the release workflow (from 1.12.0 it calls `build-release.yml`, which builds and signs: `--workflow build-release.yml` lists those runs, and for 1.11.x and earlier `release.yml` did both). Open the run for your tag and check that it ran for that tag and was approved.
+- Read what changed since the release before it: `git diff vA vB` in a clone, or the compare page `https://github.com/usezn/zn/compare/vA...vB`.
+
+### If a check fails
+
+- `CANNOT CHECK` is not a failure of the release: install the tool it names and run the script again. Until then that check is not verified.
+- A `FAIL` that names a network or download problem can be a transient error: run it again. A `FAIL` that comes back, a mismatch, or a missing attestation on a version that should have them is a result to take seriously.
+- Do not install the files. Keep them (`--keep DIR`) and report it privately as described in [SECURITY.md](../SECURITY.md).
+- A version up to 1.5.0-beta.1 fails by design, see above.
 
 ## If something does not match
 

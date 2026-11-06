@@ -93,7 +93,14 @@ const ZCODE_FILES = [
   ['LICENSE', PLUGIN, ZCODE_DIR + '/LICENSE'],
 ];
 const GITATTRIBUTES = '* -text\n';
-const PRUNE = /\.(?:d\.[mc]?ts|[mc]?ts|map)$/;
+// Left out of vendor/zn-gate: TypeScript sources, declarations and source maps, and what the hooks and the local MCP server
+// never load. The import check below refuses a build in which a kept ES module imports a file listed here; it does not look at `require` calls
+// (`bin/cli.js` and `lib/uninstall.js` require `lib/init-guide.js`, which only the command line runs), so a new entry needs a manual check.
+//   README.md          documentation of the package, not code
+//   lib/init-guide.js  the setup guide of the zn-gate command line (`zn-gate init`), which the plugin never runs
+//   @noble/curves      its BLS and BN254 pairing curves and the index and misc entry points that import them; zn-gate
+//                      and age-encryption use only the ed25519 and nist modules (also under @noble/post-quantum)
+const PRUNE = /\.(?:d\.[mc]?ts|[mc]?ts|map)$|^README\.md$|^lib\/init-guide\.js$|^node_modules\/(?:@noble\/post-quantum\/node_modules\/)?@noble\/curves\/(?:abstract\/(?:bls|tower)|bls12-381|bn254|misc|index)\.js$/;
 const MAX_FILES = 512;
 const MAX_TEXT_BYTES = 256 * 1024;
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -224,7 +231,7 @@ function withoutCompileCacheUse(rel, text) {
 // to it changes this hash and the build refuses it again until the new text is reviewed.
 const VERIFY_JS_FILE = /^lib\/agents\/launcher\.js$/;
 const VERIFY_JS_START = 'const VERIFY_JS = ';
-const VERIFY_JS_SHA256 = 'e6e0ba98752054297a3e8bfc630051f01c26b1fd4231dc35aa5b2111d795cd79';
+const VERIFY_JS_SHA256 = '7ea036036c345f46790337ce78cc46cbaeaac4a417cdcd35b62e096ce07cca10';
 
 /** For lib/agents/launcher.js only: the text without the reviewed VERIFY_JS statement (unchanged otherwise). */
 function withoutVerifyJs(rel, text) {
