@@ -38,7 +38,7 @@ function project() {
   return { home, proj, opts: { home, cwd: proj, env: { HOME: home, PATH: '/usr/bin:/bin', SHORT: 'ab', BLANK: '' } } };
 }
 
-const DENIED = /holds plain-text|was not read because/;
+const DENIED = /holds plain-text|was not read because|builds the path of a .env file/;
 
 test('cmd.exe caret escapes: every spelling of .env is refused on Windows', () => {
   const { opts } = project();
@@ -296,7 +296,10 @@ test('an unquoted expansion splits into words: each piece is checked, and the sa
       assert.match(policy.bashDenial(c, opts) || '', /was not read because/, c);
     }
     // Inside double quotes the value is one word: no split, so the same lines read like any other quoted name.
-    for (const c of ['cat .e"$X"v.example', 'cat "a${IFS}.env"', 'cat "foo${X}.env"', 'cat "a$IFS.env"']) assert.equal(policy.bashDenial(c, opts), null, c);
+    assert.equal(policy.bashDenial('cat .e"$X"v.example', opts), null);
+    // A variable right before the .env name is refused even inside double quotes, whatever literal text comes before it (its value could be a folder
+    // separator): an accepted false positive of the name rule, not of the split reading.
+    for (const c of ['cat "a${IFS}.env"', 'cat "foo${X}.env"', 'cat "a$IFS.env"']) assert.match(policy.bashDenial(c, opts) || '', /builds the path of a \.env file/, c);
     assert.match(policy.bashDenial('cat ".e${X}v"', opts) || '', /was not read because/);
     for (const c of ['cat ${HOME}/notes.md', 'cat $HOME/notes.md', 'cat config/${ENV}.json', 'cat ${APP}.env.example', 'cat "${APP}".env.example',
       'cat ${APP}.env.sample', 'cat src/${MOD}/env.ts', 'cat ${PREFIX}/etc/environment', 'cat ${X}.envrc.txt', 'cd ${PROJECT}/environments',
@@ -355,4 +358,155 @@ test('ordinary lines with unquoted expansions stay allowed', () => {
       assert.equal(policy.bashDenial(c, opts), null, c);
     }
   });
+});
+
+// --- review of #849, second round: quoted brackets, any cmd variable name, an unpaired ! under delayed expansion ---
+
+test('a quoted closing bracket does not end an expansion unit early', () => {
+  const { opts } = project();
+  for (const c of ['cat .en$(: ")")v', 'cat .en$(echo ")" >/dev/null)v', 'cat .e${U:+"}"}nv', 'cat .e${U:+")"}nv', 'cat .en$(: "(")v', "cat .e${U:+'}'}nv",
+    'cat .e${U:+\\}}nv', 'cat .en$(: \\))v', 'cat .e${U:+"$(echo })"}nv', 'cat .en$(echo $(echo ")"))v', 'cat .e${U:-"a b"}nv'.replace('a b', '')]) {
+    for (const plat of ['linux', 'win32']) asPlatform(plat, () => assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + c));
+  }
+  // deep nesting costs a bounded amount and never throws; an unbalanced quote leaves the text as it was
+  const deep = 'cat .e' + '$('.repeat(30000) + ':' + ')'.repeat(30000) + 'nv';
+  assert.doesNotThrow(() => policy.bashDenial(deep, opts));
+  assert.doesNotThrow(() => policy.bashDenial('cat .e$(: "nv', opts));
+  assert.equal(policy.bashDenial('cat notes.txt$(: ")")', opts), null);
+  assert.equal(policy.bashDenial('echo "a)" $(echo ")") b', opts), null);
+});
+
+test('cmd variable names are not only identifiers', () => {
+  const { opts } = project();
+  const o = { ...opts, env: { ...opts.env, 'ProgramFiles(x86)': 'C:\\PF' } };
+  asPlatform('win32', () => {
+    for (const c of ['type .e%ProgramFiles(x86):~0,0%nv', 'type .e%CommonProgramFiles(x86):~0,0%nv', 'type .e%=ExitCode:~0,0%nv', 'type .e%A.B%nv', 'type .e%A-B%nv',
+      'type .e%A B%nv', 'type .e!ProgramFiles(x86):~0,0!nv', 'cmd /v:on /c type .e!A.B!nv', 'type .e%ProgramFiles(x86):x=y%nv']) {
+      assert.match(policy.bashDenial(c, o) || '', DENIED, c);
+    }
+    for (const c of ['type notes.txt', 'echo 100% done', 'echo 50% of 60%', 'type notes%ProgramFiles(x86):~0,0%.txt']) assert.equal(policy.bashDenial(c, o), null, c);
+  });
+  asPlatform('linux', () => {
+    assert.match(policy.bashDenial('cmd /c type .e%ProgramFiles(x86):~0,0%nv', o) || '', DENIED);
+    assert.equal(policy.bashDenial('echo .e%ProgramFiles(x86):~0,0%nv', o), null);
+  });
+});
+
+test('cmd with delayed expansion removes an ! that has no partner', () => {
+  const { opts } = project();
+  for (const plat of ['linux', 'win32']) {
+    asPlatform(plat, () => {
+      for (const c of ['cmd /v:on /c type .e!nv', 'cmd /v:on /c type .env!', 'cmd /v:on /c type .env!::$DATA', 'cmd /v:on /c type .e!A.B!nv', 'cmd /v:on /c type .env!x!::$DATA',
+        'cmd /v:on /c type ".env!::$DATA"', 'cmd /v:on /c type .e!n!v', 'cmd /v /c type .e!nv', 'cmd /c "setlocal enabledelayedexpansion & type .e!nv"', 'cmd /v:on /c type .env^!::$DATA']) {
+        assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + c);
+      }
+      // without delayed expansion an unpaired ! is an ordinary character; ordinary uses of ! stay allowed
+      for (const c of ['cmd /c type notes!.txt', 'cmd /v:on /c echo hi!', 'cmd /v:on /c type notes.txt', 'echo done!', 'git commit -m "wow!"']) assert.equal(policy.bashDenial(c, opts), null, plat + ' ' + c);
+    });
+  }
+  asPlatform('linux', () => assert.equal(policy.bashDenial('cmd /c type .e!nv', opts), null, 'no /v:on: the ! stays'));
+});
+
+// --- review of #849, third round: a unit does not span commands; case patterns inside $( ); glued /v switches ---
+
+test('a cmd variable unit does not reach into the next command', () => {
+  const { opts } = project();
+  for (const plat of ['linux', 'win32']) {
+    asPlatform(plat, () => {
+      for (const c of ['cmd /v:on /c "echo a! & type .e!X!nv"', 'cmd /v:on /c "echo a!&type .e!X!nv"', 'cmd /c echo 5% & type .e%NOPE%nv', 'cmd /c "echo 5%&type .e%NOPE%nv"']) {
+        assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + c);
+      }
+      for (const c of ['echo 100% done & type notes.txt', 'echo 50% & echo 60% & type .env.example', 'cmd /v:on /c echo hello! & type notes.txt', 'cmd /v:on /c "type .env.example & echo done!"',
+        'set PATH=%PATH%;C:\\tools & type notes.txt', 'echo %ProgramFiles(x86)%', 'dir "%ProgramFiles(x86)%"']) {
+        assert.equal(policy.bashDenial(c, opts), null, plat + ' ' + c);
+      }
+    });
+  }
+  asPlatform('win32', () => assert.match(policy.bashDenial('type .e%A B%nv', opts) || '', DENIED, 'a name with a space is still read'));
+});
+
+test('a case pattern inside a command substitution does not end it early', () => {
+  const { opts } = project();
+  for (const c of ['cat .en$(case x in x) ;; esac)v', 'cat .en$(case x in x) : ;; esac)v', 'cat .en$(case x in a) :;; b) :;; esac)v', 'cat .en$(case x in x) case y in y) :;; esac;; esac)v',
+    'cat .e${U:-$(case x in x) ;; esac)}nv']) {
+    for (const plat of ['linux', 'win32']) asPlatform(plat, () => assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + c));
+  }
+  assert.doesNotThrow(() => policy.bashDenial('cat .en$(case x in x) ;; ', opts));
+  assert.equal(policy.bashDenial('cat notes.txt$(case x in x) ;; esac)', opts), null);
+  assert.equal(policy.bashDenial('echo $(showcase x)', opts), null);
+});
+
+test('delayed expansion is seen also with glued switches', () => {
+  const { opts } = project();
+  for (const c of ['cmd /q/v:on /c type .e!nv', 'cmd /v:on/c type .e!nv']) assert.match(policy.bashDenial(c, opts) || '', DENIED, c);
+});
+
+// --- review of #849, fourth round: names with spaces or ^ per command; case/esac with quoted words ---
+
+test('a wide cmd variable name is read command by command', () => {
+  const { opts } = project();
+  for (const plat of ['linux', 'win32']) {
+    asPlatform(plat, () => {
+      for (const c of ['cmd /v:on /c "echo a! & type .e!X Y!nv"', 'cmd /v:on /c "echo a!|type .e!X Y!nv"', 'cmd /c "echo 5% & type .e%A B%nv"', 'cmd /c echo 5% & type .e%A^B%nv',
+        'cmd /c "echo 5%&type .e%A B%nv"']) {
+        assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + c);
+      }
+      for (const c of ['echo 100% done & type notes.txt', 'cmd /v:on /c "echo a! & type notes.txt"', 'cmd /c echo 5% & type .env.example & echo 6%']) assert.equal(policy.bashDenial(c, opts), null, plat + ' ' + c);
+    });
+  }
+});
+
+test('case and esac inside a command substitution: quoted words and comments are not keywords', () => {
+  const { opts } = project();
+  for (const c of ['cat .en$(case x in x) : "esac" ;; y) ;; esac)v', "cat .en$(case x in x) : 'esac' ;; y) ;; esac)v", 'cat .en$(case x in x) : \\esac ;; y) ;; esac)v',
+    'cat .en$(case x in x) : ;; esac; case y in y) ;; esac)v', 'cat .en$(case x in a|b) : ;; (c) : ;; esac)v']) {
+    for (const plat of ['linux', 'win32']) asPlatform(plat, () => assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + c));
+  }
+  assert.doesNotThrow(() => policy.bashDenial('cat .en$(case x in x) "esac ' + 'case '.repeat(5000), opts));
+  assert.equal(policy.bashDenial('cat notes.txt$(case x in x) "esac" ;; esac)', opts), null);
+});
+
+// --- review of #849, fifth round: the whole-line wide reading, and a fallback that spans lines and is linear ---
+
+test('the wide cmd name reading also covers a name that holds an operator', () => {
+  const { opts } = project();
+  for (const plat of ['linux', 'win32']) {
+    asPlatform(plat, () => {
+      for (const c of ['cmd /c "type .e% & echo :~0,0%nv"', 'cmd /v:on /c "type .e! & echo :~0,0!nv"']) assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + c);
+    });
+  }
+});
+
+test('the case fallback spans lines and costs time in proportion to the text', () => {
+  const { opts } = project();
+  for (const c of ['cat .en$(case x in x) : "esac" ;; y)\n ;; esac)v', 'cat .en$(case x in x) :\n;; y) : "esac"\n;; esac)v']) {
+    for (const plat of ['linux', 'win32']) asPlatform(plat, () => assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + JSON.stringify(c)));
+  }
+  const big = 'cat a$(case ' + '$('.repeat(40000) + ')'.repeat(40000);
+  const t0 = Date.now();
+  policy.bashDenial(big, opts);
+  assert.ok(Date.now() - t0 < 2000, 'time: ' + (Date.now() - t0) + ' ms');
+});
+
+// --- review of #849, sixth round: esac only as a reserved word; the fallback anchored on each $( case ... esac ) ---
+
+test('case inside a command substitution: a hyphenated word, extra substitutions and parentheses around it do not bring the bypass back', () => {
+  const { opts } = project();
+  const unit = 'case x in x) : my-esac ;; y) ;; esac';
+  const multi = 'case x in\nx) : my-esac ;;\ny) ;; esac';
+  const rows = [
+    'cat $(echo a) .en$(' + unit + ')v', 'cat .en$(' + unit + ')v $(echo b)', '(cat .en$(' + unit + ')v)', 'cat .en$(' + unit + ')v # )', 'cat .en$(' + unit + ')v; echo ")"',
+    'cat $(echo a) .en$(' + multi + ')v', 'cat .en$(' + multi + ')v $(echo b)', '(cat .en$(' + multi + ')v)', 'cat .en$(' + multi + ')v # )', 'cat .en$(' + multi + ')v; echo ")"',
+    'echo $(date) && cat .en$(' + multi + ')v', 'cat .en$(' + unit + ')v\n(echo ok)', 'cat .en$(case x in x) : x-esac ;; esac)v', 'cat .en$(case x in x) : "a esac b" ;; esac)v',
+  ];
+  for (const c of rows) {
+    for (const plat of ['linux', 'win32']) asPlatform(plat, () => assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + JSON.stringify(c)));
+  }
+  for (const c of ['echo $(date) && cat notes.txt', 'cat notes.txt$(' + unit + ')', '(echo ok); cat .env.example', 'echo $(case x in x) : ;; esac) && cat .envrc', 'cat $(echo a) $(echo b) notes.txt']) {
+    assert.equal(policy.bashDenial(c, opts), null, JSON.stringify(c));
+  }
+  const many = 'cat a' + '$(case x in x) : ;; esac)'.repeat(2000);
+  const t0 = Date.now();
+  policy.bashDenial(many, opts);
+  assert.ok(Date.now() - t0 < 2500, 'time: ' + (Date.now() - t0) + ' ms');
 });
