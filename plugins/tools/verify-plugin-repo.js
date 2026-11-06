@@ -50,7 +50,7 @@ const builder = require('./build-plugin-repo');
 const ROOT = path.resolve(__dirname, '..', '..');
 const REGISTRY = 'https://registry.npmjs.org';
 // Kept separate from the build's copy on purpose; a test checks they agree.
-const PRUNE = /\.(?:d\.[mc]?ts|[mc]?ts|map)$/;
+const PRUNE = /\.(?:d\.[mc]?ts|[mc]?ts|map)$|^README\.md$|^lib\/init-guide\.js$|^node_modules\/(?:@noble\/post-quantum\/node_modules\/)?@noble\/curves\/(?:abstract\/(?:bls|tower)|bls12-381|bn254|misc|index)\.js$/;
 const WORKFLOW = '.github/workflows/verify.yml';
 
 function sha256(buf) {
