@@ -251,3 +251,56 @@ test('an expansion that comes out empty is refused whatever the environment the 
     });
   }
 });
+
+test('an expansion is read as any text: a name that a variable or substitution could complete is refused whatever the environment holds', () => {
+  const { opts } = project();
+  const attacks = ['cat .e$(echo n)v', 'cat .e`echo n`v', 'read X <<< n; cat .e${X}v', 'cat .e${X}v', 'cat ${D}env', 'cat ${D}.env', 'cat .e${X}',
+    'cat .env${S}', 'cat .e$1v', 'cat .e"$X"v', 'cat "$HOME"/.e${X}v', 'cat sub/.e${X}v', 'cat .e$(echo n)v.local', 'cat .e$(printf n)v',
+    'cat $(printf .en)v', 'cat $(echo .en)v', 'bash -c "cat .e\${X}v"', 'cat ${D}env.local', 'cat ~/.ssh/id_${K}', 'cat ${A}d_rsa'];
+  for (const extra of [{}, { X: 'n', D: '.', K: 'rsa' }, { X: 'q' }]) {
+    const o = { ...opts, env: { ...opts.env, ...extra } };
+    asPlatform('linux', () => {
+      for (const c of attacks) assert.match(policy.bashDenial(c, o) || '', /holds plain-text|was not read because/, c + ' ' + JSON.stringify(extra));
+    });
+  }
+});
+
+test('an expansion read as any text: cmd.exe variable units spell a name the same way', () => {
+  const { opts } = project();
+  asPlatform('win32', () => {
+    for (const c of ['type .e%X:~0,1%v', 'type .e!X!v', 'type .e%X%v', 'cmd /c type .e%X%v', 'set X=n& type .e%Y%v']) {
+      assert.match(policy.bashDenial(c, opts) || '', /holds plain-text|was not read because/, c);
+    }
+    for (const c of ['echo %USERPROFILE%', 'type %USERPROFILE%/notes.md', 'type %CD%/x.txt']) assert.equal(policy.bashDenial(c, opts), null, c);
+  });
+});
+
+test('an expansion read as any text: ordinary uses stay allowed', () => {
+  const { opts } = project();
+  asPlatform('linux', () => {
+    for (const c of ['echo $HOME', 'cat $HOME/notes.md', 'cat ${DIR}/notes.md', 'cat ${NAME}.txt', 'source ${VENV}/bin/activate',
+      'cat ${ROOT}/.venv/bin/python', 'cat $1', 'echo v${VERSION}', 'cat ${X}v', 'cp dist/${NAME}-${VERSION}.tgz x', 'cat ${CI_ENV}',
+      'cat config/${ENV}.json', 'cat .github/${WF}.yml', 'cat src/${MOD}/env.ts', 'cat ${APP}.env.example', 'cat ${APP}.env.sample',
+      'echo $(date)v', 'cat $(pwd)/notes.md', 'ls $(git rev-parse --show-toplevel)/src', 'echo "$X" > .e${Y}v']) {
+      assert.equal(policy.bashDenial(c, opts), null, c);
+    }
+  });
+});
+
+test('known limit: a segment that keeps two letters of the name is refused even when it names something else', () => {
+  const { opts } = project();
+  asPlatform('linux', () => {
+    // Accepted false positive: ${PREFIX}env could be .env, so it is refused. Write the name out to read it.
+    assert.match(policy.bashDenial('ls ${PREFIX}env', opts) || '', /was not read because/);
+  });
+});
+
+test('known limit: a name wholly inside a variable or a substitution is not read', () => {
+  const { opts } = project();
+  asPlatform('linux', () => {
+    // Documented in the threat model: the hook cannot see a value that no text holds. A variable assigned in the same line is followed.
+    assert.equal(policy.bashDenial('cat $NAME', opts), null);
+    assert.equal(policy.bashDenial('cat $(cat names.txt)', opts), null);
+    assert.match(policy.bashDenial('NAME=.env; cat $NAME', opts) || '', /holds plain-text|was not read because/);
+  });
+});

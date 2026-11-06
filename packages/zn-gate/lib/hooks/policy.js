@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-06.1';
+const POLICY_RULES_VERSION = '2026-11-06.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2405,7 +2405,26 @@ function bashDenialOf(cmd, opts = {}) {
     add(dropEmptyExpansions(text, opts.env || process.env));
     if (/[$`]/.test(text)) { add(stripExpansions(text, false)); add(stripExpansions(text, true)); }
     if (/[%!]/.test(text) && cmdContext(text)) for (const v of [...variants]) add(stripCmdVars(v));
+    if (/[$`]/.test(text) && /\$\(|`/.test(text)) add(substitutionOutputs(text));
     for (const v of [...variants]) if (v !== text) readings.push(allWords(v, false), allWords(v, true));
+    if (/[$`%!]/.test(text)) {
+      // Every expansion read as any text: refused when a path segment could be a protected name.
+      const wild = wildText(text);
+      if (wild !== text) {
+        const wilds = [wild];
+        if (cmdCaretsApply(wild)) wilds.push(dropCmdCarets(wild.replace(/(\/[ck]\s+)"([\s\S]*)"(\s*)$/i, '$1$2$3')));
+        for (const w of wilds) {
+          for (const r of [allWords(w, false), allWords(w, true)]) {
+            if (r.truncated) return TOO_MANY_MESSAGE;
+            for (const x of r) {
+              if (typeof x.text === 'string' && x.text.indexOf(WILD) >= 0 && !x.redirectTarget && wildWordProtected(x.text)) {
+                return WILD_MESSAGE(x.text.split(WILD).join('*'));
+              }
+            }
+          }
+        }
+      }
+    }
     for (const v of [...variants]) {
       if (!cmdCaretsApply(v)) continue;
       const c = dropCmdCarets(v.replace(/(\/[ck]\s+)"([\s\S]*)"(\s*)$/i, '$1$2$3'));
@@ -2620,7 +2639,7 @@ function stripCmdVars(text) {
  * `useDefaults`, ${NAME:-word}, ${NAME-word}, ${NAME:=word}, ${NAME=word}, ${NAME:+word} and ${NAME+word} become their word (quotes
  * removed, nested units read the same way). An unbalanced unit leaves the rest of the text as it was.
  */
-function stripExpansions(text, useDefaults) {
+function stripExpansions(text, useDefaults, mark = '') {
   const n = text.length;
   let out = '';
   let i = 0;
@@ -2629,6 +2648,7 @@ function stripExpansions(text, useDefaults) {
     if (c === '`') {
       const j = text.indexOf('`', i + 1);
       if (j < 0) { out += text.slice(i); break; }
+      out += mark;
       i = j + 1;
       continue;
     }
@@ -2647,17 +2667,19 @@ function stripExpansions(text, useDefaults) {
       if (d === '{' && useDefaults) {
         const m = /^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*])(:?[-=+])([\s\S]*)$/.exec(content);
         if (m) out += stripExpansions(m[2], true).replace(/["']/g, '');
-      }
+        else out += mark;
+      } else out += mark;
       i = j;
       continue;
     }
     if (/[A-Za-z_]/.test(d)) {
       let j = i + 1;
       while (j < n && /[A-Za-z0-9_]/.test(text[j])) j++;
+      out += mark;
       i = j;
       continue;
     }
-    if (/[0-9@*#?$!]/.test(d)) { i += 2; continue; }
+    if (/[0-9@*#?$!]/.test(d)) { out += mark; i += 2; continue; }
     out += c;
     i++;
   }
@@ -2687,6 +2709,69 @@ function dropCmdExpansions(text, env) {
       return v.replace(new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), () => (n1 ? b1 : b2));
     });
 }
+/**
+ * Expansions read as "any text". The value of `$X`, `${X}`, `$(cmd)`, a backtick substitution, `%X%` or `!X!` is not in the command: an
+ * earlier command, `read`, the program's output or an environment the hook does not see can set it to anything. So each unit is
+ * replaced by a mark, and a path segment that holds a mark and at least two literal characters of a protected name (.env, .env.*, an SSH
+ * private key name) in the right places is refused: `.e${X}v`, `${D}env`, `.e$(echo n)v` and `.e%X:~0,1%v` can all spell `.env`.
+ * It does not depend on the environment. What it cannot see is a name that is wholly inside the unit (`cat $(printf .env)` is read
+ * through the words of the substitution, `cat ${NAME}` with NAME=.env only through the assignments of the same command).
+ * A segment with fewer than two literal characters of the name (`${X}v`, `${CI_ENV}`, `config/${ENV}.json`) is allowed; so is
+ * `.example`, `.sample` and `.template` at its end.
+ */
+const WILD = '\u0001';
+const WILD_NAMES = [
+  { name: '.env', tail: false, core: 4 }, { name: '.env.', tail: true, core: 4 },
+  ...['rsa', 'dsa', 'ecdsa', 'ed25519', 'xmss'].flatMap((k) => [{ name: 'id_' + k, tail: false, core: 3 + k.length }, { name: 'id_' + k + '_sk', tail: false, core: 6 + k.length }]),
+];
+const WILD_SAFE_END_RE = /\.(?:example|sample|template)$/;
+const WILD_SEGMENT_MAX = 512;
+// Can the segment (marks match any text) spell the name, with two or more of its literal characters inside the first `core` characters of the name?
+function wildSegmentMatches(seg, t) {
+  const n = seg.length;
+  const m = t.name.length;
+  const memo = new Map();
+  const f = (i, j, c) => {
+    const key = (i * (m + 1) + j) * 3 + c;
+    const hit = memo.get(key);
+    if (hit !== undefined) return hit;
+    let r;
+    if (i === n) r = j === m && c >= 2;
+    else if (seg[i] === WILD) r = f(i + 1, j, c) || (j < m && f(i, j + 1, c));
+    else if (j < m) r = seg[i] === t.name[j] && f(i + 1, j + 1, Math.min(2, c + (j < t.core ? 1 : 0)));
+    else r = t.tail && f(i + 1, j, c);
+    memo.set(key, r);
+    return r;
+  };
+  return f(0, 0, 0);
+}
+function wildWordProtected(text) {
+  const parts = text.indexOf('=') >= 0 ? [text, text.slice(text.indexOf('=') + 1)] : [text];
+  for (const part of parts) {
+    for (const raw of part.split(/[\\/]/)) {
+      if (raw.indexOf(WILD) < 0) continue;
+      const seg = raw.toLowerCase().replace(/^["']+|["']+$/g, '');
+      if (seg.length > WILD_SEGMENT_MAX) return true;   // too long to follow: refused, not checked in part
+      if (WILD_SAFE_END_RE.test(seg)) continue;
+      for (const t of WILD_NAMES) if (wildSegmentMatches(seg, t)) return true;
+    }
+  }
+  return false;
+}
+function wildText(text) {
+  let t = /[$`]/.test(text) ? stripExpansions(text, false, WILD) : text;
+  if (/[%!]/.test(t) && cmdContext(text)) t = t.replace(CMD_VAR_UNIT_RE, WILD);
+  return t;
+}
+// The text of a substitution that only prints a word: `$(printf .en)v` and `$(echo .en)v` read as `.env`.
+function substitutionOutputs(text) {
+  return text.replace(/\$\(([^()]*)\)|`([^`]*)`/g, (m, a, b) => {
+    const toks = (a !== undefined ? a : b).trim().split(/\s+/);
+    return toks[toks.length - 1].replace(/^["']|["']$/g, '');
+  });
+}
+const WILD_MESSAGE = (word) => 'zn: ' + word + ' was not read because a variable, a command substitution or a cmd variable makes up part of the name, ' +
+  'and what is left could spell a .env file or an SSH private key. Write the file name out in full, or ask the user to run the command.';
 function dropEmptyExpansions(text, env) {
   if (/[%!]/.test(text) && cmdContext(text)) text = dropCmdExpansions(text, env);
   if (!/[$`]/.test(text)) return text;
