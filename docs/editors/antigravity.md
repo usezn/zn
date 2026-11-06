@@ -2,7 +2,7 @@
 
 Set up zn-gate in Google Antigravity: install its hooks and add it as an MCP server, and what zn-gate does and does not cover there.
 
-## Quick start (no coding needed)
+## Install (no coding needed)
 
 1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart Antigravity.
 2. At the top of the agent panel, open the **…** menu → **MCP Servers** → **Manage MCP Servers** → **View raw config**. (This is the file `~/.gemini/antigravity/mcp_config.json`, or `~/.gemini/config/mcp_config.json` in some versions, where `~` is your user folder, for example `C:\Users\you` on Windows.)
@@ -75,7 +75,7 @@ More detail is in the [threat model](../threat-model.md).
 
 ### The MCP server on its own
 
-The MCP server (quick start above) is not automatic protection: the agent decides when to call `analyze_prompt`, `check_tool_call` and `check_tool_result`.
+The MCP server (Install above) is not automatic protection: the agent decides when to call `analyze_prompt`, `check_tool_call` and `check_tool_result`.
 
 ## Technical reference
 
@@ -106,6 +106,31 @@ To check the output of the other MCP servers you use in Antigravity, start each 
 ```
 
 Every result of that server is then checked for prompt injection, and secrets zn-gate recognizes are removed, before the agent sees it. `zn-gate init --wrap-mcp` does this automatically for Claude Desktop, Claude Code, Cursor, Codex, OpenCode and Antigravity.
+
+## Verify
+
+Run `npx -y zn-gate check` in your own terminal. It makes a temporary folder with a fake `.env` file and an ordinary file, asks zn's hook to let the agent read each one, and reports whether the Antigravity hook blocked the `.env` file and allowed the other. Nothing is sent over the network and no setting changes. See [Check that it works](../check.md).
+
+This checks the hooks. To check the MCP server too, restart Antigravity and ask the agent to call `zn_status`.
+
+## Uninstall
+
+In your own terminal:
+
+```bash
+zn hooks uninstall antigravity
+```
+
+If you installed the hooks for one project only, add `--project` and run it from that project's folder. A backup of the settings file is written first. To remove the MCP server, delete the `zn-gate` entry from the MCP settings file you edited in Install. If you ran `npx -y zn-gate init --wrap-mcp`, `npx -y zn-gate init --revert` puts back each MCP settings file as it was saved before wrapping. See [Remove zn-gate](../uninstall.md).
+
+## Troubleshooting
+
+- **`node: command not found`, or Node.js is too old** (zn-gate needs 18 or later): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
+- **"running scripts is disabled on this system" on Windows:** see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+- **The zn-gate tools do not appear in Antigravity:** check that the settings file is valid and that the `zn-gate` entry sits inside the existing server section, then restart Antigravity.
+- **A command says it needs you at your own terminal:** see [It needs you at your own terminal](../troubleshooting.md#4-it-needs-you-at-your-own-terminal).
+
+All messages: [Troubleshooting](../troubleshooting.md).
 
 ## Antigravity documentation
 

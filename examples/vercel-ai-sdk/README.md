@@ -12,7 +12,7 @@ Everything runs on your machine. The model is the AI SDK's own test model (`Mock
 - Node.js 22 or newer (the AI SDK 7 needs it)
 - `zn-gate` 1.12.0 or newer
 
-The versions in `package.json` are exact (`ai` 7.0.143, `zod` 4.1.13, `zn-gate` 1.12.0), so the example behaves the same on your machine as it did when it was written.
+The versions in `package.json` are exact (`ai` 7.0.143, `zod` 4.6.6, `zn-gate` 1.12.0), so the example behaves the same on your machine as it did when it was written.
 
 ## Run
 

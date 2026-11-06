@@ -425,7 +425,7 @@ def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
             if _last_warn is None or now - _last_warn >= WARN_INTERVAL:
                 _last_warn = now
                 sys.stderr.write(
-                    f"zn-gate: the evidence log {file_path} is damaged ({e}) "
+                    f"zn-gate: the evidence log {file_path} is damaged ({e}). "
                     "Events are not being recorded. Run 'zn-gate evidence --verify' for details. "
                     f"{recovery_hint(file_path)}\n"
                 )

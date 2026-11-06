@@ -4,6 +4,6 @@
   "private": true,
   "description": "Pinned npm CLI that publishes the npm release with trusted publishing",
   "devDependencies": {
-    "npm": "11.21.0"
+    "npm": "11.21.1"
   }
 }

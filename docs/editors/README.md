@@ -35,3 +35,5 @@ Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts
 Details: [compat.md](../compat.md) (Gemini CLI and Copilot CLI) and [threat-model.md](../threat-model.md) (these two and Antigravity).
 
 VS Code and Windsurf have their own agent hooks, but zn-gate does not install hooks for them yet. For what Antigravity's hooks cover and what they do not, see [its page](antigravity.md); for ZCode, see [its page](zcode.md).
+
+To remove zn-gate from an editor by hand, see [the files zn-gate writes in each editor](remove-by-hand.md).

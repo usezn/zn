@@ -7,6 +7,12 @@ after 1.5.0-beta.1 (1.5.0-beta.2 or 1.5.0, whichever comes first).
 The same files are then published to npm, to PyPI and to the
 GitHub Release, with no long-lived publish tokens: npm and PyPI accept them
 through trusted publishing (OpenID Connect from GitHub Actions).
+From 1.14.1 on, the workflow stages the npm package (npm staged publishing):
+it becomes public only after a maintainer approves the stage with two-factor
+authentication, and the workflow then checks that the version on npm is the
+verified tarball. The npm package declares its content as dual-use
+(`contentPolicy` in `package.json`) and explains why in a `DISCLOSURE` file at
+the root of the package.
 
 Each release has:
 

@@ -246,14 +246,16 @@ test('a flood of server output is held back while the client does not read', { t
   } finally { await s.stop(); fs.rmSync(progress, { force: true }); }
 });
 
-test('a flood of server output the proxy checks more slowly than it arrives does not pile up in memory', { timeout: 120000 }, async (t) => {
+// What this checks is the memory bound, not the time: the file runs on its own (runner-plain.json), and the wait for the
+// 150 MB to pass is generous so that a busy CI runner only makes it slower.
+test('a flood of server output the proxy checks more slowly than it arrives does not pile up in memory', { timeout: 300000 }, async (t) => {
   const progress = path.join(os.tmpdir(), 'zn-frame-progress2-' + process.pid);
   fs.writeFileSync(progress, '0');
   const s = startShield({}, { PROGRESS_FILE: progress, FLOOD_LINES: '2500' });
   try {
     s.send(call(21, 'flood'));
     // The client reads everything. 2500 notifications of 60 KB (150 MB) must not sit in the proxy at once.
-    await s.wait(() => Number(fs.readFileSync(progress, 'utf8')) >= 2500 && s.lines.length >= 2500, 'all notifications', 100000);
+    await s.wait(() => Number(fs.readFileSync(progress, 'utf8')) >= 2500 && s.lines.length >= 2500, 'all notifications', 280000);
     const mb = hwmMb(s.proc.pid);
     if (mb === null) return t.skip('no /proc on this system');
     assert.ok(mb < 250, `peak memory of the proxy was ${Math.round(mb)} MB`);

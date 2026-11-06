@@ -72,3 +72,20 @@ test('isDetectedName only matches a trailing _<digits>', () => {
   assert.equal(m.isDetectedName('AWS_KEY'), false);
   assert.equal(m.isDetectedName('KEY1'), false);
 });
+
+/* A path under the temp folder that does not exist yet. */
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+test('a path that does not exist under the temp folder still counts as inside it, in every form of the temp folder name', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-markers-'));
+  try {
+    for (const base of [dir, fs.realpathSync.native(dir)]) {
+      assert.match(m.checkResolvedExecutable(path.join(base, 'no-such-folder', 'tool')), /temp directory/, base);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

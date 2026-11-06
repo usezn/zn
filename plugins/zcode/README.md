@@ -27,8 +27,14 @@ Use one of them. `zn-gate check` reports it when both are active, and when the p
 
 ## Limits
 
-- Linux (tested with the ZCode desktop app 3.16.3). macOS is not tested. The hook is a POSIX shell script, so
-  Windows is not supported by the plugin yet: use `zn hooks install zcode` there.
+- Linux (tested with the ZCode desktop app 3.16.3). macOS is not tested. Windows: every event has a second hook that starts the
+  system `cmd.exe` by its full path and runs `scripts/zn-hook.cmd` from the plugin folder, which starts Node.js directly from
+  its usual install folder (`%ProgramFiles%\nodejs`) and otherwise runs the system PowerShell on `scripts/zn-hook.ps1` (the
+  same checks as the shell script). Either way, if zn has not answered 120 seconds after the hook started, the hook blocks
+  the call. ZCode lets the call run when a hook times out, so the plugin gives its hooks 5 minutes: with every CPU busy, a
+  stuck hook was blocked after at most 154 seconds in our tests. It
+  works from a user folder with spaces, `&`, parentheses, `^` or `%` in its name. It is tested with the plugin's own tests on
+  Windows Server 2022: if `zn-gate check` reports it as not protected, use `zn hooks install zcode` there.
 - ZCode cannot rewrite what a tool returns: a value a command prints or a file the agent may read reaches the model.
   zn adds a notice when an output holds a secret. Keep secrets in the vault.
 - A user can turn the plugin off in Settings, Plugins. `zn-gate check` reads ZCode's configuration and says so.

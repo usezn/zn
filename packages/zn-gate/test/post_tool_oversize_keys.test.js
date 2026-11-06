@@ -281,3 +281,13 @@ test('the runner process answers an oversized Copilot CLI and Claude Code post-t
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('zcode: an oversized post-tool event gets the notice that ZCode cannot withhold, exit 0', async () => {
+  const text = build(['session_id', 'hook_event_name', 'tool_name', 'tool_response'],
+    { session_id: q('s'), hook_event_name: q('PostToolUse'), tool_name: q('bash'), tool_response: q(big()) });
+  const r = await runMain('zcode', text);
+  assert.notEqual(r.exit, 2);
+  assert.ok(!r.out.includes('AAAA'), 'none of the output in the answer');
+  assert.match(r.out, /cannot withhold/);
+  assert.doesNotMatch(r.out, /was withheld|output withheld/);
+});

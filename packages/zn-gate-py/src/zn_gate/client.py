@@ -86,6 +86,20 @@ def analyze_cloud(
         return parsed
 
 
+def cloud_error_hint(exc: BaseException) -> str:
+    """One plain sentence on what a failed cloud call means and what to do."""
+    if isinstance(exc, urllib.error.HTTPError):
+        if exc.code in (401, 403):
+            return "The cloud service did not accept the API key: check ZN_API_KEY."
+        return f"The cloud service answered with an error (HTTP {exc.code}): try again later."
+    reason = getattr(exc, "reason", exc)
+    if isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError) or "timed out" in str(exc):
+        return "The cloud service took too long to answer: check your network connection."
+    if isinstance(exc, urllib.error.URLError):
+        return "The cloud service could not be reached: check your network connection and ZN_API_URL."
+    return "The cloud check failed."
+
+
 def analyze(
     input_text: str,
     api_key: Optional[str] = None,
@@ -151,7 +165,8 @@ def analyze(
     except Exception as exc:
         if is_verbose():
             import sys
-            sys.stderr.write(f"[zn-gate] Warning: Cloud gate error ({exc}). Using local OSS rules fallback.\n")
+            sys.stderr.write(f"[zn-gate] Warning: Cloud gate error ({exc}). {cloud_error_hint(exc)} "
+                             "The local rules were used instead, so the text was checked on this machine only.\n")
         return {
             "verdict": "allow",
             "confidence": local_eval.confidence,

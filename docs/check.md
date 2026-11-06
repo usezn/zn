@@ -63,9 +63,17 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   its hook cannot start: its Node.js (<path>) is no longer there, so zn now blocks the tool calls and prompts instead of checking them
   ```
 
-  The last form is a Codex CLI or Claude Code hook that goes through zn's launcher script, which blocks the agent's tool calls and prompts (instead of letting them run unchecked) when the Node.js it was installed with is gone and no `zn` can be found on your PATH. Until you repair it, the agent cannot run commands. If `zn` and `node` are on your PATH the hook keeps working and `zn-gate check` only notes that the Node.js it was installed with is gone.
+  The last form is a Codex CLI or Claude Code hook that goes through zn's launcher script, which blocks the agent's tool calls and prompts (instead of letting them run unchecked) when the Node.js it was installed with is gone. The launcher never runs a `zn` it finds on your PATH instead. Until you repair it, the agent cannot run commands.
 
-  This usually happens after you removed or upgraded Node.js with a version manager such as nvm: the old Node.js took its copy of zn-gate with it. The repair is:
+  A second form appears when the zn-gate files changed after the hooks were installed (the launcher keeps the SHA-256 of the runner file and runs it only if it still matches):
+
+  ```text
+  its hook is blocking tool calls and prompts: zn-gate changed since the hooks were installed (<path> no longer matches the launcher), so zn will not run it
+  ```
+
+  `npm update -g zn-gate` refreshes the launchers by itself (a short install step), so you normally never see this after an update. You see it if the file was edited, or if the update ran with `--ignore-scripts`. Run `zn hooks install <agent>` again in your own terminal to record the new files. The check covers the runner file, not the other files of the package.
+
+  The first form usually happens after you removed or upgraded Node.js with a version manager such as nvm: the old Node.js took its copy of zn-gate with it. The repair is:
 
   ```text
   install zn-gate again for the Node.js you use now: run `npm install -g zn-gate`, then `zn hooks install <agent>`, in your own terminal
@@ -101,16 +109,17 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   ```text
   the zn-gate plugin starts its hook with /bin/sh, which is not on this computer, so the hook cannot start
-  the ZCode plugin needs a system with /bin/sh (Linux); elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again
+  the ZCode plugin needs a system with /bin/sh (macOS, Linux) or Windows PowerShell; elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again
   ```
 
-  The ZCode plugin starts its hooks with `/bin/sh`, so it works on Linux. On other systems, use `zn hooks install zcode` instead.
+  The ZCode plugin has two hooks for every event: one starts `/bin/sh` (macOS and Linux) and one starts the Windows command interpreter by its full path (`C:\Windows\System32\cmd.exe`, Windows), which runs `scripts/zn-hook.cmd`: it starts Node.js directly and, when Node.js is not in its usual install folder, runs the Windows PowerShell by its full path. Earlier plugin versions started the PowerShell directly, and `zn-gate check` accepts that too. On each system only the matching one can start. If your Windows folder is not `C:/Windows`, or the program is missing, use `zn hooks install zcode` instead.
 
 - **The ZCode plugin has no PreToolUse hook.**
 
   ```text
   the zn-gate plugin has no PreToolUse hook in <plugin folder>/hooks/hooks.json, so ZCode runs no zn check before tool calls
   the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`/bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
+  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`cmd.exe ... scripts/zn-hook.cmd PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
   install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again
   ```
 

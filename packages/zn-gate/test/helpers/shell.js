@@ -11,10 +11,11 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { tempDir } = require('./tmp');
+const { WIN, shellFor, fwd, shEnv } = require('./git_bash');
 
 /**
  * t: the node:test context (the script directory is removed when the test ends).
- * shell: 'sh', 'bash' or 'pwsh'. flags: extra shell flags (e.g. ['-l']).
+ * shell: 'sh', 'bash' or 'pwsh' (on Windows sh and bash are the ones of Git Bash, and the script path is given with /). flags: extra shell flags (e.g. ['-l']).
  * opts: spawnSync options (cwd, env, input).
  */
 function runScript(t, shell, command, opts = {}, flags = []) {
@@ -22,8 +23,9 @@ function runScript(t, shell, command, opts = {}, flags = []) {
   const ps = /pwsh|powershell/i.test(path.basename(shell));
   const file = path.join(dir, ps ? 'command.ps1' : 'command.sh');
   fs.writeFileSync(file, command + '\n');
-  const args = ps ? ['-NoProfile', '-NonInteractive', ...flags, '-File', file] : [...flags, file];
-  return spawnSync(shell, args, { encoding: 'utf8', ...opts });
+  const args = ps ? ['-NoProfile', '-NonInteractive', ...flags, '-File', file] : [...flags, WIN ? fwd(file) : file];
+  const env = WIN && !ps ? shEnv(opts.env || process.env) : opts.env;
+  return spawnSync(WIN && !ps ? shellFor(shell) : shell, args, { encoding: 'utf8', ...opts, env });
 }
 
 module.exports = { runScript };

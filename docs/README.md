@@ -7,13 +7,17 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | Guide | What it covers | For whom |
 |---|---|---|
 | [First 5 minutes](first-5-minutes.md) | Install zn-gate, see it work, what its messages mean, how to remove it | Anyone who uses a coding agent, no coding needed |
+| [zn-gate for beginners](for-beginners.md) | In plain words, what zn-gate does and what it never does | People new to terminal agents |
 | [Check that it works](check.md) | What `zn-gate check` prints and how to fix a **NOT protected** line | Everyone, after installing |
 | [Keep secrets out of your agent](secrets.md) | Five-minute walkthrough of the vault, markers and `zn run` | Everyone |
+| [Recipes](recipes.md) | Ten short step-by-step recipes: install, check, protect a project, connect, report, upgrade, uninstall | Everyone |
 | [Troubleshooting](troubleshooting.md) | The messages people meet first, and what to do for each | Everyone |
 | [Glossary](glossary.md) | Short meanings of words used in these docs | Newcomers |
 | [Upgrading](upgrading.md) | What to do when you update zn-gate | Everyone |
 | [Remove zn-gate](uninstall.md) | Uninstall in one step or piece by piece, run from your own terminal | Everyone |
+| [First project walkthrough](examples/first-project-walkthrough.md) | One example project from install to uninstall, with fake values | Newcomers |
 | [Command line reference](cli.md) | Every command, option and exit code | Everyone |
+| [Command cheat sheet](commands-cheatsheet.md) | Every command, its main flags and one example, on one page | Everyone |
 
 ## Everyday use
 
@@ -24,10 +28,12 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Protect MCP servers](shield.md) | Wrap an MCP server with the shield, shadow mode and tool pins | Everyone who uses MCP servers |
 | [Reach](reach.md) | What the coding agents on your machine can reach (secrets by name, credential files, MCP servers) | Everyone |
 | [Report](report.md) | A weekly summary of what zn-gate blocked and hid | Everyone |
+| [Examples: stats and report](examples/stats-and-report.md) | Worked examples of `stats` and `report` with sample output | Everyone |
 | [Audit](audit.md) | Review a repository's agent configuration before you open it | Developers, reviewers |
 | [Connect](connect.md) | Turn on the optional cloud check, and turn it off | Anyone who opts in |
 | [Agent compatibility](compat.md) | What the scrubber can do in each agent | Everyone choosing or configuring an agent |
 | [Editors and coding agents](editors/README.md) | Protection level and two-minute setup per editor | Editor users |
+| [Install, verify and uninstall by agent](by-agent.md) | The steps for each supported agent on one page | Editor users |
 
 ## Teams and CI
 

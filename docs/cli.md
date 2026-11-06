@@ -1,6 +1,6 @@
 # Command line reference
 
-Every command of the `zn-gate` program, with its options and exit codes. For a first walk through, start with [First 5 minutes](first-5-minutes.md).
+Every command of the `zn-gate` program, with its options and exit codes. For a first walk through, start with [First 5 minutes](first-5-minutes.md). Words you do not know are explained in the [glossary](glossary.md).
 
 ## Program names
 
@@ -92,7 +92,7 @@ Shows that zn stops your agent from reading a fake secret, in a temporary folder
 
 Aliases: `doctor`.
 
-Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up.
+Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`.
 
 ### `status`
 
@@ -217,6 +217,12 @@ Exit codes: `0` done, `2` wrong usage, no terminal, an agent running it, or the 
 
 #### `pins approve`
 
+```bash
+SERVER='paste-the-server-name-here'
+zn-gate pins approve "$SERVER"
+zn-gate pins approve --all
+```
+
 Accepts the changed or new tools of one server, or of every server with `--all`.
 
 ## Secrets and the vault
@@ -249,7 +255,7 @@ Stores a secret. You type the value at a hidden prompt, or use `--clipboard`. `-
 zn-gate secret list
 ```
 
-Lists the stored secrets: names and policy, never values.
+Lists the stored secrets: names and policy, never values. The vault must be unlocked first (`zn-gate unlock`); on a locked vault the command exits with an error.
 
 Aliases: `secret ls`.
 
@@ -304,6 +310,10 @@ zn-gate secret log [--since 1h]
 Shows who used which secret where, without values, then checks the log chain. Same as `vault log`.
 
 #### `secret get`
+
+```bash
+zn-gate secret get API_TOKEN   # exits 77 and points you to `run`
+```
 
 There is no way to print a secret value: `secret get` exits `77` and points you to `run`, which uses the value without showing it.
 
@@ -373,6 +383,10 @@ With no subcommand it is the same as `vault status`. Usage errors exit `2`: an u
 
 #### `vault status`
 
+```bash
+zn-gate vault status
+```
+
 Shows whether the vault exists and is unlocked and, when it is, when it locks: after the idle time with no use, or at the end of the session at the latest (in your local time). Exit codes: `0` done, `2` wrong usage.
 
 #### `vault log`
@@ -392,6 +406,10 @@ zn-gate vault log export --otlp [--since 7d] [--out file]
 Writes the audit log as OpenTelemetry logs (OTLP, JSON Lines) to the file, or to the screen. Needs no account. With the vault unlocked, the vault checks the whole log first and nothing is exported when the check fails (exit `1`, and the vault stores a warning, see `vault verify`). With the vault locked the chain cannot be checked: the export still runs and prints a warning that it is not a verified copy. Exit codes: `0` done, `1` error, `2` without `--otlp`. [Details](team.md).
 
 #### `vault verify`
+
+```bash
+zn-gate vault verify
+```
 
 Checks the chain and signatures of the audit log. If the check fails, it says at which record, tells you not to delete or edit the log, and links the troubleshooting page. The vault also compares the last record with the one it remembers, before it writes anything new. If the log was cut, replaced or changed in any record while the vault was locked or running, the check fails (a failed check stores the warning too), and keeps failing after lock and unlock, until you accept the log as it is now with `zn-gate vault verify --acknowledge` (run it yourself in a terminal: it refuses when an agent runs it, and the vault asks you to confirm in its own dialog or terminal). Accepting does not erase the gap: a warning record is written to the log. Exit codes: `0` correct, `1` broken, `2` wrong usage.
 
@@ -421,6 +439,10 @@ Deletes the vault for good, with everything that can open or rebuild it. It firs
 
 #### `vault team`
 
+```bash
+zn-gate vault team
+```
+
 Prints that a shared team vault is planned and not available, and counts the request on this machine only (see `stats`). Nothing is sent.
 
 ### `hooks`
@@ -434,9 +456,17 @@ Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, us
 
 #### `hooks install`
 
+```bash
+zn-gate hooks install claude-code --project
+```
+
 Adds the hooks, and the `secrets` MCP server unless `--no-mcp` is given. A backup of the settings is written first. With `--project`, the shared files run `zn` from the PATH rather than a path on your machine, so everyone who uses the project needs zn-gate installed globally; the install prints a note when `zn` is not on your PATH. For Claude Code, `--project` adds no MCP server (a shared `.mcp.json` could only name `zn`, looked up on the PATH): run `zn hooks install claude-code` for the `secrets` server, and a `secrets` entry that a 1.14.0 release candidate wrote to the project's `.mcp.json` is removed, with a backup.
 
 #### `hooks uninstall`
+
+```bash
+zn-gate hooks uninstall claude-code --project
+```
 
 Removes them again. The small launcher script under `~/.zn/hooks` is shared by every profile of the same agent on your machine (for example two Claude Code profiles with different `CLAUDE_CONFIG_DIR` folders), so `hooks uninstall` leaves it in place: deleting it would stop the hooks of the other profiles. [`uninstall`](#uninstall) removes it, and `zn-gate check` reports a hook whose launcher is missing.
 
@@ -503,23 +533,45 @@ zn-gate stats share on|off|status|show
 
 What zn-gate did on this machine: local counts for the last `--days` days (1 to 90, default 30). Exit codes: `0` done, `2` wrong usage.
 
+When sharing is on, `stats` also sends the counts of the days not yet shared and prints only the days that were really sent. With `--json`, those days are listed in `sent_days`, and the days whose upload failed are counted in `send_failed`. A day that failed is tried again on the next run, even when a later day was sent.
+
 #### `stats share`
+
+```bash
+zn-gate stats share
+```
 
 Controls the optional sharing of pseudonymous daily counts. It is off by default. Only you can turn it on, in your own terminal. Without a word after `share` it shows the status.
 
 #### `stats share on`
 
+```bash
+zn-gate stats share on
+```
+
 Explains what would be shared and asks you to confirm. Exit `1` if you do not confirm.
 
 #### `stats share off`
+
+```bash
+zn-gate stats share off
+```
 
 Turns sharing off.
 
 #### `stats share status`
 
+```bash
+zn-gate stats share status
+```
+
 Says whether sharing is on.
 
 #### `stats share show`
+
+```bash
+zn-gate stats share show
+```
 
 Shows exactly what would be sent, and where.
 
@@ -568,9 +620,17 @@ Shows the organization, the policy version, what the last policy version removed
 
 #### `team sync`
 
+```bash
+zn-gate team sync
+```
+
 Downloads the policy and uploads the audit log now. Exit `0` only when a valid policy is applied and no upload failed. Exit `1` when the machine is offline, the organization has no policy, the policy is refused, the machine was removed, or an upload failed; `team status` keeps the last reason. A sync that was running when you left the organization, or joined another one, is dropped and writes nothing.
 
 #### `team leave`
+
+```bash
+zn-gate team leave
+```
 
 Disconnects this machine from the organization. It first tells the server to revoke this installation (with the installation's own token), then deletes the local copies of the policy and upload state. Exit `1` when one of those files cannot be deleted; the message names it. If the server cannot take the revocation now (offline, an error, a rate limit, or an older server), the machine still leaves at once and the command exits `0`, but it prints that the server was not told yet: zn-gate keeps the token in the vault only to retry on `team sync` and while the vault is unlocked, for up to 30 days, and `team status` shows the pending revocation. See [zn Team](team.md#leaving).
 

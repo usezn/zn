@@ -53,3 +53,23 @@ test('check reports the warning for this Node.js and for the one the hooks run o
   assert.equal(hooks.res.warnings.length, 1);
   assert.match(hooks.res.warnings[0], /hooks will run on Node\.js 22\.23\.3 \(from \/usr\/bin\/node\).*22\.23\.4 or later/);
 });
+
+test('odd lines below the end-of-life cutoff are never judged, older even lines are end-of-life', () => {
+  for (const v of ['19.9.0', '21.7.3', '17.0.0']) assert.equal(nodeAdvice(v), null, v);
+  for (const v of ['16.20.2', '14.0.0', '0.12.18']) assert.equal(nodeAdvice(v).level, 'eol', v);
+});
+
+test('the advice carries the plain version and surrounding whitespace is ignored', () => {
+  const a = nodeAdvice('  v22.23.3\n');
+  assert.equal(a.version, '22.23.3');
+  assert.equal(a.level, 'outdated');
+  assert.ok(a.message.startsWith('Node.js 22.23.3 has known security issues'));
+  assert.ok(a.message.endsWith(ADVISORY_URL));
+});
+
+test('the end-of-life message lists every patched release', () => {
+  const { PATCHED_MINIMUM, EOL_BELOW } = require('../lib/node-support');
+  assert.equal(EOL_BELOW, 22);
+  const a = nodeAdvice('20.0.0');
+  for (const min of Object.values(PATCHED_MINIMUM)) assert.ok(a.message.includes(min), min);
+});

@@ -6,7 +6,7 @@ blocks only a few narrow shapes:
 
   rm_root_home     recursive delete of the home folder, the filesystem root, a
                    top-level system folder or a drive root
-  pipe_to_shell    a download that is run as a script without being read
+  pipe_to_shell    a download that is run as a script (or by python, node, perl or ruby) without being read
   disk_overwrite   dd, mkfs, wipefs ... on a block device, or a redirect to one
   perm_root        chmod -R 777 or chown -R on the root or a system folder
   fork_bomb        the classic shell fork bomb
@@ -24,11 +24,11 @@ The Node.js and Python versions give the same answer on the shared test corpus
 from __future__ import annotations
 
 import re
-from typing import List, Optional, Tuple
+from typing import Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-23.7"
+COMMAND_RULES_VERSION = "2026-10-29.5"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -101,7 +101,75 @@ _PS_CALL_RE = re.compile(
 # POSIX shells a backtick starts a command substitution, so the text is never stripped for the other patterns.
 _PS_TICK_RE = re.compile(r"(?:(?<=[\s|;&(A-Za-z0-9_.-])|^)`(?=[A-Za-z-])", _A)
 _PS_LINE_TICK_RE = re.compile(r"`\r?\n")
+_PS_NEXT_PIPE_RE = re.compile(r"\r?\n[ \t]*\|")
 _PS_DISK_RE = re.compile(r"(?:^|[\s;&|(])(?:format-volume|clear-disk)\b", _AI)
+
+# Code an interpreter runs from its command line (python -c, node -e, perl -e, ruby -e) and a download piped into one.
+# The option patterns are linear: an option word that may say "no program from stdin" has at most 32 letters on
+# each side of its key letter. A longer word is not taken as such an option, so a pipe into it stays blocked.
+_INTERPRETER_RE = re.compile(r"^(?:py|python(?:[23](?:\.\d+)?)?|pypy3?|node(?:js)?|perl|ruby)\Z", _A)
+class _InterpSpec(NamedTuple):
+    """How one interpreter family takes code and options on its command line."""
+
+    skip: FrozenSet[str]
+    code: Pattern[str]
+    no_stdin: Pattern[str]
+
+
+_INTERPRETERS: Dict[str, _InterpSpec] = {
+    "py": _InterpSpec(
+        skip=frozenset({"-W", "-X"}),
+        code=re.compile(r"^-[A-Za-z]*c\Z", _A),
+        no_stdin=re.compile(r"^(?:-[A-Za-z]{0,32}[cmVh][A-Za-z]{0,32}|--(?:version|help))\Z", _A),
+    ),
+    "node": _InterpSpec(
+        skip=frozenset({"-r", "--require", "--import", "--loader", "--experimental-loader"}),
+        code=re.compile(r"^(?:-e|-p|-pe|--eval|--print)\Z", _A),
+        no_stdin=re.compile(r"^(?:-[A-Za-z]{0,32}[epcvh][A-Za-z]{0,32}|--(?:eval|print|check|version|help|test)(?:=.*)?)\Z", _A | re.S),
+    ),
+    "perl": _InterpSpec(
+        skip=frozenset({"-I"}),
+        code=re.compile(r"^-[A-Za-z]*[eE]\Z", _A),
+        no_stdin=re.compile(r"^-[A-Za-z]{0,32}[eEcvVh][A-Za-z]{0,32}\Z", _A),
+    ),
+    "ruby": _InterpSpec(
+        skip=frozenset({"-r", "-I"}),
+        code=re.compile(r"^-[A-Za-z]*e\Z", _A),
+        no_stdin=re.compile(r"^(?:-[A-Za-z]{0,32}[ecvh][A-Za-z]{0,32}|--(?:version|help))\Z", _A),
+    ),
+}
+_NODE_EVAL_EQ_RE = re.compile(r"^--(?:eval|print)=([\s\S]*)\Z")
+# A recursive-delete call: shutil.rmtree, fs.rmSync / rmdirSync / rm / rmdir, rimraf, File::Path remove_tree / rmtree,
+# FileUtils.rm_rf / rm_r / remove_entry, and Perl's unlink glob(...).
+_OI_CALL_RE = re.compile(
+    r"\b(rmtree|remove_tree|remove_entry_secure|remove_entry|remove_dir|rm_rf|rm_r|rimraf|removeSync|rmSync|rmdirSync|rmdir|rm)\b"
+    r"(?:\s{0,20}\.\s{0,20}sync\b)?\s{0,20}(\()?",
+    _A,
+)
+_OI_GLOB_RE = re.compile(r"\bunlink\s{0,20}\(?\s{0,20}glob\b\s{0,20}\(?", _A)
+_OI_NEEDS_PAREN = {"rimraf", "removeSync", "rmSync", "rmdirSync", "rmdir", "rm"}
+_OI_NEEDS_RECURSIVE = {"rmSync", "rmdirSync", "rmdir", "rm"}
+_OI_RECURSIVE_RE = re.compile(r"""\brecursive['"]?\s{0,20}:\s{0,20}(?:true|1|!0)""", _A)
+_OI_PATH_WRAP_RE = re.compile(
+    r"^(?:(?:pathlib\s{0,20}\.\s{0,20})?(?:Pure)?(?:Posix)?(?:Windows)?Path\s{0,20}\(\s{0,20}|(?:path|dirname|dir)\s{0,20}=\s{0,20})", _A
+)
+# The home folder named by an expression and not by a literal: expanduser('~'), os.homedir(), Path.home(), Dir.home, $ENV{HOME} ...
+_OI_HOME_RE = re.compile(
+    r"""^(?:(?:os\s{0,20}\.\s{0,20}path\s{0,20}\.\s{0,20})?expanduser\s{0,20}\(\s{0,20}['"]~/?['"]\s{0,20}\)"""
+    r"""|(?:require\s{0,20}\(\s{0,20}['"](?:node:)?os['"]\s{0,20}\)\s{0,20}\.\s{0,20}|os\s{0,20}\.\s{0,20})?homedir\s{0,20}\(\s{0,20}\)"""
+    r"""|(?:pathlib\s{0,20}\.\s{0,20})?Path\s{0,20}\.\s{0,20}home\s{0,20}\(\s{0,20}\)"""
+    r"""|Dir\s{0,20}\.\s{0,20}home\b(?:\s{0,20}\(\s{0,20}\))?"""
+    r"""|File\s{0,20}\.\s{0,20}expand_path\s{0,20}\(\s{0,20}['"]~/?['"]\s{0,20}\)"""
+    r"""|ENV\s{0,20}\[\s{0,20}['"]HOME['"]\s{0,20}\]"""
+    r"""|\$ENV\s{0,20}\{\s{0,20}['"]?HOME['"]?\s{0,20}\}"""
+    r"""|os\s{0,20}\.\s{0,20}environ\s{0,20}\[\s{0,20}['"]HOME['"]\s{0,20}\]"""
+    r"""|os\s{0,20}\.\s{0,20}(?:getenv|environ\s{0,20}\.\s{0,20}get)\s{0,20}\(\s{0,20}['"]HOME['"]\s{0,20}\)"""
+    r"""|process\s{0,20}\.\s{0,20}env\s{0,20}(?:\.\s{0,20}HOME\b|\[\s{0,20}['"]HOME['"]\s{0,20}\]))""",
+    _A,
+)
+_OI_AFTER_HOME_RE = re.compile(r"^\s{0,20}(?:[,)}\]]|\Z)", _A)
+_OI_LITERAL_RE = re.compile(r"""^[rRbBuUfF]{0,2}(['"`])((?:[^'"`\\\r\n]|\\.){0,200})\1""", _A)
+_OI_ENV_HOME_RE = re.compile(r"""\$ENV\{['"]?HOME['"]?\}|\$\{?HOME\}?|%USERPROFILE%""", _AI)
 
 _ANSI_C_RE = re.compile(r"\$'((?:[^'\\]|\\[\s\S])*)'")
 _ANSI_C_ESC_RE = re.compile(r"\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|[0-7]{1,3}|c[\s\S]|[\s\S])")
@@ -404,6 +472,92 @@ def _world_writable(mode: str) -> bool:
     return bool(m and (m.group(1) == "" or re.search(r"[ao]", m.group(1))))
 
 
+def _interpreter_kind(head: str) -> str:
+    """The interpreter family of a program name ('py', 'node', 'perl', 'ruby'), or ''."""
+    if not _INTERPRETER_RE.match(head):
+        return ""
+    if head.startswith("py"):
+        return "py"
+    return "node" if head.startswith("node") else head
+
+
+def _interpreter_code(kind: str, rest: List[str]) -> List[str]:
+    """The code strings given on the command line of an interpreter (python -c CODE, node -e CODE, perl -e CODE, ruby -e CODE)."""
+    spec = _INTERPRETERS[kind]
+    out: List[str] = []
+    i = 0
+    while i < len(rest):
+        w = rest[i]
+        if w == "--" or not w.startswith("-"):
+            break
+        if spec.code.match(w):
+            if i + 1 < len(rest):
+                out.append(rest[i + 1])
+            i += 2
+            if kind in ("py", "node"):
+                break
+            continue
+        m = _NODE_EVAL_EQ_RE.match(w) if kind == "node" else None
+        if m:
+            out.append(m.group(1))
+            break
+        if w in spec.skip:
+            i += 1
+        i += 1
+    return out
+
+
+def _protected_argument(tail: str) -> bool:
+    """True when the first argument of a delete call names the home folder, the root or a system folder."""
+    t = re.sub(r"^\s{0,20}", "", tail, count=1, flags=_A)
+    wrap = _OI_PATH_WRAP_RE.match(t)
+    if wrap:
+        t = t[wrap.end():]
+    home = _OI_HOME_RE.match(t)
+    if home:
+        return bool(_OI_AFTER_HOME_RE.match(t[home.end():]))
+    lit = _OI_LITERAL_RE.match(t)
+    if lit is None:
+        return False
+    return bool(_dangerous_path(_OI_ENV_HOME_RE.sub("~", lit.group(2))))
+
+
+def _code_deletes_protected(code: str) -> bool:
+    """True when interpreter code calls a recursive delete on the home folder, the root or a system folder."""
+    for m in _OI_CALL_RE.finditer(code):
+        name = m.group(1)
+        if name in _OI_NEEDS_PAREN and not m.group(2):
+            continue
+        tail = code[m.end():m.end() + 300]
+        if name in _OI_NEEDS_RECURSIVE and not _OI_RECURSIVE_RE.search(tail):
+            continue
+        if _protected_argument(tail):
+            return True
+    for m in _OI_GLOB_RE.finditer(code):
+        if _protected_argument(code[m.end():m.end() + 300]):
+            return True
+    return False
+
+
+def _reads_script_from_stdin(kind: str, rest: List[str]) -> bool:
+    """True when an interpreter in a pipeline reads its program from the pipe: no script file, -c, -e or -m."""
+    spec = _INTERPRETERS[kind]
+    i = 0
+    while i < len(rest):
+        w = rest[i]
+        if w == "-":
+            return True
+        if spec.no_stdin.match(w):
+            return False
+        if w.startswith("-"):
+            if w in spec.skip:
+                i += 1
+            i += 1
+            continue
+        return False  # a script file: stdin is only data for it
+    return True
+
+
 def _check_simple(words: List[str], depth: int) -> Optional[str]:
     args = _unwrap(words)
     if not args:
@@ -430,6 +584,11 @@ def _check_simple(words: List[str], depth: int) -> Optional[str]:
         hit = _analyze(code, depth + 1)
         if hit:
             return hit
+
+    # Code an interpreter runs from its command line: python -c, node -e, perl -e, ruby -e.
+    kind = _interpreter_kind(head)
+    if kind and any(_code_deletes_protected(c) for c in _interpreter_code(kind, rest)):
+        return "rm_root_home"
 
     if head in _RM_HEADS:
         if any(_recursive_flag(w, head) for w in rest) and any(_dangerous_path(w) for w in _operands(rest, head)):
@@ -542,6 +701,12 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]]) -> Optional[str
     if first_dl >= 0:
         for j in range(first_dl + 1, len(pipe)):
             args, head, names, overflow = heads[j]
+            # an interpreter that reads its program from the pipe (python3, python3 -, node, perl, ruby)
+            interp = "" if overflow or any(n in _SHELLS for n in names) else next((k for k in map(_interpreter_kind, names) if k), "")
+            if interp:
+                if _reads_script_from_stdin(interp, args[1:]):
+                    return "pipe_to_shell"
+                continue
             if not overflow and not any(n in _SHELLS for n in names):
                 continue
             rest = args[1:]
@@ -597,7 +762,12 @@ def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
     bare = text if len(text) > _QUOTE_SCAN_MAX else _QUOTED_RE.sub("''", text)
     if _FORK_BOMB_RE.search(bare):
         return "fork_bomb"
-    ps_bare = _PS_TICK_RE.sub("", _PS_LINE_TICK_RE.sub(" ", bare)) if "`" in bare else bare
+    # PowerShell reading: a backtick and a line break continue the line, and so does a next line that starts with a pipe
+    # (PowerShell 7), so `iwr URL` + newline + `| iex` is `iwr URL | iex`.
+    if "`" in bare or "\n" in bare:
+        ps_bare = _PS_NEXT_PIPE_RE.sub(" |", _PS_TICK_RE.sub("", _PS_LINE_TICK_RE.sub(" ", bare)))
+    else:
+        ps_bare = bare
     if (
         _SHELL_RUNS_DOWNLOAD_RE.search(text)
         or _SOURCE_DOWNLOAD_RE.search(bare)
@@ -618,10 +788,11 @@ def _analyze(cmd: str, depth: int = 0) -> Optional[str]:
         if posix_hit:
             return posix_hit
     # ANSI-C quoting: bash reads $'\x63url' as curl. The words are decoded the way bash does, then read again; as above,
-    # this reading only adds a block, and only for the two rules that name a program or a file ($'\x73h', $'.bash\x72c').
+    # this reading only adds a block, and only for the rules that name a program, a file or a path ($'\x73h',
+    # $'.bash\x72c', $'\x72m' -rf $'\x7e').
     if "$'" in text:
         ansi_hit = _check_segments(_segments_of(_decode_ansi_c(text), True)[0], depth)
-        if ansi_hit in ("pipe_to_shell", "rc_download"):
+        if ansi_hit in ("pipe_to_shell", "rc_download", "rm_root_home"):
             return ansi_hit
     # Fail closed: never allow a line whose tail was not read.
     return _OVERFLOW if truncated else None

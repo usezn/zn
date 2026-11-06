@@ -4,5 +4,9 @@
   "description": "Pinned markdownlint-cli2 for the Markdown lint workflow",
   "devDependencies": {
     "markdownlint-cli2": "0.24.0"
+  },
+  "overrides": {
+    "re2js": "2.8.8",
+    "katex": "0.18.2"
   }
 }

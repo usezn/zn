@@ -71,7 +71,11 @@ class TestIdentityRequestPrefilter(unittest.TestCase):
     """The cheap checks in front of the two patterns must never change a verdict."""
 
     USER_GROUPS = {
-        "pi:identity_request": ["(?:user|operator|owner|human|principal)"],
+        "pi:identity_request": [
+            "(?:user|operator|owner|human|principal)",
+            r"(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))",
+            r"their\s{1,4}(?:(?:primary|login|account|real)\s{1,4})?e-?mail(?:\s{1,4}address(?:es)?)?",
+        ],
         "pi:identity_request_multi": [
             "(?:usuario|operador|due[ñn]o|propietario)",
             "(?:usu[aá]rio|operador|dono|propriet[aá]rio)",
@@ -79,6 +83,7 @@ class TestIdentityRequestPrefilter(unittest.TestCase):
             "(?:nutzers|benutzers|bedieners|betreibers|besitzers|operators)",
             "(?:пользовател[а-яё]+|оператор[а-яё]*|владельц[а-яё]+|хозяин[а-яё]*)",
             "(?:用户|使用者|操作者|主人|所有者)",
+            r"(?:whoami|git\s{1,4}config\s{1,4}(?:--[a-z-]{1,12}\s{1,4}){0,2}user\.(?:email|name))",
         ],
     }
 
@@ -134,7 +139,7 @@ class TestIdentityRequestPrefilter(unittest.TestCase):
                             break
                     j += 1
                 group = source[i:j + 1]
-                if "header" in group.lower() and len(group) < 400 and "[^\\n]" not in group and group not in found:
+                if "header" in group.lower() and len(group) < 600 and "[^\\n]" not in group and group not in found:
                     found.append(group)
             i += 1
         return found
@@ -147,7 +152,7 @@ class TestIdentityRequestPrefilter(unittest.TestCase):
             self.assertIn(rule_id, R.RULE_TESTERS)
 
     def test_prefilters_hold_the_user_and_place_groups_every_alternative_needs(self):
-        for rule_id, expected in (("pi:identity_request", 1), ("pi:identity_request_multi", 6)):
+        for rule_id, expected in (("pi:identity_request", 2), ("pi:identity_request_multi", 6)):
             pattern = self._patterns()[rule_id]
             gate, place = R.IDENTITY_PREFILTERS[rule_id]
             places = self._place_groups(pattern.pattern)
