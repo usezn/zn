@@ -232,7 +232,7 @@ Reviews the agent configs of a folder before you open it: hooks, MCP servers, en
 - `--fail-on`: `low`, `medium`, `high` (default), `critical` or `none`.
 - `--agents`: a comma-separated list of `claude`, `codex`, `cursor`, `opencode`, `amazonq`, `copilot`, `gemini`, or `all` (default).
 - `--include-home`: also review your own agent configs in your home folder.
-- `--approve`: record the project's executable configuration (MCP servers, hooks and their matchers, permissions, endpoint and loader overrides, install scripts, dev container commands, folder-open tasks) as the one you accept, then exit. Later audits report an entry that changed, was added or was removed since as ZNA023, by name only. It runs only at your own terminal: it refuses without one, and when an agent started it. Only names and hashes are stored, in `~/.zn/baselines`.
+- `--approve`: record the project's executable configuration (MCP servers, hooks and their matchers, permissions, endpoint and loader overrides, install scripts, dev container commands, folder-open tasks) as the one you accept, then exit. Later audits report an entry that changed, was added or was removed since as ZNA023, by name only. It runs only at a terminal and not when an agent started it, and when the vault is unlocked the approval is also confirmed on the vault's own channel (its terminal or an OS dialog). Only names and hashes are stored, in `~/.zn/baselines`.
 
 Exit codes: `0` nothing at or above `--fail-on` (or the configuration was recorded), `1` findings at or above it, `2` wrong usage, a path that is not a folder, or `--approve` without a terminal.
 

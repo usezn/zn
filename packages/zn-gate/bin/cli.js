@@ -220,7 +220,7 @@ COMMANDS:
                       endpoint overrides, permissions, instructions, planted executables
                       [--format text|json|sarif] [--output FILE] [--fail-on high]
                       [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
-                      --approve  record the project's executable configuration (your own terminal only)
+                      --approve  record the project's executable configuration (needs a terminal)
   evidence            Query the local hash-chained decision log and run the UI dashboard
   logs                Tail or inspect security event logs
   mcp                 Run as standalone bidirectional MCP server for AI agents
