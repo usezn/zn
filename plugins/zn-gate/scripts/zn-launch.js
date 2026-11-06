@@ -124,7 +124,8 @@ function loadLock() {
 function installHint(lock) {
   if (lock.bundled) return 'Reinstall the zn-gate plugin to restore its copy of zn-gate ' + lock.version + '.';
   return 'In Claude Code, the plugin installs it: make sure npm is on your PATH, then run ' +
-    'claude plugin update zn-gate@usezn and start a new session. In other agents, install the pinned release with: ' +
+    'claude plugin marketplace remove usezn, claude plugin marketplace add usezn/zn@v' + lock.version + ' and ' +
+    'claude plugin install zn-gate@usezn, and start a new session. In other agents, install the pinned release with: ' +
     'npm install -g zn-gate@' + lock.version + ' && npm audit signatures (see the plugin README).';
 }
 
