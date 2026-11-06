@@ -287,16 +287,22 @@ function approvedTools(command, args) {
 }
 
 const MENTION_MIN = 6; // a tool name this short is an ordinary word too often to mean anything in a description
-const MENTION_TEXT_CAP = 64 * 1024;
+const MENTION_FIELD_CAP = 1024 * 1024;   // characters of one field read for mentions; a longer field is reported, not skipped silently
 
 // Letters of other alphabets that look like a Latin one (Cyrillic and Greek are the usual ones), for the name comparison only.
 const LOOKALIKES = {
   'а': 'a', 'в': 'b', 'е': 'e', 'к': 'k', 'м': 'm', 'н': 'h', 'о': 'o', 'р': 'p', 'с': 'c', 'т': 't', 'у': 'y', 'х': 'x', 'і': 'i', 'ј': 'j', 'ѕ': 's', 'ԁ': 'd', 'һ': 'h', 'ӏ': 'l',
   'α': 'a', 'β': 'b', 'ε': 'e', 'ι': 'i', 'κ': 'k', 'ν': 'v', 'ο': 'o', 'ρ': 'p', 'τ': 't', 'υ': 'u', 'χ': 'x',
+  'ı': 'i', 'ɑ': 'a', 'օ': 'o', 'ɡ': 'g', 'ɩ': 'i', 'ᴅ': 'd', 'ᴏ': 'o', 'ꞇ': 't',
 };
 /** The form names and text are compared in: compatibility-normalised (full-width letters), lower case, no invisible format characters, lookalikes folded. */
 function fold(value) {
-  return String(value).normalize('NFKC').replace(/\p{Cf}/gu, '').toLowerCase().replace(/[^\u0000-\u007f]/g, (c) => LOOKALIKES[c] || c);
+  return String(value).normalize('NFKC').replace(/\p{Default_Ignorable_Code_Point}|\p{Cf}/gu, '').toLowerCase().replace(/[^\u0000-\u007f]/g, (c) => LOOKALIKES[c] || c);
+}
+
+/** A name that is not a single plain word (it has _, -, a digit or camel case): `send_email` is a mention in a text, `update` or `commit` is only a word. */
+function distinctive(name) {
+  return /[_\-0-9]/.test(name) || /[a-z][A-Z]/.test(name);
 }
 
 /**
@@ -304,7 +310,9 @@ function fold(value) {
  *   collisions: tools that carry exactly the name of an approved tool of another server (a later server can take over calls meant for the first)
  *   similar:    tools whose name is that of one only after folding case, full-width letters, lookalike letters and invisible characters
  *   mentions:   tools whose text (description, title, annotation title, input and output schema) names an approved tool of another server, also as
- *               mcp__<server>__<tool>, or with invisible characters inside the name (a description that steers how that other tool is used)
+ *               mcp__<server>__<tool>, or with invisible characters inside the name (a description that steers how that other tool is used);
+ *               only names that are not a single plain word (they hold _, -, a digit or camel case), since a word such as `update` is in every text
+ *   tooLong:    tools with a field over MENTION_FIELD_CAP characters, of which only the first part was read
  * Warn-only: the same name on two servers can be legitimate. Only names, never text, are returned.
  */
 function shadows(command, args, tools) {
@@ -322,21 +330,24 @@ function shadows(command, args, tools) {
   const collisions = [];
   const similar = [];
   const mentions = [];
+  const tooLong = [];
   const names = Object.keys(folded);
   for (const t of tools) {
     if (!t || typeof t !== 'object' || typeof t.name !== 'string') continue;
     if (others[t.name]) collisions.push({ tool: t.name, servers: others[t.name].slice(0, 5) });
     else if (folded[fold(t.name)]) similar.push({ tool: t.name, servers: others[folded[fold(t.name)][0]].slice(0, 5) });
-    const parts = [t.description, t.title, t.annotations && t.annotations.title, t.inputSchema && canonical(t.inputSchema), t.outputSchema && canonical(t.outputSchema)];
-    const text = fold(parts.filter((x) => typeof x === 'string').join('\n').slice(0, MENTION_TEXT_CAP));
+    // Each field is read on its own, so one long field cannot push the others out of the scan.
+    const parts = [t.description, t.title, t.annotations && t.annotations.title, t.inputSchema && canonical(t.inputSchema), t.outputSchema && canonical(t.outputSchema)].filter((x) => typeof x === 'string');
+    if (parts.some((x) => x.length > MENTION_FIELD_CAP)) tooLong.push({ tool: t.name });
+    const text = parts.map((x) => fold(x.slice(0, MENTION_FIELD_CAP))).join('\n');
     const self = fold(t.name);
     for (const n of names) {
-      if (n === self || n.length < MENTION_MIN || !text.includes(n)) continue;
+      if (n === self || n.length < MENTION_MIN || !distinctive(folded[n][0]) || !text.includes(n)) continue;
       const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       if (new RegExp('(^|[^a-z0-9_]|__)' + esc + '($|[^a-z0-9_])').test(text)) mentions.push({ tool: t.name, mentions: folded[n][0], servers: others[folded[n][0]].slice(0, 5) });
     }
   }
-  return { collisions, similar, mentions };
+  return { collisions, similar, mentions, tooLong };
 }
 
 function servers() {

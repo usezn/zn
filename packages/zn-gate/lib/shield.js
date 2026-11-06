@@ -1204,6 +1204,7 @@ function startMcpShield(command, args, options = {}) {
               sh.collisions = fresh(sh.collisions, 'c');
               sh.similar = fresh(sh.similar, 's');
               sh.mentions = fresh(sh.mentions, 'm', 'mentions');
+              sh.tooLong = fresh(sh.tooLong || [], 'l');
               const names = (a) => a.slice(0, 10).map((x) => pins.displayName(x.tool)).join(', ');
               if (sh.collisions.length) {
                 process.stderr.write(`[zn-shield TOOL SHADOWING] ${names(sh.collisions)}: ${sh.collisions.length === 1 ? 'has' : 'have'} the same name as an approved tool of another MCP server. ` +
@@ -1215,6 +1216,9 @@ function startMcpShield(command, args, options = {}) {
               }
               if (sh.mentions.length) {
                 process.stderr.write(`[zn-shield TOOL SHADOWING] ${names(sh.mentions)}: the text of ${sh.mentions.length === 1 ? 'this tool' : 'these tools'} names a tool of another MCP server. Review what it tells the model to do with it.\n`);
+              }
+              if (sh.tooLong.length) {
+                process.stderr.write(`[zn-shield TOOL SHADOWING] ${names(sh.tooLong)}: the text of ${sh.tooLong.length === 1 ? 'this tool is' : 'these tools is'} too long to check for names of other servers' tools in full. Read it yourself.\n`);
               }
               if (sh.collisions.length || sh.similar.length || sh.mentions.length) {
                 logEvidence({
