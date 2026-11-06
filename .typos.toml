@@ -9,3 +9,5 @@ extend-ignore-re = []
 rasie = "rasie"
 # Windows 8.3 short names used as test data for the protected-path checks (SETTIN~1.JSO is settings.json).
 SETTIN = "SETTIN"
+# Look-alike package name used on purpose as an example in docs/package-install-check.md (express with one letter added).
+expresss = "expresss"
