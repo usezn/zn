@@ -165,6 +165,8 @@ claude mcp add zn-gate -- npx -y zn-gate mcp     # Claude Code
 codex mcp add zn-gate -- npx -y zn-gate mcp      # Codex CLI
 ```
 
+In Claude Code, this `npx` form is treated like any other MCP server: a call that carries personal data is asked about first. Only an entry that runs the installed zn-gate by absolute path skips that question (see `docs/compat.md`).
+
 Cursor (`~/.cursor/mcp.json`) and other editors: `{ "mcpServers": { "zn-gate": { "command": "npx", "args": ["-y", "zn-gate", "mcp"] } } }`. OpenCode (`~/.config/opencode/opencode.json`): `{ "mcp": { "zn-gate": { "type": "local", "command": ["npx", "-y", "zn-gate", "mcp"], "enabled": true } } }`.
 
 **Protect the MCP servers you already use.** `init` finds them in your agent configs, writes a backup, and wraps each local server with the zn-gate proxy:
@@ -237,7 +239,7 @@ Where zn-gate sits in a tool call, as an MCP server or as the `shield` proxy aro
 ### Galvanize: prompt-injection detection
 
 - **Today, local:** a deterministic rules engine (signatures plus normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64) checks prompts, tool arguments, tool output and MCP tool descriptions.
-- **Today, optional cloud check:** the Galvanize 3 classifier ([announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=github&utm_medium=readme&utm_campaign=galvanize-3); its weights are not published, and the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), has open weights under Apache-2.0) can also check prompts sent to `analyze_prompt`, only if you set `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed from the prompt on your machine before it is sent; personal data is not removed on this path, and a secret zn-gate does not recognize is sent with the text.
+- **Today, optional cloud check:** the Galvanize 3 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-3); [announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=github&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), also has open weights under Apache-2.0) can also check prompts sent to `analyze_prompt`, only if you set `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed from the prompt on your machine before it is sent; personal data is not removed on this path, and a secret zn-gate does not recognize is sent with the text.
 - **Roadmap:** running Galvanize locally inside zn-gate.
 
 ### Scan: audit what your agent is about to trust

@@ -8,21 +8,18 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # fuzz/ is not a Dependabot entry: its updates edit the root Cargo.toml
+    # without fuzz/Cargo.lock, so they can never pass "cargo build --locked".
+    ignore:
+      # tokenizers follows the ML model dependency; a new minor or major
+      # release is taken together with that change, not on its own.
+      - dependency-name: "tokenizers"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
     groups:
       cargo:
         patterns: ["*"]
         update-types: [minor, patch]
 
-  - package-ecosystem: cargo
-    directory: "/fuzz"
-    target-branch: next
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 2
-    groups:
-      cargo-fuzz:
-        patterns: ["*"]
-        update-types: [minor, patch]
 
   - package-ecosystem: npm
     directory: "/.github/markdownlint"
@@ -75,6 +72,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # The package declares minimum versions. Raise one only when the new
+    # version no longer fits the range, instead of raising every lower bound.
+    versioning-strategy: increase-if-necessary
+    ignore:
+      # Build backend floor, kept low on purpose for older pip and build tools.
+      - dependency-name: "setuptools"
     groups:
       pip:
         patterns: ["*"]

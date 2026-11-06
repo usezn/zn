@@ -111,7 +111,20 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
   command is `zn secrets-mcp` (Claude Code looks `zn` up on its `PATH`, where a project folder can come
   first). A project install (`--project`) adds no MCP server. The zn-gate plugin
   registers no MCP server since version 1.14.0. Hooks installed by an earlier zn-gate keep the old
-  matcher, which skips MCP tools, until you run `zn hooks install claude-code` again.
+  matcher, which skips MCP tools, until you run `zn hooks install claude-code` again. What counts as zn's own
+  server:
+  - A server with the same name in your organization's `managed-mcp.json`, or passed with
+    `--mcp-config` (read on Linux only), counts like a project entry: it is checked like any other.
+  - zn's own detector server (`analyze_prompt`, `check_tool_call`, `check_tool_result`) is the user-scope
+    `zn-gate` (or `zn`) entry that runs `zn-gate mcp` with a Node.js and a zn-gate `bin/cli.js`, both by
+    full path and outside the project once links are resolved, with nothing in its `env` that changes what
+    that Node.js loads. Personal data sent to it is not asked about; a secret in the same call is still blocked.
+  - An `npx` entry (`npx -y zn-gate mcp`, with or without a version) is not recognised: npx prefers a
+    `zn-gate` that the project carries in `node_modules` and reads the project's `.npmrc` registry.
+    It is checked like any other server, so personal data sent to it is asked about. So are a bare
+    `zn` or `zn-gate` command and a `file:`, `github:` or `npm:` spec.
+  - If you turn on the optional cloud check (`ZN_CLOUD=1` with a key, or `zn-gate connect`), the text of an
+    `analyze_prompt` call goes to zn's API as written, personal data included, by your choice.
 - **`@file` mentions**: Claude Code does not run Read hooks for them, so zn
   cannot check the file when you mention it with `@`. A protected file
   (`.env`, credentials, a private key) is covered only when a tool call reads it.
@@ -596,5 +609,9 @@ A tool that an adapter reports only as a generic file access (some Gemini CLI, C
 
 ## Not covered yet
 
-Hermes Agent and the Cursor CLI. Gemini CLI has experimental hooks (see its entry above). A proxy for outgoing
-HTTP from `zn run` (for `curl`, `gh` or SDKs) is planned for a later release.
+Hermes Agent and the Cursor CLI. Gemini CLI has experimental hooks (see its entry above).
+
+`zn run --egress-allow` (opt-in) limits which hosts a command reaches over HTTP(S) through a local proxy. It
+covers programs that read the proxy variables (in Node, only versions that honour `NODE_USE_ENV_PROXY`), not
+programs that ignore them, raw sockets or DNS; see
+[Egress allowlist for `zn run`](secrets.md#egress-allowlist-for-zn-run).
