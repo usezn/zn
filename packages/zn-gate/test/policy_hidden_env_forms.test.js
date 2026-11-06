@@ -237,3 +237,17 @@ test('cmd is cmd.exe only in command position: a folder named cmd is not', () =>
     for (const c of ['cmd /c type .e^nv', 'ls && cmd.exe /c type .e^nv', '(cmd /c type .e^nv)', 'C:\\Windows\\System32\\cmd.exe /c type .e^nv']) assert.match(policy.bashDenial(c, opts) || '', DENIED, c);
   });
 });
+
+test('an expansion that comes out empty is refused whatever the environment the hook sees holds', () => {
+  const { opts } = project();
+  // The hook sees no X, an X that empties the slice, and an X that does not: the result is the same.
+  for (const extra of [{}, { X: 'x' }, { X: 'n' }]) {
+    const o = { ...opts, env: { ...opts.env, OS: 'Windows_NT', ...extra } };
+    asPlatform('linux', () => {
+      assert.match(policy.bashDenial('cat .e${X:0:0}nv', o) || '', DENIED, 'linux ' + JSON.stringify(extra));
+    });
+    asPlatform('win32', () => {
+      assert.match(policy.bashDenial('type .e%X:~0,1%nv', o) || '', DENIED, 'win32 ' + JSON.stringify(extra));
+    });
+  }
+});

