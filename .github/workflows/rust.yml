@@ -64,7 +64,7 @@ jobs:
       - name: Install protoc 29.3 (checksum verified)
         if: steps.scope.outputs.rust == 'true'
         uses: ./.github/actions/setup-protoc
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: steps.scope.outputs.rust == 'true'
         with:
           # Release pushes never restore or save a cache that a pull request could have poisoned.
@@ -118,7 +118,7 @@ jobs:
       - name: Install protoc 29.3 (checksum verified)
         if: steps.scope.outputs.rust == 'true'
         uses: ./.github/actions/setup-protoc
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: steps.scope.outputs.rust == 'true'
         with:
           # Release pushes never restore or save a cache that a pull request could have poisoned.
@@ -187,7 +187,7 @@ jobs:
       - name: Install protoc 29.3 (checksum verified)
         if: steps.scope.outputs.rust == 'true'
         uses: ./.github/actions/setup-protoc
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: steps.scope.outputs.rust == 'true'
         with:
           # Release pushes never restore or save a cache that a pull request could have poisoned.
@@ -257,7 +257,7 @@ jobs:
           components: llvm-tools-preview
       - name: Install protoc 29.3 (checksum verified)
         uses: ./.github/actions/setup-protoc
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2 # zizmor: ignore[cache-poisoning] release pushes set lookup-only, so they neither restore nor save a cache
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # Release pushes never restore or save a cache that a pull request could have poisoned.
           lookup-only: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/') }}

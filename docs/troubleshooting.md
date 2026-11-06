@@ -1,6 +1,6 @@
 # Troubleshooting
 
-The eleven messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
+The thirteen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
@@ -17,6 +17,8 @@ Run every command in your own terminal, not through your AI agent. New here? Sta
 - [Your agent ignores zn's hooks on a managed computer](#9-your-agent-ignores-zns-hooks-on-a-managed-computer)
 - ["the evidence log ... is damaged"](#10-the-evidence-log--is-damaged)
 - [The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)
+- [Init cannot install zn-gate: no internet connection](#12-init-cannot-install-zn-gate-no-internet-connection)
+- [Init stops the npm install after 3 minutes](#13-init-stops-the-npm-install-after-3-minutes)
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
 - [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
 
@@ -222,9 +224,48 @@ The version number in the second message is yours and will differ.
 
 Running `npx -y zn-gate init` on a Node.js older than 20.19 does the second option for you: it skips the plugin and sets up zn's hooks for Claude Code instead, and if the plugin is already installed it offers to turn it off once the hooks work. Node.js 22 LTS is recommended; 18 or later is enough for the hooks and the CLI. See the [README](../README.md#install).
 
+## 12. Init cannot install zn-gate: no internet connection
+
+`npx -y zn-gate init` prints this when npm cannot reach the npm registry while it installs zn-gate for your user:
+
+```text
+  that did not finish. npm could not reach the registry.
+  The cause may be no internet connection, a VPN or proxy that blocks it, or a company registry that is down.
+  Check your connection (and your VPN or proxy), then run it again:
+    npm install -g zn-gate@<version>
+```
+
+**What it means:** npm stopped quickly because the registry could not be found or reached. Nothing is wrong with zn-gate. The version in the command is the one init is installing.
+
+**What to do:**
+
+1. Check that your internet connection works, and that your VPN or proxy lets npm through.
+2. In your own terminal, run the command the message shows, `npm install -g zn-gate@<version>`.
+3. Run `npx -y zn-gate init` again, then `npx -y zn-gate check` to see what is protected.
+
+## 13. Init stops the npm install after 3 minutes
+
+You may see this when the npm install takes too long:
+
+```text
+  that was stopped: the install took longer than 180 seconds.
+  Your connection may just be slow. The install may be incomplete, so check what is there with:
+    npm ls -g zn-gate
+  Then run it again:
+    npm install -g zn-gate@<version>
+```
+
+**What it means:** zn-gate gives the npm install 3 minutes and then stops it. A slow connection, or a network that accepts the connection and never answers, can cause this. The install may be half done. On Windows, with the usual Node.js folder layout, zn-gate starts npm's own script directly, so the stop reaches npm itself and not only the command shell that started it.
+
+**What to do:**
+
+1. Run `npm ls -g zn-gate` in your own terminal. If it shows a version, zn-gate is installed.
+2. If it is missing or the install was incomplete, run the command the message shows, `npm install -g zn-gate@<version>`, on a steadier connection.
+3. Run `npx -y zn-gate check` to see what is protected. For a VPN or proxy, see [the README](../README.md#install).
+
 ## Block and warn reasons, by family
 
-Past the eleven messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
+Past the thirteen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
 
 Run every command in your own terminal, not through your AI agent. If you did not install zn-gate with `npm install -g zn-gate`, put `npx -y zn-gate` where the commands below say `zn`, for example `npx -y zn-gate secret set NAME`. Words you do not know are in the [glossary](glossary.md).
 
