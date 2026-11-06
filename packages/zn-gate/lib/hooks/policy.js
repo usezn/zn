@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-05.6';
+const POLICY_RULES_VERSION = '2026-11-06.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -51,7 +51,7 @@ function slash(p) {
 }
 
 const DOTENV_BASENAME_RE = /^\.env(\.[A-Za-z0-9_.-]+)?$/;
-const DOTENV_SAFE_RE = /\.(example|sample|template|dist|defaults|schema)$/i;
+const DOTENV_SAFE_RE = /\.(example|sample|template)$/i;
 // Private keys kept outside ~/.ssh, for example in a project: an SSH key name is one wherever it is;
 // a key container (.p12, .pfx) holds one; a .pem or .key file may be a public certificate, so its content decides.
 const SSH_KEY_BASENAME_RE = /^id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?$/;
@@ -134,6 +134,18 @@ const keyOf = (s) => {
 // path segment is a stream (a drive letter stays). Elsewhere a colon is a valid name character, so only the
 // explicit `::$DATA` style suffix is dropped.
 const ADS_TYPE_RE = /(?::[^\\/:*?"<>|]*)?:\$(?:DATA|INDEX_ALLOCATION|BITMAP)$/i;
+// The text before the first colon that is not inside a cmd variable pair: %NAME:~0,5% and !NAME:old=new! keep their modifier, which is not a stream.
+function cutAtStream(seg) {
+  let pct = false;
+  let bang = false;
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (c === '%') pct = !pct;
+    else if (c === '!') bang = !bang;
+    else if (c === ':' && !pct && !bang) return seg.slice(0, i);
+  }
+  return seg;
+}
 function stripStreams(text) {
   if (typeof text !== 'string') return text;
   const win = process.platform === 'win32';
@@ -141,8 +153,8 @@ function stripStreams(text) {
   return text.split(/([\\/]+)/).map((seg, i) => {
     if (win) {
       if (/^[A-Za-z]:$/.test(seg)) return seg;
-      if (i === 0 && /^[A-Za-z]:/.test(seg)) return seg.slice(0, 2) + dropTrailingDotsSpaces(seg.slice(2).replace(/:.*$/, ''));
-      return dropTrailingDotsSpaces(seg.replace(/:.*$/, ''));
+      if (i === 0 && /^[A-Za-z]:/.test(seg)) return seg.slice(0, 2) + dropTrailingDotsSpaces(cutAtStream(seg.slice(2)));
+      return dropTrailingDotsSpaces(cutAtStream(seg));
     }
     return seg.replace(ADS_TYPE_RE, '');
   }).join('');
@@ -180,13 +192,20 @@ const ci = (re) => (caseInsensitive() && !re.flags.includes('i') ? new RegExp(re
 // resolved here, so a path that uses them is treated as agent configuration.
 const AGENT_ENV = new Set(['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'XDG_CONFIG_HOME']);
 
-/** $NAME, ${NAME}, $env:NAME and %NAME% from env. Unset credential or agent variables are reported by name. */
+// The same references plus !NAME!, which cmd.exe expands when delayed expansion is on (cmd /v:on).
+// cmd.exe also takes a modifier inside the pair (%NAME:~0,5%, %NAME:old=new%, !NAME:~0,5!): the value it gives cannot be read here.
+const PATH_REF_RE = new RegExp(ENV_REF_RE.source + '|!([A-Za-z_][A-Za-z0-9_]*)(?::[^%!\\r\\n]*)?!|%([A-Za-z_][A-Za-z0-9_]*):[^%!\\r\\n]*%', 'gi');
+// A variable reference that stands right before a .env name (%D%.env, !D!.env, $D.env): when the variable holds a
+// folder with its closing separator, the word names that folder's .env file.
+const VAR_BEFORE_DOTENV_RE = /(?:\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$env:[A-Za-z_][A-Za-z0-9_]*|\$[A-Za-z_][A-Za-z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?%|![A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?!)\.env(?:\.[A-Za-z0-9_.-]+)?$/i;
+
+/** $NAME, ${NAME}, $env:NAME, %NAME% and !NAME! from env. Unset credential or agent variables are reported by name. */
 function expandEnv(p, env) {
   let credentialVar = null;
   let agentVar = null;
-  const text = p.replace(ENV_REF_RE, (m, a, b, c, d) => {
-    const name = a || b || c || d;
-    if (env[name]) return env[name];
+  const text = p.replace(PATH_REF_RE, (m, a, b, c, d, e, f) => {
+    const name = a || b || c || d || e || f;
+    if (env[name] && !/^[%!][^%!]*:/.test(m)) return env[name];
     if (CRED_ENV.includes(name.toUpperCase())) credentialVar = name.toUpperCase();
     if (AGENT_ENV.has(name.toUpperCase())) agentVar = name.toUpperCase();
     return m;
@@ -443,6 +462,9 @@ function classifyPath(p, opts = {}) {
     return { kind: 'agent_config', reason: 'the path comes from $' + expanded.agentVar + ', the agent configuration location' };
   }
   expanded.text = stripStreams(expanded.text);
+  // %D%.env, !D!.env, $D.env: a variable zn cannot expand right before the .env name (dotenvElsewhereOf refuses it).
+  const lastName = expanded.text.split(/[\\/]/).pop();
+  if (VAR_BEFORE_DOTENV_RE.test(lastName) && !ci(DOTENV_SAFE_RE).test(lastName)) return { kind: 'dotenv', reason: '.env file' };
   const abs = path.resolve(ctx.cwd, expanded.text);
   const candidates = new Set([abs, ...targetsOf(abs)]);
   // ag/../hooks.json, with ag a link to .agents/skills, names .agents/hooks.json: ".." is applied to where the link leads.
@@ -2355,7 +2377,7 @@ function shellAssignments(cmd, opts) {
     // The output of a command, or a variable zn cannot resolve, may be the home folder.
     if (/\$\(|`/.test(v)) { unknown.add(name); continue; }
     v = expandEnv(expandHome(v, home), { ...env, ...out }).text;
-    if (/\$\{?[A-Za-z_]|%[A-Za-z_][A-Za-z0-9_]*%/.test(v)) { unknown.add(name); continue; }
+    if (/\$\{?[A-Za-z_]|%[A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?%|![A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?!/.test(v)) { unknown.add(name); continue; }
     out[name] = v;
   }
   return { env: Object.keys(out).length ? out : null, unknown };
@@ -2461,14 +2483,17 @@ function bashDenialOf(cmd, opts = {}) {
   let afterGlob = 0;
   // A <rev>:<path> word is read as a git object in any command that runs git (echo HEAD:.env | xargs git show).
   const anyGit = words.some((x) => x.git || x.text === 'git' || x.text.endsWith('/git'));
-  for (const w of words) {
+  for (const w of withEqualsReadings(psListWords(words, opts))) {
     // --flag=value carries a path too (--kubeconfig=~/.kube/config).
     let text = w.text;
     if (text.startsWith('-')) {
       const eq = text.indexOf('=');
       // git log -L<range>:<file> names a file after the colon.
       const lineRange = w.git ? /^-L[^:]*:(.+)$/.exec(text) : null;
+      // PowerShell binds a value with a colon (gc -Path:.env, -LiteralPath:.env, -Lit:.env).
+      const psValue = w.git ? null : PS_COLON_PARAM_RE.exec(text);
       if (lineRange) text = lineRange[1];
+      else if (psValue) text = psValue[1];
       else if (eq < 0) continue;
       else text = text.slice(eq + 1);
     } else if (NAME_VALUE_RE.test(text)) {
@@ -2531,6 +2556,61 @@ function bashDenialOf(cmd, opts = {}) {
 }
 
 const NAME_VALUE_RE = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}=/;
+/**
+ * `-X:a=.env` is a PowerShell colon value ("a=.env") and also a --name=value word (".env"): the colon reading would hide the
+ * second one, so the text after the first '=' is judged as a word of its own as well.
+ */
+function withEqualsReadings(words) {
+  let extra = null;
+  for (const w of words) {
+    if (w.git || !w.text.startsWith('-')) continue;
+    const eq = w.text.indexOf('=');
+    if (eq > 0 && PS_COLON_PARAM_RE.test(w.text)) (extra || (extra = [])).push({ ...w, text: w.text.slice(eq + 1) });
+  }
+  return extra ? words.concat(extra) : words;
+}
+// -Name:value, a PowerShell parameter with its value attached.
+const PS_COLON_PARAM_RE = /^-[A-Za-z][A-Za-z0-9]{0,63}:(.+)$/s;
+
+/* PowerShell reads every path of a comma list (cat a,b  gc 'a','b'  type @('a','b')); in bash, a,b is one file name.
+   Readers that take such lists, and the ones that exist only in PowerShell (read as PowerShell in any tool). */
+const PS_LIST_READERS = new Set(['cat', 'gc', 'type', 'get-content', 'select-string', 'sls', 'import-csv', 'ipcsv', 'more', 'get-item',
+  'gi', 'get-childitem', 'gci', 'ls', 'dir', 'copy-item', 'copy', 'cp', 'import-clixml', 'convertfrom-json']);
+const PS_ONLY_READERS = new Set(['gc', 'get-content', 'select-string', 'sls', 'import-csv', 'ipcsv', 'get-item', 'gi', 'get-childitem',
+  'gci', 'copy-item', 'import-clixml']);
+/* The words of a command, each comma list of a PowerShell reader followed by the paths inside it. */
+function psListWords(words, opts) {
+  const out = [];
+  let prev = null;
+  const readerOf = (h) => {
+    const head = bareHead(h || '').toLowerCase().replace(/\.exe$/, '');
+    return PS_LIST_READERS.has(head) && (opts.powershell === true || PS_ONLY_READERS.has(head));
+  };
+  // PowerShell on Windows takes a backslash as a path separator (gc .\.env), but on another host the file ".\.env" does not exist
+  // and the read would be let through; the same word with "/" is judged too.
+  const push = (x, head) => {
+    out.push(x);
+    if (typeof x.text === 'string' && x.text.indexOf('\\') >= 0 && x.text.length <= 4096 && readerOf(head)) out.push({ ...x, text: slash(x.text) });
+  };
+  for (const w of words) {
+    push(w, w.head);
+    // @('a','b'): the opening bracket starts a new command, so the word after "@" takes the head of the "@".
+    const lead = prev && prev.text === '@' ? prev : w;
+    const before = prev;
+    prev = w;
+    if (typeof w.text !== 'string' || w.text.indexOf(',') < 0 || w.text.length > 4096) continue;
+    // gc ('a','b') and gc -Path ('a','b'): the bracket starts a new command too, so the word has itself as head and the
+    // reader is the word before it.
+    if (!readerOf(lead.head) && !(before && typeof before.text === 'string' && readerOf(before.head))) continue;
+    const inner = w.text.replace(/^@?\(/, '').replace(/\)$/, '');
+    const parts = inner.split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+    // A word that starts or ends with a comma is part of a list that goes on in the next or the previous word (gc a ,b).
+    const open = /^,|,$/.test(inner.trim());
+    if (parts.length < 2 && !open) continue;
+    for (const part of parts) push({ ...w, text: part }, w.head);
+  }
+  return out;
+}
 const ANSI_C_SIMPLE = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', "'": "'", '"': '"', '?': '?' };
 
 /**
@@ -2908,7 +2988,7 @@ function dotenvElsewhereOf(text, opts, kind = 'dotenv') {
       'Give the path from the current folder instead, for example `cat app/.env`.';
   }
   // A key file is judged by its content where the cd leads; only a .env is refused for a path built while the command runs.
-  if (kind === 'dotenv' && (/[$`]|%[A-Za-z_][A-Za-z0-9_]*%/.test(expanded) || (missing && afterSubstitution))) {
+  if (kind === 'dotenv' && (/[$`]|%[A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?%|![A-Za-z_][A-Za-z0-9_]*(?::[^%!\r\n]*)?!/.test(expanded) || (missing && afterSubstitution))) {
     return 'zn: this command builds the path of a .env file while it runs (' + text + '), so zn cannot check whether it holds secrets. ' +
       'Name the file directly, for example `cat app/.env`; if it holds values, ask the user to run `' + znCommand('env shadow .env', opts) + '` in that folder.';
   }
