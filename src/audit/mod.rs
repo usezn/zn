@@ -433,6 +433,22 @@ impl AuditVault {
             .lock()
             .map_err(|e| anyhow!("Lock poisoned: {}", e))?;
 
+        // Whatever the caller passed, the row only holds redacted text.
+        let mut entry = entry;
+        entry.tool_name = crate::scrubber::Scrubber::redact_for_log(&entry.tool_name);
+        entry.policy_match = entry
+            .policy_match
+            .as_deref()
+            .map(crate::scrubber::Scrubber::redact_for_log);
+        entry.agent_id = entry
+            .agent_id
+            .as_deref()
+            .map(crate::scrubber::Scrubber::redact_for_log);
+        entry.payload = entry
+            .payload
+            .as_deref()
+            .map(crate::scrubber::Scrubber::redact_for_log);
+
         // Encrypt payload if key is available; drop it when storage is off.
         let payload = if !self.store_payloads {
             None
