@@ -352,6 +352,28 @@ test('daemon: approvals and policy widening are confirmed out of band', async ()
   await startDaemon();
 });
 
+test('daemon: zn audit --approve and pins approve are confirmed on the daemon channel, and a "no" is final', async () => {
+  const c = clientMod.createClient({});
+  confirmAnswer = true;
+  const n0 = confirmations.length;
+  assert.strictEqual(await c.confirmApproval('audit', '/work/app', '12 entries'), true);
+  const asked = confirmations[confirmations.length - 1];
+  assert.strictEqual(confirmations.length, n0 + 1);
+  assert.strictEqual(asked.kind, 'config-approval');
+  assert.match(asked.message, /\/work\/app/);
+  assert.match(asked.message, /12 entries/);
+  assert.strictEqual(await c.confirmApproval('pins', '/work/app', 'all servers'), true);
+  assert.match(confirmations[confirmations.length - 1].message, /MCP tools/);
+  // control characters in what is shown cannot forge a line of the prompt
+  await c.confirmApproval('audit', '/work/app\nProject: /safe\u202e', 'x');
+  assert.strictEqual(confirmations[confirmations.length - 1].message.split('\n').length, 4, 'one line for the warning, one per field and the footer');
+  confirmAnswer = false;
+  await assert.rejects(c.confirmApproval('audit', '/work/app', 'x'), (e) => e.code === 'ZN_POLICY_DENIED' && /declined/.test(e.message));
+  await assert.rejects(c.confirmApproval('nothing', '/work/app', 'x'), (e) => e.code === 'ZN_POLICY_DENIED');
+  confirmAnswer = true;
+  c.close();
+});
+
 test('daemon: an approved executable rewritten in place loses its approval', async () => {
   const dir = fs.mkdtempSync(path.join(os.homedir(), '.zn-test-bin-'));
   const saved = process.env.PATH;
