@@ -326,3 +326,33 @@ test('known limit: a name wholly inside a variable or a substitution is not read
     assert.match(policy.bashDenial('NAME=.env; cat $NAME', opts) || '', /holds plain-text|was not read because/);
   });
 });
+
+test('a piece an unquoted expansion cuts off is also read as a glob, as the shell globs each word after splitting', () => {
+  const { opts } = project();
+  asPlatform('linux', () => {
+    for (const c of ['cat a${IFS}.e*', 'cat a${IFS}.en?', 'cat a${IFS}.en[v]', 'cat a${IFS}?env', 'cat a${IFS}.e?v', 'cat a${IFS}.??v',
+      'cat a${IFS}.[e]nv', 'cat a${X}.e*', 'cat a${X}.en?', 'cat a${X}.en[v]', 'cat a${X}?env', 'cat a$IFS.e*', 'cat a${IFS}.e*${Y}',
+      'cat a${IFS}.e*.example${IFS}x', 'cat ~/.ssh/a${IFS}id_*', 'cat a${IFS}id_r?a', 'cat a${IFS}id_[r]sa', 'cat a${IFS}.env*']) {
+      assert.match(policy.bashDenial(c, opts) || '', /was not read because|\.env|credential|SSH|private key|protected/i, c);
+    }
+    // One word, no split: a quoted expansion keeps its glob with the rest of the word, which starts with other text.
+    for (const c of ['cat "a${IFS}".en?', 'cat a"${IFS}".e*', 'cat "a${IFS}".e*', 'cat ${DIR}/*.md', 'cat a${IFS}*.md', 'cat a${IFS}*',
+      'cat a${IFS}n?tes.md', 'cat a${IFS}[a-c]*.txt', 'cat a${IFS}.e*.example', 'cat ${DIR}/*.json']) {
+      assert.equal(policy.bashDenial(c, opts), null, c);
+    }
+    // Names that start with id_ or end with a key type next to an unquoted expansion are refused on purpose.
+    for (const c of ['cat id_${T}.txt', 'cp ${SRC}/id_${T}.pub ${DST}/']) assert.match(policy.bashDenial(c, opts) || '', /was not read because/, c);
+  });
+});
+
+test('ordinary lines with unquoted expansions stay allowed', () => {
+  const { opts } = project();
+  asPlatform('linux', () => {
+    for (const c of ['echo $HOME', 'cd $HOME/projects', 'source ${VENV}/bin/activate', 'docker run -e APP_ENV=${ENV} img', 'cat config/${ENV}.json',
+      'cat ${APP}.env.example', 'cat src/${MOD}/env.ts', 'tar czf dist/${NAME}-${VERSION}.tgz .', 'uv run --env-file ${ENVFILE} x',
+      'docker compose --env-file ${ENV_FILE} up', 'pytest tests/${TEST}_env.py', 'cat ~/.ssh/id_rsa.pub', 'cat ${DIR}/environment.yml',
+      'ls ${DIR}/*.py', 'rm ${TMPD}/*.log', 'grep -r foo ${SRC}/lib/*.js', 'cat ${A}/*.md ${B}/?.txt', 'cat ${DIR}/[a-c]*.txt']) {
+      assert.equal(policy.bashDenial(c, opts), null, c);
+    }
+  });
+});

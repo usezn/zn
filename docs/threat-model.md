@@ -560,7 +560,9 @@ stop malware running as the same user (see above).
   and a segment that ends in `.example`, `.sample` or `.template` is allowed. An unquoted expansion can also split its value into
   several words (`cat a${IFS}.env` reads `.env`), so each piece of a segment between unquoted expansions is checked as a word of its
   own, and the `.example` ending only counts at the end of the last piece (`cat .e$(printf "nv ")v.example` is refused); inside double
-  quotes nothing is split. This also refuses `~/.ssh/id_${T}.pub`. It does not refuse a name that is wholly inside the
+  quotes nothing is split. A piece is also read as a glob, because the shell globs each word after it splits (`cat a${IFS}.e*`, `.en?`, `.en[v]`
+  and `?env` are refused as pieces). This also refuses names that start with `id_` or end with a key type next to an unquoted
+  expansion, such as `~/.ssh/id_${T}.pub`, `id_${T}.txt` and `cp ${SRC}/id_${T}.pub`; quote the expansion or write the name out. It does not refuse a name that is wholly inside the
   expansion: `cat ${NAME}` with `NAME=.env` set by an earlier command or by the agent's environment, `cat $(cat names.txt)`, or a
   substitution that assembles the name from pieces without a literal character outside it. A variable assigned in the same line
   (`NAME=.env; cat $NAME`) is followed, and so is a substitution that only prints a word (`$(echo .env)`). Other names (for

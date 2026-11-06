@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-06.5';
+const POLICY_RULES_VERSION = '2026-11-06.6';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2757,6 +2757,19 @@ function wildSegmentMatches(seg, t) {
   };
   return f(0, 0, 0);
 }
+// Names a glob in a piece can match. The shell globs each word after it splits, so `.e*`, `.en?`, `.en[v]` and `?env` cut off by an
+// unquoted expansion can read `.env`. The glob engine is the one the words without expansions use (globRegExp); a mark is any text.
+// Like the literal reading, a piece needs two literal characters (a bracket expression counts as one), so `*` or `${X}*` alone is not refused.
+const WILD_GLOB_NAMES = ['.env', '.env.local', '.env.example', '.env.sample', '.env.template', ...['rsa', 'dsa', 'ecdsa', 'ed25519', 'xmss'].flatMap((k) => ['id_' + k, 'id_' + k + '_sk', 'id_' + k + '.pub'])];
+function wildPieceGlobMatches(piece) {
+  if (!/[*?[]/.test(piece)) return false;
+  const lits = piece.replace(/\[[^\]]*\]/g, 'x').replace(/[*?]/g, '').length;
+  if (lits < 2) return false;
+  let re;
+  try { re = globRegExp(piece.replace(/[]/g, '*')); } catch (e) { return true; }
+  if (re.impossible) return false;
+  return WILD_GLOB_NAMES.some((n) => re.test(n));
+}
 // Can some word the segment may become spell a protected name? An unquoted expansion splits its value into words when the value holds
 // spaces, so the segment is also read piece by piece: the start up to the first splitting mark, each piece between two of them, and the
 // rest after the last, each with "any text" kept on the cut side. The safe endings (.example ...) apply only to a piece that really ends
@@ -2765,7 +2778,7 @@ function wildSegmentProtected(seg) {
   const check = (piece, safe) => {
     if (safe && WILD_SAFE_END_RE.test(piece)) return false;
     for (const t of WILD_NAMES) if (wildSegmentMatches(piece, t)) return true;
-    return false;
+    return wildPieceGlobMatches(piece);
   };
   if (check(seg, true)) return true;
   if (seg.indexOf(WILD) < 0) return false;
