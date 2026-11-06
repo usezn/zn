@@ -11,6 +11,7 @@ const os = require('os');
 const path = require('path');
 
 const policy = require('../lib/hooks/policy');
+const { budget } = require('./helpers/time_budget');
 
 function asPlatform(name, fn) {
   const desc = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -386,5 +387,5 @@ test('case inside a command substitution: a hyphenated word, extra substitutions
   const many = 'cat a' + '$(case x in x) : ;; esac)'.repeat(2000);
   const t0 = Date.now();
   policy.bashDenial(many, opts);
-  assert.ok(Date.now() - t0 < 2500, 'time: ' + (Date.now() - t0) + ' ms');
+  assert.ok(Date.now() - t0 < budget(2500), 'time: ' + (Date.now() - t0) + ' ms');
 });
