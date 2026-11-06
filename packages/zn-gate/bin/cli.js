@@ -32,6 +32,9 @@ process.stdout.on('error', (err) => {
   throw err;
 });
 
+// Node 18 prints an ExperimentalWarning for the X25519 algorithm that the vault uses. Drop only that one.
+require('../lib/warnings').installX25519WarningFilter();
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -1113,6 +1116,13 @@ ${ruleLine(process.env, 60)}\n`);
     }
 
     const totalModified = actions.filter(a => a.status === 'shielded' || a.status === 'reverted').length;
+    const totalFailed = actions.filter(a => a.failed).length;
+    if (totalFailed) {
+      // Exit 1: at least one config could not be changed (see the line above it for the path and the next step).
+      process.stdout.write(`\nDone. Checked ${scanned.length} environment configurations (${totalModified} modified, ${totalFailed} could not be changed).\n\n`);
+      process.exitCode = 1;
+      return;
+    }
     process.stdout.write(`\nDone. Checked ${scanned.length} environment configurations (${totalModified} modified).\n\n`);
     return;
   }

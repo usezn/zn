@@ -115,7 +115,7 @@ With `--wrap-mcp` it finds the MCP servers in known agent configs and wraps them
 
 `--dry-run`, `--shadow` and `--revert` each select `--wrap-mcp` too.
 
-Exit codes: `0` done, or every agent found is already protected. `1` no supported agent found, or the steps were only printed. `2` an argument it does not know.
+Exit codes: `0` done, or every agent found is already protected. `1` no supported agent found, or the steps were only printed; with `--wrap-mcp` also when a config could not be changed (for example the disk is full or the file is read-only). The line for that config names the file and says what to do; the file is left as it was. `2` an argument it does not know.
 
 ### `uninstall`
 
@@ -698,7 +698,7 @@ Downloads the policy and uploads the audit log now. Exit `0` only when a valid p
 zn-gate team leave
 ```
 
-Disconnects this machine from the organization. It first tells the server to revoke this installation (with the installation's own token), then deletes the local copies of the policy and upload state. Exit `1` when one of those files cannot be deleted; the message names it. If the server cannot take the revocation now (offline, an error, a rate limit, or an older server), the machine still leaves at once and the command exits `0`, but it prints that the server was not told yet: zn-gate keeps the token in the vault only to retry on `team sync` and while the vault is unlocked, for up to 30 days, and `team status` shows the pending revocation. See [zn Team](team.md#leaving).
+Disconnects this machine from the organization. It first tells the server to revoke this installation (with the installation's own token), then deletes the local copies of the policy and upload state. Exit `1` when one of those files cannot be deleted; the message names it. If the server cannot take the revocation now (offline, an error, a rate limit, or an older server), the machine still leaves at once and the command exits `0`, but it prints that the server was not told yet: zn-gate keeps the token in the vault only to retry on `team sync` and while the vault is unlocked, until the server confirms, and `team status` shows the pending revocation. A revocation the server has not confirmed is never dropped, and a 65th leave is refused until some are confirmed. Earlier versions kept at most eight waiting revocations and dropped the oldest beyond that without any record, so an organization admin should review the installations in the dashboard and remove any that should be gone. See [zn Team](team.md#leaving).
 
 #### `team managed-config`
 

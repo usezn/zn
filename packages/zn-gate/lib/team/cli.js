@@ -55,7 +55,7 @@ function withClient(fn) {
 
 function describePolicy(p) {
   if (!p || p.state === 'none') return 'none received yet (PENDING: the organization policy is not applied; run `zn team sync`)';
-  if (p.state === 'invalid') return 'cached copy does not verify (' + (p.error || 'invalid') + '); run `zn team sync`';
+  if (p.state === 'invalid') return 'the stored copy could not be verified (' + (p.error || 'invalid') + ') -- INVALID: strict mode (every secret is blocked, nothing is opened) until a valid policy arrives; run `zn team sync`';
   const base = 'version ' + p.version + ', valid until ' + p.expires_at;
   if (p.state === 'expired' && p.clock === 'behind') return base + " -- STRICT MODE (only restrictions apply): this computer's clock is behind the time this policy was issued. Check the computer's date and time.";
   if (p.state === 'expired') return base + " -- EXPIRED: strict mode (only restrictions apply) until zn can reach the server. If this computer is online, check its date and time.";
@@ -157,14 +157,11 @@ async function statusCmd(args) {
     last_sync: (info && info.last_sync) || null,
     // The server was not told yet that an installation left: kept in the vault and retried.
     revocation_pending: (info && Array.isArray(info.revocations)) ? info.revocations : [],
-    // Pending revocations that were dropped because more than 8 were waiting: the server was never told about them.
-    revocations_dropped: (info && info.revocations_dropped) || null,
   };
   if (json) { out(JSON.stringify(res, null, 2)); return 0; }
   if (!joined) {
     out('Not in a zn organization. Join with: zn team join <token> (from your organization admin).');
     for (const l of describeRevocations(res.revocation_pending)) out(l);
-    for (const l of describeDropped(res.revocations_dropped)) out(l);
     return 0;
   }
   out('Organization: ' + (res.org_name ? res.org_name + ' (' + res.org + ')' : res.org));
@@ -182,7 +179,6 @@ async function statusCmd(args) {
       (res.revoked_at ? '' : '; run `zn team sync` to retry')));
   }
   for (const l of describeRevocations(res.revocation_pending)) out(l);
-  for (const l of describeDropped(res.revocations_dropped)) out(l);
   if (!info) out('The vault is locked: policy downloads and uploads resume after `' + znCommand('unlock') + '`.');
   return 0;
 }
@@ -194,18 +190,9 @@ function describeRevocations(list) {
     lines.push('Revocation pending since ' + r.since + ' (installation ' + r.install_id + (r.org ? ', ' + r.org : '') + '): last error ' + (r.last_error || 'unknown') +
       (r.last_try_at ? ' (last try ' + r.last_try_at + ')' : '') + '.');
     lines.push('  The server was not told that this installation left, so its token still works there. Next step: `zn team sync` retries now (zn also retries every 15 minutes while the vault is unlocked)' +
-      (r.give_up_at ? ' until ' + r.give_up_at + ', when it stops; an admin can then remove the installation from the dashboard' : '') + '.');
+      '; it keeps retrying until the server confirms. An admin can also remove the installation from the dashboard.');
   }
   return lines;
-}
-
-/* Warning for `zn team status` when pending revocations were dropped to make room (at most 8 are kept). */
-function describeDropped(d) {
-  if (!d || !(d.count > 0)) return [];
-  return [
-    'WARNING: ' + d.count + ' pending revocation' + (d.count === 1 ? ' was' : 's were') + ' dropped (last on ' + d.last_at + (d.last_install_id ? ', installation ' + d.last_install_id : '') + '): more than 8 installations left while the server could not be reached.',
-    '  The server was never told about ' + (d.count === 1 ? 'it' : 'them') + ', so ' + (d.count === 1 ? 'that installation token' : 'those installation tokens') + ' still work there. Ask an admin to remove ' + (d.count === 1 ? 'it' : 'them') + ' from the dashboard.',
-  ];
 }
 
 async function syncCmd() {
@@ -249,7 +236,7 @@ async function leaveCmd() {
       : 'The server was told: installation ' + r.install_id + ' is revoked and its token no longer works.');
   } else if (r.left && rev && rev.status === 'pending') {
     out('The server was NOT told yet that you left (' + rev.error + '): installation ' + r.install_id + ' stays on the organization\'s list, and its token still works there, until a retry succeeds.');
-    out('zn keeps the token in your vault only for that retry and nothing else: no policy, no uploads, no detectors. It retries on `zn team sync` and every 15 minutes while the vault is unlocked, and stops on ' + rev.give_up_at + '. `zn team status` shows it.');
+    out('zn keeps the token in your vault only for that retry and nothing else: no policy, no uploads, no detectors. It retries on `zn team sync` and every 15 minutes while the vault is unlocked, until the server confirms. `zn team status` shows it.');
   } else if (!r.left && Array.isArray(r.revocations) && r.revocations.length) {
     for (const l of describeRevocations(r.revocations)) out(l);
   }

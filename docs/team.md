@@ -46,7 +46,7 @@ going to a host that their local settings do not allow.
 | Command | What it does |
 |---|---|
 | `zn team join -` | Connects this machine to your organization. The token (`znj_...`) comes from an organization admin; `-` reads it from one line of standard input, so it stays out of your shell history. You can also set `ZN_TEAM_JOIN_TOKEN` and run `zn team join`, or pass it as `zn team join <token>` (an argument wins over the variable; zn then warns that the token stays in your shell history and in the process list). Needs the vault unlocked (`zn unlock`). The join counts as done only once the organization's first valid policy has been downloaded and applied. If the policy cannot be downloaded (offline, refused, or the organization has not published one yet), the command exits `1`: this machine is registered but `zn team status` shows the join as **pending** until `zn team sync` succeeds. If your admin has not published a policy yet, the command says so: this is expected, no restrictions apply for now, and zn checks again by itself (`zn team sync` checks now). Failures say in plain words what happened and the command to run next; the technical cause (HTTP status, internal code) shows only with `ZN_VERBOSE=1`. |
-| `zn team status` | Organization, installation id, policy version and expiry, what the last policy version removed or loosened, upload state, and the result of the last sync (what failed, and when it last worked). If the server has not yet been told that you left, a "Revocation pending" line with the last error and the next step. If more than 8 installations left while the server could not be reached, the oldest pending revocation is dropped to keep the list small; status then shows a "WARNING ... dropped" line (for 30 days) and the audit log gets a `team_revocation_dropped` record, so an admin can remove that installation from the dashboard. `--json` for scripts (`join_pending`, `last_sync`, `policy.change`, `revocation_pending`, `revocations_dropped`). Never shows the install token. |
+| `zn team status` | Organization, installation id, policy version and expiry, what the last policy version removed or loosened, upload state, and the result of the last sync (what failed, and when it last worked). If the server has not yet been told that you left, a "Revocation pending" line with the last error and the next step. A pending revocation is never dropped (see [Leaving](#leaving)). `--json` for scripts (`join_pending`, `last_sync`, `policy.change`, `revocation_pending`). Never shows the install token. |
 | `zn team sync` | Downloads the policy and uploads pending audit records now. Exits `0` only when a valid policy is applied and no upload failed; offline, no policy, a refused policy, a removed machine or a failed upload exit `1` and say why. This also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. If you leave the organization or join another one while a sync is running, that sync is dropped and writes nothing. |
 | `zn team leave` | Disconnects this machine and tells the server (see [Leaving](#leaving)). The organization's policy stops applying here at once. It deletes the local copies of the policy and the upload state one by one; if one cannot be deleted (for example a locked file), the command exits `1` and names the file to delete by hand, because the hooks still read it. |
 | `zn team managed-config` | Prints the files an admin deploys with device management so zn-gate's hooks run on every machine. Writes nothing; see [Deploy zn-gate's hooks to every machine](#deploy-zn-gates-hooks-to-every-machine-managed-settings). |
@@ -111,32 +111,23 @@ only then deletes the local membership. The answer decides what is printed:
   works on the server.
 
 For that second case zn-gate keeps a small "revocation pending" record in
-the encrypted vault. It holds the install token, the organization, the API
-address and the time.
-
-The record is not a membership and gives the organization no control: no
-policy, no uploads, no detectors. The token is used for nothing else.
-
-It is retried:
-
-- on `zn team sync`,
-- on `zn team leave`,
-- every 15 minutes while the vault is unlocked.
-
-Each retry uses the token of the installation that left. This also holds after
-you join an organization again: the new membership keeps its own token and is
-never affected.
-
-The record is removed when the server confirms (or answers that the token is
-no longer valid). zn-gate gives up after **30 days**. From then on, ask an
-organization admin to remove the installation from the dashboard.
-
-`zn team status` shows the pending record (since when, the last error and when
-zn-gate stops trying). `--json` has it as `revocation_pending`.
-
-A server that answers 404 or 405 (an older API) is treated as "not supported
-yet", never as revoked. If the server asks to wait (HTTP 429), zn-gate waits
-for the time it gave.
+the encrypted vault: the install token, the organization, the API address and
+the time. It is not a membership and gives the organization no control: no
+policy, no uploads, no detectors; the token is used for nothing else. It is
+retried on `zn team sync`, on `zn team leave` and every 15 minutes while the
+vault is unlocked, each time with the token of the installation that left
+(also after you join an organization again, when the new membership keeps its
+own token and is never affected). The record is removed when the server
+confirms (or answers that the token is no longer valid). It is never dropped
+because of its age and the warning stays in `zn team status` until the server
+has confirmed; an organization admin can also remove the installation from the
+dashboard, and zn-gate then clears the record on its next retry. Every pending
+installation is kept, up to 64: with 64 unconfirmed leaves, `zn team leave`
+refuses to leave another organization and tells you to run `zn team sync` or
+ask an admin to remove them. Earlier versions kept at most eight waiting revocations and dropped the oldest beyond that without any record: if your organization used an earlier version, an organization admin should review the installations in the dashboard and remove any that should be gone. `zn team status` shows each pending record (since
+when and the last error); `--json` has it as `revocation_pending`. A server that answers 404 or 405 (an older API) is
+treated as "not supported yet", never as revoked. If the server asks to wait
+(HTTP 429), zn-gate waits for the time it gave.
 
 ## The organization policy
 
@@ -307,6 +298,7 @@ patterns are skipped on the machine, and all custom detectors together get
 |---|---|
 | No network, policy still valid (policies are valid for 7 days) | The policy keeps applying. Audit records wait in `~/.zn/audit.jsonl` and are uploaded later. The automatic sync keeps the reason it failed (`zn team status` shows it under "Last sync") and writes one audit record, then at most one more every 6 hours while it keeps failing. |
 | No network for longer than the policy's validity | Strict mode: the restrictions keep applying; anything the organization had opened is withdrawn until a fresh policy arrives. `zn team status` says so. |
+| The stored copy of the policy does not verify (it was edited, or the organization key changed) | Strict mode, and its content is not trusted at all: every secret is blocked, nothing the organization had opened stays open, and nothing is read from the unverified copy. `zn team status` says the stored copy could not be verified and that this machine stays in strict mode until a valid policy arrives. Run `zn team sync` with the vault unlocked: the next valid policy replaces the bad copy and normal rules resume. Hooks, the scrubber and the base protections are not affected. |
 | A downloaded policy fails a check (signature, key, organization, expiry, older version, same version with other content) | It is refused and the last accepted policy stays. The refusal is recorded in the audit log. |
 | An admin removes this machine | Uploads stop. `zn team status` shows "removed from org". The last policy applies until it expires, then strict mode. |
 | The vault is locked | Nothing is downloaded or uploaded until `zn unlock`. The last accepted policy still applies to every use of a secret, which needs the vault unlocked anyway. |

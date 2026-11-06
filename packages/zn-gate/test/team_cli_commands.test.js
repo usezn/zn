@@ -121,7 +121,7 @@ test('status --json on a joined machine is valid JSON with the documented keys',
   const r = await capture(() => runTeamCommand(['team', 'status', '--json']));
   assert.strictEqual(r.code, 0);
   const j = JSON.parse(r.stdout);
-  assert.deepStrictEqual(Object.keys(j), ['joined', 'vault', 'org', 'org_name', 'install_id', 'api_base', 'revoked_at', 'policy', 'upload', 'join_pending', 'last_sync', 'revocation_pending', 'revocations_dropped']);
+  assert.deepStrictEqual(Object.keys(j), ['joined', 'vault', 'org', 'org_name', 'install_id', 'api_base', 'revoked_at', 'policy', 'upload', 'join_pending', 'last_sync', 'revocation_pending']);
   assert.strictEqual(j.vault, 'unlocked');
   assert.deepStrictEqual(j.policy, { state: 'active', version: 3, expires_at: '2099-01-01T00:00:00.000Z', change: null });
   assert.ok(r.stdout.endsWith('\n'));
