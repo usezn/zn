@@ -287,6 +287,7 @@ function startMcpShield(command, args, options = {}) {
   // Set while the first list of a new server is being read, page by page: those
   // pages are pinned. Any later list is compared with the pins.
   const pinSession = {};
+  const shadowReported = new Set();
   if (pinMode !== 'off' && pins.pinsMoved()) {
     process.stderr.write(`[zn-shield] MCP tool pins are kept in ${pins.pinsDir()}, not in your own ~/.zn (set by HOME or ZN_HOME).\n`);
   }
@@ -1198,20 +1199,29 @@ function startMcpShield(command, args, options = {}) {
           if (result) {
             try {
               const sh = pins.shadows(command, args, tools);
+              // Each overlap is reported once per run of the shield, not at every tools/list.
+              const fresh = (a, kind, name) => a.filter((x) => { const k = kind + '|' + key + '|' + x.tool + '|' + (name ? x[name] : ''); if (shadowReported.has(k)) return false; shadowReported.add(k); return true; });
+              sh.collisions = fresh(sh.collisions, 'c');
+              sh.similar = fresh(sh.similar, 's');
+              sh.mentions = fresh(sh.mentions, 'm', 'mentions');
               const names = (a) => a.slice(0, 10).map((x) => pins.displayName(x.tool)).join(', ');
               if (sh.collisions.length) {
                 process.stderr.write(`[zn-shield TOOL SHADOWING] ${names(sh.collisions)}: ${sh.collisions.length === 1 ? 'has' : 'have'} the same name as an approved tool of another MCP server. ` +
                   'The agent may call the wrong one. Check that both servers are yours.\n');
               }
+              if (sh.similar.length) {
+                process.stderr.write(`[zn-shield TOOL SHADOWING] ${names(sh.similar)}: ${sh.similar.length === 1 ? 'has' : 'have'} a name that reads like that of an approved tool of another MCP server ` +
+                  '(the same letters apart from case, look-alike letters or invisible characters). The agent may take one for the other.\n');
+              }
               if (sh.mentions.length) {
                 process.stderr.write(`[zn-shield TOOL SHADOWING] ${names(sh.mentions)}: the text of ${sh.mentions.length === 1 ? 'this tool' : 'these tools'} names a tool of another MCP server. Review what it tells the model to do with it.\n`);
               }
-              if (sh.collisions.length || sh.mentions.length) {
+              if (sh.collisions.length || sh.similar.length || sh.mentions.length) {
                 logEvidence({
                   agent: options.agent || 'mcp-server',
                   phase: 'tool-pin',
                   tool_name: key,
-                  payload: names(sh.collisions.concat(sh.mentions)),
+                  payload: names(sh.collisions.concat(sh.similar, sh.mentions)),
                   verdict: 'allow',
                   rule: 'mcp_tool_shadowing',
                   reason: 'Tool name or text overlaps with a tool of another MCP server',

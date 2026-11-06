@@ -127,9 +127,10 @@ or for one run with the environment variable `ZN_MCP_PINNING=block`. The mode th
 When you wrap more than one server, the shield also compares each tool list with the approved tools of your other pinned servers and warns (`[zn-shield TOOL SHADOWING]`) in two cases:
 
 - a tool has the same name as an approved tool of another server, so the agent may call the wrong one;
-- the description, title or parameters of a tool name an approved tool of another server, which is how a server can steer how a different server's tool is used. Names shorter than six characters and names that only appear inside a longer word are ignored.
+- the name of a tool reads like that of an approved tool of another server once case, full-width letters, look-alike letters of other alphabets and invisible characters are set aside;
+- the description, title, annotation title or the input or output schema of a tool names an approved tool of another server, also in the form `mcp__<server>__<tool>` or with invisible characters inside the name, which is how a server can steer how a different server's tool is used. Names shorter than six characters and names that only appear inside a longer word are ignored.
 
-This is a warning, not a block: the same name on two servers can be legitimate, and the shield logs it in the evidence log (`mcp_tool_shadowing`) without any tool text. A tool that is new or changed on the other server and not yet approved is not used as a reference.
+This is a warning, not a block: the same name on two servers can be legitimate. Each overlap is reported once per run of the shield, and it is logged in the evidence log (`mcp_tool_shadowing`) without any tool text. A tool that is new or changed on the other server and not yet approved is not used as a reference.
 
 ### See the pins
 

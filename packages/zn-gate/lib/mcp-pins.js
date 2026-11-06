@@ -185,6 +185,7 @@ function loadServer(key) {
     if (s && typeof s === 'object' && s.tools && typeof s.tools === 'object' && s.pending && typeof s.pending === 'object') {
       s.tools = dict(s.tools);
       s.pending = dict(s.pending);
+      s.parts = dict(s.parts);
       return s;
     }
   } catch (_) { /* below */ }
@@ -286,13 +287,24 @@ function approvedTools(command, args) {
 }
 
 const MENTION_MIN = 6; // a tool name this short is an ordinary word too often to mean anything in a description
+const MENTION_TEXT_CAP = 64 * 1024;
+
+// Letters of other alphabets that look like a Latin one (Cyrillic and Greek are the usual ones), for the name comparison only.
+const LOOKALIKES = {
+  'а': 'a', 'в': 'b', 'е': 'e', 'к': 'k', 'м': 'm', 'н': 'h', 'о': 'o', 'р': 'p', 'с': 'c', 'т': 't', 'у': 'y', 'х': 'x', 'і': 'i', 'ј': 'j', 'ѕ': 's', 'ԁ': 'd', 'һ': 'h', 'ӏ': 'l',
+  'α': 'a', 'β': 'b', 'ε': 'e', 'ι': 'i', 'κ': 'k', 'ν': 'v', 'ο': 'o', 'ρ': 'p', 'τ': 't', 'υ': 'u', 'χ': 'x',
+};
+/** The form names and text are compared in: compatibility-normalised (full-width letters), lower case, no invisible format characters, lookalikes folded. */
+function fold(value) {
+  return String(value).normalize('NFKC').replace(/\p{Cf}/gu, '').toLowerCase().replace(/[^\u0000-\u007f]/g, (c) => LOOKALIKES[c] || c);
+}
 
 /**
  * Tool shadowing across servers: the other pinned servers' approved tools against this list.
- *   collisions: tools that carry the name of an approved tool of another server (a later server can take over calls
- *               meant for the first)
- *   mentions:   tools whose text names an approved tool of another server (a description that steers how that
- *               other tool is used)
+ *   collisions: tools that carry exactly the name of an approved tool of another server (a later server can take over calls meant for the first)
+ *   similar:    tools whose name is that of one only after folding case, full-width letters, lookalike letters and invisible characters
+ *   mentions:   tools whose text (description, title, annotation title, input and output schema) names an approved tool of another server, also as
+ *               mcp__<server>__<tool>, or with invisible characters inside the name (a description that steers how that other tool is used)
  * Warn-only: the same name on two servers can be legitimate. Only names, never text, are returned.
  */
 function shadows(command, args, tools) {
@@ -305,20 +317,26 @@ function shadows(command, args, tools) {
     if (!s || s.corrupt) continue;
     for (const n of Object.keys(s.tools)) if (!s.pending[n]) (others[n] = others[n] || []).push(s.command);
   }
+  const folded = dict();
+  for (const n of Object.keys(others)) (folded[fold(n)] = folded[fold(n)] || []).push(n);
   const collisions = [];
+  const similar = [];
   const mentions = [];
-  const names = Object.keys(others);
+  const names = Object.keys(folded);
   for (const t of tools) {
     if (!t || typeof t !== 'object' || typeof t.name !== 'string') continue;
     if (others[t.name]) collisions.push({ tool: t.name, servers: others[t.name].slice(0, 5) });
-    const text = [t.description, t.title, canonical(t.inputSchema)].filter((x) => typeof x === 'string').join('\n');
+    else if (folded[fold(t.name)]) similar.push({ tool: t.name, servers: others[folded[fold(t.name)][0]].slice(0, 5) });
+    const parts = [t.description, t.title, t.annotations && t.annotations.title, t.inputSchema && canonical(t.inputSchema), t.outputSchema && canonical(t.outputSchema)];
+    const text = fold(parts.filter((x) => typeof x === 'string').join('\n').slice(0, MENTION_TEXT_CAP));
+    const self = fold(t.name);
     for (const n of names) {
-      if (n === t.name || n.length < MENTION_MIN || !text.includes(n)) continue;
+      if (n === self || n.length < MENTION_MIN || !text.includes(n)) continue;
       const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      if (new RegExp('(^|[^A-Za-z0-9_])' + esc + '($|[^A-Za-z0-9_])').test(text)) mentions.push({ tool: t.name, mentions: n, servers: others[n].slice(0, 5) });
+      if (new RegExp('(^|[^a-z0-9_]|__)' + esc + '($|[^a-z0-9_])').test(text)) mentions.push({ tool: t.name, mentions: folded[n][0], servers: others[folded[n][0]].slice(0, 5) });
     }
   }
-  return { collisions, mentions };
+  return { collisions, similar, mentions };
 }
 
 function servers() {
@@ -343,6 +361,7 @@ function approve(which) {
     for (const n of names) {
       s.tools[n] = s.pending[n].hash;
       if (s.pending[n].parts && typeof s.pending[n].parts === 'object') s.parts[n] = s.pending[n].parts;
+      else delete s.parts[n];       // approved by a version that kept no parts: the next change names the whole tool
     }
     s.pending = {};
     s.pinnedAt = new Date().toISOString();
