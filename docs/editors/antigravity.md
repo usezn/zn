@@ -44,6 +44,16 @@ zn hooks install antigravity
 
 This writes the hook to `~/.gemini/config/hooks.json` for your user. Add `--project` to write `.agents/hooks.json` in the current project instead; a project hook runs `zn` from your `PATH`, so everyone who opens the project in Antigravity needs zn-gate installed (without it the hook blocks the call with a message that says how to install it). The command is written for the kind of machine you ran it on (macOS and Linux, or Windows): a teammate on the other kind runs the same command in their own copy. zn-gate keeps a backup of a file it changes, and `zn hooks uninstall antigravity` removes the hook. `zn hooks install antigravity` also starts the hook once with a harmless test event and tells you if it does not answer with a valid decision. If it says `SELF-CHECK FAILED`, follow the next step it prints (usually `npm install -g zn-gate`, then install again) before you use Antigravity. Then run `npx -y zn-gate check`, which reports whether the Antigravity hook works.
 
+### Project or user install
+
+| | User install | Project install |
+| - | - | - |
+| Command | `zn hooks install antigravity` | `zn hooks install antigravity --project` |
+| Flag | none | `--project` |
+| Folder | `~/.gemini/config/hooks.json` | `.agents/hooks.json` in the current project |
+| Who is covered | You, in every project you open in Antigravity | Everyone who opens that project, if they have zn-gate installed |
+| Uninstall | `zn hooks uninstall antigravity` | `zn hooks uninstall antigravity --project`, run from the project's folder |
+
 ## What zn-gate protects in Antigravity, and what it does not
 
 | | In Antigravity |

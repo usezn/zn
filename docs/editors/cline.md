@@ -2,6 +2,11 @@
 
 Set up zn-gate in Cline in two minutes: add it as an MCP server, and what zn-gate does not cover there.
 
+## What you need
+
+- **Cline** in your editor, with its **MCP Servers** panel. This page does not name a minimum Cline or editor version.
+- **Node.js 18 or later**, which includes `npx` (step 1 below shows how to check).
+
 ## Install (no coding needed)
 
 1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart VS Code (or your editor).
@@ -43,6 +48,19 @@ In Cline, zn-gate works as an **MCP server**: the agent can ask it to check a pr
 | Blocks a secret pasted into the chat | **No** |
 
 We found no hooks in the Cline extension's documentation that zn-gate could use (hooks are documented for the Cline SDK only), and zn-gate does not install any for Cline. So in Cline zn-gate does not block reads of your `.env` or credential files and does not remove secrets from shell output or file contents. If you need that today, use zn-gate with Claude Code, Codex CLI, Cursor or OpenCode: see [compat.md](../compat.md).
+
+### Cline and Continue side by side
+
+This is what the [Continue page](continue.md) and this page each say is covered.
+
+| | Cline | Continue |
+| - | - | - |
+| zn-gate's checks available to the agent (MCP) | Yes | Yes |
+| Your other MCP servers checked for prompt injection and secrets | Yes, if you wrap them | Yes, if you wrap them |
+| Blocks reads of `.env` and credential files | No | No |
+| Removes secrets from shell output and file contents | No | No |
+| Blocks a secret pasted into the chat | No | No |
+| Edited by `zn-gate init --wrap-mcp` | No | No |
 
 ## Technical reference
 

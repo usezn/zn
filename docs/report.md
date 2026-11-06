@@ -39,8 +39,22 @@ If zn-gate has not checked anything yet, it says so and shows no numbers. Counts
 | `--json` | Print the same numbers as JSON, for scripts. |
 | `--no-team-line` | Leave out the closing line about zn Team. The line also does not appear once this computer has joined a Team. |
 
+### Options at a glance
+
+| Option | Default | Example |
+|---|---|---|
+| `--since <period>` | `7d` (allowed: `1d` to `90d`) | `zn-gate report --since 30d` |
+| `--json` | Off (prints the text summary) | `zn-gate report --json` |
+| `--no-team-line` | Off (the closing line about zn Team is shown, unless this computer has joined a Team) | `zn-gate report --no-team-line` |
+
 ## Your data stays here
 
 The report only reads two things that zn-gate already keeps on your computer: the counts in `~/.zn/stats.json` and the list of protected MCP servers. It writes no files, opens no network connection and needs no account. It never prints prompts, file contents, folder names or the names of your secrets; a server is shown only by its name (the program and the package or script file), never by its arguments.
 
 Sharing counts with zn is a separate choice that is off unless you turn it on (`zn-gate stats share status`).
+
+## Next steps
+
+- [CLI reference](cli.md): see every command and option, including the ones that read the same counts.
+- [Stats and report example](examples/stats-and-report.md): follow a full run and see what the output means.
+- [Recipes](recipes.md): copy short answers for common tasks.

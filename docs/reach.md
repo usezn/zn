@@ -265,11 +265,19 @@ finding.
 
 With `--remember`, reach writes one small file: `~/.zn/reach-last.json`, or
 `reach-last.json` in the folder that `ZN_HOME` names when that variable is set.
-For each folder it keeps the high, medium and low counts and the date of the
-run. The key is a SHA-256 hash of the absolute folder path, cut to 32
-characters, so the file holds no path, file name or value. At most 200 folders
-are kept; the oldest go first. The next `--remember` run in the same folder
-then shows, for example, `(last time, 2026-10-17: 2 high, 1 medium, 0 low)`.
+
+For each folder, the file keeps:
+
+- the high, medium and low counts
+- the date of the run
+
+The key is a SHA-256 hash of the absolute folder path, cut to 32 characters.
+So the file holds no path, file name or value.
+
+At most 200 folders are kept. The oldest go first.
+
+The next `--remember` run in the same folder then shows, for example,
+`(last time, 2026-10-17: 2 high, 1 medium, 0 low)`.
 
 Without `--remember`, reach writes no file.
 
@@ -316,6 +324,35 @@ Without any agent installed, the same two `.env` secrets are reported as
 would be able to read them.", and the `NEXT` block is left out.
 
 With `--fail-on high`, that run exits with code 1.
+
+### Example: `--remember` run twice
+
+This uses the same fake project as above, in a folder called `my-app`, with
+`ZN_HOME` unset. The first run writes the memory file and has no earlier run
+to compare with:
+
+```bash
+npx -y zn-gate reach ./my-app --remember
+```
+
+The report is the one shown above. In JSON, `previous` is `null` for this run.
+
+Now suppose you ran `npx -y zn-gate init` and `npx -y zn-gate env shadow .env`
+as the `NEXT` block says, and run the same command again:
+
+```bash
+npx -y zn-gate reach ./my-app --remember
+```
+
+This time the report also gives the counts of the earlier run in this folder,
+for example `(last time, 2026-10-17: 2 high, 1 medium, 0 low)`, so you can see
+that the high findings are gone. With `--json`, `previous` holds those counts
+and the date. The file `~/.zn/reach-last.json` now holds the counts of the
+second run for this folder. It holds no path, file name or value.
+
+Run it without `--remember` and reach writes no file. See
+[--remember](#--remember) for where the file is kept and how many folders it
+holds.
 
 ## JSON
 

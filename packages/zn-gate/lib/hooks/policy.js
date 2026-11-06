@@ -29,7 +29,7 @@ const { znCommand } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-04.1';
+const POLICY_RULES_VERSION = '2026-11-06.7';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -52,7 +52,7 @@ function slash(p) {
 }
 
 const DOTENV_BASENAME_RE = /^\.env(\.[A-Za-z0-9_.-]+)?$/;
-const DOTENV_SAFE_RE = /\.(example|sample|template|dist|defaults|schema)$/i;
+const DOTENV_SAFE_RE = /\.(example|sample|template)$/i;
 // Private keys kept outside ~/.ssh, for example in a project: an SSH key name is one wherever it is;
 // a key container (.p12, .pfx) holds one; a .pem or .key file may be a public certificate, so its content decides.
 const SSH_KEY_BASENAME_RE = /^id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?$/;
@@ -2447,7 +2447,7 @@ function bashDenialOf(cmd, opts = {}) {
   let afterGlob = 0;
   // A <rev>:<path> word is read as a git object in any command that runs git (echo HEAD:.env | xargs git show).
   const anyGit = words.some((x) => x.git || x.text === 'git' || x.text.endsWith('/git'));
-  for (const w of words) {
+  for (const w of psListWords(words, opts)) {
     // --flag=value carries a path too (--kubeconfig=~/.kube/config).
     let text = w.text;
     if (text.startsWith('-')) {
@@ -2517,6 +2517,46 @@ function bashDenialOf(cmd, opts = {}) {
 }
 
 const NAME_VALUE_RE = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}=/;
+
+/* PowerShell reads every path of a comma list (cat a,b  gc 'a','b'  type @('a','b')); in bash, a,b is one file name.
+   Readers that take such lists, and the ones that exist only in PowerShell (read as PowerShell in any tool). */
+const PS_LIST_READERS = new Set(['cat', 'gc', 'type', 'get-content', 'select-string', 'sls', 'import-csv', 'ipcsv', 'more', 'get-item',
+  'gi', 'get-childitem', 'gci', 'ls', 'dir', 'copy-item', 'copy', 'cp', 'import-clixml', 'convertfrom-json']);
+const PS_ONLY_READERS = new Set(['gc', 'get-content', 'select-string', 'sls', 'import-csv', 'ipcsv', 'get-item', 'gi', 'get-childitem',
+  'gci', 'copy-item', 'import-clixml']);
+/* The words of a command, each comma list of a PowerShell reader followed by the paths inside it. */
+function psListWords(words, opts) {
+  const out = [];
+  let prev = null;
+  const readerOf = (h) => {
+    const head = bareHead(h || '').toLowerCase().replace(/\.exe$/, '');
+    return PS_LIST_READERS.has(head) && (opts.powershell === true || PS_ONLY_READERS.has(head));
+  };
+  // PowerShell on Windows takes a backslash as a path separator (gc .\.env), but on another host the file ".\.env" does not exist
+  // and the read would be let through; the same word with "/" is judged too.
+  const push = (x, head) => {
+    out.push(x);
+    if (typeof x.text === 'string' && x.text.indexOf('\\') >= 0 && x.text.length <= 4096 && readerOf(head)) out.push({ ...x, text: slash(x.text) });
+  };
+  for (const w of words) {
+    push(w, w.head);
+    // @('a','b'): the opening bracket starts a new command, so the word after "@" takes the head of the "@".
+    const lead = prev && prev.text === '@' ? prev : w;
+    const before = prev;
+    prev = w;
+    if (typeof w.text !== 'string' || w.text.indexOf(',') < 0 || w.text.length > 4096) continue;
+    // gc ('a','b') and gc -Path ('a','b'): the bracket starts a new command too, so the word has itself as head and the
+    // reader is the word before it.
+    if (!readerOf(lead.head) && !(before && typeof before.text === 'string' && readerOf(before.head))) continue;
+    const inner = w.text.replace(/^@?\(/, '').replace(/\)$/, '');
+    const parts = inner.split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+    // A word that starts or ends with a comma is part of a list that goes on in the next or the previous word (gc a ,b).
+    const open = /^,|,$/.test(inner.trim());
+    if (parts.length < 2 && !open) continue;
+    for (const part of parts) push({ ...w, text: part }, w.head);
+  }
+  return out;
+}
 const ANSI_C_SIMPLE = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', "'": "'", '"': '"', '?': '?' };
 
 /* The command with each bash $'...' word decoded and quoted again as a plain '...' word, and $"..." read as "...". */

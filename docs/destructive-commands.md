@@ -51,6 +51,14 @@ A `cd` or `pushd` earlier in the same command line is followed: after `cd ~ && r
 
 A command that follows a shell keyword is read like any other: inside `{ ...; }`, after `then`, `do`, `else`, `elif`, `if`, `while`, `until` and `!`, and inside backticks. `{ rm -rf ~; }`, `if true; then rm -rf ~; fi`, `while true; do rm -rf ~; done`, `! rm -rf ~` and ``echo `rm -rf ~` `` are blocked like `rm -rf ~`; the same commands on a project folder (`if true; then rm -rf ./build; fi`) are allowed.
 
+## Shapes the table does not show
+
+Three more shapes are blocked. The check reads each one the way the shell or the interpreter runs it.
+
+- **ANSI-C quoting.** Bash decodes the escapes inside `$'...'` before it runs the word. `$'\x72m' -rf $'\x7e'` runs as `rm -rf ~`, so the `rm_root_home` rule blocks it. `echo $'rm -rf ~'` only prints text and is allowed.
+- **Code given to an interpreter.** The check reads the code in `python3 -c`, `node -e`, `perl -e` and `ruby -e`, also behind `sudo` or `env`. These are blocked by `rm_root_home`: `python3 -c "import shutil; shutil.rmtree('/home/alice')"`, `sudo node -e "require('fs').rmSync('/home/alice', { recursive: true, force: true })"` and `ruby -e "require 'fileutils'; FileUtils.rm_rf('/usr')"`. These are allowed: `python3 -c "import shutil; shutil.rmtree('./build')"` and `node -e "console.log(1)"`.
+- **A PowerShell download piped to `Invoke-Expression` on the next line.** A line that starts with `| Invoke-Expression` continues the command on the line before it. So `Invoke-WebRequest https://example.com/install.ps1` followed by a new line `| Invoke-Expression` is read as one pipeline, and the `pipe_to_shell` rule blocks it. That rule is off by default: the agent hooks block this only when you turn it on. A call to `checkCommand` always applies all six rules. `iwr https://example.com/install.ps1 -OutFile install.ps1` is allowed.
+
 ## What it does not do
 
 The check reads command text only. These are **not** covered, and the check lets them through:
