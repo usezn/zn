@@ -349,6 +349,8 @@ for (const f of walk('plugins').filter((x) => x.endsWith('.md'))) {
 // pin the same zn-gate release, from the registry, with no inBundle entries.
 const npmPkgFile = PLUGIN + '/package.json';
 function npmrcTurnsScriptsOff(text) {
+  // npm skips lines it cannot parse (e.g. U+2028/U+2029 inside a line), so accept printable ASCII only.
+  if (/[^\t\n\r\x20-\x7e]/.test(text.replace(/^\uFEFF/, ''))) return false;
   const lines = text.split(/[\r\n]+/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#') && !l.startsWith(';'));
   return lines.length === 1 && /^ignore-scripts\s*=\s*true$/.test(lines[0]);
 }
