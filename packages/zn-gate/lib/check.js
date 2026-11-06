@@ -103,7 +103,7 @@ function pluginNodeProblem(st) {
 const AGENTS = [
   {
     id: 'claude-code', name: 'Claude Code', event: 'PreToolUse', tool: 'Read',
-    fix: 'install the zn-gate plugin: `claude plugin marketplace add usezn/zn`, then `claude plugin install zn-gate@usezn`',
+    fix: 'install the zn-gate plugin (needs internet): `claude plugin marketplace add usezn/zn`, then `claude plugin install zn-gate@usezn`',
     file: (a, o) => a.settingsFile(o), project: (dir) => path.join(dir, '.claude', 'settings.json'),
     request: (dir, file) => ({ hook_event_name: 'PreToolUse', session_id: 'zn-check', cwd: dir, tool_name: 'Read', tool_input: { file_path: file } }),
   },

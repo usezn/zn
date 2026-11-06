@@ -228,14 +228,21 @@ function withoutCompileCacheUse(rel, text) {
 // SHA-256 of the hook runner and then run those same bytes (VERIFY_JS). That text names the "module" built-in and
 // process.mainModule, but it is never loaded by the bundle: it runs in a separate Node.js process and loads only the
 // runner file it was given. It is allowed only when the whole statement is byte for byte the reviewed one; any change
-// to it changes this hash and the build refuses it again until the new text is reviewed.
+// to it changes this hash and the build refuses it again until the new text is reviewed. The statement splices
+// CHANGED_RC into the program text, so the program also depends on that constant: the file must declare it exactly
+// once as a plain integer (const CHANGED_RC = <digits>;), or the exception does not apply.
 const VERIFY_JS_FILE = /^lib\/agents\/launcher\.js$/;
 const VERIFY_JS_START = 'const VERIFY_JS = ';
 const VERIFY_JS_SHA256 = '7ea036036c345f46790337ce78cc46cbaeaac4a417cdcd35b62e096ce07cca10';
 
+const CHANGED_RC_DECL = /(?:^|\n)const CHANGED_RC = \d{1,3};\n/g;
+const CHANGED_RC_ANY = /\bCHANGED_RC\s*=(?!=)/g;
+
 /** For lib/agents/launcher.js only: the text without the reviewed VERIFY_JS statement (unchanged otherwise). */
 function withoutVerifyJs(rel, text) {
   if (!VERIFY_JS_FILE.test(rel)) return text;
+  // the program text includes CHANGED_RC: one plain integer declaration and no other assignment to it
+  if ((text.match(CHANGED_RC_DECL) || []).length !== 1 || (text.match(CHANGED_RC_ANY) || []).length !== 1) return text;
   const start = text.indexOf(VERIFY_JS_START);
   if (start < 0 || text.indexOf(VERIFY_JS_START, start + 1) >= 0) return text;
   const end = text.indexOf('";\n', start);
@@ -296,7 +303,9 @@ function dynamicImports(rel, text, problems) {
     else problems.push(rel + ': import() with a computed name cannot be checked');
   }
   if (UNCHECKABLE.test(withoutVerifyJs(rel, withoutCompileCacheUse(rel, text)))) {
-    problems.push(rel + ': uses createRequire, import.meta.resolve, process.mainModule or the "module" built-in, which cannot be checked');
+    // A tarball packed from a CRLF checkout has CRLF line ends, so the reviewed statement never matches its hash.
+    const crlf = VERIFY_JS_FILE.test(rel) && text.includes('\r\n') ? ' (this file has CRLF line ends: pack the release from an LF checkout)' : '';
+    problems.push(rel + ': uses createRequire, import.meta.resolve, process.mainModule or the "module" built-in, which cannot be checked' + crlf);
   }
   return out;
 }
