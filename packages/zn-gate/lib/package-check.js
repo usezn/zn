@@ -187,6 +187,16 @@ const CONFIG_WRITE_RES = [
 ];
 const REGISTRY_KEY_RE = /registry|index-url|index_url|find-links|npmregistryserver|userconfig|globalconfig|extra-index|--index\b/i;
 const PIP_INDEX_FLAG_RE = /^(?:--index-url|--extra-index-url|--index|--default-index|--find-links|-f|-i)(?:=|$)/;
+const CONFIG_FILE_RE = new RegExp(CONFIG_FILE + '(?![A-Za-z0-9_.-])', 'i');
+
+/*
+ * True when the raw command line (before any split into segments) names a registry variable, a registry key or flag
+ * (REGISTRY_KEY_RE covers --registry, --index-url, --extra-index-url, config keys), or a registry settings file, in any
+ * position and in any quoting. Used to fail closed: a mention anywhere makes every install in the line private.
+ */
+function rawMentionsRegistry(text) {
+  return REGISTRY_NAME_RE.test(text) || REGISTRY_KEY_RE.test(text) || CONFIG_FILE_RE.test(text);
+}
 
 /* True when one segment sets a registry variable the Windows / PowerShell way. Whitespace, quotes and case tolerant. */
 function winSetsRegistry(seg) {
@@ -250,13 +260,14 @@ function setsRegistry(command, depth = 0) {
 
 /*
  * The installs by name in a command: [{ eco: 'npm' | 'pypi', name, raw, legacyCase, registry }].
- * `registry` is true when the same command names another registry (--registry, --index-url ...).
+ * `registry` is true when the same command names another registry (--registry, --index-url ...), and for every install
+ * of a line that mentions a registry variable, key, flag or settings file anywhere (rawMentionsRegistry).
  */
 function installsOf(command, depth = 0) {
   const text = String(command == null ? '' : command);
   if (!text || text.length > MAX_CHARS || depth > 2) return [];
   const found = [];
-  const wholeCommand = setsRegistry(text, depth);
+  const wholeCommand = setsRegistry(text, depth) || rawMentionsRegistry(text);
   for (const seg of segmentsOf(text)) {
     const un = unwrap(seg);
     const words = un.words;

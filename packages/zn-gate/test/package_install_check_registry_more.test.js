@@ -96,17 +96,12 @@ test('online: none of the private forms makes a request', async () => {
 
 const PUBLIC = [
   'echo hello > notes.txt && npm i lodash',
-  'npm config get registry && npm i lodash',
   'npm set loglevel silent && npm i lodash',
   'setx FOO bar && pip install requests',
   'Set-Item env:FOO x; pip install requests',
   'printf x > readme.md && pip install requests',
-  'cat .npmrc && npm i lodash',
-  'grep registry .npmrc && npm i lodash',
   '$env:FOO = "x"; pip install requests',
   '[Environment]::SetEnvironmentVariable("FOO", "x"); pip install requests',
-  'echo $env:PIP_INDEX_URL; pip install requests',
-  'cat pip.conf | head && pip install requests',
 ];
 
 for (const cmd of PUBLIC) {
@@ -114,5 +109,22 @@ for (const cmd of PUBLIC) {
     const r = regOf(cmd);
     assert.ok(r.length >= 1);
     assert.ok(r.every((x) => x === false), 'registry stays false');
+  });
+}
+
+// Round 6: a mention of a registry variable, key or settings file anywhere in the line makes every install of it private,
+// reads included (fail closed).
+const MENTIONS = [
+  'npm config get registry && npm i lodash',
+  'cat .npmrc && npm i lodash',
+  'grep registry .npmrc && npm i lodash',
+  'echo $env:PIP_INDEX_URL; pip install requests',
+  'cat pip.conf | head && pip install requests',
+];
+
+for (const cmd of MENTIONS) {
+  test('round 6: a mention makes it private: ' + JSON.stringify(cmd), () => {
+    const r = regOf(cmd);
+    assert.ok(r.length >= 1 && r.every(Boolean), JSON.stringify(r));
   });
 }

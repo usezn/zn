@@ -44,11 +44,15 @@ for (const cmd of PRIVATE) {
   });
 }
 
-test('an empty or unrelated inline variable does not mark the install', () => {
-  assert.deepEqual(regOf('PIP_INDEX_URL= pip install requests'), [false]);
+test('an unrelated inline variable does not mark the install', () => {
   assert.deepEqual(regOf('FOO=bar pip install requests'), [false]);
   assert.deepEqual(regOf('env FOO=bar npm i lodash'), [false]);
-  assert.deepEqual(regOf('PIP_INDEX_URL=https://pypi.corp.example.invalid/simple echo hi && pip install requests'), [false]);
+});
+
+// Round 6: an empty registry variable, or one set in front of another command, marks every install of the line.
+test('round 6: an empty or other-command registry variable marks the whole line', () => {
+  assert.deepEqual(regOf('PIP_INDEX_URL= pip install requests'), [true]);
+  assert.deepEqual(regOf('PIP_INDEX_URL=https://pypi.corp.example.invalid/simple echo hi && pip install requests'), [true]);
 });
 
 test('online: a command with an inline registry variable sends no name to the public registry', async () => {

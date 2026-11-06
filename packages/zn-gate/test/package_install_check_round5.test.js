@@ -36,9 +36,16 @@ for (const cmd of SETTERS) {
   });
 }
 
+// Round 6: a mention of a settings file or of the word "registry" anywhere in the line is private (no longer public).
+const PRIVATE_ROUND6_NOW = ['cat .npmrc && npm i left-pad', 'grep registry .npmrc && npm i left-pad'];
+for (const cmd of PRIVATE_ROUND6_NOW) {
+  test(`round 5 -> round 6: a mention makes it private -> ${JSON.stringify(cmd)}`, () => {
+    const r = regOf(cmd);
+    assert.ok(r.length >= 1 && r.every(Boolean), JSON.stringify(r));
+  });
+}
+
 for (const cmd of [
-  'cat .npmrc && npm i left-pad',
-  'grep registry .npmrc && npm i left-pad',
   'echo hello > notes.txt && npm i left-pad',
   'echo hello >| notes.txt && npm i left-pad',
   '{ echo hi; npm i left-pad; }',

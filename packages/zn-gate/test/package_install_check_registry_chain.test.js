@@ -59,11 +59,8 @@ test('mixed command: both installs are private when one segment exports a regist
 const PUBLIC = [
   'export FOO=1 && pip install requests',
   'FOO=1; pip install requests',
-  'npm config get registry && npm i lodash',
   'pip config list && pip install requests',
   'npm config set loglevel warn && npm i lodash',
-  `PIP_INDEX_URL=${P} echo hi && pip install requests`,
-  'export PIP_INDEX_URL= && pip install requests',
 ];
 
 for (const cmd of PUBLIC) {
@@ -71,6 +68,18 @@ for (const cmd of PUBLIC) {
     const r = regOf(cmd);
     assert.ok(r.length >= 1);
     assert.ok(r.every((x) => x === false), 'registry stays false');
+  });
+}
+
+// Round 6: a registry variable (even empty) or key anywhere in the line makes every install of the line private.
+for (const cmd of [
+  'npm config get registry && npm i lodash',
+  `PIP_INDEX_URL=${P} echo hi && pip install requests`,
+  'export PIP_INDEX_URL= && pip install requests',
+]) {
+  test('round 6: a mention makes it private: ' + JSON.stringify(cmd), () => {
+    const r = regOf(cmd);
+    assert.ok(r.length >= 1 && r.every(Boolean), JSON.stringify(r));
   });
 }
 
