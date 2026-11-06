@@ -343,10 +343,10 @@ jobs:
           persist-credentials: false
       - name: Scan AI agent prompts and tools
         # Pin the action to a full commit SHA; the comment names the release.
-        uses: usezn/zn@<ACTION_SHA_1_15_0> # v1.15.0
+        uses: usezn/zn@84f85b2ed5bd938d823bc2521d48044eddb2ad84 # v1.15.0
         with:
           version: '1.15.0'
-          package-sha256: '<PYPI_WHEEL_SHA256_1_15_0>'
+          package-sha256: '18733cfed66c80ee8114d3d3be5809cc74346dbaac42403c51c137fbc8c1d5fd'
           path: '.'
           fail-on-threat: 'true'
           format: 'github'
@@ -378,7 +378,7 @@ jobs:
         id: zn
         # Pin to the full commit SHA of an Action release v1.10.0 or later.
         # The zn-gate package version is set by version below.
-        uses: usezn/zn@<ACTION_SHA_1_15_0> # v1.15.0
+        uses: usezn/zn@84f85b2ed5bd938d823bc2521d48044eddb2ad84 # v1.15.0
         with:
           version: '1.15.0'
           mode: 'both'
