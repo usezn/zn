@@ -20,9 +20,11 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Recipes](recipes.md) | Ten short step-by-step recipes: install, check, protect a project, connect, report, upgrade, uninstall | Everyone |
 | [Troubleshooting](troubleshooting.md) | The messages people meet first, and what to do for each | Everyone |
 | [Glossary](glossary.md) | Short meanings of words used in these docs | Newcomers |
+| [FAQ: update and remove zn-gate](faq.md) | Short answers to common questions about updating and removing zn-gate | Everyone |
 | [Upgrading](upgrading.md) | What to do when you update zn-gate | Everyone |
 | [Remove zn-gate](uninstall.md) | Uninstall in one step or piece by piece, run from your own terminal | Everyone |
 | [First project walkthrough](examples/first-project-walkthrough.md) | One example project from install to uninstall, with fake values | Newcomers |
+| [Install matrix](install-matrix.md) | Install methods by operating system, with the command that verifies each one | Everyone |
 | [Command line reference](cli.md) | Every command, option and exit code | Everyone |
 | [Exit codes](exit-codes.md) | The exit code of every command, on one page | Everyone |
 | [Command cheat sheet](commands-cheatsheet.md) | Every command, its main flags and one example, on one page | Everyone |
@@ -42,9 +44,27 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Example: cloud check settings](examples/cloud-check-settings.md) | Each cloud check setting with its effect, one fake command and what leaves the machine | Anyone who opts in |
 | [Audit](audit.md) | Review a repository's agent configuration before you open it | Developers, reviewers |
 | [Connect](connect.md) | Turn on the optional cloud check, and turn it off | Anyone who opts in |
+| [Files and folders](files-and-folders.md) | The files and folders that zn-gate reads or writes, such as the `.zn` folder | Everyone |
 | [Agent compatibility](compat.md) | What the scrubber can do in each agent | Everyone choosing or configuring an agent |
 | [Editors and coding agents](editors/README.md) | Protection level and two-minute setup per editor | Editor users |
 | [Install, verify and uninstall by agent](by-agent.md) | The steps for each supported agent on one page | Editor users |
+
+## Worked examples
+
+More short walk-throughs in [examples/](examples/), all with fake values:
+
+- [After an upgrade](examples/after-an-upgrade.md): five commands to run after you update zn-gate.
+- [Check output explained](examples/check-output-explained.md): a sample `check` output, line by line.
+- [Init and uninstall](examples/init-and-uninstall.md): set up zn-gate, preview, then remove it.
+- [Offline and local only](examples/offline-and-local-only.md): use zn-gate with no network and with the cloud check off.
+- [Python API](examples/python-api.md): five short examples of the Python package.
+- [Reach report file](examples/reach-report-file.md): write the reach report to a file in CI.
+- [Scripting](examples/scripting.md): exit codes and JSON output in a shell script and a CI job.
+- [Uninstall one agent](examples/uninstall-one-agent.md): remove zn-gate from one agent and keep the others.
+- [Unix first run](examples/unix-first-run.md): the first ten minutes on macOS or Linux with a version-manager Node.js.
+- [Upgrade checklist](examples/upgrade-checklist.md): a one-screen version of the upgrade steps.
+- [Windows checklist](examples/windows-checklist.md): install and check zn-gate on Windows.
+- [Zed and JetBrains](examples/zed-and-jetbrains.md): connect, check and remove zn-gate in Zed and JetBrains.
 
 ## Teams and CI
 

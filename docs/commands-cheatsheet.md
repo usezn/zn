@@ -24,6 +24,7 @@ One page with every `zn-gate` command, its most useful flags and one example. Ev
 | [`reach`](cli.md#reach) | `--json`, `--sarif`, `--fail-on`, `--remember` | `zn-gate reach . --fail-on high` |
 | [`analyze`](cli.md#analyze) | none | `zn-gate analyze "Summarize this file"` |
 | [`pins`](cli.md#pins) | `approve <server>`, `approve --all` | `zn-gate pins` |
+| [`pins approve`](cli.md#pins-approve) | `--all` | `zn-gate pins approve --all` |
 
 ## Secrets and the vault
 
@@ -73,6 +74,9 @@ Commands that add, change or remove a value need an interactive terminal. A valu
 | [`evidence`](cli.md#evidence) | `--verify`, `--ui`, `--port`, `--export`, `--format`, `--output`, `--tail` | `zn-gate evidence --verify` |
 | [`stats`](cli.md#stats) | `--days`, `--json` | `zn-gate stats --days 30` |
 | [`stats share`](cli.md#stats-share) | `on`, `off`, `status`, `show` | `zn-gate stats share status` |
+| [`stats share on`](cli.md#stats-share-on) | none | `zn-gate stats share on` |
+| [`stats share off`](cli.md#stats-share-off) | none | `zn-gate stats share off` |
+| [`stats share show`](cli.md#stats-share-show) | none | `zn-gate stats share show` |
 | [`report`](cli.md#report) | `--since`, `--json`, `--no-team-line` | `zn-gate report --since 7d` |
 
 ## zn Team

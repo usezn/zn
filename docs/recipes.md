@@ -1,6 +1,6 @@
 # Recipes
 
-Ten short recipes for the common jobs. Each one lists the steps and links to the full page. Run every command in your own terminal, not through an AI agent: several of them refuse to run under an agent. Every command is described in the [command line reference](cli.md).
+Eleven short recipes for the common jobs. Each one lists the steps and links to the full page. Run every command in your own terminal, not through an AI agent: several of them refuse to run under an agent. Every command is described in the [command line reference](cli.md).
 
 | Recipe | Main command | Own terminal needed | A file changes |
 | --- | --- | --- | --- |
@@ -101,3 +101,12 @@ Full page: [Upgrading](upgrading.md).
 3. Run `npm uninstall -g zn-gate` to remove the program itself.
 
 Full page: [Remove zn-gate](uninstall.md).
+
+## 11. Pin an MCP server
+
+1. Run `zn-gate pins` to list the MCP servers that `shield` has pinned and any tools that changed.
+2. Read the changed or new tools of each server before you accept them.
+3. In your own terminal, approve one server by name, for example `SERVER='docs-server'` and then `zn-gate pins approve "$SERVER"`. Use `zn-gate pins approve --all` to accept every server.
+4. Type the server key again when it asks. The command refuses to run under an AI agent or without a terminal, and exits `2` if the approval is not confirmed.
+
+Full page: [Protect MCP servers](shield.md#tool-pinning), and [`pins`](cli.md#pins) in the reference.

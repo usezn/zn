@@ -4,6 +4,12 @@ For each supported editor, this page lists the files zn-gate writes and what to 
 
 `~` is your user folder, for example `C:\Users\you` on Windows. Before it changes a settings file, zn-gate saves a copy next to it, so you can also put that copy back (changes you made to the file since are lost).
 
+## Before you start
+
+1. Close the editor, so it does not work with the file while you change it.
+2. Make a copy of the file you are about to edit. zn-gate already saves a copy next to a settings file it changed, but a copy of your own keeps the file as it is now.
+3. Note the folder the file is in (for example `~/.cursor/` or `.cursor/` in the project), so you can find it again and the saved copy next to it.
+
 ## Editors where zn-gate installs hooks
 
 ### Cursor

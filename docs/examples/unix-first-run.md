@@ -51,3 +51,19 @@ A short walk-through for macOS or Linux when Node.js came from a version manager
 9. If you are stuck, ask in [Discussions](https://github.com/usezn/zn/discussions). Give your zn-gate version (`zn-gate --version`), your operating system and the message, and leave out any secret.
 
 To remove zn-gate, see [Remove zn-gate](../uninstall.md).
+
+## What each step creates
+
+This table uses only [Files and folders zn-gate reads or writes](../files-and-folders.md). "Not listed" means that page names no file or folder for the step.
+
+| Step | File or folder it creates |
+| --- | --- |
+| 1. Check your Node.js version | Not listed. |
+| 2. Update Node.js | Not listed. |
+| 3. Install zn-gate with `init` | Not listed for plain `init`. With `--wrap-mcp`, `init` saves a copy of each MCP config first. |
+| 4. Fix `EACCES` | Not listed. |
+| 5. `check` | Not listed. |
+| 6. Fix the Node.js version for Claude Code | Not listed. |
+| 7. `status` and `test` | Not listed. |
+| 8. `env shadow .env` | The values move into the vault in the `.zn` folder (`~/.zn`), markers stay in `.env`, and an encrypted copy of the original is made. The command prints its name. |
+| 9. Ask in Discussions | Not listed. |

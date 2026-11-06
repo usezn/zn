@@ -130,6 +130,11 @@ Run `zn hooks uninstall copilot` (add `--project` if you installed it in a proje
 
 All messages: [Troubleshooting](../troubleshooting.md).
 
+## Related pages
+
+- [Install, verify and uninstall by agent](../by-agent.md): the short steps for each agent.
+- [Troubleshooting](../troubleshooting.md): all messages and how to fix them.
+
 ## VS Code documentation
 
 - MCP servers in VS Code: <https://code.visualstudio.com/docs/copilot/customization/mcp-servers>

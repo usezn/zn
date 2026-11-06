@@ -2,6 +2,8 @@
 
 You use an AI coding agent (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, or the experimental Gemini CLI) and you do not write code yourself, or not much. This page takes you from nothing to "zn-gate is on and I saw it work", then tells you what its messages mean and how to remove it. No account and no API key are needed. Everything runs on your machine.
 
+On this page: [Before you start](#before-you-start) · [1. Install](#1-install) · [2. Check that it worked](#2-check-that-it-worked) · [3. What you will see while you work](#3-what-you-will-see-while-you-work) · [If something fails](#if-something-fails) · [Where to go next](#where-to-go-next)
+
 ## Before you start
 
 > **Checklist**
