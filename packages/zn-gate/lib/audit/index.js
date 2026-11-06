@@ -1913,9 +1913,9 @@ function baselineFindings(root, home, out) {
   const add = (key, severity, verb) => {
     const file = key.slice(0, key.indexOf('#'));
     out.push({
-      id: 'ZNA022', severity, agent: 'any', file, line: 1, title: BY_ID.ZNA022.title,
+      id: 'ZNA023', severity, agent: 'any', file, line: 1, title: BY_ID.ZNA023.title,
       detail: redact('The entry ' + key.slice(key.indexOf('#') + 1) + ' in ' + file + ' was ' + verb + ' since you approved this project.'),
-      evidence: redact(key), fix: BY_ID.ZNA022.fix, references: [], _readers: AGENTS,
+      evidence: redact(key), fix: BY_ID.ZNA023.fix, references: [], _readers: AGENTS,
     });
   };
   for (const k of d.changed) add(k, 'high', 'changed');

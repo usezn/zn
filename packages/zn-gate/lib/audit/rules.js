@@ -170,7 +170,7 @@ const RULES = [
     references: [],
   },
   {
-    id: 'ZNA022', severity: 'high', name: 'config-changed-since-approved',
+    id: 'ZNA023', severity: 'high', name: 'config-changed-since-approved',
     title: 'Executable agent configuration changed since you approved it',
     help: 'An MCP server, hook, endpoint override, permission list or install script differs from the version recorded by `zn audit --approve`. Only entry names are compared and reported; values are never printed. A removed hook, permission or setting is reported as medium, any other removed entry as low. A file that can no longer be read (too large, not valid, a link that leaves the project) counts as a change.',
     fix: 'Review the changed entry (git diff shows what changed). If the change is yours, run `zn audit --approve` again to record it.',

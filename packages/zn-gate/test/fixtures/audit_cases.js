@@ -280,8 +280,8 @@ const RULE_CASES = [
     name: 'a command changed after the project was approved is reported by entry name only',
     files: { '.mcp.json': JSON.stringify({ mcpServers: { tools: { command: 'node', args: ['server.js'] } } }) },
     approvedThen: { '.mcp.json': JSON.stringify({ mcpServers: { tools: { command: 'node', args: ['other-server.js'] } } }) },
-    expect: [{ id: 'ZNA022', severity: 'high', file: '.mcp.json' }],
-    count: { ZNA022: 1 },
+    expect: [{ id: 'ZNA023', severity: 'high', file: '.mcp.json' }],
+    count: { ZNA023: 1 },
   },
 ];
 
