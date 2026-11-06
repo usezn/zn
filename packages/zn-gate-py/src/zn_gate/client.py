@@ -12,7 +12,10 @@ arguments (guard, integrations, sanitize_tool_result) are always local.
 from __future__ import annotations
 
 import json
+import http.client
 import os
+import socket
+import threading
 import urllib.request
 import urllib.error
 from typing import Any, Dict, Optional, cast
@@ -22,6 +25,81 @@ from . import __version__
 from .verbose import is_verbose
 
 DEFAULT_ENDPOINT = "https://api.usezn.com/v30/analyze"
+
+
+# The stdlib's own "no timeout given" marker; typeshed does not declare it.
+_DEFAULT_TIMEOUT: Any = socket.__dict__["_GLOBAL_DEFAULT_TIMEOUT"]
+
+
+def _bounded_getaddrinfo(host: Any, port: Any, timeout: Optional[float]) -> Any:
+    """socket.getaddrinfo that gives up after `timeout` seconds.
+
+    getaddrinfo cannot be cancelled and can take about 20 s on a network that silently drops traffic, whatever the
+    request timeout says. It runs in a daemon thread, so a lookup still pending never keeps the interpreter alive.
+    The system resolver is still what answers: /etc/hosts and split-DNS keep working.
+    """
+    box: Dict[str, Any] = {}
+
+    def work() -> None:
+        try:
+            box["result"] = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+        except BaseException as exc:  # handed to the caller below
+            box["error"] = exc
+
+    worker = threading.Thread(target=work, name="zn-gate-dns", daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        raise TimeoutError("timed out resolving %s" % (host,))
+    if "error" in box:
+        raise cast(BaseException, box["error"])
+    return box["result"]
+
+
+def _create_connection(address: Any, timeout: Any = _DEFAULT_TIMEOUT, source_address: Any = None) -> socket.socket:
+    """socket.create_connection with a bounded name lookup (same signature)."""
+    host, port = address
+    wait = None if timeout is _DEFAULT_TIMEOUT else timeout
+    last: Optional[OSError] = None
+    for family, kind, proto, _canon, sockaddr in _bounded_getaddrinfo(host, port, wait):
+        sock = None
+        try:
+            sock = socket.socket(family, kind, proto)
+            if timeout is not _DEFAULT_TIMEOUT:
+                sock.settimeout(timeout)
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(sockaddr)
+            return sock
+        except OSError as exc:
+            last = exc
+            if sock is not None:
+                sock.close()
+    raise last or OSError("getaddrinfo returns an empty list")
+
+
+class _BoundedHTTPSConnection(http.client.HTTPSConnection):
+    # http.client opens the socket through this attribute, then does TLS with the host name (SNI and the
+    # certificate check) and sends it as the Host header, so connecting to a resolved address is safe.
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._create_connection = _create_connection
+
+
+class _BoundedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req: Any) -> Any:
+        return self.do_open(_BoundedHTTPSConnection, req, context=getattr(self, "_context", None))
+
+
+_OPENER: Optional[urllib.request.OpenerDirector] = None
+
+
+def _open(req: Any, timeout: Optional[float] = None) -> Any:
+    """urlopen with the proxy settings of the environment and a name lookup that ends within `timeout`."""
+    global _OPENER
+    if _OPENER is None:
+        _OPENER = urllib.request.build_opener(_BoundedHTTPSHandler)
+    return _OPENER.open(req, timeout=timeout)
 
 
 def resolve_endpoint(options: Optional[Dict[str, Any]] = None) -> str:
@@ -103,7 +181,7 @@ def analyze_cloud(
         "User-Agent": f"zn-gate/{__version__} (python-stdlib-client)",
     }
     req = urllib.request.Request(endpoint, data=payload, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with _open(req, timeout=timeout) as resp:
         raw = resp.read().decode("utf-8")
         parsed: Dict[str, Any] = _cloud_verdict(json.loads(raw))
         parsed["engine"] = "cloud-v30" if "/v30" in endpoint else "cloud-prod"

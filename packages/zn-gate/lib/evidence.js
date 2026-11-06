@@ -28,8 +28,19 @@ function ensureZnDir(filePath = EVIDENCE_FILE) {
  * the open descriptor before the line is written (POSIX only), so a symlink
  * swapped in between cannot redirect the chmod.
  */
+// True when the file is not empty and its last byte is not a newline, e.g. an editor or a cut-off
+// write left the last record without its line break. The caller holds the write lock.
+function lastByteIsNotNewline(fd) {
+  const size = fs.fstatSync(fd).size;
+  if (size === 0) return false;
+  const last = Buffer.alloc(1);
+  fs.readSync(fd, last, 0, 1, size - 1);
+  return last[0] !== 0x0a;
+}
+
 function appendLedgerLine(filePath, line) {
-  const fd = fs.openSync(filePath, 'a', LEDGER_FILE_MODE);
+  // 'a+' (append and read) so the last byte can be checked; every write still goes to the end.
+  const fd = fs.openSync(filePath, 'a+', LEDGER_FILE_MODE);
   try {
     if (process.platform !== 'win32') {
       try {
@@ -38,6 +49,9 @@ function appendLedgerLine(filePath, line) {
         // Best effort: a file system without POSIX modes keeps its own.
       }
     }
+    // Without this, a record appended to a ledger that lacks its final newline would join the
+    // previous line and verify would report Malformed JSON.
+    if (lastByteIsNotNewline(fd)) fs.writeSync(fd, '\n', null, 'utf8');
     fs.writeSync(fd, line, null, 'utf8');
   } finally {
     fs.closeSync(fd);
@@ -109,11 +123,19 @@ function breakStaleLock(lockPath, token) {
   let fd;
   try {
     fd = fs.openSync(mutex, 'wx', LEDGER_FILE_MODE);
-    try { fs.writeSync(fd, token); } catch { /* best effort: without it the mutex is never released by us */ }
   } catch {
     // Another breaker is working. A mutex left by a dead process is removed after a while.
     reclaimStaleMutex(mutex, token);
     return false;
+  }
+  try {
+    fs.writeSync(fd, token);
+  } catch (e) {
+    // Without the token this process cannot release the mutex. The mutex is ours (just created
+    // with 'wx'), so remove it and report the error instead of leaving an empty mutex behind.
+    try { fs.closeSync(fd); } catch { /* best effort */ }
+    try { fs.unlinkSync(mutex); } catch { /* best effort */ }
+    throw e;
   }
   try {
     try { fs.closeSync(fd); } catch { /* best effort */ }
@@ -245,13 +267,48 @@ function releaseLock(lockPath, token) {
 }
 
 // Canonical serialization of a record for hashing. Node writes UTF-8 as is; Python used to
-// escape non-ASCII as \uXXXX. Verification accepts both forms, so a log written by either
-// package (or by an older version) verifies in both. New records use the plain form.
-function canonical(record) {
-  return JSON.stringify(record);
+// escape non-ASCII as \uXXXX, and Python writes a small float such as 1e-05 where JavaScript
+// writes 0.00001. New records use the plain JavaScript form (the Python package writes the same
+// text); verification also accepts the ASCII-escaped form and the Python number form, so a log
+// written by either package (or by an older version) verifies in both.
+const CONF_MARK = '@@zn-confidence@@';
+
+// The text Python's repr gives for a finite non-integer float (what json.dumps writes).
+function pythonNumber(x) {
+  const [mant, expText] = x.toExponential().split('e');
+  const exp = Number(expText);
+  const neg = mant.startsWith('-');
+  const digits = mant.replace('-', '').replace('.', '');
+  let out;
+  if (exp >= -4 && exp < 16) {
+    if (exp < 0) out = '0.' + '0'.repeat(-exp - 1) + digits;
+    else if (digits.length <= exp + 1) out = digits + '0'.repeat(exp + 1 - digits.length);
+    else out = digits.slice(0, exp + 1) + '.' + digits.slice(exp + 1);
+  } else {
+    out = digits[0] + (digits.length > 1 ? '.' + digits.slice(1) : '') + 'e' + (exp < 0 ? '-' : '+') + String(Math.abs(exp)).padStart(2, '0');
+  }
+  return (neg ? '-' : '') + out;
 }
-function canonicalAscii(record) {
-  return JSON.stringify(record).replace(/[\u007f-￿]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+
+function serialize(record, { ascii = false, pyNumbers = false } = {}) {
+  let text;
+  if (pyNumbers && typeof record.confidence === 'number' && Number.isFinite(record.confidence) && !Number.isInteger(record.confidence)) {
+    text = JSON.stringify({ ...record, confidence: CONF_MARK }).replace('"' + CONF_MARK + '"', pythonNumber(record.confidence));
+  } else {
+    text = JSON.stringify(record);
+  }
+  return ascii ? text.replace(/[\u007f-￿]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')) : text;
+}
+function canonical(record) {
+  return serialize(record);
+}
+function canonicalForms(record) {
+  return [
+    serialize(record),
+    serialize(record, { ascii: true }),
+    serialize(record, { pyNumbers: true }),
+    serialize(record, { ascii: true, pyNumbers: true }),
+  ];
 }
 
 const HASH_RE = /^[0-9a-f]{64}$/;
@@ -462,7 +519,11 @@ function buildRecord(event, prevHash, plainPreview = false) {
   // Note: a payload with a lone surrogate hashes as U+FFFD here and as '?' in the Python package,
   // so payload_sha256 differs between the two for such text; record_hash and verification are
   // not affected.
-  const payloadStr = typeof event.payload === 'string' ? event.payload : JSON.stringify(event.payload || '');
+  // A missing or null payload is the empty string; any other non-string payload is its compact JSON
+  // (so 0 is "0" and false is "false"), as in the Python package.
+  const payloadStr = typeof event.payload === 'string'
+    ? event.payload
+    : (event.payload === undefined || event.payload === null ? '' : JSON.stringify(event.payload));
   const payloadSha256 = crypto.createHash('sha256').update(payloadStr).digest('hex');
 
   const baseRecord = {
@@ -481,8 +542,9 @@ function buildRecord(event, prevHash, plainPreview = false) {
     verdict: event.verdict || 'allow',
     rule: event.rule || null,
     reason: event.reason || null,
-    confidence: event.confidence || 1.0,
-    latency_us: event.latency_us || 0,
+    // A confidence of 0 is kept as 0; only a missing or non-numeric one defaults to 1.
+    confidence: typeof event.confidence === 'number' && Number.isFinite(event.confidence) ? event.confidence : 1.0,
+    latency_us: typeof event.latency_us === 'number' && Number.isFinite(event.latency_us) ? Math.trunc(event.latency_us) : 0,
     engine: event.engine || 'oss-deterministic',
     prev_hash: prevHash,
   };
@@ -494,6 +556,42 @@ function buildRecord(event, prevHash, plainPreview = false) {
     .digest('hex');
 
   return { ...baseRecord, record_hash: recordHash };
+}
+
+// A last line that is not JSON counts as a write cut off by a crash or a full disk only if it is
+// the last line, the file does not end with a newline (every complete write does), and the line
+// starts like a written record. It is still reported as not verified (valid: false), but with
+// truncated_tail: true so the output can say so and explain how to continue. Anything else
+// (text with a trailing newline, an edited record, text that is not a record) stays a tamper report.
+const RECORD_START = '{"id":"ev_';
+function endsWithNewline(filePath) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const size = fs.fstatSync(fd).size;
+    if (size === 0) return true;
+    const b = Buffer.alloc(1);
+    fs.readSync(fd, b, 0, 1, size - 1);
+    return b[0] === 0x0a;
+  } catch {
+    return true;
+  } finally {
+    if (fd !== undefined) try { fs.closeSync(fd); } catch { /* ignore */ }
+  }
+}
+function isCutTail(filePath, line) {
+  return line.startsWith(RECORD_START) && !endsWithNewline(filePath);
+}
+const TRUNCATED_TAIL_MESSAGE = 'Last record is incomplete (the write was cut off, for example by a crash or a full disk)';
+function truncatedTailResult(total, index) {
+  return {
+    valid: false,
+    total,
+    verified: index,
+    broken_index: index,
+    error: `${TRUNCATED_TAIL_MESSAGE} at line ${index + 1}: the line is not valid JSON.`,
+    truncated_tail: true,
+  };
 }
 
 /**
@@ -524,6 +622,7 @@ function verifyEvidenceLedger(filePath = EVIDENCE_FILE) {
     try {
       rec = JSON.parse(lines[i]);
     } catch (e) {
+      if (i === lines.length - 1 && isCutTail(filePath, lines[i])) return truncatedTailResult(lines.length, i);
       return { valid: false, total: lines.length, verified: i, broken_index: i, error: `Malformed JSON at line ${i + 1}: ${e.message}` };
     }
     if (rec === null || typeof rec !== 'object' || Array.isArray(rec)) {
@@ -542,8 +641,9 @@ function verifyEvidenceLedger(filePath = EVIDENCE_FILE) {
 
     const { record_hash, ...baseRecord } = rec;
     const hashOf = (text) => crypto.createHash('sha256').update(expectedPrevHash + ':' + text).digest('hex');
-    // Records written by Python (or older versions) may have non-ASCII escaped: accept both forms.
-    if (hashOf(canonical(baseRecord)) !== record_hash && hashOf(canonicalAscii(baseRecord)) !== record_hash) {
+    // Records written by Python (or older versions) may have non-ASCII escaped or a small
+    // confidence written the Python way: accept every form.
+    if (!canonicalForms(baseRecord).some((text) => hashOf(text) === record_hash)) {
       return {
         valid: false,
         total: lines.length,
@@ -934,7 +1034,7 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
           badge.textContent = '● SHA-256 Chain Verified (Tamper-Free)';
         } else {
           badge.className = 'status-badge badge-invalid';
-          badge.textContent = '✖ TAMPER DETECTED at record ' + v.broken_index;
+          badge.textContent = v.truncated_tail ? '✖ LAST RECORD INCOMPLETE (not verified)' : '✖ TAMPER DETECTED at record ' + v.broken_index;
         }
 
         const tbody = document.getElementById('audit-table');

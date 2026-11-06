@@ -936,59 +936,13 @@ async function runReachCommand(rest) {
   return zr.failed(r, failOn) ? 1 : 0;
 }
 
-// Options of scan and analyze. Any other option that starts with "--" is refused with exit 2: it is named and
-// the options the command takes are listed. Everything after a bare "--" is positional text, and so is anything
-// that does not start with "--" (analyze text may start with "-").
-const CLOUD_VALUE_OPTIONS = ['--key', '--stage', '--url', '--long-input'];
-const CLOUD_FLAG_OPTIONS = ['--local-only', '--verbose'];
-const COMMAND_OPTIONS = {
-  scan: {
-    value: ['--format', '--include', '--exclude', ...CLOUD_VALUE_OPTIONS],
-    flag: ['--code', '--all', '--allow-partial', '--include-home', ...CLOUD_FLAG_OPTIONS],
-    listed: ['--format', '--include', '--exclude', '--code', '--all', '--allow-partial', '--include-home'],
-  },
-  analyze: {
-    value: CLOUD_VALUE_OPTIONS,
-    flag: CLOUD_FLAG_OPTIONS,
-    listed: CLOUD_VALUE_OPTIONS.concat(CLOUD_FLAG_OPTIONS),
-  },
-};
-
-// The problem with an option of scan or analyze, or null when every option is one the command takes.
-function optionProblem(command, args) {
-  const spec = COMMAND_OPTIONS[command];
-  for (let i = 1; i < args.length; i++) {
-    const tok = args[i];
-    if (tok === '--') break;
-    if (!tok.startsWith('--')) continue;
-    const name = tok.split('=')[0];
-    const shown = tok.replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
-    const takesValue = spec.value.includes(name);
-    if (!takesValue && !spec.flag.includes(name)) {
-      let msg = 'unknown option "' + shown + '". The options of zn-gate ' + command + ' are ' + spec.listed.join(', ') + '.';
-      if (command === 'analyze') msg += ' To analyze text that starts with "--", put "--" before it: zn-gate analyze -- "<text>".';
-      return msg;
-    }
-    if (tok !== name) {
-      return takesValue ? '"' + shown + '": give the value as the next argument, as ' + name + ' VALUE.' : name + ' takes no value.';
-    }
-    if (takesValue) i++;
-  }
-  return null;
-}
-
-// The folder that scan audits: the first argument that is not an option or an option's value; "." when none.
-function scanTargetOf(args) {
-  for (let i = 1; i < args.length; i++) {
-    if (args[i] === '--') return args[i + 1] || '.';
-    if (!args[i].startsWith('--')) return args[i];
-    if (COMMAND_OPTIONS.scan.value.includes(args[i])) i++;
-  }
-  return '.';
-}
+// Options of scan and analyze: parsing and the --opt=value form live in lib/cli-args.js.
+const { expandEqualsOptions, optionProblem, scanTargetOf } = require('../lib/cli-args');
 
 async function main() {
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
+  // scan and analyze accept --opt=value: it is split into --opt value before the parser reads the arguments.
+  const args = (rawArgs[0] === 'scan' || rawArgs[0] === 'analyze') ? expandEqualsOptions(rawArgs[0], rawArgs) : rawArgs;
   if (args[0] === 'audit') {
     await runAuditCommand(args.slice(1));
     return;
@@ -1201,14 +1155,25 @@ ${ruleLine(process.env, 60)}\n`);
 
     if (options.verify) {
       const verification = verifyEvidenceLedger();
+      let integrity;
+      if (verification.valid) {
+        integrity = sym(process.env, '✔', col.green) + col.green('ALL SHA-256 HASHES VERIFIED (IMMUTABLE)');
+      } else if (verification.truncated_tail) {
+        integrity = sym(process.env, '✖', col.red) + col.red('LAST RECORD INCOMPLETE (NOT VERIFIED)');
+      } else {
+        integrity = sym(process.env, '✖', col.red) + col.red('TAMPER DETECTED AT RECORD ' + verification.broken_index);
+      }
       process.stdout.write(`
 ${sym(process.env, '🔒')}Cryptographic Evidence Ledger Verification:
   Ledger Path   : ${EVIDENCE_FILE}
   Total Records : ${verification.total}
-  Integrity     : ${verification.valid ? sym(process.env, '✔', col.green) + col.green('ALL SHA-256 HASHES VERIFIED (IMMUTABLE)') : sym(process.env, '✖', col.red) + col.red('TAMPER DETECTED AT RECORD ' + verification.broken_index)}
+  Integrity     : ${integrity}
 \n`);
       if (!verification.valid) {
-        process.stdout.write(`  Details: ${verification.error}\n  ${recoveryHint()}\n\n`);
+        const next = verification.truncated_tail
+          ? `The first ${verification.verified} records verified; the last line was cut off. ${recoveryHint()}`
+          : recoveryHint();
+        process.stdout.write(`  Details: ${verification.error}\n  ${next}\n\n`);
         process.exit(1);
       }
       return;
@@ -1309,7 +1274,7 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     const textArgs = dashAt !== -1 ? args.slice(dashAt + 1) : args.filter((a, idx) => {
       if (idx === 0) return false;
       if (a.startsWith('--')) return false;
-      if (idx > 0 && args[idx - 1].startsWith('--') && args[idx - 1] !== '--local-only' && args[idx - 1] !== '--verbose') return false;
+      if (idx > 0 && args[idx - 1].startsWith('--') && args[idx - 1] !== '--local-only' && args[idx - 1] !== '--verbose' && args[idx - 1] !== '--json') return false;
       return true;
     });
 
