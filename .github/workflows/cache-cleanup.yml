@@ -195,7 +195,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          # This job only lists on the daily schedule: it deletes only on a manual run with dry_run unchecked.
+          # This job only lists on the schedule: it deletes only on a manual run with dry_run unchecked.
           DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && !inputs.dry_run) && 'false' || 'true' }}
         run: |
           set -euo pipefail
