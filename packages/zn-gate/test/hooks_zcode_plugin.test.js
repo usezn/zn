@@ -312,12 +312,14 @@ test('the ZCode plugin hook, started as ZCode starts it, runs no planted sh or n
   const args = pre.args.map((a) => a.split('${ZCODE_PLUGIN_ROOT}').join(pluginRoot));
   const eventFor = (cwd) => JSON.stringify({ hook_event_name: 'PreToolUse', cwd, tool_name: 'Read', tool_input: { file_path: path.join(cwd, '.env') } });
   const paths = posix ? ['.:/usr/bin:/bin', ':/usr/bin:/bin'] : ['.;' + SYSPATH, ';' + SYSPATH];
-  // Each PATH entry has its own folder and planted programs. On POSIX the two hook starts overlap; on Windows each start is the
-  // system PowerShell, which is slow, and two at once each took longer than their 40 s on a busy runner, so there they run one after the other.
+  // Each PATH entry has its own folder and planted programs. On POSIX the two hook starts overlap. On Windows each start is the system PowerShell
+  // and they run one after the other with spawnSync, as they did before they were made asynchronous: the asynchronous start timed out there
+  // (40 s each) in every CI run, while the synchronous one finished.
   const start = (PATH) => {
     const { cwd, marker } = plantPrograms(t);
     // ZCode gives the hook the plugin folder in ZCODE_PLUGIN_ROOT (the Windows entry reads its script there).
     const env = posix ? { PATH, HOME: cwd } : { PATH, SystemRoot: process.env.SystemRoot, USERPROFILE: cwd, ZCODE_PLUGIN_ROOT: pluginRoot };
+    if (!posix) return Promise.resolve({ PATH, marker, r: spawnSync(pre.command, args, { cwd, input: eventFor(cwd), encoding: 'utf8', env, timeout: 40000, windowsHide: true }) });
     return spawnAsync(pre.command, args, { cwd, env, input: eventFor(cwd), timeout: 40000 }).then((r) => ({ PATH, marker, r }));
   };
   const results = [];

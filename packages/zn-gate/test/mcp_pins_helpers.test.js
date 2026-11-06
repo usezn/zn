@@ -33,12 +33,13 @@ const A = { name: 'alpha', description: 'First tool.' };
 const B = { name: 'beta', description: 'Second tool.' };
 
 test('a command with arguments: flags and missing paths stay, an existing file is made absolute', (t) => {
+  const prev = process.cwd();
+  // Registered before the folder is made: an after-hook that goes back out of it must run before the one that removes it (Windows: EBUSY).
+  t.after(() => process.chdir(prev));
   const dir = tempDir(t, 'zn-pins-helpers-');
   const script = path.join(dir, 'server.js');
   fs.writeFileSync(script, '// fake server\n');
-  const prev = process.cwd();
   process.chdir(dir);
-  t.after(() => process.chdir(prev));
   assert.strictEqual(
     pins.serverKey('node', ['server.js', '--port', '9000', 'missing.js']),
     keyOf(['node', script, '--port', '9000', 'missing.js'])
