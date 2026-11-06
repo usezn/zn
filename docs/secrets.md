@@ -77,6 +77,13 @@ replaced with tokens. Reads of `.env` files with real values, credential files
 (`~/.aws/credentials`, `~/.ssh/id_*`, `~/.npmrc`…) and zn's own `~/.zn` are
 blocked.
 
+Template files named `.env.example`, `.env.sample` or `.env.template` (also with a
+middle part, such as `.env.local.example`) can be read, because they are meant to
+hold placeholders. Any other name, such as `.env.example.bak`, `.env.examplex` or
+`.env.local`, stays blocked. zn judges these commands by the file name; it does not
+open the file, and it does not follow a symbolic link. Keep real values out of
+template files.
+
 ### Name, address and username
 
 Besides checksummed personal data (cards, IBAN, national IDs, e-mail, phone), the
@@ -269,6 +276,35 @@ are. The key id used in AWS documentation (it ends in `EXAMPLE`) is
 redacted too, for every prefix (`AKIA`, `ASIA`, `ABIA`, `ACCA`). A real key id
 is never skipped because of how it ends, and redacting a documentation
 example costs nothing.
+
+## Egress allowlist for `zn run`
+
+Off by default. `zn run --egress-allow HOST[:PORT],... -- <command>` starts a
+proxy on `127.0.0.1` (random port) for the command's lifetime and sets
+`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` (and lowercase forms) to it, with
+`NODE_USE_ENV_PROXY=1`. `NO_PROXY` is removed, so the command cannot route
+around the proxy with it. The proxy opens CONNECT tunnels and `http://`
+requests only to the listed hosts. Other requests get 403 before any DNS
+lookup, and zn logs the refused host and port (never the body or headers).
+
+- An entry is an exact host name or IP address. `api.example.com` does not
+  allow `x.api.example.com` or `localhost`. An entry without a port
+  allows every port of that host (so `github.com` also allows port 22); use
+  `host:443` to allow only that port.
+- It covers programs that read the proxy variables themselves (curl, gh,
+  Python requests and urllib, axios). In Node it covers only versions that
+  honour `NODE_USE_ENV_PROXY` (in our tests, 22.21 and later 22.x, and 24.5 and
+  later; see `node --help` for `--use-env-proxy`). The `fetch` and `http`
+  of an older Node, and SDKs built on a `fetch` without proxy support, ignore
+  the variables and connect directly: they are not covered.
+- An allowed name is trusted to resolve where it should: the proxy does not
+  filter the address a listed name resolves to. CONNECT tunnels carry the
+  client's own TLS server name and cannot be inspected.
+- `--egress-allow` is not the `hooks.egressAllowHosts` setting, which lists
+  hosts exempt from the personal-data check of the egress hook.
+- It does not cover programs that ignore the variables, raw sockets, DNS
+  lookups made by the program itself, or a command that unsets the variables.
+  It is a guard for well-behaved tools, not a sandbox.
 
 ## Useful commands
 
