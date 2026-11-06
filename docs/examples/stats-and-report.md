@@ -4,6 +4,16 @@ Worked examples of `zn-gate stats` and `zn-gate report`. All numbers, names and 
 
 Both commands read only counts kept on your computer. Nothing is sent.
 
+## Outputs at a glance
+
+| Output | Flag or setting | Section |
+| --- | --- | --- |
+| Weekly report | none (default period is 7 days) | [Weekly report](#weekly-report) |
+| Longer period | `--since 30d` | [A longer period](#a-longer-period) |
+| JSON | `--json` | [JSON for scripts](#json-for-scripts) |
+| No closing line | `--no-team-line` | [Leave out the closing line](#leave-out-the-closing-line) |
+| Nothing to show | none; counting off with `ZN_STATS=off` | [When there is nothing to show](#when-there-is-nothing-to-show) |
+
 ## Weekly report
 
 ```bash

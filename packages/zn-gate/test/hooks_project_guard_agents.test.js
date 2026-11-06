@@ -281,11 +281,14 @@ test('check: a bare `zn hook` in a project file is reported as not protected; th
     getAdapter(agent).install({ scope: 'project', projectDir: proj, home, env: { HOME: home }, mcp: false, managedDir: path.join(home, 'no-managed-policy'), command: 'zn hook ' + agent });
     const env = { HOME: home, PATH: process.env.PATH };
     const find = (res) => res.results ? res.results.find((x) => x.id === agent) : (Array.isArray(res) ? res.find((x) => x.id === agent) : null);
-    const bare = find(await check({ home, env, cwd: proj }));
+    // Both answers come from the hook commands in the settings files, which are read without starting any hook. A live
+    // check starts the hook of every installed agent (slow on Windows) and gives the same answers, so only claude-code runs live here.
+    const live = agent === 'claude-code';
+    const bare = find(await check({ home, env, cwd: proj, live }));
     assert.equal(bare.state, 'not-protected', agent);
     assert.match(bare.problem, /bare `zn hook /, agent);
     assert.match(bare.fix, /--project/, agent);
-    const ok = find(await check({ home, env, cwd: guarded }));
+    const ok = find(await check({ home, env, cwd: guarded, live }));
     assert.equal(ok.state, 'project-only', agent);
     void spec;
   }

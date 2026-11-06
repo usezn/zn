@@ -64,6 +64,22 @@ The commands that start a long-running server (`mcp`, `shield`, `secrets-mcp`) e
 
 ## Settings
 
+### Settings at a glance
+
+| Setting | Default | What it changes |
+|---|---|---|
+| `ZN_API_KEY` or `--key <api_key>` | Not stated | API key for the optional cloud check (`analyze`, `analyze_prompt`). |
+| `ZN_CLOUD=1` | Off: nothing leaves your machine | Turns the optional cloud check on. |
+| `ZN_LOCAL_ONLY=true` or `--local-only` | Not stated | Never uses the cloud, even when `ZN_CLOUD=1` is set. |
+| `ZN_STAGE` or `--stage <v30\|prod>` | `v30` | Cloud stage. |
+| `ZN_API_URL` or `--url <url>` | Not stated | Uses another cloud address. |
+| `--long-input <windows\|off>` | `windows` (overlapping windows, up to 20) | How long texts are sent to the cloud check; `off` sends only the first 512 tokens. |
+| `ZN_STATS=off` | Not stated | Turns off the local counts shown by `stats` and `report`. |
+| `ZN_VERBOSE=1` or `--verbose` | Not stated | Prints debug messages to the error output. |
+| `NO_COLOR` | Not stated | Turns off colors. |
+
+The table below gives the full description of each setting.
+
 | Setting | Effect |
 |---|---|
 | `ZN_API_KEY` or `--key <api_key>` | API key for the optional cloud check. Used only by `analyze` and `analyze_prompt`, and only when the cloud check is on. |
@@ -365,6 +381,8 @@ zn-gate env <shadow|unshadow> ...
 
 Groups the two commands below. Run `zn-gate env --help` for the short usage.
 
+Exit codes (both commands): `0` done (also when there was nothing to move, or with `--dry-run`, or with `--help`), `1` an error (for example the file or the vault could not be read), or `env unshadow` when you answered no, `64` wrong usage (an unknown subcommand or option, or a missing or malformed `--backup`), `77` there is no interactive terminal, or an AI agent ran it: nothing was changed.
+
 #### `env shadow`
 
 ```bash
@@ -534,6 +552,8 @@ zn-gate mcp
 
 Runs zn-gate as an MCP server (stdio) with the tools `analyze_prompt`, `check_tool_call` and `check_tool_result`.
 
+Exit codes: it runs until its input is closed, then exits `0`.
+
 ### `shield`
 
 ```text
@@ -570,6 +590,14 @@ zn-gate stats share on|off|status|show
 ```
 
 What zn-gate did on this machine: local counts for the last `--days` days (1 to 90, default 30). Exit codes: `0` done, `2` wrong usage.
+
+With `--json`, the output is one JSON object with the same counts and these extra fields:
+
+- `sharing`: `true` when sharing of pseudonymous daily counts is on.
+- `sent_days`: the days whose counts were really uploaded during this run. It is `[]` when sharing is off or nothing was pending.
+- `send_failed`: the number of days whose upload failed during this run. They are tried again the next time you run `stats`.
+
+When sharing is on, `stats` sends each complete day (every day before today) that has not been sent yet. The text output prints `Shared pseudonymous counts for <day>.` only for the days in `sent_days`, and it prints `<n> day(s) could not be shared; they will be tried next time.` when `send_failed` is more than `0`.
 
 #### `stats share`
 

@@ -290,16 +290,16 @@ function hostOf(url) {
 }
 
 function isLoopback(host) {
-  return host === 'localhost' || host === '::1' || host === '0.0.0.0' || /^127\./.test(host || '') || /\.localhost$/.test(host || '');
+  return host === 'localhost' || host === '::1' || host === '0.0.0.0' || /^127(?:\.\d{1,3}){3}$/.test(host || '') || /\.localhost$/.test(host || '');
 }
 
-/** URL without user, password, query or fragment, for printing. */
+/** Scheme and host of a URL, for printing: no path, user, password, query or fragment. */
 function safeUrl(url) {
   try {
     const u = new URL(String(url));
-    return u.protocol + '//' + u.host + (u.pathname === '/' ? '' : u.pathname);
+    return u.protocol + '//' + u.host;
   } catch (_) {
-    return String(url).replace(/\/\/[^/@\s]*@/, '//').replace(/[?#].*$/, '');
+    return '(unparsable URL)';
   }
 }
 

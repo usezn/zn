@@ -40,6 +40,7 @@ reads, command output, search results, MCP results and pasted prompts.
 | **Copies kept by the agent on your disk** | See below. |
 | **Restoring an old `secrets.age`, with or without its old `audit.jsonl`** | The log still verifies against the older checkpoint, so the check passes. Detecting it needs an anchor outside `~/.zn` (a Team upload of the log is one). |
 | **Records of the last minute if the vault process is killed** | The vault saves its checkpoint every minute and when it locks. Records written after the last save can be cut without notice if the process is killed before the next save. |
+| **A symbolic link or a Windows short name that points at a protected file** | The path checks read the text of a path; they do not look at the disk. A link such as `notes.txt` that points at `.env` or `~/.ssh/id_rsa`, or a short name such as `PROGRA~1`, is not recognised as the protected file. Keep secrets in the vault or outside the project folder. The coding-agent hooks of the npm package also resolve the real path of the agents' own configuration files. |
 
 zn-gate is not a sandbox, and how much it sees depends on the agent (see
 [compat.md](compat.md)). Hooks are a guardrail: a determined process can find another
@@ -554,3 +555,8 @@ stop malware running as the same user (see above).
   rules are a guardrail against mistakes, not a sandbox.
 - **Latency:** each hook is a short Node process. Measured about 78 ms p50 per
   tool call on a Windows desktop (`bench/HOOK_LATENCY.md`).
+
+## Next steps
+
+- [Compatibility](compat.md): which agents and platforms zn works with, and how well.
+- [Architecture](architecture.md): how the hooks, scrubber and vault fit together behind these limits.
