@@ -94,3 +94,8 @@ If the command was what you meant, the agent will ask you to confirm; run it you
 ## If it blocks a command you want
 
 Run the command yourself in a terminal. The check applies to agents only. If a rule gets in your way often, turn that rule (or the whole check) off with the settings above.
+
+## Next steps
+
+- [API reference](api-reference.md): call the command check (`checkCommand`, `check_command`) from your own code.
+- [Troubleshooting](troubleshooting.md): find fixes when a block or a hook does not behave as you expect.

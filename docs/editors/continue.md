@@ -67,10 +67,12 @@ Open the settings file you edited in Install, delete the `zn-gate` entry (and an
 
 ## Troubleshooting
 
-- **`node: command not found`, or Node.js is too old** (zn-gate needs 18 or later): see [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found).
-- **"running scripts is disabled on this system" on Windows:** see [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
-- **The zn-gate tools do not appear in Continue:** check that the settings file is valid and that the `zn-gate` entry sits inside the existing server section, then restart Continue.
-- **A command says it needs you at your own terminal:** see [It needs you at your own terminal](../troubleshooting.md#4-it-needs-you-at-your-own-terminal).
+| Symptom | Cause | Fix |
+| - | - | - |
+| `node: command not found`, or Node.js is too old | Node.js is missing or older than 18 (zn-gate needs 18 or later) | See [Node.js is too old](../troubleshooting.md#1-nodejs-is-too-old) and [`npx: command not found`](../troubleshooting.md#2-npx-command-not-found) |
+| "running scripts is disabled on this system" on Windows | PowerShell blocks running scripts | See [the PowerShell message](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows) |
+| The zn-gate tools do not appear in Continue | The settings file is not valid, or the `zn-gate` entry is not inside the existing server section | Check that the settings file is valid and that the `zn-gate` entry sits inside the existing server section, then restart Continue |
+| A command says it needs you at your own terminal | The command must be run at your own terminal | See [It needs you at your own terminal](../troubleshooting.md#4-it-needs-you-at-your-own-terminal) |
 
 All messages: [Troubleshooting](../troubleshooting.md).
 
