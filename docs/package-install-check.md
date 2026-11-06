@@ -43,6 +43,8 @@ Commands that install packages by name, in Bash or PowerShell, also behind `sudo
 | uv | `uv pip install <name>`, `uv add <name>` |
 | pipx | `pipx install <name>` |
 
+The offline check reads the forms in this table, also behind `sudo`, `env`, `cd x &&` and `sh -c "..."`. The online lookup reads only the plain installs described in [What leaves your computer](#what-leaves-your-computer).
+
 Not checked in this version:
 
 - **One-off runs** (`npx`, `uvx`, `pipx run`). They run a package without installing it, and they are not read yet.
@@ -90,20 +92,24 @@ List names that should never be questioned in `hooks.packageInstallAllow`. An en
 
 **Offline mode and the default: nothing.** It reads the command text and a file that ships with zn-gate.
 
-**Online mode: only the package name**, in one plain request to the public registry the package would come from anyway:
+**Online mode: only the package name, and only for a plain install**, in one plain request to the public registry the package would come from anyway:
 
 - `https://registry.npmjs.org/<name>` for npm (a scoped name is sent as `@scope%2Fname`);
 - `https://pypi.org/pypi/<name>/json` for PyPI.
 
 The request has no cookies, no account and no header except `Accept`. It carries no command, path, project name or other data. The name is checked against the characters a registry allows before it is put in the URL. A redirect is not followed, a reply over 4 MiB is dropped, and a lookup that takes more than 2 seconds is given up. At most 8 names of one command are looked up; the others are noted in the decision log as having had no lookup ("too many names"). Names on the bundled list, names that look like a well-known one, names you allowed, and npm names with capital letters are not looked up.
 
-If you use another registry, zn-gate does not send your names to the public one. The whole command line is read as text, before it is split into commands. If the line mentions any of the following anywhere (before or after the install, in any position, and also inside `sh -c "..."`, a function, a brace group or a `( ... )` group), **none** of its installs is looked up:
+**Which commands are looked up: only plain installs.** The online lookup uses an allow list, not a list of registries to avoid. The whole command line must be a plain install, or none of its names is looked up:
 
-- a registry variable: `NPM_CONFIG_REGISTRY`, `NPM_CONFIG_USERCONFIG`, `YARN_NPM_REGISTRY_SERVER`, `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`, `PIP_FIND_LINKS`, `PIP_CONFIG_FILE`, `UV_INDEX`, `UV_INDEX_URL`, `UV_INDEX_<name>`, `UV_DEFAULT_INDEX`, `UV_EXTRA_INDEX_URL`, `UV_FIND_LINKS`, `UV_CONFIG_FILE`, `BUN_CONFIG_REGISTRY`, `YARN_REGISTRY` (any letter case), set in any way: an assignment, `export`, `local`, `typeset`, `readonly`, `declare`, an inline variable in front of a command (also after `env` or `sudo env`), `$env:NAME = "..."`, `Set-Item env:NAME`, `setx NAME`, or `[Environment]::SetEnvironmentVariable("NAME", ...)`;
-- a registry key or flag: a word that contains `registry`, `index-url`, `find-links`, `userconfig` or `globalconfig`, such as `--registry`, `--@scope:registry=`, `--config.registry=`, `--userconfig`, `--index-url`, `--extra-index-url`, `--index`, `--find-links`, `--config-file`, `npm config set registry ...`, `npm set registry ...`, `yarn config set npmRegistryServer ...` or `pip config set global.index-url ...`. The short pip flags `-i` and `-f` count when they come after `pip install`;
-- a registry settings file: `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `bunfig.toml`, `.bunfig.toml`, `pip.conf`, `pip.ini` or `uv.toml`, written or only read (`echo ... > .npmrc`, `>|`, `tee`, `cp`, `Set-Content`, or `cat .npmrc`).
+- every simple command in the line is an install of one of these forms: `npm|pnpm|bun install|i|add`, `yarn add` or `yarn global add`, `pip|pip3|pipx install`, `python|python3|py -m pip install`, `uv add` or `uv pip install`;
+- joined only by `&&` or `;` (no pipe, redirect, background `&`, line break, subshell, `{ }` group, `$`, backtick, `\`, `#`, `!`, `*` or `?`);
+- no wrapper and no variable in front: no `sudo`, `env`, `sh -c`, `cd`, `VAR=value`, `export`;
+- every word is a package name (`name`, `name@1.2.3` or `name@^1.2` for npm, `name`, `name[extra]` or `name==1.2.3` for PyPI, optionally quoted), or one of the switches below. A name that is a path, a URL, a git source, an alias, or a glob is not a name;
+- the switches are a closed list that changes neither the registry, the index, a settings file nor a value: `-D`, `--save-dev`, `-O`, `--save-optional`, `-P`, `--save-prod`, `-S`, `--save`, `--no-save`, `-E`, `--save-exact`, `-g`, `--global`, `--no-audit`, `--no-fund`, `--legacy-peer-deps`, `--ignore-scripts`, `-q`, `--quiet`, `--silent`, `-U`, `--upgrade`, `--user`, `--no-deps`, `--pre`, `--no-cache-dir`, `--disable-pip-version-check`, `--break-system-packages`, `--no-input`, `--ignore-installed`, `--dev`, `--no-sync`, `--frozen`.
 
-So `cat .npmrc && npm i left-pad`, `grep registry x && npm i left-pad` and `{ export PIP_INDEX_URL=... ; pip install x; }` look up nothing. A line with no such mention is read as usual. zn-gate also reads exactly these settings, and only in online mode:
+Any other word makes the whole line **not plain**: a flag that is not in the list (`--registry`, `--reg`, `--regis`, `--index-url`, `-i`, `-f`, `--ind`, `--extra-i`, `--find`, `--pip-args`, `--prefix`, `-r`, `--userconfig`, `--foo`), a joined or abbreviated flag (`-qi URL`, `-i<URL>`), a value, a file, a variable, or any form zn-gate does not read. A name in a line that is not plain is still checked offline (it can still be reported as a look-alike), but it is **never** sent to the public registry. So `npm i left-pad --registry https://npm.example.com`, `pip install -i https://pypi.example.com/simple corp-tool`, `cat .npmrc && npm i left-pad`, `export PIP_INDEX_URL=... && pip install x` and `npx x` look up nothing. `npm ci`, `npm install` and `pip install -r requirements.txt` have no name to look up.
+
+The check does not try to recognise every registry setting; it lets through only the commands it understands. Settings that the environment or a settings file in your project or your home folder can set are read as described below, only in online mode:
 
 - npm, pnpm, Yarn, Bun: `.npmrc`, `.yarnrc`, `.yarnrc.yml` and `bunfig.toml` (also `.bunfig.toml`) in the folder the agent works in and in your home folder; the file named by `NPM_CONFIG_USERCONFIG`.
 - pip and uv: `~/.config/pip/pip.conf`, `~/.pip/pip.conf`, `~/pip/pip.ini`, `~/Library/Application Support/pip/pip.conf`, `~/AppData/Roaming/pip/pip.ini`, `%APPDATA%\pip\pip.ini`, `$XDG_CONFIG_HOME/pip/pip.conf`, `$XDG_CONFIG_HOME/uv/uv.toml`, `~/.config/uv/uv.toml`, `$VIRTUAL_ENV/pip.conf`, `/etc/pip.conf`, `uv.toml`, `pip.conf` and `pyproject.toml` in the working folder, and the files named by `PIP_CONFIG_FILE` and `UV_CONFIG_FILE`.
@@ -124,7 +130,7 @@ Each question, and each online lookup that gave no answer, is written to the [de
 - It reads the **name**, not the package. A malicious package with a legitimate-looking name, or a real package that was taken over, is not caught.
 - The bundled list is a **starter list** written by hand. It ages, it is not complete, and it can miss a popular package or flag a legitimate name that is one letter from a popular one. Add such a name to `hooks.packageInstallAllow`.
 - Offline mode cannot know whether a name exists. Online mode can, but only for names it is allowed to look up (see above).
-- **A registry that the check cannot see.** It reads the text of the command and the settings files listed above, nothing more. It does not see a registry set by a file or script that the command runs (`source .env`, `. ./setup.sh`), by `eval`, by a script the command starts (a `package.json` script, a Makefile), or by an `.npmrc` or `pip.conf` found after a `cd` into another folder (it reads the settings of the working folder it knows about). In those cases a private package name may still be sent to the public registry in online mode. If you use a private registry, do not use online mode, or set the registry in the user-level settings that zn-gate reads (your home folder's `.npmrc`, `~/.config/pip/pip.conf`, `~/.config/uv/uv.toml`, or the environment variables listed above).
+- **A registry that the check cannot see.** It reads the text of the command and the settings files listed above, nothing more. It does not see a registry set by a script the command starts (a `package.json` script, a Makefile), or by an `.npmrc` or `pip.conf` in a folder other than the working folder and your home folder (it reads the settings of those two folders, listed above). A command that sources a file, runs `eval` or changes folder is not a plain install, so it is never looked up. In the other cases a private package name may still be sent to the public registry in online mode. If you use a private registry, do not use online mode, or set the registry in the user-level settings that zn-gate reads (your home folder's `.npmrc`, `~/.config/pip/pip.conf`, `~/.config/uv/uv.toml`, or the environment variables listed above).
 - It is a guardrail, not a sandbox: it reads the text of a command. An install that a script performs, or a name the shell builds at run time (`npm i $PKG`), is not seen.
 - The online lookup uses the system and Node.js trust store, including `NODE_EXTRA_CA_CERTS`, so a project could add a certificate authority through its environment; the effect is limited to silencing a question, because the check never blocks.
 - The Python package (`zn-gate` on PyPI) does not install hooks, so this check is part of the Node.js hooks only.

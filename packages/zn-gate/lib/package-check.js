@@ -11,7 +11,9 @@
  *            reports a name that is one small step away from one of them: a one-letter change, two letters swapped,
  *            a look-alike character, other separators, or an npm scope that imitates a well-known scope.
  *            Needs no network and touches no file apart from that list.
- *   online   also asks the public registry (see package-registry.js) whether the name exists and how old it is.
+ *   online   also asks the public registry (see package-registry.js) whether the name exists and how old it is,
+ *            but only for a command that is a PLAIN install (see plainInstallNames): the whole command line must
+ *            be understood with an allow list. Anything else is checked offline only.
  *
  * Only commands that install packages BY NAME are read: `npm|pnpm|yarn|bun add|install|i <name>`,
  * `pip|pip3 install <name>`, `python -m pip install <name>`, `uv pip install <name>`, `uv add <name>`,
@@ -48,13 +50,6 @@ const PIP_VALUE_FLAGS = new Set(['-r', '--requirement', '--requirements', '-c', 
   // uv flags that take a value (their value is a folder, a mode or a pin, never a package name)
   '--index-strategy', '--project', '--directory', '--prerelease', '--python-platform', '--torch-backend', '--bounds', '--rev', '--tag',
   '--branch', '--marker', '-m', '--config-file']);
-// A command that names another registry: the public registry is never asked about its packages.
-// (--userconfig, --globalconfig, --config-file name a settings file zn-gate does not read: treated as another registry.)
-const NPM_REGISTRY_RE = /^--(?:(?:@[^=\s]+:)?registry|config\.registry|userconfig|globalconfig)(?:=|$)/;
-const PIP_REGISTRY_RE = /^(?:--index-url|-i|--extra-index-url|--index|--default-index|-f|--find-links|--config-file)(?:=|$)/;
-// Settings a command can carry in front of it (`VAR=x pip install y`, `env VAR=x ...`) that name another registry or a
-// settings file. The value must not be empty.
-const REGISTRY_ASSIGN_RE = /^(?:npm_config_(?:@[^=\s]+:)?registry|npm_config_(?:user|global)config|yarn_npm_registry_server|bun_config_registry|yarn_registry|pip_(?:index_url|extra_index_url|find_links|config_file)|uv_(?:index(?:_url)?|index_[a-z0-9_]+|default_index|extra_index_url|find_links|config_file))=./i;
 
 const NPM_HEADS = new Set(['npm', 'pnpm', 'yarn', 'bun']);
 const NPM_SUBCOMMANDS = new Set(['install', 'i', 'add', 'in', 'ins', 'inst', 'insta', 'instal']);
@@ -64,9 +59,98 @@ const PYTHON_HEAD_RE = /^(?:py|python(?:[23](?:\.\d+)?)?)$/;
 const NPM_NAME_RE = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
 const PYPI_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
-function programName(text) {
-  return String(text).replace(/^\\+/, '').split(/[\\/]/).pop().toLowerCase().replace(/\.(?:exe|cmd|bat|ps1)$/, '');
+/* ------------------------------ the online allow list ------------------------------ */
+
+// A command is PLAIN only when every word of it is one of these: a known package manager and install sub-command, the
+// names (npm: name or name@version; PyPI: name, name[extra] or name==version), and switches from this closed list. None
+// of the switches takes a value or names a registry, index, file or config. Anything else makes the command not plain.
+const PLAIN_SWITCHES = new Set([
+  '-D', '--save-dev', '-O', '--save-optional', '-P', '--save-prod', '-S', '--save', '--no-save', '-E', '--save-exact', '-g', '--global',
+  '--no-audit', '--no-fund', '--legacy-peer-deps', '--ignore-scripts', '-q', '--quiet', '--silent',
+  '-U', '--upgrade', '--user', '--no-deps', '--pre', '--no-cache-dir', '--disable-pip-version-check', '--break-system-packages',
+  '--no-input', '--ignore-installed', '--dev', '--no-sync', '--frozen',
+]);
+// npm name, optionally with a version or tag (`lodash`, `@types/node@18`, `left-pad@^1.3`, `tool@latest`).
+const PLAIN_NPM_RE = /^(?:@[A-Za-z0-9][A-Za-z0-9._~-]*\/)?[A-Za-z0-9][A-Za-z0-9._~-]*(?:@[A-Za-z0-9._^~+-]+)?$/;
+// PyPI name, optionally with extras and one exact version (`requests`, `requests[socks]`, `requests==2.31.0`).
+const PLAIN_PYPI_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9._,-]+\])?(?:==[A-Za-z0-9._+!-]+)?$/;
+const PLAIN_PYTHON_HEADS = new Set(['python', 'python3', 'py']);
+const PLAIN_PIP_HEADS = new Set(['pip', 'pip3', 'pipx']);
+
+/* True when the raw text holds only plain characters: no line break, no expansion, no grouping, no pipe, no redirect,
+ * no background `&` (`&&` is allowed), no escape, glob, comment or history character. */
+function plainText(text) {
+  if (!text || text.length > MAX_CHARS) return false;
+  if (/[\n\r$`(){}<>|\\*?#!]/.test(text)) return false;
+  return !/(?<!&)&(?!&)/.test(text);
 }
+
+/* The names of one simple command if it is a plain install, else null. */
+function plainSegment(ws) {
+  const head = ws[0];
+  let eco;
+  let args;
+  if (PLAIN_PYTHON_HEADS.has(head)) {
+    if (ws[1] !== '-m' || ws[2] !== 'pip' || ws[3] !== 'install') return null;
+    eco = 'pypi';
+    args = ws.slice(4);
+  } else if (head === 'uv') {
+    if (ws[1] === 'add') args = ws.slice(2);
+    else if (ws[1] === 'pip' && ws[2] === 'install') args = ws.slice(3);
+    else return null;
+    eco = 'pypi';
+  } else if (PLAIN_PIP_HEADS.has(head)) {
+    if (ws[1] !== 'install') return null;
+    eco = 'pypi';
+    args = ws.slice(2);
+  } else if (NPM_HEADS.has(head)) {
+    eco = 'npm';
+    // `yarn global add x` is the only nested form; `yarn add` is the only yarn install that names packages.
+    const k = head === 'yarn' && ws[1] === 'global' ? 2 : 1;
+    const sub = ws[k];
+    const ok = head === 'yarn' ? sub === 'add' : (sub === 'install' || sub === 'i' || sub === 'add');
+    if (!ok) return null;
+    args = ws.slice(k + 1);
+  } else {
+    return null;
+  }
+  const out = [];
+  for (const a of args) {
+    if (a.startsWith('-')) {
+      if (!PLAIN_SWITCHES.has(a)) return null;
+      continue;
+    }
+    const n = eco === 'npm'
+      ? (PLAIN_NPM_RE.test(a) ? npmNameOf(a) : null)
+      : (PLAIN_PYPI_RE.test(a) ? pypiNameOf(a) : null);
+    if (!n) return null;
+    out.push({ eco, ...n });
+  }
+  return out;
+}
+
+/**
+ * The names a command installs when the WHOLE command line is a plain install (see above): every simple command in it
+ * is a plain install, joined by `&&` or `;`, with no wrapper, variable, redirect, pipe, subshell, shell or unknown
+ * switch. Returns [{ eco, name, raw, legacyCase }] (possibly empty), or null when the command is not plain. Only these
+ * names may be sent to the public registry. Anything else is checked offline.
+ */
+function plainInstallNames(command) {
+  const text = String(command == null ? '' : command);
+  if (!plainText(text)) return null;
+  const segs = segmentsOf(text);
+  if (!segs.length) return null;
+  const out = [];
+  for (const ws of segs) {
+    if (!ws.length) continue;
+    const names = plainSegment(ws);
+    if (!names) return null;
+    out.push(...names);
+  }
+  return out;
+}
+
+/* ----------------------------- the offline reader ----------------------------- */
 
 /* Simple commands of a command line, as arrays of words. Same reading as the destructive-command check. */
 function segmentsOf(cmd) {
@@ -92,11 +176,9 @@ function segmentsOf(cmd) {
 /* The words of a command after wrappers that only run it (sudo, env, VAR=x, nohup, nice, time ...). */
 function unwrap(args) {
   let i = 0;
-  let registry = false;
-  const seen = (w) => { if (REGISTRY_ASSIGN_RE.test(w)) registry = true; };
   for (let guard = 0; guard < 8 && i < args.length; guard++) {
     const a = args[i];
-    if (ASSIGN_RE.test(a)) { seen(a); i++; continue; }
+    if (ASSIGN_RE.test(a)) { i++; continue; }
     const name = programName(a);
     if (name === 'sudo' || name === 'doas') {
       i++;
@@ -105,7 +187,7 @@ function unwrap(args) {
     }
     if (name === 'env') {
       i++;
-      while (i < args.length && (args[i].startsWith('-') || ASSIGN_RE.test(args[i]))) { const f = args[i++]; seen(f); if (f === '-u' || f === '-C' || f === '-S') i++; }
+      while (i < args.length && (args[i].startsWith('-') || ASSIGN_RE.test(args[i]))) { const f = args[i++]; if (f === '-u' || f === '-C' || f === '-S') i++; }
       continue;
     }
     if (name === 'command' || name === 'exec' || name === 'nohup' || name === 'time' || name === 'builtin' || name === 'setsid') {
@@ -126,27 +208,25 @@ function unwrap(args) {
     }
     break;
   }
-  return { words: args.slice(i), registry };
+  return { words: args.slice(i) };
 }
 
 /*
- * Reads the words after the sub-command: returns { names: [word], registry: bool, spec: bool }.
+ * Reads the words after the sub-command: returns { names: [word] }.
  * A flag that takes a value consumes it; a flag written --flag=value is one word. `names` are the words that are not flags.
  */
-function positionals(args, valueFlags, registryRe) {
+function positionals(args, valueFlags) {
   const names = [];
-  let registry = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--') { for (let j = i + 1; j < args.length; j++) names.push(args[j]); break; }
     if (a.startsWith('-') && a.length > 1) {
-      if (registryRe.test(a)) registry = true;
       if (valueFlags.has(a)) i++;
       continue;
     }
     names.push(a);
   }
-  return { names, registry };
+  return { names };
 }
 
 /* A registry name from an npm spec (`lodash`, `lodash@^4`, `@types/node@18`), or null when the spec is not a registry name. */
@@ -177,129 +257,41 @@ function pypiNormalise(name) {
   return String(name).toLowerCase().replace(/[-_.]+/g, '-');
 }
 
-/* Registry/config variable NAMES (no value), derived from REGISTRY_ASSIGN_RE, for the Windows and PowerShell forms. */
-const REGISTRY_NAME_RE = new RegExp('(?<![A-Za-z0-9_])' + REGISTRY_ASSIGN_RE.source.slice(1, -2) + '(?![A-Za-z0-9_])', 'i');
-const CONFIG_FILE = '(?:\\.npmrc|\\.yarnrc(?:\\.yml)?|bunfig\\.toml|pip\\.conf|pip\\.ini|uv\\.toml)';
-/* A registry config file written in the command line: a redirect to it, or tee/cp/mv/ln/install/touch/sed -i naming it. */
-const CONFIG_WRITE_RES = [
-  new RegExp('>[>|]?\\s*["\']?[^\\s"\'|;&<>]*' + CONFIG_FILE + '(?![A-Za-z0-9_.-])', 'i'),
-  new RegExp('(?:^|[\\s;&|(])(?:tee|cp|mv|ln|install|touch|sed|dd|truncate|set-content|add-content|out-file|new-item|copy-item|move-item)\\b[^\\n;&|]*?[^\\s"\'|;&<>]*' + CONFIG_FILE + '(?![A-Za-z0-9_.-])', 'i'),
-];
-const REGISTRY_KEY_RE = /registry|index-url|index_url|find-links|npmregistryserver|userconfig|globalconfig|extra-index|--index\b/i;
-const PIP_INDEX_FLAG_RE = /^(?:--index-url|--extra-index-url|--index|--default-index|--find-links|-f|-i)(?:=|$)/;
-const CONFIG_FILE_RE = new RegExp(CONFIG_FILE + '(?![A-Za-z0-9_.-])', 'i');
-
 /*
- * True when the raw command line (before any split into segments) names a registry variable, a registry key or flag
- * (REGISTRY_KEY_RE covers --registry, --index-url, --extra-index-url, config keys), or a registry settings file, in any
- * position and in any quoting. Used to fail closed: a mention anywhere makes every install in the line private.
- */
-function rawMentionsRegistry(text) {
-  return REGISTRY_NAME_RE.test(text) || REGISTRY_KEY_RE.test(text) || CONFIG_FILE_RE.test(text);
-}
-
-/* True when one segment sets a registry variable the Windows / PowerShell way. Whitespace, quotes and case tolerant. */
-function winSetsRegistry(seg) {
-  const joined = seg.join(' ').replace(/["'`]/g, ' ');
-  if (!REGISTRY_NAME_RE.test(joined)) return false;
-  if (/^\s*(?:set-item|new-item|set-itemproperty|setx|\[(?:system\.)?environment\]::setenvironmentvariable)\b/i.test(joined)) return true;
-  if (/^\s*\$env:/i.test(joined) && /=/.test(joined)) return true;
-  return /\bsetenvironmentvariable\b/i.test(joined);
-}
-
-/*
- * True when the command line, read as a whole, changes the registry or index for installs that come LATER in it (or
- * that it cannot place): `export PIP_INDEX_URL=x && pip install y`, a bare `VAR=x;` segment, `declare -x`, `$env:VAR=x`,
- * `npm|pnpm|yarn|bun config set registry x`, `pip|uv config set ...index... x`. When it does, every install in the
- * command is treated as private, wherever the setting stands (before or after the install): a skipped lookup is
- * harmless, a private name sent to the public registry is not. A setting in front of ONE command (`VAR=x echo hi && pip
- * install y`) only counts for that command and is handled in installsOf.
- */
-function setsRegistry(command, depth = 0) {
-  const text = String(command == null ? '' : command);
-  if (!text || text.length > MAX_CHARS || depth > 2) return false;
-  const bare = (w) => String(w).replace(/^\$?env:/i, '').replace(/^["'']+/, '');
-  // A registry config file written earlier or later in the same line (also inside sh -c: the raw text holds it).
-  if (CONFIG_WRITE_RES.some((re) => re.test(text))) return true;
-  // .NET call written as SetEnvironmentVariable("NAME", ...): the parentheses hide it from the word reader, so read the raw text.
-  if (new RegExp('setenvironmentvariable\\s*\\(\\s*["\']?\\s*' + REGISTRY_NAME_RE.source, 'i').test(text)) return true;
-  for (const seg of segmentsOf(text)) {
-    if (!seg.length) continue;
-    const un = unwrap(seg);
-    // Only assignments (no command after them): the shell keeps them for the rest of the line.
-    if (!un.words.length && un.registry) return true;
-    const w0 = un.words.length ? programName(un.words[0]) : '';
-    if (['export', 'declare', 'typeset', 'readonly', 'local', 'setenv', 'set'].includes(w0) && un.words.slice(1).some((w) => REGISTRY_ASSIGN_RE.test(bare(w)))) return true;
-    if (!un.words.length && seg.some((w) => REGISTRY_ASSIGN_RE.test(bare(w)))) return true;
-    // `$env:PIP_INDEX_URL = "x"` split in words, or `Set-Item env:NAME x`: conservative on any mention with a value.
-    if (/^(?:\$env:|set-item|\[environment\]::setenvironmentvariable)/i.test(String(seg[0])) && seg.some((w) => REGISTRY_ASSIGN_RE.test(bare(w) + '=x') || REGISTRY_ASSIGN_RE.test(bare(w)))) return true;
-    if (winSetsRegistry(seg)) return true;
-    if (NPM_HEADS.has(w0) && un.words.slice(1).some((w) => NPM_REGISTRY_RE.test(w))) return true;
-    if ((PIP_HEAD_RE.test(w0) || w0 === 'uv' || w0 === 'pipx' || PYTHON_HEAD_RE.test(w0)) && un.words.slice(1).some((w) => PIP_INDEX_FLAG_RE.test(w))) return true;
-    if (NPM_HEADS.has(w0)) {
-      const r0 = un.words.slice(1);
-      const si = r0.indexOf('set');
-      if (si >= 0 && r0.slice(si + 1).some((w) => REGISTRY_KEY_RE.test(w))) return true;
-    }
-    if (NPM_HEADS.has(w0) || PIP_HEAD_RE.test(w0) || w0 === 'uv' || w0 === 'pipx' || PYTHON_HEAD_RE.test(w0)) {
-      const r = un.words.slice(1);
-      const c = r.findIndex((w) => w === 'config' || w === 'c');
-      if (c >= 0 && r.slice(c + 1).some((w) => /^(?:set|edit)$/.test(w))) {
-        const keyed = r.slice(c + 1).some((w) => /registry|index|find-links|userconfig|globalconfig/i.test(w));
-        if (keyed || r.slice(c + 1).includes('edit')) return true;
-      }
-    }
-    if (SHELLS.has(w0)) {
-      const rest = un.words.slice(1);
-      const k = rest.findIndex((w) => /^-[A-Za-z]*c$/.test(w));
-      if (k >= 0 && typeof rest[k + 1] === 'string' && setsRegistry(rest[k + 1], depth + 1)) return true;
-    }
-  }
-  return false;
-}
-
-/*
- * The installs by name in a command: [{ eco: 'npm' | 'pypi', name, raw, legacyCase, registry }].
- * `registry` is true when the same command names another registry (--registry, --index-url ...), and for every install
- * of a line that mentions a registry variable, key, flag or settings file anywhere (rawMentionsRegistry).
+ * The installs by name in a command (for the offline check): [{ eco: 'npm' | 'pypi', name, raw, legacyCase }].
  */
 function installsOf(command, depth = 0) {
   const text = String(command == null ? '' : command);
   if (!text || text.length > MAX_CHARS || depth > 2) return [];
   const found = [];
-  const wholeCommand = setsRegistry(text, depth) || rawMentionsRegistry(text);
   for (const seg of segmentsOf(text)) {
-    const un = unwrap(seg);
-    const words = un.words;
+    const words = unwrap(seg).words;
     if (!words.length) continue;
-    // An inline registry variable means the names come from another registry: never ask the public one.
-    const start = found.length;
-    const mark = () => { if (un.registry) for (let k = start; k < found.length; k++) found[k] = { ...found[k], registry: true }; };
     const head = programName(words[0]);
     const rest = words.slice(1);
     if (SHELLS.has(head)) {
       const c = rest.findIndex((w) => /^-[A-Za-z]*c$/.test(w));
       if (c >= 0 && typeof rest[c + 1] === 'string') found.push(...installsOf(rest[c + 1], depth + 1));
-      mark();
       continue;
     }
-    if (NPM_HEADS.has(head)) { found.push(...npmInstalls(head, rest)); mark(); continue; }
-    if (PIP_HEAD_RE.test(head)) { found.push(...pipInstalls(rest)); mark(); continue; }
+    if (NPM_HEADS.has(head)) { found.push(...npmInstalls(head, rest)); continue; }
+    if (PIP_HEAD_RE.test(head)) { found.push(...pipInstalls(rest)); continue; }
     if (PYTHON_HEAD_RE.test(head)) {
       const m = rest.indexOf('-m');
       if (m >= 0 && rest[m + 1] === 'pip') found.push(...pipInstalls(rest.slice(m + 2)));
-      mark();
       continue;
     }
-    if (head === 'uv') { found.push(...uvInstalls(rest)); mark(); continue; }
+    if (head === 'uv') { found.push(...uvInstalls(rest)); continue; }
     if (head === 'pipx') {
       const sub = firstPositional(rest, PIP_VALUE_FLAGS);
       if (sub && sub.word === 'install' && !rest.includes('--spec')) found.push(...pypiList(rest.slice(sub.index + 1)));
-      mark();
     }
   }
-  const all = wholeCommand ? found.map((f) => ({ ...f, registry: true })) : found;
-  return all.slice(0, MAX_NAMES);
+  return found.slice(0, MAX_NAMES);
+}
+
+function programName(text) {
+  return String(text).replace(/^\\+/, '').split(/[\\/]/).pop().toLowerCase().replace(/\.(?:exe|cmd|bat|ps1)$/, '');
 }
 
 /* The first word that is not a flag (or a flag's value): { word, index } or null. */
@@ -324,21 +316,21 @@ function npmInstalls(head, args) {
   if (!sub || !NPM_SUBCOMMANDS.has(sub.word)) return [];
   // yarn only adds by name with "add"; "yarn install" has no names.
   if (head === 'yarn' && sub.word !== 'add') return [];
-  const { names, registry } = positionals(args.slice(sub.index + 1), valueFlags, NPM_REGISTRY_RE);
+  const { names } = positionals(args.slice(sub.index + 1), valueFlags);
   const out = [];
   for (const w of names) {
     const n = npmNameOf(w);
-    if (n) out.push({ eco: 'npm', ...n, registry: registry || args.some((a) => NPM_REGISTRY_RE.test(a)) });
+    if (n) out.push({ eco: 'npm', ...n });
   }
   return out;
 }
 
 function pypiList(args) {
-  const { names, registry } = positionals(args, PIP_VALUE_FLAGS, PIP_REGISTRY_RE);
+  const { names } = positionals(args, PIP_VALUE_FLAGS);
   const out = [];
   for (const w of names) {
     const n = pypiNameOf(w);
-    if (n) out.push({ eco: 'pypi', ...n, registry });
+    if (n) out.push({ eco: 'pypi', ...n });
   }
   return out;
 }
@@ -500,8 +492,9 @@ function messageOf(findings) {
  *   unavailable  [{ eco, name, why }]                        online lookups that gave no answer (no question is asked)
  *   checked      number of names read from the command
  * opts: { mode: 'offline' | 'online', allow, newDays, index, lookup }
- * `lookup(items)` is the online lookup (package-registry.js); it is only called in online mode, and only with names
- * that the offline step did not already report. In offline mode nothing outside this file is used.
+ * `lookup(items)` is the online lookup (package-registry.js). It is called only in online mode, only when the whole
+ * command is a plain install (plainInstallNames), and only with names that that reading returned and the offline step
+ * did not already report. In offline mode nothing outside this file is used.
  */
 async function check(command, opts = {}) {
   const mode = opts.mode === 'online' ? 'online' : 'offline';
@@ -515,6 +508,9 @@ async function check(command, opts = {}) {
     seen.add(key);
     names.push(i);
   }
+  // Only the names of a plain install may be looked up: the whole command must be understood.
+  const plain = mode === 'online' ? plainInstallNames(command) : null;
+  const plainKeys = new Set((plain || []).map((p) => p.eco + ':' + p.name));
   const findings = [];
   const pending = [];
   for (const i of names) {
@@ -522,10 +518,10 @@ async function check(command, opts = {}) {
     if (hit) { findings.push({ eco: i.eco, name: i.name, kind: hit.kind, suggestion: hit.suggestion }); continue; }
     // A name on the starter list exists and is old: nothing to ask the registry.
     if (index[i.eco] && index[i.eco].all.has(index[i.eco].normalise(i.name))) continue;
-    if (mode === 'online' && !i.registry && !i.legacyCase) pending.push(i);
+    if (plain && plainKeys.has(i.eco + ':' + i.name) && !i.legacyCase) pending.push(i);
   }
   const unavailable = [];
-  if (mode === 'online' && pending.length && typeof opts.lookup === 'function') {
+  if (plain && pending.length && typeof opts.lookup === 'function') {
     const days = newDaysOf(opts.newDays);
     const results = await opts.lookup(pending.map((i) => ({ eco: i.eco, name: i.name })));
     for (const i of pending) {
@@ -541,4 +537,4 @@ async function check(command, opts = {}) {
   return { findings, unavailable, checked: names.length };
 }
 
-module.exports = { check, installsOf, lookAlike, indexOf, messageOf, sentenceOf, allowed, pypiNormalise, oneEdit, skeleton, NAMES };
+module.exports = { check, installsOf, plainInstallNames, lookAlike, indexOf, messageOf, sentenceOf, allowed, pypiNormalise, oneEdit, skeleton, NAMES };

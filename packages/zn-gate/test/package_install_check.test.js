@@ -122,12 +122,13 @@ test('command shapes: ' + SHAPES.length + ' commands, only installs by name give
   for (const [command, expected] of SHAPES) assert.deepEqual(names(command), expected, command);
 });
 
-test('a registry flag in the command is remembered, other commands are not marked', () => {
-  assert.equal(pc.installsOf('npm i x --registry https://registry.example.com')[0].registry, true);
-  assert.equal(pc.installsOf('npm --registry=https://registry.example.com i x')[0].registry, true);
-  assert.equal(pc.installsOf('pip install --extra-index-url https://pypi.example.com/simple x')[0].registry, true);
-  assert.equal(pc.installsOf('npm i x')[0].registry, false);
-  assert.equal(pc.installsOf('pip install x')[0].registry, false);
+test('only a whole plain install may name packages for the registry', () => {
+  assert.deepEqual(pc.plainInstallNames('npm i x').map((i) => i.name), ['x']);
+  assert.deepEqual(pc.plainInstallNames('pip install x').map((i) => i.name), ['x']);
+  assert.equal(pc.plainInstallNames('npm i x --registry https://registry.example.com'), null);
+  assert.equal(pc.plainInstallNames('npm --registry=https://registry.example.com i x'), null);
+  assert.equal(pc.plainInstallNames('pip install --extra-index-url https://pypi.example.com/simple x'), null);
+  assert.equal(pc.plainInstallNames('echo hi && pip install x'), null);
 });
 
 test('an npm name with capitals is marked as a legacy spelling', () => {

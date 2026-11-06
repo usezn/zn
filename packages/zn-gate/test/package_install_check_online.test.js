@@ -145,7 +145,7 @@ test('a scoped npm name is asked for as @scope%2Fname', async () => {
 
 test('only the package name is in the request: a fixed URL and two limits, nothing else', async () => {
   const f = fakeFetch({});
-  await online('GITHUB_TOKEN=ghp_fake npm i some-invented-name --save-dev && echo secret@example.com', f);
+  await online('npm i some-invented-name --save-dev', f);
   assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0].url, NPM('some-invented-name'));
   assert.deepEqual(Object.keys(f.calls[0].options).sort(), ['maxBytes', 'timeoutMs']);

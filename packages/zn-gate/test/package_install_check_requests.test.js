@@ -3,9 +3,7 @@
 process.env.ZN_STATS = 'off';
 delete process.env.ZN_PACKAGE_CHECK;
 
-// Package install check: review fixes. A command that ends in deny makes no registry request, the request options
-// pin certificate checks, names beyond the lookup limit are noted, the settings files that mark a private registry,
-// and popular names that the look-alike rule must not flag. No network: every fetcher here is fake.
+// Package install check: no request after a deny, request options, the lookup limit, look-alike names and settings files of another registry. No network: every fetcher here is fake.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -22,7 +20,7 @@ const { tempDir } = require('./helpers/tmp');
 
 const CWD = path.join(path.sep, 'work', 'proj');
 
-test('N6: a command that ends in a deny makes no registry request', async (t) => {
+test('a command that ends in a deny makes no registry request', async (t) => {
   const home = tempDir(t, 'zn-pkg-n6-');
   fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
   fs.writeFileSync(path.join(home, '.zn', 'config.json'), JSON.stringify({ hooks: { packageInstallCheck: 'online' } }));
@@ -42,7 +40,7 @@ test('N6: a command that ends in a deny makes no registry request', async (t) =>
   assert.equal(calls.length, 1);
 });
 
-test('N7: the request options set certificate checks explicitly and only ask for JSON', () => {
+test('the request options set certificate checks explicitly and only ask for JSON', () => {
   const o = reg.requestOptions(new URL('https://pypi.org/pypi/requests/json'), 5000);
   assert.equal(o.rejectUnauthorized, true);
   assert.equal(o.hostname, 'pypi.org');
@@ -50,7 +48,7 @@ test('N7: the request options set certificate checks explicitly and only ask for
   assert.deepEqual(Object.keys(o.headers), ['Accept']);
 });
 
-test('N2: names beyond the lookup limit are reported as unavailable, not dropped silently', async () => {
+test('names beyond the lookup limit are reported as unavailable, not dropped silently', async () => {
   const names = Array.from({ length: 10 }, (_, i) => 'invented-pkg-' + String.fromCharCode(97 + i));
   const asked = [];
   const fetch = (url) => { asked.push(url); return Promise.resolve({ status: 404, body: '' }); };
@@ -61,7 +59,7 @@ test('N2: names beyond the lookup limit are reported as unavailable, not dropped
   assert.deepEqual(r.unavailable.map((u) => u.why), ['too many names', 'too many names']);
 });
 
-test('N3: popular names that look like another name are not flagged', () => {
+test('popular names that look like another name are not flagged', () => {
   for (const name of ['motor', 'authlib', 'parse']) assert.deepEqual(pc.installsOf('pip install ' + name).map((i) => i.name), [name]);
   const r = (cmd) => pc.check(cmd, { mode: 'offline' });
   return Promise.all(['pip install motor', 'pip install authlib', 'pip install parse'].map(async (c) => assert.deepEqual((await r(c)).findings, [])));
@@ -79,7 +77,7 @@ function files(t, map) {
 const PRIV_NPM = 'https://npm.corp.example.invalid/';
 const PRIV_PIP = '[global]\nindex-url = https://pypi.corp.example.invalid/simple\n';
 
-test('N1: settings files that mark another registry (npm side)', (t) => {
+test('settings files that mark another registry (npm side)', (t) => {
   const none = files(t, {});
   assert.equal(reg.privateRegistry('npm', { home: none, cwd: none, env: {} }), false);
   const cases = {
@@ -99,7 +97,7 @@ test('N1: settings files that mark another registry (npm side)', (t) => {
   assert.equal(reg.privateRegistry('npm', { home: none, cwd: none, env: { NPM_CONFIG_USERCONFIG: path.join(custom, 'my-npmrc') } }), true);
 });
 
-test('N1: settings files that mark another registry (PyPI side)', (t) => {
+test('settings files that mark another registry (PyPI side)', (t) => {
   const none = files(t, {});
   assert.equal(reg.privateRegistry('pypi', { home: none, cwd: none, env: {} }), false);
   const home = files(t, { 'Library/Application Support/pip/pip.conf': PRIV_PIP });
