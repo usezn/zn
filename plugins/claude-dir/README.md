@@ -17,6 +17,16 @@ Node.js 20.19 or later. Nothing is downloaded or installed when the plugin is in
 
 Nothing. The hooks run locally and make no network requests. See https://usezn.com/privacy
 
+## What a scanner may flag, and why
+
+Automated checks of this plugin can report the items below. None of them runs on your machine.
+
+- **Image file.** The only image is `icon.png`, the listing icon named in `.claude-plugin/plugin.json`. Nothing loads or runs it, and the plugin contains no font. Other image names in `vendor/zn-gate` appear only as links in documentation.
+- **Fields in `plugin.json`.** `icon`, `documentationUrl`, `supportUrl`, `privacyPolicyUrl` and `termsOfServiceUrl` are the directory listing fields of the plugin reference: Claude Code does not read them and the directory does. Versions of `claude plugin validate` before 2.1.281 report them as unknown fields.
+- **Download-and-run text** (`curl ... | sh` and similar). It appears in documentation examples and in zn-gate's own detection rules, which exist to flag and block such commands when an agent writes one. The plugin downloads, installs and runs nothing: its launcher only reads the files in this repository.
+- **Package manager settings.** `vendor/zn-gate/lib/init-guide.js` prints advice for people who install the zn-gate command line tool (`npm config set prefix ...`). It belongs to `zn-gate init`, which the plugin never runs: the launcher loads only the hook runner and the local MCP code, and neither loads that file.
+- **Credentials.** zn-gate recognises secret values and the names of credential files (for example `.env` or an AWS credentials file) in order to keep them out of what is sent to the model and to block tool calls that read or send them. The plugin does not ask for, store or send any credential, makes no network requests, and declares no `userConfig`.
+
 ## How the code you run is checked
 
 - `vendor/zn-gate` holds the published zn-gate release, without TypeScript sources and source maps. Every file is byte for byte the file in the npm package.
