@@ -219,6 +219,20 @@ function withoutCompileCacheUse(rel, text) {
   return uses ? rest : text;
 }
 const MODULE_BUILTINS = new Set(['module', 'node:module']);
+// lib/agents/launcher.js holds VERIFY_JS, a script passed as text to a separate `node -e` (it checks the runner's
+// SHA-256 and runs those exact bytes). It is a string, not code of the bundle, but it names the "module" built-in and
+// process.mainModule. Only that exact text is taken out before the UNCHECKABLE rule: any change to it (its SHA-256
+// below no longer matches), a second copy, or any other use of those names in the file is still refused.
+const LAUNCHER_FILE = /^lib\/agents\/launcher\.js$/;
+const VERIFY_BLOCK = /const VERIFY_JS = [\s\S]*?;\n\n/g;
+const VERIFY_BLOCK_SHA256 = '2a500045b36060f08b61584f4f270d25f41888e7d97b84b589bf188fd94db16b';
+function withoutLauncherVerifyScript(rel, text) {
+  if (!LAUNCHER_FILE.test(rel)) return text;
+  const blocks = text.match(VERIFY_BLOCK) || [];
+  if (blocks.length !== 1) return text;
+  if (require('crypto').createHash('sha256').update(blocks[0]).digest('hex') !== VERIFY_BLOCK_SHA256) return text;
+  return text.replace(blocks[0], '');
+}
 
 /**
  * True for a method named import ("async import(key, format) { ... }"): it
@@ -269,7 +283,7 @@ function dynamicImports(rel, text, problems) {
     if (lit) out.push(lit[2]);
     else problems.push(rel + ': import() with a computed name cannot be checked');
   }
-  if (UNCHECKABLE.test(withoutCompileCacheUse(rel, text))) {
+  if (UNCHECKABLE.test(withoutLauncherVerifyScript(rel, withoutCompileCacheUse(rel, text)))) {
     problems.push(rel + ': uses createRequire, import.meta.resolve, process.mainModule or the "module" built-in, which cannot be checked');
   }
   return out;
