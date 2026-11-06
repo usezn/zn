@@ -11,6 +11,7 @@ const os = require('os');
 const path = require('path');
 
 const policy = require('../lib/hooks/policy');
+const { budget } = require('./helpers/time_budget');
 
 function asPlatform(name, fn) {
   const desc = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -363,7 +364,8 @@ test('the case fallback spans lines and costs time in proportion to the text', (
   const big = 'cat a$(case ' + '$('.repeat(40000) + ')'.repeat(40000);
   const t0 = Date.now();
   policy.bashDenial(big, opts);
-  assert.ok(Date.now() - t0 < 2000, 'time: ' + (Date.now() - t0) + ' ms');
+  const ms = Date.now() - t0;
+  assert.ok(ms < budget(2000), 'time: ' + ms + ' ms (limit ' + budget(2000) + ' ms on this machine)');
 });
 
 // --- review of #849, sixth round: esac only as a reserved word; the fallback anchored on each $( case ... esac ) ---
@@ -386,5 +388,6 @@ test('case inside a command substitution: a hyphenated word, extra substitutions
   const many = 'cat a' + '$(case x in x) : ;; esac)'.repeat(2000);
   const t0 = Date.now();
   policy.bashDenial(many, opts);
-  assert.ok(Date.now() - t0 < 2500, 'time: ' + (Date.now() - t0) + ' ms');
+  const ms = Date.now() - t0;
+  assert.ok(ms < budget(2500), 'time: ' + ms + ' ms (limit ' + budget(2500) + ' ms on this machine)');
 });
