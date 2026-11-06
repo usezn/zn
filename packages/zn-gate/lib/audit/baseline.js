@@ -26,7 +26,7 @@ const MCP_FILES = [
   ['.amazonq/mcp.json', 'mcpServers'], ['opencode.json', 'mcp'], ['opencode.jsonc', 'mcp'], ['.opencode/opencode.json', 'mcp'], ['.codex/config.toml', 'mcp_servers'],
 ];
 const SCALAR_SETTINGS = ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'statusLine', 'enableAllProjectMcpServers', 'enabledMcpjsonServers', 'disableAllHooks', 'otelHeadersHelper'];
-const ENV_RE = /^(?:(?:ANTHROPIC|OPENAI|GOOGLE|GEMINI)_.*(?:URL|ENDPOINT|HOST)|(?:HTTPS?|ALL)_PROXY|NODE_OPTIONS|NODE_EXTRA_CA_CERTS|LD_PRELOAD|LD_LIBRARY_PATH|BASH_ENV|ENV|PATH|PYTHONPATH|GIT_SSH_COMMAND|SSL_CERT_FILE|REQUESTS_CA_BUNDLE)$/i;
+const ENV_RE = /^(?:(?:ANTHROPIC|OPENAI|GOOGLE|GEMINI)_.*(?:URL|ENDPOINT|HOST)|(?:HTTPS?|ALL)_PROXY|NODE_OPTIONS|NODE_EXTRA_CA_CERTS|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_[A-Z_]+|CLAUDE_CODE_SHELL_PREFIX|PERL5OPT|BASH_ENV|ENV|PATH|PYTHONPATH|GIT_SSH_COMMAND|SSL_CERT_FILE|REQUESTS_CA_BUNDLE)$/i;
 const DEVCONTAINER_FILES = ['.devcontainer/devcontainer.json', '.devcontainer.json'];
 const DEVCONTAINER_KEYS = ['initializeCommand', 'onCreateCommand', 'updateContentCommand', 'postCreateCommand', 'postStartCommand', 'postAttachCommand'];
 
@@ -52,7 +52,16 @@ function readConfig(root, realRoot, rel) {
   if (lst.isSymbolicLink()) {
     let real;
     try { real = fs.realpathSync.native(file); } catch (_) { return { kind: 'bad', hash: sha(['broken-link']) }; }
-    if (!insideOf(realRoot, real)) return { kind: 'bad', hash: sha(['link-outside', real]) };
+    if (!insideOf(realRoot, real)) {
+      // What the agent loads is the content of the target: its size and digest are the hash (the path is not kept).
+      try {
+        const st0 = fs.statSync(real);
+        const body = st0.isFile() && st0.size <= MAX_HASHED ? fs.readFileSync(real) : null;
+        return { kind: 'bad', hash: sha(['link-outside', st0.size, body ? crypto.createHash('sha256').update(body).digest('hex') : '']) };
+      } catch (_) {
+        return { kind: 'bad', hash: sha(['link-outside-unreadable']) };
+      }
+    }
     target = real;
   }
   let st;

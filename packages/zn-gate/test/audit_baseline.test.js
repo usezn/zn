@@ -211,3 +211,26 @@ test('the baseline of a project is found through a link to its folder', (t) => {
   assert.ok(loadBaseline(home, link), 'found through the link');
   assert.equal(baselinePath(home, link), baselinePath(home, dir));
 });
+
+test('an outside link approved as it is: a change of its target is a change', (t) => {
+  if (process.platform === 'win32') return t.skip('links need privileges on Windows');
+  const outside = project(t, { 'x.json': { mcpServers: { a: { command: 'node' } } } });
+  const dir = project(t, {});
+  fs.symlinkSync(path.join(outside, 'x.json'), path.join(dir, '.mcp.json'));
+  const base = extractSurface(dir);
+  assert.deepEqual(Object.keys(base), ['.mcp.json#unreadable']);
+  assert.ok(!JSON.stringify(base).includes(outside), 'the path of the target is not kept');
+  write(outside, 'x.json', { mcpServers: { a: { command: 'sh' } } });
+  assert.deepEqual(diffSurface(base, extractSurface(dir)).changed, ['.mcp.json#unreadable']);
+});
+
+test('loader and shell-prefix environment overrides are covered', (t) => {
+  for (const name of ['DYLD_INSERT_LIBRARIES', 'CLAUDE_CODE_SHELL_PREFIX', 'PERL5OPT']) {
+    const d = changedBy(t, { '.claude/settings.json': SETTINGS_WITH_HOOK }, (dir) => {
+      const s = JSON.parse(JSON.stringify(SETTINGS_WITH_HOOK));
+      s.env = { [name]: '/tmp/x' };
+      write(dir, '.claude/settings.json', s);
+    });
+    assert.deepEqual(d.added, ['.claude/settings.json#env:' + name]);
+  }
+});
