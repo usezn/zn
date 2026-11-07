@@ -1,5 +1,7 @@
 # zn-gate API Reference
 
+For a short guide to calling the HTTP API from curl, Python or Node.js, see the [API quickstart](api-quickstart.md).
+
 ## Table of contents
 
 - [Node.js (`zn-gate`)](#nodejs-zn-gate)
