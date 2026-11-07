@@ -111,3 +111,15 @@ test('env shadow --dry-run reports the whole-URL move; secret import prints the 
   assert.match(io2.stdout.text(), /note DATABASE_URL/);
   assert.equal(fs.readFileSync(path.join(dir, '.env'), 'utf8'), before);
 });
+
+test('env shadow: the suggested manual name is always a valid vault name (key ending in _digits, multi-line value)', async (t) => {
+  const markers = require('../lib/broker/markers');
+  const { io } = setup(t, ['API_KEY_1=abc', 'PRIVATE_KEY="line one\nline two"', 'DB_PASS_2=pw']);
+  assert.equal(await cli.dispatch('env', ['shadow', '--all'], io), 0);
+  const out = io.stdout.text();
+  const names = [...out.matchAll(/zn secret set ([A-Z0-9_]+)/g)].map((m) => m[1]);
+  assert.ok(names.length >= 2, 'suggestions are printed');
+  for (const n of names) assert.equal(markers.validateSecretName(n), null, n + ' is accepted by the vault');
+  assert.match(out, /run `zn secret set API_KEY_1_VALUE` and put __ZN_API_KEY_1_VALUE__ in its place/);
+  assert.equal(out.includes('zn secret set API_KEY_1`'), false);
+});

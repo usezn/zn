@@ -266,12 +266,21 @@ function secretNameForKey(key) {
   return n;
 }
 
+// A vault name for the manual fix that validateSecretName accepts. A key such
+// as API_KEY_1 maps to a name the scrubber reserves, so it gets a suffix.
+function suggestSecretName(key) {
+  const base = secretNameForKey(key) || 'SECRET';
+  if (!markers.validateSecretName(base)) return base;
+  const cand = base.slice(0, 64 - '_VALUE'.length).replace(/_+$/, '') + '_VALUE';
+  return markers.validateSecretName(cand) ? 'MY_SECRET' : cand;
+}
+
 /**
  * Plan which .env values move to the vault. Returns
  * {parsed, items: [{entry, name, value, start, end}], skipped: [{key, why}]}
  */
 function shortWhy(n, key) {
-  const name = secretNameForKey(key);
+  const name = suggestSecretName(key);
   return 'stays in clear text in the file. The value is only ' + n + ' character(s), and zn moves values of '
     + dotenv.MIN_SECRET_LEN + ' or more because shorter ones cannot be told apart from ordinary settings. '
     + 'To keep it out of the file, run `zn secret set ' + name + '` and put ' + markers.markerFor(name) + ' in its place.';
@@ -293,7 +302,7 @@ function planImport(text, flags) {
   for (const e of parsed.entries) {
     if (only && !only.has(e.key)) continue;
     if (!only && !flags.all && !dotenv.isSensitiveKey(e.key)) continue;
-    if (e.multiline) { skipped.push({ key: e.key, why: 'stays in clear text in the file. It is a multi-line value, which zn does not move. Store it with `zn secret set ' + secretNameForKey(e.key) + '`.' }); continue; }
+    if (e.multiline) { skipped.push({ key: e.key, why: 'stays in clear text in the file. It is a multi-line value, which zn does not move. Store it with `zn secret set ' + suggestSecretName(e.key) + '`.' }); continue; }
     if (!e.value || e.value.includes('__ZN_')) continue;
     const pw = dotenv.connectionPassword(e.value);
     let name = secretNameForKey(e.key);
