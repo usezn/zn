@@ -124,7 +124,7 @@ or for one run with the environment variable `ZN_MCP_PINNING=block`. The mode th
 
 ### Tool shadowing
 
-When you wrap more than one server, the shield also compares each tool list with the approved tools of your other pinned servers and warns (`[zn-shield TOOL SHADOWING]`) in two cases:
+When you wrap more than one server, the shield also compares each tool list with the approved tools of your other pinned servers and warns (`[zn-shield TOOL SHADOWING]`) in three cases:
 
 - a tool has the same name as an approved tool of another server, so the agent may call the wrong one;
 - the name of a tool reads like that of an approved tool of another server once case, full-width letters, look-alike letters of other alphabets and invisible or default-ignorable characters are set aside;

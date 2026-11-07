@@ -178,7 +178,7 @@ file names) are printed as `\x1b`, never sent to the terminal.
 {
   "version": 1,
   "tool": "zn-gate",
-  "toolVersion": "1.14.1",
+  "toolVersion": "1.15.0",
   "root": "/home/me/some-repo",
   "findings": [
     {
