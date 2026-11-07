@@ -85,7 +85,13 @@ wrapping with `npx -y zn-gate init --revert`. Afterwards, run
 `npx -y zn-gate check` to see what is left. See
 [Piece by piece](uninstall.md#piece-by-piece).
 
-### 11. In which order should I remove zn-gate?
+## Your data
+
+### 11. Where is my data?
+
+The check runs locally on your machine unless you turn on the optional cloud check. With it on, only the text of `analyze_prompt` and `zn-gate analyze` calls is sent, after zn-gate removed the secrets it detects. See [What leaves your machine](../README.md#what-leaves-your-machine) for the full list, and [Turn on the optional cloud check](connect.md) to turn it on or off.
+
+### 12. In which order should I remove zn-gate?
 
 Remove the hooks before the program. Run `npx -y zn-gate uninstall` in your own terminal first: it puts back the MCP servers that zn-gate wrapped, then removes the hooks and the Claude Code plugin, and asks before each change. Only after that, run `npm uninstall -g zn-gate`.
 
@@ -93,13 +99,13 @@ If you remove the program first, the hooks stay in your agent's settings. The ag
 
 ## Hooks
 
-### 12. What do zn-gate's hooks do, and where do they live?
+### 13. What do zn-gate's hooks do, and where do they live?
 
 A hook is an entry that your coding agent runs at fixed points: when you send a prompt, before a tool call, and after a tool returns its output. zn-gate's hook passes that event to zn-gate, which checks it and can block it. Each agent keeps its hook entries in its own settings file: your user settings, or, with `--project`, the settings of one project folder.
 
 To see every zn hook, the file it is in and whether it works, run `npx -y zn-gate check --hooks`. It only reads files. The small launcher script that runs the hooks is in `~/.zn/hooks`. For the command, see [`hooks`](cli.md#hooks).
 
-### 13. How do I turn the hooks off for one project, or for a while?
+### 14. How do I turn the hooks off for one project, or for a while?
 
 For one project, go to that project's folder and run `npx -y zn-gate hooks uninstall <agent> --project`, with the agent's name, for example `claude-code`. Your user hooks stay in place.
 
