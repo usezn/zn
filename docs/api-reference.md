@@ -1,5 +1,7 @@
 # zn-gate API Reference
 
+For the response fields of the zn Cloud API (`POST /v30/analyze`) and how to choose a threshold, see [Reading the API score and picking a threshold](api-score-threshold-guide.md).
+
 ## Table of contents
 
 - [Node.js (`zn-gate`)](#nodejs-zn-gate)
