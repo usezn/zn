@@ -191,8 +191,8 @@ function summary({ days = 30, now = new Date(), file } = {}) {
   return { days, since: first, total, byKey, detections, events: { ...data.events } };
 }
 
-// Gate latency per tool call: the last LATENCY_KEEP durations (ms, one decimal) of the hook runs on pre and post
-// tool events. Only numbers are kept: never a command, a prompt, a path or a name.
+// Decision time per tool call: the last LATENCY_KEEP durations (ms, one decimal) of the hook decisions on pre and
+// post tool events. It stops before the response is written and before stats and evidence are saved. Only numbers are kept: never a command, a prompt, a path or a name.
 const LATENCY_KEEP = 100;
 const LATENCY_MAX_MS = 60000;
 
@@ -226,11 +226,11 @@ function latencySummary({ file, last = LATENCY_KEEP } = {}) {
 
 /** The line `zn-gate check` / `doctor` prints. `off` is true when recording was turned off by ZN_STATS=off. */
 function latencyReport({ file, off = false } = {}) {
-  if (off) return 'Gate latency per tool call: off (ZN_STATS=off), nothing is measured.';
+  if (off) return 'Decision time per tool call: off (ZN_STATS=off), nothing is measured.';
   const s = latencySummary({ file });
-  if (!s) return 'Gate latency per tool call: no data yet. It is measured on each tool call your agent makes through zn.';
+  if (!s) return 'Decision time per tool call: no data yet. It is measured on each tool call your agent makes through zn.';
   const fmt = (v) => v.toFixed(1);
-  return 'Gate latency per tool call (last ' + s.count + ' calls, measured on this machine): p50 ' + fmt(s.p50) + ' ms, p95 ' + fmt(s.p95) + ' ms.';
+  return 'Decision time per tool call (last ' + s.count + ' calls, measured on this machine): p50 ' + fmt(s.p50) + ' ms, p95 ' + fmt(s.p95) + ' ms. Excludes process startup, writing the response, and saving stats and evidence.';
 }
 
 module.exports = { znHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known,

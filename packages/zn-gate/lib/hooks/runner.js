@@ -1735,6 +1735,8 @@ async function handle(adapter, rawEvent, opts = {}) {
   } finally {
     d.closeVault();
   }
+  // Decision time only: from the start of handle() up to the decision. Excludes process startup, writing the
+  // response, and saving stats and evidence (both run after this point).
   const latencyMs = performance.now() - t0;
   // zn Team: a line for the person (a policy change that lifted restrictions, or detectors that are not applied).
   const teamLines = takeTeamNotes();
@@ -1773,7 +1775,7 @@ function countHook(agentId, ev, decision, opts = {}, latencyMs) {
       warned: decision.decision === 'ask' || decision.failOpen || (decision.decision === 'deny' && decision.noBlock) ? 1 : 0,
       redacted: extra.redacted || 0,
       detections: extra.detections || {},
-      // Only the duration of a tool call check is kept (lib/stats.js latencyReport).
+      // Decision time only, not the response write or the stats and evidence saves (see lib/stats.js latencyReport).
       latencyMs: ev.event === 'pre_tool' || ev.event === 'post_tool' ? latencyMs : undefined,
     }, file ? { file } : {});
   } catch {

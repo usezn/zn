@@ -1,5 +1,5 @@
 'use strict';
-/* Gate latency per tool call: the percentile math, what is stored, and what `zn-gate doctor` prints. */
+/* Decision time per tool call: the percentile math, what is stored, and what `zn-gate doctor` prints. */
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -65,10 +65,10 @@ test('ZN_STATS=off stores nothing', (t) => {
 
 test('latencyReport says no data yet, shows measured p50 and p95, and says off', (t) => {
   const file = path.join(tempDir(t, 'zn-latency-'), 'stats.json');
-  assert.strictEqual(stats.latencyReport({ file }), 'Gate latency per tool call: no data yet. It is measured on each tool call your agent makes through zn.');
+  assert.strictEqual(stats.latencyReport({ file }), 'Decision time per tool call: no data yet. It is measured on each tool call your agent makes through zn.');
   assert.match(stats.latencyReport({ file, off: true }), /off \(ZN_STATS=off\)/);
   for (const ms of [1, 2, 3, 4, 10]) stats.record({ layer: 'hook', agent: 'claude-code', checked: 1, latencyMs: ms }, { file });
-  assert.strictEqual(stats.latencyReport({ file }), 'Gate latency per tool call (last 5 calls, measured on this machine): p50 3.0 ms, p95 10.0 ms.');
+  assert.strictEqual(stats.latencyReport({ file }), 'Decision time per tool call (last 5 calls, measured on this machine): p50 3.0 ms, p95 10.0 ms. Excludes process startup, writing the response, and saving stats and evidence.');
 });
 
 // `doctor` is the CLI command: it runs in a fresh home, so the file is the one the test writes.
@@ -81,7 +81,7 @@ function runDoctor(home) {
 
 test('zn-gate doctor prints "no data yet" when nothing was measured', (t) => {
   const home = tempDir(t, 'zn-doctor-latency-none-');
-  assert.match(runDoctor(home), /Gate latency per tool call: no data yet\./);
+  assert.match(runDoctor(home), /Decision time per tool call: no data yet\./);
 });
 
 test('zn-gate doctor prints the measured p50 and p95 when there is data', (t) => {
@@ -89,6 +89,6 @@ test('zn-gate doctor prints the measured p50 and p95 when there is data', (t) =>
   const file = path.join(home, 'stats.json');
   for (const ms of [1, 2, 3, 4, 10]) stats.record({ layer: 'hook', agent: 'claude-code', checked: 1, latencyMs: ms }, { file });
   const out = runDoctor(home);
-  assert.match(out, /Gate latency per tool call \(last 5 calls, measured on this machine\): p50 3\.0 ms, p95 10\.0 ms\./);
+  assert.match(out, /Decision time per tool call \(last 5 calls, measured on this machine\): p50 3\.0 ms, p95 10\.0 ms\. Excludes process startup/);
   assert.doesNotMatch(out, /no data yet/);
 });
