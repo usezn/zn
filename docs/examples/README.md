@@ -3,6 +3,7 @@
 Worked examples, in alphabetical order. All values in them are made up.
 
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
+- [first-block-vs-allow-decision.md](first-block-vs-allow-decision.md): what to do the first time zn-gate blocks a command of your agent, and when to change the settings instead.
 - [first-project-walkthrough.md](first-project-walkthrough.md): one small example project, from install to removal.
 - [init-and-uninstall.md](init-and-uninstall.md): set up zn-gate, preview the steps with a dry run, then remove it.
 - [long-text-analysis.md](long-text-analysis.md): the two long-input modes of the cloud check (`windows` or `off`), and when the result carries a warning.
