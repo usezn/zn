@@ -64,6 +64,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [OWASP mapping](owasp-mapping.md) | Which zn-gate rules and features touch each category of the OWASP LLM and MCP Top 10, what is not covered, and the agent CVEs that `zn audit` reports | Security reviewers |
 | [Performance](performance.md) | How long the agent hooks take, with the script to reproduce it | Developers |
 | [API reference](api-reference.md) | Node.js and Python functions | Developers |
+| [API data handling](api-data-handling.md) | What the analysis API keeps, for how long, and how to delete it | Developers, security reviewers |
 | [Verify a release](verify-release.md) | Check signatures and build provenance of a download | Security-minded users |
 | [Rust gateway (legacy)](rust-core.md) | The original gateway in `src/`, not released | Contributors |
 
