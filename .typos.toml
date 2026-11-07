@@ -1,4 +1,4 @@
-# Config for the spellcheck step of the Quick checks workflow (crate-ci/typos). Add an exception only for a word that is spelled on
+# Config for the Spellcheck workflow (crate-ci/typos). Add an exception only for a word that is spelled on
 # purpose, and say why on the line above it. typos already skips hashes, hex strings and URLs.
 
 [default]
@@ -9,5 +9,5 @@ extend-ignore-re = []
 rasie = "rasie"
 # Windows 8.3 short names used as test data for the protected-path checks (SETTIN~1.JSO is settings.json).
 SETTIN = "SETTIN"
-# Intentional misspelling in the typo-squat example of docs/package-install-check.md (the squatted name is one letter off).
+# Misspelled package name used as an example of a name that looks like a well-known one (docs/package-install-check.md).
 expresss = "expresss"
