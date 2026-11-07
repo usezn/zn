@@ -542,7 +542,8 @@ function denial(command, rules) {
   let hit;
   try { hit = analyze(command, 0); } finally { ENABLED = saved; }
   if (!hit) return null;
-  return 'zn blocked this: ' + (REASONS[hit] || OVERFLOW_REASON) + '. Ask the user to confirm before running this command. If they want it, they can run it in their own terminal; do not run it yourself.';
+  return 'zn blocked this: ' + (REASONS[hit] || OVERFLOW_REASON) + ' (rule: destructive:' + hit + '). ' +
+    'Ask the user to confirm before running this command. If they want it, they can run it in their own terminal; do not run it yourself. ';
 }
 
 /** The rules the agent hooks apply when the user has not changed anything. The other four are opt-in. */
