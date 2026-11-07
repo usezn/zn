@@ -5,7 +5,8 @@ name: Windows checks for Windows-specific code
 # - on every push to main and to a release branch, so a release commit is never tagged without it
 #   (.github/release-required-checks.txt names this job);
 # - on pull requests into next, main and release branches that touch code with Windows-specific paths
-#   (command quoting, launching programs, the keychain, the broker, agent setup) or any test.
+#   (command quoting, launching programs, the keychain, the broker, agent setup) or any test;
+# - every night on next (nightly-next.yml starts a manual run there), and on other manual runs.
 # The merge queue runs only the required checks, so it does not run this workflow.
 
 on:
@@ -28,6 +29,7 @@ on:
       - 'plugins/zcode/scripts/**'
       - 'plugins/zn-gate/scripts/**'
       - '.github/workflows/windows-paths.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
