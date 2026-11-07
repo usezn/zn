@@ -406,4 +406,15 @@ function describePackage(dir, safe) {
   return lines;
 }
 
-module.exports = { PackageError, parsePackageSpec, fetchPackageForScan, extractTarball, registryBase, checkTarballUrl, checkRedirect, unsafeOnWindows, describePackage };
+// What the agent-config audit did not read in full, as short phrases ([] when it walked everything).
+function auditCoverageGaps(result) {
+  const gaps = [];
+  if (result.truncated) gaps.push('it stopped early (time budget or entry limit), so some files were not checked');
+  const dirs = (result.skippedDirs || []).length;
+  if (dirs) gaps.push(dirs + ' folder(s) were not read');
+  const files = new Set((result.findings || []).filter((f) => f.id === 'ZNA020').map((f) => f.file)).size;
+  if (files) gaps.push(files + ' file(s) were not fully checked');
+  return gaps;
+}
+
+module.exports = { auditCoverageGaps, PackageError, parsePackageSpec, fetchPackageForScan, extractTarball, registryBase, checkTarballUrl, checkRedirect, unsafeOnWindows, describePackage };

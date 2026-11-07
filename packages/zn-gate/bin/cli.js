@@ -218,7 +218,7 @@ COMMANDS:
                       [--format text|json|github] (matched values are never printed)
   scan --package NAME[@VERSION]
                       Audit an npm package (MCP server or skill) before you add it: it is downloaded from the
-                      registry and read in full (node_modules and dist too), never installed or run; the
+                      registry and its files with a scanned extension are read (node_modules and dist too), never installed or run; the
                       install scripts npm would run are listed. Text output only.
   audit [path]        Review a repository's agent configs before you open it: hooks, MCP servers,
                       endpoint overrides, permissions, instructions, planted executables
@@ -859,9 +859,10 @@ async function runScanPackage(args, options) {
   if (extra.length) return fail('--package scans the package from the registry: leave out the folder argument (' + extra[0].slice(0, 40) + ')');
   if (options.includeHome) return fail('--include-home cannot be used with --package');
   if (options.formatGiven && String(options.format).toLowerCase() !== 'text') return fail('--package supports only --format text for now');
+  if (args.some((a) => a === '--exclude' || a.startsWith('--exclude='))) return fail('--exclude cannot be used with --package: no folder of a package is skipped by name');
   if (options.allowPartial) return fail('--allow-partial cannot be used with --package: a package is read in full, and a part that could not be read is never reported as a pass');
 
-  const { fetchPackageForScan, describePackage } = require('../lib/scan-package');
+  const { fetchPackageForScan, describePackage, auditCoverageGaps } = require('../lib/scan-package');
   let pkg;
   try {
     pkg = await fetchPackageForScan(spec);
@@ -889,8 +890,11 @@ async function runScanPackage(args, options) {
     } else {
       process.stdout.write('\nConfig audit: no findings in ' + label + '\n');
     }
+    // A partly walked audit (time budget, entry cap, folder not opened, agent file not fully read) is not a clean one.
+    const gaps = auditCoverageGaps(result);
+    if (gaps.length) process.stdout.write('\nConfig audit incomplete: ' + gaps.join('; ') + '. Exit code 3\n');
     if (summary.failed || scanCode === 1) return 1;
-    return scanCode;
+    return scanCode || (gaps.length ? 3 : 0);
   } finally {
     pkg.cleanup();
   }
