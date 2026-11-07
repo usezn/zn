@@ -179,4 +179,3 @@ Run `npx -y zn-gate check` afterwards if you want to see that zn is off.
 - [Remove zn-gate](uninstall.md)
 - [Words you do not know](glossary.md)
 - [What zn-gate cannot protect](threat-model.md)
-
