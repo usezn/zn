@@ -442,7 +442,7 @@ Run both checks before each commit with the [pre-commit](https://pre-commit.com)
 
 ## Examples
 
-Runnable examples are in [`examples/`](examples/). The code API checks text for sensitive paths, prompt injection in tool output and secrets, and redacts the secrets; it does not block destructive shell commands.
+Runnable examples are in [`examples/`](examples/), with the command to run each one in its [index](examples/README.md). The code API checks text for sensitive paths, prompt injection in tool output and secrets, and redacts the secrets; it does not block destructive shell commands.
 
 | Example | Language | Framework | What it shows |
 |---|---|---|---|
