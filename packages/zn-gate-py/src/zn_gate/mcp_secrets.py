@@ -22,6 +22,7 @@ import re
 from typing import Any, Callable, Dict, List, Optional, Mapping, Sequence, Set, Tuple, TypedDict
 
 from .rules import _is_non_secret_value
+from .shell_names import npx_name
 
 RULE_ID = "secret:mcp_config"
 
@@ -466,7 +467,7 @@ def mcp_next_step(kind: str, name: str) -> str:
                 "your agent expects (for example ${" + use + "} in Claude Code, ${env:" + use + "} in Cursor and VS Code, "
                 "{env:" + use + "} in OpenCode), keep the real value in your own shell settings or a secret manager, "
                 "and rotate it if the file was ever committed or shared.")
-    through = (f"Next: {NPM_ONLY_NOTE}run npx -y zn-gate secret set {use} to store the value in the local vault (it asks for the value, "
+    through = (f"Next: {NPM_ONLY_NOTE}run {npx_name()} -y zn-gate secret set {use} to store the value in the local vault (it asks for the value, "
                f"so it is never typed on a command line), run zn secret allow {use} --command <the server's command> so zn run "
                "may use it, take the value out of this file and start the server through zn run: set the server's command to zn "
                f"and put run, --secrets, {use}, -- and the old command first in args, so the server gets the value as the "
