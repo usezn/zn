@@ -3,7 +3,7 @@
 // The launcher records a manifest of the package files the hook runner can load (the code and data under lib/, package.json
 // and bin/cli.js, each with its SHA-256). Every module the runner requires is read once, hashed and compiled from those same
 // bytes: an edited file, a file that is not in the list, a link or a file outside the package blocks the hook (exit status 86,
-// then the usual "zn-gate changed" block), and a file swapped after the check never runs. Only files that are loaded are read;
+// then the usual "zn-gate changed" block), and a file swapped after the check never runs. Only files that are loaded are read (and the vault client files, on every call);
 // `zn-gate check` (see check.test.js) reads the whole list. Everything runs on a copy of the package in a temporary folder,
 // with fake values and the real `sh`.
 
@@ -88,6 +88,7 @@ test('manifest: the launcher records the list of the package files, and the inta
 for (const [label, change] of [
   ['an edited policy file', (s) => fs.appendFileSync(s.p('lib/hooks/policy.js'), '// edited\n')],
   ['an edited destructive-command file', (s) => fs.appendFileSync(s.p('lib/destructive.js'), '// edited\n')],
+  ['an edited vault file', (s) => fs.appendFileSync(s.p('lib/vault/store.js'), '// edited' + String.fromCharCode(10))],
   ['an edited broker file', (s) => fs.appendFileSync(s.p('lib/broker/files.js'), '// edited\n')],
   ['an edited helper module', (s) => fs.appendFileSync(s.p('lib/zn-command.js'), '// edited\n')],
   ['a policy file replaced by a link to a copy outside the package', (s) => {

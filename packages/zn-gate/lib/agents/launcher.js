@@ -97,10 +97,13 @@ const CHANGED_RC = 86;
 // could not be made (only the runner is then checked). With a manifest, every module the runner requires afterwards is read
 // once, hashed and compiled from those same bytes: a file that is not in the list, differs from it, or lies outside the package
 // ends the run with CHANGED_RC, so a file swapped after the check, a link, or a planted file never runs. Only files that are
-// loaded are read: a file nothing requires costs nothing, and `zn-gate check` reads the whole list.
+// loaded are read, plus VAULT_FILES, which are read on every call: a file nothing requires costs nothing, and `zn-gate check` reads the whole list.
+// The vault client and the modules it loads. A hook call that never needs the vault does not load them (that saves about 3 ms), but they are
+// still read and checked on every call, so an edited vault file blocks the call as any other edited file does.
+const VAULT_FILES = ['lib/vault/client.js', 'lib/vault/store.js', 'lib/vault/winacl.js', 'lib/exe.js', 'lib/errors.js', 'lib/linear-text.js'];
 const VERIFY_JS = "const fs=require('fs'),M=require('module'),p=require('path'),c=require('crypto');" +
   "const [f,h,t,...a]=process.argv.slice(1);const X=()=>process.exit(" + CHANGED_RC + ");const H=(x)=>c.createHash('sha256').update(x).digest('hex');" +
-  "const D=/^[0-9a-f]{64}$/;let b,R=f;" +
+  "const D=/^[0-9a-f]{64}$/;const V=" + JSON.stringify(VAULT_FILES) + ";let b,R=f;" +
   "if(t==='-'){try{b=fs.readFileSync(f)}catch(e){X()}}else{" +
   "const T=new Map();for(const e of t.split(';')){const i=e.lastIndexOf('=');const k=e.slice(0,i);if(!k||!D.test(e.slice(i+1)))X();T.set(k,e.slice(i+1))}" +
   "try{R=fs.realpathSync(f)}catch(e){X()}const r=p.resolve(R,'..','..','..')+p.sep;" +
@@ -108,7 +111,7 @@ const VERIFY_JS = "const fs=require('fs'),M=require('module'),p=require('path'),
   "const S=(v)=>{v=v.toString('utf8');return v.charCodeAt(0)===65279?v.slice(1):v};" +
   "const oj=M._extensions['.json'],oc=M._extensions['.js'];" +
   "M._extensions['.js']=(m,n)=>m._compile(S(G(n)),n);M._extensions['.json']=(m,n)=>{m.exports=JSON.parse(S(G(n)))};M._extensions['.node']=X;" +
-  "b=G(R)}" +
+  "b=G(R);for(const k of V)if(T.has(k))G(r+k)}" +
   "if(!D.test(h||'')||H(b)!==h)X();" +
   "process.argv=[process.argv[0],f,...a];const m=new M(R,null);m.id='.';m.filename=R;m.paths=M._nodeModulePaths(p.dirname(R));" +
   "process.mainModule=m;M._cache[R]=m;m._compile(b.toString('utf8'),R);m.loaded=true;";
