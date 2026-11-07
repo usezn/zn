@@ -30,7 +30,7 @@ More in [section 6 of the troubleshooting guide](troubleshooting.md#6-your-agent
 zn: ~/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `zn secret set NAME`, then run the command with `zn run --secrets NAME -- <command>` so the program gets it as an environment variable.
 ```
 
-The first part is the path your agent asked for. The kind in brackets says what the file is. Other kinds include an SSH private key, a key store, `~/.npmrc` and `~/.pypirc` (package registry tokens).
+The first part is the path your agent asked for. The kind in parentheses says what the file is. Other kinds include an SSH private key, a key store, `~/.npmrc` and `~/.pypirc` (package registry tokens).
 
 **Why it fired:** the file usually holds a password or a key, and zn-gate does not let an agent read it.
 
@@ -40,7 +40,7 @@ The first part is the path your agent asked for. The kind in brackets says what 
 2. Ask your agent to run the command with `zn run --secrets NAME -- <command>`. The program then gets the value as an environment variable, and the agent never sees it.
 3. If you did not expect the read, ask your agent why it wanted that file.
 
-More in [keeping secrets out of your agent](secrets.md) and [section 5 of the troubleshooting guide](troubleshooting.md).
+More in [keeping secrets out of your agent](secrets.md) and [the troubleshooting guide](troubleshooting.md#zn-file-was-not-read-because-zn-treats-it-as-holding-secrets-kind).
 
 ## 3. A command was blocked as destructive
 
@@ -58,7 +58,7 @@ The reason after "zn blocked this:" names the kind of damage the command could d
 2. If you did not mean it, ask your agent for a narrower command that names only the one folder or file it needs to change.
 3. Do not reword the command to get past the block. Ask the agent to stop and tell you what it was trying to do.
 
-More in [section 3 of the troubleshooting guide](troubleshooting.md#a-command-that-wipes-or-damages-the-machine).
+More in [the troubleshooting guide](troubleshooting.md#a-command-that-wipes-or-damages-the-machine).
 
 ## 4. A request would send personal data or a secret away
 
