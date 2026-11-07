@@ -27,7 +27,7 @@ You normally do not type this in a terminal. The command is what your agent runs
 }
 ```
 
-Always keep the `--`. To wrap every local server in your agent configs in one step instead, see [`init --shadow`](../shield.md#wrap-all-your-servers-at-once-init---wrap-mcp); it writes a backup of each file first.
+Always keep the `--`. To wrap every local server in your agent configs in one step instead, see [`init --wrap-mcp`](../shield.md#wrap-all-your-servers-at-once-init---wrap-mcp) (or `init --shadow` to wrap them in watch-only mode); it writes a backup of each file first.
 
 In shadow mode the shield watches and records but does not change anything: a call it would refuse is still sent on, and tool output reaches the agent untouched, secrets included. Use it to see what zn-gate would do, not as protection.
 
