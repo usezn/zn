@@ -1,0 +1,2 @@
+### Added
+- `zn-gate stats` now shows a `Top rules` block with the five detector ids that matched most often, with their counts, for the last 7 days or for `--days N`. `--json` has the same list in `top_rules`. Only ids and counts are shown, and nothing new is stored. The Python `zn-gate stats` shows the same block.

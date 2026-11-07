@@ -190,4 +190,22 @@ function summary({ days = 30, now = new Date(), file } = {}) {
   return { days, since: first, total, byKey, detections, events: { ...data.events } };
 }
 
-module.exports = { znHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known };
+const TOP_RULES_DAYS = 7;
+const TOP_RULES_LIMIT = 5;
+// Until a plain-name table exists, every built-in detector id shares this generic name.
+const GENERIC_RULE_NAME = 'Built-in detector';
+
+/**
+ * The most frequent detector ids over the last `days` days (default 7): [{ id, name, count }], highest count first,
+ * ties by id. Ids only, from the counts already stored; nothing new is recorded.
+ */
+function topRules({ days = TOP_RULES_DAYS, limit = TOP_RULES_LIMIT, now = new Date(), file } = {}) {
+  const s = summary({ days, now, file });
+  return Object.entries(s.detections)
+    .filter(([id, n]) => TYPE_RE.test(id) && Number.isFinite(n) && n > 0)
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .slice(0, limit)
+    .map(([id, count]) => ({ id, name: GENERIC_RULE_NAME, count }));
+}
+
+module.exports = { topRules, TOP_RULES_DAYS, znHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known };

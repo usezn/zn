@@ -77,7 +77,21 @@ def summary(days: int = 30, now: Optional[datetime.date] = None, path: Optional[
             "events": dict(data.get("events") or {})}
 
 
-def render(s: Dict[str, Any]) -> str:
+TOP_RULES_DAYS = 7
+TOP_RULES_LIMIT = 5
+GENERIC_RULE_NAME = "Built-in detector"
+WHY_HINT = "To understand a block, see https://usezn.com/docs/zn-gate/troubleshooting/"
+
+
+def top_rules(days: int = TOP_RULES_DAYS, limit: int = TOP_RULES_LIMIT, now: Optional[datetime.date] = None,
+              path: Optional[str] = None) -> list:
+    """Most frequent detector ids over the last `days` days: ids and counts only, highest count first, ties by id."""
+    dets = summary(days=days, now=now, path=path)["detections"]
+    items = sorted(((t, n) for t, n in dets.items() if n > 0), key=lambda kv: (-kv[1], kv[0]))[:limit]
+    return [{"id": t, "name": GENERIC_RULE_NAME, "count": n} for t, n in items]
+
+
+def render(s: Dict[str, Any], top: Optional[Dict[str, Any]] = None) -> str:
     t = s["total"]
     lines = ["zn-gate on this machine, last {} day{}{}:".format(
         s["days"], "" if s["days"] == 1 else "s", " (counting since {})".format(s["since"]) if s["since"] else ""), ""]
@@ -93,6 +107,14 @@ def render(s: Dict[str, Any]) -> str:
         if types:
             lines.append("")
             lines.append("  Secret types found: " + ", ".join("{} {:,}".format(k, n) for k, n in types))
+        rules = (top or {}).get("rules") or []
+        if rules:
+            d = top["days"]
+            lines.append("")
+            lines.append("  Top rules, last {} day{}:".format(d, "" if d == 1 else "s"))
+            for r in rules:
+                lines.append("    {}  {}  {:,}".format(r["id"], r["name"], r["count"]))
+            lines.append("  Most frequent: {}. {}".format(rules[0]["id"], WHY_HINT))
         if s["byKey"]:
             lines.append("")
             lines.append("  By agent:")
