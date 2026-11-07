@@ -1,6 +1,6 @@
 # Claude Code: the plugin or the command-line install
 
-zn-gate covers Claude Code in two ways: the zn's hooks written into Claude Code's settings with `zn hooks install claude-code`. This page compares the two: what each needs, how to verify it, and how to remove it. The steps for all agents are in [Install, verify and uninstall by agent](../by-agent.md).
+zn-gate covers Claude Code in two ways: the zn-gate plugin from the zn-gate marketplace, or zn's hooks written into Claude Code's settings with `zn hooks install claude-code`. This page compares the two: what each needs, how to verify it, and how to remove it. The steps for all agents are in [Install, verify and uninstall by agent](../by-agent.md).
 
 Run every command in your own terminal, not through your agent.
 
