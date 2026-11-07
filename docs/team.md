@@ -21,6 +21,15 @@ control of their own machine can leave the organization or stop zn-gate; the
 dashboard shows each machine's last policy version and last upload, so a
 machine that stops reporting is visible.
 
+**On this page**
+
+- [Roles in a team](#roles-in-a-team)
+- [Commands](#commands)
+- [The organization policy](#the-organization-policy)
+- [What is sent](#what-is-sent)
+- [Deploy zn-gate's hooks to every machine (managed settings)](#deploy-zn-gates-hooks-to-every-machine-managed-settings)
+- [Export the audit log to OpenTelemetry](#export-the-audit-log-to-opentelemetry)
+
 ## Roles in a team
 
 **Lead.** The lead is the organization admin who sets zn Team up. The lead
