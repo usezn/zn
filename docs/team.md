@@ -60,7 +60,7 @@ zn team status --rules
 
 Prints, in plain words, the policy your organization signed: its version, the key id it was signed with, when it stops being valid, and each rule (what it blocks, warns about or restricts, for which secret names and agents, and the reason your admin gave). Custom detectors are listed by name and type only.
 
-It reads the copy that `zn team sync` saved on this machine and checks its signature again with the key pinned when you joined. It makes no network call and changes nothing, and it never shows a secret value (rules name secrets, they never hold them). If that copy does not verify, or has expired, the command says so and prints no rules from it: a policy that is not valid is never shown as if it were in force. `zn team status --rules --json` has the same information under `rules`.
+It reads the copy that `zn team sync` saved on this machine and checks its signature again with the key pinned when you joined. It makes no network call, does not open the vault, and changes nothing (so with `--rules` the upload and last-sync lines are left out; run `zn team status` for those), and it never shows a secret value (rules name secrets, they never hold them). If that copy does not verify, or has expired, the command says so and prints no rules from it: a policy that is not valid is never shown as if it were in force. `zn team status --rules --json` has the same information under `rules`.
 
 `zn team join` and `zn team leave` are confirmed on the vault's own channel
 (the terminal of `zn unlock --foreground`, or a system dialog), not in the

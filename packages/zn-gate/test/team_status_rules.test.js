@@ -75,7 +75,8 @@ test('valid policy: version, key id, expiry and every rule in words', async () =
   assert.match(r.stdout, /1\. blocks use of secrets named PROD_\* \(all agents\)\. Reason: Production keys stay with CI/);
   assert.match(r.stdout, /2\. restricts use of secrets named STAGING_KEY \(agents: claude-code, codex\); mode proxy; hosts allowed: api\.example\.com; value only in the header/);
   assert.match(r.stdout, /3\. allows, with a warning and an audit record, use of secrets named DEMO_TOKEN \(all agents\)/);
-  assert.ok(clientCalls > 0, 'the vault was asked and was locked, so the rules came from the local copy');
+  assert.strictEqual(clientCalls, 0, '--rules makes no vault or server request');
+  assert.match(r.stdout, /Local view only/);
 });
 
 test('without --rules the output has no rules section', async () => {

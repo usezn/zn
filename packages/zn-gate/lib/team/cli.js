@@ -132,7 +132,8 @@ async function statusCmd(args) {
   const p = policy.paths();
   const team = policy.readTeam();
   let info = null;
-  try { info = await withClient((c) => c.teamInfo()); } catch (e) { info = null; }
+  // --rules never asks the vault (and so never the server): only the local join state and the verified local copy are used.
+  if (!wantRules) { try { info = await withClient((c) => c.teamInfo()); } catch (e) { info = null; } }
   const st = info && info.joined ? info.policy : (team ? policy.state({ team }) : null);
   let pending = null;
   const afterSeq = info && Number.isInteger(info.upload_after_seq) ? info.upload_after_seq : (team && Number.isInteger(team.upload_after_seq) ? team.upload_after_seq : 0);
@@ -146,7 +147,7 @@ async function statusCmd(args) {
   const joined = info ? info.joined : Boolean(team);
   const res = {
     joined,
-    vault: info ? 'unlocked' : 'locked',
+    vault: wantRules ? 'not checked' : (info ? 'unlocked' : 'locked'),
     org: (info && info.org) || (team && team.org) || null,
     org_name: (info && info.org_name) || (team && team.org_name) || null,
     install_id: (info && info.install_id) || (team && team.install_id) || null,
@@ -189,7 +190,8 @@ async function statusCmd(args) {
   }
   for (const l of describeRevocations(res.revocation_pending)) out(l);
   for (const l of describeDropped(res.revocations_dropped)) out(l);
-  if (!info) out('The vault is locked: policy downloads and uploads resume after `' + znCommand('unlock') + '`.');
+  if (wantRules) out('Local view only: with --rules the vault and the server were not contacted, so upload counts, last sync and removal status are left out. Run `zn team status` without --rules for those.');
+  else if (!info) out('The vault is locked: policy downloads and uploads resume after `' + znCommand('unlock') + '`.');
   return 0;
 }
 
