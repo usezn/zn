@@ -48,6 +48,14 @@ It also does these things on your machine:
 
 The cloud check is off until you turn it on. It needs both `ZN_CLOUD=1` and `ZN_API_KEY`, or a run of `zn-gate connect`. It only looks at prompts, and the text has recognised secrets removed before it is sent. If the call fails, the local result stands and nothing is blocked because of it. See [Connect](connect.md).
 
+## If you see this message
+
+These are three messages a new user often meets first. Each one is explained in [Troubleshooting](troubleshooting.md).
+
+- **"zn-gate needs Node.js 18 or later, and this is Node.js v..."**: install the LTS version from [nodejs.org](https://nodejs.org/), open a new terminal, check `node --version`, then run your command again. ([Details](troubleshooting.md#1-nodejs-is-too-old))
+- **"... needs an interactive terminal. Open a terminal window yourself and run it there."**: open a terminal window yourself, not the agent's window, and run the same command there. Nothing was changed. ([Details](troubleshooting.md#4-it-needs-you-at-your-own-terminal))
+- **"Your secret vault is locked."**: run `zn unlock` in your own terminal, then run the command that failed again. ([Details](troubleshooting.md#5-your-secret-vault-is-locked))
+
 ## Where to go next
 
 1. [First 5 minutes](first-5-minutes.md): install zn-gate and see it work.
