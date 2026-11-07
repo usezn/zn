@@ -657,3 +657,20 @@ Hermes Agent and the Cursor CLI. Gemini CLI has experimental hooks (see its entr
 covers programs that read the proxy variables (in Node, only versions that honour `NODE_USE_ENV_PROXY`), not
 programs that ignore them, raw sockets or DNS; see
 [Egress allowlist for `zn run`](secrets.md#egress-allowlist-for-zn-run).
+
+## Which agent versions were tested
+
+When you test a row of this page, say which agent version you used and when, in the same cell or sentence as the claim, so a reader can see how old it is. Use one short sentence:
+
+```text
+Checked on <agent> <version> on <system>, <YYYY-MM-DD>.
+```
+
+For example: `Checked on Codex CLI 0.163.0 on Linux, 2026-10-17.` (the numbers here are an example, not a test result).
+
+- **Version:** copy it from the agent's own version command, not from memory, and write it as the agent prints it (for example `0.163.0`).
+- **Date:** the day you ran the check, as `YYYY-MM-DD`.
+- **System:** name it only when the result depends on it (Linux, macOS, Windows).
+- **What you checked:** if the check was narrower than the row, say so in the same sentence (for example "hook command only, no agent started").
+- **Not tested:** write "not tested" for a version or system you did not run. Do not copy a version from another row.
+- **A new test replaces the old note:** change the version and the date; do not add a second note next to it.
