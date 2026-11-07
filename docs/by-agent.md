@@ -11,7 +11,7 @@ The hooks need zn-gate 1.5 or later from npm (`npm install -g zn-gate`).
 | Agent | Install | Verify | Uninstall |
 | - | - | - | - |
 | Claude Code | `claude plugin marketplace add usezn/zn`, then `claude plugin install zn-gate@usezn` (or `zn hooks install claude-code`) | `npx -y zn-gate check` | `claude plugin uninstall zn-gate@usezn` (or `zn hooks uninstall claude-code`) |
-| Codex CLI | `zn hooks install codex`, then trust it in `/hooks` | `npx -y zn-gate check` | `zn hooks uninstall codex` |
+| Codex CLI | [`zn hooks install codex`](editors/codex.md), then trust it in `/hooks` | `npx -y zn-gate check` | `zn hooks uninstall codex` |
 | OpenCode | `zn hooks install opencode` | `npx -y zn-gate check` (checks zn's rules; the plugin runs inside OpenCode) | `zn hooks uninstall opencode` |
 | [Cursor](editors/cursor.md) | `zn hooks install cursor` | `npx -y zn-gate check` | `zn hooks uninstall cursor` |
 | [GitHub Copilot (VS Code, CLI)](editors/vscode.md) | `zn hooks install copilot` | `npx -y zn-gate check` | `zn hooks uninstall copilot` |
