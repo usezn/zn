@@ -40,7 +40,10 @@ async function run(args, io = {}) {
     for (const s of servers) {
       process.stdout.write('  ' + s.key + '  ' + s.command + '\n');
       process.stdout.write('      ' + s.tools + ' tool(s) pinned' + (s.pinnedAt ? ' ' + s.pinnedAt : '') + '\n');
-      if (s.pending.length) process.stdout.write('      changed or new since then: ' + s.pending.slice(0, 20).join(', ') + (s.pending.length > 20 ? ', ...' : '') + '\n');
+      if (s.pending.length) {
+        process.stdout.write('      changed or new since then: ' + s.pending.slice(0, 20).join(', ') + (s.pending.length > 20 ? ', ...' : '') + '\n');
+        for (const c of s.changes) process.stdout.write('        ' + c.tool + ': ' + c.what + '\n');
+      }
     }
     if (servers.some((s) => s.pending.length)) {
       process.stdout.write('\nReview what changed, then accept it with: zn-gate pins approve <server>\n');

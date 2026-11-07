@@ -20,6 +20,16 @@ on:
 permissions:
   contents: read
 
+env:
+  # Keeps each Rust build cache small, so that the five of them (Linux check, MSRV and coverage, Windows and
+  # macOS private file writer) plus the copy that is still there after a Cargo.lock change fit in the repository
+  # 10 GB cache limit. Debug info is the largest part of target/ (on Windows it is the .pdb files) and nothing
+  # in these jobs reads it: the tests set RUST_BACKTRACE=0 and panic messages carry the file and line without it.
+  # CARGO_INCREMENTAL=0 is what rust-cache sets anyway; stated here so the cache key does not depend on it.
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+  CARGO_INCREMENTAL: 0
+
 # A new push to a pull request, or to next, cancels the run still going for it, so a burst of
 # merges into next tests only the newest commit. Runs for main, scheduled runs and manual runs always complete.
 concurrency:
@@ -156,7 +166,6 @@ jobs:
 
   msrv:
     name: minimum supported Rust version (1.95)
-    # Draft pull requests skip this job; marking the pull request ready for review runs it.
     # Draft pull requests skip this job (through scope); a change that touches no Rust file skips it too. A push to
     # next is the commit the merge queue already checked, so it is skipped there as well.
     needs: scope
@@ -237,8 +246,8 @@ jobs:
 
   coverage:
     name: coverage report
-    # Report only, no threshold, and it repeats the build and tests, so it runs on pushes to main and next
-    # and on manual runs, not on pull requests or the weekly schedule.
+    # Report only, no threshold, and it repeats the build and tests, so it runs on every push (main, next and
+    # release branches) and on manual runs, not on pull requests or the weekly schedule.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
