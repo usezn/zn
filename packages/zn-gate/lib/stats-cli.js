@@ -42,7 +42,7 @@ function confirmInTerminal(question) {
   });
 }
 
-const WHY_HINT = 'To understand a block, see https://usezn.com/docs/zn-gate/troubleshooting/';
+const WHY_HINT = 'To understand your last block, run: zn why';
 
 function printTopRules(rules, days, out) {
   if (!rules.length) return;

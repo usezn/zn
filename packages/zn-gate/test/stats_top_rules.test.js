@@ -57,7 +57,7 @@ test('text output: Top rules block over 7 days by default, with a hint, ids and 
   assert.ok(r.out.indexOf('DB_PASSWORD  ') < r.out.indexOf('GITHUB_TOKEN  '));
   assert.doesNotMatch(r.out, /SSN {2}/);
   assert.doesNotMatch(r.out, /STRIPE_KEY {2}/);
-  assert.match(r.out, /Most frequent: AWS_KEY\. To understand a block, see https:\/\/usezn\.com\/docs\//);
+  assert.match(r.out, /Most frequent: AWS_KEY\. To understand your last block, run: zn why/);
 });
 
 test('--days N sets the Top rules window', async () => {
