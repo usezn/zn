@@ -250,3 +250,9 @@ test('every rule id the rules engine can return is explained', () => {
     assert.ok(EXPLAINED_IDS.includes(id), id + ' should have its own entry');
   }
 });
+
+test('size:truncated makes no absolute protection claim across engines', () => {
+  const info = explainRule('size:truncated');
+  assert.doesNotMatch(JSON.stringify(info), /always|never passes|cannot be passed/i);
+  assert.match(info.allow.note, /recorded block only/);
+});

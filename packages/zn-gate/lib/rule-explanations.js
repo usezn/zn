@@ -54,8 +54,8 @@ for (const g of GROUPS) {
 Object.assign(TABLE, {
   'size:truncated': {
     name: 'Text too big to check in full',
-    matters: 'Part of it was never scanned, and the part that was not scanned could hold an attack, so it was held back.',
-    allow: { command: null, note: 'Ask the tool for a smaller result. The shield always holds back results it cannot check in full.', who: 'The tool or source has to give less text.' },
+    matters: 'Part of it was never scanned, and the part that was not scanned could hold an attack. This record shows it was not passed on unchecked.',
+    allow: { command: null, note: 'Ask the tool for a smaller result. This explains the recorded block only; whether an unchecked result is ever passed on depends on how the guard is configured.', who: 'The tool or source has to give less text.' },
   },
   'size:oversize': {
     name: 'Text too big to check in full',
