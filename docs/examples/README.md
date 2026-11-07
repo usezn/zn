@@ -1,6 +1,6 @@
 # Examples
 
-Worked examples, in alphabetical order. All values in them are made up, except zn's own service addresses, which each page names as real.
+Worked examples, in alphabetical order. The values you type in them are made up; command output is shown as zn-gate prints it.
 
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
 - [first-project-walkthrough.md](first-project-walkthrough.md): one small example project, from install to removal.
