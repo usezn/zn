@@ -335,4 +335,41 @@ you to run `zn unlock`.
 - **You want your old `.env` back**: run the restore command that `zn env shadow` printed, for example `zn env unshadow .env --backup <name>`, in your own terminal.
 - **Not sure what is protected**: run `npx -y zn-gate check`.
 
+## Common questions about the vault
+
+**Where does the vault live?**
+In `~/.zn/vault/` on your computer (or in the `vault` folder inside the folder
+that the `ZN_HOME` variable names). The secrets are in `secrets.age`, an
+encrypted file; nothing is written in clear. The key that opens it is in your OS
+keychain, or behind your passphrase when there is no keychain. See
+[step 1](#1-install-and-unlock-the-vault) and [Files and folders](files-and-folders.md).
+
+**Does the agent ever see a secret value?**
+No. The agent works with markers. `zn secret get` and `zn secret reveal` refuse
+to print a value, and the `secrets` MCP server has no tool that returns one. A
+value reaches only the program you allowed, or an allowed host, and the output
+comes back masked. See [step 4](#4-let-a-command-use-a-secret) and
+[step 5](#5-let-the-agent-call-an-api).
+
+**Can the agent change what a secret is allowed to do?**
+Not on its own. `zn secret set`, `allow`, `approve`, `rm` and similar commands
+need you in your own terminal, and the vault asks you to confirm in a system
+dialog or in the `zn unlock --foreground` terminal.
+
+**How do I remove one secret?**
+Run `zn secret rm NAME` in your own terminal and confirm. To see the names
+first, run `zn secret list` (it never prints values). To delete everything, see
+`zn vault purge` in [Useful commands](#useful-commands).
+
+**I forgot my passphrase. Can I get my secrets back?**
+No. Nobody can recover them. `zn vault reset` sets the old vault aside as an
+encrypted backup and starts a new, empty one. The steps are in
+[If something fails](#if-something-fails).
+
+**How do I move to another computer?**
+There is no export or sync command, and zn never prints a value, so the vault
+does not travel. On the new computer, install zn-gate, run `zn unlock`, and store
+your values again with `zn secret set NAME` or `zn env shadow .env`. Keep the
+originals in your own password manager so you can do this.
+
 Words you do not know? See the [glossary](glossary.md).
