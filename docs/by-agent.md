@@ -2,7 +2,7 @@
 
 A short list of the steps for each of the eight agents zn-gate can install hooks for: seven supported, plus Gemini CLI, which is experimental. Run every command in your own terminal. For what each agent is and is not protected against, see [Editors and coding agents](editors/README.md); each editor has its own page with the full steps.
 
-Verifying is the same for every agent that has hooks: `npx -y zn-gate check` makes a temporary folder with a fake `.env` file, asks the hook to read it, and reports whether it was blocked. See [Check that it works](check.md). To remove everything at once, run `npx -y zn-gate uninstall`: see [Remove zn-gate](uninstall.md).
+Verifying is the same for every agent that has hooks: `npx -y zn-gate check` makes a temporary folder with a fake `.env` file, asks the hook to read it, and reports whether it was blocked. See [Check that it works](check.md). To remove everything at once, run `npx -y zn-gate uninstall`: see [Remove zn-gate](uninstall.md). To move from one agent to another, follow the [switching agents checklist](examples/switching-agents-checklist.md).
 
 ## Agents with hooks
 
@@ -10,7 +10,7 @@ The hooks need zn-gate 1.5 or later from npm (`npm install -g zn-gate`).
 
 | Agent | Install | Verify | Uninstall |
 | - | - | - | - |
-| Claude Code | `claude plugin marketplace add usezn/zn@v1.14.1`, then `claude plugin install zn-gate@usezn` (or `zn hooks install claude-code`) | `npx -y zn-gate check` | `claude plugin uninstall zn-gate@usezn` (or `zn hooks uninstall claude-code`) |
+| Claude Code | `claude plugin marketplace add usezn/zn@v1.15.0`, then `claude plugin install zn-gate@usezn` (or `zn hooks install claude-code`) | `npx -y zn-gate check` | `claude plugin uninstall zn-gate@usezn` (or `zn hooks uninstall claude-code`) |
 | Codex CLI | `zn hooks install codex`, then trust it in `/hooks` | `npx -y zn-gate check` | `zn hooks uninstall codex` |
 | OpenCode | `zn hooks install opencode` | `npx -y zn-gate check` (checks zn's rules; the plugin runs inside OpenCode) | `zn hooks uninstall opencode` |
 | [Cursor](editors/cursor.md) | `zn hooks install cursor` | `npx -y zn-gate check` | `zn hooks uninstall cursor` |

@@ -51,7 +51,7 @@ function znCommand(args, opts = {}) {
 }
 
 // The zn subcommands that messages tell a person to type after `zn` or `zn-gate`.
-const CLI_VERBS = 'hooks|env|secret|unlock|lock|run|hook|init|check|audit|test|status|stats|scan|evidence|vault|connect|disconnect|uninstall|team|pins|secrets-mcp';
+const CLI_VERBS = 'hooks|env|secret|unlock|lock|run|hook|init|check|audit|test|status|stats|scan|evidence|vault|connect|disconnect|uninstall|team|pins|secrets-mcp|why';
 // `npx -y zn-gate` is handled by NPX_WORD, so the package name after `-y` is skipped here.
 const ZN_WORD = new RegExp('(^|[^\\w./-])(?<!-y )(zn-gate|zn)(?= (?:' + CLI_VERBS + ')\\b)', 'g');
 const NPX_WORD = /(^|[^\w./-])npx(?= -y zn-gate)/g;

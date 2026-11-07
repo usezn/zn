@@ -21,6 +21,22 @@ zn-gate protects most where an agent lets it hook into its own tools: there it c
 
 "Only servers you wrap" means that the results of the MCP servers you start through `zn-gate shield` are checked; each page shows how. The hooks need zn-gate 1.5 or later from npm (`npm install -g zn-gate`). Per-agent details for the hooks: [compat.md](../compat.md).
 
+## Project or user install
+
+Which editor pages describe a user install (all your projects), a project install (one project), or both, and where to read the steps.
+
+| Editor or agent | Project or user install | Page |
+| - | - | - |
+| Cursor | Both. Hooks: user by default, `--project` for one project. MCP server: `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json` (one project). | [cursor.md](cursor.md) |
+| VS Code (GitHub Copilot) | Both. User configuration (**MCP: Open User Configuration**), or `.mcp.json` / `.vscode/mcp.json` in one project. | [vscode.md](vscode.md) |
+| Google Antigravity | Both. Hooks: `~/.gemini/config/hooks.json` for your user, or `--project` for `.agents/hooks.json`. MCP server: all projects or `.agents/mcp_config.json` for one project. | [antigravity.md](antigravity.md) |
+| ZCode desktop app | User only. There is no `--project` install; ZCode ignores the hooks of a project. | [zcode.md](zcode.md) |
+| Windsurf (Devin Desktop) | User: the MCP configuration file in your user folder. The page describes no project file. | [windsurf.md](windsurf.md) |
+| Cline | User: the settings file opened by **Configure MCP Servers**. The page describes no project file. | [cline.md](cline.md) |
+| Zed | User: your Zed `settings.json`. The page describes no project file. | [zed.md](zed.md) |
+| JetBrains AI Assistant | Both: the MCP settings are global or per project. | [jetbrains.md](jetbrains.md) |
+| Continue | Both: your Continue `config.yaml`, or a file in `.continue/mcpServers/` in your project. | [continue.md](continue.md) |
+
 ## Experimental hooks
 
 Gemini CLI has an experimental hook adapter. It is listed apart from the seven supported agents above (Claude Code, Codex CLI, OpenCode, Cursor, GitHub Copilot, Google Antigravity and the ZCode desktop app) and is less tested. It blocks reads and writes of secret files by path and shell commands that handle secrets, and stops the agent from editing its own hook or settings files.

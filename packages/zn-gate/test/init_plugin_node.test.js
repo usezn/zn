@@ -68,7 +68,7 @@ test('init plan: before 20.19 the plugin is skipped and zn hooks are installed i
     const m = machine(t);
     const cc = ccOf((await plan({ ...m, nodeVersion: v })).items);
     assert.deepEqual(cc.steps.map(line), ['zn hooks install claude-code'], v);
-    assert.equal(cc.note, 'Claude Code plugin skipped: it needs Node.js 20.19 or later (you have ' + v + '). zn\'s hooks are set up instead; update Node.js to use the plugin.');
+    assert.equal(cc.note, 'Claude Code plugin skipped: it needs Node.js 20.19 or later (you have ' + v + '). zn\'s hooks are set up instead, and they protect Claude Code on this Node.js. To use the plugin, install Node.js 22 LTS from nodejs.org, then open a new terminal.');
   }
 });
 
@@ -88,6 +88,35 @@ test('init: the skipped plugin is said in one line, once', async (t) => {
   assert.match(lines[0], /^Claude Code plugin skipped: it needs Node\.js 20\.19 or later \(you have 18\.19\.0\)\./);
   assert.match(out, winCmdRe(/zn hooks install claude-code/));
   assert.doesNotMatch(out, /claude plugin install/);
+});
+
+test('init plan: 18.x and 20.18 get a note that says why, what zn does instead, and the fix', async (t) => {
+  for (const v of ['18.19.0', '20.18.3']) {
+    const m = machine(t);
+    const cc = ccOf((await plan({ ...m, nodeVersion: v })).items);
+    assert.match(cc.note, /^Claude Code plugin skipped: it needs Node\.js 20\.19 or later \(you have /, v);
+    assert.match(cc.note, /zn's hooks are set up instead/, v);
+    assert.match(cc.note, /install Node\.js 22 LTS from nodejs\.org/, v);
+  }
+});
+
+test('init plan: 20.19 and 22 get no skipped-plugin note at all', async (t) => {
+  for (const v of ['20.19.0', '22.5.1']) {
+    const m = machine(t);
+    const cc = ccOf((await plan({ ...m, nodeVersion: v })).items);
+    assert.equal(cc.note, undefined, v);
+  }
+});
+
+test('init: the skipped-plugin warning is printed before the step that installs zn hooks', async (t) => {
+  const m = machine(t);
+  let out = '';
+  await guide({ ...m, nodeVersion: '18.19.0', stdin: { isTTY: false }, write: (s) => { out += s; } });
+  const warn = out.indexOf('plugin skipped');
+  const step = out.search(winCmdRe(/zn hooks install claude-code/));
+  assert.ok(warn > -1, out);
+  assert.ok(step > -1, out);
+  assert.ok(warn < step, 'the warning comes first');
 });
 
 test('init: on Node.js 20.19 or later the guide says nothing about a skipped plugin', async (t) => {

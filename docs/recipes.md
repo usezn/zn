@@ -2,6 +2,19 @@
 
 Ten short recipes for the common jobs. Each one lists the steps and links to the full page. Run every command in your own terminal, not through an AI agent: several of them refuse to run under an agent. Every command is described in the [command line reference](cli.md).
 
+| Recipe | Main command | Own terminal needed | A file changes |
+| --- | --- | --- | --- |
+| [1. Try zn-gate without installing it](#1-try-zn-gate-without-installing-it) | `npx -y zn-gate check` | see the recipe | No setting changes; it uses a fake secret in a temporary folder |
+| [2. Install zn-gate](#2-install-zn-gate) | `npm install -g zn-gate` | see the recipe | see the recipe |
+| [3. Set up your coding agents](#3-set-up-your-coding-agents) | `zn-gate init` | Yes; without a terminal it only prints the steps | Yes, after it asks before each step |
+| [4. Check that you are protected](#4-check-that-you-are-protected) | `zn-gate check` | see the recipe | No |
+| [5. See what your agents can reach](#5-see-what-your-agents-can-reach) | `zn-gate reach` | see the recipe | No, it is read only |
+| [6. Protect one project](#6-protect-one-project) | `zn-gate hooks install claude-code --project` | Yes | Yes, the project settings (a backup is written first) |
+| [7. Turn on the optional cloud check](#7-turn-on-the-optional-cloud-check) | `zn-gate connect` | Yes | see the recipe |
+| [8. Read the weekly report](#8-read-the-weekly-report) | `zn-gate report` | see the recipe | see the recipe |
+| [9. Upgrade](#9-upgrade) | `npm install -g zn-gate` | see the recipe | see the recipe |
+| [10. Uninstall](#10-uninstall) | `zn-gate uninstall` | Yes; confirm in your terminal | Yes; `--dry-run` changes nothing |
+
 ## 1. Try zn-gate without installing it
 
 1. Run `npx -y zn-gate check`.

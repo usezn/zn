@@ -149,6 +149,7 @@ function record(entry, opts = {}) {
       const k = normType(t);
       c.detections[k] = (c.detections[k] || 0) + Math.floor(v);
     }
+    if (entry.latencyMs !== undefined) pushLatency(data, entry.latencyMs);
     prune(data, now);
     save(data, file);
   } catch {
@@ -190,4 +191,47 @@ function summary({ days = 30, now = new Date(), file } = {}) {
   return { days, since: first, total, byKey, detections, events: { ...data.events } };
 }
 
-module.exports = { znHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known };
+// Decision time per tool call: the last LATENCY_KEEP durations (ms, one decimal) of the hook decisions on pre and
+// post tool events. It stops before the response is written and before stats and evidence are saved. Only numbers are kept: never a command, a prompt, a path or a name.
+const LATENCY_KEEP = 100;
+const LATENCY_MAX_MS = 60000;
+
+function latencySamples(data) {
+  const raw = data && data.latency && Array.isArray(data.latency.samples) ? data.latency.samples : [];
+  return raw.map(Number).filter((v) => Number.isFinite(v) && v >= 0 && v <= LATENCY_MAX_MS);
+}
+
+function pushLatency(data, ms) {
+  const v = Number(ms);
+  if (!Number.isFinite(v) || v < 0) return;
+  const samples = latencySamples(data);
+  samples.push(Math.min(LATENCY_MAX_MS, Math.round(v * 10) / 10));
+  data.latency = { samples: samples.slice(-LATENCY_KEEP) };
+}
+
+/** Nearest-rank percentile of an ascending array (p in 0..100). null for an empty array. */
+function percentile(sorted, p) {
+  if (!sorted.length) return null;
+  const rank = Math.ceil((p / 100) * sorted.length);
+  return sorted[Math.min(sorted.length, Math.max(1, rank)) - 1];
+}
+
+/** { count, p50, p95 } over the last `last` stored durations, or null when there are none. */
+function latencySummary({ file, last = LATENCY_KEEP } = {}) {
+  const samples = latencySamples(load(file || statsFile())).slice(-last);
+  if (!samples.length) return null;
+  const sorted = [...samples].sort((a, b) => a - b);
+  return { count: samples.length, p50: percentile(sorted, 50), p95: percentile(sorted, 95) };
+}
+
+/** The line `zn-gate check` / `doctor` prints. `off` is true when recording was turned off by ZN_STATS=off. */
+function latencyReport({ file, off = false } = {}) {
+  if (off) return 'Decision time per tool call: off (ZN_STATS=off), nothing is measured.';
+  const s = latencySummary({ file });
+  if (!s) return 'Decision time per tool call: no data yet. It is measured on each tool call your agent makes through zn.';
+  const fmt = (v) => v.toFixed(1);
+  return 'Decision time per tool call (last ' + s.count + ' calls, measured on this machine): p50 ' + fmt(s.p50) + ' ms, p95 ' + fmt(s.p95) + ' ms. Excludes process startup, writing the response, and saving stats and evidence.';
+}
+
+module.exports = { znHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known,
+  percentile, latencySummary, latencyReport, LATENCY_KEEP };

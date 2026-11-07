@@ -55,3 +55,22 @@ More: [CLI reference](cli.md), [remove by hand](editors/remove-by-hand.md).
 - The rest of the `.zn` folder stays: your settings and the decision log (`evidence.jsonl`).
 
 More: [Remove zn-gate](uninstall.md), [`uninstall` in the CLI reference](cli.md#uninstall).
+
+## Who creates each one, and how to remove it
+
+Every command is run in your own terminal. "None" means no documented command removes it: delete it by hand.
+
+| Path | Created by | Delete by hand? | Command that removes it |
+| --- | --- | --- | --- |
+| `~/.zn` (the whole folder) | zn-gate, when it first stores the vault or settings | Yes, once you have your values back. A deleted vault cannot be recovered. | None for the whole folder. See the rows below for what is inside. |
+| The vault files | zn-gate, when you store secrets | Yes | `zn-gate uninstall` (answer yes to the second question), or `zn-gate vault purge` |
+| `audit.jsonl` | zn-gate, next to the vault files | Yes | `zn-gate uninstall` (second yes), or `zn-gate vault purge` |
+| `~/.zn/vault-backup-<date>` | `zn-gate vault reset` | Yes | `zn-gate vault purge` |
+| `~/.zn/hooks` | `zn-gate hooks install <agent>` | Yes | None. `hooks uninstall` leaves it in place. |
+| `~/.zn/reach-last.json` | `zn-gate reach --remember` | Yes | None |
+| `.env` files | You. `env shadow` changes the values in them to markers. | Yes, they are your files. | None. `env unshadow FILE --backup ENVBAK_NAME` puts the values back; `uninstall` never edits them. |
+| Settings file backups (written before `hooks install` or `hooks uninstall` changes a file) | `zn-gate hooks install <agent>`, `zn-gate hooks uninstall <agent>` | Yes | None |
+| Saved copies of MCP configs | `zn-gate init --wrap-mcp` | Yes, but then `init --revert` can no longer put the copy back. | None. `zn-gate init --revert` puts the copy back in place of the wrapped config. |
+| Hooks in your agent's settings | `zn-gate hooks install <agent>` | Yes, see [remove by hand](editors/remove-by-hand.md). | `zn-gate hooks uninstall <agent>`, or `zn-gate uninstall` |
+
+More: [Remove zn-gate](uninstall.md), [CLI reference](cli.md).

