@@ -78,17 +78,17 @@ When the agent calls `zn_status`, it answers with its status as text. With the c
 
 ```json
 {
-  "package": "zn-gate@1.15.0",
+  "package": "zn-gate@X.Y.Z",
   "engine": "local-rules",
   "endpoint": "none (local only)",
-  "rules_version": "2026-11-04.35",
+  "rules_version": "<rules_version>",
   "cloud_enabled": false,
   "leaves_machine": "nothing",
   "lifecycle_coverage": "bidirectional (prompt, pre-tool-call, post-tool-result)"
 }
 ```
 
-The version numbers in your answer are those of the zn-gate you have installed. With the optional cloud check on ([Turn on the optional cloud check](../connect.md)), the fields change: `engine` becomes `local-rules + cloud (analyze_prompt only)`, `endpoint` names the address of the cloud check, `cloud_enabled` becomes `true`, and `leaves_machine` says: "analyze_prompt text only, with secrets redacted locally before sending. Tool results and tool-call arguments never leave the machine."
+The block above shows placeholders: your answer shows the package version and the rules version of the zn-gate you have installed. With the optional cloud check on ([Turn on the optional cloud check](../connect.md)), the fields change: `engine` becomes `local-rules + cloud (analyze_prompt only)`, `endpoint` names the address of the cloud check, `cloud_enabled` becomes `true`, and `leaves_machine` says: "analyze_prompt text only, with secrets redacted locally before sending. Tool results and tool-call arguments never leave the machine."
 
 `npx -y zn-gate check` does not test this setup: it checks hooks, and zn-gate does not install hooks for Continue yet. See [Check that it works](../check.md).
 
