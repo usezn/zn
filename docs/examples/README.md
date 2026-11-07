@@ -8,4 +8,5 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [long-text-analysis.md](long-text-analysis.md): the two long-input modes of the cloud check (`windows` or `off`), and when the result carries a warning.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project, from the run to what each exit code means.
 - [stats-and-report.md](stats-and-report.md): worked examples of `zn-gate stats` and `zn-gate report`.
+- [team-leave-and-rejoin.md](team-leave-and-rejoin.md): leave an organization, what is removed and kept, what the lead sees, and joining again.
 - [first-cloud-check.md](first-cloud-check.md): the shortest path from connect to a first checked prompt, in five steps.
