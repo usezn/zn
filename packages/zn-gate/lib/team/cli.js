@@ -3,7 +3,7 @@
  * zn Team on this machine:
  *
  *   zn team join <znj_token> | - | (ZN_TEAM_JOIN_TOKEN) [--api https://...] [--agent claude-code|codex|...] [--include-history]
- *   zn team status [--json]
+ *   zn team status [--json] [--rules]
  *   zn team sync                      download the policy now and upload the audit log
  *   zn team leave
  *
@@ -24,6 +24,7 @@ const { pendingCount } = require('./upload');
 const { syncOutcome } = require('./sync-outcome');
 const { cleanChange, describeChange } = require('./changes');
 const { exportAuditStream } = require('./otel');
+const { rulesView, rulesLines } = require('./rules-view');
 const store = require('../vault/store');
 const { createClient } = require('../vault/client');
 const { messageWithUnlockHint, fsErrorText } = require('../errors');
@@ -31,7 +32,7 @@ const { isVerbose } = require('../verbose');
 const messages = require('../messages');
 const { znCommand } = require('../zn-command');
 
-const USAGE = 'usage: zn team join <token> | zn team join - | ZN_TEAM_JOIN_TOKEN=... zn team join [--api URL] [--agent ID] [--include-history] | zn team status [--json] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
+const USAGE = 'usage: zn team join <token> | zn team join - | ZN_TEAM_JOIN_TOKEN=... zn team join [--api URL] [--agent ID] [--include-history] | zn team status [--json] [--rules] | zn team sync | zn team leave | zn team managed-config [--agent ID|all] [--os macos|linux|windows|all] [--managed-hooks-only] [--exclusive-mcp] [--json]';
 const JOIN_TOKEN_ENV = 'ZN_TEAM_JOIN_TOKEN';
 const EXPORT_USAGE = 'usage: zn vault log export --otlp [--since 7d] [--out FILE] [--unverified]';
 
@@ -129,10 +130,12 @@ async function joinCmd(args, io) {
 
 async function statusCmd(args) {
   const json = args.includes('--json');
+  const wantRules = args.includes('--rules');
   const p = policy.paths();
   const team = policy.readTeam();
   let info = null;
-  try { info = await withClient((c) => c.teamInfo()); } catch (e) { info = null; }
+  // --rules never asks the vault (and so never the server): only the local join state and the verified local copy are used.
+  if (!wantRules) { try { info = await withClient((c) => c.teamInfo()); } catch (e) { info = null; } }
   const st = info && info.joined ? info.policy : (team ? policy.state({ team }) : null);
   let pending = null;
   const afterSeq = info && Number.isInteger(info.upload_after_seq) ? info.upload_after_seq : (team && Number.isInteger(team.upload_after_seq) ? team.upload_after_seq : 0);
@@ -146,7 +149,7 @@ async function statusCmd(args) {
   const joined = info ? info.joined : Boolean(team);
   const res = {
     joined,
-    vault: info ? 'unlocked' : 'locked',
+    vault: wantRules ? 'not checked' : (info ? 'unlocked' : 'locked'),
     org: (info && info.org) || (team && team.org) || null,
     org_name: (info && info.org_name) || (team && team.org_name) || null,
     install_id: (info && info.install_id) || (team && team.install_id) || null,
@@ -162,9 +165,12 @@ async function statusCmd(args) {
     // Pending revocations that were dropped because more than 8 were waiting: the server was never told about them.
     revocations_dropped: (info && info.revocations_dropped) || null,
   };
+  // --rules: read from the readable copy and verified again here with the pinned key; no network, no vault needed.
+  if (wantRules) res.rules = rulesView(team ? policy.state({ team }) : null);
   if (json) { out(JSON.stringify(res, null, 2)); return 0; }
   if (!joined) {
     out('Not in a zn organization. Join with: zn team join <token> (from your organization admin).');
+    if (wantRules) out('Rules: none, because this machine has not joined an organization.');
     for (const l of describeRevocations(res.revocation_pending)) out(l);
     for (const l of describeDropped(res.revocations_dropped)) out(l);
     return 0;
@@ -173,6 +179,7 @@ async function statusCmd(args) {
   out('Installation: ' + res.install_id + ' via ' + res.api_base);
   if (res.revoked_at) out('REMOVED FROM ORG on ' + res.revoked_at + '. ' + messages.TEAM_REMOVED + ' Note: the cached policy still applies until it expires, then strict mode.');
   out('Policy:       ' + describePolicy(st));
+  if (wantRules) for (const l of rulesLines(res.rules)) out(l);
   if (change) { const lines = describeChange(change); out('Policy change: ' + lines[0]); for (const l of lines.slice(1)) out(l); }
   out('Audit upload: ' + (pending == null ? 'unknown' : pending + ' records pending') +
     (res.upload.last_upload ? ', last upload ' + res.upload.last_upload + ' (' + res.upload.last_status + ')' : ''));
@@ -185,7 +192,8 @@ async function statusCmd(args) {
   }
   for (const l of describeRevocations(res.revocation_pending)) out(l);
   for (const l of describeDropped(res.revocations_dropped)) out(l);
-  if (!info) out('The vault is locked: policy downloads and uploads resume after `' + znCommand('unlock') + '`.');
+  if (wantRules) out('Local view only: with --rules the vault and the server were not contacted, so upload counts, last sync and removal status are left out. Run `zn team status` without --rules for those.');
+  else if (!info) out('The vault is locked: policy downloads and uploads resume after `' + znCommand('unlock') + '`.');
   return 0;
 }
 

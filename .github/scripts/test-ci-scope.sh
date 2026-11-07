@@ -47,6 +47,17 @@ scope ci-scope.sh false "Rust-only change skips the Node and Python jobs" src/ma
 scope ci-scope.sh true  "package change runs" packages/zn-gate/lib/x.js
 scope ci-scope.sh true  "workflow change runs" .github/workflows/ci.yml
 
+# SKIP_LEG=true skips even a code change (a matrix leg left to the merge queue)
+n=$((n + 1))
+r="$work/leg"; git init -q "$r"
+(
+  cd "$r"; git config user.email t@example.invalid; git config user.name t; git remote add origin "$r"
+  mkdir -p packages/zn-gate/lib; echo base > packages/zn-gate/lib/x.js; git add -A; git commit -q -m base
+  base="$(git rev-parse HEAD)"; echo changed >> packages/zn-gate/lib/x.js; git add -A; git commit -q -m change
+  got="$(EVENT_NAME=pull_request BASE_SHA="$base" FULL=false SKIP_LEG=true bash "$scripts/ci-scope.sh" | grep -E '^run=')"
+  if [ "$got" = "run=false" ]; then echo "ok   SKIP_LEG=true skips a code change"; else echo "FAIL SKIP_LEG: got $got"; exit 1; fi
+) || fails=$((fails + 1))
+
 # rust-scope.sh: the Rust gateway job
 scope rust-scope.sh true  "Rust-only change runs the Rust job" src/engine/watcher.rs
 scope rust-scope.sh true  "Cargo.lock change runs the Rust job" Cargo.lock

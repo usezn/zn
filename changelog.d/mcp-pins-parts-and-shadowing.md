@@ -1,0 +1,2 @@
+### Added
+- `zn-gate pins` now says what changed in a tool (its description, its parameters or other fields) before you approve it, and the shield warns when a tool has the same name as, reads like (case, look-alike letters, invisible characters), or its text names (also as `mcp__server__tool`) an approved tool of another pinned MCP server (`TOOL SHADOWING`). Each field of a tool is read on its own, a field over 1 MiB is reported, and a name that is a single plain word is not taken for a mention. Each overlap is reported once per run.
