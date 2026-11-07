@@ -57,11 +57,40 @@ On pull requests from forks, GitHub may not allow the SARIF upload. The audit st
 
 ## Which version runs
 
-The `version` input is the exact `zn-gate` version that gets installed; ranges and `latest` are refused. When you leave it out, you get the version that the pinned release of the Action sets as its default, so pinning the Action by SHA also pins what runs. Set `version` when you want to move the two separately. We recommend setting `version` in every workflow: from 1.13.0 on, each release of the Action defaults to its own `zn-gate` version, but the 1.12.0 release of the Action still defaults to 1.10.0. For a stronger check, set `package-sha256` (the hash of the PyPI wheel, used by `scan`) and `npm-integrity` (the `sha512-...` integrity of the npm tarball, used by `audit`): the install fails when the downloaded file differs.
+The `version` input is the exact `zn-gate` version that gets installed. Ranges and `latest` are refused.
+
+When you leave it out, you get the version that the pinned release of the Action sets as its default. So pinning the Action by SHA also pins what runs. Set `version` when you want to move the two separately.
+
+We recommend setting `version` in every workflow. From 1.13.0 on, each release of the Action defaults to its own `zn-gate` version. The 1.12.0 release of the Action still defaults to 1.10.0.
+
+For a stronger check, set one or both of these inputs. The install fails when the downloaded file differs.
+
+- `package-sha256`: the hash of the PyPI wheel, used by `scan`.
+- `npm-integrity`: the `sha512-...` integrity of the npm tarball, used by `audit`.
 
 `audit` needs `zn-gate` 1.6.0 or later. With an older version, `mode: both` runs the scan only and prints a warning, and `mode: audit` fails.
 
 ## Inputs
+
+### Inputs at a glance
+
+No input is required. Each one has a default, and an empty default means the input is off. The examples are fake values.
+
+| Input | Required | Default | Example |
+|---|---|---|---|
+| `mode` | No | `scan` | `audit` |
+| `version` | No | set by the release | `1.13.1` |
+| `path` | No | `.` | `docs` |
+| `fail-on-threat` | No | `true` | `'false'` |
+| `severity-threshold` | No | `high` | `medium` |
+| `fail-on` | No | empty | `high` |
+| `agents` | No | empty (all) | `claude,cursor` |
+| `format` | No | `github` | `sarif` |
+| `sarif-file` | No | empty | `results/zn-gate.sarif` |
+| `package-sha256` | No | empty | `0000...0000` (the 64-character hash of the wheel) |
+| `npm-integrity` | No | empty | `sha512-AAAA...` (the integrity of the tarball) |
+
+The full description of each input follows.
 
 | Input | Default | What it does |
 |---|---|---|
@@ -88,7 +117,25 @@ Outputs:
 
 ## What the scan does not read
 
-The scan lists what it leaves out, so a gap never goes unnoticed. Files it does not read (binary files, files of 2 MiB or more) and directories it does not enter (`build`, `dist`, `vendor`, `target`) appear as notices in the workflow run, as a count in the text output, and as `skipped` and `skipped_dirs` in the JSON output. Dependency stores and caches such as `node_modules`, `.git` and `.venv` are skipped without a notice. Test directories (`test`, `tests`, `__tests__`) are read, because fixtures there can hold real secrets. The Node and Python scans skip exactly the same directories. A directory named `target` is skipped only when a `Cargo.toml`, `pom.xml`, Gradle or sbt file sits next to it, and `vendor` only next to `go.mod`, `composer.json`, `Gemfile` or `Cargo.toml`. The directory you pass to the scan is always read, whatever its name. A name you pass with `--exclude` is skipped everywhere and is not listed.
+The scan lists what it leaves out, so a gap never goes unnoticed.
+
+It does not read these files:
+
+- Binary files.
+- Files of 2 MiB or more.
+
+It does not enter these directories: `build`, `dist`, `vendor`, `target`.
+
+Skipped files and directories show up in three places: as notices in the workflow run, as a count in the text output, and as `skipped` and `skipped_dirs` in the JSON output.
+
+Dependency stores and caches such as `node_modules`, `.git` and `.venv` are skipped without a notice. Test directories (`test`, `tests`, `__tests__`) are read, because fixtures there can hold real secrets. The Node and Python scans skip exactly the same directories.
+
+Two directory names depend on the files next to them:
+
+- A directory named `target` is skipped only when a `Cargo.toml`, `pom.xml`, Gradle or sbt file sits next to it.
+- `vendor` is skipped only next to `go.mod`, `composer.json`, `Gemfile` or `Cargo.toml`.
+
+The directory you pass to the scan is always read, whatever its name. A name you pass with `--exclude` is skipped everywhere and is not listed.
 
 ## Read the results in code scanning
 
@@ -202,4 +249,5 @@ npx -y zn-gate audit .
 ## Related
 
 - [`zn audit`](audit.md): what it checks and every rule.
+- [CI step example](examples/ci-step-example.md): one job that runs the audit and reads its exit code.
 - [Action inputs in the README](../README.md#github-action).
