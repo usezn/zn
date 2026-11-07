@@ -11,7 +11,7 @@ def _run(monkeypatch, *argv):
     return cli.main()
 
 
-@pytest.mark.parametrize("cmd", ["report", "reach", "connect", "disconnect", "uninstall"])
+@pytest.mark.parametrize("cmd", ["report", "reach", "why", "connect", "disconnect", "uninstall"])
 def test_npm_only_command_names_the_exact_command(monkeypatch, capsys, cmd):
     assert _run(monkeypatch, cmd) == 2
     out = capsys.readouterr()

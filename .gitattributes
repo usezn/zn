@@ -2,3 +2,5 @@
 *.sh text eol=lf
 # Batch files need CRLF (labels and goto fail with bare LF): keep it in every checkout.
 *.cmd text eol=crlf
+# npm reads this file on every system: the check compares it line by line, and the pin tool writes it with LF.
+plugins/zn-gate/.npmrc text eol=lf
