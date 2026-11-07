@@ -4,6 +4,43 @@ The thirteen messages people most often meet when they first use zn-gate: what e
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
+## Symptoms by command
+
+Find the command you ran, then the symptom that matches.
+
+- `init`
+  - [Node.js is too old](#1-nodejs-is-too-old)
+  - [`npx: command not found`](#2-npx-command-not-found)
+  - ["running scripts is disabled on this system" (Windows)](#3-running-scripts-is-disabled-on-this-system-windows)
+  - [It needs you at your own terminal](#4-it-needs-you-at-your-own-terminal)
+  - [Init cannot install zn-gate: no internet connection](#12-init-cannot-install-zn-gate-no-internet-connection)
+  - [Init stops the npm install after 3 minutes](#13-init-stops-the-npm-install-after-3-minutes)
+- `check`
+  - [Your agent ignores zn's hooks on a managed computer](#9-your-agent-ignores-zns-hooks-on-a-managed-computer)
+  - [The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)
+  - ["zn: part of zn-gate is missing from this installation"](#zn-part-of-zn-gate-is-missing-from-this-installation--zn-something-went-wrong-inside-the-zn-hook)
+- `scan` and `audit`
+  - ["Exposed credential detected by DLP filter"](#exposed-credential-detected-by-dlp-filter)
+  - ["Unknown command" / "unknown argument" / "Target path does not exist"](#unknown-command--unknown-argument--target-path-does-not-exist----format-for-scan-must-be-text-json-or-github--please-provide-text-to-analyze)
+- `secret`, `unlock`, `lock` and `vault`
+  - ["Your secret vault is locked"](#5-your-secret-vault-is-locked)
+  - [Your agent was blocked: ".env holds plain-text secrets"](#6-your-agent-was-blocked-env-holds-plain-text-secrets)
+  - ["zn could not use your secret vault"](#zn-could-not-use-your-secret-vault-error)
+  - ["Lock the vault first"](#lock-the-vault-first)
+  - ["The vault is already unlocked"](#the-vault-is-already-unlocked)
+- `team`
+  - ["invalid join token (expected znj_...)" / "No join token given"](#invalid-join-token-expected-znj_--no-join-token-given)
+  - ["This join token is expired, already used or not valid"](#this-join-token-is-expired-already-used-or-not-valid)
+  - ["Could not reach the zn server"](#could-not-reach-the-zn-server)
+  - ["Your admin has not published a policy yet"](#your-admin-has-not-published-a-policy-yet)
+  - ["An admin removed this machine from the organization"](#an-admin-removed-this-machine-from-the-organization)
+  - ["Your organization is not active on zn right now"](#your-organization-is-not-active-on-zn-right-now)
+- `evidence`
+  - ["the evidence log ... is damaged"](#10-the-evidence-log--is-damaged)
+- `connect`
+  - [`zn-gate connect` does not accept your key](#7-zn-gate-connect-does-not-accept-your-key)
+  - ["will not send the saved key" (TLS settings)](#8-will-not-send-the-saved-key-tls-settings)
+
 ## Symptom index
 
 - [Node.js is too old](#1-nodejs-is-too-old)
