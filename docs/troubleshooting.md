@@ -45,7 +45,7 @@ Install the LTS version from https://nodejs.org/ (or run: nvm install --lts), th
 
 ## 3. `running scripts is disabled on this system` (Windows)
 
-**What it means:** Windows PowerShell blocks the script that starts `npm` and `npx` by default. Nothing is wrong with zn-gate.
+**What it means:** Windows PowerShell blocks the script that starts `npm` and `npx` by default. Nothing is wrong with zn-gate. PowerShell prints the message as `npx.ps1 cannot be loaded because running scripts is disabled on this system.` (the file is `npm.ps1`, `npx.ps1` or `zn.ps1`, depending on the command). Microsoft explains the setting in [about_Execution_Policies](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies).
 
 **What to do, any one of these:**
 
@@ -754,6 +754,12 @@ To see where these rules apply, and what happens when the file is not valid, rea
 
 **What to do:** run `zn-gate --help` to see the commands. Examples: `zn-gate scan .`, `zn-gate scan . --format json`, `zn-gate analyze "some text"`.
 
+#### "Git Bash was not found, and Claude Code runs the hooks of the zn-gate plugin with it on Windows"
+
+**What happened:** on Windows, Claude Code runs the hooks of the zn-gate plugin with Git Bash (`bash.exe`). `zn-gate check` found no Git Bash, so the plugin 's hook cannot start. The full message is `Git Bash was not found, and Claude Code runs the hooks of the zn-gate plugin with it on Windows ("shell": "bash"), so the hook cannot start`.
+
+**What to do:** install Git for Windows, or set `CLAUDE_CODE_GIT_BASH_PATH` to the full path of its `bash.exe`, then run `zn-gate check` again. If you do not want Git Bash, use zn 's own hooks instead, in your own terminal: `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`. The same steps are in [Check that it works](check.md).
+
 #### Any other message that ends a command with an error
 
 **What happened:** zn-gate stopped because of a problem it did not expect. It prints that problem's own message, with no zn-gate prefix, and exits with code 1. Run the command again with `ZN_VERBOSE=1` to see zn-gate's error code next to the message, when there is one.
@@ -819,7 +825,7 @@ When a command cannot read or write a file or folder, zn-gate says what is wrong
 
 #### "The folder path `<path>` is too long" / "The links in the path `<path>` lead in a circle"
 
-**What happened:** the path is too long for your system (on Windows the limit is about 260 characters, and the message says so), or it goes through links that point back to each other.
+**What happened:** the path is too long for your system, or it goes through links that point back to each other. On Windows the message reads `The folder path <path> is too long (Windows stops at about 260 characters). Move the folder to a shorter path, then try again.` Windows can also answer a path of 260 characters or more with "not found" or "invalid argument"; zn reports those cases with the same message.
 
 **What to do:** move the folder to a shorter path, or choose another path without circular links, then run the command again.
 
