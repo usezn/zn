@@ -21,6 +21,7 @@ Windows PowerShell blocks the script that starts `npm` and `npx` by default. Not
 ## Other messages
 
 - `npx: command not found`: install Node.js, open a new terminal and run the command again.
+- `'zn' is not recognized as an internal or external command`: add the folder that `npm config get prefix` prints to your user `PATH`, then open a new terminal ([troubleshooting 12](../troubleshooting.md#12-zn-is-not-recognized-as-an-internal-or-external-command)). Until then, use `npx -y zn-gate` instead of `zn`.
 - `init` only prints steps and changes nothing: an AI agent or a script ran it. Run it yourself in your own terminal.
 
 ## More

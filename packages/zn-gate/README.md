@@ -49,6 +49,7 @@ Run it yourself, in your own terminal. When an AI agent or a script runs it, it 
 **If something fails:**
 
 - `npx: command not found`, or a message about the Node.js version: install the LTS version of [Node.js](https://nodejs.org/), open a new terminal and run the command again.
+- `'zn' is not recognized as an internal or external command` on Windows: add the folder that `npm config get prefix` prints to your user `PATH`, then open a new terminal. Until then, use `npx -y zn-gate` in place of `zn`. See [troubleshooting 12](https://github.com/usezn/zn/blob/main/docs/troubleshooting.md#12-zn-is-not-recognized-as-an-internal-or-external-command).
 - "running scripts is disabled on this system" on Windows: see the PowerShell note above.
 - `init` only prints steps and changes nothing: an AI agent or a script ran it. Run it yourself in your own terminal.
 - `check` shows **NOT protected**: that line says why and what to run. [What the output means](https://github.com/usezn/zn/blob/main/docs/check.md).

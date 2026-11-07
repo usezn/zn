@@ -1,6 +1,6 @@
 # Troubleshooting
 
-The eleven messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
+The twelve messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
@@ -17,6 +17,7 @@ Run every command in your own terminal, not through your AI agent. New here? Sta
 - [Your agent ignores zn's hooks on a managed computer](#9-your-agent-ignores-zns-hooks-on-a-managed-computer)
 - ["the evidence log ... is damaged"](#10-the-evidence-log--is-damaged)
 - [The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)
+- [`'zn' is not recognized as an internal or external command`](#12-zn-is-not-recognized-as-an-internal-or-external-command)
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
 - [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
 
@@ -222,9 +223,39 @@ The version number in the second message is yours and will differ.
 
 Running `npx -y zn-gate init` on a Node.js older than 20.19 does the second option for you: it skips the plugin and sets up zn's hooks for Claude Code instead, and if the plugin is already installed it offers to turn it off once the hooks work. Node.js 22 LTS is recommended; 18 or later is enough for the hooks and the CLI. See the [README](../README.md#install).
 
+## 12. `'zn' is not recognized as an internal or external command`
+
+You may see this in Command Prompt:
+
+```text
+'zn' is not recognized as an internal or external command,
+operable program or batch file.
+```
+
+PowerShell words the message differently, but the cause is the same.
+
+**What it means:** zn-gate is installed, but Windows cannot find the `zn` command. `npm install -g zn-gate` puts `zn` in npm's global folder, and that folder is not on your `PATH`, the list of folders the terminal searches for commands. `npx` still works, because `npx -y zn-gate` runs zn-gate without needing `zn` on your `PATH`.
+
+**What to do:**
+
+1. Find the folder. In your own terminal, run:
+
+   ```text
+   npm config get prefix
+   ```
+
+   It prints one folder. On most Windows computers it ends in `npm`, and `zn.cmd` is directly inside it.
+
+2. Add that folder to your user `PATH`. Open the Start menu, search for "environment variables", and choose "Edit the environment variables for your account". Under "User variables", select `Path`, choose "New", paste the folder from step 1, and click OK on each window.
+3. Open a new terminal. A terminal that was already open keeps the old `PATH`. Run `zn --version`. It prints the zn-gate version.
+
+**Until then:** use `npx -y zn-gate` in place of `zn`, for example `npx -y zn-gate check`. Each command in this guide that starts with `zn` works the same way with `npx -y zn-gate`.
+
+If `zn --version` still fails after step 3, run `npm list -g zn-gate` in your own terminal. If it prints nothing, install zn-gate again with `npm install -g zn-gate`, then repeat step 3.
+
 ## Block and warn reasons, by family
 
-Past the eleven messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
+Past the twelve messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
 
 Run every command in your own terminal, not through your AI agent. If you did not install zn-gate with `npm install -g zn-gate`, put `npx -y zn-gate` where the commands below say `zn`, for example `npx -y zn-gate secret set NAME`. Words you do not know are in the [glossary](glossary.md).
 
