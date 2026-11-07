@@ -51,7 +51,7 @@ const { gitStatusOf } = require('../broker/files');
 const deps = require('../deps');
 const { envFlag } = require('../env-flag');
 const { shQuote, SH_QUOTE_ESCAPE, portablePath } = require('../shell-quote');
-const { znCommand, winCommandText } = require('../zn-command');
+const { znCommand, winCommandText, cliName } = require('../zn-command');
 const { hasUnsafeText } = require('../safe-text');
 
 const SECRET_SOURCES = new Set(['exact', 'pattern']);
@@ -1642,7 +1642,7 @@ function failDecision(ev, err, mode, agentId) {
   const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
   const vaultDown = err.vaultFailed === true;
   // The vault errors of the engine may already say how to fix it (zn unlock): say it once.
-  const unlockHint = /zn unlock/.test(String(err.message || '')) ? '' : ' Check that the vault is running and unlocked (zn unlock; zn lock stops it).';
+  const unlockHint = /zn unlock/.test(String(err.message || '')) ? '' : ' Check that the vault is running and unlocked (' + cliName('zn') + ' unlock; ' + cliName('zn') + ' lock stops it).';
   const msg = vaultDown
     ? 'zn: could not check this action against your secret vault, so it was blocked to keep your secrets safe.' + unlockHint + detail
     : 'zn: ' + (missing ? REINSTALL : HOOK_FAILED + fixHint(agentId)) + detail;
