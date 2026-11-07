@@ -1623,7 +1623,7 @@ mod tests {
         format!(
             "github_pat_{}_{}",
             &FAKE_BODY[..22],
-            FAKE_BODY.repeat(2)[..59].to_string()
+            &FAKE_BODY.repeat(2)[..59]
         )
     }
 
