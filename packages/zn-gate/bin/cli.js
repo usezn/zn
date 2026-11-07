@@ -1299,6 +1299,12 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
         process.exitCode = 1;
       }
     } catch (_) { /* the check never fails on the rules file */ }
+    try {
+      // One line on hook health from the same helper as `check --hooks`; it never changes the exit code.
+      const hl = require('../lib/hooks-list');
+      const line = hl.summaryLine(hl.listHooks({}));
+      if (line) process.stdout.write(line + '\n\n');
+    } catch (_) { /* the summary is only a hint */ }
     return;
   }
 
