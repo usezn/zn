@@ -39,7 +39,7 @@ def add_plugin(tag, market=MARKET):
 
 def is_win_hook(h):
     c = h['command'].lower()
-    return 'powershell' in c or c.endswith('cmd.exe') or c.endswith('zn-hook-win.cmd')
+    return 'powershell' in c or c.endswith('cmd.exe') or c.endswith('zn-hook.cmd')
 
 
 def hook_events(res):
@@ -197,7 +197,7 @@ def main():
     # D6: Node.js is installed but the hook PATH has no Node.js and the environment has no ProgramFiles (the hook environment of the
     # app); the test process (python.exe) is the only ancestor and is not Node.js: the hook must block, never exit 0.
     r = direct(hook, 'PreToolUse', sysonly, 'cmd_no_node_on_path')
-    record('D6 launcher .cmd, Node.js not on the PATH, no node.exe ancestor', 'exit 2 with a zn reason (never 0)', 'rc=%d %s' % (r.returncode, r.stderr.strip()[:200]),
+    record('D6 plugin entry (cmd.exe running scripts\\zn-hook.cmd), Node.js not on the PATH, no node.exe ancestor', 'exit 2 with a zn reason (never 0)', 'rc=%d %s' % (r.returncode, r.stderr.strip()[:200]),
            r.returncode == 2 and 'zn' in r.stderr and 'Microsoft Windows' not in r.stdout, 'd_direct_cmd_no_node_on_path_PreToolUse.txt')
     r = direct(hook, 'PreToolUse', NODEDIR + ';' + sysonly, 'withnode')
     record('D5 (control) hook entry with Node.js back, ordinary call', 'exit 0 (allowed)', 'rc=%d %s' % (r.returncode, r.stderr.strip()[:200]), r.returncode == 0, 'd_direct_withnode_PreToolUse.txt')
@@ -250,17 +250,17 @@ def extra(sysr, sysonly):
                                                ('2', 'i_hang_sync_fast', WORK + '/market-hang-sync', pf, 'never gives its thread back, direct Node.js path'),
                                                ('3', 'i_hang_sync_ps', WORK + '/market-hang-sync', {}, 'never gives its thread back, PowerShell path')]:
         case = 'I%s zn-gate inside the plugin hangs on PreToolUse: Read .env (%s)' % (num, label)
-        expect = 'blocked by the hook at its 26 second deadline, before ZCode\'s 30 second timeout; value not returned'
+        expect = 'blocked by the hook at its 2 minute deadline, before ZCode\'s 5 minute timeout; value not returned'
         if not os.path.isdir(market):
             record(case, expect, 'the kit has no ' + market, False, '')
             continue
         fresh(False)
         add_plugin(tag, market)
-        res = run_zcode(tag, [{'tool': 'read', 'values': v(file_path=PROJ + '/.env')}], env_extra=env_extra, timeout=240)
+        res = run_zcode(tag, [{'tool': 'read', 'values': v(file_path=PROJ + '/.env')}], env_extra=env_extra, timeout=600)
         runs = plugin_durations(res)
         pre = [(o, d) for e, o, d in runs if e == 'PreToolUse']
         msgs = short(res['tool_msgs'], 4000)
-        ok = bool(pre) and all(o == 'blocked' and (d < 0 or 20000 <= d < 29000) for o, d in pre) and 'FAKE_sk_live' not in msgs and res['requests'] > 0
+        ok = bool(pre) and all(o == 'blocked' and 115000 <= d < 300000 for o, d in pre) and 'FAKE_sk_live' not in msgs and res['requests'] > 0
         record(case, expect, short(res['tool_msgs']) + ' | plugin hook runs (event, outcome, ms): %s' % runs, ok, 'cases/' + tag)
     # back to the real plugin
     fresh(False)
