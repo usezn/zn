@@ -28,13 +28,13 @@ git blame src/app.js
 git reset --soft HEAD~1
 git restore src/app.js
 git clean -n
-git remote -v
-git config --list --show-origin
+git branch --show-current
+git log --oneline -n 5
 git ls-files
 git grep -n "TODO" -- src
 git bisect start
 git worktree add ../app-feature feature/add-search
-git log --since="2 weeks ago" --author="Alex"
+git log --since="2 weeks ago" --oneline
 git shortlog -sn
 git diff --name-only main...feature/add-search
 git revert HEAD --no-edit
@@ -167,7 +167,7 @@ tree -L 2 ./src
 du -sh ./node_modules
 jq '.dependencies' package.json
 echo "hello world" > ./notes/hello.txt
-env | grep NODE_ENV
+echo "build done"
 pwd
 which node
 chmod +x ./scripts/build.sh
@@ -186,8 +186,8 @@ curl -o ./downloads/sample.json https://example.com/data/sample.json
 wget https://example.org/files/readme.txt
 ssh deploy@app.example.com uptime
 ssh -p 2222 dev@build.example.net ls -la
-scp ./dist/app.tar.gz dev@files.example.com:/srv/uploads/
-rsync -av ./public/ dev@static.example.com:/var/www/demo/
+scp ./dist/app.tar.gz dev@files.example.com:uploads/
+rsync -av ./public/ dev@static.example.com:demo/
 ping -c 3 example.com
 dig example.com A +short
 nslookup example.org
