@@ -185,6 +185,21 @@ It reads Claude Desktop, Claude Code (`~/.claude.json`), Cursor (`~/.cursor/mcp.
 
 </details>
 
+## Contents
+
+- [Docs index](docs/README.md)
+- [First 5 minutes](docs/first-5-minutes.md)
+- [By agent](docs/by-agent.md)
+- [Examples](docs/examples/README.md)
+- [CLI reference](docs/cli.md)
+- [API quickstart](docs/api-quickstart.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Uninstall](docs/uninstall.md)
+- [What each piece does](#what-each-piece-does)
+- [Configuration](#configuration)
+- [FAQ](#faq)
+- [Security](#security)
+
 ## See what zn-gate did
 
 ```bash
