@@ -78,6 +78,21 @@ includes PowerShell and Claude Code's Monitor tool) is blocked, because zn
 could not check it within the time the agent waits for the hook. The same
 limit applies to a patch (`apply_patch`) in Codex and OpenCode.
 
+## Where to find your agent version
+
+Some notes on this page depend on the version of your agent (for example, the Claude Code version for the PowerShell tool on Windows, or the Codex CLI version for hook events). To see the version of a command-line agent, run its own `--version` option in your own terminal. These are the commands the zn-gate end-to-end tests use to record the agent version:
+
+| Agent | Command |
+| --- | --- |
+| Claude Code | `claude --version` |
+| Codex CLI | `codex --version` |
+| OpenCode | `opencode --version` |
+| GitHub Copilot CLI | `copilot --version` |
+
+For the other agents (Cursor, Antigravity, the ZCode desktop app, Gemini CLI and GitHub Copilot in VS Code), zn-gate does not document a command. Look in the agent's own documentation for how to see its version.
+
+The version of zn-gate itself is printed by `zn-gate --version`. When you ask for help, give both versions (see [troubleshooting](troubleshooting.md)).
+
 ## Settings, skills and instruction files that change in Claude Code
 
 `zn hooks install claude-code` registers two more Claude Code hooks, `ConfigChange`
