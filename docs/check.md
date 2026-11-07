@@ -34,6 +34,7 @@ zn-gate check: does zn stop your coding agent from reading a secret?
 Your agent cannot read secret files such as .env through these tools. Nothing was sent anywhere.
 ```
 
+- **Decision time**: the line after the agents gives how long zn takes to decide each tool call, as p50 and p95 of the last 100 calls on this machine. This is decision time only. It does not include process startup, writing the response to your agent, or saving stats and evidence, so it is not the whole delay your agent sees. It is measured locally and stored only as numbers in `~/.zn/stats.json`. Until zn has checked a tool call, it says `no data yet`. With `ZN_STATS=off` it says that nothing is measured.
 - **OK**: zn is protecting that agent. The quoted text is what your agent is told when it tries to read the file.
 - **-**: zn is not set up for that agent (neither for your user nor in managed configuration), or only for one project. The line gives the command that sets it up for your user. If you only ran zn-gate with `npx`, that command starts with `npm install -g zn-gate`, because `zn hooks install` needs zn-gate installed for your user. An agent that is not on this machine is listed as *not found on this machine*.
 - When an agent is found but not set up, the summary points to `npx -y zn-gate init`, which shows each step and asks before it runs one.
@@ -79,11 +80,19 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
 
   The last form is a Codex CLI or Claude Code hook that goes through zn's launcher script, which blocks the agent's tool calls and prompts (instead of letting them run unchecked) when the Node.js it was installed with is gone. The launcher never runs a `zn` it finds on your PATH instead. Until you repair it, the agent cannot run commands.
 
-  A second form appears when the zn-gate files changed after the hooks were installed (the launcher keeps the SHA-256 of the runner file and runs it only if it still matches):
+  A second form appears when the zn-gate files changed after the hooks were installed (the launcher keeps the SHA-256 of the runner file and of every other file the hook loads, the code and data under `lib/`, `package.json` and `bin/cli.js`, and runs a file only if it still matches; the inline PowerShell hooks on Windows check neither the runner nor the other files):
 
   ```text
   its hook is blocking tool calls and prompts: zn-gate changed since the hooks were installed (<path> no longer matches the launcher), so zn will not run it
   ```
+
+  When the runner is intact but another file differs from the list, or is gone, the line names up to three of them:
+
+  ```text
+  its hook blocks the tool calls and prompts that load a zn-gate file that changed since the hooks were installed (lib/rules.js no longer match the launcher), and zn will not run it then
+  ```
+
+  The hook reads only the files it loads, so a changed file that nothing has loaded yet does not stop it, but `zn-gate check` reads the whole list. A file added after the install is a note, not a block. A launcher written by an older zn-gate records only the runner; the check then adds a note that says so, and `zn hooks install <agent>` records the rest.
 
   `npm update -g zn-gate` refreshes the launchers by itself (a short install step), so you normally never see this after an update. You see it if the file was edited, or if the update ran with `--ignore-scripts` or with bun (which skip it), or if you installed or updated with `sudo` (the step does not change your files then). Run `zn hooks install <agent>` again in your own terminal to record the new files.
 
@@ -134,14 +143,14 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   the ZCode plugin needs a system with /bin/sh (macOS, Linux) or Windows PowerShell; elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again
   ```
 
-  The ZCode plugin has two hooks for every event: one starts `/bin/sh` (macOS and Linux) and one starts the Windows PowerShell by its full path (`C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`, Windows). On each system only the matching one can start. If your Windows folder is not `C:/Windows`, or the program is missing, use `zn hooks install zcode` instead.
+  The ZCode plugin has two hooks for every event: one starts `/bin/sh` (macOS and Linux) and one starts the Windows command interpreter by its full path (`C:\Windows\System32\cmd.exe`, Windows), which runs `scripts/zn-hook.cmd`: it starts Node.js directly and, when Node.js is not in its usual install folder, runs the Windows PowerShell by its full path. Earlier plugin versions started the PowerShell directly, and `zn-gate check` accepts that too. On each system only the matching one can start. If your Windows folder is not `C:/Windows`, or the program is missing, use `zn hooks install zcode` instead.
 
 - **The ZCode plugin has no PreToolUse hook.**
 
   ```text
   the zn-gate plugin has no PreToolUse hook in <plugin folder>/hooks/hooks.json, so ZCode runs no zn check before tool calls
   the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`/bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
-  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`powershell.exe ... scripts/zn-hook.ps1 PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
+  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`cmd.exe ... scripts/zn-hook.cmd PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
   install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again
   ```
 

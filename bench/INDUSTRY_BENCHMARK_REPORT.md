@@ -43,3 +43,10 @@ b1da2e1fb75f266c069b832fef6738c295f01d8962fae15bdac9ff6625e5594e  InjecAgent/att
    Testing 400 diverse JSON tool outputs (Google Calendar, Weather, PostgreSQL orders, Slack messages, GitHub commits) yielded **0 false positive blocks** in zn Core (`FPR: 0.00%`).
 2. **Complementary Layer Architecture**:
    zn Core 1.2.3 provides sub-millisecond, zero-dependency, zero-FP protection against explicit jailbreaks, exfiltration commands, and obfuscated evasions (`97.93%` on the internal obfuscation fuzz set). The Neural Cloud Gate provides deep semantic defense on natural-language indirect tool injections (`92.4%` on InjecAgent).
+
+## 4. Sources and licenses
+
+- `deepset/prompt-injections`: Apache License 2.0. Source: https://huggingface.co/datasets/deepset/prompt-injections (license from the dataset card, checked 2026-11-01).
+- `InjecAgent` (UIUC Kang Lab): MIT License. Source: https://github.com/uiuc-kang-lab/InjecAgent (license from the repository, checked 2026-11-01).
+
+Only SHA-256 hashes and aggregate metrics from these datasets are recorded here. No dataset content is copied into this repository.

@@ -32,12 +32,15 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | Guide | What it covers | For whom |
 |---|---|---|
 | [Destructive commands](destructive-commands.md) | Refuses commands that wipe a machine (on by default), and more, such as a download run unread, if you turn them on | Everyone |
+| [Packages your agent installs](package-install-check.md) | Optional and off by default: asks you before an agent installs a package whose name looks like a well-known one, or (online mode) does not exist or is brand new. Never blocks | Everyone |
 | [Network requests that carry personal data](egress-check.md) | Asks you before an agent sends your email address, phone number or a literal secret in a curl, wget, WebFetch or MCP request | Everyone |
 | [Protect MCP servers](shield.md) | Wrap an MCP server with the shield, shadow mode and tool pins | Everyone who uses MCP servers |
 | [Reach](reach.md) | What the coding agents on your machine can reach (secrets by name, credential files, MCP servers) | Everyone |
 | [Report](report.md) | A weekly summary of what zn-gate blocked and hid | Everyone |
 | [Examples: stats and report](examples/stats-and-report.md) | Worked examples of `stats` and `report` with sample output | Everyone |
 | [Example: Node.js API](examples/node-api.md) | Install and one short example per call of the Node.js API, with fake values | Developers |
+| [API quickstart](api-quickstart.md) | Send text to the analysis API from curl, Python or Node.js, with the key in an environment variable | Developers |
+| [Example: cloud check settings](examples/cloud-check-settings.md) | Each cloud check setting with its effect, one fake command and what leaves the machine | Anyone who opts in |
 | [Audit](audit.md) | Review a repository's agent configuration before you open it | Developers, reviewers |
 | [Connect](connect.md) | Turn on the optional cloud check, and turn it off | Anyone who opts in |
 | [Agent compatibility](compat.md) | What the scrubber can do in each agent | Everyone choosing or configuring an agent |

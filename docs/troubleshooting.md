@@ -269,6 +269,8 @@ Past the thirteen messages above, zn-gate prints more short messages when it sto
 
 Run every command in your own terminal, not through your AI agent. If you did not install zn-gate with `npm install -g zn-gate`, put `npx -y zn-gate` where the commands below say `zn`, for example `npx -y zn-gate secret set NAME`. Words you do not know are in the [glossary](glossary.md).
 
+To see which rule stopped your agent last, and what you can do about it, run `zn why` in your own terminal. It explains the last block in the evidence log (`zn why <id>` explains a record you pick); see [`why`](cli.md#why).
+
 Pick the family that fits your message:
 
 - [Your agent tried to read or change a protected file](#your-agent-tried-to-read-or-change-a-protected-file)
@@ -605,9 +607,22 @@ zn: something went wrong inside the zn hook, so this action was blocked to keep 
 
 #### "zn: could not read this action (`<why>`), so it was blocked" / "could not read the tool name of this call" / "could not read the command of this call"
 
-**What happened:** the event your agent sent to zn was damaged or in a shape zn does not know, so zn could not check it.
+**What happened:** the event your agent sent to zn was damaged, so zn could not check it. If the message says your agent "changed the format of the data", see the next entry.
 
 **What to do:** retry the action. If it repeats, run `zn hooks install <agent>` again, then `npx -y zn-gate check`.
+
+#### "This usually means `<agent>` changed the format of the data it sends to zn"
+
+```text
+zn: could not read the tool name of this call, so zn cannot check it and blocked it. This usually means <agent> changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `zn hooks install <agent>`.
+zn: <agent> sent an event zn does not know, so it was not checked. This usually means <agent> changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `zn hooks install <agent>`.
+```
+
+**What happened:** your agent was updated and now sends zn information in a new shape (a renamed field, a new event name, a different tool name). The installed zn-gate is older than the agent, so it cannot read it. A call whose tool or command zn cannot read is blocked. An event with a name zn does not know is let through unchecked, and the second message appears on the hook's error output (some agents show it only in verbose mode).
+
+**Is it safe?** A blocked call was not run. An event the second message names was not checked, so update zn-gate soon.
+
+**What to do:** run `npm install -g zn-gate@latest`, then `zn hooks install <agent>`, then `npx -y zn-gate check`. If you use the Claude Code plugin, run `claude plugin update zn-gate@usezn` instead. If it still happens after the update, your agent may be newer than the latest zn-gate: please report it as an issue.
 
 #### "zn: this action names a file or text that is not valid Unicode text, so it was blocked"
 
@@ -1052,6 +1067,33 @@ The `zn-gate` command of the Python package protects agents you build yourself. 
 
 **What to do:** follow that message, or choose another `--output` path, then run it again.
 
+#### "zn_gate: ZN_STRICT is set to ..., but only ZN_STRICT=1 turns it on, so it is off"
+
+This also appears for `ZN_BLOCK_TRUNCATED`.
+
+**What happened:** the variable has a value other than `1`, such as `true` or `yes`. Only `1` turns it on, so the setting is off. The warning appears once for each value in each run of your program. An unset, empty or `0` value leaves the setting off without a warning.
+
+**What to do:** to turn it on, set the variable to `1`, for example `ZN_STRICT=1`. If you do not want it, remove the variable.
+
+#### "zn_gate: '...' was blocked (rule ...), but on_block='ignore' let it through"
+
+**What happened:** the LangChain handler (`ZnGuardCallbackHandler`) was set to let blocked items through, with `on_block="ignore"` or `raise_on_injection=False`. It found a blocked prompt, tool call or output and let it through. The line names where it was (for example `langchain:llm_prompt`) and the rule, never the text.
+
+**What to do:** if you did not mean to let blocked items through, use `on_block="raise"`, the default. The handler then raises `GuardBlockError` instead. If you did mean it, each warning is the record of an item that passed.
+
+#### "[zn-gate] Warning: Cloud gate error (...)"
+
+**What happened:** you turned on the cloud check (`ZN_CLOUD=1` with an API key), and the call to the cloud failed. The message is shown only when `ZN_VERBOSE=1` is set. The rest of the line says why:
+
+- "The cloud service did not accept the API key: check ZN_API_KEY." (HTTP 401 or 403)
+- "The cloud service took too long to answer: check your network connection."
+- "The cloud service could not be reached: check your network connection and ZN_API_URL."
+- "The cloud service answered with an error (HTTP `<code>`): try again later."
+
+Then zn checked the text with the local rules only, on your machine, and the result has `"mode": "oss-local-fallback"`.
+
+**What to do:** for an invalid key, check `ZN_API_KEY`. For a timeout or a connection error, check your connection and `ZN_API_URL` if you set it. For any other error, try again later.
+
 ### Where a message points you
 
 - A message that ends with "More: <https://usezn.com/docs/zn-gate/troubleshooting/>" (a vault that did not start, a damaged vault file, a failed audit log check) points to this page. [Section 5](#5-your-secret-vault-is-locked) covers the vault, and [section 10](#10-the-evidence-log--is-damaged) the logs.
@@ -1080,7 +1122,7 @@ The Node.js package always refuses a connection whose certificate does not check
 
 ### Hooks block everything: "zn-gate changed since the hooks were installed"
 
-The hook launcher keeps a fingerprint of zn-gate's hook runner and runs it only while it matches, so after the files change your agent blocks its tool calls and prompts and shows the message "zn-gate changed since the hooks were installed". `npm update -g zn-gate` fixes the launchers by itself, but not when the update ran with `--ignore-scripts`, with bun, or with `sudo`. In your own terminal, without `sudo`, run `zn hooks install <agent>` again (for example `zn hooks install claude-code`), then start a new session. More in [check](check.md) and [upgrading](upgrading.md).
+The hook launcher keeps a fingerprint of zn-gate's hook runner and of every other zn-gate file the hook loads, and runs a file only while it matches, so after the files change your agent blocks its tool calls and prompts and shows the message "zn-gate changed since the hooks were installed". `zn-gate check` names the changed file. `npm update -g zn-gate` fixes the launchers by itself, but not when the update ran with `--ignore-scripts`, with bun, or with `sudo`. In your own terminal, without `sudo`, run `zn hooks install <agent>` again (for example `zn hooks install claude-code`), then start a new session. More in [check](check.md) and [upgrading](upgrading.md).
 
 ### npm says EACCES when init installs zn-gate
 
@@ -1092,5 +1134,9 @@ echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.zshrc
 ```
 
 Use `~/.bashrc` instead of `~/.zshrc` if you use bash. Then open a new terminal and run the installs again: `npm install -g` for your agent (for example `npm install -g @openai/codex` or `npm install -g @google/gemini-cli`, if it failed too) and `npm install -g zn-gate`, then `npx -y zn-gate init` (or `zn hooks install <agent>`). An install that failed with `EACCES` did nothing, so it has to be run again. A Node.js version manager such as nvm also avoids the problem. This does not apply to Windows.
+
+### init says there is no internet connection
+
+If `zn-gate init` cannot reach the npm registry, it says "no internet connection: npm could not reach the registry" and what to do next, instead of a message about permissions. Check your connection (and any proxy or VPN), then run `npx -y zn-gate init` again. The npm install step gives up after about 30 seconds and never waits more than 3 minutes. On Windows it also stops npm itself, so nothing goes on installing in the background. A real permission error still gets the advice above.
 
 **To see the technical detail of an error:** run the command again with `ZN_VERBOSE=1`, or set `DEBUG=zn` (also `zn*`, `zn:*`, `zn-gate` or `zn-gate:*`, alone or in a comma-separated list). Other `DEBUG` values, such as `DEBUG=*`, do not change what zn prints. The Node.js and Python packages follow the same rule.

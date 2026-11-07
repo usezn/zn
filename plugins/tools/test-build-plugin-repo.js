@@ -165,6 +165,13 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       await rejects({ ...BASE, 'lib/compile-cache.js': "const mod = require('module');\nmod.enableCompileCache = () => {};\n" }, /module. built-in/);
       await rejects({ ...BASE, 'lib/extra.js': "const mod = require('module');\nconst f = mod;\nmod.enableCompileCache();\n" }, /module. built-in/);
       await rejects({ ...BASE, 'lib/compile-cache.js': "const mod = require('module');\nconst f = mod;\nmod.enableCompileCache();\n" }, /module. built-in/);
+      // lib/agents/launcher.js: only the exact VERIFY_JS text of the release is taken out before the rule.
+      const verifyBlock = "const VERIFY_JS = \"const fs=require('fs'),M=require('module'),p=require('path');\" +\n  \"const [f,h,...a]=process.argv.slice(1);let b;try{b=fs.readFileSync(f)}catch(e){process.exit(\" + CHANGED_RC + \")}\" +\n  \"if(!/^[0-9a-f]{64}$/.test(h||'')||require('crypto').createHash('sha256').update(b).digest('hex')!==h)process.exit(\" + CHANGED_RC + \");\" +\n  \"process.argv=[process.argv[0],f,...a];const m=new M(f,null);m.id='.';m.filename=f;m.paths=M._nodeModulePaths(p.dirname(f));\" +\n  \"process.mainModule=m;M._cache[f]=m;m._compile(b.toString('utf8'),f);m.loaded=true;\";\n\n";
+      await build({ ...BASE, 'lib/agents/launcher.js': 'const x = 1;\n' + verifyBlock + 'module.exports = { x };\n' });
+      await rejects({ ...BASE, 'lib/agents/launcher.js': 'const x = 1;\n' + verifyBlock.replace('m.loaded=true', 'm.loaded=1') + 'module.exports = { x };\n' }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/agents/launcher.js': verifyBlock + "const M = require('module');\n" }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/agents/launcher.js': verifyBlock + verifyBlock }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/other.js': verifyBlock }, /module. built-in/);
       await rejects({ ...BASE, 'lib/extra.js': "const { _load } = require('module');\n" }, /module. built-in/);
       await rejects({ ...BASE, 'lib/compile-cache.js': "const { _load } = require('module');\n" }, /module. built-in/);
       await rejects({ ...BASE, 'lib/extra.js': "require('module').enableCompileCache();\n" }, /module. built-in/);
@@ -189,6 +196,12 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
         await rejects({ ...BASE, 'lib/extra.js': 'const CHANGED_RC = 86;\n' + stmt }, /module. built-in|mainModule/);
         await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt + "require('module').createRequire(__filename);\n" }, /createRequire|module. built-in/);
         await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt + stmt }, /module. built-in|mainModule/);
+        // CHANGED_RC is spliced into the program: a non-number or a second assignment voids the exception
+        await rejects({ ...BASE, 'lib/agents/launcher.js': "const CHANGED_RC = '0);require(`child_process`)';\n" + stmt }, /module. built-in|mainModule/);
+        await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt + 'CHANGED_RC = 1;\n' }, /module. built-in|mainModule/);
+        await rejects({ ...BASE, 'lib/agents/launcher.js': stmt }, /module. built-in|mainModule/);
+        // a CRLF-packed launcher is refused with a message that names the cause
+        await rejects({ ...BASE, 'lib/agents/launcher.js': ('const CHANGED_RC = 86;\n' + stmt).replace(/\n/g, '\r\n') }, /CRLF line ends/);
       }
       // Only lib/compile-cache.js may use the exception.
       await rejects({ ...BASE, 'lib/extra.js': "const mod = require('module');\nmod.enableCompileCache('/x');\n" }, /module. built-in/);
@@ -522,6 +535,12 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       const start = text.indexOf('\n4. ');
       const step4 = text.slice(start, text.indexOf('\n\n', start + 4));
       for (const [rel] of builder.PLUGIN_FILES) {
+        // An image is not named: a directory scan reads a file name in a document as a reference to an unread asset.
+        if (/\.(?:png|jpe?g|gif|webp)$/i.test(rel)) {
+          assert.ok(!text.includes(rel), rel + ' is not named in PROVENANCE.md');
+          assert.ok(step4.includes('listing icon'), 'PROVENANCE.md step 4 mentions the listing icon');
+          continue;
+        }
         assert.ok(step4.includes('`' + rel + '`'), rel + ' is named in PROVENANCE.md step 4');
       }
       for (const named of step4.match(/`[^`]+`/g) || []) {
@@ -529,6 +548,54 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
         if (!/[./]/.test(n) || n.startsWith('plugins/') || n.includes(' ') || n.includes('X.Y.Z') || n === 'source' || n === '* -text') continue;
         const known = builder.PLUGIN_FILES.some(([rel]) => rel === n) || ['.gitattributes', '.github/workflows/verify.yml'].includes(n);
         assert.ok(known, n + ' in PROVENANCE.md step 4 is not a copied file');
+      }
+    });
+
+    await test('the build leaves out the package README, the setup guide and the unused BLS curves, and keeps what the vault uses', async () => {
+      const left = [
+        'README.md', 'lib/init-guide.js', 'lib/x.d.ts', 'lib/x.js.map',
+        'node_modules/@noble/curves/abstract/bls.js', 'node_modules/@noble/curves/abstract/tower.js', 'node_modules/@noble/curves/bls12-381.js',
+        'node_modules/@noble/curves/bn254.js', 'node_modules/@noble/curves/misc.js', 'node_modules/@noble/curves/index.js',
+        'node_modules/@noble/post-quantum/node_modules/@noble/curves/abstract/bls.js', 'node_modules/@noble/post-quantum/node_modules/@noble/curves/index.js',
+      ];
+      const kept = [
+        'package.json', 'bin/cli.js', 'lib/init.js', 'lib/hooks/runner.js', 'docs/README.md', 'node_modules/age-encryption/README.md',
+        'node_modules/@noble/curves/ed25519.js', 'node_modules/@noble/curves/nist.js', 'node_modules/@noble/curves/abstract/edwards.js',
+        'node_modules/@noble/curves/abstract/modular.js',
+      ];
+      for (const rel of left) assert.ok(builder.PRUNE.test(rel), rel + ' is left out');
+      for (const rel of kept) assert.ok(!builder.PRUNE.test(rel), rel + ' is kept');
+    });
+
+    await test('PROVENANCE.md step 2 names every file the build leaves out', async () => {
+      const text = fs.readFileSync(path.join(CLAUDE_DIR, 'PROVENANCE.md'), 'utf8');
+      const start = text.indexOf('\n2. ');
+      const step2 = text.slice(start, text.indexOf('\n\n', start + 4));
+      const alts = [];
+      let depth = 0;
+      let cur = '';
+      for (const c of builder.PRUNE.source) {
+        if (c === '(') depth++;
+        if (c === ')') depth--;
+        if (c === '|' && depth === 0) {
+          alts.push(cur);
+          cur = '';
+        } else cur += c;
+      }
+      alts.push(cur);
+      const named = (alt) => {
+        if (alt.startsWith('\\.(?:d')) return ['.ts', '.mts', '.cts', '.map'];
+        const plain = alt.replace(/^\^|\$$/g, '').replace(/\\([./])/g, '$1');
+        if (!/[()?*+[\]|]/.test(plain)) return [plain];
+        if (alt.includes('@noble\\/curves')) {
+          return ['node_modules/@noble/curves', 'node_modules/@noble/post-quantum/node_modules/@noble/curves', 'abstract/bls.js', 'abstract/tower.js', 'bls12-381.js', 'bn254.js', 'misc.js', 'index.js'];
+        }
+        return null;
+      };
+      for (const alt of alts) {
+        const names = named(alt);
+        assert.ok(names, 'PRUNE entry ' + alt + ' is not covered by this test: add it here and to PROVENANCE.md step 2');
+        for (const name of names) assert.ok(step2.includes(name), name + ' is named in PROVENANCE.md step 2');
       }
     });
 

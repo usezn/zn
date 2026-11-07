@@ -249,4 +249,5 @@ npx -y zn-gate audit .
 ## Related
 
 - [`zn audit`](audit.md): what it checks and every rule.
+- [CI step example](examples/ci-step-example.md): one job that runs the audit and reads its exit code.
 - [Action inputs in the README](../README.md#github-action).
