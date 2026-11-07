@@ -32,15 +32,16 @@ python3 -m venv .venv
 
 No internet on this computer? See [Install on a machine without internet](https://github.com/usezn/zn/blob/main/docs/install-matrix.md#install-on-a-machine-without-internet). Those steps are for the npm package.
 
-**On Windows**, with Python from the Python install manager, there is no `pip` command, and after a plain `pip install` the `Scripts` folder is not on your PATH, so `zn-gate` is "not recognized". Use the `py` launcher and a virtual environment, and call the tools by their full path:
+**On Windows**, use the `py` launcher, which comes with Python from python.org and the Python install manager:
 
 ```powershell
-py -m venv .venv
-.venv\Scripts\python -m pip install zn-gate
-.venv\Scripts\zn-gate scan .
+py -m pip install zn-gate
+py -m zn_gate scan .
 ```
 
-(`python -m zn_gate` is not available: the command is `zn-gate`, inside the environment's `Scripts` folder.)
+Run it as `py -m zn_gate`, not as `zn-gate`. `pip` installs the `zn-gate` command into the `Scripts` folder of your Python, and that folder is often not on your PATH, so a plain `zn-gate` can fail with "not recognized" even after a successful install. `py -m zn_gate` runs the same commands (`scan`, `test`, `status` and the rest) without needing that folder on your PATH. Replace `scan .` with the command you need, for example `py -m zn_gate status`.
+
+To keep zn-gate inside a project's virtual environment instead, run `py -m venv .venv`, then `.venv\Scripts\python -m pip install zn-gate` and `.venv\Scripts\python -m zn_gate scan .`.
 
 **Only the command-line tools (`scan`, `test`, `status`)?** Install the Python CLI as a standalone tool, without a virtual environment. On Ubuntu and Debian, first run `sudo apt update && sudo apt install pipx`. Bare `pip` is often missing there too (`pip: command not found`), and `pip install` into the system Python is refused, so use pipx, uv or a virtual environment. To get uv, follow the [official uv installation guide](https://docs.astral.sh/uv/getting-started/installation/):
 
@@ -59,7 +60,7 @@ Inside an environment you already use (your project's virtualenv, Poetry, uv), `
 **If something fails:**
 
 - `externally-managed-environment`: install it in a virtual environment, as shown above.
-- `pip` or `zn-gate` is "not recognized" on Windows: use `py -m venv .venv`, then `.venv\Scripts\python -m pip install zn-gate` and `.venv\Scripts\zn-gate scan .`.
+- `pip` or `zn-gate` is "not recognized" on Windows: use `py -m pip install zn-gate` and `py -m zn_gate scan .`.
 - `pip: command not found` or `No module named pip`: this system has no pip for its Python. Use the virtual environment or pipx steps above.
 - `zn-gate: command not found` after a virtual environment install: run `.venv/bin/zn-gate scan .`, or run `source .venv/bin/activate` first.
 - `python3 -m venv` fails on Debian or Ubuntu: run `sudo apt update && sudo apt install python3-venv`.
