@@ -40,7 +40,7 @@ py -m venv .venv
 .venv\Scripts\zn-gate scan .
 ```
 
-(`python -m zn_gate` is not available: the command is `zn-gate`, inside the environment's `Scripts` folder.)
+(If the `zn-gate` command is not found, `py -m zn_gate scan .` runs the same command.)
 
 **Only the command-line tools (`scan`, `test`, `status`)?** Install the Python CLI as a standalone tool, without a virtual environment. On Ubuntu and Debian, first run `sudo apt update && sudo apt install pipx`. Bare `pip` is often missing there too (`pip: command not found`), and `pip install` into the system Python is refused, so use pipx, uv or a virtual environment. To get uv, follow the [official uv installation guide](https://docs.astral.sh/uv/getting-started/installation/):
 
