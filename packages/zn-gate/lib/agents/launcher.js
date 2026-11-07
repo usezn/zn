@@ -68,9 +68,9 @@ const WARN_STDERR = new Set(['cursor']);
 const blockExit = (agentId) => BLOCK_EXIT_BY_AGENT[agentId] || BLOCK_EXIT;
 const blockJson = (agentId) => BLOCK_JSON_BY_AGENT[agentId] || BLOCK_JSON;
 
-const FIX = 'run `npm install -g zn-gate` and then `zn hooks install codex` in your own terminal';
+const FIX = 'install Node.js again from nodejs.org if it is missing (without it neither command below works), then run `npm install -g zn-gate` and then `zn hooks install codex` in your own terminal';
 // The one extra way out when zn-gate is gone: `npx` downloads it for one command, so it works with nothing installed.
-const REMOVE = 'or remove the hooks with `npx -y zn-gate hooks uninstall codex`';
+const REMOVE = 'or, once Node.js is installed, remove the hooks with `npx -y zn-gate hooks uninstall codex`';
 
 function reasonText(agentId) {
   return 'zn: its hook cannot start because zn-gate is not installed any more (the Node.js or the files it was installed with are gone), but its hooks for ' + agentId + ' still point at it, so this was blocked. Ask the user to ' +

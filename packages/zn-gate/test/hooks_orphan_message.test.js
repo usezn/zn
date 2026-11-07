@@ -19,7 +19,7 @@ const posix = process.platform !== 'win32';
 const AGENTS = ['claude-code', 'codex', 'cursor', 'gemini', 'zcode'];
 
 function orphan(t, agent) {
-  const home = tempDir(t, 'zn-b3483-');
+  const home = tempDir(t, 'zn-orphan-hook-');
   const empty = path.join(home, 'empty');
   fs.mkdirSync(empty);
   const env = { HOME: home, ZN_HOME: path.join(home, '.zn'), PATH: process.env.PATH };
@@ -39,6 +39,9 @@ for (const agent of AGENTS) {
     assert.match(r.stderr, /still point at it/);
     assert.match(r.stderr, new RegExp('npm install -g zn-gate` and then `zn hooks install ' + agent));
     assert.match(r.stderr, new RegExp('npx -y zn-gate hooks uninstall ' + agent));
+    // Node.js may be the missing part: the text must say to reinstall it before any npm or npx command.
+    assert.ok(r.stderr.indexOf('install Node.js again') !== -1 && r.stderr.indexOf('install Node.js again') < r.stderr.indexOf('npm install -g'), r.stderr);
+    assert.match(r.stderr, /once Node\.js is installed, remove the hooks/);
   });
 
   test('orphan hook (' + agent + '): an event that cannot block only warns, with the same fixes', { skip: !posix }, (t) => {
@@ -57,5 +60,6 @@ test('orphan hook: the Windows script carries the same text', () => {
   assert.ok(s, 'a script is made');
   assert.match(s, /zn-gate is not installed any more/);
   assert.match(s, /npx.cmd -y zn-gate hooks uninstall codex/);
+  assert.match(s, /install Node\.js again/);
   assert.match(s, /exit 2/);
 });
