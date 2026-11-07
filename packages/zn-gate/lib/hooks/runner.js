@@ -1711,6 +1711,7 @@ function unreadablePre(ev, agentId) {
  * opts: {engine, vault, failMode, home}
  */
 async function handle(adapter, rawEvent, opts = {}) {
+  const t0 = performance.now();
   const mode = failModeOf(opts);
   let ev = null;
   let decision;
@@ -1734,11 +1735,12 @@ async function handle(adapter, rawEvent, opts = {}) {
   } finally {
     d.closeVault();
   }
+  const latencyMs = performance.now() - t0;
   // zn Team: a line for the person (a policy change that lifted restrictions, or detectors that are not applied).
   const teamLines = takeTeamNotes();
   if (teamLines.length && decision && !decision.userMessage) decision.userMessage = teamLines.join(' ');
   const output = adapter.respond({ ...decision, event: ev });
-  countHook(adapter.id, ev, decision, opts);
+  countHook(adapter.id, ev, decision, opts, latencyMs);
   recordEvidence(adapter.id, ev, decision, opts);
   return { output, stderr: decision.warning || null, decision };
 }
@@ -1747,7 +1749,7 @@ async function handle(adapter, rawEvent, opts = {}) {
  * Local counts for `zn-gate stats` (best effort; never changes the decision). A denial because zn itself
  * failed (fail-closed) is not counted as a block; asks and fail-open passes count as warnings.
  */
-function countHook(agentId, ev, decision, opts = {}) {
+function countHook(agentId, ev, decision, opts = {}, latencyMs) {
   try {
     if (!ev || !ev.event || !decision) return;
     // Codex asks PreToolUse first, then PermissionRequest for the same call when it shows an approval prompt.
@@ -1771,6 +1773,8 @@ function countHook(agentId, ev, decision, opts = {}) {
       warned: decision.decision === 'ask' || decision.failOpen || (decision.decision === 'deny' && decision.noBlock) ? 1 : 0,
       redacted: extra.redacted || 0,
       detections: extra.detections || {},
+      // Only the duration of a tool call check is kept (lib/stats.js latencyReport).
+      latencyMs: ev.event === 'pre_tool' || ev.event === 'post_tool' ? latencyMs : undefined,
     }, file ? { file } : {});
   } catch {
     /* counting must never affect a hook */
