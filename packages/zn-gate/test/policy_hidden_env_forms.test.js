@@ -11,6 +11,7 @@ const os = require('os');
 const path = require('path');
 
 const policy = require('../lib/hooks/policy');
+const { budget } = require('./helpers/time_budget');
 
 function asPlatform(name, fn) {
   const desc = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -238,6 +239,128 @@ test('cmd is cmd.exe only in command position: a folder named cmd is not', () =>
   });
 });
 
+test('an expansion that comes out empty is refused whatever the environment the hook sees holds', () => {
+  const { opts } = project();
+  // The hook sees no X, an X that empties the slice, and an X that does not: the result is the same.
+  for (const extra of [{}, { X: 'x' }, { X: 'n' }]) {
+    const o = { ...opts, env: { ...opts.env, OS: 'Windows_NT', ...extra } };
+    asPlatform('linux', () => {
+      assert.match(policy.bashDenial('cat .e${X:0:0}nv', o) || '', DENIED, 'linux ' + JSON.stringify(extra));
+    });
+    asPlatform('win32', () => {
+      assert.match(policy.bashDenial('type .e%X:~0,1%nv', o) || '', DENIED, 'win32 ' + JSON.stringify(extra));
+    });
+  }
+});
+
+test('an expansion is read as any text: a name that a variable or substitution could complete is refused whatever the environment holds', () => {
+  const { opts } = project();
+  const attacks = ['cat .e$(echo n)v', 'cat .e`echo n`v', 'read X <<< n; cat .e${X}v', 'cat .e${X}v', 'cat ${D}env', 'cat ${D}.env', 'cat .e${X}',
+    'cat .env${S}', 'cat .e$1v', 'cat .e"$X"v', 'cat "$HOME"/.e${X}v', 'cat sub/.e${X}v', 'cat .e$(echo n)v.local', 'cat .e$(printf n)v',
+    'cat $(printf .en)v', 'cat $(echo .en)v', 'bash -c "cat .e\${X}v"', 'cat ${D}env.local', 'cat ~/.ssh/id_${K}', 'cat ${A}d_rsa'];
+  for (const extra of [{}, { X: 'n', D: '.', K: 'rsa' }, { X: 'q' }]) {
+    const o = { ...opts, env: { ...opts.env, ...extra } };
+    asPlatform('linux', () => {
+      for (const c of attacks) assert.match(policy.bashDenial(c, o) || '', /holds plain-text|was not read because/, c + ' ' + JSON.stringify(extra));
+    });
+  }
+});
+
+test('an expansion read as any text: cmd.exe variable units spell a name the same way', () => {
+  const { opts } = project();
+  asPlatform('win32', () => {
+    for (const c of ['type .e%X:~0,1%v', 'type .e!X!v', 'type .e%X%v', 'cmd /c type .e%X%v', 'set X=n& type .e%Y%v']) {
+      assert.match(policy.bashDenial(c, opts) || '', /holds plain-text|was not read because/, c);
+    }
+    for (const c of ['echo %USERPROFILE%', 'type %USERPROFILE%/notes.md', 'type %CD%/x.txt']) assert.equal(policy.bashDenial(c, opts), null, c);
+  });
+});
+
+test('an expansion read as any text: ordinary uses stay allowed', () => {
+  const { opts } = project();
+  asPlatform('linux', () => {
+    for (const c of ['echo $HOME', 'cat $HOME/notes.md', 'cat ${DIR}/notes.md', 'cat ${NAME}.txt', 'source ${VENV}/bin/activate',
+      'cat ${ROOT}/.venv/bin/python', 'cat $1', 'echo v${VERSION}', 'cat ${X}v', 'cp dist/${NAME}-${VERSION}.tgz x', 'cat ${CI_ENV}',
+      'cat config/${ENV}.json', 'cat .github/${WF}.yml', 'cat src/${MOD}/env.ts', 'cat ${APP}.env.example', 'cat ${APP}.env.sample',
+      'echo $(date)v', 'cat $(pwd)/notes.md', 'ls $(git rev-parse --show-toplevel)/src', 'echo "$X" > .e${Y}v']) {
+      assert.equal(policy.bashDenial(c, opts), null, c);
+    }
+  });
+});
+
+test('an unquoted expansion splits into words: each piece is checked, and the safe ending only ends a real word', () => {
+  const { opts } = project();
+  asPlatform('linux', () => {
+    for (const c of ['cat a${IFS}.env', 'cat a$IFS.env', 'cat foo${X}.env', 'cat a$(printf " ").env',
+      'cat .e$(printf "nv ")v.example', 'cat .e${X}v.example', 'cat .e${X}v.sample', 'cat .e${X}v.template', 'cat .e$X.example',
+      'cat x${IFS}id_rsa', 'cat ~/.ssh/a${IFS}id_ed25519', 'cat a${IFS}.env.local', 'cat "a"${IFS}.env']) {
+      assert.match(policy.bashDenial(c, opts) || '', /was not read because/, c);
+    }
+    // Inside double quotes the value is one word: no split, so the same lines read like any other quoted name.
+    assert.equal(policy.bashDenial('cat .e"$X"v.example', opts), null);
+    // A variable right before the .env name is refused even inside double quotes, whatever literal text comes before it (its value could be a folder
+    // separator): an accepted false positive of the name rule, not of the split reading.
+    for (const c of ['cat "a${IFS}.env"', 'cat "foo${X}.env"', 'cat "a$IFS.env"']) assert.match(policy.bashDenial(c, opts) || '', /builds the path of a \.env file/, c);
+    assert.match(policy.bashDenial('cat ".e${X}v"', opts) || '', /was not read because/);
+    for (const c of ['cat ${HOME}/notes.md', 'cat $HOME/notes.md', 'cat config/${ENV}.json', 'cat ${APP}.env.example', 'cat "${APP}".env.example',
+      'cat ${APP}.env.sample', 'cat src/${MOD}/env.ts', 'cat ${PREFIX}/etc/environment', 'cat ${X}.envrc.txt', 'cd ${PROJECT}/environments',
+      'echo v${VERSION}', 'tar czf dist/${NAME}-${VERSION}.tgz .', 'cat a${IFS}b.txt', 'cat ${A}${B}notes', 'cat "${APP}.env.example"',
+      'cat $(pwd)/.env.example']) {
+      assert.equal(policy.bashDenial(c, opts), null, c);
+    }
+  });
+});
+
+test('known limit: a segment that keeps two letters of the name is refused even when it names something else', () => {
+  const { opts } = project();
+  asPlatform('linux', () => {
+    // Accepted false positive: ${PREFIX}env could be .env, so it is refused. Write the name out to read it.
+    // Same for a key name cut by an unquoted expansion: id_${T}.pub could split into id_rsa and .pub.
+    assert.match(policy.bashDenial('cat ~/.ssh/id_${T}.pub', opts) || '', /was not read because/);
+    assert.match(policy.bashDenial('ls ${PREFIX}env', opts) || '', /was not read because/);
+  });
+});
+
+test('known limit: a name wholly inside a variable or a substitution is not read', () => {
+  const { opts } = project();
+  asPlatform('linux', () => {
+    // Documented in the threat model: the hook cannot see a value that no text holds. A variable assigned in the same line is followed.
+    assert.equal(policy.bashDenial('cat $NAME', opts), null);
+    assert.equal(policy.bashDenial('cat $(cat names.txt)', opts), null);
+    assert.match(policy.bashDenial('NAME=.env; cat $NAME', opts) || '', /holds plain-text|was not read because/);
+  });
+});
+
+test('a piece an unquoted expansion cuts off is also read as a glob, as the shell globs each word after splitting', () => {
+  const { opts } = project();
+  asPlatform('linux', () => {
+    for (const c of ['cat a${IFS}.e*', 'cat a${IFS}.en?', 'cat a${IFS}.en[v]', 'cat a${IFS}?env', 'cat a${IFS}.e?v', 'cat a${IFS}.??v',
+      'cat a${IFS}.[e]nv', 'cat a${X}.e*', 'cat a${X}.en?', 'cat a${X}.en[v]', 'cat a${X}?env', 'cat a$IFS.e*', 'cat a${IFS}.e*${Y}',
+      'cat a${IFS}.e*.example${IFS}x', 'cat ~/.ssh/a${IFS}id_*', 'cat a${IFS}id_r?a', 'cat a${IFS}id_[r]sa', 'cat a${IFS}.env*']) {
+      assert.match(policy.bashDenial(c, opts) || '', /was not read because|\.env|credential|SSH|private key|protected/i, c);
+    }
+    // One word, no split: a quoted expansion keeps its glob with the rest of the word, which starts with other text.
+    for (const c of ['cat "a${IFS}".en?', 'cat a"${IFS}".e*', 'cat "a${IFS}".e*', 'cat ${DIR}/*.md', 'cat a${IFS}*.md', 'cat a${IFS}*',
+      'cat a${IFS}n?tes.md', 'cat a${IFS}[a-c]*.txt', 'cat a${IFS}.e*.example', 'cat ${DIR}/*.json']) {
+      assert.equal(policy.bashDenial(c, opts), null, c);
+    }
+    // Names that start with id_ or end with a key type next to an unquoted expansion are refused on purpose.
+    for (const c of ['cat id_${T}.txt', 'cp ${SRC}/id_${T}.pub ${DST}/']) assert.match(policy.bashDenial(c, opts) || '', /was not read because/, c);
+  });
+});
+
+test('ordinary lines with unquoted expansions stay allowed', () => {
+  const { opts } = project();
+  asPlatform('linux', () => {
+    for (const c of ['echo $HOME', 'cd $HOME/projects', 'source ${VENV}/bin/activate', 'docker run -e APP_ENV=${ENV} img', 'cat config/${ENV}.json',
+      'cat ${APP}.env.example', 'cat src/${MOD}/env.ts', 'tar czf dist/${NAME}-${VERSION}.tgz .', 'uv run --env-file ${ENVFILE} x',
+      'docker compose --env-file ${ENV_FILE} up', 'pytest tests/${TEST}_env.py', 'cat ~/.ssh/id_rsa.pub', 'cat ${DIR}/environment.yml',
+      'ls ${DIR}/*.py', 'rm ${TMPD}/*.log', 'grep -r foo ${SRC}/lib/*.js', 'cat ${A}/*.md ${B}/?.txt', 'cat ${DIR}/[a-c]*.txt']) {
+      assert.equal(policy.bashDenial(c, opts), null, c);
+    }
+  });
+});
+
 // --- review of #849, second round: quoted brackets, any cmd variable name, an unpaired ! under delayed expansion ---
 
 test('a quoted closing bracket does not end an expansion unit early', () => {
@@ -363,7 +486,8 @@ test('the case fallback spans lines and costs time in proportion to the text', (
   const big = 'cat a$(case ' + '$('.repeat(40000) + ')'.repeat(40000);
   const t0 = Date.now();
   policy.bashDenial(big, opts);
-  assert.ok(Date.now() - t0 < 2000, 'time: ' + (Date.now() - t0) + ' ms');
+  const ms = Date.now() - t0;
+  assert.ok(ms < budget(2000), 'time: ' + ms + ' ms (limit ' + budget(2000) + ' ms on this machine)');
 });
 
 // --- review of #849, sixth round: esac only as a reserved word; the fallback anchored on each $( case ... esac ) ---
@@ -386,5 +510,6 @@ test('case inside a command substitution: a hyphenated word, extra substitutions
   const many = 'cat a' + '$(case x in x) : ;; esac)'.repeat(2000);
   const t0 = Date.now();
   policy.bashDenial(many, opts);
-  assert.ok(Date.now() - t0 < 2500, 'time: ' + (Date.now() - t0) + ' ms');
+  const ms = Date.now() - t0;
+  assert.ok(ms < budget(2500), 'time: ' + ms + ' ms (limit ' + budget(2500) + ' ms on this machine)');
 });

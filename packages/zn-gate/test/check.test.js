@@ -98,6 +98,7 @@ test('check: no setup at all is a failure, with the command for each agent found
   assert.equal(code, 1);
   assert.match(s, winCmdRe(/Codex CLI\s+zn is not set up for this agent\. To protect it, run `zn hooks install codex` in your own terminal/));
   assert.match(s, /claude plugin install zn-gate@usezn/);
+  assert.match(s, /install the zn-gate plugin \(needs internet\): `claude plugin marketplace add usezn\/zn`/);
   assert.match(s, /Cursor\s+not found on this machine\n/);
   assert.match(s, winCmdRe(/To set it up, run `npx -y zn-gate init` in your own terminal/));
 });
