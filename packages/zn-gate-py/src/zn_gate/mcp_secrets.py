@@ -460,6 +460,13 @@ NPM_ONLY_NOTE = ("move it into the zn vault with the npm package (secret, secret
                  "not of this Python package): ")
 
 
+def _zn_follow_up() -> str:
+    """How to start zn for the follow-up step: plain `zn` where it is unchanged, the npx.cmd form on Windows.
+
+    PowerShell's default policy refuses zn.ps1, and the first step already uses npx, so a global zn is not assumed there."""
+    return "zn" if npx_name() == "npx" else f"{npx_name()} -y zn-gate"
+
+
 def mcp_next_step(kind: str, name: str) -> str:
     use = suggested_name(normalize_name(name))
     if kind in ("header", "URL"):
@@ -468,7 +475,7 @@ def mcp_next_step(kind: str, name: str) -> str:
                 "{env:" + use + "} in OpenCode), keep the real value in your own shell settings or a secret manager, "
                 "and rotate it if the file was ever committed or shared.")
     through = (f"Next: {NPM_ONLY_NOTE}run {npx_name()} -y zn-gate secret set {use} to store the value in the local vault (it asks for the value, "
-               f"so it is never typed on a command line), run zn secret allow {use} --command <the server's command> so zn run "
+               f"so it is never typed on a command line), run {_zn_follow_up()} secret allow {use} --command <the server's command> so zn run "
                "may use it, take the value out of this file and start the server through zn run: set the server's command to zn "
                f"and put run, --secrets, {use}, -- and the old command first in args, so the server gets the value as the "
                f"environment variable {use}")

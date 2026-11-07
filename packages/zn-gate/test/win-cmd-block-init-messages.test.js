@@ -19,6 +19,16 @@ function asPlatform(value, fn) {
   }
 }
 
+async function asPlatformAsync(value, fn) {
+  const real = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value });
+  try {
+    return await fn();
+  } finally {
+    Object.defineProperty(process, 'platform', real);
+  }
+}
+
 // No zn on PATH, so the messages name the npx form.
 const noPath = { PATH: '' };
 
@@ -70,4 +80,20 @@ test('OpenCode repair step names the .cmd shims on win32 only', () => {
   asPlatform('linux', () => {
     assert.match(pluginSource(opts), /Run zn-gate check in a terminal, then zn hooks install opencode\./);
   });
+});
+
+test('a vault failure on win32 names zn.cmd unlock once and never the bare zn unlock', async () => {
+  const runner = require('../lib/hooks/runner');
+  const engine = require('../lib/scrub/engine');
+  const adapter = (ev) => ({ id: 'claude-code', normalize: () => Object.assign({ cwd: process.cwd() }, ev), respond: (d) => d });
+  const pre = { event: 'pre_tool', tool: 'webfetch', toolName: 'WebFetch', input: { url: 'https://example.com/?q=x' } };
+  const run = () => runner.handle(adapter(pre), {}, { home: process.env.HOME, vault: { maskInfo: async () => { throw new Error('connection closed'); } }, engine });
+  const win = await asPlatformAsync('win32', run);
+  assert.match(win.decision.message, /\(zn\.cmd unlock\)/);
+  assert.doesNotMatch(win.decision.message, /(^|[^.\w])zn unlock/);
+  assert.equal(win.decision.message.split(' unlock)').length - 1, 1, win.decision.message);
+  const posix = await asPlatformAsync('linux', run);
+  assert.match(posix.decision.message, /\(zn unlock\)/);
+  assert.doesNotMatch(posix.decision.message, /\.cmd/);
+  assert.equal(posix.decision.message.split(' unlock)').length - 1, 1, posix.decision.message);
 });

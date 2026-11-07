@@ -26,6 +26,22 @@ class TestNpxName(unittest.TestCase):
         self.assertIn("  npx -y zn-gate init\n", msg)
         self.assertNotIn("npx.cmd", msg)
 
+    def test_secret_follow_up_uses_npx_cmd_on_windows(self):
+        from zn_gate.mcp_secrets import mcp_next_step
+        with mock.patch("zn_gate.shell_names.os.name", "nt"):
+            msg = mcp_next_step("environment variable", "API_KEY")
+        self.assertIn("run npx.cmd -y zn-gate secret set ", msg)
+        self.assertIn("run npx.cmd -y zn-gate secret allow ", msg)
+        self.assertNotIn("run zn secret allow", msg)
+
+    def test_secret_follow_up_is_unchanged_on_posix(self):
+        from zn_gate.mcp_secrets import mcp_next_step
+        with mock.patch("zn_gate.shell_names.os.name", "posix"):
+            msg = mcp_next_step("environment variable", "API_KEY")
+        self.assertIn("run npx -y zn-gate secret set ", msg)
+        self.assertIn("run zn secret allow ", msg)
+        self.assertNotIn("npx.cmd", msg)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1439,7 +1439,7 @@ function failDecision(ev, err, mode, agentId) {
   const detail = missing ? '' : ' (' + (err.code ? err.code + ': ' : '') + String(err.message || 'unknown error') + ')';
   const vaultDown = err.vaultFailed === true;
   // The vault errors of the engine may already say how to fix it (zn unlock): say it once.
-  const unlockHint = /zn unlock/.test(String(err.message || '')) ? '' : ' Check that the vault is running and unlocked (' + cliName('zn') + ' unlock; ' + cliName('zn') + ' lock stops it).';
+  const unlockHint = /zn(?:\.cmd)? unlock/.test(String(err.message || '')) ? '' : ' Check that the vault is running and unlocked (' + cliName('zn') + ' unlock; ' + cliName('zn') + ' lock stops it).';
   const msg = vaultDown
     ? 'zn: could not check this action against your secret vault, so it was blocked to keep your secrets safe.' + unlockHint + detail
     : 'zn: ' + (missing ? REINSTALL : HOOK_FAILED + fixHint(agentId)) + detail;
