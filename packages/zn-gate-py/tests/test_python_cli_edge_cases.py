@@ -27,7 +27,6 @@ def _env():
     return env
 
 
-@pytest.mark.skip(reason="product mismatch: analyze with empty text exits 0 with an allow verdict; docs/cli.md says no text prints usage and exits 2")
 def test_analyze_empty_text_is_a_usage_error():
     proc = subprocess.run(
         [sys.executable, "-m", "zn_gate.cli", "analyze", ""],
@@ -84,7 +83,6 @@ def test_same_secret_outside_node_modules_is_reported(tmp_path):
     assert code == 1
 
 
-@pytest.mark.skip(reason="product bug: stats.render prints agent and detection labels with control characters raw (ESC, BEL)")
 def test_stats_render_does_not_print_control_characters_from_labels(tmp_path, monkeypatch):
     monkeypatch.setenv("ZN_HOME", str(tmp_path))
     bell = chr(7)
@@ -99,3 +97,25 @@ def test_stats_render_does_not_print_control_characters_from_labels(tmp_path, mo
     text = stats.render(stats.summary(days=30, now=datetime.date(2026, 11, 7)))
     assert esc not in text
     assert bell not in text
+    assert "codex" in text and "AWS" in text and "_KEY" in text
+
+
+def test_stats_render_cleans_the_layer_label_too(tmp_path, monkeypatch):
+    monkeypatch.setenv("ZN_HOME", str(tmp_path))
+    esc = chr(27)
+    day = {"ho" + esc + "[2Jok:agent": {"checked": 1, "blocked": 0, "warned": 0, "redacted": 0, "detections": {}}}
+    (tmp_path / "stats.json").write_text(json.dumps({"version": 1, "days": {"2026-11-07": day}, "events": {}}), encoding="utf-8")
+    text = stats.render(stats.summary(days=30, now=datetime.date(2026, 11, 7)))
+    assert esc not in text
+    assert "agent" in text
+
+
+def test_stats_render_cleans_a_detection_type_alone(tmp_path, monkeypatch):
+    monkeypatch.setenv("ZN_HOME", str(tmp_path))
+    day = {"hook:codex": {"checked": 1, "blocked": 0, "warned": 0, "redacted": 0,
+                          "detections": {"TOKEN" + chr(0) + chr(27) + "]0;title" + chr(7) + chr(0x202e): 1}}}
+    (tmp_path / "stats.json").write_text(json.dumps({"version": 1, "days": {"2026-11-07": day}, "events": {}}), encoding="utf-8")
+    text = stats.render(stats.summary(days=30, now=datetime.date(2026, 11, 7)))
+    for bad in (chr(0), chr(27), chr(7), chr(0x202e)):
+        assert bad not in text
+    assert "TOKEN" in text
