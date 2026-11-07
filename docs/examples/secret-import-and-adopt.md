@@ -61,6 +61,7 @@ Adopted __ZN_AWS_KEY_1__ as __ZN_AWS_PROD__ (proxy mode).
 
 ```text
 $ npx -y zn-gate secret list
+  APP_NAME                      env
   AWS_PROD                      proxy   hosts=api.example.test
   DATABASE_URL_PASSWORD         env
   STRIPE_SECRET_KEY             env
@@ -90,12 +91,13 @@ The audit log records each import and adoption, with names and no values:
 
 ```text
 $ npx -y zn-gate secret log --since 1h
-2026-11-07T19:45:16.747Z  allow  -  unlock  -  -    ttl:480m
-2026-11-07T19:45:42.585Z  allow  -  resolve  claude-code  Bash    mask_text
-2026-11-07T19:45:59.401Z  allow  DATABASE_URL_PASSWORD  set  -  -    created
-2026-11-07T19:45:59.419Z  allow  STRIPE_SECRET_KEY  set  -  -    created
-2026-11-07T19:45:59.602Z  allow  AWS_PROD  set  -  -    adopted
-chain: valid, 5 records
+2026-11-07T20:45:46.092Z  allow  -  unlock  -  -    ttl:480m
+2026-11-07T20:45:46.363Z  allow  DATABASE_URL_PASSWORD  set  -  -    created
+2026-11-07T20:45:46.381Z  allow  STRIPE_SECRET_KEY  set  -  -    created
+2026-11-07T20:45:46.788Z  allow  APP_NAME  set  -  -    created
+2026-11-07T20:45:47.227Z  allow  -  resolve  claude-code  Bash    mask_text
+2026-11-07T20:45:47.508Z  allow  AWS_PROD  set  -  -    adopted
+chain: valid, 6 records
 ```
 
 ## Exit codes
