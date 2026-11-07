@@ -8,4 +8,5 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [long-text-analysis.md](long-text-analysis.md): the two long-input modes of the cloud check (`windows` or `off`), and when the result carries a warning.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project, from the run to what each exit code means.
 - [stats-and-report.md](stats-and-report.md): worked examples of `zn-gate stats` and `zn-gate report`.
+- [stats-share-controls.md](stats-share-controls.md): check, turn on and turn off the optional sharing of daily counts.
 - [first-cloud-check.md](first-cloud-check.md): the shortest path from connect to a first checked prompt, in five steps.
