@@ -839,6 +839,15 @@ def _check_redacted(text: str) -> str:
         return "[output hidden]"
 
 
+def _check_rule_ids(text: str) -> str:
+    """Rule ids the secret rules report for `text` (ids only, never the value). Never raises."""
+    try:
+        _, found = _dlp_redact(text)
+        return ", ".join(sorted({str(f.get("rule", "unknown")) for f in found})) or "none"
+    except Exception:
+        return "unknown"
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     """Run the Python guard on a fake secret and on a benign text, in a temp folder."""
     import tempfile
@@ -849,8 +858,9 @@ def cmd_check(args: argparse.Namespace) -> int:
         with tempfile.TemporaryDirectory(prefix="zn-gate-check-") as tmp:
             secret_file = os.path.join(tmp, "fake.env")
             benign_file = os.path.join(tmp, "notes.txt")
+            secret_text = "AWS_ACCESS_KEY_ID=" + _CHECK_FAKE_SECRET + "\n"
             with open(secret_file, "w", encoding="utf-8") as handle:
-                handle.write("AWS_ACCESS_KEY_ID=" + _CHECK_FAKE_SECRET + "\n")
+                handle.write(secret_text)
             with open(benign_file, "w", encoding="utf-8") as handle:
                 handle.write(_CHECK_BENIGN_TEXT)
             reader = _guarded_reader()
@@ -859,15 +869,15 @@ def cmd_check(args: argparse.Namespace) -> int:
             try:
                 got = reader(secret_file)
             except GuardBlockError:
-                print(f"{_lead(CHECK)}PASS  fake secret: blocked by the guard")
+                print(f"{_lead(CHECK)}PASS  fake secret: blocked by the guard (rule: {_check_rule_ids(secret_text)})")
             else:
                 shown = _check_redacted(str(got))
                 if _CHECK_FAKE_SECRET in str(got):
                     ok = False
-                    print(f"{_lead(ALERT)}FAIL  fake secret: the guard let it through. Result (redacted): {shown}")
+                    print(f"{_lead(ALERT)}FAIL  fake secret: the guard let it through. Rule that should have fired: {_check_rule_ids(secret_text)}. Result (redacted): {shown}")
                     print("      Next step: reinstall with pip install -U zn-gate and run this check again.")
                 else:
-                    print(f"{_lead(CHECK)}PASS  fake secret: redacted -> {shown}")
+                    print(f"{_lead(CHECK)}PASS  fake secret: redacted -> {shown} (rule: {_check_rule_ids(secret_text)})")
 
             # 2. A harmless text: the guard must pass it unchanged.
             try:

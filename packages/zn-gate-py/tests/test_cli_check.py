@@ -59,6 +59,27 @@ class TestCheckCommand(unittest.TestCase):
         self.assertEqual(code, 1, text)
         self.assertIn("benign text: blocked by mistake", text)
 
+    def test_pass_path_names_the_detector_that_caught_the_secret(self):
+        code, text = run_check()
+        self.assertEqual(code, 0, text)
+        line = next(l for l in text.splitlines() if "fake secret" in l)
+        self.assertIn("rule: secret:aws_access_key", line)
+        self.assertNotIn(FAKE, text)
+
+    def test_fails_and_names_the_rule_when_the_guard_does_not_block(self):
+        def leaky():
+            def read_file(path):
+                with open(path, encoding="utf-8") as handle:
+                    return handle.read()
+            return read_file
+
+        with mock.patch.object(cli, "_guarded_reader", leaky):
+            code, text = run_check()
+        self.assertNotEqual(code, 0, text)
+        line = next(l for l in text.splitlines() if "let it through" in l)
+        self.assertIn("secret:aws_access_key", line)
+        self.assertNotIn(FAKE, text)
+
     def test_no_network(self):
         def no_net(*a, **k):
             raise AssertionError("network used")
