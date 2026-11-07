@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const m = require('../lib/messages');
 const tty = require('../lib/broker/tty');
 const { parseDuration } = require('../lib/vault/cli');
+const { winRe } = require('./helpers/wincmd');
 
 test('terminal and agent refusals', () => {
   assert.equal(m.agentNote('CLAUDECODE'), ' (detected CLAUDECODE).');
@@ -30,13 +31,13 @@ test('vault messages', () => {
   assert.equal(m.unknownBackend('foo', ['keychain', 'passphrase']), 'Unknown vault backend "foo". Use one of: keychain, passphrase.');
   assert.equal(m.unknownBackend('foo', require('../lib/vault/keychain').BACKENDS),
     'Unknown vault backend "foo". Use one of: macos, windows, libsecret, passphrase.');
-  assert.match(m.unlockNeedsTerminal(), /^(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock needs an interactive terminal: run it in your own terminal window$/);
+  assert.match(m.unlockNeedsTerminal(), winRe(/^(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock needs an interactive terminal: run it in your own terminal window$/));
   assert.equal(m.FOREGROUND_NEEDS_TERMINAL, '--foreground needs an interactive terminal (it asks you there). Run it in your own terminal window.');
   assert.equal(m.PASSPHRASE_NEEDS_TERMINAL,
     'zn needs a terminal to ask for the passphrase. Run this command in your terminal, or pass it with --passphrase-stdin.');
-  assert.match(m.passphraseCancelled(), /^Cancelled: no passphrase was entered\. Run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock` again when you are ready\.$/);
-  assert.match(m.passphraseMismatch(), /^The two passphrases do not match\. Nothing was created; run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock` again\.$/);
-  assert.match(m.forgetLockFirst(), /^Lock the vault first \(`(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) lock`\): the daemon may hold this project in memory\.$/);
+  assert.match(m.passphraseCancelled(), winRe(/^Cancelled: no passphrase was entered\. Run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock` again when you are ready\.$/));
+  assert.match(m.passphraseMismatch(), winRe(/^The two passphrases do not match\. Nothing was created; run `(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock` again\.$/));
+  assert.match(m.forgetLockFirst(), winRe(/^Lock the vault first \(`(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) lock`\): the daemon may hold this project in memory\.$/));
 });
 
 test('connect messages', () => {

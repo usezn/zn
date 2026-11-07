@@ -41,7 +41,11 @@
 
 Everything runs on your machine; no account or API key is needed. Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. On Debian or Ubuntu, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages (steps in [docs/first-5-minutes.md](docs/first-5-minutes.md#before-you-start)). With a Node.js older than 18, the `zn-gate` and `zn` commands stop and say how to install it.
 
+No internet on this computer? See [Install on a machine without internet](docs/install-matrix.md#install-on-a-machine-without-internet).
+
 **On Alpine Linux, install Node.js with the package manager.** The Node.js builds on nodejs.org do not run on Alpine, so run `apk add nodejs npm` instead. Use Alpine 3.21 or later: 3.21 and 3.22 ship Node.js 22, 3.23 and later ship Node.js 24. Alpine 3.20 ships Node.js 20.15, which is too old for the Claude Code plugin. The `npm` package is in the community repository, so if `npm` is not found, make sure the community repository is listed in `/etc/apk/repositories`.
+
+> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](docs/troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 
 **Getting started: four steps, one command each.** Run them in your own terminal.
 
@@ -165,6 +169,8 @@ claude mcp add zn-gate -- npx -y zn-gate mcp     # Claude Code
 codex mcp add zn-gate -- npx -y zn-gate mcp      # Codex CLI
 ```
 
+In Claude Code, this `npx` form is treated like any other MCP server: a call that carries personal data is asked about first. Only an entry that runs the installed zn-gate by absolute path skips that question (see `docs/compat.md`).
+
 Cursor (`~/.cursor/mcp.json`) and other editors: `{ "mcpServers": { "zn-gate": { "command": "npx", "args": ["-y", "zn-gate", "mcp"] } } }`. OpenCode (`~/.config/opencode/opencode.json`): `{ "mcp": { "zn-gate": { "type": "local", "command": ["npx", "-y", "zn-gate", "mcp"], "enabled": true } } }`.
 
 **Protect the MCP servers you already use.** `init` finds them in your agent configs, writes a backup, and wraps each local server with the zn-gate proxy:
@@ -237,7 +243,7 @@ Where zn-gate sits in a tool call, as an MCP server or as the `shield` proxy aro
 ### Galvanize: prompt-injection detection
 
 - **Today, local:** a deterministic rules engine (signatures plus normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64) checks prompts, tool arguments, tool output and MCP tool descriptions.
-- **Today, optional cloud check:** the Galvanize 3 classifier ([announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=github&utm_medium=readme&utm_campaign=galvanize-3); its weights are not published, and the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), has open weights under Apache-2.0) can also check prompts sent to `analyze_prompt`, only if you set `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed from the prompt on your machine before it is sent; personal data is not removed on this path, and a secret zn-gate does not recognize is sent with the text.
+- **Today, optional cloud check:** the Galvanize 3 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-3); [announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=github&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), also has open weights under Apache-2.0) can also check prompts sent to `analyze_prompt`, only if you set `ZN_CLOUD=1` and `ZN_API_KEY`. The secrets zn-gate detects are removed from the prompt on your machine before it is sent; personal data is not removed on this path, and a secret zn-gate does not recognize is sent with the text.
 - **Roadmap:** running Galvanize locally inside zn-gate.
 
 ### Scan: audit what your agent is about to trust
@@ -268,7 +274,7 @@ By default nothing is sent. If you set `ZN_CLOUD=1` and an API key, run `zn-gate
 | MCP tool and parameter descriptions (`shield`) | Locally | **Never**, in any configuration |
 | Counts of what zn-gate did (`zn-gate stats`: checks, blocks, secrets replaced, per secret type) | Written locally to `~/.zn/stats.json` | **Never**, unless you turn on `zn-gate stats share on`: then, each time you run `zn-gate stats`, one report per complete day (at most the last 3 days) with a random installation id, the day, the zn-gate, OS and Node.js versions, the agent and part of zn-gate used most, and the number of secrets found per built-in type (never values, prompts, variable or secret names, paths, hosts or emails). `zn-gate stats share show` shows it first. |
 | Prompts (`analyze_prompt`, `zn-gate analyze`, Python `analyze()`) | Locally | Only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`, run `zn-gate connect` yourself (Node package), or use the API key option of the Claude Code plugin (for `analyze_prompt` only). Detected secrets are removed locally before sending. Personal data, and any secret zn-gate does not recognize, is sent as written. |
-| Team audit trail (`~/.zn/audit.jsonl`) | Written locally | Only on a machine joined to a Team organization with `zn team join`: while the vault is unlocked, the vault daemon syncs a few seconds after `zn unlock` and then every 15 minutes, and uploads audit metadata only (time, secret name, how it was used, agent, tool, command name, host, decision and its reason, written since you joined; earlier records only with `zn team join --include-history`) to your organization. Never secret values, prompts, file contents or tool output. See [zn Team](docs/team.md). |
+| Team audit trail (the vault audit log, `~/.zn/audit.jsonl`) | Written locally | Only on a machine joined to a Team organization with `zn team join`: while the vault is unlocked, the vault daemon syncs a few seconds after `zn unlock` and then every 15 minutes, and uploads audit metadata only (time, secret name, how it was used, agent, tool, command name, host, decision and its reason, written since you joined; earlier records only with `zn team join --include-history`) to your organization. Never secret values, prompts, file contents or tool output. See [zn Team](docs/team.md). |
 | Secret values in the vault (`secrets_http_request`, `zn run`) | Encrypted locally | **Never to zn.** zn gives a value only to a program you allowed (`zn run`, in its environment) or puts it into a request the agent asks for, and only to hosts you allowed for that secret (headers only by default). What an allowed program does with it is up to that program ([limits](docs/threat-model.md)). |
 | `zn-gate connect` and `zn-gate disconnect` | Locally | Only when you run them yourself in your own terminal. They send only the API key, to `api.usezn.com`: to check it (`/prod/usage`) and, with `disconnect --revoke` or when you say yes, to revoke it (`/prod/keys/self`). |
 
@@ -304,7 +310,7 @@ zn Team: `zn team join <token>` connects a machine to your organization's signed
 
 Custom rules: add banned patterns and forbidden paths in `.znrules` or `zn.config.json` at your project root ([example](packages/zn-gate/README.md#custom-rules-znrules-or-znconfigjson)).
 
-Audit log: `zn-gate shield` appends each decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a redacted preview. It detects accidental or partial edits; it is not tamper-proof against someone with write access to the file. Check it with `npx -y zn-gate evidence --verify`. The agent hooks add to the same log when they block something or hide a secret in a tool result: it records the agent, the kind of event, a rule name and the kinds of secret, never a secret value, a command, a file path or your prompt.
+Decision log: `zn-gate shield` appends each decision to `~/.zn/evidence.jsonl` as a hash-chained (SHA-256) record with a redacted preview. It detects accidental or partial edits; it is not tamper-proof against someone with write access to the file. Check it with `npx -y zn-gate evidence --verify`. The agent hooks add to the same log when they block something or hide a secret in a tool result: it records the agent, the kind of event, a rule name and the kinds of secret, never a secret value, a command, a file path or your prompt.
 
 ### GitHub Action
 

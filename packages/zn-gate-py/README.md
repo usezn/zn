@@ -30,15 +30,18 @@ python3 -m venv .venv
 
 `zn-gate` is installed inside the environment, so run it as shown, or run `source .venv/bin/activate` once in each terminal and then `zn-gate scan .` (Windows: `.venv\Scripts\activate`).
 
-**On Windows**, with Python from the Python install manager, there is no `pip` command, and after a plain `pip install` the `Scripts` folder is not on your PATH, so `zn-gate` is "not recognized". Use the `py` launcher and a virtual environment, and call the tools by their full path:
+No internet on this computer? See [Install on a machine without internet](https://github.com/usezn/zn/blob/main/docs/install-matrix.md#install-on-a-machine-without-internet). Those steps are for the npm package.
+
+**On Windows**, use the `py` launcher, which comes with Python from python.org and the Python install manager:
 
 ```powershell
-py -m venv .venv
-.venv\Scripts\python -m pip install zn-gate
-.venv\Scripts\zn-gate scan .
+py -m pip install zn-gate
+py -m zn_gate scan .
 ```
 
-(`python -m zn_gate` is not available: the command is `zn-gate`, inside the environment's `Scripts` folder.)
+Run it as `py -m zn_gate`, not as `zn-gate`. `pip` installs the `zn-gate` command into the `Scripts` folder of your Python, and that folder is often not on your PATH, so a plain `zn-gate` can fail with "not recognized" even after a successful install. `py -m zn_gate` runs the same commands (`scan`, `test`, `status` and the rest) without needing that folder on your PATH. Replace `scan .` with the command you need, for example `py -m zn_gate status`.
+
+To keep zn-gate inside a project's virtual environment instead, run `py -m venv .venv`, then `.venv\Scripts\python -m pip install zn-gate` and `.venv\Scripts\python -m zn_gate scan .`.
 
 **Only the command-line tools (`scan`, `test`, `status`)?** Install the Python CLI as a standalone tool, without a virtual environment. On Ubuntu and Debian, first run `sudo apt update && sudo apt install pipx`. Bare `pip` is often missing there too (`pip: command not found`), and `pip install` into the system Python is refused, so use pipx, uv or a virtual environment. To get uv, follow the [official uv installation guide](https://docs.astral.sh/uv/getting-started/installation/):
 
@@ -57,7 +60,7 @@ Inside an environment you already use (your project's virtualenv, Poetry, uv), `
 **If something fails:**
 
 - `externally-managed-environment`: install it in a virtual environment, as shown above.
-- `pip` or `zn-gate` is "not recognized" on Windows: use `py -m venv .venv`, then `.venv\Scripts\python -m pip install zn-gate` and `.venv\Scripts\zn-gate scan .`.
+- `pip` or `zn-gate` is "not recognized" on Windows: use `py -m pip install zn-gate` and `py -m zn_gate scan .`.
 - `pip: command not found` or `No module named pip`: this system has no pip for its Python. Use the virtual environment or pipx steps above.
 - `zn-gate: command not found` after a virtual environment install: run `.venv/bin/zn-gate scan .`, or run `source .venv/bin/activate` first.
 - `python3 -m venv` fails on Debian or Ubuntu: run `sudo apt update && sudo apt install python3-venv`.
@@ -106,7 +109,7 @@ print(r.verdict)           # allow
 **Galvanize: prompt-injection detection**
 
 - Today, local: `evaluate`, `check_tool_call`, `check_tool_result` and `@guard` run a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides and comment splicing. Shell commands that decode Base64 text and run it (for example `... | base64 -d | sh`) are recognised; a Base64 string on its own is not decoded.
-- Today, optional cloud: `analyze()` can also query the Galvanize 3 classifier ([announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=pypi&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), has open weights under Apache-2.0), only with `ZN_CLOUD=1` and `ZN_API_KEY`.
+- Today, optional cloud: `analyze()` can also query the Galvanize 3 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-3); [announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=pypi&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), also has open weights under Apache-2.0), only with `ZN_CLOUD=1` and `ZN_API_KEY`.
 - Roadmap: running Galvanize locally.
 
 **Scan: audit what your agent is about to trust**
@@ -120,7 +123,7 @@ print(r.verdict)           # allow
 
 **Nothing, by default.** `evaluate`, `guard`, `check_tool_call`, `check_tool_result`, `sanitize_tool_result`, `redact_secrets` and the LangChain / CrewAI / LlamaIndex / Promptfoo integrations are always local.
 
-The only function that can reach the network is `analyze()`, and only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`. The text is secret-redacted locally before it is sent: personal data, and a secret zn-gate does not recognize, is sent as written. If the cloud call fails, `analyze()` returns the result of the local rules with `fallback: True`: it does not fail closed. `ZN_API_KEY` alone enables nothing, and `ZN_LOCAL_ONLY=true` overrides `ZN_CLOUD=1`. `zn-gate status` shows the active detection engine and whether the optional cloud check is on. Sharing of usage statistics is off by default and has its own status in the npm package: `npx -y zn-gate stats share status`. Data-flow diagrams: [repository README](https://github.com/usezn/zn#what-leaves-your-machine).
+The only function that can reach the network is `analyze()`, and only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`. The text is secret-redacted locally before it is sent: personal data, and a secret zn-gate does not recognize, is sent as written. If the cloud call fails, `analyze()` returns the result of the local rules with `fallback: True` (the [status page](https://usezn.com/status?utm_source=pypi&utm_medium=readme&utm_campaign=status) shows whether the service is down): it does not fail closed. One exception: if the service answers but its verdict is neither allow nor block, the text is blocked (rule `cloud:unknown-verdict`), because zn-gate cannot tell what the service meant. If the cloud answers but its model is unavailable, `analyze()` keeps the cloud verdict and adds `degraded: True` and `degraded_reason`, because the cloud gate decided from its rules alone. `ZN_API_KEY` alone enables nothing, and `ZN_LOCAL_ONLY=true` overrides `ZN_CLOUD=1`. `zn-gate status` shows the active detection engine and whether the optional cloud check is on. Sharing of usage statistics is off by default and has its own status in the npm package: `npx -y zn-gate stats share status`. Data-flow diagrams: [repository README](https://github.com/usezn/zn#what-leaves-your-machine).
 
 A long text (over 1,000 characters) is checked by the cloud classifier in overlapping 512-token windows, up to 20, so an injection in the middle or at the end of a long document is not missed. Set `ZN_LONG_INPUT=off` (or `analyze(..., long_input="off")`, `zn-gate analyze --long-input off`) to check only the first 512 tokens, as before. Cloud checks are billed by text size, with or without windows (`off` does not lower the count): 1 call up to 2,000 characters, and 1 more for each further 1,000 characters or part of them (up to 19 calls for the 20,000-character limit); the gate reports the count in `billed_calls`.
 
@@ -172,6 +175,8 @@ print(a.verdict, a.rule)                              # block destructive:rm_roo
 Only the rules listed in [Destructive commands](https://github.com/usezn/zn/blob/main/docs/destructive-commands.md) are checked, so decide in your own code which tools may delete files or run commands.
 
 Runnable example with Microsoft Semantic Kernel: [examples/semantic-kernel-agent](https://github.com/usezn/zn/tree/main/examples/semantic-kernel-agent).
+
+The secret-file check reads the text of a path only. It does not follow symbolic links and does not expand Windows short names (such as `PROGRA~1`), so a link or short name that points at a protected file is not recognised. Keep secrets in the zn vault (the npm package's `zn env shadow .env`) or outside the project folder.
 
 ### LangChain / LangGraph
 
@@ -281,7 +286,7 @@ providers:
     label: "zn-gate"
 ```
 
-### Local audit log
+### Local decision log
 
 <!-- snippet-test -->
 ```python
@@ -331,10 +336,10 @@ We only publish numbers we can reproduce, with the method next to them.
 - `ZN_BLOCK_TRUNCATED`: `1` keeps a tool result too large to scan in full blocked (rule `size:truncated`), even when `ZN_ALLOW_TRUNCATED=1` is set. Any other value leaves it off and logs a warning (logger `zn_gate`) naming the accepted values.
 - `ZN_ALLOW_TRUNCATED`: `1` lets a tool result over 4 MB through, marked `truncated`, instead of blocking it. This weakens protection: the part of the output past the limit is never checked, so use it only for a tool you trust. It has no effect on arguments, which are always blocked over 4 MB.
 - `ZN_VERBOSE`: `1` (or `DEBUG=zn`) prints technical detail on the error output.
-- `ZN_HOME`: folder used instead of `~/.zn`. The Python package reads the usage counts there (`zn-gate stats`), written by the npm package.
+- `ZN_HOME`: folder used instead of `~/.zn`. The Python package reads the usage counts there (`zn-gate stats`), written by the npm package, and keeps the evidence ledger there. In the npm package it also covers the hook settings (`config.json`) and the secret request list.
 - Project files: this package does not read `.znrules` or `zn.config.json`. Custom rules and the `strict` setting in those files apply only to the npm package (its CLI, agent hooks and Node.js library). In Python, turn strict mode on with `strict=True` or `ZN_STRICT=1`.
 - `ZN_STAGE` / `ZN_API_URL`: cloud endpoint selection.
-- `NO_COLOR` (any non-empty value) or `TERM=dumb`: the command line output leaves out its symbols; the status words (ALLOW, BLOCK, clean, ...) stay.
+- `NO_COLOR` (any non-empty value) or `TERM=dumb`: the command line output uses short ASCII markers such as `[ok]`, `[!]` and `[+]` in place of its symbols; the status words (ALLOW, BLOCK, clean, ...) stay. Piped output and runs with `CI` set (any non-empty value) use the same markers.
 
 ## Examples
 

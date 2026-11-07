@@ -1,5 +1,13 @@
 # Agent compatibility
 
+## Limits at a glance
+
+- An event zn cannot read is refused, except the Codex `Stop` event, which is never blocked.
+- The unlocked vault answers any program of your user, so lock it when you do not need it.
+- Approved scripts, and every program on macOS and Windows, are started by path right after zn's last check.
+
+Details for each: [Limits that apply to every agent](#limits-that-apply-to-every-agent).
+
 What the secrets scrubber and broker can do in each agent. zn-gate is not a sandbox: what it covers
 depends on what each agent's hooks can see and block; formats were checked against each agent's official
 documentation on 2026-10-11 (Cursor again on 2026-10-17). End-to-end evidence is in [`bench/e2e/`](../bench/e2e/).
@@ -68,6 +76,43 @@ includes PowerShell and Claude Code's Monitor tool) is blocked, because zn
 could not check it within the time the agent waits for the hook. The same
 limit applies to a patch (`apply_patch`) in Codex and OpenCode.
 
+## Settings, skills and instruction files that change in Claude Code
+
+`zn hooks install claude-code` registers two more Claude Code hooks, `ConfigChange`
+and `InstructionsLoaded` (the plugin does not; run the install again to add them).
+Neither has `onFailure`: a hook that cannot run leaves the session as it was. Only
+Claude Code builds that have these events use them.
+
+- **`ConfigChange`** runs when a settings or skill file changes during a session.
+  zn blocks the change, so the new file does not take effect, when a project
+  settings file (`.claude/settings.json`) now has a critical `zn audit` finding
+  that is new since the start of the session (for example a download piped into a
+  shell, or the model endpoint moved to another server), or when a skill file now
+  holds text a person cannot see (Unicode tag characters or bidirectional
+  overrides). zn takes the starting point at the first tool call or prompt of the
+  session (or at the first change it sees, if that comes first), before anything
+  can have changed it, and only for the project settings file; a finding the file
+  already had then is allowed, because `zn audit` reported it when the folder was
+  opened. Without a starting point (the session began before the hooks were
+  installed) any critical finding blocks, and a blocked finding is never remembered
+  as allowed: a change blocked before the first prompt stays blocked for the whole
+  session, even after an unrelated edit. A skill
+  that quotes a prompt-injection example is allowed. The message
+  names the file, the rule and the line (for a settings file), and says to run
+  `zn audit`. Your own user settings, your local settings
+  (`.claude/settings.local.json`) and managed policy settings are not blocked:
+  Claude Code applies policy settings whatever a hook says. Claude Code shows no message for a blocked change; it only writes a line
+  to its debug log, so check the evidence log or run `zn audit` if a change seems
+  to have no effect.
+- **`InstructionsLoaded`** runs when `CLAUDE.md` or a `.claude/rules/*.md` file goes
+  into context. Claude Code cannot be told to hold the file back and discards the
+  output of this hook, so zn only records a file that holds text trying to
+  instruct the agent: one notice in the evidence log (`hook-instructions_loaded-notice`)
+  per session and file content, with the name of the rule and never the text; it is
+  not counted as blocked in `zn-gate stats`. A `CLAUDE.md` that is a link to another
+  file is read through the link. Files over 1 MiB are not read.
+  `AGENTS.md` that Claude Code reads directly is not reported by this event.
+
 ## Skills, commands and @file in Claude Code
 
 - **Typed skills and commands**: `UserPromptSubmit` sees only what you typed, not
@@ -103,7 +148,20 @@ limit applies to a patch (`apply_patch`) in Codex and OpenCode.
   command is `zn secrets-mcp` (Claude Code looks `zn` up on its `PATH`, where a project folder can come
   first). A project install (`--project`) adds no MCP server. The zn-gate plugin
   registers no MCP server since version 1.14.0. Hooks installed by an earlier zn-gate keep the old
-  matcher, which skips MCP tools, until you run `zn hooks install claude-code` again.
+  matcher, which skips MCP tools, until you run `zn hooks install claude-code` again. What counts as zn's own
+  server:
+  - A server with the same name in your organization's `managed-mcp.json`, or passed with
+    `--mcp-config` (read on Linux only), counts like a project entry: it is checked like any other.
+  - zn's own detector server (`analyze_prompt`, `check_tool_call`, `check_tool_result`) is the user-scope
+    `zn-gate` (or `zn`) entry that runs `zn-gate mcp` with a Node.js and a zn-gate `bin/cli.js`, both by
+    full path and outside the project once links are resolved, with nothing in its `env` that changes what
+    that Node.js loads. Personal data sent to it is not asked about; a secret in the same call is still blocked.
+  - An `npx` entry (`npx -y zn-gate mcp`, with or without a version) is not recognised: npx prefers a
+    `zn-gate` that the project carries in `node_modules` and reads the project's `.npmrc` registry.
+    It is checked like any other server, so personal data sent to it is asked about. So are a bare
+    `zn` or `zn-gate` command and a `file:`, `github:` or `npm:` spec.
+  - If you turn on the optional cloud check (`ZN_CLOUD=1` with a key, or `zn-gate connect`), the text of an
+    `analyze_prompt` call goes to zn's API as written, personal data included, by your choice.
 - **`@file` mentions**: Claude Code does not run Read hooks for them, so zn
   cannot check the file when you mention it with `@`. A protected file
   (`.env`, credentials, a private key) is covered only when a tool call reads it.
@@ -131,7 +189,9 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
 | `PreCompact` | No | Not used. |
 | `PostCompact` | No | Not used. |
 | `SessionEnd` | No | Not used. |
-| `Interrupt` | No | Not used. The documentation lists it with no matcher. |
+| `PreModelRequest` | No | Not used. Runs before each model request attempt; zn checks tool calls and prompts, not model requests. |
+| `PostModelRequest` | No | Not used. Runs after each model request attempt, with its status, error and token usage. |
+| `Interrupt` | No | Not used. Runs when you interrupt an active turn on the main thread; its output cannot prevent the interruption or restart the turn, and its default timeout is one second. The official page gives no Codex CLI version for this event (not verified). |
 
 ## Why the differences
 
@@ -288,7 +348,7 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   - `disableAllHooks` in zn's file or in `.github/copilot/settings(.local).json`
     turns the hooks off; `zn-gate check` reports it.
 - **Gemini CLI** (experimental: `zn hooks install gemini [--project]`;
-  `zn-gate check` lists it as "Gemini CLI (experimental)"). Google replaced Gemini CLI with Antigravity CLI for free and Google One accounts on 18 June 2026; Gemini CLI keeps working with zn-gate.
+  `zn-gate check` lists it as "Gemini CLI (experimental)"). Google's blog post of 19 May 2026 says that on 18 June 2026 Gemini CLI stopped serving requests for Google AI Pro and Ultra accounts, and that Antigravity CLI keeps hooks ([source](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/), checked 2026-11-06). The post does not call Gemini CLI deprecated, replaced or legacy, so this doc does not label it so. Whether it still serves other accounts is not verified here.
   Covered: `BeforeTool` blocks reads and writes of secret files by path, shell
   commands that handle secrets, and edits of Gemini CLI's own settings files.
   zn adds its hook to `~/.gemini/settings.json` (or `.gemini/settings.json`
@@ -461,9 +521,9 @@ depends on the agent and on how the hooks were installed. A user install
 (`zn hooks install <agent>`) writes a small launcher script as the hook command
 (`~/.zn/hooks/zn-hook-<agent>.sh`; on Windows, for Codex CLI, Cursor, Gemini CLI
 and Antigravity, the same steps written inline in PowerShell). It runs the
-Node.js it was installed with, while its runner still has the SHA-256 recorded
-at install time (never a `zn` from the PATH, except in the inline PowerShell
-hooks on Windows), else it answers the
+Node.js it was installed with, while its runner and the other zn-gate files it
+loads still have the SHA-256 recorded at install time (the inline PowerShell hooks on Windows check neither the runner
+nor the other files; never a `zn` from the PATH, except in those inline PowerShell hooks on Windows), else it answers the
 block itself, without Node.js. A project install (`--project`) names `zn` on
 the PATH inside a short start guard (`sh -c`, PowerShell on Windows) that gives
 the same block when `zn` or Node.js is missing or fails, so it behaves like a
@@ -589,5 +649,9 @@ A tool that an adapter reports only as a generic file access (some Gemini CLI, C
 
 ## Not covered yet
 
-Hermes Agent and the Cursor CLI. Gemini CLI has experimental hooks (see its entry above). A proxy for outgoing
-HTTP from `zn run` (for `curl`, `gh` or SDKs) is planned for a later release.
+Hermes Agent and the Cursor CLI. Gemini CLI has experimental hooks (see its entry above).
+
+`zn run --egress-allow` (opt-in) limits which hosts a command reaches over HTTP(S) through a local proxy. It
+covers programs that read the proxy variables (in Node, only versions that honour `NODE_USE_ENV_PROXY`), not
+programs that ignore them, raw sockets or DNS; see
+[Egress allowlist for `zn run`](secrets.md#egress-allowlist-for-zn-run).

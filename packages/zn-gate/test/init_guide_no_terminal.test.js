@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const { guide: realGuide } = require('../lib/init-guide');
 const { tempDir } = require('./helpers/tmp');
+const { winCmd, winCmdRe } = require('./helpers/wincmd');
 
 const AGENTS = {
   'claude-code': { dir: '.claude', name: 'Claude Code' },
@@ -62,12 +63,12 @@ for (const id of Object.keys(AGENTS)) {
     assert.equal(ran, 0);
     assert.match(text, /This is not an interactive terminal, so zn only prints the steps\. Nothing was changed\./);
     assert.match(text, /Run them in your own terminal:/);
-    assert.match(text, /Then check that it works: `npx -y zn-gate check`/);
+    assert.match(text, winCmdRe(/Then check that it works: `npx -y zn-gate check`/));
     if (id === 'claude-code') {
       assert.match(text, /\/plugin marketplace add usezn\/zn/);
       assert.match(text, /\/plugin install zn-gate@usezn/);
     } else {
-      assert.match(text, new RegExp('^ {2}zn hooks install ' + id + '$', 'm'));
+      assert.match(text, winCmdRe(new RegExp('^ {2}zn hooks install ' + id + '$', 'm')));
     }
     assert.deepEqual(snapshot(m.home), homeBefore);
     assert.deepEqual(snapshot(m.cwd), cwdBefore);
@@ -104,7 +105,7 @@ test('no terminal, missing npm from a temporary copy: the global install is a pl
   const { text, ran } = await run(m, { temporary: true, global: {} });
   assert.equal(ran, 0);
   assert.match(text, /^ {2}npm install -g zn-gate$/m);
-  assert.match(text, /^ {2}zn hooks install codex$/m);
+  assert.match(text, winCmdRe(/^ {2}zn hooks install codex$/m));
   const lines = text.split('\n');
-  assert.ok(lines.indexOf('  npm install -g zn-gate') < lines.indexOf('  zn hooks install codex'));
+  assert.ok(lines.indexOf('  npm install -g zn-gate') < lines.indexOf(winCmd('  zn hooks install codex')));
 });

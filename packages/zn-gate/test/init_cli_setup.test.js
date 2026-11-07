@@ -12,6 +12,7 @@ const { spawnSync } = require('child_process');
 const { guide: realGuide } = require('../lib/init-guide');
 const { AGENT_ENV_VARS } = require('../lib/broker/tty');
 const { tempDir } = require('./helpers/tmp');
+const { winCmdRe } = require('./helpers/wincmd');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 
@@ -51,9 +52,9 @@ function runInit(home, cwd, args = []) {
 }
 
 const AGENT_DIRS = {
-  codex: ['.codex', /zn hooks install codex/],
-  cursor: ['.cursor', /zn hooks install cursor/],
-  opencode: [path.join('.config', 'opencode'), /zn hooks install opencode/],
+  codex: ['.codex', winCmdRe(/zn hooks install codex/)],
+  cursor: ['.cursor', winCmdRe(/zn hooks install cursor/)],
+  opencode: [path.join('.config', 'opencode'), winCmdRe(/zn hooks install opencode/)],
   'claude-code': ['.claude', /\/plugin marketplace add usezn\/zn/]
 };
 

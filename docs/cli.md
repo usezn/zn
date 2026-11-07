@@ -45,7 +45,7 @@ Without installing, use `npx -y zn-gate <command>`. This page writes `zn-gate` i
 
 This page describes the npm package. The Python package (`pip install zn-gate`) has a smaller command line: see [The Python package](#the-python-package) at the end.
 
-`zn-gate --help` (or `-h`) prints the short help. `zn-gate version`, `zn-gate -V` and `zn-gate --version` print the version.
+`zn-gate --help` (or `-h`) prints the short help. `zn-gate version`, `zn-gate -v`, `zn-gate -V` and `zn-gate --version` print the version.
 
 ## Exit codes
 
@@ -64,6 +64,22 @@ The commands that start a long-running server (`mcp`, `shield`, `secrets-mcp`) e
 
 ## Settings
 
+### Settings at a glance
+
+| Setting | Default | What it changes |
+|---|---|---|
+| `ZN_API_KEY` or `--key <api_key>` | Not stated | API key for the optional cloud check (`analyze`, `analyze_prompt`). |
+| `ZN_CLOUD=1` | Off: nothing leaves your machine | Turns the optional cloud check on. |
+| `ZN_LOCAL_ONLY=true` or `--local-only` | Not stated | Never uses the cloud, even when `ZN_CLOUD=1` is set. |
+| `ZN_STAGE` or `--stage <v30\|prod>` | `v30` | Cloud stage. |
+| `ZN_API_URL` or `--url <url>` | Not stated | Uses another cloud address. |
+| `--long-input <windows\|off>` | `windows` (overlapping windows, up to 20) | How long texts are sent to the cloud check; `off` sends only the first 512 tokens. |
+| `ZN_STATS=off` | Not stated | Turns off the local counts shown by `stats` and `report`. |
+| `ZN_VERBOSE=1` or `--verbose` | Not stated | Prints debug messages to the error output. |
+| `NO_COLOR` | Not stated | Turns off colors. |
+
+The table below gives the full description of each setting.
+
 | Setting | Effect |
 |---|---|
 | `ZN_API_KEY` or `--key <api_key>` | API key for the optional cloud check. Used only by `analyze` and `analyze_prompt`, and only when the cloud check is on. |
@@ -75,7 +91,10 @@ The commands that start a long-running server (`mcp`, `shield`, `secrets-mcp`) e
 | `ZN_TEAM_JOIN_TOKEN` | The join token for `team join` when you give none as an argument and no `-`. Keeps the token out of your shell history. An argument wins over it. |
 | `ZN_STATS=off` | Turns off the local counts shown by `stats` and `report`. |
 | `ZN_VERBOSE=1` or `--verbose` | Prints debug messages to the error output. |
-| `NO_COLOR` | Turns off colors. |
+| `NO_COLOR` | Turns off colors, emoji and box-drawing characters. Any non-empty value counts (see [no-color.org](https://no-color.org)). `TERM=dumb` does the same. |
+| `CI` | Any non-empty value turns off emoji and box-drawing characters too. Colors are not affected. |
+
+Emoji and box-drawing characters are used only when the output goes to a terminal and neither `NO_COLOR`, `TERM=dumb` nor `CI` is set. Everywhere else the CLI prints a short ASCII marker in their place: `[ok]` for a check mark, `[!]` for a warning, `[x]` for a failure, `[+]` for the shield, and `->` for an arrow. Rules are drawn with dashes. So output sent to a pipe or a file is plain printable ASCII, apart from text that comes from your own files or input. The status words (`ALLOWED`, `BLOCKED`, `FAILED`, ...) carry the meaning in every mode.
 
 ## Set up and check
 
@@ -150,7 +169,7 @@ Runs the local self-test on built-in examples (attacks and ordinary developer te
 zn-gate version
 ```
 
-Prints the version and the versions of the rules. Exit code `0`. `-V` and `--version` do the same.
+Prints the version and the versions of the rules. Exit code `0`. `-v`, `-V` and `--version` do the same.
 
 ### `connect`
 
@@ -362,6 +381,8 @@ zn-gate env <shadow|unshadow> ...
 
 Groups the two commands below. Run `zn-gate env --help` for the short usage.
 
+Exit codes (both commands): `0` done (also when there was nothing to move, or with `--dry-run`, or with `--help`), `1` an error (for example the file or the vault could not be read), or `env unshadow` when you answered no, `64` wrong usage (an unknown subcommand or option, or a missing or malformed `--backup`), `77` there is no interactive terminal, or an AI agent ran it: nothing was changed.
+
 #### `env shadow`
 
 ```bash
@@ -531,6 +552,8 @@ zn-gate mcp
 
 Runs zn-gate as an MCP server (stdio) with the tools `analyze_prompt`, `check_tool_call` and `check_tool_result`.
 
+Exit codes: it runs until its input is closed, then exits `0`.
+
 ### `shield`
 
 ```text
@@ -567,6 +590,14 @@ zn-gate stats share on|off|status|show
 ```
 
 What zn-gate did on this machine: local counts for the last `--days` days (1 to 90, default 30). Exit codes: `0` done, `2` wrong usage.
+
+With `--json`, the output is one JSON object with the same counts and these extra fields:
+
+- `sharing`: `true` when sharing of pseudonymous daily counts is on.
+- `sent_days`: the days whose counts were really uploaded during this run. It is `[]` when sharing is off or nothing was pending.
+- `send_failed`: the number of days whose upload failed during this run. They are tried again the next time you run `stats`.
+
+When sharing is on, `stats` sends each complete day (every day before today) that has not been sent yet. The text output prints `Shared pseudonymous counts for <day>.` only for the days in `sent_days`, and it prints `<n> day(s) could not be shared; they will be tried next time.` when `send_failed` is more than `0`.
 
 #### `stats share`
 
@@ -679,7 +710,7 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 
 ## The Python package
 
-`pip install zn-gate` installs only the name `zn-gate` (not `zn` or `zn-mcp`). It is meant for agents you build yourself. It has six commands. `zn-gate version`, `zn-gate -V` and `zn-gate --version` print the version and the rules version.
+`pip install zn-gate` installs only the name `zn-gate` (not `zn` or `zn-mcp`). It is meant for agents you build yourself. It has six commands. `zn-gate version`, `zn-gate -v`, `zn-gate -V` and `zn-gate --version` print the version and the rules version.
 
 | Command | Options | What it does |
 |---|---|---|

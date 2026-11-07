@@ -195,8 +195,15 @@ function verifyEnvelope(envelope, pin, opts) {
   if (!good) return { ok: false, error: 'bad signature' };
   const p = envelope.policy;
   if (o.org && p.org !== o.org) return { ok: false, error: 'policy is for another organization' };
-  if (Date.parse(p.issued_at) - SKEW_MS > now) return { ok: false, error: 'policy issued in the future' };
-  const expired = Date.parse(p.expires_at) + SKEW_MS <= now;
+  let clockBehind = false;
+  if (Date.parse(p.issued_at) - SKEW_MS > now) {
+    // The signature is good, so the policy is genuine and this computer's clock is behind. Reading the cache
+    // must not drop the organization's rules (setting the clock back would turn them off): report it as
+    // expired so strict mode applies. A new policy from the server is still refused.
+    if (!o.allowExpired) return { ok: false, error: "policy issued in the future: this computer's clock looks behind; check the date and time" };
+    clockBehind = true;
+  }
+  const expired = clockBehind || Date.parse(p.expires_at) + SKEW_MS <= now;
   if (expired && !o.allowExpired) return { ok: false, error: 'policy expired' };
   if (o.minVersion && p.version < o.minVersion) return { ok: false, error: 'policy version rollback' };
   // The same version must be the same policy: a second signed policy with the
@@ -205,7 +212,7 @@ function verifyEnvelope(envelope, pin, opts) {
     if (digestOf(p) !== o.heldDigest) return { ok: false, error: 'policy version already used with different content' };
     if (Number.isFinite(o.heldExpiresAt) && Date.parse(p.expires_at) < o.heldExpiresAt) return { ok: false, error: 'policy older than the one held' };
   }
-  return { ok: true, policy: p, expired };
+  return clockBehind ? { ok: true, policy: p, expired: true, clock: 'behind' } : { ok: true, policy: p, expired };
 }
 
 /* ------------------------------------------------------------------ */
@@ -290,6 +297,7 @@ function state(opts) {
   if (!v.ok) return { state: 'invalid', policy: null, org: team.org, error: v.error };
   return {
     state: v.expired ? 'expired' : 'active',
+    clock: v.clock || undefined,
     policy: v.policy,
     org: team.org,
     version: v.policy.version,

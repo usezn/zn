@@ -17,24 +17,36 @@ them.
 3. Run `zn-gate check`. Every agent that is set up should say **OK**.
 
 The hook launchers of `zn hooks install` keep the SHA-256 of zn-gate's hook
-runner and run it only while it matches. `npm update -g zn-gate` rewrites them by
-itself (an install step of the package). If your update does not run install
-scripts, the launchers are not refreshed, and what happens depends on how you
-installed zn-gate:
+runner, and of every other zn-gate file the hook loads (the code and data under
+`lib/`, `package.json` and `bin/cli.js`), and run a file only while it matches.
+A file that changed, that the launcher does not list, or that lies outside the
+package stops the hook with the same block as a changed runner. `npm update -g
+zn-gate` rewrites the launchers by itself (an install step of the package). If
+your update does not run install scripts, the launchers are not refreshed, and
+what happens depends on how you installed zn-gate:
 
 - **pnpm** (`pnpm add -g zn-gate@<newer>`) skips install scripts. The old
   version's folder stays on disk, so the hooks keep working but run the runner
   of the previous version, with its older rules, until you run
   `zn hooks install <agent>` again. `zn-gate check` still says **OK** and adds a
   note that names the older version.
-- **bun** and `npm install --ignore-scripts` skip them too. The runner changed,
-  so the hooks block tool calls and say so until you run
+- **bun** and `npm install --ignore-scripts` skip them too. The zn-gate files
+  changed, so the hooks block tool calls and say so until you run
   `zn hooks install <agent>` again for each agent.
 
 If you installed or updated with `sudo`, run `zn hooks install <agent>` again as yourself (without `sudo`) after the update.
 
 If `zn-gate check` says an agent is not protected, it also prints the command
 that fixes it.
+
+### Upgrade methods
+
+| Method | Command | Then |
+|---|---|---|
+| npm (global install) | `npm install -g zn-gate` | Run `zn-gate check`. |
+| pip (Python package) | `pip install -U zn-gate` | Run `zn-gate check`. |
+| npx | `npx -y zn-gate ...` | Nothing to update. |
+| Claude Code plugin | `/plugin` inside Claude Code, or `claude plugin update zn-gate@usezn` in your terminal | Start a new Claude Code session. |
 
 ## Run `zn hooks install <agent>` again when a release changes the hook
 
@@ -93,9 +105,9 @@ depends on the agent and on how the hooks were installed. A user install
 (`zn hooks install <agent>`) writes a small launcher script as the hook command
 (`~/.zn/hooks/zn-hook-<agent>.sh`; on Windows, for Codex CLI, Cursor, Gemini CLI
 and Antigravity, the same steps written inline in PowerShell). It runs the
-Node.js it was installed with, while its runner still has the SHA-256 recorded
-at install time (never a `zn` from the PATH, except in the inline PowerShell
-hooks on Windows), else it answers the
+Node.js it was installed with, while its runner and the other zn-gate files it
+loads still have the SHA-256 recorded at install time (the inline PowerShell hooks on Windows check neither the runner
+nor the other files; never a `zn` from the PATH, except in those inline PowerShell hooks on Windows), else it answers the
 block itself, without Node.js. A project install (`--project`) names `zn` on
 the PATH inside a short start guard (`sh -c`, PowerShell on Windows) that gives
 the same block when `zn` or Node.js is missing or fails, so it behaves like a
@@ -237,6 +249,12 @@ If you use the Python package (`pip install -U zn-gate`):
 
 Run these in your own terminal, not through an AI agent. Going back does not
 touch your code or your vault.
+
+If you keep the hooks and only change the program, run the hook install again
+right after the change. Until you run `zn hooks install <agent>` for each agent
+with the older version, that agent's hooks block its actions: zn fails closed on
+purpose, so nothing runs unchecked. Run step 4 below straight after the install
+of the older release.
 
 1. Remove the hooks of each agent you set up with `zn hooks install`:
    `npx -y zn-gate hooks uninstall claude-code` (use `codex`, `cursor`,

@@ -124,6 +124,18 @@ def cloud_error_hint(exc: BaseException) -> str:
     return "The cloud check failed."
 
 
+DEGRADED_REASON = "model unavailable, rules only"
+
+
+def degraded_fields(cloud_res: Dict[str, Any]) -> Dict[str, Any]:
+    """When the gate could not reach its model it answers from the rules alone and says so in decided_by ("ml-error...").
+    That answer is not a model verdict: it is marked degraded so callers can tell it apart."""
+    decided_by = cloud_res.get("decided_by")
+    if isinstance(decided_by, str) and decided_by.strip().lower().startswith("ml-error"):
+        return {"degraded": True, "degraded_reason": DEGRADED_REASON}
+    return {}
+
+
 def analyze(
     input_text: str,
     api_key: Optional[str] = None,
@@ -178,6 +190,7 @@ def analyze(
                                   long_input="windows" if windows else None)
         cloud_res["mode"] = "hybrid-cloud"
         cloud_res["secrets_redacted_before_upload"] = len(detections)
+        cloud_res.update(degraded_fields(cloud_res))
         li = cloud_res.get("long_input")
         if isinstance(li, dict) and li.get("capped"):
             cloud_res["warning"] = ("The text is longer than the cloud gate checks (%s windows of 512 tokens): "

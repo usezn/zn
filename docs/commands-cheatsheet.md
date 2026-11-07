@@ -94,6 +94,7 @@ Needs the vault unlocked. See [zn Team](team.md).
 | `--help`, `-h` | Print the short help. |
 | `--local-only` | Never use the cloud check. |
 | `--verbose` | Print debug messages to the error output. |
-| `NO_COLOR` | Turn off colors. |
+| `NO_COLOR` | Turn off colors, emoji and box-drawing characters (short ASCII markers such as `[ok]` take their place). |
+| `CI` | Any non-empty value turns off emoji and box-drawing characters too. Colors are not affected. |
 
 Exit codes: `0` done, `1` a problem was found, `2` wrong usage (or `analyze` blocked the text), `64` wrong usage for the secrets commands, `77` refused on purpose, `127` `run` could not find the program. Each command lists its own codes in the [reference](cli.md#exit-codes).

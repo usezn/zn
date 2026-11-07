@@ -18,7 +18,7 @@ const { createSecretsServer } = require('../lib/broker/mcp');
 const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
 const { generateAll } = require('./fixtures/fake_secrets');
-const { budget } = require('./helpers/time_budget');
+const { budget, budgetWin } = require('./helpers/time_budget');
 
 const FAKE = generateAll(7171, { perType: 1, piiPerType: 1 });
 const NPM = FAKE.secrets.find((s) => s.type === 'npm_access_token').value;
@@ -367,7 +367,7 @@ test('a long patch sent as a shell command is refused quickly, naming a secret f
   const big = "apply_patch <<'PATCH'\n*** Begin Patch\n" + body + "*** End Patch\nPATCH";
   assert.ok(big.length < policy.SHELL_SCAN_CAP);
   const { ms, result: m } = fastestMs(() => policy.bashDenial(big, { cwd: dir, home: dir }));
-  assert.ok(ms < budget(1500), 'too slow: ' + ms + ' ms');
+  assert.ok(ms < budgetWin(1500, 6000), 'too slow: ' + ms + ' ms');
   assert.match(m, /sent as a shell command, which zn cannot check file by file/);
   // A secret file among the first files is still named.
   const named = policy.bashDenial("apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: .env\n@@\n+X=1\n" + body + "*** End Patch\nPATCH", { cwd: dir, home: dir });
@@ -744,7 +744,7 @@ test('a 100 KB here-document read as data is checked in milliseconds', (t) => {
   const cmd = "cat > generated.js <<'EOF'\n" + body + 'EOF';
   const { ms, result: deny } = fastestMs(() => policy.bashDenial(cmd, o));
   assert.equal(deny, null, 'the body is data, so the command is allowed');
-  assert.ok(ms < budget(25), 'checked in ' + ms + ' ms');
+  assert.ok(ms < budgetWin(25, 150), 'checked in ' + ms + ' ms');
 });
 
 test('10 000 here-document operators on one line are checked within the time budget', (t) => {

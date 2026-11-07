@@ -8,8 +8,9 @@ const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
 const m = require('../lib/messages');
+const { winRe, ZN_RE, NPX_RE } = require('./helpers/wincmd');
 
-const ZN = '(?:zn|npx -y zn-gate@\\S+)';
+const ZN = '(?:' + ZN_RE + '|' + NPX_RE + ' -y zn-gate@\\S+)';
 const VERBOSE = { ZN_VERBOSE: '1' };
 const QUIET = {};
 
@@ -123,7 +124,7 @@ test('vaultDamaged names the file, the reset command and the troubleshooting pag
   const file = path.join(os.tmpdir(), 'example-project', 'vault.json');
   const text = m.vaultDamaged(file, 'is not valid JSON', 'fake parse error', QUIET);
   assert.ok(text.startsWith('Your vault file ' + file + ' is not valid JSON. zn did not change it and will not start a new vault over it. '));
-  assert.match(text, /Restore it from a backup\. With no backup, run `(zn|npx -y zn-gate@\S+) vault reset`: it sets the old vault aside and starts empty, so the secrets saved in it are lost\. More: https:\/\/usezn\.com\/docs\/zn-gate\/troubleshooting\/$/);
+  assert.match(text, winRe(/Restore it from a backup\. With no backup, run `(zn|npx -y zn-gate@\S+) vault reset`: it sets the old vault aside and starts empty, so the secrets saved in it are lost\. More: https:\/\/usezn\.com\/docs\/zn-gate\/troubleshooting\/$/));
   assert.ok(!text.includes('fake parse error'));
   const verbose = m.vaultDamaged(file, 'is not valid JSON', 'x'.repeat(200), VERBOSE);
   assert.ok(verbose.endsWith(' Detail: ' + 'x'.repeat(120) + '.'));

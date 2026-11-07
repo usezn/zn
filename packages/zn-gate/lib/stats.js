@@ -190,4 +190,4 @@ function summary({ days = 30, now = new Date(), file } = {}) {
   return { days, since: first, total, byKey, detections, events: { ...data.events } };
 }
 
-module.exports = { record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known };
+module.exports = { znHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known };
