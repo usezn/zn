@@ -47,9 +47,10 @@ test('status with an unknown flag does not crash and prints no stack trace', () 
   assertNoStackTrace(r);
 });
 
-test('check with an unknown flag does not crash, exits 0 or 1 and prints no stack trace', () => {
+test('check with an unknown flag exits 2, names the flag and prints no stack trace', () => {
   const r = run('check');
-  assert.ok(r.status === 0 || r.status === 1, 'exit code was ' + r.status);
-  assert.match(r.stdout, /zn-gate check/);
+  assert.strictEqual(r.status, 2, r.stderr);
+  assert.match(r.stderr, /unknown option "--no-such-flag"/);
+  assert.strictEqual(r.stdout, '');
   assertNoStackTrace(r);
 });

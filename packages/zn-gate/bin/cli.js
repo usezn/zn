@@ -990,6 +990,20 @@ function scanTargetOf(args) {
   return '.';
 }
 
+// check and doctor take one option, --hooks. Any other option is refused with exit 2: it is named and the
+// accepted option is listed. Nothing else is read from the arguments.
+const CHECK_OPTIONS = ['--hooks'];
+
+function checkOptionProblem(command, args) {
+  for (let i = 1; i < args.length; i++) {
+    if (!args[i].startsWith('-')) continue;
+    if (CHECK_OPTIONS.includes(args[i])) continue;
+    const shown = args[i].replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
+    return 'unknown option "' + shown + '". The options of zn-gate ' + command + ' are ' + CHECK_OPTIONS.join(', ') + '.';
+  }
+  return null;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   if (args[0] === 'audit') {
@@ -1034,6 +1048,15 @@ async function main() {
   if (args.includes('-V') || args.includes('--version') || args[0] === 'version' || args[0] === '-v') {
     process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION}; scrub rules: ${SCRUB_RULES_VERSION}; audit rules: ${AUDIT_RULES_VERSION})\n`);
     process.exit(0);
+  }
+
+  if (args[0] === 'check' || args[0] === 'doctor') {
+    const problem = checkOptionProblem(args[0], args);
+    if (problem) {
+      process.stderr.write('zn-gate: ' + problem + '\n');
+      process.exitCode = 2;
+      return;
+    }
   }
 
   if (args[0] === 'scan' || args[0] === 'analyze') {
