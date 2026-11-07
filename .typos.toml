@@ -13,3 +13,5 @@ SETTIN = "SETTIN"
 expresss = "expresss"
 # It is the Spanish imperative of "ignore" and appears inside a quoted Spanish example phrase.
 ignora = "ignora"
+# It is the German word for "your" and appears inside a quoted German example phrase.
+deine = "deine"
