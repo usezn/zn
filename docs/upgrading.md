@@ -249,6 +249,12 @@ If you use the Python package (`pip install -U zn-gate`):
 Run these in your own terminal, not through an AI agent. Going back does not
 touch your code or your vault.
 
+If you keep the hooks and only change the program, run the hook install again
+right after the change. Until you run `zn hooks install <agent>` for each agent
+with the older version, that agent's hooks block its actions: zn fails closed on
+purpose, so nothing runs unchecked. Run step 4 below straight after the install
+of the older release.
+
 1. Remove the hooks of each agent you set up with `zn hooks install`:
    `npx -y zn-gate hooks uninstall claude-code` (use `codex`, `cursor`,
    `opencode` or `antigravity` for the others, and add `--project` for a project

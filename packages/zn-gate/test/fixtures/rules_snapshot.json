@@ -156,7 +156,7 @@
     },
     "audit": {
       "version_const": "AUDIT_RULES_VERSION",
-      "version": "2026-11-05.2",
+      "version": "2026-11-06.3",
       "ids": [
         "ZNA001",
         "ZNA002",
@@ -195,6 +195,7 @@
         "patterns.isCredentialFlag",
         "patterns.isLoopback",
         "patterns.isPlaceholder",
+        "patterns.maskUrls",
         "patterns.npmSpec",
         "patterns.packagesOf",
         "patterns.pinnedNpm",
@@ -206,8 +207,8 @@
         "patterns.weakening"
       ],
       "sha256": {
-        "lib/audit/rules.js": "e581b921eea012a777ae1bbe6c87fa84745d62fbb9ed7b29c6ff3409c347d99b",
-        "lib/audit/patterns.js": "b524829269ab6057015c492b3ab80c02e460e3e9689eaf3abe0dcf2aaf954b93"
+        "lib/audit/rules.js": "7791a1d80e7f0ff24d6693f13c164e729379ef54799c2f8b054c92a49c158f46",
+        "lib/audit/patterns.js": "fddd085d756061f1fcec7cec8aca3029f4b3ac7e63abb340e8d84c36a03f52c1"
       }
     },
     "policy": {
@@ -244,7 +245,7 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "39c9b92ac55c7629584f15303dba2b383be9f444415988bcd3a0316189478edb",
+        "lib/hooks/policy.js": "ed129aba39a6371448ebb21250bf10891e8dc16db8d7135bb3c523f285ab139d",
         "lib/broker/files.js": "f74250b2509bc7451865279da3daff9b1be5e0697cb7d275f0b0871b35b0893d",
         "lib/broker/markers.js": "bf01a06b547629804c504e37a2c6126330ab729bed51ec460bfca4036c1a0b3b",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",

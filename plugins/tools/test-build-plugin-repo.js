@@ -189,6 +189,12 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
         await rejects({ ...BASE, 'lib/extra.js': 'const CHANGED_RC = 86;\n' + stmt }, /module. built-in|mainModule/);
         await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt + "require('module').createRequire(__filename);\n" }, /createRequire|module. built-in/);
         await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt + stmt }, /module. built-in|mainModule/);
+        // CHANGED_RC is spliced into the program: a non-number or a second assignment voids the exception
+        await rejects({ ...BASE, 'lib/agents/launcher.js': "const CHANGED_RC = '0);require(`child_process`)';\n" + stmt }, /module. built-in|mainModule/);
+        await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt + 'CHANGED_RC = 1;\n' }, /module. built-in|mainModule/);
+        await rejects({ ...BASE, 'lib/agents/launcher.js': stmt }, /module. built-in|mainModule/);
+        // a CRLF-packed launcher is refused with a message that names the cause
+        await rejects({ ...BASE, 'lib/agents/launcher.js': ('const CHANGED_RC = 86;\n' + stmt).replace(/\n/g, '\r\n') }, /CRLF line ends/);
       }
       // Only lib/compile-cache.js may use the exception.
       await rejects({ ...BASE, 'lib/extra.js': "const mod = require('module');\nmod.enableCompileCache('/x');\n" }, /module. built-in/);

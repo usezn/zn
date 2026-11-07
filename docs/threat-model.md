@@ -553,6 +553,20 @@ stop malware running as the same user (see above).
   at a command (quotes, a backslash inside a word, `$'\x63url'`), but they do not
   follow a variable: `C=curl; $C https://example.com/i.sh | sh` is not seen. The
   rules are a guardrail against mistakes, not a sandbox.
+- **A protected name that no text spells is not read.** Each expansion in a command (`${NAME}`, `$NAME`, `$(...)`, backticks, cmd.exe
+  `%NAME%` and `!NAME!` units) is read as any text, whatever the environment the hook sees holds. A path segment is refused when it holds
+  such an expansion and at least two literal characters of `.env`, `.env.*` or an SSH private key name in the places they have in
+  that name: `.e${X}v`, `${D}env`, `.e$(echo n)v`, `.e%X:~0,1%v`. This also refuses a few ordinary names, such as `${PREFIX}env`,
+  and a segment that ends in `.example`, `.sample` or `.template` is allowed. An unquoted expansion can also split its value into
+  several words (`cat a${IFS}.env` reads `.env`), so each piece of a segment between unquoted expansions is checked as a word of its
+  own, and the `.example` ending only counts at the end of the last piece (`cat .e$(printf "nv ")v.example` is refused); inside double
+  quotes nothing is split. A piece is also read as a glob, because the shell globs each word after it splits (`cat a${IFS}.e*`, `.en?`, `.en[v]`
+  and `?env` are refused as pieces). This also refuses names that start with `id_` or end with a key type next to an unquoted
+  expansion, such as `~/.ssh/id_${T}.pub`, `id_${T}.txt` and `cp ${SRC}/id_${T}.pub`; quote the expansion or write the name out. It does not refuse a name that is wholly inside the
+  expansion: `cat ${NAME}` with `NAME=.env` set by an earlier command or by the agent's environment, `cat $(cat names.txt)`, or a
+  substitution that assembles the name from pieces without a literal character outside it. A variable assigned in the same line
+  (`NAME=.env; cat $NAME`) is followed, and so is a substitution that only prints a word (`$(echo .env)`). Other names (for
+  example `.npmrc` or a `.pem` file) are not part of this reading. The rules are a guardrail, not a sandbox.
 - **Latency:** each hook is a short Node process. Measured about 78 ms p50 per
   tool call on a Windows desktop (`bench/HOOK_LATENCY.md`).
 
