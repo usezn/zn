@@ -165,6 +165,13 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
       await rejects({ ...BASE, 'lib/compile-cache.js': "const mod = require('module');\nmod.enableCompileCache = () => {};\n" }, /module. built-in/);
       await rejects({ ...BASE, 'lib/extra.js': "const mod = require('module');\nconst f = mod;\nmod.enableCompileCache();\n" }, /module. built-in/);
       await rejects({ ...BASE, 'lib/compile-cache.js': "const mod = require('module');\nconst f = mod;\nmod.enableCompileCache();\n" }, /module. built-in/);
+      // lib/agents/launcher.js: only the exact VERIFY_JS text of the release is taken out before the rule.
+      const verifyBlock = "const VERIFY_JS = \"const fs=require('fs'),M=require('module'),p=require('path');\" +\n  \"const [f,h,...a]=process.argv.slice(1);let b;try{b=fs.readFileSync(f)}catch(e){process.exit(\" + CHANGED_RC + \")}\" +\n  \"if(!/^[0-9a-f]{64}$/.test(h||'')||require('crypto').createHash('sha256').update(b).digest('hex')!==h)process.exit(\" + CHANGED_RC + \");\" +\n  \"process.argv=[process.argv[0],f,...a];const m=new M(f,null);m.id='.';m.filename=f;m.paths=M._nodeModulePaths(p.dirname(f));\" +\n  \"process.mainModule=m;M._cache[f]=m;m._compile(b.toString('utf8'),f);m.loaded=true;\";\n\n";
+      await build({ ...BASE, 'lib/agents/launcher.js': 'const x = 1;\n' + verifyBlock + 'module.exports = { x };\n' });
+      await rejects({ ...BASE, 'lib/agents/launcher.js': 'const x = 1;\n' + verifyBlock.replace('m.loaded=true', 'm.loaded=1') + 'module.exports = { x };\n' }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/agents/launcher.js': verifyBlock + "const M = require('module');\n" }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/agents/launcher.js': verifyBlock + verifyBlock }, /module. built-in/);
+      await rejects({ ...BASE, 'lib/other.js': verifyBlock }, /module. built-in/);
       await rejects({ ...BASE, 'lib/extra.js': "const { _load } = require('module');\n" }, /module. built-in/);
       await rejects({ ...BASE, 'lib/compile-cache.js': "const { _load } = require('module');\n" }, /module. built-in/);
       await rejects({ ...BASE, 'lib/extra.js': "require('module').enableCompileCache();\n" }, /module. built-in/);
@@ -189,6 +196,12 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
         await rejects({ ...BASE, 'lib/extra.js': 'const CHANGED_RC = 86;\n' + stmt }, /module. built-in|mainModule/);
         await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt + "require('module').createRequire(__filename);\n" }, /createRequire|module. built-in/);
         await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt + stmt }, /module. built-in|mainModule/);
+        // CHANGED_RC is spliced into the program: a non-number or a second assignment voids the exception
+        await rejects({ ...BASE, 'lib/agents/launcher.js': "const CHANGED_RC = '0);require(`child_process`)';\n" + stmt }, /module. built-in|mainModule/);
+        await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt + 'CHANGED_RC = 1;\n' }, /module. built-in|mainModule/);
+        await rejects({ ...BASE, 'lib/agents/launcher.js': stmt }, /module. built-in|mainModule/);
+        // a CRLF-packed launcher is refused with a message that names the cause
+        await rejects({ ...BASE, 'lib/agents/launcher.js': ('const CHANGED_RC = 86;\n' + stmt).replace(/\n/g, '\r\n') }, /CRLF line ends/);
       }
       // Only lib/compile-cache.js may use the exception.
       await rejects({ ...BASE, 'lib/extra.js': "const mod = require('module');\nmod.enableCompileCache('/x');\n" }, /module. built-in/);

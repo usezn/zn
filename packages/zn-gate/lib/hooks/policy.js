@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-06.1';
+const POLICY_RULES_VERSION = '2026-11-06.11';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2419,6 +2419,54 @@ function bashDenialOf(cmd, opts = {}) {
   // Bash $'...' quoting spells characters as escapes ($'\x2eenv' is .env), and $"..." is a plain "...":
   // a fourth reading with them decoded.
   if (/\$['"]/.test(text)) readings.push(allWords(decodeAnsiC(text), true));
+  // And with the expansions that leave nothing (or a fixed word) taken out, the cmd variable units taken out, and cmd.exe's carets removed
+  // after that (cmd expands % before it reads carets). The first two do not depend on the environment the hook sees.
+  {
+    const variants = new Set([text]);
+    const add = (t) => { variants.add(t); };
+    add(dropEmptyExpansions(text, opts.env || process.env));
+    if (/[$`]/.test(text)) { add(stripExpansions(text, false)); add(stripExpansions(text, true)); }
+    // A case pattern inside $( ) can end the unit early in the readings above: fallback readings take each $( case ... up to each `esac )` after it (16 and 16 at most).
+    if (/\bcase\b/.test(text)) {
+      const opens = [...text.matchAll(/\$\(\s*case\s/g)].slice(0, 16);
+      for (const o of opens) {
+        const tail = /\besac\s*\)/g;
+        tail.lastIndex = o.index + o[0].length;
+        let m;
+        let n = 0;
+        while ((m = tail.exec(text)) !== null && n++ < 16) add(text.slice(0, o.index) + text.slice(m.index + m[0].length));
+      }
+    }
+    if (/[%!]/.test(text) && cmdContext(text)) for (const v of [...variants]) { add(stripCmdVars(v)); add(stripCmdVarsPerCommand(v)); add(stripCmdVarsNarrow(v)); }
+    // With delayed expansion on, cmd removes a ! that has no partner (type .e!nv opens .env), so a reading without any ! is judged too.
+    const delayed = text.indexOf('!') >= 0 && DELAYED_EXPANSION_RE.test(text) && cmdContext(text);
+    if (delayed) for (const v of [...variants]) add(v.replace(/!/g, ''));
+    if (/[$`]/.test(text) && /\$\(|`/.test(text)) add(substitutionOutputs(text));
+    for (const v of [...variants]) if (v !== text) readings.push(allWords(v, false), allWords(v, true));
+    if (/[$`%!]/.test(text)) {
+      // Every expansion read as any text: refused when a path segment could be a protected name.
+      const wild = wildText(text);
+      if (wild !== text) {
+        const wilds = [wild];
+        if (cmdCaretsApply(wild)) wilds.push(dropCmdCarets(wild.replace(/(\/[ck]\s+)"([\s\S]*)"(\s*)$/i, '$1$2$3')));
+        for (const w of wilds) {
+          for (const r of [allWords(w, false), allWords(w, true)]) {
+            if (r.truncated) return TOO_MANY_MESSAGE;
+            for (const x of r) {
+              if (typeof x.text === 'string' && WILD_ANY_RE.test(x.text) && !x.redirectTarget && wildWordProtected(x.text)) {
+                return WILD_MESSAGE(x.text.replace(/[\u0001\u0002]/g, '*'));
+              }
+            }
+          }
+        }
+      }
+    }
+    for (const v of [...variants]) {
+      if (!cmdCaretsApply(v)) continue;
+      const c = dropCmdCarets(v.replace(/(\/[ck]\s+)"([\s\S]*)"(\s*)$/i, '$1$2$3'));
+      readings.push(allWords(c, false), allWords(c, true));
+    }
+  }
   // A reading that could not be split to the end is refused, not checked in part.
   if (readings.some((r) => r.truncated)) return TOO_MANY_MESSAGE;
   const words = readings.flat();
@@ -2597,6 +2645,369 @@ function psListWords(words, opts) {
   return out;
 }
 const ANSI_C_SIMPLE = { a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v', '\\': '\\', "'": "'", '"': '"', '?': '?' };
+
+/**
+ * Two more readings of a command, for words a shell or cmd.exe rewrites before the program sees them.
+ *  - cmd.exe: `^` escapes the next character outside double quotes, and a `^` at the end of a line joins it to the next one,
+ *    so `type .e^nv` opens `.env`. Read only where cmd.exe is in play (Windows, or the text names cmd or a batch file): in a
+ *    POSIX shell `^` is an ordinary character, and `grep ^.env notes.md` must stay allowed.
+ *  - Expansions that leave nothing: an unset or empty variable, `${VAR:0:0}`, `${VAR:-}`, `$@`, `$*` and an empty command
+ *    substitution, so `.en${EMPTY}v` and `.e${HOME:0:0}nv` open `.env`. The variable values are the ones the hook sees.
+ * The original text is still read as typed; these are extra readings, so a word protected in any of them is refused.
+ */
+// cmd /v:on (or /v), or setlocal enabledelayedexpansion.
+const DELAYED_EXPANSION_RE = /\/v(?::on)?(?=[\s"'\/]|$)|enabledelayedexpansion/i;
+const CMD_CONTEXT_RE = /(?:^|[;&|(\"'`])\s*(?:(?:sudo|env|call|start|exec|nohup|time|xargs|command|wine)\s+(?:-\S+\s+)*)*(?:\S*[\\/])?(?:cmd(?:\.exe)?|[^\s;&|()\"'`]*\.(?:bat|cmd))(?=\s|$|[\"'])/i;
+function cmdContext(text) {
+  return process.platform === 'win32' || CMD_CONTEXT_RE.test(text);
+}
+function cmdCaretsApply(text) {
+  return text.indexOf('^') >= 0 && cmdContext(text);
+}
+// A caret outside double quotes escapes the next character (an escaped quote does not open a quote); inside double quotes it is literal.
+function dropCmdCarets(text) {
+  let out = '';
+  let inQuote = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') { inQuote = !inQuote; out += c; continue; }
+    if (c === '^' && !inQuote) {
+      const nx = text[i + 1];
+      if (nx === undefined) break;
+      if (nx === '\r' && text[i + 2] === '\n') { i += 2; continue; }
+      if (nx === '\n') { i++; continue; }
+      out += nx;
+      i++;
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
+// Every cmd variable unit, with or without a modifier, taken out whole: its value is not known here (an undefined one is empty in a batch file).
+// A cmd variable name is anything up to the next % or ! or colon: ProgramFiles(x86), =ExitCode, A.B and A-B are names too.
+// Two readings, both judged: a name without spaces or cmd operators (the usual one: it cannot reach into the next command, so
+// `echo a! & type .e!X!nv` is read per command), and a name that may hold spaces (`%A B%`), which can pair a % or ! with one of a later command.
+const CMD_VAR_UNIT_RE = /%[^%!:\r\n]+(?::[^%!\r\n]*)?%|![^%!:\r\n]+(?::[^%!\r\n]*)?!/g;
+const CMD_VAR_UNIT_NARROW_RE = /%[^%!:\s&|<>^"]+(?::[^%!\s&|<>"]*)?%|![^%!:\s&|<>^"]+(?::[^%!\s&|<>"]*)?!/g;
+function stripCmdVars(text) {
+  return text.replace(CMD_VAR_UNIT_RE, '');
+}
+// cmd expands a variable inside one command: the wide reading (a name may hold a space or a ^) is applied to each command on its own,
+// split at & and | and at line breaks, so `echo a! & type .e!X Y!nv` reads `!X Y!` as one unit and not `! & type .e!`.
+function stripCmdVarsPerCommand(text) {
+  return text.split(/([&|\r\n]+)/).map((seg, i) => (i % 2 ? seg : stripCmdVars(seg))).join('');
+}
+function stripCmdVarsNarrow(text) {
+  return text.replace(CMD_VAR_UNIT_NARROW_RE, '');
+}
+const UNIT_DEPTH = 64;
+/** True when the word at `i` starts a command: at the start of the body or after ;  &  |  (  { or a line break (blanks skipped). */
+function commandStart(text, i, from) {
+  let j = i - 1;
+  while (j >= from && (text[j] === ' ' || text[j] === '\t')) j--;
+  return j < from || ';&|(\n{'.includes(text[j]);
+}
+/** The index after the esac that closes a case whose body starts at `from` (nested case counted), or -1. Quotes, comments and escapes hide words. */
+function caseEnd(text, from) {
+  let open = 1;
+  let i = from;
+  const n = text.length;
+  while (i < n) {
+    const c = text[i];
+    if (c === '\\') { i += 2; continue; }
+    if (c === "'" || c === '"') {
+      let k = i + 1;
+      while (k < n && text[k] !== c) k += c === '"' && text[k] === '\\' ? 2 : 1;
+      i = k + 1;
+      continue;
+    }
+    if (c === '#' && (i === from || /\s/.test(text[i - 1]))) {
+      const k = text.indexOf('\n', i);
+      if (k < 0) return -1;
+      i = k + 1;
+      continue;
+    }
+    if (/[A-Za-z_]/.test(c) && (i === 0 || !/[A-Za-z0-9_]/.test(text[i - 1]))) {
+      let k = i;
+      while (k < n && /[A-Za-z0-9_]/.test(text[k])) k++;
+      const word = text.slice(i, k);
+      // A reserved word only where a command starts: `my-esac` or `x esac` in an argument are words of the body.
+      if ((word === 'case' || word === 'esac') && commandStart(text, i, from)) {
+        if (word === 'case') open++;
+        else if (--open === 0) return k;
+      }
+      i = k;
+      continue;
+    }
+    i++;
+  }
+  return -1;
+}
+/**
+ * The index after the bracket that closes a ${...} or $(...) whose content starts at `from`, or -1 when there is none (or it is nested
+ * over UNIT_DEPTH levels). Bash honours quotes while it looks for the bracket: a `)` or `}` inside '...', "..." or after a backslash does
+ * not close the unit, and nested ${ }, $( ) and backticks are units of their own; inside $( ) a bare ( nests too.
+ */
+function unitEnd(text, from, closer, depth) {
+  if (depth > UNIT_DEPTH) return -1;
+  const n = text.length;
+  let j = from;
+  while (j < n) {
+    const ch = text[j];
+    if (ch === '\\') { j += 2; continue; }
+    if (ch === "'") {
+      const k = text.indexOf("'", j + 1);
+      if (k < 0) return -1;
+      j = k + 1;
+      continue;
+    }
+    if (ch === '`') {
+      const k = text.indexOf('`', j + 1);
+      if (k < 0) return -1;
+      j = k + 1;
+      continue;
+    }
+    if (ch === '"') {
+      j++;
+      for (;;) {
+        if (j >= n) return -1;
+        const q = text[j];
+        if (q === '\\') { j += 2; continue; }
+        if (q === '"') { j++; break; }
+        if (q === '`') {
+          const k = text.indexOf('`', j + 1);
+          if (k < 0) return -1;
+          j = k + 1;
+          continue;
+        }
+        if (q === '$' && (text[j + 1] === '{' || text[j + 1] === '(')) {
+          const e = unitEnd(text, j + 2, text[j + 1] === '{' ? '}' : ')', depth + 1);
+          if (e < 0) return -1;
+          j = e;
+          continue;
+        }
+        j++;
+      }
+      continue;
+    }
+    if (ch === '$' && (text[j + 1] === '{' || text[j + 1] === '(')) {
+      const e = unitEnd(text, j + 2, text[j + 1] === '{' ? '}' : ')', depth + 1);
+      if (e < 0) return -1;
+      j = e;
+      continue;
+    }
+    if (closer === ')' && ch === 'c' && text.startsWith('case', j) && (j === from || /[\s;&|(]/.test(text[j - 1])) && /\s/.test(text[j + 4] || '')) {
+      // a case pattern ends in a bare ): skip the whole case ... esac (nested ones counted; quoted words are not keywords)
+      const e = caseEnd(text, j + 4);
+      if (e < 0) return -1;
+      j = e;
+      continue;
+    }
+    if (ch === '(' && closer === ')') {
+      const e = unitEnd(text, j + 1, ')', depth + 1);
+      if (e < 0) return -1;
+      j = e;
+      continue;
+    }
+    if (ch === closer) return j + 1;
+    j++;
+  }
+  return -1;
+}
+/**
+ * The text with every shell expansion unit taken out whole, whatever the environment holds (a variable the hook sees may differ from the
+ * agent's shell): balanced ${...} (any operator, nested), $NAME, $1, $@ $* $# $? $$ $!, balanced $(...) and backticks. With
+ * `useDefaults`, ${NAME:-word}, ${NAME-word}, ${NAME:=word}, ${NAME=word}, ${NAME:+word} and ${NAME+word} become their word (quotes
+ * removed, nested units read the same way). An unbalanced unit leaves the rest of the text as it was.
+ */
+function stripExpansions(text, useDefaults, mark = '', quotedMark = mark) {
+  const n = text.length;
+  let out = '';
+  let i = 0;
+  let sq = false;
+  let dq = false;
+  while (i < n) {
+    const c = text[i];
+    if (quotedMark !== mark) {
+      // Track quoting so an expansion inside double quotes (no field splitting) gets its own mark.
+      if (c === "'" && !dq) sq = !sq;
+      else if (c === '"' && !sq) dq = !dq;
+      else if (c === '\\' && !sq && text[i + 1] === '"') { out += c + '"'; i += 2; continue; }
+    }
+    const mk = dq ? quotedMark : mark;
+    if (c === '`') {
+      const j = text.indexOf('`', i + 1);
+      if (j < 0) { out += text.slice(i); break; }
+      out += mk;
+      i = j + 1;
+      continue;
+    }
+    if (c !== '$' || i + 1 >= n) { out += c; i++; continue; }
+    const d = text[i + 1];
+    if (d === '{' || d === '(') {
+      const j = unitEnd(text, i + 2, d === '{' ? '}' : ')', 0);
+      if (j < 0) { out += text.slice(i); break; }
+      const content = text.slice(i + 2, j - 1);
+      if (d === '{' && useDefaults) {
+        const m = /^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*])(:?[-=+])([\s\S]*)$/.exec(content);
+        if (m) out += stripExpansions(m[2], true).replace(/["']/g, '');
+        else out += mk;
+      } else out += mk;
+      i = j;
+      continue;
+    }
+    if (/[A-Za-z_]/.test(d)) {
+      let j = i + 1;
+      while (j < n && /[A-Za-z0-9_]/.test(text[j])) j++;
+      out += mk;
+      i = j;
+      continue;
+    }
+    if (/[0-9@*#?$!]/.test(d)) { out += mk; i += 2; continue; }
+    out += c;
+    i++;
+  }
+  return out;
+}
+// ${NAME}, ${NAME:-word}, ${NAME-word}, ${NAME:+word}, ${NAME+word}, ${NAME:off} and ${NAME:off:len} (offset and length without a sign: a
+// negative one needs a space or parentheses, which this does not read), $@, $* and an empty command substitution.
+const EMPTY_EXPANSION_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*|[@*])(?:(:?[-+])([^}$`"'\\]*)|:([0-9]+)(?::([0-9]+))?)?\}|\$[@*]|\$\(\s*(?:true|:)?\s*\)|`\s*(?:true|:)?\s*`/g;
+// cmd.exe: %NAME:~off,len% and %NAME:old=new% (and the !NAME...! forms of delayed expansion) give a piece of the value or a replaced one.
+const CMD_SLICE_RE = /%([^%!:\s&|<>^"]+):~([0-9]+)(?:,([0-9]+))?%|!([^%!:\s&|<>^"]+):~([0-9]+)(?:,([0-9]+))?!/g;
+const CMD_REPLACE_RE = /%([^%!:\s&|<>^"]+):([^%!=~*\r\n][^%!=\r\n]*)=([^%!\r\n]*)%|!([^%!:\s&|<>^"]+):([^%!=~*\r\n][^%!=\r\n]*)=([^%!\r\n]*)!/g;
+function dropCmdExpansions(text, env) {
+  const val = (name) => {
+    const k = Object.keys(env).find((e) => e.toUpperCase() === name.toUpperCase());   // cmd variable names ignore case
+    return k !== undefined && env[k] != null ? String(env[k]) : '';
+  };
+  return text
+    .replace(CMD_SLICE_RE, (m, n1, o1, l1, n2, o2, l2) => {
+      const v = val(n1 || n2);
+      const off = Number(n1 ? o1 : o2);
+      const len = n1 ? l1 : l2;
+      return len === undefined ? v.slice(off) : v.substr(off, Number(len));
+    })
+    .replace(CMD_REPLACE_RE, (m, n1, a1, b1, n2, a2, b2) => {
+      const v = val(n1 || n2);
+      const from = n1 ? a1 : a2;
+      return v.replace(new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), () => (n1 ? b1 : b2));
+    });
+}
+/**
+ * Expansions read as "any text". The value of `$X`, `${X}`, `$(cmd)`, a backtick substitution, `%X%` or `!X!` is not in the command: an
+ * earlier command, `read`, the program's output or an environment the hook does not see can set it to anything. So each unit is
+ * replaced by a mark, and a path segment that holds a mark and at least two literal characters of a protected name (.env, .env.*, an SSH
+ * private key name) in the right places is refused: `.e${X}v`, `${D}env`, `.e$(echo n)v` and `.e%X:~0,1%v` can all spell `.env`.
+ * It does not depend on the environment. What it cannot see is a name that is wholly inside the unit (`cat $(printf .env)` is read
+ * through the words of the substitution, `cat ${NAME}` with NAME=.env only through the assignments of the same command).
+ * A segment with fewer than two literal characters of the name (`${X}v`, `${CI_ENV}`, `config/${ENV}.json`) is allowed; so is
+ * `.example`, `.sample` and `.template` at its end.
+ */
+const WILD = '\u0001';
+// An expansion inside double quotes: bash does not split its value into words there.
+const WILDQ = '\u0002';
+const WILD_ANY_RE = /[\u0001\u0002]/;
+const WILD_NAMES = [
+  { name: '.env', tail: false, core: 4 }, { name: '.env.', tail: true, core: 4 },
+  ...['rsa', 'dsa', 'ecdsa', 'ed25519', 'xmss'].flatMap((k) => [{ name: 'id_' + k, tail: false, core: 3 + k.length }, { name: 'id_' + k + '_sk', tail: false, core: 6 + k.length }]),
+];
+const WILD_SAFE_END_RE = /\.(?:example|sample|template)$/;
+const WILD_SEGMENT_MAX = 512;
+// Can the segment (marks match any text) spell the name, with two or more of its literal characters inside the first `core` characters of the name?
+function wildSegmentMatches(seg, t) {
+  const n = seg.length;
+  const m = t.name.length;
+  const memo = new Map();
+  const f = (i, j, c) => {
+    const key = (i * (m + 1) + j) * 3 + c;
+    const hit = memo.get(key);
+    if (hit !== undefined) return hit;
+    let r;
+    if (i === n) r = j === m && c >= 2;
+    else if (seg[i] === WILD || seg[i] === WILDQ) r = f(i + 1, j, c) || (j < m && f(i, j + 1, c));
+    else if (j < m) r = seg[i] === t.name[j] && f(i + 1, j + 1, Math.min(2, c + (j < t.core ? 1 : 0)));
+    else r = t.tail && f(i + 1, j, c);
+    memo.set(key, r);
+    return r;
+  };
+  return f(0, 0, 0);
+}
+// Names a glob in a piece can match. The shell globs each word after it splits, so `.e*`, `.en?`, `.en[v]` and `?env` cut off by an
+// unquoted expansion can read `.env`. The glob engine is the one the words without expansions use (globRegExp); a mark is any text.
+// Like the literal reading, a piece needs two literal characters (a bracket expression counts as one), so `*` or `${X}*` alone is not refused.
+const WILD_GLOB_NAMES = ['.env', '.env.local', '.env.example', '.env.sample', '.env.template', ...['rsa', 'dsa', 'ecdsa', 'ed25519', 'xmss'].flatMap((k) => ['id_' + k, 'id_' + k + '_sk', 'id_' + k + '.pub'])];
+function wildPieceGlobMatches(piece) {
+  if (!/[*?[]/.test(piece)) return false;
+  const lits = piece.replace(/\[[^\]]*\]/g, 'x').replace(/[*?]/g, '').length;
+  if (lits < 2) return false;
+  let re;
+  try { re = globRegExp(piece.replace(/[]/g, '*')); } catch (e) { return true; }
+  if (re.impossible) return false;
+  return WILD_GLOB_NAMES.some((n) => re.test(n));
+}
+// Can some word the segment may become spell a protected name? An unquoted expansion splits its value into words when the value holds
+// spaces, so the segment is also read piece by piece: the start up to the first splitting mark, each piece between two of them, and the
+// rest after the last, each with "any text" kept on the cut side. The safe endings (.example ...) apply only to a piece that really ends
+// the word, never to the whole segment, because splitting happens before them.
+function wildSegmentProtected(seg) {
+  const check = (piece, safe) => {
+    if (safe && WILD_SAFE_END_RE.test(piece)) return false;
+    for (const t of WILD_NAMES) if (wildSegmentMatches(piece, t)) return true;
+    return wildPieceGlobMatches(piece);
+  };
+  if (check(seg, true)) return true;
+  if (seg.indexOf(WILD) < 0) return false;
+  const parts = seg.split(WILD);
+  const last = parts.length - 1;
+  for (let i = 0; i <= last; i++) {
+    if (parts[i] === '' ) continue;
+    const piece = (i > 0 ? WILD : '') + parts[i] + (i < last ? WILD : '');
+    if (check(piece, i === last)) return true;
+  }
+  return false;
+}
+function wildWordProtected(text) {
+  const parts = text.indexOf('=') >= 0 ? [text, text.slice(text.indexOf('=') + 1)] : [text];
+  for (const part of parts) {
+    for (const raw of part.split(/[\\/]/)) {
+      if (!WILD_ANY_RE.test(raw)) continue;
+      const seg = raw.toLowerCase().replace(/^["']+|["']+$/g, '');
+      if (seg.length > WILD_SEGMENT_MAX) return true;   // too long to follow: refused, not checked in part
+      if (wildSegmentProtected(seg)) return true;
+    }
+  }
+  return false;
+}
+function wildText(text) {
+  let t = /[$`]/.test(text) ? stripExpansions(text, false, WILD, WILDQ) : text;
+  if (/[%!]/.test(t) && cmdContext(text)) t = t.replace(CMD_VAR_UNIT_RE, WILD);
+  return t;
+}
+// The text of a substitution that only prints a word: `$(printf .en)v` and `$(echo .en)v` read as `.env`.
+function substitutionOutputs(text) {
+  return text.replace(/\$\(([^()]*)\)|`([^`]*)`/g, (m, a, b) => {
+    const toks = (a !== undefined ? a : b).trim().split(/\s+/);
+    return toks[toks.length - 1].replace(/^["']|["']$/g, '');
+  });
+}
+const WILD_MESSAGE = (word) => 'zn: ' + word + ' was not read because a variable, a command substitution or a cmd variable makes up part of the name, ' +
+  'and what is left could spell a .env file or an SSH private key. Write the file name out in full, or ask the user to run the command.';
+function dropEmptyExpansions(text, env) {
+  if (/[%!]/.test(text) && cmdContext(text)) text = dropCmdExpansions(text, env);
+  if (!/[$`]/.test(text)) return text;
+  return text.replace(EMPTY_EXPANSION_RE, (m, name, op, word, off, len) => {
+    if (!name) return '';
+    const isSet = Object.prototype.hasOwnProperty.call(env, name) && env[name] != null;
+    const v = isSet ? String(env[name]) : '';
+    if (op) {
+      const set = op[0] === ':' ? v !== '' : isSet;
+      return op.endsWith('-') ? (set ? v : word) : (set ? word : '');
+    }
+    if (off === undefined) return v;
+    return len === undefined ? v.slice(Number(off)) : v.substr(Number(off), Number(len));
+  });
+}
 
 /* The command with each bash $'...' word decoded and quoted again as a plain '...' word, and $"..." read as "...". */
 function decodeAnsiC(cmd) {

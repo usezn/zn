@@ -122,8 +122,9 @@ function zcodeProblems(files, dir) {
           const zc = require(path.join(__dirname, '..', '..', 'packages', 'zn-gate', 'lib', 'agents', 'zcode.js'));
           const sh = h && h.type === 'process' && h.command === '/bin/sh' && Array.isArray(h.args) && h.args.length === 2 &&
             h.args[0] === '${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh' && h.args[1] === event;
-          const ps = h && h.type === 'process' && h.command === zc.PLUGIN_WIN_POWERSHELL && JSON.stringify(h.args) === JSON.stringify(zc.pluginWindowsArgs(event));
-          if (!sh && !ps) problems.push(dir + 'hooks/hooks.json: a ' + event + ' hook does not run `/bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh ' + event + '` or the PowerShell form for Windows');
+          const ps = h && h.type === 'process' && ((h.command === zc.PLUGIN_WIN_CMD && JSON.stringify(h.args) === JSON.stringify(zc.pluginWindowsCmdArgs(event))) ||
+            (h.command === zc.PLUGIN_WIN_POWERSHELL && JSON.stringify(h.args) === JSON.stringify(zc.pluginWindowsArgs(event))));
+          if (!sh && !ps) problems.push(dir + 'hooks/hooks.json: a ' + event + ' hook does not run `/bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh ' + event + '` or the cmd.exe or PowerShell form for Windows');
         }
       }
     }
