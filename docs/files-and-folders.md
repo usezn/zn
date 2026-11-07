@@ -15,7 +15,7 @@ zn-gate keeps the vault and its settings in a `.zn` folder in your home folder (
 | `~/.zn/hooks` | A small launcher script, shared by every profile of the same agent. `npm update -g zn-gate` refreshes these launchers by itself (a short install step); a project-local install does not touch them, and neither does an update with `--ignore-scripts`. |
 | `~/.zn/reach-last.json` | Written only by `reach --remember`. |
 
-More: [uninstall](uninstall.md#your-env-files-and-the-vault), [`hooks uninstall`](cli.md#hooks-uninstall).
+More: [uninstall](uninstall.md#4-your-env-files-and-the-vault), [`hooks uninstall`](cli.md#hooks-uninstall).
 
 ## `reach`
 
