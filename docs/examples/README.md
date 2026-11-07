@@ -27,6 +27,8 @@ Worked examples, grouped by what you are trying to do. All values in them are ma
 
 - [cloud-check-settings.md](cloud-check-settings.md): the settings for the optional cloud check, what each one does and what leaves your machine.
 - [connect-and-disconnect.md](connect-and-disconnect.md): connect the optional cloud check, check its status and disconnect.
+- [first-cloud-check.md](first-cloud-check.md): the shortest path from connect to a first checked prompt, in five steps.
+- [long-text-analysis.md](long-text-analysis.md): the two long-input modes of the cloud check (`windows` or `off`), and when the result carries a warning.
 
 ## Teams
 
