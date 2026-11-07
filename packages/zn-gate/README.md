@@ -24,6 +24,8 @@ No internet on this computer? See [Install on a machine without internet](https:
 
 **On Alpine Linux, install Node.js with the package manager.** The Node.js builds on nodejs.org do not run on Alpine, so run `apk add nodejs npm` instead. Use Alpine 3.21 or later: 3.21 and 3.22 ship Node.js 22, 3.23 and later ship Node.js 24. Alpine 3.20 ships Node.js 20.15, which is too old for the Claude Code plugin. The `npm` package is in the community repository, so if `npm` is not found, make sure the community repository is listed in `/etc/apk/repositories`.
 
+> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](https://github.com/usezn/zn/blob/main/docs/troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+
 **Getting started: four steps, one command each.** Run them in your own terminal.
 
 1. `npx -y zn-gate reach` shows what your coding agents can reach on this machine: secrets in your `.env` files (by name only), credential files and MCP servers. It is read only and sends nothing. Details in [docs/reach.md](https://github.com/usezn/zn/blob/main/docs/reach.md).
@@ -377,7 +379,7 @@ zn-gate blocks what is almost certainly an attack or a leak: reading credential 
 
 Some other patterns also appear in ordinary text, such as `system:` keys in YAML, "bypass the cache" or an article that explains what a jailbreak is. For those, zn-gate lets the text through and adds a short warning (`advisory` in the result) so you or your agent can take a look.
 
-The same goes for text in a tool result (a fetched page, an MCP result, a file) that tells your agent to say who its user is, or to put the user's name, email, account or API key in a header, a URL parameter, a cookie, a form field or the next request. That wording is rarely legitimate there, but docs and policies mention the same words, so by default it is an advisory (`pi:identity_request`; `pi:identity_request_multi` covers Spanish, Portuguese, French, German, Russian and Chinese) and strict mode blocks it. Documentation that tells you to send your own API key in the `Authorization` header does not match.
+The same goes for text in a tool result (a fetched page, an MCP result, a file) that tells your agent to say who its user is, or to put the user's name, email, account or API key in a header, a URL parameter, a cookie, a form field or the next request. That wording is rarely legitimate there, but docs and policies mention the same words, so by default it is an advisory (`pi:identity_request`; `pi:identity_request_multi` covers Spanish, Portuguese, French, German, Russian and Chinese) and strict mode blocks it. Documentation that tells you to send your own API key in the `Authorization` header does not match, and neither does API documentation that asks for your email in a User-Agent or From header, a mailto parameter, a request body or a form.
 
 To block those too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": true` to `zn.config.json` in your project (or a line `strict` in `.znrules`).
 
