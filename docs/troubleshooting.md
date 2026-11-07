@@ -605,9 +605,22 @@ zn: something went wrong inside the zn hook, so this action was blocked to keep 
 
 #### "zn: could not read this action (`<why>`), so it was blocked" / "could not read the tool name of this call" / "could not read the command of this call"
 
-**What happened:** the event your agent sent to zn was damaged or in a shape zn does not know, so zn could not check it.
+**What happened:** the event your agent sent to zn was damaged, so zn could not check it. If the message says your agent "changed the format of the data", see the next entry.
 
 **What to do:** retry the action. If it repeats, run `zn hooks install <agent>` again, then `npx -y zn-gate check`.
+
+#### "This usually means `<agent>` changed the format of the data it sends to zn"
+
+```text
+zn: could not read the tool name of this call, so zn cannot check it and blocked it. This usually means <agent> changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `zn hooks install <agent>`.
+zn: <agent> sent an event zn does not know, so it was not checked. This usually means <agent> changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `zn hooks install <agent>`.
+```
+
+**What happened:** your agent was updated and now sends zn information in a new shape (a renamed field, a new event name, a different tool name). The installed zn-gate is older than the agent, so it cannot read it. A call whose tool or command zn cannot read is blocked. An event with a name zn does not know is let through unchecked, and the second message appears on the hook's error output (some agents show it only in verbose mode).
+
+**Is it safe?** A blocked call was not run. An event the second message names was not checked, so update zn-gate soon.
+
+**What to do:** run `npm install -g zn-gate@latest`, then `zn hooks install <agent>`, then `npx -y zn-gate check`. If you use the Claude Code plugin, run `claude plugin update zn-gate@usezn` instead. If it still happens after the update, your agent may be newer than the latest zn-gate: please report it as an issue.
 
 #### "zn: this action names a file or text that is not valid Unicode text, so it was blocked"
 
