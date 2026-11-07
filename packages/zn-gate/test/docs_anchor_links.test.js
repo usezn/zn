@@ -14,6 +14,8 @@ const docsDir = path.join(repo, 'docs');
 
 function stripFences(md) {
   const out = [];
+  // Windows checkouts use CRLF, and "." in a regex does not match "\r": normalize first.
+  md = md.replace(/\r\n?/g, '\n');
   let fence = null;
   for (const line of md.split('\n')) {
     const m = line.match(/^ {0,3}(`{3,}|~{3,})/);
