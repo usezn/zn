@@ -1178,6 +1178,209 @@ function hasPrivateKey(text) {
   return false;
 }
 
+// The most a changed configuration or instruction file is read: a file over it is not checked here (zn audit reports it).
+const CHANGED_FILE_CAP = 1024 * 1024;
+
+/** The text of a file the agent reports as changed or loaded, or null when it is not a plain file we can read within the cap. */
+function readReportedFile(file) {
+  try {
+    if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
+    const st = fs.statSync(file);
+    if (!st.isFile() || st.size > CHANGED_FILE_CAP) return null;
+    return fs.readFileSync(file, 'utf8');
+  } catch (_) {
+    return null;
+  }
+}
+
+const SETTINGS_REL = '.claude/settings.json';
+function criticalKeys(findings, rel, root) {
+  // The folder is part of the key: a finding of a parent folder's settings is not the same finding in this one.
+  const where = require('crypto').createHash('sha256').update(String(root || '')).digest('hex').slice(0, 8);
+  // A settings file that could not be checked (a link out of the project, too large) counts as critical: it is not passed as clean.
+  return (findings || []).filter((f) => (f.severity === 'critical' || f.id === 'ZNA020') && String(f.file || '').split(path.sep).join('/') === rel)
+    .map((f) => String(f.id) + '|' + rel + '|' + where + '|' + require('crypto').createHash('sha256').update(String(f.detail || f.evidence || f.title || '')).digest('hex').slice(0, 12));
+}
+
+// The audit behind the baseline and the ConfigChange verdict is about one file, the project settings file, and runs on that file alone
+// (no walk of the folder: a walk that stops after N entries can stop before the file, and a whole home folder took 5 s).
+function auditSettings(root, rel) {
+  return require('../audit').auditFileAt({ root, rel: rel || SETTINGS_REL });
+}
+
+/** The folder whose .claude/settings.json the session works with: walking up from where the first event happened, the first folder that has one,
+ *  or a git checkout, never the home folder (those are the user's own settings). The folder itself when there is none. */
+function settingsRoot(cwd, opts) {
+  const homes = [require('os').homedir(), opts && opts.home].filter(Boolean).map((h) => path.resolve(h));
+  let dir = cwd;
+  for (let i = 0; i < 40; i++) {
+    if (homes.includes(path.resolve(dir))) break;
+    if (fs.existsSync(path.join(dir, SETTINGS_REL)) || fs.existsSync(path.join(dir, '.git'))) return dir;
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return cwd;
+}
+
+// Session memory older than this is not needed any more.
+const STATE_KEEP_MS = 14 * 24 * 3600 * 1000;
+function pruneState(dir) {
+  try {
+    const cutoff = Date.now() - STATE_KEEP_MS;
+    for (const n of fs.readdirSync(dir).slice(0, 5000)) {
+      if (!/^(?:config-change|instructions-loaded)-[0-9a-f]{16}\.json$/.test(n)) continue;
+      const f = path.join(dir, n);
+      try { if (fs.statSync(f).mtimeMs < cutoff) fs.unlinkSync(f); } catch (_) { /* gone, or not ours to remove */ }
+    }
+  } catch (_) { /* nothing to clean */ }
+}
+
+/**
+ * The baseline of the project settings file, taken once per session at the first PreToolUse or UserPromptSubmit event, which fires before
+ * the tool or the prompt can change anything (Claude Code has no SessionStart hook registered here). What the audit finds then is what the
+ * person opened the folder with (zn audit reported it); a later change is judged against it. A session that already has a state file (its
+ * first ConfigChange left one) is not baselined again: a change blocked before this point must not become what the session started with.
+ * An audit that fails leaves an empty baseline, so it is not retried at every call and a critical finding blocks.
+ */
+function recordConfigBaseline(ev, opts) {
+  try {
+    if (!ev.sessionId || typeof ev.cwd !== 'string' || !path.isAbsolute(ev.cwd)) return;
+    const sf = seenFile(ev, 'config-change', opts);
+    if (!sf) return;
+    if (fs.existsSync(sf)) { touchSeen(sf); return; }
+    pruneState(path.dirname(sf));
+    let keys = [];
+    try {
+      const root = settingsRoot(ev.cwd, opts);
+      keys = criticalKeys(auditSettings(root).findings, SETTINGS_REL, root);
+    } catch (_) {
+      keys = [];
+    }
+    writeSeen(sf, ['file|' + SETTINGS_REL].concat(keys));
+  } catch (_) {
+    /* no baseline: a critical finding blocks */
+  }
+}
+
+/** The file that remembers, for one session, what a hook has already seen (kept in the zn state folder, owner only). */
+function seenFile(ev, name, opts) {
+  if (!ev.sessionId) return null;
+  const base = opts && opts.home ? path.join(opts.home, '.zn') : require('../stats').znHome();
+  const id = require('crypto').createHash('sha256').update(String(ev.sessionId || '')).digest('hex').slice(0, 16);
+  return path.join(base, 'state', name + '-' + id + '.json');
+}
+/** A session that is still in use keeps its memory: the age that pruneState goes by is the last use. */
+function touchSeen(file) {
+  try { const now = new Date(); fs.utimesSync(file, now, now); } catch (_) { /* gone */ }
+}
+function readSeen(file) {
+  if (!file) return [];
+  try {
+    const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return Array.isArray(j) ? j.filter((x) => typeof x === 'string') : [];
+  } catch (_) {
+    return [];
+  }
+}
+function writeSeen(file, list) {
+  if (!file) return;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(file, JSON.stringify(list.slice(-500)), { mode: 0o600 });
+  } catch (_) {
+    /* no memory: the hook still answers */
+  }
+}
+
+// Text a person cannot see in a skill file: Unicode tag characters and bidirectional overrides and isolates.
+const HIDDEN_TEXT_RE = /[\u{E0000}-\u{E007F}‪-‮⁦-⁩]/u;
+
+/**
+ * ConfigChange (Claude Code): a settings or skill file changed during the session. The change is blocked, so the new file does not
+ * take effect, when
+ *  - a project or local settings file now has a critical audit finding (a download piped into a shell, a model endpoint moved to
+ *    another server, ...): the same rules `zn audit` applies when a folder is opened, so an edit made during the session cannot do
+ *    what the audit refuses at the start; or
+ *    Only a finding that is new since the baseline of the session is a reason to block (see recordConfigBaseline): a project file that
+ *    already had one when the session began (the audit reported it then) can still be edited. A session with no baseline (no session id,
+ *    or the hooks were installed after it began) blocks every critical finding, and the first ConfigChange it sees leaves an empty
+ *    baseline, so a change blocked before the first prompt is never adopted as the starting point.
+ *    Local settings (settings.local.json) are the user's own file and are never blocked; or
+ *  - a skill file now holds text a person cannot see (Unicode tag characters, bidirectional overrides). A skill that quotes an
+ *    injection example (a security guide, red-team notes) is allowed: the generic injection rules are not used here.
+ * Policy settings cannot be blocked (Claude Code applies them anyway) and your own user settings are yours to edit: both are allowed.
+ */
+function decideConfigChange(ev, opts) {
+  const source = ev.configSource;
+  const file = ev.filePath;
+  if (source === 'skills') {
+    const text = readReportedFile(file);
+    if (text === null) return { decision: 'allow' };
+    if (HIDDEN_TEXT_RE.test(text)) {
+      return {
+        decision: 'deny', kinds: ['config-change-skill'],
+        message: 'zn: this change to a skill file was not applied: the file now holds text a person cannot see (Unicode tag characters or bidirectional overrides). ' +
+          'Open ' + path.basename(file) + ', remove that text, and save it again.',
+      };
+    }
+    return { decision: 'allow' };
+  }
+  if (source !== 'project_settings') return { decision: 'allow' };
+  if (typeof file !== 'string' || !path.isAbsolute(file) || !/(^|[\\/])\.claude[\\/][^\\/]+$/.test(file)) return { decision: 'allow' };
+  const root = path.dirname(path.dirname(file));
+  let result;
+  try {
+    result = auditSettings(root, path.relative(root, file).split(path.sep).join('/'));
+  } catch (_) {
+    return { decision: 'allow' };
+  }
+  const rel = path.relative(root, file).split(path.sep).join('/');
+  const critical = (result.findings || []).filter((f) => (f.severity === 'critical' || f.id === 'ZNA020') && String(f.file || '').split(path.sep).join('/') === rel);
+  const sf = seenFile(ev, 'config-change', opts);
+  const prev = readSeen(sf);
+  if (sf && prev.length) touchSeen(sf);
+  const known = prev.includes('file|' + rel);
+  // Whatever the verdict, a session without a baseline has one from now on: empty, so no finding is ever "known" because it was blocked.
+  if (sf && !known) writeSeen(sf, prev.concat(['file|' + rel]));
+  if (!critical.length) return { decision: 'allow' };
+  // Only a finding that is new since the baseline of the session counts. Without a baseline (no session id, or the session began before
+  // this hook was installed) every critical finding blocks. A blocked finding is never remembered: the next edit is judged the same way.
+  // (`known` is read before the empty baseline above was written, so a first change that is blocked is blocked with every finding.)
+  // The key holds what the finding says (the address it points to, the command), not its line: an edit that moves it stays known.
+  const keys = criticalKeys(critical, rel, root);
+  const fresh = known ? critical.filter((f, i) => !prev.includes(keys[i])) : critical;
+  if (!fresh.length) return { decision: 'allow' };
+  const first = fresh[0];
+  return {
+    decision: 'deny', kinds: ['config-change-' + String(first.id || 'audit').toLowerCase()],
+    message: 'zn: this change to ' + rel + ' was not applied: ' + String(first.title || first.id).slice(0, 120) + ' (' + String(first.id) + ', line ' + (first.line || '?') + ')' +
+      (fresh.length > 1 ? ' and ' + (fresh.length - 1) + ' more critical finding(s)' : '') + '. Run `zn audit` to see it, fix the file, and save it again.',
+  };
+}
+
+/**
+ * InstructionsLoaded (Claude Code): an instruction file (CLAUDE.md, .claude/rules/*.md) went into context. Claude Code cannot be told to
+ * hold it back, so this only records it: a file that holds text trying to instruct the agent is written to the evidence log as a block
+ * of kind instructions-injection, once per session and content, as a notice that is not counted as blocked (nothing is printed:
+ * Claude Code discards the output of this event).
+ */
+function decideInstructionsLoaded(ev, opts) {
+  const text = readReportedFile(ev.filePath);
+  if (text === null) return { decision: 'allow' };
+  const v = require('../rules').evaluate(text);
+  if (v && v.verdict === 'block') {
+    // The same file is reported at every session start, lazy load and compaction: once per session and content.
+    const sf = seenFile(ev, 'instructions-loaded', opts);
+    const prev = readSeen(sf);
+    const key = require('crypto').createHash('sha256').update(String(ev.filePath)).update('\0').update(text).digest('hex').slice(0, 24);
+    if (prev.includes(key)) return { decision: 'allow' };
+    writeSeen(sf, prev.concat([key]));
+    return { decision: 'deny', noBlock: true, kinds: ['instructions-injection'], message: 'zn: ' + path.basename(ev.filePath) + ' holds text that tries to instruct the agent (' + String(v.rule || 'injection').slice(0, 60) + ').' };
+  }
+  return { decision: 'allow' };
+}
+
 async function decideExpansion(ev, d, agentId) {
   return decidePromptText(ev, d, agentId, true);
 }
@@ -1517,12 +1720,14 @@ async function handle(adapter, rawEvent, opts = {}) {
     if (ev && ev.event) guardNativeText(ev);
     await injectTestFault();
     if (!ev || !ev.event) decision = { decision: 'allow' };
-    else if (ev.event === 'pre_tool') decision = unreadablePre(ev, adapter.id) || await decidePre(ev, d, adapter.id, opts);
+    else if (ev.event === 'pre_tool') { if (adapter.id === 'claude-code') recordConfigBaseline(ev, opts); decision = unreadablePre(ev, adapter.id) || await decidePre(ev, d, adapter.id, opts); }
     else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id, opts);
-    else if (ev.event === 'user_prompt') decision = await decidePrompt(ev, d, adapter.id);
+    else if (ev.event === 'user_prompt') { if (adapter.id === 'claude-code') recordConfigBaseline(ev, opts); decision = await decidePrompt(ev, d, adapter.id); }
     else if (ev.event === 'stop') decision = await decideStop(ev, d, adapter.id, opts);
     else if (ev.event === 'session_start') decision = { decision: 'allow', context: SESSION_CONTEXT() };
     else if (ev.event === 'prompt_expansion') decision = await decideExpansion(ev, d, adapter.id);
+    else if (ev.event === 'config_change') decision = decideConfigChange(ev, opts);
+    else if (ev.event === 'instructions_loaded') decision = decideInstructionsLoaded(ev, opts);
     else decision = { decision: 'allow' };
   } catch (err) {
     decision = failDecision(ev, err, mode, adapter.id);
@@ -1562,8 +1767,8 @@ function countHook(agentId, ev, decision, opts = {}) {
     const file = opts.home ? path.join(opts.home, '.zn', 'stats.json') : undefined;
     require('../stats').record({
       layer: 'hook', agent: agentId, checked: 1,
-      blocked: decision.decision === 'deny' && !decision.failClosed ? 1 : 0,
-      warned: decision.decision === 'ask' || decision.failOpen ? 1 : 0,
+      blocked: decision.decision === 'deny' && !decision.failClosed && !decision.noBlock ? 1 : 0,
+      warned: decision.decision === 'ask' || decision.failOpen || (decision.decision === 'deny' && decision.noBlock) ? 1 : 0,
       redacted: extra.redacted || 0,
       detections: extra.detections || {},
     }, file ? { file } : {});
@@ -1599,10 +1804,11 @@ function recordEvidence(agentId, ev, decision, opts = {}) {
       // Only the shape of the event is hashed and previewed, never its content.
       payload: JSON.stringify({ event: ev.event, tool: ev.tool || null, kinds }),
       verdict: redacted ? 'allow' : 'block',
-      rule: redacted ? 'hook-redacted-output' : 'hook-' + ev.event + (kinds.length ? '-secret' : '-policy'),
+      rule: redacted ? 'hook-redacted-output' : (decision.noBlock ? 'hook-' + ev.event + '-notice' : 'hook-' + ev.event + (kinds.length ? '-secret' : '-policy')),
       reason: redacted
         ? stats.redacted + ' secret value(s) in the tool output replaced with tokens' + (kinds.length ? ' (' + kinds.join(', ') + ')' : '')
-        : (kinds.length ? 'secret kinds: ' + kinds.join(', ') : 'blocked by the zn hook policy'),
+        : (decision.noBlock ? 'an instruction file holds text that tries to instruct the agent (recorded only: Claude Code cannot be told to hold it back)'
+          : (kinds.length ? 'secret kinds: ' + kinds.join(', ') : 'blocked by the zn hook policy')),
       engine: 'zn-hook',
     // _plainPreview: the payload above is the event name, the tool name and the checked secret kinds,
     // never text from the agent, so the ledger does not load the redaction engine for it (~17 ms).
