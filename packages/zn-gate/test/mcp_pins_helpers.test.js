@@ -38,14 +38,18 @@ test('a command with arguments: flags and missing paths stay, an existing file i
   fs.writeFileSync(script, '// fake server\n');
   const prev = process.cwd();
   process.chdir(dir);
-  t.after(() => process.chdir(prev));
-  assert.strictEqual(
-    pins.serverKey('node', ['server.js', '--port', '9000', 'missing.js']),
-    keyOf(['node', script, '--port', '9000', 'missing.js'])
-  );
-  // Labels longer than the display limit are shortened with '...': the temporary folder on
-  // Windows makes this one long enough, so compare with the same shortening.
-  assert.strictEqual(pins.label('node', ['server.js', '--port', '9000']), pins.displayName('node ' + script + ' --port 9000'));
+  // Go back before the temporary folder is removed: Windows cannot remove the current folder (EBUSY).
+  try {
+    assert.strictEqual(
+      pins.serverKey('node', ['server.js', '--port', '9000', 'missing.js']),
+      keyOf(['node', script, '--port', '9000', 'missing.js'])
+    );
+    // Labels longer than the display limit are shortened with '...': the temporary folder on
+    // Windows makes this one long enough, so compare with the same shortening.
+    assert.strictEqual(pins.label('node', ['server.js', '--port', '9000']), pins.displayName('node ' + script + ' --port 9000'));
+  } finally {
+    process.chdir(prev);
+  }
 });
 
 test('a command alone has the same key and label with no arguments, an empty list or null', () => {
