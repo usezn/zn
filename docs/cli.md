@@ -97,6 +97,37 @@ The table below gives the full description of each setting.
 
 Emoji and box-drawing characters are used only when the output goes to a terminal and neither `NO_COLOR`, `TERM=dumb` nor `CI` is set. Everywhere else the CLI prints a short ASCII marker in their place: `[ok]` for a check mark, `[!]` for a warning, `[x]` for a failure, `[+]` for the shield, and `->` for an arrow. Rules are drawn with dashes. So output sent to a pipe or a file is plain printable ASCII, apart from text that comes from your own files or input. The status words (`ALLOWED`, `BLOCKED`, `FAILED`, ...) carry the meaning in every mode.
 
+### All environment variables
+
+Every `ZN_` variable the command-line tool reads, with the default and the package that reads it. "Both" means the npm and the Python package read it the same way. Other `ZN_` names in the code are internal to zn, used by its tests, or belong to the server, and are not listed here.
+
+| Variable | Default | What it does | Package |
+|---|---|---|---|
+| `ZN_HOME` | `~/.zn` | Folder for zn's own files: stats, the evidence log, pins and hook launchers. | Both |
+| `ZN_CLOUD=1` | Off | Turns the optional cloud check on. | Both |
+| `ZN_API_KEY` | None | API key for the cloud check. Used only when the cloud check is on. | Both |
+| `ZN_LOCAL_ONLY=true` | Off | Never uses the cloud, even when `ZN_CLOUD=1` is set. | Both |
+| `ZN_API_URL` | The address of `ZN_STAGE` | Uses another cloud address. | Both |
+| `ZN_STAGE` | `v30` | Cloud stage: `v30` or `prod`. | Both |
+| `ZN_LONG_INPUT` | `windows` | How long texts are sent to the cloud check: `windows` or `off`. | Both |
+| `ZN_STRICT=1` | Off | Treats advisory rules as blocking. The environment can only add strictness. | Both |
+| `ZN_ALLOW_TRUNCATED=1` | Off | Lets through output too large to scan in full. It is still marked as truncated. By default such output is blocked. | Both |
+| `ZN_BLOCK_TRUNCATED=1` | Off | Blocks output too large to scan in full, even when `ZN_ALLOW_TRUNCATED=1` is set. | Both |
+| `ZN_VERBOSE=1` | Off | Shows technical details of errors. `DEBUG=zn` does the same. | Both |
+| `ZN_STATS=off` | On | Turns off the local counts shown by `stats` and `report`. | npm |
+| `ZN_BLOCK_DESTRUCTIVE=1` | Off | Turns on the six destructive-command rules. | npm |
+| `ZN_HOOK_FAIL_MODE=closed` | `closed` | Makes hooks fail closed, which is the default. `open` set here is ignored; it is read only from `~/.zn/config.json`. | npm |
+| `ZN_EGRESS_CHECK` | `ask` (or the config value) | `deny` makes the outbound-network check deny instead of ask. The environment can only raise the level. | npm |
+| `ZN_PACKAGE_CHECK=offline` | The config value | Turns on offline mode for the check on newly seen packages. The environment can only add offline mode. | npm |
+| `ZN_MCP_PINNING` | The config value (`mcpPinning`) | Pinning mode for MCP servers. The stricter of this and the config value applies. | npm |
+| `ZN_HOOK_DIR` | `~/.zn/hooks` | Folder for the hook launchers. It must be private to your user. | npm |
+| `ZN_AGENT` | None | Agent name for `zn run` and the MCP server when `--agent` is not given. | npm |
+| `ZN_TEAM_JOIN_TOKEN` | None | Join token for `team join` when no token is given as an argument. An argument wins. | npm |
+| `ZN_KEYCHAIN_BACKEND` | Detected | Forces the system keychain backend. For tests and unusual setups. | npm |
+| `ZN_KEYCHAIN_SERVICE` | `zn-vault` | Service name used in the keychain. For tests and unusual setups. | npm |
+| `ZN_KEYCHAIN_PATH` | The system default | On macOS, the keychain file to use. For tests and unusual setups. | npm |
+| `ZN_NO_COMPILE_CACHE` | Off | Any value turns off the Node.js compile cache. | npm |
+
 ## Set up and check
 
 ### `init`
