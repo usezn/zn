@@ -214,7 +214,7 @@ zn-gate scan [path] [--format text|json|github] [--all] [--include .rst,.xml] [-
 
 Looks through prompt templates, markdown, skills and configs for injection traps and secrets. `path` defaults to the current folder. Matched values are never printed.
 
-- `--format`: `text` (default), `json`, or `github` (workflow annotations for CI).
+- `--format`: `text` (default), `json`, or `github` (workflow annotations for CI). The Node and Python versions take the same values. `scan` has no SARIF output; `zn-gate audit --format sarif` (npm package) covers agent configs instead. Any other value exits `2`.
 - `--all` (or `--code`): include source code files.
 - `--include`: more file extensions to scan.
 - `--exclude`: more folders to skip.
@@ -261,7 +261,7 @@ Exit codes: `0` done, `1` findings meet `--fail-on`, `2` wrong usage or a failur
 zn-gate analyze "<text>"
 ```
 
-Checks a piece of text for prompt injection and prints the answer as JSON. It is local; the optional cloud check is used only when it is on. Exit codes: `0` allowed, `1` no text given, `2` blocked.
+Checks a piece of text for prompt injection and prints the answer as JSON. `--json` is accepted and changes nothing, because the answer is always JSON (the Python package takes the same flag). It is local; the optional cloud check is used only when it is on. Exit codes: `0` allowed, `1` no text given, `2` blocked.
 
 ### `pins`
 
