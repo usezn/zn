@@ -75,7 +75,7 @@ npx -y zn-gate vault forget ~/projects/demo
 If the project had a map, the command prints `Forgot the token map of <folder>`. If it had none, as in the throwaway vault used here, it says so and still exits 0:
 
 ```text
-No token map stored for /home/me/projects/demo
+No token map stored for ~/projects/demo
 ```
 
 The folder name in that line is an example. The command does not ask for confirmation, and the deletion cannot be undone. It touches only that project's map: the vault, your other projects and the audit log are not changed. More than one folder, or any option, is a usage error and exits 2 (`Unexpected argument "b".` plus the usage line).
@@ -88,7 +88,7 @@ Before it acts, purge checks three things, each before anything is touched:
 
 - it is not an AI agent that runs it (an agent is refused with `must be run by you in your own terminal, not by an AI agent`);
 - this computer does not belong to a zn Team organization (otherwise it refuses and exits 1, because the controls of the organization are kept in the vault);
-- the vault is locked (otherwise it says `The vault is unlocked. Run `zn-gate lock` first` and exits 1).
+- the vault is locked (otherwise it says `` [zn] The vault is unlocked. Run `zn-gate lock` first, then `zn-gate vault purge`. `` and exits 1).
 
 Then it lists every file it will delete and waits for you. In a terminal you type the phrase `purge my vault`. Anything else cancels:
 
