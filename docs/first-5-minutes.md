@@ -138,6 +138,24 @@ zn also has a text check that your agent can call through zn's own tools. Some p
 
 For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a block: `"verdict": "block"` with the reason "Override prior instructions".
 
+## Windows PowerShell: the .cmd forms
+
+On Windows, PowerShell can refuse to run the `npx.ps1` and `zn.ps1` scripts that npm writes next to the programs, and then a bare `npx` or `zn` fails with "running scripts is disabled on this system". The `.cmd` forms start the same programs without those scripts. Use them when a bare command fails this way:
+
+```powershell
+npx.cmd -y zn-gate init
+npx.cmd -y zn-gate check
+```
+
+After `npm.cmd install -g zn-gate`, the installed program is `zn.cmd`:
+
+```powershell
+zn.cmd check
+zn.cmd status
+```
+
+On Windows, zn prints the `.cmd` form in its own messages, so copy the command it shows. The execution policy note above is a permanent fix; the `.cmd` forms need no change to your settings. If `npx.cmd` or `zn.cmd` says it is not recognized, the folder where npm installs programs is not on PATH: see [troubleshooting](troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+
 ## If something fails
 
 - `npx: command not found`: install the LTS version of [Node.js](https://nodejs.org/), open a new terminal and run the command again.
