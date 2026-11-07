@@ -7,6 +7,7 @@
 //! - Email addresses → `[EMAIL_REDACTED]`
 //! - API keys, secrets, passwords, tokens → `[SECRET_REDACTED]`
 //! - AWS access key ids (`AKIA`, `ASIA`, `ABIA` or `ACCA` + 16 capitals/digits) → `[SECRET_REDACTED]`
+//! - GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`) and Stripe secret keys (`sk_`/`rk_` + `live`/`test`/`prod`) → `[SECRET_REDACTED]`
 //! - Credit card numbers (known network prefix and length, Luhn checksum) → `[CARD_REDACTED]`
 //! - Social Security Numbers (US, valid area/group/serial) → `[SSN_REDACTED]`
 //! - Phone numbers (E.164 `+<digits>`, or formatted NANP numbers) → `[PHONE_REDACTED]`
@@ -33,6 +34,9 @@ static E164_REGEX: OnceLock<Regex> = OnceLock::new();
 static NANP_REGEX: OnceLock<Regex> = OnceLock::new();
 static JWT_REGEX: OnceLock<Regex> = OnceLock::new();
 static AWS_KEY_REGEX: OnceLock<Regex> = OnceLock::new();
+static GITHUB_TOKEN_REGEX: OnceLock<Regex> = OnceLock::new();
+static GITHUB_PAT_REGEX: OnceLock<Regex> = OnceLock::new();
+static STRIPE_KEY_REGEX: OnceLock<Regex> = OnceLock::new();
 static AUTH_HEADER_REGEX: OnceLock<Regex> = OnceLock::new();
 static AUTH_PLACEHOLDER_REGEX: OnceLock<Regex> = OnceLock::new();
 static QUOTED_OPEN_REGEX: OnceLock<Regex> = OnceLock::new();
@@ -653,6 +657,81 @@ fn aws_key_spans(text: &str) -> Vec<(usize, usize)> {
     spans
 }
 
+fn github_token_re() -> &'static Regex {
+    GITHUB_TOKEN_REGEX.get_or_init(|| Regex::new(r"gh[pousr]_[A-Za-z0-9]{36,255}").unwrap())
+}
+
+fn github_pat_re() -> &'static Regex {
+    GITHUB_PAT_REGEX
+        .get_or_init(|| Regex::new(r"github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59,}").unwrap())
+}
+
+fn stripe_key_re() -> &'static Regex {
+    STRIPE_KEY_REGEX
+        .get_or_init(|| Regex::new(r"(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{20,247}").unwrap())
+}
+
+/// Shannon entropy in bits per character of an ASCII string.
+fn shannon_bits(s: &str) -> f64 {
+    let mut counts = [0usize; 256];
+    for b in s.bytes() {
+        counts[b as usize] += 1;
+    }
+    let n = s.len() as f64;
+    counts
+        .iter()
+        .filter(|&&c| c > 0)
+        .map(|&c| {
+            let p = c as f64 / n;
+            -p * p.log2()
+        })
+        .sum()
+}
+
+/// Same check as the Node.js scrubber (`looksRandom`): at least two character
+/// classes (lower, upper, digit) and at least 3.5 bits of entropy per character.
+fn looks_random(body: &str) -> bool {
+    let b = body.as_bytes();
+    let classes = usize::from(b.iter().any(|c| c.is_ascii_lowercase()))
+        + usize::from(b.iter().any(|c| c.is_ascii_uppercase()))
+        + usize::from(b.iter().any(|c| c.is_ascii_digit()));
+    classes >= 2 && shannon_bits(body) >= 3.5
+}
+
+/// Spans of `re` matches that do not touch a token character (ASCII letter,
+/// digit, `_` or `-`) on either side, as the Node.js `NB`/`NA` boundaries do,
+/// and whose text passes `check`.
+fn token_spans(re: &Regex, text: &str, check: fn(&str) -> bool) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut pos = 0;
+    while pos < text.len() {
+        let Some(m) = re.find_at(text, pos) else {
+            break;
+        };
+        let (s, e) = (m.start(), m.end());
+        let tok =
+            |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if !tok(char_before(text, s)) && !tok(char_after(text, e)) && check(m.as_str()) {
+            spans.push((s, e));
+            pos = e;
+        } else {
+            pos = s + 1;
+        }
+    }
+    spans
+}
+
+fn github_token_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = token_spans(github_token_re(), text, |v| looks_random(&v[4..]));
+    spans.extend(token_spans(github_pat_re(), text, |_| true));
+    spans.sort_unstable();
+    spans
+}
+
+fn stripe_key_spans(text: &str) -> Vec<(usize, usize)> {
+    token_spans(stripe_key_re(), text, |v| looks_random(&v[8..]))
+}
+
 fn replace_spans(text: &str, spans: &[(usize, usize)], marker: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
@@ -706,6 +785,8 @@ impl Scrubber {
             .replace_all(&output, "[EMAIL_REDACTED]")
             .to_string();
         output = replace_spans(&output, &aws_key_spans(&output), "[SECRET_REDACTED]");
+        output = replace_spans(&output, &github_token_spans(&output), "[SECRET_REDACTED]");
+        output = replace_spans(&output, &stripe_key_spans(&output), "[SECRET_REDACTED]");
         output = auth_re().replace_all(&output, redact_auth).to_string();
         output = redact_quoted_values(&output);
         output = api_re().replace_all(&output, redact_secret).to_string();
@@ -1530,6 +1611,99 @@ mod tests {
             "AKIAIOSFODNN7EXAMPLE9",
             "AKIAAAAAAAAAAAAAAAAA",
             "AKIAIOSFODNN7exampleX",
+        ] {
+            assert_eq!(Scrubber::scrub(input), input, "{input}");
+        }
+    }
+
+    // Fictional tokens built at runtime from a made-up body, not credentials.
+    const FAKE_BODY: &str = "aB3dE5fG7hI9jK1lM2nO4pQ6rS8tU0vW1xY2";
+
+    fn fake_pat() -> String {
+        format!(
+            "github_pat_{}_{}",
+            &FAKE_BODY[..22],
+            FAKE_BODY.repeat(2)[..59].to_string()
+        )
+    }
+
+    #[test]
+    fn test_github_tokens_mid_line_and_at_end_are_masked() {
+        for prefix in ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"] {
+            let tok = format!("{prefix}{FAKE_BODY}");
+            assert_eq!(
+                Scrubber::scrub(&format!("use {tok} here")),
+                "use [SECRET_REDACTED] here"
+            );
+            assert_eq!(
+                Scrubber::scrub(&format!("use {tok}")),
+                "use [SECRET_REDACTED]"
+            );
+        }
+        let pat = fake_pat();
+        assert_eq!(
+            Scrubber::scrub(&format!("a {pat} b")),
+            "a [SECRET_REDACTED] b"
+        );
+        assert_eq!(Scrubber::scrub(&format!("a {pat}")), "a [SECRET_REDACTED]");
+    }
+
+    #[test]
+    fn test_github_and_stripe_keys_in_json_with_neutral_key_are_masked() {
+        let gh = format!("ghp_{FAKE_BODY}");
+        let st = format!("sk_live_{}", &FAKE_BODY[..24]);
+        let input = format!("{{\"note\":\"{gh}\",\"ref\":\"{st}\"}}");
+        let out = Scrubber::scrub(&input);
+        assert!(!out.contains(FAKE_BODY), "{out}");
+        assert!(!out.contains(&FAKE_BODY[..24]), "{out}");
+        assert!(out.contains("[SECRET_REDACTED]"), "{out}");
+    }
+
+    #[test]
+    fn test_stripe_keys_are_masked_including_in_minified_text() {
+        for prefix in ["sk_live_", "sk_test_", "rk_live_", "rk_test_", "sk_prod_"] {
+            let tok = format!("{prefix}{}", &FAKE_BODY[..24]);
+            assert_eq!(
+                Scrubber::scrub(&format!("k={tok};")),
+                "k=[SECRET_REDACTED];",
+                "{prefix}"
+            );
+            assert_eq!(
+                Scrubber::scrub(&format!("x {tok}")),
+                "x [SECRET_REDACTED]",
+                "{prefix}"
+            );
+        }
+        let tok = format!("sk_live_{}", &FAKE_BODY[..24]);
+        let filler = "var a=function(b){return b+1};".repeat(400);
+        let input = format!("{filler}const k=\"{tok}\";{filler}");
+        let out = Scrubber::scrub(&input);
+        assert!(!out.contains(&FAKE_BODY[..24]), "key left in minified text");
+        assert!(out.contains("const k=\"[SECRET_REDACTED]\";"));
+    }
+
+    #[test]
+    fn test_github_and_stripe_look_alikes_are_unchanged() {
+        let short_gh = format!("ghp_{}", &FAKE_BODY[..35]);
+        let glued_gh = format!("xghp_{FAKE_BODY}");
+        let dash_gh = format!("a-ghp_{FAKE_BODY}");
+        let short_st = format!("sk_live_{}", &FAKE_BODY[..19]);
+        let glued_st = format!("Ask_live_{}", &FAKE_BODY[..24]);
+        let bad_env = format!("sk_dev_{}", &FAKE_BODY[..24]);
+        let repeated = format!("sk_live_{}", "a".repeat(24));
+        let short_pat = format!("github_pat_{}_{}", &FAKE_BODY[..22], &FAKE_BODY[..30]);
+        for input in [
+            "ghp_",
+            "github_pat_",
+            "sk_live_",
+            short_gh.as_str(),
+            glued_gh.as_str(),
+            dash_gh.as_str(),
+            short_st.as_str(),
+            glued_st.as_str(),
+            bad_env.as_str(),
+            repeated.as_str(),
+            short_pat.as_str(),
         ] {
             assert_eq!(Scrubber::scrub(input), input, "{input}");
         }
