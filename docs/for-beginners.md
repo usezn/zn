@@ -79,7 +79,7 @@ The output is what zn-gate printed on a real machine, with one change: the `Targ
 [+]  zn-gate Static Security Audit
 Target  : /home/you/zn-first-run
 Scope   : Prompt templates, docs, configs (use --code to scan source)
-Files   : 2 file(s) queued for audit
+Files   : 1 file(s) queued for audit
 
 Findings (1):
   [x] .env:1 Secret found
@@ -90,7 +90,7 @@ Findings (1):
 
 -----------------------------------------------------------------------------
 Audit Result : FAILED - 1 SECRET(S) FOUND
-Files Scanned: 2
+Files Scanned: 1
 Files Skipped: 0
 Status       : Move the secrets out of these files (see "Next" for each one)
 -----------------------------------------------------------------------------
@@ -100,7 +100,7 @@ Status       : Move the secrets out of these files (see "Next" for each one)
 
 - **`zn-gate Static Security Audit`**: the name of the check. It only reads files. It does not run anything from them.
 - **`Target`**: the folder it checked. **`Scope`**: the kinds of files it reads by default, here text, docs and config files. `.env` is a config file, so it is read.
-- **`Files : 2 file(s)`**: the two files in the folder, `.env` and an ordinary text file.
+- **`Files : 1 file(s)`**: the one file in the folder, `.env`.
 - **`[x] .env:1 Secret found`**: the file and the line number where it found a secret. The `[x]` marks a finding.
 - **`Rule: secret:aws_access_key`**: the kind of secret the rule recognises, here an AWS access key.
 - **`Line: AWS_ACCESS_KEY_ID=[REDACTED_AWS_KEY]`**: the line as zn-gate saw it, with the value replaced by `[REDACTED_AWS_KEY]`. zn-gate never prints the value itself, so you can paste this report without leaking it.
