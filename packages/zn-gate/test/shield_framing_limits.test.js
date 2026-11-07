@@ -246,16 +246,37 @@ test('a flood of server output is held back while the client does not read', { t
   } finally { await s.stop(); fs.rmSync(progress, { force: true }); }
 });
 
+// Waits until done() holds. The wait does not end because a fixed time has passed: it ends when the proxy makes no progress
+// for stallMs (the value mark() returns does not change), or after maxMs in all. A slow or busy runner only makes the flow
+// slower, which a fixed limit counted as a failure; a proxy that stops moving still fails, with the last values it reached.
+function waitWhileMoving(done, what, mark, { stallMs = 90000, maxMs = 1200000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    let last = mark();
+    let lastChange = started;
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const m = mark();
+      if (m !== last) { last = m; lastChange = now; }
+      if (done()) { clearInterval(timer); resolve(); return; }
+      if (now - lastChange > stallMs) { clearInterval(timer); reject(new Error('stalled: ' + what + ' (no progress for ' + stallMs + ' ms at ' + m + ')')); return; }
+      if (now - started > maxMs) { clearInterval(timer); reject(new Error('too long: ' + what + ' (' + m + ')')); }
+    }, 500);
+  });
+}
+
 // What this checks is the memory bound, not the time: the file runs on its own (runner-plain.json), and the wait for the
-// 150 MB to pass is generous so that a busy CI runner only makes it slower.
-test('a flood of server output the proxy checks more slowly than it arrives does not pile up in memory', { timeout: 300000 }, async (t) => {
+// 150 MB to pass ends on a stall, not on a fixed time, so that a busy CI runner only makes it slower.
+test('a flood of server output the proxy checks more slowly than it arrives does not pile up in memory', { timeout: 1500000 }, async (t) => {
   const progress = path.join(os.tmpdir(), 'zn-frame-progress2-' + process.pid);
   fs.writeFileSync(progress, '0');
   const s = startShield({}, { PROGRESS_FILE: progress, FLOOD_LINES: '2500' });
   try {
     s.send(call(21, 'flood'));
     // The client reads everything. 2500 notifications of 60 KB (150 MB) must not sit in the proxy at once.
-    await s.wait(() => Number(fs.readFileSync(progress, 'utf8')) >= 2500 && s.lines.length >= 2500, 'all notifications', 280000);
+    const written = () => Number(fs.readFileSync(progress, 'utf8'));
+    await waitWhileMoving(() => written() >= 2500 && s.lines.length >= 2500, 'all notifications',
+      () => 'server wrote ' + written() + ', client read ' + s.lines.length + ', stderr: ' + s.stderr.slice(-300));
     const mb = hwmMb(s.proc.pid);
     if (mb === null) return t.skip('no /proc on this system');
     assert.ok(mb < 250, `peak memory of the proxy was ${Math.round(mb)} MB`);
