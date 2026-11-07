@@ -15,6 +15,8 @@ Terms such as hook, matcher and scrubber are explained in the [glossary](glossar
 
 **What has been tested.**
 
+The agent versions named here are kept in one file, [`packages/zn-gate/lib/agents/tested-versions.json`](../packages/zn-gate/lib/agents/tested-versions.json). `zn-gate check` reads it to show the version of each agent on your machine next to the version zn was last tested with, and a test fails when this page and that file disagree.
+
 - **ZCode desktop app 3.16.3:** tested end to end in the app on Linux. On Linux and Windows it was also tested through the agent runtime that ships with the app (details: [ZCode page](editors/zcode.md)).
 - **Antigravity:** tested end to end with the official `agy` CLI 1.4.7 on Linux. 13 of the 15 scenarios gave a result and none failed. The model refused to delete the home folder, so that check was run on the installed hook directly; another plugin's hook did not always run next to zn's, while zn's hook always ran and its deny always applied.
 - **Claude Code, Codex CLI and OpenCode:** end-to-end runs with the agent itself, with 0 secret values sent to the model provider (see the table below). Codex CLI 0.163.0 and OpenCode 1.19.3 also ran end to end on Windows Server 2022.
