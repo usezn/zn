@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-10-31.7",
+      "version": "2026-11-07.1",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -47,7 +47,7 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "0c9d3dc6c44b44ac5f52891acfc345f634694fb6c8d0d56a08752773647db688",
+        "lib/rules.js": "ee544bce36af651ab5e6367da50cbb3578e544a3d1de8e546608162662369b97",
         "lib/mcp-secrets.js": "1a051cdb7ac9cd04b46494a2efe0aa90ab136a5e866d2dbf42d4431888ab7487"
       }
     },
@@ -156,7 +156,7 @@
     },
     "audit": {
       "version_const": "AUDIT_RULES_VERSION",
-      "version": "2026-10-30.1",
+      "version": "2026-11-06.3",
       "ids": [
         "ZNA001",
         "ZNA002",
@@ -179,6 +179,7 @@
         "ZNA019",
         "ZNA020",
         "ZNA021",
+        "ZNA022",
         "patterns.CRED_FLAG_NAME",
         "patterns.CRED_FLAG_ONLY",
         "patterns.INTERPRETERS",
@@ -194,6 +195,7 @@
         "patterns.isCredentialFlag",
         "patterns.isLoopback",
         "patterns.isPlaceholder",
+        "patterns.maskUrls",
         "patterns.npmSpec",
         "patterns.packagesOf",
         "patterns.pinnedNpm",
@@ -205,13 +207,13 @@
         "patterns.weakening"
       ],
       "sha256": {
-        "lib/audit/rules.js": "0b4f5e96a50f2122adcaa4bcdea3ed1f540686b5fde641f7815881a624d0dcc3",
-        "lib/audit/patterns.js": "e758c777211da759a6973260363f3ddac41a37156171886bed624d97f18cdf46"
+        "lib/audit/rules.js": "7791a1d80e7f0ff24d6693f13c164e729379ef54799c2f8b054c92a49c158f46",
+        "lib/audit/patterns.js": "fddd085d756061f1fcec7cec8aca3029f4b3ac7e63abb340e8d84c36a03f52c1"
       }
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-11-02.44",
+      "version": "2026-11-07.1",
       "ids": [
         "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
@@ -241,7 +243,7 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "23382ef845bf0d7e5068ac90c3436858aacf4353b0d7ef1422b8a171449567ab",
+        "lib/hooks/policy.js": "a2c6ffbb7c8d408a49bc023cd3d4859ed3f51aac70df3ebc77e946d8198ec4a5",
         "lib/broker/files.js": "f74250b2509bc7451865279da3daff9b1be5e0697cb7d275f0b0871b35b0893d",
         "lib/broker/markers.js": "bf01a06b547629804c504e37a2c6126330ab729bed51ec460bfca4036c1a0b3b",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",

@@ -1,3 +1,4 @@
-{"ts":"2026-10-11T11:52:03.941Z","tool_name":"Bash","input":{"command":"ZN_AGENT=claude-code \"/usr/bin/node\" \"<repo>/packages/zn-gate/lib/broker/run.js\" -- node -e \"console.log('db:', process.argv[1])\" __ZN_DB_PASSWORD__","description":"allowed command"}}
-{"ts":"2026-10-11T11:52:05.690Z","tool_name":"Bash","input":{"command":"ZN_AGENT=claude-code \"/usr/bin/node\" \"<repo>/packages/zn-gate/lib/broker/run.js\" -- python3 -c \"import sys; print('db:', sys.argv[1])\" __ZN_DB_PASSWORD__","description":"command not approved"}}
-{"ts":"2026-10-11T11:52:06.415Z","tool_name":"Bash","input":{"command":"printf %s <<VALUE:AWS_ACCESS_KEY_ID>> | wc -c","description":"restore a detected value locally"}}
+{"ts":"2026-10-31T20:46:46.617Z","tool_name":"Write","input":{"file_path":"<run>/proj/src/client.js","content":"const token = process.env.GITHUB_TOKEN; // stored as __ZN_GITHUB_TOKEN__\n"}}
+{"ts":"2026-10-31T20:46:46.739Z","tool_name":"Bash","input":{"command":"zn run --secrets DB_PASSWORD -- node -e \"console.log('db:', process.env.DB_PASSWORD)\"","description":"allowed command"}}
+{"ts":"2026-10-31T20:46:47.363Z","tool_name":"Bash","input":{"command":"zn run --secrets DB_PASSWORD -- python3 -c \"import os; print('db:', os.environ['DB_PASSWORD'])\"","description":"command not approved"}}
+{"ts":"2026-10-31T20:46:47.700Z","tool_name":"Bash","input":{"command":"printf %s <<VALUE:AWS_ACCESS_KEY_ID>> | wc -c","description":"restore a detected value locally"}}

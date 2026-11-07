@@ -146,16 +146,17 @@ Rule ids are stable: a rule may get better, but its id never changes meaning.
 | ZNA016 | critical (Windows executables) / high | An executable in the audited root shares its name with a common tool (`git.exe`, `node.exe`, `npm.cmd`, `python`, `zn.cmd`, ...) | Windows and some tools search the current directory first: the planted file runs instead of the real tool. CVE-2026-63093 |
 | ZNA017 | medium | Project settings add plugin marketplaces or enable plugins (`extraKnownMarketplaces`, `enabledPlugins`) | Third-party plugins (hooks, MCP servers, skills) get installed and updated once the project is trusted ("Plugin4Shell") |
 | ZNA018 | low | The repository ships agent extensions (commands, subagents, skills, plugins) | Inventory: they are reviewed by the other rules, but you should know they are there |
-| ZNA019 | high / medium | A CI workflow runs an AI agent on input anyone can write (`issues`, `issue_comment`, `pull_request_target`, discussions) | An issue or comment becomes instructions for an agent that holds repository tokens. High with `pull_request_target`, issue or comment text pasted into the workflow (`${{ github.event.issue.body }}`, also through `env:`), an action opened to users without write access (`allowed_non_write_users`), or a CLI step (`claude -p`, `codex exec`) with write permissions and no author filter. Medium otherwise: the common agent actions check the actor's own permission before running |
+| ZNA019 | high / medium | A CI workflow runs an AI agent on input anyone can write (`issues`, `issue_comment`, `pull_request_target`, `pull_request_review`, `pull_request_review_comment`, `discussion`, `discussion_comment`) | An issue or comment becomes instructions for an agent that holds repository tokens. High with `pull_request_target`, issue or comment text pasted into the workflow (`${{ github.event.issue.body }}`, also through `env:`), an action opened to users without write access (`allowed_non_write_users`, or `allow_users: "*"`), or a CLI step (`claude -p`, `codex exec`) with write permissions and no author filter. Medium otherwise: the common agent actions check the actor's own permission before running |
 | ZNA020 | high / low | An agent file could not be checked: a syntax error, a size over 1 MiB (the first 1 MiB is still checked), a symbolic link leaving the repository, or a scan that stopped early | The agent may still act on it. High when the file can run commands or redirect the agent (the text is then searched for risky keys, and `runOn: folderOpen` or a download piped into a shell is still reported), when it uses a reserved key such as `__proto__`, or when the scan did not finish; low for a syntax error in a file that cannot run anything |
 | ZNA021 | medium | An agent instruction file (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, rules, `copilot-instructions.md`, `SKILL.md` and other skill, command and agent files) has a run of 40 or more empty or whitespace-only lines with more text after it | The text after the run is out of view for a person who opens the file and past the part of it a classifier reads. The finding gives the line where that text starts and the length of the run; the text is not printed. Blank lines at the end of a file are not reported. The check counts lines and uses no text patterns: read the file from the reported line |
+| ZNA022 | high / medium | A hook of type `http`, or of type `agent` that names a URL, in an agent settings or hooks file | Each tool event the hook matches (the command line, file paths and contents, tool output) is posted to that address, and from the moment the folder is opened when the file is in the project. High for a remote address, medium for a local one (`127.0.0.1`, `localhost`, `::1`), low in your own user file. Environment variables that its headers interpolate or `allowedEnvVars` lists are named in the finding, never their values. A command hook is reported by ZNA001, a placeholder URL such as `${HOOK_URL}` is not reported |
 
 ## Output
 
 ### Text
 
 ```text
-zn audit  ./some-repo  (zn-gate 1.14.1)
+zn audit  ./some-repo  (zn-gate 1.15.0)
 
 CRITICAL  ZNA007  .claude/settings.json:3  [claude]
           Model API endpoint overridden by the project
@@ -167,7 +168,7 @@ CRITICAL  ZNA007  .claude/settings.json:3  [claude]
 1 finding (1 critical, 0 high, 0 medium, 0 low) in 1 file. Failing: severity >= high.
 ```
 
-Colors are used only on a terminal and never when `NO_COLOR` is set or `TERM=dumb`. Control
+Colors are used only on a terminal and never when `NO_COLOR` is set or `TERM=dumb`. Emoji and box-drawing characters are replaced by short ASCII markers such as `[ok]` and `[!]` outside a terminal and when `CI` is set. Control
 characters and escape sequences from the repository (in evidence, details and
 file names) are printed as `\x1b`, never sent to the terminal.
 
@@ -276,7 +277,12 @@ object, the same entries as the "Directories not read" list in the text report. 
 start with `~/`. `agent` is the agent that reads the file (`any` when several
 do). `evidence` is the matching line, cut to 160 characters, with secrets
 replaced by `[REDACTED:<TYPE>]`. URLs in `detail` and `evidence` lose their user,
-password, query string and fragment.
+password, path, query string and fragment: only `scheme://host[:port]` is shown,
+and a URL that cannot be read safely is shown as `(unparsable URL)`. This covers
+every URL on the line, not only the one the finding is about. A proxy written
+without a scheme (`user:password@host:port`) shows `[REDACTED]@host:port`. The one
+exception is the download URL of ZNA002, which is shown without its user and
+password; any other URL in that finding is reduced like the rest.
 
 ### SARIF
 
@@ -289,7 +295,7 @@ findings) so alerts survive line moves and stay unique. Findings from
 flag off in CI.
 
 ```yaml
-- run: npx -y zn-gate@1.14.1 audit --format sarif --output zn-audit.sarif --fail-on none
+- run: npx -y zn-gate@1.15.0 audit --format sarif --output zn-audit.sarif --fail-on none
 - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
   with:
     sarif_file: zn-audit.sarif

@@ -21,6 +21,7 @@ from . import __version__
 from .rules import RULES_VERSION, evaluate, mask_token_runs
 from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact, redact_scan_secrets as _scan_redact
 from . import mcp_secrets as _mcp
+from .node_tools import node_available
 from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
 
 
@@ -109,6 +110,9 @@ def _leak_next_step(file: str, rule: str) -> str:
     if rule == "secret:private_key":
         return ("Next: move the key out of this file (for example to ~/.ssh or a secret manager) "
                 "and replace it if the file was ever committed or shared.")
+    if not node_available():
+        return ("Next: take the value out of this file and set it as an environment variable in your own shell or a secret manager "
+                "(the Python package has no local vault; the vault commands need Node.js), and rotate it if it was ever committed or shared.")
     if re.match(r"\.env", os.path.basename(file), re.IGNORECASE):
         try:
             rel = _relative_to_cwd(file)
@@ -127,8 +131,10 @@ ALERT = "\U0001f6a8"
 CHECK = "\u2705"
 LOCK = "\U0001f512"
 
-# Plain markers used when the console cannot encode the symbols above, for
-# example a Windows console with a legacy code page such as cp1252.
+# Plain markers used wherever the symbols above are off: a pipe or file, plain-text
+# requests (NO_COLOR, TERM=dumb), CI runs, and consoles that cannot encode them
+# (for example a Windows console with a legacy code page such as cp1252).
+# Same markers as the Node package (lib/term.js).
 _ASCII_MARKERS = {SHIELD: "[+]", ALERT: "[!]", CHECK: "[ok]", LOCK: "[ok]"}
 
 
@@ -151,16 +157,27 @@ def _configure_output_streams() -> None:
 
 def _plain_text() -> bool:
     """True when the environment asks for plain text: NO_COLOR set to any non-empty
-    value (no-color.org) or TERM=dumb. Symbols are then left out; the words next to
-    them carry the same meaning."""
+    value (no-color.org) or TERM=dumb."""
     return bool(os.environ.get("NO_COLOR")) or os.environ.get("TERM") == "dumb"
 
 
+def _is_terminal(stream: Any) -> bool:
+    isatty = getattr(stream, "isatty", None)
+    try:
+        return bool(isatty and isatty())
+    except (OSError, ValueError):
+        return False
+
+
 def _icon(symbol: str, stream: Any = None) -> str:
-    """Return `symbol` if the stream can encode it, else a plain ASCII marker ('' in plain text)."""
-    if _plain_text():
-        return ""
+    """Return `symbol` where symbols are on, else its plain ASCII marker ('' if it has none).
+
+    Symbols are on only on a terminal that is not asked for plain text, not in CI
+    (CI set to any non-empty value), and only when the stream can encode them.
+    """
     stream = stream if stream is not None else sys.stdout
+    if _plain_text() or os.environ.get("CI") or not _is_terminal(stream):
+        return _ASCII_MARKERS.get(symbol, "")
     encoding = getattr(stream, "encoding", None) or "utf-8"
     try:
         symbol.encode(encoding)
@@ -206,7 +223,7 @@ def cmd_test(args: argparse.Namespace) -> int:
         # DLP filter is reported on its own line and does not turn an ALLOW
         # into a BLOCK.
         status_icon = f"{_lead(SHIELD)}ALLOW" if assessment.allowed else f"{_lead(ALERT)}BLOCK"
-        print(f"\n{status_icon} | Verdict: {assessment.verdict.upper()} (latency: {latency_us:.1f}µs)")
+        print(f"\n{status_icon} | Verdict: {assessment.verdict.upper()} (latency: {latency_us:.1f} us)")
         print(f"Rule:       {assessment.rule}")
         if assessment.reason:
             print(f"Reason:     {assessment.reason}")
@@ -239,6 +256,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     elapsed_ms = (time.perf_counter() - t0) * 1000
     res["latency_ms"] = round(elapsed_ms, 2)
 
+    if res.get("degraded"):
+        print("[zn-gate] Warning: the cloud model was unavailable, so this verdict comes from the cloud gate fallback rules, not from its model.",
+              file=sys.stderr)
     print(json.dumps(res, indent=2))
 
     return 2 if res.get("verdict") == "block" else 0
@@ -657,7 +677,7 @@ def _print_report(fmt: str, scanned: int, skipped: List[Dict[str, str]], all_vio
             **({"warning": nothing} if nothing else {}),
         }, indent=2))
     else:
-        print(f"\n{_lead(SHIELD)}zn-gate Security Scanner — Scanned {scanned} files")
+        print(f"\n{_lead(SHIELD)}zn-gate Security Scanner - Scanned {scanned} files")
         if nothing:
             print(f"{_lead(ALERT)}{_safe_text(nothing)}")
         if skipped:
@@ -816,6 +836,15 @@ NPM_ONLY_COMMANDS = frozenset({
 
 
 def npm_only_message(command: str) -> str:
+    if not node_available():
+        return (
+            f"zn-gate {command} is in the npm package, not in this Python package.\n"
+            "The Python package protects agents you build yourself (LangChain, CrewAI, "
+            "LlamaIndex or plain tool calling).\n"
+            "To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, "
+            "install Node.js 18 or later (22 LTS recommended; the Claude Code plugin needs 20.19 or later) "
+            "from https://nodejs.org, then follow the install steps at https://github.com/usezn/zn#install\n"
+        )
     return (
         f"zn-gate {command} is in the npm package, not in this Python package.\n"
         "The Python package protects agents you build yourself (LangChain, CrewAI, "
@@ -828,10 +857,16 @@ def npm_only_message(command: str) -> str:
 
 # Commands that exist only in the npm package and take no explanation of the
 # Python/agents split: they just say where the command lives.
-NPM_ONLY_SIMPLE_COMMANDS = frozenset({"report", "reach", "connect", "disconnect", "uninstall"})
+NPM_ONLY_SIMPLE_COMMANDS = frozenset({"report", "reach", "why", "connect", "disconnect", "uninstall"})
 
 
 def npm_only_simple_message(command: str) -> str:
+    if not node_available():
+        return (
+            f"zn-gate {command} is a command of the npm package, not of this Python package.\n"
+            "It needs Node.js 18 or later: install it from https://nodejs.org, then follow the install steps at "
+            "https://github.com/usezn/zn#install\n"
+        )
     return (
         f"zn-gate {command} is a command of the npm package, not of this Python package.\n"
         "Run it with Node.js 18 or later:\n"
@@ -842,6 +877,11 @@ def npm_only_simple_message(command: str) -> str:
 
 
 def npm_help_message() -> str:
+    if not node_available():
+        return (
+            "zn-gate help is not a command. This package shows its help with --help:\n"
+            "  zn-gate --help\n"
+        )
     return (
         "zn-gate help is not a command. The npm package shows its help with --help.\n"
         "Run it with Node.js 18 or later:\n"

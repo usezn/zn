@@ -73,6 +73,8 @@ test('check: every agent installed for the user blocks .env and allows an ordina
     if (r.id !== 'opencode') assert.equal(r.verified, true, `${r.id}: installed hook not run`);
   }
   assert.equal(res.removed, true);
+  // Gemini CLI support is experimental: its name in the report must keep saying so.
+  assert.match(byId(res, 'gemini').name, /experimental/);
   const { s, code } = textOf(res);
   assert.equal(code, 0);
   assert.match(s, /OK Claude Code\s+blocked the \.env file and allowed the ordinary file/);
@@ -96,6 +98,7 @@ test('check: no setup at all is a failure, with the command for each agent found
   assert.equal(code, 1);
   assert.match(s, winCmdRe(/Codex CLI\s+zn is not set up for this agent\. To protect it, run `zn hooks install codex` in your own terminal/));
   assert.match(s, /claude plugin install zn-gate@usezn/);
+  assert.match(s, /install the zn-gate plugin \(needs internet\): `claude plugin marketplace add usezn\/zn`/);
   assert.match(s, /Cursor\s+not found on this machine\n/);
   assert.match(s, winCmdRe(/To set it up, run `npx -y zn-gate init` in your own terminal/));
 });
@@ -707,12 +710,15 @@ test('check: only an absolute sh or node running a script inside the plugin fold
     ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/x.sh"\tPreToolUse', /control character/],
     ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/x.sh"\nnode x', /control character/],
   ];
-  for (const [cmd, re] of unsafe) {
+  // These commands are judged from the manifest alone: each problem is set before any hook starts, so a live run, which
+  // starts hook processes (slow on Windows), gives the same answer. The first case runs end to end, to keep the live path
+  // covered here.
+  for (const [i, [cmd, re]] of unsafe.entries()) {
     const home = tempDir(t, 'zn-check-ccb3-');
     const root = fakePlugin(home, launcher());
     fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
     fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooksJson(cmd));
-    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: i === 0 }), 'claude-code');
     assert.equal(r.state, 'not-protected', cmd);
     assert.match(r.problem, re, cmd);
   }

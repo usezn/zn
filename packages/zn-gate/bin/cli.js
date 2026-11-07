@@ -220,8 +220,9 @@ COMMANDS:
                       endpoint overrides, permissions, instructions, planted executables
                       [--format text|json|sarif] [--output FILE] [--fail-on high]
                       [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
-  evidence            Query the local hash-chained audit log and run the UI dashboard
+  evidence            Query the local hash-chained decision log and run the UI dashboard
   logs                Tail or inspect security event logs
+  why [<id>]          Explain, in plain words, the last block in the evidence log (or the record with that id)
   mcp                 Run as standalone bidirectional MCP server for AI agents
   analyze <text>      Inspect a prompt from the CLI (local; cloud only with ZN_CLOUD=1 + key)
   test                Run the local self-test (51 curated vectors: 26 attacks, 25 benign)
@@ -246,6 +247,8 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   run -- <command>    Run a command with secrets in its environment (allowed commands only)
                       and its output masked [--secrets A,B to set env vars]
                       -s is a short form of --secrets; --agent ID names the agent in the audit log
+                      --egress-allow HOST[:PORT],... lets the command reach only those hosts over
+                      HTTP(S) through a local proxy (off by default; see docs/secrets.md)
                       (a marker in the command's arguments is refused, never filled in)
   secret log          Show the local audit log of secret use [--since 1h] (same as vault log)
   hooks install <agent> [--project] [--no-mcp]
@@ -258,6 +261,8 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
                       you confirm it separately [--dry-run]. Your own terminal only
   check               Show that zn blocks your agent from reading a fake secret
                       (also: doctor). Safe: a temporary folder, nothing is sent
+  check --hooks       List every installed zn hook and say if it is OK, stale or broken
+                      (reads files only; nothing is run or changed)
   connect             Optional: turn on the cloud check for analyze_prompt. Opens usezn.com,
                       you paste an analysis-only API key at a hidden prompt; it is kept in your system
                       keychain or the zn vault, never in a file. Your own terminal only
@@ -313,7 +318,7 @@ TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
   team join <token>   Connect this machine to your organization (confirmed outside the agent)
                       options: --api URL (another server), --agent ID (claude-code, codex, ...),
                       --include-history (also sends the audit records written before you joined)
-  team status         Organization, policy version and upload state [--json]
+  team status         Organization, policy version and upload state [--json] [--rules]
   team sync           Download the policy and upload the audit log now
   team leave          Disconnect this machine (confirmed outside the agent)
   team managed-config Print the managed settings an admin deploys with MDM (nothing is written)
@@ -354,14 +359,14 @@ EXAMPLES:
   npx -y zn-gate evidence --verify
   npx -y zn-gate evidence --ui
 
-Learn more & documentation at https://usezn.com · GitHub: https://github.com/usezn/zn
+Learn more & documentation at https://usezn.com | GitHub: https://github.com/usezn/zn
 `);
 }
 
 async function runTestSuite(options) {
   process.stdout.write(`
 ${sym(process.env, '🛡️', undefined, '  ')}Running zn-gate v${VERSION} Self-Test Suite
-Engine: Local rules (the self-test never uses the network) · Rules: ${RULES_VERSION}
+Engine: Local rules (the self-test never uses the network) | Rules: ${RULES_VERSION}
 Evaluating ${TEST_VECTORS.length} curated test vectors (${TEST_VECTORS.filter(v => v.type === 'attack').length} attacks + ${TEST_VECTORS.filter(v => v.type === 'benign').length} benign developer scenarios)...\n
 `);
 
@@ -1040,6 +1045,12 @@ async function main() {
     }
   }
 
+  // Read-only: explains one block of the local evidence log. No options of its own, no network.
+  if (args[0] === 'why') {
+    process.exitCode = require('../lib/why').runWhy(args.slice(1));
+    return;
+  }
+
   // Parse options
   const options = {
     apiKey: process.env.ZN_API_KEY,
@@ -1261,15 +1272,24 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     return;
   }
 
+  if ((command === 'check' || command === 'doctor') && args.includes('--hooks')) {
+    // Lists the installed hooks and whether each is OK, stale or broken; reads files only.
+    const hl = require('../lib/hooks-list');
+    process.exitCode = hl.report(hl.listHooks({}));
+    return;
+  }
+
   if (command === 'test') {
     await runTestSuite(options);
     return;
   }
 
   if (command === 'check' || command === 'doctor') {
+    const statsWereOn = require('../lib/stats').enabled();
     process.env.ZN_STATS = 'off'; // the test read is not counted in zn-gate stats
     const zc = require('../lib/check');
     process.exitCode = zc.report(await zc.check({}));
+    process.stdout.write('\n' + require('../lib/stats').latencyReport({ off: !statsWereOn }) + '\n');
     try {
       const cfg = require('../lib/rules').loadCustomConfig(true);
       if (cfg.errors.length > 0) {
@@ -1318,6 +1338,9 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     }
 
     const result = await analyze(textToAnalyze, options);
+    if (result.degraded) {
+      process.stderr.write('[zn-gate] Warning: the cloud model was unavailable, so this verdict comes from the cloud gate fallback rules, not from its model.\n');
+    }
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
     process.exit(isBlockVerdict(result.verdict) ? 2 : 0);
   }

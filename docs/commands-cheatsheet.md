@@ -71,6 +71,7 @@ Commands that add, change or remove a value need an interactive terminal. A valu
 | Command | Useful flags | Example |
 |---|---|---|
 | [`evidence`](cli.md#evidence) | `--verify`, `--ui`, `--port`, `--export`, `--format`, `--output`, `--tail` | `zn-gate evidence --verify` |
+| [`why`](cli.md#why) | `<id>` (optional) | `zn-gate why` |
 | [`stats`](cli.md#stats) | `--days`, `--json` | `zn-gate stats --days 30` |
 | [`stats share`](cli.md#stats-share) | `on`, `off`, `status`, `show` | `zn-gate stats share status` |
 | [`report`](cli.md#report) | `--since`, `--json`, `--no-team-line` | `zn-gate report --since 7d` |
@@ -94,6 +95,7 @@ Needs the vault unlocked. See [zn Team](team.md).
 | `--help`, `-h` | Print the short help. |
 | `--local-only` | Never use the cloud check. |
 | `--verbose` | Print debug messages to the error output. |
-| `NO_COLOR` | Turn off colors. |
+| `NO_COLOR` | Turn off colors, emoji and box-drawing characters (short ASCII markers such as `[ok]` take their place). |
+| `CI` | Any non-empty value turns off emoji and box-drawing characters too. Colors are not affected. |
 
 Exit codes: `0` done, `1` a problem was found, `2` wrong usage (or `analyze` blocked the text), `64` wrong usage for the secrets commands, `77` refused on purpose, `127` `run` could not find the program. Each command lists its own codes in the [reference](cli.md#exit-codes).
