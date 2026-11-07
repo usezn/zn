@@ -2,6 +2,7 @@
 
 Worked examples, in alphabetical order. All values in them are made up.
 
+- [ci-secret-scan-gate.md](ci-secret-scan-gate.md): a GitHub Actions job that fails when `zn-gate scan` finds a secret, with the Action and with `npx`.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
 - [first-project-walkthrough.md](first-project-walkthrough.md): one small example project, from install to removal.
 - [init-and-uninstall.md](init-and-uninstall.md): set up zn-gate, preview the steps with a dry run, then remove it.
