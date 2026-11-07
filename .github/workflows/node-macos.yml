@@ -2,8 +2,8 @@ name: zn-gate Node.js on macOS
 
 # Runs the whole zn-gate Node.js test suite on macOS with Node.js 22, including the vault tests against
 # the native macOS Keychain. Pull requests do not run it: macOS runners are the scarcest ones and kept every
-# pull request waiting. It runs in the merge queue (so not again on the push to next), on pushes to main and release branches that change
-# code with macOS-specific behaviour (the paths below: Keychain, hooks, agent setup, launching programs, file
+# pull request waiting, and the merge queue runs only the required checks. It runs on pushes to main and release
+# branches that change code with macOS-specific behaviour (the paths below: Keychain, hooks, agent setup, launching programs, file
 # system scans and links, the CLI), every day and on manual runs.
 on:
   push:
@@ -35,9 +35,6 @@ on:
       - 'packages/zn-gate/package.json'
       - 'packages/zn-gate/package-lock.json'
       - '.github/workflows/node-macos.yml'
-  # The merge queue always runs it (Node.js 22 on macOS is the macOS sample of the queue).
-  merge_group:
-    types: [ checks_requested ]
   # Daily full run on the default branch.
   schedule:
     - cron: '30 6 * * *'
