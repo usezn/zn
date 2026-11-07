@@ -14,6 +14,7 @@ Eleven short recipes for the common jobs. Each one lists the steps and links to 
 | [8. Read the weekly report](#8-read-the-weekly-report) | `zn-gate report` | see the recipe | see the recipe |
 | [9. Upgrade](#9-upgrade) | `npm install -g zn-gate` | see the recipe | see the recipe |
 | [10. Uninstall](#10-uninstall) | `zn-gate uninstall` | Yes; confirm in your terminal | Yes; `--dry-run` changes nothing |
+| [11. Pin an MCP server](#11-pin-an-mcp-server) | `zn-gate pins approve` | Yes; it refuses to run without a terminal | Yes, only zn-gate's record of approved servers |
 
 ## 1. Try zn-gate without installing it
 
