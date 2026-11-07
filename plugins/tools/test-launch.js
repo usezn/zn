@@ -753,7 +753,7 @@ try {
     for (const rel of ['lib/d0/f0.js', 'lib/d4/f39.js', 'lib/d2/f22.js']) {
       const c = makeTree('chg-' + rel.replace(/\W/g, ''));
       fs.appendFileSync(path.join(c.dir, rel), ' ');
-      await sameAnswer(c, rel, new RegExp(rel.replace(/\./g, '\\.') + ' was changed'));
+      await sameAnswer(c, rel, new RegExp(rel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' was changed'));
     }
   });
   atest('parallel check: an extra file, an extra directory, a missing file and a link are refused, like the sequential check', async () => {
