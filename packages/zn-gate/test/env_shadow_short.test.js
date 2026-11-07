@@ -140,3 +140,15 @@ test('env shadow: the clear-text summary makes no claim about what the hook coun
   assert.doesNotMatch(out, /8 characters or more/);
   assert.match(out, /treat it as readable by an agent/);
 });
+
+test('env shadow --dry-run with only a short skipped value prints the preview line and writes nothing', async (t) => {
+  const { dir, vault, io } = setup(t, ['API_KEY=abc']);
+  const before = fs.readFileSync(path.join(dir, '.env'), 'utf8');
+  assert.equal(await cli.dispatch('env', ['shadow', '--dry-run'], io), 0);
+  const out = io.stdout.text();
+  assert.match(out, /Preview only: no value has moved\. If you run this without --dry-run, 1 value\(s\) would stay in clear text in \.env: API_KEY\./);
+  assert.doesNotMatch(out, /\n1 value\(s\) stay in clear text/);
+  assert.equal(out.includes('abc'), false, 'the value is never printed');
+  assert.equal(fs.readFileSync(path.join(dir, '.env'), 'utf8'), before);
+  assert.deepEqual(await vault.listSecrets(), []);
+});

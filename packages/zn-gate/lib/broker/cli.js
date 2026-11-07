@@ -388,7 +388,7 @@ async function envShadow(args, io) {
   if (plan.items.length === 0) {
     out(io, path.basename(file) + ': nothing to shadow' + (dotenv.isShadowed(text) ? ' (already shadowed)' : ''));
     for (const s of plan.skipped) out(io, '  skipped ' + s.key + ': ' + s.why);
-    if (plan.skipped.length) out(io, clearTextSummary(plan, file));
+    if (plan.skipped.length) out(io, clearTextSummary(plan, file, Boolean(flags['dry-run'])));
     return 0;
   }
   if (flags['dry-run']) {
