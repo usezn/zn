@@ -10,6 +10,23 @@ Copilot (VS Code, CLI), Google Antigravity and the ZCode desktop app. What each
 one can and cannot do is in [compat.md](compat.md); the limits are in
 [threat-model.md](threat-model.md).
 
+## The `zn secret` commands at a glance
+
+| Command | What it does |
+|---|---|
+| `zn secret set NAME` | Store a secret, typed at a hidden prompt (or copied with `--clipboard`) |
+| `zn secret list` | List your secrets: names and rules, never values |
+| `zn secret rm NAME` | Remove a secret and the approvals it had |
+| `zn secret allow NAME` | Add the hosts or commands that may use a secret |
+| `zn secret approve NAME` | Approve the first use of a secret by a command that is already allowed |
+| `zn secret import [FILE]` | Copy the values of a `.env` file into the vault (the file is not changed) |
+| `zn secret adopt TOKEN` | Store a value that zn detected (such as `AWS_KEY_1`) under a name you choose |
+| `zn secret get NAME` | Does not print the value: it refuses and points you to `zn run`, which uses the value without showing it |
+| `zn secret log` | Show who used which secret, and where, without values |
+
+The commands that add, change or remove a value need an interactive terminal,
+and they refuse to run inside an agent. [Every option is in the CLI reference](cli.md#secret).
+
 ## 1. Install and unlock the vault
 
 ```bash
