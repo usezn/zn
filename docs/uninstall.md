@@ -106,6 +106,16 @@ npx -y zn-gate check
 
 `uninstall` runs this for you at the end. If it still reports something as set up, the line says which part is left and what to run.
 
+## Common mistakes
+
+- **Removing the program before the hooks.** `npm uninstall -g zn-gate` removes the program but not what it set up. The hooks stay in your agent's settings, and `zn-gate check` then reports lines such as `its hook cannot start: its zn-gate files (<path>) is no longer there`. See [The hooks are set up but cannot run](check.md#the-hooks-are-set-up-but-cannot-run). Run `npx -y zn-gate uninstall` first, and `npm uninstall -g zn-gate` last, as the uninstall output tells you.
+- **Asking your agent to run uninstall.** It refuses when an AI agent runs it, and also when there is no interactive terminal (a script, or a pipe), and nothing changes: it prints `zn uninstall: Not allowed: zn-gate uninstall needs an interactive terminal. Open a terminal window yourself and run it there.` and exits with `77` (see [exit codes](exit-codes.md#set-up-and-check)). Open your own terminal and run it there. `--dry-run` is the one form that also works without a terminal, because it only prints the list.
+- **Forgetting a `--project` install.** `uninstall` looks at your user settings and at the folder you run it in, not at every project on the computer. Hooks you installed with `--project` in another folder stay until you run uninstall from that folder (or `hooks uninstall <agent> --project` there). Use `--dry-run` in a folder to see whether anything is listed. See [Before you remove it](#before-you-remove-it).
+- **Expecting uninstall to delete the vault.** It keeps the vault unless you answer yes to the second question, and it keeps it anyway while the vault is unlocked or when a zn Team organization manages the computer. The rest of the `.zn` folder (settings and the decision log) is never deleted by it either. See [What each command removes and leaves](#what-each-command-removes-and-leaves).
+- **Deleting the vault before putting your `.env` values back.** If you ran `env shadow`, your `.env` file holds markers, `uninstall` does not edit it, and the real values are only in the vault. Run `env unshadow` first. See [Your `.env` files and the vault](#your-env-files-and-the-vault).
+
+For the questions people ask most, see [Uninstall](faq.md#uninstall) in the FAQ.
+
 ## Related
 
 - [Files zn-gate writes in each editor, and how to remove them by hand](editors/remove-by-hand.md)
