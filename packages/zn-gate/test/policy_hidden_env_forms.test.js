@@ -511,3 +511,18 @@ test('case inside a command substitution: a hyphenated word, extra substitutions
   policy.bashDenial(many, opts);
   assert.ok(Date.now() - t0 < budget(2500), 'time: ' + (Date.now() - t0) + ' ms');
 });
+
+test('a glob in a later segment of a word that carries an expansion is read as a glob too', () => {
+  const { opts } = project();
+  asPlatform('linux', () => {
+    for (const c of ['cat $PWD/.e*', 'cat ${DIR}/.e*', 'cat "$PWD"/.e*', 'cat a${IFS}./.e*', 'cat $PWD/.en?', 'cat ${DIR}/sub/.en[v]',
+      'cat $PWD/?env', 'cat $PWD/.env*', 'cat $HOME/.ssh/id_*', 'cat $(pwd)/.e*', 'cp ${SRC}/.e* ${DST}/']) {
+      assert.match(policy.bashDenial(c, opts) || '', /was not read because|\.env|credential|SSH|private key|protected/i, c);
+    }
+    // Benign look-alikes stay allowed.
+    for (const c of ['cat $PWD/README.md', 'cat $PWD/src/*.js', 'cat ${DIR}/*.md', 'cat "$PWD"/docs/*.txt', 'cat $PWD/.e*.example', 'cat ${DIR}/n?tes.md',
+      'cat $PWD/[a-c]*.txt', 'cat $PWD/*']) {
+      assert.equal(policy.bashDenial(c, opts), null, c);
+    }
+  });
+});

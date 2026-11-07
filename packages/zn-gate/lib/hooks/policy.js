@@ -2970,8 +2970,17 @@ function wildSegmentProtected(seg) {
 function wildWordProtected(text) {
   const parts = text.indexOf('=') >= 0 ? [text, text.slice(text.indexOf('=') + 1)] : [text];
   for (const part of parts) {
+    let afterMark = false;
     for (const raw of part.split(/[\\/]/)) {
-      if (!WILD_ANY_RE.test(raw)) continue;
+      if (!WILD_ANY_RE.test(raw)) {
+        // A glob in a later segment of a word that carries an expansion still reaches the file: `$PWD/.e*`, `${DIR}/.e*`.
+        if (afterMark && /[*?[]/.test(raw)) {
+          const later = raw.toLowerCase().replace(/^["']+|["']+$/g, '');
+          if (!WILD_SAFE_END_RE.test(later) && wildPieceGlobMatches(later)) return true;
+        }
+        continue;
+      }
+      afterMark = true;
       const seg = raw.toLowerCase().replace(/^["']+|["']+$/g, '');
       if (seg.length > WILD_SEGMENT_MAX) return true;   // too long to follow: refused, not checked in part
       if (wildSegmentProtected(seg)) return true;
