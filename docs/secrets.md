@@ -57,6 +57,21 @@ For a connection string with a long password, only the password moves, as
 whole URL moves to the vault as `DATABASE_URL`, and `.env` keeps
 `DATABASE_URL=__ZN_DATABASE_URL__`.
 
+Values shorter than 8 characters are not moved, because they cannot be told
+apart from ordinary settings. They stay in `.env` in clear text, and `zn env
+shadow` says so: it names each variable it left (never its value), and gives
+the command to keep it out of the file. For example, for `API_KEY=abc`:
+
+```text
+  skipped API_KEY: stays in clear text in the file. The value is only 3 character(s), and zn moves values of 8 or more because shorter ones cannot be told apart from ordinary settings. To keep it out of the file, run `zn secret set API_KEY` and put __ZN_API_KEY__ in its place.
+1 value(s) stay in clear text in .env: API_KEY. Until each one is stored with `zn secret set`, treat it as readable by an agent.
+```
+
+There is no option to force a short value into the vault with `zn env shadow`.
+Store it yourself with `zn secret set API_KEY` (it asks for the value at a
+hidden prompt) and replace the value in `.env` with `__ZN_API_KEY__`. Multi-line
+values, and names zn cannot use, are also left in the file and listed the same way.
+
 An encrypted copy of the original is kept (`zn env unshadow` restores it). To
 add a single secret, type it at a hidden prompt (never as an argument):
 
