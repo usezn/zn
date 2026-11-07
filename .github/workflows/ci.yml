@@ -1,13 +1,15 @@
 name: zn CI
 
-# Pull requests into next run, all on Ubuntu, the checks the rulesets require: Node.js 18.x, 22.x and 24.x
-# (only 22.x runs its tests there; 18.x and 24.x report, and run their tests in the merge queue), Python 3.12,
-# the npm and Python package builds and the lint job, plus the Python 3.14 warnings job, which is not required. The full matrix (Node.js
-# 18.x, 20.x, 22.x, 24.x and 26.x; Python 3.10 to 3.14, Windows and macOS) runs on pull requests into main and
-# release branches, on the merge queue for main and release branches, on pushes to main and release branches,
-# on the daily schedule, on manual runs, and on any pull request labelled full-ci. A push to next runs only the
-# matrix entries the merge queue did not run (Node.js 20.x and 26.x; Python 3.10, 3.11, 3.13, 3.14, Windows and
-# macOS). Its only macOS job is Python 3.12.
+# Pull requests into next run, all on Ubuntu, the checks of this workflow that the rulesets require: Node.js 18.x,
+# 22.x and 24.x (only 22.x runs its tests there; 18.x and 24.x report, and run their tests in the merge queue),
+# Python 3.12, the npm and Python package builds and the lint job. The other required checks (leak bench,
+# scrubber + vault, Public facts, and build, test, clippy, fmt) come from other workflows. The Python 3.14
+# warnings job is not required. The full matrix (Node.js 18.x, 20.x, 22.x, 24.x and 26.x; Python 3.10 to 3.14,
+# Windows and macOS) runs on pull requests into main and release branches, on pushes to main and release
+# branches, on the daily schedule, on manual runs, and on any pull request labelled full-ci. A push to next runs
+# only the matrix entries the merge queue did not run (Node.js 20.x and 26.x; Python 3.10, 3.11, 3.13, 3.14,
+# Windows and macOS). The only macOS job is Python 3.12. The merge queue is enabled for next only; if one is
+# enabled for main or a release branch, it runs the full matrix.
 on:
   push:
     # release/** is here, and there is no paths filter, because tag-release.yml requires the checks of this
@@ -19,8 +21,9 @@ on:
     types: [ opened, synchronize, reopened, labeled, ready_for_review ]
     # No paths filter here: these jobs give required checks, and a workflow skipped by a
     # paths filter leaves them pending. ci-scope.sh skips their steps for documentation instead.
-  # The merge queue: for next, the same Node.js and Python entries as a pull request into next, with the
-  # Node.js 18.x and 24.x tests running too; for main and release/*, the full matrix.
+  # The merge queue (enabled for next only today): the same Node.js and Python entries as a pull request into
+  # next, with the Node.js 18.x and 24.x tests running too. If one is enabled for main or a release branch, it
+  # runs the full matrix.
   merge_group:
     types: [ checks_requested ]
   # Daily full run on the default branch.
@@ -126,8 +129,8 @@ jobs:
         run: node bench/bench_node.js
 
   # Pull requests into next run Python 3.12 on Ubuntu only. Older and newer Python versions, Windows and
-  # macOS run on the push to next, on pull requests into main and release branches, on the merge queue for
-  # main and release branches, and on pull requests labelled full-ci (so they run before the merge).
+  # macOS run on the push to next, on pull requests into main and release branches, on a merge queue for main
+  # or a release branch if one is enabled, and on pull requests labelled full-ci (so they run before the merge).
   test-python:
     name: Python ${{ matrix.python-version }} tests & benchmarks (${{ matrix.os }})
     # Draft pull requests skip this job; marking the pull request ready for review runs it.
