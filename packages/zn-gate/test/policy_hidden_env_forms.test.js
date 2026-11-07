@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 
 const policy = require('../lib/hooks/policy');
-const { budget } = require('./helpers/time_budget');
+const { budget, cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 function asPlatform(name, fn) {
   const desc = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -508,8 +508,9 @@ test('case inside a command substitution: a hyphenated word, extra substitutions
     assert.equal(policy.bashDenial(c, opts), null, JSON.stringify(c));
   }
   const many = 'cat a' + '$(case x in x) : ;; esac)'.repeat(2000);
-  const t0 = Date.now();
+  // CPU time, not wall time: a busy shared runner can leave the process unscheduled for seconds, which no code change causes; a quadratic fallback still burns the CPU and fails the limit.
+  const c0 = cpuNow();
   policy.bashDenial(many, opts);
-  const ms = Date.now() - t0;
-  assert.ok(ms < budget(2500), 'time: ' + ms + ' ms (limit ' + budget(2500) + ' ms on this machine)');
+  const ms = cpuMsSince(c0);
+  assert.ok(ms < budget(2500), 'cpu time: ' + ms + ' ms (limit ' + budget(2500) + ' ms on this machine)');
 });
