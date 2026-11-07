@@ -1,0 +1,2 @@
+### Changed
+- `zn env shadow` and `zn secret import` now say plainly which variables they left in `.env` in clear text: each one is named (never its value), with the reason (too short to tell apart from ordinary settings, multi-line, or a name zn cannot use) and the command to store it anyway, `zn secret set NAME`. A closing line gives the count and warns that an agent can still read these values, because the hook that blocks reading a `.env` only counts values of 8 characters or more. When some values stay behind, the first line no longer says the file holds only markers.
