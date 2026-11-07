@@ -1,5 +1,22 @@
 # Agent compatibility
 
+## Tested in the last release
+
+The table shows, for each agent zn-gate supports, the agent version and the date of the last test in the latest release, 1.15.0 (published 2026-11-06). Gemini CLI is experimental and is not counted among the supported agents.
+
+| Agent | Agent version tested | Tested on | zn-gate version |
+|---|---|---|---|
+| Claude Code | Not recorded | 2026-11-06 | 1.15.0 |
+| Codex CLI | Not recorded | 2026-11-06 | 1.15.0 |
+| Cursor | Not recorded | 2026-11-06 | 1.15.0 |
+| OpenCode | not tested in this release | - | - |
+| Antigravity | not tested in this release | - | - |
+| ZCode desktop app | not tested in this release | - | - |
+| GitHub Copilot | not tested in this release | - | - |
+| Gemini CLI (experimental) | not tested in this release | - | - |
+
+For Claude Code, Codex CLI and Cursor, the release check runs zn's hooks with the blocked and allowed cases described in [`bench/e2e/`](../bench/e2e/). It does not record the version of the agent itself, so that column says "Not recorded" until it does.
+
 ## Limits at a glance
 
 - An event zn cannot read is refused, except the Codex `Stop` event, which is never blocked.
