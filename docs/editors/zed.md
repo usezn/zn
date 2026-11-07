@@ -26,6 +26,26 @@ Set up zn-gate in Zed in two minutes: add it as an MCP server, and what zn-gate 
 
    If the file already has a `"context_servers"` section, add only the `"zn-gate": {...}` part inside it. Or use **Settings → AI → MCP Servers → Add Server → Add Local Server**.
 4. Save the file.
+5. **Is it working?** Restart Zed, then in a terminal run:
+
+   ```bash
+   npx -y zn-gate status
+   npx -y zn-gate check
+   ```
+
+   `status` shows the version and whether the optional cloud check is on. `check` prints one line for each agent it finds, then a closing sentence. A good result looks like this:
+
+   ```text
+   zn-gate check: does zn stop your coding agent from reading a secret?
+
+     OK Claude Code  blocked the .env file and allowed the ordinary file. ...
+     -  Codex CLI    zn is not set up for this agent. ...
+     -  Cursor       not found on this machine
+
+   Your agent cannot read secret files such as .env through these tools. Nothing was sent anywhere.
+   ```
+
+   **OK** means zn protects that agent; **-** means zn is not set up for it or it is not on this machine; a line that says **NOT protected** needs the fix it names (see [Check that it works](../check.md)). Zed is not listed, because zn-gate does not install hooks for Zed yet: `check` does not test this setup. To confirm the server itself, see [Verify](#verify).
 
 Status: these steps follow Zed's documentation; not yet verified by us in Zed.
 

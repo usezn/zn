@@ -115,6 +115,17 @@ Outputs:
 | `scan-exit-code` | Exit code of the scan: `0` clean, `1` findings, `2` error, `3` no file was read, or a file or folder was not read and `allow-partial` is not `true` (zn-gate 1.14.0 and later); empty if it did not run. The step then fails with its own message and, with `format: sarif`, the report is still written. |
 | `audit-exit-code` | Exit code of the audit: `0` clean, `1` findings at or above the threshold, `2` error; empty if it did not run. |
 
+## Reading the result
+
+The exit codes are the ones in the [CLI exit codes](cli.md#exit-codes). For the action step they mean:
+
+- `0`: done, nothing to report. For the scan, nothing was found and everything that matched was read. For the audit, nothing is at or above the threshold.
+- `1`: the command ran and found a problem. For the scan, something was found (or the path does not exist). For the audit, there are findings at or above the threshold. Findings win over skipped files: if both happen, the code is `1`.
+- `2`: the command was used wrongly, for example an option it does not know or a path that is not a folder (audit).
+- `3`: scan only. The result does not cover everything: no file was read, or a file or folder that should have been read was not, and `allow-partial` is not `true`.
+
+The same codes are available as the `scan-exit-code` and `audit-exit-code` outputs, described in the table above.
+
 ## What the scan does not read
 
 The scan lists what it leaves out, so a gap never goes unnoticed.
