@@ -55,6 +55,23 @@ For the full explanation of each line, read the list above and the rest of this 
 
 `zn-gate check` exits with 0 only when every agent that is set up for your user is protected.
 
+## Agent versions
+
+Under each agent it finds, `zn-gate check` shows the version of that agent on your machine and the version zn-gate was last tested with ([the list](compat.md#agent-compatibility) names them; the source is `lib/agents/tested-versions.json` in the package):
+
+```text
+  OK Codex CLI    blocked the .env file and allowed the ordinary file. Your agent would be told:
+     "zn: ..."
+     version 0.170.0, newer than 0.163.0, the last version zn was tested with. It may still work. If a hook does not run, report it at https://github.com/usezn/zn/issues
+  -  Cursor       zn is not set up for this agent. To protect it, run `zn hooks install cursor` in your own terminal.
+     version: not found
+```
+
+- **Newer than tested**: the agent may still work. If a hook does not run, report it at the link in the line.
+- **Older than tested**: if a hook does not run, update the agent first, then report it.
+- **not found**: zn could not read a version, which is not an error. Agents without a command that prints a version (Cursor and ZCode, for example) always say so.
+- **How it reads the version**: it runs only `<agent> --version`, found on your PATH outside the project folder, with a 2-second limit, in an empty folder, with none of your environment variables except the PATH and your home folder, and with update checks turned off. It changes nothing, and zn sends nothing over the network.
+
 ## List every installed hook
 
 ```bash
