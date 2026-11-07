@@ -336,3 +336,11 @@ you to run `zn unlock`.
 - **Not sure what is protected**: run `npx -y zn-gate check`.
 
 Words you do not know? See the [glossary](glossary.md).
+
+## Related pages
+
+- [Team setup on a developer machine](team.md): organization policy, managed settings and the audit log for a team.
+- [Agent compatibility](compat.md): what each supported agent can and cannot do with zn-gate's hooks.
+- [Threat model](threat-model.md): what the scrubber and the broker protect, and what they do not.
+- [`zn audit`](audit.md): review a repository's agent configuration before you open it.
+- [Troubleshooting](troubleshooting.md): the messages you are most likely to meet, and what to do.
