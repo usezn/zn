@@ -5,5 +5,6 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
 - [first-project-walkthrough.md](first-project-walkthrough.md): one small example project, from install to removal.
 - [init-and-uninstall.md](init-and-uninstall.md): set up zn-gate, preview the steps with a dry run, then remove it.
+- [package-install-check-walkthrough.md](package-install-check-walkthrough.md): turn on the optional package install check, answer one question about a look-alike name, then allow a name.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project, from the run to what each exit code means.
 - [stats-and-report.md](stats-and-report.md): worked examples of `zn-gate stats` and `zn-gate report`.
