@@ -4,7 +4,7 @@
 |---|---|
 | `zn-gate team join` | Connects this machine to your organization with the join token your admin gave you. |
 | `zn-gate team status` | Shows the organization, the policy version and the state of the audit upload. |
-| `zn-gate team sync` | Downloads the policy and uploads the audit log now. |
+| `zn-gate team sync` | Downloads the policy and uploads the vault audit log now. |
 | `zn-gate team leave` | Disconnects this machine from the organization. |
 | `zn-gate team managed-config` | For administrators. Prints the managed configuration files to deploy so that the zn hooks run for every developer. |
 
@@ -59,7 +59,7 @@ going to a host that their local settings do not allow.
 | `zn team sync` | Downloads the policy and uploads pending audit records now. Exits `0` only when a valid policy is applied and no upload failed; offline, no policy, a refused policy, a removed machine or a failed upload exit `1` and say why. This also happens on its own while the vault is unlocked: a few seconds after `zn unlock`, then every 15 minutes. If you leave the organization or join another one while a sync is running, that sync is dropped and writes nothing. |
 | `zn team leave` | Disconnects this machine and tells the server (see [Leaving](#leaving)). The organization's policy stops applying here at once. It deletes the local copies of the policy and the upload state one by one; if one cannot be deleted (for example a locked file), the command exits `1` and names the file to delete by hand, because the hooks still read it. |
 | `zn team managed-config` | Prints the files an admin deploys with device management so zn-gate's hooks run on every machine. Writes nothing; see [Deploy zn-gate's hooks to every machine](#deploy-zn-gates-hooks-to-every-machine-managed-settings). |
-| `zn vault log export --otlp` | Writes the local audit log as OpenTelemetry logs (works without zn Team; see below). |
+| `zn vault log export --otlp` | Writes the local vault audit log as OpenTelemetry logs (works without zn Team; see below). |
 
 ### See the rules in force
 
@@ -222,7 +222,7 @@ What zn-gate does is make the change visible:
 - `zn team status` lists what the last version removed or loosened (up to 20
   items; the rest are counted), also with the vault locked. `--json` has it
   as `policy.change`.
-- The audit log gets one record per such version, with the reason
+- The vault audit log gets one record per such version, with the reason
   `org_policy_lifted:v3-v4:n2` (the two versions and the number of
   changes). It is uploaded with the other records.
 - With Claude Code, the next hook message that checks a tool output or a
@@ -326,7 +326,7 @@ patterns are skipped on the machine, and all custom detectors together get
 |---|---|
 | No network, policy still valid (policies are valid for 7 days) | The policy keeps applying. Audit records wait in `~/.zn/audit.jsonl` and are uploaded later. The automatic sync keeps the reason it failed (`zn team status` shows it under "Last sync") and writes one audit record, then at most one more every 6 hours while it keeps failing. |
 | No network for longer than the policy's validity | Strict mode: the restrictions keep applying; anything the organization had opened is withdrawn until a fresh policy arrives. `zn team status` says so. |
-| A downloaded policy fails a check (signature, key, organization, expiry, older version, same version with other content) | It is refused and the last accepted policy stays. The refusal is recorded in the audit log. |
+| A downloaded policy fails a check (signature, key, organization, expiry, older version, same version with other content) | It is refused and the last accepted policy stays. The refusal is recorded in the vault audit log. |
 | An admin removes this machine | Uploads stop. `zn team status` shows "removed from org". The last policy applies until it expires, then strict mode. |
 | The vault is locked | Nothing is downloaded or uploaded until `zn unlock`. The last accepted policy still applies to every use of a secret, which needs the vault unlocked anyway. |
 | `~/.zn/team.json` or `~/.zn/org-policy.json` is deleted or edited | The vault puts them back (see below). |
