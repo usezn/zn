@@ -1,2 +1,0 @@
-### Changed
-- The identity-request injection rule (`pi:identity_request`, Node.js and Python) flags "send their e-mail" only when the destination is an `X-` header or the next request: API docs that ask for an email address "in every request" or "on each request" are no longer reported. A place the rule leaves out (the User-Agent, a mailto link, the request body or a form) now only counts when it is the destination, so "in the X-Example-User header of the next request, not in the User-Agent" is reported.

@@ -38,6 +38,16 @@ const REGISTRY = 'https://registry.npmjs.org';
 const PLUGIN = path.resolve(__dirname, '..', 'zn-gate');
 const LOCK = path.join(PLUGIN, 'scripts', 'zn-gate.lock.json');
 const NPM_NAME = 'zn-gate-plugin';
+// Since 1.15.0 zn-gate has a postinstall of its own (it refreshes the launchers after `npm update -g zn-gate`, and does nothing in a plugin
+// folder). The plugin never runs it: plugins/zn-gate/.npmrc turns install scripts off for npm in that folder, as the docs say. This one script
+// of this one package is the only install script a pin accepts, and only with that file in place.
+const OWN_SCRIPTS = { postinstall: 'node lib/agents/refresh.js' };
+const NPMRC = 'ignore-scripts=true\n';
+function ownScriptsOnly(meta) {
+  const scripts = Object.assign({}, (meta && meta.scripts) || {});
+  delete scripts.test;
+  return JSON.stringify(Object.keys(scripts).sort().map((k) => [k, scripts[k]])) === JSON.stringify(Object.entries(OWN_SCRIPTS));
+}
 
 function get(url, redirects = 3) {
   return new Promise((resolve, reject) => {
@@ -176,6 +186,7 @@ async function main(argv) {
     texts.push([factsFile, moved]);
   }
   for (const [file, text] of texts) fs.writeFileSync(file, text);
+  fs.writeFileSync(path.join(PLUGIN, '.npmrc'), NPMRC);
   fs.writeFileSync(path.join(PLUGIN, 'package.json'), JSON.stringify(npm.pkg, null, 2) + '\n');
   fs.writeFileSync(path.join(PLUGIN, 'package-lock.json'), JSON.stringify(npm.npmLock, null, 2) + '\n');
   fs.writeFileSync(LOCK, JSON.stringify(lock, null, 2) + '\n');
@@ -305,12 +316,12 @@ function buildNpmFiles(version, meta, bundled) {
     if (k && (!/^sha512-/.test(e.integrity || '') || !String(e.resolved || '').startsWith(REGISTRY + '/'))) {
       throw new Error('the npm lock entry ' + k + ' has no sha512 integrity or registry URL');
     }
-    if (e.hasInstallScript) throw new Error('the npm lock entry ' + k + ' has an install script');
+    if (e.hasInstallScript && !(k === 'node_modules/zn-gate' && ownScriptsOnly(meta))) throw new Error('the npm lock entry ' + k + ' has an install script');
   }
   return { pkg, npmLock };
 }
 
-module.exports = { buildNpmFiles, stripBundled, get, tarEntries, versionedTexts };
+module.exports = { ownScriptsOnly, NPMRC, buildNpmFiles, stripBundled, get, tarEntries, versionedTexts };
 
 if (require.main === module) main(process.argv.slice(2)).catch((err) => {
   process.stderr.write('pin-release: ' + err.message + '\n');

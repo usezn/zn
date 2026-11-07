@@ -269,6 +269,8 @@ Past the thirteen messages above, zn-gate prints more short messages when it sto
 
 Run every command in your own terminal, not through your AI agent. If you did not install zn-gate with `npm install -g zn-gate`, put `npx -y zn-gate` where the commands below say `zn`, for example `npx -y zn-gate secret set NAME`. Words you do not know are in the [glossary](glossary.md).
 
+To see which rule stopped your agent last, and what you can do about it, run `zn why` in your own terminal. It explains the last block in the evidence log (`zn why <id>` explains a record you pick); see [`why`](cli.md#why).
+
 Pick the family that fits your message:
 
 - [Your agent tried to read or change a protected file](#your-agent-tried-to-read-or-change-a-protected-file)
@@ -1132,5 +1134,9 @@ echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.zshrc
 ```
 
 Use `~/.bashrc` instead of `~/.zshrc` if you use bash. Then open a new terminal and run the installs again: `npm install -g` for your agent (for example `npm install -g @openai/codex` or `npm install -g @google/gemini-cli`, if it failed too) and `npm install -g zn-gate`, then `npx -y zn-gate init` (or `zn hooks install <agent>`). An install that failed with `EACCES` did nothing, so it has to be run again. A Node.js version manager such as nvm also avoids the problem. This does not apply to Windows.
+
+### init says there is no internet connection
+
+If `zn-gate init` cannot reach the npm registry, it says "no internet connection: npm could not reach the registry" and what to do next, instead of a message about permissions. Check your connection (and any proxy or VPN), then run `npx -y zn-gate init` again. The npm install step gives up after about 30 seconds and never waits more than 3 minutes. On Windows it also stops npm itself, so nothing goes on installing in the background. A real permission error still gets the advice above.
 
 **To see the technical detail of an error:** run the command again with `ZN_VERBOSE=1`, or set `DEBUG=zn` (also `zn*`, `zn:*`, `zn-gate` or `zn-gate:*`, alone or in a comma-separated list). Other `DEBUG` values, such as `DEBUG=*`, do not change what zn prints. The Node.js and Python packages follow the same rule.

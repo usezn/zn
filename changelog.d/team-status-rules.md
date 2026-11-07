@@ -1,0 +1,2 @@
+### Added
+- `zn team status --rules` prints the rules of your organization's active signed policy in plain words: the version, the key id it was signed with, when it expires, and each rule (what it blocks, warns about or restricts, for which secret names and agents, and the reason). It reads the saved copy and checks its signature again with the key pinned at join, makes no network call, and shows no rules from a copy that does not verify or has expired. `--json` adds a `rules` object.

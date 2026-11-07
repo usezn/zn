@@ -156,7 +156,7 @@ Rule ids are stable: a rule may get better, but its id never changes meaning.
 ### Text
 
 ```text
-zn audit  ./some-repo  (zn-gate 1.14.1)
+zn audit  ./some-repo  (zn-gate 1.15.0)
 
 CRITICAL  ZNA007  .claude/settings.json:3  [claude]
           Model API endpoint overridden by the project
@@ -295,7 +295,7 @@ findings) so alerts survive line moves and stay unique. Findings from
 flag off in CI.
 
 ```yaml
-- run: npx -y zn-gate@1.14.1 audit --format sarif --output zn-audit.sarif --fail-on none
+- run: npx -y zn-gate@1.15.0 audit --format sarif --output zn-audit.sarif --fail-on none
 - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
   with:
     sarif_file: zn-audit.sarif
