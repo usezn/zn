@@ -234,7 +234,14 @@ function extractTarball(gz, dest, opts = { windows: process.platform === 'win32'
   let count = 0;
   while (off + 512 <= tar.length) {
     const h = tar.subarray(off, off + 512);
-    if (h.every((b) => b === 0)) break;
+    if (h.every((b) => b === 0)) {
+      // npm's tar reader stops only after two empty blocks in a row, so one empty block between entries
+      // must not hide what follows. Whatever comes after the end marker has to be empty too.
+      for (let i = off; i < tar.length; i++) {
+        if (tar[i] !== 0) throw new PackageError('the archive has data after its end marker');
+      }
+      break;
+    }
     // The checksum field counts as eight spaces.
     let sum = 0;
     for (let i = 0; i < 512; i++) sum += (i >= 148 && i < 156) ? 0x20 : h[i];
@@ -251,8 +258,17 @@ function extractTarball(gz, dest, opts = { windows: process.platform === 'win32'
     const body = tar.subarray(off, off + size);
     off += Math.ceil(size / 512) * 512;
 
-    if (type === 'x') { pax = parsePax(body); continue; }
-    if (type === 'g') continue;
+    if (type === 'x' || type === 'g') {
+      const rec = parsePax(body);
+      // Only a path is honoured. A size (or a link target) would change how npm reads the archive.
+      for (const k of Object.keys(rec)) {
+        if (k === 'size' || k === 'linkpath' || (type === 'g' && k === 'path')) {
+          throw new PackageError('the archive has an extended header this scan does not follow (' + JSON.stringify(k) + ')');
+        }
+      }
+      if (type === 'x') pax = rec;
+      continue;
+    }
     if (type === 'L') { longName = cstr(body, 0, body.length); continue; }
     if (pax && pax.path) name = pax.path;
     if (longName) name = longName;

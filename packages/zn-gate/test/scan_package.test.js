@@ -571,3 +571,53 @@ test('names that Windows cannot write are recognised', () => {
     assert.ok(!unsafeOnWindows(ok.split('/')), ok);
   }
 });
+
+// The own reader must fail closed where it could read an archive differently from npm.
+function paxRecord(key, value) {
+  const rest = ' ' + key + '=' + value + '\n';
+  let len = rest.length + 1;
+  while (String(len).length + rest.length !== len) len = String(len).length + rest.length;
+  return Buffer.from(len + rest);
+}
+
+function extractInto(parts) {
+  const dest = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-test-extract-'));
+  try {
+    return extractTarball(zlib.gzipSync(Buffer.concat(parts)), dest, { windows: false });
+  } finally {
+    fs.rmSync(dest, { recursive: true, force: true });
+  }
+}
+
+test('one empty block between entries does not hide the files after it', () => {
+  const hidden = [
+    tarEntry('package/a.md', Buffer.from('fine\n')),
+    Buffer.alloc(512),
+    tarEntry('package/dist/evil.js', Buffer.from(INJECTION)),
+    Buffer.alloc(1024),
+  ];
+  assert.throws(() => extractInto(hidden), (e) => e instanceof PackageError && /data after its end marker/.test(e.message));
+  // A normal end (two empty blocks, or more) is still fine.
+  const ok = extractInto([tarEntry('package/a.md', Buffer.from('fine\n')), Buffer.alloc(2048)]);
+  assert.strictEqual(ok.files, 1);
+});
+
+test('an extended header with a size or a link target is refused', () => {
+  for (const key of ['size', 'linkpath']) {
+    const parts = [
+      tarEntry('PaxHeader', paxRecord(key, '0'), 'x'),
+      tarEntry('package/data.bin', Buffer.from('carrier')),
+      Buffer.alloc(1024),
+    ];
+    assert.throws(() => extractInto(parts), (e) => e instanceof PackageError && /extended header/.test(e.message), key);
+  }
+  const global = [tarEntry('pax_global_header', paxRecord('size', '0'), 'g'), Buffer.alloc(1024)];
+  assert.throws(() => extractInto(global), (e) => e instanceof PackageError);
+  // A path record is still honoured.
+  const withPath = extractInto([
+    tarEntry('PaxHeader', paxRecord('path', 'package/long/name.md'), 'x'),
+    tarEntry('package/short', Buffer.from('fine\n')),
+    Buffer.alloc(1024),
+  ]);
+  assert.strictEqual(withPath.files, 1);
+});
