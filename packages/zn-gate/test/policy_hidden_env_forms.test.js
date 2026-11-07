@@ -484,10 +484,10 @@ test('the case fallback spans lines and costs time in proportion to the text', (
     for (const plat of ['linux', 'win32']) asPlatform(plat, () => assert.match(policy.bashDenial(c, opts) || '', DENIED, plat + ' ' + JSON.stringify(c)));
   }
   const big = 'cat a$(case ' + '$('.repeat(40000) + ')'.repeat(40000);
-  const t0 = Date.now();
+  const c0 = cpuNow();
   policy.bashDenial(big, opts);
-  const ms = Date.now() - t0;
-  assert.ok(ms < budget(2000), 'time: ' + ms + ' ms (limit ' + budget(2000) + ' ms on this machine)');
+  const ms = cpuMsSince(c0);
+  assert.ok(ms < budget(2000), 'cpu time: ' + ms + ' ms (limit ' + budget(2000) + ' ms on this machine)');
 });
 
 // --- review of #849, sixth round: esac only as a reserved word; the fallback anchored on each $( case ... esac ) ---
