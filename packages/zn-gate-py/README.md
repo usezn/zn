@@ -308,6 +308,7 @@ zn-gate test "some text"        # check one text against the rules (exit 1 if fl
 zn-gate evidence --verify       # check the local evidence log (also --export, --format jsonl|csv, --output FILE)
 zn-gate stats --days 7          # local counts of what zn-gate did (also --json)
 zn-gate status                  # engine and what leaves the machine
+zn-gate check                   # prove the Python guard blocks a fake secret (no Node.js, no network)
 zn-gate --version
 ```
 
