@@ -130,3 +130,25 @@ test('a ledger mixing old records (no rule_id) and new ones verifies, exports an
   fs.writeFileSync(file, lines.join('\n'));
   assert.equal(evidence.verifyEvidenceLedger(file).valid, false);
 });
+
+test('overlapping hook calls keep their own rule id', async () => {
+  const homeA = tmp();
+  const homeB = tmp();
+  fs.writeFileSync(path.join(homeB, '.env'), 'API_KEY=not-a-real-key-123\n');
+  // The vault call yields to the event loop, so the two invocations really interleave.
+  const slow = { maskInfo: async () => { await new Promise((r) => setTimeout(r, 30)); return { masked: false }; } };
+  const runs = [];
+  for (let i = 0; i < 6; i++) {
+    runs.push(runner.handle(cc(), bash(homeA, WIPE_HOME), { home: homeA, vault: slow }));
+    runs.push(runner.handle(cc(), read(homeB, path.join(homeB, '.env')), { home: homeB, vault: slow }));
+  }
+  const res = await Promise.all(runs);
+  res.forEach((r, i) => {
+    assert.equal(r.decision.decision, 'deny');
+    assert.equal(r.decision.ruleId, i % 2 === 0 ? 'destructive:rm_root_home' : 'secret-file:dotenv');
+  });
+  const ids = (h) => records(h).map((x) => x.rule_id);
+  assert.deepEqual(ids(homeA), Array(6).fill('destructive:rm_root_home'));
+  assert.deepEqual(ids(homeB), Array(6).fill('secret-file:dotenv'));
+  assert.equal(evidence.verifyEvidenceLedger(path.join(homeA, '.zn', 'evidence.jsonl')).valid, true);
+});

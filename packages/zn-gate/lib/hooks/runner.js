@@ -46,7 +46,7 @@ if (require.main === module) require('../compile-cache').enable();
 const fs = require('fs');
 const path = require('path');
 const policy = require('./policy');
-const { takeRuleId, resetRuleId } = require('./rule-id');
+const { takeRuleId, resetRuleId, runWithRuleNote } = require('./rule-id');
 const markers = require('../broker/markers');
 const { gitStatusOf } = require('../broker/files');
 const deps = require('../deps');
@@ -1713,7 +1713,11 @@ function unreadablePre(ev, agentId) {
  * value to print (or null for "no opinion").
  * opts: {engine, vault, failMode, home}
  */
-async function handle(adapter, rawEvent, opts = {}) {
+function handle(adapter, rawEvent, opts = {}) {
+  return runWithRuleNote(() => handleInner(adapter, rawEvent, opts));
+}
+
+async function handleInner(adapter, rawEvent, opts = {}) {
   const mode = failModeOf(opts);
   let ev = null;
   let decision;
