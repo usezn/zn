@@ -88,7 +88,7 @@ test('manifest: the launcher records the list of the package files, and the inta
 for (const [label, change] of [
   ['an edited policy file', (s) => fs.appendFileSync(s.p('lib/hooks/policy.js'), '// edited\n')],
   ['an edited destructive-command file', (s) => fs.appendFileSync(s.p('lib/destructive.js'), '// edited\n')],
-  ['an edited vault file', (s) => fs.appendFileSync(s.p('lib/vault/store.js'), '// edited\n')],
+  ['an edited broker file', (s) => fs.appendFileSync(s.p('lib/broker/files.js'), '// edited\n')],
   ['an edited helper module', (s) => fs.appendFileSync(s.p('lib/zn-command.js'), '// edited\n')],
   ['a policy file replaced by a link to a copy outside the package', (s) => {
     const copy = path.join(s.base, 'outside-policy.js');

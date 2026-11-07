@@ -2209,6 +2209,17 @@ function supervisorAnswer(agentId, adapter, text) {
   oversizeEvent(agentId, adapter, text, SUPERVISOR_REASON);
 }
 
+/** Closes the vault connection if this process opened one. A hook that never needed the vault must not load the client (and its crypto, socket and
+ *  store code, about 3 ms) only to close nothing: with the module not loaded there is no connection to close. */
+function closeVaultClient() {
+  let key;
+  try { key = require.resolve('../vault/client'); } catch (_) { return; }
+  const loaded = require.cache[key];
+  if (loaded && loaded.exports && typeof loaded.exports.close === 'function') {
+    try { loaded.exports.close(); } catch (_) { /* nothing open */ }
+  }
+}
+
 // Returns a function that disarms the supervisor.
 function armSupervisor(agentId, state) {
   let adapter;
@@ -2308,7 +2319,7 @@ async function handleEvent(args, state, readText) {
   try {
     const res = await handle(adapter, raw);
     if (res.stderr) process.stderr.write(res.stderr + ' (fail-open: event passed through)\n');
-    try { require('../vault/client').close(); } catch (_) { /* not loaded */ }
+    closeVaultClient();
     if (res.output !== null && res.output !== undefined) {
       // After the deadline the engine or the vault may still be working: leave as soon as the answer is written.
       if (res.decision && res.decision.abandoned) process.stdout.write(JSON.stringify(res.output), (err) => { if (err) state.stdoutFailed = true; else ackDone(state); process.exit(state.stdoutFailed ? failedWriteCode(state) : (process.exitCode || 0)); });
