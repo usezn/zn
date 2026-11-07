@@ -160,8 +160,16 @@ function normalize(raw) {
   const event = name === 'PreToolUse' ? 'pre_tool'
     : name === 'PostToolUse' ? 'post_tool'
       : name === 'UserPromptSubmit' ? 'user_prompt'
-        : name === 'UserPromptExpansion' ? 'prompt_expansion' : null;
+        : name === 'UserPromptExpansion' ? 'prompt_expansion'
+          : name === 'ConfigChange' ? 'config_change'
+            : name === 'InstructionsLoaded' ? 'instructions_loaded' : null;
   const base = { event, cwd: raw.cwd || process.cwd(), sessionId: raw.session_id || null, raw };
+  // A configuration file changed during the session (source: user_settings, project_settings, local_settings, policy_settings,
+  // skills), or an instruction file (CLAUDE.md, .claude/rules/*.md) was loaded into context. Neither carries a tool.
+  if (event === 'config_change') return { ...base, tool: null, input: { texts: [] }, configSource: typeof raw.source === 'string' ? raw.source : '', filePath: typeof raw.file_path === 'string' ? raw.file_path : '' };
+  if (event === 'instructions_loaded') {
+    return { ...base, tool: null, input: { texts: [] }, filePath: typeof raw.file_path === 'string' ? raw.file_path : '', memoryType: typeof raw.memory_type === 'string' ? raw.memory_type : '', loadReason: typeof raw.load_reason === 'string' ? raw.load_reason : '' };
+  }
   if (event === 'user_prompt') return { ...base, tool: null, input: { prompt: typeof raw.prompt === 'string' ? raw.prompt : '' }, output: undefined };
   if (event === 'prompt_expansion') return { ...base, tool: null, input: { prompt: typeof raw.prompt === 'string' ? raw.prompt : '' }, output: undefined };
   if (!event) return base;
@@ -264,6 +272,11 @@ function respondInner(d, ev) {
     return null;
   }
   if (ev.event === 'prompt_expansion') {
+    return d.decision === 'deny' ? { decision: 'block', reason: d.message || 'Blocked by zn' } : null;
+  }
+  // ConfigChange: {decision: "block"} keeps the new settings from taking effect (not for policy_settings, which Claude Code applies
+  // whatever a hook says). InstructionsLoaded has no decision control: Claude Code ignores its output.
+  if (ev.event === 'config_change') {
     return d.decision === 'deny' ? { decision: 'block', reason: d.message || 'Blocked by zn' } : null;
   }
   return null;
@@ -370,6 +383,10 @@ function ourHooks(command) {
     UserPromptSubmit: { hooks: [{ ...h('UserPromptSubmit'), onFailure: 'block' }] },
     // A typed skill or command expands after UserPromptSubmit; this checks the expanded text.
     UserPromptExpansion: { hooks: [{ ...h('UserPromptExpansion'), onFailure: 'block' }] },
+    // A settings or skill file that changes during the session (a change can be blocked), and an instruction file that goes into
+    // context (only recorded). Neither has onFailure: a hook that cannot run leaves the session as it was.
+    ConfigChange: { hooks: [h('ConfigChange')] },
+    InstructionsLoaded: { hooks: [h('InstructionsLoaded')] },
   };
 }
 

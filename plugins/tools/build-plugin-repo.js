@@ -87,6 +87,7 @@ const ZCODE_FILES = [
   ['hooks/hooks.json', ZCODE, ZCODE_DIR + '/hooks/hooks.json'],
   ['scripts/zn-hook.sh', ZCODE, ZCODE_DIR + '/scripts/zn-hook.sh'],
   ['scripts/zn-hook.ps1', ZCODE, ZCODE_DIR + '/scripts/zn-hook.ps1'],
+  ['scripts/zn-hook.cmd', ZCODE, ZCODE_DIR + '/scripts/zn-hook.cmd'],
   ['README.md', ZCODE, ZCODE_DIR + '/README.md'],
   ['scripts/zn-launch.js', PLUGIN, ZCODE_DIR + '/scripts/zn-launch.js'],
   ['icon.png', PLUGIN, ZCODE_DIR + '/icon.png'],
@@ -252,6 +253,20 @@ function withoutVerifyJs(rel, text) {
   return text.slice(0, start) + text.slice(end + 3);
 }
 const MODULE_BUILTINS = new Set(['module', 'node:module']);
+// The released 1.15.0 launcher keeps the same VERIFY_JS as a block (`const VERIFY_JS = ...;` up to a blank line) instead of the
+// statement above. That older text is allowed by the same rule: exactly one block, byte for byte the reviewed one (its
+// SHA-256 below); any change, a second copy or any other use of those names in the file is still refused. Both
+// exceptions are chained below, and each refuses a second copy. Remove this one after the release that ships the
+// statement form.
+const VERIFY_BLOCK = /const VERIFY_JS = [\s\S]*?;\n\n/g;
+const VERIFY_BLOCK_SHA256 = '2a500045b36060f08b61584f4f270d25f41888e7d97b84b589bf188fd94db16b';
+function withoutLauncherVerifyScript(rel, text) {
+  if (!VERIFY_JS_FILE.test(rel)) return text;
+  const blocks = text.match(VERIFY_BLOCK) || [];
+  if (blocks.length !== 1) return text;
+  if (require('crypto').createHash('sha256').update(blocks[0]).digest('hex') !== VERIFY_BLOCK_SHA256) return text;
+  return text.replace(blocks[0], '');
+}
 
 /**
  * True for a method named import ("async import(key, format) { ... }"): it
@@ -302,7 +317,7 @@ function dynamicImports(rel, text, problems) {
     if (lit) out.push(lit[2]);
     else problems.push(rel + ': import() with a computed name cannot be checked');
   }
-  if (UNCHECKABLE.test(withoutVerifyJs(rel, withoutCompileCacheUse(rel, text)))) {
+  if (UNCHECKABLE.test(withoutLauncherVerifyScript(rel, withoutVerifyJs(rel, withoutCompileCacheUse(rel, text))))) {
     // A tarball packed from a CRLF checkout has CRLF line ends, so the reviewed statement never matches its hash.
     const crlf = VERIFY_JS_FILE.test(rel) && text.includes('\r\n') ? ' (this file has CRLF line ends: pack the release from an LF checkout)' : '';
     problems.push(rel + ': uses createRequire, import.meta.resolve, process.mainModule or the "module" built-in, which cannot be checked' + crlf);
