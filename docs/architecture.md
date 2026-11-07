@@ -7,7 +7,7 @@ zn-gate is a **lightweight checkpoint on your machine**, placed between your AI 
 **How to read this diagram**
 
 - The boxes: untrusted input (prompts, files, web, MCP) on the left, the agent and its tools on the right, and zn-gate between them with one box per check (`analyze_prompt`, `check_tool_call`, `check_tool_result`).
-- The arrows: input goes through the three checks and reaches the agent as clean input, and output comes back redacted. The bottom row (rules engine, scrubber, encrypted vault, hash-chained vault audit log) is used by all three checks.
+- The arrows: input goes through the three checks and reaches the agent as clean input, and output comes back redacted. The bottom row (rules engine, scrubber, encrypted vault, and the hash-chained decision log, the "audit log" box in the diagram) is used by all three checks.
 - The cloud path: only with `ZN_CLOUD=1` and `ZN_API_KEY` set, prompts with detected secrets removed go to the Galvanize 3 classifier at `api.usezn.com`.
 
 ## Three checks, one local engine
@@ -37,7 +37,7 @@ Here is one tool call from the agent to the answer, using only what is described
 4. If the arguments pass, the tool runs. If you approved a command, `zn run` fills in the real value of a secret marker such as `__ZN_AWS_KEY_1__` at that point. The agent itself only works with the marker.
 5. After the tool runs and before the model sees the output, `check_tool_result` looks for indirect injection hidden in it. Secrets and personal data are redacted.
 6. The model sees the cleaned output, with a marker or `[REDACTED_...]` text in place of any removed value, and gives its answer.
-7. Each assessment is recorded in the hash-chained audit log at `~/.zn/evidence.jsonl`.
+7. Each assessment is recorded in the hash-chained decision log at `~/.zn/evidence.jsonl`.
 
 All of these checks use the local engine. Tool arguments and tool output never leave the machine. See [Key Architectural Principles](#key-architectural-principles) for the details.
 
