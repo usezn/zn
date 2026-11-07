@@ -954,7 +954,7 @@
   "hook": "allow"
  },
  {
-  "cmd": "mv ./tmp/draft.md ./docs/draft.md",
+  "cmd": "mv ./tmp/draft.md ./notes/draft.md",
   "destructive": "allow",
   "rule": null,
   "hook": "allow"
