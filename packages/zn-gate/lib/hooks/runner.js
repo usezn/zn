@@ -550,7 +550,8 @@ async function egressCheck(ev, d, agentId, mode, requests, what) {
     return {
       decision: 'deny',
       message: 'zn blocked this ' + what + ': it ' + sentence + '. Next step: send the request without the personal data. Do not write the value of a secret in it, and do not expand a shell variable into its arguments (the value would show in the process list and in command-line logs). ' +
-        'For a web request use the secrets_http_request tool of the zn "secrets" MCP server (the secret in proxy mode); for a program, run it with ' + '`' + znCommand('run --secrets NAME -- <program that reads the variable>') + '`' + ', which gives it the secret as an environment variable that the program reads itself (or from standard input or a file, where it supports that). If the data must be sent, tell the user.',
+        'For a web request use the secrets_http_request tool of the zn "secrets" MCP server (the secret in proxy mode); for a program, run it with ' + '`' + znCommand('run --secrets NAME -- <program that reads the variable>') + '`' + ', which gives it the secret as an environment variable that the program reads itself (or from standard input or a file, where it supports that). If the data must be sent, tell the user (rule: egress-check). Personal data or a secret that leaves this computer cannot be taken back. ' +
+        'Only the user can allow it, by running the request in their own terminal.',
     };
   }
   return {
@@ -1643,8 +1644,9 @@ function failDecision(ev, err, mode, agentId) {
   const vaultDown = err.vaultFailed === true;
   // The vault errors of the engine may already say how to fix it (zn unlock): say it once.
   const unlockHint = /zn unlock/.test(String(err.message || '')) ? '' : ' Check that the vault is running and unlocked (zn unlock; zn lock stops it).';
+  const unlockStep = ' Ask the user to run `' + znCommand('unlock') + '` in their own terminal; an agent cannot unlock it.';
   const msg = vaultDown
-    ? 'zn: could not check this action against your secret vault, so it was blocked to keep your secrets safe.' + unlockHint + detail
+    ? 'zn: could not check this action against your secret vault, so it was blocked to keep your secrets safe (rule: vault:unavailable).' + unlockHint + unlockStep + detail
     : 'zn: ' + (missing ? REINSTALL : HOOK_FAILED + fixHint(agentId)) + detail;
   // Fail open only when the engine itself is missing and the user chose so.
   if (mode === 'open' && missing) return { decision: 'allow', failOpen: true, warning: 'zn: ' + REINSTALL_USER };

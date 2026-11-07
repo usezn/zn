@@ -4,7 +4,7 @@ zn-gate can refuse a small set of shell commands that wipe a machine or run a do
 
 It is a guardrail against a model's mistake or a bad suggestion, not a sandbox. It reads the text of one command and blocks it only when the command has one of the shapes below.
 
-When a command is blocked, it does not run, and the agent is told why and to ask you to confirm before it runs the command. If you do want it, run it yourself in a terminal.
+When a command is blocked, it does not run, and the agent is told why, which rule blocked it (for example `rule: destructive:rm_root_home`) and to ask you to confirm before it runs the command. If you do want it, run it yourself in a terminal.
 
 ## Change the settings
 
