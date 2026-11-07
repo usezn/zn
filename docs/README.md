@@ -26,6 +26,10 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Command line reference](cli.md) | Every command, option and exit code | Everyone |
 | [Exit codes](exit-codes.md) | The exit code of every command, on one page | Everyone |
 | [Command cheat sheet](commands-cheatsheet.md) | Every command, its main flags and one example, on one page | Everyone |
+| [First 5 minutes checklist](first-5-minutes-checklist.md) | A printable version of the numbered steps in First 5 minutes | Everyone |
+| [FAQ: update and remove](faq.md) | Short answers to common questions about updating and removing zn-gate | Everyone |
+| [Files and folders](files-and-folders.md) | The files and folders the commands read or write | Everyone |
+| [Examples](examples/README.md) | Worked examples, in alphabetical order, with made-up values | Everyone |
 
 ## Everyday use
 
