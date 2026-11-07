@@ -55,6 +55,13 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
+      - name: Exclude the work folders from Defender scanning
+        # Windows Defender scans every file the checkout, npm and pip write and by the test processes; excluding the work folders and node/python is the
+        # documented way to cut that I/O cost on Windows runners (best effort: a failure only warns).
+        shell: pwsh
+        run: |
+          $paths = @($env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:RUNNER_TOOL_CACHE, "$env:LOCALAPPDATA\npm-cache", "$env:LOCALAPPDATA\pip")
+          try { Add-MpPreference -ExclusionPath $paths -ExclusionProcess node.exe, python.exe -ErrorAction Stop; (Get-MpPreference).ExclusionPath } catch { Write-Warning "Defender exclusion not applied: $_" }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
