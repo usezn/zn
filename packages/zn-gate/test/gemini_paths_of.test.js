@@ -43,6 +43,16 @@ test('pathsOf marks a broken nested file: URL as bad and adds no path', () => {
   assert.deepEqual(r, { paths: [], bad: true });
 });
 
+test('pathsOf marks a nested file: URL with a remote host as bad and adds no path', () => {
+  const r = pathsOf({ options: { uri: 'file://example.invalid/some/file.txt' } });
+  assert.deepEqual(r, { paths: [], bad: true });
+});
+
+test('pathsOf treats a nested file: URL with a localhost host as a local path', () => {
+  const r = pathsOf({ options: { uri: 'file://localhost/work/example/x.txt' } });
+  assert.deepEqual(r, { paths: [path.resolve('/work/example/x.txt')], bad: false });
+});
+
 test('pathsOf leaves out a nested value with a line break', () => {
   const r = pathsOf({ options: { file_path: '/work/example/a.txt\n/work/example/b.txt', dir_path: '/work/example/c\rd' } });
   assert.deepEqual(r, { paths: [], bad: false });
