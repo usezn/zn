@@ -40,6 +40,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Examples: stats and report](examples/stats-and-report.md) | Worked examples of `stats` and `report` with sample output | Everyone |
 | [Example: Node.js API](examples/node-api.md) | Install and one short example per call of the Node.js API, with fake values | Developers |
 | [Example: cloud check settings](examples/cloud-check-settings.md) | Each cloud check setting with its effect, one fake command and what leaves the machine | Anyone who opts in |
+| [Reading the API score and picking a threshold](api-score-threshold-guide.md) | What each field of the zn Cloud API response means, and how to choose what your app does with the score | Developers |
 | [Audit](audit.md) | Review a repository's agent configuration before you open it | Developers, reviewers |
 | [Connect](connect.md) | Turn on the optional cloud check, and turn it off | Anyone who opts in |
 | [Agent compatibility](compat.md) | What the scrubber can do in each agent | Everyone choosing or configuring an agent |
