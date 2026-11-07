@@ -1461,6 +1461,27 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Rust scrubber has no AWS access key rule; the Node scrubber masks AKIA keys (AWS_KEY in lib/scrub/patterns.js). Un-ignore when the rule lands."]
+    fn test_aws_example_key_at_end_without_newline_is_masked() {
+        // AWS documentation example key, not a credential. The text ends right after the key.
+        let input = "config key AKIAIOSFODNN7EXAMPLE";
+        let out = Scrubber::scrub(input);
+        assert!(!out.contains("AKIAIOSFODNN7EXAMPLE"), "{out}");
+    }
+
+    #[test]
+    fn test_fifteen_digit_non_luhn_number_is_unchanged() {
+        // Fictional numbers. 123456789012345 has no card network prefix, so the
+        // network check alone rejects it. 378282246310006 has an Amex prefix and is
+        // the test number 378282246310005 with its last digit changed, so only the
+        // Luhn check rejects it.
+        for input in ["123456789012345", "378282246310006"] {
+            assert!(!luhn_valid(input), "{input} must fail Luhn");
+            assert_eq!(Scrubber::scrub(input), input);
+        }
+    }
+
+    #[test]
     fn test_card_needs_luhn_network_and_boundaries() {
         for input in [
             "Card: 4111-1111-1111-1112",  // fails Luhn
