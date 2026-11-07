@@ -234,7 +234,7 @@ function withoutCompileCacheUse(rel, text) {
 // once as a plain integer (const CHANGED_RC = <digits>;), or the exception does not apply.
 const VERIFY_JS_FILE = /^lib\/agents\/launcher\.js$/;
 const VERIFY_JS_START = 'const VERIFY_JS = ';
-const VERIFY_JS_SHA256 = '7ea036036c345f46790337ce78cc46cbaeaac4a417cdcd35b62e096ce07cca10';
+const VERIFY_JS_SHA256 = '715eb569856bcff83560156131d56c328069582fcbfb7e2b0104011d79391c30';
 
 const CHANGED_RC_DECL = /(?:^|\n)const CHANGED_RC = \d{1,3};\n/g;
 const CHANGED_RC_ANY = /\bCHANGED_RC\s*=(?!=)/g;
