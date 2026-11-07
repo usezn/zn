@@ -39,7 +39,7 @@ test('pathsOf turns a nested file: URL into a path', (t) => {
 });
 
 test('pathsOf marks a broken nested file: URL as bad and adds no path', () => {
-  const r = pathsOf({ options: { uri: 'file://example.invalid/some/file.txt' } });
+  const r = pathsOf({ options: { uri: 'file:///%zz' } });
   assert.deepEqual(r, { paths: [], bad: true });
 });
 
