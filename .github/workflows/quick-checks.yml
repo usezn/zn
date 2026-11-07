@@ -1,7 +1,7 @@
 name: Quick checks
 
 # The short checks that used to be a workflow each, in two jobs so a pull request queues two runners for them
-# instead of ten. The first job: changelog fragment, Markdown lint, spelling (typos), links, shellcheck, package lint
+# instead of nine. The first job: changelog fragment, Markdown lint, spelling (typos), links, shellcheck, package lint
 # (publint, attw, check-wheel-contents), the pre-commit hooks and the runnable doc snippets. The second job,
 # "Workflow lint" (actionlint + zizmor), keeps its own runner because zizmor gets a token: that job runs no script
 # of this repository, only pinned installs and the two tools, as the former workflow-lint.yml did. .github/scripts/quick-scope.sh keeps the paths filter each check had: a step whose files did not
