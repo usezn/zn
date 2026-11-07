@@ -62,7 +62,7 @@ npx -y zn-gate init
 
 `init` does this:
 
-- It finds the eight coding agents it supports on your machine: Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app and GitHub Copilot, plus Gemini CLI (experimental).
+- It finds the seven coding agents it supports on your machine: Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app and GitHub Copilot, plus Gemini CLI (experimental).
 - For each one that is not protected yet, it shows the setup: the zn-gate plugin for Claude Code (or zn's hooks when your Node.js is older than 20.19), and zn's hooks for the others.
 - It runs each step only after you confirm it.
 - It ends with `zn-gate check`.
