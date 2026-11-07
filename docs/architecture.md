@@ -85,6 +85,59 @@ What goes where on your machine, and what can leave it:
 
 See also: [What leaves your machine](../README.md#what-leaves-your-machine), the [threat model](threat-model.md) and the [glossary](glossary.md).
 
+## Reading the decision log by hand
+
+The decision log (`~/.zn/evidence.jsonl`) is a plain text file with one JSON record on each line. `zn-gate evidence` shows it for you ([worked example](examples/evidence-example.md), [options](cli.md#evidence)), but you can also open the file in any editor. This is not the vault audit log (`audit.jsonl`), which records only when the vault gave out a secret.
+
+Each record has these fields:
+
+| Field | What it holds |
+|---|---|
+| `id` | A unique name for the record. |
+| `timestamp` | When zn-gate decided, in UTC. |
+| `agent_environment` | The agent that asked, or `unknown`. |
+| `phase` | What was checked, for example `tool-call`. |
+| `tool_name` | The tool the agent tried to use, or `unknown`. |
+| `payload_sha256` | The SHA-256 fingerprint of the text that was checked. The text itself is not stored. |
+| `payload_preview` | The first 120 characters of that text, with secrets replaced first. |
+| `verdict` | `allow`, `block` or `shadow` (recorded only, nothing stopped). |
+| `rule` | The rule that decided, or `null`. |
+| `reason` | A short explanation, or `null`. |
+| `confidence` | A number from 0 to 1. |
+| `latency_us` | How long the check took, in microseconds. |
+| `engine` | What made the decision. `oss-deterministic` is the local rules engine. |
+| `prev_hash` | The `record_hash` of the record before this one. |
+| `record_hash` | The fingerprint of this record. |
+
+Here are two records from a test log, with the lines wrapped so they fit. In the file, each record is one line. The values are only examples.
+
+```json
+{"id":"ev_mw6upplz_4d112c50","timestamp":"2026-11-07T20:23:49.991Z",
+ "agent_environment":"claude-code","phase":"tool-call","tool_name":"Read",
+ "payload_sha256":"87a00fed4b691b341e0e6e77d04ce66891a8e4a3372156a14e02b949f97eb1be",
+ "payload_preview":"{\"file_path\":\".env\"}","verdict":"block",
+ "rule":"hook-pre_tool-policy","reason":"example reason","confidence":1,
+ "latency_us":120,"engine":"oss-deterministic",
+ "prev_hash":"0000000000000000000000000000000000000000000000000000000000000000",
+ "record_hash":"d56a763dc34e0d6c7bf7699afeec078c40010e1630be49b993a5bc1ef40f1428"}
+{"id":"ev_mw6uppml_e4be893c","timestamp":"2026-11-07T20:23:50.013Z",
+ "agent_environment":"claude-code","phase":"tool-call","tool_name":"Bash",
+ "payload_sha256":"4cf29611a66934862f29acfcc817e30b905c1ab73d5e65831413eb6b454d49db",
+ "payload_preview":"{\"command\":\"ls\"}","verdict":"allow","rule":null,"reason":null,
+ "confidence":1,"latency_us":0,"engine":"oss-deterministic",
+ "prev_hash":"d56a763dc34e0d6c7bf7699afeec078c40010e1630be49b993a5bc1ef40f1428",
+ "record_hash":"089a19752b035599bacb839ddba6d770b3da2e7cf636c37d0d9b760d4af80458"}
+```
+
+How the records link:
+
+- The first record of a log has a `prev_hash` of 64 zeros.
+- Every later record carries, as its `prev_hash`, the `record_hash` of the record before it. In the example, the second `prev_hash` is the first `record_hash`.
+- A `record_hash` is the SHA-256 of the record's `prev_hash`, a colon, and the rest of the record (every field except `record_hash`) written as JSON.
+- If someone edits a record, its `record_hash` no longer matches. If someone removes or reorders records, a `prev_hash` no longer points at the record before it.
+
+To check the whole chain, run `zn-gate evidence --verify`. It ends with exit code `0` when every record matches and `1` when one does not, and a damaged log is explained in [Troubleshooting](troubleshooting.md#10-the-evidence-log--is-damaged). As said above, this finds accidental or partial edits and does not stop someone who can write to the file and recalculates every hash.
+
 ## Read next
 
 - [Check that it works](check.md): run `zn-gate check` to confirm zn-gate is protecting your agent.
