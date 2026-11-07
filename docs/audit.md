@@ -34,7 +34,7 @@ zn audit [path] [--format text|json|sarif] [--output <file>]
 
 ### `zn audit` and the secret-use log
 
-In 1.5, `zn audit` showed the local audit log of secret use. That log is now
+In 1.5, `zn audit` showed the local vault audit log of secret use. That log is now
 `zn vault log` (also `zn secret log`), and `zn audit` always reviews agent
 configs: a bare `zn audit` reviews the current directory. `zn audit log` (when
 there is no directory named `log`) and `zn audit --since DATE` exit with code

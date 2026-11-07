@@ -93,7 +93,7 @@ More in [secrets](secrets.md). If it asks for a terminal to enter the passphrase
 
 **If the vault does not answer:** `The vault is not answering` means the vault is slow or was left over from a crash. Run `zn lock`, then `zn unlock`. If `unlock` says the vault did not start in time or stopped while starting, run it again; if it keeps happening, restart your computer and open an issue with the output of `ZN_VERBOSE=1 zn unlock`.
 
-**If `zn vault verify` says the audit log did not pass its check:** do not delete or edit the log. It is the record of what the vault did, and a change to it is what the check finds. Keep a copy of `~/.zn/audit.jsonl`, then open an issue; `zn vault verify` with `ZN_VERBOSE=1` prints the reason. If the message says the log "was changed behind the vault", and you have looked into it (for example you know a disk problem or a restore cut the log), run `zn vault verify --acknowledge` in your own terminal to accept the log as it is now; the warning stays in the log. If it says the log "does not verify on its own", the chain itself is broken and cannot be accepted.
+**If `zn vault verify` says the vault audit log did not pass its check:** do not delete or edit the log. It is the record of what the vault did, and a change to it is what the check finds. Keep a copy of `~/.zn/audit.jsonl`, then open an issue; `zn vault verify` with `ZN_VERBOSE=1` prints the reason. If the message says the log "was changed behind the vault", and you have looked into it (for example you know a disk problem or a restore cut the log), run `zn vault verify --acknowledge` in your own terminal to accept the log as it is now; the warning stays in the log. If it says the log "does not verify on its own", the chain itself is broken and cannot be accepted.
 
 For the other messages of `zn unlock`, `zn lock` and `zn forget` (cancelled prompts, passphrases that do not match, `--ttl` and `--idle`, the clipboard), see [Messages from the vault commands](#messages-from-the-vault-commands-zn-unlock-zn-lock-zn-forget).
 
@@ -269,7 +269,7 @@ Past the thirteen messages above, zn-gate prints more short messages when it sto
 
 Run every command in your own terminal, not through your AI agent. If you did not install zn-gate with `npm install -g zn-gate`, put `npx -y zn-gate` where the commands below say `zn`, for example `npx -y zn-gate secret set NAME`. Words you do not know are in the [glossary](glossary.md).
 
-To see which rule stopped your agent last, and what you can do about it, run `zn why` in your own terminal. It explains the last block in the evidence log (`zn why <id>` explains a record you pick); see [`why`](cli.md#why).
+To see which rule stopped your agent last, and what you can do about it, run `zn why` in your own terminal. It explains the last block in the decision log (`zn why <id>` explains a record you pick); see [`why`](cli.md#why).
 
 Pick the family that fits your message:
 
@@ -764,7 +764,7 @@ To see where these rules apply, and what happens when the file is not valid, rea
 
 #### "Tamper detected"
 
-**What happened:** `zn-gate evidence --verify` found that the evidence log was changed or damaged, so its chain of records no longer matches. The message gives the place of the break and a command to move the file aside.
+**What happened:** `zn-gate evidence --verify` found that the decision log was changed or damaged, so its chain of records no longer matches. The message gives the place of the break and a command to move the file aside.
 
 **Is it safe?** Your protection keeps working. Only the record is in doubt.
 
@@ -931,7 +931,7 @@ When a command cannot read or write a file or folder, zn-gate says what is wrong
 
 **What happened:** you typed a `zn team` word that does not exist. There is no `zn team login` or `zn team export`. If you typed a token without `join`, zn did not print it back.
 
-**What to do:** the commands are `zn team join <token>`, `zn team status`, `zn team sync` and `zn team leave`. To export the audit log, run `zn vault log export --otlp`. All options: `zn team --help`.
+**What to do:** the commands are `zn team join <token>`, `zn team status`, `zn team sync` and `zn team leave`. To export the vault audit log, run `zn vault log export --otlp`. All options: `zn team --help`.
 
 #### "invalid request" / "nothing to approve" / "the organization policy does not ask for this"
 

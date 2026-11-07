@@ -458,7 +458,7 @@ Shows whether the vault exists and is unlocked and, when it is, when it locks: a
 zn-gate vault log [--since 1h]
 ```
 
-Shows the audit log of secret use. Same as `secret log`. With the vault unlocked, the vault checks the whole log first (every signature, the chain and the last record it remembers). If the check fails, the log is not shown: the command prints the reason, exits `1` and the vault stores a warning (see `vault verify`). With the vault locked the chain cannot be checked, and the output says so. Exit codes follow the secrets commands above.
+Shows the vault audit log of secret use. Same as `secret log`. With the vault unlocked, the vault checks the whole log first (every signature, the chain and the last record it remembers). If the check fails, the log is not shown: the command prints the reason, exits `1` and the vault stores a warning (see `vault verify`). With the vault locked the chain cannot be checked, and the output says so. Exit codes follow the secrets commands above.
 
 #### `vault log export`
 
@@ -466,7 +466,7 @@ Shows the audit log of secret use. Same as `secret log`. With the vault unlocked
 zn-gate vault log export --otlp [--since 7d] [--out file] [--unverified]
 ```
 
-Writes the audit log as OpenTelemetry logs (OTLP, JSON Lines) to the file, or to the screen. Needs no account. With the vault unlocked, the vault checks the whole log first and nothing is exported when the check fails (exit `1`, and the vault stores a warning, see `vault verify`). With the vault locked the chain cannot be checked: the export is refused unless you add `--unverified`, and then it prints a warning that it is not a verified copy. `--out` writes a new private (0600) file and refuses a symbolic link or a folder. Exit codes: `0` done, `1` error, `2` without `--otlp`. [Details](team.md).
+Writes the vault audit log as OpenTelemetry logs (OTLP, JSON Lines) to the file, or to the screen. Needs no account. With the vault unlocked, the vault checks the whole log first and nothing is exported when the check fails (exit `1`, and the vault stores a warning, see `vault verify`). With the vault locked the chain cannot be checked: the export is refused unless you add `--unverified`, and then it prints a warning that it is not a verified copy. `--out` writes a new private (0600) file and refuses a symbolic link or a folder. Exit codes: `0` done, `1` error, `2` without `--otlp`. [Details](team.md).
 
 #### `vault verify`
 
@@ -474,7 +474,7 @@ Writes the audit log as OpenTelemetry logs (OTLP, JSON Lines) to the file, or to
 zn-gate vault verify
 ```
 
-Checks the chain and signatures of the audit log. If the check fails, it says at which record, tells you not to delete or edit the log, and links the troubleshooting page. The vault also compares the last record with the one it remembers, before it writes anything new. If the log was cut, replaced or changed in any record while the vault was locked or running, the check fails (a failed check stores the warning too), and keeps failing after lock and unlock, until you accept the log as it is now with `zn-gate vault verify --acknowledge` (run it yourself in a terminal: it refuses when an agent runs it, and the vault asks you to confirm in its own dialog or terminal). Accepting does not erase the gap: a warning record is written to the log. Exit codes: `0` correct, `1` broken, `2` wrong usage.
+Checks the chain and signatures of the vault audit log. If the check fails, it says at which record, tells you not to delete or edit the log, and links the troubleshooting page. The vault also compares the last record with the one it remembers, before it writes anything new. If the log was cut, replaced or changed in any record while the vault was locked or running, the check fails (a failed check stores the warning too), and keeps failing after lock and unlock, until you accept the log as it is now with `zn-gate vault verify --acknowledge` (run it yourself in a terminal: it refuses when an agent runs it, and the vault asks you to confirm in its own dialog or terminal). Accepting does not erase the gap: a warning record is written to the log. Exit codes: `0` correct, `1` broken, `2` wrong usage.
 
 #### `vault forget`
 
@@ -498,7 +498,7 @@ The way out when you lost the vault passphrase. It sets the old vault aside in a
 zn-gate vault purge [--yes]
 ```
 
-Deletes the vault for good, with everything that can open or rebuild it. It first lists every file it will delete: the vault (secrets and first-use approvals), the token maps of your projects, the audit log, every `vault-backup-*` folder made by `vault reset`, and the session key, plus the vault key in your system keychain. Then you confirm by typing `purge my vault`, and it deletes them and checks again that none is left. If a file or the keychain entry cannot be removed, it says which one and exits `1`; it never reports the vault as purged while something remains. The vault must be locked, and it refuses on a machine that belongs to a zn Team organization. It needs a person at a terminal; a script can pass `--yes` to skip the typed phrase and the terminal, but an AI agent can never run it. Deleting cannot be undone. Exit codes: `0` purged (or there was no vault), `1` refused, cancelled or not fully purged, `2` wrong usage.
+Deletes the vault for good, with everything that can open or rebuild it. It first lists every file it will delete: the vault (secrets and first-use approvals), the token maps of your projects, the vault audit log, every `vault-backup-*` folder made by `vault reset`, and the session key, plus the vault key in your system keychain. Then you confirm by typing `purge my vault`, and it deletes them and checks again that none is left. If a file or the keychain entry cannot be removed, it says which one and exits `1`; it never reports the vault as purged while something remains. The vault must be locked, and it refuses on a machine that belongs to a zn Team organization. It needs a person at a terminal; a script can pass `--yes` to skip the typed phrase and the terminal, but an AI agent can never run it. Deleting cannot be undone. Exit codes: `0` purged (or there was no vault), `1` refused, cancelled or not fully purged, `2` wrong usage.
 
 #### `vault team`
 
@@ -595,7 +595,7 @@ Aliases: `logs`, `export`.
 zn-gate why [<id>]
 ```
 
-Explains, in plain words, one block from the local evidence log. With no id it explains the last block; with an id it explains that record (the `id` field of a record from `zn-gate evidence --export`). It says what was stopped (the tool and the short preview the log already holds, with secrets removed), which rule fired, why that matters, and the one command you can run in your own terminal to go on, when such a command exists. For a rule that cannot be bypassed it says so and who decides.
+Explains, in plain words, one block from the local decision log. With no id it explains the last block; with an id it explains that record (the `id` field of a record from `zn-gate evidence --export`). It says what was stopped (the tool and the short preview the log already holds, with secrets removed), which rule fired, why that matters, and the one command you can run in your own terminal to go on, when such a command exists. For a rule that cannot be bypassed it says so and who decides.
 
 The command only reads the log: it changes nothing and uses no network. If the log does not hold enough to explain a record, for example because no rule id was recorded, it says what is missing instead of guessing. Exit codes: `0` explained, `1` nothing to explain (no log, no block, an id that is not in the log, or a log that cannot be read), `2` wrong usage. A line of the log that cannot be read is skipped, and the output says how many.
 
@@ -707,7 +707,7 @@ Shows the organization, the policy version, what the last policy version removed
 zn-gate team sync
 ```
 
-Downloads the policy and uploads the audit log now. Exit `0` only when a valid policy is applied and no upload failed. Exit `1` when the machine is offline, the organization has no policy, the policy is refused, the machine was removed, or an upload failed; `team status` keeps the last reason. A sync that was running when you left the organization, or joined another one, is dropped and writes nothing.
+Downloads the policy and uploads the vault audit log now. Exit `0` only when a valid policy is applied and no upload failed. Exit `1` when the machine is offline, the organization has no policy, the policy is refused, the machine was removed, or an upload failed; `team status` keeps the last reason. A sync that was running when you left the organization, or joined another one, is dropped and writes nothing.
 
 #### `team leave`
 

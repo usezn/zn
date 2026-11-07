@@ -7,7 +7,7 @@ zn-gate is a **lightweight checkpoint on your machine**, placed between your AI 
 **How to read this diagram**
 
 - The boxes: untrusted input (prompts, files, web, MCP) on the left, the agent and its tools on the right, and zn-gate between them with one box per check (`analyze_prompt`, `check_tool_call`, `check_tool_result`).
-- The arrows: input goes through the three checks and reaches the agent as clean input, and output comes back redacted. The bottom row (rules engine, PII and secret scrubber, encrypted vault, hash-chained audit log) is used by all three checks.
+- The arrows: input goes through the three checks and reaches the agent as clean input, and output comes back redacted. The bottom row (rules engine, scrubber, encrypted vault, hash-chained vault audit log) is used by all three checks.
 - The cloud path: only with `ZN_CLOUD=1` and `ZN_API_KEY` set, prompts with detected secrets removed go to the Galvanize 3 classifier at `api.usezn.com`.
 
 ## Three checks, one local engine
@@ -23,7 +23,7 @@ zn-gate checks each step of a tool call. The same local pieces serve all three c
 The local pieces:
 
 - **Rules engine.** Signatures plus normalization against homoglyphs, zero-width characters, BiDi overrides and comment splicing; shell commands that decode Base64 text and run it are recognised, but a Base64 string on its own is not decoded. It checks prompts, tool arguments, tool output and MCP tool descriptions.
-- **PII and secret scrubber.** Replaces the secrets it recognises (provider keys, tokens, JWTs, private keys, database URL passwords) and detects personal data (cards, IBAN, national IDs, e-mail, phone). The model sees a marker or `[REDACTED_...]` text instead of the value.
+- **Scrubber.** Replaces the secrets it recognises (provider keys, tokens, JWTs, private keys, database URL passwords) and detects personal data (cards, IBAN, national IDs, e-mail, phone). The model sees a marker or `[REDACTED_...]` text instead of the value.
 - **Encrypted vault.** Keeps the real values of your secrets on your machine. The agent works with stable markers such as `__ZN_AWS_KEY_1__`, and `zn run` puts a value in the environment of a command only when you approved it.
 - **Hash-chained decision log.** Records each assessment in `~/.zn/evidence.jsonl`.
 
@@ -78,7 +78,7 @@ What goes where on your machine, and what can leave it:
    Local evaluation uses compiled regular expressions, homoglyph normalization, and a 2048-entry LRU cache. Measured latencies by input size, with hardware and the script to reproduce them, are in the [npm package README](../packages/zn-gate/README.md#performance-local-rules-engine-no-network).
 
 3. **Optional Cloud Second Opinion (opt-in):**
-   Only prompt analysis (`analyze()`) can query the cloud classifier, and only when both `ZN_API_KEY` and `ZN_CLOUD=1` are set, or the user ran `zn-gate connect` (`ZN_LOCAL_ONLY=true` overrides it). Attacks caught by the local rules are blocked in-process first, and the text is secret-redacted locally before it is sent (personal data, and a secret zn-gate does not recognize, is not removed). If the cloud call fails, the local result stands (`fallback: true`) and nothing is blocked because of it. Tool arguments, tool output and tool descriptions never leave the machine.
+   Only prompt analysis (`analyze()`) can query the cloud check, and only when both `ZN_API_KEY` and `ZN_CLOUD=1` are set, or the user ran `zn-gate connect` (`ZN_LOCAL_ONLY=true` overrides it). Attacks caught by the local rules are blocked in-process first, and the text is secret-redacted locally before it is sent (personal data, and a secret zn-gate does not recognize, is not removed). If the cloud call fails, the local result stands (`fallback: true`) and nothing is blocked because of it. Tool arguments, tool output and tool descriptions never leave the machine.
 
 4. **Hash-Chained Local Decision Log:**
    Each recorded assessment is hashed with SHA-256 and chained into `~/.zn/evidence.jsonl`, with canonical JSON in both the Node and Python implementations. The chain detects accidental or partial edits; it is not tamper-proof against someone with write access to the file, who can recompute it.

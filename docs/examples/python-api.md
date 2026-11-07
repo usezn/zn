@@ -38,7 +38,7 @@ print(assessment.verdict, assessment.reason)
 
 ## Log an evidence record
 
-`log_evidence` appends one hash-chained record to the evidence log. It returns the record, or `None` when nothing was written. Here the log is a file under `/tmp/example`.
+`log_evidence` appends one hash-chained record to the decision log. It returns the record, or `None` when nothing was written. Here the log is a file under `/tmp/example`.
 
 ```python
 from zn_gate import log_evidence
@@ -47,7 +47,7 @@ record = log_evidence({"tool": "run_tool", "verdict": "allow"}, file_path="/tmp/
 print(record is not None)
 ```
 
-## Verify the evidence log
+## Verify the decision log
 
 `verify_evidence_ledger` checks the chain and returns `{'valid', 'total', 'verified', 'broken_index', 'error'}`.
 
