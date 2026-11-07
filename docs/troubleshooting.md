@@ -1052,6 +1052,33 @@ The `zn-gate` command of the Python package protects agents you build yourself. 
 
 **What to do:** follow that message, or choose another `--output` path, then run it again.
 
+#### "zn_gate: ZN_STRICT is set to ..., but only ZN_STRICT=1 turns it on, so it is off"
+
+This also appears for `ZN_BLOCK_TRUNCATED`.
+
+**What happened:** the variable has a value other than `1`, such as `true` or `yes`. Only `1` turns it on, so the setting is off. The warning appears once for each value in each run of your program. An unset, empty or `0` value leaves the setting off without a warning.
+
+**What to do:** to turn it on, set the variable to `1`, for example `ZN_STRICT=1`. If you do not want it, remove the variable.
+
+#### "zn_gate: '...' was blocked (rule ...), but on_block='ignore' let it through"
+
+**What happened:** the LangChain handler (`ZnGuardCallbackHandler`) was set to let blocked items through, with `on_block="ignore"` or `raise_on_injection=False`. It found a blocked prompt, tool call or output and let it through. The line names where it was (for example `langchain:llm_prompt`) and the rule, never the text.
+
+**What to do:** if you did not mean to let blocked items through, use `on_block="raise"`, the default. The handler then raises `GuardBlockError` instead. If you did mean it, each warning is the record of an item that passed.
+
+#### "[zn-gate] Warning: Cloud gate error (...)"
+
+**What happened:** you turned on the cloud check (`ZN_CLOUD=1` with an API key), and the call to the cloud failed. The message is shown only when `ZN_VERBOSE=1` is set. The rest of the line says why:
+
+- "The cloud service did not accept the API key: check ZN_API_KEY." (HTTP 401 or 403)
+- "The cloud service took too long to answer: check your network connection."
+- "The cloud service could not be reached: check your network connection and ZN_API_URL."
+- "The cloud service answered with an error (HTTP `<code>`): try again later."
+
+Then zn checked the text with the local rules only, on your machine, and the result has `"mode": "oss-local-fallback"`.
+
+**What to do:** for an invalid key, check `ZN_API_KEY`. For a timeout or a connection error, check your connection and `ZN_API_URL` if you set it. For any other error, try again later.
+
 ### Where a message points you
 
 - A message that ends with "More: <https://usezn.com/docs/zn-gate/troubleshooting/>" (a vault that did not start, a damaged vault file, a failed audit log check) points to this page. [Section 5](#5-your-secret-vault-is-locked) covers the vault, and [section 10](#10-the-evidence-log--is-damaged) the logs.

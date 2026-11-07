@@ -14,6 +14,10 @@ PORT=${PORT:-8787}
 rm -rf "$RUN"; mkdir -p "$RUN"
 node "$H/setup.js" --pkg "$PKG" --run "$RUN" --agent claude-code >/dev/null
 OUT=$RUN/out
+# The scripted commands call zn run, so the run has a zn on its PATH (as run_codex.sh does).
+mkdir -p "$RUN/bin"
+ln -sf "$PKG/bin/cli.js" "$RUN/bin/zn"
+export PATH=$RUN/bin:$PATH
 export HOME=$RUN/home ZN_HOME=$RUN/zn CLAUDE_CONFIG_DIR=$RUN/home/.claude
 export ANTHROPIC_BASE_URL=http://127.0.0.1:$PORT ANTHROPIC_API_KEY=mock-provider-key
 export DISABLE_TELEMETRY=1 DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_ERROR_REPORTING=1
