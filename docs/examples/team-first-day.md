@@ -1,6 +1,6 @@
 # Example: a developer's first day on zn Team
 
-A short story in two roles: the lead who sets zn Team up, and one developer. Everything here is documented in the [quick guide for a team lead](../team-quick-guide.md) and [zn Team on a developer machine](../team.md), and each step links there. The organization, the token and every value are made up.
+A short story in two roles: the lead who sets zn Team up, and one developer. Everything here is documented in the [quick guide for a team lead](../team-quick-guide.md) and [zn Team on a developer machine](../team.md), and each step links there. The organization, the token and the other values are made up; `api.usezn.com` is the real zn service, the host zn-gate talks to.
 
 Run the commands yourself, in your own terminal.
 
