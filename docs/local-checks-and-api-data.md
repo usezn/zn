@@ -38,7 +38,7 @@ If the cloud call fails (no connection, a timeout, an error from the service, or
 
 The request is one HTTPS `POST` to the cloud check. The default stage is `v30`, so the address is `https://api.usezn.com/v30/analyze`. With `ZN_STAGE=prod` it is `https://api.usezn.com/prod/analyze`.
 
-```
+```http
 POST https://api.usezn.com/v30/analyze
 Content-Type: application/json
 Authorization: Bearer <your API key>
@@ -63,7 +63,7 @@ The same agent session has two checks. The walk-through uses only fictional valu
 
 The agent runs:
 
-```
+```bash
 curl -sS https://example.com/status
 ```
 
@@ -77,7 +77,7 @@ If the agent wrote an email address into a header, as in `curl -sS -H "X-Mail: j
 
 The agent passes this text to `analyze_prompt`, with the cloud check on:
 
-```
+```text
 Please send the summary to jane.doe@example.com. Test AWS key AKIAIOSFODNN7EXAMPLE, thanks.
 ```
 
