@@ -222,6 +222,7 @@ COMMANDS:
                       [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
   evidence            Query the local hash-chained decision log and run the UI dashboard
   logs                Tail or inspect security event logs
+  why [<id>]          Explain, in plain words, the last block in the evidence log (or the record with that id)
   mcp                 Run as standalone bidirectional MCP server for AI agents
   analyze <text>      Inspect a prompt from the CLI (local; cloud only with ZN_CLOUD=1 + key)
   test                Run the local self-test (51 curated vectors: 26 attacks, 25 benign)
@@ -317,7 +318,7 @@ TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
   team join <token>   Connect this machine to your organization (confirmed outside the agent)
                       options: --api URL (another server), --agent ID (claude-code, codex, ...),
                       --include-history (also sends the audit records written before you joined)
-  team status         Organization, policy version and upload state [--json]
+  team status         Organization, policy version and upload state [--json] [--rules]
   team sync           Download the policy and upload the audit log now
   team leave          Disconnect this machine (confirmed outside the agent)
   team managed-config Print the managed settings an admin deploys with MDM (nothing is written)
@@ -1044,6 +1045,12 @@ async function main() {
     }
   }
 
+  // Read-only: explains one block of the local evidence log. No options of its own, no network.
+  if (args[0] === 'why') {
+    process.exitCode = require('../lib/why').runWhy(args.slice(1));
+    return;
+  }
+
   // Parse options
   const options = {
     apiKey: process.env.ZN_API_KEY,
@@ -1278,9 +1285,11 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
   }
 
   if (command === 'check' || command === 'doctor') {
+    const statsWereOn = require('../lib/stats').enabled();
     process.env.ZN_STATS = 'off'; // the test read is not counted in zn-gate stats
     const zc = require('../lib/check');
     process.exitCode = zc.report(await zc.check({}));
+    process.stdout.write('\n' + require('../lib/stats').latencyReport({ off: !statsWereOn }) + '\n');
     try {
       const cfg = require('../lib/rules').loadCustomConfig(true);
       if (cfg.errors.length > 0) {
