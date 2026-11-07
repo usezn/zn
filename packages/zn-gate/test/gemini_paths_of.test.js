@@ -49,8 +49,12 @@ test('pathsOf marks a nested file: URL with a remote host as bad and adds no pat
 });
 
 test('pathsOf treats a nested file: URL with a localhost host as a local path', () => {
-  const r = pathsOf({ options: { uri: 'file://localhost/work/example/x.txt' } });
-  assert.deepEqual(r, { paths: [path.resolve('/work/example/x.txt')], bad: false });
+  // Build the URL from a platform-absolute path so it also has a drive letter on Windows.
+  const local = path.resolve('/work/example/x.txt');
+  const url = pathToFileURL(local);
+  url.host = 'localhost';
+  const r = pathsOf({ options: { uri: url.href } });
+  assert.deepEqual(r, { paths: [local], bad: false });
 });
 
 test('pathsOf leaves out a nested value with a line break', () => {
