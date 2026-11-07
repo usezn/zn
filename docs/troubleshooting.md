@@ -270,6 +270,8 @@ Past the thirteen messages above, zn-gate prints more short messages when it sto
 
 Run every command in your own terminal, not through your AI agent. If you did not install zn-gate with `npm install -g zn-gate`, put `npx -y zn-gate` where the commands below say `zn`, for example `npx -y zn-gate secret set NAME`. Words you do not know are in the [glossary](glossary.md).
 
+To see which rule stopped your agent last, and what you can do about it, run `zn why` in your own terminal. It explains the last block in the evidence log (`zn why <id>` explains a record you pick); see [`why`](cli.md#why).
+
 Pick the family that fits your message:
 
 - [Your agent tried to read or change a protected file](#your-agent-tried-to-read-or-change-a-protected-file)
@@ -606,9 +608,22 @@ zn: something went wrong inside the zn hook, so this action was blocked to keep 
 
 #### "zn: could not read this action (`<why>`), so it was blocked" / "could not read the tool name of this call" / "could not read the command of this call"
 
-**What happened:** the event your agent sent to zn was damaged or in a shape zn does not know, so zn could not check it.
+**What happened:** the event your agent sent to zn was damaged, so zn could not check it. If the message says your agent "changed the format of the data", see the next entry.
 
 **What to do:** retry the action. If it repeats, run `zn hooks install <agent>` again, then `npx -y zn-gate check`.
+
+#### "This usually means `<agent>` changed the format of the data it sends to zn"
+
+```text
+zn: could not read the tool name of this call, so zn cannot check it and blocked it. This usually means <agent> changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `zn hooks install <agent>`.
+zn: <agent> sent an event zn does not know, so it was not checked. This usually means <agent> changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `zn hooks install <agent>`.
+```
+
+**What happened:** your agent was updated and now sends zn information in a new shape (a renamed field, a new event name, a different tool name). The installed zn-gate is older than the agent, so it cannot read it. A call whose tool or command zn cannot read is blocked. An event with a name zn does not know is let through unchecked, and the second message appears on the hook's error output (some agents show it only in verbose mode).
+
+**Is it safe?** A blocked call was not run. An event the second message names was not checked, so update zn-gate soon.
+
+**What to do:** run `npm install -g zn-gate@latest`, then `zn hooks install <agent>`, then `npx -y zn-gate check`. If you use the Claude Code plugin, run `claude plugin update zn-gate@usezn` instead. If it still happens after the update, your agent may be newer than the latest zn-gate: please report it as an issue.
 
 #### "zn: this action names a file or text that is not valid Unicode text, so it was blocked"
 
@@ -1120,5 +1135,9 @@ echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.zshrc
 ```
 
 Use `~/.bashrc` instead of `~/.zshrc` if you use bash. Then open a new terminal and run the installs again: `npm install -g` for your agent (for example `npm install -g @openai/codex` or `npm install -g @google/gemini-cli`, if it failed too) and `npm install -g zn-gate`, then `npx -y zn-gate init` (or `zn hooks install <agent>`). An install that failed with `EACCES` did nothing, so it has to be run again. A Node.js version manager such as nvm also avoids the problem. This does not apply to Windows.
+
+### init says there is no internet connection
+
+If `zn-gate init` cannot reach the npm registry, it says "no internet connection: npm could not reach the registry" and what to do next, instead of a message about permissions. Check your connection (and any proxy or VPN), then run `npx -y zn-gate init` again. The npm install step gives up after about 30 seconds and never waits more than 3 minutes. On Windows it also stops npm itself, so nothing goes on installing in the background. A real permission error still gets the advice above.
 
 **To see the technical detail of an error:** run the command again with `ZN_VERBOSE=1`, or set `DEBUG=zn` (also `zn*`, `zn:*`, `zn-gate` or `zn-gate:*`, alone or in a comma-separated list). Other `DEBUG` values, such as `DEBUG=*`, do not change what zn prints. The Node.js and Python packages follow the same rule.
