@@ -6,8 +6,8 @@
  * shield or scrubber module reads the stored key or the cloud settings" stays easy to test (test/connect.test.js).
  *
  * Personal data (email, phone, IBAN, card number) is replaced with [EMAIL], [PHONE], [IBAN], [CARD] after the secrets.
- * It sends nothing unless the person turned the optional cloud check on (ZN_CLOUD=1 with a key, or zn-gate connect,
- * and not ZN_LOCAL_ONLY). analyze() applies the prompt check's own steps: the local rules first, the secret
+ * It sends nothing unless the person ran zn-gate connect (the saved key; no
+ * environment variable counts) and ZN_LOCAL_ONLY is not set. analyze() applies the prompt check's own steps: the local rules first, the secret
  * redaction before the request, the same timeouts and the same fallback to the local rules when the call fails.
  * pinOrigin keeps the key and the text on the fixed zn origin: an environment variable of the agent (a project can set
  * it) cannot point them elsewhere, and a TLS setting that weakens the check stops the request.
@@ -55,16 +55,18 @@ function redactForCloud(sample) {
 
 /** The analyze() result for the sample, or null when the cloud check is off or nothing could be asked. */
 async function ask(sample, timeoutMs) {
-  // Cheap test before the client is loaded: nothing of it runs when the cloud check is off. isConnected is the only
-  // thing this file takes from cloud-key (test/connect.test.js holds it to that): it never reads the key.
+  // Cheap test before the client is loaded: nothing of it runs unless the person ran `zn-gate connect`. isConnected is
+  // the only thing this file takes from cloud-key (test/connect.test.js holds it to that): it never reads the key.
+  // The environment never turns this path on (no variable does): a project can put variables in the agent's
+  // environment, and every tool result would then go out under a key it chose.
   const { isConnected } = require('../cloud-key');
-  if (process.env.ZN_CLOUD !== '1' && !isConnected()) return null;
+  if (!isConnected()) return null;
   const client = require('../client');
-  if (!client.isCloudEnabled()) return null;
+  if (!client.isCloudEnabled({ storedOnly: true })) return null;
   // Secrets, then personal data, are replaced before the request is built; if that fails nothing is sent.
   // Placeholders can be longer than what they replace, so the cap is applied again to the text actually sent.
   const clean = trimToBytes(redactForCloud(sample));
-  return client.analyze(clean, { pinOrigin: true, timeout: timeoutMs });
+  return client.analyze(clean, { pinOrigin: true, storedOnly: true, timeout: timeoutMs });
 }
 
 module.exports = { ask, redactForCloud, trimToBytes };

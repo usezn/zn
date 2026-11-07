@@ -73,6 +73,8 @@ function isCloudEnabled(options = {}) {
 
 /** A usable key from --key / ZN_API_KEY together with ZN_CLOUD=1: the person's own, explicit opt-in. */
 function explicitOptIn(options = {}) {
+  // storedOnly (tool output in the hooks): the environment and --key never count, only what `zn-gate connect` saved.
+  if (options.storedOnly) return false;
   return Boolean(usableApiKey(options.apiKey || process.env.ZN_API_KEY)) && process.env.ZN_CLOUD === '1';
 }
 

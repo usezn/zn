@@ -208,7 +208,7 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   with `{"hooks": {"checkToolOutputInstructions": false}}` in
   `~/.zn/config.json`. At most 64 KiB of each output are checked: the first 48 KiB and
   the last 16 KiB.
-  With the optional cloud check on (`ZN_CLOUD=1` with a key, or `zn-gate connect`), the same
+  After `zn-gate connect` (`ZN_CLOUD=1` and `ZN_API_KEY` in the environment do not enable this, because a project can set them), the same
   outputs are also sent to zn's API, when the local check did not flag them: a sample of at most 16 KiB,
   counted in bytes of UTF-8 text (the first 12 KiB and the last 4 KiB), after secrets and personal data (email, phone, IBAN and card numbers) are replaced. The cloud
   can only add the same note; a failed call changes nothing. Turn off just this path with
