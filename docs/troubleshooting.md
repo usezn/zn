@@ -269,6 +269,8 @@ Past the thirteen messages above, zn-gate prints more short messages when it sto
 
 Run every command in your own terminal, not through your AI agent. If you did not install zn-gate with `npm install -g zn-gate`, put `npx -y zn-gate` where the commands below say `zn`, for example `npx -y zn-gate secret set NAME`. Words you do not know are in the [glossary](glossary.md).
 
+To see which rule stopped your agent last, and what you can do about it, run `zn why` in your own terminal. It explains the last block in the evidence log (`zn why <id>` explains a record you pick); see [`why`](cli.md#why).
+
 Pick the family that fits your message:
 
 - [Your agent tried to read or change a protected file](#your-agent-tried-to-read-or-change-a-protected-file)

@@ -222,6 +222,7 @@ COMMANDS:
                       [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
   evidence            Query the local hash-chained decision log and run the UI dashboard
   logs                Tail or inspect security event logs
+  why [<id>]          Explain, in plain words, the last block in the evidence log (or the record with that id)
   mcp                 Run as standalone bidirectional MCP server for AI agents
   analyze <text>      Inspect a prompt from the CLI (local; cloud only with ZN_CLOUD=1 + key)
   test                Run the local self-test (51 curated vectors: 26 attacks, 25 benign)
@@ -1040,6 +1041,12 @@ async function main() {
       process.exitCode = 2;
       return;
     }
+  }
+
+  // Read-only: explains one block of the local evidence log. No options of its own, no network.
+  if (args[0] === 'why') {
+    process.exitCode = require('../lib/why').runWhy(args.slice(1));
+    return;
   }
 
   // Parse options
