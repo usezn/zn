@@ -57,6 +57,15 @@ For a connection string with a long password, only the password moves, as
 whole URL moves to the vault as `DATABASE_URL`, and `.env` keeps
 `DATABASE_URL=__ZN_DATABASE_URL__`.
 
+Your agent can read a `.env` only when every variable with a secret-looking name
+(one that contains KEY, SECRET, TOKEN, PASS, PWD, CREDENTIAL, AUTH, DSN or CONN, or
+ends in `_URL` or `_URI`) is empty or holds a marker, however short its value is.
+`zn env shadow` leaves values under 8 characters in the file because they cannot be
+told apart from ordinary text, so the read stays blocked and the message names the
+variables that still hold a value (never the values). Store each one with
+`zn secret set NAME` and write `__ZN_NAME__` in its place. Variables with ordinary
+names (`PORT=8080`, `DEBUG=1`) never block the read.
+
 An encrypted copy of the original is kept (`zn env unshadow` restores it). To
 add a single secret, type it at a hidden prompt (never as an argument):
 

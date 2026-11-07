@@ -272,7 +272,7 @@ function secretNameForKey(key) {
  */
 function shortWhy(n) {
   return 'the value is only ' + n + ' character(s); values under ' + dotenv.MIN_SECRET_LEN
-    + ' are not moved because they cannot be told apart from ordinary text. It stays in the file in plain text. Use a longer value.';
+    + ' are not moved because they cannot be told apart from ordinary text. It stays in the file in plain text, and your agent cannot read the file while it does. Use a longer value, or store it with `zn secret set NAME` and write __ZN_NAME__ in its place.';
 }
 
 function planImport(text, flags) {
