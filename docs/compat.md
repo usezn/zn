@@ -208,7 +208,7 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   the last 16 KiB.
   With the optional cloud check on (`ZN_CLOUD=1` with a key, or `zn-gate connect`), the same
   outputs are also sent to zn's API, when the local check did not flag them: a sample of at most 16 KiB
-  (the first 12 KiB and the last 4 KiB), after secrets are replaced (personal data is not removed). The cloud
+  (the first 12 KiB and the last 4 KiB), after secrets and personal data (email, phone, IBAN and card numbers) are replaced. The cloud
   can only add the same note; a failed call changes nothing. Turn off just this path with
   `{"hooks": {"cloudCheckToolOutput": false}}`. Only the Claude Code hook does this today:
   the other agents get no note for tool output (the same limit as the local check above), so they send nothing.

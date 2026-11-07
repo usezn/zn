@@ -191,6 +191,45 @@ test('secrets are replaced before anything is sent, and a local secret match sen
   }
 });
 
+test('personal data (email, phone, IBAN, card) is replaced with placeholders before anything is sent', async (t) => {
+  const seen = stub(t, allow);
+  const { dir, home } = await setup(t);
+  const email = 'jane.doe@example.com';
+  const phone = '+1 202-555-0143';
+  const iban = 'DE89370400440532013000';
+  const card = '4242424242424242';
+  const text = CLEAN.repeat(2) + 'contact ' + email + ' phone ' + phone + ' iban ' + iban + ' card ' + card + ' ' + CLEAN.repeat(2);
+  await run(postTool('Bash', { command: 'cat contacts.txt' }, { stdout: text, stderr: '' }, dir), home);
+  assert.equal(seen.length, 1);
+  const body = seen[0].body.input;
+  for (const v of [email, phone, iban, card, '202-555-0143']) assert.ok(!body.includes(v), 'not sent: ' + v);
+  for (const p of ['[EMAIL]', '[PHONE]', '[IBAN]', '[CARD]']) assert.ok(body.includes(p), 'placeholder ' + p);
+  assert.ok(body.includes('shipping dates'), 'the rest of the text is still sent');
+});
+
+test('secrets and personal data together: neither value is sent', async (t) => {
+  const seen = stub(t, allow);
+  const { dir, home } = await setup(t);
+  const ghp = 'ghp_' + 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8';
+  const email = 'john.smith@example.com';
+  await run(postTool('Bash', { command: 'env' }, { stdout: CLEAN.repeat(2) + 'token=' + ghp + ' owner ' + email + ' ' + CLEAN.repeat(2), stderr: '' }, dir), home);
+  assert.equal(seen.length, 1);
+  assert.ok(!seen[0].body.input.includes(ghp));
+  assert.ok(!seen[0].body.input.includes(email));
+});
+
+test('if the redaction throws, nothing is sent and no note is added', async (t) => {
+  const seen = stub(t, block);
+  const { dir, home } = await setup(t);
+  const rules = require('../lib/rules');
+  const real = rules.redactSecrets;
+  rules.redactSecrets = () => { throw new Error('boom'); };
+  t.after(() => { rules.redactSecrets = real; });
+  const res = await run(webfetch(dir, CLEAN.repeat(5)), home);
+  assert.equal(seen.length, 0);
+  assert.ok(!/zn cloud check/.test(JSON.stringify(res.output || {})));
+});
+
 test('the sample is capped: a large output sends a bounded text, not the whole file', async (t) => {
   const seen = stub(t, allow);
   const { dir, home } = await setup(t);

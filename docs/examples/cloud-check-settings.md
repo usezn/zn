@@ -16,7 +16,7 @@ Without `ZN_CLOUD=1` (and without `zn-gate connect`), none of these settings sen
 
 ## What is sent when the cloud check is on
 
-Only the text of `analyze_prompt` and `zn-gate analyze` calls, after zn-gate removed the secrets it detects, and the key as a request header. Personal data is not removed on this path, and a secret zn-gate does not recognize is sent with the text. Tool-call arguments and tool descriptions are never sent. Tool output is sent only by the Claude Code hook, as a sample of at most 16 KiB of each web, MCP or shell result, and `"cloudCheckToolOutput": false` under `hooks` in `~/.zn/config.json` turns that off. If the cloud call fails, the text is checked by the local rules alone.
+Only the text of `analyze_prompt` and `zn-gate analyze` calls, after zn-gate removed the secrets it detects, and the key as a request header. Personal data is not removed on this path, and a secret zn-gate does not recognize is sent with the text. Tool-call arguments and tool descriptions are never sent. Tool output is sent only by the Claude Code hook, as a sample of at most 16 KiB of each web, MCP or shell result, with secrets, email addresses, phone numbers, IBANs and card numbers removed first, and `"cloudCheckToolOutput": false` under `hooks` in `~/.zn/config.json` turns that off. If the cloud call fails, the text is checked by the local rules alone.
 
 `zn-gate status` shows the state at any time.
 
