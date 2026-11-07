@@ -1,0 +1,2 @@
+### Changed
+- When an agent sends zn data in a shape this version does not know (a renamed field, a new event name, a different tool name), the message now says the format probably changed and gives the update command (`npm install -g zn-gate@latest`, then `zn hooks install <agent>`; for the Claude Code plugin, `claude plugin update zn-gate@usezn`). Decisions are unchanged: a call zn cannot read is still blocked, and an event with an unknown name is still not checked, but it now prints this note on the hook error output.

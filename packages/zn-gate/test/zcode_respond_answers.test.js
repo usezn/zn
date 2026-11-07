@@ -62,7 +62,7 @@ test('an unreadable tool call is denied with the reason of what is missing (exit
   assert.match(zc.respond({ decision: 'allow', event: tool('Read', {}) }).hookSpecificOutput.permissionDecisionReason, /^zn: could not read the file this call uses/);
   const r = hook(t, { hook_event_name: 'PreToolUse', cwd: '/w', tool_name: 'Bash' });
   assert.equal(r.status, 0);
-  assert.equal(JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason, 'zn: could not read the command of this call, so zn cannot check it.');
+  assert.match(JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason, /^zn: could not read the command of this call, so zn cannot check it. This usually means ZCode changed the format of the data it sends to zn.*npm install -g zn-gate@latest/);
 });
 
 test('a wrapped command is denied with the exact zn run command to use', () => {
