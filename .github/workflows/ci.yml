@@ -211,14 +211,15 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         run: python bench/bench_python.py
 
-  # The Python package on the newest Python with deprecation and resource warnings as errors, in pull requests
-  # too: a call that a future Python removes, or a file or socket left open, fails here instead of in a user's
-  # upgrade. No -X dev: its debug checks multiply the run time and break the linear-time tests.
+  # The Python package on the newest Python with deprecation and resource warnings as errors: a call that a
+  # future Python removes, or a file or socket left open, fails here instead of in a user's upgrade. No -X dev:
+  # its debug checks multiply the run time and break the linear-time tests.
   python-warnings:
     name: Python 3.14 tests with warnings as errors (ubuntu-latest)
-    # Draft pull requests skip this job; marking the pull request ready for review runs it. Not a required check,
-    # so the merge queue leaves it out: it runs in pull requests and in the nightly run on next.
-    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    # Not a required check, so the merge queue leaves it out. A pull request runs it only with the full-ci label
+    # (and not as a draft); every other run covers it: pushes to main and release branches, the nightly run on
+    # next (nightly-next.yml starts a manual run of this workflow there), and manual runs.
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'full-ci')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
