@@ -2030,4 +2030,45 @@ function audit(opts) {
   return { root, files: scanned, findings, truncated: Boolean(truncated) || timedOut, entries, skippedDirs, agents: Array.from(selected), agentFiles, explicitAgents: !(!o.agents || o.agents.length === 0 || o.agents.includes('all')) };
 }
 
-module.exports = { audit, classify, redact, AGENTS, AGENT_PLACES, _internal: { globMatcher, hookCommands, isOurHook, isOurMcp, gitIgnored, readBounded, grantsWrite, withoutTrailingEquals, OUR_HOOKS, SAFE_ABS, znGateFile } };
+/**
+ * The audit of one project file, without walking the folder: the rules `audit` applies to that file and nothing else, so what a hook needs
+ * to know about `.claude/settings.json` does not depend on what else is in the project (a walk that stops after N entries can stop before
+ * the file). A file that is not there gives no findings; a link that leaves the project, a file that cannot be read or one that is too large
+ * gives the same "not checked" finding the whole audit gives.
+ */
+function auditFileAt(opts) {
+  const root = path.resolve(opts.root);
+  const rel = String(opts.rel);
+  const c = classify(rel, false);
+  const result = { root, findings: [] };
+  if (!c) return result;
+  const abs = path.join(root, ...rel.split('/'));
+  let st;
+  try { st = fs.lstatSync(abs); } catch (_) { return result; }
+  const out = [];
+  let target = abs;
+  if (st.isSymbolicLink()) {
+    let real = null;
+    try { real = fs.realpathSync(abs); } catch (_) { real = null; }
+    let realRoot = root;
+    try { realRoot = fs.realpathSync(root); } catch (_) { /* keep */ }
+    const inside = real && (path.relative(realRoot, real) === '' || (!path.relative(realRoot, real).startsWith('..') && !path.isAbsolute(path.relative(realRoot, real))));
+    if (!inside) {
+      out.push(uncheckedFinding({ file: rel, agent: c.agent, readers: c.readers, severity: 'high', detail: rel + (real ? ' is a symbolic link to a location outside the audited directory. Agents follow it; zn audit does not read it.' : ' is a broken symbolic link.') }));
+    } else {
+      target = real;
+    }
+  }
+  if (!out.length) auditFile(Object.assign({ abs: target, rel, display: rel, scope: 'project', root }, c), out);
+  const seen = new Set();
+  for (const f of out) {
+    const key = [f.id, f.file, f.line, f.severity, f.detail].join('\u0000');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    delete f._readers;
+    result.findings.push(f);
+  }
+  return result;
+}
+
+module.exports = { audit, auditFileAt, classify, redact, AGENTS, AGENT_PLACES, _internal: { globMatcher, hookCommands, isOurHook, isOurMcp, gitIgnored, readBounded, grantsWrite, withoutTrailingEquals, OUR_HOOKS, SAFE_ABS, znGateFile } };
