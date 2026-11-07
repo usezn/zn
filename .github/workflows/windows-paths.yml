@@ -5,7 +5,8 @@ name: Windows checks for Windows-specific code
 # - on every push to main and to a release branch, so a release commit is never tagged without it
 #   (.github/release-required-checks.txt names this job);
 # - on pull requests into next, main and release branches that touch code with Windows-specific paths
-#   (command quoting, launching programs, the keychain, the broker, agent setup) or any test.
+#   (command quoting, launching programs, the keychain, the broker, agent setup). A pull request that changes
+#   only tests does not run it; the push to main and the nightly run on next cover those.
 # The merge queue runs only the required checks, so it does not run this workflow.
 
 on:
@@ -23,7 +24,6 @@ on:
       - 'packages/zn-gate/lib/agents/**'
       - 'packages/zn-gate/lib/init.js'
       - 'packages/zn-gate/bin/**'
-      - 'packages/zn-gate/test/**'
       - 'plugins/tools/**'
       - 'plugins/zcode/scripts/**'
       - 'plugins/zn-gate/scripts/**'
