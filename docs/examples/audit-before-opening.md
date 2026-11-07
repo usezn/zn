@@ -72,20 +72,22 @@ When you only want the report, `--fail-on none` never fails the job. The
 
 ## Try it yourself
 
-All the commands of this page, in order. The repository, hosts and URLs are
-fake, so nothing real is checked or sent:
+All the commands of this page, in order. Run them on a repository you have
+just cloned and not yet opened with an agent; here it is in the folder
+`./example-repo`. The audit only reads files: it runs nothing from the
+repository and sends nothing.
 
 ```sh
-# Clone the example repository
-git clone https://example.com/example-org/example-repo.git
-
-# Audit it before any agent opens it
+# Audit the repository before any agent opens it
 npx -y zn-gate audit ./example-repo
 
 # The same from inside the repository
 cd example-repo
-zn audit
+npx -y zn-gate audit
 
 # In CI: SARIF for GitHub code scanning, never fail the job
-zn audit --format sarif --output zn-audit.sarif --fail-on none
+npx -y zn-gate audit --format sarif --output zn-audit.sarif --fail-on none
 ```
+
+If you installed zn-gate globally (`npm install -g zn-gate`), `zn audit` is the
+same command.
