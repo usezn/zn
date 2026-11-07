@@ -315,7 +315,7 @@ TEAM (zn Team: organization policy and audit upload; needs the vault unlocked):
   team join <token>   Connect this machine to your organization (confirmed outside the agent)
                       options: --api URL (another server), --agent ID (claude-code, codex, ...),
                       --include-history (also sends the audit records written before you joined)
-  team status         Organization, policy version and upload state [--json]
+  team status         Organization, policy version and upload state [--json] [--rules]
   team sync           Download the policy and upload the audit log now
   team leave          Disconnect this machine (confirmed outside the agent)
   team managed-config Print the managed settings an admin deploys with MDM (nothing is written)

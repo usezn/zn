@@ -679,10 +679,10 @@ Connects this machine to your organization with the join token your admin gave y
 #### `team status`
 
 ```bash
-zn-gate team status [--json]
+zn-gate team status [--json] [--rules]
 ```
 
-Shows the organization, the policy version, what the last policy version removed or loosened, the state of the audit upload, and a revocation that is still pending after `team leave`. See [zn Team](team.md#when-the-organization-lifts-a-restriction).
+Shows the organization, the policy version, what the last policy version removed or loosened, the state of the audit upload, and a revocation that is still pending after `team leave`. With `--rules` it also prints the rules of the active signed policy in plain words (version, key id, expiry, each rule), read from the saved copy and checked again with the pinned key, with no network call. A copy that does not verify or has expired prints no rules. `--json` adds a `rules` object. See [zn Team](team.md#when-the-organization-lifts-a-restriction).
 
 #### `team sync`
 
