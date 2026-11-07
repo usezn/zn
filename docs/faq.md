@@ -85,9 +85,15 @@ wrapping with `npx -y zn-gate init --revert`. Afterwards, run
 `npx -y zn-gate check` to see what is left. See
 [Piece by piece](uninstall.md#piece-by-piece).
 
+## Your data
+
+### 11. Where is my data?
+
+The check runs locally on your machine unless you turn on the optional cloud check. With it on, only the text of `analyze_prompt` and `zn-gate analyze` calls is sent, after zn-gate removed the secrets it detects. See [What leaves your machine](../README.md#what-leaves-your-machine) for the full list, and [Turn on the optional cloud check](connect.md) to turn it on or off.
+
 ## Logs and blocks
 
-### 11. Where do I see what was blocked?
+### 12. Where do I see what was blocked?
 
 Run `npx -y zn-gate why` in your own terminal. It explains the last block in plain words: what was stopped, why, and what to do next. To explain one specific block, give its id from the records that `npx -y zn-gate evidence --export` prints. Without an id, `why` explains the last block; if there is no block yet, it says so.
 
