@@ -320,7 +320,7 @@ CRITICAL  ZNA007  .claude/settings.json:3  [claude]
 ```
 
 **The first line** is `zn audit`, the directory exactly as you typed it (`.` when you gave none) and, in
-brackets, the zn-gate version that made the report.
+parentheses, the zn-gate version that made the report.
 
 **The header of a finding** has four parts:
 
