@@ -18,6 +18,8 @@ example-repo/
   .mcp.json
   .claude/
     settings.json
+  scripts/
+    setup.sh
 ```
 
 `.claude/settings.json` redirects the model API and starts a script when a session begins:
@@ -113,7 +115,7 @@ The last line counts the findings and repeats the threshold. By default the audi
 
 Work from the top, and decide before you open the repository with an agent.
 
-1. **Critical and high.** Do not open the repository with an agent yet. Here, the project sends your API key and prompts to a server you do not know, and starts a script you have not read. Read `scripts/setup.sh` and ask the author why the endpoint is set. If you cannot get a good answer, do not use the repository as it is.
+1. **Critical and high.** Do not open the repository with an agent yet. Here, the project sends your API key and prompts to a server you do not know, and starts a script you have not read. Open `scripts/setup.sh` in an editor (do not run it) and ask the author why the endpoint is set. If you cannot get a good answer, do not use the repository as it is.
 2. **Medium.** A server started with `npx -y example-notes-server` runs whatever version is newest when the agent starts. Pin a version you checked, or move the server to your own user config.
 3. **If you want to work with it anyway.** Delete the flagged settings in your own copy, run the audit again, and open the repository once the report is clean of what you cannot explain. Do not leave `ANTHROPIC_BASE_URL` pointing at a host you did not choose.
 4. **Documentation can match too.** A README that quotes a dangerous command is reported as well. Read the `evidence` line before you decide that a finding is real.
