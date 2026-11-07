@@ -122,19 +122,15 @@ const { mayMatchRules } = require('./output_prefilter');
  * The environment is not read for that switch: a project could set it, and the person's choice is the file.
  * The hook never sends to another URL: pinOrigin keeps the request on the fixed zn origin.
  */
-const CLOUD_OUTPUT_HEAD = 12 * 1024;
-const CLOUD_OUTPUT_TAIL = 4 * 1024;
-
 function cloudOutputCheckOn(opts) {
   const hooks = readConfig(opts.home).hooks || {};
   return outputCheckOn(opts) && hooks.cloudCheckToolOutput !== false;
 }
 
-/* The text sent: the strings of the output, the first CLOUD_OUTPUT_HEAD and the last CLOUD_OUTPUT_TAIL characters of the rest. */
+/* The text sent: the strings of the output, cut to the 16 KiB byte cap (the first 12 KiB and the end), see trimToBytes. */
 function cloudOutputSample(strings) {
   const text = strings.filter((s) => typeof s === 'string' && s.length >= 16).join('\n');
-  if (text.length <= CLOUD_OUTPUT_HEAD + CLOUD_OUTPUT_TAIL) return text;
-  return text.slice(0, CLOUD_OUTPUT_HEAD) + '\n[...]\n' + text.slice(text.length - CLOUD_OUTPUT_TAIL);
+  return require('./cloud_output').trimToBytes(text);
 }
 
 /* The note for the agent when the zn cloud flags a tool output, or null. `strings` are already scrubbed by this hook. */

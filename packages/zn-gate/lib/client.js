@@ -21,9 +21,10 @@ try {
  *    (lib/hooks/runner.js, cloudOutputNote) passes a capped sample of the
  *    output of web, MCP and shell tools to analyze() with pinOrigin, only when
  *    the cloud check is on and hooks.cloudCheckToolOutput is not false.
- *  - The only code path that can reach the network is analyze() — the
- *    prompt-analysis API used by the `analyze_prompt` MCP tool and the
- *    `zn-gate analyze` CLI command — and only when BOTH ZN_API_KEY and
+ *  - Text reaches the network only through analyze(), in two cases: prompt
+ *    analysis (the `analyze_prompt` MCP tool and the `zn-gate analyze` CLI
+ *    command) and, as described above, the tool-output sample of the Claude
+ *    Code hook. Either only when BOTH ZN_API_KEY and
  *    ZN_CLOUD=1 are set, or the user ran `zn-gate connect` (and
  *    ZN_LOCAL_ONLY is not "true"). Secrets are redacted locally with
  *    redactSecrets() before the request is built. `connect` and `disconnect`

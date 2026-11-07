@@ -239,6 +239,45 @@ test('the sample is capped: a large output sends a bounded text, not the whole f
   assert.equal(seen[0].body.long_input, 'windows');
 });
 
+test('the cap is in UTF-8 bytes: CJK and emoji output sends at most 16 KiB, never half a character', async (t) => {
+  const seen = stub(t, allow);
+  const { dir, home } = await setup(t);
+  for (const unit of ['日本語のテキストです。', '😀🎉🚀👍', 'é ü ñ ']) {
+    await run(postTool('Bash', { command: 'cat big' }, { stdout: unit.repeat(5000), stderr: '' }, dir), home);
+  }
+  assert.equal(seen.length, 3);
+  for (const s of seen) {
+    const sent = s.body.input;
+    assert.ok(Buffer.byteLength(sent) <= 16 * 1024, 'sent ' + Buffer.byteLength(sent) + ' bytes');
+    assert.ok(!sent.includes('\uFFFD'), 'no broken character');
+    assert.ok(sent.includes('\n[...]\n'));
+  }
+});
+
+test('the cap holds after redaction, even when placeholders are longer than what they replace', async (t) => {
+  const seen = stub(t, allow);
+  const { dir, home } = await setup(t);
+  // 7 bytes a line before redaction, 8 after ("[EMAIL]" is longer than "a@b.co"): under the cap going in, over it coming out.
+  const text = 'a@b.co\n'.repeat(2300);
+  assert.ok(Buffer.byteLength(text) < 16 * 1024);
+  await run(postTool('Bash', { command: 'cat mails' }, { stdout: text, stderr: '' }, dir), home);
+  assert.equal(seen.length, 1);
+  assert.ok(seen[0].body.input.includes('[EMAIL]'));
+  assert.ok(Buffer.byteLength(seen[0].body.input) <= 16 * 1024, 'sent ' + Buffer.byteLength(seen[0].body.input));
+});
+
+test('trimToBytes: ASCII keeps the first 12 KiB and the end, short text is unchanged', () => {
+  const { trimToBytes } = require('../lib/hooks/cloud_output');
+  assert.equal(trimToBytes('abc'), 'abc');
+  const exact = 'x'.repeat(16 * 1024);
+  assert.equal(trimToBytes(exact), exact);
+  const long = 'h'.repeat(12 * 1024) + 'm'.repeat(50000) + 't'.repeat(8 * 1024);
+  const out = trimToBytes(long);
+  assert.equal(Buffer.byteLength(out), 16 * 1024);
+  assert.ok(out.startsWith('h'.repeat(12 * 1024) + '\n[...]\n'));
+  assert.ok(out.endsWith('t'.repeat(4 * 1024 - 7)));
+});
+
 test('tiny outputs and tools outside the output check send nothing', async (t) => {
   const seen = stub(t, block);
   const { dir, home } = await setup(t);

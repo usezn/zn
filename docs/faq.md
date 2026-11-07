@@ -89,4 +89,4 @@ wrapping with `npx -y zn-gate init --revert`. Afterwards, run
 
 ### 11. Where is my data?
 
-The check runs locally on your machine unless you turn on the optional cloud check. With it on, only the text of `analyze_prompt` and `zn-gate analyze` calls is sent, after zn-gate removed the secrets it detects. See [What leaves your machine](../README.md#what-leaves-your-machine) for the full list, and [Turn on the optional cloud check](connect.md) to turn it on or off.
+The check runs locally on your machine unless you turn on the optional cloud check. With it on, the text of `analyze_prompt` and `zn-gate analyze` calls is sent, after zn-gate removed the secrets it detects, and so is a sample of tool output seen by the Claude Code hook. See [What leaves your machine](../README.md#what-leaves-your-machine) for the full list, and [Turn on the optional cloud check](connect.md) to turn it on or off.

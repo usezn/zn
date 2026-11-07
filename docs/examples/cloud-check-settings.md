@@ -2,7 +2,7 @@
 
 The settings that control the optional cloud check, each with its effect, one command with fake values, and what leaves your machine. The effects are copied from the Settings table of the [command line reference](../cli.md#settings). For the full behaviour, read [Turn on the optional cloud check](../connect.md).
 
-By default nothing leaves your machine. Only `analyze` and `analyze_prompt` can use the cloud check, and only when it is on. Every other command stays local.
+By default nothing leaves your machine. Only `analyze`, `analyze_prompt` and, for tool output, the Claude Code hook can use the cloud check, and only when it is on. Every other command stays local.
 
 | Setting | Effect | Example command (fake values) | What leaves the machine |
 |---|---|---|---|
@@ -16,7 +16,7 @@ Without `ZN_CLOUD=1` (and without `zn-gate connect`), none of these settings sen
 
 ## What is sent when the cloud check is on
 
-Only the text of `analyze_prompt` and `zn-gate analyze` calls, after zn-gate removed the secrets it detects, and the key as a request header. Personal data is not removed on this path, and a secret zn-gate does not recognize is sent with the text. Tool-call arguments and tool descriptions are never sent. Tool output is sent only by the Claude Code hook, as a sample of at most 16 KiB of each web, MCP or shell result, with secrets, email addresses, phone numbers, IBANs and card numbers removed first, and `"cloudCheckToolOutput": false` under `hooks` in `~/.zn/config.json` turns that off. If the cloud call fails, the text is checked by the local rules alone.
+Two things are sent: the text of `analyze_prompt` and `zn-gate analyze` calls, and, only when the cloud check is on, a sample of tool output (below). For prompts: the text, after zn-gate removed the secrets it detects, and the key as a request header. Personal data is not removed on this path, and a secret zn-gate does not recognize is sent with the text. Tool-call arguments and tool descriptions are never sent. Tool output is sent only by the Claude Code hook, as a sample of at most 16 KiB, counted in bytes of UTF-8 text, of each web, MCP or shell result, with secrets, email addresses, phone numbers, IBANs and card numbers removed first, and `"cloudCheckToolOutput": false` under `hooks` in `~/.zn/config.json` turns that off. If the cloud call fails, the text is checked by the local rules alone.
 
 `zn-gate status` shows the state at any time.
 
