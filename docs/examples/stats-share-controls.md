@@ -25,8 +25,8 @@ zn-gate stats share show
 ```
 
 ```text
-What is shared, once a day, only if you turn sharing on: a random id for this installation (a new one each time you turn sharing on), the day, the zn-gate version, the operating system, the Node.js version, the agent and part of zn-gate used most that day, and how many secrets of each built-in type were found (for example AWS_KEY 3). Never secret values, prompts, variable or secret names, file names, paths, repository names, hosts or emails.
-Where: https://api.usezn.com/v1/telemetry.
+What is shared, once a day, only if you turn sharing on: a random id for this installation (a new one each time you turn sharing on), the day, the zn-gate version, the operating system, the Node.js major version, the agent and part of zn-gate used most that day, and how many secrets of each built-in type were found (for example AWS_KEY 3). Never secret values, prompts, variable or secret names, file names, paths, repository names, hosts or emails.
+Where: https://api.usezn.com/v1/telemetry. This is zn's real telemetry address, the only place the report is sent; the other values on this page are made up.
 
 Sharing is off, so nothing is sent. There are no complete days of counts yet to show an example.
 ```
