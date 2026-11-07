@@ -4,6 +4,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 
 - [block-message-anatomy.md](block-message-anatomy.md): one real block message, explained part by part.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
+- [env-file-round-trip.md](env-file-round-trip.md): move a fake `.env` file into the vault and put the values back.
 - [first-project-walkthrough.md](first-project-walkthrough.md): one small example project, from install to removal.
 - [init-and-uninstall.md](init-and-uninstall.md): set up zn-gate, preview the steps with a dry run, then remove it.
 - [long-text-analysis.md](long-text-analysis.md): the two long-input modes of the cloud check (`windows` or `off`), and when the result carries a warning.
