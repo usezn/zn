@@ -77,7 +77,13 @@ Codex CLI (user): ~/.codex/hooks.json
 - **STALE**: the hook still works but was written by an older zn-gate, or runs an older copy of it. Run the fix to bring it up to date.
 - **BROKEN**: the hook cannot run, is turned off, is written twice for the same event, points at a file or Node.js that is gone, or is in a settings file zn cannot read (for example, one that is not valid JSON). Run the fix; if the settings file is not valid JSON, repair it first. If you no longer want zn for that agent, run `zn hooks uninstall <agent>` instead.
 
-The exit code is `0` when every hook is OK (or none is set up) and `1` when any is stale or broken. For a test that zn really blocks a secret, run `zn-gate check` without `--hooks`.
+Plain `zn-gate check` (without `--hooks`) ends with one line about the same hooks, and prints it only when at least one hook is installed. It does not change the exit code of `check`.
+
+```text
+Hooks: 3 OK, 1 stale, 0 broken. Run zn-gate check --hooks for details.
+```
+
+The exit code of `check --hooks` is `0` when every hook is OK (or none is set up) and `1` when any is stale or broken. For a test that zn really blocks a secret, run `zn-gate check` without `--hooks`.
 
 ## What each NOT protected line means
 
