@@ -990,22 +990,52 @@ function scanTargetOf(args) {
   return '.';
 }
 
-// check and doctor take one option, --hooks. Any other option is refused with exit 2: it is named and the
-// accepted option is listed. Nothing else is read from the arguments.
-const CHECK_OPTIONS = ['--hooks'];
+// Commands that take no options or a fixed set. An option they do not know is refused with exit 2: it is named and
+// the options the command takes are listed. -h, --help, -V and --version are handled by the general code, so they pass.
+const GLOBAL_OPTIONS = ['-h', '--help', '-V', '--version'];
+const STATUS_OPTIONS = ['--key', '--stage', '--url', '--local-only', '--verbose'];
+const EVIDENCE_VALUE_OPTIONS = ['--format', '--output', '--port', '--tail'];
+const EVIDENCE_OPTIONS = ['--verify', '--ui', '--export', ...EVIDENCE_VALUE_OPTIONS];
 
-function checkOptionProblem(command, args) {
-  for (let i = 1; i < args.length; i++) {
-    if (!args[i].startsWith('-')) continue;
-    if (CHECK_OPTIONS.includes(args[i])) continue;
-    const shown = args[i].replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
-    return 'unknown option "' + shown + '". The options of zn-gate ' + command + ' are ' + CHECK_OPTIONS.join(', ') + '.';
+function fixedOptionProblem(label, args, accepted, valueOptions = [], start = 1) {
+  for (let i = start; i < args.length; i++) {
+    const tok = args[i];
+    if (!tok.startsWith('-') || GLOBAL_OPTIONS.includes(tok)) continue;
+    if (accepted.includes(tok)) {
+      if (valueOptions.includes(tok)) i++;
+      continue;
+    }
+    const shown = tok.replace(/[^\x20-\x7e]/g, '?').slice(0, 40);
+    const takes = accepted.length
+      ? 'The options of zn-gate ' + label + ' are ' + accepted.join(', ') + '.'
+      : 'zn-gate ' + label + ' takes no options.';
+    return 'unknown option "' + shown + '". ' + takes;
   }
+  return null;
+}
+
+// The problem with an option of one of those commands, or null. Other commands are checked where they are dispatched.
+function fixedOptionsProblem(args) {
+  const command = args[0];
+  if (command === 'check' || command === 'doctor') return fixedOptionProblem(command, args, ['--hooks']);
+  if (command === 'status') return fixedOptionProblem(command, args, STATUS_OPTIONS, ['--key', '--stage', '--url']);
+  if (command === 'version' || command === '-v') return fixedOptionProblem('version', args, []);
+  if (command === 'test') return fixedOptionProblem(command, args, []);
+  if (command === 'evidence' || command === 'logs' || command === 'export') {
+    return fixedOptionProblem(command, args, EVIDENCE_OPTIONS, EVIDENCE_VALUE_OPTIONS);
+  }
+  if (command === 'team' && args[1] === 'status') return fixedOptionProblem('team status', args, ['--json', '--rules'], [], 2);
   return null;
 }
 
 async function main() {
   const args = process.argv.slice(2);
+  const fixedProblem = fixedOptionsProblem(args);
+  if (fixedProblem) {
+    process.stderr.write('zn-gate: ' + fixedProblem + '\n');
+    process.exitCode = 2;
+    return;
+  }
   if (args[0] === 'audit') {
     await runAuditCommand(args.slice(1));
     return;
@@ -1048,15 +1078,6 @@ async function main() {
   if (args.includes('-V') || args.includes('--version') || args[0] === 'version' || args[0] === '-v') {
     process.stdout.write(`zn-gate ${VERSION} (rules engine: ${RULES_VERSION}; scrub rules: ${SCRUB_RULES_VERSION}; audit rules: ${AUDIT_RULES_VERSION})\n`);
     process.exit(0);
-  }
-
-  if (args[0] === 'check' || args[0] === 'doctor') {
-    const problem = checkOptionProblem(args[0], args);
-    if (problem) {
-      process.stderr.write('zn-gate: ' + problem + '\n');
-      process.exitCode = 2;
-      return;
-    }
   }
 
   if (args[0] === 'scan' || args[0] === 'analyze') {
