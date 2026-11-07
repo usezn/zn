@@ -269,7 +269,7 @@ You may see this when the npm install takes too long:
 You may see this in your agent after you removed the program with `npm uninstall -g zn-gate` (or an update of Node.js left it behind) while zn's hooks were still set up:
 
 ```text
-zn: its hook cannot start because zn-gate is not installed any more (the Node.js or the files it was installed with are gone), but its hooks for codex still point at it, so this was blocked. Ask the user to install Node.js again from nodejs.org if it is missing (without it neither command below works), then run `npm install -g zn-gate` and then `zn hooks install codex` in their terminal, or, once Node.js is installed, remove the hooks with `npx -y zn-gate hooks uninstall codex`.
+zn: its hook cannot start because zn-gate is not installed any more (the Node.js or the files it was installed with are gone), but its hooks for codex still point at it, so this was blocked. Ask the user to install Node.js again from nodejs.org if it is gone (without it neither command below works), then run `npm install -g zn-gate` and then `zn hooks install codex` in their terminal, or, once Node.js is installed, remove the hooks with `npx -y zn-gate hooks uninstall codex`.
 ```
 
 **What it means:** the hooks are still in your agent's settings, but the program they run is gone. zn checks nothing in this state, so it stops the calls that the agent lets a hook stop, instead of letting them run unchecked. For the calls a hook cannot stop, such as a result that was already produced, you get a warning that zn is not protecting the session.
