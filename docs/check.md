@@ -64,8 +64,8 @@ zn-gate check --hooks
 The other name of the command, `doctor`, works with it too. It lists every zn hook set up for your agents, one line per hook event, and says whether each one is working. It only reads your agents' settings files and zn's launcher files: it runs no hook, changes nothing and sends nothing. It looks at the settings for your user and, in the folder you run it from, at the project settings.
 
 ```text
-Codex CLI (user): /home/you/.codex/hooks.json
-  STALE  PreToolUse [^(Bash|apply_patch|mcp__.+)$]  '/home/you/.zn/hooks/zn-hook-codex.sh' PreToolUse
+Codex CLI (user): ~/.codex/hooks.json
+  STALE  PreToolUse [^(Bash|apply_patch|mcp__.+)$]  '~/.zn/hooks/zn-hook-codex.sh' PreToolUse
   STALE: its launcher script was written by an older zn-gate.
     Fix: run `zn hooks install codex` in your own terminal.
 
