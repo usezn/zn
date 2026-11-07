@@ -1269,9 +1269,11 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
   }
 
   if (command === 'check' || command === 'doctor') {
+    const statsWereOn = require('../lib/stats').enabled();
     process.env.ZN_STATS = 'off'; // the test read is not counted in zn-gate stats
     const zc = require('../lib/check');
     process.exitCode = zc.report(await zc.check({}));
+    process.stdout.write('\n' + require('../lib/stats').latencyReport({ off: !statsWereOn }) + '\n');
     try {
       const cfg = require('../lib/rules').loadCustomConfig(true);
       if (cfg.errors.length > 0) {
