@@ -30,6 +30,8 @@ python3 -m venv .venv
 
 `zn-gate` is installed inside the environment, so run it as shown, or run `source .venv/bin/activate` once in each terminal and then `zn-gate scan .` (Windows: `.venv\Scripts\activate`).
 
+New to the Python package and do not have Node.js? The [first run with the Python package](https://github.com/usezn/zn/blob/main/docs/examples/python-only-first-run.md) takes you from the install to a blocked fake secret, step by step.
+
 No internet on this computer? See [Install on a machine without internet](https://github.com/usezn/zn/blob/main/docs/install-matrix.md#install-on-a-machine-without-internet). Those steps are for the npm package.
 
 **On Windows**, use the `py` launcher, which comes with Python from python.org and the Python install manager:
