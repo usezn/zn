@@ -1,8 +1,9 @@
 # FAQ: update and remove zn-gate
 
-Short answers to common questions about updating and removing zn-gate. Each
-answer points to the page that has the details: [upgrading.md](upgrading.md) and
-[uninstall.md](uninstall.md).
+Short answers to common questions about updating, running and removing
+zn-gate. Each answer points to the page that has the details:
+[upgrading.md](upgrading.md), [uninstall.md](uninstall.md),
+[performance.md](performance.md) and [install-matrix.md](install-matrix.md).
 
 Run every command in your own terminal, not through an AI agent. zn-gate refuses
 to uninstall when an agent or a script runs it, and zn's hooks refuse
@@ -85,8 +86,39 @@ wrapping with `npx -y zn-gate init --revert`. Afterwards, run
 `npx -y zn-gate check` to see what is left. See
 [Piece by piece](uninstall.md#piece-by-piece).
 
+### 11. How do I remove zn-gate from one agent only?
+
+Run `npx -y zn-gate hooks uninstall <agent>` in your own terminal: it removes
+the hooks of that agent only and writes a backup of the settings file first.
+The Uninstall column of [the table by agent](by-agent.md) has the name and the
+command for each of them, for example `claude-code`, `codex`, `cursor` or
+`gemini`. For Claude Code installed as a plugin, remove the plugin instead:
+`claude plugin uninstall zn-gate@usezn`. Then run `npx -y zn-gate check`: it
+names each agent that is no longer protected. Details are in
+[Piece by piece](uninstall.md#piece-by-piece).
+
+## Performance
+
+### 12. Does zn-gate slow my agent down?
+
+The hooks run once before and once after each tool call, and the agent waits
+for them. Most of that time is Node.js starting, not the check itself.
+[performance.md](performance.md) has the measured times for each agent and
+input size, and the script to measure them on your own machine.
+
 ## Your data
 
-### 11. Where is my data?
+### 13. Where is my data?
 
 The check runs locally on your machine unless you turn on the optional cloud check. With it on, only the text of `analyze_prompt` and `zn-gate analyze` calls is sent, after zn-gate removed the secrets it detects. See [What leaves your machine](../README.md#what-leaves-your-machine) for the full list, and [Turn on the optional cloud check](connect.md) to turn it on or off.
+
+### 14. Does zn-gate work without internet?
+
+The protection does: the hooks and `zn-gate analyze` with the local check,
+which is the default, run on your machine and need no connection. What needs
+internet is the optional cloud check of `zn-gate analyze`, `zn-gate connect`
+and the team commands that join or sync with a zn organization. On a computer
+without internet, leave the cloud check off: with it off, nothing is sent to
+usezn.com. See
+[Install on a machine without internet](install-matrix.md#install-on-a-machine-without-internet)
+for the full list and the offline install steps.
