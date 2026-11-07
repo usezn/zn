@@ -10,12 +10,12 @@ name: Cache cleanup
 # deleted only by a manual run with dry_run unchecked. It also deletes
 # the superseded caches of main (see .github/scripts/cache-superseded.sh): a Rust build cache is
 # 1 to 1.5 GB and a new one is saved whenever Cargo.lock changes, so the old one would otherwise sit
-# in the 10 GB limit until it is evicted, and push live caches out first. It runs daily and on demand.
+# in the 10 GB limit until it is evicted, and push live caches out first. It runs every six hours and on demand.
 # It deliberately has no pull_request trigger: that event runs the workflow file as
 # the pull request has it, so a same-repository branch could use this job's actions: write token.
 on:
   schedule:
-    - cron: "41 4 * * *" # daily, 04:41 UTC
+    - cron: "41 */6 * * *" # every six hours, at minute 41 UTC
   workflow_dispatch:
     inputs:
       dry_run:
@@ -196,7 +196,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          # This job only lists on the daily schedule: it deletes only on a manual run with dry_run unchecked.
+          # This job only lists on the schedule: it deletes only on a manual run with dry_run unchecked.
           DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && !inputs.dry_run) && 'false' || 'true' }}
         run: |
           set -euo pipefail
