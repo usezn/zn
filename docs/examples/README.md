@@ -2,6 +2,7 @@
 
 Worked examples, in alphabetical order. All values in them are made up.
 
+- [agents-on-a-shared-machine.md](agents-on-a-shared-machine.md): several people on one computer: what is kept for each user, what is global, and what one user cannot see of another.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
 - [first-project-walkthrough.md](first-project-walkthrough.md): one small example project, from install to removal.
 - [init-and-uninstall.md](init-and-uninstall.md): set up zn-gate, preview the steps with a dry run, then remove it.
