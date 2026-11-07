@@ -57,7 +57,7 @@ let netMode = 'real';
 const fetchImpl = (url, opts) => {
   if (netMode === 'dns') {
     const e = new TypeError('fetch failed');
-    e.cause = Object.assign(new Error('getaddrinfo EAI_AGAIN api.usezn.com'), { code: 'EAI_AGAIN', syscall: 'getaddrinfo', hostname: 'api.usezn.com' });
+    e.cause = Object.assign(new Error('getaddrinfo EAI_AGAIN api.example.invalid'), { code: 'EAI_AGAIN', syscall: 'getaddrinfo', hostname: 'api.example.invalid' });
     return Promise.reject(e);
   }
   return fetch(url, opts);
