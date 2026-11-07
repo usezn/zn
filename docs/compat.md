@@ -47,6 +47,8 @@ GitHub Copilot (VS Code and Copilot CLI) is the seventh supported agent and has 
 
 If the launcher script itself cannot start (it was deleted, it is no longer executable, or its folder cannot be read), no zn code runs, so the agent's own rules decide. Claude Code blocks the call, with its own message and none from zn, because the hooks carry `onFailure: "block"`. Codex, Gemini CLI and ZCode report a hook failure and run the call. Cursor runs shell commands, MCP calls and `preToolUse`, and blocks file reads and prompts (`failClosed`). Antigravity does not document it. `zn-gate check` reports a launcher it cannot read; run `zn hooks install <agent>` again to write it.
 
+When a check runs out of time or fails, every agent gets the same next step: try again, and if it keeps happening, run `zn-gate check`. OpenCode: if the zn hook cannot start (for example the Node.js it was installed with is gone), the blocked call says so in plain words and gives the repair step (`zn-gate check`, then `zn hooks install opencode`).
+
 The agents' plugin folders and plugin state count as hook configuration too: an installed plugin runs its hooks, so the agent can read these files but not write, delete or move them. That is `~/.claude/plugins/` (with `installed_plugins.json`; also under `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_PLUGIN_CACHE_DIR`), `~/.codex/plugins/` (also under `CODEX_HOME`), `~/.cursor/plugins/`, `~/.zcode/cli/plugins/`, Antigravity's `~/.gemini/config/plugins/`, `~/.gemini/antigravity-cli/plugins/`, `~/.gemini/config/config.json` and the `.agents/plugins/` folder at the root of a project. The folders `~/.zcode`, `~/.zcode/cli`, `~/.gemini`, `~/.gemini/config` and `~/.gemini/antigravity-cli` cannot be removed, moved or created as such; the other files in them stay writable. These folders are protected in your home folder (and under `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `CLAUDE_CODE_PLUGIN_CACHE_DIR`), not in a project: a project's own `.gemini/` or `.claude/plugins/` stays writable. They are also protected at their real place when the configuration folder or the plugin folder is a link to another folder (for example a `~/.claude` kept in a dotfiles folder). The same holds, as for `~/.zn`, when the home folder or the project is reached through a link, after a `cd` into the home folder, and when a variable that is not set, a command substitution or another user's `~name` comes in front of these paths.
 
 Tool output is checked within fixed limits so that the check always finishes before the agent's own hook
@@ -75,6 +77,43 @@ In every agent, a shell command longer than 100 KB (counted in characters; this
 includes PowerShell and Claude Code's Monitor tool) is blocked, because zn
 could not check it within the time the agent waits for the hook. The same
 limit applies to a patch (`apply_patch`) in Codex and OpenCode.
+
+## Settings, skills and instruction files that change in Claude Code
+
+`zn hooks install claude-code` registers two more Claude Code hooks, `ConfigChange`
+and `InstructionsLoaded` (the plugin does not; run the install again to add them).
+Neither has `onFailure`: a hook that cannot run leaves the session as it was. Only
+Claude Code builds that have these events use them.
+
+- **`ConfigChange`** runs when a settings or skill file changes during a session.
+  zn blocks the change, so the new file does not take effect, when a project
+  settings file (`.claude/settings.json`) now has a critical `zn audit` finding
+  that is new since the start of the session (for example a download piped into a
+  shell, or the model endpoint moved to another server), or when a skill file now
+  holds text a person cannot see (Unicode tag characters or bidirectional
+  overrides). zn takes the starting point at the first tool call or prompt of the
+  session (or at the first change it sees, if that comes first), before anything
+  can have changed it, and only for the project settings file; a finding the file
+  already had then is allowed, because `zn audit` reported it when the folder was
+  opened. Without a starting point (the session began before the hooks were
+  installed) any critical finding blocks, and a blocked finding is never remembered
+  as allowed: a change blocked before the first prompt stays blocked for the whole
+  session, even after an unrelated edit. A skill
+  that quotes a prompt-injection example is allowed. The message
+  names the file, the rule and the line (for a settings file), and says to run
+  `zn audit`. Your own user settings, your local settings
+  (`.claude/settings.local.json`) and managed policy settings are not blocked:
+  Claude Code applies policy settings whatever a hook says. Claude Code shows no message for a blocked change; it only writes a line
+  to its debug log, so check the evidence log or run `zn audit` if a change seems
+  to have no effect.
+- **`InstructionsLoaded`** runs when `CLAUDE.md` or a `.claude/rules/*.md` file goes
+  into context. Claude Code cannot be told to hold the file back and discards the
+  output of this hook, so zn only records a file that holds text trying to
+  instruct the agent: one notice in the evidence log (`hook-instructions_loaded-notice`)
+  per session and file content, with the name of the rule and never the text; it is
+  not counted as blocked in `zn-gate stats`. A `CLAUDE.md` that is a link to another
+  file is read through the link. Files over 1 MiB are not read.
+  `AGENTS.md` that Claude Code reads directly is not reported by this event.
 
 ## Skills, commands and @file in Claude Code
 
@@ -542,6 +581,7 @@ installs, and the plugins keep a plain command. Agent by agent:
   timeout zn sets on its hook entries) and blocks the call, on Windows too. If ZCode cannot
   start the launcher itself (the file deleted or not executable), the call goes
   ahead unchecked.
+  After a tool has run, a post-tool event whose check timed out gets a notice that the check timed out and that the output was not withheld (exit 0), and an event over 32 MiB gets a notice that ZCode cannot withhold that output (exit 0). The tool had already run, so a block would not hold the output back.
 
 `zn-gate check` says which agents are in this state.
 

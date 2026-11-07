@@ -184,6 +184,61 @@ function destructiveRulesOf(opts) {
 }
 
 /*
+ * Package install check (see lib/package-check.js). Off by default: with the check off nothing of it is loaded and
+ * the decisions are exactly the ones without it. A command that installs a package by name asks the user when the
+ * name looks like a well-known package, and, in the online mode, when the registry does not know it or it is new.
+ * It never blocks. The question is "soft": an agent that cannot ask (Codex CLI, Cursor's preToolUse, OpenCode, Gemini
+ * CLI) runs the command, and the finding is still written to the decision log.
+ *
+ * ~/.zn/config.json, {"hooks": {"packageInstallCheck": "off" | "offline" | "online", "packageInstallAllow": [...],
+ * "packageInstallNewDays": 14}}. ZN_PACKAGE_CHECK=offline turns on the offline mode from the environment (never
+ * the online one: see lib/package-check-settings.js).
+ */
+const PACKAGE_COMMAND_RE = /\b(?:npm|pnpm|yarn|bun|pip3?|pipx|uv|python3?|py)\b/i;
+
+async function packageInstallCheck(command, opts, cwd) {
+  const st = require('../package-check-settings').settingsOf(readConfig(opts.home).hooks, opts.packageInstallCheck, process.env.ZN_PACKAGE_CHECK);
+  if (st.mode === 'off' || !PACKAGE_COMMAND_RE.test(command)) return null;
+  try {
+    const pc = require('../package-check');
+    let lookup;
+    if (st.mode === 'online') {
+      const reg = require('../package-registry');
+      const stateDir = opts.home ? path.join(opts.home, '.zn') : require('../stats').znHome();
+      lookup = (items) => {
+        // A name is asked of the public registry only when the user's own settings do not point at another one.
+        const ctx = { cwd, home: opts.home || require('os').homedir(), env: process.env };
+        const privateEco = {};
+        const usable = items.filter((i) => !(i.eco in privateEco ? privateEco[i.eco] : (privateEco[i.eco] = reg.privateRegistry(i.eco, ctx))));
+        return reg.lookupMany(usable, { fetch: opts.packageFetch, now: opts.packageNow, stateDir });
+      };
+    }
+    const res = await pc.check(command, { mode: st.mode, allow: st.allow, newDays: st.newDays, lookup });
+    const records = res.findings.map((f) => ({
+      rule: 'hook-package-check-' + (f.kind === 'not_found' ? 'not-found' : f.kind === 'new_package' ? 'new' : 'look-alike'),
+      reason: pc.sentenceOf(f),
+    })).concat(res.unavailable.map((u) => ({
+      rule: 'hook-package-check-unavailable',
+      reason: 'the registry lookup for ' + (u.eco === 'pypi' ? 'Python package' : 'npm package') + ' `' + u.name + '` gave no answer (' + u.why + '), so no question was asked',
+    })));
+    const message = pc.messageOf(res.findings);
+    return message || records.length ? { message, records } : null;
+  } catch (_) {
+    // An optional check never stops a command because it failed.
+    return null;
+  }
+}
+
+/* The package check joined to the decision the rest of the checks made for the same call. It only adds a question. */
+function withPackage(res, pkg) {
+  if (!pkg) return res;
+  const records = { packageCheck: pkg.records };
+  if (!pkg.message || res.decision === 'deny') return { ...res, ...records };
+  if (res.decision === 'ask') return { ...res, message: (res.message ? res.message + ' ' : '') + pkg.message.replace(/^zn: /, 'Also, '), ...records };
+  return { decision: 'ask', soft: true, message: (res.message ? res.message + ' ' : '') + (res.message ? pkg.message.replace(/^zn: /, 'Also, ') : pkg.message), ...records };
+}
+
+/*
  * Writes to the files where an agent keeps memory and standing instructions (MEMORY.md, AGENTS.md, CLAUDE.md,
  * .cursor/rules and the others in lib/hooks/policy.js) ask the user. Returns "ask" (the default), "deny" or "off".
  *
@@ -246,6 +301,18 @@ function fixHint(agentId) {
   const name = AGENT_NAMES[agentId];
   return 'If it happens again, ask the user to run `' + znCommand('hooks install' + (name ? ' ' + agentId : '')) + '`' +
     (name ? ' to set up zn for ' + name + ' again.' : '.');
+}
+/*
+ * The step for an event whose JSON is valid but whose shape zn does not know: the agent most likely changed what it
+ * sends to hooks, so the installed zn-gate is older than the agent. Only the text differs from the other refusals.
+ */
+const AGENT_LABELS = { 'claude-code': 'Claude Code', codex: 'Codex CLI', cursor: 'Cursor', opencode: 'OpenCode', antigravity: 'Antigravity', zcode: 'ZCode', copilot: 'GitHub Copilot CLI', gemini: 'Gemini CLI' };
+function formatChangeStep(agentId) {
+  const label = AGENT_LABELS[agentId] || 'the agent';
+  const update = agentId === 'claude-code' && process.env.CLAUDE_PLUGIN_ROOT
+    ? 'Ask the user to update the zn-gate plugin with `claude plugin update zn-gate@usezn`.'
+    : 'Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `' + znCommand('hooks install' + (AGENT_LABELS[agentId] ? ' ' + agentId : '')) + '`.';
+  return 'This usually means ' + label + ' changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. ' + update;
 }
 const HOOK_FAILED = 'something went wrong inside the zn hook, so this action was blocked to keep the user\'s secrets safe. ';
 
@@ -650,6 +717,9 @@ async function decidePre(ev, d, agentId, opts) {
       : policy.wrapWithZnRun(command);
     // Neither wrapper rewrites a command any more: a marker in the arguments is refused with guidance.
     if (!wrap.ok) return { decision: 'deny', message: wrap.reason };
+    // After every deny above: a command that ends in a deny makes no registry request.
+    const pkg = await packageInstallCheck(original, opts, ev.cwd);
+    const finish = (r) => withPackage(withEgress(r, egress), pkg);
 
     const detected = markers.findMarkers(command).filter((m) => m.detected);
     let context;
@@ -676,12 +746,12 @@ async function decidePre(ev, d, agentId, opts) {
         // A command that carries markers always asks, even when nothing was rewritten
         // (already wrapped in `zn run` by the agent, or tokens kept unresolved).
         // Never let it run on the user's allow rules alone.
-        return withEgress(withInstruction({ decision: 'ask', soft: true, message: 'zn: this command contains secret placeholders (such as __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + ', so it needs your approval before it runs.', context }), egress);
+        return finish(withInstruction({ decision: 'ask', soft: true, message: 'zn: this command contains secret placeholders (such as __ZN_NAME__)' + (notes.length ? '; ' + notes.join('; ') : '') + ', so it needs your approval before it runs.', context }));
       }
-      return withEgress(withInstruction(notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' }), egress);
+      return finish(withInstruction(notes.length ? { decision: 'allow', message: 'zn: ' + notes.join('; ') } : { decision: 'allow' }));
     }
     // kind tells adapters that cannot rewrite input what the rewrite was for.
-    return withEgress(withInstruction({ decision: 'ask', updatedInput: { command }, kind: 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context }), egress);
+    return finish(withInstruction({ decision: 'ask', updatedInput: { command }, kind: 'restore', message: 'zn: this command ' + notes.join('; ') + '.', context }));
   }
 
   if ((tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') && Array.isArray(input.texts)) {
@@ -1121,6 +1191,209 @@ function hasPrivateKey(text) {
   return false;
 }
 
+// The most a changed configuration or instruction file is read: a file over it is not checked here (zn audit reports it).
+const CHANGED_FILE_CAP = 1024 * 1024;
+
+/** The text of a file the agent reports as changed or loaded, or null when it is not a plain file we can read within the cap. */
+function readReportedFile(file) {
+  try {
+    if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
+    const st = fs.statSync(file);
+    if (!st.isFile() || st.size > CHANGED_FILE_CAP) return null;
+    return fs.readFileSync(file, 'utf8');
+  } catch (_) {
+    return null;
+  }
+}
+
+const SETTINGS_REL = '.claude/settings.json';
+function criticalKeys(findings, rel, root) {
+  // The folder is part of the key: a finding of a parent folder's settings is not the same finding in this one.
+  const where = require('crypto').createHash('sha256').update(String(root || '')).digest('hex').slice(0, 8);
+  // A settings file that could not be checked (a link out of the project, too large) counts as critical: it is not passed as clean.
+  return (findings || []).filter((f) => (f.severity === 'critical' || f.id === 'ZNA020') && String(f.file || '').split(path.sep).join('/') === rel)
+    .map((f) => String(f.id) + '|' + rel + '|' + where + '|' + require('crypto').createHash('sha256').update(String(f.detail || f.evidence || f.title || '')).digest('hex').slice(0, 12));
+}
+
+// The audit behind the baseline and the ConfigChange verdict is about one file, the project settings file, and runs on that file alone
+// (no walk of the folder: a walk that stops after N entries can stop before the file, and a whole home folder took 5 s).
+function auditSettings(root, rel) {
+  return require('../audit').auditFileAt({ root, rel: rel || SETTINGS_REL });
+}
+
+/** The folder whose .claude/settings.json the session works with: walking up from where the first event happened, the first folder that has one,
+ *  or a git checkout, never the home folder (those are the user's own settings). The folder itself when there is none. */
+function settingsRoot(cwd, opts) {
+  const homes = [require('os').homedir(), opts && opts.home].filter(Boolean).map((h) => path.resolve(h));
+  let dir = cwd;
+  for (let i = 0; i < 40; i++) {
+    if (homes.includes(path.resolve(dir))) break;
+    if (fs.existsSync(path.join(dir, SETTINGS_REL)) || fs.existsSync(path.join(dir, '.git'))) return dir;
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return cwd;
+}
+
+// Session memory older than this is not needed any more.
+const STATE_KEEP_MS = 14 * 24 * 3600 * 1000;
+function pruneState(dir) {
+  try {
+    const cutoff = Date.now() - STATE_KEEP_MS;
+    for (const n of fs.readdirSync(dir).slice(0, 5000)) {
+      if (!/^(?:config-change|instructions-loaded)-[0-9a-f]{16}\.json$/.test(n)) continue;
+      const f = path.join(dir, n);
+      try { if (fs.statSync(f).mtimeMs < cutoff) fs.unlinkSync(f); } catch (_) { /* gone, or not ours to remove */ }
+    }
+  } catch (_) { /* nothing to clean */ }
+}
+
+/**
+ * The baseline of the project settings file, taken once per session at the first PreToolUse or UserPromptSubmit event, which fires before
+ * the tool or the prompt can change anything (Claude Code has no SessionStart hook registered here). What the audit finds then is what the
+ * person opened the folder with (zn audit reported it); a later change is judged against it. A session that already has a state file (its
+ * first ConfigChange left one) is not baselined again: a change blocked before this point must not become what the session started with.
+ * An audit that fails leaves an empty baseline, so it is not retried at every call and a critical finding blocks.
+ */
+function recordConfigBaseline(ev, opts) {
+  try {
+    if (!ev.sessionId || typeof ev.cwd !== 'string' || !path.isAbsolute(ev.cwd)) return;
+    const sf = seenFile(ev, 'config-change', opts);
+    if (!sf) return;
+    if (fs.existsSync(sf)) { touchSeen(sf); return; }
+    pruneState(path.dirname(sf));
+    let keys = [];
+    try {
+      const root = settingsRoot(ev.cwd, opts);
+      keys = criticalKeys(auditSettings(root).findings, SETTINGS_REL, root);
+    } catch (_) {
+      keys = [];
+    }
+    writeSeen(sf, ['file|' + SETTINGS_REL].concat(keys));
+  } catch (_) {
+    /* no baseline: a critical finding blocks */
+  }
+}
+
+/** The file that remembers, for one session, what a hook has already seen (kept in the zn state folder, owner only). */
+function seenFile(ev, name, opts) {
+  if (!ev.sessionId) return null;
+  const base = opts && opts.home ? path.join(opts.home, '.zn') : require('../stats').znHome();
+  const id = require('crypto').createHash('sha256').update(String(ev.sessionId || '')).digest('hex').slice(0, 16);
+  return path.join(base, 'state', name + '-' + id + '.json');
+}
+/** A session that is still in use keeps its memory: the age that pruneState goes by is the last use. */
+function touchSeen(file) {
+  try { const now = new Date(); fs.utimesSync(file, now, now); } catch (_) { /* gone */ }
+}
+function readSeen(file) {
+  if (!file) return [];
+  try {
+    const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return Array.isArray(j) ? j.filter((x) => typeof x === 'string') : [];
+  } catch (_) {
+    return [];
+  }
+}
+function writeSeen(file, list) {
+  if (!file) return;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(file, JSON.stringify(list.slice(-500)), { mode: 0o600 });
+  } catch (_) {
+    /* no memory: the hook still answers */
+  }
+}
+
+// Text a person cannot see in a skill file: Unicode tag characters and bidirectional overrides and isolates.
+const HIDDEN_TEXT_RE = /[\u{E0000}-\u{E007F}‪-‮⁦-⁩]/u;
+
+/**
+ * ConfigChange (Claude Code): a settings or skill file changed during the session. The change is blocked, so the new file does not
+ * take effect, when
+ *  - a project or local settings file now has a critical audit finding (a download piped into a shell, a model endpoint moved to
+ *    another server, ...): the same rules `zn audit` applies when a folder is opened, so an edit made during the session cannot do
+ *    what the audit refuses at the start; or
+ *    Only a finding that is new since the baseline of the session is a reason to block (see recordConfigBaseline): a project file that
+ *    already had one when the session began (the audit reported it then) can still be edited. A session with no baseline (no session id,
+ *    or the hooks were installed after it began) blocks every critical finding, and the first ConfigChange it sees leaves an empty
+ *    baseline, so a change blocked before the first prompt is never adopted as the starting point.
+ *    Local settings (settings.local.json) are the user's own file and are never blocked; or
+ *  - a skill file now holds text a person cannot see (Unicode tag characters, bidirectional overrides). A skill that quotes an
+ *    injection example (a security guide, red-team notes) is allowed: the generic injection rules are not used here.
+ * Policy settings cannot be blocked (Claude Code applies them anyway) and your own user settings are yours to edit: both are allowed.
+ */
+function decideConfigChange(ev, opts) {
+  const source = ev.configSource;
+  const file = ev.filePath;
+  if (source === 'skills') {
+    const text = readReportedFile(file);
+    if (text === null) return { decision: 'allow' };
+    if (HIDDEN_TEXT_RE.test(text)) {
+      return {
+        decision: 'deny', kinds: ['config-change-skill'],
+        message: 'zn: this change to a skill file was not applied: the file now holds text a person cannot see (Unicode tag characters or bidirectional overrides). ' +
+          'Open ' + path.basename(file) + ', remove that text, and save it again.',
+      };
+    }
+    return { decision: 'allow' };
+  }
+  if (source !== 'project_settings') return { decision: 'allow' };
+  if (typeof file !== 'string' || !path.isAbsolute(file) || !/(^|[\\/])\.claude[\\/][^\\/]+$/.test(file)) return { decision: 'allow' };
+  const root = path.dirname(path.dirname(file));
+  let result;
+  try {
+    result = auditSettings(root, path.relative(root, file).split(path.sep).join('/'));
+  } catch (_) {
+    return { decision: 'allow' };
+  }
+  const rel = path.relative(root, file).split(path.sep).join('/');
+  const critical = (result.findings || []).filter((f) => (f.severity === 'critical' || f.id === 'ZNA020') && String(f.file || '').split(path.sep).join('/') === rel);
+  const sf = seenFile(ev, 'config-change', opts);
+  const prev = readSeen(sf);
+  if (sf && prev.length) touchSeen(sf);
+  const known = prev.includes('file|' + rel);
+  // Whatever the verdict, a session without a baseline has one from now on: empty, so no finding is ever "known" because it was blocked.
+  if (sf && !known) writeSeen(sf, prev.concat(['file|' + rel]));
+  if (!critical.length) return { decision: 'allow' };
+  // Only a finding that is new since the baseline of the session counts. Without a baseline (no session id, or the session began before
+  // this hook was installed) every critical finding blocks. A blocked finding is never remembered: the next edit is judged the same way.
+  // (`known` is read before the empty baseline above was written, so a first change that is blocked is blocked with every finding.)
+  // The key holds what the finding says (the address it points to, the command), not its line: an edit that moves it stays known.
+  const keys = criticalKeys(critical, rel, root);
+  const fresh = known ? critical.filter((f, i) => !prev.includes(keys[i])) : critical;
+  if (!fresh.length) return { decision: 'allow' };
+  const first = fresh[0];
+  return {
+    decision: 'deny', kinds: ['config-change-' + String(first.id || 'audit').toLowerCase()],
+    message: 'zn: this change to ' + rel + ' was not applied: ' + String(first.title || first.id).slice(0, 120) + ' (' + String(first.id) + ', line ' + (first.line || '?') + ')' +
+      (fresh.length > 1 ? ' and ' + (fresh.length - 1) + ' more critical finding(s)' : '') + '. Run `zn audit` to see it, fix the file, and save it again.',
+  };
+}
+
+/**
+ * InstructionsLoaded (Claude Code): an instruction file (CLAUDE.md, .claude/rules/*.md) went into context. Claude Code cannot be told to
+ * hold it back, so this only records it: a file that holds text trying to instruct the agent is written to the evidence log as a block
+ * of kind instructions-injection, once per session and content, as a notice that is not counted as blocked (nothing is printed:
+ * Claude Code discards the output of this event).
+ */
+function decideInstructionsLoaded(ev, opts) {
+  const text = readReportedFile(ev.filePath);
+  if (text === null) return { decision: 'allow' };
+  const v = require('../rules').evaluate(text);
+  if (v && v.verdict === 'block') {
+    // The same file is reported at every session start, lazy load and compaction: once per session and content.
+    const sf = seenFile(ev, 'instructions-loaded', opts);
+    const prev = readSeen(sf);
+    const key = require('crypto').createHash('sha256').update(String(ev.filePath)).update('\0').update(text).digest('hex').slice(0, 24);
+    if (prev.includes(key)) return { decision: 'allow' };
+    writeSeen(sf, prev.concat([key]));
+    return { decision: 'deny', noBlock: true, kinds: ['instructions-injection'], message: 'zn: ' + path.basename(ev.filePath) + ' holds text that tries to instruct the agent (' + String(v.rule || 'injection').slice(0, 60) + ').' };
+  }
+  return { decision: 'allow' };
+}
+
 async function decideExpansion(ev, d, agentId) {
   return decidePromptText(ev, d, agentId, true);
 }
@@ -1441,10 +1714,10 @@ async function injectTestFault() {
  */
 function unreadablePre(ev, agentId) {
   if (typeof ev.toolName !== 'string' || !ev.toolName.trim()) {
-    return { decision: 'deny', message: 'zn: could not read the tool name of this call, so zn cannot check it and blocked it. ' + fixHint(agentId) };
+    return { decision: 'deny', message: 'zn: could not read the tool name of this call, so zn cannot check it and blocked it. ' + formatChangeStep(agentId) };
   }
   if ((ev.tool === 'bash' || ev.tool === 'powershell') && typeof (ev.input || {}).command !== 'string') {
-    return { decision: 'deny', message: 'zn: could not read the command of this call, so zn cannot check it and blocked it. ' + fixHint(agentId) };
+    return { decision: 'deny', message: 'zn: could not read the command of this call, so zn cannot check it and blocked it. ' + formatChangeStep(agentId) };
   }
   return null;
 }
@@ -1455,41 +1728,50 @@ function unreadablePre(ev, agentId) {
  * opts: {engine, vault, failMode, home}
  */
 async function handle(adapter, rawEvent, opts = {}) {
+  const t0 = performance.now();
   const mode = failModeOf(opts);
   let ev = null;
   let decision;
   const d = lazyDeps(opts);
   try {
     ev = adapter.normalize(rawEvent);
+    // An adapter that could not read part of a call says so in ev.unreadable, and its block carries that text.
+    if (ev && typeof ev.unreadable === 'string') ev.unreadable += ' ' + formatChangeStep(adapter.id);
     if (ev && ev.event) guardNativeText(ev);
     await injectTestFault();
-    if (!ev || !ev.event) decision = { decision: 'allow' };
-    else if (ev.event === 'pre_tool') decision = unreadablePre(ev, adapter.id) || await decidePre(ev, d, adapter.id, opts);
+    // The decision stays an allow (nothing zn registered for names this event), but the person is told how to update.
+    if (!ev || !ev.event) decision = { decision: 'allow', formatNote: 'zn: ' + AGENT_LABELS[adapter.id] + ' sent an event zn does not know, so it was not checked. ' + formatChangeStep(adapter.id) };
+    else if (ev.event === 'pre_tool') { if (adapter.id === 'claude-code') recordConfigBaseline(ev, opts); decision = unreadablePre(ev, adapter.id) || await decidePre(ev, d, adapter.id, opts); }
     else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id, opts);
-    else if (ev.event === 'user_prompt') decision = await decidePrompt(ev, d, adapter.id);
+    else if (ev.event === 'user_prompt') { if (adapter.id === 'claude-code') recordConfigBaseline(ev, opts); decision = await decidePrompt(ev, d, adapter.id); }
     else if (ev.event === 'stop') decision = await decideStop(ev, d, adapter.id, opts);
     else if (ev.event === 'session_start') decision = { decision: 'allow', context: SESSION_CONTEXT() };
     else if (ev.event === 'prompt_expansion') decision = await decideExpansion(ev, d, adapter.id);
+    else if (ev.event === 'config_change') decision = decideConfigChange(ev, opts);
+    else if (ev.event === 'instructions_loaded') decision = decideInstructionsLoaded(ev, opts);
     else decision = { decision: 'allow' };
   } catch (err) {
     decision = failDecision(ev, err, mode, adapter.id);
   } finally {
     d.closeVault();
   }
+  // Decision time only: from the start of handle() up to the decision. Excludes process startup, writing the
+  // response, and saving stats and evidence (both run after this point).
+  const latencyMs = performance.now() - t0;
   // zn Team: a line for the person (a policy change that lifted restrictions, or detectors that are not applied).
   const teamLines = takeTeamNotes();
   if (teamLines.length && decision && !decision.userMessage) decision.userMessage = teamLines.join(' ');
   const output = adapter.respond({ ...decision, event: ev });
-  countHook(adapter.id, ev, decision, opts);
+  countHook(adapter.id, ev, decision, opts, latencyMs);
   recordEvidence(adapter.id, ev, decision, opts);
-  return { output, stderr: decision.warning || null, decision };
+  return { output, stderr: decision.warning || null, decision, formatNote: decision.formatNote || null };
 }
 
 /**
  * Local counts for `zn-gate stats` (best effort; never changes the decision). A denial because zn itself
  * failed (fail-closed) is not counted as a block; asks and fail-open passes count as warnings.
  */
-function countHook(agentId, ev, decision, opts = {}) {
+function countHook(agentId, ev, decision, opts = {}, latencyMs) {
   try {
     if (!ev || !ev.event || !decision) return;
     // Codex asks PreToolUse first, then PermissionRequest for the same call when it shows an approval prompt.
@@ -1509,10 +1791,12 @@ function countHook(agentId, ev, decision, opts = {}) {
     const file = opts.home ? path.join(opts.home, '.zn', 'stats.json') : undefined;
     require('../stats').record({
       layer: 'hook', agent: agentId, checked: 1,
-      blocked: decision.decision === 'deny' && !decision.failClosed ? 1 : 0,
-      warned: decision.decision === 'ask' || decision.failOpen ? 1 : 0,
+      blocked: decision.decision === 'deny' && !decision.failClosed && !decision.noBlock ? 1 : 0,
+      warned: decision.decision === 'ask' || decision.failOpen || (decision.decision === 'deny' && decision.noBlock) ? 1 : 0,
       redacted: extra.redacted || 0,
       detections: extra.detections || {},
+      // Decision time only, not the response write or the stats and evidence saves (see lib/stats.js latencyReport).
+      latencyMs: ev.event === 'pre_tool' || ev.event === 'post_tool' ? latencyMs : undefined,
     }, file ? { file } : {});
   } catch {
     /* counting must never affect a hook */
@@ -1530,6 +1814,7 @@ function countHook(agentId, ev, decision, opts = {}) {
 function recordEvidence(agentId, ev, decision, opts = {}) {
   try {
     if (!ev || !ev.event || !decision || ev.permissionRequest) return;
+    if (Array.isArray(decision.packageCheck) && decision.packageCheck.length) recordPackageCheck(agentId, ev, decision.packageCheck, opts);
     const denied = decision.decision === 'deny' && !decision.failClosed;
     const stats = decision.stats || {};
     const redacted = ev.event === 'post_tool' && decision.decision === 'allow' && stats.redacted > 0;
@@ -1545,16 +1830,43 @@ function recordEvidence(agentId, ev, decision, opts = {}) {
       // Only the shape of the event is hashed and previewed, never its content.
       payload: JSON.stringify({ event: ev.event, tool: ev.tool || null, kinds }),
       verdict: redacted ? 'allow' : 'block',
-      rule: redacted ? 'hook-redacted-output' : 'hook-' + ev.event + (kinds.length ? '-secret' : '-policy'),
+      rule: redacted ? 'hook-redacted-output' : (decision.noBlock ? 'hook-' + ev.event + '-notice' : 'hook-' + ev.event + (kinds.length ? '-secret' : '-policy')),
       reason: redacted
         ? stats.redacted + ' secret value(s) in the tool output replaced with tokens' + (kinds.length ? ' (' + kinds.join(', ') + ')' : '')
-        : (kinds.length ? 'secret kinds: ' + kinds.join(', ') : 'blocked by the zn hook policy'),
+        : (decision.noBlock ? 'an instruction file holds text that tries to instruct the agent (recorded only: Claude Code cannot be told to hold it back)'
+          : (kinds.length ? 'secret kinds: ' + kinds.join(', ') : 'blocked by the zn hook policy')),
       engine: 'zn-hook',
     // _plainPreview: the payload above is the event name, the tool name and the checked secret kinds,
     // never text from the agent, so the ledger does not load the redaction engine for it (~17 ms).
     }, file, { lockWaitMs: 500, noStats: true, _plainPreview: true });
   } catch (e) {
     try { process.stderr.write('zn-gate: could not record the block in the evidence log (' + (e && e.code || 'error') + ').' + String.fromCharCode(10)); } catch (_) { /* nothing more to do */ }
+  }
+}
+
+/*
+ * The package install check writes one record per finding, or per lookup that gave no answer. Like the others, it holds
+ * no command: the rule id and a sentence that names the package (a registry name, cut down to its own characters).
+ * The verdict is "allow": the check only asks, it never blocks. A problem with the ledger never changes the decision.
+ */
+function recordPackageCheck(agentId, ev, records, opts) {
+  try {
+    const evidence = require('../evidence');
+    const file = opts.home ? path.join(opts.home, '.zn', 'evidence.jsonl') : undefined;
+    for (const r of records.slice(0, 8)) {
+      evidence.logEvidence({
+        agent: agentId,
+        phase: 'hook-' + ev.event,
+        tool_name: ev.tool || ev.event,
+        payload: JSON.stringify({ event: ev.event, tool: ev.tool || null, rule: r.rule }),
+        verdict: 'allow',
+        rule: r.rule,
+        reason: r.reason,
+        engine: 'zn-hook',
+      }, file, { lockWaitMs: 500, noStats: true, _plainPreview: true });
+    }
+  } catch (e) {
+    /* the decision is already made */
   }
 }
 
@@ -2022,6 +2334,7 @@ async function handleEvent(args, state, readText) {
   try {
     const res = await handle(adapter, raw);
     if (res.stderr) process.stderr.write(res.stderr + ' (fail-open: event passed through)\n');
+    if (res.formatNote) process.stderr.write('zn hook: ' + res.formatNote + '\n');
     try { require('../vault/client').close(); } catch (_) { /* not loaded */ }
     if (res.output !== null && res.output !== undefined) {
       // After the deadline the engine or the vault may still be working: leave as soon as the answer is written.

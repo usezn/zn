@@ -582,7 +582,7 @@ function isProjectWindowsScript(script, agentId) {
 }
 
 /** Every event name an installer writes the project guard for (any agent); the exact check tries each one. */
-const GUARD_EVENTS = [undefined, 'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'UserPromptExpansion', 'PermissionRequest', 'BeforeTool',
+const GUARD_EVENTS = [undefined, 'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'UserPromptExpansion', 'ConfigChange', 'InstructionsLoaded', 'PermissionRequest', 'BeforeTool',
   'beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'preToolUse', 'postToolUse'];
 
 /** Whether a command is exactly a POSIX project guard that this version writes (any event of this agent). */

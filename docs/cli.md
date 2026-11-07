@@ -29,6 +29,7 @@ Every command of the `zn-gate` program, with its options and exit codes. For a f
 - [`mcp`](#mcp)
 - [`shield`](#shield)
 - [`evidence`](#evidence)
+- [`why`](#why)
 - [`stats`](#stats)
 - [`report`](#report)
 - [`team`](#team)
@@ -141,11 +142,17 @@ Exit codes: `0` everything listed was removed, or there was nothing to remove. `
 zn-gate check
 ```
 
-Shows that zn stops your agent from reading a fake secret, in a temporary folder. Nothing is sent and no setting changes. [What the output means](check.md).
+Shows that zn stops your agent from reading a fake secret, in a temporary folder. Nothing is sent and no setting changes. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
 
 Aliases: `doctor`.
 
 Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`.
+
+```bash
+zn-gate check --hooks
+```
+
+Lists every installed zn hook (agent, settings file, event and the command it runs) and says whether each is OK, stale (written by an older zn-gate) or broken, with the command that fixes it. It only reads files: nothing is run, changed or sent. Exit code `0` when every hook is OK, `1` when any is stale or broken. [What the output means](check.md#list-every-installed-hook).
 
 ### `status`
 
@@ -582,6 +589,16 @@ Aliases: `logs`, `export`.
 
 `export` is the same as `evidence --export`.
 
+### `why`
+
+```bash
+zn-gate why [<id>]
+```
+
+Explains, in plain words, one block from the local evidence log. With no id it explains the last block; with an id it explains that record (the `id` field of a record from `zn-gate evidence --export`). It says what was stopped (the tool and the short preview the log already holds, with secrets removed), which rule fired, why that matters, and the one command you can run in your own terminal to go on, when such a command exists. For a rule that cannot be bypassed it says so and who decides.
+
+The command only reads the log: it changes nothing and uses no network. If the log does not hold enough to explain a record, for example because no rule id was recorded, it says what is missing instead of guessing. Exit codes: `0` explained, `1` nothing to explain (no log, no block, an id that is not in the log, or a log that cannot be read), `2` wrong usage. A line of the log that cannot be read is skipped, and the output says how many.
+
 ### `stats`
 
 ```bash
@@ -679,10 +696,10 @@ Connects this machine to your organization with the join token your admin gave y
 #### `team status`
 
 ```bash
-zn-gate team status [--json]
+zn-gate team status [--json] [--rules]
 ```
 
-Shows the organization, the policy version, what the last policy version removed or loosened, the state of the audit upload, and a revocation that is still pending after `team leave`. See [zn Team](team.md#when-the-organization-lifts-a-restriction).
+Shows the organization, the policy version, what the last policy version removed or loosened, the state of the audit upload, and a revocation that is still pending after `team leave`. With `--rules` it also prints the rules of the active signed policy in plain words (version, key id, expiry, each rule), read from the saved copy and checked again with the pinned key, with no network call. A copy that does not verify or has expired prints no rules. `--json` adds a `rules` object. See [zn Team](team.md#when-the-organization-lifts-a-restriction).
 
 #### `team sync`
 
@@ -721,4 +738,16 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 | `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`. |
 | `stats` | `--days N`, `--json` | Local counts for the last `N` days (1 to 90, default 30). There is no `stats share`. Exit `0`, or `2` if `--days` is out of range. |
 
-The other commands on this page are only in the npm package. In the Python package they print a short note and exit `2`: `init`, `check`, `doctor`, `audit`, `hooks`, `run`, `secret`, `env`, `vault`, `unlock`, `lock`, `pins`, `mcp`, `shield`, `team`, `logs` and `export` point to `npx -y zn-gate init`, and `report`, `connect` and `disconnect` point to `npx -y zn-gate <command>`. `reach` is in the npm package too, except `reach --history`, which the Python package has as well (see [reach](reach.md#history-did-your-agents-keep-a-secret-of-yours)). A command neither package knows exits `1`. To use the optional cloud check from Python, set `ZN_CLOUD=1` and `ZN_API_KEY` (or pass `--key` to `analyze`) instead of running `connect`.
+The other commands on this page are only in the npm package. In the Python package they print a short note and exit `2`: `init`, `check`, `doctor`, `audit`, `hooks`, `run`, `secret`, `env`, `vault`, `unlock`, `lock`, `pins`, `mcp`, `shield`, `team`, `logs` and `export` point to `npx -y zn-gate init`, and `report`, `why`, `connect` and `disconnect` point to `npx -y zn-gate <command>`. `reach` is in the npm package too, except `reach --history`, which the Python package has as well (see [reach](reach.md#history-did-your-agents-keep-a-secret-of-yours)). A command neither package knows exits `1`. To use the optional cloud check from Python, set `ZN_CLOUD=1` and `ZN_API_KEY` (or pass `--key` to `analyze`) instead of running `connect`.
+
+## JSON output
+
+When a command prints JSON, the npm and the Python package print the same fields, except for the ones in this table. Read the fields you need by name in scripts. Do not compare whole outputs byte for byte, because some values change on every run.
+
+| Package | Command | Field or behavior | Why it differs |
+|---|---|---|---|
+| Python | `analyze` | `latency_ms` on every answer, and `latency_us` on blocked texts | It is the time this run took, so it changes between runs. Compare `verdict` and `rule`, not the timings. The npm package does not print timings. |
+| Python | `test --json` | `allowed`, `secrets_detected`, `latency_us`, and `redacted_preview` when a secret was found | The npm `test` command runs its self-test instead and prints no JSON. |
+| npm | `stats --json` | `sharing`, `sent_days`, `send_failed` | Sharing pseudonymous counts is an npm-only feature (`stats share`), so only the npm output reports whether sharing is on and which days were sent. |
+
+`analyze --json` is accepted by both packages and changes nothing. Key order can differ between the two packages. `scan --format json` has the same keys in both.
