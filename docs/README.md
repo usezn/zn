@@ -2,12 +2,24 @@
 
 An index of the guides in this folder. The main [README](../README.md) is the best place to start.
 
-## Where to start
+## Which page do I read
 
-- **New user:** read [First 5 minutes](first-5-minutes.md), then run [Check that it works](check.md). If a word is unfamiliar, see the [Glossary](glossary.md).
-- **Team lead:** read [zn Team](team.md) for organization policy and audit upload, and the [Team quick guide](team-quick-guide.md). Add the [GitHub Action](github-action.md) to review agent configs on pull requests.
-- **Editor user:** pick your editor in [Editors and coding agents](editors/README.md), or follow the steps for your agent in [Install, verify and uninstall by agent](by-agent.md). [Agent compatibility](compat.md) shows what the scrubber does in each one.
-- **Automation:** see the [Command line reference](cli.md) for commands, options and exit codes, the [GitHub Action](github-action.md) for CI, and the [API reference](api-reference.md) for the Node.js and Python functions.
+| I want to... | Read |
+|---|---|
+| Install zn-gate and see it work | [First 5 minutes](first-5-minutes.md) |
+| Check that I am protected | [Check that it works](check.md) |
+| Keep my API keys and `.env` values away from my agent | [Keep secrets out of your agent](secrets.md) |
+| Set it up for my editor or coding agent | [Editors and coding agents](editors/README.md), or [Install, verify and uninstall by agent](by-agent.md) |
+| Understand a word or a message I do not know | [Glossary](glossary.md) and [Troubleshooting](troubleshooting.md) |
+| Look up a command, option or exit code | [Command line reference](cli.md) and [Exit codes](exit-codes.md) |
+| Review a repository's agent settings before I open it | [Audit](audit.md) |
+| Stop a coding agent in CI from exposing secrets | [Coding agents in CI](agents-in-ci.md) and the [GitHub Action](github-action.md) |
+| Set a shared policy for my team | [zn Team](team.md) and the [Team quick guide](team-quick-guide.md) |
+| Update or remove zn-gate | [Upgrading](upgrading.md) and [Remove zn-gate](uninstall.md) |
+| Call zn-gate from Node.js or Python | [API reference](api-reference.md) |
+| Know what zn-gate does and does not protect against | [Threat model](threat-model.md) |
+
+The full list of guides follows below. If a word is unfamiliar, see the [Glossary](glossary.md).
 
 ## Getting started
 
