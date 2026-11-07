@@ -476,7 +476,7 @@ zn: this command does not start with a plain program name, so zn cannot tell whi
 
 **Is it safe?** It is safe if you decline. If you approve, that data reaches that server.
 
-In `"deny"` mode the message ends with `(rule: egress-check)` and says that only you can allow the request, by running it yourself in your own terminal.
+In `"deny"` mode the message names the rule `(rule: egress-check)`, says that personal data cannot be taken back, and says that only you can allow the request, by running it yourself in your own terminal.
 
 **What to do:** approve only if that server should get the data. Otherwise decline and ask the agent to send the request without it. Never write the value of a secret in the request. How to change the setting and list trusted hosts: [Network requests that carry personal data](egress-check.md).
 
@@ -498,7 +498,7 @@ zn checks every command and patch before it runs. When one is too large or too d
 
 #### "zn: this command is too long for zn to check (over 100 KB)" / "zn: this patch is too long for zn to check" / "zn: this MCP call is too large for zn to check"
 
-The command message ends with `(rule: size:command-too-long)` and says that only you can run it, in your own terminal.
+The command message names the rule `(rule: size:command-too-long)`, says that unchecked it could read a secret or a protected file, and says that only you can run it, in your own terminal.
 
 **What to do:** ask the agent to split the work into smaller steps. Do not send the same content in pieces to get around the limit. MCP means a tool server your agent talks to; the limit there is 1 MB of arguments.
 
@@ -609,7 +609,7 @@ zn: something went wrong inside the zn hook, so this action was blocked to keep 
 
 **What happened:** the check needs your vault and the vault was not running or could not be used.
 
-The message ends its first sentence with `(rule: vault:unavailable)` and tells the agent to ask you to run `zn unlock`; an agent cannot unlock the vault.
+The message gives the rule `(rule: vault:unavailable)`, says that an agent cannot unlock the vault, and names `zn unlock` once: that is the step for you to take in your own terminal.
 
 **What to do:** run `zn unlock` in your own terminal and try again. See [section 5](#5-your-secret-vault-is-locked).
 

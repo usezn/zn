@@ -22,6 +22,8 @@ const EMAIL = generateAll(8451, { perType: 1, piiPerType: 1 }).pii.find((p) => p
 // `zn`, or `npx -y zn-gate@<version>` when zn is not on the PATH.
 const ZN = '(?:zn|npx -y zn-gate@[^ `]+)';
 const rule = (msg) => { const m = /\(rule: ([a-z0-9:_-]+)\)/.exec(msg); return m && m[1]; };
+// The unlock command is named once. "an agent cannot unlock it" says who decides, not which command, so it is not counted.
+const unlockMentions = (msg) => (msg.replace(/[Aa]n agent cannot unlock it/g, '').match(/\bunlock\b/g) || []).length;
 
 test('destructive command: rule, why and who decides', () => {
   const msg = destructive.denial('rm -rf ~', ['rm_root_home']);
@@ -87,6 +89,20 @@ test('vault not available: rule, why and the one command', async () => {
   const msg = r.decision.message;
   assert.match(msg, /^zn: could not check this action against your secret vault, so it was blocked to keep your secrets safe/);
   assert.equal(rule(msg), 'vault:unavailable');
-  assert.match(msg, new RegExp('Ask the user to run `' + ZN + ' unlock` in their own terminal'));
-  assert.match(msg, /an agent cannot unlock it/);
+  assert.equal(unlockMentions(msg), 1, msg);
+  assert.match(msg, /an agent cannot unlock it/i);
 });
+
+// Vault down, direct: the engine's error text names the unlock command or it does not; either way the message names it once.
+for (const [label, message] of [
+  ['the error does not name the unlock command', 'socket closed'],
+  ['the error names the unlock command', 'vault is locked; run `zn unlock` first'],
+]) {
+  test('vault not available, ' + label + ': unlock command named once', () => {
+    const err = Object.assign(new Error(message), { code: 'ZN_LOCKED', vaultFailed: true });
+    const r = runner.failDecision({ event: 'pre_tool' }, err, 'closed', 'claude-code');
+    assert.equal(rule(r.message), 'vault:unavailable');
+    assert.equal(unlockMentions(r.message), 1, r.message);
+    assert.match(r.message, /an agent cannot unlock it/i);
+  });
+}
