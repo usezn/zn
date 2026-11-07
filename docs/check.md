@@ -67,10 +67,17 @@ The other name of the command, `doctor`, works with it too. It lists every zn ho
 ```text
 Codex CLI (user): ~/.codex/hooks.json
   STALE  PreToolUse [^(Bash|apply_patch|mcp__.+)$]  '~/.zn/hooks/zn-hook-codex.sh' PreToolUse
+  STALE  PermissionRequest [^(Bash|apply_patch|mcp__.+)$]  '~/.zn/hooks/zn-hook-codex.sh' PermissionRequest
+  STALE  PostToolUse [.*]  '~/.zn/hooks/zn-hook-codex.sh' PostToolUse
+  STALE  UserPromptSubmit  '~/.zn/hooks/zn-hook-codex.sh' UserPromptSubmit
+  STALE  SessionStart  '~/.zn/hooks/zn-hook-codex.sh' SessionStart
+  STALE  SubagentStart  '~/.zn/hooks/zn-hook-codex.sh' SubagentStart
+  STALE  Stop  '~/.zn/hooks/zn-hook-codex.sh' Stop
   STALE: its launcher script was written by an older zn-gate.
     Fix: run `zn hooks install codex` in your own terminal.
 
-1 OK, 1 stale, 0 broken.
+0 OK, 7 stale, 0 broken.
+To remove the hooks of an agent instead, run `zn hooks uninstall <agent>`.
 ```
 
 - **OK**: the hook points at files that exist, and its launcher is the one this zn-gate writes.

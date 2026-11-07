@@ -7,7 +7,7 @@ You use an AI coding agent (Claude Code, Codex CLI, Cursor, OpenCode, Antigravit
 > **Checklist**
 >
 > - **Node.js:** 22 LTS is recommended. 18 or later works for the hooks and the CLI. The Claude Code plugin needs 20.19 or later.
-> - **An agent:** at least one of Claude Code, Codex CLI, Cursor or OpenCode. Antigravity is experimental.
+> - **An agent:** at least one of Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot. Gemini CLI is experimental.
 > - **No account and no API key** are needed.
 
 Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command below in your own terminal, not through your agent.
@@ -65,12 +65,18 @@ each agent's zn hook whether the agent may read them. This is what happened:
   -  Codex CLI    not found on this machine
   -  Cursor       not found on this machine
   -  OpenCode     not found on this machine
+  -  Antigravity  not found on this machine
+  -  GitHub Copilot (VS Code, CLI) not found on this machine
+  -  Gemini CLI (experimental) not found on this machine
+  -  ZCode        not found on this machine
 
 Your agent cannot read secret files such as .env through these tools. Nothing was sent anywhere.
 If your agent needs a value from .env, keep it in zn's vault instead: `zn env shadow .env`.
 More: https://usezn.com/docs/check
 
 The test folder was deleted.
+
+Decision time per tool call: no data yet. It is measured on each tool call your agent makes through zn.
 ```
 
 `OK` means that agent is protected. A line that starts with `-` means zn is not set up for that agent, or the agent is not on your machine. A line with `NOT protected` says why and what to run. More in [check.md](check.md).
@@ -125,7 +131,7 @@ zn also has a text check that your agent can call through zn's own tools. Some p
   "rule": "none",
   "reason": null,
   "engine": "oss-local",
-  "rules_version": "2026-10-16.10",
+  "rules_version": "2026-11-04.35",
   "advisory": {
     "rule": "pi:bypass",
     "reason": "Guardrail bypass attempt"
