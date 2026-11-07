@@ -19,6 +19,7 @@ Run every command in your own terminal, not through your AI agent. New here? Sta
 - [The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)
 - [Init cannot install zn-gate: no internet connection](#12-init-cannot-install-zn-gate-no-internet-connection)
 - [Init stops the npm install after 3 minutes](#13-init-stops-the-npm-install-after-3-minutes)
+- [Your agent says "zn-gate is not installed any more"](#14-your-agent-says-zn-gate-is-not-installed-any-more)
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
 - [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
 
@@ -262,6 +263,21 @@ You may see this when the npm install takes too long:
 1. Run `npm ls -g zn-gate` in your own terminal. If it shows a version, zn-gate is installed.
 2. If it is missing or the install was incomplete, run the command the message shows, `npm install -g zn-gate@<version>`, on a steadier connection.
 3. Run `npx -y zn-gate check` to see what is protected. For a VPN or proxy, see [the README](../README.md#install).
+
+## 14. Your agent says "zn-gate is not installed any more"
+
+You may see this in your agent after you removed the program with `npm uninstall -g zn-gate` (or an update of Node.js left it behind) while zn's hooks were still set up:
+
+```text
+zn: its hook cannot start because zn-gate is not installed any more (the Node.js or the files it was installed with are gone), but its hooks for codex still point at it, so this was blocked. Ask the user to run `npm install -g zn-gate` and then `zn hooks install codex` in their terminal, or remove the hooks with `npx -y zn-gate hooks uninstall codex`.
+```
+
+**What it means:** the hooks are still in your agent's settings, but the program they run is gone. zn checks nothing in this state, so it stops the calls that the agent lets a hook stop, instead of letting them run unchecked. For the calls a hook cannot stop, such as a result that was already produced, you get a warning that zn is not protecting the session.
+
+**What to do:** run one of these in your own terminal, with the agent name from the message (`claude-code`, `codex`, `cursor`, `gemini`, `zcode`):
+
+1. To keep zn: `npm install -g zn-gate`, then `zn hooks install <agent>`.
+2. To remove zn: `npx -y zn-gate hooks uninstall <agent>`. It needs no installed program. See [Remove zn-gate](uninstall.md).
 
 ## Block and warn reasons, by family
 
