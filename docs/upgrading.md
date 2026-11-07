@@ -155,8 +155,9 @@ installs, and the plugins keep a plain command. Agent by agent:
   when a hook cannot start or times out (not tested). With the user install (the only one
   ZCode has), the launcher exits 2 with the repair step on tool calls, permission
   requests and prompts, and after a tool has run zn only warns. The launcher also
-  stops a hook that has not finished after 28 seconds (2 seconds under the 30-second
-  timeout zn sets on its hook entries) and blocks the call, on Windows too. If ZCode cannot
+  stops a hook that has not finished after 2 minutes and blocks the call, on Windows
+  too; zn sets a 5-minute timeout on its hook entries. If a hook takes longer than
+  5 minutes (a very busy computer), ZCode runs the call. If ZCode cannot
   start the launcher itself (the file deleted or not executable), the call goes
   ahead unchecked.
 
@@ -248,6 +249,12 @@ If you use the Python package (`pip install -U zn-gate`):
 
 Run these in your own terminal, not through an AI agent. Going back does not
 touch your code or your vault.
+
+If you keep the hooks and only change the program, run the hook install again
+right after the change. Until you run `zn hooks install <agent>` for each agent
+with the older version, that agent's hooks block its actions: zn fails closed on
+purpose, so nothing runs unchecked. Run step 4 below straight after the install
+of the older release.
 
 1. Remove the hooks of each agent you set up with `zn hooks install`:
    `npx -y zn-gate hooks uninstall claude-code` (use `codex`, `cursor`,

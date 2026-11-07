@@ -1,8 +1,8 @@
 name: Dependency audit
 
-# Reports known advisories for the dependencies of both packages. It runs on pushes to main and next and
-# every day, not on pull requests: an advisory depends on the day it is published more than on the
-# change, and these two jobs never fail the run. eslint runs in the Lint job of ci.yml.
+# Reports known advisories for the dependencies of both packages. It runs on pushes to main, every day on
+# main and every night on next, not on pull requests: an advisory depends on the day it is published more
+# than on the change, and these two jobs never fail the run. eslint runs in the Lint job of ci.yml.
 on:
   push:
     branches: [main]
