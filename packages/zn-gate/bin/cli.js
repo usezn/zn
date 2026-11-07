@@ -261,6 +261,8 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
                       you confirm it separately [--dry-run]. Your own terminal only
   check               Show that zn blocks your agent from reading a fake secret
                       (also: doctor). Safe: a temporary folder, nothing is sent
+  check --hooks       List every installed zn hook and say if it is OK, stale or broken
+                      (reads files only; nothing is run or changed)
   connect             Optional: turn on the cloud check for analyze_prompt. Opens usezn.com,
                       you paste an analysis-only API key at a hidden prompt; it is kept in your system
                       keychain or the zn vault, never in a file. Your own terminal only
@@ -1267,6 +1269,13 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     }
 
     startMcpShield(targetArgs[0], targetArgs.slice(1), options);
+    return;
+  }
+
+  if ((command === 'check' || command === 'doctor') && args.includes('--hooks')) {
+    // Lists the installed hooks and whether each is OK, stale or broken; reads files only.
+    const hl = require('../lib/hooks-list');
+    process.exitCode = hl.report(hl.listHooks({}));
     return;
   }
 

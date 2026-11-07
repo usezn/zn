@@ -111,7 +111,7 @@ function main(opts = {}) {
   } catch (_) { /* never fail the install */ }
 }
 
-module.exports = { refreshLaunchers, main };
+module.exports = { refreshLaunchers, main, _launcherOptions: launcherOptions };
 
 if (require.main === module) {
   try { main(); } catch (_) { /* never fail the install */ }

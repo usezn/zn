@@ -56,6 +56,29 @@ For the full explanation of each line, read the list above and the rest of this 
 
 `zn-gate check` exits with 0 only when every agent that is set up for your user is protected.
 
+## List every installed hook
+
+```bash
+zn-gate check --hooks
+```
+
+The other name of the command, `doctor`, works with it too. It lists every zn hook set up for your agents, one line per hook event, and says whether each one is working. It only reads your agents' settings files and zn's launcher files: it runs no hook, changes nothing and sends nothing. It looks at the settings for your user and, in the folder you run it from, at the project settings.
+
+```text
+Codex CLI (user): ~/.codex/hooks.json
+  STALE  PreToolUse [^(Bash|apply_patch|mcp__.+)$]  '~/.zn/hooks/zn-hook-codex.sh' PreToolUse
+  STALE: its launcher script was written by an older zn-gate.
+    Fix: run `zn hooks install codex` in your own terminal.
+
+1 OK, 1 stale, 0 broken.
+```
+
+- **OK**: the hook points at files that exist, and its launcher is the one this zn-gate writes.
+- **STALE**: the hook still works but was written by an older zn-gate, or runs an older copy of it. Run the fix to bring it up to date.
+- **BROKEN**: the hook cannot run, is turned off, is written twice for the same event, points at a file or Node.js that is gone, or is in a settings file zn cannot read (for example, one that is not valid JSON). Run the fix; if the settings file is not valid JSON, repair it first. If you no longer want zn for that agent, run `zn hooks uninstall <agent>` instead.
+
+The exit code is `0` when every hook is OK (or none is set up) and `1` when any is stale or broken. For a test that zn really blocks a secret, run `zn-gate check` without `--hooks`.
+
 ## What each NOT protected line means
 
 A line that starts with `X` and says **NOT protected** gives one reason and one repair. Parts in angle brackets, such as `<file>`, are blanks that zn-gate fills in. Run every repair in your own terminal, then run `npx -y zn-gate check` again. Each reason below is quoted as zn-gate prints it.
