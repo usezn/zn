@@ -534,6 +534,10 @@ function checkCommand(command) {
   };
 }
 
+// The rule of the last denial() call that blocked (its id, like 'rm_root_home'), for the evidence record.
+let lastHit = null;
+function lastRule() { return lastHit; }
+
 /** The deny message for the agent hooks, or null. */
 function denial(command, rules) {
   if (typeof command !== 'string') return null;
@@ -541,6 +545,7 @@ function denial(command, rules) {
   ENABLED = rules ? new Set(rules) : null;
   let hit;
   try { hit = analyze(command, 0); } finally { ENABLED = saved; }
+  lastHit = hit || null;
   if (!hit) return null;
   return 'zn blocked this: ' + (REASONS[hit] || OVERFLOW_REASON) + '. Ask the user to confirm before running this command. If they want it, they can run it in their own terminal; do not run it yourself.';
 }
@@ -548,4 +553,4 @@ function denial(command, rules) {
 /** The rules the agent hooks apply when the user has not changed anything. The other four are opt-in. */
 const DEFAULT_RULES = ['rm_root_home', 'disk_overwrite'];
 
-module.exports = { checkCommand, denial, DEFAULT_RULES, COMMAND_RULES_VERSION, RULES: Object.keys(REASONS).map((k) => 'destructive:' + k) };
+module.exports = { checkCommand, denial, lastRule, DEFAULT_RULES, COMMAND_RULES_VERSION, RULES: Object.keys(REASONS).map((k) => 'destructive:' + k) };

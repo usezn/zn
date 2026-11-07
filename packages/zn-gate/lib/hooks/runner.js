@@ -46,6 +46,7 @@ if (require.main === module) require('../compile-cache').enable();
 const fs = require('fs');
 const path = require('path');
 const policy = require('./policy');
+const { takeRuleId, resetRuleId } = require('./rule-id');
 const markers = require('../broker/markers');
 const { gitStatusOf } = require('../broker/files');
 const deps = require('../deps');
@@ -549,6 +550,7 @@ async function egressCheck(ev, d, agentId, mode, requests, what) {
   if (mode === 'deny') {
     return {
       decision: 'deny',
+      ruleId: 'egress-check',
       message: 'zn blocked this ' + what + ': it ' + sentence + '. Next step: send the request without the personal data. Do not write the value of a secret in it, and do not expand a shell variable into its arguments (the value would show in the process list and in command-line logs). ' +
         'For a web request use the secrets_http_request tool of the zn "secrets" MCP server (the secret in proxy mode); for a program, run it with ' + '`' + znCommand('run --secrets NAME -- <program that reads the variable>') + '`' + ', which gives it the secret as an environment variable that the program reads itself (or from standard input or a file, where it supports that). If the data must be sent, tell the user.',
     };
@@ -616,7 +618,7 @@ async function decidePre(ev, d, agentId, opts) {
   if (tool === 'write' || tool === 'edit' || tool === 'multiedit' || tool === 'notebookedit') {
     // A patch can touch several files: every one is checked, not only the first.
     if (input.tooLong) {
-      return { decision: 'deny', message: 'zn: this patch is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.' };
+      return { decision: 'deny', ruleId: 'size:patch-too-long', message: 'zn: this patch is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.' };
     }
     if (input.unparsed) return { decision: 'deny', message: 'zn: could not read the file names in this patch, so zn cannot check it.' };
     const instructionMode = instructionWritesOf(opts);
@@ -914,7 +916,7 @@ function mcpServerLabel(server) {
 async function decideMcp(ev, d, agentId) {
   const text = mcpArgumentText(ev.input.args);
   if (text === null) {
-    return { decision: 'deny', message: 'zn: this MCP call is too large for zn to check (its arguments are over 1 MB). Next step: tell the user; do not resend this content in parts.' };
+    return { decision: 'deny', ruleId: 'size:mcp-call-too-large', message: 'zn: this MCP call is too large for zn to check (its arguments are over 1 MB). Next step: tell the user; do not resend this content in parts.' };
   }
   if (!text) return { decision: 'allow' }; // nothing to check, so the vault is not loaded
   const server = ev.mcp && ev.mcp.server ? String(ev.mcp.server) : '';
@@ -1649,6 +1651,7 @@ function failDecision(ev, err, mode, agentId) {
   // Fail open only when the engine itself is missing and the user chose so.
   if (mode === 'open' && missing) return { decision: 'allow', failOpen: true, warning: 'zn: ' + REINSTALL_USER };
   const r = failClosed(ev, err, msg);
+  if (vaultDown) r.ruleId = 'vault:unavailable';
   // The user (not only the model) needs to hear how to fix a broken install.
   if (missing) r.userMessage = 'zn: ' + REINSTALL_USER;
   return r;
@@ -1715,6 +1718,7 @@ async function handle(adapter, rawEvent, opts = {}) {
   let ev = null;
   let decision;
   const d = lazyDeps(opts);
+  resetRuleId();
   try {
     ev = adapter.normalize(rawEvent);
     if (ev && ev.event) guardNativeText(ev);
@@ -1737,6 +1741,11 @@ async function handle(adapter, rawEvent, opts = {}) {
   // zn Team: a line for the person (a policy change that lifted restrictions, or detectors that are not applied).
   const teamLines = takeTeamNotes();
   if (teamLines.length && decision && !decision.userMessage) decision.userMessage = teamLines.join(' ');
+  // The check that refused leaves its id for the evidence record (it never changes the decision).
+  if (decision && decision.decision === 'deny' && !decision.ruleId) {
+    const id = takeRuleId(decision.message);
+    if (id) decision.ruleId = id;
+  }
   const output = adapter.respond({ ...decision, event: ev });
   countHook(adapter.id, ev, decision, opts);
   recordEvidence(adapter.id, ev, decision, opts);
@@ -1804,6 +1813,7 @@ function recordEvidence(agentId, ev, decision, opts = {}) {
       // Only the shape of the event is hashed and previewed, never its content.
       payload: JSON.stringify({ event: ev.event, tool: ev.tool || null, kinds }),
       verdict: redacted ? 'allow' : 'block',
+      rule_id: redacted ? undefined : decision.ruleId,
       rule: redacted ? 'hook-redacted-output' : (decision.noBlock ? 'hook-' + ev.event + '-notice' : 'hook-' + ev.event + (kinds.length ? '-secret' : '-policy')),
       reason: redacted
         ? stats.redacted + ' secret value(s) in the tool output replaced with tokens' + (kinds.length ? ' (' + kinds.join(', ') + ')' : '')
