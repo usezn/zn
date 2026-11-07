@@ -123,3 +123,20 @@ test('env shadow: the suggested manual name is always a valid vault name (key en
   assert.match(out, /run `zn secret set API_KEY_1_VALUE` and put __ZN_API_KEY_1_VALUE__ in its place/);
   assert.equal(out.includes('zn secret set API_KEY_1`'), false);
 });
+
+test('env shadow --dry-run says it is a preview and that no value has moved', async (t) => {
+  const { dir, io } = setup(t, ['API_KEY=abc', 'TEST_KEY=zz_fake_0000000000000000000000']);
+  assert.equal(await cli.dispatch('env', ['shadow', '--dry-run'], io), 0);
+  const out = io.stdout.text();
+  assert.match(out, /Preview only: no value has moved\. If you run this without --dry-run, 1 value\(s\) would stay in clear text in \.env: API_KEY\./);
+  assert.doesNotMatch(out, /\n1 value\(s\) stay in clear text/);
+  assert.match(fs.readFileSync(path.join(dir, '.env'), 'utf8'), /TEST_KEY=zz_fake/);
+});
+
+test('env shadow: the clear-text summary makes no claim about what the hook counts', async (t) => {
+  const { io } = setup(t, ['API_KEY=abc']);
+  assert.equal(await cli.dispatch('env', ['shadow'], io), 0);
+  const out = io.stdout.text();
+  assert.doesNotMatch(out, /8 characters or more/);
+  assert.match(out, /treat it as readable by an agent/);
+});

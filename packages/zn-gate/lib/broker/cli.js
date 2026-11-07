@@ -286,11 +286,15 @@ function shortWhy(n, key) {
     + 'To keep it out of the file, run `zn secret set ' + name + '` and put ' + markers.markerFor(name) + ' in its place.';
 }
 
-function clearTextSummary(plan, file) {
+function clearTextSummary(plan, file, dryRun) {
   if (!plan.skipped.length) return '';
-  return plan.skipped.length + ' value(s) stay in clear text in ' + path.basename(file) + ': '
-    + plan.skipped.map((x) => x.key).join(', ') + '. An agent can still read them: the hook that blocks reading a .env only counts values of '
-    + dotenv.MIN_SECRET_LEN + ' characters or more.';
+  const names = plan.skipped.map((x) => x.key).join(', ');
+  const tail = 'Until each one is stored with `zn secret set`, treat it as readable by an agent.';
+  if (dryRun) {
+    return 'Preview only: no value has moved. If you run this without --dry-run, ' + plan.skipped.length
+      + ' value(s) would stay in clear text in ' + path.basename(file) + ': ' + names + '. ' + tail;
+  }
+  return plan.skipped.length + ' value(s) stay in clear text in ' + path.basename(file) + ': ' + names + '. ' + tail;
 }
 
 function planImport(text, flags) {
@@ -391,7 +395,7 @@ async function envShadow(args, io) {
     for (const it of plan.items) out(io, '  ' + it.entry.key + ' -> ' + markers.markerFor(it.name));
     for (const s of plan.notes) out(io, '  note ' + s.key + ': ' + s.why);
     for (const s of plan.skipped) out(io, '  skipped ' + s.key + ': ' + s.why);
-    if (plan.skipped.length) out(io, clearTextSummary(plan, file));
+    if (plan.skipped.length) out(io, clearTextSummary(plan, file, true));
     return 0;
   }
   const vault = await vaultOf(io);
