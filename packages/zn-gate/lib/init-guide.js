@@ -141,8 +141,8 @@ async function plan(opts = {}) {
         const need = nodeSt.unknown ? 'zn-gate could not find or run the `node` that the hooks of the plugin start with (the first one on your PATH), and the plugin needs Node.js ' + PLUGIN_NODE_MIN + ' or later'
           : 'it needs Node.js ' + PLUGIN_NODE_MIN + ' or later (' + nodeSt.why + ')';
         item.note = dropPlugin
-          ? 'Claude Code plugin will be turned off: ' + need + '; zn\'s hooks will be used instead. Update Node.js to use the plugin.'
-          : 'Claude Code plugin skipped: ' + need + '. zn\'s hooks are set up instead; update Node.js to use the plugin.';
+          ? 'Claude Code plugin will be turned off: ' + need + '; zn\'s hooks will be used instead. To use the plugin, install Node.js 22 LTS from nodejs.org, then open a new terminal.'
+          : 'Claude Code plugin skipped: ' + need + '. zn\'s hooks are set up instead, and they protect Claude Code on this Node.js. To use the plugin, install Node.js 22 LTS from nodejs.org, then open a new terminal.';
       }
       const disablePlugin = () => {
         const claude = opts.claude !== undefined ? opts.claude : findProgram('claude', env);

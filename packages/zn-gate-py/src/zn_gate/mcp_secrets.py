@@ -23,6 +23,7 @@ from typing import Any, Callable, Dict, List, Optional, Mapping, Sequence, Set, 
 
 from .rules import _is_non_secret_value
 from .shell_names import npx_name
+from .node_tools import node_available
 
 RULE_ID = "secret:mcp_config"
 
@@ -474,6 +475,11 @@ def mcp_next_step(kind: str, name: str) -> str:
                 "your agent expects (for example ${" + use + "} in Claude Code, ${env:" + use + "} in Cursor and VS Code, "
                 "{env:" + use + "} in OpenCode), keep the real value in your own shell settings or a secret manager, "
                 "and rotate it if the file was ever committed or shared.")
+    if not node_available():
+        return ("Next: take the value out of this file and set it as an environment variable in your own shell or a secret manager, "
+                f"and have your server read {use} from there. A server that only takes the value as an argument or a setting needs "
+                "an option that reads it from the environment (the Python package has no local vault or zn run; those need Node.js). "
+                "Rotate the value if the file was ever committed or shared.")
     through = (f"Next: {NPM_ONLY_NOTE}run {npx_name()} -y zn-gate secret set {use} to store the value in the local vault (it asks for the value, "
                f"so it is never typed on a command line), run {_zn_follow_up()} secret allow {use} --command <the server's command> so zn run "
                "may use it, take the value out of this file and start the server through zn run: set the server's command to zn "
