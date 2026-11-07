@@ -72,6 +72,7 @@ Commands that add, change or remove a value need an interactive terminal. A valu
 | Command | Useful flags | Example |
 |---|---|---|
 | [`evidence`](cli.md#evidence) | `--verify`, `--ui`, `--port`, `--export`, `--format`, `--output`, `--tail` | `zn-gate evidence --verify` |
+| [`why`](cli.md#why) | `<id>` (optional) | `zn-gate why` |
 | [`stats`](cli.md#stats) | `--days`, `--json` | `zn-gate stats --days 30` |
 | [`stats share`](cli.md#stats-share) | `on`, `off`, `status`, `show` | `zn-gate stats share status` |
 | [`stats share on`](cli.md#stats-share-on) | none | `zn-gate stats share on` |

@@ -43,6 +43,7 @@ zn-gate check: does zn stop your coding agent from reading a secret?
 Your agent cannot read secret files such as .env through these tools. Nothing was sent anywhere.
 ```
 
+- **Decision time**: the line after the agents gives how long zn takes to decide each tool call, as p50 and p95 of the last 100 calls on this machine. This is decision time only. It does not include process startup, writing the response to your agent, or saving stats and evidence, so it is not the whole delay your agent sees. It is measured locally and stored only as numbers in `~/.zn/stats.json`. Until zn has checked a tool call, it says `no data yet`. With `ZN_STATS=off` it says that nothing is measured.
 - **OK**: zn is protecting that agent. The quoted text is what your agent is told when it tries to read the file.
 - **-**: zn is not set up for that agent (neither for your user nor in managed configuration), or only for one project. The line gives the command that sets it up for your user. If you only ran zn-gate with `npx`, that command starts with `npm install -g zn-gate`, because `zn hooks install` needs zn-gate installed for your user. An agent that is not on this machine is listed as *not found on this machine*.
 - When an agent is found but not set up, the summary points to `npx -y zn-gate init`, which shows each step and asks before it runs one.
@@ -151,14 +152,14 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   the ZCode plugin needs a system with /bin/sh (macOS, Linux) or Windows PowerShell; elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again
   ```
 
-  The ZCode plugin has two hooks for every event: one starts `/bin/sh` (macOS and Linux) and one starts the Windows PowerShell by its full path (`C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`, Windows). On each system only the matching one can start. If your Windows folder is not `C:/Windows`, or the program is missing, use `zn hooks install zcode` instead.
+  The ZCode plugin has two hooks for every event: one starts `/bin/sh` (macOS and Linux) and one starts the Windows command interpreter by its full path (`C:\Windows\System32\cmd.exe`, Windows), which runs `scripts/zn-hook.cmd`: it starts Node.js directly and, when Node.js is not in its usual install folder, runs the Windows PowerShell by its full path. Earlier plugin versions started the PowerShell directly, and `zn-gate check` accepts that too. On each system only the matching one can start. If your Windows folder is not `C:/Windows`, or the program is missing, use `zn hooks install zcode` instead.
 
 - **The ZCode plugin has no PreToolUse hook.**
 
   ```text
   the zn-gate plugin has no PreToolUse hook in <plugin folder>/hooks/hooks.json, so ZCode runs no zn check before tool calls
   the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`/bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
-  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`powershell.exe ... scripts/zn-hook.ps1 PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
+  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`cmd.exe ... scripts/zn-hook.cmd PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
   install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again
   ```
 

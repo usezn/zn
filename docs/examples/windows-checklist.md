@@ -2,6 +2,8 @@
 
 A short list of steps, in order, for installing zn-gate on Windows and checking that it works. Each step is explained in [First 5 minutes](../first-5-minutes.md). Run every command in your own terminal, not through your AI agent.
 
+> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+
 ## Steps
 
 1. Check Node.js. Run `node --version`. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal.
