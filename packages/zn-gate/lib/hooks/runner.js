@@ -112,19 +112,21 @@ const OUTPUT_CHECK_AGENTS = new Set(['claude-code']);
 const { mayMatchRules } = require('./output_prefilter');
 
 /*
- * Opt-in cloud check of tool output (indirect prompt injection). Only when the person turned the optional cloud
+ * Opt-in cloud check of tool output (indirect prompt injection). Off by default, also for people who already ran
+ * zn-gate connect (they agreed to prompt text only): it needs {"hooks": {"cloudCheckToolOutput": true}} in the person's
+ * own ~/.zn/config.json (a project config is never read for it) and zn-gate connect. Also only when the person turned the optional cloud
  * check on with zn-gate connect (the key it saved; ZN_CLOUD and ZN_API_KEY in the environment do not turn this path on, because a project can set them; not with ZN_LOCAL_ONLY): a capped sample of the output of the
  * same tools and agents as the local check above is sent to the zn cloud, after the secret and personal-data
  * replacement of this hook and then the same redaction the prompt check uses. A cloud answer can only add the same
  * note; it never changes the output and never relaxes a local rule. Any failure (no key, no network, timeout, an
  * unreadable answer, the hook deadline) sends nothing more and adds nothing, as for the prompt check, which falls
- * back to the local rules. ~/.zn/config.json, {"hooks": {"cloudCheckToolOutput": false}} turns off just this path.
+ * back to the local rules. Removing the setting or setting it to false turns this path off.
  * The environment is not read for that switch: a project could set it, and the person's choice is the file.
  * The hook never sends to another URL: pinOrigin keeps the request on the fixed zn origin.
  */
 function cloudOutputCheckOn(opts) {
   const hooks = readConfig(opts.home).hooks || {};
-  return outputCheckOn(opts) && hooks.cloudCheckToolOutput !== false;
+  return outputCheckOn(opts) && hooks.cloudCheckToolOutput === true;
 }
 
 /* The text sent: the strings of the output, cut to the 16 KiB byte cap (the first 12 KiB and the end), see trimToBytes. */

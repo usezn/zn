@@ -68,11 +68,13 @@ function env(t, vars) {
 
 // The tool-output path needs the person's own opt-in: `zn-gate connect` (its marker in ~/.zn/config.json and the saved
 // key, here an in-memory keychain). By default these tests are connected; connected=false is the not-connected case.
-async function setup(t, vars = {}, config, connected = true) {
+async function setup(t, vars = {}, config, connected = true, optIn = true) {
   const dir = tempDir(t, 'zn-outcloud-');
   const home = tempDir(t, 'zn-outcloud-home-');
   env(t, { ZN_HOME: path.join(home, '.zn'), ...vars });
   const cfg = { ...(config || {}) };
+  // Tool output also needs the user's own setting; optIn=false is the default state of someone who only ran connect.
+  if (connected && optIn) cfg.hooks = { cloudCheckToolOutput: true, ...cfg.hooks };
   if (connected) {
     cfg.cloud = { store: 'keychain', connectedAt: '2026-01-01T00:00:00.000Z', last4: KEY.slice(-4) };
     let mem = KEY;
@@ -121,6 +123,48 @@ test('a project config cannot turn the tool-output path on: only the user config
   // A project can ship files that look like a connected state; the hook reads the user's ~/.zn (ZN_HOME) only.
   fs.mkdirSync(path.join(dir, '.zn'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.zn', 'config.json'), JSON.stringify({ cloud: { store: 'keychain', last4: KEY.slice(-4) }, hooks: { cloudCheckToolOutput: true } }));
+  assert.equal((await run(webfetch(dir, CLEAN.repeat(5)), home)).output, null);
+  assert.equal(seen.length, 0);
+});
+
+test('connected but not opted in (the default): nothing is sent, not even after an upgrade', async (t) => {
+  const seen = stub(t, block);
+  const { dir, home } = await setup(t, {}, undefined, true, false);
+  assert.equal((await run(webfetch(dir, CLEAN.repeat(5)), home)).output, null);
+  for (const v of [false, 'true', 1, null]) {
+    const x = await setup(t, {}, { hooks: { cloudCheckToolOutput: v } }, true, false);
+    assert.equal((await run(webfetch(x.dir, CLEAN.repeat(5)), x.home)).output, null);
+  }
+  assert.equal(seen.length, 0);
+});
+
+test('connected and hooks.cloudCheckToolOutput: true in the user config: the sample is sent', async (t) => {
+  const seen = stub(t, allow);
+  const { dir, home } = await setup(t, {}, { hooks: { cloudCheckToolOutput: true } }, true, false);
+  await run(webfetch(dir, CLEAN.repeat(5)), home);
+  assert.equal(seen.length, 1);
+});
+
+test('a project config with cloudCheckToolOutput: true does not opt in a connected user', async (t) => {
+  const seen = stub(t, block);
+  const { dir, home } = await setup(t, {}, undefined, true, false);
+  fs.mkdirSync(path.join(dir, '.zn'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.zn', 'config.json'), JSON.stringify({ hooks: { cloudCheckToolOutput: true } }));
+  assert.equal((await run(webfetch(dir, CLEAN.repeat(5)), home)).output, null);
+  assert.equal(seen.length, 0);
+});
+
+test('storedOnly: if the saved key cannot be read, ZN_API_KEY and ZN_CLOUD=1 are not used and nothing is sent', async (t) => {
+  const seen = stub(t, block);
+  const { dir, home } = await setup(t, { ZN_CLOUD: '1', ZN_API_KEY: KEY });
+  // Connected (the marker is there) but the keychain no longer returns the key.
+  const impl = { store: () => {}, load: () => null, remove: () => true };
+  cloudKey._use({ native: { name: 'fake', slot: { service: 'zn-cloud', account: 'cloud-api-key' }, impl }, vault: { isUnlocked: async () => false } });
+  assert.equal(cloudKey.isConnected(), true);
+  const client = require('../lib/client');
+  const res = await client.analyze(CLEAN.repeat(5), { storedOnly: true, pinOrigin: true, apiKey: KEY });
+  assert.equal(res.mode, 'oss-local');
+  assert.equal(res.fallback, true);
   assert.equal((await run(webfetch(dir, CLEAN.repeat(5)), home)).output, null);
   assert.equal(seen.length, 0);
 });
@@ -327,7 +371,7 @@ test('tiny outputs and tools outside the output check send nothing', async (t) =
   assert.equal(seen.length, 0);
 });
 
-test('hooks.cloudCheckToolOutput: false turns off just this path; checkToolOutputInstructions: false turns off both', async (t) => {
+test('hooks.cloudCheckToolOutput: false (or unset) keeps just this path off; checkToolOutputInstructions: false turns off both', async (t) => {
   const seen = stub(t, block);
   const a = await setup(t, undefined, { hooks: { cloudCheckToolOutput: false } });
   assert.equal((await run(webfetch(a.dir, CLEAN.repeat(5)), a.home)).output, null);

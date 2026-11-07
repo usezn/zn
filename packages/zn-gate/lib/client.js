@@ -20,7 +20,7 @@ try {
  *  - One opt-in exception (since 1.15): the Claude Code PostToolUse hook
  *    (lib/hooks/runner.js, cloudOutputNote) passes a capped sample of the
  *    output of web, MCP and shell tools to analyze() with pinOrigin, only when
- *    the cloud check is on and hooks.cloudCheckToolOutput is not false.
+ *    the person ran zn-gate connect and set hooks.cloudCheckToolOutput to true in their own user config (off by default).
  *  - Text reaches the network only through analyze(), in two cases: prompt
  *    analysis (the `analyze_prompt` MCP tool and the `zn-gate analyze` CLI
  *    command) and, as described above, the tool-output sample of the Claude
@@ -233,7 +233,8 @@ async function analyze(input, options = {}) {
   }
 
   // Only the marker turns the cloud on: use the key `connect` stored, never ZN_API_KEY or --key.
-  const markerOnly = !explicitOptIn(options);
+  // storedOnly never falls back to ZN_API_KEY or --key: if the saved key cannot be read, nothing is sent.
+  const markerOnly = Boolean(options.storedOnly) || !explicitOptIn(options);
   const found = markerOnly
     ? await cloudKey.loadStoredKey().then((s) => (s ? { key: s.key, source: s.store } : null))
     : await cloudKey.resolveApiKey(options);
