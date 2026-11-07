@@ -939,7 +939,7 @@ def npm_only_message(command: str) -> str:
 
 # Commands that exist only in the npm package and take no explanation of the
 # Python/agents split: they just say where the command lives.
-NPM_ONLY_SIMPLE_COMMANDS = frozenset({"report", "reach", "connect", "disconnect", "uninstall"})
+NPM_ONLY_SIMPLE_COMMANDS = frozenset({"report", "reach", "why", "connect", "disconnect", "uninstall"})
 
 
 def npm_only_simple_message(command: str) -> str:
