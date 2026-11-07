@@ -1,0 +1,2 @@
+### Added
+- The local rules now catch the plain "ignore your previous instructions" order in Spanish, French, German and Portuguese ("ignora las instrucciones anteriores", "ignorez toutes les instructions", "vergiss deine bisherigen Regeln", "esqueça as instruções anteriores"). As with the English rules, the verb only counts when it names its target (instructions, rules, system prompt), so ordinary sentences such as "ignora el error de compilación" or "vergiss den Termin nicht" stay allowed.
