@@ -165,7 +165,7 @@ analyze('Please summarize this page.')
 
 ## Errors you may see
 
-For live API health and recent incidents, see the [status page](https://usezn.com/status/).
+For a live check of the API and any published incident notes, see the [status page](https://usezn.com/status/), or call `https://api.usezn.com/health` from your own monitoring.
 
 A failed request returns a JSON body with two fields: `error`, a sentence you can show to a person, and `code`, a stable value you can match in your code.
 

@@ -2,7 +2,7 @@
 
 For a short guide to calling the HTTP API from curl, Python or Node.js, see the [API quickstart](api-quickstart.md).
 
-Live API health and past incidents are on the [status page](https://usezn.com/status/).
+A live check of the API and any published incident notes are on the [status page](https://usezn.com/status/); the public `/health` endpoint answers `ok: true` when the API is up.
 
 ## Table of contents
 
