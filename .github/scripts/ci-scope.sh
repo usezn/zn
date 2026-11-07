@@ -19,6 +19,8 @@ out() { echo "run=$1"; [ -n "${GITHUB_OUTPUT:-}" ] && echo "run=$1" >> "$GITHUB_
 
 [ "${EVENT_NAME:-}" = "pull_request" ] || out true
 [ "${FULL:-false}" = "true" ] && out true
+# SKIP_LEG=true: this matrix leg is left to the merge queue for a pull request (the job still reports).
+[ "${SKIP_LEG:-false}" = "true" ] && { echo "skipped here: this version runs in the merge queue"; out false; }
 [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || out true
 
 git fetch --no-tags --depth=1 origin "$BASE_SHA" >/dev/null 2>&1 || out true
@@ -46,7 +48,7 @@ while IFS= read -r f; do
     packages/*|plugins/*|skill/*|bench/*|action.yml|.github/*) needed=true; echo "needs the checks: $f"; break ;;
     # Documentation files a test reads. Keep in step with the tests: test-ci-scope.sh fails when a
     # test mentions a docs file that is not listed here.
-    docs/api-reference.md|docs/audit.md|docs/check.md|docs/cli.md) needed=true; echo "needs the checks (a test reads it): $f"; break ;;
+    docs/api-reference.md|docs/audit.md|docs/check.md|docs/cli.md|docs/commands-cheatsheet.md) needed=true; echo "needs the checks (a test reads it): $f"; break ;;
     docs/*|*.md|LICENSE|NOTICE|assets/*) ;;   # documentation
     src/*|Cargo.toml|Cargo.lock|.cargo/*|build.rs) ;;   # Rust gateway
     *) needed=true; echo "needs the checks: $f"; break ;;

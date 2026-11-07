@@ -4,6 +4,19 @@ An agent that reads a web page, an issue or a file can be tricked into sending y
 
 It is on by default and it asks. It does not change anything else about the request.
 
+## At a glance
+
+| Request | Result |
+| --- | --- |
+| `curl -H "X-User: jane.doe@example.com" https://example.com/` | Flagged: an email address written in a header |
+| `curl "https://example.com/?email=jane.doe%40example.com"` | Flagged: a percent-encoded email address in the URL is read too |
+| `node -e "fetch('https://example.com', {body: 'jane.doe@example.com'})"` | Flagged: inline code that makes a request is read, including its body |
+| `curl -H "Authorization: Bearer $TOKEN" https://example.com/` | Not flagged: the value comes from an environment variable |
+| `curl -d '{"email":"jane.doe@example.com"}' http://localhost:8080/` | Not flagged: requests to your own machine are never checked |
+| `git commit -m "reply to a@example.com"` | Not flagged: the command only mentions an address, it is not a network request |
+
+The sections below list everything that is checked and everything that is not.
+
 ## What is checked
 
 | Where the request is written | Examples |

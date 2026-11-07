@@ -4,6 +4,15 @@ You can remove zn-gate in one step, or piece by piece. Either way, run the comma
 
 None of this changes your code.
 
+## Before you remove it
+
+Check these four things first. Each is explained further down this page.
+
+1. **Run the commands yourself.** Use your own terminal, not your agent: zn-gate refuses to uninstall when an AI agent or a script runs it.
+2. **Put back your `.env` values.** If you ran `env shadow`, run `npx -y zn-gate env unshadow .env --backup <name>` before you delete the vault. See [Your `.env` files and the vault](#your-env-files-and-the-vault).
+3. **Lock the vault.** An unlocked vault is kept, not deleted. Run `zn-gate lock`, then run uninstall again.
+4. **Preview the list.** Run `npx -y zn-gate uninstall --dry-run` to see what would be removed without changing anything. If you used `--project` in several projects, plan to run uninstall from each project folder.
+
 ## One step: `zn-gate uninstall`
 
 ```bash
