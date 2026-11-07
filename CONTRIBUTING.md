@@ -97,6 +97,34 @@ On Windows, run these in PowerShell on separate lines and call `..\..\.github\es
 
 If you edit a marked snippet, list and run them with `python .github/scripts/doc-snippets.py list` and `python .github/scripts/doc-snippets.py run`. The network-isolated mode (`--netns`) works only on Linux with `sudo`; elsewhere, CI runs it.
 
+### Documentation checks
+
+If your pull request changes a page under `docs/`, a README or `changelog.d/README.md`, run these three checks first. They are the same ones CI runs on documentation.
+
+1. Docs tests (Node.js only, no install needed):
+
+   ```bash
+   cd packages/zn-gate
+   node --test test/docs_*.test.js test/docs-env-vars.test.js test/install_docs_match.test.js
+   ```
+
+   They check anchors, relative links, headings, command names and subcommands, environment variables and that the install instructions agree across pages. `npm test` runs them too, together with the rest of the suite.
+
+2. Markdown lint, with the settings in `.markdownlint.jsonc` and `.markdownlint-cli2.jsonc`. From the repository root, install the pinned tool once, then run it:
+
+   ```bash
+   npm ci --prefix .github/markdownlint --ignore-scripts
+   .github/markdownlint/node_modules/.bin/markdownlint-cli2
+   ```
+
+3. Link check with [lychee](https://github.com/lycheeverse/lychee) (the workflow pins `lychee-v0.24.2`; install it yourself). The offline run checks relative links and anchors, and fails when one is broken:
+
+   ```bash
+   lychee --config .github/lychee.toml --offline --include-fragments --no-progress README.md docs "packages/*/README.md" plugins
+   ```
+
+   CI also checks external links, but only reports them and never fails the pull request.
+
 ## Your first pull request and draft pull requests
 
 - The first pull request from a fork waits for a maintainer to approve the workflow runs. The repository requires this approval for every outside contributor, so the checks show as waiting until a maintainer selects "Approve and run". Nothing is wrong with your change.
