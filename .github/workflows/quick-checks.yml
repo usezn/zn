@@ -1,17 +1,22 @@
 name: Quick checks
 
 # The short checks that used to be a workflow each, in two jobs so a pull request queues two runners for them
-# instead of ten. The first job: changelog fragment, Markdown lint, spelling (typos), links, shellcheck, package lint
+# instead of nine. The first job: changelog fragment, Markdown lint, spelling (typos), links, shellcheck, package lint
 # (publint, attw, check-wheel-contents), the pre-commit hooks and the runnable doc snippets. The second job,
 # "Workflow lint" (actionlint + zizmor), keeps its own runner because zizmor gets a token: that job runs no script
-# of this repository, only pinned installs and the two tools, as the former workflow-lint.yml did. .github/scripts/quick-scope.sh keeps the paths filter each check had: a step whose files did not
-# change is skipped, and a step that fails does not hide the ones after it (every step reports). "Public facts"
-# stays a workflow of its own because it is a required check that also runs in the merge queue. None of the
-# checks here is required; to add one to a ruleset, give it its own job first.
+# of this repository, only pinned installs and the two tools, as the former workflow-lint.yml did.
+# .github/scripts/quick-scope.sh keeps the paths filter each check had: a step whose files did not change is
+# skipped, and a step that fails does not hide the ones after it (every step reports). "Public facts" stays a
+# workflow of its own because it is a required check that also runs in the merge queue. The branch rulesets
+# require neither job of this workflow (the comment of the former workflow-lint.yml that said Workflow lint was
+# required was out of date), so they do not run in the merge queue. To make one required, add a merge_group
+# trigger for it first, or the queue waits for a check that never reports.
 on:
   push:
     branches: [ main, next ]
   # No paths filter: the scope script decides per step. A pull request into any branch runs the changelog check.
+  # Label events run the checks again on the same commit (the no-changelog label changes the changelog result).
+  # No job is skipped on them: a skipped run of a check would count as passing and could hide an earlier failure.
   pull_request:
     types: [ opened, synchronize, reopened, labeled, unlabeled, ready_for_review ]
   # Nightly run of the doc snippets on next (a schedule runs on main; the checkout step switches to next).
@@ -22,12 +27,12 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request, or to next, cancels the run still going for it. Runs for main, the schedule and
-# manual runs always complete (each has its own group). Adding or removing a label other than no-changelog starts
-# a run that does nothing (the job is skipped), so it gets its own group and cancels nothing.
+# A new push or label change on a pull request, or a new push to next, cancels the run still going for it (the new
+# run checks the same or a newer commit). Runs for main, the schedule and manual runs always complete (each has
+# its own group).
 concurrency:
-  group: quick-checks-${{ (github.event_name == 'pull_request' && !((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'no-changelog') && github.event.pull_request.number) || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ (github.event_name == 'pull_request' && !((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'no-changelog')) || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+  group: quick-checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.
@@ -40,8 +45,6 @@ env:
 jobs:
   quick:
     name: Quick checks (docs, workflows, packages)
-    # The label events other than no-changelog (see the concurrency group) skip the job.
-    if: ${{ !(github.event_name == 'pull_request' && (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'no-changelog') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -75,7 +78,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: bash .github/scripts/quick-scope.sh
       - name: Decide which checks run - test the scope script
-        if: ${{ !cancelled() && steps.scope.outputs.workflowlint == 'true' }}
+        if: ${{ !cancelled() && steps.scope.outputs.scopetest == 'true' }}
         run: bash .github/scripts/test-quick-scope.sh
 
       # Node.js 22 for the changelog tools, markdownlint, the pre-commit hooks, package lint and the snippets.
@@ -248,8 +251,6 @@ jobs:
 
   workflow-lint:
     name: Workflow lint
-    # Same skip as the quick job for label events other than no-changelog.
-    if: ${{ !(github.event_name == 'pull_request' && (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'no-changelog') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

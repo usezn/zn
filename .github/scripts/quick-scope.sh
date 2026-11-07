@@ -8,23 +8,26 @@
 #   typos         pull requests: docs, READMEs, changelog fragments, .typos.toml
 #   links         pull requests: any Markdown file, lychee config
 #   shell lint    pull requests and pushes to main or next: any *.sh
-#   workflowlint  pull requests and pushes to main or next: workflows, actions, zizmor config, action.yml
 #   packagelint   pull requests and pushes to main or next: the two packages and their lint requirements
 #   hooks         pull requests and pushes to main or next: the pre-commit hooks file and its test
 #   snippets      pull requests, pushes to main, the nightly schedule: README, docs, packages
+#   scopetest     pull requests and pushes to main or next: this script and its test
 # A change to the workflow or to this script runs every check. Manual runs run every check, the schedule
-# runs only the doc snippets, and a pull request into a branch other than main, next or release/* runs only
+# runs only the doc snippets, the changelog check runs only for a pull request (it compares the pull
+# request with its base, which no other event has), and a pull request into a branch other than main, next or release/* runs only
 # the changelog check. Any error while listing the files means true: when in doubt, run the check.
 #
 # Environment: EVENT_NAME, REF (github.ref), BASE_REF (pull requests), BEFORE (pushes: the previous tip).
 set -uo pipefail
 
-CHECKS="changelog markdownlint typos links shellcheck workflowlint packagelint hooks snippets"
+CHECKS="changelog markdownlint typos links shellcheck packagelint hooks snippets scopetest"
 declare -A run
 for c in $CHECKS; do run[$c]=false; done
 
 finish() {
   local any=false c
+  # The changelog check needs a pull request: never for pushes, manual runs or the schedule.
+  [ "${event:-}" = "pull_request" ] || run[changelog]=false
   for c in $CHECKS; do
     echo "$c=${run[$c]}"
     [ -n "${GITHUB_OUTPUT:-}" ] && echo "$c=${run[$c]}" >> "$GITHUB_OUTPUT"
@@ -90,13 +93,13 @@ while IFS= read -r f; do
     *.sh) run[shellcheck]=true ;;
   esac
   case "$f" in
-    .github/workflows/*|.github/actions/*|.github/workflow-lint/*|.github/zizmor.yml|action.yml) run[workflowlint]=true ;;
-  esac
-  case "$f" in
     packages/zn-gate/*|packages/zn-gate-py/*|.github/package-lint-requirements.txt|.github/release-requirements.txt) run[packagelint]=true ;;
   esac
   case "$f" in
     .pre-commit-hooks.yaml|.github/scripts/test-pre-commit-hooks.sh|packages/zn-gate/package.json) run[hooks]=true ;;
+  esac
+  case "$f" in
+    .github/scripts/test-quick-scope.sh) run[scopetest]=true ;;
   esac
   case "$f" in
     docs/*|packages/*|README.md|.github/scripts/doc-snippets*) run[snippets]=true ;;

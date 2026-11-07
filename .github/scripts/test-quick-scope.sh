@@ -50,13 +50,15 @@ check pull_request next packages/zn-gate-py/setup.py "changelog packagelint snip
 check pull_request next changelog.d/x.md "changelog typos links"
 check pull_request next changelog.d/README.md "changelog markdownlint typos links"
 check pull_request next scripts/run.sh "changelog shellcheck"
-check pull_request next .github/workflows/other.yml "changelog workflowlint"
-check pull_request next action.yml "changelog workflowlint"
+check pull_request next .github/workflows/other.yml "changelog"
+check pull_request next action.yml "changelog"
 check pull_request next .github/package-lint-requirements.txt "changelog packagelint"
 check pull_request next .pre-commit-hooks.yaml "changelog hooks"
 check pull_request next .typos.toml "changelog typos"
 check pull_request next .github/lychee.toml "changelog links"
-check pull_request next .github/workflows/quick-checks.yml "changelog markdownlint typos links shellcheck workflowlint packagelint hooks snippets"
+check pull_request next .github/workflows/quick-checks.yml "changelog markdownlint typos links shellcheck packagelint hooks snippets scopetest"
+check pull_request next .github/scripts/test-quick-scope.sh "changelog shellcheck scopetest"
+check push refs/heads/next .github/scripts/quick-scope.sh "markdownlint typos links shellcheck packagelint hooks snippets scopetest"
 check pull_request release/1.0 src/lib.rs "changelog"
 check pull_request feature-base docs/cli.md "changelog"
 check push refs/heads/main docs/cli.md "markdownlint snippets"
@@ -65,16 +67,16 @@ check push refs/heads/next scripts/run.sh "shellcheck"
 check push refs/heads/main packages/zn-gate/package.json "packagelint snippets hooks"
 check push refs/heads/release/1.0 docs/cli.md ""
 
-# Manual runs run everything, the schedule runs only the doc snippets.
+# Manual runs run everything but the changelog check (pull requests only), the schedule runs only the doc snippets.
 out="$(cd "$work" && EVENT_NAME=workflow_dispatch bash "$script")"
-[ "$(printf '%s\n' "$out" | grep -c '=true$')" = 10 ] || { echo "FAIL workflow_dispatch"; fail=1; }
+{ [ "$(printf '%s\n' "$out" | grep -c '=true$')" = 9 ] && printf '%s\n' "$out" | grep -qx 'changelog=false'; } || { echo "FAIL workflow_dispatch"; fail=1; }
 out="$(cd "$work" && EVENT_NAME=schedule bash "$script")"
 if ! { [ "$(printf '%s\n' "$out" | grep -c '=true$')" = 2 ] && printf '%s\n' "$out" | grep -qx 'snippets=true'; }; then
   echo "FAIL schedule"; fail=1
 fi
-# No usable base: run everything.
+# No usable base: run everything (the changelog check still needs a pull request).
 out="$(cd "$work" && EVENT_NAME=push REF=refs/heads/main BEFORE=0000000000000000000000000000000000000000 bash "$script")"
-[ "$(printf '%s\n' "$out" | grep -c '=true$')" = 10 ] || { echo "FAIL push without before"; fail=1; }
+{ [ "$(printf '%s\n' "$out" | grep -c '=true$')" = 9 ] && printf '%s\n' "$out" | grep -qx 'changelog=false'; } || { echo "FAIL push without before"; fail=1; }
 
 [ "$fail" = 0 ] && echo "quick-scope: all cases pass"
 exit "$fail"

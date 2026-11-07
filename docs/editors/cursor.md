@@ -40,6 +40,21 @@ To undo it: `zn hooks uninstall cursor`.
 
 **Not covered:** a secret printed by a shell command, or written in a file the agent reads that is not blocked, reaches the model. Keep secrets in zn-gate's vault (`zn unlock`, then `zn env shadow .env`) so your files hold markers instead of real values: see [Scrubber](https://usezn.com/docs/zn-gate/scrubber/). Hooks are a guardrail, not a sandbox.
 
+## Known limits
+
+These limits are stated on this page and in [compat.md](../compat.md):
+
+- Cursor does not let hooks change shell output or file contents, so zn-gate cannot remove secrets from them. A secret printed by a shell command, or in a file the agent reads that is not blocked, reaches the model.
+- `postToolUse` replaces the output of MCP tools only.
+- Support is best effort: Cursor does not document the input of every tool, so `preToolUse` checks writes and deletes as well as it can. A write whose file cannot be read is refused.
+- A Grep without a `path` searches the whole workspace, so files that zn would shadow or refuse can be found that way. zn does not filter those results.
+- A secret written inside inline code is checked only where zn can read the path as a word.
+- Only `beforeReadFile` and `beforeSubmitPrompt` fail closed. If the hook for an MCP call, a shell command or `preToolUse` crashes or times out, the call runs unchecked.
+- `preToolUse` and the MCP hook do not enforce `ask`: a call zn would ask about is blocked there, with the reason and how to approve it.
+- MCP arguments over 1 MB are denied, because zn cannot check them.
+- The Cursor CLI (`cursor-agent`) is not covered: its hook support is not documented.
+- There is no end-to-end run in Cursor, because Cursor has no command-line mode with hooks to drive. The Cursor app is not tested end to end, and the install steps are not verified on Windows.
+
 ## Technical reference
 
 ### zn-gate as an MCP server
