@@ -8,7 +8,7 @@ opt-in sharing of pseudonymous daily counts is managed with the npm package (`np
 import datetime
 import json
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 KEEP_DAYS = 90
 LAYER_NAMES = {
@@ -84,7 +84,7 @@ WHY_HINT = "To understand a block, see https://usezn.com/docs/zn-gate/troublesho
 
 
 def top_rules(days: int = TOP_RULES_DAYS, limit: int = TOP_RULES_LIMIT, now: Optional[datetime.date] = None,
-              path: Optional[str] = None) -> list:
+              path: Optional[str] = None) -> List[Dict[str, Any]]:
     """Most frequent detector ids over the last `days` days: ids and counts only, highest count first, ties by id."""
     dets = summary(days=days, now=now, path=path)["detections"]
     items = sorted(((t, n) for t, n in dets.items() if n > 0), key=lambda kv: (-kv[1], kv[0]))[:limit]
@@ -109,7 +109,7 @@ def render(s: Dict[str, Any], top: Optional[Dict[str, Any]] = None) -> str:
             lines.append("  Secret types found: " + ", ".join("{} {:,}".format(k, n) for k, n in types))
         rules = (top or {}).get("rules") or []
         if rules:
-            d = top["days"]
+            d = (top or {})["days"]
             lines.append("")
             lines.append("  Top rules, last {} day{}:".format(d, "" if d == 1 else "s"))
             for r in rules:
