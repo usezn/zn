@@ -94,12 +94,18 @@ class TestInvisibleRedaction(unittest.TestCase):
         self.assertIsNone(R.invisible_view("plain"))
 
 
-def _best_ms(fn, runs=5):
-    best = float("inf")
+def _best_cpu_ms(fns, runs=5):
+    """Fastest CPU time of each function, in milliseconds.
+
+    The functions are timed in turns, so a slow moment of a shared machine hits all of them alike,
+    and with CPU time, not wall time, the moments the process does not run at all are left out.
+    """
+    best = [float("inf")] * len(fns)
     for _ in range(runs):
-        t = time.perf_counter()
-        fn()
-        best = min(best, (time.perf_counter() - t) * 1000)
+        for i, fn in enumerate(fns):
+            t = time.process_time()
+            fn()
+            best[i] = min(best[i], (time.process_time() - t) * 1000)
     return best
 
 
@@ -110,9 +116,7 @@ class TestFoldingCost(unittest.TestCase):
         expanding = "ﷺ" * size
         fullwidth = "ａ" * size
         R.evaluate(plain)
-        base = _best_ms(lambda: R.evaluate(plain))
-        exp = _best_ms(lambda: R.evaluate(expanding))
-        fw = _best_ms(lambda: R.evaluate(fullwidth))
+        base, exp, fw = _best_cpu_ms([lambda: R.evaluate(plain), lambda: R.evaluate(expanding), lambda: R.evaluate(fullwidth)])
         self.assertLess(exp, base * 1.5 + 50, f"expanding {exp:.1f} ms vs plain {base:.1f} ms")
         self.assertLess(fw, base * 6 + 60, f"fullwidth {fw:.1f} ms vs plain {base:.1f} ms")
 
