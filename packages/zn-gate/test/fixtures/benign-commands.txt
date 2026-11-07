@@ -157,7 +157,7 @@ cut -d: -f1 ./data/users.txt
 diff ./old/config.json ./new/config.json
 mkdir -p ./build/reports
 cp ./src/config.example.json ./src/config.json
-mv ./tmp/draft.md ./docs/draft.md
+mv ./tmp/draft.md ./notes/draft.md
 touch ./src/new_module.ts
 rm -rf node_modules
 rm -rf ./dist
