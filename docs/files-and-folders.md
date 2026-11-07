@@ -9,9 +9,10 @@ zn-gate keeps the vault and its settings in a `.zn` folder in your home folder (
 | Path | What it is |
 | --- | --- |
 | The vault files | Your stored secrets, encrypted. |
-| `audit.jsonl` | The local audit log, next to the vault files. |
+| `audit.jsonl` | The vault audit log: what the vault did (which secret was used, unlock, reset). Never holds secret values. Next to the vault files. Check it with `zn vault verify`; read it with `zn vault log`. |
+| `evidence.jsonl` | The decision log: what zn-gate allowed or blocked. Check it with `zn-gate evidence --verify`. If it is damaged, you move it aside to `evidence.damaged.jsonl`, see [troubleshooting](troubleshooting.md#10-the-evidence-log--is-damaged). |
 | `~/.zn/vault-backup-<date>` | Encrypted copy of an old vault, made by `zn-gate vault reset`. |
-| `~/.zn/hooks` | A small launcher script, shared by every profile of the same agent. |
+| `~/.zn/hooks` | A small launcher script, shared by every profile of the same agent. `npm update -g zn-gate` refreshes these launchers by itself (a short install step); a project-local install does not touch them, and neither does an update with `--ignore-scripts`. |
 | `~/.zn/reach-last.json` | Written only by `reach --remember`. |
 
 More: [uninstall](uninstall.md#your-env-files-and-the-vault), [`hooks uninstall`](cli.md#hooks-uninstall).
@@ -50,7 +51,26 @@ More: [CLI reference](cli.md), [remove by hand](editors/remove-by-hand.md).
 
 - It removes the hooks, the `secrets` MCP server, and the Claude Code plugin.
 - It puts back the saved copies of wrapped MCP configs.
-- It keeps the vault unless you answer yes to a second question. A yes deletes the vault files, `audit.jsonl` and the vault key in your system keychain.
-- The rest of the `.zn` folder stays: your settings and any `vault-backup-*` folders.
+- It keeps the vault unless you answer yes to a second question. A yes deletes the vault files, the vault audit log (`audit.jsonl`), the `vault-backup-*` folders, the token maps, the session key and the vault key in your system keychain.
+- The rest of the `.zn` folder stays: your settings and the decision log (`evidence.jsonl`).
 
 More: [Remove zn-gate](uninstall.md), [`uninstall` in the CLI reference](cli.md#uninstall).
+
+## Who creates each one, and how to remove it
+
+Every command is run in your own terminal. "None" means no documented command removes it: delete it by hand.
+
+| Path | Created by | Delete by hand? | Command that removes it |
+| --- | --- | --- | --- |
+| `~/.zn` (the whole folder) | zn-gate, when it first stores the vault or settings | Yes, once you have your values back. A deleted vault cannot be recovered. | None for the whole folder. See the rows below for what is inside. |
+| The vault files | zn-gate, when you store secrets | Yes | `zn-gate uninstall` (answer yes to the second question), or `zn-gate vault purge` |
+| `audit.jsonl` | zn-gate, next to the vault files | Yes | `zn-gate uninstall` (second yes), or `zn-gate vault purge` |
+| `~/.zn/vault-backup-<date>` | `zn-gate vault reset` | Yes | `zn-gate vault purge` |
+| `~/.zn/hooks` | `zn-gate hooks install <agent>` | Yes | None. `hooks uninstall` leaves it in place. |
+| `~/.zn/reach-last.json` | `zn-gate reach --remember` | Yes | None |
+| `.env` files | You. `env shadow` changes the values in them to markers. | Yes, they are your files. | None. `env unshadow FILE --backup ENVBAK_NAME` puts the values back; `uninstall` never edits them. |
+| Settings file backups (written before `hooks install` or `hooks uninstall` changes a file) | `zn-gate hooks install <agent>`, `zn-gate hooks uninstall <agent>` | Yes | None |
+| Saved copies of MCP configs | `zn-gate init --wrap-mcp` | Yes, but then `init --revert` can no longer put the copy back. | None. `zn-gate init --revert` puts the copy back in place of the wrapped config. |
+| Hooks in your agent's settings | `zn-gate hooks install <agent>` | Yes, see [remove by hand](editors/remove-by-hand.md). | `zn-gate hooks uninstall <agent>`, or `zn-gate uninstall` |
+
+More: [Remove zn-gate](uninstall.md), [CLI reference](cli.md).

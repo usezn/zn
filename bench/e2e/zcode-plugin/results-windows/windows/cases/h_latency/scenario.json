@@ -1,0 +1,25 @@
+{
+ "steps": [
+  {
+   "tool": "bash",
+   "values": {
+    "command": "dir",
+    "description": "test",
+    "file_path": "C:/work/proj/a.txt",
+    "content": "ZN_WRITTEN",
+    "text": "hello"
+   }
+  },
+  {
+   "tool": "read",
+   "values": {
+    "command": "ls",
+    "description": "test",
+    "file_path": "C:/work/proj/a.txt",
+    "content": "ZN_WRITTEN",
+    "text": "hello"
+   }
+  }
+ ],
+ "final": "done"
+}

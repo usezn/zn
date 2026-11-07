@@ -9,6 +9,11 @@ from zn_gate import evidence
 from zn_gate.evidence import get_evidence_stats, log_evidence
 
 
+def _read_bytes(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
 @pytest.fixture(autouse=True)
 def _reset_warning(monkeypatch):
     monkeypatch.setattr(evidence, "_last_warn", None)
@@ -32,11 +37,11 @@ def test_lock_wait_zero_with_held_lock_returns_none_at_once(tmp_path):
     _write(p, 1)
     with open(p + ".lock", "w") as f:
         f.write("99999")
-    before = open(p, "rb").read()
+    before = _read_bytes(p)
     t0 = time.monotonic()
     assert log_evidence({"payload": "blocked"}, file_path=p, lock_wait=0) is None
     assert time.monotonic() - t0 < 1.0
-    assert open(p, "rb").read() == before
+    assert _read_bytes(p) == before
     assert os.path.exists(p + ".lock")
 
 

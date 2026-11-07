@@ -29,6 +29,8 @@ on:
       - 'packages/zn-gate/bin/**'
       - 'packages/zn-gate/test/**'
       - 'plugins/tools/**'
+      - 'plugins/zcode/scripts/**'
+      - 'plugins/zn-gate/scripts/**'
       - '.github/workflows/windows-paths.yml'
       - '.github/windows-skip-baseline.txt'
   workflow_dispatch:
@@ -39,9 +41,11 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request, or to next, cancels the run still going for it. Runs for main, release branches,
+# the merge queue and the schedule always complete (each has its own group).
 concurrency:
-  group: windows-paths-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: windows-paths-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.
@@ -125,5 +129,7 @@ jobs:
         env:
           ZN_TEST_NATIVE_KEYCHAIN: '1'
         run: node test/vault.test.js
+      # Also when a step above failed: the launcher tests are separate, and a failure there must not hide them.
       - name: Plugin launcher tests
+        if: ${{ !cancelled() }}
         run: node plugins/tools/test-launch.js

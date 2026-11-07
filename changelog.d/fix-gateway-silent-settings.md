@@ -1,0 +1,2 @@
+### Fixed
+- The zn gateway no longer ignores settings without saying so. It warns about an unknown key in `zn.json` and suggests the closest known setting, warns when `ZN_PORT` is not a valid port, and stops with a clear message when the file given with `--config` does not exist or is not a `.json` file. It also says when an upstream MCP server is skipped because its command is not allowed, when its settings file cannot be read, and that `zn start` does not forward calls to upstream servers.

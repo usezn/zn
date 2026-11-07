@@ -12,14 +12,16 @@ on:
 
 permissions: {}
 
+# Every run (push to main, schedule, manual) has its own group and always completes.
 concurrency:
-  group: scorecard
-  cancel-in-progress: true
+  group: scorecard-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
 jobs:
   analysis:
     name: Scorecard analysis
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       actions: read

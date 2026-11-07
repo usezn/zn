@@ -44,6 +44,10 @@ function licenseOf(pkg) {
 
 class ParseError extends Error {}
 
+// "WITH" exceptions that do not change what the project may ship; the base
+// license still has to be allowed. Same list as license-check-py.py.
+const EXCEPTIONS = new Set(['LLVM-exception']);
+
 // SPDX expression: "AND" binds tighter than "OR", parentheses group.
 // An OR is allowed when any alternative is; an AND only when every part is.
 // Unknown ids and anything that does not parse are not allowed.
@@ -52,13 +56,19 @@ function isAllowed(expr) {
   let pos = 0;
   const atom = () => {
     const tok = tokens[pos];
-    if (tok === undefined || tok === ')' || tok === 'AND' || tok === 'OR') throw new ParseError(expr);
+    if (tok === undefined || tok === ')' || tok === 'AND' || tok === 'OR' || tok === 'WITH') throw new ParseError(expr);
     pos += 1;
     if (tok === '(') {
       const value = orExpr();
       if (tokens[pos] !== ')') throw new ParseError(expr);
       pos += 1;
       return value;
+    }
+    if (tokens[pos] === 'WITH') {
+      const exception = tokens[pos + 1];
+      if (exception === undefined || ['(', ')', 'AND', 'OR', 'WITH'].includes(exception)) throw new ParseError(expr);
+      pos += 2;
+      return allowed.has(tok) && EXCEPTIONS.has(exception);
     }
     return allowed.has(tok);
   };

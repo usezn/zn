@@ -19,6 +19,7 @@ const launcher = require('../lib/agents/launcher');
 const { check } = require('../lib/check');
 const { tempDir } = require('./helpers/tmp');
 const { WIN, SH, fwd, pathList, shEnv, ensureShLauncher, putNode } = require('./helpers/git_bash');
+const { winCmdRe } = require('./helpers/wincmd');
 
 const RUNNER = path.resolve(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const posix = process.platform !== 'win32';
@@ -69,12 +70,12 @@ test('cursor: user install writes the launcher; the events that can deny block, 
   for (const ev of ['beforeMCPExecution', 'beforeReadFile', 'beforeShellExecution', 'beforeSubmitPrompt', 'preToolUse']) {
     const r = run(file, ev, bin);
     assert.equal(r.status, 2, ev);
-    assert.match(r.stderr, /zn hooks install cursor/);
+    assert.match(r.stderr, winCmdRe(/zn hooks install cursor/));
     assert.equal(r.stdout, '');
   }
   const post = run(file, 'postToolUse', bin);
   assert.equal(post.status, 0);
-  assert.match(post.stderr, /NOT protecting this session.*zn hooks install cursor/);
+  assert.match(post.stderr, winCmdRe(/NOT protecting this session.*zn hooks install cursor/));
   assert.equal(post.stdout, '');
 });
 
@@ -130,7 +131,7 @@ test('gemini: user install writes the launcher; BeforeTool blocks with exit 2 wh
   assert.ok(cfg.isOurs(h.command, 'gemini'));
   const r = run(file, 'BeforeTool', tempDir(t, 'zn-b96-bin-'));
   assert.equal(r.status, 2);
-  assert.match(r.stderr, /zn hooks install gemini/);
+  assert.match(r.stderr, winCmdRe(/zn hooks install gemini/));
   assert.equal(r.stdout, '');
 });
 
@@ -170,7 +171,7 @@ test('antigravity: user install writes the launcher; without Node.js it answers 
   assert.deepEqual(Object.keys(out).sort(), ['decision', 'reason']);
   assert.equal(out.decision, 'deny');
   assert.match(out.reason, /npm install -g zn-gate/);
-  assert.match(out.reason, /zn hooks install antigravity/);
+  assert.match(out.reason, winCmdRe(/zn hooks install antigravity/));
   if (WIN) return; // check reads the PowerShell hook entry on Windows, not this launcher
   const state = await stateOf(t, ctx, 'antigravity', bin);
   assert.equal(state.state, 'not-protected');
@@ -189,7 +190,7 @@ test('antigravity: a hook that starts and then fails is also a deny JSON; the re
   assert.equal(r.status, 0);
   const out = JSON.parse(r.stdout);
   assert.equal(out.decision, 'deny');
-  assert.match(out.reason, /zn-gate check/);
+  assert.match(out.reason, winCmdRe(/zn-gate check/));
   const ok = setup(t, 'antigravity', process.execPath);
   const call = { toolCall: { name: 'run_command', args: { CommandLine: 'echo hello' } }, workspacePaths: [home] };
   const live = spawnSync(SH, [fwd(ok.file), 'PreToolUse'], { input: JSON.stringify(call), encoding: 'utf8', env: shEnv({ PATH: process.env.PATH, HOME: '/nonexistent' }) });
@@ -205,7 +206,7 @@ test('antigravity: the Windows launcher is an encoded PowerShell script that pri
   assert.ok(m, script);
   const out = JSON.parse(m[1]);
   assert.equal(out.decision, 'deny');
-  assert.match(out.reason, /zn hooks install antigravity/);
+  assert.match(out.reason, /zn\.cmd hooks install antigravity/);
   assert.match(out.reason, /npm install -g zn-gate/);
   assert.match(script, /exit 0 # zn hook antigravity$/);
   const home = tempDir(t, 'zn-b96-win-');
@@ -244,7 +245,7 @@ test('a hook that starts and then fails is blocked, not passed through, and zn o
     const file = shLauncher(id, env, home, process.execPath, broken);
     const r = run(file, block, pathList([bin, ...BIN_TAIL]));
     assert.equal(r.status, 2, id + ' ' + block + ': ' + r.stderr);
-    assert.match(r.stderr, /its hook failed, so this was blocked.*zn-gate check/);
+    assert.match(r.stderr, winCmdRe(/its hook failed, so this was blocked.*zn-gate check/));
     assert.equal(fs.existsSync(mark), false, 'zn on PATH must not run after the recorded hook failed');
     if (warn) {
       const w = run(file, warn, pathList([bin, ...BIN_TAIL]));

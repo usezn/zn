@@ -1,0 +1,6 @@
+### Fixed
+- A settings file that cannot be read now gives an error that names the file, the line and, for a wrong value, the setting (for example `"server.port"`), with a plain explanation and what to do next.
+- Start-up errors about a folder or file that zn cannot write (the policy folder, the `data` folder and the audit database) now say which path, why, and how to fix it. The policy folder no longer reports a "No such file" error after a permission error.
+- The management API answers a rejected request with a JSON body that names the expected header (`Authorization: Bearer <your API key>`), and its log says whether no key or a wrong key was sent. The key itself is never logged.
+- `zn start` accepts `--port`, `--config` and `--db-path` after it, and `zn dashboard` accepts `--port` and `--api-key`. The old form `zn --start --port N` still works.
+- `zn dashboard` checks the key and the gateway before it opens the screen. A rejected key, a closed port or a key with unusable characters now ends with a clear message instead of a screen stuck on CONNECTING, a panic or a broken terminal. The dashboard also reads the gateway port from `--port` or the settings file instead of always using 9090.

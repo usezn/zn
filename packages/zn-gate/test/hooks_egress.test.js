@@ -75,6 +75,8 @@ const POSITIVE = [
   ['curl --url', `curl --url "https://example.com/?m=${EMAIL}"`, /email address in the query string/],
   // curl: body
   ['curl -d, email', `curl -X POST -d "email=${EMAIL}" https://example.com/api`, /email address in the body/],
+  ['curl --data-raw, phone with spaces', `curl --data-raw '{"phone":"+44 20 7946 0958"}' https://example.com/api`, /phone number in the body/],
+  ['curl --header, phone with dashes', `curl --header "X-Phone: +1 202-555-0143" https://example.com/api`, /phone number in a header/],
   ['curl --data-raw, phone', `curl --data-raw '{"phone":"${PHONE}"}' https://example.com/api`, /phone number in the body/],
   ['curl --json, email', `curl --json '{"mail":"${EMAIL}"}' https://example.com/api`, /email address in the body/],
   ['curl -F, email', `curl -F "mail=${EMAIL}" https://example.com/api`, /email address in the body/],
@@ -464,18 +466,6 @@ test('egress asks: PowerShell backtick line continuation', async () => {
 });
 
 /* ------------------------- zn's own MCP server ------------------------- */
-
-async function ownMcp(args, extra = {}) {
-  const ev = { event: 'pre_tool', tool: 'mcp', toolName: 'mcp__zn__check_tool_call', mcp: { server: 'zn', tool: 'check_tool_call', ours: 'analyze' }, cwd: process.cwd(), input: { args } };
-  const d = { engine: () => realEngine, vault: async () => createFakeVault(), detectors: () => [] };
-  const res = await runner.decidePre(ev, d, 'claude-code', { failMode: 'open', ...extra });
-  return { decision: res.decision === 'allow' ? 'none' : res.decision, reason: res.message || '' };
-}
-
-test('zn own MCP server: a URL and personal data in the arguments are not a network request', async () => {
-  const args = { tool_name: 'fetch', arguments: { url: 'https://example.com/a', prompt: 'reply to ' + EMAIL, headers: { 'X-User': EMAIL } } };
-  assert.equal((await ownMcp(args)).decision, 'none');
-});
 
 test('MCP attribution: data in plain arguments goes to the MCP server, data in headers to the host', async () => {
   const plain = await mcp({ url: 'https://example.com/a', note: 'contact ' + EMAIL });

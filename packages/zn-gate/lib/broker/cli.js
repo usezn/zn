@@ -161,7 +161,7 @@ async function secretList(args, io) {
     out(io, '  ' + parts.join('  '));
   }
   try {
-    const lines = fs.readFileSync(path.join(io.home, '.zn', 'requests.jsonl'), 'utf8').trim().split('\n').filter(Boolean);
+    const lines = fs.readFileSync(path.join(process.env.ZN_HOME ? require('../stats').znHome() : path.join(io.home, '.zn'), 'requests.jsonl'), 'utf8').trim().split('\n').filter(Boolean);
     const have = new Set(list.map((s) => s.name));
     const pending = [...new Map(lines.map((l) => { try { const r = JSON.parse(l); return [r.name, r]; } catch (_) { return [null, null]; } })).values()]
       .filter((r) => r && r.name && !have.has(r.name));
@@ -500,7 +500,15 @@ function hooksUsage() {
   return 'usage: zn hooks install|uninstall ' + require('../agents').listAdapters().join('|') + ' [--project] [--no-mcp]';
 }
 
+const HOOKS_OPTIONS = ['--project', '--no-mcp'];
+
 async function hooks(args, io) {
+  // Checked before parseFlags, which would read an unknown option as one that needs a value.
+  for (const a of args) {
+    if (a.startsWith('-') && !HOOKS_OPTIONS.includes(a.split('=')[0])) {
+      throw deps.znError('ZN_USAGE', 'unknown option "' + a.slice(0, 40) + '". The options of zn hooks are ' + HOOKS_OPTIONS.join(' and ') + '.');
+    }
+  }
   const { flags, positional } = parseFlags(args, { bool: ['project', 'no-mcp'] });
   const [action, agentId] = positional;
   if (!['install', 'uninstall'].includes(action) || !agentId) {

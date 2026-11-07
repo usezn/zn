@@ -1,0 +1,2 @@
+### Fixed
+- Python: the README and API reference now match the code for large inputs: an argument over 4 MB is always blocked (`size:oversize`), a tool result over 4 MB is blocked unless `ZN_ALLOW_TRUNCATED=1` is set, and `ZN_ALLOW_TRUNCATED`, `ZN_VERBOSE` and `ZN_HOME` are documented. The warning for a flag set to a value other than `1` (`ZN_STRICT`, `ZN_BLOCK_TRUNCATED`, and now `ZN_ALLOW_TRUNCATED`) lists the accepted values.

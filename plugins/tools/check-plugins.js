@@ -274,6 +274,7 @@ for (const f of ['hooks/hooks.json', 'com.openai/hooks.json']) {
 // shared). Every hook runs scripts/zn-hook.sh with its own event name; the script runs the launcher in "hook zcode" mode.
 {
   const ZC = 'plugins/zcode';
+  const zcodeAdapter = require(path.join(ROOT, 'packages', 'zn-gate', 'lib', 'agents', 'zcode.js'));
   const zhooks = (json(ZC + '/hooks/hooks.json').hooks) || {};
   const EVENTS = ['PermissionRequest', 'PostToolUse', 'PreToolUse', 'UserPromptSubmit'];
   if (JSON.stringify(Object.keys(zhooks).sort()) !== JSON.stringify(EVENTS)) fail(ZC + '/hooks/hooks.json: events must be exactly ' + EVENTS.join(', '));
@@ -281,10 +282,15 @@ for (const f of ['hooks/hooks.json', 'com.openai/hooks.json']) {
     for (const g of groups) {
       for (const h of g.hooks || []) {
         const args = JSON.stringify(h.args);
-        if (h.type !== 'process' || h.command !== '/bin/sh' || args !== JSON.stringify(['${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh', event])) {
-          fail(ZC + '/hooks/hooks.json: ' + event + ' hook must be a process hook: /bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh ' + event);
+        const sh = h.command === '/bin/sh' && args === JSON.stringify(['${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh', event]);
+        const ps = h.command === zcodeAdapter.PLUGIN_WIN_CMD && args === JSON.stringify(zcodeAdapter.pluginWindowsCmdArgs(event));
+        if (h.type !== 'process' || !(sh || ps)) {
+          fail(ZC + '/hooks/hooks.json: ' + event + ' hook must be a process hook: /bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh ' + event + ', or the cmd.exe entry for Windows (lib/agents/zcode.js pluginWindowsCmdArgs)');
         }
         if (h.onFailure !== undefined || h.async !== undefined) fail(ZC + '/hooks/hooks.json: ' + event + ' hook must not set onFailure or async');
+      }
+      if ((g.hooks || []).length !== 2 || g.hooks[0].command !== '/bin/sh' || g.hooks[1].command !== zcodeAdapter.PLUGIN_WIN_CMD) {
+        fail(ZC + '/hooks/hooks.json: ' + event + ' must have exactly two hooks, the /bin/sh one and then the cmd.exe one for Windows');
       }
     }
   }
@@ -297,6 +303,8 @@ for (const f of ['hooks/hooks.json', 'com.openai/hooks.json']) {
   const entry = (mk.plugins || [])[0] || {};
   if ((mk.plugins || []).length !== 1 || entry.name !== 'zn-gate' || entry.source !== './zn-gate') fail(ZC + '/marketplace.json: one plugin, zn-gate, with source ./zn-gate');
   if (!fs.readFileSync(path.join(ROOT, ZC, 'scripts', 'zn-hook.sh'), 'utf8').includes('hook zcode')) fail(ZC + '/scripts/zn-hook.sh: must run the launcher in "hook zcode" mode');
+  if (!fs.readFileSync(path.join(ROOT, ZC, 'scripts', 'zn-hook.ps1'), 'utf8').includes('hook zcode')) fail(ZC + '/scripts/zn-hook.ps1: must run the launcher in "hook zcode" mode');
+  if (!fs.readFileSync(path.join(ROOT, ZC, 'scripts', 'zn-hook.cmd'), 'utf8').includes('hook zcode')) fail(ZC + '/scripts/zn-hook.cmd: must run the launcher in "hook zcode" mode');
 }
 
 /* ------------------------------- links ------------------------------- */
@@ -340,6 +348,12 @@ for (const f of walk('plugins').filter((x) => x.endsWith('.md'))) {
 // package-lock.json (written by pin-release.js). When they exist they must
 // pin the same zn-gate release, from the registry, with no inBundle entries.
 const npmPkgFile = PLUGIN + '/package.json';
+function npmrcTurnsScriptsOff(text) {
+  // npm skips lines it cannot parse (e.g. U+2028/U+2029 inside a line), so accept printable ASCII only.
+  if (/[^\t\n\r\x20-\x7e]/.test(text.replace(/^\uFEFF/, ''))) return false;
+  const lines = text.split(/[\r\n]+/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#') && !l.startsWith(';'));
+  return lines.length === 1 && /^ignore-scripts\s*=\s*true$/.test(lines[0]);
+}
 const npmLockFile = PLUGIN + '/package-lock.json';
 const hasNpm = fs.existsSync(path.join(ROOT, npmPkgFile)) || fs.existsSync(path.join(ROOT, npmLockFile));
 if (hasNpm) {
@@ -365,7 +379,14 @@ if (hasNpm) {
   for (const [k, e] of Object.entries(pkgs)) {
     if (!k) continue;
     if (e.inBundle || k.startsWith('node_modules/zn-gate/')) fail(npmLockFile + ': ' + k + ' is a bundled entry (Claude Code rejects those)');
-    if (e.hasInstallScript) fail(npmLockFile + ': ' + k + ' has an install script');
+    if (e.hasInstallScript) {
+      // Only zn-gate's own postinstall, and only with the .npmrc that turns install scripts off in this folder.
+      const npmrc = PLUGIN + '/.npmrc';
+      // Whatever the line ending of the checkout (Windows may write CRLF), and nothing else that could turn the setting back on: npm
+      // takes the last value of a key, so one line "ignore-scripts=true" is the only accepted content (blank lines and comments aside).
+      const off = fs.existsSync(path.join(ROOT, npmrc)) && npmrcTurnsScriptsOff(fs.readFileSync(path.join(ROOT, npmrc), 'utf8'));
+      if (k !== 'node_modules/zn-gate' || !off) fail(npmLockFile + ': ' + k + ' has an install script' + (k === 'node_modules/zn-gate' ? ' and ' + npmrc + ' does not turn install scripts off' : ''));
+    }
     if (!/^sha512-/.test(e.integrity || '') || !String(e.resolved || '').startsWith('https://registry.npmjs.org/')) fail(npmLockFile + ': ' + k + ' has no sha512 integrity or registry URL');
   }
 }

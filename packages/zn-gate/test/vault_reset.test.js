@@ -12,6 +12,7 @@ const store = require('../lib/vault/store');
 const keychain = require('../lib/vault/keychain');
 const reset = require('../lib/vault/reset');
 const policy = require('../lib/hooks/policy');
+const { winRe } = require('./helpers/wincmd');
 
 const OLD = 'old pass phrase for the test vault';
 const NEW = 'new pass phrase for the test vault';
@@ -88,9 +89,9 @@ test('the prompt warns that values are lost and names the commands to store them
   await reset.resetVault({}, person({ ask: async (q) => { asked = q; return reset.PHRASE; }, out: (l) => said.push(l) }));
   const text = said.join('\n');
   assert.match(text, /Every secret stored in it is lost/);
-  assert.match(text, /(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) env shadow/);
-  assert.match(text, /(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) secret set NAME/);
-  assert.match(text, /(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock/);
+  assert.match(text, winRe(/(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) env shadow/));
+  assert.match(text, winRe(/(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) secret set NAME/));
+  assert.match(text, winRe(/(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) unlock/));
   assert.match(asked, /type "reset my vault"/);
 });
 
@@ -182,6 +183,21 @@ test('inside a Team organization it refuses and leaves the policy and the vault 
   assert.deepEqual(snapshot(s.znHome), before);
 });
 
+test('the membership marker in keychain.json keeps the guard when team.json and org-policy.json are deleted', async (t) => {
+  const s = setup(t);
+  await s.makeVault(OLD);
+  const meta = keychain.readMeta({});
+  keychain.writeMeta(Object.assign({}, meta, { team_org: 'org_TestOrg12345678' }), {});
+  assert.equal(fs.existsSync(path.join(s.znHome, 'team.json')), false);
+  assert.equal(require('../lib/team/policy').onTeamMachine({}), true);
+  const before = snapshot(s.znHome);
+  assert.equal(await reset.resetVault({}, person({ ask: async () => reset.PHRASE })), 1);
+  assert.deepEqual(snapshot(s.znHome), before);
+  // Without the marker (and without the files) the reset goes on.
+  keychain.writeMeta(meta, {});
+  assert.equal(require('../lib/team/policy').onTeamMachine({}), false);
+});
+
 test('an unlocked vault must be locked first', async (t) => {
   const s = setup(t);
   await s.makeVault(OLD);
@@ -207,7 +223,7 @@ test('after three failed unlocks the hint points to zn vault reset; a good unloc
   assert.equal(reset.recordUnlockFailure({}), null);
   assert.equal(reset.recordUnlockFailure({}), null);
   const tip = reset.recordUnlockFailure({});
-  assert.match(tip, /(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) vault reset/);
+  assert.match(tip, winRe(/(zn|npx -y zn-gate@\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?) vault reset/));
   assert.equal(tip.split('\n').length, 1, 'one line');
   reset.clearUnlockFailures({});
   assert.equal(reset.recordUnlockFailure({}), null);

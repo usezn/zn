@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Run the code blocks of the docs that are marked as runnable, against the packages built from this commit.
 
-  doc-snippets.py list                list every fenced block (marked and not) and why it would not run
+  doc-snippets.py list                list every fenced block (marked and not) and why it would not run, and
+                                      check every shell block for broken line continuations
   doc-snippets.py run [--netns]       build the packages, then run each marked block offline
 
 A block runs only when the line above its opening fence (blank lines allowed in between) is the marker
@@ -94,6 +95,40 @@ def collect():
     return blocks, errors
 
 
+SHELL_LANGS = {"bash", "sh", "shell", "zsh", "console"}
+POWERSHELL_LANGS = {"powershell", "ps1", "pwsh"}
+LOST_CONTINUATION = re.compile(r"\S {3,}--?[A-Za-z]")
+
+
+def command_problems(block):
+    """Broken line continuations in a shell block, as 'file:line: message' strings.
+
+    A copied command must run as shown: a run of spaces before a flag usually means a lost backslash
+    continuation, a backslash followed by a space does not continue the line, a backslash on the last line
+    continues into nothing, and bash and PowerShell continue lines with different characters."""
+    lang = block["lang"]
+    if lang not in SHELL_LANGS | POWERSHELL_LANGS:
+        return []
+    out = []
+    lines = block["code"].rstrip("\n").split("\n")
+    for n, line in enumerate(lines):
+        where = f"{block['file']}:{block['line'] + 1 + n}"
+        code = line.split(" #", 1)[0].rstrip() if lang in SHELL_LANGS else line.rstrip()
+        if not code.strip() or code.lstrip().startswith("#"):
+            continue
+        if LOST_CONTINUATION.search(code):
+            out.append(f"{where}: three or more spaces before a flag; was a line continuation lost?")
+        if code.endswith("\\") and line != line.rstrip():
+            out.append(f"{where}: a backslash followed by a space does not continue the line")
+        if code.endswith("\\") and n == len(lines) - 1:
+            out.append(f"{where}: the last line ends with a backslash, so the command continues into nothing")
+        if code.endswith("\\") and lang in POWERSHELL_LANGS:
+            out.append(f"{where}: a backslash does not continue a line in PowerShell (use a backtick, or one line)")
+        if code.endswith("`") and lang in SHELL_LANGS:
+            out.append(f"{where}: a backtick does not continue a line in bash (use a backslash, or one line)")
+    return out
+
+
 def skip_reason(block):
     if block["lang"] not in LANGS:
         return f"not a runnable language ({block['lang'] or 'no language'})"
@@ -104,6 +139,8 @@ def skip_reason(block):
 
 def cmd_list():
     blocks, errors = collect()
+    for b in blocks:
+        errors += command_problems(b)
     for e in errors:
         print(f"::error::{e}")
     todo = [b for b in blocks if skip_reason(b) is None]

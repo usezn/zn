@@ -342,3 +342,38 @@ def test_javascript_block_runs_inside_the_project(tmp_path, monkeypatch, capsys)
     root = make_repo(tmp_path, {"README.md": marked("javascript", code)})
     rc, out = run_in_process(monkeypatch, capsys, root)
     assert rc == 0, out
+
+def _block(lang, code):
+    return {"file": "docs/x.md", "line": 10, "lang": lang, "code": code, "marked": False}
+
+
+def test_command_problems_finds_a_lost_continuation():
+    out = DS.command_problems(_block("bash", "docker run -e KEY=<your-key>   -v a:b img\n"))
+    assert out == ["docs/x.md:11: three or more spaces before a flag; was a line continuation lost?"]
+
+
+def test_command_problems_accepts_aligned_comments_and_good_continuations():
+    code = "zn unlock            # creates the vault\ncurl -sS https://example.com \\\n  -H 'A: b'\n"
+    assert DS.command_problems(_block("bash", code)) == []
+
+
+def test_command_problems_finds_backslash_space_and_dangling_backslash():
+    out = DS.command_problems(_block("sh", "echo a \\ \necho b \\\n"))
+    assert any("followed by a space" in e and e.startswith("docs/x.md:11:") for e in out)
+    assert any("continues into nothing" in e and e.startswith("docs/x.md:12:") for e in out)
+
+
+def test_command_problems_checks_the_continuation_character_per_shell():
+    assert any("PowerShell" in e for e in DS.command_problems(_block("powershell", "zn.cmd a \\\n  b\n")))
+    assert any("bash" in e for e in DS.command_problems(_block("bash", "zn a `\n  b\n")))
+    assert DS.command_problems(_block("powershell", "zn.cmd a `\n  b\n")) == []
+
+
+def test_command_problems_ignores_other_languages():
+    assert DS.command_problems(_block("text", "a   -b \\\n")) == []
+
+
+def test_docs_have_no_broken_continuations():
+    blocks, _ = DS.collect()
+    problems = [e for b in blocks for e in DS.command_problems(b)]
+    assert problems == []

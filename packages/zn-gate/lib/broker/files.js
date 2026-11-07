@@ -100,6 +100,16 @@ function nativeTargetOf(file, { platform = process.platform, realpath = fs.realp
 }
 
 /**
+ * Every candidate target of a path for the protected-path rules: the realTargetOf result, plus nativeTargetOf on Windows only.
+ * Off Windows nativeTargetOf is that same result, so it is not resolved again (one realpath per candidate, as before on Linux
+ * and macOS paying for a second identical walk). Windows gets exactly the two targets it always had.
+ */
+function targetsOf(file, opts = {}) {
+  const real = realTargetOf(file);
+  return (opts.platform || process.platform) === 'win32' ? [real, nativeTargetOf(file, opts)] : [real];
+}
+
+/**
  * Write a file atomically with mode 0600 (best effort on Windows). The temporary file has an unpredictable name and is created
  * with O_EXCL, so a file that somebody else planted under any name is never opened (it would keep its owner and access list
  * through the rename); the rename then replaces the target in one step.
@@ -116,4 +126,4 @@ function writeFileAtomic(file, data, mode = 0o600) {
   }
 }
 
-module.exports = { gitStatusOf, realTargetOf, nativeTargetOf, writeFileAtomic };
+module.exports = { gitStatusOf, realTargetOf, nativeTargetOf, targetsOf, writeFileAtomic };

@@ -1,0 +1,2 @@
+### Fixed
+- On Windows, the commands zn-gate tells you to run (`zn.cmd`, `npx.cmd`, `zn-gate.cmd`) use the `.cmd` form, so they work with PowerShell's default Restricted execution policy, which refuses the `.ps1` shims. Covers `zn-gate check`, `zn-gate init`, the repair step in the reason of blocked calls (hook launchers and the runner) and the Antigravity install warnings. Output on macOS and Linux is unchanged.

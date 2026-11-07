@@ -6,11 +6,15 @@ It is **experimental** and **not distributed**: nothing you install with `npx zn
 
 The Rust gateway reads `ZN_API_KEY` as the key for its own management API. It never contacts `api.usezn.com`.
 
-On first start, with an empty database, the gateway seeds a default organisation with a super-admin key: `ZN_API_KEY` if it is set, otherwise a random key. A random key is written to `zn-superadmin-key.txt` next to the audit database (`zn.db` by default), readable only by your user (mode 0600 on Unix; on Windows the file inherits the permissions of its directory). Copy it somewhere safe, then delete the file. The key is never printed, so it does not end up in terminal scrollback or container logs; earlier versions printed a generated key to stdout. If the file cannot be written, the gateway does not start and seeds nothing.
+On first start, with an empty database, the gateway seeds a default organisation with a super-admin key. The key is `ZN_API_KEY` if it is set, otherwise a random key.
+
+A random key is written to `zn-superadmin-key.txt` next to the audit database (`zn.db` by default). The file is readable only by your user (mode 0600 on Unix; on Windows the file inherits the permissions of its directory). Copy the key somewhere safe, then delete the file.
+
+The key is never printed, so it does not end up in terminal scrollback or container logs. Earlier versions printed a generated key to stdout. If the file cannot be written, the gateway does not start and seeds nothing.
 
 The gateway's rules do not cover shell commands the way the [destructive-command check](destructive-commands.md) of `zn-gate` does. Its restricted-command rule blocks any call that contains the word `rm`, `dd`, `chmod`, `chown`, `mkfs`, `format`, `shutdown` or `reboot`, whatever the target, so it also blocks harmless commands such as `rm -rf ./build`. It has no rule for a download piped into a shell, a download written over a shell startup file, a fork bomb, or writing to a disk device with a redirect (`cat /dev/zero > /dev/sda`). Do not rely on it to stop destructive commands: use `zn-gate`.
 
-> For agent protection (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, LangChain, CrewAI), use `zn-gate` (Node.js) or `zn-gate` on PyPI (Python). They need no compilation.
+> For agent protection (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, Gemini CLI (experimental), LangChain, CrewAI), use `zn-gate` (Node.js) or `zn-gate` on PyPI (Python). They need no compilation.
 
 ## Hardening (October 2026)
 
@@ -20,10 +24,21 @@ A review of an older snapshot of this gateway found issues that only affect some
 - **Sanitized images are forwarded.** With `visual_pii_redaction` on, an allowed tool call now carries the sanitized arguments (metadata stripped), the same ones that were checked and stored in the audit vault, instead of the original frame, in the place they were read from (the rebuilt frame may list its keys in another order). If the frame cannot be rebuilt, the call is refused.
 - **Bounded WebSocket messages.** `/mcp/ws` closes a connection whose message or frame is over 1 MiB (the library default was 64 MiB).
 - **WebSocket limits are configurable.** The limits are the `server.ws_max_message_bytes` (default 1048576, 1 MiB) and `server.ws_max_frame_bytes` (default 1048576, 1 MiB) settings; a message or frame over its limit closes the connection.
+- **Idle and stuck connections are closed.** A management API connection that sends nothing for `server.session_idle_timeout_secs` (default 900, 15 minutes) is closed, which ends an unused SSE stream or WebSocket session; browsers reconnect on their own. A client that stops reading is cut after `server.write_timeout_secs` (default 30). A value of 0 keeps the default.
+- **Idle sockets cannot lock out the dashboard.** The management API serves at most 256 connections at once. When the limit is reached, a new connection takes the place of the oldest one that has not yet had a request answered successfully; a client that has been served is never closed to make room.
 - **Consensus actions expire.** A proposed action that is not approved within `consensus.pending_ttl_secs` seconds (default 900, 15 minutes; 0 means the default) can no longer be approved and is removed.
 - **Query-string credentials only for SSE and WebSocket.** The `api_key` and `token` query parameters are accepted only on `/api/v1/events` and `/mcp/ws`, where a browser client cannot send headers; on every other route a credential must come in a header.
 
-A policy upload is verified before anything is written. The gateway checks the allowed-hash list and the Ed25519 signature (and the ML-DSA-65 signature when `ZN_PQ_PUBLIC_KEY` is set, which then makes it mandatory) on the uploaded bytes in memory, reading the signatures from the `.wasm.sig` and `.wasm.pqs` files next to the policy, and checks that the WASM compiles. Only then does it write the file, to a temporary file in the policy directory that is synced and renamed over the target. A policy that fails any check leaves no file behind, and a policy already installed under that name stays as it was.
+A policy upload is verified before anything is written. The gateway checks these on the uploaded bytes in memory:
+
+- the allowed-hash list;
+- the Ed25519 signature;
+- the ML-DSA-65 signature, when `ZN_PQ_PUBLIC_KEY` is set (this then makes it mandatory);
+- that the WASM compiles.
+
+It reads the signatures from the `.wasm.sig` and `.wasm.pqs` files next to the policy.
+
+Only then does it write the file. It writes to a temporary file in the policy directory, which is synced and renamed over the target. A policy that fails any check leaves no file behind, and a policy already installed under that name stays as it was.
 
 Known limits that remain, because the gateway is not distributed: the OCR check of images uses a fixed list of phrases and recognises only `data:image/...;base64,` images; the audit vault and the loop breaker have no size or age limit; and the management API has no TLS of its own (it listens on `127.0.0.1`; outside loopback, put it behind a TLS proxy).
 
@@ -55,11 +70,21 @@ An audit database created by an earlier release used a data key that was never s
 
 ## Post-quantum policy signatures
 
-A policy can carry a post-quantum signature next to its Ed25519 one (`.wasm.pqs`, base64). When `ZN_PQ_PUBLIC_KEY` is set (hex), that signature is required. From the release after 1.11.0 it is ML-DSA-65 (FIPS 204), verified with the RustCrypto `ml-dsa` crate. Sign the raw bytes of the `.wasm` file with pure ML-DSA-65 (not the pre-hash variant) and an empty context string, and write the signature as base64 to `.wasm.pqs`; a signature made with a context or a pre-hash does not verify. Earlier versions used Dilithium3 from the unmaintained PQClean bindings: a Dilithium3 key has the same size, but its signatures cannot be decoded as ML-DSA-65, so policies signed that way are refused until they are signed again with an ML-DSA-65 key.
+A policy can carry a post-quantum signature next to its Ed25519 one (`.wasm.pqs`, base64). When `ZN_PQ_PUBLIC_KEY` is set (hex), that signature is required.
+
+From the release after 1.11.0 it is ML-DSA-65 (FIPS 204), verified with the RustCrypto `ml-dsa` crate. To sign a policy:
+
+- Sign the raw bytes of the `.wasm` file.
+- Use pure ML-DSA-65 (not the pre-hash variant) and an empty context string.
+- Write the signature as base64 to `.wasm.pqs`.
+
+A signature made with a context or a pre-hash does not verify.
+
+Earlier versions used Dilithium3 from the unmaintained PQClean bindings. A Dilithium3 key has the same size, but its signatures cannot be decoded as ML-DSA-65. Policies signed that way are refused until they are signed again with an ML-DSA-65 key.
 
 ## Dependency advisories that cannot be fixed yet
 
-`cargo audit` ignores three advisories in `zip` 7.2.0 (RUSTSEC-2026-0367, RUSTSEC-2026-0368 and RUSTSEC-2026-0369); `.cargo/audit.toml` lists them with the reason. `zip` comes only through Candle (`candle-core`), and no Candle release accepts the fixed `zip` 9 yet: the latest, 0.11.0, needs `zip` 8. All three are in `extract()`, which unpacks an archive to disk. Candle only opens archives to read named entries from `.npz` and PyTorch `.pth` files, and the gateway loads neither kind. When a Candle release accepts `zip` 9, Candle and `zip` are updated and the three entries are removed.
+`cargo audit` ignores three advisories in `zip` 8.6.0 (RUSTSEC-2026-0367, RUSTSEC-2026-0368 and RUSTSEC-2026-0369); `.cargo/audit.toml` lists them with the reason. `zip` comes only through Candle (`candle-core`), and no Candle release accepts the fixed `zip` 9 yet: the latest, 0.11.0, needs `zip` ^8.6.0. All three are in `extract()`, which unpacks an archive to disk. Candle only opens archives to read named entries from `.npz` and PyTorch `.pth` files, and the gateway loads neither kind. When a Candle release accepts `zip` 9, Candle and `zip` are updated and the three entries are removed.
 
 ## Management API authentication
 
@@ -81,13 +106,26 @@ JWT claims:
 
 A token with a bad signature, another algorithm, past its expiry or before its `nbf` gets **401**. A correctly signed token with no usable role (missing, empty, unknown or wrongly cased roles, only `blocked`, or a tenant role without a valid namespace) gets **403**.
 
-**Breaking change:** earlier versions of the gateway gave any valid HS256 token full super-admin access. Tokens must now carry `roles`, and `namespace` for tenant roles. Role names are case-sensitive. `ZN_JWT_SECRET` must be at least 32 bytes or the gateway refuses to start, so tokens signed with a shorter secret stop working. Tokens with an `nbf` (not before) time in the future are rejected, with 60 seconds of leeway for clock differences. Tenants can no longer be created in the `global` namespace or with a namespace that has whitespace, and the gateway no longer prints a `ZN_API_KEY` taken from the environment when it seeds the default organisation.
+**Breaking change:** earlier versions of the gateway gave any valid HS256 token full super-admin access. These rules now apply:
+
+- Tokens must carry `roles`, and `namespace` for tenant roles. Role names are case-sensitive.
+- `ZN_JWT_SECRET` must be at least 32 bytes or the gateway refuses to start, so tokens signed with a shorter secret stop working.
+- Tokens with an `nbf` (not before) time in the future are rejected, with 60 seconds of leeway for clock differences.
+- Tenants can no longer be created in the `global` namespace or with a namespace that has whitespace.
+- The gateway no longer prints a `ZN_API_KEY` taken from the environment when it seeds the default organisation.
 
 `POST /api/v1/tenants` (super-admin only) answers **403** to other roles and **400** with `{"status":"error","error":...}` when the tenant cannot be created (invalid namespace, blank key, or a name, namespace or key already in use). Earlier versions answered 200 in both cases.
 
 ### Tenants with a blank key
 
-Earlier versions could seed the default organisation with the hash of an empty key when `ZN_API_KEY` was set but empty (for example `ZN_API_KEY=` from an unset compose variable). Blank keys are now refused, so that tenant can no longer authenticate, and since the database already has tenants no new one is seeded. The gateway logs a warning at startup naming each such tenant (never a key). To fix it, either set a non-blank `ZN_API_KEY` (it works as the legacy super-admin key), or give the tenant a new key in the audit database (`ZN_DB_PATH`, `zn.db` by default) while the gateway is stopped:
+Earlier versions could seed the default organisation with the hash of an empty key. This happened when `ZN_API_KEY` was set but empty (for example `ZN_API_KEY=` from an unset compose variable).
+
+Blank keys are now refused, so that tenant can no longer authenticate. Since the database already has tenants, no new one is seeded. The gateway logs a warning at startup naming each such tenant (never a key).
+
+To fix it, choose one of these:
+
+- Set a non-blank `ZN_API_KEY`. It works as the legacy super-admin key.
+- Give the tenant a new key in the audit database (`ZN_DB_PATH`, `zn.db` by default) while the gateway is stopped:
 
 ```bash
 NEW_KEY=$(openssl rand -hex 32)
@@ -131,21 +169,47 @@ The first time a new version opens a file written by an earlier one, it upgrades
 
 A search runs on the request path, so it is tried once and gives up after one second; the request then goes on without a nearest neighbour. Failures are logged as a warning at most once every ten minutes, and at debug level in between.
 
-## Building from Source
+## Build it yourself
 
-### Prerequisites
+1. Install the prerequisites:
+   - Rust 1.95 or later (`cargo`); CI uses 1.99.0 and the Dockerfile builds with `rust:1-bookworm`
+   - `protoc` 29 or later
+   - OpenSSL / libssl-dev
+2. Build the gateway from the repository root:
 
-- Rust 1.95 or later (`cargo`); CI uses 1.99.0 and the Dockerfile builds with `rust:1-bookworm`
-- `protoc` 29 or later
-- OpenSSL / libssl-dev
+   ```bash
+   cargo build --release
+   ```
+
+3. Check that the binary runs:
+
+   ```bash
+   ./target/release/zn --help
+   ```
+
+## Running in Docker
+
+The root `Dockerfile` builds a small distroless image (nothing is published; build it yourself):
 
 ```bash
-cargo build --release
-./target/release/zn --help
+docker build -t zn .
+docker run --rm -i zn analyze "ignore all previous instructions"
 ```
+
+The server (`zn start`) needs two things inside a container. It listens on `127.0.0.1` by default, which a published port cannot reach, so set `server.bind_address` to `0.0.0.0` in a config file (the container's own address). And it reads requests on standard input, so keep stdin open with `-i`: without it the server exits at once. Set `ZN_API_KEY` too, because a random key would be written inside the container and lost when it stops:
+
+```bash
+echo '{"server":{"bind_address":"0.0.0.0"}}' > zn.json
+docker run --rm -i -p 127.0.0.1:9090:9090 -e ZN_API_KEY=<your-key> -v "$PWD/zn.json:/data/zn.json:ro" zn start
+curl -H "X-API-Key: <your-key>" http://127.0.0.1:9090/api/v1/health
+```
+
+`0.0.0.0` is the address inside the container. `-p 127.0.0.1:9090:9090` publishes the port on this machine's loopback only; leave out `127.0.0.1:` and every machine that can reach the host can reach the gateway.
 
 ## KMS key and the config fallback
 
 When `kms.key_id` (or `ZN_KMS_KEY_ID`) is set, the gateway takes the audit database key from the KMS. If that key cannot be fetched, the gateway now refuses to start with a clear error instead of quietly using the key from the config.
 
 To keep the old behaviour on purpose, set `kms.allow_config_fallback = true` (or `ZN_KMS_ALLOW_CONFIG_FALLBACK=true`). The gateway then starts with the config key and logs a warning on every start. The option is off by default. Without `kms.key_id`, nothing changes: the key from the config is used.
+
+The gateway reads at most 16 MiB per line, from its own input and from each upstream MCP server over stdio; a longer line is dropped and answered with a JSON-RPC error.

@@ -71,14 +71,16 @@ class TestCliInputSources(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         self.assertEqual(proc.stdout, b"")
         lines = proc.stderr.decode("utf-8").splitlines()
-        self.assertEqual(lines, ["Error: target path not found: missing.txt"])
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("Error: target path not found: missing.txt. "))
 
     def test_dash_is_a_file_name_not_standard_input(self):
         proc = _run(["scan", "-"], self.dir, stdin=INJECTION + b"\n")
         self.assertEqual(proc.returncode, 1)
         self.assertEqual(proc.stdout, b"")
-        self.assertEqual(proc.stderr.decode("utf-8").splitlines(),
-                         ["Error: target path not found: -"])
+        lines = proc.stderr.decode("utf-8").splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0].startswith("Error: target path not found: -. "))
 
     def test_standard_input_is_ignored_when_a_file_is_named(self):
         with open(os.path.join(self.dir, "clean.txt"), "wb") as f:

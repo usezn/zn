@@ -91,3 +91,66 @@ test('isShadowed handles connection strings', () => {
   assert.equal(d.isShadowed('DATABASE_URL=postgres://u:fakepw123@db.example.com/x'), false);
   assert.equal(d.isShadowed('DATABASE_URL=postgres://db.example.com/x'), true);
 });
+
+function editValue(text, key, replacement) {
+  const parsed = d.parseDotenv(text);
+  const e = parsed.entries.find((x) => x.key === key);
+  return d.applyEdits(parsed, [{ lineIndex: e.lineIndex, start: e.start, end: e.end, text: replacement }]);
+}
+
+test('applyEdits edits the first, a middle and the last line', () => {
+  const text = '# header\nA=one\nB=two\nC=three';
+  assert.equal(editValue(text, 'A', 'X'), '# header\nA=X\nB=two\nC=three');
+  assert.equal(editValue(text, 'B', 'X'), '# header\nA=one\nB=X\nC=three');
+  assert.equal(editValue(text, 'C', 'X'), '# header\nA=one\nB=two\nC=X');
+});
+
+test('applyEdits keeps a trailing newline on the last line', () => {
+  assert.equal(editValue('A=one\nB=two\n', 'B', 'X'), 'A=one\nB=X\n');
+});
+
+test('applyEdits keeps CRLF separators on edited and untouched lines', () => {
+  const text = 'A=one\r\nB=two\r\nC=three\r\n';
+  assert.equal(editValue(text, 'A', 'X'), 'A=X\r\nB=two\r\nC=three\r\n');
+  assert.equal(editValue(text, 'B', 'X'), 'A=one\r\nB=X\r\nC=three\r\n');
+  assert.equal(editValue(text, 'C', 'X'), 'A=one\r\nB=two\r\nC=X\r\n');
+});
+
+test('applyEdits keeps quotes, export prefix and trailing comments', () => {
+  const text = 'A="one"\nexport B=\'two\'\nC=three # note\n';
+  assert.equal(editValue(text, 'A', 'X'), 'A="X"\nexport B=\'two\'\nC=three # note\n');
+  assert.equal(editValue(text, 'B', 'X'), 'A="one"\nexport B=\'X\'\nC=three # note\n');
+  assert.equal(editValue(text, 'C', 'X'), 'A="one"\nexport B=\'two\'\nC=X # note\n');
+});
+
+test('applyEdits with an empty quoted value inserts between the quotes', () => {
+  assert.equal(editValue('A=""\n', 'A', 'X'), 'A="X"\n');
+});
+
+test('applyEdits can replace only the password of a connection URL', () => {
+  const text = 'DATABASE_URL=postgres://app:fake-pass@db.example.com/app\n';
+  const parsed = d.parseDotenv(text);
+  const e = parsed.entries[0];
+  const pw = d.connectionPassword(e.value);
+  const out = d.applyEdits(parsed, [
+    { lineIndex: e.lineIndex, start: e.start + pw.start, end: e.start + pw.end, text: '__ZN_DB__' },
+  ]);
+  assert.equal(out, 'DATABASE_URL=postgres://app:__ZN_DB__@db.example.com/app\n');
+});
+
+test('connectionPassword returns exact offsets with and without a password', () => {
+  const withPw = 'mysql://user:fake-pass@db.example.com:3306/app';
+  const r = d.connectionPassword(withPw);
+  assert.equal(withPw.slice(r.start, r.end), 'fake-pass');
+  assert.equal(d.connectionPassword('mysql://user:@db.example.com/app'), null);
+  assert.equal(d.connectionPassword('mysql://db.example.com:3306/app'), null);
+  const emptyUser = ':fake-pass@db.example.com';
+  assert.equal(d.connectionPassword('redis://' + emptyUser) !== null, true);
+});
+
+test('connectionPassword finds the password in a quoted .env value', () => {
+  const parsed = d.parseDotenv('URL="amqp://u:fake-pass@mq.example.com/v"\r\n');
+  const e = parsed.entries[0];
+  const r = d.connectionPassword(e.value);
+  assert.equal(e.value.slice(r.start, r.end), 'fake-pass');
+});

@@ -15,7 +15,9 @@ const { check: realCheck, report } = require('../lib/check');
 // supports it is injected (the check for older versions is in init_plugin_node.test.js).
 const check = (opts) => realCheck({ nodeVersion: '22.0.0', ...opts });
 const { tempDir } = require('./helpers/tmp');
+const { hookTimeoutMs } = require('./helpers/time_budget');
 const { pluginHooks, writePluginManifest } = require('./helpers/claude_plugin');
+const { winCmdRe } = require('./helpers/wincmd');
 
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 
@@ -25,7 +27,7 @@ function homeWithHooks(t, agents) {
   for (const id of agents) {
     getAdapter(id).install({ scope: 'user', home, env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
   }
-  return { home, env, cwd: tempDir(t, 'zn-check-cwd-') };
+  return { home, env, cwd: tempDir(t, 'zn-check-cwd-'), hookTimeoutMs: hookTimeoutMs() };
 }
 
 function textOf(res) {
@@ -71,11 +73,13 @@ test('check: every agent installed for the user blocks .env and allows an ordina
     if (r.id !== 'opencode') assert.equal(r.verified, true, `${r.id}: installed hook not run`);
   }
   assert.equal(res.removed, true);
+  // Gemini CLI support is experimental: its name in the report must keep saying so.
+  assert.match(byId(res, 'gemini').name, /experimental/);
   const { s, code } = textOf(res);
   assert.equal(code, 0);
   assert.match(s, /OK Claude Code\s+blocked the \.env file and allowed the ordinary file/);
   assert.match(s, /its plugin runs inside OpenCode, so it was not started here/);
-  assert.match(s, /zn env shadow \.env/);
+  assert.match(s, winCmdRe(/zn env shadow \.env/));
 });
 
 /* A PATH with only a stand-in `zn` (or nothing), so what is found does not depend on the machine running the tests. */
@@ -92,10 +96,11 @@ test('check: no setup at all is a failure, with the command for each agent found
   const res = await check({ home, env: { HOME: home, PATH: binDir(t, true) }, cwd: home });
   const { s, code } = textOf(res);
   assert.equal(code, 1);
-  assert.match(s, /Codex CLI\s+zn is not set up for this agent\. To protect it, run `zn hooks install codex` in your own terminal/);
+  assert.match(s, winCmdRe(/Codex CLI\s+zn is not set up for this agent\. To protect it, run `zn hooks install codex` in your own terminal/));
   assert.match(s, /claude plugin install zn-gate@usezn/);
+  assert.match(s, /install the zn-gate plugin \(needs internet\): `claude plugin marketplace add usezn\/zn`/);
   assert.match(s, /Cursor\s+not found on this machine\n/);
-  assert.match(s, /To set it up, run `npx -y zn-gate init` in your own terminal/);
+  assert.match(s, winCmdRe(/To set it up, run `npx -y zn-gate init` in your own terminal/));
 });
 
 test('check: without a `zn` command (npx only), the setup starts with a global install', async (t) => {
@@ -113,8 +118,8 @@ test('check: no agent on the machine says so and offers no setup', async (t) => 
   const { s, code } = textOf(res);
   assert.equal(code, 1);
   assert.match(s, /No supported coding agent was found on this machine/);
-  assert.match(s, /Install one, then run `npx -y zn-gate init`/);
-  assert.doesNotMatch(s, /zn hooks install|plugin install/);
+  assert.match(s, winCmdRe(/Install one, then run `npx -y zn-gate init`/));
+  assert.doesNotMatch(s, winCmdRe(/zn hooks install|plugin install/));
 });
 
 test('check: an agent found but not set up is named after the protected ones, with the same exit code', async (t) => {
@@ -124,7 +129,7 @@ test('check: an agent found but not set up is named after the protected ones, wi
   const res = await check({ ...ctx, env: { ...ctx.env, PATH: binDir(t, true) + ":/usr/bin:/bin" } });
   const { s, code } = textOf(res);
   assert.equal(code, 0);
-  assert.match(s, /Not set up yet: Claude Code\. To add it, run `npx -y zn-gate init`/);
+  assert.match(s, winCmdRe(/Not set up yet: Claude Code\. To add it, run `npx -y zn-gate init`/));
 });
 
 // A hook written by an older zn-gate: the plain command with the absolute Node.js and runner paths, no launcher.
@@ -158,7 +163,7 @@ test('check: Claude Code set up with zn hooks is repaired with zn hooks, not wit
   assert.match(r.fix, /`zn hooks install claude-code`/);
   assert.doesNotMatch(r.fix, /plugin/);
   const { s } = textOf(await check(ctx));
-  assert.match(s, /To fix it, install zn-gate again for the Node\.js you use now: run `npm install -g zn-gate`, then `zn hooks install claude-code`/);
+  assert.match(s, winCmdRe(/To fix it, install zn-gate again for the Node\.js you use now: run `npm install -g zn-gate`, then `zn hooks install claude-code`/));
 });
 
 test('check: a Claude Code prompt hook without onFailure "block" gets a note', async (t) => {
@@ -705,12 +710,15 @@ test('check: only an absolute sh or node running a script inside the plugin fold
     ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/x.sh"\tPreToolUse', /control character/],
     ['/bin/sh "${CLAUDE_PLUGIN_ROOT}/x.sh"\nnode x', /control character/],
   ];
-  for (const [cmd, re] of unsafe) {
+  // These commands are judged from the manifest alone: each problem is set before any hook starts, so a live run, which
+  // starts hook processes (slow on Windows), gives the same answer. The first case runs end to end, to keep the live path
+  // covered here.
+  for (const [i, [cmd, re]] of unsafe.entries()) {
     const home = tempDir(t, 'zn-check-ccb3-');
     const root = fakePlugin(home, launcher());
     fs.mkdirSync(path.join(root, 'hooks'), { recursive: true });
     fs.writeFileSync(path.join(root, 'hooks', 'hooks.json'), hooksJson(cmd));
-    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: true }), 'claude-code');
+    const r = byId(await check({ home, env: { HOME: home, PATH: process.env.PATH }, cwd: tempDir(t, 'zn-check-cwd-'), live: i === 0 }), 'claude-code');
     assert.equal(r.state, 'not-protected', cmd);
     assert.match(r.problem, re, cmd);
   }
@@ -1098,6 +1106,29 @@ test('check: a Claude Code plugin of another version than zn-gate gets a note wi
   }
 });
 
+test('check: the plugin version note reads the lock file the launcher runs, then plugin.json', (t) => {
+  const { pluginVersionNote } = require('../lib/check')._internal;
+  const mk = (lock, manifest) => {
+    const root = tempDir(t, 'zn-check-plugin-lock-');
+    fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+    if (manifest !== null) fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'zn-gate', version: manifest }));
+    if (lock !== null) fs.writeFileSync(path.join(root, 'scripts', 'zn-gate.lock.json'), lock);
+    return root;
+  };
+  // Lock present: its version wins over plugin.json, in both directions.
+  assert.match(pluginVersionNote(mk(JSON.stringify({ package: 'zn-gate', version: '1.0.0' }), '1.14.1'), '1.14.1'), /plugin is version 1\.0\.0 .*protected by the rules of zn-gate 1\.0\.0/);
+  assert.equal(pluginVersionNote(mk(JSON.stringify({ version: '1.14.1' }), '1.0.0'), '1.14.1'), '');
+  // Lock absent: plugin.json is read.
+  assert.match(pluginVersionNote(mk(null, '1.0.0'), '1.14.1'), /protected by the rules of zn-gate 1\.0\.0/);
+  // Lock malformed, or without a usable version: plugin.json is read.
+  assert.match(pluginVersionNote(mk('{ not json', '1.0.0'), '1.14.1'), /protected by the rules of zn-gate 1\.0\.0/);
+  assert.match(pluginVersionNote(mk(JSON.stringify({ package: 'zn-gate' }), '1.0.0'), '1.14.1'), /protected by the rules of zn-gate 1\.0\.0/);
+  assert.match(pluginVersionNote(mk(JSON.stringify({ version: 2 }), '1.0.0'), '1.14.1'), /protected by the rules of zn-gate 1\.0\.0/);
+  // Neither readable: no note.
+  assert.equal(pluginVersionNote(mk('{ not json', null), '1.14.1'), '');
+});
+
 test('check: with a pre-release zn-gate command, a plugin of another version gets both versions and no advice', (t) => {
   const { pluginVersionNote } = require('../lib/check')._internal;
   const root = tempDir(t, 'zn-check-plugin-rc-');
@@ -1107,4 +1138,21 @@ test('check: with a pre-release zn-gate command, a plugin of another version get
   assert.match(pluginVersionNote(root, '1.15.0'), /claude plugin update/);
   assert.match(pluginVersionNote(root, '1.14.0'), /npm install -g zn-gate@latest/);
   assert.equal(pluginVersionNote(root, '1.14.1'), '');
+});
+
+test('check: the plugin version is the one the launcher runs (scripts/zn-gate.lock.json), plugin.json only as a fallback', (t) => {
+  const { pluginVersionNote } = require('../lib/check')._internal;
+  const root = tempDir(t, 'zn-check-plugin-lock-');
+  fs.mkdirSync(path.join(root, '.claude-plugin'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'zn-gate', version: '1.14.1' }));
+  fs.writeFileSync(path.join(root, 'scripts', 'zn-gate.lock.json'), JSON.stringify({ package: 'zn-gate', version: '1.13.0' }));
+  const note = pluginVersionNote(root, '1.14.1');
+  assert.match(note, /plugin is version 1\.13\.0 /);
+  assert.match(note, /protected by the rules of zn-gate 1\.13\.0/);
+  assert.doesNotMatch(note, /checked with/);
+  // A lock file with no readable version falls back to plugin.json.
+  fs.writeFileSync(path.join(root, 'scripts', 'zn-gate.lock.json'), '{ not json');
+  assert.equal(pluginVersionNote(root, '1.14.1'), '');
+  assert.match(pluginVersionNote(root, '1.15.0'), /plugin is version 1\.14\.1 /);
 });

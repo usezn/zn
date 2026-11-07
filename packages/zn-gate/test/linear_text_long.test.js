@@ -7,15 +7,16 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const lt = require('../lib/linear-text');
+const { cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 const N = 300000;
 const LIMIT_MS = 5000;
 
 function timed(fn) {
-  const start = process.hrtime.bigint();
+  const start = cpuNow();
   const result = fn();
-  const elapsed = Number(process.hrtime.bigint() - start) / 1e6;
-  assert.ok(elapsed < LIMIT_MS, `took ${elapsed.toFixed(0)} ms, limit ${LIMIT_MS} ms`);
+  const elapsed = cpuMsSince(start);
+  assert.ok(elapsed < LIMIT_MS, `took ${elapsed.toFixed(0)} ms CPU, limit ${LIMIT_MS} ms`);
   return result;
 }
 

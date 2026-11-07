@@ -165,3 +165,49 @@ def test_missing_input_file_fails_closed(tmp_path):
     )
     assert r.returncode != 0
     assert "absent.json" in r.stderr
+
+
+@pytest.mark.parametrize(
+    "expr, status",
+    [
+        ("MIT AND Apache-2.0", "ok"),
+        ("GPL-3.0 OR MIT", "ok"),
+        ("GPL-3.0 AND MIT", "review"),
+        ("Apache-2.0 WITH LLVM-exception", "ok"),
+        ("(MIT OR Apache-2.0) AND BSD-3-Clause", "ok"),
+        ("GPL-3.0 WITH LLVM-exception", "review"),
+        ("MIT WITH Classpath-exception-2.0", "review"),
+        ("Apache-2.0 WITH", "review"),
+        ("WITH LLVM-exception", "review"),
+        ("Apache 2.0", "ok"),
+        ("Apache License, Version 2.0", "ok"),
+        ("apache license version 2.0", "ok"),
+        ("3-Clause BSD License", "ok"),
+        ("BSD", "ok"),
+        ("BSD License", "ok"),
+        ("ISC License", "ok"),
+        ("Apache-2.0 AND MIT", "ok"),
+        ("BSD-3-Clause AND MIT", "ok"),
+        ("Python Software Foundation License", "review"),
+        ("Dual License", "review"),
+        ("UNKNOWN", "review"),
+        ("BSD-3-Clause, Apache-2.0, dependency licenses", "review"),
+        ("MIT AND", "review"),
+        ("(MIT", "review"),
+    ],
+)
+def test_expression_parsing_table(tmp_path, expr, status):
+    r = run(tmp_path, [row("pkg", "1.0.0", expr)])
+    assert r.returncode == 0, r.stderr
+    assert table_row("pkg", "1.0.0", expr, status) in r.stdout
+
+
+def test_a_bare_name_never_rewrites_part_of_an_spdx_id(tmp_path):
+    # "BSD" maps to BSD-3-Clause, but BSD-4-Clause must stay unknown (not on the list).
+    r = run(tmp_path, [row("pkg", "1.0.0", "BSD-4-Clause")])
+    assert table_row("pkg", "1.0.0", "BSD-4-Clause", "review") in r.stdout
+
+
+def test_ids_added_to_the_allowlist_are_honoured(tmp_path):
+    r = run(tmp_path, [row("pkg", "1.0.0", "Zlib")], allow=ALLOWLIST_TEXT + "Zlib\n")
+    assert table_row("pkg", "1.0.0", "Zlib", "ok") in r.stdout

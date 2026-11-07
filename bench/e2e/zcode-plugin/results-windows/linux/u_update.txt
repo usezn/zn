@@ -1,0 +1,7 @@
+$ /work/zcrt /opt/ZCode/resources/glm/zcode.cjs plugins update zn-gate@usezn
+rc=0
+--stdout--
+Updated plugin zn-gate@usezn from 1.14.1 to 1.14.1-test.1. Restart zcode to apply.
+
+--stderr--
+

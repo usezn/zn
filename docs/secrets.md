@@ -5,7 +5,8 @@ The agent works with markers such as `__ZN_GITHUB_TOKEN__`; real values stay in
 an encrypted vault on your machine and are filled in only where you allowed
 them. Everything runs locally.
 
-Supported agents: Claude Code, Codex CLI, Cursor (IDE) and OpenCode. What each
+Supported agents (seven): Claude Code, Codex CLI, OpenCode, Cursor, GitHub
+Copilot (VS Code, CLI), Google Antigravity and the ZCode desktop app. What each
 one can and cannot do is in [compat.md](compat.md); the limits are in
 [threat-model.md](threat-model.md).
 
@@ -31,7 +32,7 @@ outdated one, and `zn unlock` restarts it for you.
 
 zn asks you to confirm some things outside the agent (step 4). On a desktop it
 shows a system dialog. On a server or over SSH there is no dialog: run the
-vault in a terminal of its own instead, and answer there:
+vault in a terminal of its own instead, and answer there (if the vault is already unlocked, run `zn lock` first, because `unlock --foreground` refuses with "already unlocked"):
 
 ```bash
 zn unlock --foreground
@@ -75,6 +76,13 @@ scrubber before it reaches the model. Known values, more than 60 secret formats
 replaced with tokens. Reads of `.env` files with real values, credential files
 (`~/.aws/credentials`, `~/.ssh/id_*`, `~/.npmrc`…) and zn's own `~/.zn` are
 blocked.
+
+Template files named `.env.example`, `.env.sample` or `.env.template` (also with a
+middle part, such as `.env.local.example`) can be read, because they are meant to
+hold placeholders. Any other name, such as `.env.example.bak`, `.env.examplex` or
+`.env.local`, stays blocked. zn judges these commands by the file name; it does not
+open the file, and it does not follow a symbolic link. Keep real values out of
+template files.
 
 ### Name, address and username
 
@@ -269,6 +277,35 @@ redacted too, for every prefix (`AKIA`, `ASIA`, `ABIA`, `ACCA`). A real key id
 is never skipped because of how it ends, and redacting a documentation
 example costs nothing.
 
+## Egress allowlist for `zn run`
+
+Off by default. `zn run --egress-allow HOST[:PORT],... -- <command>` starts a
+proxy on `127.0.0.1` (random port) for the command's lifetime and sets
+`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` (and lowercase forms) to it, with
+`NODE_USE_ENV_PROXY=1`. `NO_PROXY` is removed, so the command cannot route
+around the proxy with it. The proxy opens CONNECT tunnels and `http://`
+requests only to the listed hosts. Other requests get 403 before any DNS
+lookup, and zn logs the refused host and port (never the body or headers).
+
+- An entry is an exact host name or IP address. `api.example.com` does not
+  allow `x.api.example.com` or `localhost`. An entry without a port
+  allows every port of that host (so `github.com` also allows port 22); use
+  `host:443` to allow only that port.
+- It covers programs that read the proxy variables themselves (curl, gh,
+  Python requests and urllib, axios). In Node it covers only versions that
+  honour `NODE_USE_ENV_PROXY` (in our tests, 22.21 and later 22.x, and 24.5 and
+  later; see `node --help` for `--use-env-proxy`). The `fetch` and `http`
+  of an older Node, and SDKs built on a `fetch` without proxy support, ignore
+  the variables and connect directly: they are not covered.
+- An allowed name is trusted to resolve where it should: the proxy does not
+  filter the address a listed name resolves to. CONNECT tunnels carry the
+  client's own TLS server name and cannot be inspected.
+- `--egress-allow` is not the `hooks.egressAllowHosts` setting, which lists
+  hosts exempt from the personal-data check of the egress hook.
+- It does not cover programs that ignore the variables, raw sockets, DNS
+  lookups made by the program itself, or a command that unsets the variables.
+  It is a guard for well-behaved tools, not a sandbox.
+
 ## Useful commands
 
 | Command | What it does |
@@ -276,7 +313,7 @@ example costs nothing.
 | `zn secret list` | Names, modes, hosts and commands (never values) |
 | `zn secret rm NAME` | Remove a secret |
 | `zn vault log` | Local audit log: who used which secret where (no values). Also `zn secret log`; `--since 1h` limits it. With the vault unlocked it checks the whole chain first and shows nothing if the check fails (the vault stores a warning); with the vault locked it says the chain was not checked. (`zn audit` reviews agent configs; see [audit.md](audit.md)) |
-| `zn vault log export --otlp` | The same log as OpenTelemetry logs (OTLP/JSON Lines) for an OpenTelemetry Collector; `--since 7d`, `--out FILE`. An unlocked vault checks the chain first and refuses to export a log that does not verify; a locked vault cannot, and the export warns that it is not a verified copy. See [team.md](team.md#export-the-audit-log-to-opentelemetry) |
+| `zn vault log export --otlp` | The same log as OpenTelemetry logs (OTLP/JSON Lines) for an OpenTelemetry Collector; `--since 7d`, `--out FILE`. An unlocked vault checks the chain first and refuses to export a log that does not verify; a locked vault cannot, so the export is refused unless you add `--unverified`, and then it warns that it is not a verified copy; `--out` refuses a symbolic link. See [team.md](team.md#export-the-audit-log-to-opentelemetry) |
 | `zn vault verify` | Check the audit log's HMAC chain and compare its last record with the one the vault remembers. If the log was cut or replaced while the vault was locked or running, the vault keeps a warning (also after lock and unlock) and this command fails until you look into it and accept the log with `zn vault verify --acknowledge` in your own terminal (the vault asks you to confirm). The vault saves its checkpoint every minute and when it locks; if the vault process is killed, the records of the last minute may be missing without notice. Restoring an older `secrets.age`, with or without its older `audit.jsonl`, is not detected. After a power loss the check can report a false alarm |
 | `zn lock` | Lock the vault now |
 | `zn vault reset` | Forgot the passphrase? Sets the old vault aside (an encrypted backup) and starts a new, empty one. Your own terminal only; the old values are lost. See "If something fails" |
@@ -290,7 +327,7 @@ you to run `zn unlock`.
 ## If something fails
 
 - **You see `__ZN_REDACTED_...` markers**: the vault is locked. Run `zn unlock`.
-- **No confirmation dialog appears** (a server, or SSH): run `zn unlock --foreground` in a terminal of its own and answer there.
+- **No confirmation dialog appears** (a server, or SSH): run `zn lock` and then `zn unlock --foreground` in a terminal of its own and answer there.
 - **You updated zn-gate and secrets still show as markers in the hooks**: the vault is still the old version. Run `zn vault status`, then `zn unlock`, which restarts it.
 - **Codex does not run the hooks**: open Codex and approve them with `/hooks`.
 - **Claude Code ignores the hooks on a computer managed by an organization**: `zn hooks install claude-code` and `zn-gate status` say when a managed setting stops them. Ask your administrator to add zn to the managed settings.

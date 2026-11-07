@@ -1,5 +1,60 @@
 # zn-gate API Reference
 
+For a short guide to calling the HTTP API from curl, Python or Node.js, see the [API quickstart](api-quickstart.md).
+
+## Table of contents
+
+- [Node.js (`zn-gate`)](#nodejs-zn-gate)
+  - [`evaluate(text, options)`](#evaluatetext-options)
+  - [`analyze(text, options)`](#analyzetext-options)
+  - [`analyzeLocal(text, options)`](#analyzelocaltext-options)
+  - [`isCloudEnabled(options)`](#iscloudenabledoptions)
+  - [`usesStoredKey(options)`](#usesstoredkeyoptions)
+  - [`usableApiKey(value)`](#usableapikeyvalue)
+  - [`longInputMode(options)`](#longinputmodeoptions)
+  - [`resolveEndpoint(options, flags)`](#resolveendpointoptions-flags)
+  - [Constants](#constants)
+  - [`sanitizeToolResult(toolName, content, options)`](#sanitizetoolresulttoolname-content-options)
+  - [`redactSecrets(text)`](#redactsecretstext)
+  - [`checkToolResult(toolName, content, options)`](#checktoolresulttoolname-content-options)
+  - [`checkCommand(command)`](#checkcommandcommand)
+  - [`checkToolCall(toolName, args, options)`](#checktoolcalltoolname-args-options)
+  - [`guardTool(fn, options)`](#guardtoolfn-options)
+  - [`GuardBlockError`](#guardblockerror)
+  - [`sanitizeToolResult`, `redactSecrets`, `verifyEvidenceLedger` and `logEvidence`](#sanitizetoolresult-redactsecrets-verifyevidenceledger-and-logevidence)
+  - [`logEvidence(event, filePath, options)`](#logevidenceevent-filepath-options)
+  - [`verifyEvidenceLedger(filePath)`](#verifyevidenceledgerfilepath)
+- [Python (`zn-gate`)](#python-zn-gate)
+  - [`evaluate(text: str, strict: bool | None = None) -> Assessment`](#evaluatetext-str-strict-bool--none--none---assessment)
+  - [`@guard(on_block='raise'|'return'|'custom', fallback=None, check_args=True, check_result=False, mask_secrets=False, callback=None, block_truncated=False)`](#guardon_blockraisereturncustom-fallbacknone-check_argstrue-check_resultfalse-mask_secretsfalse-callbacknone-block_truncatedfalse)
+  - [`GuardBlockError(assessment, target='', payload=None)`](#guardblockerrorassessment-target-payloadnone)
+  - [`check_tool_call(tool_name: str, arguments: Any = None, strict: bool | None = None, block_truncated: bool = False) -> Assessment`](#check_tool_calltool_name-str-arguments-any--none-strict-bool--none--none-block_truncated-bool--false---assessment)
+  - [`check_tool_result(result: Any, block_truncated: bool = False, strict: bool | None = None, allow_truncated: bool = False) -> Assessment`](#check_tool_resultresult-any-block_truncated-bool--false-strict-bool--none--none-allow_truncated-bool--false---assessment)
+  - [`check_command(command: str) -> Assessment`](#check_commandcommand-str---assessment)
+  - [`normalize_input(text: str) -> tuple[str, str]`](#normalize_inputtext-str---tuplestr-str)
+  - [`redact_secrets(text: str) -> tuple[str, list[dict]]`](#redact_secretstext-str---tuplestr-listdict)
+  - [`sanitize_tool_result(tool_or_result, content=None, mask_secrets=True, block_truncated=False, strict=None, allow_truncated=False)`](#sanitize_tool_resulttool_or_result-contentnone-mask_secretstrue-block_truncatedfalse-strictnone-allow_truncatedfalse)
+  - [`analyze(input_text, api_key=None, endpoint=None, timeout=None, local_only=False, long_input=None, **kwargs) -> dict`](#analyzeinput_text-api_keynone-endpointnone-timeoutnone-local_onlyfalse-long_inputnone-kwargs---dict)
+  - [`analyze_cloud(input_text, api_key, endpoint_url=None, timeout=4.0, long_input=None) -> dict`](#analyze_cloudinput_text-api_key-endpoint_urlnone-timeout40-long_inputnone---dict)
+  - [`is_cloud_enabled(api_key: str | None = None, local_only: bool = False) -> bool`](#is_cloud_enabledapi_key-str--none--none-local_only-bool--false---bool)
+  - [`resolve_endpoint(options: dict | None = None) -> str`](#resolve_endpointoptions-dict--none--none---str)
+  - [`log_evidence(event: dict, file_path: str = EVIDENCE_FILE, lock_wait: float = 2.0) -> dict | None`](#log_evidenceevent-dict-file_path-str--evidence_file-lock_wait-float--20---dict--none)
+  - [`verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> dict`](#verify_evidence_ledgerfile_path-str--evidence_file---dict)
+  - [`get_evidence_stats(file_path: str = EVIDENCE_FILE, limit: int = 50) -> dict`](#get_evidence_statsfile_path-str--evidence_file-limit-int--50---dict)
+  - [`export_evidence_ledger(file_path: str | None = None, format: str = 'jsonl') -> dict`](#export_evidence_ledgerfile_path-str--none--none-format-str--jsonl---dict)
+  - [Constants (Python)](#constants-python)
+  - [Warnings the Python package logs](#warnings-the-python-package-logs)
+  - [Framework integrations (`zn_gate.integrations`)](#framework-integrations-zn_gateintegrations)
+  - [`ZnGuardCallbackHandler(on_block='raise', mask_secrets=True, raise_on_injection=None, block_truncated=False)`](#znguardcallbackhandleron_blockraise-mask_secretstrue-raise_on_injectionnone-block_truncatedfalse)
+  - [`guard_langchain_tool(tool, on_block='raise', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`](#guard_langchain_tooltool-on_blockraise-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone)
+  - [`guarded_tool(on_block='raise', mask_secrets=True, fallback=None, check_result=True, block_truncated=False, framework=None)`](#guarded_toolon_blockraise-mask_secretstrue-fallbacknone-check_resulttrue-block_truncatedfalse-frameworknone)
+  - [`adk_tool_callbacks(on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`](#adk_tool_callbackson_blockreturn-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone)
+  - [`openai_agents_tool_guardrails(on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`](#openai_agents_tool_guardrailson_blockreturn-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone)
+  - [`guard_pydantic_ai_toolset(toolset, on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`](#guard_pydantic_ai_toolsettoolset-on_blockreturn-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone)
+  - [`ZnLlamaGuard(on_block='raise', mask_secrets=True, raise_on_violation=None, fallback=None)`](#znllamaguardon_blockraise-mask_secretstrue-raise_on_violationnone-fallbacknone)
+  - [`call_api(prompt, options=None, context=None) -> dict`](#call_apiprompt-optionsnone-contextnone---dict)
+  - [Typing](#typing)
+
 ## Node.js (`zn-gate`)
 
 <!-- snippet-test -->
@@ -15,7 +70,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 ### `evaluate(text, options)`
 
 - Synchronous in-memory deterministic rule evaluation. Never touches the network.
-- Options: `strict` (boolean; also blocks the heuristic rules that are advisories by default; `ZN_STRICT=1` does the same).
+- Options: `strict` (boolean; also blocks the heuristic rules that are advisories by default; `ZN_STRICT=1` does the same). Any other value (`true`, `yes`) leaves it off and prints one warning on stderr.
 - Inputs over 256 KB are scanned whole, in overlapping windows. An input over 4 MB is blocked with rule `size:oversize` (and `truncated: true`).
 - Returns: `{ verdict: 'allow' | 'block', confidence: number, rule: string, reason: string | null, engine: string, rules_version: string }`, plus `truncated: true` when the input was blocked for its size and `advisory: { rule, reason }` when an advisory rule matched on an allowed input.
 - `evaluate` is also exported by `zn-gate/lib/client`.
@@ -26,6 +81,8 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 - Options: `apiKey`, `apiUrl`, `stage` (`'v30'` or `'prod'`), `timeout` (**milliseconds**; default 4000, or 12000 for text over 1,000 characters), `localOnly`, `longInput` (`'windows'` or `'off'`), `strict`.
 - Returns: `Promise<{ verdict, confidence, rule, reason, engine, rules_version, mode, ... }>`. `mode` is `'hybrid-local-fastpath'` (a local rule blocked, no network), `'oss-local'` (cloud not enabled), or `'hybrid-cloud'` (the cloud answered; `secrets_redacted_before_upload` counts the redactions).
 - If the cloud call fails or no key can be read, it resolves with the local result, `mode: 'oss-local'`, `fallback: true` and `cloud_error` (a message). It does not throw.
+- If the service answers with a verdict other than allow or block, the result is a block with `rule: 'cloud:unknown-verdict'` (not a fallback).
+- If the cloud answers but its model was unavailable, so the verdict comes from the rules alone (the cloud's `decided_by` starts with `ml-error`), the result keeps `mode: 'hybrid-cloud'` and the cloud's verdict, and adds `degraded: true` with `degraded_reason: 'model unavailable, rules only'`. Treat such a result as a rules-only check if you need the model's opinion. `zn-gate analyze` also prints one warning line on stderr.
 
 ### `analyzeLocal(text, options)`
 
@@ -61,7 +118,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 
 - `LONG_INPUT_MIN_CHARS` (`zn-gate/lib/client`): `1000`. Text longer than this asks the cloud classifier for windowed reading, and gets the longer default timeout.
 - `RULES_VERSION` (`zn-gate/lib/client` and `zn-gate/lib/rules`): the version of the built-in rule set, the same string that comes back as `rules_version` in results.
-- `EVIDENCE_FILE` (`zn-gate/lib/evidence`): the default evidence log path, `~/.zn/evidence.jsonl`.
+- `EVIDENCE_FILE` (`zn-gate/lib/evidence`): the default evidence log path, `~/.zn/evidence.jsonl` (inside the folder `ZN_HOME` names when that variable is set).
 
 ### `sanitizeToolResult(toolName, content, options)`
 
@@ -155,7 +212,7 @@ from zn_gate import get_evidence_stats, export_evidence_ledger
 ### `evaluate(text: str, strict: bool | None = None) -> Assessment`
 
 - Pure Python in-memory deterministic evaluation. Never touches the network.
-- `strict=None` follows `ZN_STRICT`; `True` also blocks the heuristic rules that are advisories by default.
+- `strict=None` follows `ZN_STRICT`; `True` also blocks the heuristic rules that are advisories by default. `ZN_STRICT` and `ZN_BLOCK_TRUNCATED` turn on only with the value `1`: another value such as `true` or `yes` leaves them off and logs a warning (logger `zn_gate`), once per value.
 - Inputs over 256 KB are scanned whole, in overlapping windows. An input over 4 MB is blocked with rule `size:oversize` (and `truncated=True`).
 - Returns: `Assessment(verdict, confidence, rule, reason, engine, rules_version, truncated, advisory)`. `verdict` is `'allow'` or `'block'`; `advisory` is a dict or `None`. `assessment.allowed` is a boolean and `assessment.to_dict()` gives a plain dict.
 
@@ -164,7 +221,7 @@ from zn_gate import get_evidence_stats, export_evidence_ledger
 - Python decorator protecting sync and async agent functions and tool handlers.
 - `on_block='raise'` raises `GuardBlockError`; `'return'` returns `fallback` (or the `Assessment` when `fallback` is `None`); `'custom'` calls `callback(assessment, function_name, payload)` and then raises `GuardBlockError`, unless the callback raises its own exception first. A blocked call never runs the function.
 - `on_block` must be `'raise'`, `'return'` or `'custom'`; any other value, or `'custom'` without a `callback`, raises `ValueError` when the decorator is created.
-- With `check_result=True`, a result too large to scan in full (over 4 MB) is blocked by default (rule `size:truncated`); set `ZN_ALLOW_TRUNCATED=1` to allow it. `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` forces the block and also covers arguments. The `self` or `cls` of a method is not checked.
+- With `check_result=True`, a result too large to scan in full (over 4 MB) is blocked by default (rule `size:truncated`); set `ZN_ALLOW_TRUNCATED=1` to allow it. `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` forces the block even with `ZN_ALLOW_TRUNCATED=1`. An argument string over 4 MB is always blocked (rule `size:oversize`); `ZN_ALLOW_TRUNCATED` does not change that. `ZN_ALLOW_TRUNCATED=1` weakens protection: the part of the output past 4 MB is never checked. The `self` or `cls` of a method is not checked.
 - Application objects passed to the function (a client, a session, a dependency container) are read as far as possible: they are read attribute by attribute down to 32 levels, as a result is, and the text found there is checked; what is deeper than 32 levels blocks the call (rule `size:nesting`), while what cannot be read, or lies past 100,000 values, is left out. Data is checked strictly, like in `check_tool_call`: dicts, lists, `SimpleNamespace`, `argparse.Namespace`, dataclasses and data models nested deeper than ten levels block the call, and a container that cannot be read (its items raise) blocks it with rule `type:unscannable`. Framework run contexts (pydantic-ai `RunContext`, Google ADK and OpenAI Agents SDK tool contexts, LangChain callback managers and `RunnableConfig`) and logging objects (loggers, handlers, `LoggerAdapter`) are not checked, so pass those as before. Arguments bound with `functools.partial` are checked the same way.
 - A generator or async generator result is passed on chunk by chunk, each chunk checked together with the end of the previous one. With `mask_secrets=True` the text is masked as one stream, so a secret split across chunks is masked whole: the last 16 KiB of text are held back, as it arrived, until more text or the end of the stream (also when the function fails) arrives, and a secret that reaches into them keeps the text from its start held too. Each chunk the function yields still gives one chunk out, empty while its text is held. The held text is withheld when a chunk blocks.
 
@@ -190,7 +247,7 @@ except GuardBlockError as e:
 
 - Recursively extracts and inspects all strings in arguments for malicious commands or credentials: dict keys and values, lists, tuples, sets, dict views, dataclasses, pydantic models and the attributes of other objects.
 - A generator or other one-shot iterator is blocked (rule `type:unscannable`), because checking it would use it up; more than 100,000 values taken from objects and other iterables is blocked (rule `size:items`); nesting deeper than ten levels is blocked (rule `size:nesting`).
-- Long strings are scanned in overlapping windows up to 4 MB, as tool results are; `Assessment.truncated` is `True` when a string was not scanned in full, and `block_truncated=True` or `ZN_BLOCK_TRUNCATED=1` blocks it (rule `size:truncated`).
+- Long strings are scanned in overlapping windows up to 4 MB, as tool results are. An argument string over 4 MB is always blocked (rule `size:oversize`, `Assessment.truncated` is `True`); `ZN_ALLOW_TRUNCATED` does not apply to arguments.
 
 ### `check_tool_result(result: Any, block_truncated: bool = False, strict: bool | None = None, allow_truncated: bool = False) -> Assessment`
 
@@ -224,6 +281,7 @@ except GuardBlockError as e:
 - `timeout` is in **seconds** (default 4.0, or 12.0 for text over 1,000 characters); the Node option is in milliseconds.
 - Returns a dict with `verdict`, `confidence`, `rule`, `reason`, `engine`, `rules_version` and `mode`: `'hybrid-local-fastpath'`, `'oss-local'` or `'hybrid-cloud'`, as in Node.
 - If the cloud call fails it returns the local result with `mode: 'oss-local-fallback'`, `fallback: True` and `cloud_error`. Node reports the same case as `mode: 'oss-local'` with `fallback: true`.
+- If the cloud answers but its model was unavailable, so the verdict comes from the rules alone (`decided_by` starts with `ml-error`), the result keeps `mode: 'hybrid-cloud'` and adds `degraded: True` with `degraded_reason: 'model unavailable, rules only'`. Node reports the same as `degraded: true`. Treat such a result as a rules-only check if you need the model's opinion. `zn-gate analyze` also prints one warning line on stderr.
 - `api_url` and `stage` (`'v30'` or `'prod'`) can be passed as keyword arguments, like `apiUrl` and `stage` in Node; they pick the endpoint as `resolve_endpoint` does. The `endpoint` argument wins over both.
 - Unlike Node, it does not use a key saved by `zn-gate connect`: pass `api_key` or set `ZN_API_KEY` together with `ZN_CLOUD=1`.
 
@@ -262,9 +320,17 @@ except GuardBlockError as e:
 ### Constants (Python)
 
 - `GENESIS_HASH`: 64 zeros, the `prev_hash` of the first record of a log.
-- `EVIDENCE_FILE` (`zn_gate.evidence`): the default evidence log path, `~/.zn/evidence.jsonl`.
+- `EVIDENCE_FILE` (`zn_gate.evidence`): the default evidence log path, `~/.zn/evidence.jsonl` (inside the folder `ZN_HOME` names when that variable is set).
 - `RULES_VERSION`: the version of the built-in rule set, the same string that comes back as `rules_version` in results.
 - `__version__`: the installed package version.
+
+### Warnings the Python package logs
+
+These warnings go to the `zn_gate` logger (Python's `logging` module), except the cloud one, which is written to stderr.
+
+- `ZN_STRICT` and `ZN_BLOCK_TRUNCATED` turn on only with the value `1`. Unset, empty and `0` leave them off without a warning. Any other value (for example `true` or `yes`) leaves the setting off and logs one warning for that value, in each program run: `zn_gate: ZN_STRICT is set to 'true', but only ZN_STRICT=1 turns it on, so it is off (...)`.
+- `ZnGuardCallbackHandler(on_block='ignore')` and `ZnGuardCallbackHandler(raise_on_injection=False)` let a blocked prompt, tool call or output through, and log a warning for each one: `zn_gate: 'langchain:llm_prompt' was blocked (rule pi:ignore_previous), but on_block='ignore' let it through`. The warning names the place and the rule, never the text.
+- A failed cloud call is reported only when `ZN_VERBOSE=1` is set, on stderr, as `[zn-gate] Warning: Cloud gate error (<error>). <hint> The local rules were used instead, so the text was checked on this machine only.` The hint says what failed: HTTP 401 or 403 means the service did not accept the API key (check `ZN_API_KEY`); a timeout means it took too long to answer; a connection error means it could not be reached (check the network and `ZN_API_URL`); any other HTTP error means the service answered with an error. In that case `analyze()` returns the local result with `"mode": "oss-local-fallback"`.
 
 ### Framework integrations (`zn_gate.integrations`)
 
@@ -278,7 +344,7 @@ No framework is required to import them. Each one uses the same rules as `check_
 ### `ZnGuardCallbackHandler(on_block='raise', mask_secrets=True, raise_on_injection=None, block_truncated=False)`
 
 - LangChain and LangGraph callback handler. It checks prompts (`on_llm_start`), tool inputs (`on_tool_start`) and tool outputs (`on_tool_end`). It sets `raise_error = True`, so LangChain does not swallow its errors.
-- `on_block`: `'raise'` (default) or `'ignore'`. With `'raise'` a blocked prompt, tool input or tool output raises `GuardBlockError` and stops the run (targets `langchain:llm_prompt`, `langchain:<tool>` and `langchain:tool_output`). A callback cannot replace a tool's output, so `'return'` raises `ValueError` when the handler is created: use `guard_langchain_tool(tool, on_block='return')` to give the model a block message instead. With `'ignore'` nothing is stopped.
+- `on_block`: `'raise'` (default) or `'ignore'`. With `'raise'` a blocked prompt, tool input or tool output raises `GuardBlockError` and stops the run (targets `langchain:llm_prompt`, `langchain:<tool>` and `langchain:tool_output`). A callback cannot replace a tool's output, so `'return'` raises `ValueError` when the handler is created: use `guard_langchain_tool(tool, on_block='return')` to give the model a block message instead. With `'ignore'` nothing is stopped, and each blocked prompt, tool input, tool output, tool error or secret in a tool output that is let through is logged as a warning (logger `zn_gate`) with the rule and where it happened, never the text.
 - `mask_secrets` (default `True`): a tool output that contains a secret stops the run with `GuardBlockError`, because the handler cannot rewrite it. If your tools are wrapped with `guard_langchain_tool`, create the handler with `mask_secrets=False`, so the wrapper hides the secret and the run goes on.
 - `raise_on_injection`: older switch. When it is not `None` it overrides `on_block`: `True` means `'raise'`, `False` means `'ignore'`.
 - `block_truncated`: force a block for a tool output too large to scan in full. Such output is blocked by default; set `ZN_ALLOW_TRUNCATED=1` to allow it.
@@ -321,3 +387,16 @@ No framework is required to import them. Each one uses the same rules as `check_
 ### `call_api(prompt, options=None, context=None) -> dict`
 
 - Promptfoo provider entry point (`promptfoo_provider` is the same function). It runs `evaluate` on the prompt and returns `{ output, tokenUsage, cost, cached, metadata }`: `output` starts with `[BLOCKED]` or `[ALLOWED]`, and `metadata` has `verdict`, `rule`, `reason`, `confidence`, `latency_ms` and `allowed`. In `promptfooconfig.yaml`: `id: 'python:zn_gate.integrations.promptfoo:call_api'`.
+
+### Typing
+
+- The package ships a `py.typed` marker (PEP 561), so type checkers use the inline type hints.
+- The modules that define the public API are checked with `mypy --strict` in CI, together with a file of type-level assertions that fails when a public signature changes shape.
+- `@guard` keeps the decorated function's signature: a type checker and `inspect.signature()` see the same parameters and return type as the undecorated function.
+- `sanitize_tool_result(tool_name, content)` returns `SanitizedToolResult`, a `TypedDict` with the keys `tool_name`, `safe_to_ingest`, `truncated`, `assessment`, `secrets_redacted` and `sanitized_content`:
+
+```python
+from zn_gate import sanitize_tool_result
+result = sanitize_tool_result("search_docs", "Refund policy: 30 days.")  # SanitizedToolResult
+print(result["safe_to_ingest"], result["sanitized_content"])  # True Refund policy: 30 days.
+```

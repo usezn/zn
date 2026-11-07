@@ -2,6 +2,38 @@
 
 Every command of the `zn-gate` program, with its options and exit codes. For a first walk through, start with [First 5 minutes](first-5-minutes.md). Words you do not know are explained in the [glossary](glossary.md).
 
+## Contents
+
+- [`init`](#init)
+- [`uninstall`](#uninstall)
+- [`check`](#check)
+- [`status`](#status)
+- [`test`](#test)
+- [`version`](#version)
+- [`connect`](#connect)
+- [`disconnect`](#disconnect)
+- [`scan`](#scan)
+- [`audit`](#audit)
+- [`reach`](#reach)
+- [`analyze`](#analyze)
+- [`pins`](#pins)
+- [`secret`](#secret)
+- [`env`](#env)
+- [`run`](#run)
+- [`unlock`](#unlock)
+- [`lock`](#lock)
+- [`vault`](#vault)
+- [`hooks`](#hooks)
+- [`hook`](#hook)
+- [`secrets-mcp`](#secrets-mcp)
+- [`mcp`](#mcp)
+- [`shield`](#shield)
+- [`evidence`](#evidence)
+- [`why`](#why)
+- [`stats`](#stats)
+- [`report`](#report)
+- [`team`](#team)
+
 ## Program names
 
 The package installs three names. They are the same program, so every command below works with any of them:
@@ -14,7 +46,7 @@ Without installing, use `npx -y zn-gate <command>`. This page writes `zn-gate` i
 
 This page describes the npm package. The Python package (`pip install zn-gate`) has a smaller command line: see [The Python package](#the-python-package) at the end.
 
-`zn-gate --help` (or `-h`) prints the short help. `zn-gate version`, `zn-gate -V` and `zn-gate --version` print the version.
+`zn-gate --help` (or `-h`) prints the short help. `zn-gate version`, `zn-gate -v`, `zn-gate -V` and `zn-gate --version` print the version.
 
 ## Exit codes
 
@@ -33,6 +65,22 @@ The commands that start a long-running server (`mcp`, `shield`, `secrets-mcp`) e
 
 ## Settings
 
+### Settings at a glance
+
+| Setting | Default | What it changes |
+|---|---|---|
+| `ZN_API_KEY` or `--key <api_key>` | Not stated | API key for the optional cloud check (`analyze`, `analyze_prompt`). |
+| `ZN_CLOUD=1` | Off: nothing leaves your machine | Turns the optional cloud check on. |
+| `ZN_LOCAL_ONLY=true` or `--local-only` | Not stated | Never uses the cloud, even when `ZN_CLOUD=1` is set. |
+| `ZN_STAGE` or `--stage <v30\|prod>` | `v30` | Cloud stage. |
+| `ZN_API_URL` or `--url <url>` | Not stated | Uses another cloud address. |
+| `--long-input <windows\|off>` | `windows` (overlapping windows, up to 20) | How long texts are sent to the cloud check; `off` sends only the first 512 tokens. |
+| `ZN_STATS=off` | Not stated | Turns off the local counts shown by `stats` and `report`. |
+| `ZN_VERBOSE=1` or `--verbose` | Not stated | Prints debug messages to the error output. |
+| `NO_COLOR` | Not stated | Turns off colors. |
+
+The table below gives the full description of each setting.
+
 | Setting | Effect |
 |---|---|
 | `ZN_API_KEY` or `--key <api_key>` | API key for the optional cloud check. Used only by `analyze` and `analyze_prompt`, and only when the cloud check is on. |
@@ -41,9 +89,13 @@ The commands that start a long-running server (`mcp`, `shield`, `secrets-mcp`) e
 | `ZN_STAGE` or `--stage <v30\|prod>` | Cloud stage. Default `v30`. |
 | `ZN_API_URL` or `--url <url>` | Use another cloud address. |
 | `--long-input <windows\|off>` | How long texts are sent to the cloud check: in overlapping windows (default, up to 20), or only the first 512 tokens. Any other value exits `2`. |
+| `ZN_TEAM_JOIN_TOKEN` | The join token for `team join` when you give none as an argument and no `-`. Keeps the token out of your shell history. An argument wins over it. |
 | `ZN_STATS=off` | Turns off the local counts shown by `stats` and `report`. |
 | `ZN_VERBOSE=1` or `--verbose` | Prints debug messages to the error output. |
-| `NO_COLOR` | Turns off colors. |
+| `NO_COLOR` | Turns off colors, emoji and box-drawing characters. Any non-empty value counts (see [no-color.org](https://no-color.org)). `TERM=dumb` does the same. |
+| `CI` | Any non-empty value turns off emoji and box-drawing characters too. Colors are not affected. |
+
+Emoji and box-drawing characters are used only when the output goes to a terminal and neither `NO_COLOR`, `TERM=dumb` nor `CI` is set. Everywhere else the CLI prints a short ASCII marker in their place: `[ok]` for a check mark, `[!]` for a warning, `[x]` for a failure, `[+]` for the shield, and `->` for an arrow. Rules are drawn with dashes. So output sent to a pipe or a file is plain printable ASCII, apart from text that comes from your own files or input. The status words (`ALLOWED`, `BLOCKED`, `FAILED`, ...) carry the meaning in every mode.
 
 ## Set up and check
 
@@ -54,7 +106,7 @@ zn-gate init
 zn-gate init --wrap-mcp [--dry-run] [--shadow] [--revert]
 ```
 
-Without options, `init` is the guided setup: it finds the coding agents on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app), shows what is missing and, in your own terminal, asks before each step. It takes no other arguments. When it runs without a terminal, or an AI agent runs it, it only prints the steps and changes nothing.
+Without options, `init` is the guided setup: it finds the coding agents on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, and the experimental Gemini CLI), shows what is missing and, in your own terminal, asks before each step. It takes no other arguments. When it runs without a terminal, or an AI agent runs it, it only prints the steps and changes nothing.
 
 With `--wrap-mcp` it finds the MCP servers in known agent configs and wraps them with `shield`. Backups are written first.
 
@@ -90,11 +142,17 @@ Exit codes: `0` everything listed was removed, or there was nothing to remove. `
 zn-gate check
 ```
 
-Shows that zn stops your agent from reading a fake secret, in a temporary folder. Nothing is sent and no setting changes. [What the output means](check.md).
+Shows that zn stops your agent from reading a fake secret, in a temporary folder. Nothing is sent and no setting changes. It ends with the decision time per tool call (p50 and p95 of the last 100 calls on this machine; excludes process startup, writing the response, and saving stats and evidence), or `no data yet` before zn has checked one. [What the output means](check.md).
 
 Aliases: `doctor`.
 
 Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`.
+
+```bash
+zn-gate check --hooks
+```
+
+Lists every installed zn hook (agent, settings file, event and the command it runs) and says whether each is OK, stale (written by an older zn-gate) or broken, with the command that fixes it. It only reads files: nothing is run, changed or sent. Exit code `0` when every hook is OK, `1` when any is stale or broken. [What the output means](check.md#list-every-installed-hook).
 
 ### `status`
 
@@ -118,7 +176,7 @@ Runs the local self-test on built-in examples (attacks and ordinary developer te
 zn-gate version
 ```
 
-Prints the version and the versions of the rules. Exit code `0`. `-V` and `--version` do the same.
+Prints the version and the versions of the rules. Exit code `0`. `-v`, `-V` and `--version` do the same.
 
 ### `connect`
 
@@ -187,9 +245,10 @@ Exit codes: `0` nothing at or above `--fail-on`, `1` findings at or above it, `2
 
 ```bash
 zn-gate reach [path] [--json | --sarif] [--fail-on high|medium|low|none] [--remember]
+zn-gate reach --history [--json] [--max-seconds N]
 ```
 
-Shows what your coding agents can reach from a folder: secrets (names only), credential files and MCP servers. Read only, nothing is sent. [What it shows](reach.md).
+Shows what your coding agents can reach from a folder: secrets (names only), credential files and MCP servers. Read only, nothing is sent. [What it shows](reach.md). With `--history` it instead scans the local session histories of Claude Code and Codex for secrets they kept, and prints agent, file, secret type, count and the action to take, never a value. [History](reach.md#history-did-your-agents-keep-a-secret-of-yours).
 
 - `--fail-on`: default `none`, so it is a report.
 - `--remember`: keep this run's counts for the next run.
@@ -329,6 +388,8 @@ zn-gate env <shadow|unshadow> ...
 
 Groups the two commands below. Run `zn-gate env --help` for the short usage.
 
+Exit codes (both commands): `0` done (also when there was nothing to move, or with `--dry-run`, or with `--help`), `1` an error (for example the file or the vault could not be read), or `env unshadow` when you answered no, `64` wrong usage (an unknown subcommand or option, or a missing or malformed `--backup`), `77` there is no interactive terminal, or an AI agent ran it: nothing was changed.
+
 #### `env shadow`
 
 ```bash
@@ -402,10 +463,10 @@ Shows the audit log of secret use. Same as `secret log`. With the vault unlocked
 #### `vault log export`
 
 ```bash
-zn-gate vault log export --otlp [--since 7d] [--out file]
+zn-gate vault log export --otlp [--since 7d] [--out file] [--unverified]
 ```
 
-Writes the audit log as OpenTelemetry logs (OTLP, JSON Lines) to the file, or to the screen. Needs no account. With the vault unlocked, the vault checks the whole log first and nothing is exported when the check fails (exit `1`, and the vault stores a warning, see `vault verify`). With the vault locked the chain cannot be checked: the export still runs and prints a warning that it is not a verified copy. Exit codes: `0` done, `1` error, `2` without `--otlp`. [Details](team.md).
+Writes the audit log as OpenTelemetry logs (OTLP, JSON Lines) to the file, or to the screen. Needs no account. With the vault unlocked, the vault checks the whole log first and nothing is exported when the check fails (exit `1`, and the vault stores a warning, see `vault verify`). With the vault locked the chain cannot be checked: the export is refused unless you add `--unverified`, and then it prints a warning that it is not a verified copy. `--out` writes a new private (0600) file and refuses a symbolic link or a folder. Exit codes: `0` done, `1` error, `2` without `--otlp`. [Details](team.md).
 
 #### `vault verify`
 
@@ -498,6 +559,8 @@ zn-gate mcp
 
 Runs zn-gate as an MCP server (stdio) with the tools `analyze_prompt`, `check_tool_call` and `check_tool_result`.
 
+Exit codes: it runs until its input is closed, then exits `0`.
+
 ### `shield`
 
 ```text
@@ -526,6 +589,16 @@ Aliases: `logs`, `export`.
 
 `export` is the same as `evidence --export`.
 
+### `why`
+
+```bash
+zn-gate why [<id>]
+```
+
+Explains, in plain words, one block from the local evidence log. With no id it explains the last block; with an id it explains that record (the `id` field of a record from `zn-gate evidence --export`). It says what was stopped (the tool and the short preview the log already holds, with secrets removed), which rule fired, why that matters, and the one command you can run in your own terminal to go on, when such a command exists. For a rule that cannot be bypassed it says so and who decides.
+
+The command only reads the log: it changes nothing and uses no network. If the log does not hold enough to explain a record, for example because no rule id was recorded, it says what is missing instead of guessing. Exit codes: `0` explained, `1` nothing to explain (no log, no block, an id that is not in the log, or a log that cannot be read), `2` wrong usage. A line of the log that cannot be read is skipped, and the output says how many.
+
 ### `stats`
 
 ```bash
@@ -534,6 +607,14 @@ zn-gate stats share on|off|status|show
 ```
 
 What zn-gate did on this machine: local counts for the last `--days` days (1 to 90, default 30). Exit codes: `0` done, `2` wrong usage.
+
+With `--json`, the output is one JSON object with the same counts and these extra fields:
+
+- `sharing`: `true` when sharing of pseudonymous daily counts is on.
+- `sent_days`: the days whose counts were really uploaded during this run. It is `[]` when sharing is off or nothing was pending.
+- `send_failed`: the number of days whose upload failed during this run. They are tried again the next time you run `stats`.
+
+When sharing is on, `stats` sends each complete day (every day before today) that has not been sent yet. The text output prints `Shared pseudonymous counts for <day>.` only for the days in `sent_days`, and it prints `<n> day(s) could not be shared; they will be tried next time.` when `send_failed` is more than `0`.
 
 #### `stats share`
 
@@ -602,21 +683,23 @@ With no subcommand it is the same as `team status`. Exit codes: `0` done, `1` an
 #### `team join`
 
 ```bash
-JOIN_TOKEN='paste-your-join-token-here'
-zn-gate team join "$JOIN_TOKEN"
+zn-gate team join -
+# Paste the join token and press Enter. Or set ZN_TEAM_JOIN_TOKEN and run: zn-gate team join
 # Optional: add --api https://api.example.com (another server), --agent claude-code,
 # or --include-history to also send the audit records written before you joined
 ```
 
-Connects this machine to your organization with the join token your admin gave you. It exits `0` only after the organization's first valid policy has been downloaded and applied. If that fails (offline, or no policy published yet) it exits `1`; the machine stays registered, `team status` shows the join as pending, and `team sync` finishes it. Only the audit records written from the join on are uploaded; `--include-history` adds the earlier ones, and only at the first join of an installation.
+The three forms: `zn team join <token>`, `zn team join -` and `ZN_TEAM_JOIN_TOKEN=... zn team join`. Where the join token comes from: an argument (`team join <token>`), standard input (`team join -`, reads one line) or the `ZN_TEAM_JOIN_TOKEN` environment variable. An argument wins over the environment variable; `-` means standard input. A token typed as an argument stays in your shell history and is visible in the process list, so zn prints a one-line note when you do that. The token is never printed.
+
+Connects this machine to your organization with the join token your admin gave you. It exits `0` only after the organization's first valid policy has been downloaded and applied. If that fails (offline, the policy is refused, or no policy is published yet) it exits `1`; the machine stays registered, `team status` shows the join as pending, and `team sync` finishes it. If your admin has not published a policy yet, it says so and that this is expected: no restrictions apply until one exists, and zn checks again by itself. A join with no token, a token that is expired or already used, and no network each say what happened and the command to run next; the HTTP status or internal code is shown only with `ZN_VERBOSE=1`. Only the audit records written from the join on are uploaded; `--include-history` adds the earlier ones, and only at the first join of an installation.
 
 #### `team status`
 
 ```bash
-zn-gate team status [--json]
+zn-gate team status [--json] [--rules]
 ```
 
-Shows the organization, the policy version, what the last policy version removed or loosened, the state of the audit upload, and a revocation that is still pending after `team leave`. See [zn Team](team.md#when-the-organization-lifts-a-restriction).
+Shows the organization, the policy version, what the last policy version removed or loosened, the state of the audit upload, and a revocation that is still pending after `team leave`. With `--rules` it also prints the rules of the active signed policy in plain words (version, key id, expiry, each rule), read from the saved copy and checked again with the pinned key, with no network call. A copy that does not verify or has expired prints no rules. `--json` adds a `rules` object. See [zn Team](team.md#when-the-organization-lifts-a-restriction).
 
 #### `team sync`
 
@@ -644,7 +727,7 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 
 ## The Python package
 
-`pip install zn-gate` installs only the name `zn-gate` (not `zn` or `zn-mcp`). It is meant for agents you build yourself. It has six commands. `zn-gate version`, `zn-gate -V` and `zn-gate --version` print the version and the rules version.
+`pip install zn-gate` installs only the name `zn-gate` (not `zn` or `zn-mcp`). It is meant for agents you build yourself. It has six commands. `zn-gate version`, `zn-gate -v`, `zn-gate -V` and `zn-gate --version` print the version and the rules version.
 
 | Command | Options | What it does |
 |---|---|---|
@@ -655,4 +738,4 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 | `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`. |
 | `stats` | `--days N`, `--json` | Local counts for the last `N` days (1 to 90, default 30). There is no `stats share`. Exit `0`, or `2` if `--days` is out of range. |
 
-The other commands on this page are only in the npm package. In the Python package they print a short note and exit `2`: `init`, `check`, `doctor`, `audit`, `hooks`, `run`, `secret`, `env`, `vault`, `unlock`, `lock`, `pins`, `mcp`, `shield`, `team`, `logs` and `export` point to `npx -y zn-gate init`, and `reach`, `report`, `connect` and `disconnect` point to `npx -y zn-gate <command>`. A command neither package knows exits `1`. To use the optional cloud check from Python, set `ZN_CLOUD=1` and `ZN_API_KEY` (or pass `--key` to `analyze`) instead of running `connect`.
+The other commands on this page are only in the npm package. In the Python package they print a short note and exit `2`: `init`, `check`, `doctor`, `audit`, `hooks`, `run`, `secret`, `env`, `vault`, `unlock`, `lock`, `pins`, `mcp`, `shield`, `team`, `logs` and `export` point to `npx -y zn-gate init`, and `report`, `why`, `connect` and `disconnect` point to `npx -y zn-gate <command>`. `reach` is in the npm package too, except `reach --history`, which the Python package has as well (see [reach](reach.md#history-did-your-agents-keep-a-secret-of-yours)). A command neither package knows exits `1`. To use the optional cloud check from Python, set `ZN_CLOUD=1` and `ZN_API_KEY` (or pass `--key` to `analyze`) instead of running `connect`.

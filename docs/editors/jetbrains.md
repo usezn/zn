@@ -4,7 +4,7 @@ Set up zn-gate in JetBrains AI Assistant (IntelliJ IDEA, PyCharm and other JetBr
 
 ## Install (no coding needed)
 
-1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number (18 or later), go on. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart your JetBrains IDE.
+1. **Check that Node.js is installed.** Open a terminal (in most editors: menu **Terminal → New Terminal**; or your computer's Terminal app), type `node --version` and press Enter. If you see a version number, go on. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the **LTS** version from [nodejs.org](https://nodejs.org/) and restart your JetBrains IDE.
 2. Open **Settings → Tools → AI Assistant → Model Context Protocol (MCP)**, click **Add** (+), and paste the JSON below into the New MCP Server dialog.
 3. Paste this:
 

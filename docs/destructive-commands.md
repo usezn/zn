@@ -36,8 +36,8 @@ Both return the same result as `evaluate`, with a rule such as `destructive:rm_r
 
 | Rule | Default | Blocks | Examples |
 | --- | --- | --- | --- |
-| `rm_root_home` | on | Recursive delete of the home folder, the filesystem root, a top-level system folder or a drive root. Also `find` with `-delete` or `-exec rm` on those paths and no test such as `-name`. Also the one-liners `python -c`, `node -e`, `perl -e` and `ruby -e` that call a recursive delete (`shutil.rmtree`, `fs.rmSync` with `recursive`, `remove_tree`, `FileUtils.rm_rf`, `unlink glob`) on one of those paths. | `rm -rf ~`, `rm -rf $HOME/*`, `rm -rf /`, `rm -rf /usr`, `rm -rf /home/alice`, `Remove-Item -Recurse -Force $env:USERPROFILE`, `rd /s /q C:\` |
-| `pipe_to_shell` | off | A download that is run as a script without being read, or into `python`, `node`, `perl` or `ruby` when it reads the program from the pipe (`curl ... \| python3`, `\| sudo python3 -`); `\| python3 -m json.tool` and `\| python3 script.py` are fine. | `curl https://example.com/install.sh \| sh`, `wget -qO- ... \| sudo bash`, `sh -c "$(curl ...)"`, `bash <(curl ...)`, `iwr ... \| iex` |
+| `rm_root_home` | on | Recursive delete of the home folder, the filesystem root, a top-level system folder or a drive root. Also `find` with `-delete` or `-exec rm` on those paths and no test such as `-name`. Also the one-liners `python -c`, `node -e`, `perl -e` and `ruby -e` that call a recursive delete (`shutil.rmtree`, `fs.rmSync` with `recursive`, `remove_tree`, `FileUtils.rm_rf`, `unlink glob`) on one of those paths. ANSI-C quoting is read too (`$'rm' -rf ~`, `rm -rf $'~'`); a `$'...'` that is only printed (`echo $'rm -rf ~'`) is allowed. | `rm -rf ~`, `rm -rf $HOME/*`, `rm -rf /`, `rm -rf /usr`, `rm -rf /home/alice`, `Remove-Item -Recurse -Force $env:USERPROFILE`, `rd /s /q C:\` |
+| `pipe_to_shell` | off | A download that is run as a script without being read, or into `python`, `node`, `perl` or `ruby` when it reads the program from the pipe (`curl ... \| python3`, `\| sudo python3 -`); `\| python3 -m json.tool` and `\| python3 script.py` are fine. In PowerShell 7 a next line that starts with a pipe continues the command above it (`iwr https://example.com/i.ps1` followed by a line `\| iex` is blocked); `\| ConvertFrom-Json` is fine. | `curl https://example.com/install.sh \| sh`, `wget -qO- ... \| sudo bash`, `sh -c "$(curl ...)"`, `bash <(curl ...)`, `iwr ... \| iex` |
 | `disk_overwrite` | on | `dd` with `of=` a block device, `mkfs`, `mkswap`, `wipefs`, `shred` or `blkdiscard` on one, a redirect into one, PowerShell `Format-Volume` and `Clear-Disk`. | `dd if=/dev/zero of=/dev/sda`, `mkfs.ext4 /dev/nvme0n1p2`, `cat /dev/zero > /dev/sda` |
 | `perm_root` | off | `chmod -R`, `chown -R` or `chgrp -R` on the filesystem root or a top-level system folder; `chmod -R` with a world-writable mode on the home folder. | `chmod -R 777 /`, `chown -R nobody /usr`, `chmod -R 777 ~` |
 | `fork_bomb` | off | The classic shell fork bomb, under any function name. | `:(){ :\|:& };:` |
@@ -46,6 +46,14 @@ Both return the same result as `evaluate`, with a rule such as `destructive:rm_r
 "Top-level system folder" means `/bin`, `/boot`, `/dev`, `/etc`, `/home`, `/lib`, `/opt`, `/root`, `/sbin`, `/srv`, `/sys`, `/usr`, `/var`, and on macOS `/Users`, `/System`, `/Library`, `/Applications`. A deeper path such as `/var/lib/apt/lists` or `/usr/local/lib/node_modules/x` is not blocked.
 
 The command is split the way the rest of zn-gate's hook policy splits it, so quotes, `&&`, `;`, pipes, `sudo`, `env`, `nohup` and similar wrappers are understood. The code of `sh -c`, `bash -lc`, `eval`, `pwsh -Command` and `cmd /c` is checked too, up to three levels deep. Text that only mentions a command inside quotes (`echo "rm -rf ~"`, a commit message) is not blocked.
+
+## Shapes the table does not show
+
+Three more shapes are blocked. The check reads each one the way the shell or the interpreter runs it.
+
+- **ANSI-C quoting.** Bash decodes the escapes inside `$'...'` before it runs the word. `$'\x72m' -rf $'\x7e'` runs as `rm -rf ~`, so the `rm_root_home` rule blocks it. `echo $'rm -rf ~'` only prints text and is allowed.
+- **Code given to an interpreter.** The check reads the code in `python3 -c`, `node -e`, `perl -e` and `ruby -e`, also behind `sudo` or `env`. These are blocked by `rm_root_home`: `python3 -c "import shutil; shutil.rmtree('/home/alice')"`, `sudo node -e "require('fs').rmSync('/home/alice', { recursive: true, force: true })"` and `ruby -e "require 'fileutils'; FileUtils.rm_rf('/usr')"`. These are allowed: `python3 -c "import shutil; shutil.rmtree('./build')"` and `node -e "console.log(1)"`.
+- **A PowerShell download piped to `Invoke-Expression` on the next line.** A line that starts with `| Invoke-Expression` continues the command on the line before it. So `Invoke-WebRequest https://example.com/install.ps1` followed by a new line `| Invoke-Expression` is read as one pipeline, and the `pipe_to_shell` rule blocks it. That rule is off by default: the agent hooks block this only when you turn it on. A call to `checkCommand` always applies all six rules. `iwr https://example.com/install.ps1 -OutFile install.ps1` is allowed.
 
 ## What it does not do
 
@@ -56,16 +64,38 @@ The check reads command text only. These are **not** covered, and the check lets
 - A script saved first and run later (`curl -o x.sh ... && sh x.sh`), or a download piped into an interpreter that is given a script file (`curl ... | python3 script.py`, which only reads the download as data).
 - Other tools (`rsync --delete`, `git clean`), code in a file or built at run time (a script the agent wrote, `python3 -c "shutil.rmtree(path)"` with a variable), and paths below the top level (`rm -rf /usr/local`).
 - Commands that run inside a container (`docker run ... rm -rf /`) or on another machine (`ssh host "rm -rf /"`).
+- Some shell wrappers and constructs that run a command indirectly are not read.
 - Anything an agent does by writing a file and then running it.
+- A command that comes right after a shell keyword or a block opener. Commands after `{`, `then`, `else`, `do` and `!`, and commands inside backticks, are not read: `{ rm -rf ~; }`, `if true; then rm -rf ~; fi`, `while true; do rm -rf ~; done`, `! rm -rf ~` and `` echo `rm -rf ~` `` pass, while the same command inside `( )`, `$( )`, after `time`, or after `case ... )` is read.
+- A change of folder. The check does not follow where the command runs, so a relative target such as `.` is judged without knowing the folder: `cd ~ && rm -rf .`, `env -C ~ rm -rf .`, `env --chdir=/ rm -rf .` and `sudo -D / rm -rf .` pass, also inside `sh -c "..."`.
+
+We are working on both gaps (the commands after keywords and the changes of folder); they are not fixed in the released versions yet.
 
 For those, use a sandbox, a container or your agent's own permission prompts. This check adds a cheap last barrier for the most common catastrophic mistakes.
 
+Untrusted code should run in a sandbox, such as a container or a virtual machine, not on your own machine. This check does not contain code that you do not trust.
+
 ## How well it works
 
-The test corpus has about 1,000 ordinary developer commands (builds, git, package managers, containers, `rm -rf node_modules dist build target .venv`, `curl -o`, `curl | jq`, edits to `.bashrc`, and many that sit close to the blocked shapes) and about 550 commands with the blocked shapes, written from templates with varied flags, targets and fictitious hosts. On that corpus there are no false positives and no misses; the corpus is written by the same people who wrote the rules, so read it as a regression test, not as an error rate on all real commands. Run `node bench/destructive_policy.js` in the repository to see the numbers, and `--docs` to also check the shell lines of the repository's documentation.
+The test corpus has about 1,000 ordinary developer commands (builds, git, package managers, containers, `rm -rf node_modules dist build target .venv`, `curl -o`, `curl | jq`, edits to `.bashrc`, and many that sit close to the blocked shapes) and about 650 commands with the blocked shapes, written from templates with varied flags, targets and fictitious hosts. On that corpus there are no false positives and no misses. The corpus is written by the same people who wrote the rules, so read it as a regression test, not as an error rate on all real commands. Run `node bench/destructive_policy.js` in the repository to see the numbers, and `--docs` to also check the shell lines of the repository's documentation.
 
 Cost: about 5 microseconds per command for the check itself, and a few microseconds more for a hook decision, which takes about 160 microseconds without it. The check code is loaded the first time a shell command is checked, and not at all when you turn the check off.
+
+## How to read a blocked-command message
+
+A block tells you two things: the command did not run, and which rule matched. Use the rule name to find the matching row in [What it blocks](#what-it-blocks). The rule name appears with a `destructive:` prefix, for example `destructive:rm_root_home`.
+
+- `destructive:rm_root_home` for `rm -rf ~`: a recursive delete of the home folder. It is on by default.
+- `destructive:disk_overwrite` for `dd if=/dev/zero of=/dev/sda`: a write to a disk device. It is on by default.
+- `destructive:pipe_to_shell` for `curl https://example.com/install.sh | sh`: a download run without being read. It is only active if you turned it on.
+
+If the command was what you meant, the agent will ask you to confirm; run it yourself in a terminal. If the command was a mistake, tell the agent what you actually want. If a rule blocks work you do often, see [Change the settings](#change-the-settings). For commands the check does not cover, see [What it does not do](#what-it-does-not-do).
 
 ## If it blocks a command you want
 
 Run the command yourself in a terminal. The check applies to agents only. If a rule gets in your way often, turn that rule (or the whole check) off with the settings above.
+
+## Next steps
+
+- [API reference](api-reference.md): call the command check (`checkCommand`, `check_command`) from your own code.
+- [Troubleshooting](troubleshooting.md): find fixes when a block or a hook does not behave as you expect.

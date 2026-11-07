@@ -15,6 +15,7 @@ const { check, _internal } = require('../lib/check');
 const { tempDir } = require('./helpers/tmp');
 const { writePluginManifest } = require('./helpers/claude_plugin');
 const { WIN, gitBashExe } = require('./helpers/git_bash');
+const { winCmd, winCmdRe } = require('./helpers/wincmd');
 
 // On Windows the zn-gate plugin of Claude Code runs in Git Bash. These tests run there with a Git Bash given the way Claude Code
 // documents (CLAUDE_CODE_GIT_BASH_PATH), and are skipped only when the computer has none; the Windows tests without Git Bash are below.
@@ -66,7 +67,7 @@ test('init plan: before 20.19 the plugin is skipped and zn hooks are installed i
     const m = machine(t);
     const cc = ccOf((await plan({ ...m, nodeVersion: v })).items);
     assert.deepEqual(cc.steps.map(line), ['zn hooks install claude-code'], v);
-    assert.equal(cc.note, 'Claude Code plugin skipped: it needs Node.js 20.19 or later (you have ' + v + '). zn\'s hooks are set up instead; update Node.js to use the plugin.');
+    assert.equal(cc.note, 'Claude Code plugin skipped: it needs Node.js 20.19 or later (you have ' + v + '). zn\'s hooks are set up instead, and they protect Claude Code on this Node.js. To use the plugin, install Node.js 22 LTS from nodejs.org, then open a new terminal.');
   }
 });
 
@@ -84,8 +85,37 @@ test('init: the skipped plugin is said in one line, once', async (t) => {
   const lines = out.split('\n').filter((l) => /plugin skipped/.test(l));
   assert.equal(lines.length, 1);
   assert.match(lines[0], /^Claude Code plugin skipped: it needs Node\.js 20\.19 or later \(you have 18\.19\.0\)\./);
-  assert.match(out, /zn hooks install claude-code/);
+  assert.match(out, winCmdRe(/zn hooks install claude-code/));
   assert.doesNotMatch(out, /claude plugin install/);
+});
+
+test('init plan: 18.x and 20.18 get a note that says why, what zn does instead, and the fix', async (t) => {
+  for (const v of ['18.19.0', '20.18.3']) {
+    const m = machine(t);
+    const cc = ccOf((await plan({ ...m, nodeVersion: v })).items);
+    assert.match(cc.note, /^Claude Code plugin skipped: it needs Node\.js 20\.19 or later \(you have /, v);
+    assert.match(cc.note, /zn's hooks are set up instead/, v);
+    assert.match(cc.note, /install Node\.js 22 LTS from nodejs\.org/, v);
+  }
+});
+
+test('init plan: 20.19 and 22 get no skipped-plugin note at all', async (t) => {
+  for (const v of ['20.19.0', '22.5.1']) {
+    const m = machine(t);
+    const cc = ccOf((await plan({ ...m, nodeVersion: v })).items);
+    assert.equal(cc.note, undefined, v);
+  }
+});
+
+test('init: the skipped-plugin warning is printed before the step that installs zn hooks', async (t) => {
+  const m = machine(t);
+  let out = '';
+  await guide({ ...m, nodeVersion: '18.19.0', stdin: { isTTY: false }, write: (s) => { out += s; } });
+  const warn = out.indexOf('plugin skipped');
+  const step = out.search(winCmdRe(/zn hooks install claude-code/));
+  assert.ok(warn > -1, out);
+  assert.ok(step > -1, out);
+  assert.ok(warn < step, 'the warning comes first');
 });
 
 test('init: on Node.js 20.19 or later the guide says nothing about a skipped plugin', async (t) => {
@@ -115,13 +145,13 @@ test('init (interactive): a plugin on an older Node.js: hooks installed, checked
     // The run stand-in does what the real commands do: the hooks are written, the plugin switch is only recorded.
     run: (step) => {
       order.push(step.manual);
-      if (/^zn hooks install/.test(step.manual)) {
+      if (winCmdRe(/^zn hooks install/).test(step.manual)) {
         getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
       }
       return true;
     },
   });
-  assert.deepEqual(order, ['zn hooks install claude-code', 'claude plugin disable zn-gate@usezn']);
+  assert.deepEqual(order, [winCmd('zn hooks install claude-code'), 'claude plugin disable zn-gate@usezn']);
   assert.match(out, /check that zn's hooks for Claude Code work now: yes/);
   assert.ok(out.indexOf('plugin will be turned off') < out.indexOf('check that zn'), 'the plan comes first');
   assert.ok(out.indexOf('Claude Code plugin turned off;') > out.indexOf('check that zn'), 'the confirmation comes after the steps');
@@ -142,7 +172,7 @@ test('init: the plugin is only said to be turned off when it was; declined, or w
   await guide({
     ...m, nodeVersion: '18.19.0', stdin: { isTTY: true }, write: (s) => { out += s; }, confirm: async () => true,
     run: (step) => {
-      if (/^zn hooks install/.test(step.manual)) getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
+      if (winCmdRe(/^zn hooks install/).test(step.manual)) getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
       return !/plugin disable/.test(step.manual);
     },
   });

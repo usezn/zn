@@ -1,0 +1,3 @@
+### Changed
+- `zn team join` and `zn team sync` explain failures in plain words, with the exact command to run next: no join token, a token that is expired or already used, no network, an organization that is not active, and a machine an admin removed. The HTTP status and internal codes show only with `ZN_VERBOSE=1`. `zn team login` and `zn team export` now say they are not zn commands and point to `zn team join` and `zn vault log export --otlp`.
+- `zn team status` and `zn team sync` no longer tell a machine an admin removed to retry a sync that cannot work; they point to `zn team leave` and `zn team join <token>`.

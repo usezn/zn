@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { Writable } = require('stream');
 
@@ -251,6 +252,67 @@ test('zn run refuses proxy-mode secrets, unknown secrets and agent-planted binar
   const code = await runBroker(['--secrets', 'DB_PASSWORD', '--', 'psql'], { vault, env: { PATH: dir }, stdout: sink(), stderr: e3, stdin: { isTTY: false } });
   assert.equal(code, 77);
   assert.match(e3.text(), /temp directory/);
+});
+
+// A Windows folder has a long and, often, a short 8.3 name: a binary planted in the temp folder is refused whichever
+// of the two names the PATH entry uses.
+test('zn run refuses a binary planted in the temp folder through its long and its short Windows name', { skip: process.platform !== 'win32' }, async (t) => {
+  const { execFileSync } = require('node:child_process');
+  const dir = tempDir(t, 'zn-plant-name-');
+  fs.writeFileSync(path.join(dir, 'psql.cmd'), '@echo %*\r\n');
+  let short = '';
+  try {
+    // windowsVerbatimArguments: Node would otherwise escape the quotes around the folder for a C program, not for cmd.exe.
+    short = execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/c', 'for %I in ("' + dir + '") do @echo %~sI'], { encoding: 'utf8', windowsVerbatimArguments: true }).trim();
+  } catch (_) { /* no short names on this volume */ }
+  const forms = [dir, path.join(os.tmpdir(), path.basename(dir))];
+  if (short && short.toLowerCase() !== dir.toLowerCase() && fs.existsSync(path.join(short, 'psql.cmd'))) forms.push(short);
+  for (const form of forms) {
+    const vault = await setup();
+    await vault.setSecret('DB_PASSWORD', PG, { mode: 'env', allowCommands: ['psql'] });
+    const err = sink();
+    const code = await runBroker(['--secrets', 'DB_PASSWORD', '--', 'psql'], { vault, env: { PATH: form }, stdout: sink(), stderr: err, stdin: { isTTY: false } });
+    assert.equal(code, 77, 'PATH ' + form + ': ' + err.text());
+    assert.match(err.text(), /temp directory/, 'PATH ' + form);
+  }
+});
+
+// The temp folder comes from TMPDIR, TEMP and TMP, which the agent controls: pointing them elsewhere does not let a
+// binary planted in the system temp folder run with the secret.
+test('zn run refuses a binary planted in the temp folder when TMPDIR, TEMP and TMP point elsewhere', async (t) => {
+  // Planted in the fixed system temp folder, whatever TMPDIR says where the tests run.
+  const systemTemp = process.platform === 'win32' ? path.join(os.userInfo().homedir, 'AppData', 'Local', 'Temp') : '/tmp';
+  const dir = tempDir(t, 'zn-plant-env-', systemTemp);
+  const name = process.platform === 'win32' ? 'psql.cmd' : 'psql';
+  fs.writeFileSync(path.join(dir, name), process.platform === 'win32' ? '@echo %*\r\n' : '#!/bin/sh\necho "$@"\n', { mode: 0o755 });
+  const elsewhere = path.join(dir, 'no-such-temp');
+  const saved = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP };
+  for (const k of Object.keys(saved)) process.env[k] = elsewhere;
+  try {
+    const vault = await setup();
+    await vault.setSecret('DB_PASSWORD', PG, { mode: 'env', allowCommands: ['psql'] });
+    const err = sink();
+    const code = await runBroker(['--secrets', 'DB_PASSWORD', '--', 'psql'], { vault, env: { PATH: dir, TMPDIR: elsewhere, TEMP: elsewhere, TMP: elsewhere }, stdout: sink(), stderr: err, stdin: { isTTY: false } });
+    assert.equal(code, 77, err.text());
+    assert.match(err.text(), /temp directory/);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});
+
+test('on Windows the system temp folder and the profile temp folder are always among the temp folders', { skip: process.platform !== 'win32' }, () => {
+  const roots = markers.tempRoots().map((r) => r.toLowerCase());
+  const systemTemp = fs.realpathSync.native('\\\\?\\GLOBALROOT\\SystemRoot\\Temp').toLowerCase();
+  assert.ok(roots.includes(systemTemp), systemTemp + ' not in ' + roots.join(', '));
+  const profileTemp = fs.realpathSync.native(path.join(os.userInfo().homedir, 'AppData', 'Local', 'Temp')).toLowerCase();
+  assert.ok(roots.includes(profileTemp), profileTemp + ' not in ' + roots.join(', '));
+});
+
+test('on POSIX the fixed system temp folders are always among the temp folders', { skip: process.platform === 'win32' }, () => {
+  const roots = markers.tempRoots();
+  for (const d of ['/tmp', '/var/tmp', '/dev/shm']) {
+    if (fs.existsSync(d)) assert.ok(roots.includes(fs.realpathSync.native(d)), d + ' not in ' + roots.join(', '));
+  }
 });
 
 test('first use is confirmed by the vault, never on the command terminal, and only once', async () => {

@@ -1,0 +1,205 @@
+[
+ {
+  "case": "A0 install through the runtime plugin API",
+  "expected": "installed, enabled, 8 hooks listed (a /bin/sh and a PowerShell hook per event), no npm install needed",
+  "observed": "Plugins (16) - visualize@zcode-plugins-official [enabled] official/zcode-plugins-official: /work/home/.zcode/cli/plugins/cache/zcode-plugins-official/visualize/0.1.0 skills: 1, commands: 0, hooks: 0, mcp: none - node-repl-host@zcode-plugins-official [enabled] official/zcode-plugins-official: /work/h | enabled=True",
+  "result": "PASS",
+  "evidence": "a_install.txt, a_list.txt"
+ },
+ {
+  "case": "A (hooks.enabled=false) Read .env",
+  "expected": "denied by the plugin hook, value not returned",
+  "observed": "zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.14.1 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use. | [('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'PreToolUse', 'blocked'), ('plugin', 'PreToolUse', 'failed')]",
+  "result": "PASS",
+  "evidence": "cases/a_read_env"
+ },
+ {
+  "case": "A (hooks.enabled=false) Bash cat ~/.aws/credentials",
+  "expected": "denied",
+  "observed": "zn: ~/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `npx -y zn-gate@1.14.1 secret s | [('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'PreToolUse', 'blocked'), ('plugin', 'PreToolUse', 'failed')]",
+  "result": "PASS",
+  "evidence": "cases/a_aws"
+ },
+ {
+  "case": "A (hooks.enabled=false) benign ls + Read",
+  "expected": "allowed, no false block, the plugin hook ran",
+  "observed": "a.txt || 1\thello world 2\t | [('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'PreToolUse', 'success'), ('plugin', 'PreToolUse', 'failed')]",
+  "result": "PASS",
+  "evidence": "cases/a_benign"
+ },
+ {
+  "case": "A (hooks.enabled=false) prompt with FAKE secret",
+  "expected": "blocked by UserPromptSubmit, 0 model requests",
+  "observed": "requests=0 [('plugin', 'UserPromptSubmit', 'blocked'), ('plugin', 'UserPromptSubmit', 'failed')]",
+  "result": "PASS",
+  "evidence": "cases/a_prompt"
+ },
+ {
+  "case": "A (hooks.enabled=false) MCP benign",
+  "expected": "passes, runs",
+  "observed": "ECHO:hello | called=True",
+  "result": "PASS",
+  "evidence": "cases/a_mcp"
+ },
+ {
+  "case": "A (hooks.enabled=false) MCP with a doc AWS key in args",
+  "expected": "denied, server not called",
+  "observed": "zn: this call would send a secret (an AWS key) to the MCP server zn_fake, so zn blocked it. A stored secret cannot be passed to this server. Next step: for a web request, use the secrets_http_request tool of the zn \"secr | called=False",
+  "result": "PASS",
+  "evidence": "cases/a_mcp_secret"
+ },
+ {
+  "case": "A (hooks.enabled=false) Write to ~/.zcode/cli/config.json",
+  "expected": "denied, file unchanged",
+  "observed": "zn: Zcode settings and hooks (/work/home/.zcode/cli/config.json) is protected: an agent may not change how zn and its hooks run. Ask the user to make this change. | [('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'PreToolUse', 'blocked'), ('plugin', 'PreToolUse', 'failed')]",
+  "result": "PASS",
+  "evidence": "cases/a_cfg"
+ },
+ {
+  "case": "B (hooks.enabled=absent) Read .env",
+  "expected": "denied by the plugin hook",
+  "observed": "zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.14.1 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use. | [('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'PreToolUse', 'blocked'), ('plugin', 'PreToolUse', 'failed')]",
+  "result": "PASS",
+  "evidence": "cases/b_read_env"
+ },
+ {
+  "case": "B (hooks.enabled=absent) cat ~/.aws/credentials",
+  "expected": "denied",
+  "observed": "zn: ~/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `npx -y zn-gate@1.14.1 secret s | [('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'PreToolUse', 'blocked'), ('plugin', 'PreToolUse', 'failed')]",
+  "result": "PASS",
+  "evidence": "cases/b_aws"
+ },
+ {
+  "case": "C (hooks.enabled=True) Read .env",
+  "expected": "denied by the plugin hook",
+  "observed": "zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.14.1 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use. | [('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'PreToolUse', 'blocked'), ('plugin', 'PreToolUse', 'failed')]",
+  "result": "PASS",
+  "evidence": "cases/c_read_env"
+ },
+ {
+  "case": "C (hooks.enabled=True) cat ~/.aws/credentials",
+  "expected": "denied",
+  "observed": "zn: ~/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `npx -y zn-gate@1.14.1 secret s | [('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'PreToolUse', 'blocked'), ('plugin', 'PreToolUse', 'failed')]",
+  "result": "PASS",
+  "evidence": "cases/c_aws"
+ },
+ {
+  "case": "D plugin disabled + hooks.enabled=false",
+  "expected": "plugin state false in config, zn inert (documented: NOT protected)",
+  "observed": "enabledPlugins[zn-gate@usezn]=False | key returned=True kinds=[]",
+  "result": "PASS",
+  "evidence": "cases/d_disabled_aws, config_d_disabled.json"
+ },
+ {
+  "case": "D2 plugin enabled again",
+  "expected": "blocks again",
+  "observed": "zn: ~/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `npx -y zn-gate@1.14.1 secret s | [('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'PreToolUse', 'blocked'), ('plugin', 'PreToolUse', 'failed')]",
+  "result": "PASS",
+  "evidence": "cases/d_reenabled_aws"
+ },
+ {
+  "case": "E uninstall",
+  "expected": "plugin gone from the list and from enabledPlugins, zn no longer runs (cache left on disk is informational)",
+  "observed": "rc=0 listed=False cache_left=True enabled_entry=None key_returned=True",
+  "result": "PASS",
+  "evidence": "e_uninstall.txt, cases/e_after_uninstall_aws"
+ },
+ {
+  "case": "F vendored file changed",
+  "expected": "every call blocked (fail closed), reason names the changed file",
+  "observed": "(no tool message) | [('plugin', 'UserPromptSubmit', 'blocked'), ('plugin', 'UserPromptSubmit', 'failed')]",
+  "result": "PASS",
+  "evidence": "cases/f_tamper_benign"
+ },
+ {
+  "case": "G no node on the PATH of the hook",
+  "expected": "still checks (ZCode own Node.js) and denies",
+  "observed": "zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.14.1 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use. | [('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'PreToolUse', 'blocked'), ('plugin', 'PreToolUse', 'failed')]",
+  "result": "PASS",
+  "evidence": "cases/g_no_node_in_path"
+ },
+ {
+  "case": "G2 hook script with no usable Node.js (PreToolUse)",
+  "expected": "exit 2 with a reason",
+  "observed": "rc=2 zn: no Node.js 20.19 or later was found for the hook (looked in the PATH, the usual install folders and the app itself). This call was blocked because zn could ",
+  "result": "PASS",
+  "evidence": "g_direct_no_node_PreToolUse.txt"
+ },
+ {
+  "case": "G2 hook script with no usable Node.js (PostToolUse)",
+  "expected": "exit 0 with a reason",
+  "observed": "rc=0 zn is NOT protecting this session: no Node.js 20.19 or later was found for the hook (looked in the PATH, the usual install folders and the app itself).",
+  "result": "PASS",
+  "evidence": "g_direct_no_node_PostToolUse.txt"
+ },
+ {
+  "case": "I1 zn-gate check: plugin only, hooks.enabled=false",
+  "expected": "OK, via the plugin",
+  "observed": "rc=1 ne X ZCode NOT protected: the zn-gate plugin starts its UserPromptSubmit hook with `C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe` by name, so a program or script in a relative or empty PATH entry, or in the folder the agent runs in, could run in i",
+  "result": "FAIL",
+  "evidence": "i_check_plugin_only.txt"
+ },
+ {
+  "case": "I2 zn-gate check: plugin turned off, hooks.enabled=false",
+  "expected": "NOT protected, says the plugin is off",
+  "observed": "rc=1 ne X ZCode NOT protected: the zn-gate plugin is turned off in ZCode, and the hooks of `zn hooks install zcode` are not installed, so nothing of zn protects ZCode. To fix it, turn the plugin on in ZCode (Settings, Plugins), or run `zn hooks install zcode` in your own terminal, then run `zn-gate check",
+  "result": "PASS",
+  "evidence": "i_check_plugin_off.txt"
+ },
+ {
+  "case": "J1 zn hooks install zcode with the plugin on",
+  "expected": "rc 0 and a warning about the double run",
+  "observed": "rc=0 warned=True enabledPlugins={'enabledPlugins': {'zn-gate@usezn': True}}",
+  "result": "PASS",
+  "evidence": "j_hooks_install.txt"
+ },
+ {
+  "case": "J2 zn-gate check with both",
+  "expected": "protected, with a note that every call is checked twice",
+  "observed": "rc=1 ne X ZCode NOT protected: the zn-gate plugin starts its UserPromptSubmit hook with `C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe` by name, so a program or script in a relative or empty PATH entry, or in the folder the agent runs in, could run in its place and skip zn. To fix it, update the plugin: install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again. Some agents a",
+  "result": "FAIL",
+  "evidence": "j_check_both.txt"
+ },
+ {
+  "case": "J3 double install: the call is checked by both and blocked",
+  "expected": "user and plugin hooks both run on PreToolUse, the call is blocked once",
+  "observed": "[('user', 'blocked'), ('plugin', 'blocked'), ('plugin', 'failed')] tool_msgs=zn: ~/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values ne",
+  "result": "PASS",
+  "evidence": "cases/j_double_aws"
+ },
+ {
+  "case": "K plugin off + zn hooks on",
+  "expected": "blocked by the user hooks only",
+  "observed": "[('user', 'UserPromptSubmit', 'success'), ('user', 'PreToolUse', 'blocked')]",
+  "result": "PASS",
+  "evidence": "cases/k_hooks_only_aws"
+ },
+ {
+  "case": "K2 zn-gate check, plugin off + hooks on",
+  "expected": "protected, notes the plugin is off",
+  "observed": "rc=0 e OK ZCode blocked the .env file and allowed the ordinary file. Your agent would be told: \"zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.\" (the zn-gate plugin is installed but tu",
+  "result": "PASS",
+  "evidence": "k_check_hooks_only.txt"
+ },
+ {
+  "case": "K3 zn-gate check, plugin off + hooks.enabled=false",
+  "expected": "NOT protected",
+  "observed": "rc=1 ne X ZCode NOT protected: the zn-gate plugin is turned off in ZCode, and \"hooks.enabled\" is false in /work/home/.zcode/cli/config.json, so ZCode runs none of the hooks of `zn hooks install zcode` either and nothing of zn protects ZCode. To fix it, turn the plugin on in ZCode (Settings, Plugins), or run `zn hooks instal",
+  "result": "PASS",
+  "evidence": "k_check_nothing.txt"
+ },
+ {
+  "case": "U update to a new plugin version",
+  "expected": "the new version is installed and still blocks in a new session",
+  "observed": "old=1.14.1 rc=0/0 listing=zn-gate@usezn [enabled] cache/usezn: /work/home/.zcode/cli/plugins/cache/usezn/zn-gate/1.14.1-test.1 skills: 0, commands: 0, hooks: 8, mcp: none ",
+  "result": "PASS",
+  "evidence": "u_*.txt, cases/u_after_update_aws"
+ },
+ {
+  "case": "H hook latency (info)",
+  "expected": "observe only",
+  "observed": "durationMs of hook runs: [986, 24, 35, 232, 5, 241, 4, 30, 229, 4, 242, 4, 11]",
+  "result": "PASS",
+  "evidence": "cases/h_latency"
+ }
+]

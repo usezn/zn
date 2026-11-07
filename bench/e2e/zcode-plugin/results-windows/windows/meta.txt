@@ -1,0 +1,39 @@
+[2026-10-30T09:27:42Z] OS: Microsoft Windows Server 2022 Datacenter 10.0.20348 whoami=ec2amaz-03nk1ok\administrator
+[2026-10-30T09:27:53Z] installer url=https://cdn-zcode.z.ai/zcode/electron/releases/3.16.3/windows-x64/ZCode-3.16.3-win-x64.exe sha256=B4FCCC1EAD9922D9066E083D53D3BF92BDEAC3124767D4352FD0583E5399382F size=190777144
+[2026-10-30T09:27:56Z] installer signature=Valid
+[2026-10-30T09:28:33Z] installer exit=0
+[2026-10-30T09:28:41Z] exe version=3.16.3.8992 file=3.16.3.8992
+[2026-10-30T09:28:44Z] zcode.cjs sha256=97490D0F06A7A225D54D47817ACF4B4859CDB268B59F2490CAAEDA982BEF063A
+[2026-10-30T09:28:52Z] node msi node-v22.23.4-x64.msi exit=0
+[2026-10-30T09:29:15Z] node v22.23.4 python Python 3.12.8
+[2026-10-30T09:29:15Z] zn-gate tarball C:\znjob\work\zn-gate-1.14.1.tgz sha256=813BC6FFABD961FAB9F1BD32CD71070BF34177AAC4069DD8558EC3182D77C9DE
+[2026-10-30T09:29:30Z] zn-gate: zn-gate 1.14.1 (rules engine: 2026-10-25.25; scrub rules: 2026-10-24.1; audit rules: 2026-10-23.8)
+[2026-10-30T09:29:30Z] market extracted: exit=0  hooks=True
+[2026-10-30T09:31:38Z] e2e exit=
+[2026-10-30T09:31:38Z] summary: PASS | A0 install through the runtime plugin API | Plugins (16) - visualize@zcode-plugins-official [enabled] official/zcode-plugins-official: C:\work\home\.zcode\cli\plugins\cache\zcode-plugins-official\visualize\0.1.0 skills: 1, commands: 0, hooks: 0, mcp: none - node-repl-host@zcode-plugins-official [enabled] official/zcode-plugins-official: C:\wo
+[2026-10-30T09:31:38Z] summary: PASS | A1 installed copy has both hooks per event | sh=4 powershell=4 dir=C:/work/home/.zcode/cli/plugins/cache/usezn/zn-gate\1.14.1
+[2026-10-30T09:31:38Z] summary: PASS | B1 Read .env | zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.14.1 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use. | [('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'UserPromptSubmit', 'success'), ('pl
+[2026-10-30T09:31:38Z] summary: PASS | B2 Bash type %USERPROFILE%\.aws\credentials | zn: C:\work\home\.aws\credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `npx -y zn-gate@1.14 | [('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'UserPromptSubmit', 'su
+[2026-10-30T09:31:38Z] summary: PASS | B3 Read ~/.aws/credentials | zn: C:/work/home/.aws/credentials was not read because zn treats it as holding secrets (AWS credentials file), and secret values never go to the model. If a command needs a value, ask the user to run `npx -y zn-gate@1.14 | [('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'UserPromptSubmit', 'su
+[2026-10-30T09:31:38Z] summary: PASS | C ordinary dir + Read a.txt |  Volume in drive C has no label.
+[2026-10-30T09:31:38Z] summary:   Volume Serial Number is 1CE9-5F0A
+[2026-10-30T09:31:38Z] summary:  
+[2026-10-30T09:31:38Z] summary:   Directory of C:\work\proj
+[2026-10-30T09:31:38Z] summary:  
+[2026-10-30T09:31:38Z] summary:  10/30/2026  09:30  || 1	hello world 2	 | [('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'PreToolUse', 'failed'), ('plugin', 'PreToolUse', 'success')
+[2026-10-30T09:31:38Z] summary: PASS | C2 prompt with FAKE secret | requests=0 [('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'UserPromptSubmit', 'blocked')]
+[2026-10-30T09:31:38Z] summary: PASS | C3 MCP call with a doc AWS key in args | zn: this call would send a secret (an AWS key) to the MCP server zn_fake, so zn blocked it. A stored secret cannot be passed to this server. Next step: for a web request, use the secrets_http_request tool of the zn "secr | called=False
+[2026-10-30T09:31:38Z] summary: FAIL | E1 zn-gate check: plugin only, hooks.enabled=false | rc=1 ne X ZCode NOT protected: the zn-gate plugin starts its UserPromptSubmit hook with `C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe` by name, so a program or script in a relative or empty PATH entry, or in the folder the agent runs in, could run in its place and skip zn. To fix it, up
+[2026-10-30T09:31:38Z] summary: PASS | E2 zn-gate check: plugin turned off | rc=1 ne X ZCode NOT protected: the zn-gate plugin is turned off in ZCode, and the hooks of `zn hooks install zcode` are not installed, so nothing of zn protects ZCode. To fix it, turn the plugin on in ZCode (Settings, Plugins), or run `zn hooks install zcode` in your own terminal, then run `zn-gate 
+[2026-10-30T09:31:38Z] summary: PASS | D1 hook entry, no usable Node.js (PreToolUse) | node_hidden=True rc=2 zn: no Node.js 20.19 or later was found for the hook (looked in the PATH, the usual install folders and the app itself). This call was blocked because zn could not check it. Ask the user to fix it, or
+[2026-10-30T09:31:38Z] summary: PASS | D2 hook entry, no usable Node.js (PostToolUse) | rc=0 zn is NOT protecting this session: no Node.js 20.19 or later was found for the hook (looked in the PATH, the usual install folders and the app itself).
+[2026-10-30T09:31:38Z] summary: PASS | D3 in the app, Node.js uninstalled and off the PATH: Read .env | zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.14.1 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use. | [('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'UserPromptSubmit', 'success'), ('pl
+[2026-10-30T09:31:38Z] summary: PASS | D4 (info) same setup, ordinary dir |  Volume in drive C has no label.
+[2026-10-30T09:31:38Z] summary:   Volume Serial Number is 1CE9-5F0A
+[2026-10-30T09:31:38Z] summary:  
+[2026-10-30T09:31:38Z] summary:   Directory of C:\work\proj
+[2026-10-30T09:31:38Z] summary:  
+[2026-10-30T09:31:38Z] summary:  10/30/2026  09:31  | [('plugin', 'UserPromptSubmit', 'failed'), ('plugin', 'UserPromptSubmit', 'success'), ('plugin', 'PreToolUse', 'failed'), ('plugin', 'PreToolUse', 'success'), ('plugin', 'PostTo
+[2026-10-30T09:31:38Z] summary: PASS | D5 (control) hook entry with Node.js back, ordinary call | rc=0 
+[2026-10-30T09:31:38Z] summary: PASS | H hook latency (info) | durationMs of hook runs: [1116, 4862, 43, 34, 763, 30, 785, 21, 44, 747, 32, 768, 14]
+[2026-10-30T09:31:39Z] done

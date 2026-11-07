@@ -20,6 +20,7 @@ const { windowsCommandScript } = require('../lib/shell-quote');
 const { check } = require('../lib/check');
 const { tempDir } = require('./helpers/tmp');
 const { WIN, SH, fwd, pathList, shEnv, shellFor, ensureShLauncher, putNode } = require('./helpers/git_bash');
+const { winCmdRe } = require('./helpers/wincmd');
 
 const codex = getAdapter('codex');
 const RUNNER = path.resolve(__dirname, '..', 'lib', 'hooks', 'runner.js');
@@ -85,7 +86,7 @@ test('codex launcher: Node.js gone and no zn on PATH: it still blocks, with the 
     const r = runLauncher(file, ev, '{}', bin);
     assert.equal(r.status, 2, ev + ' exits 2 (Codex: exit code 2 with the reason on stderr blocks)');
     assert.match(r.stderr, /zn: its hook cannot start/);
-    assert.match(r.stderr, /zn hooks install codex/);
+    assert.match(r.stderr, winCmdRe(/zn hooks install codex/));
     assert.equal(r.stdout, '');
   }
   const p = runLauncher(file, 'PermissionRequest', '{}', bin);
@@ -93,12 +94,12 @@ test('codex launcher: Node.js gone and no zn on PATH: it still blocks, with the 
   const pj = JSON.parse(p.stdout);
   assert.equal(pj.hookSpecificOutput.hookEventName, 'PermissionRequest');
   assert.equal(pj.hookSpecificOutput.decision.behavior, 'deny');
-  assert.match(pj.hookSpecificOutput.decision.message, /zn hooks install codex/);
+  assert.match(pj.hookSpecificOutput.decision.message, winCmdRe(/zn hooks install codex/));
   // Where blocking would hide a tool result or loop the model: a warning the user sees, exit 0.
   for (const ev of ['PostToolUse', 'Stop', 'SessionStart', 'SubagentStart']) {
     const r = runLauncher(file, ev, '{}', bin);
     assert.equal(r.status, 0, ev);
-    assert.match(JSON.parse(r.stdout).systemMessage, /NOT protecting this session.*zn hooks install codex/);
+    assert.match(JSON.parse(r.stdout).systemMessage, winCmdRe(/NOT protecting this session.*zn hooks install codex/));
   }
 });
 

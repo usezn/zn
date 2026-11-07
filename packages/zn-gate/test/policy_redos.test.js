@@ -5,14 +5,14 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const policy = require('../lib/hooks/policy');
-const { budget } = require('./helpers/time_budget');
+const { budget, cpuNow, cpuMsSince } = require('./helpers/time_budget');
 
 test('the admin-command check is fast on a long run of flags', () => {
   const flags = Array.from({ length: 40 }, () => '--a').join(' ');
   for (const cmd of ['zn stats ' + flags + ' x', 'zn stats ' + '--days 7 '.repeat(2000) + 'share', 'zn-gate stats ' + flags + ' share of', 'zn stats ' + '-a '.repeat(5000) + 'share']) {
-    const start = process.hrtime.bigint();
+    const start = cpuNow();
     policy.adminCommand(cmd);
-    const ms = Number(process.hrtime.bigint() - start) / 1e6;
+    const ms = cpuMsSince(start);
     assert.ok(ms < budget(500), cmd.slice(0, 40) + ' took ' + ms + ' ms');
   }
 });

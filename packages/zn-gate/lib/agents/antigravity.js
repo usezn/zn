@@ -20,12 +20,13 @@
  *    reason, overwrite, permissionOverrides}. "allow" means "proceed, deferring to the next hook or the
  *    default policy", so it is the way to say "no opinion" (never auto_approve).
  *
- * Tools named in the docs: run_command (shell), view_file, write_to_file, replace_file_content,
- * multi_replace_file_content, list_dir, find_by_name, grep_search, search_web, read_url_content,
- * and agent-management tools. The argument names are NOT documented (only that run_command takes a command
- * line), so this adapter finds the command by its likely names and finds file paths by key name
- * (anything called path, file, target, uri or dir), skipping keys that hold content. How an MCP tool is
- * named is not documented either: names that start with "mcp" are treated as MCP calls.
+ * Tools named in the official docs (https://antigravity.google/docs/hooks, checked 2026-11-06): run_command
+ * (CommandLine, Cwd), view_file (AbsolutePath), write_to_file and replace_file_content and
+ * multi_replace_file_content (TargetFile), list_dir (DirectoryPath), find_by_name (SearchDirectory),
+ * grep_search (SearchPath), search_web (query), read_url_content (Url), and agent-management tools. The
+ * argument names above are the documented ones; the adapter also finds the command by its likely names and
+ * finds file paths by key name (anything called path, file, target, uri or dir), skipping keys that hold
+ * content. The docs do not name MCP tools: names that start with "mcp" are treated as MCP calls.
  * A tool zn cannot classify gets "allow" (no opinion).
  *
  * Observed on a real Antigravity (Windows, 2026-10-20): a PreToolUse hook that fails, prints nothing,
@@ -46,6 +47,7 @@ const path = require('path');
 const cfg = require('./config-file');
 const launcher = require('./launcher');
 const policy = require('../hooks/policy');
+const { winCommandText } = require('../zn-command');
 
 const id = 'antigravity';
 const HOOK_NAME = 'zn-gate';
@@ -461,14 +463,14 @@ function install(opts = {}) {
   report.warnings.push('zn checks tool calls before they run (PreToolUse): it blocks reads and writes of secret files and shell commands that handle secrets.');
   if ((opts.scope || 'user') === 'project' && !opts.command) report.warnings.push('The project hook runs `zn` from your PATH (zn hook antigravity): every teammate who opens this project in Antigravity needs zn-gate installed. Without it the hook answers a deny that says how to install it, so Antigravity blocks the call instead of running it unchecked. The command is written for this kind of machine (' + ((opts.platform || process.platform) === 'win32' ? 'Windows' : 'macOS and Linux') + '): a teammate on the other kind runs `zn hooks install antigravity --project` in their own copy of the project.');
   report.warnings.push('Antigravity hooks cannot rewrite or redact what a tool returns, so a value printed by a command or a file the agent is allowed to read reaches the model. Keep secrets in the vault.');
-  report.warnings.push('Antigravity does not document what happens when a hook fails or times out. In our tests (Windows, October 2026) a hook that failed to start or answered with something that is not a decision made Antigravity deny every tool call; a timeout was not tested. If the Node.js zn was installed with goes away, the launcher script answers a deny that says how to repair it, and zn itself answers every event with an explicit decision. Run `zn-gate check` to see that the hook works.');
+  report.warnings.push(winCommandText('Antigravity does not document what happens when a hook fails or times out. In our tests (Windows, October 2026) a hook that failed to start or answered with something that is not a decision made Antigravity deny every tool call; a timeout was not tested. If the Node.js zn was installed with goes away, the launcher script answers a deny that says how to repair it, and zn itself answers every event with an explicit decision. Run `zn-gate check` to see that the hook works.', opts.platform || process.platform));
   if (opts.selfCheck) {
     report.selfCheck = selfCheck(command, { ...opts, splitOnSpaces: !opts.command });
     if (!report.selfCheck.ok) {
       const fix = (opts.scope || 'user') === 'project' && !opts.command
         ? 'install zn-gate for your user (npm install -g zn-gate) so that `zn` is on your PATH, then run this command again'
         : 'run `npx -y zn-gate check`, then `npm install -g zn-gate` and this command again; if it still fails, run `zn hooks uninstall antigravity` before you use Antigravity';
-      report.warnings.push('SELF-CHECK FAILED: the hook was started once with a harmless test event and ' + report.selfCheck.detail + '. Antigravity would deny every tool call. Next step: ' + fix + '.');
+      report.warnings.push('SELF-CHECK FAILED: the hook was started once with a harmless test event and ' + report.selfCheck.detail + '. Antigravity would deny every tool call. Next step: ' + winCommandText(fix, opts.platform || process.platform) + '.');
     } else {
       report.warnings.push('Self-check passed: the hook was started once with a harmless test event and ' + report.selfCheck.detail + '.');
     }

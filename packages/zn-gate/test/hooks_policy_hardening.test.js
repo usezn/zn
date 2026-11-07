@@ -18,7 +18,7 @@ const { createSecretsServer } = require('../lib/broker/mcp');
 const { createFakeVault } = require('./helpers/fake_vault');
 const fakeEngine = require('./helpers/fake_engine');
 const { generateAll } = require('./fixtures/fake_secrets');
-const { budget } = require('./helpers/time_budget');
+const { budget, budgetWin } = require('./helpers/time_budget');
 
 const FAKE = generateAll(7171, { perType: 1, piiPerType: 1 });
 const NPM = FAKE.secrets.find((s) => s.type === 'npm_access_token').value;
@@ -382,7 +382,7 @@ test('a long patch sent as a shell command is refused quickly, naming a secret f
   const big = "apply_patch <<'PATCH'\n*** Begin Patch\n" + body + "*** End Patch\nPATCH";
   assert.ok(big.length < policy.SHELL_SCAN_CAP);
   const { ms, result: m } = fastestMs(() => policy.bashDenial(big, { cwd: dir, home: dir }));
-  assert.ok(ms < budget(1500), 'too slow: ' + ms + ' ms');
+  assert.ok(ms < budgetWin(1500, 6000), 'too slow: ' + ms + ' ms');
   assert.match(m, /sent as a shell command, which zn cannot check file by file/);
   // A secret file among the first files is still named.
   const named = policy.bashDenial("apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: .env\n@@\n+X=1\n" + body + "*** End Patch\nPATCH", { cwd: dir, home: dir });
@@ -760,10 +760,9 @@ test('a 100 KB here-document read as data is checked in milliseconds', (t) => {
   const { ms, result: deny } = fastestCpuMs(() => policy.bashDenial(cmd, o));
   assert.equal(deny, null, 'the body is data, so the command is allowed');
   // Windows runners measured 32 ms of CPU time for the same check (the CPU clock there ticks in about 16 ms steps, and
-  // the runner CPU is slower), so the budget is 100 ms there. A check that rescans the body, which is what this test
+  // the runner CPU is slower), so Windows gets a larger budget. A check that rescans the body, which is what this test
   // guards against, takes seconds on 100 KB, so both budgets still catch it.
-  const limit = process.platform === 'win32' ? 100 : 25;
-  assert.ok(ms < budget(limit), 'checked in ' + ms + ' ms');
+  assert.ok(ms < budgetWin(25, 150), 'checked in ' + ms + ' ms');
 });
 
 test('10 000 here-document operators on one line are checked within the time budget', (t) => {

@@ -8,7 +8,9 @@ A short walk-through of `init` and `uninstall`, including a dry run of each. Eve
 npx -y zn-gate init
 ```
 
-`init` finds the coding agents on this machine (Claude Code, Codex CLI, Cursor, OpenCode), shows what is missing, and asks before each step. Exit code `0` means it is done, or every agent found is already protected. `1` means no supported agent was found, or the steps were only printed.
+`init` finds the coding agents on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, and the experimental Gemini CLI and Copilot CLI), shows what is missing, and asks before each step. Exit code `0` means it is done, or every agent found is already protected. `1` means no supported agent was found, or the steps were only printed.
+
+**What to expect:** it asks before each step, and it changes files only for the steps you accept.
 
 ## 2. Preview wrapping MCP servers
 
@@ -20,6 +22,8 @@ npx -y zn-gate init --wrap-mcp --dry-run
 
 It shows what would change and changes nothing. Run it without `--dry-run` to wrap the servers with `shield`; backups are written first.
 
+**What to expect:** this preview changes no files.
+
 ## 3. Check
 
 ```bash
@@ -27,6 +31,8 @@ npx -y zn-gate check
 ```
 
 This shows that zn stops your agent from reading a fake secret, in a temporary folder. Nothing is sent and no setting changes. See [what the output means](../check.md).
+
+**What to expect:** this step changes no setting; it only uses a temporary folder.
 
 ## 4. Preview the removal
 
@@ -36,6 +42,8 @@ npx -y zn-gate uninstall --dry-run
 
 It finds what zn-gate set up for your user and for the folder you are in, prints the plan with the file paths, and changes nothing.
 
+**What to expect:** this preview changes no files.
+
 ## 5. Remove
 
 ```bash
@@ -43,6 +51,8 @@ npx -y zn-gate uninstall
 ```
 
 It prints the same plan and asks "Remove what is listed above?". Nothing is removed until you answer yes. Then it removes the plugin, the hooks and the wrapped MCP servers it listed.
+
+**What to expect:** nothing is removed until you answer yes. After that it changes files, and it keeps your vault and never edits your `.env` files, as listed below.
 
 - Your vault is kept unless you answer yes to a second, separate question. The default is no, and deleting it cannot be undone.
 - Your `.env` files are never edited. If you used `env shadow`, put the values back first with `env unshadow`.

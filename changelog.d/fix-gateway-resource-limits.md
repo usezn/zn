@@ -1,0 +1,3 @@
+### Security
+- Rust gateway: when the management API reaches its limit of 256 connections, a new connection now takes the place of the oldest one that has not yet had a request answered successfully. Idle sockets opened on the local machine can no longer lock the dashboard out, and a client that has been served is never closed to make room.
+- Rust gateway: a management API connection that sends nothing for 15 minutes is now closed, which ends an unused SSE stream or WebSocket session, and a client that stops reading is cut after 30 seconds. Both are configurable with `server.session_idle_timeout_secs` and `server.write_timeout_secs`.

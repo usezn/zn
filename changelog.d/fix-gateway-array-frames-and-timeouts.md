@@ -1,0 +1,3 @@
+### Security
+- The gateway now rejects JSON-RPC frames that are arrays or plain values, so a tool call hidden in an array can no longer reach the MCP server unchecked. JSON-RPC batches were never supported on the client side; they now get an "Invalid Request" error instead of being forwarded. A frame with the same top-level key twice (such as two `method` or two `params` fields) is still rejected.
+- The management API now closes connections that stall while sending headers (after 10 seconds) or a request body (30 seconds without new data), and serves at most 256 connections at once, so half-open connections can no longer use up the server's file descriptors.

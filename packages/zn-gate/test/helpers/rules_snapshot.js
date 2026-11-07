@@ -15,7 +15,7 @@ const crypto = require('crypto');
 const PKG = path.join(__dirname, '..', '..');
 const SNAPSHOT_FILE = path.join(PKG, 'test', 'fixtures', 'rules_snapshot.json');
 const VERSION_FORMAT = /^\d{4}-\d{2}-\d{2}\.\d+$/;
-const UPDATE_HINT = 'run node scripts/update-rules-snapshot.js';
+const UPDATE_HINT = 'run node packages/zn-gate/scripts/update-rules-snapshot.js from the repository root';
 // Codes that the update script refuses to write over (unless --force).
 const BLOCKING_CODES = ['unbumped', 'backwards', 'invalid'];
 
@@ -161,7 +161,7 @@ function compareLayer(name, expected, actual) {
       if (order === 0) {
         problems.push({
           code: 'unbumped',
-          message: `rules changed in ${file}: bump ${def.versionConst} and run node scripts/update-rules-snapshot.js`,
+          message: `rules changed in ${file}: bump ${def.versionConst} and run node packages/zn-gate/scripts/update-rules-snapshot.js from the repository root`,
         });
       } else if (order < 0) {
         problems.push({

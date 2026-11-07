@@ -14,7 +14,7 @@ Everything runs on your machine. The model is the SDK's scripted test model (`Sc
 - Node.js 22 or newer
 - `zn-gate` 1.12.0 or newer
 
-The versions in `package.json` and `package-lock.json` are exact (`@openai/agents` 0.20.0, `zn-gate` 1.12.0, `zod` 4.6.7), so the example behaves the same on your machine as it did when it was written.
+The versions in `package.json` and `package-lock.json` are exact (`@openai/agents` 0.20.0, `zn-gate` 1.14.1, `zod` 4.6.7), so the example behaves the same on your machine as it did when it was written.
 
 ## Run
 

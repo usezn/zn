@@ -7,7 +7,7 @@
 
 // Version of the rule catalogue and of the command patterns in audit/patterns.js.
 // Bump it when a rule, a pattern or a rule id changes; see CONTRIBUTING.md.
-const AUDIT_RULES_VERSION = '2026-10-23.8';
+const AUDIT_RULES_VERSION = '2026-11-06.3';
 
 const SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const RANK = { none: 99, low: 1, medium: 2, high: 3, critical: 4 };
@@ -167,6 +167,13 @@ const RULES = [
     title: 'Instruction file hides text behind a long run of blank lines',
     help: 'A run of 40 or more empty or whitespace-only lines, followed by more text, pushes that text out of view for a person who opens the file and past the part of it a classifier reads. The report gives the line where the hidden text starts and the length of the run; the text is never printed.',
     fix: 'Open the file at the reported line and read what follows. Remove the blank lines, and the text too unless you wrote it.',
+    references: [],
+  },
+  {
+    id: 'ZNA022', severity: 'high', name: 'hook-sends-events',
+    title: 'Hook sends tool events to a URL',
+    help: 'An `http` hook, or an `agent` hook that names a URL, posts each tool event it matches (the command line, file paths and contents, tool output) to that address. In a project file it starts as soon as the folder is opened; its headers can carry values from your environment. A local address stays on your machine; anything else is a third party.',
+    fix: 'Remove the hook, or point it at a server you run over https and forward no credentials. Review what the hook sends before you keep it.',
     references: [],
   },
 ];

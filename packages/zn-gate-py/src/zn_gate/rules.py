@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-10-29.4
+RULES_VERSION: 2026-11-04.35
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-10-30.1"
+RULES_VERSION = "2026-11-04.35"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -411,7 +411,7 @@ RULE_TESTERS: Dict[str, Any] = {
 
 EXFIL_VERB_SOURCE = r'(?<![A-Za-z0-9_])(give|reveal|send|show|print|expose|leak|paste|dump|read|open|cat|fetch|extract|steal)(?![A-Za-z0-9_])'
 EXFIL_VERBS = _rc(EXFIL_VERB_SOURCE, re.IGNORECASE)
-CRED_OBJECTS = _rc(r"""(?<![A-Za-z0-9_])(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)(?![A-Za-z0-9_])|(?:^|\s|['"`])\.env(?:\.[a-z0-9]+)?(?![A-Za-z0-9_])""", re.IGNORECASE)
+CRED_OBJECTS = _rc(r"""(?<![A-Za-z0-9_])(passwords?|api[_ -]?keys?|secrets?|credentials?|tokens?|ssh[ _-]?keys?|private[ _-]?keys?|aws_secret[a-z0-9_]*|aws_access[a-z0-9_]*)(?![A-Za-z0-9_])|(?:^|\s|['"`/\\,])\.env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?(?![A-Za-z0-9_])""", re.IGNORECASE)
 
 # The verb must start a clause (an instruction, not a description such as
 # "this library reads tokens from ...") or be followed by "me"/"us", and the
@@ -440,10 +440,74 @@ ADVISORY_RULES: List[Tuple[str, Any, str]] = [
     ('indirect:hidden_tag', _test_hidden_tag_anywhere, 'Hidden element in markup followed by instruction-like words'),
 ]
 
+# Protected files and the path view: same rules and steps as rules.js
+# (testSensitivePath). The view is lexical only: it never touches the file
+# system, so symbolic links and Windows short (8.3) names are not resolved.
+SENSITIVE_PATH_RE = _rc(r"""(?:^|[\s"'`(\[\/])\.(?:ssh\/(?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws\/credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE)
+PATH_HOME_VAR_RE = _rc(r'\$\{(?:env:)?(?:home|userprofile)\}|\$(?:env:)?(?:home|userprofile)(?![a-z0-9_])|%(?:userprofile|home)%|%homedrive%%homepath%')
+PATH_CWD_VAR_RE = _rc(r'\$\{(?:env:)?pwd\}|\$(?:env:)?pwd(?![a-z0-9_])|%cd%')
+PATH_WORD_SPLIT_RE = _rc(r"""[ \t\r\n\f\v|&;<>()\[\]{}`,]+""")
+PATH_QUOTE_RE = _rc(r"""["']""")
+PATH_TILDE_USER_RE = _rc(r'^~[^/]*')
+PATH_DRIVE_RE = _rc(r'^[a-z]:$')
+_ASCII_LOWER = str.maketrans('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
+
+
+def _normalize_path_word(word: str) -> str:
+    """Lexical normalization of one word that uses / as its only separator."""
+    absolute = word.startswith('/')
+    s = PATH_TILDE_USER_RE.sub('~', word, count=1) if word.startswith('~') else word
+    out: List[str] = []
+    for seg in s.split('/'):
+        if seg not in ('.', '..'):
+            # Windows ignores trailing dots and spaces.
+            seg = seg.rstrip('. ')
+        if seg in ('', '.'):
+            continue
+        if seg == '..':
+            last = out[-1] if out else None
+            # A parent of the root or of a drive root is the root itself.
+            if (absolute and last is None) or (last is not None and PATH_DRIVE_RE.search(last)):
+                continue
+            if last is not None and last not in ('..', '~'):
+                out.pop()
+                continue
+        out.append(seg)
+    return ('/' if absolute else '') + '/'.join(out)
+
+
+def sensitive_path_view(text: str) -> str:
+    """The path view of a text: its normalized words, one per line."""
+    lowered = PATH_CWD_VAR_RE.sub('.', PATH_HOME_VAR_RE.sub('~', text.translate(_ASCII_LOWER)))
+    words: List[str] = []
+    for raw in PATH_WORD_SPLIT_RE.split(lowered):
+        if not raw:
+            continue
+        word = PATH_QUOTE_RE.sub('', raw)
+        words.append(_normalize_path_word(word.replace('\\', '/')))
+        if '\\' in word:
+            words.append(_normalize_path_word(word.replace('\\', '')))
+    return '\n'.join(words)
+
+
+# The text as written: next to the path view, this keeps the home, drive and
+# variable prefixes the view does not need.
+SENSITIVE_PATH_TEXT_RE = _rc(r"""(?:^|[\s"'`(\[@,\/\\])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE)
+
+
+def _test_sensitive_path(text: str) -> bool:
+    return (SENSITIVE_PATH_TEXT_RE.search(text) is not None
+            or SENSITIVE_PATH_RE.search(text) is not None
+            or SENSITIVE_PATH_RE.search(sensitive_path_view(text)) is not None)
+
+
+RULE_TESTERS['path:sensitive_file'] = _test_sensitive_path
+
 SENSITIVE_PATH_RULES: List[Tuple[str, re.Pattern[str], str]] = [
     (
         'path:sensitive_file',
-        _rc(r"""(?:^|[\s"'`(\[@])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_rsa|id_ed25519|authorized_keys)|aws[\/\\]credentials|env(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE),
+        # The pattern matches the text as written; the rule is _test_sensitive_path().
+        SENSITIVE_PATH_TEXT_RE,
         'Targeting sensitive system credentials or environment file',
     ),
 ]
@@ -608,13 +672,11 @@ def normalize_input(text: str) -> Tuple[str, str]:
     return normalized, stripped
 
 
-# Default policy by tiers (same list as ADVISORY_BY_DEFAULT in rules.js). A
-# match of these heuristic rules is an advisory unless strict mode is on
 _ENV_FLAG_WARNED: Set[Tuple[str, str]] = set()
 
 
 def env_flag(name: str) -> bool:
-    """True when the hardening flag `name` (ZN_STRICT, ZN_BLOCK_TRUNCATED) is set to "1", the only value that turns it
+    """True when the hardening flag `name` (ZN_STRICT, ZN_BLOCK_TRUNCATED, ZN_ALLOW_TRUNCATED) is set to "1", the only value that turns it
     on. Any other value (true, yes, on...) leaves it off, so it is said once in the log rather than ignored silently."""
     value = os.environ.get(name)
     if value == "1":
@@ -623,10 +685,13 @@ def env_flag(name: str) -> bool:
         _ENV_FLAG_WARNED.add((name, value))
         import logging
         logging.getLogger("zn_gate").warning(
-            "zn_gate: %s is set to %r, but only %s=1 turns it on, so it is off", name, value[:20], name)
+            "zn_gate: %s is set to %r, but only %s=1 turns it on, so it is off "
+            "(accepted values: 1 to turn it on; unset, empty or 0 to leave it off)", name, value[:20], name)
     return False
 
 
+# Default policy by tiers (same list as ADVISORY_BY_DEFAULT in rules.js). A
+# match of these heuristic rules is an advisory unless strict mode is on
 # (strict=True, or ZN_STRICT=1 in the environment).
 ADVISORY_BY_DEFAULT = frozenset([
     'pi:identity_override',
@@ -798,7 +863,8 @@ def _evaluate_uncached(input_text: str, strict: bool = False) -> Assessment:
 
         # 2. Sensitive Path Traversal
         for rule_id, pat, desc in SENSITIVE_PATH_RULES:
-            if pat.search(text):
+            tester = RULE_TESTERS.get(rule_id)
+            if tester(text) if tester else pat.search(text):
                 return Assessment(verdict='block', confidence=0.92, rule=rule_id, reason=desc)
 
         # 3. Indirect Injections (HTML comments & hidden tags)
@@ -1398,6 +1464,77 @@ PROVIDER_HINTS: Dict[str, Tuple[str, ...]] = {
 }
 
 # ---------------------------------------------------------------------------
+# Forms of the Node.js scrubber's token table (patterns.js) that the rules above do not read: a longer
+# key of a provider they already know, a key with no rule yet, an AWS secret
+# read from the words before it, and a private key whose END line was cut off. The shared secret
+# table keeps the rules.js forms; these entries are Python-only additions, so the two packages
+# redact the same fake secrets (tests/test_secret_scrub_parity.py lists the shapes that still differ
+# on purpose). Ids end in "#scrub" so that a check or a hint belongs to one entry; the suffix is
+# dropped from the detections. SCRUB_FIRST_PATTERNS run before the shared table, so a longer key is
+# redacted whole; SCRUB_LAST_PATTERNS run after it.
+# ---------------------------------------------------------------------------
+_B64_B = r'(?<![A-Za-z0-9+/_-])'
+_B64_A = r'(?![A-Za-z0-9+/=_-])'
+_OPENAI_PREFIX_RE = _rc(r'sk-(?:proj-|svcacct-|admin-|or-v1-)?')
+
+
+def _openai_scrub_body(v: str) -> bool:
+    body = _OPENAI_PREFIX_RE.sub('', v, count=1)
+    return _pv_random(body, 2, 3.5) and _DIGIT_RE.search(body) is not None
+
+
+_AWS_WORDS_RE = _rc(r'aws|secret[_ -]?access[_ -]?key|SecretAccessKey', re.IGNORECASE | re.ASCII)
+_SECRET_WORD_RE = _rc(r'secret', re.IGNORECASE | re.ASCII)
+
+SCRUB_FIRST_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
+    # A key with hyphens or underscores in the body (sk-test-..., sk-<name>_<id>): 40 to 200 characters. Same
+    # check as the scrubber (see _openai_scrub_body): the body must look random and hold a digit, in any case,
+    # and the Helicone, sp-, cp- and similar forms stay with the shared rule above.
+    ("secret:openai_key#scrub", _rc(_TB + r'sk-(?!ant-|helicone-|(?:eu|cp|gov|rl|sp|lf|[Nn]one)-|(?!svcacct-)[a-z0-9]{7}-)(?:proj-|svcacct-|admin-|or-v1-)?[A-Za-z0-9_-]{40,200}' + _TA), "[REDACTED_OPENAI_KEY]"),
+    # GitHub tokens of up to 255 characters, and fine-grained tokens longer than 82.
+    ("secret:github_token#scrub", _rc(_TB + r'gh[pousr]_[A-Za-z0-9]{36,255}' + _TA), "[REDACTED_GITHUB_TOKEN]"),
+    ("secret:github_token#scrub_pat", _rc(_TB + r'github_pat_[A-Za-z0-9]{22}_[A-Za-z0-9]{59,}' + _TA), "[REDACTED_GITHUB_TOKEN]"),
+]
+
+SCRUB_LAST_PATTERNS: List[Tuple[str, re.Pattern[str], str]] = [
+    ("secret:zn_api_key", _rc(_TB + r'zn_[0-9a-f]{48}' + _TA), "[REDACTED_ZN_API_KEY]"),
+    # A JWT whose parts are shorter than the shared rule asks for (8 characters after eyJ, a 16-character signature).
+    ("secret:jwt_token#scrub", _rc(_TB + r'eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}' + _TA), "[REDACTED_JWT]"),
+    # 40 base64 characters after the words "aws" and "secret" (the CLI's SecretAccessKey, prose, a config file).
+    ("secret:aws_secret_key#scrub", _rc(_B64_B + r'[A-Za-z0-9+/]{40}' + _B64_A), "[REDACTED_AWS_SECRET]"),
+    # A private key whose END line was cut off: the header and the base64 lines after it.
+    ("secret:private_key#scrub", _rc(r'-----BEGIN (?:(?:RSA |EC |DSA |OPENSSH |ENCRYPTED |PGP )?PRIVATE KEY(?: BLOCK)?)-----(?:[ \t]*\r?\n[ \t>#*/"' + "'" + r'-]*[A-Za-z0-9+/=:,-]+)*'), "[REDACTED_PRIVATE_KEY]"),
+]
+
+
+def _aws_secret_context(text: str, start: int, end: int) -> bool:
+    """patterns.js AWS_SECRET: a random-looking value with "aws" or "secret access key", and "secret", in the 160 characters before it."""
+    if not _pv_random(text[start:end], 3, 4.0):
+        return False
+    window = text[max(0, start - 160):start]
+    return _AWS_WORDS_RE.search(window) is not None and _SECRET_WORD_RE.search(window) is not None
+
+
+PROVIDER_CONTEXT_CHECKS: Dict[str, Any] = {
+    "secret:aws_secret_key#scrub": _aws_secret_context,
+}
+PROVIDER_MATCH_CHECKS.update({
+    "secret:openai_key#scrub": _openai_scrub_body,
+    "secret:github_token#scrub": lambda v: _pv_random(v[4:], 2, 3.5),
+    "secret:private_key#scrub": lambda v: len(v) >= 40,
+})
+PROVIDER_HINTS.update({
+    "secret:openai_key#scrub": ("sk-",),
+    "secret:github_token#scrub": ("ghp_", "gho_", "ghu_", "ghs_", "ghr_"),
+    "secret:github_token#scrub_pat": ("github_pat_",),
+    "secret:zn_api_key": ("zn_",),
+    "secret:jwt_token#scrub": (".eyJ",),
+    "secret:aws_secret_key#scrub": ("ecret", "ECRET"),
+    "secret:private_key#scrub": ("-----BEGIN ",),
+})
+
+
+# ---------------------------------------------------------------------------
 # Extra credential forms that only `zn-gate scan` reports (files at rest, not
 # agent traffic). Same table as SCAN_SECRET_PATTERNS in rules.js (see the
 # comment there); they run after SECRET_PATTERNS and the provider formats, on
@@ -1602,7 +1739,8 @@ def _redact_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     if not isinstance(text, str) or not text:
         return text, []
     redacted, first = _redact_quoted_credentials(text)
-    redacted, rest = _redact_with(redacted, SECRET_PATTERNS + PROVIDER_SECRET_PATTERNS)
+    redacted, rest = _redact_with(
+        redacted, SCRUB_FIRST_PATTERNS + SECRET_PATTERNS + PROVIDER_SECRET_PATTERNS + SCRUB_LAST_PATTERNS)
     return redacted, first + rest
 
 
@@ -1683,6 +1821,9 @@ def _rule_candidates(rule_id: str, pattern: re.Pattern[str], replacement: str, t
             if m.end() == m.start():
                 continue
             if match_check is not None and not match_check(m.group(0)):
+                continue
+            context_check = PROVIDER_CONTEXT_CHECKS.get(rule_id)
+            if context_check is not None and not context_check(hay, m.start(), m.end()):
                 continue
             groups: List[Optional[Tuple[int, int]]] = [None]
             for k in range(1, pattern.groups + 1):
@@ -1778,7 +1919,7 @@ def _redact_with(text: str, patterns: List[Tuple[str, re.Pattern[str], str]]) ->
             continue
         edits: List[Tuple[int, int, str]] = []
         for start, end, found_rule, new in _merge_candidates(cands):
-            detections.append({"rule": found_rule, "start": start, "end": end})
+            detections.append({"rule": found_rule.partition("#")[0], "start": start, "end": end})
             edits.append((start, end, new))
         redacted = _apply_edits(redacted, edits)
         dirty = True
@@ -1875,7 +2016,7 @@ def truncated_blocks(block_truncated: bool = False, allow_truncated: bool = Fals
     """
     if block_truncated or env_flag('ZN_BLOCK_TRUNCATED'):
         return True
-    return not (allow_truncated or os.environ.get('ZN_ALLOW_TRUNCATED') == '1')
+    return not (allow_truncated or env_flag('ZN_ALLOW_TRUNCATED'))
 
 
 def scan_windows(text: str, strict: Optional[bool] = None) -> Assessment:

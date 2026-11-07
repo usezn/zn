@@ -30,6 +30,7 @@ const withBash = (m) => { if (WIN && GIT_BASH) m.env.CLAUDE_CODE_GIT_BASH_PATH =
 const RUNNER = path.join(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const VERSION = require('../package.json').version;
 const { budget } = require('./helpers/time_budget');
+const { winCmd, winCmdRe } = require('./helpers/wincmd');
 const ZN = path.resolve('/opt/npm/bin/zn');
 const NPM = path.resolve('/opt/npm/bin/npm');
 
@@ -130,9 +131,9 @@ test('guide: without a terminal it only prints the steps and runs nothing', asyn
   assert.equal(ran, 0);
   assert.equal(code, 1);
   assert.match(out.text(), /only prints the steps\. Nothing was changed\./);
-  assert.match(out.text(), /zn hooks install codex/);
-  assert.match(out.text(), /npx -y zn-gate check/);
-  assert.match(out.text(), /zn-gate init --wrap-mcp/);
+  assert.match(out.text(), winCmdRe(/zn hooks install codex/));
+  assert.match(out.text(), winCmdRe(/npx -y zn-gate check/));
+  assert.match(out.text(), winCmdRe(/zn-gate init --wrap-mcp/));
 });
 
 test('guide: when an AI agent runs it, it only prints the steps, also in a terminal', async (t) => {
@@ -156,7 +157,7 @@ test('guide: in a terminal each step is confirmed, run, and the result is checke
   };
   const code = await guide({ ...m, temporary: false, stdin: tty, write: out.write, run, confirm: async (q) => { asked.push(q); return true; } });
   assert.equal(asked.length, 1);
-  assert.match(asked[0], /zn hooks install codex/);
+  assert.match(asked[0], winCmdRe(/zn hooks install codex/));
   assert.match(out.text(), /OK Codex CLI\s+blocked the \.env file/);
   assert.equal(code, 0);
 });
@@ -188,7 +189,7 @@ test('guide: a step the person declines is skipped and shown for later', async (
   const code = await guide({ ...m, temporary: false, stdin: tty, write: out.write, run: () => { ran++; return true; }, confirm: async () => false });
   assert.equal(ran, 0);
   assert.equal(code, 1);
-  assert.match(out.text(), /skipped\. You can run it later: zn hooks install codex/);
+  assert.match(out.text(), winCmdRe(/skipped\. You can run it later: zn hooks install codex/));
 });
 
 test('guide: nothing found, and everything already protected', async (t) => {
@@ -440,23 +441,36 @@ test('guide: after repairing the hooks next to a broken plugin, the plugin is tu
     // The hooks step "succeeds"; it really repairs the hooks only in the second round.
     const run = (step) => {
       ran.push(step.manual);
-      if (repairs && step.manual === 'zn hooks install claude-code') {
+      if (repairs && step.manual === winCmd('zn hooks install claude-code')) {
         getAdapter('claude-code').install({ scope: 'user', home: m.home, env: m.env, nodePath: process.execPath, runnerPath: RUNNER, mcp: false });
       }
       return true;
     };
     await guide({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false, stdin: tty, write: out.write, confirm: async () => true, run });
     if (repairs) {
-      assert.deepEqual(ran, ['zn hooks install claude-code', 'claude plugin disable zn-gate@usezn']);
+      assert.deepEqual(ran, [winCmd('zn hooks install claude-code'), 'claude plugin disable zn-gate@usezn']);
       assert.match(out.text(), /check that zn's hooks for Claude Code work now: yes/);
     } else {
-      assert.deepEqual(ran, ['zn hooks install claude-code']);
+      assert.deepEqual(ran, [winCmd('zn hooks install claude-code')]);
       assert.match(out.text(), /check that zn's hooks for Claude Code work now: not yet \(.+\)\. The zn-gate plugin was left on\./);
     }
   }
 });
 
-// Windows without Git Bash: the plan for a plugin that cannot start there is the plugin install again (measured; not asserted: reinstalling cannot give it a Git Bash).
+test('plan on Windows without Git Bash: a plugin that cannot start there gets Git for Windows (or zn hooks) first, never the plugin install again', { skip: !WIN && 'Windows only' }, async (t) => {
+  // No CLAUDE_CODE_GIT_BASH_PATH and an empty PATH: Claude Code would run the plugin hook with Git Bash, and there is none.
+  // Installing the plugin again cannot give it one.
+  const m = machine(t, ['claude-code']);
+  pluginIn(m.home);
+  const { items } = await plan({ ...m, claude: path.resolve('/opt/bin/claude'), temporary: false });
+  const cc = items.find((i) => i.id === 'claude-code');
+  assert.equal(cc.steps.length, 1);
+  assert.equal(cc.steps[0].run, null);
+  assert.equal(cc.steps[0].label, 'first do this yourself');
+  assert.match(cc.steps[0].manual, /^install Git for Windows \(or set CLAUDE_CODE_GIT_BASH_PATH to its bash\.exe\), or use zn's hooks instead/);
+  assert.doesNotMatch(cc.steps.map(line).join('\n'), /marketplace add|plugin install/);
+});
+
 test('plan: zn rules that do not block .env get the zn-gate repair, never the plugin install', { skip: NEEDS_BASH }, async (t) => {
   const runner = require('../lib/hooks/runner');
   const real = runner.handle;
@@ -554,14 +568,16 @@ test('guide: npm failing to reach the registry says there is no internet, not a 
     const run = () => ({ ok: false, stderr: 'npm error code ' + code + '\n' });
     // An unwritable global folder (a system npm) must not hide the real cause.
     await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN, prefix: '/' }, stdin: tty, write: out.write, run, confirm: async () => true });
-    assert.match(out.text(), /npm could not reach the registry. That can be no internet connection/, code);
+    assert.match(out.text(), /npm could not reach the registry\.\n  The cause may be no internet connection/, code);
     assert.match(out.text(), /npm install -g zn-gate@/, code);
     assert.doesNotMatch(out.text(), /global folder/, code);
   }
   const m = machine(t, ['codex']);
   const out = capture();
   await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN }, stdin: tty, write: out.write, run: () => ({ ok: false, stderr: '', timedOut: true }), confirm: async () => true });
-  assert.match(out.text(), /no internet connection/);
+  assert.match(out.text(), /that was stopped: the install took longer than 180 seconds/);
+  assert.match(out.text(), /npm ls -g zn-gate/);
+  assert.doesNotMatch(out.text(), /no internet connection|Nothing was installed/);
 });
 
 function stubNpm(t, stderr, exit) {
@@ -579,7 +595,7 @@ test('guide: a stub npm printing EAI_AGAIN gives the no-internet message, one pr
   const m = machine(t, ['codex']);
   const out = capture();
   await guide({ ...m, temporary: true, global: { npm: net.file, version: null, zn: ZN, prefix: '/' }, stdin: tty, write: out.write, confirm: async () => true });
-  assert.match(out.text(), /npm could not reach the registry. That can be no internet connection/);
+  assert.match(out.text(), /npm could not reach the registry\.\n  The cause may be no internet connection/);
   assert.doesNotMatch(out.text(), /global folder/);
   const args = fs.readFileSync(path.join(net.dir, 'args'), 'utf8');
   assert.match(args, /install -g .*--fetch-retries=1/);
@@ -637,4 +653,39 @@ test('init: a slow npm on Windows is ended at the timeout and writes nothing aft
   assert.ok(Date.now() - started < 10000, 'runStep returned after ' + (Date.now() - started) + ' ms');
   await new Promise((resolve) => setTimeout(resolve, 5000));
   assert.equal(fs.existsSync(marker), false, 'npm was still running after the timeout');
+});
+
+test('guide: the confirmation shows the exact command that runs, flags included', async (t) => {
+  const m = machine(t, ['codex']);
+  const asked = [];
+  const out = capture();
+  await guide({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN }, stdin: tty, write: out.write, run: () => true, confirm: async (q) => { asked.push(q); return asked.length === 1; } });
+  const { setup } = await plan({ ...m, temporary: true, global: { npm: NPM, version: null, zn: ZN } });
+  assert.ok(asked[0].includes('`npm ' + setup[0].run[1].join(' ') + '`'), asked[0]);
+});
+
+test('guide: a stub npm that sleeps past the limit gets its own timeout text, and the network text has no chained colons', posixOnly, async (t) => {
+  const origWrite = process.stderr.write;
+  process.stderr.write = () => true;
+  t.after(() => { process.stderr.write = origWrite; });
+  const dir = tempDir(t, 'zn-stub-npm-');
+  const slow = path.join(dir, 'npm');
+  fs.writeFileSync(slow, '#!/bin/sh\nsleep 5\n', { mode: 0o755 });
+  const m = machine(t, ['codex']);
+  const { setup } = await plan({ ...m, temporary: true, global: { npm: slow, version: null, zn: ZN } });
+  setup[0].timeout = 1000;
+  const slowRun = _internal.runStep(setup[0], process.env);
+  assert.equal(slowRun.timedOut, true);
+  const out = capture();
+  await guide({ ...m, temporary: true, global: { npm: slow, version: null, zn: ZN }, stdin: tty, write: out.write, run: () => ({ ok: false, stderr: '', timedOut: true }), confirm: async () => true });
+  assert.match(out.text(), /took longer than 180 seconds/);
+  assert.match(out.text(), /incomplete/);
+  assert.match(out.text(), /npm ls -g zn-gate/);
+  assert.doesNotMatch(out.text(), /no internet|Nothing was installed/);
+  const net = stubNpm(t, 'npm error code ENOTFOUND', 1);
+  const out2 = capture();
+  await guide({ ...m, temporary: true, global: { npm: net.file, version: null, zn: ZN, prefix: '/' }, stdin: tty, write: out2.write, confirm: async () => true });
+  assert.match(out2.text(), /npm could not reach the registry\./);
+  assert.doesNotMatch(out2.text(), /did not finish: /);
+  assert.doesNotMatch(out2.text(), /npm ls -g/);
 });

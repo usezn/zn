@@ -45,6 +45,16 @@ class TestVersionOutput(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(proc.stdout, _zn("--version").stdout)
 
+    def test_all_version_forms_print_identical_output_with_the_package_version(self):
+        outputs = {form: _zn(form) for form in ("version", "-V", "-v", "--version")}
+        for form, proc in outputs.items():
+            with self.subTest(form=form):
+                self.assertEqual(proc.returncode, 0)
+                self.assertEqual(proc.stderr, "")
+        self.assertEqual(len({p.stdout for p in outputs.values()}), 1)
+        first_line = outputs["version"].stdout.splitlines()[0]
+        self.assertEqual(first_line.split()[1], __version__)
+
 
 class TestHelpOutput(unittest.TestCase):
     def test_every_expected_subcommand_is_known(self):
@@ -84,6 +94,21 @@ class TestUnknownFlag(unittest.TestCase):
                 self.assertEqual(proc.returncode, 2)
                 self.assertIn("--no-such-flag", proc.stderr)
                 self.assertEqual(proc.stdout, "")
+
+
+class TestUnknownSubcommand(unittest.TestCase):
+    def test_unknown_subcommand_exits_1_with_a_hint_on_stderr(self):
+        proc = _zn("no-such-command")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("Unknown command: no-such-command", proc.stderr)
+        self.assertIn("Run 'zn-gate --help' for usage.", proc.stderr)
+        self.assertEqual(proc.stdout, "")
+
+    def test_npm_only_subcommand_exits_2_and_points_to_npm(self):
+        proc = _zn("init")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("is in the npm package", proc.stderr)
+        self.assertEqual(proc.stdout, "")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 """
 Cryptographic Evidence Engine for zn-gate-py.
-Maintains a tamper-evident SHA-256 hash-chained audit ledger at ~/.zn/evidence.jsonl.
+Maintains a tamper-evident SHA-256 hash-chained audit ledger at ~/.zn/evidence.jsonl (or in the folder ZN_HOME names).
 Pure Python stdlib. Zero external dependencies.
 """
 
@@ -24,7 +24,9 @@ def _redact(text: str) -> str:
     from .rules import mask_token_runs, redact_secrets  # local import avoids import cycles
     return mask_token_runs(redact_secrets(text)[0])
 
-ZN_DIR = os.path.expanduser("~/.zn")
+from .stats import zn_home  # noqa: E402  (one rule for the state folder: ~/.zn or ZN_HOME)
+
+ZN_DIR = zn_home()
 EVIDENCE_FILE = os.path.join(ZN_DIR, "evidence.jsonl")
 GENESIS_HASH = "0" * 64
 
