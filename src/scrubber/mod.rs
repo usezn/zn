@@ -1654,4 +1654,19 @@ mod table_parity_tests {
     fn e164_validator_equals_node() {
         assert_eq!(mismatches("e164", e164_valid), Vec::<String>::new());
     }
+
+    #[test]
+    fn test_github_token_in_json_string_is_masked_and_structure_kept() {
+        // Fake value, built at runtime so secret scanners do not flag the literal.
+        let token = format!("{}{}", "ghp_", "FAKE0123456789abcdefABCDEFghijklmnop");
+        let input = format!(r#"{{"id":1,"token":"{token}","n":[1,2]}}"#);
+        let out = Scrubber::scrub(&input);
+        assert!(!out.contains(&token), "{out}");
+        assert!(out.contains("[SECRET_REDACTED]"), "{out}");
+        let v: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
+        assert_eq!(v["id"], 1);
+        assert_eq!(v["n"], serde_json::json!([1, 2]));
+        assert_eq!(v["token"], "[SECRET_REDACTED]");
+        assert_eq!(v.as_object().unwrap().len(), 3);
+    }
 }
