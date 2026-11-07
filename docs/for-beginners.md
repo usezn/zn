@@ -37,7 +37,7 @@ It also does these things on your machine:
 
 ## What it never does
 
-- It does not send your prompts, files, tool arguments or tool output off your machine by default. Tool arguments, tool output and tool descriptions never leave the machine, even with the optional cloud check on.
+- It does not send your prompts, files, tool arguments or tool output off your machine by default. Tool arguments and tool descriptions never leave the machine, even with the optional cloud check on. With it on, the Claude Code hook also sends a small sample of web, MCP and shell results to check them for hidden instructions; you can turn that off alone with `"cloudCheckToolOutput": false` under `hooks` in `~/.zn/config.json`.
 - It does not need an account or an API key for the local checks.
 - It is not a sandbox. It checks what an agent's hooks can see, and it does not stop a program from touching other things.
 - It does not judge whether a shell command or a query is destructive in the tool-call check. That check is text-based.

@@ -39,7 +39,7 @@ Here is one tool call from the agent to the answer, using only what is described
 6. The model sees the cleaned output, with a marker or `[REDACTED_...]` text in place of any removed value, and gives its answer.
 7. Each assessment is recorded in the hash-chained audit log at `~/.zn/evidence.jsonl`.
 
-All of these checks use the local engine. Tool arguments and tool output never leave the machine. See [Key Architectural Principles](#key-architectural-principles) for the details.
+All of these checks use the local engine. Tool arguments never leave the machine, and neither does tool output, except in one opt-in case: with the cloud check on, the Claude Code hook sends a capped, redacted sample of web, MCP and shell results to the cloud classifier. See [Key Architectural Principles](#key-architectural-principles) for the details.
 
 ## How it attaches to your agent
 
@@ -78,7 +78,7 @@ What goes where on your machine, and what can leave it:
    Local evaluation uses compiled regular expressions, homoglyph normalization, and a 2048-entry LRU cache. Measured latencies by input size, with hardware and the script to reproduce them, are in the [npm package README](../packages/zn-gate/README.md#performance-local-rules-engine-no-network).
 
 3. **Optional Cloud Second Opinion (opt-in):**
-   Only prompt analysis (`analyze()`) can query the cloud classifier, and only when both `ZN_API_KEY` and `ZN_CLOUD=1` are set, or the user ran `zn-gate connect` (`ZN_LOCAL_ONLY=true` overrides it). Attacks caught by the local rules are blocked in-process first, and the text is secret-redacted locally before it is sent (personal data, and a secret zn-gate does not recognize, is not removed). If the cloud call fails, the local result stands (`fallback: true`) and nothing is blocked because of it. Tool arguments, tool output and tool descriptions never leave the machine.
+   Only prompt analysis (`analyze()`) can query the cloud classifier, and only when both `ZN_API_KEY` and `ZN_CLOUD=1` are set, or the user ran `zn-gate connect` (`ZN_LOCAL_ONLY=true` overrides it). Attacks caught by the local rules are blocked in-process first, and the text is secret-redacted locally before it is sent (personal data, and a secret zn-gate does not recognize, is not removed). If the cloud call fails, the local result stands (`fallback: true`) and nothing is blocked because of it. Tool arguments and tool descriptions never leave the machine. Tool output stays local too, except that the Claude Code hook, when the cloud check is on, also sends a sample of at most 16 KiB of each web, MCP or shell result after the same secret redaction, and a failed call changes nothing (`hooks.cloudCheckToolOutput: false` turns that off).
 
 4. **Hash-Chained Local Decision Log:**
    Each recorded assessment is hashed with SHA-256 and chained into `~/.zn/evidence.jsonl`, with canonical JSON in both the Node and Python implementations. The chain detects accidental or partial edits; it is not tamper-proof against someone with write access to the file, who can recompute it.

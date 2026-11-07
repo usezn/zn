@@ -16,7 +16,11 @@ try {
  *
  *  - Tool results, tool-call arguments and tool/parameter descriptions are
  *    evaluated ONLY in-process (analyzeLocal / checkToolResult). They never
- *    leave the machine, under any configuration.
+ *    leave the machine through this module's own entry points.
+ *  - One opt-in exception (since 1.15): the Claude Code PostToolUse hook
+ *    (lib/hooks/runner.js, cloudOutputNote) passes a capped sample of the
+ *    output of web, MCP and shell tools to analyze() with pinOrigin, only when
+ *    the cloud check is on and hooks.cloudCheckToolOutput is not false.
  *  - The only code path that can reach the network is analyze() — the
  *    prompt-analysis API used by the `analyze_prompt` MCP tool and the
  *    `zn-gate analyze` CLI command — and only when BOTH ZN_API_KEY and
@@ -238,13 +242,16 @@ async function analyze(input, options = {}) {
   const apiKey = found.key;
   const { sanitized, detections } = redactSecrets(typeof input === 'string' ? input : String(input ?? ''));
   const storedKey = found.source === 'keychain' || found.source === 'vault';
-  const tlsWhy = storedKey ? cloudKey.tlsRefusal() : null;
+  // pinOrigin (the hooks): the key and the text go only to the fixed zn origin, with the TLS check held to the same strictness as a saved key,
+  // because the environment of an agent can be set by the project it works in.
+  const pinned = storedKey || Boolean(options.pinOrigin);
+  const tlsWhy = pinned ? cloudKey.tlsRefusal() : null;
   if (tlsWhy) {
     // The saved key is never sent over a connection that is not checked against the system's authorities.
     return { ...local, mode: 'oss-local', fallback: true, cloud_error: tlsWhy };
   }
-  const endpoint = resolveEndpoint(options, { stored: storedKey });
-  if (storedKey && endpoint.indexOf(FIXED_API_ORIGIN + '/') !== 0) {
+  const endpoint = resolveEndpoint(options, { stored: pinned });
+  if (pinned && endpoint.indexOf(FIXED_API_ORIGIN + '/') !== 0) {
     return { ...local, mode: 'oss-local', fallback: true, cloud_error: 'the saved key is only sent to ' + FIXED_API_ORIGIN };
   }
   const urlIgnored = storedKey && Boolean(options.apiUrl || process.env.ZN_API_URL);

@@ -576,10 +576,17 @@ test('no hook, shield or scrubber module reads the stored key or the cloud setti
   const files = [];
   for (const dir of ['hooks', 'scrub']) for (const f of fs.readdirSync(path.join(lib, dir))) files.push(path.join(lib, dir, f));
   files.push(path.join(lib, 'shield.js'), path.join(lib, 'evidence.js'));
-  for (const f of files) {
+  // The one exception: lib/hooks/cloud_output.js asks the opt-in cloud check about a sample of tool output (see docs/connect.md).
+  const EXCEPTION = path.join(lib, 'hooks', 'cloud_output.js');
+  assert.ok(files.includes(EXCEPTION), 'the exception is still where this test expects it');
+  for (const f of files.filter((x) => x !== EXCEPTION)) {
     const src = fs.readFileSync(f, 'utf8');
     assert.doesNotMatch(src, /require\(\s*['"][^'"]*(?:cloud-key|connect-cli)|cloudKey/, path.relative(lib, f));
   }
+  // The exception reads no key itself: it only asks the client, which pins the origin.
+  const ex = fs.readFileSync(EXCEPTION, 'utf8');
+  assert.doesNotMatch(ex, /loadStoredKey|resolveApiKey|keychain|vault/i);
+  assert.match(ex, /pinOrigin: true/);
 });
 
 test('connect-cli talks to one host only and has no other URL', () => {
