@@ -48,6 +48,71 @@ It also does these things on your machine:
 
 The cloud check is off until you turn it on. It needs both `ZN_CLOUD=1` and `ZN_API_KEY`, or a run of `zn-gate connect`. It only looks at prompts, and the text has recognised secrets removed before it is sent. If the call fails, the local result stands and nothing is blocked because of it. See [Connect](connect.md).
 
+## Your first run: a fake secret gets flagged
+
+You can see zn-gate catch a secret without risking anything. The steps below use a made-up key. Run them in your own terminal, not through your agent.
+
+1. Make an empty folder and go into it:
+
+   ```bash
+   mkdir zn-first-run
+   cd zn-first-run
+   ```
+
+2. Create a file named `.env` (the dot is part of the name) with this one line:
+
+   ```text
+   AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+   ```
+
+   `AKIAIOSFODNN7EXAMPLE` is the example key that Amazon publishes in its own documentation. It does not open anything. In a text editor, choose "All files" when you save, so the file is not called `.env.txt`.
+
+3. Run the scan:
+
+   ```bash
+   npx -y zn-gate scan .
+   ```
+
+The output is what zn-gate printed on a real machine, with one change: the `Target` line shows a placeholder folder instead of the full path of that machine.
+
+```text
+[+]  zn-gate Static Security Audit
+Target  : /home/you/zn-first-run
+Scope   : Prompt templates, docs, configs (use --code to scan source)
+Files   : 2 file(s) queued for audit
+
+Findings (1):
+  [x] .env:1 Secret found
+    Rule: secret:aws_access_key (Exposed credential detected by DLP filter)
+    Line: AWS_ACCESS_KEY_ID=[REDACTED_AWS_KEY]
+    Next: run npx -y zn-gate env shadow .env to move the values into the local vault, and rotate any value that was ever committed or shared.
+
+
+-----------------------------------------------------------------------------
+Audit Result : FAILED - 1 SECRET(S) FOUND
+Files Scanned: 2
+Files Skipped: 0
+Status       : Move the secrets out of these files (see "Next" for each one)
+-----------------------------------------------------------------------------
+```
+
+### What each part means
+
+- **`zn-gate Static Security Audit`**: the name of the check. It only reads files. It does not run anything from them.
+- **`Target`**: the folder it checked. **`Scope`**: the kinds of files it reads by default, here text, docs and config files. `.env` is a config file, so it is read.
+- **`Files : 2 file(s)`**: the two files in the folder, `.env` and an ordinary text file.
+- **`[x] .env:1 Secret found`**: the file and the line number where it found a secret. The `[x]` marks a finding.
+- **`Rule: secret:aws_access_key`**: the kind of secret the rule recognises, here an AWS access key.
+- **`Line: AWS_ACCESS_KEY_ID=[REDACTED_AWS_KEY]`**: the line as zn-gate saw it, with the value replaced by `[REDACTED_AWS_KEY]`. zn-gate never prints the value itself, so you can paste this report without leaking it.
+- **`Next:`**: what to do. For a real key, move the value into zn's encrypted vault with the command shown (see [Keep secrets out of your agent](secrets.md)), and replace the key with a new one if the old one was ever shared or committed. This key is fake, so there is nothing to replace.
+- **`Audit Result : FAILED`**: at least one secret was found. The scan stops with exit code `1`, which a script or a CI job reads as "stop and look" (see [exit codes](exit-codes.md)).
+
+The scan only reports. It does not stop your agent. The part that stops an agent from reading a `.env` file is the hook that zn-gate installs for it. [Check that it works](check.md) tests exactly that, and [What the check output means](examples/check-output-explained.md) explains each line of that output.
+
+When you are done, go back up and delete the test folder (`cd ..` and then `rm -r zn-first-run`, or `Remove-Item -Recurse zn-first-run` in PowerShell).
+
+If you installed zn-gate with `pip` instead of `npx`, run `zn-gate scan .` in place of the command above. The wording of the report can differ a little between the Node.js and the Python versions.
+
 ## Where to go next
 
 1. [First 5 minutes](first-5-minutes.md): install zn-gate and see it work.
