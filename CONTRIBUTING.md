@@ -4,6 +4,28 @@ Thank you for your interest in contributing to **zn**! We welcome bug reports, r
 
 How the project is maintained, how pull requests are reviewed and how releases are made: [GOVERNANCE.md](GOVERNANCE.md). Pull requests target the `next` branch. Releases ship weekly: a pull request merged into `next` by Thursday goes into that week's release candidate and, after testing, into the release on Tuesday ([release schedule](GOVERNANCE.md#release-schedule)).
 
+## Where to start
+
+New to the project? These eight tasks are small and self-contained. Each one names the files to read, the one command that runs its tests, and what a good pull request contains. Open your pull request against the `next` branch. Reviewers check that user-visible changes add a changelog fragment (see [changelog.d/README.md](changelog.d/README.md)).
+
+Install the Node.js dependencies once with `cd packages/zn-gate` and `npm ci --ignore-scripts`. Run each command from the repository root unless a `cd` says otherwise.
+
+1. **Add a detection rule with a benign counter-test.** Files: `packages/zn-gate/lib/rules.js`, its Python twin `packages/zn-gate-py/src/zn_gate/rules.py`, and a rule test file such as `packages/zn-gate/test/rules_ignore.test.js`. Test: `cd packages/zn-gate` and `node --test test/rules_ignore.test.js`. Good PR: a rule ID that follows [Adding New Rules](#adding-new-rules), an ordinary sentence that must stay allowed next to the attack that must be blocked, and the version bump and snapshot update described in [Changing a rule](#changing-a-rule).
+
+2. **Add an editor or agent setup page.** Files: a new `docs/editors/<name>.md` (copy the layout of `docs/editors/zed.md`) and a row in the table in `docs/editors/README.md`. Test: `.github/markdownlint/node_modules/.bin/markdownlint-cli2` (install it once with `npm ci --prefix .github/markdownlint --ignore-scripts`). Good PR: setup steps a beginner can follow, and a "Tested by us" entry that says exactly what you ran. Write "Not yet verified" if you did not run it.
+
+3. **Add an example for another agent framework.** Files: a new `examples/<framework>-agent/` folder with `agent_guard.py`, a `requirements.txt` that pins one `zn-gate==` release, and a `README.md`. Start from `examples/haystack-agent/`. Test: `python3 .github/scripts/examples-smoke.py run --only <framework>-agent`. Good PR: the example's README shows the output it really prints, and the smoke run passes.
+
+4. **Fix a docs page.** Files: any page under `docs/` (for example `docs/first-5-minutes.md`) or a package README. Test: `.github/markdownlint/node_modules/.bin/markdownlint-cli2`. Good PR: one fix per change, with a short note on what was wrong. Any command you change has been run by you.
+
+5. **Add a Windows check.** Files: `packages/zn-gate/test/hook_dir_windows.test.js`, whose Windows-only cases are skipped on other systems. Test, in Windows PowerShell: `cd packages/zn-gate` and `node --test test/hook_dir_windows.test.js`. On other systems the same command passes and the Windows cases are skipped. Good PR: a case that fails before your fix and passes after it on Windows, with the output of that run in the pull request.
+
+6. **Add a line to the benign corpus.** Files: `packages/zn-gate/test/fixtures/benign_phrases.json`, the `phrases` list. Test: `node bench/rules_fp_gate.js`. Good PR: one ordinary sentence that a developer really writes, with no real secrets or real hosts. If the block count rises, the baseline change in `bench/rules_fp_baseline.json` is explained in the pull request, as described in [Changing a rule](#changing-a-rule).
+
+7. **Add a Python parity test.** Files: `packages/zn-gate-py/tests/test_cli_parity.py`, which checks that the Python CLI behaves like the npm package. Test: `cd packages/zn-gate-py` and `python -m pytest tests/test_cli_parity.py -v`. Good PR: one new case next to the existing ones, with the same text and exit code as the Node CLI.
+
+8. **Check an agent's version handling.** Files: `packages/zn-gate/lib/agents/claude-code.js` (it has version-dependent behavior, for example for Claude Code 2.1.295 and later) and `packages/zn-gate/test/hooks_claude_launcher.test.js`. Test: `cd packages/zn-gate` and `node --test test/hooks_claude_launcher.test.js`. Good PR: the agent version you checked and where you found it, and a test that pins the behavior for that version.
+
 ## Architecture Overview
 
 `zn` is designed as a local-first security gate with minimal dependencies:
