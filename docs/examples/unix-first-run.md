@@ -60,7 +60,7 @@ This table uses only [Files and folders zn-gate reads or writes](../files-and-fo
 | --- | --- |
 | 1. Check your Node.js version | Not listed. |
 | 2. Update Node.js | Not listed. |
-| 3. Install zn-gate with `init` | Not listed for plain `init`. With `--wrap-mcp`, `init` saves a copy of each MCP config first. |
+| 3. Install zn-gate with `init` | Depends on the steps you accept. For each detected agent, the hooks step adds hooks to its settings file, writes a backup of that file first, and writes a launcher script under `~/.zn/hooks`. With `--wrap-mcp`, `init` saves a copy of each MCP config first. |
 | 4. Fix `EACCES` | Not listed. |
 | 5. `check` | Not listed. |
 | 6. Fix the Node.js version for Claude Code | Not listed. |
