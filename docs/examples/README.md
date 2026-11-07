@@ -9,3 +9,4 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project, from the run to what each exit code means.
 - [stats-and-report.md](stats-and-report.md): worked examples of `zn-gate stats` and `zn-gate report`.
 - [first-cloud-check.md](first-cloud-check.md): the shortest path from connect to a first checked prompt, in five steps.
+- [team-sync-offline.md](team-sync-offline.md): what `zn team sync` does without a network, what keeps working from the saved policy, and its exit codes.
