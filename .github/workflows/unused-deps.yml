@@ -4,9 +4,11 @@ on:
   push:
     branches: [main]
     paths: ["packages/zn-gate/**", "src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/unused-deps.yml"]
+  # Both jobs are informational, so a pull request runs them only when it changes this workflow; every other
+  # change is covered by the push to main and the daily run on next.
   pull_request:
     types: [ opened, synchronize, reopened, ready_for_review ]
-    paths: ["packages/zn-gate/**", "src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/unused-deps.yml"]
+    paths: [".github/workflows/unused-deps.yml"]
   # Nightly run on next (a schedule runs on main; the checkout steps switch to next).
   schedule:
     - cron: '10 3 * * *'
