@@ -60,6 +60,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 |---|---|---|
 | [Architecture](architecture.md) | The three checks, the local engine and how zn-gate attaches to an agent | Developers, security reviewers |
 | [Threat model](threat-model.md) | What the scrubber and broker protect against, and what they do not | Security reviewers |
+| [What runs locally and what goes to the API](local-checks-and-api-data.md) | Which checks run on your computer, when the optional cloud check is called, the exact request it sends, and how to keep everything local | Everyone |
 | [OWASP mapping](owasp-mapping.md) | Which zn-gate rules and features touch each category of the OWASP LLM and MCP Top 10, what is not covered, and the agent CVEs that `zn audit` reports | Security reviewers |
 | [Performance](performance.md) | How long the agent hooks take, with the script to reproduce it | Developers |
 | [API reference](api-reference.md) | Node.js and Python functions | Developers |
