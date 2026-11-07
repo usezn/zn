@@ -10,9 +10,9 @@ This page says what the zn analysis API keeps for each request, how long it is k
 | Evidence records (one per analyzed request) | 90 days | Automatically after 90 days, with your account, or on email request |
 | Usage counts (dashboard) | Until your account is deleted | With your account |
 | Application logs | 14 to 90 days | Automatically |
-| Gateway access logs (include IP address) | 14 to 30 days | Automatically |
+| Gateway access logs (include IP address) | 14 to 30 days (30 days for the analysis endpoint) | Automatically |
 | API keys | Until you delete the key or your account | Delete the key in the dashboard |
-| Anonymous statistics (only if you turn them on) | 400 days | Not linked to an account |
+| Anonymous statistics (only if you turn them on) | 400 days | Not linked to an account (the upload request is still in the gateway access log) |
 
 ## What the API stores
 
@@ -29,9 +29,10 @@ Each analyzed request creates one evidence record. It holds:
 - a random evidence ID;
 - the verdict, the confidence, the rule that decided and the rules version;
 - the response time and the time of the request;
-- a SHA-256 hash of the input and its size in bytes and characters;
+- a SHA-256 hash of the input and its size in bytes and characters (a hash of a short or guessable input can be recovered by guessing, so treat it as pseudonymous, not anonymous);
 - the first 12 characters of the API key and a one-way identifier of the key;
-- the endpoint used, the Origin host of the request, and the client name and version.
+- the endpoint used, the Origin host of the request, and the client name and version;
+- your account, as the owner of the record, and the model score and version when a model ran.
 
 It does not hold the input text (except the Contributor excerpt above), the raw User-Agent header, the IP address or the API key itself.
 
@@ -43,8 +44,8 @@ For each request the API keeps a usage row: your account, the date and time, the
 
 ### Logs
 
-- **Application logs** record the status of each request, the first 8 characters of the API key, the response time and, for analysis calls, the length of the input. They never contain input text. They are kept for 14 days for the analysis endpoints and for 90 days for the MCP and key-management endpoints.
-- **Gateway access logs** record the time, route, status, response time and the source IP address of each request. They are kept for 14 days on the production gateway and for 30 days on the other gateway.
+- **Application logs** record the request status (all errors and a sample of successful calls), the first 8 characters of the API key, the response time and, for analysis calls, the length of the input. They never contain input text. They are kept for 14 days for the analysis endpoints and for 90 days for the MCP and key-management endpoints.
+- **Gateway access logs** record the time, route, status, response time and the source IP address of each request. They are kept for 30 days for the analysis endpoint, the MCP endpoint and the usage-statistics endpoint, and for 14 days for the other routes.
 
 ### API keys and account
 
@@ -54,7 +55,7 @@ An API key is stored encrypted, so the dashboard can show it again after you pas
 
 ### Anonymous statistics (opt-in)
 
-zn-gate can send a daily count report to the API, but only if you turn that on. It is off by default. The report holds counts only, a random installation ID that is not linked to any account, the day, and version and agent information. It is kept for 400 days.
+zn-gate can send a daily count report to the API, but only if you turn that on. It is off by default. The report holds counts only, a random installation ID that is not linked to any account, the day, and version and agent information. It is kept for 400 days. Like every request, the report's source IP address appears in the gateway access log for 30 days; the stored report itself holds no IP address.
 
 ### Teams
 
