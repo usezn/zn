@@ -129,7 +129,7 @@ Removes zn-gate from this computer in one step. It finds what is set up, prints 
 - zn's hooks of every agent, for your user and for the current project, and zn's own `secrets` MCP server (the same as `hooks uninstall`);
 - MCP servers wrapped by `init --wrap-mcp`: the saved copy of each config is put back (changes made to that file since are lost). Afterwards it looks again and lists any server that is still wrapped (for example a config wrapped twice) with what to do by hand.
 
-The vault is not touched unless you answer yes to a second, separate question (default no); deleting it cannot be undone. `.env` files that hold zn markers are left alone, because the values are in the vault: run `zn env unshadow` first if you want them back in the file. It ends by running `check` and showing its result, and tells you how to remove the program itself (`npm uninstall -g zn-gate`).
+The vault is not touched unless you answer yes to a second, separate question (default no); deleting it cannot be undone. `.env` files that hold zn markers are left alone, because the values are in the vault: run `zn env unshadow` first if you want them back in the file. It ends by running `check` and showing its result, and tells you how to remove the program itself (`npm uninstall -g zn-gate`), which is the last step: the hooks and the plugin go first, so no agent is left pointing at a missing command.
 
 - `--dry-run`: print the plan and change nothing.
 
@@ -508,7 +508,7 @@ zn-gate hooks install <agent> [--project] [--no-mcp]
 zn-gate hooks uninstall <agent> [--project] [--no-mcp]
 ```
 
-Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, use [`uninstall`](#uninstall)). `<agent>` is `claude-code`, `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `gemini` or `copilot` (`claude` is accepted for `claude-code`, `gemini-cli` for `gemini`). `--project` changes the settings of the current project instead of your user settings. `--no-mcp` leaves the `secrets` MCP server out. It needs an interactive terminal. An agent that is not in that list or a misspelled name is refused first, with the supported names, and exit code 64.
+Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, use [`uninstall`](#uninstall)). Remove the hooks before you remove the program with `npm uninstall -g zn-gate`. `<agent>` is `claude-code`, `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `gemini` or `copilot` (`claude` is accepted for `claude-code`, `gemini-cli` for `gemini`). `--project` changes the settings of the current project instead of your user settings. `--no-mcp` leaves the `secrets` MCP server out. It needs an interactive terminal. An agent that is not in that list or a misspelled name is refused first, with the supported names, and exit code 64.
 
 #### `hooks install`
 
