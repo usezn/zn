@@ -2,6 +2,12 @@
 
 You have never used a terminal agent, or you have just started. This page explains in plain words what zn-gate does and what it never does. It repeats only what the [architecture page](architecture.md) and the [glossary](glossary.md) already say, so use those for the full detail.
 
+## Before you begin
+
+- [ ] [Node.js](first-5-minutes.md#before-you-start) installed (run `node --version` to check)
+- [ ] [A terminal](first-5-minutes.md#before-you-start) open, separate from your agent
+- [ ] [A supported agent](first-5-minutes.md#1-install) on your machine
+
 ## Some words first
 
 - A **coding agent** (Claude Code, Codex CLI, Cursor or OpenCode) is a program that reads your files and runs commands for you.

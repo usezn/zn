@@ -4,9 +4,11 @@ on:
   push:
     branches: [main]
     paths: ["packages/zn-gate/**", "src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/unused-deps.yml"]
+  # Both jobs are informational, so a pull request runs them only when it changes this workflow; every other
+  # change is covered by the push to main and the daily run on next.
   pull_request:
     types: [ opened, synchronize, reopened, ready_for_review ]
-    paths: ["packages/zn-gate/**", "src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/unused-deps.yml"]
+    paths: [".github/workflows/unused-deps.yml"]
   # Nightly run on next (a schedule runs on main; the checkout steps switch to next).
   schedule:
     - cron: '10 3 * * *'
@@ -15,8 +17,8 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request, or to next, cancels the run still going for it. Runs for main, release branches,
-# the merge queue and the schedule always complete (each has its own group).
+# A new push to a pull request cancels the run still going for it. Runs for main, the schedule and manual runs
+# always complete (each has its own group).
 concurrency:
   group: unused-deps-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}

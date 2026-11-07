@@ -1,6 +1,6 @@
 # Troubleshooting
 
-The eleven messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
+The thirteen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
@@ -17,6 +17,8 @@ Run every command in your own terminal, not through your AI agent. New here? Sta
 - [Your agent ignores zn's hooks on a managed computer](#9-your-agent-ignores-zns-hooks-on-a-managed-computer)
 - ["the evidence log ... is damaged"](#10-the-evidence-log--is-damaged)
 - [The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)
+- [Init cannot install zn-gate: no internet connection](#12-init-cannot-install-zn-gate-no-internet-connection)
+- [Init stops the npm install after 3 minutes](#13-init-stops-the-npm-install-after-3-minutes)
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
 - [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
 
@@ -222,9 +224,48 @@ The version number in the second message is yours and will differ.
 
 Running `npx -y zn-gate init` on a Node.js older than 20.19 does the second option for you: it skips the plugin and sets up zn's hooks for Claude Code instead, and if the plugin is already installed it offers to turn it off once the hooks work. Node.js 22 LTS is recommended; 18 or later is enough for the hooks and the CLI. See the [README](../README.md#install).
 
+## 12. Init cannot install zn-gate: no internet connection
+
+`npx -y zn-gate init` prints this when npm cannot reach the npm registry while it installs zn-gate for your user:
+
+```text
+  that did not finish. npm could not reach the registry.
+  The cause may be no internet connection, a VPN or proxy that blocks it, or a company registry that is down.
+  Check your connection (and your VPN or proxy), then run it again:
+    npm install -g zn-gate@<version>
+```
+
+**What it means:** npm stopped quickly because the registry could not be found or reached. Nothing is wrong with zn-gate. The version in the command is the one init is installing.
+
+**What to do:**
+
+1. Check that your internet connection works, and that your VPN or proxy lets npm through.
+2. In your own terminal, run the command the message shows, `npm install -g zn-gate@<version>`.
+3. Run `npx -y zn-gate init` again, then `npx -y zn-gate check` to see what is protected.
+
+## 13. Init stops the npm install after 3 minutes
+
+You may see this when the npm install takes too long:
+
+```text
+  that was stopped: the install took longer than 180 seconds.
+  Your connection may just be slow. The install may be incomplete, so check what is there with:
+    npm ls -g zn-gate
+  Then run it again:
+    npm install -g zn-gate@<version>
+```
+
+**What it means:** zn-gate gives the npm install 3 minutes and then stops it. A slow connection, or a network that accepts the connection and never answers, can cause this. The install may be half done. On Windows, with the usual Node.js folder layout, zn-gate starts npm's own script directly, so the stop reaches npm itself and not only the command shell that started it.
+
+**What to do:**
+
+1. Run `npm ls -g zn-gate` in your own terminal. If it shows a version, zn-gate is installed.
+2. If it is missing or the install was incomplete, run the command the message shows, `npm install -g zn-gate@<version>`, on a steadier connection.
+3. Run `npx -y zn-gate check` to see what is protected. For a VPN or proxy, see [the README](../README.md#install).
+
 ## Block and warn reasons, by family
 
-Past the eleven messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
+Past the thirteen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
 
 Run every command in your own terminal, not through your AI agent. If you did not install zn-gate with `npm install -g zn-gate`, put `npx -y zn-gate` where the commands below say `zn`, for example `npx -y zn-gate secret set NAME`. Words you do not know are in the [glossary](glossary.md).
 
@@ -564,9 +605,22 @@ zn: something went wrong inside the zn hook, so this action was blocked to keep 
 
 #### "zn: could not read this action (`<why>`), so it was blocked" / "could not read the tool name of this call" / "could not read the command of this call"
 
-**What happened:** the event your agent sent to zn was damaged or in a shape zn does not know, so zn could not check it.
+**What happened:** the event your agent sent to zn was damaged, so zn could not check it. If the message says your agent "changed the format of the data", see the next entry.
 
 **What to do:** retry the action. If it repeats, run `zn hooks install <agent>` again, then `npx -y zn-gate check`.
+
+#### "This usually means `<agent>` changed the format of the data it sends to zn"
+
+```text
+zn: could not read the tool name of this call, so zn cannot check it and blocked it. This usually means <agent> changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `zn hooks install <agent>`.
+zn: <agent> sent an event zn does not know, so it was not checked. This usually means <agent> changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `zn hooks install <agent>`.
+```
+
+**What happened:** your agent was updated and now sends zn information in a new shape (a renamed field, a new event name, a different tool name). The installed zn-gate is older than the agent, so it cannot read it. A call whose tool or command zn cannot read is blocked. An event with a name zn does not know is let through unchecked, and the second message appears on the hook's error output (some agents show it only in verbose mode).
+
+**Is it safe?** A blocked call was not run. An event the second message names was not checked, so update zn-gate soon.
+
+**What to do:** run `npm install -g zn-gate@latest`, then `zn hooks install <agent>`, then `npx -y zn-gate check`. If you use the Claude Code plugin, run `claude plugin update zn-gate@usezn` instead. If it still happens after the update, your agent may be newer than the latest zn-gate: please report it as an issue.
 
 #### "zn: this action names a file or text that is not valid Unicode text, so it was blocked"
 
@@ -1011,6 +1065,33 @@ The `zn-gate` command of the Python package protects agents you build yourself. 
 
 **What to do:** follow that message, or choose another `--output` path, then run it again.
 
+#### "zn_gate: ZN_STRICT is set to ..., but only ZN_STRICT=1 turns it on, so it is off"
+
+This also appears for `ZN_BLOCK_TRUNCATED`.
+
+**What happened:** the variable has a value other than `1`, such as `true` or `yes`. Only `1` turns it on, so the setting is off. The warning appears once for each value in each run of your program. An unset, empty or `0` value leaves the setting off without a warning.
+
+**What to do:** to turn it on, set the variable to `1`, for example `ZN_STRICT=1`. If you do not want it, remove the variable.
+
+#### "zn_gate: '...' was blocked (rule ...), but on_block='ignore' let it through"
+
+**What happened:** the LangChain handler (`ZnGuardCallbackHandler`) was set to let blocked items through, with `on_block="ignore"` or `raise_on_injection=False`. It found a blocked prompt, tool call or output and let it through. The line names where it was (for example `langchain:llm_prompt`) and the rule, never the text.
+
+**What to do:** if you did not mean to let blocked items through, use `on_block="raise"`, the default. The handler then raises `GuardBlockError` instead. If you did mean it, each warning is the record of an item that passed.
+
+#### "[zn-gate] Warning: Cloud gate error (...)"
+
+**What happened:** you turned on the cloud check (`ZN_CLOUD=1` with an API key), and the call to the cloud failed. The message is shown only when `ZN_VERBOSE=1` is set. The rest of the line says why:
+
+- "The cloud service did not accept the API key: check ZN_API_KEY." (HTTP 401 or 403)
+- "The cloud service took too long to answer: check your network connection."
+- "The cloud service could not be reached: check your network connection and ZN_API_URL."
+- "The cloud service answered with an error (HTTP `<code>`): try again later."
+
+Then zn checked the text with the local rules only, on your machine, and the result has `"mode": "oss-local-fallback"`.
+
+**What to do:** for an invalid key, check `ZN_API_KEY`. For a timeout or a connection error, check your connection and `ZN_API_URL` if you set it. For any other error, try again later.
+
 ### Where a message points you
 
 - A message that ends with "More: <https://usezn.com/docs/zn-gate/troubleshooting/>" (a vault that did not start, a damaged vault file, a failed audit log check) points to this page. [Section 5](#5-your-secret-vault-is-locked) covers the vault, and [section 10](#10-the-evidence-log--is-damaged) the logs.
@@ -1039,7 +1120,7 @@ The Node.js package always refuses a connection whose certificate does not check
 
 ### Hooks block everything: "zn-gate changed since the hooks were installed"
 
-The hook launcher keeps a fingerprint of zn-gate's hook runner and runs it only while it matches, so after the files change your agent blocks its tool calls and prompts and shows the message "zn-gate changed since the hooks were installed". `npm update -g zn-gate` fixes the launchers by itself, but not when the update ran with `--ignore-scripts`, with bun, or with `sudo`. In your own terminal, without `sudo`, run `zn hooks install <agent>` again (for example `zn hooks install claude-code`), then start a new session. More in [check](check.md) and [upgrading](upgrading.md).
+The hook launcher keeps a fingerprint of zn-gate's hook runner and of every other zn-gate file the hook loads, and runs a file only while it matches, so after the files change your agent blocks its tool calls and prompts and shows the message "zn-gate changed since the hooks were installed". `zn-gate check` names the changed file. `npm update -g zn-gate` fixes the launchers by itself, but not when the update ran with `--ignore-scripts`, with bun, or with `sudo`. In your own terminal, without `sudo`, run `zn hooks install <agent>` again (for example `zn hooks install claude-code`), then start a new session. More in [check](check.md) and [upgrading](upgrading.md).
 
 ### npm says EACCES when init installs zn-gate
 

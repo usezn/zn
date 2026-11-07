@@ -122,13 +122,23 @@ Set the mode in `~/.zn/config.json`:
 
 or for one run with the environment variable `ZN_MCP_PINNING=block`. The mode that applies is the strictest of the two. An MCP server's environment can make pinning stricter but never weaker: only `"mcpPinning": "off"` in your own `~/.zn/config.json` turns it off. With `--shadow`, pinning only logs (see above).
 
+### Tool shadowing
+
+When you wrap more than one server, the shield also compares each tool list with the approved tools of your other pinned servers and warns (`[zn-shield TOOL SHADOWING]`) in two cases:
+
+- a tool has the same name as an approved tool of another server, so the agent may call the wrong one;
+- the name of a tool reads like that of an approved tool of another server once case, full-width letters, look-alike letters of other alphabets and invisible or default-ignorable characters are set aside;
+- the description, title, annotation title or the input or output schema of a tool names an approved tool of another server, also in the form `mcp__<server>__<tool>` or with invisible characters inside the name, which is how a server can steer how a different server's tool is used. Names shorter than six characters, names that are a single plain word (`update`, `commit`: they are in every text) and names that only appear inside a longer word are ignored for this check; a tool whose text is over 1 MiB is reported as too long to check in full.
+
+This is a warning, not a block: the same name on two servers can be legitimate. Each overlap is reported once per run of the shield, and it is logged in the evidence log (`mcp_tool_shadowing`) without any tool text. A tool that is new or changed on the other server and not yet approved is not used as a reference.
+
 ### See the pins
 
 ```bash
 npx -y zn-gate pins
 ```
 
-lists each pinned server with its key, its command line, how many tools are pinned and when, and the names of the tools that changed or are new since then. `zn-gate pins list` does the same. If nothing is pinned yet, it says so; servers are pinned the first time the shield sees their tools.
+lists each pinned server with its key, its command line, how many tools are pinned and when, and the names of the tools that changed or are new since then, each with what changed: its description, its parameters (the input and output schema, including every parameter description), other fields (annotations and the like), or `new tool`. `zn-gate pins list` does the same. Pins written by an older version say `whole tool` until the next approval. If nothing is pinned yet, it says so; servers are pinned the first time the shield sees their tools.
 
 ### Approve a change
 
@@ -163,11 +173,12 @@ If the pins file of a server cannot be read or written, the shield treats every 
 
 ### What is stored
 
-Pins live in `~/.zn/mcp-pins/`, one file per server, readable only by your account on Linux and macOS. Each file holds the program name, its arguments with secrets removed, and the tool names with their fingerprints. It never holds tool text.
+Pins live in `~/.zn/mcp-pins/`, one file per server, readable only by your account on Linux and macOS. Each file holds the program name, its arguments with secrets removed, and the tool names with their fingerprints (one for the whole tool and one each for its text, its parameters and its other fields). It never holds tool text.
 
 ## Limits
 
 - Pinning covers tool definitions (names, descriptions and parameters). It does not check the server's code.
+- The shadowing check only knows servers that were pinned on this machine, and it compares names, not what a tool does.
 - Tool results are checked in full up to 32 MB. A larger result is removed and the agent is told to ask the tool for a smaller part (a page or a line range).
 - Text nested more than 8 levels deep in a server message or in a tool result's structured content is not checked. It is replaced by a notice, so the agent does not get it unchecked; in shadow mode it is passed on unchanged, and the shield writes one line to stderr saying the message was not fully checked.
 - Lines are capped before they are read in full: a line over 64 MiB from the server (32 MiB from the client) is dropped, in shadow mode too, because it cannot be held in memory to be checked. A message nested more than 128 levels, with more than 4 million values, or in a batch of 1000 messages or more is refused with a JSON-RPC error; when the server sends such a batch, each request it was answering gets its own error. While a lot of server output waits to be checked, the shield stops reading from the server.

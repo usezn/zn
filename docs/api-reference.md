@@ -1,5 +1,7 @@
 # zn-gate API Reference
 
+For a short guide to calling the HTTP API from curl, Python or Node.js, see the [API quickstart](api-quickstart.md).
+
 ## Table of contents
 
 - [Node.js (`zn-gate`)](#nodejs-zn-gate)
@@ -41,6 +43,7 @@
   - [`get_evidence_stats(file_path: str = EVIDENCE_FILE, limit: int = 50) -> dict`](#get_evidence_statsfile_path-str--evidence_file-limit-int--50---dict)
   - [`export_evidence_ledger(file_path: str | None = None, format: str = 'jsonl') -> dict`](#export_evidence_ledgerfile_path-str--none--none-format-str--jsonl---dict)
   - [Constants (Python)](#constants-python)
+  - [Warnings the Python package logs](#warnings-the-python-package-logs)
   - [Framework integrations (`zn_gate.integrations`)](#framework-integrations-zn_gateintegrations)
   - [`ZnGuardCallbackHandler(on_block='raise', mask_secrets=True, raise_on_injection=None, block_truncated=False)`](#znguardcallbackhandleron_blockraise-mask_secretstrue-raise_on_injectionnone-block_truncatedfalse)
   - [`guard_langchain_tool(tool, on_block='raise', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`](#guard_langchain_tooltool-on_blockraise-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone)
@@ -50,6 +53,7 @@
   - [`guard_pydantic_ai_toolset(toolset, on_block='return', mask_secrets=True, check_result=True, block_truncated=False, fallback=None)`](#guard_pydantic_ai_toolsettoolset-on_blockreturn-mask_secretstrue-check_resulttrue-block_truncatedfalse-fallbacknone)
   - [`ZnLlamaGuard(on_block='raise', mask_secrets=True, raise_on_violation=None, fallback=None)`](#znllamaguardon_blockraise-mask_secretstrue-raise_on_violationnone-fallbacknone)
   - [`call_api(prompt, options=None, context=None) -> dict`](#call_apiprompt-optionsnone-contextnone---dict)
+  - [Typing](#typing)
 
 ## Node.js (`zn-gate`)
 
@@ -320,6 +324,14 @@ except GuardBlockError as e:
 - `RULES_VERSION`: the version of the built-in rule set, the same string that comes back as `rules_version` in results.
 - `__version__`: the installed package version.
 
+### Warnings the Python package logs
+
+These warnings go to the `zn_gate` logger (Python's `logging` module), except the cloud one, which is written to stderr.
+
+- `ZN_STRICT` and `ZN_BLOCK_TRUNCATED` turn on only with the value `1`. Unset, empty and `0` leave them off without a warning. Any other value (for example `true` or `yes`) leaves the setting off and logs one warning for that value, in each program run: `zn_gate: ZN_STRICT is set to 'true', but only ZN_STRICT=1 turns it on, so it is off (...)`.
+- `ZnGuardCallbackHandler(on_block='ignore')` and `ZnGuardCallbackHandler(raise_on_injection=False)` let a blocked prompt, tool call or output through, and log a warning for each one: `zn_gate: 'langchain:llm_prompt' was blocked (rule pi:ignore_previous), but on_block='ignore' let it through`. The warning names the place and the rule, never the text.
+- A failed cloud call is reported only when `ZN_VERBOSE=1` is set, on stderr, as `[zn-gate] Warning: Cloud gate error (<error>). <hint> The local rules were used instead, so the text was checked on this machine only.` The hint says what failed: HTTP 401 or 403 means the service did not accept the API key (check `ZN_API_KEY`); a timeout means it took too long to answer; a connection error means it could not be reached (check the network and `ZN_API_URL`); any other HTTP error means the service answered with an error. In that case `analyze()` returns the local result with `"mode": "oss-local-fallback"`.
+
 ### Framework integrations (`zn_gate.integrations`)
 
 <!-- snippet-test -->
@@ -375,3 +387,16 @@ No framework is required to import them. Each one uses the same rules as `check_
 ### `call_api(prompt, options=None, context=None) -> dict`
 
 - Promptfoo provider entry point (`promptfoo_provider` is the same function). It runs `evaluate` on the prompt and returns `{ output, tokenUsage, cost, cached, metadata }`: `output` starts with `[BLOCKED]` or `[ALLOWED]`, and `metadata` has `verdict`, `rule`, `reason`, `confidence`, `latency_ms` and `allowed`. In `promptfooconfig.yaml`: `id: 'python:zn_gate.integrations.promptfoo:call_api'`.
+
+### Typing
+
+- The package ships a `py.typed` marker (PEP 561), so type checkers use the inline type hints.
+- The modules that define the public API are checked with `mypy --strict` in CI, together with a file of type-level assertions that fails when a public signature changes shape.
+- `@guard` keeps the decorated function's signature: a type checker and `inspect.signature()` see the same parameters and return type as the undecorated function.
+- `sanitize_tool_result(tool_name, content)` returns `SanitizedToolResult`, a `TypedDict` with the keys `tool_name`, `safe_to_ingest`, `truncated`, `assessment`, `secrets_redacted` and `sanitized_content`:
+
+```python
+from zn_gate import sanitize_tool_result
+result = sanitize_tool_result("search_docs", "Refund policy: 30 days.")  # SanitizedToolResult
+print(result["safe_to_ingest"], result["sanitized_content"])  # True Refund policy: 30 days.
+```

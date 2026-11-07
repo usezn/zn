@@ -246,6 +246,8 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
   run -- <command>    Run a command with secrets in its environment (allowed commands only)
                       and its output masked [--secrets A,B to set env vars]
                       -s is a short form of --secrets; --agent ID names the agent in the audit log
+                      --egress-allow HOST[:PORT],... lets the command reach only those hosts over
+                      HTTP(S) through a local proxy (off by default; see docs/secrets.md)
                       (a marker in the command's arguments is refused, never filled in)
   secret log          Show the local audit log of secret use [--since 1h] (same as vault log)
   hooks install <agent> [--project] [--no-mcp]
@@ -1267,9 +1269,11 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
   }
 
   if (command === 'check' || command === 'doctor') {
+    const statsWereOn = require('../lib/stats').enabled();
     process.env.ZN_STATS = 'off'; // the test read is not counted in zn-gate stats
     const zc = require('../lib/check');
     process.exitCode = zc.report(await zc.check({}));
+    process.stdout.write('\n' + require('../lib/stats').latencyReport({ off: !statsWereOn }) + '\n');
     try {
       const cfg = require('../lib/rules').loadCustomConfig(true);
       if (cfg.errors.length > 0) {
