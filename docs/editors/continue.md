@@ -74,7 +74,7 @@ Every result of that server is then checked for prompt injection, and secrets zn
 
 Restart Continue, then ask the agent to call `zn_status` (or look for the zn-gate tools `analyze_prompt`, `check_tool_call` and `check_tool_result` in the editor's list of MCP tools). If they are listed, the server is running.
 
-When the agent calls `zn_status`, it answers with text like:
+When the agent calls `zn_status`, it answers with its status as text. With the cloud check off (the default), the answer is:
 
 ```json
 {
@@ -88,7 +88,7 @@ When the agent calls `zn_status`, it answers with text like:
 }
 ```
 
-The version numbers in your output are those of the zn-gate you have installed. With the optional cloud check on, the fields name the cloud engine and say what is sent (prompt text only, with secrets redacted locally before sending).
+The version numbers in your answer are those of the zn-gate you have installed. With the optional cloud check on ([Turn on the optional cloud check](../connect.md)), the fields change: `engine` becomes `local-rules + cloud (analyze_prompt only)`, `endpoint` names the address of the cloud check, `cloud_enabled` becomes `true`, and `leaves_machine` says: "analyze_prompt text only, with secrets redacted locally before sending. Tool results and tool-call arguments never leave the machine."
 
 `npx -y zn-gate check` does not test this setup: it checks hooks, and zn-gate does not install hooks for Continue yet. See [Check that it works](../check.md).
 
