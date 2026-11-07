@@ -25,6 +25,8 @@ node --version
 
 ## Install your agent first
 
+> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+
 zn-gate protects an agent that is already installed; it does not install the agent for you. Install the agent from its official site, and sign in with your own account for that agent (zn-gate itself needs no account):
 
 - Codex CLI: run `npm install -g @openai/codex`, then run `codex` and sign in with your OpenAI account. OpenAI's own steps are in the [Codex CLI docs](https://developers.openai.com/codex/cli).
@@ -143,7 +145,7 @@ For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a
 - `init` only prints steps and changes nothing: an AI agent or a script ran it. Run it yourself in your own terminal.
 - `check` says `NOT protected`: the line says what to run.
 - zn blocked something you need: use `npx -y zn-gate env shadow .env` for secrets, or ask in [Discussions](https://github.com/usezn/zn/discussions).
-- Another message? The [troubleshooting guide](troubleshooting.md) explains the twelve most common ones.
+- Another message? The [troubleshooting guide](troubleshooting.md) explains the fourteen most common ones.
 
 ## Remove zn-gate
 

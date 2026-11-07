@@ -1,0 +1,2 @@
+### Added
+- `zn audit` has a new rule, ZNA022, for a hook of type `http` (or of type `agent` that names a URL) in an agent settings or hooks file: it posts each tool event it matches, with the command line, file paths and contents, to that address, as soon as the folder is opened when the file is in the project. A remote address is high, a local one medium, and your own user file low; the environment variables its headers use are named, never their values.

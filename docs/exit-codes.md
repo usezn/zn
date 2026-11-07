@@ -4,6 +4,16 @@ One page with the exit code of every `zn-gate` command, and of the GitHub Action
 
 A command that succeeds exits with `0`. A command that is not listed here with a code does not use it.
 
+## Which exit code in a script
+
+In a script, these three codes are the ones you will check most. The [full table](#common-codes) and the per-command tables below list the rest.
+
+| Code | What to do in the script |
+|---|---|
+| `0` | Carry on: the command is done, or it found nothing to report. |
+| `1` | Stop and look: the command ran and found a problem. |
+| `2` | Fix the call: the command was used wrongly, or `analyze` blocked the text. |
+
 ## Common codes
 
 | Code | Meaning |
