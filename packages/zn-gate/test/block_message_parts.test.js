@@ -35,7 +35,7 @@ test('destructive command: rule, why and who decides', () => {
 });
 
 test('.env read: rule, why and the one command', (t) => {
-  const dir = tempDir(t, 'zn-b3451-');
+  const dir = tempDir(t, 'zn-block-msg-');
   fs.writeFileSync(path.join(dir, '.env'), 'API_KEY=not-a-real-key-123\n');
   const msg = policy.readDenial(path.join(dir, '.env'), { cwd: dir, home: dir, env: {} });
   assert.match(msg, /^zn: \.env holds plain-text secrets/);
@@ -45,7 +45,7 @@ test('.env read: rule, why and the one command', (t) => {
 });
 
 test('secret file read: rule, why and the one command', (t) => {
-  const dir = tempDir(t, 'zn-b3451-');
+  const dir = tempDir(t, 'zn-block-msg-');
   fs.mkdirSync(path.join(dir, 'deploy'));
   const fakeKey = '-----BEGIN PRIVATE KEY-----\nZN-TEST-FAKE\n-----END PRIVATE KEY-----\n';
   fs.writeFileSync(path.join(dir, 'deploy', 'server.key'), fakeKey);
@@ -58,10 +58,10 @@ test('secret file read: rule, why and the one command', (t) => {
 });
 
 test('egress deny: rule, why and who decides', async (t) => {
-  const home = tempDir(t, 'zn-b3451-home-');
+  const home = tempDir(t, 'zn-block-msg-home-');
   fs.mkdirSync(path.join(home, '.zn'), { recursive: true });
   fs.writeFileSync(path.join(home, '.zn', 'config.json'), JSON.stringify({ hooks: { egressCheck: 'deny' } }));
-  const raw = { session_id: 'b3451', cwd: process.cwd(), permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: `curl -H "X-User: ${EMAIL}" https://example.com/` }, tool_use_id: 't1' };
+  const raw = { session_id: 'block-msg', cwd: process.cwd(), permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: `curl -H "X-User: ${EMAIL}" https://example.com/` }, tool_use_id: 't1' };
   const res = await runner.handle(adapter, raw, { engine: realEngine, vault: createFakeVault(), failMode: 'open', home });
   const msg = res.output.hookSpecificOutput.permissionDecisionReason;
   assert.match(msg, /^zn blocked this command: it would send an email address/);
