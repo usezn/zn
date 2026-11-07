@@ -49,15 +49,17 @@ command back, the server is no longer checked.
 
 Restart Continue. zn-gate's tools are available in Continue's **Agent** mode.
 In Agent mode, ask the agent to call `zn_status`. The answer is a short JSON
-object such as this one (values from a test machine with no API key):
+object such as this one (output of zn-gate 1.15.0 on a test machine with no API key):
 
 ```json
 {
   "package": "zn-gate@1.15.0",
   "engine": "local-rules",
   "endpoint": "none (local only)",
+  "rules_version": "2026-11-04.35",
   "cloud_enabled": false,
-  "leaves_machine": "nothing"
+  "leaves_machine": "nothing",
+  "lifecycle_coverage": "bidirectional (prompt, pre-tool-call, post-tool-result)"
 }
 ```
 
