@@ -303,6 +303,18 @@ function fixHint(agentId) {
   return 'If it happens again, ask the user to run `' + znCommand('hooks install' + (name ? ' ' + agentId : '')) + '`' +
     (name ? ' to set up zn for ' + name + ' again.' : '.');
 }
+/*
+ * The step for an event whose JSON is valid but whose shape zn does not know: the agent most likely changed what it
+ * sends to hooks, so the installed zn-gate is older than the agent. Only the text differs from the other refusals.
+ */
+const AGENT_LABELS = { 'claude-code': 'Claude Code', codex: 'Codex CLI', cursor: 'Cursor', opencode: 'OpenCode', antigravity: 'Antigravity', zcode: 'ZCode', copilot: 'GitHub Copilot CLI', gemini: 'Gemini CLI' };
+function formatChangeStep(agentId) {
+  const label = AGENT_LABELS[agentId] || 'the agent';
+  const update = agentId === 'claude-code' && process.env.CLAUDE_PLUGIN_ROOT
+    ? 'Ask the user to update the zn-gate plugin with `claude plugin update zn-gate@usezn`.'
+    : 'Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `' + znCommand('hooks install' + (AGENT_LABELS[agentId] ? ' ' + agentId : '')) + '`.';
+  return 'This usually means ' + label + ' changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. ' + update;
+}
 const HOOK_FAILED = 'something went wrong inside the zn hook, so this action was blocked to keep the user\'s secrets safe. ';
 
 /**
@@ -1700,10 +1712,10 @@ async function injectTestFault() {
  */
 function unreadablePre(ev, agentId) {
   if (typeof ev.toolName !== 'string' || !ev.toolName.trim()) {
-    return { decision: 'deny', message: 'zn: could not read the tool name of this call, so zn cannot check it and blocked it. ' + fixHint(agentId) };
+    return { decision: 'deny', message: 'zn: could not read the tool name of this call, so zn cannot check it and blocked it. ' + formatChangeStep(agentId) };
   }
   if ((ev.tool === 'bash' || ev.tool === 'powershell') && typeof (ev.input || {}).command !== 'string') {
-    return { decision: 'deny', message: 'zn: could not read the command of this call, so zn cannot check it and blocked it. ' + fixHint(agentId) };
+    return { decision: 'deny', message: 'zn: could not read the command of this call, so zn cannot check it and blocked it. ' + formatChangeStep(agentId) };
   }
   return null;
 }
@@ -1718,6 +1730,7 @@ function handle(adapter, rawEvent, opts = {}) {
 }
 
 async function handleInner(adapter, rawEvent, opts = {}) {
+  const t0 = performance.now();
   const mode = failModeOf(opts);
   let ev = null;
   let decision;
@@ -1725,9 +1738,12 @@ async function handleInner(adapter, rawEvent, opts = {}) {
   resetRuleId();
   try {
     ev = adapter.normalize(rawEvent);
+    // An adapter that could not read part of a call says so in ev.unreadable, and its block carries that text.
+    if (ev && typeof ev.unreadable === 'string') ev.unreadable += ' ' + formatChangeStep(adapter.id);
     if (ev && ev.event) guardNativeText(ev);
     await injectTestFault();
-    if (!ev || !ev.event) decision = { decision: 'allow' };
+    // The decision stays an allow (nothing zn registered for names this event), but the person is told how to update.
+    if (!ev || !ev.event) decision = { decision: 'allow', formatNote: 'zn: ' + AGENT_LABELS[adapter.id] + ' sent an event zn does not know, so it was not checked. ' + formatChangeStep(adapter.id) };
     else if (ev.event === 'pre_tool') { if (adapter.id === 'claude-code') recordConfigBaseline(ev, opts); decision = unreadablePre(ev, adapter.id) || await decidePre(ev, d, adapter.id, opts); }
     else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id, opts);
     else if (ev.event === 'user_prompt') { if (adapter.id === 'claude-code') recordConfigBaseline(ev, opts); decision = await decidePrompt(ev, d, adapter.id); }
@@ -1742,6 +1758,9 @@ async function handleInner(adapter, rawEvent, opts = {}) {
   } finally {
     d.closeVault();
   }
+  // Decision time only: from the start of handle() up to the decision. Excludes process startup, writing the
+  // response, and saving stats and evidence (both run after this point).
+  const latencyMs = performance.now() - t0;
   // zn Team: a line for the person (a policy change that lifted restrictions, or detectors that are not applied).
   const teamLines = takeTeamNotes();
   if (teamLines.length && decision && !decision.userMessage) decision.userMessage = teamLines.join(' ');
@@ -1751,16 +1770,16 @@ async function handleInner(adapter, rawEvent, opts = {}) {
     if (id) decision.ruleId = id;
   }
   const output = adapter.respond({ ...decision, event: ev });
-  countHook(adapter.id, ev, decision, opts);
+  countHook(adapter.id, ev, decision, opts, latencyMs);
   recordEvidence(adapter.id, ev, decision, opts);
-  return { output, stderr: decision.warning || null, decision };
+  return { output, stderr: decision.warning || null, decision, formatNote: decision.formatNote || null };
 }
 
 /**
  * Local counts for `zn-gate stats` (best effort; never changes the decision). A denial because zn itself
  * failed (fail-closed) is not counted as a block; asks and fail-open passes count as warnings.
  */
-function countHook(agentId, ev, decision, opts = {}) {
+function countHook(agentId, ev, decision, opts = {}, latencyMs) {
   try {
     if (!ev || !ev.event || !decision) return;
     // Codex asks PreToolUse first, then PermissionRequest for the same call when it shows an approval prompt.
@@ -1784,6 +1803,8 @@ function countHook(agentId, ev, decision, opts = {}) {
       warned: decision.decision === 'ask' || decision.failOpen || (decision.decision === 'deny' && decision.noBlock) ? 1 : 0,
       redacted: extra.redacted || 0,
       detections: extra.detections || {},
+      // Decision time only, not the response write or the stats and evidence saves (see lib/stats.js latencyReport).
+      latencyMs: ev.event === 'pre_tool' || ev.event === 'post_tool' ? latencyMs : undefined,
     }, file ? { file } : {});
   } catch {
     /* counting must never affect a hook */
@@ -2322,6 +2343,7 @@ async function handleEvent(args, state, readText) {
   try {
     const res = await handle(adapter, raw);
     if (res.stderr) process.stderr.write(res.stderr + ' (fail-open: event passed through)\n');
+    if (res.formatNote) process.stderr.write('zn hook: ' + res.formatNote + '\n');
     try { require('../vault/client').close(); } catch (_) { /* not loaded */ }
     if (res.output !== null && res.output !== undefined) {
       // After the deadline the engine or the vault may still be working: leave as soon as the answer is written.

@@ -85,6 +85,25 @@ try {
   } else {
     process.stdout.write('skipped: the lock file is already on ' + lockVersion + ' (version ' + pkgVersion + ')\n');
   }
+  // The .npmrc that turns install scripts off for zn-gate's own postinstall: the line ending does not matter (Windows checks out CRLF),
+  // and a second line, a missing file or another value does.
+  const lockOf = JSON.parse(fs.readFileSync(path.join(ROOT, 'plugins/zn-gate/package-lock.json'), 'utf8'));
+  if (lockOf.packages && lockOf.packages['node_modules/zn-gate'] && lockOf.packages['node_modules/zn-gate'].hasInstallScript) {
+    const npmrcCase = (text) => {
+      const dir = copyTree();
+      const f = path.join(dir, 'plugins/zn-gate/.npmrc');
+      if (text === null) fs.rmSync(f, { force: true });
+      else fs.writeFileSync(f, text);
+      return check(dir);
+    };
+    assert.ok(npmrcCase('ignore-scripts=true\n').ok, '.npmrc: LF passes');
+    assert.ok(npmrcCase('ignore-scripts=true\r\n').ok, '.npmrc: CRLF passes');
+    assert.ok(npmrcCase('# no scripts\r\nignore-scripts = true\r\n\r\n').ok, '.npmrc: a comment, spaces and blank lines pass');
+    for (const [label, text] of [['missing', null], ['empty', ''], ['false', 'ignore-scripts=false\n'], ['turned back on', 'ignore-scripts=true\nignore-scripts=false\n'], ['bare CR turns it back on', 'ignore-scripts=true\n#c\rignore-scripts=false\n'], ['U+2028 line separator', 'ignore-scripts=true\u2028\n'], ['U+2029 paragraph separator', 'ignore-scripts=true\u2029\n'], ['another key', 'ignore-scripts=true\nregistry=https://example.invalid/\n']]) {
+      const r = npmrcCase(text);
+      assert.ok(!r.ok && /does not turn install scripts off|has an install script/.test(r.out), '.npmrc ' + label + ' fails: ' + r.out);
+    }
+  }
   process.stdout.write('ok\n');
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
