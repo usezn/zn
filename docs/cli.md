@@ -557,7 +557,7 @@ Runs the `secrets` MCP server over standard input and output. Agents start it fr
 zn-gate mcp
 ```
 
-Runs zn-gate as an MCP server (stdio) with the tools `analyze_prompt`, `check_tool_call` and `check_tool_result`.
+Runs zn-gate as an MCP server (stdio) with the tools `analyze_prompt`, `check_tool_call`, `check_tool_result` and `zn_status` (reports the detection engine, the rules version and whether anything leaves the computer).
 
 Exit codes: it runs until its input is closed, then exits `0`.
 
