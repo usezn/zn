@@ -77,14 +77,12 @@ Every command is run in your own terminal. "None" means no documented command re
 | `vault/identity.age` | zn-gate, on a computer with no system keychain | No: the vault cannot be opened without it | `zn-gate vault purge` |
 | `vault/keychain.json` | zn-gate, when the vault is created | No | `zn-gate vault purge` |
 | `run/session.key` and `run/vault.sock` | zn-gate, while the vault is unlocked | Only while the vault is locked | `zn-gate lock` (zn-gate removes them itself) |
-| `config.json` | zn-gate, for your settings and the cloud key marker | Yes; it resets your settings and loses no secret | `zn-gate disconnect` removes the cloud key only |
+| `config.json` | zn-gate, for your settings and the cloud key marker | Yes; it resets your settings and loses no secret | `zn-gate disconnect` removes the cloud key and its marker in this file, and nothing else |
 | `stats.json` | zn-gate, when it counts checks | Yes | None. `ZN_STATS=off` stops the counting. |
 | `requests.jsonl` | zn's `secrets_request` tool, when an agent asks for a secret | Yes | None |
 | `package-registry-cache.json` | zn-gate, for package lookups | Yes | None |
 | `team.json`, `org-policy.json`, `team-upload.json`, `team-notice.json` | zn-gate, on a computer that joined a zn Team | No: the hooks read them | `zn-gate team leave` |
 | `hooks/` | `zn-gate hooks install <agent>` | Yes, once the hooks are uninstalled | None. `hooks uninstall` leaves it in place. |
-| `ENVBAK_X<hash>D<stamp>` (inside `vault/secrets.age`) | `zn-gate env shadow`, as the encrypted copy of a `.env` file | Only after it is restored | `zn-gate env unshadow FILE --backup NAME` restores it |
-| `<settings file>.bak-zn-<stamp>` | `zn-gate hooks install` or `uninstall`, before it changes an agent's settings | Yes | None |
-| `<config file>.bak.<number>` | `zn-gate init --wrap-mcp`, before it wraps an MCP config | Yes, after `init --revert` has restored the file | `zn-gate init --revert` restores it |
+| `ENVBAK_X<hash>D<stamp>`, an entry inside `vault/secrets.age` | `zn-gate env shadow`, as the encrypted copy of a `.env` file | No: it is not a file, and without it `env unshadow` cannot restore the `.env` file | `zn-gate secret rm NAME`. `zn-gate env unshadow FILE --backup NAME` only restores the file; it does not delete the copy. |
 
 More: [Remove zn-gate](uninstall.md), [CLI reference](cli.md).
