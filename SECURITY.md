@@ -110,3 +110,13 @@ We gratefully acknowledge independent security researchers who have helped prote
 * [SEC-2026-02](docs/advisories/SEC-2026-02.md) — *Insufficient session and token revocation on password reset (Remediated in the usezn.com platform, which is not part of this repository)*
 * [SEC-2026-03](https://usezn.com/security/) — *Incomplete session revocation on password change (Remediated in the usezn.com platform, which is not part of this repository)*
 * [SEC-2026-04](https://usezn.com/security/) — *Session termination flow hardening: logout redirects and error handling (Remediated in the usezn.com platform, which is not part of this repository)*
+
+---
+
+## How to Cite and Contact
+
+1. **Check the supported versions** above. Only the latest minor version of `zn-gate` (npm and PyPI) receives security fixes, so confirm the issue on it first.
+2. **Report privately** through [GitHub private vulnerability reporting](https://github.com/usezn/zn/security/advisories/new), or by email to [security@usezn.com](mailto:security@usezn.com) if you cannot use GitHub. Do not open a public issue or pull request.
+3. **Include** the affected version, component or commit, detailed reproduction steps, and any proof of concept. Testing against local Docker containers or isolated test accounts is strongly encouraged.
+4. **Expect** an acknowledgement and an initial assessment within the targets above, and an update at least every 14 days (see [What to expect](#what-to-expect)). The advisory credits you unless you prefer to stay anonymous (see [Coordinated Disclosure](#coordinated-disclosure)).
+5. **Cite an advisory** by its GHSA id and URL, in the form `https://github.com/usezn/zn/security/advisories/GHSA-xxxx-xxxx-xxxx`, for example `GHSA-rf3f-ppm5-3xrx`. Cite the CVE id too once GitHub assigns one to the advisory.
