@@ -17,6 +17,21 @@ Set up zn-gate in Continue in two minutes: add it as an MCP server, and what zn-
    ```
 
    If the file already has an `mcpServers:` list, add only the `- name: zn-gate` entry to it.
+
+   If you prefer one file per project, create `.continue/mcpServers/zn-gate.yaml` in your project instead, with:
+
+   ```yaml
+   name: zn-gate
+   version: 1.0.0
+   schema: v1
+   mcpServers:
+     - name: zn-gate
+       type: stdio
+       command: npx
+       args: ["-y", "zn-gate", "mcp"]
+   ```
+
+   Standalone files in `.continue/mcpServers/` need the `name`, `version` and `schema` lines at the top; your main `config.yaml` does not.
 4. Save the file. zn-gate's tools are available in Continue's **Agent** mode only.
 
 Status: these steps follow Continue's documentation; not yet verified by us in Continue.
@@ -58,6 +73,22 @@ Every result of that server is then checked for prompt injection, and secrets zn
 ## Verify
 
 Restart Continue, then ask the agent to call `zn_status` (or look for the zn-gate tools `analyze_prompt`, `check_tool_call` and `check_tool_result` in the editor's list of MCP tools). If they are listed, the server is running.
+
+When the agent calls `zn_status`, it answers with text like:
+
+```json
+{
+  "package": "zn-gate@1.15.0",
+  "engine": "local-rules",
+  "endpoint": "none (local only)",
+  "rules_version": "2026-11-04.35",
+  "cloud_enabled": false,
+  "leaves_machine": "nothing",
+  "lifecycle_coverage": "bidirectional (prompt, pre-tool-call, post-tool-result)"
+}
+```
+
+The version numbers in your output are those of the zn-gate you have installed. With the optional cloud check on, the fields name the cloud engine and say what is sent (prompt text only, with secrets redacted locally before sending).
 
 `npx -y zn-gate check` does not test this setup: it checks hooks, and zn-gate does not install hooks for Continue yet. See [Check that it works](../check.md).
 
