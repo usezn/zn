@@ -212,7 +212,7 @@ from zn_gate import get_evidence_stats, export_evidence_ledger
 ### `evaluate(text: str, strict: bool | None = None) -> Assessment`
 
 - Pure Python in-memory deterministic evaluation. Never touches the network.
-- `strict=None` follows `ZN_STRICT`; `True` also blocks the heuristic rules that are advisories by default.
+- `strict=None` follows `ZN_STRICT`; `True` also blocks the heuristic rules that are advisories by default. `ZN_STRICT` and `ZN_BLOCK_TRUNCATED` turn on only with the value `1`: another value such as `true` or `yes` leaves them off and logs a warning (logger `zn_gate`), once per value.
 - Inputs over 256 KB are scanned whole, in overlapping windows. An input over 4 MB is blocked with rule `size:oversize` (and `truncated=True`).
 - Returns: `Assessment(verdict, confidence, rule, reason, engine, rules_version, truncated, advisory)`. `verdict` is `'allow'` or `'block'`; `advisory` is a dict or `None`. `assessment.allowed` is a boolean and `assessment.to_dict()` gives a plain dict.
 
@@ -344,7 +344,7 @@ No framework is required to import them. Each one uses the same rules as `check_
 ### `ZnGuardCallbackHandler(on_block='raise', mask_secrets=True, raise_on_injection=None, block_truncated=False)`
 
 - LangChain and LangGraph callback handler. It checks prompts (`on_llm_start`), tool inputs (`on_tool_start`) and tool outputs (`on_tool_end`). It sets `raise_error = True`, so LangChain does not swallow its errors.
-- `on_block`: `'raise'` (default) or `'ignore'`. With `'raise'` a blocked prompt, tool input or tool output raises `GuardBlockError` and stops the run (targets `langchain:llm_prompt`, `langchain:<tool>` and `langchain:tool_output`). A callback cannot replace a tool's output, so `'return'` raises `ValueError` when the handler is created: use `guard_langchain_tool(tool, on_block='return')` to give the model a block message instead. With `'ignore'` nothing is stopped.
+- `on_block`: `'raise'` (default) or `'ignore'`. With `'raise'` a blocked prompt, tool input or tool output raises `GuardBlockError` and stops the run (targets `langchain:llm_prompt`, `langchain:<tool>` and `langchain:tool_output`). A callback cannot replace a tool's output, so `'return'` raises `ValueError` when the handler is created: use `guard_langchain_tool(tool, on_block='return')` to give the model a block message instead. With `'ignore'` nothing is stopped, and each blocked prompt, tool input, tool output, tool error or secret in a tool output that is let through is logged as a warning (logger `zn_gate`) with the rule and where it happened, never the text.
 - `mask_secrets` (default `True`): a tool output that contains a secret stops the run with `GuardBlockError`, because the handler cannot rewrite it. If your tools are wrapped with `guard_langchain_tool`, create the handler with `mask_secrets=False`, so the wrapper hides the secret and the run goes on.
 - `raise_on_injection`: older switch. When it is not `None` it overrides `on_block`: `True` means `'raise'`, `False` means `'ignore'`.
 - `block_truncated`: force a block for a tool output too large to scan in full. Such output is blocked by default; set `ZN_ALLOW_TRUNCATED=1` to allow it.
