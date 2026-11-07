@@ -4,6 +4,24 @@ Each time a coding agent calls a tool, it starts zn's hook and waits for it: onc
 example a shell command) and once after it, with the tool's output. This page says how long that takes and
 how it is measured.
 
+## Quick reference
+
+The hook itself has no settings to tune on this page. The options below belong to the benchmark and to the
+latency budget that checks it. Every one is a command-line flag of the `node bench/...` scripts.
+
+| Setting | Default | What it changes | Details |
+|---|---|---|---|
+| `--runs N` (`hook_latency_matrix.js`) | `40` | How many times each case is timed, after one warm-up run. | [How it is measured](#how-it-is-measured) |
+| `--json FILE` (`hook_latency_matrix.js`) | none | Also writes the results of the run to this file, which the budget check and `--update-baseline` read. | [The budget in CI](#the-budget-in-ci) |
+| `--baseline FILE` (`hook_latency_matrix.js`) | none | Compares the run with a baseline file and fails if a case is too slow. Without it, the run only prints the table. | [The budget in CI](#the-budget-in-ci) |
+| `--max-increase X` (`hook_latency_matrix.js`) | `0.2` (20 %) | How far above its baseline one case may be before the run fails. The Windows job uses `0.35`. | [The budget in CI](#the-budget-in-ci) |
+| `--baseline FILE` (`hook_latency_gate.js`) | `bench/hook_latency_baseline.json` | The baseline file the report is compared with. | [The budget in CI](#the-budget-in-ci) |
+| `--max-increase X` (`hook_latency_gate.js`) | `0.2` (20 %) | Same limit per case, when you check a saved report with the gate script. | [The budget in CI](#the-budget-in-ci) |
+| `--update-baseline` (`hook_latency_gate.js`) | off | Writes the median ratio of the reports you give as the new baseline instead of comparing. | [The budget in CI](#the-budget-in-ci) |
+
+The limit for the whole run, the median of all cases at most 10 % above the baseline, is fixed in the gate
+script and has no flag.
+
 ## How it is measured
 
 `bench/hook_latency_matrix.js` starts `node lib/hooks/runner.js <agent>` with the agent's event on stdin,
