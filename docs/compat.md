@@ -2,20 +2,20 @@
 
 ## Tested in the last release
 
-The table shows, for each agent zn-gate supports, the agent version and the date of the last test in the latest release, 1.15.0 (published 2026-11-06). Gemini CLI is experimental and is not counted among the supported agents.
+The table shows, for each agent zn-gate supports, the agent version and the date of the last test in the latest release, 1.15.0 (published 2026-11-06). Gemini CLI is experimental.
 
 | Agent | Agent version tested | Tested on | zn-gate version |
 |---|---|---|---|
-| Claude Code | Not recorded | 2026-11-06 | 1.15.0 |
-| Codex CLI | Not recorded | 2026-11-06 | 1.15.0 |
-| Cursor | Not recorded | 2026-11-06 | 1.15.0 |
+| Claude Code | Hook command only (no agent started) | 2026-11-06 | 1.15.0 |
+| Codex CLI | Hook command only (no agent started) | 2026-11-06 | 1.15.0 |
+| Cursor | Hook command only (no agent started) | 2026-11-06 | 1.15.0 |
 | OpenCode | not tested in this release | - | - |
 | Antigravity | not tested in this release | - | - |
 | ZCode desktop app | not tested in this release | - | - |
 | GitHub Copilot | not tested in this release | - | - |
 | Gemini CLI (experimental) | not tested in this release | - | - |
 
-For Claude Code, Codex CLI and Cursor, the release check runs zn's hooks with the blocked and allowed cases described in [`bench/e2e/`](../bench/e2e/). It does not record the version of the agent itself, so that column says "Not recorded" until it does.
+For Claude Code, Codex CLI and Cursor, the 1.15.0 clean-install release check installed zn's hooks on a clean Linux machine and piped blocked event payloads to the installed hook commands on stdin. No agent is started in that check, so the agent version column says "Hook command only" until a run with the real agent is recorded. End-to-end runs with the real agent CLIs are in [`bench/e2e/`](../bench/e2e/).
 
 ## Limits at a glance
 
@@ -32,12 +32,20 @@ Terms such as hook, matcher and scrubber are explained in the [glossary](glossar
 
 **What has been tested.**
 
-- **ZCode desktop app 3.16.3:** tested end to end in the app on Linux. On Linux and Windows it was also tested through the agent runtime that ships with the app (details: [ZCode page](editors/zcode.md)).
-- **Antigravity:** tested end to end with the official `agy` CLI 1.4.7 on Linux. 13 of the 15 scenarios gave a result and none failed. The model refused to delete the home folder, so that check was run on the installed hook directly; another plugin's hook did not always run next to zn's, while zn's hook always ran and its deny always applied.
-- **Claude Code, Codex CLI and OpenCode:** end-to-end runs with the agent itself, with 0 secret values sent to the model provider (see the table below). Codex CLI 0.163.0 and OpenCode 1.19.3 also ran end to end on Windows Server 2022.
-- **Gemini CLI 0.64.0 and GitHub Copilot CLI 1.0.98:** end-to-end runs against a scripted model provider, with 0 secret values sent. On Windows Server 2022 (PowerShell 5.1) the Gemini CLI hooks were verified to block reads of `.env` files.
-- **GitHub Copilot in VS Code:** documented, not tested in the app. VS Code's documentation says VS Code, the GitHub Copilot app and Copilot CLI share one hook harness and format, and lists the two folders zn writes to; the end-to-end run above is with Copilot CLI, not inside VS Code (details in the Copilot entry below and on the [VS Code page](editors/vscode.md)).
-- **Cursor:** no end-to-end run, because Cursor has no CLI with hooks to drive. On Windows Server 2022 (PowerShell 5.1) its hooks were verified to block reads of `.env` files; the Cursor app itself has not been tested.
+| Agent | Version tested | What was checked | Date |
+|---|---|---|---|
+| ZCode desktop app | 3.16.3 | End to end in the app on Linux. On Linux and Windows, also through the agent runtime that ships with the app (details: [ZCode page](editors/zcode.md)). On Windows Server 2022, for an administrator and for a standard user, through the agent the app ships; the app window itself was not driven. macOS not tested. | October 2026 |
+| Antigravity | `agy` CLI 1.4.7 | End to end with the official `agy` CLI on Linux: 13 of the 15 scenarios gave a result and none failed. The model refused to delete the home folder, so that check was run on the installed hook directly; another plugin's hook did not always run next to zn's, while zn's hook always ran and its deny always applied. Checked by hand on Windows with the Antigravity IDE and CLI (no automated run). | Linux run: not stated. Windows check: October 2026 |
+| Claude Code | 2.1.316 | End-to-end run with the agent itself, 0 values sent to the model provider ([`bench/e2e/`](../bench/e2e/README.md)). | 2026-10-31 |
+| Codex CLI | 0.166.0 | End-to-end run with the agent itself on Linux, 0 values sent to the model provider ([`bench/e2e/`](../bench/e2e/README.md)). | 2026-10-31 |
+| Codex CLI | 0.163.0 | End-to-end run on Windows Server 2022 with PowerShell, 0 values sent to the model provider ([evidence](../bench/e2e/windows/)). | Not stated |
+| OpenCode | 1.19.5 | End-to-end run with the agent itself on Linux, 0 values sent to the model provider ([`bench/e2e/`](../bench/e2e/README.md)). | 2026-10-31 |
+| OpenCode | 1.19.3 | End-to-end run on Windows Server 2022, 0 values sent to the model provider ([evidence](../bench/e2e/windows/)). | Not stated |
+| Gemini CLI | 0.64.0 | End-to-end run against a scripted model provider, 0 secret values sent. On Windows Server 2022 (PowerShell 5.1) the hooks were verified to block reads of `.env` files. | Not stated |
+| GitHub Copilot CLI | 1.0.98 | End-to-end run against a scripted model provider, 0 secret values sent. | Not stated |
+| GitHub Copilot in VS Code | Not tested in the app | Documented, not tested: the end-to-end run above is with Copilot CLI, not inside VS Code (see the [VS Code page](editors/vscode.md)). | - |
+| Cursor | No version: no end-to-end run, because Cursor has no CLI with hooks to drive. The Cursor app itself has not been tested. | On Windows Server 2022 (PowerShell 5.1) the hooks were verified to block reads of `.env` files. | Not stated |
+
 - **Clean install and Windows smoke test:** a clean install on Linux ran the hooks of Claude Code, Codex CLI and Cursor. A smoke test on Windows, as an administrator and as a standard user, ran the hooks of all eight agents.
 - **Desktop apps:** the Claude desktop app, the Cursor app, the Antigravity app and IDE, and the OpenCode desktop app have not been tested end to end yet. Anthropic's documentation says the Claude desktop app uses the same hooks as the Claude Code CLI, and Google's documentation lists the same hook files for the Antigravity app, IDE and CLI, so the hooks zn installs apply there too.
 
