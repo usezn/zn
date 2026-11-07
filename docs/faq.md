@@ -90,3 +90,18 @@ wrapping with `npx -y zn-gate init --revert`. Afterwards, run
 ### 11. Where is my data?
 
 The check runs locally on your machine unless you turn on the optional cloud check. With it on, only the text of `analyze_prompt` and `zn-gate analyze` calls is sent, after zn-gate removed the secrets it detects. See [What leaves your machine](../README.md#what-leaves-your-machine) for the full list, and [Turn on the optional cloud check](connect.md) to turn it on or off.
+
+## Commands that never need the network
+
+These commands work offline. In the npm package they make no network call:
+
+| Command | What it does |
+|---|---|
+| `npx -y zn-gate --help` | Prints the list of commands. |
+| `npx -y zn-gate --version` | Prints the version. |
+| `npx -y zn-gate status` | Shows the engine, the endpoint and whether an API key is saved. It only reads local state. |
+| `npx -y zn-gate scan [path]` | Scans files on this machine with the local rules. |
+
+Other commands are not listed here. `stats` is left out because, if you turn on
+sharing, it can send daily counts. The cloud check is also left out. For the full
+picture, see [Example: running offline and with the cloud check off](examples/offline-and-local-only.md#the-default-nothing-leaves-your-machine).
