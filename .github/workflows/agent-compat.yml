@@ -209,7 +209,7 @@ jobs:
           python-version: "3.12"
       - name: Install the npm tarball globally and check the CLI
         shell: pwsh
-        run: |
+        run: | # zizmor: ignore[adhoc-packages] the zn-gate tarball packed by this run is installed offline, with no dependencies to lock
           $ErrorActionPreference = 'Stop'
           function Fail([string]$Message) {
             Write-Host "::error title=Clean install failed (npm, Windows)::$Message"
@@ -234,8 +234,13 @@ jobs:
           if ($got -notmatch ('^zn-gate ' + [regex]::Escape($want) + '(\s|$)')) {
             Fail "zn --version printed '$got', expected zn-gate $want"
           }
-          & zn doctor
-          if ($LASTEXITCODE -ne 0) { Fail 'zn doctor exited with a non-zero status (see the output above)' }
+          # zn doctor exits 1 when no coding agent is set up, so on a clean runner (no agent installed) that
+          # exact outcome is expected: assert the exit code and the message instead of a generic failure.
+          $doctorOut = (& zn doctor) | Out-String
+          $doctorCode = $LASTEXITCODE
+          Write-Host $doctorOut
+          if ($doctorCode -ne 1) { Fail "zn doctor exited with $doctorCode, expected 1 when no coding agent is installed" }
+          if ($doctorOut -notmatch 'No supported coding agent was found on this machine') { Fail 'zn doctor did not report that no coding agent was found' }
           & zn test
           if ($LASTEXITCODE -ne 0) { Fail 'zn test failed (see the output above)' }
       - name: Install the wheel in a new virtualenv and check the CLI
@@ -267,8 +272,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path $proj | Out-Null
           Set-Location $proj
           git init -q
-          & $zn doctor
-          if ($LASTEXITCODE -ne 0) { Fail 'zn-gate doctor exited with a non-zero status (see the output above)' }
+          # Same as the npm job: no coding agent on a clean runner, so zn-gate doctor must exit 1 and say so.
+          $doctorOut = (& $zn doctor) | Out-String
+          $doctorCode = $LASTEXITCODE
+          Write-Host $doctorOut
+          if ($doctorCode -ne 1) { Fail "zn-gate doctor exited with $doctorCode, expected 1 when no coding agent is installed" }
+          if ($doctorOut -notmatch 'No supported coding agent was found on this machine') { Fail 'zn-gate doctor did not report that no coding agent was found' }
 
   clean-install-macos:
     name: clean install (macOS, npm and Python)
@@ -291,7 +300,7 @@ jobs:
           python-version: "3.12"
       - name: Install the npm tarball globally and check the CLI
         shell: bash
-        run: |
+        run: | # zizmor: ignore[adhoc-packages] the zn-gate tarball packed by this run is installed offline, with no dependencies to lock
           set -euo pipefail
           fail() { echo "::error title=Clean install failed (npm, macOS)::$*"; exit 1; }
           tgz="$(find "$RUNNER_TEMP/packed" -name 'zn-gate-*.tgz' -print -quit)"
@@ -313,7 +322,14 @@ jobs:
             "zn-gate $want" | "zn-gate $want "*) ;;
             *) fail "zn --version printed '$got', expected zn-gate $want" ;;
           esac
-          zn doctor || fail "zn doctor exited with a non-zero status (see the output above)"
+          # Same as Windows: no coding agent on a clean runner, so zn doctor must exit 1 and say so.
+          doctor_out="$(zn doctor 2>&1)" && doctor_rc=0 || doctor_rc=$?
+          printf '%s\n' "$doctor_out"
+          [ "$doctor_rc" -eq 1 ] || fail "zn doctor exited with $doctor_rc, expected 1 when no coding agent is installed"
+          case "$doctor_out" in
+            *"No supported coding agent was found on this machine"*) ;;
+            *) fail "zn doctor did not report that no coding agent was found" ;;
+          esac
           zn test || fail "zn test failed (see the output above)"
       - name: Install the wheel in a new virtualenv and check the CLI
         shell: bash
@@ -339,4 +355,11 @@ jobs:
           mkdir -p "$proj"
           cd "$proj"
           git init -q || fail "git init failed in the clean project"
-          "$zn_py" doctor || fail "zn-gate doctor exited with a non-zero status (see the output above)"
+          # Same as the npm job: no coding agent on a clean runner, so zn-gate doctor must exit 1 and say so.
+          doctor_out="$("$zn_py" doctor 2>&1)" && doctor_rc=0 || doctor_rc=$?
+          printf '%s\n' "$doctor_out"
+          [ "$doctor_rc" -eq 1 ] || fail "zn-gate doctor exited with $doctor_rc, expected 1 when no coding agent is installed"
+          case "$doctor_out" in
+            *"No supported coding agent was found on this machine"*) ;;
+            *) fail "zn-gate doctor did not report that no coding agent was found" ;;
+          esac
