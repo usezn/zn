@@ -9,3 +9,4 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project, from the run to what each exit code means.
 - [stats-and-report.md](stats-and-report.md): worked examples of `zn-gate stats` and `zn-gate report`.
 - [first-cloud-check.md](first-cloud-check.md): the shortest path from connect to a first checked prompt, in five steps.
+- [pre-commit-scan.md](pre-commit-scan.md): run `zn-gate scan` on the files of each commit with a git pre-commit hook.
