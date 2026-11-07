@@ -70,7 +70,7 @@ Under each agent it finds, `zn-gate check` shows the version of that agent on yo
 - **Newer than tested**: the agent may still work. If a hook does not run, report it at the link in the line.
 - **Older than tested**: if a hook does not run, update the agent first, then report it.
 - **not found**: zn could not read a version, which is not an error. Agents without a command that prints a version (Cursor and ZCode, for example) always say so.
-- **How it reads the version**: it runs only `<agent> --version`, found on your PATH outside the project folder, with a 2-second limit, in an empty folder, with none of your environment variables except the PATH and your home folder, and with update checks turned off. It changes nothing, and zn sends nothing over the network.
+- **How it reads the version**: it runs only `<agent> --version`, found on your PATH outside the project folder, with a 2-second limit, in an empty folder, with none of your environment variables except the PATH and your home folder (on Windows also SystemRoot, ComSpec, PATHEXT, APPDATA and LOCALAPPDATA, which programs there need to start), and with update checks turned off. It changes nothing, and zn sends nothing over the network.
 
 ## List every installed hook
 
@@ -86,7 +86,7 @@ Codex CLI (user): ~/.codex/hooks.json
   STALE: its launcher script was written by an older zn-gate.
     Fix: run `zn hooks install codex` in your own terminal.
 
-1 OK, 1 stale, 0 broken.
+0 OK, 1 stale, 0 broken.
 ```
 
 - **OK**: the hook points at files that exist, and its launcher is the one this zn-gate writes.
