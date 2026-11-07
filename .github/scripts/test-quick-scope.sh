@@ -31,7 +31,8 @@ check() {
   got=""
   for c in $(printf '%s\n' "$out" | sed -n 's/^\([a-z]*\)=true$/\1/p' | grep -v '^any$' | sort); do got="$got $c"; done
   got="${got# }"
-  want="$(printf '%s\n' $want | sort | tr '\n' ' ')"; want="${want% }"
+  read -ra want_arr <<< "$want"
+  want="$(printf '%s\n' "${want_arr[@]}" | sort | tr '\n' ' ')"; want="${want% }"
   if [ "$got" != "$want" ]; then
     echo "FAIL $event $ref $path: got [$got], want [$want]"
     fail=1
@@ -68,7 +69,9 @@ check push refs/heads/release/1.0 docs/cli.md ""
 out="$(cd "$work" && EVENT_NAME=workflow_dispatch bash "$script")"
 [ "$(printf '%s\n' "$out" | grep -c '=true$')" = 10 ] || { echo "FAIL workflow_dispatch"; fail=1; }
 out="$(cd "$work" && EVENT_NAME=schedule bash "$script")"
-[ "$(printf '%s\n' "$out" | grep -c '=true$')" = 2 ] && printf '%s\n' "$out" | grep -qx 'snippets=true' || { echo "FAIL schedule"; fail=1; }
+if ! { [ "$(printf '%s\n' "$out" | grep -c '=true$')" = 2 ] && printf '%s\n' "$out" | grep -qx 'snippets=true'; }; then
+  echo "FAIL schedule"; fail=1
+fi
 # No usable base: run everything.
 out="$(cd "$work" && EVENT_NAME=push REF=refs/heads/main BEFORE=0000000000000000000000000000000000000000 bash "$script")"
 [ "$(printf '%s\n' "$out" | grep -c '=true$')" = 10 ] || { echo "FAIL push without before"; fail=1; }

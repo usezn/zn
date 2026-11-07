@@ -7,7 +7,7 @@
 #   markdownlint  pull requests and pushes to main or next: docs, READMEs, markdownlint config
 #   typos         pull requests: docs, READMEs, changelog fragments, .typos.toml
 #   links         pull requests: any Markdown file, lychee config
-#   shellcheck    pull requests and pushes to main or next: any *.sh
+#   shell lint    pull requests and pushes to main or next: any *.sh
 #   workflowlint  pull requests and pushes to main or next: workflows, actions, zizmor config, action.yml
 #   packagelint   pull requests and pushes to main or next: the two packages and their lint requirements
 #   hooks         pull requests and pushes to main or next: the pre-commit hooks file and its test
