@@ -339,6 +339,51 @@ If the vault is locked, the hooks still redact what they can recognise, but
 with markers that cannot be restored (`__ZN_REDACTED_AWS_KEY__`), and remind
 you to run `zn unlock`.
 
+## Files that hold secrets, and how to remove each one
+
+zn-gate keeps its files in a `.zn` folder in your home folder (`~/.zn`). If `ZN_HOME` is set, the same files are in that folder instead. [Files and folders](files-and-folders.md) lists the same paths with the command that creates each one. This section says what each file holds and how to remove it safely. Run every command in your own terminal, not through your agent.
+
+Deleting the vault loses every value stored in it, and nothing brings them back. Before you remove the vault, put back the `.env` values you still need (see the last rows below).
+
+### The vault
+
+| File in `~/.zn` | What it holds | How to remove it safely |
+|---|---|---|
+| `vault/secrets.age` | Your named secrets, encrypted. The copies of `.env` files that `zn env shadow` set aside are kept here too. | One secret: `zn secret rm NAME`. Everything: `zn vault purge`, which loses all values. |
+| `ENVBAK_X<hash>D<stamp>`, an entry inside `vault/secrets.age` (not a separate file) | The original `.env` file that `zn env shadow` set aside. | `zn secret rm NAME` deletes the copy, so use it only after you have restored what you need. `zn-gate env unshadow FILE --backup NAME` only restores the `.env` file; it does not delete the copy. |
+| `vault/<32 hex characters>.age`, one per project | The values zn-gate detected in one project, so that it can put the markers back there. | `zn vault forget DIR`, for that project's folder, while the vault is locked. |
+| `vault/identity.age` | The vault key, protected by a passphrase. It exists only on a computer with no system keychain. | Do not delete it by hand: without it the vault cannot be opened. `zn vault purge` removes it. |
+| `vault/keychain.json` | Vault settings: which keychain holds the vault key, and its public part. No secret values. | Do not delete it by hand. `zn vault purge` removes it. |
+| `audit.jsonl` | The vault audit log: which secret was used, and when. It holds no values, and each line is chained to the one before. | `zn-gate uninstall` (answer yes to the second question), or `zn vault purge`. By hand, you break the chain that `zn vault verify` checks. |
+| `vault-backup-<date>` | An encrypted copy of an old vault, made by `zn vault reset`. | `zn vault purge` removes every backup. There is no command for one backup alone. |
+
+The vault key is also stored in your system keychain, under the name `zn-vault` (set `ZN_KEYCHAIN_SERVICE` to use another name). `zn vault purge` removes that entry too. The API key for `zn-gate connect` is stored under the name `zn-cloud`, or in the vault. `zn-gate disconnect` removes it, and asks whether to also revoke it on usezn.com (see [Connect](connect.md)).
+
+To delete the vault, follow [Remove zn-gate](uninstall.md#your-env-files-and-the-vault).
+
+### Other files in `~/.zn`
+
+| File | What it holds | How to remove it safely |
+|---|---|---|
+| `run/session.key` and `run/vault.sock` | The session key and socket of the running vault. zn-gate removes them when the vault locks. | `zn lock`. Do not delete them while the vault is unlocked. |
+| `config.json` | Your settings, for example `hooks.blockDestructiveCommands`. It also has a marker for the cloud key: where the key is, and its last four characters. It never holds the key. | `zn-gate disconnect` removes the cloud key and its marker, and nothing else. Deleting the file resets your settings to the defaults, and loses no secret. |
+| `evidence.jsonl` and `evidence.damaged.jsonl` | The decision log: what zn-gate allowed or blocked. The `damaged` file is an old log moved aside after it was found broken. | No command. Delete it by hand; deleting it does not touch any secret. |
+| `stats.json` | Counts per day, such as checks and blocks. No values. | No command. Delete it by hand. `ZN_STATS=off` stops the counting. |
+| `requests.jsonl` | A record of each time an agent asked for a secret: the name, the agent and the reason it gave. No value. | No command. Delete it by hand; the agent can ask again. |
+| `package-registry-cache.json` | Saved answers to package lookups. | No command. Delete it by hand; the next lookup fetches the answer again. |
+| `team.json`, `org-policy.json`, `team-upload.json`, `team-notice.json` | The copies of the policy and the upload state of a zn Team, on a computer that joined one. | Do not delete them by hand: the hooks read them. Run `zn-gate team leave` (see [Team](team.md#leaving)). |
+| `hooks/` | The launcher scripts that your agent's hooks start. No secrets. | Run `zn-gate hooks uninstall AGENT` first. If you delete the folder while the hooks are still installed, the hooks cannot start, and `zn-gate check` reports the agent as NOT protected. |
+
+### Files outside `~/.zn`
+
+| File | What it holds | How to remove it safely |
+|---|---|---|
+| Your `.env` files | Real values, or markers after `zn env shadow`. | `zn-gate env unshadow FILE --backup NAME` writes the original values back into the file, in plain text. Do this before you remove the vault. |
+| `<settings file>.bak-zn-<stamp>` | A copy of an agent's settings file, made before `hooks install` or `hooks uninstall` changed it. | No command. Delete it by hand after you have checked the current settings. |
+| `<config file>.bak.<number>` | A copy of an MCP config, saved before `init --wrap-mcp` changed it. | `zn-gate init --revert` puts the saved copy back. Delete the copy by hand only after you have checked the restored file. |
+
+When you have finished, `npx -y zn-gate check` shows what is still set up. The [uninstall guide](uninstall.md#piece-by-piece) gives the full order for removing zn-gate.
+
 ## If something fails
 
 - **You see `__ZN_REDACTED_...` markers**: the vault is locked. Run `zn unlock`.
