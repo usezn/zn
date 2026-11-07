@@ -55,6 +55,50 @@ For the full explanation of each line, read the list above and the rest of this 
 
 `zn-gate check` exits with 0 only when every agent that is set up for your user is protected.
 
+## Machine-readable output
+
+```bash
+zn-gate check --json
+```
+
+`doctor --json` works too. It prints one JSON object on stdout and nothing else, built from the same check as the text output, so it is safe to use in a script, in CI or to paste into a support request. The exit code is the same as in the text form. It has no secret values, and your home folder is shown as `~`.
+
+```json
+{
+  "schema": 1,
+  "zn_gate_version": "1.14.1",
+  "node_version": "22.11.0",
+  "exit_code": 1,
+  "protected": false,
+  "agents": [
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "state": "not-protected",
+      "protected": false,
+      "reason": "its zn hook is turned off in ~/.claude/settings.json",
+      "fix": "run `zn hooks install claude-code` in your own terminal",
+      "message": "",
+      "notes": [],
+      "checked": true
+    }
+  ],
+  "warnings": [],
+  "project_rules_errors": [],
+  "test_folder_removed": true
+}
+```
+
+- `schema`: the version of this format. It changes only when a field is removed or changes meaning.
+- `zn_gate_version`, `node_version`: the versions that ran the check.
+- `exit_code`: `0` when at least one agent is set up and every agent that is set up is protected, `1` otherwise (also when a project rules file has errors). The process exits with this value.
+- `protected`: `true` when `exit_code` is `0`.
+- `agents`: one entry per supported agent, with `id`, `name`, and `state`: `protected`, `not-protected`, `not-set-up`, `project-only` (set up for one project only) or `not-found` (the agent is not on this machine).
+- Per agent: `protected` (`true` only for the `protected` state), `reason` (why it is not protected, or empty), `fix` (what to run, or empty), `message` (what the agent is told when it tries to read the fake key, only when protected), `notes` and `checked`.
+- `warnings`: the same warnings the text form prints, for example about an old Node.js.
+- `project_rules_errors`: errors in the project rules file, if any.
+- `test_folder_removed`: whether the temporary test folder was deleted.
+
 ## What each NOT protected line means
 
 A line that starts with `X` and says **NOT protected** gives one reason and one repair. Parts in angle brackets, such as `<file>`, are blanks that zn-gate fills in. Run every repair in your own terminal, then run `npx -y zn-gate check` again. Each reason below is quoted as zn-gate prints it.

@@ -147,6 +147,12 @@ Aliases: `doctor`.
 
 Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`.
 
+```bash
+zn-gate check --json
+```
+
+Prints the same check as one JSON object, for scripts, CI and support requests. Same exit codes; your home folder is shown as `~`. [Fields](check.md#machine-readable-output).
+
 ### `status`
 
 ```bash

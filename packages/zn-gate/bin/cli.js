@@ -260,6 +260,7 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
                       you confirm it separately [--dry-run]. Your own terminal only
   check               Show that zn blocks your agent from reading a fake secret
                       (also: doctor). Safe: a temporary folder, nothing is sent
+  check --json        Same check as one JSON object for scripts, CI and support requests
   connect             Optional: turn on the cloud check for analyze_prompt. Opens usezn.com,
                       you paste an analysis-only API key at a hidden prompt; it is kept in your system
                       keychain or the zn vault, never in a file. Your own terminal only
@@ -1271,6 +1272,16 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
   if (command === 'check' || command === 'doctor') {
     process.env.ZN_STATS = 'off'; // the test read is not counted in zn-gate stats
     const zc = require('../lib/check');
+    if (args.includes('--json')) {
+      // One JSON object on stdout and nothing else; same exit codes as the text form.
+      const data = await zc.check({});
+      let rulesErrors = [];
+      try { rulesErrors = require('../lib/rules').loadCustomConfig(true).errors.map(String); } catch (_) { /* never fails on the rules file */ }
+      const out = zc.toJson(data, { version: require('../package.json').version, rulesErrors });
+      process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+      process.exitCode = out.exit_code;
+      return;
+    }
     process.exitCode = zc.report(await zc.check({}));
     try {
       const cfg = require('../lib/rules').loadCustomConfig(true);
