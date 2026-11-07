@@ -19,6 +19,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Keep secrets out of your agent](secrets.md) | Five-minute walkthrough of the vault, markers and `zn run` | Everyone |
 | [Recipes](recipes.md) | Ten short step-by-step recipes: install, check, protect a project, connect, report, upgrade, uninstall | Everyone |
 | [Troubleshooting](troubleshooting.md) | The messages people meet first, and what to do for each | Everyone |
+| [Why was this blocked?](why-was-this-blocked.md) | Five common blocks, what each message means and how to go on safely | Everyone |
 | [Glossary](glossary.md) | Short meanings of words used in these docs | Newcomers |
 | [Upgrading](upgrading.md) | What to do when you update zn-gate | Everyone |
 | [Remove zn-gate](uninstall.md) | Uninstall in one step or piece by piece, run from your own terminal | Everyone |
