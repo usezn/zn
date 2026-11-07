@@ -1703,6 +1703,26 @@ async function injectTestFault() {
   }
 }
 
+/*
+ * The hook the agent runs names its own event (the launcher puts it in ZN_HOOK_EVENT; the runner cannot read it from an
+ * event whose shape it does not know). Only Claude Code, Codex, ZCode and Cursor are told apart this way: a hook that
+ * can block (a tool call before it runs, a prompt) refuses an event zn cannot read, because letting it pass would
+ * run the call unchecked. Any other hook, or one whose event is not known, keeps the pass with a note.
+ */
+function configuredHookBlocks(agentId) {
+  const e = process.env.ZN_HOOK_EVENT;
+  if (!['claude-code', 'codex', 'zcode', 'cursor'].includes(agentId) || typeof e !== 'string' || !/^[A-Za-z]+$/.test(e)) return false;
+  return require('../agents/launcher').blockExit(agentId).has(e);
+}
+
+function unknownEventDecision(agentId) {
+  const label = AGENT_LABELS[agentId];
+  if (configuredHookBlocks(agentId)) {
+    return { decision: 'deny', refuseText: 'zn: ' + label + ' sent an event zn does not know, so zn cannot check it and blocked it. ' + formatChangeStep(agentId) };
+  }
+  return { decision: 'allow', formatNote: 'zn: ' + label + ' sent an event zn does not know, so it was not checked. ' + formatChangeStep(agentId) };
+}
+
 /**
  * A tool call that names no tool, or a shell call without a command, cannot be checked: block it in every agent.
  * Returns a deny decision, or null when the call is readable.
@@ -1734,7 +1754,7 @@ async function handle(adapter, rawEvent, opts = {}) {
     if (ev && ev.event) guardNativeText(ev);
     await injectTestFault();
     // The decision stays an allow (nothing zn registered for names this event), but the person is told how to update.
-    if (!ev || !ev.event) decision = { decision: 'allow', formatNote: 'zn: ' + AGENT_LABELS[adapter.id] + ' sent an event zn does not know, so it was not checked. ' + formatChangeStep(adapter.id) };
+    if (!ev || !ev.event) decision = unknownEventDecision(adapter.id);
     else if (ev.event === 'pre_tool') { if (adapter.id === 'claude-code') recordConfigBaseline(ev, opts); decision = unreadablePre(ev, adapter.id) || await decidePre(ev, d, adapter.id, opts); }
     else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id, opts);
     else if (ev.event === 'user_prompt') { if (adapter.id === 'claude-code') recordConfigBaseline(ev, opts); decision = await decidePrompt(ev, d, adapter.id); }
@@ -1752,7 +1772,8 @@ async function handle(adapter, rawEvent, opts = {}) {
   // zn Team: a line for the person (a policy change that lifted restrictions, or detectors that are not applied).
   const teamLines = takeTeamNotes();
   if (teamLines.length && decision && !decision.userMessage) decision.userMessage = teamLines.join(' ');
-  const output = adapter.respond({ ...decision, event: ev });
+  // An event zn cannot read on a hook that can block is refused by the caller (exit code and answer of the agent).
+  const output = decision.refuseText ? null : adapter.respond({ ...decision, event: ev });
   countHook(adapter.id, ev, decision, opts);
   recordEvidence(adapter.id, ev, decision, opts);
   return { output, stderr: decision.warning || null, decision, formatNote: decision.formatNote || null };
@@ -2006,8 +2027,8 @@ function oversizeEvent(agentId, adapter, text, why = 'the event on stdin is too 
  * hooks.whenUnavailable "allow" in ~/.zn/config.json, such events pass, as
  * they do when the engine is missing.
  */
-function refuseInput(agentId, why) {
-  if (failModeOf({}) === 'open') {
+function refuseInput(agentId, why, fullMessage) {
+  if (!fullMessage && failModeOf({}) === 'open') {
     process.stderr.write('zn hook: ' + why + '; passed through (hooks.whenUnavailable is "allow")\n');
     // Antigravity denies the call when the hook prints nothing, so passing it through takes an explicit answer.
     if (agentId === 'antigravity') process.stdout.write(JSON.stringify({ decision: 'allow' }));
@@ -2016,7 +2037,7 @@ function refuseInput(agentId, why) {
   // Claude Code and Codex show this stderr to the model, so it never says how to
   // let actions pass unchecked (docs/compat.md documents that for the user).
   // A check that ran out of time gets the same step as every other timeout; an event zn cannot read, the reinstall step.
-  const msg = 'zn: could not read this action (' + why + '), so it was blocked. ' + (why === SUPERVISOR_REASON ? TIMEOUT_STEP : fixHint(agentId));
+  const msg = fullMessage || ('zn: could not read this action (' + why + '), so it was blocked. ' + (why === SUPERVISOR_REASON ? TIMEOUT_STEP : fixHint(agentId)));
   process.stderr.write('zn hook: ' + msg + '\n');
   if (agentId === 'cursor') process.stdout.write(JSON.stringify({ permission: 'deny', continue: false, user_message: msg, agent_message: msg }));
   // Antigravity does not document its exit codes, so its deny answer is printed as well.
@@ -2322,6 +2343,7 @@ async function handleEvent(args, state, readText) {
   const disarm = armCodexFailClosed(agentId, raw.hook_event_name) || armAntigravityFailClosed(agentId, raw);
   try {
     const res = await handle(adapter, raw);
+    if (res.decision && res.decision.refuseText) { refuseInput(agentId, 'unknown event', res.decision.refuseText); return; }
     if (res.stderr) process.stderr.write(res.stderr + ' (fail-open: event passed through)\n');
     if (res.formatNote) process.stderr.write('zn hook: ' + res.formatNote + '\n');
     try { require('../vault/client').close(); } catch (_) { /* not loaded */ }
