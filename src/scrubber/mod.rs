@@ -6,6 +6,7 @@
 //! ## Supported Patterns
 //! - Email addresses → `[EMAIL_REDACTED]`
 //! - API keys, secrets, passwords, tokens → `[SECRET_REDACTED]`
+//! - AWS access key ids (`AKIA`, `ASIA`, `ABIA` or `ACCA` + 16 capitals/digits) → `[SECRET_REDACTED]`
 //! - Credit card numbers (known network prefix and length, Luhn checksum) → `[CARD_REDACTED]`
 //! - Social Security Numbers (US, valid area/group/serial) → `[SSN_REDACTED]`
 //! - Phone numbers (E.164 `+<digits>`, or formatted NANP numbers) → `[PHONE_REDACTED]`
@@ -31,6 +32,7 @@ static SSN_REGEX: OnceLock<Regex> = OnceLock::new();
 static E164_REGEX: OnceLock<Regex> = OnceLock::new();
 static NANP_REGEX: OnceLock<Regex> = OnceLock::new();
 static JWT_REGEX: OnceLock<Regex> = OnceLock::new();
+static AWS_KEY_REGEX: OnceLock<Regex> = OnceLock::new();
 static AUTH_HEADER_REGEX: OnceLock<Regex> = OnceLock::new();
 static AUTH_PLACEHOLDER_REGEX: OnceLock<Regex> = OnceLock::new();
 static QUOTED_OPEN_REGEX: OnceLock<Regex> = OnceLock::new();
@@ -623,6 +625,34 @@ fn checked_spans(
     spans
 }
 
+fn aws_key_re() -> &'static Regex {
+    AWS_KEY_REGEX.get_or_init(|| Regex::new(r"(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}").unwrap())
+}
+
+/// AWS access key ids, same rule as the Node.js scrubber (`AWS_KEY`): a known
+/// prefix and 16 capitals or digits, not touching another ASCII letter or digit,
+/// and not 16 repeats of one character after the prefix.
+fn aws_key_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut pos = 0;
+    while pos < text.len() {
+        let Some(m) = aws_key_re().find_at(text, pos) else {
+            break;
+        };
+        let (s, e) = (m.start(), m.end());
+        let alnum = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric());
+        let tail = &text.as_bytes()[s + 4..e];
+        let repeated = tail.iter().all(|&b| b == tail[0]);
+        if !alnum(char_before(text, s)) && !alnum(char_after(text, e)) && !repeated {
+            spans.push((s, e));
+            pos = e;
+        } else {
+            pos = s + 1;
+        }
+    }
+    spans
+}
+
 fn replace_spans(text: &str, spans: &[(usize, usize)], marker: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
@@ -675,6 +705,7 @@ impl Scrubber {
         output = email_re()
             .replace_all(&output, "[EMAIL_REDACTED]")
             .to_string();
+        output = replace_spans(&output, &aws_key_spans(&output), "[SECRET_REDACTED]");
         output = auth_re().replace_all(&output, redact_auth).to_string();
         output = redact_quoted_values(&output);
         output = api_re().replace_all(&output, redact_secret).to_string();
@@ -1461,12 +1492,47 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Rust scrubber has no AWS access key rule; the Node scrubber masks AKIA keys (AWS_KEY in lib/scrub/patterns.js). Un-ignore when the rule lands."]
     fn test_aws_example_key_at_end_without_newline_is_masked() {
         // AWS documentation example key, not a credential. The text ends right after the key.
         let input = "config key AKIAIOSFODNN7EXAMPLE";
         let out = Scrubber::scrub(input);
         assert!(!out.contains("AKIAIOSFODNN7EXAMPLE"), "{out}");
+        assert_eq!(out, "config key [SECRET_REDACTED]");
+    }
+
+    #[test]
+    fn test_aws_key_mid_line_and_other_prefixes_are_masked() {
+        // AWS documentation example key and prefix variants, not credentials.
+        for input in [
+            "id AKIAIOSFODNN7EXAMPLE and more",
+            "id=ASIAIOSFODNN7EXAMPLE;",
+            "(ABIAIOSFODNN7EXAMPLE)",
+            "ACCAIOSFODNN7EXAMPLE\n",
+        ] {
+            let out = Scrubber::scrub(input);
+            assert!(out.contains("[SECRET_REDACTED]"), "{input} -> {out}");
+            assert!(!out.contains("IOSFODNN7EXAMPLE"), "{input} -> {out}");
+        }
+        assert_eq!(
+            Scrubber::scrub("a AKIAIOSFODNN7EXAMPLE b ASIAIOSFODNN7EXAMPLE c"),
+            "a [SECRET_REDACTED] b [SECRET_REDACTED] c"
+        );
+    }
+
+    #[test]
+    fn test_aws_key_look_alikes_are_unchanged() {
+        for input in [
+            "AKIA",
+            "akiaiosfodnn7example",
+            "AKIAIOSFODNN7EXAMPL",
+            "AKIAIOSFODNN7EXAMPLES",
+            "xAKIAIOSFODNN7EXAMPLE",
+            "AKIAIOSFODNN7EXAMPLE9",
+            "AKIAAAAAAAAAAAAAAAAA",
+            "AKIAIOSFODNN7exampleX",
+        ] {
+            assert_eq!(Scrubber::scrub(input), input, "{input}");
+        }
     }
 
     #[test]
