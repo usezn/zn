@@ -21,6 +21,7 @@ from . import __version__
 from .rules import RULES_VERSION, evaluate, mask_token_runs
 from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact, redact_scan_secrets as _scan_redact
 from . import mcp_secrets as _mcp
+from .node_tools import node_available
 from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
 
 
@@ -109,6 +110,9 @@ def _leak_next_step(file: str, rule: str) -> str:
     if rule == "secret:private_key":
         return ("Next: move the key out of this file (for example to ~/.ssh or a secret manager) "
                 "and replace it if the file was ever committed or shared.")
+    if not node_available():
+        return ("Next: take the value out of this file and set it as an environment variable in your own shell or a secret manager "
+                "(the Python package has no local vault; the vault commands need Node.js), and rotate it if it was ever committed or shared.")
     if re.match(r"\.env", os.path.basename(file), re.IGNORECASE):
         try:
             rel = _relative_to_cwd(file)
@@ -832,6 +836,15 @@ NPM_ONLY_COMMANDS = frozenset({
 
 
 def npm_only_message(command: str) -> str:
+    if not node_available():
+        return (
+            f"zn-gate {command} is in the npm package, not in this Python package.\n"
+            "The Python package protects agents you build yourself (LangChain, CrewAI, "
+            "LlamaIndex or plain tool calling).\n"
+            "To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, "
+            "install Node.js 18 or later (22 LTS recommended; the Claude Code plugin needs 20.19 or later) "
+            "from https://nodejs.org, then follow the install steps at https://github.com/usezn/zn#install\n"
+        )
     return (
         f"zn-gate {command} is in the npm package, not in this Python package.\n"
         "The Python package protects agents you build yourself (LangChain, CrewAI, "
@@ -848,6 +861,12 @@ NPM_ONLY_SIMPLE_COMMANDS = frozenset({"report", "reach", "connect", "disconnect"
 
 
 def npm_only_simple_message(command: str) -> str:
+    if not node_available():
+        return (
+            f"zn-gate {command} is a command of the npm package, not of this Python package.\n"
+            "It needs Node.js 18 or later: install it from https://nodejs.org, then follow the install steps at "
+            "https://github.com/usezn/zn#install\n"
+        )
     return (
         f"zn-gate {command} is a command of the npm package, not of this Python package.\n"
         "Run it with Node.js 18 or later:\n"
@@ -858,6 +877,11 @@ def npm_only_simple_message(command: str) -> str:
 
 
 def npm_help_message() -> str:
+    if not node_available():
+        return (
+            "zn-gate help is not a command. This package shows its help with --help:\n"
+            "  zn-gate --help\n"
+        )
     return (
         "zn-gate help is not a command. The npm package shows its help with --help.\n"
         "Run it with Node.js 18 or later:\n"
