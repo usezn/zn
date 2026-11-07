@@ -89,12 +89,12 @@ jobs:
   private-file:
     name: private file writer (${{ matrix.os }})
     # The owner-only file writer has a separate Windows implementation (protected DACL) and platform-specific
-    # Unix code, so its tests also run on Windows and macOS. Not a required check. Pull requests into next leave it
-    # out (the shared runner pool is the bottleneck: those pull requests run the required checks and one Windows job,
-    # "Windows (Node.js 22)"); pushes to main, next and release branches, the schedule, pull
-    # requests into main or release branches and the full-ci label run both systems. The merge queue runs only the
-    # required checks, so it skips this job. Draft pull requests skip it.
-    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && !(github.event_name == 'pull_request' && github.base_ref == 'next' && !contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    # Unix code (file permissions), so its tests also run on Windows and macOS. Not a required check. It runs in pull
+    # requests that change Rust code or Cargo files (the scope job decides, so a pull request that changes none
+    # does not start a Windows or macOS runner), on pushes to main, next and release branches, and on the schedule.
+    # The merge queue runs only the required checks, so it skips this job. Draft pull requests skip it.
+    needs: scope
+    if: github.event_name != 'merge_group' && needs.scope.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:

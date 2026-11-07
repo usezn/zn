@@ -1,8 +1,9 @@
 name: Windows checks for the Python package
 
-# Python 3.12 on Windows for pull requests into next that change the Python package (it has Windows-specific code:
-# paths, file locking, the console). The merge queue runs only the required checks, so it does not run this
-# workflow. Not a required check. Python 3.12 on Windows is also part of ci.yml's full matrix (pushes to main and
+# Python 3.12 on Windows for pull requests into next that touch the Python package, its benchmark or its test
+# requirements (it has Windows-specific code: paths, file locking, the console). Pull requests that change none of
+# those paths do not run it. The merge queue runs only the required checks, so it does not run this workflow. Not a
+# required check. Python 3.12 on Windows is also part of ci.yml's full matrix (pushes to main and
 # release branches, pull requests into them, and the full-ci label).
 on:
   pull_request:
