@@ -159,7 +159,7 @@ Lists every installed zn hook (agent, settings file, event and the command it ru
 zn-gate status
 ```
 
-Shows the version, the rules version, whether the optional cloud check is on and where the API key comes from. Always exits `0`.
+Shows the version, the rules version, whether the optional cloud check is on and where the API key comes from. If any installed hook was written by an older zn-gate, it also prints one warning naming each agent and the command that refreshes it (`zn hooks install <agent>`, with `--project` for project hooks); it prints nothing about hooks when they are all current. It only reads files: nothing is run, changed or sent. Always exits `0`.
 
 ### `test`
 

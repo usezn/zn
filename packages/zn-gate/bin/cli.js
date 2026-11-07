@@ -1390,6 +1390,11 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
         if (notes.length) process.stdout.write('\n');
       }
     } catch (_) { /* status never fails on this check */ }
+    // Hooks written by an older zn-gate (read-only, no network; a warning only: it never changes the exit status).
+    try {
+      const w = require('../lib/hooks-list').staleWarning({});
+      if (w) process.stdout.write(w);
+    } catch (_) { /* status never fails on this check */ }
     // An end-of-life or unpatched Node.js (a warning only: it never changes the exit status).
     try {
       const adv = require('../lib/node-support').nodeAdvice(process.versions.node);
