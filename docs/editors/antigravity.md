@@ -125,13 +125,18 @@ This checks the hooks. To check the MCP server too, restart Antigravity and ask 
 
 ## Uninstall
 
-In your own terminal:
+In your own terminal, in this order (the same order `npx -y zn-gate uninstall` uses):
+
+1. If you ran `npx -y zn-gate init --wrap-mcp`, put back the MCP settings files first: `npx -y zn-gate init --revert`. Do this before the next step: a saved copy put back after the hooks are removed could bring the zn-gate server back.
+2. Remove the hooks:
 
 ```bash
 zn hooks uninstall antigravity
 ```
 
-If you installed the hooks for one project only, add `--project` and run it from that project's folder. A backup of the settings file is written first. To remove the MCP server, delete the `zn-gate` entry from the MCP settings file you edited in Install. If you ran `npx -y zn-gate init --wrap-mcp`, `npx -y zn-gate init --revert` puts back each MCP settings file as it was saved before wrapping. See [Remove zn-gate](../uninstall.md).
+If you installed the hooks for one project only, add `--project` and run it from that project's folder. A backup of the settings file is written first.
+
+3. If you added the `zn-gate` MCP server by hand, delete its entry from the MCP settings file you edited in Install, then restart Antigravity. See [Remove zn-gate](../uninstall.md).
 
 ## Troubleshooting
 

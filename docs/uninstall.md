@@ -54,6 +54,8 @@ This is a summary of the sections below. Each command is run in your own termina
 
 Use this if you want to remove only one part. Each command is run in your own terminal.
 
+If you remove the parts by hand, use the order `zn-gate uninstall` uses: put back the wrapped MCP servers first (`init --revert`), because a saved copy put back after the hooks are removed could bring back zn's `secrets` server. Then the plugin and the hooks, then the vault if you want it gone, then the program.
+
 ### Claude Code plugin
 
 ```bash
