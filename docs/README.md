@@ -17,7 +17,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [zn-gate for beginners](for-beginners.md) | In plain words, what zn-gate does and what it never does | People new to terminal agents |
 | [Check that it works](check.md) | What `zn-gate check` prints and how to fix a **NOT protected** line | Everyone, after installing |
 | [Keep secrets out of your agent](secrets.md) | Five-minute walkthrough of the vault, markers and `zn run` | Everyone |
-| [Recipes](recipes.md) | Ten short step-by-step recipes: install, check, protect a project, connect, report, upgrade, uninstall | Everyone |
+| [Recipes](recipes.md) | Eleven short step-by-step recipes: install, check, protect a project, connect, report, upgrade, uninstall | Everyone |
 | [Troubleshooting](troubleshooting.md) | The messages people meet first, and what to do for each | Everyone |
 | [Glossary](glossary.md) | Short meanings of words used in these docs | Newcomers |
 | [FAQ: update and remove zn-gate](faq.md) | Short answers to common questions about updating and removing zn-gate | Everyone |

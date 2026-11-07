@@ -15,7 +15,15 @@ def test_two_lists_multiply():
 
 
 def test_nested_braces_expand_inner_list_first():
-    assert _expand_braces("x{a,b{c,d}}") == ["xa", "xbc", "xa", "xbd"]
+    assert _expand_braces("x{a,b{c,d}}") == ["xa", "xbc", "xbd"]
+
+
+def test_nested_braces_with_a_suffix():
+    assert _expand_braces("x{a,b{c,d}}y") == ["xay", "xbcy", "xbdy"]
+
+
+def test_deeper_nesting_has_no_duplicates():
+    assert _expand_braces("{a,b{c,d{e,f}}}") == ["a", "bc", "bde", "bdf"]
 
 
 def test_word_without_braces_is_returned_as_is():
@@ -58,8 +66,8 @@ def test_sequence_inside_a_list():
 
 def test_exactly_64_results_are_returned():
     out = _expand_braces("w{" + "," * 63 + "}")
-    assert out is not None and len(out) == 64
-    assert set(out) == {"w"}
+    # 64 alternatives are within the limit; they are all the same word, so one is kept
+    assert out == ["w"]
 
 
 def test_more_than_64_results_give_none():
