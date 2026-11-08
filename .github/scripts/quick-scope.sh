@@ -8,6 +8,9 @@
 #   typos         pull requests: docs, READMEs, changelog fragments, .typos.toml
 #   links         pull requests: any Markdown file, lychee config
 #   shell lint    pull requests and pushes to main or next: any *.sh
+# Workflow lint (actionlint + zizmor) is not decided here: its job in quick-checks.yml keeps its own inline
+# paths filter (workflows, actions, workflow-lint config, zizmor config, action.yml) because it runs no
+# script of the repository.
 #   packagelint   pull requests and pushes to main or next: the two packages and their lint requirements
 #   hooks         pull requests and pushes to main or next: the pre-commit hooks file and its test
 #   snippets      pull requests, pushes to main, the nightly schedule: README, docs, packages
