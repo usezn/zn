@@ -151,7 +151,7 @@ If your computer is part of a zn Team organization, `zn vault reset` refuses, be
 ## 6. Your agent was blocked: `.env holds plain-text secrets`
 
 ```text
-zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.
+zn: .env holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.
 ```
 
 **What it means:** your agent tried to read a file with secrets in plain text. zn stopped it, so the secrets did not reach the agent. This is zn working, not an error.
@@ -428,6 +428,8 @@ Pick the family that fits your message:
 
 **Is it safe?** Yes. The file was not read, so its contents never reached the agent.
 
+The message ends with `(rule: secret-file:credential)` and says that agents may not read the file itself.
+
 **What to do:** if a command needs a value from that file, store it with `zn secret set NAME` in your own terminal. Your agent then runs the command with `zn run --secrets NAME -- <command>`, and the program gets the value as an environment variable on your computer. If you did not expect the read, ask your agent why it wanted that file. See [secrets](secrets.md). A `.env` file has its own message: see [section 6](#6-your-agent-was-blocked-env-holds-plain-text-secrets).
 
 #### "zn: the pattern `<pattern>` was not read because it would also match a .env file" / "because it is too broad for zn to check"
@@ -520,7 +522,7 @@ zn blocked this: `zn-gate init` turns zn's protection on for coding agents, whic
 
 #### "zn blocked this: `<reason>`. Ask the user to confirm before running this command."
 
-The reason is one of these, and the rest of the message tells the agent to ask you:
+The message gives the rule in brackets, for example `(rule: destructive:rm_root_home)`, then tells the agent to ask you before it runs the command. The reason is one of these:
 
 | The message says | What it means |
 |---|---|
@@ -617,6 +619,8 @@ zn: this command does not start with a plain program name, so zn cannot tell whi
 
 **Is it safe?** It is safe if you decline. If you approve, that data reaches that server.
 
+In `"deny"` mode the message names the rule `(rule: egress-check)`, says that personal data cannot be taken back, and says that only you can allow the request, by running it yourself in your own terminal.
+
 **What to do:** approve only if that server should get the data. Otherwise decline and ask the agent to send the request without it. Never write the value of a secret in the request. How to change the setting and list trusted hosts: [Network requests that carry personal data](egress-check.md).
 
 #### "zn: this call would send personal data (`<kinds>`) to `<server>`" / "zn: this call would send a secret (`<kinds>`) to `<server>`, so zn blocked it" / "zn: `<server>` never receives secret values"
@@ -636,6 +640,8 @@ zn: this command does not start with a plain program name, so zn cannot tell whi
 zn checks every command and patch before it runs. When one is too large or too deep to check within the time the agent allows, zn blocks it, because letting it through unchecked would be worse. These are safe: nothing ran.
 
 #### "zn: this command is too long for zn to check (over 100 KB)" / "zn: this patch is too long for zn to check" / "zn: this MCP call is too large for zn to check"
+
+The command message names the rule `(rule: size:command-too-long)`, says that unchecked it could read a secret or a protected file, and says that only you can run it, in your own terminal.
 
 **What to do:** ask the agent to split the work into smaller steps. Do not send the same content in pieces to get around the limit. MCP means a tool server your agent talks to; the limit there is 1 MB of arguments.
 
@@ -745,6 +751,8 @@ zn: something went wrong inside the zn hook, so this action was blocked to keep 
 #### "zn: could not check this action against your secret vault, so it was blocked"
 
 **What happened:** the check needs your vault and the vault was not running or could not be used.
+
+The message gives the rule `(rule: vault:unavailable)`, says that an agent cannot unlock the vault, and names `zn unlock` once: that is the step for you to take in your own terminal.
 
 **What to do:** run `zn unlock` in your own terminal and try again. See [section 5](#5-your-secret-vault-is-locked).
 
