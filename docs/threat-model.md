@@ -1,4 +1,4 @@
-# Threat model: secrets scrubber and broker
+# Threat model: scrubber and broker
 
 **zn-gate keeps secret values out of the model's context. In env mode, a
 command you allowed still holds the value: scope it, and turn on your agent's
@@ -26,7 +26,7 @@ reads, command output, search results, MCP results and pasted prompts.
 | A secret written into a file by `secrets_render_file` outside the project, over an existing file, or into a credential file | **You are asked** | Only new files inside the project, other than credential files, are written without confirmation. The agents' hook and plugin settings and zn's own state are refused outright. An overwrite is done in place through the checked descriptor, so a power cut during it can leave a truncated file; a file with other hard links is refused |
 | The API reflects the token in its response | **Yes** | Responses are masked and scrubbed |
 | The vault file is forged with the public key, edited, or deleted | **Fails closed** | Integrity tag keyed by the identity; a missing vault with existing history is refused |
-| The audit log is cut or replaced while the vault is locked or running | **Detected** | The vault keeps the last record (sequence number and MAC) and compares the log with it before every write, and checks the whole chain (every signature) before it writes, shows, exports or uploads the log. A mismatch, including one changed record in the middle, leaves a warning inside the vault and the log is not shown, exported or uploaded; `zn vault verify` fails until you accept the log |
+| The vault audit log is cut or replaced while the vault is locked or running | **Detected** | The vault keeps the last record (sequence number and MAC) and compares the log with it before every write, and checks the whole chain (every signature) before it writes, shows, exports or uploads the log. A mismatch, including one changed record in the middle, leaves a warning inside the vault and the log is not shown, exported or uploaded; `zn vault verify` fails until you accept the log |
 
 ## What zn does not protect against
 
@@ -214,7 +214,7 @@ prove it can read `~/.zn/run/session.key`.
     approved (the same file identity as the approval), the hosts and places
     (header, URL, body) the secret allows, and the organization policy.
   - A request that names no destination and no purpose, or one the daemon does
-    not know, gets nothing and is written to the audit log.
+    not know, gets nothing and is written to the vault audit log.
 - **The other commands that touch values are concrete.** `zn secret adopt`
   moves a value inside the vault. `zn secret import` and `zn env shadow` compare
   a value by getting yes or no (recorded, and limited to 120 a minute).
@@ -325,7 +325,7 @@ right before starting it, and starts that path; it never looks the name up on
   - **Your own script: allowed, with a warning.** Only you (and root or an
     administrator) can write it, as with scripts installed by nvm, Homebrew,
     pnpm, yarn, pipx or a virtual environment. `zn run` prints a one-line
-    warning on stderr and notes it in the audit log. The remaining risk: any
+    warning on stderr and notes it in the vault audit log. The remaining risk: any
     other program running as your user could still swap the script in that
     window. That is the same trust zn already places in everything that runs
     as you. To avoid it, run the script through its interpreter
