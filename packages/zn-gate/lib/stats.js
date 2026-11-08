@@ -26,6 +26,27 @@ function znHome() {
   return path.join(os.homedir(), '.zn');
 }
 
+/*
+ * The .zn folder in the home directory of the operating-system account running this process, or null when the system
+ * does not report one. Used for settings a project must not be able to redirect (the opt-in cloud check of tool output).
+ * os.homedir() is not used here: it follows HOME (and USERPROFILE on Windows), which a project can set for the agent.
+ * os.userInfo().homedir comes from the account itself: the passwd entry (getpwuid_r) on Linux and macOS, the profile
+ * directory of the process token (GetUserProfileDirectoryW) on Windows. ZN_HOME is not read either. When os.userInfo()
+ * throws (no passwd entry for the uid, as in some containers), the answer is null and callers treat it as "off".
+ */
+let realHomeForTests = null;
+function userHome() {
+  try {
+    const home = realHomeForTests ? realHomeForTests() : os.userInfo().homedir;
+    return typeof home === 'string' && home ? path.join(path.resolve(home), '.zn') : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Tests only: a function returning the account home userHome() should use, or null to restore os.userInfo(). */
+function _useRealHome(fn) { realHomeForTests = typeof fn === 'function' ? fn : null; }
+
 function statsFile() {
   return path.join(znHome(), 'stats.json');
 }
@@ -251,5 +272,5 @@ function topRules({ days = TOP_RULES_DAYS, limit = TOP_RULES_LIMIT, now = new Da
     .map(([id, count]) => ({ id, name: TOP_RULE_NAME, count }));
 }
 
-module.exports = { topRules, TOP_RULES_DAYS, znHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known,
+module.exports = { topRules, TOP_RULES_DAYS, znHome, userHome, _useRealHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known,
   percentile, latencySummary, latencyReport, LATENCY_KEEP };

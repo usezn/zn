@@ -22,6 +22,33 @@
 use regex::Regex;
 use std::sync::OnceLock;
 
+/// Writer for the gateway's own log lines: redacts each line with
+/// `Scrubber::redact_for_log` and writes it to stderr.
+#[derive(Clone, Copy, Default)]
+pub struct RedactingStderr;
+
+/// One redacting writer over any sink (stderr in production).
+pub struct RedactingWriter<W: std::io::Write>(pub W);
+
+impl<W: std::io::Write> std::io::Write for RedactingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let text = String::from_utf8_lossy(buf);
+        self.0
+            .write_all(Scrubber::redact_for_log(&text).as_bytes())?;
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for RedactingStderr {
+    type Writer = RedactingWriter<std::io::Stderr>;
+    fn make_writer(&'a self) -> Self::Writer {
+        RedactingWriter(std::io::stderr())
+    }
+}
+
 /// PII Scrubber for sanitizing sensitive data
 pub struct Scrubber;
 
@@ -760,6 +787,66 @@ fn nanp_spans(text: &str) -> Vec<(usize, usize)> {
     checked_spans(nanp_re(), text, nanp_lead, nanp_trail, formatted_nanp_valid)
 }
 
+/// Token shapes the gateway also keeps out of its own logs and audit rows:
+/// cloud, code-host, payment, AI-provider and chat credentials, webhook URLs,
+/// and private key blocks. Each match is replaced whole.
+fn token_re() -> &'static Regex {
+    static TOKEN_REGEX: OnceLock<Regex> = OnceLock::new();
+    TOKEN_REGEX.get_or_init(|| {
+        Regex::new(concat!(
+            r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----|$)",
+            r"|(?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16}",
+            r"|(?i:(?:aws_?)?secret_?access_?key)[\x22']?[ \t]*[:=][ \t]*[\x22']?[A-Za-z0-9/+=]{40}",
+            r"|AIza[0-9A-Za-z_-]{35}",
+            r"|glpat-[A-Za-z0-9_-]{20,}",
+            r"|github_pat_[A-Za-z0-9_]{22,255}",
+            r"|gh[pousr]_[A-Za-z0-9]{20,255}",
+            r"|sk-(?:proj|ant)-[A-Za-z0-9_-]{20,}",
+            r"|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{8,}",
+            r"|whsec_[A-Za-z0-9]{16,}",
+            r"|xox[abprs]-[A-Za-z0-9-]{10,}",
+            r"|xapp-[A-Za-z0-9-]{10,}",
+            r"|hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+",
+            r"|discord(?:app)?\.com/api(?:/v[0-9]+)?/webhooks/[0-9]+/[A-Za-z0-9_-]+",
+        ))
+        .unwrap()
+    })
+}
+
+fn iban_re() -> &'static Regex {
+    static IBAN_REGEX: OnceLock<Regex> = OnceLock::new();
+    IBAN_REGEX.get_or_init(|| {
+        Regex::new(r"(?i-u)[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?").unwrap()
+    })
+}
+
+/// ISO 13616 mod-97 check on a candidate (spaces allowed).
+fn iban_valid(raw: &str) -> bool {
+    // Byte slicing below is only safe on ASCII; never trust the caller's input.
+    if !raw.is_ascii() {
+        return false;
+    }
+    let compact: String = raw
+        .chars()
+        .filter(|c| *c != ' ')
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    if !(15..=34).contains(&compact.len()) {
+        return false;
+    }
+    let rotated = format!("{}{}", &compact[4..], &compact[..4]);
+    let mut rem: u32 = 0;
+    for c in rotated.chars() {
+        let v = match c {
+            '0'..='9' => c as u32 - '0' as u32,
+            'A'..='Z' => c as u32 - 'A' as u32 + 10,
+            _ => return false,
+        };
+        rem = if v >= 10 { rem * 100 + v } else { rem * 10 + v } % 97;
+    }
+    rem == 1
+}
+
 impl Scrubber {
     /// Scrub all PII and sensitive data from the input string
     ///
@@ -796,6 +883,28 @@ impl Scrubber {
         output = replace_spans(&output, &nanp_spans(&output), "[PHONE_REDACTED]");
 
         output
+    }
+
+    /// Redact text before it is written to a log or to the audit database.
+    ///
+    /// Everything `scrub` masks, plus the credential shapes `scrub` leaves in
+    /// place because the forwarded call must keep its arguments (cloud, code
+    /// host, payment and chat tokens, private key blocks, IBANs). This is for
+    /// what the gateway records about a call, never for what it forwards.
+    pub fn redact_for_log(input: &str) -> String {
+        let mut output = token_re()
+            .replace_all(input, "[SECRET_REDACTED]")
+            .to_string();
+        output = iban_re()
+            .replace_all(&output, |c: &regex::Captures| {
+                if iban_valid(&c[0]) {
+                    "[IBAN_REDACTED]".to_string()
+                } else {
+                    c[0].to_string()
+                }
+            })
+            .to_string();
+        Self::scrub(&output)
     }
 
     /// Check if a string contains any detectable PII
@@ -1914,6 +2023,134 @@ mod table_parity_tests {
     #[test]
     fn e164_validator_equals_node() {
         assert_eq!(mismatches("e164", e164_valid), Vec::<String>::new());
+    }
+
+    // ---- redact_for_log -------------------------------------------------
+
+    // Built from pieces so no literal in the source looks like a real credential.
+    fn log_values() -> Vec<String> {
+        vec![
+            ["AKIA", "IOSFODNN7EXAMPLE"].concat(),
+            ["gh", "p_0123456789abcdefghijABCDEFGHIJ012345"].concat(),
+            ["sk_", "live_EXAMPLEEXAMPLE0123456789"].concat(),
+            ["xo", "xb-123456789012-example0123456789"].concat(),
+            "GB82 WEST 1234 5698 7654 32".to_string(),
+            "GB82WEST12345698765432".to_string(),
+            "gb82 west 1234 5698 7654 32".to_string(),
+            [
+                "aws_secret_",
+                "access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            ]
+            .concat(),
+            // The JSON form of temporary credentials, with no aws prefix on the key.
+            [
+                "\"SecretAccess",
+                "Key\": \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"",
+            ]
+            .concat(),
+            ["AI", "zaSyA-0123456789abcdefghijklmnopqrstuv"].concat(),
+            ["gl", "pat-0123456789abcdefghij"].concat(),
+            ["xa", "pp-1-A0123456789-0123456789-abcdef0123"].concat(),
+            [
+                "https://hooks.",
+                "slack.com/services/T0EXAMPLE1/B0EXAMPLE1/abcdefghijklmnop0123",
+            ]
+            .concat(),
+            [
+                "https://disc",
+                "ord.com/api/webhooks/123456789012345678/abcdefghij_EXAMPLE-0123",
+            ]
+            .concat(),
+            ["sk-", "proj-EXAMPLEEXAMPLE0123456789"].concat(),
+            ["sk-", "ant-api03-EXAMPLEEXAMPLE0123456789"].concat(),
+            [
+                "-----BEGIN PGP PRIV",
+                "ATE KEY BLOCK-----\n",
+                "lQdGBFexampleexample\n",
+                "-----END PGP PRIV",
+                "ATE KEY BLOCK-----",
+            ]
+            .concat(),
+            [
+                "eyJhbGciOiJIUzI1NiJ9",
+                "eyJzdWIiOiJleGFtcGxlIn0",
+                "c2lnbmF0dXJl",
+            ]
+            .join("."),
+            "jane.doe@example.com".to_string(),
+            "4111 1111 1111 1111".to_string(),
+        ]
+    }
+
+    fn fake_ghp() -> String {
+        ["gh", "p_0123456789abcdefghijABCDEFGHIJ012345"].concat()
+    }
+
+    #[test]
+    fn redact_for_log_masks_every_known_secret_type() {
+        for v in &log_values() {
+            let out = Scrubber::redact_for_log(&format!("before {v} after"));
+            assert!(!out.contains(v.as_str()), "{v} left in {out}");
+            assert!(out.contains("before") && out.contains("after"), "{out}");
+        }
+        let out = Scrubber::redact_for_log("password = \"hunter2-example-not-real\"");
+        assert!(!out.contains("hunter2"), "{out}");
+        let key = "-----BEGIN PRIVATE KEY-----\nMIIEexampleexample\n-----END PRIVATE KEY-----";
+        let out = Scrubber::redact_for_log(&format!("k={key}!"));
+        assert!(!out.contains("MIIE"), "{out}");
+    }
+
+    #[test]
+    fn redact_for_log_keeps_plain_text_and_non_iban_codes() {
+        for text in [
+            "list_files in ./src",
+            "order GB12 ABCD 1234 5678 9012",
+            "build 2026-11-01",
+        ] {
+            assert_eq!(Scrubber::redact_for_log(text), text);
+        }
+    }
+
+    #[test]
+    fn iban_with_non_ascii_lookalike_letters_does_not_panic() {
+        // U+212A (Kelvin sign) and U+017F (long s) case-fold to ASCII letters.
+        for bad in [
+            "\u{212A}\u{212A}12ABCDABCDABCD",
+            "\u{017F}\u{017F}12ABCDABCDABCD",
+            "GB82WEST1234569876543\u{212A}",
+        ] {
+            assert!(!iban_valid(bad), "{bad}");
+            assert_eq!(Scrubber::redact_for_log(bad), bad);
+            let wrapped = format!("agent {bad} end");
+            assert_eq!(Scrubber::redact_for_log(&wrapped), wrapped);
+        }
+        assert!(iban_valid("GB82WEST12345698765432"));
+        assert_eq!(
+            Scrubber::redact_for_log("iban GB82WEST12345698765432 ok"),
+            "iban [IBAN_REDACTED] ok"
+        );
+    }
+
+    #[test]
+    fn scrub_itself_is_unchanged_so_forwarded_frames_do_not_change() {
+        // `scrub` is what is forwarded; only the log redactor knows the extra shapes
+        // (such as a spaced IBAN). Tokens that `scrub` already masks stay masked.
+        let text = "iban GB82 WEST 1234 5698 7654 32";
+        assert_eq!(Scrubber::scrub(text), text);
+    }
+
+    #[test]
+    fn redacting_writer_masks_what_it_writes() {
+        use std::io::Write;
+        let mut sink: Vec<u8> = Vec::new();
+        {
+            let mut w = RedactingWriter(&mut sink);
+            writeln!(w, "INFO Tool call detected: no_such_{}", fake_ghp()).unwrap();
+            w.flush().unwrap();
+        }
+        let out = String::from_utf8(sink).unwrap();
+        assert!(!out.contains(&fake_ghp()[..8]), "{out}");
+        assert!(out.contains("Tool call detected"), "{out}");
     }
 
     #[test]
