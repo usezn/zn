@@ -1,11 +1,22 @@
 name: zn-gate Node.js on macOS
 
 # Runs the whole zn-gate Node.js test suite on macOS with Node.js 22, including the vault tests against
-# the native macOS Keychain. Pull requests do not run it: macOS runners are the scarcest ones and kept every
-# pull request waiting. It runs in the merge queue (so not again on the push to next), on pushes to main and release branches that change
+# the native macOS Keychain. It runs on pull requests that touch the zn-gate library, CLI or tests (macOS runners
+# are the scarcest ones, so pull requests that change nothing there skip it), not in the merge queue (which runs
+# only the required checks), and on pushes to main and release branches that change
 # code with macOS-specific behaviour (the paths below: Keychain, hooks, agent setup, launching programs, file
 # system scans and links, the CLI), every day and on manual runs.
 on:
+  pull_request:
+    branches: [ next, main, 'release/**' ]
+    types: [ opened, synchronize, reopened, ready_for_review ]
+    paths:
+      - 'packages/zn-gate/lib/**'
+      - 'packages/zn-gate/bin/**'
+      - 'packages/zn-gate/test/**'
+      - 'packages/zn-gate/package.json'
+      - 'packages/zn-gate/package-lock.json'
+      - '.github/workflows/node-macos.yml'
   push:
     branches: [ main, 'release/**' ]
     paths:
@@ -35,9 +46,6 @@ on:
       - 'packages/zn-gate/package.json'
       - 'packages/zn-gate/package-lock.json'
       - '.github/workflows/node-macos.yml'
-  # The merge queue always runs it (Node.js 22 on macOS is the macOS sample of the queue).
-  merge_group:
-    types: [ checks_requested ]
   # Daily full run on the default branch.
   schedule:
     - cron: '30 6 * * *'
@@ -46,10 +54,10 @@ on:
 permissions:
   contents: read
 
-# A new push to next cancels the run still going for it. Other runs always complete.
+# A new push to a pull request, or to next, cancels the run still going for it. Other runs always complete.
 concurrency:
-  group: node-macos-${{ (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/next' }}
+  group: node-macos-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.

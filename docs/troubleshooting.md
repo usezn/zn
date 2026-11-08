@@ -1,8 +1,45 @@
 # Troubleshooting
 
-The sixteen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
+The seventeen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
+
+## Symptoms by command
+
+Find the command you ran, then the symptom that matches.
+
+- `init`
+  - [Node.js is too old](#1-nodejs-is-too-old)
+  - [`npx: command not found`](#2-npx-command-not-found)
+  - ["running scripts is disabled on this system" (Windows)](#3-running-scripts-is-disabled-on-this-system-windows)
+  - [It needs you at your own terminal](#4-it-needs-you-at-your-own-terminal)
+  - [Init cannot install zn-gate: no internet connection](#12-init-cannot-install-zn-gate-no-internet-connection)
+  - [Init stops the npm install after 3 minutes](#13-init-stops-the-npm-install-after-3-minutes)
+- `check`
+  - [Your agent ignores zn's hooks on a managed computer](#9-your-agent-ignores-zns-hooks-on-a-managed-computer)
+  - [The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)
+  - ["zn: part of zn-gate is missing from this installation"](#zn-part-of-zn-gate-is-missing-from-this-installation--zn-something-went-wrong-inside-the-zn-hook)
+- `scan` and `audit`
+  - ["Exposed credential detected by DLP filter"](#exposed-credential-detected-by-dlp-filter)
+  - ["Unknown command" / "unknown argument" / "Target path does not exist"](#unknown-command--unknown-argument--target-path-does-not-exist----format-for-scan-must-be-text-json-or-github--please-provide-text-to-analyze)
+- `secret`, `unlock`, `lock` and `vault`
+  - ["Your secret vault is locked"](#5-your-secret-vault-is-locked)
+  - [Your agent was blocked: ".env holds plain-text secrets"](#6-your-agent-was-blocked-env-holds-plain-text-secrets)
+  - ["zn could not use your secret vault"](#zn-could-not-use-your-secret-vault-error)
+  - ["Lock the vault first"](#lock-the-vault-first)
+  - ["The vault is already unlocked"](#the-vault-is-already-unlocked)
+- `team`
+  - ["invalid join token (expected znj_...)" / "No join token given"](#invalid-join-token-expected-znj_--no-join-token-given)
+  - ["This join token is expired, already used or not valid"](#this-join-token-is-expired-already-used-or-not-valid)
+  - ["Could not reach the zn server"](#could-not-reach-the-zn-server)
+  - ["Your admin has not published a policy yet"](#your-admin-has-not-published-a-policy-yet)
+  - ["An admin removed this machine from the organization"](#an-admin-removed-this-machine-from-the-organization)
+  - ["Your organization is not active on zn right now"](#your-organization-is-not-active-on-zn-right-now)
+- `evidence`
+  - ["the evidence log ... is damaged"](#10-the-evidence-log--is-damaged)
+- `connect`
+  - [`zn-gate connect` does not accept your key](#7-zn-gate-connect-does-not-accept-your-key)
+  - ["will not send the saved key" (TLS settings)](#8-will-not-send-the-saved-key-tls-settings)
 
 ## Symptom index
 
@@ -19,6 +56,7 @@ Run every command in your own terminal, not through your AI agent. New here? Sta
 - [The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)
 - [Init cannot install zn-gate: no internet connection](#12-init-cannot-install-zn-gate-no-internet-connection)
 - [Init stops the npm install after 3 minutes](#13-init-stops-the-npm-install-after-3-minutes)
+- [`'zn' is not recognized as an internal or external command`](#14-zn-is-not-recognized-as-an-internal-or-external-command)
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
 - [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
 
@@ -93,7 +131,7 @@ More in [secrets](secrets.md). If it asks for a terminal to enter the passphrase
 
 **If the vault does not answer:** `The vault is not answering` means the vault is slow or was left over from a crash. Run `zn lock`, then `zn unlock`. If `unlock` says the vault did not start in time or stopped while starting, run it again; if it keeps happening, restart your computer and open an issue with the output of `ZN_VERBOSE=1 zn unlock`.
 
-**If `zn vault verify` says the audit log did not pass its check:** do not delete or edit the log. It is the record of what the vault did, and a change to it is what the check finds. Keep a copy of `~/.zn/audit.jsonl`, then open an issue; `zn vault verify` with `ZN_VERBOSE=1` prints the reason. If the message says the log "was changed behind the vault", and you have looked into it (for example you know a disk problem or a restore cut the log), run `zn vault verify --acknowledge` in your own terminal to accept the log as it is now; the warning stays in the log. If it says the log "does not verify on its own", the chain itself is broken and cannot be accepted.
+**If `zn vault verify` says the vault audit log did not pass its check:** do not delete or edit the log. It is the record of what the vault did, and a change to it is what the check finds. Keep a copy of `~/.zn/audit.jsonl`, then open an issue; `zn vault verify` with `ZN_VERBOSE=1` prints the reason. If the message says the log "was changed behind the vault", and you have looked into it (for example you know a disk problem or a restore cut the log), run `zn vault verify --acknowledge` in your own terminal to accept the log as it is now; the warning stays in the log. If it says the log "does not verify on its own", the chain itself is broken and cannot be accepted.
 
 For the other messages of `zn unlock`, `zn lock` and `zn forget` (cancelled prompts, passphrases that do not match, `--ttl` and `--idle`, the clipboard), see [Messages from the vault commands](#messages-from-the-vault-commands-zn-unlock-zn-lock-zn-forget).
 
@@ -263,7 +301,37 @@ You may see this when the npm install takes too long:
 2. If it is missing or the install was incomplete, run the command the message shows, `npm install -g zn-gate@<version>`, on a steadier connection.
 3. Run `npx -y zn-gate check` to see what is protected. For a VPN or proxy, see [the README](../README.md#install).
 
-## 14. `scan` lists files under "Not scanned"
+## 14. `'zn' is not recognized as an internal or external command`
+
+You may see this in Command Prompt:
+
+```text
+'zn' is not recognized as an internal or external command,
+operable program or batch file.
+```
+
+PowerShell words the message differently, but the cause is the same.
+
+**What it means:** zn-gate is installed, but Windows cannot find the `zn` command. `npm install -g zn-gate` puts `zn` in npm's global folder, and that folder is not on your `PATH`, the list of folders the terminal searches for commands. `npx` still works, because `npx -y zn-gate` runs zn-gate without needing `zn` on your `PATH`.
+
+**What to do:**
+
+1. Find the folder. In your own terminal, run:
+
+   ```text
+   npm config get prefix
+   ```
+
+   It prints one folder. On most Windows computers it ends in `npm`, and `zn.cmd` is directly inside it.
+
+2. Add that folder to your user `PATH`. Open the Start menu, search for "environment variables", and choose "Edit the environment variables for your account". Under "User variables", select `Path`, choose "New", paste the folder from step 1, and click OK on each window.
+3. Open a new terminal. A terminal that was already open keeps the old `PATH`. Run `zn --version`. It prints the zn-gate version.
+
+**Until then:** use `npx -y zn-gate` in place of `zn`, for example `npx -y zn-gate check`. Each command in this guide that starts with `zn` works the same way with `npx -y zn-gate`.
+
+If `zn --version` still fails after step 3, run `npm list -g zn-gate` in your own terminal. If it prints nothing, install zn-gate again with `npm install -g zn-gate`, then repeat step 3.
+
+## 15. `scan` lists files under "Not scanned"
 
 A scan can end with a list like this:
 
@@ -285,9 +353,9 @@ A folder that `scan` did not enter is listed apart, under "Directories not scann
 
 1. For `2 MiB or larger`, check whether the file is really text you wrote. If it can hold a secret, split it, or scan a smaller copy.
 2. For `cannot be read`, fix the permissions of the file or folder and run the scan again.
-3. If you accept that these files stay unread, see [The scan ends with exit code 3](#15-the-scan-ends-with-exit-code-3).
+3. If you accept that these files stay unread, see [The scan ends with exit code 3](#16-the-scan-ends-with-exit-code-3).
 
-## 15. The scan ends with exit code 3
+## 16. The scan ends with exit code 3
 
 You may see this at the end of a scan that found nothing:
 
@@ -304,15 +372,15 @@ Audit Result : NOTHING SCANNED
 Status       : No files were read: this is not a clean result
 ```
 
-**What it means:** exit code `3` says the result is not a clean one, because `scan` did not see everything. Either a file or folder it should have read was left out (see [14](#14-scan-lists-files-under-not-scanned)), or no file matched. If `scan` finds something, it exits `1` instead, whatever else was left out. A pruned build folder such as `dist` does not cause a `3`; an unreadable folder or file does.
+**What it means:** exit code `3` says the result is not a clean one, because `scan` did not see everything. Either a file or folder it should have read was left out (see [15](#15-scan-lists-files-under-not-scanned)), or no file matched. If `scan` finds something, it exits `1` instead, whatever else was left out. A pruned build folder such as `dist` does not cause a `3`; an unreadable folder or file does.
 
 **What to do:**
 
 1. Read the "Not scanned" and "Directories not scanned" lists and fix what they point to.
-2. If the scan read no file, check that you ran it in the right folder, and that the folder holds files `scan` reads. Source code is read only with `--code` (see [16](#16-scan-reads-no-source-code)).
+2. If the scan read no file, check that you ran it in the right folder, and that the folder holds files `scan` reads. Source code is read only with `--code` (see [17](#17-scan-reads-no-source-code)).
 3. If you accept the unread files, add `--allow-partial`: the same scan then exits `0` when it finds nothing. It prints `Partial coverage accepted with --allow-partial`, and the lists stay in the output. It does not change what the scan reads, and it does not accept a scan that read no file at all. See [exit codes](exit-codes.md#scan-and-review).
 
-## 16. `scan` reads no source code
+## 17. `scan` reads no source code
 
 A folder scan reports `Files Scanned: 0`, or says nothing about your `.js`, `.ts`, `.py`, `.sh`, `.html`, `.go` or `.rs` files, and the header reads:
 
@@ -330,11 +398,13 @@ Scope   : Prompt templates, docs, configs (use --code to scan source)
 
 ## Block and warn reasons, by family
 
-Past the sixteen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
+Past the seventeen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
+
+For five common blocks, with what to do for each, see [Why was this blocked?](why-was-this-blocked.md).
 
 Run every command in your own terminal, not through your AI agent. If you did not install zn-gate with `npm install -g zn-gate`, put `npx -y zn-gate` where the commands below say `zn`, for example `npx -y zn-gate secret set NAME`. Words you do not know are in the [glossary](glossary.md).
 
-To see which rule stopped your agent last, and what you can do about it, run `zn why` in your own terminal. It explains the last block in the evidence log (`zn why <id>` explains a record you pick); see [`why`](cli.md#why).
+To see which rule stopped your agent last, and what you can do about it, run `zn why` in your own terminal. It explains the last block in the decision log (`zn why <id>` explains a record you pick); see [`why`](cli.md#why).
 
 Pick the family that fits your message:
 
@@ -359,6 +429,14 @@ Pick the family that fits your message:
 **Is it safe?** Yes. The file was not read, so its contents never reached the agent.
 
 **What to do:** if a command needs a value from that file, store it with `zn secret set NAME` in your own terminal. Your agent then runs the command with `zn run --secrets NAME -- <command>`, and the program gets the value as an environment variable on your computer. If you did not expect the read, ask your agent why it wanted that file. See [secrets](secrets.md). A `.env` file has its own message: see [section 6](#6-your-agent-was-blocked-env-holds-plain-text-secrets).
+
+#### "zn: the pattern `<pattern>` was not read because it would also match a .env file" / "because it is too broad for zn to check"
+
+**What happened:** your agent ran a command with a wildcard, such as `ls *` or `cat *`, in a folder that has a `.env` file (or with a pattern so broad that zn cannot tell what it reaches). zn cannot be sure the wildcard leaves the file with secrets out, so it stopped the command. Nothing was read or changed.
+
+**Is it safe?** Yes. The command did not run.
+
+**What to do:** ask your agent to name the files it needs, for example `ls src` or `cat README.md`, or to use a narrower wildcard such as `cat *.md`. If it has to run the wildcard, run the command yourself in your own terminal.
 
 #### "zn: this command reads `<file>` through a path zn cannot check" / "builds the path of a .env file while it runs" / "changes to `<folder>` first"
 
@@ -829,7 +907,7 @@ To see where these rules apply, and what happens when the file is not valid, rea
 
 #### "Tamper detected"
 
-**What happened:** `zn-gate evidence --verify` found that the evidence log was changed or damaged, so its chain of records no longer matches. The message gives the place of the break and a command to move the file aside.
+**What happened:** `zn-gate evidence --verify` found that the decision log was changed or damaged, so its chain of records no longer matches. The message gives the place of the break and a command to move the file aside.
 
 **Is it safe?** Your protection keeps working. Only the record is in doubt.
 
@@ -996,7 +1074,7 @@ When a command cannot read or write a file or folder, zn-gate says what is wrong
 
 **What happened:** you typed a `zn team` word that does not exist. There is no `zn team login` or `zn team export`. If you typed a token without `join`, zn did not print it back.
 
-**What to do:** the commands are `zn team join <token>`, `zn team status`, `zn team sync` and `zn team leave`. To export the audit log, run `zn vault log export --otlp`. All options: `zn team --help`.
+**What to do:** the commands are `zn team join <token>`, `zn team status`, `zn team sync` and `zn team leave`. To export the vault audit log, run `zn vault log export --otlp`. All options: `zn team --help`.
 
 #### "invalid request" / "nothing to approve" / "the organization policy does not ask for this"
 
