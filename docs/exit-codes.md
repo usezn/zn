@@ -133,6 +133,7 @@ With `fail-on-threat: 'false'` the exit codes stay `0`, so do not use these outp
 
 `make` stops a target at the first command that exits with a non-zero code, and it does not say which code it was. To react to a code, save it with `$$?` and read it in the same shell command. This target treats the three non-zero codes of `scan` differently:
 
+<!-- markdownlint-disable MD010 -->
 ```make
 scan:
 	@zn-gate scan . ; code=$$? ; \
@@ -143,6 +144,7 @@ scan:
 	  *) echo "scan: could not run (exit $$code), check the command" ; exit $$code ;; \
 	esac
 ```
+<!-- markdownlint-enable MD010 -->
 
 - `0` means nothing was found and everything that matched was read, so the target passes.
 - `1` means the scan found something (or the path does not exist). Fix the findings.
