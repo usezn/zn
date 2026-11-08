@@ -89,7 +89,9 @@ test('check --json: valid JSON and exit 1 when an agent config is malformed', (t
   assert.ok(!r.stdout.includes(c.home));
 });
 
-test('toJson hides a home whose real path contains it (longest form replaced first)', () => {
+// Skipped on Windows: the nested path reuses an absolute path (a drive letter cannot sit inside a path component)
+// and symlinkSync needs extra privileges there. The replacement logic is the same on every platform.
+test('toJson hides a home whose real path contains it (longest form replaced first)', { skip: process.platform === 'win32' }, () => {
   const fsm = require('node:fs');
   const osm = require('node:os');
   const pathm = require('node:path');
@@ -114,5 +116,15 @@ test('toJson hides a home whose real path contains it (longest form replaced fir
     assert.equal(out.warnings[0], 'see ~/x');
   } finally {
     fsm.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('check --hooks --json is refused with exit 2', () => {
+  const cli = path.join(__dirname, '..', 'bin', 'cli.js');
+  for (const cmd of ['check', 'doctor']) {
+    const r = spawnSync(process.execPath, [cli, cmd, '--hooks', '--json'], { encoding: 'utf8' });
+    assert.equal(r.status, 2, r.stderr);
+    assert.equal(r.stdout, '');
+    assert.match(r.stderr, /--hooks and --json cannot be used together/);
   }
 });

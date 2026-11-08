@@ -1093,7 +1093,14 @@ function fixedOptionProblem(label, args, accepted, valueOptions = [], start = 1)
 // The problem with an option of one of those commands, or null. Other commands are checked where they are dispatched.
 function fixedOptionsProblem(args) {
   const command = args[0];
-  if (command === 'check' || command === 'doctor') return fixedOptionProblem(command, args, ['--hooks', '--json']);
+  if (command === 'check' || command === 'doctor') {
+    // --hooks prints the hook list as text; --json prints the agent check. Asking for both would silently drop one.
+    if (args.includes('--hooks') && args.includes('--json')) {
+      return '--hooks and --json cannot be used together. Run zn-gate ' + command + ' --json for the agent check as JSON, '
+        + 'or zn-gate ' + command + ' --hooks for the list of hooks.';
+    }
+    return fixedOptionProblem(command, args, ['--hooks', '--json']);
+  }
   if (command === 'status') return fixedOptionProblem(command, args, STATUS_OPTIONS, ['--key', '--stage', '--url']);
   if (command === 'version' || command === '-v') return fixedOptionProblem('version', args, []);
   if (command === 'test') return fixedOptionProblem(command, args, []);
