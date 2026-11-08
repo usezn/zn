@@ -17,4 +17,5 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project, from the run to what each exit code means.
 - [stats-and-report.md](stats-and-report.md): worked examples of `zn-gate stats` and `zn-gate report`.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
+- [zn-scan-package-reading.md](zn-scan-package-reading.md): read the output of `zn-gate scan --package` for a package with nothing found, a package with a finding and a package that does not exist.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
