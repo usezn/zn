@@ -767,3 +767,19 @@ def test_text_garbage_appended_at_the_end_reports_its_line(tmp_path):
     assert res["total"] == 4
     assert res["broken_index"] == 3 and res["verified"] == 3
     assert "Malformed JSON at line 4" in res["error"]
+
+
+def test_cli_verify_reports_one_flipped_byte_as_tamper(tmp_path, monkeypatch, capsys):
+    # Every byte stays valid UTF-8 and valid JSON: only the hash chain can notice the change.
+    p = _ledger(tmp_path)
+    assert verify_evidence_ledger(p)["valid"] is True
+    with open(p, "rb") as f:
+        data = bytearray(f.read())
+    data[data.index(b"example-0") + len(b"example-")] ^= 0x01  # "0" becomes "1"
+    with open(p, "wb") as f:
+        f.write(bytes(data))
+    assert verify_evidence_ledger(p)["valid"] is False
+    monkeypatch.setattr(cli, "verify_evidence_ledger", lambda: verify_evidence_ledger(p))
+    code = cli.cmd_evidence(type("A", (), {"verify": True})())
+    assert code != 0
+    assert "Tamper detected" in capsys.readouterr().err

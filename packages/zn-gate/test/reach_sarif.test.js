@@ -72,3 +72,21 @@ test('an audit finding keeps its ZNA rule and an unknown rule is skipped', () =>
   assert.strictEqual(res[0].ruleId, 'ZNA001');
   assert.match(s.runs[0].tool.driver.rules[0].help.text, /Fix: /);
 });
+
+test('quotes and backslashes in a finding message are escaped and come back exactly', () => {
+  const title = 'Secret "quoted" in C:\\Users\\me\\.env';
+  const detail = 'second "line" ends with a backslash \\';
+  const fix = 'Move it to "~/.zn" \\ and keep it out of git';
+  const findings = [
+    { kind: 'dotenv', section: 'files', severity: 'high', title, detail, fix, file: 'app/.env', line: 2 },
+    { kind: 'credential-files', section: 'files', severity: 'low', title, detail, fix, file: '~/.aws/credentials' },
+  ];
+  const raw = toSarif({ findings }, { toolVersion: '0.0.0-test' });
+  assert.ok(raw.includes('Secret \\"quoted\\" in C:\\\\Users\\\\me\\\\.env'), 'quotes and backslashes are escaped in the JSON text');
+  const s = JSON.parse(raw);
+  const text = title + ': ' + detail + ' Fix: ' + fix;
+  assert.strictEqual(s.runs[0].results.length, 1);
+  assert.strictEqual(s.runs[0].results[0].message.text, text);
+  assert.strictEqual(s.runs[0].invocations[0].toolExecutionNotifications.length, 1);
+  assert.strictEqual(s.runs[0].invocations[0].toolExecutionNotifications[0].message.text, text);
+});
