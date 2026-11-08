@@ -11,8 +11,9 @@
  * and a lookup that has not finished in 2 seconds is given up. Any failure (network, timeout, status other than
  * 200 and 404, a reply that is not the expected JSON) gives no answer, and the caller then asks no question.
  *
- * The answers are kept for one day in ~/.zn/package-registry-cache.json (written atomically, mode 0600). A cache that
- * cannot be read or written is ignored. Only the name, whether it exists and the date of its first release are kept.
+ * The answers are kept for one day in ~/.zn/package-registry-cache.json (written atomically, mode 0600), an answer about
+ * the latest version for one hour. A cache that cannot be read or written is ignored. Only the name, whether it exists,
+ * the date of its first release and, when asked, the version and its publish date are kept.
  */
 
 const fs = require('fs');
@@ -26,6 +27,9 @@ const MAX_CACHE_ENTRIES = 2000;
 const MAX_NAMES = 8;
 const CACHE_FILE = 'package-registry-cache.json';
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+// An answer about the latest version can change within the day (a new release), so it is kept for an hour only.
+const LATEST_TTL_MS = HOUR_MS;
 
 const NPM_OK = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
 const PYPI_OK = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
@@ -74,9 +78,22 @@ function httpsFetch(url, { timeoutMs = TIMEOUT_MS, maxBytes = MAX_BYTES } = {}) 
   });
 }
 
+const ok = (t) => (Number.isFinite(t) ? t : null);
+
+/* Milliseconds of the earliest upload among a PyPI release's files, or null. */
+function firstUploadOf(files) {
+  let first = Infinity;
+  for (const f of Array.isArray(files) ? files : []) {
+    if (!f || typeof f !== 'object') continue;
+    const s = typeof f.upload_time_iso_8601 === 'string' ? f.upload_time_iso_8601 : typeof f.upload_time === 'string' ? f.upload_time + 'Z' : '';
+    const t = Date.parse(s);
+    if (Number.isFinite(t) && t < first) first = t;
+  }
+  return first === Infinity ? null : first;
+}
+
 /* Milliseconds of the first release in the registry's JSON, or null when it cannot be told. */
 function createdOf(eco, doc) {
-  const ok = (t) => (Number.isFinite(t) ? t : null);
   if (eco === 'npm') {
     const t = doc && doc.time && typeof doc.time.created === 'string' ? Date.parse(doc.time.created) : NaN;
     return ok(t);
@@ -84,19 +101,33 @@ function createdOf(eco, doc) {
   let first = Infinity;
   const releases = doc && typeof doc.releases === 'object' && doc.releases ? doc.releases : {};
   for (const files of Object.values(releases)) {
-    if (!Array.isArray(files)) continue;
-    for (const f of files) {
-      if (!f || typeof f !== 'object') continue;
-      let s = typeof f.upload_time_iso_8601 === 'string' ? f.upload_time_iso_8601 : typeof f.upload_time === 'string' ? f.upload_time + 'Z' : '';
-      const t = Date.parse(s);
-      if (Number.isFinite(t) && t < first) first = t;
-    }
+    const t = firstUploadOf(files);
+    if (t !== null && t < first) first = t;
   }
   return first === Infinity ? null : first;
 }
 
-/* One lookup: { state: 'missing' | 'found', created } or throws an Error with a short reason. */
-async function fetchOne(eco, name, fetch, timeoutMs, maxBytes) {
+/*
+ * The version the agent asks for: `wanted` is an exact version, or 'latest' (no version in the command). Returns
+ * { version, created } with the version the registry resolves to and its publish time (ms, or null), or null.
+ */
+function versionOf(eco, doc, wanted) {
+  if (eco === 'npm') {
+    const tags = doc['dist-tags'] && typeof doc['dist-tags'] === 'object' ? doc['dist-tags'] : {};
+    const version = wanted === 'latest' ? tags.latest : wanted;
+    if (typeof version !== 'string' || !version) return null;
+    const t = doc.time && typeof doc.time[version] === 'string' ? Date.parse(doc.time[version]) : NaN;
+    return { version, created: ok(t) };
+  }
+  const info = doc.info && typeof doc.info === 'object' ? doc.info : {};
+  const version = wanted === 'latest' ? info.version : wanted;
+  if (typeof version !== 'string' || !version) return null;
+  const files = doc.releases && typeof doc.releases === 'object' ? doc.releases[version] : undefined;
+  return { version, created: firstUploadOf(files) };
+}
+
+/* One lookup: { state: 'missing' | 'found', created, version, versionCreated } or throws an Error with a short reason. */
+async function fetchOne(eco, name, fetch, timeoutMs, maxBytes, wanted) {
   const url = urlFor(eco, name);
   if (!url) throw new Error('name not valid');
   let timer;
@@ -104,14 +135,15 @@ async function fetchOne(eco, name, fetch, timeoutMs, maxBytes) {
   let res;
   try { res = await Promise.race([Promise.resolve().then(() => fetch(url, { timeoutMs, maxBytes })), limit]); } finally { clearTimeout(timer); }
   if (!res || typeof res.status !== 'number') throw new Error('no reply');
-  if (res.status === 404) return { state: 'missing', created: null };
+  if (res.status === 404) return { state: 'missing', created: null, version: null, versionCreated: null };
   if (res.status !== 200) throw new Error('status ' + res.status);
   if (typeof res.body !== 'string') throw new Error('no body');
   if (res.body.length > maxBytes) throw new Error('reply too large');
   let doc;
   try { doc = JSON.parse(res.body); } catch (e) { throw new Error('reply is not JSON'); }
   if (!doc || typeof doc !== 'object' || Array.isArray(doc)) throw new Error('reply not understood');
-  return { state: 'found', created: createdOf(eco, doc) };
+  const v = wanted ? versionOf(eco, doc, wanted) : null;
+  return { state: 'found', created: createdOf(eco, doc), version: v ? v.version : null, versionCreated: v ? v.created : null };
 }
 
 function readCache(file) {
@@ -137,8 +169,20 @@ function writeCache(file, entries) {
   }
 }
 
+/* The answer for one name from a cache entry or a fresh reply: { state, ageDays, version, versionAgeHours }. */
+function answerOf(entry, now) {
+  return {
+    state: entry.s,
+    ageDays: typeof entry.c === 'number' ? (now - entry.c) / DAY_MS : null,
+    version: typeof entry.vv === 'string' ? entry.vv : null,
+    versionAgeHours: typeof entry.vc === 'number' ? (now - entry.vc) / HOUR_MS : null,
+  };
+}
+
 /**
- * Looks the names up. items: [{ eco, name }]. Returns a Map `eco:name` -> { state, ageDays } or { error }.
+ * Looks the names up. items: [{ eco, name, version? }]. `version` is set only when the caller needs the publish time of
+ * a version: an exact version, or 'latest' for a name with no version in the command. Returns a Map `eco:name` ->
+ * { state, ageDays, version, versionAgeHours } or { error }.
  * opts: { fetch, now (function, ms), stateDir, timeoutMs, maxBytes }
  */
 async function lookupMany(items, opts = {}) {
@@ -154,18 +198,24 @@ async function lookupMany(items, opts = {}) {
   for (const it of items.slice(0, MAX_NAMES)) {
     const key = it.eco + ':' + it.name;
     const hit = cache[key];
-    if (hit && typeof hit.t === 'number' && now - hit.t < TTL_MS && now >= hit.t && (hit.s === 'missing' || hit.s === 'found')) {
-      out.set(key, { state: hit.s, ageDays: typeof hit.c === 'number' ? (now - hit.c) / DAY_MS : null });
+    const wanted = typeof it.version === 'string' ? it.version : null;
+    const ttl = hit && hit.vr === 'latest' ? LATEST_TTL_MS : TTL_MS;
+    const sameVersion = !wanted || (hit && hit.vr === wanted);
+    if (hit && typeof hit.t === 'number' && now - hit.t < ttl && now >= hit.t && (hit.s === 'missing' || hit.s === 'found') && sameVersion) {
+      out.set(key, answerOf(hit, now));
     } else todo.push(it);
   }
   let changed = false;
   await Promise.all(todo.map(async (it) => {
     const key = it.eco + ':' + it.name;
+    const wanted = typeof it.version === 'string' ? it.version : null;
     try {
-      const r = await fetchOne(it.eco, it.name, fetch, timeoutMs, maxBytes);
-      cache[key] = { t: now, s: r.state, c: r.created };
+      const r = await fetchOne(it.eco, it.name, fetch, timeoutMs, maxBytes, wanted);
+      const entry = { t: now, s: r.state, c: r.created };
+      if (wanted) Object.assign(entry, { vr: wanted, vv: r.version, vc: r.versionCreated });
+      cache[key] = entry;
       changed = true;
-      out.set(key, { state: r.state, ageDays: r.created === null ? null : (now - r.created) / DAY_MS });
+      out.set(key, answerOf({ s: r.state, c: r.created, vv: r.version, vc: r.versionCreated }, now));
     } catch (e) {
       out.set(key, { error: String((e && e.message) || 'failed').replace(/[^A-Za-z0-9 .:-]/g, '').slice(0, 60) });
     }
@@ -231,4 +281,4 @@ function privateRegistry(eco, opts = {}) {
   return false;
 }
 
-module.exports = { lookupMany, urlFor, httpsFetch, requestOptions, createdOf, privateRegistry, CACHE_FILE, TTL_MS, TIMEOUT_MS, MAX_BYTES };
+module.exports = { lookupMany, urlFor, httpsFetch, requestOptions, createdOf, versionOf, privateRegistry, CACHE_FILE, TTL_MS, LATEST_TTL_MS, TIMEOUT_MS, MAX_BYTES };
