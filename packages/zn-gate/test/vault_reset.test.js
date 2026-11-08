@@ -130,7 +130,7 @@ test('a confirmed reset backs up the old vault and a new empty vault works', asy
   assert.deepEqual((await store.readEncrypted(p.secretsFile, id)).secrets, {});
 });
 
-test('with an OS keychain the warning says the key is replaced at the next unlock, not by the reset (B-1952)', async (t) => {
+test('with an OS keychain the warning says the key is replaced at the next unlock, not by the reset', async (t) => {
   const s = setup(t);
   await s.makeVault(OLD);
   t.mock.method(keychain, 'readMeta', () => ({ backend: 'macos' }));
@@ -142,7 +142,7 @@ test('with an OS keychain the warning says the key is replaced at the next unloc
   assert.doesNotMatch(line, /is replaced in your/);
 });
 
-test('an old file that cannot be removed after the backup stops with the backup path and what is left (B-1952)', async (t) => {
+test('an old file that cannot be removed after the backup stops with the backup path and what is left', async (t) => {
   const s = setup(t);
   await s.makeVault(OLD);
   const real = fs.unlinkSync;
