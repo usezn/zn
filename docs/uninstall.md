@@ -66,6 +66,8 @@ This is a summary of the sections below. Each command is run in your own termina
 
 Find your agent in this table and run the command in your own terminal. Add `--project` only if you installed the hooks for one project, and run it from that project's folder. Each hooks command writes a backup of the settings file first.
 
+**For any agent:** if you ran `init --wrap-mcp`, run `npx -y zn-gate init --revert` first, before the command in your row. Put the wrapped MCP servers back before you remove the hooks.
+
 | Agent | Remove its hooks | Project install | Other step |
 | - | - | - | - |
 | Claude Code | `npx -y zn-gate hooks uninstall claude-code` | Yes, add `--project` | If you installed the plugin, remove it with `claude plugin uninstall zn-gate@usezn`. The hooks command also removes zn's `secrets` MCP server. |
@@ -73,7 +75,7 @@ Find your agent in this table and run the command in your own terminal. Add `--p
 | OpenCode | `npx -y zn-gate hooks uninstall opencode` | Yes, add `--project` | None. |
 | Cursor | `npx -y zn-gate hooks uninstall cursor` | Yes, add `--project` | If you added the `secrets` MCP server to `~/.cursor/mcp.json` by hand, delete that entry. |
 | GitHub Copilot (VS Code, CLI) | `npx -y zn-gate hooks uninstall copilot` | Yes, add `--project` | If you added the MCP server by hand, delete its entry in the settings file you edited. See [the VS Code page](editors/vscode.md#uninstall). |
-| Google Antigravity | `npx -y zn-gate hooks uninstall antigravity` | Yes, add `--project` | If you ran `init --wrap-mcp`, run `npx -y zn-gate init --revert`. |
+| Google Antigravity | `npx -y zn-gate hooks uninstall antigravity` | Yes, add `--project` | None. |
 | ZCode desktop app | `npx -y zn-gate hooks uninstall zcode` | No. ZCode runs no project hooks, so zn never installs them there: leave out `--project`. | If you use the ZCode plugin, turn it off in Settings, then Plugins. The steps to remove the plugin are not published yet. |
 | Gemini CLI (experimental) | `npx -y zn-gate hooks uninstall gemini` | Yes, add `--project` | None. |
 | Windsurf (Devin Desktop) | None. zn installs no hooks for this agent, so `hooks uninstall` does not apply. | No | Delete the `zn-gate` entry from the MCP settings file you edited, and any `zn-gate shield` wrapper you added (put back its original command). Restart the agent. See [the Windsurf page](editors/windsurf.md#uninstall). |
