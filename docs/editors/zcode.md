@@ -22,11 +22,23 @@ This writes zn's hooks to `~/.zcode/cli/config.json` for your user, next to anyt
 - registers the zn-gate `secrets` MCP server in the same file;
 - keeps a backup of the file before it changes it.
 
-`zn hooks uninstall zcode` removes zn's hooks and the server and leaves your own settings alone. Start a new ZCode session after installing or uninstalling: a running session keeps the hooks it started with.
-
 There is no `--project` install. ZCode does not run the hooks of a project (`<project>/.zcode/config.json`), only the ones in your user file, so everyone on a team runs `zn hooks install zcode` once on their own machine.
 
-Then run `npx -y zn-gate check` to see that the hook works on your machine.
+## Verify
+
+Run `npx -y zn-gate check` in your own terminal to see that the hook works on your machine. It makes a temporary folder with a fake `.env` file and asks zn's hook to block reading it; nothing is sent over the network and no setting changes. See [Check that it works](../check.md).
+
+## Uninstall
+
+In your own terminal, run:
+
+```bash
+zn hooks uninstall zcode
+```
+
+This removes zn's hooks and the `secrets` server from your user file and leaves your own settings alone. A backup of the file is written first. Start a new ZCode session after installing or uninstalling: a running session keeps the hooks it started with.
+
+If you added the zn-gate plugin, turn it off in Settings, Plugins (see [The ZCode plugin](#the-zcode-plugin) below). To remove the program itself, run `npm uninstall -g zn-gate` if you installed it globally. See [Remove zn-gate](../uninstall.md).
 
 ## The ZCode plugin
 

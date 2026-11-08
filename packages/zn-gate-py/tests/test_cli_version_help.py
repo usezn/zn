@@ -59,7 +59,7 @@ class TestVersionOutput(unittest.TestCase):
 class TestHelpOutput(unittest.TestCase):
     def test_every_expected_subcommand_is_known(self):
         self.assertEqual(
-            _COMMANDS, ["analyze", "evidence", "scan", "stats", "status", "test"]
+            _COMMANDS, ["analyze", "check", "evidence", "scan", "stats", "status", "test"]
         )
 
     def test_top_level_help_lists_every_subcommand(self):
