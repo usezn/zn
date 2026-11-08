@@ -242,6 +242,12 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   with `{"hooks": {"checkToolOutputInstructions": false}}` in
   `~/.zn/config.json`. At most 64 KiB of each output are checked: the first 48 KiB and
   the last 16 KiB.
+  Off by default: after `zn-gate connect` and only if you add `{"hooks": {"cloudCheckToolOutput": true}}` to your own `~/.zn/config.json` (read from your operating-system account's home folder, so `HOME`, `USERPROFILE`, `ZN_HOME`, `ZN_CLOUD`, `ZN_API_KEY` and a project's settings cannot enable this, because a project can set them), the same
+  outputs are also sent to zn's API, when the local check did not flag them: a sample of at most 16 KiB,
+  counted in bytes of UTF-8 text (the first 12 KiB and the last 4 KiB), after secrets and personal data (email, phone, IBAN and card numbers) are replaced. The cloud
+  can only add the same note (also when its verdict is neither allow nor block); a failed call changes nothing. Remove the setting, or set it to
+  `false`, to turn this path off. Only the Claude Code hook does this today:
+  the other agents get no note for tool output (the same limit as the local check above), so they send nothing.
 - **Codex CLI**:
   - `ask` is not supported, so a call zn would ask about (personal data in an
     MCP call, a write to an instruction file, a search over a folder with a
