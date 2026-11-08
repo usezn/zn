@@ -191,6 +191,17 @@ function nestedCommand(args) {
   return undefined;
 }
 
+/**
+ * A file: address with a host other than localhost would become a network (UNC) path on Windows, so it is refused
+ * on every platform. A localhost host is dropped so the address stays a local path.
+ */
+function localFileUrl(v) {
+  const u = new URL(v);
+  if (u.hostname && u.hostname.toLowerCase() !== 'localhost') throw new Error('file: URL names a remote host');
+  u.hostname = '';
+  return u;
+}
+
 /** Every string argument whose key looks like a file or folder (content-like keys skipped), three levels deep. */
 function pathsOf(args) {
   const out = [];
@@ -198,7 +209,7 @@ function pathsOf(args) {
   const add = (k, v) => {
     if (typeof v !== 'string' || !v) return;
     if (/^file:/i.test(v)) {
-      try { out.push(fileURLToPath(v)); } catch (_) { bad = true; }
+      try { out.push(fileURLToPath(localFileUrl(v))); } catch (_) { bad = true; }
       return;
     }
     if (/url/i.test(k) && !PATH_KEY_RE.test(k)) return;
