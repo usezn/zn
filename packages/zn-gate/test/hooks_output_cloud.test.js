@@ -506,3 +506,100 @@ test('agents other than Claude Code send nothing (their hooks cannot pass a note
   assert.ok(!/zn cloud check/.test(JSON.stringify(res.output || {})));
   assert.equal(seen.length, 0);
 });
+
+// Values placed across the points where the sample is cut: the first 12 KiB, and the start of the last bytes kept.
+// The redaction runs before any cut, so no part of the value is sent.
+const FILLER = 'The quarterly report lists the shipping dates for each warehouse. ';
+const STRADDLE = {
+  'an e-mail address': 'zq.mailbox@example.org',
+  'a phone number': '+1 202-555-0143',
+  'an IBAN': 'DE89370400440532013000',
+  'a card number': '4111111111111111',
+};
+
+/* Fails when any 4 characters in a row of `value` (that the filler text does not hold) are in `body`. */
+function assertNoPart(body, value) {
+  for (let i = 0; i + 4 <= value.length; i++) {
+    const part = value.slice(i, i + 4);
+    if (FILLER.includes(part)) continue;
+    assert.ok(!body.includes(part), 'part of the value sent: ' + JSON.stringify(part));
+  }
+}
+// Head cut at 12 KiB; the tail kept is the last 4 KiB minus the cut marker (see trimToBytes).
+const HEAD_CUT = 12 * 1024;
+const TAIL_KEEP = 4 * 1024 - Buffer.byteLength('\n[...]\n');
+
+function fill(n) {
+  return FILLER.repeat(Math.ceil(n / FILLER.length) + 1).slice(0, n);
+}
+
+/* A text of `total` ASCII characters with `value` across the head cut ('head') or the tail cut ('tail'). */
+function straddled(value, where, total) {
+  const v = ' ' + value + ' ';
+  const half = Math.floor(v.length / 2);
+  if (where === 'head') {
+    const pre = fill(HEAD_CUT - half);
+    return pre + v + fill(total - pre.length - v.length);
+  }
+  const post = fill(TAIL_KEEP - (v.length - half));
+  return fill(total - post.length - v.length) + v + post;
+}
+
+for (const [kind, value] of Object.entries(STRADDLE)) {
+  for (const where of ['head', 'tail']) {
+    for (const total of [40 * 1024, 400 * 1024]) {
+      test(`${kind} across the ${where} cut of a ${total / 1024} KiB output is not sent, not even in part`, async (t) => {
+        const seen = stub(t, allow);
+        const { dir, home } = await setup(t);
+        await run(postTool('Bash', { command: 'cat data' }, { stdout: straddled(value, where, total), stderr: '' }, dir), home);
+        assert.equal(seen.length, 1);
+        const body = seen[0].body.input;
+        assert.ok(Buffer.byteLength(body) <= 16 * 1024, 'sent ' + Buffer.byteLength(body));
+        assert.ok(body.includes('\n[...]\n'), 'the sample was cut');
+        assertNoPart(body, value);
+      });
+    }
+  }
+}
+
+test('a secret across the head or the tail cut is not sent, not even in part', async (t) => {
+  const seen = stub(t, allow);
+  const { dir, home } = await setup(t);
+  // A Slack token: the hook's own scrubber in these tests does not know it, so only the cloud redaction removes it.
+  const token = 'xoxb-' + '2384756190-4857261930475-' + 'q7W3e9R1t5Y8u2I4o6P0a1S3';
+  const { redactForCloud } = require('../lib/hooks/cloud_output');
+  assert.ok(!redactForCloud(' ' + token + ' ').includes('q7W3e9R1'), 'the redaction knows this token');
+  for (const where of ['head', 'tail']) {
+    for (const total of [40 * 1024, 400 * 1024]) {
+      await run(postTool('Bash', { command: 'env' }, { stdout: straddled(token, where, total), stderr: '' }, dir), home);
+    }
+  }
+  assert.equal(seen.length, 4);
+  for (const s of seen) assertNoPart(s.body.input, token);
+});
+
+test('cloudSample: a long output keeps the head and the end, with values near the cuts replaced', () => {
+  const { cloudSample } = require('../lib/hooks/cloud_output');
+  const text = 'card 4111111111111111 ' + fill(2 * 1024 * 1024) + ' mail zq.mailbox@example.org';
+  const out = cloudSample(text);
+  assert.ok(Buffer.byteLength(out) <= 16 * 1024);
+  assert.ok(out.startsWith('card [CARD] '));
+  assert.ok(out.endsWith(' mail [EMAIL]'));
+  assert.ok(!out.includes('4111') && !out.includes('zq.mailbox'));
+});
+
+test('cloudSample: no half word at a cut edge (a placeholder is kept whole or dropped)', () => {
+  const { cloudSample } = require('../lib/hooks/cloud_output');
+  const text = 'a@b.co '.repeat(10000);
+  const out = cloudSample(text);
+  const [head, tail] = out.split('\n[...]\n');
+  assert.ok(/(^|\s)\[EMAIL\]$/.test(head), 'head ends with a whole placeholder: ' + head.slice(-20));
+  assert.ok(/^\[EMAIL\]/.test(tail), 'tail starts with a whole placeholder: ' + tail.slice(0, 20));
+});
+
+test('cloudSample: when redaction shrinks a window too much to keep its raw edge out of reach, nothing is sent', () => {
+  const { cloudSample } = require('../lib/hooks/cloud_output');
+  const key = '-----BEGIN RSA PRIVATE KEY-----\n' + 'MIIEow'.repeat(9000) + '\n-----END RSA PRIVATE KEY-----';
+  assert.equal(cloudSample(key + ' ' + fill(400 * 1024)), null);
+  assert.equal(cloudSample(fill(400 * 1024) + ' ' + key), null);
+});

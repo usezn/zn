@@ -138,10 +138,10 @@ function cloudOutputCheckOn(opts) {
   return outputCheckOn(opts) && hooks.cloudCheckToolOutput === true;
 }
 
-/* The text sent: the strings of the output, cut to the 16 KiB byte cap (the first 12 KiB and the end), see trimToBytes. */
+/* The strings of the output, joined. cloud_output.js redacts them and only then cuts them to the 16 KiB byte cap
+ * (the first 12 KiB and the end, see cloudSample): a cut made first could split a value the detectors then miss. */
 function cloudOutputSample(strings) {
-  const text = strings.filter((s) => typeof s === 'string' && s.length >= 16).join('\n');
-  return require('./cloud_output').trimToBytes(text);
+  return strings.filter((s) => typeof s === 'string' && s.length >= 16).join('\n');
 }
 
 /* The note for the agent when the zn cloud flags a tool output, or null. `strings` are already scrubbed by this hook. */
