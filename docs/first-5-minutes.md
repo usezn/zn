@@ -2,37 +2,21 @@
 
 You use an AI coding agent (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, or the experimental Gemini CLI) and you do not write code yourself, or not much. This page takes you from nothing to "zn-gate is on and I saw it work", then tells you what its messages mean and how to remove it. No account and no API key are needed. Everything runs on your machine.
 
-## Before you start
+## The three commands
 
-> **Checklist**
+> **Before you run them**
 >
-> - **Node.js:** 22 LTS is recommended. 18 or later works for the hooks and the CLI. The Claude Code plugin needs 20.19 or later.
-> - **An agent:** at least one of Claude Code, Codex CLI, Cursor or OpenCode. Antigravity is experimental.
-> - **No account and no API key** are needed.
+> - An agent must already be installed before `npx -y zn-gate init`: see [Install your agent first](#install-your-agent-first).
+> - Run the commands in your own terminal, not through your agent.
+> - On Windows PowerShell, use the `.cmd` forms (`npx.cmd`) or set the execution policy: see the [PowerShell note](#install-your-agent-first) and the [.cmd forms](#windows-powershell-the-cmd-forms).
 
-Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command below in your own terminal, not through your agent.
+Run these in your own terminal, not through your agent. You need Node.js first; its details are [below](#before-you-start).
 
-On Debian or Ubuntu Linux, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages. Gemini CLI and the Claude Code plugin need an even newer one. For example, with the NodeSource packages for Node.js 22 LTS:
+1. **Install:** `npx -y zn-gate init`
+2. **Check:** `npx -y zn-gate check`
+3. **Next, if you have a `.env` file with real secrets:** `npx -y zn-gate env shadow .env`
 
-```bash
-sudo apt-get install -y curl
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
-node --version
-```
-
-`node --version` should print `v22` followed by numbers. On another Linux system, download Node.js 22 LTS from [nodejs.org](https://nodejs.org/en/download).
-
-## Install your agent first
-
-> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
-
-zn-gate protects an agent that is already installed; it does not install the agent for you. Install the agent from its official site, and sign in with your own account for that agent (zn-gate itself needs no account):
-
-- Codex CLI: run `npm install -g @openai/codex`, then run `codex` and sign in with your OpenAI account. OpenAI's own steps are in the [Codex CLI docs](https://developers.openai.com/codex/cli).
-- Gemini CLI: run `npm install -g @google/gemini-cli` (it needs Node.js 20 or later), then run `gemini` and sign in with your Google account. Google's own steps are in the [Gemini CLI repository](https://github.com/google-gemini/gemini-cli).
-
-If `npm install -g` fails with `EACCES`, use the fix in Troubleshooting, then run the same `npm install -g` command again.
+Each step is explained below. Windows PowerShell notes are in [Install your agent first](#install-your-agent-first).
 
 ## 1. Install
 
@@ -137,6 +121,38 @@ zn also has a text check that your agent can call through zn's own tools. Some p
 `"verdict": "allow"` means nothing was stopped. The `advisory` says why it is worth a look. What to do: read the text it points at. If it is harmless, carry on. If you did not expect it (for example inside a file you downloaded), do not let your agent follow it. To make the text check block these too, turn on strict mode: set `ZN_STRICT=1`, or add `"strict": true` to `zn.config.json` in your project.
 
 For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a block: `"verdict": "block"` with the reason "Override prior instructions".
+
+## Before you start
+
+> **Checklist**
+>
+> - **Node.js:** Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later.
+> - **An agent:** at least one of Claude Code, Codex CLI, Cursor or OpenCode. Antigravity is experimental.
+> - **No account and no API key** are needed.
+
+Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command on this page in your own terminal, not through your agent.
+
+On Debian or Ubuntu Linux, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages. Gemini CLI and the Claude Code plugin need an even newer one. For example, with the NodeSource packages for Node.js 22 LTS:
+
+```bash
+sudo apt-get install -y curl
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+node --version
+```
+
+`node --version` should print `v22` followed by numbers. On another Linux system, download Node.js 22 LTS from [nodejs.org](https://nodejs.org/en/download).
+
+## Install your agent first
+
+> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+
+zn-gate protects an agent that is already installed; it does not install the agent for you. Install the agent from its official site, and sign in with your own account for that agent (zn-gate itself needs no account):
+
+- Codex CLI: run `npm install -g @openai/codex`, then run `codex` and sign in with your OpenAI account. OpenAI's own steps are in the [Codex CLI docs](https://developers.openai.com/codex/cli).
+- Gemini CLI: run `npm install -g @google/gemini-cli` (it needs Node.js 20 or later), then run `gemini` and sign in with your Google account. Google's own steps are in the [Gemini CLI repository](https://github.com/google-gemini/gemini-cli).
+
+If `npm install -g` fails with `EACCES`, use the fix in Troubleshooting, then run the same `npm install -g` command again.
 
 ## Windows PowerShell: the .cmd forms
 
