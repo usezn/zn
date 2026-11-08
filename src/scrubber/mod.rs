@@ -707,12 +707,16 @@ fn token_re() -> &'static Regex {
 fn iban_re() -> &'static Regex {
     static IBAN_REGEX: OnceLock<Regex> = OnceLock::new();
     IBAN_REGEX.get_or_init(|| {
-        Regex::new(r"(?i)[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?").unwrap()
+        Regex::new(r"(?i-u)[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?").unwrap()
     })
 }
 
 /// ISO 13616 mod-97 check on a candidate (spaces allowed).
 fn iban_valid(raw: &str) -> bool {
+    // Byte slicing below is only safe on ASCII; never trust the caller's input.
+    if !raw.is_ascii() {
+        return false;
+    }
     let compact: String = raw
         .chars()
         .filter(|c| *c != ' ')
@@ -1844,6 +1848,26 @@ mod table_parity_tests {
         ] {
             assert_eq!(Scrubber::redact_for_log(text), text);
         }
+    }
+
+    #[test]
+    fn iban_with_non_ascii_lookalike_letters_does_not_panic() {
+        // U+212A (Kelvin sign) and U+017F (long s) case-fold to ASCII letters.
+        for bad in [
+            "\u{212A}\u{212A}12ABCDABCDABCD",
+            "\u{017F}\u{017F}12ABCDABCDABCD",
+            "GB82WEST1234569876543\u{212A}",
+        ] {
+            assert!(!iban_valid(bad), "{bad}");
+            assert_eq!(Scrubber::redact_for_log(bad), bad);
+            let wrapped = format!("agent {bad} end");
+            assert_eq!(Scrubber::redact_for_log(&wrapped), wrapped);
+        }
+        assert!(iban_valid("GB82WEST12345698765432"));
+        assert_eq!(
+            Scrubber::redact_for_log("iban GB82WEST12345698765432 ok"),
+            "iban [IBAN_REDACTED] ok"
+        );
     }
 
     #[test]
