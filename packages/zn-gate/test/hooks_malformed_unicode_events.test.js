@@ -110,3 +110,19 @@ test('OpenCode metadata taken into the tool output is content: not refused, and 
   const res = await runner.handle(adapter, plain, { home: cwd });
   assert.match(res.decision.message || '', /not valid Unicode/, JSON.stringify(res.decision));
 });
+
+// Only metadata is left out: an OpenCode content array, which the adapter also takes into the output, is checked.
+test('malformed text in an OpenCode content array taken into the tool output is still refused', async (t) => {
+  const cwd = tempDir(t, 'zn-badtext-occontent-');
+  const adapter = getAdapter('opencode');
+  for (const [name, bad] of Object.entries(BAD)) {
+    const event = { hook: 'tool.execute.after', tool: 'github_get_file', cwd, sessionID: 's1', args: {}, content: [{ type: 'text', text: '/work/' + bad }] };
+    const ev = adapter.normalize(event);
+    assert.equal(ev.output.content, event.content, 'the adapter takes the content into the output');
+    await noFsCalls(bad, async (calls) => {
+      const res = await runner.handle(adapter, event, { home: cwd });
+      assert.deepEqual(calls, [], name + ': file calls ' + calls.join(', '));
+      assert.match(res.decision.message || '', /not valid Unicode/, name + ': ' + JSON.stringify(res.decision));
+    });
+  }
+});
