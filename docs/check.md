@@ -125,14 +125,32 @@ zn-gate check --hooks
 
 The other name of the command, `doctor`, works with it too. It lists every zn hook set up for your agents, one line per hook event, and says whether each one is working. It only reads your agents' settings files and zn's launcher files: it runs no hook, changes nothing and sends nothing. It looks at the settings for your user and, in the folder you run it from, at the project settings.
 
+Here is a real run on a test machine with two fictional setups: a Claude Code hook whose launcher was written by an older zn-gate, and a Codex hook whose launcher file was removed. The home folder is shown as `~`.
+
 ```text
+zn hooks installed on this machine (nothing was run or changed):
+
+Claude Code (user): ~/.claude/settings.json
+  STALE  PreToolUse [^(Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch)$|^mcp__.*]  '~/.zn/hooks/zn-hook-claude-code.sh' PreToolUse
+  STALE: the launcher records the zn-gate runner but not the other files the hook loads, so a change to one of them would not be seen: run `zn hooks install claude-code` to record them.
+    Fix: run `zn hooks install claude-code` in your own terminal.
+
 Codex CLI (user): ~/.codex/hooks.json
-  STALE  PreToolUse [^(Bash|apply_patch|mcp__.+)$]  '~/.zn/hooks/zn-hook-codex.sh' PreToolUse
-  STALE: its launcher script was written by an older zn-gate.
+  BROKEN PreToolUse [^(Bash|apply_patch|mcp__.+)$]  '~/.zn/hooks/zn-hook-codex.sh' PreToolUse
+  BROKEN: its hook cannot start: its launcher script (~/.zn/hooks/zn-hook-codex.sh) is missing or was changed.
     Fix: run `zn hooks install codex` in your own terminal.
 
-0 OK, 1 stale, 0 broken.
+0 OK, 1 stale, 1 broken.
+To remove the hooks of an agent instead, run `zn hooks uninstall <agent>`.
 ```
+
+How to read it:
+
+- The first line of each block names the agent, whether the hook is in your user settings (`user`) or in the project settings (`project`), and the settings file it was read from.
+- Each hook gets one line: its status (`OK`, `STALE` or `BROKEN`), the event (`PreToolUse`), the matcher in brackets (the pattern of tool names the hook applies to), and the command the agent runs.
+- A line that is not `OK` is followed by the reason and the `Fix:` line. Run the fix in your own terminal, then run `zn-gate check --hooks` again.
+- The last line before the tip counts the hooks: `X OK, Y stale, Z broken.` Here one hook is stale and one is broken, so the exit code is `1`.
+- A healthy hook has the same layout with `OK` at the start and no reason lines.
 
 - **OK**: the hook points at files that exist, and its launcher is the one this zn-gate writes.
 - **STALE**: the hook still works but was written by an older zn-gate, or runs an older copy of it. Run the fix to bring it up to date.
@@ -145,6 +163,17 @@ Hooks: 3 OK, 1 stale, 0 broken. Run zn-gate check --hooks for details.
 ```
 
 The exit code of `check --hooks` is `0` when every hook is OK (or none is set up) and `1` when any is stale or broken. For a test that zn really blocks a secret, run `zn-gate check` without `--hooks`.
+
+### When to run it
+
+Run `zn-gate check --hooks` when:
+
+- You have just run `zn hooks install <agent>`, to confirm every hook for that agent says `OK`.
+- You upgraded zn-gate (for example with `npm install -g zn-gate@latest`) and want to see whether an agent's hook still uses the older launcher. Such a hook shows `STALE`.
+- You changed or removed Node.js (for example with `nvm uninstall`). A hook that points at the old Node.js shows `BROKEN`; the fix is `npm install -g zn-gate` followed by `zn hooks install <agent>`.
+- `zn-gate check` reports an agent as **NOT protected** and you want to see which hook is at fault.
+
+It is safe to run at any time, as often as you like, including in scripts: it changes nothing, and the exit code tells a script whether a hook needs attention.
 
 ## What each NOT protected line means
 
