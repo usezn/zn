@@ -29,6 +29,14 @@ We take the security of zn, the MCP Gateway, and our client SDKs seriously. If y
 
 Please include detailed reproduction steps, proof-of-concept payloads or scripts, and affected versions, components or commits. Testing against local Docker containers or isolated test accounts is strongly encouraged.
 
+A report is easiest to act on when it says:
+
+* the zn-gate version, your operating system and the agent you use (for example Claude Code or Codex CLI);
+* the exact steps to reproduce it, and what you expected compared with what happened;
+* the output you saw, with anything personal removed.
+
+Never include a real secret, token or key in a report: use a fake one (such as the AWS documentation example key) and replace personal paths and names in pasted output.
+
 ### What to expect
 
 The project has a single maintainer today (see [MAINTAINERS.md](MAINTAINERS.md)). These are targets, for both channels:
