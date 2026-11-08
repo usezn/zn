@@ -58,7 +58,7 @@ Find the command you ran, then the symptom that matches.
 - [Init stops the npm install after 3 minutes](#13-init-stops-the-npm-install-after-3-minutes)
 - [`'zn' is not recognized as an internal or external command`](#14-zn-is-not-recognized-as-an-internal-or-external-command)
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
-- [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
+- [Also useful](#also-useful): TLS certificates and trust stores; hooks that stop running after an agent update; npm EACCES
 
 ## 1. Node.js is too old
 
@@ -1266,6 +1266,41 @@ The Node.js package always refuses a connection whose certificate does not check
 ### Hooks block everything: "zn-gate changed since the hooks were installed"
 
 The hook launcher keeps a fingerprint of zn-gate's hook runner and of every other zn-gate file the hook loads, and runs a file only while it matches, so after the files change your agent blocks its tool calls and prompts and shows the message "zn-gate changed since the hooks were installed". `zn-gate check` names the changed file. `npm update -g zn-gate` fixes the launchers by itself, but not when the update ran with `--ignore-scripts`, with bun, or with `sudo`. In your own terminal, without `sudo`, run `zn hooks install <agent>` again (for example `zn hooks install claude-code`), then start a new session. More in [check](check.md) and [upgrading](upgrading.md).
+
+### Your agent updated and zn's hooks stopped running
+
+Nothing is blocked any more, and no message from zn appears. That is the sign: a hook that does not run says nothing. If an update (or a reset of the agent's settings) rewrote the file where the agent keeps its hooks, zn's entries can be gone, and the agent then works without zn.
+
+Check it in your own terminal, not through your agent:
+
+```bash
+zn check
+```
+
+In a throwaway home folder, with zn's hooks installed for Codex CLI and then the `hooks.json` file replaced by one with no hooks (the way a reset would leave it), this printed for that agent (output shortened; the hint names `npm install -g zn-gate` because zn-gate was not installed globally on the test computer):
+
+```text
+  -  Codex CLI    zn is not set up for this agent. To protect it, run `npm install -g zn-gate`, then `zn hooks install codex`, in your own terminal.
+     version: not found (tested with 0.163.0)
+
+zn is not set up for your agents yet, so nothing protects your secrets. To set it up, run `npx -y zn-gate init` in your own terminal: it shows each step and asks before it runs one.
+```
+
+The command exited with `1`. A line that starts with `OK` means that agent is protected. A line that starts with `X` and says `NOT protected` names one reason and one repair; [What each NOT protected line means](check.md#what-each-not-protected-line-means) explains each of them. In the same folder, `zn check --hooks` said `None found`. Run it to list what zn finds in your agents' settings files, and read [List every installed hook](check.md#list-every-installed-hook) for the `OK`, `STALE` and `BROKEN` states. There is no `zn hooks status` command.
+
+To bring the hooks back, run the install again for that agent, then check again:
+
+```bash
+zn hooks install codex
+zn check
+```
+
+Use your own agent's name from [by agent](by-agent.md) in place of `codex`. The same run printed `OK Codex CLI    blocked the .env file and allowed the ordinary file` and `Hooks: 7 OK, 0 stale, 0 broken.` The install keeps a copy of the file it replaces, named `hooks.json.bak-zn-<date>`.
+
+- **Codex CLI asks you to trust the hooks.** Codex runs new or changed hooks only after you review them with `/hooks`, so after a reinstall open Codex and approve them. `zn check` says that an `OK` does not prove Codex runs the hook until you have.
+- **If your agent is newer than the version zn was tested with**, `zn check` adds a `version` line to its row. The agent may still work; if a hook does not run, report it as an issue. The versions tested are in [compat](compat.md#which-agent-versions-were-tested).
+- **If the message is that zn blocks everything,** see ["zn-gate changed since the hooks were installed"](#hooks-block-everything-zn-gate-changed-since-the-hooks-were-installed) or [If your agent blocks every prompt](compat.md#if-your-agent-blocks-every-prompt) instead. That is the opposite problem: hooks that run and refuse.
+- **Run plain `zn check`, not only `zn check --hooks`.** `--hooks` reads the hook entries, and a setting that switches every hook off (`disableAllHooks`) is not one of its findings. Plain `check` runs a real test and reports it as in [9](#9-your-agent-ignores-zns-hooks-on-a-managed-computer).
 
 ### npm says EACCES when init installs zn-gate
 
