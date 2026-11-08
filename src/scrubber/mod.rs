@@ -2132,6 +2132,28 @@ mod table_parity_tests {
     }
 
     #[test]
+    fn redact_for_log_masks_openssh_private_key_block() {
+        // Fake key: the header, a fake body line and the footer. Not a real key.
+        let key = concat!(
+            "-----BEGIN OPENSSH PRIV",
+            "ATE KEY",
+            "-----\n",
+            "b3BlbnNzaC1rZXktdjEAAAAAEXAMPLEEXAMPLEEXAMPLE\n",
+            "-----END OPENSSH PRIV",
+            "ATE KEY",
+            "-----"
+        );
+        let text = format!("deploy note before {key} deploy note after");
+        let out = Scrubber::redact_for_log(&text);
+        assert!(!out.contains("BEGIN OPENSSH PRIVATE KEY"), "{out}");
+        assert!(!out.contains("b3BlbnNzaC1r"), "{out}");
+        assert!(
+            out.contains("deploy note before") && out.contains("deploy note after"),
+            "{out}"
+        );
+    }
+
+    #[test]
     fn scrub_itself_is_unchanged_so_forwarded_frames_do_not_change() {
         // `scrub` is what is forwarded; only the log redactor knows the extra shapes
         // (such as a spaced IBAN). Tokens that `scrub` already masks stay masked.
