@@ -109,3 +109,38 @@ Your code is not changed by any of this. Details, including the manual steps for
 - [First 5 minutes](../first-5-minutes.md), the full page this walkthrough is built from
 - [Every command and exit code](../cli.md)
 - [What zn-gate cannot protect](../threat-model.md)
+
+## Cleaning up after a test
+
+Step 6 removes zn-gate itself. If you ran this walkthrough only as a test, this section also removes the throwaway files it left. Run every command in your own terminal. The order matches [Remove zn-gate](../uninstall.md): wrapped MCP servers first, then the hooks, then the plugin, then the vault, and the program last.
+
+1. **Put the real values back.** If you ran `env shadow` in step 3, your `.env` still holds markers until you run `env unshadow` (step 6). Do this before anything is deleted, because a deleted vault cannot give the values back.
+2. **Remove what zn-gate set up.** `npx -y zn-gate uninstall` finds and removes it in the right order: it first puts back any MCP servers that `init --wrap-mcp` wrapped (this walkthrough does not wrap any, so there is usually nothing to put back), then the hooks that `init` added in step 1, then the Claude Code plugin if you installed it. It asks before it removes anything.
+3. **Delete the vault only if it was just for the test.** The second question of `uninstall` deletes the vault and everything that can open it. Answer no if the vault holds secrets you use elsewhere. The default is no.
+4. **Remove the program last**, if you installed it globally: `npm uninstall -g zn-gate`.
+5. **Delete the example project.** If you made `~/projects/example-shop` only for this test, and your values are back in `.env`, you can delete the folder. Check the path first, because this cannot be undone:
+
+   ```bash
+   ls ~/projects/example-shop
+   rm -r ~/projects/example-shop
+   ```
+
+6. **Leave or delete the rest of `~/.zn`.** `uninstall` keeps your settings and the decision log (`evidence.jsonl`), which holds what `check` and your work with the agent recorded, and it leaves the small launcher scripts under `~/.zn/hooks`. If you do not plan to use zn-gate again, you can delete the `.zn` folder by hand once the vault is gone. See [Files and folders](../files-and-folders.md).
+
+To check that nothing is left, preview the removal again in the folder where you ran `init`:
+
+```bash
+npx -y zn-gate uninstall --dry-run
+```
+
+When nothing is left, it prints:
+
+```text
+zn-gate uninstall: what zn-gate set up on this computer
+
+Nothing from zn-gate was found for your user or this folder.
+```
+
+(That output was captured on a test computer with no zn-gate setup.) `uninstall` also ends with `npx -y zn-gate check`, so you see that zn-gate is off; what it prints is described in [check](../check.md).
+
+Hooks you installed with `--project` in other folders stay until you run `uninstall` from each of those folders. More: [Remove zn-gate](../uninstall.md).
