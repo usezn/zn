@@ -8,6 +8,8 @@ Worked examples, grouped by what you want to do. All values in them are made up.
 |---|---|
 | [first-project-walkthrough.md](first-project-walkthrough.md) | One small example project, from install to removal. |
 | [init-and-uninstall.md](init-and-uninstall.md) | Set up zn-gate, preview the steps with a dry run, then remove it. |
+| [moving-to-a-new-computer.md](moving-to-a-new-computer.md) | Set up zn-gate on a new computer, or on a second one, with fictional values. |
+| [safe-first-day-with-a-new-agent.md](safe-first-day-with-a-new-agent.md) | Try zn-gate with a new agent in a throwaway folder, then remove it. |
 | [unix-first-run.md](unix-first-run.md) | The first ten minutes on macOS or Linux when Node.js comes from a version manager. |
 | [windows-checklist.md](windows-checklist.md) | The steps, in order, to install and check zn-gate on Windows. |
 
@@ -15,10 +17,13 @@ Worked examples, grouped by what you want to do. All values in them are made up.
 
 | Page | What it shows |
 |---|---|
+| [audit-before-adding-a-repo.md](audit-before-adding-a-repo.md) | Run `zn-gate audit` on a repository you do not know yet, read the report and decide what to do before you open it with an agent. |
 | [block-message-anatomy.md](block-message-anatomy.md) | One real block message, explained part by part. |
 | [check-output-explained.md](check-output-explained.md) | A sample `check` output explained line by line. |
 | [evidence-example.md](evidence-example.md) | `zn-gate evidence`: the counts, the latest records and how to verify the log. |
+| [first-block-vs-allow-decision.md](first-block-vs-allow-decision.md) | What to do the first time zn-gate blocks a command of your agent, and when to change the settings instead. |
 | [reading-a-reach-history-report.md](reading-a-reach-history-report.md) | How to read the output of `zn-gate reach --history`. |
+| [reading-a-scan-finding.md](reading-a-scan-finding.md) | What each field of a scan finding means in `--format json` and `--format github`. |
 | [scan-walkthrough.md](scan-walkthrough.md) | Scan one small example project, from the run to what each exit code means. |
 | [stats-and-report.md](stats-and-report.md) | Worked examples of `zn-gate stats` and `zn-gate report`. |
 | [which-command-shows-what.md](which-command-shows-what.md) | Six common questions and the command that answers each. |
@@ -50,6 +55,7 @@ Worked examples, grouped by what you want to do. All values in them are made up.
 
 | Page | What it shows |
 |---|---|
+| [mcp-server-with-zn-gate.md](mcp-server-with-zn-gate.md) | The two MCP servers of zn-gate (`mcp` and `secrets-mcp`): what each does and what the agent sees. |
 | [package-install-check-walkthrough.md](package-install-check-walkthrough.md) | Turn on the optional package install check, answer one question about a look-alike name, then allow a name. |
 | [switching-agents-checklist.md](switching-agents-checklist.md) | Move zn-gate protection from one agent to another. |
 | [vscode-and-cursor.md](vscode-and-cursor.md) | Install, verify and uninstall zn-gate for VS Code and Cursor on one page. |
