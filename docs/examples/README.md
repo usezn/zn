@@ -15,6 +15,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [first-project-walkthrough.md](first-project-walkthrough.md): one small example project, from install to removal.
 - [init-and-uninstall.md](init-and-uninstall.md): set up zn-gate, preview the steps with a dry run, then remove it.
 - [long-text-analysis.md](long-text-analysis.md): the two long-input modes of the cloud check (`windows` or `off`), and when the result carries a warning.
+- [mcp-server-with-zn-gate.md](mcp-server-with-zn-gate.md): the two MCP servers of zn-gate (`mcp` and `secrets-mcp`): what each does and what the agent sees.
 - [moving-to-a-new-computer.md](moving-to-a-new-computer.md): what moves and what does not when you set up zn-gate on a new computer, with fictional values.
 - [node-api.md](node-api.md): install and one short example per call of the Node.js API.
 - [offline-and-local-only.md](offline-and-local-only.md): use zn-gate with no network and with the optional cloud check off.
