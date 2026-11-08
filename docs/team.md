@@ -50,6 +50,14 @@ chooses Deny if they did not start the command. A member can look at
 `zn team leave`. Only a member can approve, on their own machine, a secret
 going to a host that their local settings do not allow.
 
+## Invited by email?
+
+An invitation email is for the dashboard, not for this command. Its link
+(`usezn.com/team?invite=...`) adds you to the organization on the web, after
+you sign in with the address it was sent to. A machine joins with a separate
+join token (`znj_...`) from an organization admin. If you paste the invitation
+link into `zn team join`, zn says so and exits `2` without contacting anything.
+
 ## Commands
 
 | Command | What it does |
