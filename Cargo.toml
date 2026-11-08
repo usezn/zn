@@ -56,7 +56,7 @@ clap = { version = "4.4", features = ["derive"] }
 async-stream = "0.3"
 tower_governor = { version = "0.8", default-features = false, features = ["axum"] }
 aho-corasick = "1.1"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"] }
 prometheus = "0.14"
 lazy_static = "1.4"
 lru = "0.18.2"
