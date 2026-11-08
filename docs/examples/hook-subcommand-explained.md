@@ -29,7 +29,7 @@ zn hook: unknown agent "nosuchagent" (supported: claude-code, codex, cursor, ope
 A project holds a fake `.env` file, and the agent tries to read it. The agent writes one event as JSON on the standard input of the hook (shortened here; the path is made up):
 
 ```json
-{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"/home/you/project/.env"}}
+{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"/path/to/project/.env"}}
 ```
 
 The hook answers on standard output. This is the answer from a real run:
