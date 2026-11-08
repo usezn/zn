@@ -455,7 +455,7 @@ function normalize(raw) {
     const patch = patchTextOf(toolName, args);
     if (patch !== undefined) return { ...ev, tool: 'write', input: patchInput(patch) };
   }
-  // A known tool: its top-level command string (dev1's rule). A tool zn does not know: every command at any level within
+  // A known tool: its top-level command string. A tool zn does not know: every command at any level within
   // bounds, built the way VS Code builds the line; unreadable or too deep = refused.
   const scan = known ? null : commandScan(args, cwd);
   if (scan && (scan.bad || scan.truncated)) {

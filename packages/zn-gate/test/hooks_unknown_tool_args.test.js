@@ -37,7 +37,7 @@ const AGENTS = [
 
 for (const a of AGENTS) {
   test(a.name + ': an unknown tool with arguments that are not an object is denied with a reason', async (t) => {
-    const dir = tempDir(t, 'zn-b2589-');
+    const dir = tempDir(t, 'zn-unknown-tool-args-');
     for (const bad of ['{"command":', '[1,2]', '42', 'true', 'null-ish', ['cat', 'x'], 7, true]) {
       const reason = a.deny(await a.run(dir, 'custom_shell', bad));
       assert.ok(reason && /could not read/.test(reason), a.name + ' ' + JSON.stringify(bad) + ': ' + reason);
@@ -45,7 +45,7 @@ for (const a of AGENTS) {
   });
 
   test(a.name + ': known tools with arguments that are not an object are denied too', async (t) => {
-    const dir = tempDir(t, 'zn-b2589-');
+    const dir = tempDir(t, 'zn-unknown-tool-args-');
     const names = a.name === 'Copilot' ? ['bash', 'view', 'web_fetch', 'glob'] : ['Bash', 'Read', 'WebFetch', 'Glob', 'mcp__srv__tool'];
     for (const n of names) {
       const reason = a.deny(await a.run(dir, n, '{"command":'));
@@ -54,7 +54,7 @@ for (const a of AGENTS) {
   });
 
   test(a.name + ': a nested command in an unknown tool is judged like a shell command', async (t) => {
-    const dir = tempDir(t, 'zn-b2589-');
+    const dir = tempDir(t, 'zn-unknown-tool-args-');
     assert.ok(a.deny(await a.run(dir, 'custom_shell', { payload: { command: 'cat ' + AWS } })));
     assert.ok(a.deny(await a.run(dir, 'custom_shell', { payload: { command: 'rm -rf ~' } })));
     assert.ok(a.deny(await a.run(dir, 'custom_shell', { steps: [{ label: 'x' }, { run: { cmd: 'rm -rf ~' } }] })));
@@ -62,13 +62,13 @@ for (const a of AGENTS) {
   });
 
   test(a.name + ': a secret file named under any key of an unknown tool is denied', async (t) => {
-    const dir = tempDir(t, 'zn-b2589-');
+    const dir = tempDir(t, 'zn-unknown-tool-args-');
     assert.ok(a.deny(await a.run(dir, 'custom_open', { payload: { value: AWS } })));
     assert.ok(a.deny(await a.run(dir, 'custom_open', { items: [{ inner: { thing: AWS } }] })));
   });
 
   test(a.name + ': an unknown tool with a command of the wrong type or nested too deeply is denied', async (t) => {
-    const dir = tempDir(t, 'zn-b2589-');
+    const dir = tempDir(t, 'zn-unknown-tool-args-');
     assert.ok(a.deny(await a.run(dir, 'custom_shell', { command: 7 })));
     assert.ok(a.deny(await a.run(dir, 'custom_shell', { command: { nested: 'x' } })));
     let deep = { command: 'cat ' + AWS };
@@ -77,7 +77,7 @@ for (const a of AGENTS) {
   });
 
   test(a.name + ': benign unknown tools still pass with no opinion', async (t) => {
-    const dir = tempDir(t, 'zn-b2589-');
+    const dir = tempDir(t, 'zn-unknown-tool-args-');
     assert.equal((await a.run(dir, 'some_new_tool', { query: 'hello', options: { limit: 3, tags: ['a', 'b'] } })).output, null);
     assert.equal((await a.run(dir, 'some_new_tool', {})).output, null);
     assert.equal((await a.run(dir, 'some_new_tool', { payload: { command: 'npm test' } })).output, null);
@@ -86,14 +86,14 @@ for (const a of AGENTS) {
 }
 
 test('Copilot: the VS Code spelling (tool_input) is refused when malformed, and a missing input is still empty', async (t) => {
-  const dir = tempDir(t, 'zn-b2589-');
+  const dir = tempDir(t, 'zn-unknown-tool-args-');
   assert.ok(copilotDeny(await runCopilotVsCode(dir, 'custom_shell', '{"command":')));
   assert.ok(copilotDeny(await runCopilotVsCode(dir, 'custom_shell', 5)));
   assert.equal((await runCopilotVsCode(dir, 'some_new_tool', undefined)).output, null);
 });
 
 test('ZCode: a JSON string input is read, a missing input is empty', async (t) => {
-  const dir = tempDir(t, 'zn-b2589-');
+  const dir = tempDir(t, 'zn-unknown-tool-args-');
   assert.ok(zcodeDeny(await runZcode(dir, 'custom_shell', JSON.stringify({ payload: { command: 'cat ' + AWS } }))));
   assert.equal((await runZcode(dir, 'some_new_tool', JSON.stringify({ query: 'hello' }))).output, null);
   assert.equal((await runZcode(dir, 'some_new_tool', undefined)).output, null);
@@ -109,15 +109,15 @@ test('known tools keep their shape', () => {
 // Review cases: a nested task line is built argument by argument the way VS Code builds it, and every reading is judged.
 for (const a of AGENTS) {
   test(a.name + ': a nested task whose argument chains a second command is judged on the raw line too', async (t) => {
-    const dir = tempDir(t, 'zn-b2589-');
+    const dir = tempDir(t, 'zn-unknown-tool-args-');
     assert.ok(a.deny(await a.run(dir, 'create_and_run_task', { task: { type: 'shell', command: 'echo', args: ['x&&rm -rf ~'] } })));
   });
   test(a.name + ': a nested task argument given as {value} is read, not dropped', async (t) => {
-    const dir = tempDir(t, 'zn-b2589-');
+    const dir = tempDir(t, 'zn-unknown-tool-args-');
     assert.ok(a.deny(await a.run(dir, 'create_and_run_task', { task: { type: 'shell', command: 'rm', args: ['-rf', { value: '~' }] } })));
   });
   test(a.name + ': a nested task argument zn cannot read (a number) is denied with a reason', async (t) => {
-    const dir = tempDir(t, 'zn-b2589-');
+    const dir = tempDir(t, 'zn-unknown-tool-args-');
     const r = a.deny(await a.run(dir, 'create_and_run_task', { task: { type: 'shell', command: 'ls', args: [42] } }));
     assert.ok(r); assert.match(r, /could not read/i);
   });
