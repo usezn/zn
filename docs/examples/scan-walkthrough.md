@@ -160,5 +160,6 @@ Links found inside the folder are not followed and are not listed.
 
 ## Where to go next
 
+- [Scan a single file](scan-a-single-file.md), one file instead of a folder
 - [scan](../cli.md#scan), the reference with every option
 - [First project walkthrough](first-project-walkthrough.md), one small example project from install to removal
