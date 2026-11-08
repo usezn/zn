@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-10-31.2"
+COMMAND_RULES_VERSION = "2026-11-08.12"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -1156,6 +1156,8 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional
         alts = _brace_alts(a[0]) if a else [""]
         names = [_program_name(x) for x in (alts if alts is not None else [str(a[0])])]
         heads.append((a, names[0], names, alts is None, _segment_dir(known, d)))
+    if any(h[4] is _CWD_OVERFLOW for h in heads):
+        return _OVERFLOW
     first_dl = next((j for j, h in enumerate(heads) if h[3] or any(n in _DOWNLOADERS for n in h[2])), -1)
     if first_dl >= 0:
         for j in range(first_dl + 1, len(pipe)):
@@ -1214,6 +1216,8 @@ def _check_segments(
     """cwd0 is the folder a cd or pushd earlier in the same command line moved to (None = unknown). A cd inside a pipeline or a background command runs in a subshell and does not count."""
     pipe: List[Tuple[List[str], Optional[str]]] = []
     known = cwd0  # the folder reached so far: a _Folder, _CWD_LOST, or None when unknown
+    # A ( group runs in a subshell: a cd inside it does not move the folder of what follows the ). Each "(" saves the folder.
+    groups: List[Any] = []
     raws = getattr(segs, "raws", None)
     ticks = 0
     var_scope = _Vars()
@@ -1222,6 +1226,8 @@ def _check_segments(
         words = var_scope.apply(words, sep)
         if var_scope.overflow:
             return _OVERFLOW
+        if sep == "(" and len(groups) < _MAX_SEGMENTS:
+            groups.append(known)
         hit = _check_simple(words, depth, known)
         if hit:
             return hit
@@ -1247,6 +1253,8 @@ def _check_segments(
             if hit2:
                 return hit2
             pipe = []
+        if sep == ")" and groups:
+            known = groups.pop()
     return _check_pipeline(pipe, known) if pipe else None
 
 

@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-10-31.2';
+const COMMAND_RULES_VERSION = '2026-11-08.12';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -715,12 +715,15 @@ const MAX_TICK_READS = 200;
 function checkSegments(segs, depth, cwd0 = null) {
   let pipe = [];
   let known = cwd0; // the folder reached so far: a chain, CWD_LOST, or null when unknown
+  // A ( group runs in a subshell: a cd inside it does not move the folder of what follows the ). Each "(" saves the folder.
+  const groups = [];
   let ticks = 0;
   const vars = shellVars.newScope();
   for (let seg of segs) {
     // Literal variables assigned earlier on the line are filled in (X=curl; $X url | sh).
     const words = shellVars.applyWords(vars, seg.words, seg.sep);
     if (vars.overflow) return OVERFLOW;
+    if (seg.sep === '(' && groups.length < MAX_SEGMENTS) groups.push(known);
     if (words !== seg.words) seg = { ...seg, words };
     const hit = checkSimple(seg.words, depth, known);
     if (hit) return hit;
@@ -743,6 +746,7 @@ function checkSegments(segs, depth, cwd0 = null) {
       if (hit2) return hit2;
       pipe = [];
     }
+    if (seg.sep === ')' && groups.length) known = groups.pop();
   }
   return pipe.length ? checkPipeline(pipe, known) : null;
 }

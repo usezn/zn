@@ -21,7 +21,7 @@ const GHP = generateAll(8360, { perType: 1, piiPerType: 1 }).secrets.find((s) =>
 const H = `-H "Authorization: Bearer ${GHP}" https://example.com/api`;
 
 async function decision(command) {
-  const event = { session_id: 'b2216', cwd: process.cwd(), permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, tool_use_id: 'toolu_2216' };
+  const event = { session_id: 'abc123', cwd: process.cwd(), permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, tool_use_id: 'toolu_01' };
   const res = await runner.handle(adapter, event, { engine: realEngine, vault: createFakeVault(), failMode: 'open' });
   const out = res.output && res.output.hookSpecificOutput;
   const d = out ? out.permissionDecision : 'none';
