@@ -10,9 +10,8 @@ const { tempDir } = require('./helpers/tmp');
 const { znCommand, cliName, PACKAGE_VERSION } = require('../lib/zn-command');
 
 const WIN = process.platform === 'win32';
-// On Windows znCommand prints the .cmd shims (zn.cmd, npx.cmd), so expect the same names.
-const ZN = cliName('zn');
-const NPX = cliName('npx') + ' -y zn-gate@' + PACKAGE_VERSION;
+const NPX = cliName('npx') + ' -y zn-gate@' + PACKAGE_VERSION; // npx.cmd on Windows
+const ZN = cliName('zn'); // zn.cmd on Windows
 
 function envWithZn(dir) {
   const file = path.join(dir, WIN ? 'zn.cmd' : 'zn');
