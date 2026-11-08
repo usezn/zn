@@ -79,7 +79,7 @@ No input is required. Each one has a default, and an empty default means the inp
 | Input | Required | Default | Example |
 |---|---|---|---|
 | `mode` | No | `scan` | `audit` |
-| `version` | No | set by the release | `1.13.1` |
+| `version` | No | set by the release | `1.15.0` |
 | `path` | No | `.` | `docs` |
 | `fail-on-threat` | No | `true` | `'false'` |
 | `severity-threshold` | No | `high` | `medium` |
@@ -175,9 +175,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Audit agent configs and scan for secrets
-        uses: usezn/zn@746be20f3276ab0d589f2d6df941b5d31a5396d8 # v1.13.1
+        uses: usezn/zn@84f85b2ed5bd938d823bc2521d48044eddb2ad84 # v1.15.0
         with:
-          version: '1.13.1'
+          version: '1.15.0'
           mode: both
           path: '.'
           format: github
@@ -208,9 +208,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Audit agent configs (report only)
-        uses: usezn/zn@746be20f3276ab0d589f2d6df941b5d31a5396d8 # v1.13.1
+        uses: usezn/zn@84f85b2ed5bd938d823bc2521d48044eddb2ad84 # v1.15.0
         with:
-          version: '1.13.1'
+          version: '1.15.0'
           mode: audit
           format: github
           fail-on-threat: 'false'
@@ -220,7 +220,7 @@ Always set `version` to the same release as the pinned Action. In the 1.12.0 Act
 
 Both modes also check the MCP config files of the repository (such as `.mcp.json`, `.cursor/mcp.json` and `.vscode/mcp.json`) for keys and passwords written in plain text. The value is never printed.
 
-Releases up to and including 1.13.1 do not have this check. It was added in 1.14.0, so the example above, which pins 1.13.1, does not show these annotations. With an Action that pins 1.14.0 or later, `scan` reports the finding as `secret:mcp_config` and `audit` as `ZNA011`. With 1.13.1 or earlier, both modes only report keys with a known format (for example an AWS access key) in these files, under the general secret rules.
+Releases before 1.14.0 do not have this check: there, both modes only report keys with a known format (for example an AWS access key) in these files, under the general secret rules. From 1.14.0 on, which includes the 1.15.0 pinned in the example above, `scan` reports the finding as `secret:mcp_config` and `audit` as `ZNA011`.
 
 Each finding is an error annotation on the file and line. The audit's message names the key; the scan's message does not, and suggests a vault name to use instead. With `fail-on-threat: 'false'` the annotation is still an error (red), but the step ends green. A warn-mode scan of a `.mcp.json` with a key in an `env` block shows this, shortened:
 
