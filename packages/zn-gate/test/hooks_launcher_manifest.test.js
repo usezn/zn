@@ -88,6 +88,15 @@ test('manifest: the launcher records the list of the package files, and the inta
 for (const [label, change] of [
   ['an edited policy file', (s) => fs.appendFileSync(s.p('lib/hooks/policy.js'), '// edited\n')],
   ['an edited destructive-command file', (s) => fs.appendFileSync(s.p('lib/destructive.js'), '// edited\n')],
+  ['an edited vault file', (s) => fs.appendFileSync(s.p('lib/vault/store.js'), '// edited\n')],
+  ['an edited vault client', (s) => fs.appendFileSync(s.p('lib/vault/client.js'), '// edited\n')],
+  ['a deleted vault file', (s) => fs.rmSync(s.p('lib/vault/winacl.js'))],
+  ['a vault file replaced by a link to a copy outside the package', (s) => {
+    const copy = path.join(s.base, 'outside-store.js');
+    fs.copyFileSync(s.p('lib/vault/store.js'), copy);
+    fs.rmSync(s.p('lib/vault/store.js'));
+    fs.symlinkSync(copy, s.p('lib/vault/store.js'));
+  }],
   ['an edited broker file', (s) => fs.appendFileSync(s.p('lib/broker/files.js'), '// edited\n')],
   ['an edited helper module', (s) => fs.appendFileSync(s.p('lib/zn-command.js'), '// edited\n')],
   ['a policy file replaced by a link to a copy outside the package', (s) => {
@@ -109,8 +118,8 @@ for (const [label, change] of [
   });
 }
 
-// The runner loads the vault client only when a call needs the vault (redaction), so an edited vault file is caught on the
-// calls that load it. On an ordinary call nothing reads or runs that file, like any other file that is not required.
+// The runner loads the vault client only when a call needs the vault (redaction). Every call still checks the client's files
+// against the list without running them (above: an ordinary call is blocked), and a call that loads the vault is stopped too.
 const { generateAll } = require('./fixtures/fake_secrets');
 const FAKE_PAT = generateAll(5151, { perType: 1, piiPerType: 1 }).secrets.find((x) => x.type === 'github_pat_classic').value;
 const REDACT_EVENT = (home) => JSON.stringify({ session_id: 's1', cwd: home, tool_use_id: 't1', hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'cat notes.txt' }, tool_response: { stdout: 'token: ' + FAKE_PAT + '\nok\n', stderr: '', interrupted: false, isImage: false } });
@@ -132,11 +141,15 @@ for (const file of ['lib/vault/store.js', 'lib/vault/client.js']) {
   });
 }
 
-test('manifest: an edited vault file is not read by a call that never loads the vault (it cannot run there)', { skip: !posix }, (t) => {
+test('manifest: an ordinary call with an edited vault file is blocked although it does not need the vault', { skip: !posix }, (t) => {
   const s = realPackage(t);
+  assert.equal(s.run().status, 0);
   fs.appendFileSync(s.p('lib/vault/store.js'), '// edited\n');
   const r = s.run();
-  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, CHANGED);
+  assert.match(r.stderr, AGAIN);
+  assert.equal(r.stdout, '');
 });
 
 test('manifest: a deleted module the runner needs blocks the hook', { skip: !posix }, (t) => {
