@@ -5,6 +5,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [audit-before-adding-a-repo.md](audit-before-adding-a-repo.md): run `zn-gate audit` on a repository you do not know yet, read the report and decide what to do before you open it with an agent.
 - [block-message-anatomy.md](block-message-anatomy.md): one real block message, explained part by part.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
+- [exit-code-of-hooks-explained.md](exit-code-of-hooks-explained.md): what the exit code and the answer of `zn hook` mean to the agent: allow, deny, ask and an event zn cannot read.
 - [first-block-vs-allow-decision.md](first-block-vs-allow-decision.md): what to do the first time zn-gate blocks a command of your agent, and when to change the settings instead.
 - [env-file-round-trip.md](env-file-round-trip.md): move a fake `.env` file into the vault and put the values back.
 - [first-cloud-check.md](first-cloud-check.md): the shortest path from connect to a first checked prompt, in five steps.
