@@ -97,27 +97,43 @@ If you remove the program first, the hooks stay in your agent's settings. The ag
 
 The check runs locally on your machine unless you turn on the optional cloud check. With it on, only the text of `analyze_prompt` and `zn-gate analyze` calls is sent, after zn-gate removed the secrets it detects. See [What leaves your machine](../README.md#what-leaves-your-machine) for the full list, and [Turn on the optional cloud check](connect.md) to turn it on or off.
 
-## Logs and blocks
+## Commands that never need the network
 
-### 13. Where do I see what was blocked?
+These commands work offline. In the npm package they make no network call:
 
-Run `npx -y zn-gate why` in your own terminal. It explains the last block in plain words: what was stopped, why, and what to do next. To explain one specific block, give its id from the records that `npx -y zn-gate evidence --export` prints. Without an id, `why` explains the last block; if there is no block yet, it says so.
+| Command | What it does |
+|---|---|
+| `npx -y zn-gate --help` | Prints the list of commands. |
+| `npx -y zn-gate --version` | Prints the version. |
+| `npx -y zn-gate status` | Shows the engine, the endpoint and whether an API key is saved. It only reads local state. |
+| `npx -y zn-gate scan [path]` | Scans files on this machine with the local rules. |
 
-To count what zn-gate did over the last days, run `npx -y zn-gate stats`. It shows the checks, the blocks and the secrets replaced. Use `--days` to change the period. The options and exit codes are in the command line reference: [why](cli.md#why) and [stats](cli.md#stats).
+Other commands are not listed here. `stats` is left out because, if you turn on
+sharing, it can send daily counts. The cloud check is also left out. For the full
+picture, see [Example: running offline and with the cloud check off](examples/offline-and-local-only.md#the-default-nothing-leaves-your-machine).
 
-Every decision is also written to the decision log on your computer, `~/.zn/evidence.jsonl`. The log stays local, and `npx -y zn-gate evidence --verify` checks that its records have not been changed. See [files and folders](files-and-folders.md).
 ## Hooks
 
-### 14. What do zn-gate's hooks do, and where do they live?
+### 13. What do zn-gate's hooks do, and where do they live?
 
 A hook is an entry that your coding agent runs at fixed points: when you send a prompt, before a tool call, and after a tool returns its output. zn-gate's hook passes that event to zn-gate, which checks it and can block it. Each agent keeps its hook entries in its own settings file: your user settings, or, with `--project`, the settings of one project folder.
 
 To see every zn hook, the file it is in and whether it works, run `npx -y zn-gate check --hooks`. It only reads files. The small launcher script that runs the hooks is in `~/.zn/hooks`. For the command, see [`hooks`](cli.md#hooks).
 
-### 15. How do I turn the hooks off for one project, or for a while?
+### 14. How do I turn the hooks off for one project, or for a while?
 
 For one project, go to that project's folder and run `npx -y zn-gate hooks uninstall <agent> --project`, with the agent's name, for example `claude-code`. Your user hooks stay in place.
 
 zn-gate has no pause switch. To turn the hooks off for a while, run `npx -y zn-gate hooks uninstall <agent>`, and later run `zn-gate hooks install <agent>` to turn them back on. With the Claude Code plugin, `claude plugin disable zn-gate@usezn` turns off the plugin's hooks, and `claude plugin enable zn-gate@usezn` turns them back on.
 
 Run these commands in your own terminal: zn-gate refuses to change hooks when an agent runs them. While the hooks are off, the agent's actions are not checked by zn-gate. Run `npx -y zn-gate check` afterwards to see what is protected.
+
+## Logs and blocks
+
+### 15. Where do I see what was blocked?
+
+Run `npx -y zn-gate why` in your own terminal. It explains the last block in plain words: what was stopped, why, and what to do next. To explain one specific block, give its id from the records that `npx -y zn-gate evidence --export` prints. Without an id, `why` explains the last block; if there is no block yet, it says so.
+
+To count what zn-gate did over the last days, run `npx -y zn-gate stats`. It shows the checks, the blocks and the secrets replaced. Use `--days` to change the period. The options and exit codes are in the command line reference: [why](cli.md#why) and [stats](cli.md#stats).
+
+Every decision is also written to the decision log on your computer, `~/.zn/evidence.jsonl`. The log stays local, and `npx -y zn-gate evidence --verify` checks that its records have not been changed. See [files and folders](files-and-folders.md).
