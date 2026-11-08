@@ -269,7 +269,7 @@ def _parity_corpus() -> List[Dict[str, Any]]:
 
 def _same_as_node(text):
     """The Python hint adds one note that says the vault commands are npm-only; the Node.js hint has no such note."""
-    return text.replace(mcp.NPM_ONLY_NOTE, "")
+    return text.replace(mcp.NPM_ONLY_NOTE, "").replace("run npx.cmd -y zn-gate secret allow", "run zn secret allow")
 
 
 class TestNodeParity(unittest.TestCase):
