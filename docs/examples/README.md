@@ -3,18 +3,23 @@
 Worked examples, in alphabetical order. All values in them are made up.
 
 - [after-an-upgrade.md](after-an-upgrade.md): five commands to run after you update zn-gate, and what a good result looks like.
+- [audit-before-adding-a-repo.md](audit-before-adding-a-repo.md): run `zn-gate audit` on a repository you do not know yet, read the report and decide what to do before you open it with an agent.
 - [block-message-anatomy.md](block-message-anatomy.md): one real block message, explained part by part.
 - [check-output-explained.md](check-output-explained.md): a sample `check` output, read line by line.
 - [ci-step-example.md](ci-step-example.md): one fake CI job that runs the audit and reads its exit code.
+- [claude-code-plugin-or-cli.md](claude-code-plugin-or-cli.md): the two ways to cover Claude Code (the plugin, or the hooks of `zn hooks install claude-code`), what each needs, and how to verify and remove them.
 - [cloud-check-settings.md](cloud-check-settings.md): each cloud check setting with its effect, one fake command and what leaves the machine.
 - [connect-and-disconnect.md](connect-and-disconnect.md): turn the optional cloud check on, check its status and turn it off.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
 - [env-file-round-trip.md](env-file-round-trip.md): move a fake `.env` file into the vault and put the values back.
 - [evidence-example.md](evidence-example.md): the local evidence log that `zn-gate evidence` shows.
+- [first-block-vs-allow-decision.md](first-block-vs-allow-decision.md): what to do the first time zn-gate blocks a command of your agent, and when to change the settings instead.
 - [first-cloud-check.md](first-cloud-check.md): the shortest path from connect to a first checked prompt, in five steps.
 - [first-project-walkthrough.md](first-project-walkthrough.md): one small example project, from install to removal.
+- [hook-subcommand-explained.md](hook-subcommand-explained.md): what `zn-gate hook` is, who calls it, and why you rarely run it by hand.
 - [init-and-uninstall.md](init-and-uninstall.md): set up zn-gate, preview the steps with a dry run, then remove it.
 - [long-text-analysis.md](long-text-analysis.md): the two long-input modes of the cloud check (`windows` or `off`), and when the result carries a warning.
+- [mcp-pin-review-checklist.md](mcp-pin-review-checklist.md): what to compare in a changed MCP tool before you approve it with `pins approve`.
 - [mcp-server-with-zn-gate.md](mcp-server-with-zn-gate.md): the two MCP servers of zn-gate (`mcp` and `secrets-mcp`): what each does and what the agent sees.
 - [moving-to-a-new-computer.md](moving-to-a-new-computer.md): what moves and what does not when you set up zn-gate on a new computer, with fictional values.
 - [node-api.md](node-api.md): install and one short example per call of the Node.js API.
@@ -23,15 +28,20 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [python-api.md](python-api.md): five short examples of the Python package.
 - [reach-report-file.md](reach-report-file.md): write the `reach` report to a file in CI and keep it as a build artifact.
 - [reading-a-reach-history-report.md](reading-a-reach-history-report.md): how to read the output of zn-gate reach --history.
+- [safe-first-day-with-a-new-agent.md](safe-first-day-with-a-new-agent.md): try zn-gate with a new agent in a throwaway folder, then remove it.
+- [scan-a-single-file.md](scan-a-single-file.md): scan one file instead of a folder, and read the report.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project, from the run to what each exit code means.
 - [scripting.md](scripting.md): use `zn-gate` from a shell script or a CI job: exit codes and JSON output.
+- [shield-walkthrough.md](shield-walkthrough.md): wrap a fake MCP server with the shield, from shadow mode to enforce and back.
 - [stats-and-report.md](stats-and-report.md): worked examples of `zn-gate stats` and `zn-gate report`.
 - [switching-agents-checklist.md](switching-agents-checklist.md): a checklist for moving zn-gate protection from one coding agent to another.
 - [uninstall-one-agent.md](uninstall-one-agent.md): remove zn-gate from one agent and keep the others.
 - [unix-first-run.md](unix-first-run.md): the first ten minutes on macOS or Linux with a Node.js from a version manager.
 - [upgrade-checklist.md](upgrade-checklist.md): a one-screen version of the upgrade page.
+- [vault-verify-and-forget.md](vault-verify-and-forget.md): the vault verify, forget and purge commands, and what each one asks before acting.
 - [vscode-and-cursor.md](vscode-and-cursor.md): install, verify and uninstall for VS Code and Cursor on one page.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
 - [windows-checklist.md](windows-checklist.md): the steps, in order, to install zn-gate on Windows and check that it works.
 - [zed-and-jetbrains.md](zed-and-jetbrains.md): connect, check and remove zn-gate in Zed and JetBrains editors.
+- [zn-hooks-install-for-one-agent.md](zn-hooks-install-for-one-agent.md): install the hooks for one coding agent only, then verify them with `check --hooks` and `check`.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
