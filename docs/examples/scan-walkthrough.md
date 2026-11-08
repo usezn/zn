@@ -160,5 +160,6 @@ Links found inside the folder are not followed and are not listed.
 
 ## Where to go next
 
+- [Skipped folders, large files and `--exclude`](scan-ignore-and-skipped-files.md), what a scan leaves out and how to read a skipped path on purpose
 - [scan](../cli.md#scan), the reference with every option
 - [First project walkthrough](first-project-walkthrough.md), one small example project from install to removal
