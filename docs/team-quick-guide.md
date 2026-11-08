@@ -77,7 +77,7 @@ zn team managed-config --agent claude-code --os macos
 zn vault log export --otlp --since 7d --out zn-audit.otlp.jsonl
 ```
 
-This writes the local audit log as OpenTelemetry logs. It needs no account.
+This writes the local vault audit log as OpenTelemetry logs. It needs no account.
 
 ## More
 
