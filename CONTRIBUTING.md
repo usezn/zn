@@ -198,3 +198,16 @@ If you find a security vulnerability, please do NOT open a public issue, a pull 
 ## Changelog
 
 Describe a change users will notice in a fragment file in `changelog.d/` instead of editing `CHANGELOG.md`; see [changelog.d/README.md](changelog.d/README.md).
+
+### Check your fragment locally
+
+CI runs the `Changelog` check on every pull request. You can run the same check before you push. It compares your commits with the base branch, so commit your fragment first (it does not read uncommitted changes), then run this from the repository root:
+
+```bash
+git fetch origin next
+node .github/scripts/changelog.mjs check --base origin/next
+```
+
+`--base` is required: use the branch your pull request targets (`origin/next` for most). The check prints `changelog OK` when your fragment is valid, or lists what is wrong and shows the fragment template. It fails when you change shipped files (the packages, the plugin, the Action) without adding a fragment, when a fragment is not a plain `.md` file directly in `changelog.d/` or breaks the `### <Section>` and `- ` format, and when you edit `[Unreleased]` in `CHANGELOG.md` by hand.
+
+If your change is one users do not notice (the `no-changelog` label in CI), set `CHANGELOG_SKIP=1` for the run: `CHANGELOG_SKIP=1 node .github/scripts/changelog.mjs check --base origin/next` in a Unix shell, or `$env:CHANGELOG_SKIP = '1'` first in PowerShell. To run the tests of the check itself, use `node --test .github/scripts/changelog.test.mjs`; to see what the next release will say, use `node .github/scripts/changelog.mjs preview`.
