@@ -148,6 +148,24 @@ zn-gate protects an agent that is already installed; it does not install the age
 
 If `npm install -g` fails with `EACCES`, use the fix in Troubleshooting, then run the same `npm install -g` command again.
 
+## Windows PowerShell: the .cmd forms
+
+On Windows, PowerShell can refuse to run the `npx.ps1` and `zn.ps1` scripts that npm writes next to the programs, and then a bare `npx` or `zn` fails with "running scripts is disabled on this system". The `.cmd` forms start the same programs without those scripts. Use them when a bare command fails this way:
+
+```powershell
+npx.cmd -y zn-gate init
+npx.cmd -y zn-gate check
+```
+
+After `npm.cmd install -g zn-gate`, the installed program is `zn.cmd`:
+
+```powershell
+zn.cmd check
+zn.cmd status
+```
+
+On Windows, zn prints the `.cmd` form in its own messages, so copy the command it shows. The execution policy note above is a permanent fix; the `.cmd` forms need no change to your settings. If `npx.cmd` or `zn.cmd` says it is not recognized, the folder where npm installs programs is not on PATH: see [troubleshooting](troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+
 ## If something fails
 
 - `npx: command not found`: install the LTS version of [Node.js](https://nodejs.org/), open a new terminal and run the command again.
@@ -155,7 +173,7 @@ If `npm install -g` fails with `EACCES`, use the fix in Troubleshooting, then ru
 - `init` only prints steps and changes nothing: an AI agent or a script ran it. Run it yourself in your own terminal.
 - `check` says `NOT protected`: the line says what to run.
 - zn blocked something you need: use `npx -y zn-gate env shadow .env` for secrets, or ask in [Discussions](https://github.com/usezn/zn/discussions).
-- Another message? The [troubleshooting guide](troubleshooting.md) explains the ten most common ones.
+- Another message? The [troubleshooting guide](troubleshooting.md) explains the fourteen most common ones.
 
 ## Remove zn-gate
 
