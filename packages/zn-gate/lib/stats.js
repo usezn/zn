@@ -26,10 +26,26 @@ function znHome() {
   return path.join(os.homedir(), '.zn');
 }
 
-/** The per-user ~/.zn, always: ZN_HOME is not read. For settings a project must not be able to redirect. */
+/*
+ * The .zn folder in the home directory of the operating-system account running this process, or null when the system
+ * does not report one. Used for settings a project must not be able to redirect (the opt-in cloud check of tool output).
+ * os.homedir() is not used here: it follows HOME (and USERPROFILE on Windows), which a project can set for the agent.
+ * os.userInfo().homedir comes from the account itself: the passwd entry (getpwuid_r) on Linux and macOS, the profile
+ * directory of the process token (GetUserProfileDirectoryW) on Windows. ZN_HOME is not read either. When os.userInfo()
+ * throws (no passwd entry for the uid, as in some containers), the answer is null and callers treat it as "off".
+ */
+let realHomeForTests = null;
 function userHome() {
-  return path.join(os.homedir(), '.zn');
+  try {
+    const home = realHomeForTests ? realHomeForTests() : os.userInfo().homedir;
+    return typeof home === 'string' && home ? path.join(path.resolve(home), '.zn') : null;
+  } catch (_) {
+    return null;
+  }
 }
+
+/** Tests only: a function returning the account home userHome() should use, or null to restore os.userInfo(). */
+function _useRealHome(fn) { realHomeForTests = typeof fn === 'function' ? fn : null; }
 
 function statsFile() {
   return path.join(znHome(), 'stats.json');
@@ -238,5 +254,5 @@ function latencyReport({ file, off = false } = {}) {
   return 'Decision time per tool call (last ' + s.count + ' calls, measured on this machine): p50 ' + fmt(s.p50) + ' ms, p95 ' + fmt(s.p95) + ' ms. Excludes process startup, writing the response, and saving stats and evidence.';
 }
 
-module.exports = { znHome, userHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known,
+module.exports = { znHome, userHome, _useRealHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known,
   percentile, latencySummary, latencyReport, LATENCY_KEEP };

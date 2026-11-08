@@ -114,7 +114,8 @@ const { mayMatchRules } = require('./output_prefilter');
 /*
  * Opt-in cloud check of tool output (indirect prompt injection). Off by default, also for people who already ran
  * zn-gate connect (they agreed to prompt text only): it needs {"hooks": {"cloudCheckToolOutput": true}} in the person's
- * own ~/.zn/config.json (a project config is never read for it) and zn-gate connect. Also only when the person turned the optional cloud
+ * own ~/.zn/config.json, in the operating-system account's home (HOME, USERPROFILE, ZN_HOME and a project config are never
+ * read for it) and zn-gate connect. Also only when the person turned the optional cloud
  * check on with zn-gate connect (the key it saved; ZN_CLOUD and ZN_API_KEY in the environment do not turn this path on, because a project can set them; not with ZN_LOCAL_ONLY): a capped sample of the output of the
  * same tools and agents as the local check above is sent to the zn cloud, after the secret and personal-data
  * replacement of this hook and then the same redaction the prompt check uses. A cloud answer can only add the same
@@ -125,11 +126,14 @@ const { mayMatchRules } = require('./output_prefilter');
  * The hook never sends to another URL: pinOrigin keeps the request on the fixed zn origin.
  */
 function cloudOutputCheckOn(opts) {
-  // The opt-in is read from the fixed per-user ~/.zn only: neither ZN_HOME nor opts.home can move it, because a project
-  // can set ZN_HOME for the agent and point it at a folder that holds the setting and a connected marker.
+  // The opt-in is read from the .zn folder in the operating-system account's home only (os.userInfo(), see
+  // stats.userHome): neither HOME, USERPROFILE, ZN_HOME nor opts.home can move it, because a project can set them for the
+  // agent and point them at a folder that holds the setting and a connected marker. No account home: off.
+  const userZn = require('../stats').userHome();
+  if (!userZn) return false;
   let hooks = {};
   try {
-    hooks = (JSON.parse(fs.readFileSync(path.join(require('../stats').userHome(), 'config.json'), 'utf8')) || {}).hooks || {};
+    hooks = (JSON.parse(fs.readFileSync(path.join(userZn, 'config.json'), 'utf8')) || {}).hooks || {};
   } catch (_) { /* no user config: off */ }
   return outputCheckOn(opts) && hooks.cloudCheckToolOutput === true;
 }

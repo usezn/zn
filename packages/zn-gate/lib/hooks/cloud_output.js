@@ -59,7 +59,8 @@ async function ask(sample, timeoutMs) {
   // the only thing this file takes from cloud-key (test/connect.test.js holds it to that): it never reads the key.
   // The environment never turns this path on (no variable does): a project can put variables in the agent's
   // environment, and every tool result would then go out under a key it chose.
-  // Judged from the fixed per-user folder only, never from a folder the agent's environment names.
+  // Judged from the operating-system account's home folder only (os.userInfo()), never from a folder the agent's
+  // environment names (HOME, USERPROFILE or the zn folder override).
   const { isConnectedAtUserHome } = require('../cloud-key');
   if (!isConnectedAtUserHome()) return null;
   const client = require('../client');

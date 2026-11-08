@@ -173,11 +173,20 @@ function isConnected() {
 }
 
 /**
- * True when `zn-gate connect` stored a key, judged only by the per-user ~/.zn/config.json: ZN_HOME is not read, because a
- * project can set it for the agent and point it at a folder it ships. Used for the opt-in cloud check of tool output.
+ * True when `zn-gate connect` stored a key, judged only by the .zn/config.json in the home folder of the operating-system
+ * account (stats.userHome: from os.userInfo(), not from HOME, USERPROFILE or ZN_HOME, which a project can set for the
+ * agent and point at a folder it ships). Used for the opt-in cloud check of tool output. False when the system does not
+ * report the account home, and false when the folder the rest of zn uses (ZN_HOME, HOME) is a different one: the stored
+ * key is looked up through the marker in that folder, so it must be the account's own.
  */
 function isConnectedAtUserHome() {
-  return readMarker(path.join(require('os').homedir(), '.zn', 'config.json')) !== null;
+  const real = require('./stats').userHome();
+  if (!real) return false;
+  const same = process.platform === 'win32'
+    ? path.resolve(znHome()).toLowerCase() === path.resolve(real).toLowerCase()
+    : path.resolve(znHome()) === path.resolve(real);
+  if (!same) return false;
+  return readMarker(path.join(real, 'config.json')) !== null;
 }
 
 /* ------------------------------ stores ------------------------------ */
