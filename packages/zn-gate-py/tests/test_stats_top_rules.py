@@ -44,6 +44,20 @@ def test_render_shows_block_and_hint_with_ids_only(tmp_path):
     assert "SSN  " not in text
 
 
+def test_only_detector_ids_are_shown(tmp_path):
+    path = write(tmp_path, {"2026-10-13": {"hook:cursor": entry(
+        {"not an id/with path": 5, "lower_key": 4, "AWS_KEY\n": 3, "AWS_KEY": 1, "JWT": 2})}})
+    top = stats.top_rules(now=NOW, path=path)
+    assert [r["id"] for r in top] == ["JWT", "AWS_KEY"]
+
+
+def test_non_finite_and_bad_counts_count_as_zero(tmp_path):
+    path = write(tmp_path, {"2026-10-13": {"hook:cursor": entry(
+        {"AWS_KEY": float("inf"), "JWT": "x", "EMAIL": 2, "SSN": float("nan")})}})
+    assert [(r["id"], r["count"]) for r in stats.top_rules(now=NOW, path=path)] == [("EMAIL", 2)]
+    assert stats.summary(days=30, now=NOW, path=path)["total"]["checked"] == 5
+
+
 def test_render_without_top_is_unchanged(tmp_path):
     s = stats.summary(days=30, now=NOW, path=ledger(tmp_path))
     assert "Top rules" not in stats.render(s)

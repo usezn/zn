@@ -8,6 +8,7 @@ opt-in sharing of pseudonymous daily counts is managed with the npm package (`np
 import datetime
 import json
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 KEEP_DAYS = 90
@@ -44,7 +45,7 @@ def load(path: Optional[str] = None) -> Dict[str, Any]:
 def _num(v: Any) -> int:
     try:
         n = int(v or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
     return n if n > 0 else 0
 
@@ -81,13 +82,16 @@ TOP_RULES_DAYS = 7
 TOP_RULES_LIMIT = 5
 GENERIC_RULE_NAME = "Built-in detector"
 WHY_HINT = "To understand a block, see https://usezn.com/docs/zn-gate/troubleshooting/"
+# The same shape the npm package accepts for a detector id (lib/stats.js TYPE_RE): upper case, digits, underscores.
+DETECTOR_ID_RE = re.compile(r"[A-Z0-9](?:[A-Z0-9_]{0,62}[A-Z0-9])?")
 
 
 def top_rules(days: int = TOP_RULES_DAYS, limit: int = TOP_RULES_LIMIT, now: Optional[datetime.date] = None,
               path: Optional[str] = None) -> List[Dict[str, Any]]:
     """Most frequent detector ids over the last `days` days: ids and counts only, highest count first, ties by id."""
     dets = summary(days=days, now=now, path=path)["detections"]
-    items = sorted(((t, n) for t, n in dets.items() if n > 0), key=lambda kv: (-kv[1], kv[0]))[:limit]
+    items = sorted(((t, n) for t, n in dets.items() if n > 0 and DETECTOR_ID_RE.fullmatch(t)),
+                   key=lambda kv: (-kv[1], kv[0]))[:limit]
     return [{"id": t, "name": GENERIC_RULE_NAME, "count": n} for t, n in items]
 
 

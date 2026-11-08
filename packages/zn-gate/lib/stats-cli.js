@@ -52,6 +52,7 @@ function printTopRules(rules, days, out) {
 }
 
 function printSummary(s, out, top) {
+  const topRules = top && Array.isArray(top.rules) ? top.rules : [];
   const t = s.total;
   out(`zn-gate on this machine, last ${s.days} day${s.days === 1 ? '' : 's'}` + (s.since ? ` (counting since ${s.since})` : '') + ':\n\n');
   if (!t.checked && !t.blocked && !t.redacted && !t.warned) {
@@ -64,7 +65,7 @@ function printSummary(s, out, top) {
     const types = Object.entries(s.detections).sort((a, b) => b[1] - a[1]).slice(0, 8);
     if (types.length) out('\n  Secret types found: ' + types.map(([k, n]) => `${k} ${fmt(n)}`).join(', ') + '\n');
     const keys = Object.entries(s.byKey).sort((a, b) => b[1].checked - a[1].checked);
-    printTopRules(top.rules, top.days, out);
+    printTopRules(topRules, top && top.days, out);
     if (keys.length) {
       out('\n  By agent:\n');
       for (const [key, c] of keys) {

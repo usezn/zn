@@ -65,7 +65,7 @@ zn-gate on this machine, last 30 days (counting since 2026-10-02):
   Most frequent: AWS_KEY. To understand your last block, run: zn why
 ```
 
-The `Top rules` block covers 7 days by default. `zn-gate stats --days 30` makes it cover 30 days. It shows only detector ids and counts, never values, paths or command text. With `--json`, the same list is in `top_rules`.
+The `Top rules` block covers 7 days by default. `zn-gate stats --days 30` makes it cover 30 days. It shows only detector ids and counts, never values, paths or command text. With `--json`, the same list is in `top_rules`. The hint line above is the npm package's; the Python package points to the troubleshooting page instead.
 
 ## A longer period
 

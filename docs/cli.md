@@ -616,7 +616,7 @@ zn-gate stats share on|off|status|show
 
 What zn-gate did on this machine: local counts for the last `--days` days (1 to 90, default 30). Exit codes: `0` done, `2` wrong usage.
 
-`stats` also prints a `Top rules` block: the five detector ids that matched most often, each with its count. It covers the last 7 days, or the last `--days` days when you pass `--days`. Only ids and counts are shown, never values, paths or command text, and nothing new is stored. A line below the block names the most frequent id and points to the [troubleshooting page](https://usezn.com/docs/zn-gate/troubleshooting/). The block is left out when nothing matched in the window.
+`stats` also prints a `Top rules` block: the five detector ids that matched most often, each with its count. It covers the last 7 days, or the last `--days` days when you pass `--days`. Only ids and counts are shown, never values, paths or command text, and nothing new is stored. A line below the block names the most frequent id. The npm package adds `zn why`, which explains your last block. The Python package points to the [troubleshooting page](https://usezn.com/docs/zn-gate/troubleshooting/) instead, because `why` is only in the npm package. The block is left out when nothing matched in the window.
 
 With `--json`, the output is one JSON object with the same counts and these extra fields:
 
