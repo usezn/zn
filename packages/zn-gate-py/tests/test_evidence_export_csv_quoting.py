@@ -27,6 +27,6 @@ def test_csv_export_round_trips_commas_newlines_and_quotes(tmp_path, monkeypatch
     assert len(rows) == 2
     header, row = rows
     assert len(row) == len(header) == 11
-    record = dict(zip(header, row))
+    record = dict(zip(header, row, strict=True))
     assert record["tool_name"] == TOOL
     assert record["reason"] == REASON
