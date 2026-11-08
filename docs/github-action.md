@@ -154,6 +154,40 @@ With `format: sarif` and the upload step, the findings appear in your repository
 
 Code scanning needs a public repository, or GitHub Code Security on a private one. Without it, use `format: github` (the default): the findings show as annotations in the workflow run and on the pull request, and no `security-events` permission is needed.
 
+## Reading the SARIF file in GitHub code scanning
+
+This section shows where each part of the SARIF file ends up in GitHub. It applies when you use `format: sarif` and the upload step from the [minimal workflow](#minimal-workflow).
+
+**Where to look.** Open your repository, then **Security** > **Code scanning**. Each finding is one alert. Click an alert to see the message, the file and line, and the rule. On a pull request, GitHub also shows the alerts on the changed lines. Use the **Tool** filter to separate the audit (`zn-gate audit`) from the scan (`zn-gate scan`).
+
+**What each SARIF field becomes.** The audit and the scan write these fields:
+
+| SARIF field | What it holds | Where you see it in GitHub |
+|---|---|---|
+| `ruleId` | The rule that fired. The audit uses its `ZNA` ids (for example `ZNA011`). The scan uses the name of its rule (for example `secret:mcp_config`). | The rule name on the alert. |
+| `message.text` | The audit writes the title of the finding, a colon and the detail. The scan writes the reason, a colon and the matching text. | The alert title and description. |
+| `locations` | The file, relative to the repository root, and the start line. | The file and line on the alert, and the annotation on a pull request. |
+| `level` | The audit maps `critical` and `high` to `error`, `medium` to `warning` and `low` to `note`. The scan always writes `error`. | The severity of the alert, with the next row. |
+| `security-severity` (audit only) | A score for the rule: `9.5` critical, `8.0` high, `5.5` medium, `3.0` low. | The Critical, High, Medium or Low label. |
+| `partialFingerprints` (audit only) | A hash of the rule, the file, the evidence and a counter for identical findings. It does not use the line number. | Not shown. GitHub uses it to know that an alert is the same one after a line moves. |
+| `properties` (audit only) | The `agent`, the `evidence` (with any secret value hidden), the `fix` and the `references`. | Stored in the file for tools that read SARIF. The rule help text on the alert shows the fix. |
+
+The rule page links to [audit.md](audit.md#rules), which lists each audit rule and how to fix it. The [audit page](audit.md#sarif) describes the file the audit writes. The action merges the audit and the scan into one file, with one run for each. The scan rules carry only their name, so a scan alert has no help text.
+
+**Dismiss a false positive.**
+
+1. Open the alert under **Security** > **Code scanning**.
+2. Select **Dismiss alert**.
+3. Choose a reason: **False positive**, **Used in tests** or **Won't fix**. Add a comment so that the next reader knows why.
+
+GitHub keeps the dismissal. For audit alerts, the fingerprint stays the same when the line moves, so the alert does not come back. If the file or the evidence changes, GitHub opens a new alert. Dismissing an alert does not change the exit code of the step: set `fail-on` or `severity-threshold` for that (see [Inputs](#inputs)). An alert for a real finding is better fixed than dismissed: the rule page says how.
+
+**Related pages.**
+
+- [`zn audit`](audit.md): every rule, the output formats and how to fix a finding.
+- [`zn reach`](reach.md#sarif-and-ci): the SARIF file of `zn-gate reach`, which has `ZNR` rules and puts findings that belong to the machine, not to a file, into notifications of the run.
+- [Agents in CI](agents-in-ci.md): the Action with SARIF in a workflow that also runs an agent.
+
 ## Pull request example with common inputs
 
 This workflow checks every pull request with both the audit and the scan. It fails the step on audit findings of severity `high` or above, and on any scan finding. It uses only inputs that `action.yml` defines, and needs no code scanning permissions because `format: github` shows findings as annotations.

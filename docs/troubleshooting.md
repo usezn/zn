@@ -4,6 +4,27 @@ The fourteen messages people most often meet when they first use zn-gate: what e
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
+## Where to look first
+
+Find your symptom, run the command in your own terminal, then follow the link.
+
+| Symptom | Command to run | Then read |
+|---|---|---|
+| My agent is not protected, or I am not sure it is | `zn-gate check` | [What the output means](check.md) |
+| The hooks look stale, broken or missing | `zn-gate check --hooks` | [Hooks block everything](#hooks-block-everything-zn-gate-changed-since-the-hooks-were-installed) |
+| My agent ignores zn on a managed computer | `zn-gate check` | [Section 9](#9-your-agent-ignores-zns-hooks-on-a-managed-computer) |
+| A command was blocked and I do not know why | `zn why` | [Block and warn reasons, by family](#block-and-warn-reasons-by-family) |
+| Which version and rules are installed, and is the cloud check on | `zn-gate status` | [`status`](cli.md#status) |
+| I want to be sure zn works on built-in examples | `zn-gate test` | [`test`](cli.md#test) |
+| The evidence log looks wrong or damaged | `zn-gate evidence --verify` | [Section 10](#10-the-evidence-log--is-damaged) |
+| The vault is locked | `zn unlock` | [Section 5](#5-your-secret-vault-is-locked) |
+| I want to know what an agent could reach in this folder | `zn-gate reach` | [`reach`](reach.md) |
+| I want to review the agent configuration of a repository | `zn-gate audit .` | [`audit`](audit.md) |
+| A scan skipped files or stopped on an error | `zn-gate scan .` | [Messages about files and folders](#messages-about-files-and-folders) |
+| The command is not found, or Node.js is too old | `node --version` | [Section 1](#1-nodejs-is-too-old) and [section 14](#14-zn-is-not-recognized-as-an-internal-or-external-command) |
+
+The commands above only read or test. They change no setting and send nothing. See the [CLI reference](cli.md) for every command and its exit codes.
+
 ## Symptoms by command
 
 Find the command you ran, then the symptom that matches.
