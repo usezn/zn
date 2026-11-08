@@ -124,8 +124,12 @@ function configFile() {
   return path.join(znHome(), 'config.json');
 }
 
+function readConfigAt(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch (_) { return {}; }
+}
+
 function readConfig() {
-  try { return JSON.parse(fs.readFileSync(configFile(), 'utf8')) || {}; } catch (_) { return {}; }
+  return readConfigAt(configFile());
 }
 
 function writeConfig(cfg) {
@@ -137,8 +141,8 @@ function writeConfig(cfg) {
 }
 
 /** {store, connectedAt, last4} when `connect` stored a key, else null. Never the key. */
-function readMarker() {
-  const c = readConfig().cloud;
+function readMarker(file) {
+  const c = (file ? readConfigAt(file) : readConfig()).cloud;
   if (!c || typeof c !== 'object' || !STORES.includes(c.store)) return null;
   return {
     store: c.store,
@@ -166,6 +170,14 @@ function forgetMarker() { clearMarker(); }
 /** True when `zn-gate connect` has stored a key (a cheap file read; no keychain access). */
 function isConnected() {
   return readMarker() !== null;
+}
+
+/**
+ * True when `zn-gate connect` stored a key, judged only by the per-user ~/.zn/config.json: ZN_HOME is not read, because a
+ * project can set it for the agent and point it at a folder it ships. Used for the opt-in cloud check of tool output.
+ */
+function isConnectedAtUserHome() {
+  return readMarker(path.join(require('os').homedir(), '.zn', 'config.json')) !== null;
 }
 
 /* ------------------------------ stores ------------------------------ */
@@ -305,6 +317,7 @@ module.exports = {
   readMarker,
   forgetMarker,
   isConnected,
+  isConnectedAtUserHome,
   availableStore,
   saveKey,
   loadStoredKey,

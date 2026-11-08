@@ -55,12 +55,13 @@ function redactForCloud(sample) {
 
 /** The analyze() result for the sample, or null when the cloud check is off or nothing could be asked. */
 async function ask(sample, timeoutMs) {
-  // Cheap test before the client is loaded: nothing of it runs unless the person ran `zn-gate connect`. isConnected is
+  // Cheap test before the client is loaded: nothing of it runs unless the person ran `zn-gate connect`. isConnectedAtUserHome is
   // the only thing this file takes from cloud-key (test/connect.test.js holds it to that): it never reads the key.
   // The environment never turns this path on (no variable does): a project can put variables in the agent's
   // environment, and every tool result would then go out under a key it chose.
-  const { isConnected } = require('../cloud-key');
-  if (!isConnected()) return null;
+  // Judged from the fixed per-user folder only, never from a folder the agent's environment names.
+  const { isConnectedAtUserHome } = require('../cloud-key');
+  if (!isConnectedAtUserHome()) return null;
   const client = require('../client');
   if (!client.isCloudEnabled({ storedOnly: true })) return null;
   // Secrets, then personal data, are replaced before the request is built; if that fails nothing is sent.

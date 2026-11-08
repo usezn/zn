@@ -125,7 +125,12 @@ const { mayMatchRules } = require('./output_prefilter');
  * The hook never sends to another URL: pinOrigin keeps the request on the fixed zn origin.
  */
 function cloudOutputCheckOn(opts) {
-  const hooks = readConfig(opts.home).hooks || {};
+  // The opt-in is read from the fixed per-user ~/.zn only: neither ZN_HOME nor opts.home can move it, because a project
+  // can set ZN_HOME for the agent and point it at a folder that holds the setting and a connected marker.
+  let hooks = {};
+  try {
+    hooks = (JSON.parse(fs.readFileSync(path.join(require('../stats').userHome(), 'config.json'), 'utf8')) || {}).hooks || {};
+  } catch (_) { /* no user config: off */ }
   return outputCheckOn(opts) && hooks.cloudCheckToolOutput === true;
 }
 

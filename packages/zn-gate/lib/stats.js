@@ -26,6 +26,11 @@ function znHome() {
   return path.join(os.homedir(), '.zn');
 }
 
+/** The per-user ~/.zn, always: ZN_HOME is not read. For settings a project must not be able to redirect. */
+function userHome() {
+  return path.join(os.homedir(), '.zn');
+}
+
 function statsFile() {
   return path.join(znHome(), 'stats.json');
 }
@@ -233,5 +238,5 @@ function latencyReport({ file, off = false } = {}) {
   return 'Decision time per tool call (last ' + s.count + ' calls, measured on this machine): p50 ' + fmt(s.p50) + ' ms, p95 ' + fmt(s.p95) + ' ms. Excludes process startup, writing the response, and saving stats and evidence.';
 }
 
-module.exports = { znHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known,
+module.exports = { znHome, userHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known,
   percentile, latencySummary, latencyReport, LATENCY_KEEP };

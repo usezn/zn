@@ -585,13 +585,13 @@ test('no hook, shield or scrubber module reads the stored key or the cloud setti
   }
 });
 
-test('cloud_output.js takes only isConnected from cloud-key and never reads the key or the settings', () => {
+test('cloud_output.js takes only isConnectedAtUserHome from cloud-key and never reads the key or the settings', () => {
   const lib = path.join(__dirname, '..', 'lib');
   const ex = fs.readFileSync(path.join(lib, 'hooks', 'cloud_output.js'), 'utf8');
-  // Exactly one require of cloud-key: a destructured isConnected, nothing else.
+  // Exactly one require of cloud-key: a destructured isConnectedAtUserHome, nothing else.
   const reqs = ex.match(/require\(\s*['"][^'"]*cloud-key[^'"]*['"]\s*\)/g) || [];
   assert.equal(reqs.length, 1, 'one require of cloud-key');
-  assert.match(ex, /const \{ isConnected \} = require\('\.\.\/cloud-key'\);/);
+  assert.match(ex, /const \{ isConnectedAtUserHome \} = require\('\.\.\/cloud-key'\);/);
   // No other way to the key or the settings: no key getters, stores, resolvers, config or connect code.
   assert.doesNotMatch(ex, /cloudKey|cloud_key|loadStoredKey|resolveApiKey|getKey|readKey|keychain|vault|passphrase|connect-cli|readConfig|config\.json|ZN_API_KEY|ZN_HOME/i);
   // Every module it loads is on a short list: the redaction, the personal-data detectors, the key-state check, the client.
