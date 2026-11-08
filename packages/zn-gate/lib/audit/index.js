@@ -1336,7 +1336,7 @@ function readBounded(abs, max, follow) {
 
 /* ------------------------------ walk -------------------------------- */
 
-function walk(root, deadline, maxEntries) {
+function walk(root, deadline, maxEntries, noPrune) {
   const files = [];
   const extDirs = [];
   const unchecked = [];
@@ -1391,7 +1391,7 @@ function walk(root, deadline, maxEntries) {
       }
       if (d.isDirectory()) {
         if (d.name === '.git') continue;
-        if (!agentHere && SKIP_DIRS.has(d.name)) {
+        if (!noPrune && !agentHere && SKIP_DIRS.has(d.name)) {
           const pruned = pruneInfo(d.name, dir);
           if (pruned) {
             if (!pruned.silent) skippedDirs.push({ dir: r, reason: pruned.reason });
@@ -1995,7 +1995,7 @@ function audit(opts) {
   const deadline = Date.now() + (o.timeBudgetMs || TIME_BUDGET_MS);
   const out = [];
   const maxEntries = o.maxEntries || MAX_ENTRIES;
-  const { files, extDirs, unchecked, truncated, entries, skippedDirs } = walk(root, deadline, maxEntries);
+  const { files, extDirs, unchecked, truncated, entries, skippedDirs } = walk(root, deadline, maxEntries, o.noPrune);
   const known = new Set(files.map((f) => f.rel));
   for (const rec of redirectedConfigs(root, unchecked)) if (!known.has(rec.rel)) files.push(rec);
   for (const rec of importedInstructions(root, files, deadline, unchecked)) files.push(rec);
