@@ -56,7 +56,7 @@ function waitFor(file, ms = 15000) {
 }
 
 async function runDriver(t, childSource, signal) {
-  const dir = tempDir(t, 'zn-b2190-sig-');
+  const dir = tempDir(t, 'zn-broker-signals-sig-');
   const driver = path.join(dir, 'driver.js');
   const child = path.join(dir, 'child.js');
   const marker = path.join(dir, 'got-signal.txt');
