@@ -175,6 +175,8 @@ If the pins file of a server cannot be read or written, the shield treats every 
 
 Pins live in `~/.zn/mcp-pins/`, one file per server, readable only by your account on Linux and macOS. Each file holds the program name, its arguments with secrets removed, and the tool names with their fingerprints (one for the whole tool and one each for its text, its parameters and its other fields). It never holds tool text.
 
+The folder is `~/.zn/mcp-pins/` unless the `ZN_HOME` variable names another folder, in which case the pins go to `<that folder>/mcp-pins/`. If the shield finds that its pins folder is not the `.zn` folder in your own home folder, it prints one notice on stderr when it starts, and carries on as usual: nothing is blocked because of the notice. The notice is not printed when pinning is off. See [the notice](troubleshooting.md#zn-shield-mcp-tool-pins-are-kept-in-folder-not-in-your-own-zn-set-by-home-or-zn_home).
+
 ## Limits
 
 - Pinning covers tool definitions (names, descriptions and parameters). It does not check the server's code.

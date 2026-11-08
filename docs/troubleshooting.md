@@ -847,6 +847,14 @@ MCP servers are tool servers your agent talks to. zn-shield sits between your ag
 
 **What to do:** run `zn-gate pins` to see the servers and their full keys, then run `zn-gate pins approve <server>` (or `--all`) in your own terminal and type the confirmation exactly as asked. See also [shield tools changed](#zn-shield-tools-changed--zn-shield-tools-refused).
 
+#### "[zn-shield] MCP tool pins are kept in `<folder>`, not in your own ~/.zn (set by HOME or ZN_HOME)."
+
+**What happened:** the shield keeps its MCP tool pins (see [what is stored](shield.md#what-is-stored)) in `<folder>`, which is not the `.zn` folder in your own home folder. The folder comes from `ZN_HOME` when that variable is set. Otherwise it comes from `HOME`, and an MCP server's environment can set `HOME`. The notice is printed when the shield starts, and only when pinning is on (the default `warn` or `block` mode).
+
+**Is it safe?** Yes. The notice blocks nothing. Pins are still read and written, in `<folder>`, and tools are still checked.
+
+**What to do:** if you set `ZN_HOME` on purpose, nothing is needed. If you did not, find what sets `ZN_HOME` or `HOME`: your shell, a project's settings, or the `env` entry of an MCP server. Remove it there and restart the agent. While the variable points elsewhere, the pins in your own `~/.zn/mcp-pins/` are not used.
+
 ### A rule blocked text that looked like an attack
 
 #### "zn-gate blocked `<target>`. Reason: `<description>` (rule: `<id>`)"
