@@ -597,7 +597,10 @@ function uninstall(opts = {}) {
   const file = hooksFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
   // A file install created is deleted; a file that existed comes back as it was (see cfg.uninstallJson).
-  const res = cfg.uninstallJson(file, cfg.ifChanged(stripOurs));
+  const res = cfg.uninstallJson(file, cfg.ifChanged(stripOurs), cfg.readJson, {
+    // Without a kept original (installed by an older version): a file with only version, hooks and disableAllHooks left is deleted.
+    leftover: (d) => Object.keys(d).every((k) => k === 'version' || k === 'disableAllHooks' || (k === 'hooks' && isObj(d.hooks) && Object.keys(d.hooks).length === 0)),
+  });
   if (res.action !== 'unchanged') {
     report.backup = res.backup;
     report.removed = 1;

@@ -124,3 +124,57 @@ test('config-file: two backups in the same second keep both, and an absent file 
   const names = cfg.backupsOf(file);
   assert.equal(names.filter((b) => b.absent).length, 1, 'the marker for the absent file is kept');
 });
+
+/* ---- the original survives re-installs (upgrades) and older installs keep the old fallbacks ---- */
+
+for (const name of Object.keys(AGENTS)) {
+  const mod = AGENTS[name];
+  const skip = process.platform === 'win32' ? 'POSIX paths and shells' : false;
+
+  test(name + ': after 5 re-installs, uninstall still gives back the original bytes', { skip }, (t) => {
+    const home = tempDir(t, 'zn-rt-re-');
+    const o = optsFor(name, home);
+    const file = fileOf(name, o);
+    write(file, FIXTURES['tab indent']);
+    for (let i = 0; i < 5; i++) mod.install(o);
+    assert.equal(cfg.backupsOf(file).length, cfg.KEEP_BACKUPS, 'ordinary backups are still pruned');
+    assert.equal(fs.readFileSync(file + '.bak-zn-original', 'utf8'), FIXTURES['tab indent'], 'the original is not pruned or overwritten');
+    assert.equal(mod.uninstall(o).removed, 1);
+    assert.equal(fs.readFileSync(file, 'utf8'), FIXTURES['tab indent']);
+    assert.equal(fs.existsSync(file + '.bak-zn-original'), false, 'uninstall removes the kept original');
+  });
+
+  test(name + ': after 5 re-installs, uninstall still deletes a file install created', { skip }, (t) => {
+    const home = tempDir(t, 'zn-rt-re-new-');
+    const o = optsFor(name, home);
+    const file = fileOf(name, o);
+    for (let i = 0; i < 5; i++) mod.install(o);
+    assert.equal(fs.existsSync(file + '.bak-zn-original-absent'), true);
+    assert.equal(mod.uninstall(o).removed, 1);
+    assert.equal(fs.existsSync(file), false);
+    assert.equal(fs.existsSync(file + '.bak-zn-original-absent'), false);
+  });
+}
+
+test('antigravity: an install from an older version (no kept original) is deleted when nothing else is left', { skip: process.platform === 'win32' }, (t) => {
+  const home = tempDir(t, 'zn-rt-old-agy-');
+  const o = optsFor('antigravity', home);
+  const file = fileOf('antigravity', o);
+  AGENTS.antigravity.install(o);
+  for (const b of fs.readdirSync(path.dirname(file))) if (b.includes('.bak-zn-')) fs.unlinkSync(path.join(path.dirname(file), b));
+  assert.equal(AGENTS.antigravity.uninstall(o).removed, 1);
+  assert.equal(fs.existsSync(file), false);
+});
+
+test('copilot: an install from an older version (no kept original) is deleted when only version, hooks and disableAllHooks are left', { skip: process.platform === 'win32' }, (t) => {
+  const home = tempDir(t, 'zn-rt-old-cop-');
+  const o = optsFor('copilot', home);
+  const file = fileOf('copilot', o);
+  AGENTS.copilot.install(o);
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  data.disableAllHooks = false;
+  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  for (const b of fs.readdirSync(path.dirname(file))) if (b.includes('.bak-zn-')) fs.unlinkSync(path.join(path.dirname(file), b));
+  assert.equal(AGENTS.copilot.uninstall(o).removed, 1);
+  assert.equal(fs.existsSync(file), false);
+});

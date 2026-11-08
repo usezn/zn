@@ -481,8 +481,8 @@ function install(opts = {}) {
 function uninstall(opts = {}) {
   const file = hooksFile(opts);
   const report = { settings: file, backup: null, removed: 0, warnings: [] };
-  // A file install created is deleted; a file that existed comes back as it was (see cfg.uninstallJson).
-  const res = cfg.uninstallJson(file, cfg.ifChanged(stripOurs));
+  // A file install created is deleted; a file that existed comes back as it was (see cfg.uninstallJson; a config installed by an older version has no kept original: an empty file is deleted).
+  const res = cfg.uninstallJson(file, cfg.ifChanged(stripOurs), cfg.readJson, { leftover: (d) => Object.keys(d).length === 0 });
   if (res.action === 'unchanged') return report;
   report.backup = res.backup;
   report.removed = 1;

@@ -539,7 +539,7 @@ function install(opts = {}) {
     cfg.writeJson(file, data);
   } catch (err) {
     restoreEnabledState(opts, stateBefore);
-    if (report.backup) { try { fs.unlinkSync(report.backup); } catch (_) { /* none */ } }
+    cfg.discardBackup(file, report.backup);
     throw err;
   }
   if (userHooks.length) {
@@ -611,7 +611,7 @@ function uninstall(opts = {}) {
     if (state) dropState(opts, report);
     return report;
   }
-  report.backup = cfg.backup(file);
+  report.backup = cfg.backup(file, { original: false });
   report.removed = 1;
   try {
     cfg.writeJson(file, data);
@@ -619,6 +619,7 @@ function uninstall(opts = {}) {
     if (report.backup) { try { fs.unlinkSync(report.backup); } catch (_) { /* none */ } }
     throw err;
   }
+  cfg.removeOriginals(file); // zn is out of the file: the next install keeps a new original
   if (state) dropState(opts, report);
   // The launcher (see handlerFor) is shared by every config of this machine: one uninstall leaves it in place,
   // only the machine-wide uninstall (opts.removeLauncher) deletes it.
