@@ -6,7 +6,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 
 - **New user:** read [First 5 minutes](first-5-minutes.md), then run [Check that it works](check.md). If a word is unfamiliar, see the [Glossary](glossary.md).
 - **Team lead:** read [zn Team](team.md) for organization policy and audit upload, and the [Team quick guide](team-quick-guide.md). Add the [GitHub Action](github-action.md) to review agent configs on pull requests.
-- **Editor user:** pick your editor in [Editors and coding agents](editors/README.md), or follow the steps for your agent in [Install, verify and uninstall by agent](by-agent.md). [Agent compatibility](compat.md) shows what the scrubber does in each one.
+- **Editor user:** pick your editor in [Editors and coding agents](editors/README.md) or [OpenCode](editors/opencode.md), or follow the steps for your agent in [Install, verify and uninstall by agent](by-agent.md). [Agent compatibility](compat.md) shows what the scrubber does in each one.
 - **Automation:** see the [Command line reference](cli.md) for commands, options and exit codes, the [GitHub Action](github-action.md) for CI, and the [API reference](api-reference.md) for the Node.js and Python functions.
 
 ## Getting started
@@ -19,6 +19,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Keep secrets out of your agent](secrets.md) | Five-minute walkthrough of the vault, markers and `zn run` | Everyone |
 | [Recipes](recipes.md) | Ten short step-by-step recipes: install, check, protect a project, connect, report, upgrade, uninstall | Everyone |
 | [Troubleshooting](troubleshooting.md) | The messages people meet first, and what to do for each | Everyone |
+| [Why was this blocked?](why-was-this-blocked.md) | Five common blocks, what each message means and how to go on safely | Everyone |
 | [Glossary](glossary.md) | Short meanings of words used in these docs | Newcomers |
 | [Upgrading](upgrading.md) | What to do when you update zn-gate | Everyone |
 | [Remove zn-gate](uninstall.md) | Uninstall in one step or piece by piece, run from your own terminal | Everyone |
@@ -38,6 +39,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Reach](reach.md) | What the coding agents on your machine can reach (secrets by name, credential files, MCP servers) | Everyone |
 | [Report](report.md) | A weekly summary of what zn-gate blocked and hid | Everyone |
 | [Examples: stats and report](examples/stats-and-report.md) | Worked examples of `stats` and `report` with sample output | Everyone |
+| [Example: reading a scan finding](examples/reading-a-scan-finding.md) | What each field of a `zn-gate scan` finding means, with a fake finding | Everyone |
 | [Example: Node.js API](examples/node-api.md) | Install and one short example per call of the Node.js API, with fake values | Developers |
 | [API quickstart](api-quickstart.md) | Send text to the analysis API from curl, Python or Node.js, with the key in an environment variable | Developers |
 | [Example: cloud check settings](examples/cloud-check-settings.md) | Each cloud check setting with its effect, one fake command and what leaves the machine | Anyone who opts in |
@@ -61,9 +63,11 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 |---|---|---|
 | [Architecture](architecture.md) | The three checks, the local engine and how zn-gate attaches to an agent | Developers, security reviewers |
 | [Threat model](threat-model.md) | What the scrubber and broker protect against, and what they do not | Security reviewers |
+| [Hardware-backed vault key (proposal)](hardware-backed-vault-key.md) | An idea for tying the vault key to a security key, TPM or Secure Enclave; not built | Security reviewers |
 | [OWASP mapping](owasp-mapping.md) | Which zn-gate rules and features touch each category of the OWASP LLM and MCP Top 10, what is not covered, and the agent CVEs that `zn audit` reports | Security reviewers |
 | [Performance](performance.md) | How long the agent hooks take, with the script to reproduce it | Developers |
 | [API reference](api-reference.md) | Node.js and Python functions | Developers |
+| [API data handling](api-data-handling.md) | What the analysis API keeps, for how long, and how to delete it | Developers, security reviewers |
 | [Verify a release](verify-release.md) | Check signatures and build provenance of a download | Security-minded users |
 | [Rust gateway (legacy)](rust-core.md) | The original gateway in `src/`, not released | Contributors |
 
