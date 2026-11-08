@@ -13,6 +13,8 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [long-text-analysis.md](long-text-analysis.md): the two long-input modes of the cloud check (`windows` or `off`), and when the result carries a warning.
 - [mcp-server-with-zn-gate.md](mcp-server-with-zn-gate.md): the two MCP servers of zn-gate (`mcp` and `secrets-mcp`): what each does and what the agent sees.
 - [package-install-check-walkthrough.md](package-install-check-walkthrough.md): turn on the optional package install check, answer one question about a look-alike name, then allow a name.
+- [policy-corpus-contributing.md](policy-corpus-contributing.md): add an allow case or a block case to the destructive-command test corpus, and run its test.
+- [reading-a-hook-block-json.md](reading-a-hook-block-json.md): the JSON a hook returns when it blocks an action, field by field, for debugging.
 - [reading-a-reach-history-report.md](reading-a-reach-history-report.md): how to read the output of zn-gate reach --history.
 - [safe-first-day-with-a-new-agent.md](safe-first-day-with-a-new-agent.md): try zn-gate with a new agent in a throwaway folder, then remove it.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project, from the run to what each exit code means.
