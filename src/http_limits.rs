@@ -451,6 +451,7 @@ mod tests {
     use super::*;
     use axum::{body::Bytes, extract::ws::WebSocketUpgrade, response::IntoResponse, routing::get};
     use futures::{SinkExt, StreamExt};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Instant as StdInstant;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
@@ -458,10 +459,9 @@ mod tests {
 
     const BOUND: Duration = Duration::from_secs(3);
     const GET_HEALTH: &[u8] = b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n";
-    const GET_SLOW: &[u8] = b"GET /slow HTTP/1.1
-Host: localhost
-
-";
+    const GET_SLOW: &[u8] = b"GET /slow HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    /// How often the readiness polls look again, and how long they may take before the test fails.
+    const POLL: Duration = Duration::from_millis(10);
     const GET_DENIED: &[u8] = b"GET /denied HTTP/1.1\r\nHost: localhost\r\n\r\n";
 
     async fn ws_echo(ws: WebSocketUpgrade) -> impl IntoResponse {
@@ -475,25 +475,71 @@ Host: localhost
     }
 
     /// An endless response body, like an SSE stream whose client stopped reading.
-    async fn flood() -> Body {
-        Body::from_stream(futures::stream::repeat_with(|| {
+    async fn flood(chunks: Arc<AtomicUsize>) -> Body {
+        Body::from_stream(futures::stream::repeat_with(move || {
+            chunks.fetch_add(1, Ordering::SeqCst);
             Ok::<_, std::convert::Infallible>(Bytes::from(vec![b'x'; 65536]))
         }))
     }
 
+    /// Probes the handlers set, so a test can wait for a state instead of sleeping.
+    #[derive(Clone, Default)]
+    struct Probes {
+        /// The slow handler started (the request is in flight).
+        slow_started: Arc<AtomicBool>,
+        /// Chunks of the flood body produced so far; stops growing once the socket buffers are full.
+        flood_chunks: Arc<AtomicUsize>,
+    }
+
+    /// Poll `cond` every `POLL` until it holds; fail the test at `BOUND`.
+    async fn wait_until(what: &str, cond: impl Fn() -> bool) {
+        let deadline = StdInstant::now() + BOUND;
+        while !cond() {
+            assert!(StdInstant::now() < deadline, "timed out waiting for {what}");
+            tokio::time::sleep(POLL).await;
+        }
+    }
+
+    /// Wait until `counter` has not changed for `hold`.
+    async fn wait_until_stalled(what: &str, counter: &AtomicUsize, hold: Duration) {
+        let deadline = StdInstant::now() + BOUND;
+        let mut last = counter.load(Ordering::SeqCst);
+        let mut since = StdInstant::now();
+        while since.elapsed() < hold {
+            assert!(StdInstant::now() < deadline, "timed out waiting for {what}");
+            tokio::time::sleep(POLL).await;
+            let now = counter.load(Ordering::SeqCst);
+            if now != last {
+                last = now;
+                since = StdInstant::now();
+            }
+        }
+    }
+
     async fn spawn(limits: ServeLimits) -> SocketAddr {
+        spawn_with(limits, Probes::default()).await
+    }
+
+    async fn spawn_with(limits: ServeLimits, probes: Probes) -> SocketAddr {
+        let slow_started = probes.slow_started;
+        let flood_chunks = probes.flood_chunks;
         let app = Router::new()
             .route("/health", get(|| async { "OK" }))
             .route(
                 "/slow",
-                get(|| async {
+                get(move || async move {
+                    slow_started.store(true, Ordering::SeqCst);
+                    // The handler's own work, not a test wait: the request must stay in flight a while.
                     tokio::time::sleep(Duration::from_millis(600)).await;
                     "slow-done"
                 }),
             )
             .route("/denied", get(|| async { StatusCode::UNAUTHORIZED }))
             .route("/ws", get(ws_echo))
-            .route("/flood", get(flood));
+            .route(
+                "/flood",
+                get(move || async move { flood(flood_chunks).await }),
+            );
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { serve_limited(listener, app, limits).await });
@@ -530,13 +576,12 @@ Host: localhost
             ..ServeLimits::DEFAULT
         })
         .await;
-        // Four sockets that connect and send nothing take every slot.
+        // Four sockets that connect and send nothing take every slot. The listener accepts in connect
+        // order, so by the time it accepts `real` all four are registered and the oldest goes first.
         let mut idle = Vec::new();
         for _ in 0..4 {
             idle.push(TcpStream::connect(addr).await.unwrap());
-            tokio::time::sleep(Duration::from_millis(30)).await;
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
         let mut real = TcpStream::connect(addr).await.unwrap();
         assert_eq!(request(&mut real, GET_HEALTH).await, "HTTP/1.1 200 OK");
         // The oldest idle socket is the one that was closed to make room.
@@ -585,7 +630,6 @@ Host: localhost
             let mut c = TcpStream::connect(addr).await.unwrap();
             assert_eq!(request(&mut c, GET_HEALTH).await, "HTTP/1.1 200 OK");
             served.push(c);
-            tokio::time::sleep(Duration::from_millis(30)).await;
         }
         let mut real = TcpStream::connect(addr).await.unwrap();
         assert_eq!(request(&mut real, GET_HEALTH).await, "HTTP/1.1 200 OK");
@@ -595,15 +639,22 @@ Host: localhost
 
     #[tokio::test]
     async fn a_request_in_flight_is_never_evicted() {
-        let addr = spawn(ServeLimits {
-            header_read_timeout: Duration::from_secs(60),
-            max_connections: 1,
-            ..ServeLimits::DEFAULT
-        })
+        let probes = Probes::default();
+        let addr = spawn_with(
+            ServeLimits {
+                header_read_timeout: Duration::from_secs(60),
+                max_connections: 1,
+                ..ServeLimits::DEFAULT
+            },
+            probes.clone(),
+        )
         .await;
         let mut busy = TcpStream::connect(addr).await.unwrap();
         busy.write_all(GET_SLOW).await.unwrap();
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        wait_until("the slow request to be in flight", || {
+            probes.slow_started.load(Ordering::SeqCst)
+        })
+        .await;
         // A second client arrives while the slow request is still being handled.
         let second = tokio::spawn(async move {
             let mut c = TcpStream::connect(addr).await.unwrap();
@@ -621,6 +672,9 @@ Host: localhost
         assert_eq!(second.await.unwrap(), "HTTP/1.1 200 OK");
     }
 
+    /// Note: a WebSocket session counts as served once its upgrade ends in a 101 and has no request in
+    /// flight afterwards, so at the connection cap an idle WebSocket session can be evicted like any
+    /// other idle served connection. This test only covers the idle timeout, not eviction.
     #[tokio::test]
     async fn an_idle_websocket_session_is_closed_after_the_idle_time() {
         let addr = spawn(ServeLimits {
@@ -631,14 +685,16 @@ Host: localhost
         let (mut ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
             .await
             .unwrap();
-        // A session that keeps sending stays open past the idle time.
-        for i in 0..8 {
+        // A session that keeps sending stays open well past the idle time (each echo is the proof).
+        let active_since = StdInstant::now();
+        let mut i = 0;
+        while active_since.elapsed() < Duration::from_millis(800) {
             ws.send(ClientMessage::Text(format!("ping {i}").into()))
                 .await
                 .unwrap();
             let echoed = tokio::time::timeout(BOUND, ws.next()).await.unwrap();
             assert!(matches!(echoed, Some(Ok(ClientMessage::Text(_)))));
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            i += 1;
         }
         // Then it goes quiet and the server closes it.
         let start = StdInstant::now();
@@ -657,17 +713,27 @@ Host: localhost
 
     #[tokio::test]
     async fn a_client_that_stops_reading_is_cut_after_the_write_timeout() {
-        let addr = spawn(ServeLimits {
-            write_timeout: Duration::from_millis(300),
-            ..ServeLimits::DEFAULT
-        })
+        let probes = Probes::default();
+        let addr = spawn_with(
+            ServeLimits {
+                write_timeout: Duration::from_millis(300),
+                ..ServeLimits::DEFAULT
+            },
+            probes.clone(),
+        )
         .await;
         let mut c = TcpStream::connect(addr).await.unwrap();
         c.write_all(b"GET /flood HTTP/1.1\r\nHost: localhost\r\n\r\n")
             .await
             .unwrap();
-        // Do not read: the server's writes block once the socket buffers are full.
-        tokio::time::sleep(Duration::from_millis(900)).await;
+        // Do not read: the server's writes block once the socket buffers are full. Wait until the body
+        // stopped growing for longer than the write timeout, so the cut has had its time.
+        wait_until_stalled(
+            "the flood body to stall",
+            &probes.flood_chunks,
+            Duration::from_millis(600),
+        )
+        .await;
         // Drain what was buffered: with the cut it ends; an endless stream would not.
         let mut buf = vec![0u8; 65536];
         let drained = tokio::time::timeout(Duration::from_secs(10), async {
