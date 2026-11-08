@@ -295,7 +295,7 @@ mod tests {
         let args = vec![
             "-y".to_string(),
             "@scope/server@1.2.3".to_string(),
-            "C:\\Users\\Ana Ruiz\\notes".to_string(),
+            "C:\\Users\\Example User\\notes".to_string(),
             "--flag=a b".to_string(),
         ];
         assert!(check_batch_args("npx.cmd", &args).is_ok());
