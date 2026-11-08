@@ -7,10 +7,14 @@ Upgrade to it to receive them.
 
 | Version  | Supported          |
 | -------- | ------------------ |
-| 1.14.x   | :white_check_mark: |
-| < 1.14.0 | :x:                |
+| 1.15.x   | :white_check_mark: |
+| < 1.15.0 | :x:                |
 
 Prereleases (`-alpha`, `-beta`, `-rc`) are not supported once the final release is out.
+
+To install zn-gate, run `npx -y zn-gate init` in your own terminal ([Install](README.md#install)). To update it, see [Upgrading zn-gate](docs/upgrading.md). To remove it, run `npx -y zn-gate uninstall` ([removal guide](docs/uninstall.md)).
+
+This policy is only for security vulnerabilities. For a question, use [Discussions](https://github.com/usezn/zn/discussions); for a bug you can reproduce, open an [issue](https://github.com/usezn/zn/issues) ([Community and support](README.md#community-and-support)).
 
 Releases ship weekly; out-of-cycle releases only for high or critical vulnerabilities or a broken install.
 

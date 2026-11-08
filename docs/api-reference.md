@@ -1,5 +1,7 @@
 # zn-gate API Reference
 
+For a short guide to calling the HTTP API from curl, Python or Node.js, see the [API quickstart](api-quickstart.md).
+
 ## Table of contents
 
 - [Node.js (`zn-gate`)](#nodejs-zn-gate)
@@ -75,7 +77,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 
 ### `analyze(text, options)`
 
-- Prompt evaluation: runs local rules first. Queries the cloud classifier only when the user opted in, with both an API key (`apiKey` or `ZN_API_KEY`) and `ZN_CLOUD=1` or with `zn-gate connect`, and `ZN_LOCAL_ONLY` is not `true`. The text is secret-redacted locally before it is sent.
+- Prompt evaluation: runs local rules first. Queries the cloud check only when the user opted in, with both an API key (`apiKey` or `ZN_API_KEY`) and `ZN_CLOUD=1` or with `zn-gate connect`, and `ZN_LOCAL_ONLY` is not `true`. The text is secret-redacted locally before it is sent.
 - Options: `apiKey`, `apiUrl`, `stage` (`'v30'` or `'prod'`), `timeout` (**milliseconds**; default 4000, or 12000 for text over 1,000 characters), `localOnly`, `longInput` (`'windows'` or `'off'`), `strict`.
 - Returns: `Promise<{ verdict, confidence, rule, reason, engine, rules_version, mode, ... }>`. `mode` is `'hybrid-local-fastpath'` (a local rule blocked, no network), `'oss-local'` (cloud not enabled), or `'hybrid-cloud'` (the cloud answered; `secrets_redacted_before_upload` counts the redactions).
 - If the cloud call fails or no key can be read, it resolves with the local result, `mode: 'oss-local'`, `fallback: true` and `cloud_error` (a message). It does not throw.
@@ -105,7 +107,7 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 ### `longInputMode(options)`
 
 - Returns `'windows'` (default) or `'off'`, from `options.longInput` or `ZN_LONG_INPUT`. `'off'`, `'none'`, `'truncate'`, `'0'`, `'false'` and `'no'` (any case) give `'off'`; any other value gives `'windows'`.
-- With `'windows'`, `analyze` asks the cloud classifier to read texts longer than `LONG_INPUT_MIN_CHARS` in overlapping windows instead of only the first 512 tokens.
+- With `'windows'`, `analyze` asks the cloud check to read texts longer than `LONG_INPUT_MIN_CHARS` in overlapping windows instead of only the first 512 tokens.
 
 ### `resolveEndpoint(options, flags)`
 
@@ -114,9 +116,9 @@ The package ships TypeScript type definitions (`lib/client.d.ts`, `lib/rules.d.t
 
 ### Constants
 
-- `LONG_INPUT_MIN_CHARS` (`zn-gate/lib/client`): `1000`. Text longer than this asks the cloud classifier for windowed reading, and gets the longer default timeout.
+- `LONG_INPUT_MIN_CHARS` (`zn-gate/lib/client`): `1000`. Text longer than this asks the cloud check for windowed reading, and gets the longer default timeout.
 - `RULES_VERSION` (`zn-gate/lib/client` and `zn-gate/lib/rules`): the version of the built-in rule set, the same string that comes back as `rules_version` in results.
-- `EVIDENCE_FILE` (`zn-gate/lib/evidence`): the default evidence log path, `~/.zn/evidence.jsonl` (inside the folder `ZN_HOME` names when that variable is set).
+- `EVIDENCE_FILE` (`zn-gate/lib/evidence`): the default decision log path, `~/.zn/evidence.jsonl` (inside the folder `ZN_HOME` names when that variable is set).
 
 ### `sanitizeToolResult(toolName, content, options)`
 
@@ -180,7 +182,7 @@ const search = guardTool(async (query) => fetchResults(query), { name: 'search',
 
 ### `logEvidence(event, filePath, options)`
 
-- Appends one hash-chained record to the evidence log (`filePath` defaults to `~/.zn/evidence.jsonl`). `options.lockWaitMs` sets how long to wait for the write lock (default 2000).
+- Appends one hash-chained record to the decision log (`filePath` defaults to `~/.zn/evidence.jsonl`). `options.lockWaitMs` sets how long to wait for the write lock (default 2000).
 - Returns: the record that was written, or `null` when nothing was written (see the notes on damaged logs and the lock under `verifyEvidenceLedger`). It never throws for a log problem.
 
 ### `verifyEvidenceLedger(filePath)`
@@ -210,7 +212,7 @@ from zn_gate import get_evidence_stats, export_evidence_ledger
 ### `evaluate(text: str, strict: bool | None = None) -> Assessment`
 
 - Pure Python in-memory deterministic evaluation. Never touches the network.
-- `strict=None` follows `ZN_STRICT`; `True` also blocks the heuristic rules that are advisories by default.
+- `strict=None` follows `ZN_STRICT`; `True` also blocks the heuristic rules that are advisories by default. `ZN_STRICT` and `ZN_BLOCK_TRUNCATED` turn on only with the value `1`: another value such as `true` or `yes` leaves them off and logs a warning (logger `zn_gate`), once per value.
 - Inputs over 256 KB are scanned whole, in overlapping windows. An input over 4 MB is blocked with rule `size:oversize` (and `truncated=True`).
 - Returns: `Assessment(verdict, confidence, rule, reason, engine, rules_version, truncated, advisory)`. `verdict` is `'allow'` or `'block'`; `advisory` is a dict or `None`. `assessment.allowed` is a boolean and `assessment.to_dict()` gives a plain dict.
 
@@ -285,7 +287,7 @@ except GuardBlockError as e:
 
 ### `analyze_cloud(input_text, api_key, endpoint_url=None, timeout=4.0, long_input=None) -> dict`
 
-- Sends one request to the cloud classifier, with secrets redacted first, and returns the parsed response with `engine` added. It skips the local rules and the opt-in check, so call it only for a user who opted in. Unlike `analyze`, it raises on any failure (`urllib.error.URLError`, `HTTPError`, a timeout).
+- Sends one request to the cloud check, with secrets redacted first, and returns the parsed response with `engine` added. It skips the local rules and the opt-in check, so call it only for a user who opted in. Unlike `analyze`, it raises on any failure (`urllib.error.URLError`, `HTTPError`, a timeout).
 - `endpoint_url` defaults to `https://api.usezn.com/v30/analyze`. `timeout` is in seconds. `long_input='windows'` asks for windowed reading of long text.
 
 ### `is_cloud_enabled(api_key: str | None = None, local_only: bool = False) -> bool`
@@ -298,7 +300,7 @@ except GuardBlockError as e:
 
 ### `log_evidence(event: dict, file_path: str = EVIDENCE_FILE, lock_wait: float = 2.0) -> dict | None`
 
-- Appends one hash-chained record to the evidence log. `lock_wait` is in seconds. Returns the record, or `None` when nothing was written (see `verify_evidence_ledger`).
+- Appends one hash-chained record to the decision log. `lock_wait` is in seconds. Returns the record, or `None` when nothing was written (see `verify_evidence_ledger`).
 
 ### `verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> dict`
 
@@ -306,19 +308,19 @@ except GuardBlockError as e:
 
 ### `get_evidence_stats(file_path: str = EVIDENCE_FILE, limit: int = 50) -> dict`
 
-- Counts the records of the evidence log. Returns `{ total, blocks, allows, shadows, valid, error, top_rules, top_tools, recent }`: `top_rules` counts blocked records per rule, `top_tools` counts records per tool, and `recent` holds up to `limit` records, newest first. A missing file gives zero counts and `valid: True`; a log that cannot be read gives `valid: False` and the reason in `error`.
+- Counts the records of the decision log. Returns `{ total, blocks, allows, shadows, valid, error, top_rules, top_tools, recent }`: `top_rules` counts blocked records per rule, `top_tools` counts records per tool, and `recent` holds up to `limit` records, newest first. A missing file gives zero counts and `valid: True`; a log that cannot be read gives `valid: False` and the reason in `error`.
 - The Node module `zn-gate/lib/evidence` also exports `getEvidenceStats`, but it is not typed and not part of the documented Node API.
 
 ### `export_evidence_ledger(file_path: str | None = None, format: str = 'jsonl') -> dict`
 
-- Exports the evidence log as JSON lines or CSV, together with the result of the chain check. `file_path` defaults to `~/.zn/evidence.jsonl`; `format` is `'jsonl'` (default) or `'csv'` (any other value gives `'jsonl'`).
+- Exports the decision log as JSON lines or CSV, together with the result of the chain check. `file_path` defaults to `~/.zn/evidence.jsonl`; `format` is `'jsonl'` (default) or `'csv'` (any other value gives `'jsonl'`).
 - Returns `{ content, format, valid, tip_hash, total }`, plus `error` when the log is damaged. `tip_hash` is the `record_hash` of the last record, or `GENESIS_HASH` for an empty log.
 - The Node module `zn-gate/lib/evidence` also exports `exportEvidenceLedger`, but it is not typed and not part of the documented Node API.
 
 ### Constants (Python)
 
 - `GENESIS_HASH`: 64 zeros, the `prev_hash` of the first record of a log.
-- `EVIDENCE_FILE` (`zn_gate.evidence`): the default evidence log path, `~/.zn/evidence.jsonl` (inside the folder `ZN_HOME` names when that variable is set).
+- `EVIDENCE_FILE` (`zn_gate.evidence`): the default decision log path, `~/.zn/evidence.jsonl` (inside the folder `ZN_HOME` names when that variable is set).
 - `RULES_VERSION`: the version of the built-in rule set, the same string that comes back as `rules_version` in results.
 - `__version__`: the installed package version.
 
@@ -342,7 +344,7 @@ No framework is required to import them. Each one uses the same rules as `check_
 ### `ZnGuardCallbackHandler(on_block='raise', mask_secrets=True, raise_on_injection=None, block_truncated=False)`
 
 - LangChain and LangGraph callback handler. It checks prompts (`on_llm_start`), tool inputs (`on_tool_start`) and tool outputs (`on_tool_end`). It sets `raise_error = True`, so LangChain does not swallow its errors.
-- `on_block`: `'raise'` (default) or `'ignore'`. With `'raise'` a blocked prompt, tool input or tool output raises `GuardBlockError` and stops the run (targets `langchain:llm_prompt`, `langchain:<tool>` and `langchain:tool_output`). A callback cannot replace a tool's output, so `'return'` raises `ValueError` when the handler is created: use `guard_langchain_tool(tool, on_block='return')` to give the model a block message instead. With `'ignore'` nothing is stopped.
+- `on_block`: `'raise'` (default) or `'ignore'`. With `'raise'` a blocked prompt, tool input or tool output raises `GuardBlockError` and stops the run (targets `langchain:llm_prompt`, `langchain:<tool>` and `langchain:tool_output`). A callback cannot replace a tool's output, so `'return'` raises `ValueError` when the handler is created: use `guard_langchain_tool(tool, on_block='return')` to give the model a block message instead. With `'ignore'` nothing is stopped, and each blocked prompt, tool input, tool output, tool error or secret in a tool output that is let through is logged as a warning (logger `zn_gate`) with the rule and where it happened, never the text.
 - `mask_secrets` (default `True`): a tool output that contains a secret stops the run with `GuardBlockError`, because the handler cannot rewrite it. If your tools are wrapped with `guard_langchain_tool`, create the handler with `mask_secrets=False`, so the wrapper hides the secret and the run goes on.
 - `raise_on_injection`: older switch. When it is not `None` it overrides `on_block`: `True` means `'raise'`, `False` means `'ignore'`.
 - `block_truncated`: force a block for a tool output too large to scan in full. Such output is blocked by default; set `ZN_ALLOW_TRUNCATED=1` to allow it.

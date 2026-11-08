@@ -34,6 +34,7 @@ zn-gate check: does zn stop your coding agent from reading a secret?
 Your agent cannot read secret files such as .env through these tools. Nothing was sent anywhere.
 ```
 
+- **Decision time**: the line after the agents gives how long zn takes to decide each tool call, as p50 and p95 of the last 100 calls on this machine. This is decision time only. It does not include process startup, writing the response to your agent, or saving stats and evidence, so it is not the whole delay your agent sees. It is measured locally and stored only as numbers in `~/.zn/stats.json`. Until zn has checked a tool call, it says `no data yet`. With `ZN_STATS=off` it says that nothing is measured.
 - **OK**: zn is protecting that agent. The quoted text is what your agent is told when it tries to read the file.
 - **-**: zn is not set up for that agent (neither for your user nor in managed configuration), or only for one project. The line gives the command that sets it up for your user. If you only ran zn-gate with `npx`, that command starts with `npm install -g zn-gate`, because `zn hooks install` needs zn-gate installed for your user. An agent that is not on this machine is listed as *not found on this machine*.
 - When an agent is found but not set up, the summary points to `npx -y zn-gate init`, which shows each step and asks before it runs one.
@@ -54,6 +55,52 @@ Your agent cannot read secret files such as .env through these tools. Nothing wa
 For the full explanation of each line, read the list above and the rest of this page.
 
 `zn-gate check` exits with 0 only when every agent that is set up for your user is protected.
+
+## Agent versions
+
+Under each agent it finds, `zn-gate check` shows the version of that agent on your machine and the version zn-gate was last tested with ([the list](compat.md#agent-compatibility) names them; the source is `lib/agents/tested-versions.json` in the package):
+
+```text
+  OK Codex CLI    blocked the .env file and allowed the ordinary file. Your agent would be told:
+     "zn: ..."
+     version 0.170.0, newer than 0.163.0, the last version zn was tested with. It may still work. If a hook does not run, report it at https://github.com/usezn/zn/issues
+  -  Cursor       zn is not set up for this agent. To protect it, run `zn hooks install cursor` in your own terminal.
+     version: not found
+```
+
+- **Newer than tested**: the agent may still work. If a hook does not run, report it at the link in the line.
+- **Older than tested**: if a hook does not run, update the agent first, then report it.
+- **not found**: zn could not read a version, which is not an error. Agents without a command that prints a version (Cursor and ZCode, for example) always say so.
+- **How it reads the version**: it runs only `<agent> --version`, found on your PATH outside the project folder, with a 2-second limit, in an empty folder, with none of your environment variables except the PATH and your home folder (on Windows also SystemRoot, ComSpec, PATHEXT, APPDATA and LOCALAPPDATA, which programs there need to start), and with update checks turned off. It changes nothing, and zn sends nothing over the network.
+
+## List every installed hook
+
+```bash
+zn-gate check --hooks
+```
+
+The other name of the command, `doctor`, works with it too. It lists every zn hook set up for your agents, one line per hook event, and says whether each one is working. It only reads your agents' settings files and zn's launcher files: it runs no hook, changes nothing and sends nothing. It looks at the settings for your user and, in the folder you run it from, at the project settings.
+
+```text
+Codex CLI (user): ~/.codex/hooks.json
+  STALE  PreToolUse [^(Bash|apply_patch|mcp__.+)$]  '~/.zn/hooks/zn-hook-codex.sh' PreToolUse
+  STALE: its launcher script was written by an older zn-gate.
+    Fix: run `zn hooks install codex` in your own terminal.
+
+0 OK, 1 stale, 0 broken.
+```
+
+- **OK**: the hook points at files that exist, and its launcher is the one this zn-gate writes.
+- **STALE**: the hook still works but was written by an older zn-gate, or runs an older copy of it. Run the fix to bring it up to date.
+- **BROKEN**: the hook cannot run, is turned off, is written twice for the same event, points at a file or Node.js that is gone, or is in a settings file zn cannot read (for example, one that is not valid JSON). Run the fix; if the settings file is not valid JSON, repair it first. If you no longer want zn for that agent, run `zn hooks uninstall <agent>` instead.
+
+Plain `zn-gate check` (without `--hooks`) ends with one line about the same hooks, and prints it only when at least one hook is installed. It does not change the exit code of `check`.
+
+```text
+Hooks: 3 OK, 1 stale, 0 broken. Run zn-gate check --hooks for details.
+```
+
+The exit code of `check --hooks` is `0` when every hook is OK (or none is set up) and `1` when any is stale or broken. For a test that zn really blocks a secret, run `zn-gate check` without `--hooks`.
 
 ## What each NOT protected line means
 

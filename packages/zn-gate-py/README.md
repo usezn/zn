@@ -32,15 +32,16 @@ python3 -m venv .venv
 
 No internet on this computer? See [Install on a machine without internet](https://github.com/usezn/zn/blob/main/docs/install-matrix.md#install-on-a-machine-without-internet). Those steps are for the npm package.
 
-**On Windows**, with Python from the Python install manager, there is no `pip` command, and after a plain `pip install` the `Scripts` folder is not on your PATH, so `zn-gate` is "not recognized". Use the `py` launcher and a virtual environment, and call the tools by their full path:
+**On Windows**, use the `py` launcher, which comes with Python from python.org and the Python install manager:
 
 ```powershell
-py -m venv .venv
-.venv\Scripts\python -m pip install zn-gate
-.venv\Scripts\zn-gate scan .
+py -m pip install zn-gate
+py -m zn_gate scan .
 ```
 
-(`python -m zn_gate` is not available: the command is `zn-gate`, inside the environment's `Scripts` folder.)
+Run it as `py -m zn_gate`, not as `zn-gate`. `pip` installs the `zn-gate` command into the `Scripts` folder of your Python, and that folder is often not on your PATH, so a plain `zn-gate` can fail with "not recognized" even after a successful install. `py -m zn_gate` runs the same commands (`scan`, `test`, `status` and the rest) without needing that folder on your PATH. Replace `scan .` with the command you need, for example `py -m zn_gate status`.
+
+To keep zn-gate inside a project's virtual environment instead, run `py -m venv .venv`, then `.venv\Scripts\python -m pip install zn-gate` and `.venv\Scripts\python -m zn_gate scan .`.
 
 **Only the command-line tools (`scan`, `test`, `status`)?** Install the Python CLI as a standalone tool, without a virtual environment. On Ubuntu and Debian, first run `sudo apt update && sudo apt install pipx`. Bare `pip` is often missing there too (`pip: command not found`), and `pip install` into the system Python is refused, so use pipx, uv or a virtual environment. To get uv, follow the [official uv installation guide](https://docs.astral.sh/uv/getting-started/installation/):
 
@@ -59,7 +60,7 @@ Inside an environment you already use (your project's virtualenv, Poetry, uv), `
 **If something fails:**
 
 - `externally-managed-environment`: install it in a virtual environment, as shown above.
-- `pip` or `zn-gate` is "not recognized" on Windows: use `py -m venv .venv`, then `.venv\Scripts\python -m pip install zn-gate` and `.venv\Scripts\zn-gate scan .`.
+- `pip` or `zn-gate` is "not recognized" on Windows: use `py -m pip install zn-gate` and `py -m zn_gate scan .`.
 - `pip: command not found` or `No module named pip`: this system has no pip for its Python. Use the virtual environment or pipx steps above.
 - `zn-gate: command not found` after a virtual environment install: run `.venv/bin/zn-gate scan .`, or run `source .venv/bin/activate` first.
 - `python3 -m venv` fails on Debian or Ubuntu: run `sudo apt update && sudo apt install python3-venv`.
@@ -189,7 +190,7 @@ handler = ZnGuardCallbackHandler(on_block="raise")
 # pass callbacks=[handler] to your agent, chain or tool
 ```
 
-The handler stops the run. With `on_block="raise"` (default) a blocked prompt, tool call or tool output raises `GuardBlockError` out of the agent: the tool does not run and the output does not reach the model. `on_block="ignore"` turns that off. `"return"` is not accepted (it raises `ValueError`), because LangChain ignores what a callback returns; any other value raises `ValueError` too.
+The handler stops the run. With `on_block="raise"` (default) a blocked prompt, tool call or tool output raises `GuardBlockError` out of the agent: the tool does not run and the output does not reach the model. `on_block="ignore"` turns that off: each blocked prompt, tool call, tool output, tool error or secret in a tool output that is let through is logged as a warning (logger `zn_gate`) with the rule and where it happened, never the text. `"return"` is not accepted (it raises `ValueError`), because LangChain ignores what a callback returns; any other value raises `ValueError` too.
 
 A callback cannot change what a tool returns. So with `mask_secrets=True` (default) a tool output that contains a secret also stops the run (it fails closed instead of letting the secret reach the model). The same goes for a tool's error, whose text LangChain (`handle_tool_error`) and LangGraph (`ToolNode(handle_tool_errors=True)`) send to the model: when the message is blocked or contains a secret, the handler replaces the error with `GuardBlockError`, whose message holds no secret. To hide the secret and keep going, or to give the model a block message instead of the output, wrap the tool (needs `langchain-core`):
 
@@ -273,7 +274,7 @@ safe_query = guard.on_query_start(user_query)
 clean_response = guard.sanitize_response(query_engine.query(safe_query))
 ```
 
-`on_block` accepts `"raise"` (default), `"return"` or `"ignore"`; any other value raises `ValueError`. With `"return"`, `on_query_start` returns `fallback`, or a short block message, in place of the query, so the engine never sees the blocked text. `sanitize_response` hides secrets in text, lists, dicts and in the text of a LlamaIndex `Response` (on a copy).
+`on_block` accepts `"raise"` (default), `"return"` or `"ignore"`; any other value raises `ValueError`. With `"return"`, `on_query_start` returns `fallback`, or a short block message, in place of the query, so the engine never sees the blocked text. `sanitize_response` hides secrets in text, lists, dicts and in the text of a LlamaIndex `Response` (on a copy). With `on_block="ignore"` (or `raise_on_violation=False`), a blocked query that is let through is logged as a warning (logger `zn_gate`) with the rule, never the text.
 
 For LlamaIndex tools, wrap the function with `guarded_tool` before `FunctionTool.from_defaults(fn=...)`: the arguments are checked before it runs and its output is checked and masked before the agent reads it (see the `llamaindex-agent` example).
 
@@ -307,6 +308,7 @@ zn-gate test "some text"        # check one text against the rules (exit 1 if fl
 zn-gate evidence --verify       # check the local evidence log (also --export, --format jsonl|csv, --output FILE)
 zn-gate stats --days 7          # local counts of what zn-gate did (also --json)
 zn-gate status                  # engine and what leaves the machine
+zn-gate check                   # prove the Python guard blocks a fake secret (no Node.js, no network)
 zn-gate --version
 ```
 

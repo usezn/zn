@@ -25,6 +25,8 @@ node --version
 
 ## Install your agent first
 
+> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+
 zn-gate protects an agent that is already installed; it does not install the agent for you. Install the agent from its official site, and sign in with your own account for that agent (zn-gate itself needs no account):
 
 - Codex CLI: run `npm install -g @openai/codex`, then run `codex` and sign in with your OpenAI account. OpenAI's own steps are in the [Codex CLI docs](https://developers.openai.com/codex/cli).
@@ -136,6 +138,24 @@ zn also has a text check that your agent can call through zn's own tools. Some p
 
 For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a block: `"verdict": "block"` with the reason "Override prior instructions".
 
+## Windows PowerShell: the .cmd forms
+
+On Windows, PowerShell can refuse to run the `npx.ps1` and `zn.ps1` scripts that npm writes next to the programs, and then a bare `npx` or `zn` fails with "running scripts is disabled on this system". The `.cmd` forms start the same programs without those scripts. Use them when a bare command fails this way:
+
+```powershell
+npx.cmd -y zn-gate init
+npx.cmd -y zn-gate check
+```
+
+After `npm.cmd install -g zn-gate`, the installed program is `zn.cmd`:
+
+```powershell
+zn.cmd check
+zn.cmd status
+```
+
+On Windows, zn prints the `.cmd` form in its own messages, so copy the command it shows. The execution policy note above is a permanent fix; the `.cmd` forms need no change to your settings. If `npx.cmd` or `zn.cmd` says it is not recognized, the folder where npm installs programs is not on PATH: see [troubleshooting](troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+
 ## If something fails
 
 - `npx: command not found`: install the LTS version of [Node.js](https://nodejs.org/), open a new terminal and run the command again.
@@ -143,7 +163,7 @@ For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a
 - `init` only prints steps and changes nothing: an AI agent or a script ran it. Run it yourself in your own terminal.
 - `check` says `NOT protected`: the line says what to run.
 - zn blocked something you need: use `npx -y zn-gate env shadow .env` for secrets, or ask in [Discussions](https://github.com/usezn/zn/discussions).
-- Another message? The [troubleshooting guide](troubleshooting.md) explains the ten most common ones.
+- Another message? The [troubleshooting guide](troubleshooting.md) explains the fourteen most common ones.
 
 ## Remove zn-gate
 

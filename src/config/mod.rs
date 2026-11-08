@@ -1322,6 +1322,16 @@ pub fn config_parse_problem(file: &str, content: &str, err: &serde_json::Error) 
             "zn could not read the settings file {file}: it is not valid JSON at {at} ({}). Look for a missing comma or quote, or a comma after the last item. {fix}",
             plain_serde_syntax(&err.to_string())
         ),
+        Category::Data if err.to_string().starts_with("duplicate field `") => {
+            let msg = err.to_string();
+            let key = msg["duplicate field `".len()..]
+                .split('`')
+                .next()
+                .unwrap_or_default();
+            format!(
+                "zn could not use the settings file {file}: the setting \"{key}\" appears more than once ({at}). Keep only one \"{key}\" in that section. {fix}"
+            )
+        }
         Category::Data => {
             let what = plain_data_problem(&err.to_string());
             match find_bad_setting(content) {
@@ -1535,6 +1545,37 @@ mod parse_message_tests {
     fn wrong_type_in_a_top_level_setting_is_named() {
         let msg = problem(r#"{"environment": 5}"#);
         assert!(msg.contains("\"environment\""), "{msg}");
+    }
+
+    #[test]
+    fn duplicate_key_is_rejected_and_named() {
+        let text = r#"{"server": {"port": 8080, "port": 9090}}"#;
+        let err = serde_json::from_str::<ZnConfig>(text).expect_err("duplicate key must not parse");
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
+        let msg = config_parse_problem("/work/zn.json", text, &err);
+        assert!(msg.contains("/work/zn.json"), "{msg}");
+        assert!(msg.contains("\"port\" appears more than once"), "{msg}");
+        assert!(msg.contains("line 1"), "{msg}");
+        assert!(msg.contains("zn init"), "{msg}");
+    }
+
+    #[test]
+    fn duplicate_key_fails_to_load() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("dup.json");
+        std::fs::write(
+            &file,
+            r#"{"environment": "development", "environment": "production"}"#,
+        )
+        .expect("write");
+        let msg = ZnConfig::load(Some(&file))
+            .expect_err("a duplicate key must not load")
+            .to_string();
+        assert!(msg.contains("dup.json"), "{msg}");
+        assert!(
+            msg.contains("\"environment\" appears more than once"),
+            "{msg}"
+        );
     }
 
     #[test]

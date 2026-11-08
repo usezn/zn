@@ -2,6 +2,8 @@
 
 A short list of steps, in order, for installing zn-gate on Windows and checking that it works. Each step is explained in [First 5 minutes](../first-5-minutes.md). Run every command in your own terminal, not through your AI agent.
 
+> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](../troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+
 ## Steps
 
 1. Check Node.js. Run `node --version`. Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. If you see "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal.
@@ -21,6 +23,7 @@ Windows PowerShell blocks the script that starts `npm` and `npx` by default. Not
 ## Other messages
 
 - `npx: command not found`: install Node.js, open a new terminal and run the command again.
+- `'zn' is not recognized as an internal or external command`: add the folder that `npm config get prefix` prints to your user `PATH`, then open a new terminal ([troubleshooting 14](../troubleshooting.md#14-zn-is-not-recognized-as-an-internal-or-external-command)). Until then, use `npx -y zn-gate` instead of `zn`.
 - `init` only prints steps and changes nothing: an AI agent or a script ran it. Run it yourself in your own terminal.
 
 ## More

@@ -193,6 +193,9 @@ function destructiveRulesOf(opts) {
  * ~/.zn/config.json, {"hooks": {"packageInstallCheck": "off" | "offline" | "online", "packageInstallAllow": [...],
  * "packageInstallNewDays": 14}}. ZN_PACKAGE_CHECK=offline turns on the offline mode from the environment (never
  * the online one: see lib/package-check-settings.js).
+ *
+ * Notices ("packageInstallNotices": true or ["fresh_version", "no_lockfile"]) are added to an allowed command as a
+ * note. They need the check itself to be on, never ask and never change a deny.
  */
 const PACKAGE_COMMAND_RE = /\b(?:npm|pnpm|yarn|bun|pip3?|pipx|uv|python3?|py)\b/i;
 
@@ -213,7 +216,7 @@ async function packageInstallCheck(command, opts, cwd) {
         return reg.lookupMany(usable, { fetch: opts.packageFetch, now: opts.packageNow, stateDir });
       };
     }
-    const res = await pc.check(command, { mode: st.mode, allow: st.allow, newDays: st.newDays, lookup });
+    const res = await pc.check(command, { mode: st.mode, allow: st.allow, newDays: st.newDays, lookup, notices: st.notices });
     const records = res.findings.map((f) => ({
       rule: 'hook-package-check-' + (f.kind === 'not_found' ? 'not-found' : f.kind === 'new_package' ? 'new' : 'look-alike'),
       reason: pc.sentenceOf(f),
@@ -222,7 +225,8 @@ async function packageInstallCheck(command, opts, cwd) {
       reason: 'the registry lookup for ' + (u.eco === 'pypi' ? 'Python package' : 'npm package') + ' `' + u.name + '` gave no answer (' + u.why + '), so no question was asked',
     })));
     const message = pc.messageOf(res.findings);
-    return message || records.length ? { message, records } : null;
+    const notice = pc.noticeOf(res.notices);
+    return message || records.length || notice ? { message, records, notice } : null;
   } catch (_) {
     // An optional check never stops a command because it failed.
     return null;
@@ -233,9 +237,13 @@ async function packageInstallCheck(command, opts, cwd) {
 function withPackage(res, pkg) {
   if (!pkg) return res;
   const records = { packageCheck: pkg.records };
-  if (!pkg.message || res.decision === 'deny') return { ...res, ...records };
-  if (res.decision === 'ask') return { ...res, message: (res.message ? res.message + ' ' : '') + pkg.message.replace(/^zn: /, 'Also, '), ...records };
-  return { decision: 'ask', soft: true, message: (res.message ? res.message + ' ' : '') + (res.message ? pkg.message.replace(/^zn: /, 'Also, ') : pkg.message), ...records };
+  if (res.decision === 'deny') return { ...res, ...records };
+  // A notice is only a note: on an allowed command it is shown to the user (userMessage) and changes no decision.
+  const join = (a, b) => (a ? a + ' ' + b : b);
+  if (!pkg.message) return pkg.notice ? { ...res, userMessage: join(res.userMessage, pkg.notice), ...records } : { ...res, ...records };
+  const note = pkg.notice ? ' ' + pkg.notice : '';
+  if (res.decision === 'ask') return { ...res, message: (res.message ? res.message + ' ' : '') + pkg.message.replace(/^zn: /, 'Also, ') + note, ...records };
+  return { decision: 'ask', soft: true, message: (res.message ? res.message + ' ' : '') + (res.message ? pkg.message.replace(/^zn: /, 'Also, ') : pkg.message) + note, ...records };
 }
 
 /*
@@ -301,6 +309,18 @@ function fixHint(agentId) {
   const name = AGENT_NAMES[agentId];
   return 'If it happens again, ask the user to run `' + znCommand('hooks install' + (name ? ' ' + agentId : '')) + '`' +
     (name ? ' to set up zn for ' + name + ' again.' : '.');
+}
+/*
+ * The step for an event whose JSON is valid but whose shape zn does not know: the agent most likely changed what it
+ * sends to hooks, so the installed zn-gate is older than the agent. Only the text differs from the other refusals.
+ */
+const AGENT_LABELS = { 'claude-code': 'Claude Code', codex: 'Codex CLI', cursor: 'Cursor', opencode: 'OpenCode', antigravity: 'Antigravity', zcode: 'ZCode', copilot: 'GitHub Copilot CLI', gemini: 'Gemini CLI' };
+function formatChangeStep(agentId) {
+  const label = AGENT_LABELS[agentId] || 'the agent';
+  const update = agentId === 'claude-code' && process.env.CLAUDE_PLUGIN_ROOT
+    ? 'Ask the user to update the zn-gate plugin with `claude plugin update zn-gate@usezn`.'
+    : 'Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `' + znCommand('hooks install' + (AGENT_LABELS[agentId] ? ' ' + agentId : '')) + '`.';
+  return 'This usually means ' + label + ' changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. ' + update;
 }
 const HOOK_FAILED = 'something went wrong inside the zn hook, so this action was blocked to keep the user\'s secrets safe. ';
 
@@ -1697,10 +1717,10 @@ async function injectTestFault() {
  */
 function unreadablePre(ev, agentId) {
   if (typeof ev.toolName !== 'string' || !ev.toolName.trim()) {
-    return { decision: 'deny', message: 'zn: could not read the tool name of this call, so zn cannot check it and blocked it. ' + fixHint(agentId) };
+    return { decision: 'deny', message: 'zn: could not read the tool name of this call, so zn cannot check it and blocked it. ' + formatChangeStep(agentId) };
   }
   if ((ev.tool === 'bash' || ev.tool === 'powershell') && typeof (ev.input || {}).command !== 'string') {
-    return { decision: 'deny', message: 'zn: could not read the command of this call, so zn cannot check it and blocked it. ' + fixHint(agentId) };
+    return { decision: 'deny', message: 'zn: could not read the command of this call, so zn cannot check it and blocked it. ' + formatChangeStep(agentId) };
   }
   return null;
 }
@@ -1711,15 +1731,19 @@ function unreadablePre(ev, agentId) {
  * opts: {engine, vault, failMode, home}
  */
 async function handle(adapter, rawEvent, opts = {}) {
+  const t0 = performance.now();
   const mode = failModeOf(opts);
   let ev = null;
   let decision;
   const d = lazyDeps(opts);
   try {
     ev = adapter.normalize(rawEvent);
+    // An adapter that could not read part of a call says so in ev.unreadable, and its block carries that text.
+    if (ev && typeof ev.unreadable === 'string') ev.unreadable += ' ' + formatChangeStep(adapter.id);
     if (ev && ev.event) guardNativeText(ev);
     await injectTestFault();
-    if (!ev || !ev.event) decision = { decision: 'allow' };
+    // The decision stays an allow (nothing zn registered for names this event), but the person is told how to update.
+    if (!ev || !ev.event) decision = { decision: 'allow', formatNote: 'zn: ' + AGENT_LABELS[adapter.id] + ' sent an event zn does not know, so it was not checked. ' + formatChangeStep(adapter.id) };
     else if (ev.event === 'pre_tool') { if (adapter.id === 'claude-code') recordConfigBaseline(ev, opts); decision = unreadablePre(ev, adapter.id) || await decidePre(ev, d, adapter.id, opts); }
     else if (ev.event === 'post_tool') decision = await decidePost(ev, d, adapter.id, opts);
     else if (ev.event === 'user_prompt') { if (adapter.id === 'claude-code') recordConfigBaseline(ev, opts); decision = await decidePrompt(ev, d, adapter.id); }
@@ -1734,20 +1758,23 @@ async function handle(adapter, rawEvent, opts = {}) {
   } finally {
     d.closeVault();
   }
+  // Decision time only: from the start of handle() up to the decision. Excludes process startup, writing the
+  // response, and saving stats and evidence (both run after this point).
+  const latencyMs = performance.now() - t0;
   // zn Team: a line for the person (a policy change that lifted restrictions, or detectors that are not applied).
   const teamLines = takeTeamNotes();
   if (teamLines.length && decision && !decision.userMessage) decision.userMessage = teamLines.join(' ');
   const output = adapter.respond({ ...decision, event: ev });
-  countHook(adapter.id, ev, decision, opts);
+  countHook(adapter.id, ev, decision, opts, latencyMs);
   recordEvidence(adapter.id, ev, decision, opts);
-  return { output, stderr: decision.warning || null, decision };
+  return { output, stderr: decision.warning || null, decision, formatNote: decision.formatNote || null };
 }
 
 /**
  * Local counts for `zn-gate stats` (best effort; never changes the decision). A denial because zn itself
  * failed (fail-closed) is not counted as a block; asks and fail-open passes count as warnings.
  */
-function countHook(agentId, ev, decision, opts = {}) {
+function countHook(agentId, ev, decision, opts = {}, latencyMs) {
   try {
     if (!ev || !ev.event || !decision) return;
     // Codex asks PreToolUse first, then PermissionRequest for the same call when it shows an approval prompt.
@@ -1771,6 +1798,8 @@ function countHook(agentId, ev, decision, opts = {}) {
       warned: decision.decision === 'ask' || decision.failOpen || (decision.decision === 'deny' && decision.noBlock) ? 1 : 0,
       redacted: extra.redacted || 0,
       detections: extra.detections || {},
+      // Decision time only, not the response write or the stats and evidence saves (see lib/stats.js latencyReport).
+      latencyMs: ev.event === 'pre_tool' || ev.event === 'post_tool' ? latencyMs : undefined,
     }, file ? { file } : {});
   } catch {
     /* counting must never affect a hook */
@@ -2308,6 +2337,7 @@ async function handleEvent(args, state, readText) {
   try {
     const res = await handle(adapter, raw);
     if (res.stderr) process.stderr.write(res.stderr + ' (fail-open: event passed through)\n');
+    if (res.formatNote) process.stderr.write('zn hook: ' + res.formatNote + '\n');
     try { require('../vault/client').close(); } catch (_) { /* not loaded */ }
     if (res.output !== null && res.output !== undefined) {
       // After the deadline the engine or the vault may still be working: leave as soon as the answer is written.
