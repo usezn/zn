@@ -217,6 +217,20 @@ test('text and github output never show the value', (t) => {
   assert.match(gh.stdout, /::error file=\.mcp\.json,line=5,title=Secret found \(secret%3Amcp_config\)::Next: /);
 });
 
+test('on Windows the vault steps name npx.cmd (like the Python package); elsewhere they are unchanged', () => {
+  const win = mcp.mcpNextStep('environment variable', 'BRAVE_API_KEY', 'win32');
+  assert.match(win, /run npx\.cmd -y zn-gate secret set BRAVE_API_KEY/);
+  assert.match(win, /run npx\.cmd -y zn-gate secret allow BRAVE_API_KEY --command/);
+  assert.doesNotMatch(win, /run zn secret allow/);
+  for (const platform of ['linux', 'darwin']) {
+    const other = mcp.mcpNextStep('argument', 'api-key', platform);
+    assert.match(other, /run npx -y zn-gate secret set MCP_API_KEY/);
+    assert.match(other, /run zn secret allow MCP_API_KEY --command/);
+    assert.doesNotMatch(other, /\.cmd/);
+  }
+  assert.equal(mcp.mcpNextStep('header', 'Authorization', 'win32'), mcp.mcpNextStep('header', 'Authorization', 'linux'));
+});
+
 test('the next step is plain: the vault and zn run --secrets for env and arguments, an environment variable for headers', () => {
   const env = mcp.mcpNextStep('environment variable', 'BRAVE_API_KEY');
   assert.match(env, /npx -y zn-gate secret set BRAVE_API_KEY/);

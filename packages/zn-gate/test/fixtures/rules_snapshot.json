@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-11-04.35",
+      "version": "2026-11-08.9",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -47,8 +47,8 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "4a21b1c566b0aac574b9d4d29a00816d58086835419735bed524459233947f90",
-        "lib/mcp-secrets.js": "1a051cdb7ac9cd04b46494a2efe0aa90ab136a5e866d2dbf42d4431888ab7487"
+        "lib/rules.js": "16efc9d7353b59a9fcf0f395e85ec8b8476b99a513de5b87c1a3d52af612392e",
+        "lib/mcp-secrets.js": "5c956c12ec8553802581d1437be83eb93c5584c5c03b5649bfe2402cdcaac60a"
       }
     },
     "scrub": {
@@ -156,7 +156,7 @@
     },
     "audit": {
       "version_const": "AUDIT_RULES_VERSION",
-      "version": "2026-11-06.3",
+      "version": "2026-11-06.4",
       "ids": [
         "ZNA001",
         "ZNA002",
@@ -180,6 +180,7 @@
         "ZNA020",
         "ZNA021",
         "ZNA022",
+        "ZNA023",
         "patterns.CRED_FLAG_NAME",
         "patterns.CRED_FLAG_ONLY",
         "patterns.INTERPRETERS",
@@ -207,13 +208,13 @@
         "patterns.weakening"
       ],
       "sha256": {
-        "lib/audit/rules.js": "7791a1d80e7f0ff24d6693f13c164e729379ef54799c2f8b054c92a49c158f46",
+        "lib/audit/rules.js": "90dcf910450d86e959f76e688a1dcd0c33b3427c05ec6e20bc0b0c113b3a4a60",
         "lib/audit/patterns.js": "fddd085d756061f1fcec7cec8aca3029f4b3ac7e63abb340e8d84c36a03f52c1"
       }
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-11-08.1",
+      "version": "2026-11-08.9",
       "ids": [
         "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
@@ -221,6 +222,7 @@
         "_globClassEnd",
         "_globClassSource",
         "adminCommand",
+        "adminDenial",
         "bashDenial",
         "classifyPath",
         "classifyWord",
@@ -243,7 +245,7 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "f689b82adbad5a80c5e2562119a2db8070be7ce7ea52e447ee196510e11bc635",
+        "lib/hooks/policy.js": "9adc1e8f0967106149438f64ba61c76952273dd6fed81bb5daccafeafff0c2bd",
         "lib/broker/files.js": "f74250b2509bc7451865279da3daff9b1be5e0697cb7d275f0b0871b35b0893d",
         "lib/broker/markers.js": "bf01a06b547629804c504e37a2c6126330ab729bed51ec460bfca4036c1a0b3b",
         "lib/broker/dotenv.js": "b3be93c3b21282d83a82ad15c82a8af94df845adf69e13250d8c62ecdbcbd8a0",

@@ -269,7 +269,7 @@ def _parity_corpus() -> List[Dict[str, Any]]:
 
 def _same_as_node(text):
     """The Python hint adds one note that says the vault commands are npm-only; the Node.js hint has no such note."""
-    return text.replace(mcp.NPM_ONLY_NOTE, "").replace("run npx.cmd -y zn-gate secret allow", "run zn secret allow")
+    return text.replace(mcp.NPM_ONLY_NOTE, "")
 
 
 class TestNodeParity(unittest.TestCase):
@@ -304,6 +304,29 @@ class TestNodeParity(unittest.TestCase):
                                        _same_as_node(mcp.mcp_next_step("argument", name)),
                                        _same_as_node(mcp.mcp_next_step("setting", name)), _same_as_node(mcp.mcp_next_step("header", name)),
                                        mcp.mcp_sample("argument", name), mcp.mcp_sample("URL", name), mcp.mcp_sample("header", name)])
+
+
+class TestWindowsNextStepParity(unittest.TestCase):
+    """On Windows both packages name npx.cmd in the vault steps, and on other systems both keep npx and zn."""
+
+    def test_next_step_text_is_the_same_in_node_and_python_per_platform(self):
+        from unittest import mock
+        node = _node_or_skip()
+        code = ("const m = require(process.argv[1]);"
+                "const out = {};"
+                "for (const p of ['win32', 'linux']) out[p] = ['environment variable', 'argument', 'setting']"
+                ".map((k) => m.mcpNextStep(k, 'api-key', p));"
+                "console.log(JSON.stringify(out));")
+        res = subprocess.run([node, "-e", code, str(NODE_LIB)], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(res.returncode, 0, res.stderr[:300])
+        got = json.loads(res.stdout)
+        for plat, os_name in (("win32", "nt"), ("linux", "posix")):
+            with mock.patch("zn_gate.shell_names.os.name", os_name):
+                py = [_same_as_node(mcp.mcp_next_step(k, "api-key")) for k in ("environment variable", "argument", "setting")]
+            self.assertEqual(py, got[plat], plat)
+        self.assertIn("run npx.cmd -y zn-gate secret set ", got["win32"][0])
+        self.assertIn("run npx.cmd -y zn-gate secret allow ", got["win32"][0])
+        self.assertIn("run zn secret allow ", got["linux"][0])
 
 
 class TestSharedFixtureParity(unittest.TestCase):
