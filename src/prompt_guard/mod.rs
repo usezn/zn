@@ -95,9 +95,24 @@ fn forget_instruction_base() -> String {
 /// True when the text before a "forget ..." match ends with a negation word.
 fn forget_negated(before: &str) -> bool {
     let b = before.to_ascii_lowercase();
-    ["n't ", "n\u{2019}t ", "not ", "never ", "ever ", "dont "]
-        .iter()
-        .any(|w| b.ends_with(w))
+    // Contractions sit on a word by construction, so the bare suffix is the whole negation.
+    if b.ends_with("n't ") || b.ends_with("n\u{2019}t ") {
+        return true;
+    }
+    // The standalone words only: a longer word that merely ends in one of these
+    // ("however", "forever", "whenever", "cannot", "knot") is not a negation, so it
+    // must not suppress the match. Require a non-word char (or start) before the word.
+    ["not ", "never ", "ever ", "dont "].iter().any(|w| {
+        if !b.ends_with(w) {
+            return false;
+        }
+        let start = b.len() - w.len();
+        start == 0
+            || !b[..start]
+                .chars()
+                .next_back()
+                .map_or(false, |c| c.is_ascii_alphanumeric() || c == '_')
+    })
 }
 
 /// Whether some "forget ..." in the input is an instruction form of `pi:forget` and is not negated.
