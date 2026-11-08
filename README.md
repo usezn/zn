@@ -233,6 +233,8 @@ npx -y zn-gate test
 
 This runs the local self-test (51 curated vectors: 26 attacks, 25 benign) and shows per-decision latency on your machine. It is a smoke test, not a detection rate. Nothing is sent over the network.
 
+If zn-gate blocks something and you want to know why, [Why was this blocked?](docs/why-was-this-blocked.md) shows five common messages, what caused each one and how to go on safely.
+
 **For developers: see the redaction by hand.** Send a tool output with a fake AWS key (AWS's documentation example) and a database password through zn-gate, exactly as your agent would, and look for `sanitized_content` in the output; that field is what the model would see. In the full output, `verdict: allow` only means that no prompt injection was found; the secrets are hidden in `sanitized_content` (here `[REDACTED_AWS_KEY]` and `[REDACTED_DB_PASSWORD]`), and `secrets_redacted` counts them:
 
 ```bash
