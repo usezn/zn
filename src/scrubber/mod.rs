@@ -2167,4 +2167,35 @@ mod table_parity_tests {
         assert_eq!(v["token"], "[SECRET_REDACTED]");
         assert_eq!(v.as_object().unwrap().len(), 3);
     }
+
+    // Fake npm token: "npm_" plus 36 characters, split in the source so no scanner reads it as a real one.
+    const FAKE_NPM_TOKEN: &str = concat!("npm_", "FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE");
+
+    #[test]
+    fn test_npmrc_auth_token_line_is_redacted() {
+        let input = format!("//registry.npmjs.org/:_authToken={}", FAKE_NPM_TOKEN);
+        let scrubbed = Scrubber::scrub(&input);
+        assert!(
+            !scrubbed.contains(FAKE_NPM_TOKEN),
+            "token kept: {}",
+            scrubbed
+        );
+        assert!(
+            scrubbed.contains("[SECRET_REDACTED]"),
+            "no marker: {}",
+            scrubbed
+        );
+    }
+
+    #[test]
+    #[ignore = "gap: no npm token rule (a bare npm_ token outside a token-named key is not redacted)"]
+    fn test_bare_npm_token_is_redacted() {
+        let input = format!("npm publish used {} from the CI log", FAKE_NPM_TOKEN);
+        let scrubbed = Scrubber::scrub(&input);
+        assert!(
+            !scrubbed.contains(FAKE_NPM_TOKEN),
+            "token kept: {}",
+            scrubbed
+        );
+    }
 }
