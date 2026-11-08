@@ -7,10 +7,11 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { tempDir } = require('./helpers/tmp');
-const { znCommand, PACKAGE_VERSION } = require('../lib/zn-command');
+const { znCommand, cliName, PACKAGE_VERSION } = require('../lib/zn-command');
 
 const WIN = process.platform === 'win32';
-const NPX = 'npx -y zn-gate@' + PACKAGE_VERSION;
+const NPX = cliName('npx') + ' -y zn-gate@' + PACKAGE_VERSION; // npx.cmd on Windows
+const ZN = cliName('zn'); // zn.cmd on Windows
 
 function envWithZn(dir) {
   const file = path.join(dir, WIN ? 'zn.cmd' : 'zn');
@@ -37,7 +38,7 @@ const CASES = [
 test('znCommand: odd arguments with zn on PATH', (t) => {
   const env = envWithZn(tempDir(t, 'zn-blank-yes-'));
   for (const [name, arg, tail] of CASES) {
-    assert.equal(znCommand(arg, { env }), tail ? 'zn ' + tail : 'zn', name);
+    assert.equal(znCommand(arg, { env }), tail ? ZN + ' ' + tail : ZN, name);
   }
 });
 
