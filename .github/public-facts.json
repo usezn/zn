@@ -74,7 +74,7 @@
       {
         "file": "docs/editors/gemini.md",
         "pin": "zn-gate 1.14.0",
-        "why": "the release that changed the Gemini CLI hooks written before it (not a pin)"
+        "why": "the minimum version for the experimental Gemini CLI hooks, which 1.14.0 added (not a pin)"
       },
       {
         "file": "docs/editors/cursor.md",

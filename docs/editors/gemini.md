@@ -15,7 +15,7 @@ Support for Gemini CLI is experimental. It is listed apart from the seven suppor
    zn hooks install gemini
    ```
 
-   On a Mac, if you see `EACCES`, follow npm's guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally). The hooks need zn-gate 1.5 or later. zn-gate adds its hook to `~/.gemini/settings.json`.
+   On a Mac, if you see `EACCES`, follow npm's guide to [fixing permission errors](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally). The hooks need zn-gate 1.14.0 or later, the release that added them. zn-gate adds its hook to `~/.gemini/settings.json`.
 
    To protect one project only, run `zn hooks install gemini --project` from that project's folder: the hook goes into `.gemini/settings.json` there. Gemini CLI treats a project hook as untrusted until you approve it in Gemini CLI, and it runs `zn` from your PATH, so every teammate who opens the project needs zn-gate installed.
 
@@ -48,7 +48,7 @@ To undo it: `zn hooks uninstall gemini`.
 
 `zn hooks install gemini` writes one hook entry into the Gemini CLI settings file: `~/.gemini/settings.json` for your user, or `.gemini/settings.json` in the project with `--project`. zn-gate registers the `BeforeTool` event only: it checks each tool call before it runs, and the hook entry has a 15-second timeout.
 
-A user install writes the hook command as a small launcher script, and a project install runs `zn` from your PATH inside a start guard: when the hook fails, including when the Node.js zn-gate was installed with is gone, the launcher or the guard answers with a block instead of letting the call run. Hooks written before zn-gate 1.14.0 do not have these answers: when such a hook cannot start, Gemini CLI shows a warning and the tool call runs. After you upgrade zn-gate, run `zn hooks install gemini` again.
+A user install writes the hook command as a small launcher script, and a project install runs `zn` from your PATH inside a start guard: when the hook fails, including when the Node.js zn-gate was installed with is gone, the launcher or the guard answers with a block instead of letting the call run. After you upgrade zn-gate, run `zn hooks install gemini` again.
 
 Per-agent details and how each agent compares: [compat.md](../compat.md).
 
