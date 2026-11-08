@@ -58,7 +58,7 @@ In a script, these three codes are the ones you will check most. The [full table
 
 | Command | Codes | Meaning |
 |---|---|---|
-| `scan` | `0`, `1`, `2`, `3` | `0` nothing found and everything that matched was read; `1` something was found or the path does not exist; `2` an unknown `--format`; `3` the coverage is incomplete: no file was read, or a file or folder that should have been read was not. |
+| `scan` | `0`, `1`, `2`, `3` | `0` nothing found and everything that matched was read; `1` something was found or the path does not exist; `2` an unknown `--format`; `3` the coverage is incomplete: no file was read, or a file or folder that should have been read was not. (zn-gate 1.14.0 and later) |
 | `audit` | `0`, `1`, `2` | `0` nothing at or above `--fail-on`; `1` findings at or above it; `2` wrong usage or a path that is not a folder. |
 | `reach` | `0`, `1`, `2` | `0` done; `1` findings meet `--fail-on`; `2` wrong usage or a failure. |
 | `analyze` | `0`, `1`, `2` | `0` the text is allowed; `1` no text given; `2` the text is blocked. |
@@ -110,7 +110,7 @@ The Python package (`pip install zn-gate`) has a smaller command line than the n
 |---|---|---|
 | `test "<text>"` | `0`, `1` | `0` nothing was flagged; `1` the text was blocked or contains a secret. It does not run the self-test that `test` runs in the npm package. |
 | `analyze "<text>"` | `0`, `2` | `0` the text is allowed; `2` the text is blocked; without a text, `2` (the npm package exits `1`). |
-| `scan [path]` | `0`, `1`, `3` | `0` nothing found; `1` something was found or the path does not exist; `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. |
+| `scan [path]` | `0`, `1`, `3` | `0` nothing found; `1` something was found or the path does not exist; `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. (zn-gate 1.14.0 and later) |
 | `evidence` | `0`, `1` | `0` done; `1` `--verify` found a changed SHA-256 chain, or the export was not saved. |
 | `status` | `0` | Always `0`. |
 | `stats` | `0`, `2` | `0` done; `2` `--days` is out of range (1 to 90). |
