@@ -85,7 +85,7 @@ Please send the summary to jane.doe@example.com. Test AWS key AKIAIOSFODNN7EXAMP
 2. The scrubber finds the AWS key and replaces it with `[REDACTED_AWS_KEY]`. The email address is not a secret, so it is not replaced.
 3. The request body sent to `https://api.usezn.com/v30/analyze` is the `input` shown in [What the request contains](#what-the-request-contains).
 4. The response is returned to the agent with `mode: "hybrid-cloud"` and `secrets_redacted_before_upload: 1`.
-5. Nothing is written to the decision log for this check. The stats counter only counts checks and blocks.
+5. Nothing is written to the decision log for this check. The local stats counter records the check and any block, warning, redaction or secret type found, as counts only.
 
 ## What never leaves your computer
 
@@ -128,7 +128,7 @@ zn-gate keeps its files in `~/.zn`, or in the folder named by `ZN_HOME` if you s
 
 - **`config.json`**: your settings. It records that you connected and the last four characters of the key, never the key. See [Turn on the optional cloud check](connect.md).
 - **`evidence.jsonl`**: the decision log. Each record has a time, the agent, the tool name, the rule, the reason, the verdict, a SHA-256 hash of the checked text and a preview of at most the first 120 characters. The preview has detected secrets removed. Personal data is not removed from it. Hook decisions keep no command text: their preview holds only the event name, the tool name and the kinds of secret found. Each record is chained to the one before it, so an edit can be detected.
-- **`stats.json`**: counts only, per day: checks, blocks, redactions and the number of secrets found per type. No values, no prompts and no paths.
+- **`stats.json`**: counts only, per day: checks, blocks, warnings, redactions and the number of secrets found per type. No values, no prompts and no paths.
 - **The vault**: your secrets, encrypted, and the vault audit log. See [Keep secrets out of your agent](secrets.md).
 - **The saved API key** (only after `zn-gate connect`): in the system keychain or in the vault, never in a file. See [Turn on the optional cloud check](connect.md).
 

@@ -1,2 +1,2 @@
-zn-gate==1.15.0rc1
+zn-gate==1.15.0
 llama-index-core==0.14.25
