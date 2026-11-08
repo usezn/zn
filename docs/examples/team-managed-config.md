@@ -2,7 +2,7 @@
 
 A worked example of `zn team managed-config`, the command an administrator uses to get the files that make zn-gate's hooks run on every developer machine. The sample output below was produced by running the command; the very long hook command lines are shortened to `...`.
 
-The command only prints. It writes no file and does not read the machine it runs on: the output depends only on the options you pass. You copy each printed file to the path shown with your own device management or configuration tool (Jamf, Intune, Group Policy, Ansible and the like). The full explanation, with the warnings for each agent, is in [Deploy zn-gate's hooks to every machine](../team.md#deploy-zn-gates-hooks-to-every-machine-managed-settings) and the options are in the [command line reference](../cli.md#team-managed-config).
+The command only prints. It writes no file and reads no settings of the machine it runs on: the output depends only on the options you pass, except that without `--os` it uses the operating system of that machine. You copy each printed file to the path shown with your own device management or configuration tool (Jamf, Intune, Group Policy, Ansible and the like). The full explanation, with the warnings for each agent, is in [Deploy zn-gate's hooks to every machine](../team.md#deploy-zn-gates-hooks-to-every-machine-managed-settings) and the options are in the [command line reference](../cli.md#team-managed-config).
 
 ## Who runs it
 
