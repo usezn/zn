@@ -15,4 +15,5 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project, from the run to what each exit code means.
 - [stats-and-report.md](stats-and-report.md): worked examples of `zn-gate stats` and `zn-gate report`.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
+- [zn-init-dry-run-preview.md](zn-init-dry-run-preview.md): preview what `init --wrap-mcp` would change, with a real dry-run output explained line by line.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
