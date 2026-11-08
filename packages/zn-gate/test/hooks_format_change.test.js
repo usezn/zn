@@ -19,12 +19,12 @@ after(() => { for (const d of created) fs.rmSync(d, { recursive: true, force: tr
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-formatchange-'));
 created.push(home);
 
-function run(agent, payload) {
+function run(agent, payload, hookEvent) {
   const input = typeof payload === 'string' ? payload : JSON.stringify(payload);
   return spawnSync(process.execPath, [RUNNER, agent], {
     input,
     encoding: 'utf8',
-    env: { ...process.env, HOME: home, USERPROFILE: home, ZN_HOOK_FAIL_MODE: '', CLAUDE_PLUGIN_ROOT: '' },
+    env: { ...process.env, HOME: home, USERPROFILE: home, ZN_HOOK_FAIL_MODE: '', CLAUDE_PLUGIN_ROOT: '', ZN_HOOK_EVENT: hookEvent || '' },
   });
 }
 
@@ -99,4 +99,68 @@ test('truncated or garbage input keeps its own message and does not claim a form
       assert.doesNotMatch(r.stderr + r.stdout, /changed the format/);
     }
   }
+});
+
+// The launcher tells the runner which hook it serves (ZN_HOOK_EVENT). On a hook that can block (a tool call before it
+// runs, a prompt) an event zn cannot read is refused; on any other hook it still passes with the note.
+const BLOCKING = [
+  ['claude-code', 'PreToolUse', 'PostToolUse', std],
+  ['claude-code', 'UserPromptSubmit', 'PostToolUse', std],
+  ['codex', 'PreToolUse', 'PostToolUse', std],
+  ['codex', 'UserPromptSubmit', 'PostToolUse', std],
+  ['zcode', 'PreToolUse', 'PostToolUse', std],
+  ['zcode', 'UserPromptSubmit', 'PostToolUse', std],
+  ['cursor', 'beforeShellExecution', 'postToolUse', (ev) => ({ hook_event_name: ev, cwd: home, command: 'echo hi' })],
+  ['cursor', 'beforeSubmitPrompt', 'postToolUse', (ev) => ({ hook_event_name: ev, cwd: home, command: 'echo hi' })],
+];
+for (const [agent, hook, postHook, make] of BLOCKING) {
+  for (const [what, payload] of [['unknown event', make(hook + 'V2')], ['extra wrapper', wrap(make(hook))]]) {
+    test(agent + ': ' + what + ' on the ' + hook + ' hook is blocked and names the update', () => {
+      const r = run(agent, payload, hook);
+      assert.equal(r.status, 2, r.stdout + r.stderr);
+      assert.ok(r.stderr.includes('sent an event zn does not know, so zn cannot check it and blocked it'), r.stderr);
+      assert.ok(r.stderr.includes(LABEL[agent]), r.stderr);
+      assert.ok(r.stderr.includes('npm install -g zn-gate@latest'), r.stderr);
+      assert.ok(r.stderr.includes('hooks install ' + agent), r.stderr);
+      if (agent === 'cursor') assert.match(r.stdout, /"permission":"deny"/);
+    });
+    test(agent + ': ' + what + ' on the ' + postHook + ' hook is not blocked', () => {
+      const r = run(agent, payload, postHook);
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(r.stderr.includes('so it was not checked'), r.stderr);
+      assert.doesNotMatch(r.stdout, /deny|block/);
+    });
+  }
+}
+
+test('an agent with no way to tell its hook keeps the pass with the note, even when the variable is set', () => {
+  for (const [agent, payload] of [['copilot', { hookEventName: 'preToolUseV2', ...COP }], ['opencode', { hook: 'tool.execute.before.v2', cwd: home, tool: 'bash', args: sh }]]) {
+    const r = run(agent, payload, 'PreToolUse');
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stderr.includes('so it was not checked'), r.stderr);
+    assert.doesNotMatch(r.stdout, /deny/);
+  }
+});
+
+test('the launcher script names the hook it serves for the runner', () => {
+  const launcher = require('../lib/agents/launcher');
+  const text = launcher.unixScript('claude-code', process.execPath, RUNNER, { runnerDigest: '', manifest: '' });
+  assert.match(text, /unset ZN_HOOK_EVENT; case "\$ZN_EVENT" in ""\|\*\[!A-Za-z\]\*\) ;; \*\) export ZN_HOOK_EVENT="\$ZN_EVENT" ;; esac/);
+  const win = launcher.windowsScript('claude-code', 'PreToolUse', 'C:/node/node.exe', 'C:/zn/lib/hooks/runner.js');
+  assert.ok(win.includes("$env:ZN_HOOK_EVENT = 'PreToolUse'; "), 'the Windows script sets the event');
+});
+
+test('a real launcher blocks an unknown event on its PreToolUse hook', { skip: process.platform === 'win32' }, () => {
+  const launcher = require('../lib/agents/launcher');
+  const file = launcher.writeLauncher('claude-code', process.execPath, RUNNER, { home });
+  const go = (event) => spawnSync('/bin/sh', [file, event], {
+    input: JSON.stringify(wrap(std('PreToolUse'))),
+    encoding: 'utf8',
+    env: { PATH: process.env.PATH, HOME: home, TMPDIR: home, ZN_HOME: path.join(home, '.zn') },
+  });
+  const pre = go('PreToolUse');
+  assert.equal(pre.status, 2, pre.stdout + pre.stderr);
+  assert.ok(pre.stderr.includes('blocked it'), pre.stderr);
+  const post = go('PostToolUse');
+  assert.equal(post.status, 0, post.stdout + post.stderr);
 });

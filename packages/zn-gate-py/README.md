@@ -363,6 +363,8 @@ Runnable examples for the Python package, in [`examples/`](https://github.com/us
 
 **Is the Python engine the same as the Node one?** Same approach and rule families, separate implementations. Both are tested in [CI](https://github.com/usezn/zn/actions/workflows/ci.yml).
 
+**How do I remove it?** If you also set up zn's hooks or the Claude Code plugin with the npm package, remove those first: run `npx -y zn-gate uninstall` in your own terminal ([removal guide](https://github.com/usezn/zn/blob/main/docs/uninstall.md)). Then run `pip uninstall zn-gate` last, so no agent setting is left pointing at a missing command.
+
 **Will it block legitimate content?** Sometimes. Use `on_block="return"` with a fallback while you evaluate it.
 
 ## Security
