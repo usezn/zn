@@ -9,7 +9,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | Install zn-gate and see it work | [First 5 minutes](first-5-minutes.md) |
 | Check that I am protected | [Check that it works](check.md) |
 | Keep my API keys and `.env` values away from my agent | [Keep secrets out of your agent](secrets.md) |
-| Set it up for my editor or coding agent | [Editors and coding agents](editors/README.md), or [Install, verify and uninstall by agent](by-agent.md) |
+| Set it up for my editor or coding agent | [Editors and coding agents](editors/README.md) or [OpenCode](editors/opencode.md), or [Install, verify and uninstall by agent](by-agent.md) |
 | Understand a word or a message I do not know | [Glossary](glossary.md) and [Troubleshooting](troubleshooting.md) |
 | Look up a command, option or exit code | [Command line reference](cli.md) and [Exit codes](exit-codes.md) |
 | Review a repository's agent settings before I open it | [Audit](audit.md) |
