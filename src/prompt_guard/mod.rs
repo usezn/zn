@@ -550,4 +550,20 @@ mod table_parity_tests {
         let extra: BTreeSet<String> = rust.difference(&node).cloned().collect();
         assert_eq!(extra, rust_only, "Rust rule ids that Node.js does not have");
     }
+
+    #[test]
+    fn test_phrase_inside_a_code_comment_of_benign_code_is_not_flagged() {
+        // Benign source code: the phrase is only a comment in a function.
+        let code = "fn sort_rows(rows: &mut Vec<Row>) {\n    // ignore the above lines when sorting\n    rows.sort();\n}\n";
+        assert_eq!(detect_prompt_injection(code).matched_pattern, None);
+        assert!(!contains_prompt_injection(code));
+    }
+
+    #[test]
+    #[ignore = "false positive: a code comment such as \"ignore the above lines and sort them\" is flagged as pi:ignore_previous, because the override pattern accepts \"and\" after the phrase"]
+    fn test_phrase_with_and_inside_a_code_comment_is_not_flagged() {
+        // Same comment, followed by "and": the override pattern accepts "and" after the phrase.
+        let code = "fn sort_rows(rows: &mut Vec<Row>) {\n    // ignore the above lines and sort them\n    rows.sort();\n}\n";
+        assert_eq!(detect_prompt_injection(code).matched_pattern, None);
+    }
 }
