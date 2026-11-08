@@ -88,25 +88,9 @@ For Claude Code, Codex CLI, Cursor, Google Antigravity, Gemini CLI and ZCode, `h
 
 Use this if you want to remove only one part, or to do the steps yourself. Each command is run in your own terminal.
 
-If you remove the parts by hand, use the order `zn-gate uninstall` uses: put back the wrapped MCP servers first (`init --revert`, step 3 below), because a saved copy put back after the hooks are removed could bring back zn's `secrets` server. Then the plugin and the hooks, then the vault if you want it gone, then the program.
+If you remove the parts by hand, use the order `zn-gate uninstall` uses: put back the wrapped MCP servers first (`init --revert`, step 1 below), because a saved copy put back after the hooks are removed could bring back zn's `secrets` server. Then the hooks and the plugin, then the vault if you want it gone, then the program.
 
-### 1. Hooks (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, Gemini CLI, or Claude Code without the plugin)
-
-```bash
-npx -y zn-gate hooks uninstall claude-code
-```
-
-Use `codex`, `cursor`, `opencode`, `antigravity`, `zcode` or `copilot` instead of `claude-code` for the others (ZCode has no project hooks, so `--project` does not apply to it). Add `--project` if you installed the hooks for one project only; run it from that project's folder. A backup of the settings file is written first. For Claude Code it also removes zn's own `secrets` MCP server. Add `--no-mcp` to leave MCP servers alone.
-
-### 2. Claude Code plugin
-
-```bash
-claude plugin uninstall zn-gate@usezn
-```
-
-Or, inside Claude Code, type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
-
-### 3. MCP servers wrapped by `init --wrap-mcp`
+### 1. MCP servers wrapped by `init --wrap-mcp`
 
 ```bash
 npx -y zn-gate init --revert
@@ -115,6 +99,22 @@ npx -y zn-gate init --revert
 This puts back each MCP settings file as it was saved just before zn wrapped it. Changes you made to those files later, such as MCP servers you added, are lost, so add them again afterwards. It only undoes MCP wrapping: it does not remove the plugin or any hooks. If you only ever ran `init` without `--wrap-mcp`, there is nothing for it to restore.
 
 A zn-gate MCP server you added by hand (an entry named `zn-gate` in your agent's MCP settings) is not touched by any command here: delete that entry yourself.
+
+### 2. Hooks (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, Gemini CLI, or Claude Code without the plugin)
+
+```bash
+npx -y zn-gate hooks uninstall claude-code
+```
+
+Use `codex`, `cursor`, `opencode`, `antigravity`, `zcode` or `copilot` instead of `claude-code` for the others (ZCode has no project hooks, so `--project` does not apply to it). Add `--project` if you installed the hooks for one project only; run it from that project's folder. A backup of the settings file is written first. For Claude Code it also removes zn's own `secrets` MCP server. Add `--no-mcp` to leave MCP servers alone.
+
+### 3. Claude Code plugin
+
+```bash
+claude plugin uninstall zn-gate@usezn
+```
+
+Or, inside Claude Code, type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
 
 ### 4. Your `.env` files and the vault
 
