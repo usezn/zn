@@ -72,6 +72,11 @@
         "why": "the release that added the experimental Gemini CLI and GitHub Copilot CLI adapters (not a pin)"
       },
       {
+        "file": "docs/editors/gemini.md",
+        "pin": "zn-gate 1.14.0",
+        "why": "the release that changed the Gemini CLI hooks written before it (not a pin)"
+      },
+      {
         "file": "docs/editors/cursor.md",
         "pin": "zn-gate 1.14.0",
         "why": "the release that removed the Cursor plugin (not a pin)"
