@@ -32,7 +32,7 @@ test('launcher script on linux keeps the plain forms', () => {
 
 test('antigravity install on win32: the install warnings name zn-gate.cmd check', (t) => {
   // tempDir gives the long form of the path: a Windows 8.3 short name (RUNNER~1) holds a "~", which the Antigravity install refuses.
-  const home = tempDir(t, 'zn-b2304-');
+  const home = tempDir(t, 'zn-win-cmd-hook-reasons-');
   const opts = {
     home,
     nodePath: 'C:\Program Files\nodejs\node.exe',
@@ -46,7 +46,7 @@ test('antigravity install on win32: the install warnings name zn-gate.cmd check'
 
   // The POSIX half needs a POSIX path: a Windows temp folder (C:\\...) is never one Antigravity can start there.
   if (process.platform === 'win32') return;
-  const posix = getAdapter('antigravity').install({ ...opts, home: tempDir(t, 'zn-b2304-'), platform: 'linux' });
+  const posix = getAdapter('antigravity').install({ ...opts, home: tempDir(t, 'zn-win-cmd-hook-reasons-'), platform: 'linux' });
   const posixText = posix.warnings.join('\n');
   assert.ok(posixText.includes('Run `zn-gate check` to see that the hook works.'));
   assert.ok(!posixText.includes('.cmd'));
