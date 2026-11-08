@@ -9,6 +9,15 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 - **Editor user:** pick your editor in [Editors and coding agents](editors/README.md) or [OpenCode](editors/opencode.md), or follow the steps for your agent in [Install, verify and uninstall by agent](by-agent.md). [Agent compatibility](compat.md) shows what the scrubber does in each one.
 - **Automation:** see the [Command line reference](cli.md) for commands, options and exit codes, the [GitHub Action](github-action.md) for CI, and the [API reference](api-reference.md) for the Node.js and Python functions.
 
+## Where to start by role
+
+| If you are | Read first | Then |
+|---|---|---|
+| A developer using a coding agent | [First 5 minutes](first-5-minutes.md) | [Check that it works](check.md), then [Keep secrets out of your agent](secrets.md) |
+| A team admin | [zn Team](team.md) | [Team quick guide](team-quick-guide.md), then [Agent compatibility](compat.md) |
+| A CI maintainer | [GitHub Action](github-action.md) | [Coding agents in CI](agents-in-ci.md), then [Exit codes](exit-codes.md) |
+| A security reviewer | [Threat model](threat-model.md) | [Architecture](architecture.md), then [OWASP mapping](owasp-mapping.md) |
+
 ## Getting started
 
 | Guide | What it covers | For whom |
