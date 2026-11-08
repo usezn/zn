@@ -303,6 +303,26 @@ flag off in CI.
     sarif_file: zn-audit.sarif
 ```
 
+### Formats of `zn audit` and `zn scan`
+
+Both commands take `--format` with `text` (default) and `json`, but their
+third format differs: `zn audit` writes `sarif` for GitHub code scanning,
+`zn scan` writes `github` for workflow annotations in CI.
+
+| Command | `--format` | When to use | Who reads it |
+|---|---|---|---|
+| `zn audit` | `text` (default) | A local review before you open the repository | People |
+| `zn audit` | `json` | Findings consumed by a script or another tool | Scripts and tools |
+| `zn audit` | `sarif` | Findings uploaded to GitHub code scanning | GitHub code scanning: one alert per finding under Security > Code scanning |
+| `zn scan` | `text` (default) | A local scan | People |
+| `zn scan` | `json` | Results consumed by a script or another tool | Scripts and tools |
+| `zn scan` | `github` | A scan in a GitHub Actions workflow | People: annotations in the workflow run and on the pull request |
+
+In the [GitHub Action](github-action.md) the `format` input takes `github`
+(default), `text`, `json` or `sarif` for both modes; with `sarif` and the
+upload step, the audit and the scan appear as two separate code scanning runs
+(categories `zn-gate/audit/` and `zn-gate/scan/`).
+
 ## How to read the output
 
 This walks through the text report from [Output](#text), line by line. The values (the path, the file, the

@@ -1,6 +1,6 @@
 # Troubleshooting
 
-The fourteen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
+The seventeen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
@@ -332,9 +332,74 @@ PowerShell words the message differently, but the cause is the same.
 
 If `zn --version` still fails after step 3, run `npm list -g zn-gate` in your own terminal. If it prints nothing, install zn-gate again with `npm install -g zn-gate`, then repeat step 3.
 
+## 15. `scan` lists files under "Not scanned"
+
+A scan can end with a list like this:
+
+```text
+Not scanned (1):
+  big.md (2 MiB or larger)
+```
+
+**What it means:** the file is one that `scan` reads, but it did not read it, and it tells you why instead of leaving it out in silence. These are the reasons:
+
+- `2 MiB or larger`: `scan` reads a file only when it is smaller than 2 MiB (2,097,152 bytes). A bigger file is never opened.
+- `not a regular file`: the name matches, but it is not an ordinary file (for example a socket or a named pipe).
+- `binary .key file, not a key`: a `.key` file with binary content, such as a macOS Keynote file, not a private key.
+- `cannot be read`: the file could not be opened, usually because of its permissions.
+
+A folder that `scan` did not enter is listed apart, under "Directories not scanned". It says `cannot be read` when the folder could not be opened, or `skipped by name` for a build or cache folder such as `dist` or `build`. Folders such as `node_modules` and `.git` are skipped without being listed.
+
+**What to do:**
+
+1. For `2 MiB or larger`, check whether the file is really text you wrote. If it can hold a secret, split it, or scan a smaller copy.
+2. For `cannot be read`, fix the permissions of the file or folder and run the scan again.
+3. If you accept that these files stay unread, see [The scan ends with exit code 3](#16-the-scan-ends-with-exit-code-3).
+
+## 16. The scan ends with exit code 3
+
+You may see this at the end of a scan that found nothing:
+
+```text
+Audit Result : INCOMPLETE - SOME FILES WERE NOT READ
+Status       : Incomplete: 1 file(s) and 0 folder(s) were not read. Exit code 3; use --allow-partial to accept
+```
+
+Or, when the scan read no file at all:
+
+```text
+[!] No files were scanned in .
+Audit Result : NOTHING SCANNED
+Status       : No files were read: this is not a clean result
+```
+
+**What it means:** exit code `3` says the result is not a clean one, because `scan` did not see everything. Either a file or folder it should have read was left out (see [15](#15-scan-lists-files-under-not-scanned)), or no file matched. If `scan` finds something, it exits `1` instead, whatever else was left out. A pruned build folder such as `dist` does not cause a `3`; an unreadable folder or file does.
+
+**What to do:**
+
+1. Read the "Not scanned" and "Directories not scanned" lists and fix what they point to.
+2. If the scan read no file, check that you ran it in the right folder, and that the folder holds files `scan` reads. Source code is read only with `--code` (see [17](#17-scan-reads-no-source-code)).
+3. If you accept the unread files, add `--allow-partial`: the same scan then exits `0` when it finds nothing. It prints `Partial coverage accepted with --allow-partial`, and the lists stay in the output. It does not change what the scan reads, and it does not accept a scan that read no file at all. See [exit codes](exit-codes.md#scan-and-review).
+
+## 17. `scan` reads no source code
+
+A folder scan reports `Files Scanned: 0`, or says nothing about your `.js`, `.ts`, `.py`, `.sh`, `.html`, `.go` or `.rs` files, and the header reads:
+
+```text
+Scope   : Prompt templates, docs, configs (use --code to scan source)
+```
+
+**What it means:** by default `scan` reads the files an agent reads as instructions or settings: `.md`, `.txt`, `.prompt`, `.json`, `.yaml`, `.yml`, `.toml`, `.env`, `.pem` and `.key` files, files whose name starts with `.env`, and private key files such as `id_ed25519`. It does not read source code. A folder that holds only source code therefore scans zero files and ends with exit code `3`.
+
+**What to do:**
+
+1. Add `--code` (or its other name, `--all`) to read those source files too: `zn-gate scan . --code`. The header then reads `Scope   : All files (prompts + code)`.
+2. For another extension, name it with `--include`, for example `zn-gate scan . --include .rst,.xml`.
+3. Name a single file to scan it whatever its extension: `zn-gate scan path/to/file.js`.
+
 ## Block and warn reasons, by family
 
-Past the fourteen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
+Past the seventeen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
 
 For five common blocks, with what to do for each, see [Why was this blocked?](why-was-this-blocked.md).
 
