@@ -42,12 +42,18 @@ const DENIED = /holds plain-text|was not read because|builds the path of a .env 
 
 const BLOCKED = [
   'type .e^nv',
+  'type .e^n^v',
+  'type .en^v',
+  'type ^.env',
+  'type .env^',
   'ty^pe .env',
   'type %CD%\\.env',
+  'type %CD%\\.e^nv',
   'type .%EMPTY%env',
   'cmd /c "type .e^nv"',
   'more < .e^nv',
   'findstr . .e^nv',
+  'type .e^NV',
 ];
 
 const ALLOWED = ['type README.md', 'echo 100%', 'type notes^.txt', 'type %CD%\\README.md', 'echo %EMPTY%', 'findstr . README.md', 'more < README.md'];
@@ -57,19 +63,26 @@ function decide(c, platform) {
   return asPlatform(platform, () => policy.bashDenial(c, opts) || '');
 }
 
-// Dangerous forms the policy allows today. Empty means every case below is blocked.
-const GAPS = new Set([]);
-
+// Dangerous forms the policy allows today, with the reason. Each one is a todo test: it fails until the policy is fixed, then
+// the todo flag is removed. Only the cmd-caret and percent cases belong here.
+const GAPS = new Map([
+  // Windows file names are case-insensitive, so .e^NV is the same .env file as .e^nv. The policy matches the .env name
+  // case-sensitively, so this form is allowed. Product gap: fix in the .env name match in lib/hooks/policy.js.
+  ['type .e^NV', 'known gap: allowed today; Windows reads .env case-insensitively, the policy matches it case-sensitively'],
+]);
 for (const c of BLOCKED) {
-  test('win32: blocked: ' + c, GAPS.has(c) ? { todo: 'known gap: allowed today, a .env read through cmd.exe syntax' } : {}, () => {
+  const gap = GAPS.get(c);
+  test('win32: blocked: ' + c, gap ? { todo: gap } : {}, () => {
     assert.match(decide(c, 'win32'), DENIED, c);
   });
 }
 
 // Once cmd is named, the caret is cmd syntax on any system.
-test('linux: blocked once cmd is named: cmd /c "type .e^nv"', () => {
-  assert.match(decide('cmd /c "type .e^nv"', 'linux'), DENIED);
-});
+for (const c of ['cmd /c "type .e^nv"', 'cmd /c type .e^nv', 'cmd.exe /c "type .e^nv"', 'cmd /c "type %CD%\\.env"']) {
+  test('linux: blocked once cmd is named: ' + c, () => {
+    assert.match(decide(c, 'linux'), DENIED, c);
+  });
+}
 
 for (const c of ALLOWED) {
   test('win32: allowed look-alike: ' + c, () => {
