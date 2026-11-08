@@ -9,6 +9,7 @@
 #   links         pull requests: any Markdown file, lychee config
 #   shell lint    pull requests and pushes to main or next: any *.sh
 #   workflowlint  pull requests and pushes to main or next: workflows, actions, zizmor config, action.yml
+#   wfheader      pull requests and pushes to main or next: workflows, the header check and its test
 #   packagelint   pull requests and pushes to main or next: the two packages and their lint requirements
 #   hooks         pull requests and pushes to main or next: the pre-commit hooks file and its test
 #   snippets      pull requests, pushes to main, the nightly schedule: README, docs, packages
@@ -21,7 +22,7 @@
 # Environment: EVENT_NAME, REF (github.ref), BASE_REF (pull requests), BEFORE (pushes: the previous tip).
 set -uo pipefail
 
-CHECKS="changelog markdownlint typos links shellcheck workflowlint packagelint hooks snippets scopetest"
+CHECKS="changelog markdownlint typos links shellcheck workflowlint wfheader packagelint hooks snippets scopetest"
 declare -A run
 for c in $CHECKS; do run[$c]=false; done
 
@@ -95,6 +96,9 @@ while IFS= read -r f; do
   esac
   case "$f" in
     .github/workflows/*|.github/actions/*|.github/workflow-lint/*|.github/zizmor.yml|action.yml) run[workflowlint]=true ;;
+  esac
+  case "$f" in
+    .github/workflows/*|.github/scripts/check-workflow-header*) run[wfheader]=true ;;
   esac
   case "$f" in
     packages/zn-gate/*|packages/zn-gate-py/*|.github/package-lint-requirements.txt|.github/release-requirements.txt) run[packagelint]=true ;;
