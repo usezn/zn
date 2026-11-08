@@ -4,6 +4,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 
 - [audit-before-adding-a-repo.md](audit-before-adding-a-repo.md): run `zn-gate audit` on a repository you do not know yet, read the report and decide what to do before you open it with an agent.
 - [block-message-anatomy.md](block-message-anatomy.md): one real block message, explained part by part.
+- [claude-code-plugin-or-cli.md](claude-code-plugin-or-cli.md): the two ways to cover Claude Code (the plugin, or the hooks of `zn hooks install claude-code`), what each needs, and how to verify and remove them.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
 - [first-block-vs-allow-decision.md](first-block-vs-allow-decision.md): what to do the first time zn-gate blocks a command of your agent, and when to change the settings instead.
 - [env-file-round-trip.md](env-file-round-trip.md): move a fake `.env` file into the vault and put the values back.
