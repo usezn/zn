@@ -238,12 +238,23 @@ const VERIFY_JS_SHA256 = '715eb569856bcff83560156131d56c328069582fcbfb7e2b010401
 
 const CHANGED_RC_DECL = /(?:^|\n)const CHANGED_RC = \d{1,3};\n/g;
 const CHANGED_RC_ANY = /\bCHANGED_RC\s*=(?!=)/g;
+// The statement also splices JSON.stringify(VAULT_FILES) into the program, and that list is outside the pinned text. It must be
+// one literal array of plain relative .js paths (no "..", no quotes or escapes) on one line, declared once and used nowhere but
+// in that JSON.stringify call (outside comments), so no code can change what the verifier checks without changing this hash.
+const VAULT_FILES_DECL = /(?:^|\n)const VAULT_FILES = \[('lib\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.js'(?:, 'lib\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.js')*)\];\n/g;
+function vaultFilesOk(text) {
+  if ((text.match(VAULT_FILES_DECL) || []).length !== 1) return false;
+  const code = text.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  // the declaration and the one JSON.stringify(VAULT_FILES) inside the statement, nothing else
+  return (code.match(/\bVAULT_FILES\b/g) || []).length === 2 && (code.match(/JSON\.stringify\(VAULT_FILES\)/g) || []).length === 1;
+}
 
 /** For lib/agents/launcher.js only: the text without the reviewed VERIFY_JS statement (unchanged otherwise). */
 function withoutVerifyJs(rel, text) {
   if (!VERIFY_JS_FILE.test(rel)) return text;
   // the program text includes CHANGED_RC: one plain integer declaration and no other assignment to it
   if ((text.match(CHANGED_RC_DECL) || []).length !== 1 || (text.match(CHANGED_RC_ANY) || []).length !== 1) return text;
+  if (!vaultFilesOk(text)) return text;
   const start = text.indexOf(VERIFY_JS_START);
   if (start < 0 || text.indexOf(VERIFY_JS_START, start + 1) >= 0) return text;
   const end = text.indexOf('";\n', start);
