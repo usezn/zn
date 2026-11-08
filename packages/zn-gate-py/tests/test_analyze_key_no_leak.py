@@ -9,6 +9,7 @@ import json
 import logging
 import threading
 import time
+import urllib.error
 
 import pytest
 
@@ -103,6 +104,9 @@ def test_transport_exceptions_do_not_carry_the_key(status, reply, echo, delay, t
     finally:
         srv.shutdown()
         srv.server_close()
+    if isinstance(info.value, urllib.error.HTTPError):
+        # The HTTP error holds the open response: close it so the socket is not left to the garbage collector.
+        info.value.close()
     assert srv.seen == ["Bearer " + FAKE_KEY]
     for text in _chain_texts(info.value) + [client.cloud_error_hint(info.value)]:
         assert FAKE_KEY not in text
