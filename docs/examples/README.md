@@ -2,6 +2,7 @@
 
 Worked examples, in alphabetical order. All values in them are made up.
 
+- [agent-hooks-health-checklist.md](agent-hooks-health-checklist.md): a weekly check of your agent hooks with `zn check`, `zn check --hooks` and `zn stats`, and how to fix a broken one.
 - [block-message-anatomy.md](block-message-anatomy.md): one real block message, explained part by part.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
 - [env-file-round-trip.md](env-file-round-trip.md): move a fake `.env` file into the vault and put the values back.
