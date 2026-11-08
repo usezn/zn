@@ -52,6 +52,7 @@ After you update zn-gate, a vault that is still running from the older version k
 
 ```text
 Vault: unlocked (backend passphrase, locks after 30 min idle, or at 23:09 (in 8 h) at the latest, zn-gate 1.14.0), outdated: restart with `zn lock`, then `zn unlock`
+Location: ~/.zn/vault
 ```
 
 Run the two commands in your own terminal, in the order the line gives. More in [Install and unlock the vault](../secrets.md#1-install-and-unlock-the-vault).
