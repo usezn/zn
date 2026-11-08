@@ -29,15 +29,15 @@ def _subparsers():
 
 def test_docs_name_the_same_commands_as_the_parser():
     assert set(_section_rows()) == set(_subparsers())
-    assert len(_subparsers()) == 6
+    assert len(_subparsers()) == 7
 
 
-@pytest.mark.parametrize("command", sorted(["test", "analyze", "scan", "evidence", "status", "stats"]))
+@pytest.mark.parametrize("command", sorted(["test", "analyze", "scan", "evidence", "status", "stats", "check"]))
 def test_documented_options_exist_in_the_command_parser(command):
     options_cell = _section_rows()[command]
     documented = set(re.findall(r"`(--[a-z-]+)", options_cell))
     sub = _subparsers()[command]
     registered = {o for a in sub._actions for o in a.option_strings}
     assert documented <= registered, documented - registered
-    if command != "status":
+    if command not in ("status", "check"):
         assert documented
