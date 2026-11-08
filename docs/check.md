@@ -550,6 +550,45 @@ zn could not check it: <error>
 
 Something unexpected stopped the check for that agent, and the line gives the error. Nothing was changed. Run `npx -y zn-gate check` again; if it repeats, ask in [Discussions](https://github.com/usezn/zn/discussions) and include the line, without any secret.
 
+## For scripts
+
+`zn-gate check` ends with an exit code, so a script or a CI job can tell whether your agents are protected without reading the output. The codes are listed in [Exit codes](exit-codes.md):
+
+| Code | What it means for `check` |
+|---|---|
+| `0` | At least one agent is set up and every agent that is set up is protected. |
+| `1` | An agent is not protected, no agent is set up, or the project rules file has errors. |
+| `2` | The command was used wrongly, for example with an option it does not know. |
+
+Save the code in the line right after the command, before anything else runs. In bash:
+
+```bash
+npx -y zn-gate check
+code=$?
+case $code in
+  0) echo "zn-gate: your agents are protected" ;;
+  1) echo "zn-gate: an agent is not protected, or none is set up" ; exit 1 ;;
+  2) echo "zn-gate: check was called wrongly, fix the command" ; exit 2 ;;
+  *) echo "zn-gate: could not run (exit $code)" ; exit "$code" ;;
+esac
+```
+
+In PowerShell:
+
+```powershell
+npx -y zn-gate check
+$code = $LASTEXITCODE
+switch ($code) {
+  0 { Write-Output "zn-gate: your agents are protected" }
+  1 { Write-Output "zn-gate: an agent is not protected, or none is set up"; exit 1 }
+  2 { Write-Output "zn-gate: check was called wrongly, fix the command"; exit 2 }
+  default { Write-Output "zn-gate: could not run (exit $code)"; exit $code }
+}
+```
+
+- If your script runs with `set -e` in bash, a non-zero code stops it before the `case` line. Write `npx -y zn-gate check || code=$?` and start with `code=0` instead.
+- A machine with no coding agent set up exits `1`, so do not use `check` as a gate on a CI runner that has no agent. See [Exit codes](exit-codes.md#which-exit-code-in-a-script) for the codes of the other commands.
+
 ## If something fails
 
 - **`npx: command not found`**: install the LTS version of [Node.js](https://nodejs.org/), open a new terminal and run the command again.
