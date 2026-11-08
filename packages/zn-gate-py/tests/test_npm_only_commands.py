@@ -6,7 +6,7 @@ import pytest
 from zn_gate import cli
 
 
-@pytest.mark.parametrize("argv", [["hooks", "install", "claude-code"], ["init"], ["check"], ["unlock"]])
+@pytest.mark.parametrize("argv", [["hooks", "install", "claude-code"], ["init"], ["doctor"], ["unlock"]])
 def test_npm_only_command_points_to_npm(monkeypatch, capsys, argv):
     monkeypatch.setattr(sys, "argv", ["zn-gate"] + argv)
     assert cli.main() == 2
