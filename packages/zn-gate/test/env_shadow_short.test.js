@@ -138,7 +138,7 @@ test('env shadow: the clear-text summary makes no claim about what the hook coun
   assert.equal(await cli.dispatch('env', ['shadow'], io), 0);
   const out = io.stdout.text();
   assert.doesNotMatch(out, /8 characters or more/);
-  assert.match(out, /treat it as readable by an agent/);
+  assert.match(out, /your agent cannot read this file/);
 });
 
 test('env shadow --dry-run with only a short skipped value prints the preview line and writes nothing', async (t) => {
