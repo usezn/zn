@@ -38,7 +38,14 @@ test('topRules: highest count first, ties by id, at most five, 7 days by default
   fixture();
   const top = stats.topRules();
   assert.deepEqual(top.map((r) => [r.id, r.count]), [['AWS_KEY', 9], ['DB_PASSWORD', 4], ['GITHUB_TOKEN', 4], ['JWT', 3], ['EMAIL', 2]]);
-  for (const r of top) assert.equal(typeof r.name, 'string');
+  for (const r of top) assert.equal(r.name, 'Built-in detector');
+});
+
+test('topRules: name is always the generic label, for every id', () => {
+  fixture();
+  // Detector ids are upper case and rule-explanations keys are lower case, so no id here has an
+  // explanation entry; the generic name must hold for all of them, including the longer window.
+  for (const r of stats.topRules({ days: 30 })) assert.equal(r.name, 'Built-in detector');
 });
 
 test('topRules: a longer window counts older days', () => {

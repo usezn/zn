@@ -235,11 +235,12 @@ function latencyReport({ file, off = false } = {}) {
 
 const TOP_RULES_DAYS = 7;
 const TOP_RULES_LIMIT = 5;
-const { explainRule } = require('./rule-explanations');
+const TOP_RULE_NAME = 'Built-in detector';
 
 /**
  * The most frequent detector ids over the last `days` days (default 7): [{ id, name, count }], highest count first,
- * ties by id. Ids only, from the counts already stored; nothing new is recorded.
+ * ties by id. Ids only, from the counts already stored; nothing new is recorded. `name` is always the generic
+ * label 'Built-in detector' (the same as Python's GENERIC_RULE_NAME): detector ids never match rule-explanations.
  */
 function topRules({ days = TOP_RULES_DAYS, limit = TOP_RULES_LIMIT, now = new Date(), file } = {}) {
   const s = summary({ days, now, file });
@@ -247,7 +248,7 @@ function topRules({ days = TOP_RULES_DAYS, limit = TOP_RULES_LIMIT, now = new Da
     .filter(([id, n]) => TYPE_RE.test(id) && Number.isFinite(n) && n > 0)
     .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
     .slice(0, limit)
-    .map(([id, count]) => ({ id, name: (explainRule(id) || {}).name || 'Built-in detector', count }));
+    .map(([id, count]) => ({ id, name: TOP_RULE_NAME, count }));
 }
 
 module.exports = { topRules, TOP_RULES_DAYS, znHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known,
