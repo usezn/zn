@@ -308,9 +308,11 @@ def _decode_ansi_c(cmd: str) -> str:
 
 
 class _Segs(List[Any]):
-    """The simple commands of a line as (words, sep) pairs; raws holds the text of each one that has a backtick (else '')."""
+    """The simple commands of a line as (words, sep) pairs; raws holds the text of each one that has a backtick (else '').
+    opens counts, for each one, the ( of a group after a pipe, which are left out of the text read next (curl URL | (sh))."""
 
     raws: List[str]
+    opens: List[int]
 
 
 def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], Optional[str]]], bool]:
@@ -320,7 +322,9 @@ def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], O
     rest = re.sub(r"(^|[\s\"'])([A-Za-z]:)\\(?=\s|\Z)", r"\1\2/", rest)
     out = _Segs()
     out.raws = []
+    out.opens = []
     guard = 0
+    opens = 0
     while rest and guard < _MAX_SEGMENTS:
         guard += 1
         end, words, sep = _scan_first(rest, posix)
@@ -334,12 +338,15 @@ def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], O
                 sep = "|&"
                 adv += 1
         out.append((words, sep))
+        out.opens.append(opens)
+        opens = 0
         raw = rest[:end]
         out.raws.append(raw if "`" in raw else "")
         rest = rest[adv:]
         if sep in ("|", "|&"):
             lead = _PIPE_LEAD_RE.match(rest)
             if lead:
+                opens = lead.group(0).count("(")
                 rest = rest[lead.end():]
     # Unread text left over: the caller must not treat the commands read so far as the whole line.
     return out, bool(rest)
@@ -1156,6 +1163,9 @@ def _check_pipeline(pipe: List[Tuple[List[str], Optional[str]]], known: Optional
         alts = _brace_alts(a[0]) if a else [""]
         names = [_program_name(x) for x in (alts if alts is not None else [str(a[0])])]
         heads.append((a, names[0], names, alts is None, _segment_dir(known, d)))
+    # An env -C / sudo -D folder too long to follow (seen only once the redirects are left out) is refused, not guessed at.
+    if any(h[4] is _CWD_OVERFLOW for h in heads):
+        return _OVERFLOW
     first_dl = next((j for j, h in enumerate(heads) if h[3] or any(n in _DOWNLOADERS for n in h[2])), -1)
     if first_dl >= 0:
         for j in range(first_dl + 1, len(pipe)):
@@ -1211,13 +1221,19 @@ _MAX_TICK_READS = 200
 def _check_segments(
     segs: List[Tuple[List[str], Optional[str]]], depth: int, cwd0: Any = None
 ) -> Optional[str]:
-    """cwd0 is the folder a cd or pushd earlier in the same command line moved to (None = unknown). A cd inside a pipeline or a background command runs in a subshell and does not count."""
+    """cwd0 is the folder a cd or pushd earlier in the same command line moved to (None = unknown). A cd inside a pipeline or a background command runs in a subshell and does not count.
+    Nor does a cd inside ( ) or $( ): past the ) the folder is the one from before the (. A ) the line cannot match to a (
+    leaves the folder unknown and treated as protected."""
     pipe: List[Tuple[List[str], Optional[str]]] = []
     known = cwd0  # the folder reached so far: a _Folder, _CWD_LOST, or None when unknown
     raws = getattr(segs, "raws", None)
+    opens = getattr(segs, "opens", None)
+    outer: List[Any] = []  # the folder outside each ( ) still open, innermost last
     ticks = 0
     var_scope = _Vars()
     for idx, (words, sep) in enumerate(segs):
+        for _ in range(opens[idx] if opens else 0):
+            outer.append(known)
         # Literal variables assigned earlier on the line are filled in (X=curl; $X url | sh).
         words = var_scope.apply(words, sep)
         if var_scope.overflow:
@@ -1241,12 +1257,16 @@ def _check_segments(
                 return _OVERFLOW
             if to is not _NOT_CD:
                 known = to
+        if sep == "(":
+            outer.append(known)
         pipe.append((words, sep))
         if not _is_pipe(sep):
             hit2 = _check_pipeline(pipe, known)
             if hit2:
                 return hit2
             pipe = []
+        if sep == ")":
+            known = outer.pop() if outer else _CWD_LOST
     return _check_pipeline(pipe, known) if pipe else None
 
 

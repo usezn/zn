@@ -113,7 +113,8 @@ function programName(text) {
   return String(text).replace(/^\\+/, '').split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, '');
 }
 
-/* Simple commands of a command line, with the operator that follows each: [{ words: string[], sep }]. */
+/* Simple commands of a command line, with the operator that follows each: [{ words: string[], sep, raw, opens }]. opens counts
+   the ( of a group after a pipe, which are left out of the text read next (curl URL | (sh)). */
 function segmentsOf(cmd, posix = false) {
   const { scanFirstCommand } = require('./hooks/policy');
   // 2>&1 and &> are redirections, not the control operator &.
@@ -121,6 +122,7 @@ function segmentsOf(cmd, posix = false) {
   let rest = String(cmd).replace(/(\d*[<>]+)&(\d+|-)/g, '$1_$2').replace(/&>>?/g, '>').replace(/(^|[\s"'])([A-Za-z]:)\\(?=\s|$)/g, '$1$2/');
   const out = [];
   let guard = 0;
+  let opens = 0;
   for (; rest.length && guard < MAX_SEGMENTS; guard++) {
     const scan = scanFirstCommand(rest, posix);
     let sep = scan.operator;
@@ -131,10 +133,17 @@ function segmentsOf(cmd, posix = false) {
     }
     // The text of the command, kept only when it holds a backtick: its substitution starts from the folder reached by then.
     const raw = rest.slice(0, scan.end);
-    out.push({ words: scan.words.map((w) => w.text), sep, raw: raw.includes('`') ? raw : '' });
+    out.push({ words: scan.words.map((w) => w.text), sep, raw: raw.includes('`') ? raw : '', opens });
+    opens = 0;
     rest = rest.slice(adv);
     // A pipe continues over a line break, and its target may be a group: curl URL |<nl>sh, curl URL | (sh).
-    if (sep === '|' || sep === '|&') rest = rest.replace(/^(?:\s|\()+/, '');
+    if (sep === '|' || sep === '|&') {
+      const lead = /^(?:\s|\()+/.exec(rest);
+      if (lead) {
+        opens = lead[0].split('(').length - 1;
+        rest = rest.slice(lead[0].length);
+      }
+    }
   }
   // Unread text left over: the caller must not treat the commands read so far as the whole line.
   out.truncated = rest.length > 0;
@@ -711,13 +720,17 @@ function on(rule) { return ENABLED === null || ENABLED.has(rule); }
 // Most backtick substitutions read from a changed folder in one command line; past it the line is refused.
 const MAX_TICK_READS = 200;
 
-/* `cwd0` is the folder a cd or pushd earlier in the same command line moved to (null = unknown). A cd inside a pipeline or a background command runs in a subshell and does not count. */
+/* `cwd0` is the folder a cd or pushd earlier in the same command line moved to (null = unknown). A cd inside a pipeline or a background command runs in a subshell and does not count.
+   Nor does a cd inside ( ) or $( ): past the ) the folder is the one from before the (. A ) the line cannot match to a (
+   leaves the folder unknown and treated as protected. */
 function checkSegments(segs, depth, cwd0 = null) {
   let pipe = [];
   let known = cwd0; // the folder reached so far: a chain, CWD_LOST, or null when unknown
   let ticks = 0;
   const vars = shellVars.newScope();
+  const outer = []; // the folder outside each ( ) still open, innermost last
   for (let seg of segs) {
+    for (let k = 0; k < (seg.opens || 0); k++) outer.push(known);
     // Literal variables assigned earlier on the line are filled in (X=curl; $X url | sh).
     const words = shellVars.applyWords(vars, seg.words, seg.sep);
     if (vars.overflow) return OVERFLOW;
@@ -737,12 +750,14 @@ function checkSegments(segs, depth, cwd0 = null) {
       if (to === CWD_OVERFLOW) return OVERFLOW;
       if (to !== NOT_CD) known = to;
     }
+    if (seg.sep === '(') outer.push(known);
     pipe.push(seg);
     if (!isPipe(seg.sep)) {
       const hit2 = checkPipeline(pipe, known);
       if (hit2) return hit2;
       pipe = [];
     }
+    if (seg.sep === ')') known = outer.length ? outer.pop() : CWD_LOST;
   }
   return pipe.length ? checkPipeline(pipe, known) : null;
 }

