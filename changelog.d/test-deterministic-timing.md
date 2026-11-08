@@ -1,0 +1,2 @@
+### Changed
+- The setup plan of `zn-gate init` now accepts the same longer hook start time as `zn-gate check` for tests, and two tests no longer depend on how fast the machine is: the one for a plugin next to zn hooks gives the plugin hook far more than 15 s to start, and the 33 MiB scan test compares the work for four times the text with the work for the small text instead of using a fixed time limit.

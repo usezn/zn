@@ -48,7 +48,7 @@ while IFS= read -r f; do
     packages/*|plugins/*|skill/*|bench/*|action.yml|.github/*) needed=true; echo "needs the checks: $f"; break ;;
     # Documentation files a test reads. Keep in step with the tests: test-ci-scope.sh fails when a
     # test mentions a docs file that is not listed here.
-    docs/api-reference.md|docs/audit.md|docs/check.md|docs/cli.md|docs/commands-cheatsheet.md) needed=true; echo "needs the checks (a test reads it): $f"; break ;;
+    docs/api-reference.md|docs/audit.md|docs/check.md|docs/cli.md|docs/commands-cheatsheet.md|docs/compat.md) needed=true; echo "needs the checks (a test reads it): $f"; break ;;
     docs/*|*.md|LICENSE|NOTICE|assets/*) ;;   # documentation
     src/*|Cargo.toml|Cargo.lock|.cargo/*|build.rs) ;;   # Rust gateway
     *) needed=true; echo "needs the checks: $f"; break ;;

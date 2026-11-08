@@ -50,7 +50,7 @@ test('every message in messages.js is clean', () => {
     const value = messages[name];
     if (typeof value === 'string') {
       assertClean(value, name);
-    } else if (typeof value === 'function' && name !== 'isNetworkFailure' && name !== 'verboseDetail') {
+    } else if (typeof value === 'function' && name !== 'isNetworkFailure' && name !== 'looksLikeEmailInvite' && name !== 'verboseDetail') {
       for (const env of [{}, { ZN_VERBOSE: '1' }]) {
         assertClean(value(...args, env), name);
         assertClean(value(['started from example'], ['x'], 'y', env), name);

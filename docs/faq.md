@@ -86,7 +86,13 @@ wrapping with `npx -y zn-gate init --revert`. Afterwards, run
 `npx -y zn-gate check` to see what is left. See
 [Piece by piece](uninstall.md#piece-by-piece).
 
-### 11. How do I remove zn-gate from one agent only?
+### 11. In which order should I remove zn-gate?
+
+Remove the hooks before the program. Run `npx -y zn-gate uninstall` in your own terminal first: it puts back the MCP servers that zn-gate wrapped, then removes the hooks and the Claude Code plugin, and asks before each change. Only after that, run `npm uninstall -g zn-gate`.
+
+If you remove the program first, the hooks stay in your agent's settings. The agent can then be blocked from running commands, because part of zn-gate is missing. If that happens, run `npm install -g zn-gate` to put the program back, then run `npx -y zn-gate uninstall`. To remove only one part, see [Piece by piece](uninstall.md#piece-by-piece).
+
+### 12. How do I remove zn-gate from one agent only?
 
 Run `npx -y zn-gate hooks uninstall <agent>` in your own terminal: it removes
 the hooks of that agent only and writes a backup of the settings file first.
@@ -99,7 +105,7 @@ names each agent that is no longer protected. Details are in
 
 ## Performance
 
-### 12. Does zn-gate slow my agent down?
+### 13. Does zn-gate slow my agent down?
 
 The hooks run once before and once after each tool call, and the agent waits
 for them. Most of that time is Node.js starting, not the check itself.
@@ -108,11 +114,11 @@ input size, and the script to measure them on your own machine.
 
 ## Your data
 
-### 13. Where is my data?
+### 14. Where is my data?
 
 The check runs locally on your machine unless you turn on the optional cloud check. With it on, only the text of `analyze_prompt` and `zn-gate analyze` calls is sent, after zn-gate removed the secrets it detects. See [What leaves your machine](../README.md#what-leaves-your-machine) for the full list, and [Turn on the optional cloud check](connect.md) to turn it on or off.
 
-### 14. Does zn-gate work without internet?
+### 15. Does zn-gate work without internet?
 
 The protection does: the hooks and `zn-gate analyze` with the local check,
 which is the default, run on your machine and need no connection. What needs
@@ -122,3 +128,19 @@ without internet, leave the cloud check off: with it off, nothing is sent to
 usezn.com. See
 [Install on a machine without internet](install-matrix.md#install-on-a-machine-without-internet)
 for the full list and the offline install steps.
+
+## Hooks
+
+### 16. What do zn-gate's hooks do, and where do they live?
+
+A hook is an entry that your coding agent runs at fixed points: when you send a prompt, before a tool call, and after a tool returns its output. zn-gate's hook passes that event to zn-gate, which checks it and can block it. Each agent keeps its hook entries in its own settings file: your user settings, or, with `--project`, the settings of one project folder.
+
+To see every zn hook, the file it is in and whether it works, run `npx -y zn-gate check --hooks`. It only reads files. The small launcher script that runs the hooks is in `~/.zn/hooks`. For the command, see [`hooks`](cli.md#hooks).
+
+### 17. How do I turn the hooks off for one project, or for a while?
+
+For one project, go to that project's folder and run `npx -y zn-gate hooks uninstall <agent> --project`, with the agent's name, for example `claude-code`. Your user hooks stay in place.
+
+zn-gate has no pause switch. To turn the hooks off for a while, run `npx -y zn-gate hooks uninstall <agent>`, and later run `zn-gate hooks install <agent>` to turn them back on. With the Claude Code plugin, `claude plugin disable zn-gate@usezn` turns off the plugin's hooks, and `claude plugin enable zn-gate@usezn` turns them back on.
+
+Run these commands in your own terminal: zn-gate refuses to change hooks when an agent runs them. While the hooks are off, the agent's actions are not checked by zn-gate. Run `npx -y zn-gate check` afterwards to see what is protected.
