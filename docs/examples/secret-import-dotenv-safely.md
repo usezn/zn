@@ -1,6 +1,6 @@
 # Example: import a `.env` file's secrets into the vault
 
-`zn secret import` copies the secret values of a `.env` file into the vault and leaves the file as it is. This page walks one import step by step, checks the result with `zn secret list`, and then removes the secrets again. It only strings together steps that [Keep secrets out of your coding agent](../secrets.md) and the [command line reference](../cli.md) describe. All names and values are made up, and nothing on this page touches a real file of yours. For the version that also rewrites the file with markers, see [a `.env` file round trip through the vault](env-file-round-trip.md).
+`zn secret import` copies the secret values of a `.env` file into the vault and leaves the file as it is. This page walks one import step by step, checks the result with `zn secret list`, and then removes the secrets again. It only strings together steps that [Keep secrets out of your coding agent](../secrets.md) and the [command line reference](../cli.md) describe. All names and values are made up, and nothing on this page touches a real file of yours.
 
 Run every command in your own terminal, not through your agent: the commands that add, change or remove a value need an interactive terminal, and they refuse to run inside an agent.
 
@@ -100,7 +100,7 @@ npx -y zn-gate secret list
 No secrets stored. Add one with: zn secret set NAME   or import a .env: zn env shadow .env
 ```
 
-There is nothing else to clean up: `secret import` never changes the `.env` file and stores no encrypted copy of it, so there is nothing to restore — the file still holds the values it always held. (That is also why removing the secrets is safe.) To have the file rewritten with markers instead, use `env shadow`, which stores an encrypted copy and is undone with `env unshadow`; that walk-through is [a `.env` file round trip through the vault](env-file-round-trip.md).
+There is nothing else to clean up: `secret import` never changes the `.env` file and stores no encrypted copy of it, so there is nothing to restore — the file still holds the values it always held. (That is also why removing the secrets is safe.) To have the file rewritten with markers instead, use `env shadow`, which stores an encrypted copy and is undone with `env unshadow`.
 
 If the `.env` was ever committed, synced or shared, rotate the values as well: copying them into the vault does not undo that exposure.
 
@@ -114,4 +114,3 @@ npx -y zn-gate lock
 
 - [Keep secrets out of your coding agent](../secrets.md), the page this walkthrough is built from
 - [`secret import`](../cli.md#secret-import) and [`env shadow`](../cli.md#env-shadow) in the command line reference
-- [Example: a `.env` file round trip through the vault](env-file-round-trip.md)
