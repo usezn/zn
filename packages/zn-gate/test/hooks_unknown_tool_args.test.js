@@ -131,3 +131,22 @@ test('commandScan builds the nested lines with the VS Code reading and keeps the
   assert.ok(copilot.commandScan({ a: { b: { c: { command: 'npm test' } } } }).command.split('\n').includes('npm test'));
   assert.equal(copilot.commandScan({ q: 'hello' }).command, undefined);
 });
+
+// A command and a protected path in the same unknown tool: both checks apply, so the path check still denies.
+for (const a of AGENTS) {
+  test(a.name + ': an unknown tool with a harmless command and a protected path is denied by the path check', async (t) => {
+    const dir = tempDir(t, 'zn-test-');
+    const top = a.deny(await a.run(dir, 'custom_runner', { command: 'ls', file_path: AWS }));
+    assert.ok(top, a.name + ': top-level command next to a protected path');
+    const deep = a.deny(await a.run(dir, 'custom_runner', { a: { b: { command: 'npm test' } }, target: AWS }));
+    assert.ok(deep, a.name + ': nested command next to a protected path');
+  });
+
+  test(a.name + ': controls for a command next to a path (harmless command allowed, protected path alone denied)', async (t) => {
+    const dir = tempDir(t, 'zn-test-');
+    assert.equal(a.deny(await a.run(dir, 'custom_runner', { command: 'npm test' })), null, a.name + ': harmless command only');
+    assert.equal(a.deny(await a.run(dir, 'custom_runner', { command: 'npm test', file_path: path.join(dir, 'notes.txt') })), null,
+      a.name + ': harmless command next to a workspace file');
+    assert.ok(a.deny(await a.run(dir, 'custom_runner', { file_path: AWS })), a.name + ': protected path only');
+  });
+}

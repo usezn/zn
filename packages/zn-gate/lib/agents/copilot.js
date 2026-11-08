@@ -468,6 +468,12 @@ function normalize(raw) {
   if (SHELL_TOOLS.has(toolName) || (!known && cmd !== undefined)) {
     const e = { ...ev, tool: toolName === 'powershell' ? 'powershell' : 'bash', input: { command: cmd || '', texts: [] } };
     if (cmd === undefined) e.unreadable = unreadable('command');
+    else if (!known) {
+      // The files named next to the command still get the read and write checks (both checks apply).
+      const also = pathsOf(args, { loose: true });
+      if (also.paths.length) e.input.alsoPaths = also.paths;
+      if (also.bad) e.unreadable = unreadable('file address');
+    }
     return e;
   }
   const { paths, bad } = pathsOf(args, { loose: !known });

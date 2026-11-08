@@ -683,6 +683,12 @@ async function decidePre(ev, d, agentId, opts) {
   }
 
   if (SHELL_TOOLS.has(tool)) {
+    // A tool zn does not know whose arguments hold both a command and file paths: the paths get the read and write
+    // checks first, so the command check never replaces them.
+    for (const p of Array.isArray(input.alsoPaths) ? input.alsoPaths : []) {
+      const deny = policy.readDenial(p, pathOpts) || policy.writeDenial(p, pathOpts);
+      if (deny) return { decision: 'deny', message: deny };
+    }
     const original = String(input.command || '');
     const instructionMode = instructionWritesOf(opts);
     const instructionNotice = instructionMode === 'off' ? undefined : {};

@@ -269,15 +269,20 @@ function normalize(raw) {
   }
   // Any other tool (one zn does not know): commands and files in its nested arguments, within bounds, get the shell,
   // read and write checks; arguments zn cannot read to the end are refused.
-  if (!NAMES_ONLY_TOOLS.has(toolName)) {
-    const scan = require('./copilot').commandScan(args, cwd);
-    if (scan.bad || scan.truncated) return unreadable(scan.bad ? 'the command' : 'the arguments (too deeply nested)');
-    if (scan.command !== undefined) return { ...ev, tool: 'bash', input: { command: scan.command, texts: [] } };
-  }
   const named = pathsOf(args);
   const loose = NAMES_ONLY_TOOLS.has(toolName) ? { paths: [], bad: false } : require('./copilot').pathsOf(args, { loose: true });
   const paths = [...new Set([...named.paths, ...loose.paths])];
   const bad = named.bad || loose.bad;
+  if (!NAMES_ONLY_TOOLS.has(toolName)) {
+    const scan = require('./copilot').commandScan(args, cwd);
+    if (scan.bad || scan.truncated) return unreadable(scan.bad ? 'the command' : 'the arguments (too deeply nested)');
+    if (scan.command !== undefined) {
+      // The files named next to the command still get the read and write checks (both checks apply).
+      const e = { ...ev, tool: 'bash', input: { command: scan.command, texts: [], ...(paths.length ? { alsoPaths: paths } : {}) } };
+      if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
+      return e;
+    }
+  }
   if (!NAMES_ONLY_TOOLS.has(toolName) && (paths.length || bad)) {
     const e = { ...ev, tool: 'fileaccess', input: { path: paths[0], paths, texts: [] } };
     if (bad) e.unreadable = 'zn: could not read a file address in this call, so zn cannot check it.';
