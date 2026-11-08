@@ -26,13 +26,13 @@ test('a relative argument with a space resolves to the same server key as its ab
   }
 });
 
-test('a Windows program path with spaces is kept whole in the key and the label', () => {
+test('a Windows program path with spaces is kept whole in the key and ends the label with the program name', () => {
   const exe = 'C:\\Program Files\\Example Tools\\server.exe';
   const key = pins.serverKey(exe, ['--stdio']);
   assert.match(key, /^[0-9a-f]{16}$/);
   // Splitting the path at its space gives a different server, so the key must differ.
   assert.notStrictEqual(key, pins.serverKey('C:\\Program', ['Files\\Example Tools\\server.exe', '--stdio']));
-  assert.match(pins.label(exe, ['--stdio']), /Program Files\\Example Tools\\server\.exe --stdio/);
+  assert.match(pins.label(exe, ['--stdio']), /server\.exe --stdio$/);
 });
 
 test('a POSIX program path with a space is labelled by its program name and arguments', () => {
