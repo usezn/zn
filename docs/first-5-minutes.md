@@ -167,15 +167,17 @@ On Windows, zn prints the `.cmd` form in its own messages, so copy the command i
 
 ## Remove zn-gate
 
-To remove everything in one step, run `npx -y zn-gate uninstall` in your own terminal ([details](uninstall.md)). To remove only the part you installed:
+To remove everything in one step, run `npx -y zn-gate uninstall` in your own terminal ([details](uninstall.md)). It does the steps below in the safe order.
 
-- **Hooks** (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, Gemini CLI, or Claude Code without the plugin): `npx -y zn-gate hooks uninstall claude-code`. Use `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `copilot` or `gemini` for the others, and add `--project` if you installed them for one project only. A backup of the settings file is written first.
-- **Claude Code plugin**: run `claude plugin uninstall zn-gate@usezn`, or in Claude Code type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
-- **Wrapped MCP servers** (from `init --wrap-mcp`): `npx -y zn-gate init --revert` puts back each MCP settings file as it was saved just before zn wrapped it. Changes you made to those files later, such as MCP servers you added, are lost, so add them again afterwards. It only undoes MCP wrapping, not hooks.
-- **The program itself**, if you installed it with `npm install -g zn-gate`: `npm uninstall -g zn-gate`.
-- **The Python package**, if you installed it with `pip install zn-gate`: `pip uninstall zn-gate`.
-- **`.env` files you moved into the vault** keep markers such as `__ZN_API_KEY__`. `env shadow` tells you how to put the real values back. Do that before you remove zn-gate.
-- **zn's own folder**: zn keeps its vault, settings and counters in a `.zn` folder in your home folder, and removing zn-gate leaves it there. Delete it only after you have put your `.env` values back, because the vault holds them.
+To remove one part at a time, go in this order: wrapped MCP servers first, then the hooks, then the plugin, and the program last. This is the order `zn-gate uninstall` uses. If you remove the program first, your agent's settings still point at a command that is gone.
+
+1. **Wrapped MCP servers** (from `init --wrap-mcp`): `npx -y zn-gate init --revert` puts back each MCP settings file as it was saved just before zn wrapped it. Changes you made to those files later, such as MCP servers you added, are lost, so add them again afterwards. It only undoes MCP wrapping, not hooks.
+2. **Hooks** (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, Gemini CLI, or Claude Code without the plugin): `npx -y zn-gate hooks uninstall claude-code`. Use `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `copilot` or `gemini` for the others, and add `--project` if you installed them for one project only. A backup of the settings file is written first.
+3. **Claude Code plugin**: run `claude plugin uninstall zn-gate@usezn`, or in Claude Code type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
+4. **`.env` files you moved into the vault** keep markers such as `__ZN_API_KEY__`. `env shadow` tells you how to put the real values back (`npx -y zn-gate env unshadow .env --backup <name>`). Do that before you delete the vault.
+5. **zn's own folder**: zn keeps its vault, settings and counters in a `.zn` folder in your home folder, and removing zn-gate leaves it there. Delete it only after you have put your `.env` values back, because the vault holds them. The second question of `zn-gate uninstall` deletes the vault; you can also delete the folder by hand.
+6. **The program itself**, last, if you installed it with `npm install -g zn-gate`: `npm uninstall -g zn-gate`.
+7. **The Python package**, after that, if you installed it with `pip install zn-gate`: `pip uninstall zn-gate`.
 
 Run `npx -y zn-gate check` afterwards if you want to see that zn is off.
 
