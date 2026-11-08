@@ -1,4 +1,4 @@
-# Hash-pinned check-wheel-contents for .github/workflows/package-lint.yml, installed with pip
+# Hash-pinned check-wheel-contents for the package lint steps of .github/workflows/quick-checks.yml, installed with pip
 # --require-hashes together with .github/release-requirements.txt.
 #
 # Dependabot opens security updates only for this directory (same reason as
