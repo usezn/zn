@@ -87,12 +87,12 @@ Here is a real run on a test machine with two fictional setups: a Claude Code ho
 zn hooks installed on this machine (nothing was run or changed):
 
 Claude Code (user): ~/.claude/settings.json
-  STALE  PreToolUse [Bash]  '~/.zn/hooks/zn-hook-claude-code.sh' PreToolUse
+  STALE  PreToolUse [^(Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch)$|^mcp__.*]  '~/.zn/hooks/zn-hook-claude-code.sh' PreToolUse
   STALE: the launcher records the zn-gate runner but not the other files the hook loads, so a change to one of them would not be seen: run `zn hooks install claude-code` to record them.
     Fix: run `zn hooks install claude-code` in your own terminal.
 
 Codex CLI (user): ~/.codex/hooks.json
-  BROKEN PreToolUse [Bash]  '~/.zn/hooks/zn-hook-codex.sh' PreToolUse
+  BROKEN PreToolUse [^(Bash|apply_patch|mcp__.+)$]  '~/.zn/hooks/zn-hook-codex.sh' PreToolUse
   BROKEN: its hook cannot start: its launcher script (~/.zn/hooks/zn-hook-codex.sh) is missing or was changed.
     Fix: run `zn hooks install codex` in your own terminal.
 
@@ -103,7 +103,7 @@ To remove the hooks of an agent instead, run `zn hooks uninstall <agent>`.
 How to read it:
 
 - The first line of each block names the agent, whether the hook is in your user settings (`user`) or in the project settings (`project`), and the settings file it was read from.
-- Each hook gets one line: its status (`OK`, `STALE` or `BROKEN`), the event (`PreToolUse`), the matcher in brackets (here `Bash`, the tool it applies to), and the command the agent runs.
+- Each hook gets one line: its status (`OK`, `STALE` or `BROKEN`), the event (`PreToolUse`), the matcher in brackets (the pattern of tool names the hook applies to), and the command the agent runs.
 - A line that is not `OK` is followed by the reason and the `Fix:` line. Run the fix in your own terminal, then run `zn-gate check --hooks` again.
 - The last line before the tip counts the hooks: `X OK, Y stale, Z broken.` Here one hook is stale and one is broken, so the exit code is `1`.
 - A healthy hook has the same layout with `OK` at the start and no reason lines.
