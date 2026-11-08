@@ -23,7 +23,7 @@ const RUNNER = path.resolve(__dirname, '..', 'lib', 'hooks', 'runner.js');
 const posix = process.platform !== 'win32';
 
 function profiles(t) {
-  const home = tempDir(t, 'zn-b1091-');
+  const home = tempDir(t, 'zn-shared-launcher-');
   const base = { HOME: home, ZN_HOME: path.join(home, '.zn'), PATH: process.env.PATH };
   const a = { ...base, CLAUDE_CONFIG_DIR: path.join(home, 'profile-a') };
   const b = { ...base, CLAUDE_CONFIG_DIR: path.join(home, 'profile-b') };
@@ -49,14 +49,14 @@ test('claude-code: uninstalling one profile keeps the launcher the other profile
 test('claude-code: after one profile is uninstalled, check still says the other is protected', { skip: !posix }, async (t) => {
   const { home, a, b } = profiles(t);
   claude.uninstall({ env: a, home, mcp: false });
-  const r = (await check({ home, env: b, cwd: tempDir(t, 'zn-b1091-cwd-') })).results.find((x) => x.id === 'claude-code');
+  const r = (await check({ home, env: b, cwd: tempDir(t, 'zn-shared-launcher-cwd-') })).results.find((x) => x.id === 'claude-code');
   assert.equal(r.state, 'protected', r.problem);
 });
 
 test('claude-code: a hook that points at a missing launcher is reported as not protected, with the fix', { skip: !posix }, async (t) => {
   const { home, b, file } = profiles(t);
   fs.unlinkSync(file);
-  const r = (await check({ home, env: b, cwd: tempDir(t, 'zn-b1091-cwd-') })).results.find((x) => x.id === 'claude-code');
+  const r = (await check({ home, env: b, cwd: tempDir(t, 'zn-shared-launcher-cwd-') })).results.find((x) => x.id === 'claude-code');
   assert.equal(r.state, 'not-protected');
   assert.match(r.problem, /its hook cannot start: its launcher script \(.*zn-hook-claude-code\.sh\) is missing or was changed/);
   assert.match(r.fix, /zn hooks install claude-code/);
