@@ -28,6 +28,8 @@ Find the command you ran, then the symptom that matches.
   - ["zn could not use your secret vault"](#zn-could-not-use-your-secret-vault-error)
   - ["Lock the vault first"](#lock-the-vault-first)
   - ["The vault is already unlocked"](#the-vault-is-already-unlocked)
+- `run`
+  - ["zn run: Not found: secret `<NAME>` is not in the vault"](#zn-run-not-found-secret-name-is-not-in-the-vault)
 - `team`
   - ["invalid join token (expected znj_...)" / "No join token given"](#invalid-join-token-expected-znj_--no-join-token-given)
   - ["This join token is expired, already used or not valid"](#this-join-token-is-expired-already-used-or-not-valid)
@@ -853,6 +855,22 @@ To see where these rules apply, and what happens when the file is not valid, rea
 **What happened:** zn refused a request, or could not find what you named. The detail says what. "Not allowed" usually means a rule or a team policy, or a step that only a person at a terminal may do.
 
 **What to do:** read the detail. If it names a command to run, run it in your own terminal. If it names a team policy, ask your administrator. Otherwise run `zn-gate status`, and ask in [Discussions](https://github.com/usezn/zn/discussions) if you are stuck.
+
+#### "zn run: Not found: secret `<NAME>` is not in the vault"
+
+```text
+zn run: Not found: secret <NAME> is not in the vault. Add it from your own terminal: zn secret set <NAME>
+```
+
+**What happened:** the command named a secret with `--secrets` that is not stored in your vault. zn stops before the command starts, so the command did not run.
+
+**What to do:**
+
+1. Run `zn secret list` in your own terminal. It lists the names your vault holds, names and policy only, never values, so you can check the spelling: secret names use upper-case letters, digits and single underscores, such as `GITHUB_TOKEN`.
+2. Add the secret from your own terminal: `zn secret set PGPASSWORD --command psql` (here the secret is `PGPASSWORD`, the variable `psql` reads, and `--command` allows `psql`, the program your `zn run` command starts). You type the value at a hidden prompt.
+3. Run the `zn run` command again. The first time a program uses a secret, the vault asks you to confirm it in its own prompt (a dialog, or the `zn unlock --foreground` terminal).
+
+If `zn run` instead says your vault is locked, see [section 5](#5-your-secret-vault-is-locked). More on giving a command a secret: [secrets](secrets.md).
 
 #### "zn could not use your secret vault: `<error>`"
 
