@@ -11,7 +11,7 @@ Both are for the person at the keyboard. They refuse to run inside an agent's sh
 | Get out after forgetting the passphrase | `zn vault reset` | Kept in an encrypted backup, but nobody can open it without the old passphrase. |
 | Start clean and keep an encrypted copy for now | `zn vault reset` | Same: kept, encrypted. |
 | Remove every trace of the vault from this computer | `zn vault purge` | Deleted, with the backups. |
-| Remove one secret | `zn secret rm NAME` | See Remove and replace a stored secret. |
+| Remove one secret | `zn secret rm NAME` | Only that secret is removed. |
 
 A common order is `reset` first and, when you are sure you do not need the backup, `purge` after.
 
