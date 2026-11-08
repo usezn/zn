@@ -45,3 +45,20 @@ class TestNpxName(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_zn_gate_name_is_cmd_on_windows(monkeypatch):
+    from zn_gate import shell_names
+    monkeypatch.setattr(shell_names.os, "name", "nt")
+    assert shell_names.zn_gate_name() == "zn-gate.cmd"
+    monkeypatch.setattr(shell_names.os, "name", "posix")
+    assert shell_names.zn_gate_name() == "zn-gate"
+
+
+def test_npm_only_note_names_the_cmd_shim_on_windows(monkeypatch):
+    from zn_gate import cli, shell_names
+    monkeypatch.setattr(shell_names.os, "name", "nt")
+    monkeypatch.setattr(cli, "node_available", lambda: True)
+    msg = cli.npm_only_simple_message("connect")
+    assert "  npx.cmd -y zn-gate connect" in msg
+    assert "  zn-gate.cmd connect" in msg

@@ -21,7 +21,7 @@ from . import __version__
 from .rules import RULES_VERSION, evaluate, mask_token_runs
 from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact, redact_scan_secrets as _scan_redact
 from . import mcp_secrets as _mcp
-from .shell_names import npx_name
+from .shell_names import npx_name, zn_gate_name
 from .node_tools import node_available
 from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
 
@@ -967,7 +967,7 @@ def npm_only_simple_message(command: str) -> str:
         "Run it with Node.js 18 or later:\n"
         f"  {npx_name()} -y zn-gate {command}\n"
         f"or, after npm install -g zn-gate:\n"
-        f"  zn-gate {command}\n"
+        f"  {zn_gate_name()} {command}\n"
     )
 
 
