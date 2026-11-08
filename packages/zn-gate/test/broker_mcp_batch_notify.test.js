@@ -95,7 +95,7 @@ test('handleBatch: a request that fails inside the batch does not stop the other
 });
 
 test('notify: a secrets_request calls notify once with the agent, name, reason and the command to run', async (t) => {
-  const home = tempDir(t, 'zn-b2190-home-');
+  const home = tempDir(t, 'zn-broker-batch-notify-home-');
   const lines = [];
   const srv = createSecretsServer({ vault: createFakeVault(), engine: fakeEngine, home, agent: 'claude-code', notify: (l) => lines.push(l) });
   const r = await srv.callTool('secrets_request', { name: 'DEMO_API_KEY', reason: 'call the demo service' });
@@ -107,7 +107,7 @@ test('notify: a secrets_request calls notify once with the agent, name, reason a
 });
 
 test('notify: without a reason the message has no empty parentheses', async (t) => {
-  const home = tempDir(t, 'zn-b2190-home-');
+  const home = tempDir(t, 'zn-broker-batch-notify-home-');
   const lines = [];
   const srv = createSecretsServer({ vault: createFakeVault(), engine: fakeEngine, home, agent: 'codex', notify: (l) => lines.push(l) });
   await srv.callTool('secrets_request', { name: 'DEMO_API_KEY' });
@@ -115,7 +115,7 @@ test('notify: without a reason the message has no empty parentheses', async (t) 
 });
 
 test('notify: control characters in the reason become spaces and a long reason is cut to 300 characters', async (t) => {
-  const home = tempDir(t, 'zn-b2190-home-');
+  const home = tempDir(t, 'zn-broker-batch-notify-home-');
   const lines = [];
   const srv = createSecretsServer({ vault: createFakeVault(), engine: fakeEngine, home, agent: 'codex', notify: (l) => lines.push(l) });
   await srv.callTool('secrets_request', { name: 'DEMO_API_KEY', reason: 'one\ntwo\u001b[2Jthree' + 'x'.repeat(400) });
@@ -127,7 +127,7 @@ test('notify: control characters in the reason become spaces and a long reason i
 });
 
 test('notify: a refused request (invalid name or a value) never calls notify', async (t) => {
-  const home = tempDir(t, 'zn-b2190-home-');
+  const home = tempDir(t, 'zn-broker-batch-notify-home-');
   const lines = [];
   const srv = createSecretsServer({ vault: createFakeVault(), engine: fakeEngine, home, agent: 'codex', notify: (l) => lines.push(l) });
   const bad = await srv.callTool('secrets_request', { name: 'lower-case' });
@@ -138,7 +138,7 @@ test('notify: a refused request (invalid name or a value) never calls notify', a
 });
 
 test('notify: without an injected notify the line goes to stderr with a newline', async (t) => {
-  const home = tempDir(t, 'zn-b2190-home-');
+  const home = tempDir(t, 'zn-broker-batch-notify-home-');
   const srv = createSecretsServer({ vault: createFakeVault(), engine: fakeEngine, home, agent: 'codex' });
   const written = [];
   const original = process.stderr.write;

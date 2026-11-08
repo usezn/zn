@@ -194,6 +194,9 @@ function destructiveRulesOf(opts) {
  * ~/.zn/config.json, {"hooks": {"packageInstallCheck": "off" | "offline" | "online", "packageInstallAllow": [...],
  * "packageInstallNewDays": 14}}. ZN_PACKAGE_CHECK=offline turns on the offline mode from the environment (never
  * the online one: see lib/package-check-settings.js).
+ *
+ * Notices ("packageInstallNotices": true or ["fresh_version", "no_lockfile"]) are added to an allowed command as a
+ * note. They need the check itself to be on, never ask and never change a deny.
  */
 const PACKAGE_COMMAND_RE = /\b(?:npm|pnpm|yarn|bun|pip3?|pipx|uv|python3?|py)\b/i;
 
@@ -214,7 +217,7 @@ async function packageInstallCheck(command, opts, cwd) {
         return reg.lookupMany(usable, { fetch: opts.packageFetch, now: opts.packageNow, stateDir });
       };
     }
-    const res = await pc.check(command, { mode: st.mode, allow: st.allow, newDays: st.newDays, lookup });
+    const res = await pc.check(command, { mode: st.mode, allow: st.allow, newDays: st.newDays, lookup, notices: st.notices });
     const records = res.findings.map((f) => ({
       rule: 'hook-package-check-' + (f.kind === 'not_found' ? 'not-found' : f.kind === 'new_package' ? 'new' : 'look-alike'),
       reason: pc.sentenceOf(f),
@@ -223,7 +226,8 @@ async function packageInstallCheck(command, opts, cwd) {
       reason: 'the registry lookup for ' + (u.eco === 'pypi' ? 'Python package' : 'npm package') + ' `' + u.name + '` gave no answer (' + u.why + '), so no question was asked',
     })));
     const message = pc.messageOf(res.findings);
-    return message || records.length ? { message, records } : null;
+    const notice = pc.noticeOf(res.notices);
+    return message || records.length || notice ? { message, records, notice } : null;
   } catch (_) {
     // An optional check never stops a command because it failed.
     return null;
@@ -234,9 +238,13 @@ async function packageInstallCheck(command, opts, cwd) {
 function withPackage(res, pkg) {
   if (!pkg) return res;
   const records = { packageCheck: pkg.records };
-  if (!pkg.message || res.decision === 'deny') return { ...res, ...records };
-  if (res.decision === 'ask') return { ...res, message: (res.message ? res.message + ' ' : '') + pkg.message.replace(/^zn: /, 'Also, '), ...records };
-  return { decision: 'ask', soft: true, message: (res.message ? res.message + ' ' : '') + (res.message ? pkg.message.replace(/^zn: /, 'Also, ') : pkg.message), ...records };
+  if (res.decision === 'deny') return { ...res, ...records };
+  // A notice is only a note: on an allowed command it is shown to the user (userMessage) and changes no decision.
+  const join = (a, b) => (a ? a + ' ' + b : b);
+  if (!pkg.message) return pkg.notice ? { ...res, userMessage: join(res.userMessage, pkg.notice), ...records } : { ...res, ...records };
+  const note = pkg.notice ? ' ' + pkg.notice : '';
+  if (res.decision === 'ask') return { ...res, message: (res.message ? res.message + ' ' : '') + pkg.message.replace(/^zn: /, 'Also, ') + note, ...records };
+  return { decision: 'ask', soft: true, message: (res.message ? res.message + ' ' : '') + (res.message ? pkg.message.replace(/^zn: /, 'Also, ') : pkg.message) + note, ...records };
 }
 
 /*
