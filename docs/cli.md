@@ -146,7 +146,7 @@ Shows that zn stops your agent from reading a fake secret, in a temporary folder
 
 Aliases: `doctor`.
 
-Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`.
+Exit codes: `0` every agent that is set up is protected. `1` an agent is not protected, or none is set up. On a new machine, set zn up first (`zn-gate init`); until an agent is set up, `check` exits with `1`. An option it does not know (for example `--json`) exits with `2`, names it and lists the option that `check` takes (`--hooks`).
 
 ```bash
 zn-gate check --hooks
@@ -216,6 +216,7 @@ Exit codes: `0` the local setting was removed (or there was nothing to remove), 
 
 ```bash
 zn-gate scan [path] [--format text|json|github] [--all] [--include .rst,.xml] [--exclude fixtures,legacy] [--include-home] [--allow-partial]
+zn-gate scan --package <name>[@version]
 ```
 
 Looks through prompt templates, markdown, skills and configs for injection traps and secrets. `path` defaults to the current folder. Matched values are never printed.
@@ -225,11 +226,18 @@ Looks through prompt templates, markdown, skills and configs for injection traps
 - `--include`: more file extensions to scan.
 - `--exclude`: more folders to skip.
 - `--include-home`: also check your own MCP configs for passwords and keys written in plain text.
+- `--package <name>[@version]`: audit an npm MCP server or skill before you add it. The package is downloaded from the registry (`ZN_NPM_REGISTRY`, or npmjs.org), checked against the checksum the registry gave, unpacked to a temporary folder, and its files with a scanned extension are read (see below for what is not). No folder is skipped by name: `node_modules`, `dist` and `build` inside the package are scanned too, with source files (`.js`, `.mjs`, `.cjs`, `.ts`, `.tsx` and the other extensions of a normal scan with `--code`). The agent-config audit (see [`audit`](#audit)) runs on it too, also without skipping folders. Nothing in the package is installed or run. Text output only for now; `--include-home`, `--allow-partial`, `--exclude` and a folder argument are refused (exit `2`).
+
+  Before the result, the report lists what npm would run or add if you installed the package, read from its `package.json` (a note, not a finding: it does not change the exit code). The line `Install scripts (npm runs these when you install it)` shows its `preinstall`, `install` and `postinstall` scripts with their literal command, or says there are none. A `prepare` script is shown on its own line, because npm runs it only when a package is installed from git, not from the registry. A `binding.gyp` with no `preinstall` or `install` script is flagged, because npm then builds it with `node-gyp`. The `bin` entries are listed as `Commands it adds (bin)`. Read the commands before you run `npm install` or `npx` on the package.
 - `--allow-partial`: exit `0` even when some files or folders were not read. They are still listed in the report. It does not apply when no file was read at all. In the Node version, put the path before the options (`scan ./docs --allow-partial`): `scan --allow-partial ./docs` scans the current folder.
 
 Exit codes: `0` nothing found and everything that matched was read, `1` something was found or the path does not exist, `2` an unknown `--format`, `3` the coverage is incomplete: no file was read, or a file or folder that should have been read was not. Findings win: when something was found the exit code is `1`, whether or not anything was skipped.
 
-A scan never reports a clean result for something it could not read. A folder it cannot open is listed under "Directories not scanned" (reason: cannot be read), in `skipped_dirs` for `--format json` and as a notice for `--format github`. If no file was read at all, the output says "No files were scanned" (a `warning` field in JSON) and the text report shows `NOTHING SCANNED` instead of `PASSED`. The exit code is `3` in that case, so a CI job cannot pass on a scan that looked at nothing; a path that does not exist exits `1`. The same exit code `3` applies when a file was skipped (2 MiB or larger, cannot be read, not a regular file, or a binary `.key` file) or a folder could not be opened, because the result does not cover everything that matched. Folders skipped by name (such as `node_modules`) do not count. Links found inside the folder are not followed and are not listed. Pass `--allow-partial` to accept skipped files and folders (exit `0`, still listed; `--format json` has `"incomplete": true`). Python also has `--no-fail`, which always exits `0`. The Node (`npx zn-gate`) and Python (`pip install zn-gate`) versions give the same exit codes and the same JSON fields (`skipped_dirs`, `warning`) for these cases; the text report differs in its wording and in how it prints paths.
+With `--package`, exit `2` also means the package was not scanned: the registry could not be reached, the name or version is unknown, the answer is not JSON or is too large, the checksum does not match, the tarball address or a redirect leads away from the registry's own address (host and port, with the same https rule), or the tarball has a link, a special file or a path that leaves its folder. Nothing is scanned in those cases, and the message says why. A package is never reported as clean when part of it was not read: a file of 2 MiB or larger, a file that could not be unpacked, or a part the agent-config audit did not walk (it stopped at its time budget or entry limit, a folder could not be opened, or an agent file could not be fully checked) gives exit `3` and is named (findings still give `1`). On Windows, file names it cannot create (such as `NUL`, `CON` or a name with a colon) are not unpacked, so they are listed and give exit `3`.
+
+What `--package` does not cover: it reads the files inside the package itself, not the packages it depends on (unless they are bundled inside it); files of other types (binaries, `.wasm`, files without a scanned extension) are not read; and it does not run the package, so it cannot see what the code does when it runs. If you interrupt a scan with Ctrl+C, the temporary folder (`zn-scan-pkg-` and a random suffix, in your system temporary folder) is left behind and can be deleted.
+
+A scan never reports a clean result for something it could not read. A folder it cannot open is listed under "Directories not scanned" (reason: cannot be read), in `skipped_dirs` for `--format json` and as a notice for `--format github`. If no file was read at all, the output says "No files were scanned" (a `warning` field in JSON) and the text report shows `NOTHING SCANNED` instead of `PASSED`. The exit code is `3` in that case, so a CI job cannot pass on a scan that looked at nothing; a path that does not exist exits `1`. The same exit code `3` applies when a file was skipped (2 MiB or larger, cannot be read, not a regular file, or a binary `.key` file) or a folder could not be opened, because the result does not cover everything that matched. Folders skipped by name (such as `node_modules`) do not count (with `--package` nothing is skipped by name). Links found inside the folder are not followed and are not listed. Pass `--allow-partial` to accept skipped files and folders (exit `0`, still listed; `--format json` has `"incomplete": true`). Python also has `--no-fail`, which always exits `0`. The Node (`npx zn-gate`) and Python (`pip install zn-gate`) versions give the same exit codes and the same JSON fields (`skipped_dirs`, `warning`) for these cases; the text report differs in its wording and in how it prints paths.
 
 ### `audit`
 
@@ -464,7 +472,7 @@ Shows whether the vault exists and is unlocked and, when it is, when it locks: a
 zn-gate vault log [--since 1h]
 ```
 
-Shows the audit log of secret use. Same as `secret log`. With the vault unlocked, the vault checks the whole log first (every signature, the chain and the last record it remembers). If the check fails, the log is not shown: the command prints the reason, exits `1` and the vault stores a warning (see `vault verify`). With the vault locked the chain cannot be checked, and the output says so. Exit codes follow the secrets commands above.
+Shows the vault audit log of secret use. Same as `secret log`. With the vault unlocked, the vault checks the whole log first (every signature, the chain and the last record it remembers). If the check fails, the log is not shown: the command prints the reason, exits `1` and the vault stores a warning (see `vault verify`). With the vault locked the chain cannot be checked, and the output says so. Exit codes follow the secrets commands above.
 
 #### `vault log export`
 
@@ -472,7 +480,7 @@ Shows the audit log of secret use. Same as `secret log`. With the vault unlocked
 zn-gate vault log export --otlp [--since 7d] [--out file] [--unverified]
 ```
 
-Writes the audit log as OpenTelemetry logs (OTLP, JSON Lines) to the file, or to the screen. Needs no account. With the vault unlocked, the vault checks the whole log first and nothing is exported when the check fails (exit `1`, and the vault stores a warning, see `vault verify`). With the vault locked the chain cannot be checked: the export is refused unless you add `--unverified`, and then it prints a warning that it is not a verified copy. `--out` writes a new private (0600) file and refuses a symbolic link or a folder. Exit codes: `0` done, `1` error, `2` without `--otlp`. [Details](team.md).
+Writes the vault audit log as OpenTelemetry logs (OTLP, JSON Lines) to the file, or to the screen. Needs no account. With the vault unlocked, the vault checks the whole log first and nothing is exported when the check fails (exit `1`, and the vault stores a warning, see `vault verify`). With the vault locked the chain cannot be checked: the export is refused unless you add `--unverified`, and then it prints a warning that it is not a verified copy. `--out` writes a new private (0600) file and refuses a symbolic link or a folder. Exit codes: `0` done, `1` error, `2` without `--otlp`. [Details](team.md).
 
 #### `vault verify`
 
@@ -480,7 +488,7 @@ Writes the audit log as OpenTelemetry logs (OTLP, JSON Lines) to the file, or to
 zn-gate vault verify
 ```
 
-Checks the chain and signatures of the audit log. If the check fails, it says at which record, tells you not to delete or edit the log, and links the troubleshooting page. The vault also compares the last record with the one it remembers, before it writes anything new. If the log was cut, replaced or changed in any record while the vault was locked or running, the check fails (a failed check stores the warning too), and keeps failing after lock and unlock, until you accept the log as it is now with `zn-gate vault verify --acknowledge` (run it yourself in a terminal: it refuses when an agent runs it, and the vault asks you to confirm in its own dialog or terminal). Accepting does not erase the gap: a warning record is written to the log. Exit codes: `0` correct, `1` broken, `2` wrong usage.
+Checks the chain and signatures of the vault audit log. If the check fails, it says at which record, tells you not to delete or edit the log, and links the troubleshooting page. The vault also compares the last record with the one it remembers, before it writes anything new. If the log was cut, replaced or changed in any record while the vault was locked or running, the check fails (a failed check stores the warning too), and keeps failing after lock and unlock, until you accept the log as it is now with `zn-gate vault verify --acknowledge` (run it yourself in a terminal: it refuses when an agent runs it, and the vault asks you to confirm in its own dialog or terminal). Accepting does not erase the gap: a warning record is written to the log. Exit codes: `0` correct, `1` broken, `2` wrong usage.
 
 #### `vault forget`
 
@@ -504,7 +512,7 @@ The way out when you lost the vault passphrase. It sets the old vault aside in a
 zn-gate vault purge [--yes]
 ```
 
-Deletes the vault for good, with everything that can open or rebuild it. It first lists every file it will delete: the vault (secrets and first-use approvals), the token maps of your projects, the audit log, every `vault-backup-*` folder made by `vault reset`, and the session key, plus the vault key in your system keychain. Then you confirm by typing `purge my vault`, and it deletes them and checks again that none is left. If a file or the keychain entry cannot be removed, it says which one and exits `1`; it never reports the vault as purged while something remains. The vault must be locked, and it refuses on a machine that belongs to a zn Team organization. It needs a person at a terminal; a script can pass `--yes` to skip the typed phrase and the terminal, but an AI agent can never run it. Deleting cannot be undone. Exit codes: `0` purged (or there was no vault), `1` refused, cancelled or not fully purged, `2` wrong usage.
+Deletes the vault for good, with everything that can open or rebuild it. It first lists every file it will delete: the vault (secrets and first-use approvals), the token maps of your projects, the vault audit log, every `vault-backup-*` folder made by `vault reset`, and the session key, plus the vault key in your system keychain. Then you confirm by typing `purge my vault`, and it deletes them and checks again that none is left. If a file or the keychain entry cannot be removed, it says which one and exits `1`; it never reports the vault as purged while something remains. The vault must be locked, and it refuses on a machine that belongs to a zn Team organization. It needs a person at a terminal; a script can pass `--yes` to skip the typed phrase and the terminal, but an AI agent can never run it. Deleting cannot be undone. Exit codes: `0` purged (or there was no vault), `1` refused, cancelled or not fully purged, `2` wrong usage.
 
 #### `vault team`
 
@@ -563,7 +571,7 @@ Runs the `secrets` MCP server over standard input and output. Agents start it fr
 zn-gate mcp
 ```
 
-Runs zn-gate as an MCP server (stdio) with the tools `analyze_prompt`, `check_tool_call` and `check_tool_result`.
+Runs zn-gate as an MCP server (stdio) with the tools `analyze_prompt`, `check_tool_call`, `check_tool_result` and `zn_status` (reports the detection engine, the rules version and whether anything leaves the computer).
 
 Exit codes: it runs until its input is closed, then exits `0`.
 
@@ -601,7 +609,7 @@ Aliases: `logs`, `export`.
 zn-gate why [<id>]
 ```
 
-Explains, in plain words, one block from the local evidence log. With no id it explains the last block; with an id it explains that record (the `id` field of a record from `zn-gate evidence --export`). It says what was stopped (the tool and the short preview the log already holds, with secrets removed), which rule fired, why that matters, and the one command you can run in your own terminal to go on, when such a command exists. For a rule that cannot be bypassed it says so and who decides.
+Explains, in plain words, one block from the local decision log. With no id it explains the last block; with an id it explains that record (the `id` field of a record from `zn-gate evidence --export`). It says what was stopped (the tool and the short preview the log already holds, with secrets removed), which rule fired, why that matters, and the one command you can run in your own terminal to go on, when such a command exists. For a rule that cannot be bypassed it says so and who decides.
 
 The command only reads the log: it changes nothing and uses no network. If the log does not hold enough to explain a record, for example because no rule id was recorded, it says what is missing instead of guessing. Exit codes: `0` explained, `1` nothing to explain (no log, no block, an id that is not in the log, or a log that cannot be read), `2` wrong usage. A line of the log that cannot be read is skipped, and the output says how many.
 
@@ -713,7 +721,7 @@ Shows the organization, the policy version, what the last policy version removed
 zn-gate team sync
 ```
 
-Downloads the policy and uploads the audit log now. Exit `0` only when a valid policy is applied and no upload failed. Exit `1` when the machine is offline, the organization has no policy, the policy is refused, the machine was removed, or an upload failed; `team status` keeps the last reason. A sync that was running when you left the organization, or joined another one, is dropped and writes nothing.
+Downloads the policy and uploads the vault audit log now. Exit `0` only when a valid policy is applied and no upload failed. Exit `1` when the machine is offline, the organization has no policy, the policy is refused, the machine was removed, or an upload failed; `team status` keeps the last reason. A sync that was running when you left the organization, or joined another one, is dropped and writes nothing.
 
 #### `team leave`
 
@@ -733,15 +741,16 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 
 ## The Python package
 
-`pip install zn-gate` installs only the name `zn-gate` (not `zn` or `zn-mcp`). It is meant for agents you build yourself. It has six commands. `zn-gate version`, `zn-gate -v`, `zn-gate -V` and `zn-gate --version` print the version and the rules version.
+`pip install zn-gate` installs only the name `zn-gate` (not `zn` or `zn-mcp`). It is meant for agents you build yourself. It has seven commands. `zn-gate version`, `zn-gate -v`, `zn-gate -V` and `zn-gate --version` print the version and the rules version.
 
 | Command | Options | What it does |
 |---|---|---|
 | `test "<text>"` | `--json` | Checks one piece of text against the rules. It does **not** run the self-test that `test` runs in the npm package. Exit `0` if nothing was flagged, `1` if the text was blocked or contains a secret. |
 | `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked. Without a text it prints the usage and exits `2` (the npm package exits `1`). |
-| `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude`, `--include-home` | Like `scan` in the npm package, without the `--all` and `--code` options. Exit `0` nothing found, `1` something was found or the path does not exist, `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. |
+| `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude`, `--include-home` | Like `scan` in the npm package, without the `--all` and `--code` options. Exit `0` nothing found, `1` something was found or the path does not exist, `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. There is no `--package` in the Python version yet. |
 | `evidence` | `--verify`, `--export`, `--format jsonl\|csv`, `--output file` | Counts, chain check and export, like the npm command. There is no `--ui`, no `--tail` and no `logs` or `export` alias. |
 | `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`. |
 | `stats` | `--days N`, `--json` | Local counts for the last `N` days (1 to 90, default 30). There is no `stats share`. Exit `0`, or `2` if `--days` is out of range. |
+| `check` | none | Runs the Python guard on a built-in fake secret and on a harmless text, in a temporary folder, and prints `PASS` or `FAIL` for each. Exit `0` only if the secret is blocked or redacted and the harmless text passes, `1` otherwise. Nothing is sent and the fake secret is never printed in full. It covers the Python guard only: for agent hooks (Claude Code, Codex, Cursor and others) run `npx -y zn-gate check`. |
 
-The other commands on this page are only in the npm package. In the Python package they print a short note and exit `2`: `init`, `check`, `doctor`, `audit`, `hooks`, `run`, `secret`, `env`, `vault`, `unlock`, `lock`, `pins`, `mcp`, `shield`, `team`, `logs` and `export` point to `npx -y zn-gate init`, and `report`, `why`, `connect` and `disconnect` point to `npx -y zn-gate <command>`. `reach` is in the npm package too, except `reach --history`, which the Python package has as well (see [reach](reach.md#history-did-your-agents-keep-a-secret-of-yours)). A command neither package knows exits `1`. To use the optional cloud check from Python, set `ZN_CLOUD=1` and `ZN_API_KEY` (or pass `--key` to `analyze`) instead of running `connect`.
+The other commands on this page are only in the npm package. In the Python package they print a short note and exit `2`: `init`, `doctor`, `audit`, `hooks`, `run`, `secret`, `env`, `vault`, `unlock`, `lock`, `pins`, `mcp`, `shield`, `team`, `logs` and `export` point to `npx -y zn-gate init`, and `report`, `why`, `connect` and `disconnect` point to `npx -y zn-gate <command>`. `reach` is in the npm package too, except `reach --history`, which the Python package has as well (see [reach](reach.md#history-did-your-agents-keep-a-secret-of-yours)). A command neither package knows exits `1`. To use the optional cloud check from Python, set `ZN_CLOUD=1` and `ZN_API_KEY` (or pass `--key` to `analyze`) instead of running `connect`.

@@ -1445,7 +1445,9 @@ async function check(opts = {}) {
     fs.writeFileSync(ctx.readme, 'An ordinary file that zn lets your agent read.\n');
     for (const spec of AGENTS) {
       try {
-        results.push(await checkAgent(spec, ctx));
+        const r = await checkAgent(spec, ctx);
+        if (!(r.state === 'not-set-up' && r.found === false)) r.version = require('./agents/versions').versionInfo(spec.id, { env, cwd });
+        results.push(r);
       } catch (err) {
         results.push({ id: spec.id, name: spec.name, fix: spec.fix, state: 'not-protected', problem: 'zn could not check it: ' + oneLine(err && err.message, 200), notes: [] });
       }
@@ -1467,6 +1469,8 @@ function report({ results, removed, warnings }, write) {
   let setUp = 0;
   let bad = 0;
   const missing = [];
+  const { versionLine } = require('./agents/versions');
+  const ver = (r) => { if (r.version) w(`     ${versionLine(r.version)}\n`); };
   for (const r of results) {
     if (r.state === 'not-set-up' && r.found === false) {
       w(`  -  ${r.name.padEnd(12)} not found on this machine\n`);
@@ -1475,10 +1479,12 @@ function report({ results, removed, warnings }, write) {
     if (r.state === 'not-set-up') {
       missing.push(r.name);
       w(`  -  ${r.name.padEnd(12)} zn is not set up for this agent. To protect it, ${r.fix}.\n`);
+      ver(r);
       continue;
     }
     if (r.state === 'project-only') {
       w(`  -  ${r.name.padEnd(12)} zn is set up only for one project (${r.where}). This check covers the setup for your user; to protect every project, ${r.fix}.\n`);
+      ver(r);
       continue;
     }
     setUp++;
@@ -1486,11 +1492,13 @@ function report({ results, removed, warnings }, write) {
       bad++;
       w(`  X  ${r.name.padEnd(12)} NOT protected: ${r.problem}.\n`);
       w(`     To fix it, ${r.fix}.\n`);
+      ver(r);
       continue;
     }
     w(`  OK ${r.name.padEnd(12)} blocked the .env file and allowed the ordinary file. Your agent would be told:\n`);
     w(`     "${r.message}"\n`);
     for (const n of r.notes) w(`     (${n})\n`);
+    ver(r);
   }
   w('\n');
   const init = 'run `npx -y zn-gate init` in your own terminal: it shows each step and asks before it runs one.\n';
