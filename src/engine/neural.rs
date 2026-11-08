@@ -318,4 +318,166 @@ mod tests {
             if loaded_int8 { "int8" } else { "fp32" }
         );
     }
+
+    // ── Fake model directory (tiny hand-encoded ONNX graph) ─────────
+
+    fn pb_varint(mut v: u64, out: &mut Vec<u8>) {
+        loop {
+            let b = (v & 0x7f) as u8;
+            v >>= 7;
+            if v == 0 {
+                out.push(b);
+                break;
+            }
+            out.push(b | 0x80);
+        }
+    }
+
+    fn pb_bytes(field: u32, data: &[u8], out: &mut Vec<u8>) {
+        pb_varint(((field as u64) << 3) | 2, out);
+        pb_varint(data.len() as u64, out);
+        out.extend_from_slice(data);
+    }
+
+    fn pb_int(field: u32, v: u64, out: &mut Vec<u8>) {
+        pb_varint((field as u64) << 3, out);
+        pb_varint(v, out);
+    }
+
+    /// ONNX model whose only output `token_embeddings` is an Identity of a
+    /// constant (1, 2, 2) float initializer holding [[1, 0], [0, 1]].
+    fn fake_onnx_bytes() -> Vec<u8> {
+        let mut tensor = Vec::new();
+        for d in [1u64, 2, 2] {
+            pb_int(1, d, &mut tensor); // dims
+        }
+        pb_int(2, 1, &mut tensor); // data_type = FLOAT
+        pb_bytes(8, b"emb", &mut tensor); // name
+        let raw: Vec<u8> = [1.0f32, 0.0, 0.0, 1.0]
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+        pb_bytes(9, &raw, &mut tensor); // raw_data
+
+        let mut node = Vec::new();
+        pb_bytes(1, b"emb", &mut node); // input
+        pb_bytes(2, b"token_embeddings", &mut node); // output
+        pb_bytes(4, b"Identity", &mut node); // op_type
+
+        let mut out_info = Vec::new();
+        pb_bytes(1, b"token_embeddings", &mut out_info); // name
+
+        let mut graph = Vec::new();
+        pb_bytes(1, &node, &mut graph);
+        pb_bytes(5, &tensor, &mut graph);
+        pb_bytes(12, &out_info, &mut graph);
+
+        let mut model = Vec::new();
+        pb_int(1, 8, &mut model); // ir_version
+        pb_bytes(7, &graph, &mut model);
+        model
+    }
+
+    const FAKE_TOKENIZER: &str = r#"{"version":"1.0","truncation":null,"padding":null,"added_tokens":[],"normalizer":null,"pre_tokenizer":{"type":"Whitespace"},"post_processor":null,"decoder":null,"model":{"type":"WordLevel","vocab":{"[UNK]":0,"hello":1},"unk_token":"[UNK]"}}"#;
+
+    fn fake_model_dir(weights: &[&str], with_head: bool) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for w in weights {
+            std::fs::write(dir.path().join(w), fake_onnx_bytes()).unwrap();
+        }
+        std::fs::write(dir.path().join("tokenizer.json"), FAKE_TOKENIZER).unwrap();
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"zn_onnx_seq": 2, "hidden_size": 2}"#,
+        )
+        .unwrap();
+        if with_head {
+            std::fs::write(
+                dir.path().join("head.json"),
+                r#"{"weights":[2.0,0.0],"bias":0.0,"threshold":0.5}"#,
+            )
+            .unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn neural_new_loads_fp32_weights_and_scores() {
+        let dir = fake_model_dir(&["model.onnx"], true);
+        let engine = NeuralEngine::new(dir.path()).expect("fake model loads");
+        assert_eq!(engine.weights_file(), "model.onnx");
+        let score = engine.score("hello").expect("score");
+        // sigmoid(2.0) because the pooled, normalised embedding is [1, 0].
+        assert!((score - 0.880_797).abs() < 1e-4, "score = {score}");
+        assert!((0.0..=1.0).contains(&score));
+    }
+
+    #[test]
+    fn neural_new_falls_back_to_int8_weights() {
+        let dir = fake_model_dir(&["model_int8.onnx"], true);
+        let engine = NeuralEngine::new(dir.path()).expect("int8 fallback loads");
+        assert_eq!(engine.weights_file(), "model_int8.onnx");
+    }
+
+    #[test]
+    fn neural_new_prefers_fp32_over_int8() {
+        let dir = fake_model_dir(&["model.onnx", "model_int8.onnx"], true);
+        let engine = NeuralEngine::new(dir.path()).unwrap();
+        assert_eq!(engine.weights_file(), "model.onnx");
+    }
+
+    #[test]
+    fn neural_new_without_any_weights_reports_missing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = NeuralEngine::new(dir.path()).err().expect("must fail");
+        assert!(err.to_string().contains("no model.onnx"), "{err}");
+    }
+
+    #[test]
+    fn neural_new_with_corrupt_weights_reports_unusable() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("model.onnx"), b"\xff\xff not an onnx file").unwrap();
+        let err = NeuralEngine::new(dir.path()).err().expect("must fail");
+        assert!(err.to_string().contains("model.onnx unusable"), "{err}");
+    }
+
+    #[test]
+    fn neural_new_reports_last_error_when_both_weights_unusable() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("model.onnx"), b"\xff\xff").unwrap();
+        std::fs::write(dir.path().join("model_int8.onnx"), b"\xff\xff").unwrap();
+        let err = NeuralEngine::new(dir.path()).err().expect("must fail");
+        assert!(
+            err.to_string().contains("model_int8.onnx unusable"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn neural_try_weights_without_head_is_an_error() {
+        let dir = fake_model_dir(&["model.onnx"], false);
+        let err = NeuralEngine::try_weights(dir.path(), "model.onnx")
+            .err()
+            .expect("must fail");
+        assert!(err.to_string().contains("missing head.json"), "{err}");
+    }
+
+    #[test]
+    fn neural_try_weights_without_tokenizer_is_an_error() {
+        let dir = fake_model_dir(&["model.onnx"], true);
+        std::fs::remove_file(dir.path().join("tokenizer.json")).unwrap();
+        assert!(NeuralEngine::try_weights(dir.path(), "model.onnx").is_err());
+    }
+
+    #[test]
+    fn neural_score_error_when_graph_lacks_expected_output() {
+        let dir = fake_model_dir(&["model.onnx"], true);
+        let mut engine = NeuralEngine::new(dir.path()).unwrap();
+        // Swap in an empty graph: evaluation can no longer produce embeddings.
+        let empty = tempfile::tempdir().unwrap();
+        std::fs::write(empty.path().join("model.onnx"), b"").unwrap();
+        std::fs::write(empty.path().join("tokenizer.json"), FAKE_TOKENIZER).unwrap();
+        engine.model = OnnxModel::open(empty.path(), "model.onnx").unwrap();
+        assert!(engine.score("hello").is_err());
+    }
 }
