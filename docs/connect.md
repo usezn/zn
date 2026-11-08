@@ -62,6 +62,13 @@ A saved key is only ever sent to <https://api.usezn.com>. `--url` and `ZN_API_UR
 - **Saved key cannot be read, prompts checked locally**: run `zn-gate status`, then `zn-gate connect --reconnect` to replace the key.
 - **`fallback: true` in a result**: the cloud call failed and the local rules checked the prompt. To see whether the service is down, open the [status page](https://usezn.com/status?utm_source=github&utm_medium=docs&utm_campaign=status). See [What is sent](#what-is-sent).
 
+When a cloud check fails, the result also carries a `cloud_error` text. The Node package returns one of these texts, and what to do:
+
+- **`no API key available (run zn-gate status)`**: the saved key could not be read. Run `zn-gate status`, then `zn-gate connect --reconnect` to replace the key.
+- **A refusal that names an environment variable**, such as `NODE_TLS_REJECT_UNAUTHORIZED`, `NODE_EXTRA_CA_CERTS` or `SSL_CERT_FILE`: zn-gate will not send the saved key over a connection someone could read. Remove the variable and try again; see section 8 of [troubleshooting](troubleshooting.md#8-will-not-send-the-saved-key-tls-settings).
+- **`the saved key is only sent to https://api.usezn.com`**: a saved key is not sent to a custom URL. Drop the custom URL, or pass the key with `--key` or `ZN_API_KEY` instead.
+- **`Gateway responded with HTTP <code>: ...`**: with `401` or `403`, the key was not accepted: check it. With any other code, try again later and check the [status page](https://usezn.com/status?utm_source=github&utm_medium=docs&utm_campaign=status).
+
 For the full steps, see [If something fails](#if-something-fails).
 
 ## What is sent
