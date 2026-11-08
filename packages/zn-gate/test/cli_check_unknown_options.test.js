@@ -28,10 +28,10 @@ function refused(args, option, listed) {
 }
 
 for (const command of ['check', 'doctor']) {
-  test(`${command} --json is refused with exit 2, names the flag and lists the option it takes`, refused([command, '--json'], '--json', /The options of zn-gate \S+ are --hooks\./));
+  test(`${command} --bogus is refused with exit 2, names the flag and lists the options it takes`, refused([command, '--bogus'], '--bogus', /The options of zn-gate \S+ are --hooks, --json\./));
 }
 
-test('check refuses an unknown option that comes after --hooks', refused(['check', '--hooks', '--bogus'], '--bogus', /are --hooks\./));
+test('check refuses an unknown option that comes after --hooks', refused(['check', '--hooks', '--bogus'], '--bogus', /are --hooks, --json\./));
 
 test('version refuses an unknown option and says it takes none', refused(['version', '--bogus'], '--bogus', /zn-gate version takes no options\./));
 test('status refuses an unknown option and lists its options', refused(['status', '--bogus'], '--bogus', /The options of zn-gate status are --key, --stage, --url, --local-only, --verbose\./));

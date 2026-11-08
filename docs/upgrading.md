@@ -259,10 +259,10 @@ of the older release.
 1. Remove the hooks of each agent you set up with `zn hooks install`:
    `npx -y zn-gate hooks uninstall claude-code` (use `codex`, `cursor`,
    `opencode` or `antigravity` for the others, and add `--project` for a project
-   install). With the Claude Code plugin, see [Remove zn-gate](uninstall.md#claude-code-plugin).
+   install). With the Claude Code plugin, see [Remove zn-gate](uninstall.md#3-claude-code-plugin).
 2. Remove the program: `npm uninstall -g zn-gate`, and `pip uninstall zn-gate`
    if you also installed the Python package
-   ([details](uninstall.md#the-program-itself)).
+   ([details](uninstall.md#5-the-program-itself-last)).
 3. Install the older release with your package manager, the same way you
    installed zn-gate the first time. The commands on this page
    (`npm install -g zn-gate`, `pip install -U zn-gate`) install the newest release.
