@@ -163,7 +163,7 @@ On Windows, zn prints the `.cmd` form in its own messages, so copy the command i
 - `init` only prints steps and changes nothing: an AI agent or a script ran it. Run it yourself in your own terminal.
 - `check` says `NOT protected`: the line says what to run.
 - zn blocked something you need: use `npx -y zn-gate env shadow .env` for secrets, or ask in [Discussions](https://github.com/usezn/zn/discussions).
-- Another message? The [troubleshooting guide](troubleshooting.md) explains the fifteen most common ones.
+- Another message? The [troubleshooting guide](troubleshooting.md) explains the eighteen most common ones.
 
 ## Remove zn-gate
 
