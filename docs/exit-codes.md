@@ -152,3 +152,5 @@ scan:
 - `2` means the command itself was used wrongly, for example an unknown option or a `--format` that is not `text`, `json` or `github`. Fix the line, not the project.
 
 Inside a Makefile every `$` is written `$$`, and each line of the recipe ends with a backslash so the whole `case` runs in one shell. See [Scan and review](#scan-and-review) for the codes of the other commands.
+
+For PowerShell, see [Checking zn-gate exit codes in PowerShell](examples/exit-code-checks-in-powershell.md).
