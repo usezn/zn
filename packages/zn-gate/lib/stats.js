@@ -171,6 +171,14 @@ function recordEvent(name, opts = {}) {
   }
 }
 
+/** A stored count as a non-negative integer. Same rule as the Python package: fractions are truncated, negative and non-numeric values count as 0. */
+function count(v) {
+  let n = v;
+  if (typeof n === 'string') n = /^\s*[+-]?\d+\s*$/.test(n) ? Number(n) : 0;
+  else if (typeof n === 'boolean') n = n ? 1 : 0;
+  return typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
+}
+
 /** Totals over the last `days` days (today included): overall, per layer:agent and per detection type. */
 function summary({ days = 30, now = new Date(), file } = {}) {
   const data = load(file || statsFile());
@@ -184,8 +192,8 @@ function summary({ days = 30, now = new Date(), file } = {}) {
     if (!first || day < first) first = day;
     for (const [key, c] of Object.entries(entries)) {
       const k = (byKey[key] ||= { checked: 0, blocked: 0, warned: 0, redacted: 0 });
-      for (const f of Object.keys(total)) { total[f] += c[f] || 0; k[f] += c[f] || 0; }
-      for (const [t, n] of Object.entries(c.detections || {})) detections[t] = (detections[t] || 0) + n;
+      for (const f of Object.keys(total)) { const n = count(c[f]); total[f] += n; k[f] += n; }
+      for (const [t, n] of Object.entries(c.detections || {})) detections[t] = (detections[t] || 0) + count(n);
     }
   }
   return { days, since: first, total, byKey, detections, events: { ...data.events } };
