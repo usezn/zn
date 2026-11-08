@@ -20,15 +20,26 @@
  * `pipx install <name>`. One-off runs (`npx`, `uvx`, `pipx run`) are not read in this version. Installs without a
  * name (`npm ci`, `npm install`, `pip install -r file`, `-e .`, local paths, URLs, git sources, archives) are not
  * checked. The command is split with the hook policy's own tokenizer (scanFirstCommand).
+ *
+ * Notices (hooks.packageInstallNotices, see package-check-settings.js) are a second, opt-in layer. They never ask and
+ * never block, and they never take a lookup from a question. `fresh_version` (online mode) notes a version published
+ * less than 72 hours ago. It is judged only for a command that is a PLAIN install (plainInstallNames), the same rule
+ * as the lookups: for any other command no registry is asked for a notice either, so such a command gets no
+ * fresh_version note (it fails closed). `no_lockfile` notes an `npm install` or `npm i` in a project (not `npm ci`, not
+ * a global install). It is read from the text of the command, needs no network and no name lookup, so it is not
+ * limited to plain installs: the plain rule decides what may leave the machine, and a local reading does not send
+ * anything. They come back in `notices`.
  */
 
 const { scanFirstCommand } = require('./hooks/policy');
 const NAMES = require('./data/package-names.json');
-const { newDaysOf } = require('./package-check-settings');
+const { newDaysOf, FRESH_HOURS } = require('./package-check-settings');
 
 const MAX_CHARS = 100 * 1024;
 const MAX_SEGMENTS = 200;
 const MAX_NAMES = 24;
+// The version notices have a lookup budget of their own (the question's budget is the registry's limit of 8).
+const MAX_NOTICE_NAMES = 8;
 const MIN_LOOKALIKE_LENGTH = 5;
 
 const ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -229,16 +240,35 @@ function positionals(args, valueFlags) {
   return { names };
 }
 
+const NPM_EXACT_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const PYPI_EXACT_VERSION_RE = /^==\s*([A-Za-z0-9][A-Za-z0-9.+!_-]*)$/;
+
+/*
+ * The version an install asks for: 'latest' when the command names none, the version itself when it is exact, or null
+ * when it is a range, a tag or a wildcard (the version that will be installed is not known, so none is judged).
+ */
+function npmVersionOf(v) {
+  if (v === undefined || v === '') return 'latest';
+  return v.length <= 64 && NPM_EXACT_VERSION_RE.test(v) ? v : null;
+}
+
+function pypiVersionOf(spec) {
+  const v = String(spec).trim();
+  if (v === '') return 'latest';
+  const m = PYPI_EXACT_VERSION_RE.exec(v);
+  return m && m[1].length <= 64 ? m[1] : null;
+}
+
 /* A registry name from an npm spec (`lodash`, `lodash@^4`, `@types/node@18`), or null when the spec is not a registry name. */
 function npmNameOf(spec) {
   const s = String(spec);
   if (!s || s.length > 300 || /^[.~/\\-]/.test(s) || /[:\s]/.test(s) || /\.(?:tgz|tar|tar\.gz|zip)$/i.test(s)) return null;
-  const m = s.startsWith('@') ? /^(@[^/@]+\/[^/@]+)(?:@.*)?$/.exec(s) : /^([^@/]+)(?:@.*)?$/.exec(s);
+  const m = s.startsWith('@') ? /^(@[^/@]+\/[^/@]+)(?:@(.*))?$/.exec(s) : /^([^@/]+)(?:@(.*))?$/.exec(s);
   if (!m) return null;
   const raw = m[1];
   const name = raw.toLowerCase();
   if (name.length > 214 || !NPM_NAME_RE.test(name)) return null;
-  return { raw, name, legacyCase: raw !== name };
+  return { raw, name, legacyCase: raw !== name, version: npmVersionOf(m[2]) };
 }
 
 /* A registry name from a Python requirement (`requests`, `requests==2`, `pkg[extra]>=1`), or null. */
@@ -249,7 +279,7 @@ function pypiNameOf(spec) {
   if (!m) return null;
   const raw = m[1];
   if (!PYPI_NAME_RE.test(raw) || raw.length > 100 || /\.(?:whl|tgz|zip|tar|gz)$/i.test(raw)) return null;
-  return { raw, name: pypiNormalise(raw), legacyCase: false };
+  return { raw, name: pypiNormalise(raw), legacyCase: false, version: pypiVersionOf(m[2]) };
 }
 
 /** PyPI's own normalisation: lowercase, runs of - _ . become one -. Two names equal after it are the same package. */
@@ -288,6 +318,57 @@ function installsOf(command, depth = 0) {
     }
   }
   return found.slice(0, MAX_NAMES);
+}
+
+/*
+ * `npm install` or `npm i` in a project (not `npm ci`, not a global install). npm uses the lockfile in that case but does
+ * not require it, and may update it. Returns { unlocked, guarded }: guarded is true when the command has --ignore-scripts
+ * (the last of --ignore-scripts and --no-ignore-scripts wins, as it does in npm).
+ */
+const NPM_UNLOCKED_SUBCOMMANDS = new Set(['install', 'i', 'in', 'ins', 'inst', 'insta', 'instal']);
+const NPM_GLOBAL_FLAGS = new Set(['-g', '--global', '--global=true', '--location=global']);
+function npmUnlocked(args) {
+  const none = { unlocked: false, guarded: false };
+  const sub = firstPositional(args, new Set([...NPM_VALUE_FLAGS, '-w']));
+  if (!sub || !NPM_UNLOCKED_SUBCOMMANDS.has(sub.word)) return none;
+  if (args.some((a) => NPM_GLOBAL_FLAGS.has(a))) return none;
+  let guarded = false;
+  for (const a of args) {
+    if (a === '--ignore-scripts' || a === '--ignore-scripts=true') guarded = true;
+    else if (a === '--no-ignore-scripts' || a === '--ignore-scripts=false') guarded = false;
+  }
+  return { unlocked: true, guarded };
+}
+
+/*
+ * Whether the command runs `npm install` in a project (see npmUnlocked). It reads every simple command of the line the
+ * way installsOf does, and the text of `sh -c`. Returns { unlocked, unguarded }. It only reads text: nothing is sent.
+ */
+function unlockedOf(command, depth = 0) {
+  const text = String(command == null ? '' : command);
+  let unlocked = false;
+  let unguarded = false;
+  if (!text || text.length > MAX_CHARS || depth > 2) return { unlocked, unguarded };
+  for (const seg of segmentsOf(text)) {
+    const words = unwrap(seg).words;
+    if (!words.length) continue;
+    const head = programName(words[0]);
+    const rest = words.slice(1);
+    if (SHELLS.has(head)) {
+      const c = rest.findIndex((w) => /^-[A-Za-z]*c$/.test(w));
+      if (c >= 0 && typeof rest[c + 1] === 'string') {
+        const inner = unlockedOf(rest[c + 1], depth + 1);
+        unlocked = unlocked || inner.unlocked;
+        unguarded = unguarded || inner.unguarded;
+      }
+      continue;
+    }
+    if (head === 'npm') {
+      const lock = npmUnlocked(rest);
+      if (lock.unlocked) { unlocked = true; if (!lock.guarded) unguarded = true; }
+    }
+  }
+  return { unlocked, unguarded };
 }
 
 function programName(text) {
@@ -486,20 +567,30 @@ function messageOf(findings) {
 
 /* ------------------------------------- check ------------------------------------- */
 
+/* Adds a version note for one answer: a version published less than FRESH_HOURS ago. */
+function noteFresh(i, r, out) {
+  if (r.state === 'found' && typeof r.versionAgeHours === 'number' && r.versionAgeHours < FRESH_HOURS) {
+    out.push({ eco: i.eco, name: i.name, kind: 'fresh_version', version: typeof r.version === 'string' ? r.version : i.version, hours: Math.max(0, Math.floor(r.versionAgeHours)) });
+  }
+}
+
 /**
- * Checks a command. Returns { findings, unavailable, checked }:
+ * Checks a command. Returns { findings, unavailable, checked, notices }:
  *   findings     [{ eco, name, kind, suggestion?, days? }]  names that need a question
  *   unavailable  [{ eco, name, why }]                        online lookups that gave no answer (no question is asked)
  *   checked      number of names read from the command
- * opts: { mode: 'offline' | 'online', allow, newDays, index, lookup }
+ *   notices      [{ eco, name, kind: 'fresh_version', version, hours } | { eco: 'npm', kind: 'no_lockfile', suggest }]
+ * opts: { mode: 'offline' | 'online', allow, newDays, index, lookup, notices }
  * `lookup(items)` is the online lookup (package-registry.js). It is called only in online mode, only when the whole
  * command is a plain install (plainInstallNames), and only with names that that reading returned and the offline step
  * did not already report. In offline mode nothing outside this file is used.
+ * `notices` is a Set of the notice kinds that are switched on ('fresh_version', 'no_lockfile'); empty by default.
  */
 async function check(command, opts = {}) {
   const mode = opts.mode === 'online' ? 'online' : 'offline';
   const allow = opts.allow || [];
   const index = opts.index || defaultIndex();
+  const notices = opts.notices instanceof Set ? opts.notices : new Set();
   const seen = new Set();
   const names = [];
   for (const i of installsOf(command)) {
@@ -508,33 +599,73 @@ async function check(command, opts = {}) {
     seen.add(key);
     names.push(i);
   }
-  // Only the names of a plain install may be looked up: the whole command must be understood.
+  // Only the names of a plain install may be looked up: the whole command must be understood. The notices follow the same rule.
   const plain = mode === 'online' ? plainInstallNames(command) : null;
   const plainKeys = new Set((plain || []).map((p) => p.eco + ':' + p.name));
+  const wantFresh = Boolean(plain) && notices.has('fresh_version');
   const findings = [];
-  const pending = [];
+  // Two lists. The questions are the names that were looked up before the notices existed: their call is unchanged.
+  // The notices for names on the starter list have a call of their own, with a budget of their own.
+  const questions = [];
+  const freshOnly = [];
   for (const i of names) {
     const hit = lookAlike(i.eco, i.name, index);
     if (hit) { findings.push({ eco: i.eco, name: i.name, kind: hit.kind, suggestion: hit.suggestion }); continue; }
-    // A name on the starter list exists and is old: nothing to ask the registry.
-    if (index[i.eco] && index[i.eco].all.has(index[i.eco].normalise(i.name))) continue;
-    if (plain && plainKeys.has(i.eco + ':' + i.name) && !i.legacyCase) pending.push(i);
+    // A name on the starter list exists and is old: nothing to ask the registry about it, but a new version of it is still noticed.
+    const known = Boolean(index[i.eco] && index[i.eco].all.has(index[i.eco].normalise(i.name)));
+    if (!plain || !plainKeys.has(i.eco + ':' + i.name) || i.legacyCase) continue;
+    const fresh = wantFresh && Boolean(i.version);
+    if (!known) questions.push({ ...i, fresh });
+    else if (fresh) freshOnly.push(i);
   }
   const unavailable = [];
-  if (plain && pending.length && typeof opts.lookup === 'function') {
+  const freshNotices = [];
+  const lookupOf = (list) => (list.length
+    ? opts.lookup(list.map((i) => (i.fresh ? { eco: i.eco, name: i.name, version: i.version } : { eco: i.eco, name: i.name })))
+    : Promise.resolve(new Map()));
+  if (plain && typeof opts.lookup === 'function' && (questions.length || freshOnly.length)) {
     const days = newDaysOf(opts.newDays);
-    const results = await opts.lookup(pending.map((i) => ({ eco: i.eco, name: i.name })));
-    for (const i of pending) {
-      const r = results.get(i.eco + ':' + i.name);
+    const answers = await lookupOf(questions);
+    for (const i of questions) {
+      const r = answers.get(i.eco + ':' + i.name);
       if (!r) continue;
       if (r.error) { unavailable.push({ eco: i.eco, name: i.name, why: r.error }); continue; }
-      if (r.state === 'missing') { findings.push({ eco: i.eco, name: i.name, kind: 'not_found' }); continue; }
-      if (r.state === 'found' && typeof r.ageDays === 'number' && r.ageDays < days) {
+      if (r.state === 'missing') findings.push({ eco: i.eco, name: i.name, kind: 'not_found' });
+      else if (r.state === 'found' && typeof r.ageDays === 'number' && r.ageDays < days) {
         findings.push({ eco: i.eco, name: i.name, kind: 'new_package', days: Math.floor(r.ageDays) });
       }
+      if (i.fresh) noteFresh(i, r, freshNotices);
+    }
+    const notes = freshOnly.slice(0, MAX_NOTICE_NAMES);
+    const noteAnswers = await lookupOf(notes.map((i) => ({ ...i, fresh: true })));
+    for (const i of notes) {
+      const r = noteAnswers.get(i.eco + ':' + i.name);
+      if (r && !r.error) noteFresh(i, r, freshNotices);
     }
   }
-  return { findings, unavailable, checked: names.length };
+  const out = freshNotices.slice();
+  if (notices.has('no_lockfile')) {
+    const lock = unlockedOf(command);
+    if (lock.unlocked) out.push({ eco: 'npm', kind: 'no_lockfile', suggest: lock.unguarded });
+  }
+  return { findings, unavailable, checked: names.length, notices: out };
 }
 
-module.exports = { check, installsOf, plainInstallNames, lookAlike, indexOf, messageOf, sentenceOf, allowed, pypiNormalise, oneEdit, skeleton, NAMES };
+/* The sentence for one notice. A notice is a note: it never asks and never stops the command. */
+function noticeSentenceOf(n) {
+  if (n.kind === 'no_lockfile') {
+    const note = 'this runs `npm install`, which uses the lockfile but does not require it and may update it; `npm ci` installs exactly what the lockfile records';
+    return n.suggest ? note + '; to keep install scripts from running, add `--ignore-scripts`' : note;
+  }
+  const what = ECO_NAME[n.eco] + ' `' + n.name + '` version ' + String(n.version).replace(/[^0-9A-Za-z.+_-]/g, '').slice(0, 64);
+  return what + ' was published ' + (n.hours < 1 ? 'less than an hour' : n.hours + ' hour' + (n.hours === 1 ? '' : 's')) + ' ago, less than ' + FRESH_HOURS + ' hours';
+}
+
+/** The note for the user, or null when there is nothing to note. */
+function noticeOf(notices) {
+  if (!notices || !notices.length) return null;
+  const list = notices.slice(0, 4).map(noticeSentenceOf);
+  return 'zn notice (the command still runs): ' + list.join('; ') + (notices.length > 4 ? '; and ' + (notices.length - 4) + ' more' : '') + '.';
+}
+
+module.exports = { check, installsOf, plainInstallNames, lookAlike, indexOf, messageOf, sentenceOf, noticeOf, noticeSentenceOf, allowed, pypiNormalise, oneEdit, skeleton, NAMES };
