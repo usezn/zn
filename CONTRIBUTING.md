@@ -125,6 +125,22 @@ If your pull request changes a page under `docs/`, a README or `changelog.d/READ
 
    CI also checks external links, but only reports them and never fails the pull request.
 
+### Writing a docs example
+
+A worked example is a page in `docs/examples/` that follows one task from the first command to the result. Copy the layout of [scan-walkthrough.md](docs/examples/scan-walkthrough.md):
+
+- A single `#` title, then a short intro that says what the page does, says that every value is made up, and links to the reference page for the command.
+- A line that says to run every command in your own terminal, not through your agent.
+- One `##` section per step, each with the command in a fenced block and the output below it.
+- A closing `## Where to go next` section with links.
+
+Rules for the content:
+
+- **Fictitious values only.** Use reserved domains (`example.com`, `.invalid`, `.test`), documentation IPs (`192.0.2.x`, `198.51.100.x`, `203.0.113.x`), obviously fake keys and example paths. Never paste a real key, host, user name or path from your machine.
+- **Real output.** Run the command with the example values and paste what it prints. Do not write output by hand. Shorten it only by removing lines, and replace anything personal with the example values.
+- **Add the page to the index.** Add one line to [docs/examples/README.md](docs/examples/README.md), keeping the list in alphabetical order, and a row to the table in [docs/README.md](docs/README.md).
+- **Run the docs tests** from [Documentation checks](#documentation-checks) before you open the pull request. They check the links, anchors, headings and the commands and options the page names.
+
 ## Your first pull request and draft pull requests
 
 - The first pull request from a fork waits for a maintainer to approve the workflow runs. The repository requires this approval for every outside contributor, so the checks show as waiting until a maintainer selects "Approve and run". Nothing is wrong with your change.
