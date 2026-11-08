@@ -39,7 +39,7 @@ def _deep_dict(levels, leaf):
     return value
 
 
-# --- B-340: framework context arguments --------------------------------------
+# --- framework context arguments --------------------------------------
 
 class TestFrameworkContextArguments(unittest.TestCase):
     CONTEXTS = [
