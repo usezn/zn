@@ -115,10 +115,12 @@ test('create_and_run_task is judged like a shell command in both adapters', asyn
 test('a custom task shell is a bare shell name or a system shell, never a workspace file', async (t) => {
   const dir = tempDir(t, 'zn-unknown-tools-');
   const mk = (executable) => ({ workspaceFolder: dir, task: { label: 'x', type: 'shell', command: 'echo', args: ['hello'], options: { shell: { executable, args: ['-c'] } } } });
-  for (const exe of ['./bash', 'tools/bash', '../sh', '/tmp/bash', 'C:\\work\\bash.exe']) {
+  for (const exe of ['./bash', 'tools/bash', '../sh', '/tmp/bash', 'C:\\work\\bash.exe',
+    'C:\\Windows\\System32\\..\\Users\\x\\cmd.exe', 'C:\\Windows\\System32\\sub\\cmd.exe', 'C:\\Windows\\System32\\', 'C:/Windows/System32/../Users/x/cmd.exe']) {
     assert.ok(copilotDenied(await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: mk(exe) })), exe);
   }
-  for (const exe of ['bash', '/bin/bash', '/usr/bin/zsh']) {
+  for (const exe of ['bash', '/bin/bash', '/usr/bin/zsh',
+    'C:\\Windows\\System32\\cmd.exe', 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', 'C:\\Program Files\\PowerShell\\7\\pwsh.exe', 'C:\\Program Files\\Git\\bin\\bash.exe', 'c:\\windows\\system32\\cmd.exe', 'C:/Windows/System32/cmd.exe']) {
     assert.equal((await runCopilot({ cwd: dir, toolName: 'create_and_run_task', toolArgs: mk(exe) })).output, null, exe);
   }
 });

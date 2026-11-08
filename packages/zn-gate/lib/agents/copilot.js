@@ -196,7 +196,7 @@ const { classifyEnv } = require('../audit/patterns');
 // (a program that is not a shell, or an argument that can carry code) is refused, because VS Code launches a custom
 // shell as `executable args... commandLine`, so the code could sit in the shell settings.
 const KNOWN_SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'fish', 'pwsh', 'powershell', 'cmd', 'nu']);
-const SYSTEM_SHELL_DIR = /^(?:\/(?:usr\/(?:local\/)?)?s?bin\/|\/opt\/homebrew\/bin\/|[A-Za-z]:[\/]Windows[\/]System32[\/](?:WindowsPowerShell[\/]v1\.0[\/])?|[A-Za-z]:[\/]Program Files[\/](?:PowerShell[\/]\d+[\/]|Git[\/](?:usr[\/])?bin[\/]))[^\/]+$/i;
+const SYSTEM_SHELL_DIR = /^(?:\/(?:usr\/(?:local\/)?)?s?bin\/|\/opt\/homebrew\/bin\/|[A-Za-z]:[\\/]Windows[\\/]System32[\\/](?:WindowsPowerShell[\\/]v1\.0[\\/])?|[A-Za-z]:[\\/]Program Files[\\/](?:PowerShell[\\/]\d+[\\/]|Git[\\/](?:usr[\\/])?bin[\\/]))[^\\/]+$/i;
 const SHELL_FLAGS = new Set(['-c', '-l', '-i', '-lc', '--login', '-noprofile', '-command', '/d', '/s', '/c']);
 // Keys VS Code reads under a task's options; any other key is refused so a new field fails closed.
 const TASK_OPTION_KEYS = new Set(['cwd', 'env', 'shell']);
