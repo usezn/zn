@@ -61,7 +61,7 @@ the command that fixes it. Usually that is `npm install -g zn-gate`, then
 Run `npx -y zn-gate uninstall` (or `zn-gate uninstall` if you installed it with
 `npm install -g zn-gate`). It lists what it found, asks before it removes
 anything, puts back the wrapped MCP servers, removes the hooks and the plugin, and ends with
-`zn-gate check`. Last, run `npm uninstall -g zn-gate` to remove the program, and
+`zn-gate check`. It does not remove the program, edit your `.env` files or delete the `.zn` folder. Last, run `npm uninstall -g zn-gate` yourself to remove the program, and
 then `pip uninstall zn-gate` if you also installed the Python package. Do not
 remove the program first: your agent's settings would still point at a command
 that is gone. See
@@ -94,7 +94,7 @@ else is gone. Afterwards, run
 
 ### 11. In which order should I remove zn-gate?
 
-Remove the hooks before the program. Run `npx -y zn-gate uninstall` in your own terminal first: it puts back the MCP servers that zn-gate wrapped, then removes the hooks and the Claude Code plugin, and asks before each change. Only after that, run `npm uninstall -g zn-gate`.
+Remove the hooks before the program. Run `npx -y zn-gate uninstall` in your own terminal first: it puts back the MCP servers that zn-gate wrapped, then removes the hooks and the Claude Code plugin. It asks before it removes anything, and again before it deletes the vault. It does not remove the program: only after that, run `npm uninstall -g zn-gate` yourself.
 
 If you remove the program first, the hooks stay in your agent's settings. The agent can then be blocked from running commands, because part of zn-gate is missing. If that happens, run `npm install -g zn-gate` to put the program back, then run `npx -y zn-gate uninstall`. To remove only one part, see [Piece by piece](uninstall.md#piece-by-piece).
 

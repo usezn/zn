@@ -19,7 +19,7 @@ The hooks need zn-gate 1.5 or later from npm (`npm install -g zn-gate`).
 | [ZCode desktop app](editors/zcode.md) | `zn hooks install zcode` | `npx -y zn-gate check` | `zn hooks uninstall zcode` |
 | Gemini CLI (experimental) | `zn hooks install gemini` | `npx -y zn-gate check` | `zn hooks uninstall gemini` |
 
-Add `--project` to the install and uninstall commands to work on one project only; run them from that project's folder. A backup of the settings file is written first. More: [Remove zn-gate](uninstall.md#piece-by-piece). To remove by hand, use the order `npx -y zn-gate uninstall` uses: put back wrapped MCP servers first (`npx -y zn-gate init --revert`, for the agents `init --wrap-mcp` changes: Claude Desktop, Claude Code, Cursor, Codex, OpenCode and Antigravity), then the hooks, then the program (`npm uninstall -g zn-gate`).
+Add `--project` to the install and uninstall commands to work on one project only; run them from that project's folder. A backup of the settings file is written first. More: [Remove zn-gate](uninstall.md#piece-by-piece). To remove by hand, use the order `npx -y zn-gate uninstall` uses: put back wrapped MCP servers first (`npx -y zn-gate init --revert`, for the agents `init --wrap-mcp` changes: Claude Desktop, Claude Code, Cursor, Codex, OpenCode and Antigravity), then the hooks. Remove the program last, yourself (`npm uninstall -g zn-gate`).
 
 ## Agents with MCP only
 

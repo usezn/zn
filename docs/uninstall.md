@@ -22,7 +22,9 @@ Whichever way you remove zn-gate, follow this order:
 3. Your `.env` values (`env unshadow`), then the vault if you want it deleted.
 4. The program itself, last: `npm uninstall -g zn-gate`, then `pip uninstall zn-gate` if you also installed the Python package.
 
-If you remove the program first, your agent's settings still point at a command that is gone. `npx -y zn-gate uninstall` does the steps in this order for you.
+If you remove the program first, your agent's settings still point at a command that is gone.
+
+`npx -y zn-gate uninstall` does steps 1 and 2 for you, in that order, after you confirm the list. It then asks separately whether to delete the vault (the vault part of step 3), and ends by running `zn-gate check`. It does not edit your `.env` files, does not delete the rest of the `.zn` folder, and does not remove the program. Those are yours to do: put your `.env` values back if you want them (`env unshadow`), delete the `.zn` folder if you want it gone, and remove the program yourself, last (step 4).
 
 ## One step: `zn-gate uninstall`
 
@@ -48,6 +50,8 @@ npx -y zn-gate uninstall --dry-run
 ```
 
 Your `.env` files are never edited by `uninstall`. If you moved their values into the vault with `env shadow`, they hold markers such as `__ZN_API_KEY__`. Put the real values back before you delete the vault: see [Your `.env` files and the vault](#4-your-env-files-and-the-vault).
+
+`uninstall` also does not run `npm uninstall -g zn-gate` or `pip uninstall zn-gate`. It only prints the program removal as its last line, and that part is yours.
 
 ## What each command removes and leaves
 

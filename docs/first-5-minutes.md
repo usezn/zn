@@ -167,9 +167,9 @@ On Windows, zn prints the `.cmd` form in its own messages, so copy the command i
 
 ## Remove zn-gate
 
-To remove everything in one step, run `npx -y zn-gate uninstall` in your own terminal ([details](uninstall.md)). It does the steps below in the safe order.
+To remove most of it in one step, run `npx -y zn-gate uninstall` in your own terminal ([details](uninstall.md)). It does steps 1, 2 and 3 below for you, in that order, after you confirm the list. It then asks separately before it deletes the vault (the second question in step 5). It does not edit your `.env` files, does not delete the `.zn` folder and does not remove the program, so steps 4, 5 (the folder), 6 and 7 are yours to do.
 
-To remove one part at a time, go in this order, the same one `uninstall` uses. Put back the wrapped MCP servers first, because a saved copy put back after the hooks are removed could bring back zn's `secrets` server. Remove the program last: if you remove the program first, your agent's settings still point at a command that is gone.
+To remove one part at a time, go in this order, the same one `uninstall` uses for steps 1 to 3. Put back the wrapped MCP servers first, because a saved copy put back after the hooks are removed could bring back zn's `secrets` server. Remove the program last: if you remove the program first, your agent's settings still point at a command that is gone.
 
 1. **Wrapped MCP servers** (from `init --wrap-mcp`): `npx -y zn-gate init --revert` puts back each MCP settings file as it was saved just before zn wrapped it. Changes you made to those files later, such as MCP servers you added, are lost, so add them again afterwards. It only undoes MCP wrapping, not hooks.
 2. **Hooks** (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, Gemini CLI, or Claude Code without the plugin): `npx -y zn-gate hooks uninstall claude-code`. Use `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `copilot` or `gemini` for the others, and add `--project` if you installed them for one project only. A backup of the settings file is written first.
