@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Windows helpers of the ZCode e2e kit (the app headless runtime, fake local provider, FICTITIOUS values only).
-env: ZC_CLI (zcode.cjs), KIT, OUT, WORK, ZC_APPDIR. zn-gate is installed under WORK/npm."""
+env: ZC_CLI (zcode.cjs), KIT, OUT, WORK, ZC_APPDIR, ZC_HOME (the user folder, WORK/home by default; a folder with spaces,
+&, parentheses, ^ or % tests how the plugin hooks start from there). zn-gate is installed under WORK/npm."""
 import os, sys, json, time, shutil, subprocess, hashlib, re, copy
 
 KIT = os.environ.get('KIT', os.path.dirname(os.path.abspath(__file__)))
@@ -11,7 +12,7 @@ NPM = WORK + '/npm'
 APPDIR = os.environ.get('ZC_APPDIR', 'C:/ZCodeApp')
 BUILTIN = APPDIR + '/resources/config/provider/zcode-builtin.json'
 PYEXE = sys.executable
-HOME = WORK + '/home'
+HOME = os.environ.get('ZC_HOME') or WORK + '/home'
 PROJ = WORK + '/proj'
 import shutil as _sh
 NODE = _sh.which('node') or 'C:/Program Files/nodejs/node.exe'
@@ -147,11 +148,14 @@ def tool_msgs(prov_log):
     return n, msgs
 
 
-def run_zcode(name, steps, prompt='run the test', cfg_edit=None, with_zn_path=False, mode='yolo', timeout=150):
+def run_zcode(name, steps, prompt='run the test', cfg_edit=None, with_zn_path=False, mode='yolo', timeout=150, env_extra=None, env_drop=(), prep=None):
+    """env_extra / env_drop change the app's environment (which its hooks get); prep() runs after the project is reset."""
     cd = '%s/cases/%s' % (OUT, name)
     shutil.rmtree(cd, ignore_errors=True)
     os.makedirs(cd)
     reset_project()
+    if prep:
+        prep()
     saved_cfg = open(CFG).read()
     if cfg_edit:
         c = json.load(open(CFG))
@@ -164,6 +168,10 @@ def run_zcode(name, steps, prompt='run the test', cfg_edit=None, with_zn_path=Fa
                             stdout=open(cd + '/provider.out', 'w'), stderr=subprocess.STDOUT)
     time.sleep(0.7)
     env = sh_env({'ZC_HOOK_LOG': cd + '/hook.jsonl', 'ZC_HOOK_MODE': WORK + '/hook_mode', 'ZCODE_LOG_CONSOLE': '1'}, with_zn_path)
+    env.update(env_extra or {})
+    for k in env_drop:
+        for key in [x for x in env if x.lower() == k.lower()]:
+            del env[key]
     args = [ZCN, CLI, '--prompt', prompt, '--cwd', PROJ, '--output-format', 'stream-json', '--no-color', '--mode', mode]
     t0 = time.time()
     try:
