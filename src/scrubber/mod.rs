@@ -1930,4 +1930,20 @@ mod table_parity_tests {
         assert_eq!(v["token"], "[SECRET_REDACTED]");
         assert_eq!(v.as_object().unwrap().len(), 3);
     }
+
+    #[test]
+    fn test_github_token_on_a_crlf_line_is_masked_and_the_line_endings_are_kept() {
+        // Fake token built from a made-up body. Each line ends with CRLF, as on Windows.
+        let token = format!("{}{}", "ghp_", "FAKE0123456789abcdefABCDEFghijklmnop");
+        let input = format!("first line\r\ntoken={token}\r\nlast line\r\n");
+        assert_eq!(
+            Scrubber::scrub(&input),
+            "first line\r\ntoken=[SECRET_REDACTED]\r\nlast line\r\n"
+        );
+        let token_only = format!("first line\r\n{token}\r\n");
+        assert_eq!(
+            Scrubber::scrub(&token_only),
+            "first line\r\n[SECRET_REDACTED]\r\n"
+        );
+    }
 }
