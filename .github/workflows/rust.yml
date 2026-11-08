@@ -220,8 +220,9 @@ jobs:
   audit:
     name: cargo audit
     # Draft pull requests skip this job (through scope); a change that touches no Rust file skips it too. Unlike the
-    # other jobs that are not required, it also runs in the merge queue: a new RustSec advisory must stop a merge into
-    # next, not show up only after it. The nightly run on next checks it again.
+    # other jobs that are not required, it also runs in the merge queue, so a new RustSec advisory shows up before a
+    # merge into next and not only after it. It is not a required check, so a failure does not block the merge by
+    # itself; blocking would need cargo audit in the next ruleset. The nightly run on next checks it again.
     needs: scope
     if: needs.scope.outputs.rust == 'true'
     runs-on: ubuntu-latest
