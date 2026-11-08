@@ -128,3 +128,25 @@ The Action exposes the exit code of each step as an output. See [GitHub Action](
 | `audit-exit-code` | `0`, `1`, `2` | `0` clean; `1` findings at or above the threshold; `2` error; empty if the audit did not run. |
 
 With `fail-on-threat: 'false'` the exit codes stay `0`, so do not use these outputs to detect findings in report-only mode.
+
+## Reading exit codes in a Makefile
+
+`make` stops a target at the first command that exits with a non-zero code, and it does not say which code it was. To react to a code, save it with `$$?` and read it in the same shell command. This target treats the three non-zero codes of `scan` differently:
+
+```make
+scan:
+	@zn-gate scan . ; code=$$? ; \
+	case $$code in \
+	  0) echo "scan: clean" ;; \
+	  1) echo "scan: findings, see the list above" ; exit 1 ;; \
+	  3) echo "scan: not everything was read, see the output above" ; exit 1 ;; \
+	  *) echo "scan: could not run (exit $$code), check the command" ; exit $$code ;; \
+	esac
+```
+
+- `0` means nothing was found and everything that matched was read, so the target passes.
+- `1` means the scan found something (or the path does not exist). Fix the findings.
+- `3` means no file was read, or a file or folder that should have been read was not. This is not a clean result. Fix the cause, or add `--allow-partial` to the `zn-gate scan` line if you accept the skipped files; with that flag a scan that found nothing exits `0`.
+- `2` means the command itself was used wrongly, for example an unknown option or a `--format` that is not `text`, `json` or `github`. Fix the line, not the project.
+
+Inside a Makefile every `$` is written `$$`, and each line of the recipe ends with a backslash so the whole `case` runs in one shell. See [Scan and review](#scan-and-review) for the codes of the other commands.
