@@ -1,6 +1,6 @@
 # Example: team onboarding checklist
 
-A checklist for the first day of a new member of a zn Team organization: one line per step, with the command and what you should see. Run every command in your own terminal, not through an AI agent. Why each step works the way it does is in [zn Team on a developer machine](../team.md) and the [quick guide for a team lead](../team-quick-guide.md). The join token and the organization name below are made up; `api.usezn.com` is the real zn service, the host zn-gate talks to.
+A checklist for the first day of a new member of a zn Team organization: one line per step, with the command and what you should see. Run every command in your own terminal, not through an AI agent. Why each step works the way it does is in [zn Team on a developer machine](../team.md) and the [quick guide for a team lead](../team-quick-guide.md). The join token and the organization name below are made up.
 
 ## Before you start
 
@@ -11,7 +11,7 @@ A checklist for the first day of a new member of a zn Team organization: one lin
 
 - [ ] 1. Unlock the vault: `zn unlock`. Expected: a line starting with `Vault unlocked:`. The first run creates the vault. If you are told the vault is locked in a later step, run this again.
 - [ ] 2. Join with the token: `zn team join -`, then paste the token and press Enter. It stays out of your shell history.
-- [ ] 3. Answer the vault's prompt, not the terminal. The vault first asks whether zn-gate may send the token to `api.usezn.com` to look up the organization. Then a dialog shows the organization name, who invited you, the server and the last characters of the token.
+- [ ] 3. Answer the vault's prompt, not the terminal. The vault first asks whether zn-gate may send the token to the zn service to look up the organization. Then a dialog shows the organization name, who invited you, the server and the last characters of the token.
 - [ ] 4. Compare the dialog with what your lead sent. If it matches, approve. If you did not start the command yourself, choose Deny.
 - [ ] 5. Read the end of the join output. Expected: `Joined Example Org (...). Installation ...`, then `Policy: version N`. The command exits `0`.
 - [ ] 6. Check the policy is active: `zn team status`. Expected: an `Organization:` line with your organization, and a `Policy:` line that reads `version N, valid until <date>`. The `Policy:` line must not say `PENDING`, `EXPIRED` or `STRICT MODE`.
