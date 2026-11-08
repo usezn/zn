@@ -154,6 +154,12 @@ zn-gate check --hooks
 
 Lists every installed zn hook (agent, settings file, event and the command it runs) and says whether each is OK, stale (written by an older zn-gate) or broken, with the command that fixes it. It only reads files: nothing is run, changed or sent. Exit code `0` when every hook is OK, `1` when any is stale or broken. [What the output means](check.md#list-every-installed-hook).
 
+```bash
+zn-gate check --json
+```
+
+Prints the same check as one JSON object, for scripts, CI and support requests. Same exit codes; your home folder is shown as `~`. [Fields](check.md#machine-readable-output).
+
 ### `status`
 
 ```bash
