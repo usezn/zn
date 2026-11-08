@@ -14,6 +14,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [mcp-server-with-zn-gate.md](mcp-server-with-zn-gate.md): the two MCP servers of zn-gate (`mcp` and `secrets-mcp`): what each does and what the agent sees.
 - [package-install-check-walkthrough.md](package-install-check-walkthrough.md): turn on the optional package install check, answer one question about a look-alike name, then allow a name.
 - [reading-a-reach-history-report.md](reading-a-reach-history-report.md): how to read the output of zn-gate reach --history.
+- [safe-first-day-with-a-new-agent.md](safe-first-day-with-a-new-agent.md): try zn-gate with a new agent in a throwaway folder, then remove it.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project, from the run to what each exit code means.
 - [stats-and-report.md](stats-and-report.md): worked examples of `zn-gate stats` and `zn-gate report`.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
