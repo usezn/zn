@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-04.35
+RULES_VERSION: 2026-11-07.1
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-04.35"
+RULES_VERSION = "2026-11-07.1"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -495,10 +495,82 @@ def sensitive_path_view(text: str) -> str:
 SENSITIVE_PATH_TEXT_RE = _rc(r"""(?:^|[\s"'`(\[@,\/\\])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])""", re.IGNORECASE)
 
 
-def _test_sensitive_path(text: str) -> bool:
+# cmd.exe reads a command in steps: %VAR% is expanded first, then a ^ outside double quotes escapes the next character, so
+# `type .e^nv`, `type ^.env` and `type %CD%\.e^nv` all open .env. These readings apply only where a cmd reader or cmd itself
+# is named: in a POSIX shell `^` is an ordinary character, and `grep ^.env notes.md` must stay allowed (same as rules.js).
+CMD_READER_RE = _rc(r"""(?:^|[\s;&|("'`])(?:cmd(?:\.exe)?|type|more|findstr|copy)(?=[\s"']|$)""", re.IGNORECASE)
+CMD_PERCENT_UNIT_RE = _rc(r'%[^%!:\r\n]+(?::[^%!\r\n]*)?%')
+CMD_SET_RE = _rc(r"""(?:^|[\s&|(])set\s+"?([A-Za-z_][A-Za-z0-9_]*)=([^&|"\r\n]*)"?""", re.IGNORECASE)
+CMD_NAMED_PERCENT_RE = _rc(r'%([A-Za-z_][A-Za-z0-9_]*)%')
+CMD_C_QUOTED_RE = _rc(r'(\/[ck]\s+)"([\s\S]*)"(\s*)$', re.IGNORECASE)
+CMD_KNOWN_UNIT_RE = _rc(r'^%(?:userprofile|homepath|homedrive|home|cd)%$', re.IGNORECASE)
+
+
+def _drop_cmd_carets(text: str) -> str:
+    out: List[str] = []
+    in_quote = False
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == '"':
+            in_quote = not in_quote
+            out.append(c)
+            i += 1
+            continue
+        if c == '^' and not in_quote:
+            nx = text[i + 1] if i + 1 < n else None
+            if nx is None:
+                break
+            if nx == '\r' and text[i + 2:i + 3] == '\n':
+                i += 3
+                continue
+            if nx == '\n':
+                i += 2
+                continue
+            out.append(nx)
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return ''.join(out)
+
+
+def _expand_cmd_percent(text: str) -> str:
+    """%NAME% of a variable the same text sets (set X=.env) becomes its value; every other % unit is taken out."""
+    variables: Dict[str, str] = {}
+    for m in CMD_SET_RE.finditer(text):
+        variables[m.group(1).lower()] = re.sub(r'\s+$', '', m.group(2))
+    known = text
+    if variables:
+        known = CMD_NAMED_PERCENT_RE.sub(lambda m: variables.get(m.group(1).lower(), m.group(0)), text)
+    return CMD_PERCENT_UNIT_RE.sub(lambda m: m.group(0) if CMD_KNOWN_UNIT_RE.search(m.group(0)) else '', known)
+
+
+def _cmd_readings(text: str) -> List[str]:
+    out: List[str] = []
+    if ('^' not in text and '%' not in text) or CMD_READER_RE.search(text) is None:
+        return out
+    unwrapped = CMD_C_QUOTED_RE.sub(lambda m: m.group(1) + m.group(2) + m.group(3), text)
+    views = [unwrapped]
+    if '%' in text:
+        views.append(_expand_cmd_percent(unwrapped))
+    for v in views:
+        if v != text:
+            out.append(v)
+        if '^' in v:
+            out.append(_drop_cmd_carets(v))
+    return out
+
+
+def _test_sensitive_path_as(text: str) -> bool:
     return (SENSITIVE_PATH_TEXT_RE.search(text) is not None
             or SENSITIVE_PATH_RE.search(text) is not None
             or SENSITIVE_PATH_RE.search(sensitive_path_view(text)) is not None)
+
+
+def _test_sensitive_path(text: str) -> bool:
+    return _test_sensitive_path_as(text) or any(_test_sensitive_path_as(v) for v in _cmd_readings(text))
 
 
 RULE_TESTERS['path:sensitive_file'] = _test_sensitive_path
