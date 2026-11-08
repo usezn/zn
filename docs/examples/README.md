@@ -12,7 +12,6 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [mcp-server-with-zn-gate.md](mcp-server-with-zn-gate.md): the two MCP servers of zn-gate (`mcp` and `secrets-mcp`): what each does and what the agent sees.
 - [package-install-check-walkthrough.md](package-install-check-walkthrough.md): turn on the optional package install check, answer one question about a look-alike name, then allow a name.
 - [policy-allow-vs-block-everyday.md](policy-allow-vs-block-everyday.md): twenty ordinary agent actions and which ones zn-gate allows, asks about or blocks.
-- [policy-allow-vs-block-everyday.md](policy-allow-vs-block-everyday.md): twenty ordinary agent actions and which ones zn-gate allows, asks about or blocks.
 - [reading-a-reach-history-report.md](reading-a-reach-history-report.md): how to read the output of zn-gate reach --history.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project, from the run to what each exit code means.
 - [stats-and-report.md](stats-and-report.md): worked examples of `zn-gate stats` and `zn-gate report`.
