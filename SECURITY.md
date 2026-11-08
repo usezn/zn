@@ -42,6 +42,18 @@ The project has a single maintainer today (see [MAINTAINERS.md](MAINTAINERS.md))
 
 We keep you updated at least every 14 days until the issue is resolved, and tell you if a target will be missed and why.
 
+### In scope
+
+Reports about these parts of this repository are in scope:
+
+* the `zn-gate` packages on npm and PyPI
+* the agent hooks that `zn-gate init` installs
+* the secret vault and the scrubber
+* the MCP shield ([docs/shield.md](docs/shield.md))
+* the GitHub Action ([docs/github-action.md](docs/github-action.md))
+
+A good report shows that zn-gate fails to do what its [threat model](docs/threat-model.md) says it does, for example a secret value that reaches the model, a vault approval that can be bypassed, or a hook that lets a blocked action through.
+
 ### Out of scope
 
 These reports are not accepted as vulnerabilities:
@@ -53,6 +65,7 @@ These reports are not accepted as vulnerabilities:
 * Missing hardening headers or best practices without a demonstrable security impact
 * Findings that require physical access or a compromised end-user device
 * Unverified reports (no reproduced steps and no observed result)
+* Limits that the [threat model](docs/threat-model.md) already lists as not protected against, such as malware running as your own user
 
 ---
 
