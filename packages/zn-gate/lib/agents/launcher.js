@@ -361,6 +361,8 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     '}',
     'zn_mk ack; ZN_AF=$ZN_MK',
     'export ZN_HOOK_ACK="$ZN_AF"',
+    '# The runner learns which hook it serves from this: an event it cannot read is refused on a hook that can block.',
+    'unset ZN_HOOK_EVENT; case "$ZN_EVENT" in ""|*[!A-Za-z]*) ;; *) export ZN_HOOK_EVENT="$ZN_EVENT" ;; esac',
     'trap \'zn_rm "$ZN_AF"\' EXIT',
     'zn_acked() { [ -n "$ZN_AF" ] || return 1; ZN_X=; read -r ZN_X <"$ZN_AF" 2>/dev/null; [ "$ZN_X" = ok ]; }',
     '# Passes a private output file on to the agent: cat by absolute path, else the shell alone (the PATH of a hook can be empty). A failed write is a failure.',
@@ -1106,7 +1108,8 @@ function windowsScript(agentId, event, nodePath, runnerPath, opts = {}) {
   if (t === null) return null;
   const head = "$ProgressPreference='SilentlyContinue'; $zt=0; ";
   if (!t.startsWith(head)) throw new Error('zn: unexpected launcher script');
-  return head + ZK + t.slice(head.length);
+  const named = typeof event === 'string' && /^[A-Za-z]+$/.test(event) ? "$env:ZN_HOOK_EVENT = '" + event + "'; " : '';
+  return head + ZK + named + t.slice(head.length);
 }
 
 /**

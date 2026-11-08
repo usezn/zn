@@ -51,10 +51,10 @@ npx -y zn-gate env unshadow .env --backup <name>
 
 The file holds the original values again. The plain text leaves the vault only after you confirm in the prompt of the vault (a system dialog, or the terminal where you started `zn unlock --foreground`). More: [`env unshadow`](../cli.md#env-unshadow).
 
-Do not delete the vault while the values are still in it: if you remove zn-gate and delete the vault without putting the values back, those values are gone. See [Your `.env` files and the vault](../uninstall.md#your-env-files-and-the-vault).
+Do not delete the vault while the values are still in it: if you remove zn-gate and delete the vault without putting the values back, those values are gone. See [Your `.env` files and the vault](../uninstall.md#4-your-env-files-and-the-vault).
 
 ## Where to read more
 
 - [Keep secrets out of your coding agent](../secrets.md), the page this walkthrough is built from
 - [`env`](../cli.md#env) and [`run`](../cli.md#run) in the command line reference
-- [Your `.env` files and the vault](../uninstall.md#your-env-files-and-the-vault)
+- [Your `.env` files and the vault](../uninstall.md#4-your-env-files-and-the-vault)

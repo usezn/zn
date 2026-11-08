@@ -2,37 +2,21 @@
 
 You use an AI coding agent (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, or the experimental Gemini CLI) and you do not write code yourself, or not much. This page takes you from nothing to "zn-gate is on and I saw it work", then tells you what its messages mean and how to remove it. No account and no API key are needed. Everything runs on your machine.
 
-## Before you start
+## The three commands
 
-> **Checklist**
+> **Before you run them**
 >
-> - **Node.js:** 22 LTS is recommended. 18 or later works for the hooks and the CLI. The Claude Code plugin needs 20.19 or later.
-> - **An agent:** at least one of Claude Code, Codex CLI, Cursor or OpenCode. Antigravity is experimental.
-> - **No account and no API key** are needed.
+> - An agent must already be installed before `npx -y zn-gate init`: see [Install your agent first](#install-your-agent-first).
+> - Run the commands in your own terminal, not through your agent.
+> - On Windows PowerShell, use the `.cmd` forms (`npx.cmd`) or set the execution policy: see the [PowerShell note](#install-your-agent-first) and the [.cmd forms](#windows-powershell-the-cmd-forms).
 
-Node.js 22 LTS is recommended; 18 or later works for the hooks and the CLI, and the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command below in your own terminal, not through your agent.
+Run these in your own terminal, not through your agent. You need Node.js first; its details are [below](#before-you-start).
 
-On Debian or Ubuntu Linux, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages. Gemini CLI and the Claude Code plugin need an even newer one. For example, with the NodeSource packages for Node.js 22 LTS:
+1. **Install:** `npx -y zn-gate init`
+2. **Check:** `npx -y zn-gate check`
+3. **Next, if you have a `.env` file with real secrets:** `npx -y zn-gate env shadow .env`
 
-```bash
-sudo apt-get install -y curl
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
-node --version
-```
-
-`node --version` should print `v22` followed by numbers. On another Linux system, download Node.js 22 LTS from [nodejs.org](https://nodejs.org/en/download).
-
-## Install your agent first
-
-> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
-
-zn-gate protects an agent that is already installed; it does not install the agent for you. Install the agent from its official site, and sign in with your own account for that agent (zn-gate itself needs no account):
-
-- Codex CLI: run `npm install -g @openai/codex`, then run `codex` and sign in with your OpenAI account. OpenAI's own steps are in the [Codex CLI docs](https://developers.openai.com/codex/cli).
-- Gemini CLI: run `npm install -g @google/gemini-cli` (it needs Node.js 20 or later), then run `gemini` and sign in with your Google account. Google's own steps are in the [Gemini CLI repository](https://github.com/google-gemini/gemini-cli).
-
-If `npm install -g` fails with `EACCES`, use the fix in Troubleshooting, then run the same `npm install -g` command again.
+Each step is explained below. Windows PowerShell notes are in [Install your agent first](#install-your-agent-first).
 
 ## 1. Install
 
@@ -61,7 +45,7 @@ zn made a test folder with a fake key in a .env file and an ordinary file next t
 each agent's zn hook whether the agent may read them. This is what happened:
 
   OK Claude Code  blocked the .env file and allowed the ordinary file. Your agent would be told:
-     "zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use."
+     "zn: .env holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use."
   -  Codex CLI    not found on this machine
   -  Cursor       not found on this machine
   -  OpenCode     not found on this machine
@@ -93,7 +77,7 @@ zn-gate speaks up in three ways. Blocks and approval questions come from zn's ho
 zn stopped something that could leak a secret or looked like an attack, and it did not run. Here, an agent in `~/my-project` tried to run `cat .env`. This is what zn answered, word for word:
 
 ```json
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use."}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: .env holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use."}}
 ```
 
 `deny` is the block. The sentence after it is the next step. What to do:
@@ -138,6 +122,38 @@ zn also has a text check that your agent can call through zn's own tools. Some p
 
 For comparison, `npx -y zn-gate analyze "ignore all previous instructions"` is a block: `"verdict": "block"` with the reason "Override prior instructions".
 
+## Before you start
+
+> **Checklist**
+>
+> - **Node.js:** Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later.
+> - **An agent:** at least one of Claude Code, Codex CLI, Cursor or OpenCode. Antigravity is experimental.
+> - **No account and no API key** are needed.
+
+Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. For security, use the latest patch of a supported Node.js line (22.23.4, 24.22.1, 26.12.1 or later): Node.js 18 and 20 are end-of-life and get no security fixes, even though zn-gate still runs on them. If `node --version` says "command not found", install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal. Run every command on this page in your own terminal, not through your agent.
+
+On Debian or Ubuntu Linux, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages. Gemini CLI and the Claude Code plugin need an even newer one. For example, with the NodeSource packages for Node.js 22 LTS:
+
+```bash
+sudo apt-get install -y curl
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+node --version
+```
+
+`node --version` should print `v22` followed by numbers. On another Linux system, download Node.js 22 LTS from [nodejs.org](https://nodejs.org/en/download).
+
+## Install your agent first
+
+> **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
+
+zn-gate protects an agent that is already installed; it does not install the agent for you. Install the agent from its official site, and sign in with your own account for that agent (zn-gate itself needs no account):
+
+- Codex CLI: run `npm install -g @openai/codex`, then run `codex` and sign in with your OpenAI account. OpenAI's own steps are in the [Codex CLI docs](https://developers.openai.com/codex/cli).
+- Gemini CLI: run `npm install -g @google/gemini-cli` (it needs Node.js 20 or later), then run `gemini` and sign in with your Google account. Google's own steps are in the [Gemini CLI repository](https://github.com/google-gemini/gemini-cli).
+
+If `npm install -g` fails with `EACCES`, use the fix in Troubleshooting, then run the same `npm install -g` command again.
+
 ## Windows PowerShell: the .cmd forms
 
 On Windows, PowerShell can refuse to run the `npx.ps1` and `zn.ps1` scripts that npm writes next to the programs, and then a bare `npx` or `zn` fails with "running scripts is disabled on this system". The `.cmd` forms start the same programs without those scripts. Use them when a bare command fails this way:
@@ -167,15 +183,17 @@ On Windows, zn prints the `.cmd` form in its own messages, so copy the command i
 
 ## Remove zn-gate
 
-To remove everything in one step, run `npx -y zn-gate uninstall` in your own terminal ([details](uninstall.md)). To remove only the part you installed:
+To remove everything in one step, run `npx -y zn-gate uninstall` in your own terminal ([details](uninstall.md)). It does the steps below in the safe order.
 
-- **Hooks** (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, Gemini CLI, or Claude Code without the plugin): `npx -y zn-gate hooks uninstall claude-code`. Use `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `copilot` or `gemini` for the others, and add `--project` if you installed them for one project only. A backup of the settings file is written first.
-- **Claude Code plugin**: run `claude plugin uninstall zn-gate@usezn`, or in Claude Code type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
-- **Wrapped MCP servers** (from `init --wrap-mcp`): `npx -y zn-gate init --revert` puts back each MCP settings file as it was saved just before zn wrapped it. Changes you made to those files later, such as MCP servers you added, are lost, so add them again afterwards. It only undoes MCP wrapping, not hooks.
-- **The program itself**, if you installed it with `npm install -g zn-gate`: `npm uninstall -g zn-gate`.
-- **The Python package**, if you installed it with `pip install zn-gate`: `pip uninstall zn-gate`.
-- **`.env` files you moved into the vault** keep markers such as `__ZN_API_KEY__`. `env shadow` tells you how to put the real values back. Do that before you remove zn-gate.
-- **zn's own folder**: zn keeps its vault, settings and counters in a `.zn` folder in your home folder, and removing zn-gate leaves it there. Delete it only after you have put your `.env` values back, because the vault holds them.
+To remove one part at a time, go in this order: wrapped MCP servers first, then the hooks, then the plugin, and the program last. This is the order `zn-gate uninstall` uses. If you remove the program first, your agent's settings still point at a command that is gone.
+
+1. **Wrapped MCP servers** (from `init --wrap-mcp`): `npx -y zn-gate init --revert` puts back each MCP settings file as it was saved just before zn wrapped it. Changes you made to those files later, such as MCP servers you added, are lost, so add them again afterwards. It only undoes MCP wrapping, not hooks.
+2. **Hooks** (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, Gemini CLI, or Claude Code without the plugin): `npx -y zn-gate hooks uninstall claude-code`. Use `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `copilot` or `gemini` for the others, and add `--project` if you installed them for one project only. A backup of the settings file is written first.
+3. **Claude Code plugin**: run `claude plugin uninstall zn-gate@usezn`, or in Claude Code type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
+4. **`.env` files you moved into the vault** keep markers such as `__ZN_API_KEY__`. `env shadow` tells you how to put the real values back (`npx -y zn-gate env unshadow .env --backup <name>`). Do that before you delete the vault.
+5. **zn's own folder**: zn keeps its vault, settings and counters in a `.zn` folder in your home folder, and removing zn-gate leaves it there. Delete it only after you have put your `.env` values back, because the vault holds them. The second question of `zn-gate uninstall` deletes the vault; you can also delete the folder by hand.
+6. **The program itself**, last, if you installed it with `npm install -g zn-gate`: `npm uninstall -g zn-gate`.
+7. **The Python package**, after that, if you installed it with `pip install zn-gate`: `pip uninstall zn-gate`.
 
 Run `npx -y zn-gate check` afterwards if you want to see that zn is off.
 
