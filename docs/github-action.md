@@ -79,7 +79,7 @@ No input is required. Each one has a default, and an empty default means the inp
 | Input | Required | Default | Example |
 |---|---|---|---|
 | `mode` | No | `scan` | `audit` |
-| `version` | No | set by the release | `1.13.1` |
+| `version` | No | set by the release | `1.15.0` |
 | `path` | No | `.` | `docs` |
 | `fail-on-threat` | No | `true` | `'false'` |
 | `severity-threshold` | No | `high` | `medium` |
@@ -114,6 +114,17 @@ Outputs:
 | `sarif-file` | Path of the SARIF file (`format: sarif` only); empty if none was written. |
 | `scan-exit-code` | Exit code of the scan: `0` clean, `1` findings, `2` error, `3` no file was read, or a file or folder was not read and `allow-partial` is not `true` (zn-gate 1.14.0 and later); empty if it did not run. The step then fails with its own message and, with `format: sarif`, the report is still written. |
 | `audit-exit-code` | Exit code of the audit: `0` clean, `1` findings at or above the threshold, `2` error; empty if it did not run. |
+
+## Reading the result
+
+The exit codes are the ones in the [CLI exit codes](cli.md#exit-codes). For the action step they mean:
+
+- `0`: done, nothing to report. For the scan, nothing was found and everything that matched was read. For the audit, nothing is at or above the threshold.
+- `1`: the command ran and found a problem. For the scan, something was found (or the path does not exist). For the audit, there are findings at or above the threshold. Findings win over skipped files: if both happen, the code is `1`.
+- `2`: the command was used wrongly, for example an option it does not know or a path that is not a folder (audit).
+- `3`: scan only. The result does not cover everything: no file was read, or a file or folder that should have been read was not, and `allow-partial` is not `true`.
+
+The same codes are available as the `scan-exit-code` and `audit-exit-code` outputs, described in the table above.
 
 ## What the scan does not read
 
@@ -164,9 +175,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Audit agent configs and scan for secrets
-        uses: usezn/zn@746be20f3276ab0d589f2d6df941b5d31a5396d8 # v1.13.1
+        uses: usezn/zn@84f85b2ed5bd938d823bc2521d48044eddb2ad84 # v1.15.0
         with:
-          version: '1.13.1'
+          version: '1.15.0'
           mode: both
           path: '.'
           format: github
@@ -197,9 +208,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Audit agent configs (report only)
-        uses: usezn/zn@746be20f3276ab0d589f2d6df941b5d31a5396d8 # v1.13.1
+        uses: usezn/zn@84f85b2ed5bd938d823bc2521d48044eddb2ad84 # v1.15.0
         with:
-          version: '1.13.1'
+          version: '1.15.0'
           mode: audit
           format: github
           fail-on-threat: 'false'
@@ -209,7 +220,7 @@ Always set `version` to the same release as the pinned Action. In the 1.12.0 Act
 
 Both modes also check the MCP config files of the repository (such as `.mcp.json`, `.cursor/mcp.json` and `.vscode/mcp.json`) for keys and passwords written in plain text. The value is never printed.
 
-Releases up to and including 1.13.1 do not have this check. It comes in a later release, so the example above, which pins 1.13.1, does not show these annotations yet. Once the Action pins that release, `scan` reports the finding as `secret:mcp_config` and `audit` as `ZNA011`. Until then, both modes only report keys with a known format (for example an AWS access key) in these files, under the general secret rules.
+Releases before 1.14.0 do not have this check: there, both modes only report keys with a known format (for example an AWS access key) in these files, under the general secret rules. From 1.14.0 on, which includes the 1.15.0 pinned in the example above, `scan` reports the finding as `secret:mcp_config` and `audit` as `ZNA011`.
 
 Each finding is an error annotation on the file and line. The audit's message names the key; the scan's message does not, and suggests a vault name to use instead. With `fail-on-threat: 'false'` the annotation is still an error (red), but the step ends green. A warn-mode scan of a `.mcp.json` with a key in an `env` block shows this, shortened:
 
