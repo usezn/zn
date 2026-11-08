@@ -109,7 +109,7 @@ zn secret log
 chain: valid, 6 records
 ```
 
-The three lines are the removal, the new value stored after it (`created`), and the value replaced with `--force` (`updated`). The sample is the end of a longer log from a session that also unlocked the vault and stored the secret first. For how to read each column, see Read the secret access log.
+The three lines are the removal, the new value stored after it (`created`), and the value replaced with `--force` (`updated`). The sample is the end of a longer log from a session that also unlocked the vault and stored the secret first.
 
 ## What to check
 
