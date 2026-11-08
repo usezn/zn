@@ -2,7 +2,7 @@
 
 The settings that control the optional cloud check, each with its effect, one command with fake values, and what leaves your machine. The effects are copied from the Settings table of the [command line reference](../cli.md#settings). For the full behaviour, read [Turn on the optional cloud check](../connect.md).
 
-By default nothing leaves your machine. Only `analyze`, `analyze_prompt` and, for tool output, the Claude Code hook can use the cloud check, and only when it is on. Every other command stays local.
+By default nothing leaves your machine. Only `analyze` and `analyze_prompt` can use the cloud check when it is on, and the Claude Code hook can send tool output only after `zn-gate connect` and your own `hooks.cloudCheckToolOutput: true` in `~/.zn/config.json` (off by default). Every other command stays local.
 
 | Setting | Effect | Example command (fake values) | What leaves the machine |
 |---|---|---|---|
