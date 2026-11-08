@@ -297,7 +297,7 @@ test('a shell command over 100 KB is refused at once; one just under the limit g
   const start = process.hrtime.bigint();
   const deny = policy.bashDenial(tooLong);
   const ms = Number(process.hrtime.bigint() - start) / 1e6;
-  assert.equal(deny, 'zn: this command is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.');
+  assert.equal(deny, 'zn: this command is too long for zn to check (over 100 KB), so it was blocked (rule: size:command-too-long). Unchecked, it could read a secret or a protected file. Next step: tell the user; do not resend it in parts. Only the user can run it, in their own terminal.');
   assert.ok(ms < budget(50), 'took ' + ms + ' ms');
   // Exactly at the limit and just under it: the normal check runs.
   assert.equal(policy.bashDenial('echo ' + 'a'.repeat(cap - 5)), null);

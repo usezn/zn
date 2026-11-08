@@ -62,7 +62,9 @@ Run `npx -y zn-gate uninstall` (or `zn-gate uninstall` if you installed it with
 `npm install -g zn-gate`). It lists what it found, asks before it removes
 anything, removes the plugin, the hooks and the MCP wrapping, and ends with
 `zn-gate check`. Last, run `npm uninstall -g zn-gate` to remove the program, and
-`pip uninstall zn-gate` if you also installed the Python package. See
+then `pip uninstall zn-gate` if you also installed the Python package. Do not
+remove the program first: your agent's settings would still point at a command
+that is gone. See
 [One step](uninstall.md#one-step-zn-gate-uninstall).
 
 ### 8. Can I see what uninstall would do without changing anything?
@@ -75,13 +77,16 @@ It keeps your vault unless you answer yes to a second, separate question (the
 default is no). That yes cannot be undone. It never edits your `.env` files. If
 you moved their values into the vault with `env shadow`, put the real values back
 first with `npx -y zn-gate env unshadow .env --backup <name>`. See
-[Your `.env` files and the vault](uninstall.md#your-env-files-and-the-vault).
+[Your `.env` files and the vault](uninstall.md#4-your-env-files-and-the-vault).
 
 ### 10. Can I remove only one part?
 
-Yes. Remove the Claude Code plugin with `claude plugin uninstall zn-gate@usezn`,
-the hooks of one agent with `npx -y zn-gate hooks uninstall <agent>`, and MCP
-wrapping with `npx -y zn-gate init --revert`. Afterwards, run
+Yes. Go in this order, with the wrapped MCP servers first and the program last.
+Put back wrapped MCP servers with `npx -y zn-gate init --revert` (a saved copy
+put back after the hooks are removed could bring back zn's `secrets` server),
+then remove the hooks of one agent with `npx -y zn-gate hooks uninstall <agent>`,
+then the Claude Code plugin with `claude plugin uninstall zn-gate@usezn`. Remove the program (`npm uninstall -g zn-gate`,
+then `pip uninstall zn-gate`) only when everything else is gone. Afterwards, run
 `npx -y zn-gate check` to see what is left. See
 [Piece by piece](uninstall.md#piece-by-piece).
 
