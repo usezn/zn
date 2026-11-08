@@ -3,6 +3,7 @@
 Worked examples, in alphabetical order. All values in them are made up.
 
 - [audit-before-adding-a-repo.md](audit-before-adding-a-repo.md): run `zn-gate audit` on a repository you do not know yet, read the report and decide what to do before you open it with an agent.
+- [audit-report-to-file.md](audit-report-to-file.md): save the audit report to a file in text, JSON or SARIF, and compare two runs.
 - [block-message-anatomy.md](block-message-anatomy.md): one real block message, explained part by part.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
 - [first-block-vs-allow-decision.md](first-block-vs-allow-decision.md): what to do the first time zn-gate blocks a command of your agent, and when to change the settings instead.
