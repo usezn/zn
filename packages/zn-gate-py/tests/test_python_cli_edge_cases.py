@@ -10,8 +10,6 @@ import subprocess
 import sys
 from contextlib import redirect_stdout
 
-import pytest
-
 from zn_gate import cli, stats
 from zn_gate.evidence import log_evidence, verify_evidence_ledger
 
