@@ -33,6 +33,40 @@ const MAX_STRINGS_PER_LINE = 200000;
 // A very long line is scanned in slices of about this many characters, with the deadline checked between slices,
 // so one huge line cannot run far past --max-seconds. Lines shorter than this are scanned whole.
 const SLICE_CHARS = 4 * 1024 * 1024;
+// Each slice is scanned with this many characters of the next slice after it, so a secret that crosses a cut is seen
+// whole by the slice it starts in. See overlapChars() for how the size comes from the secret rules.
+const OVERLAP_FLOOR = 64 * 1024;
+let overlap = 0;
+
+/**
+ * Longest match of a secret rule, as an upper bound: for each rule, the sum of the upper bounds of its bounded
+ * repeats ({n} and {m,n}; an open {m,} counts as m) plus the length of its source (which bounds its fixed text).
+ * The overlap is twice that, and at least OVERLAP_FLOOR: the part of a slice that is read twice is then at least
+ * two of the longest secrets long, so a secret that crosses a cut fits in it and the two seams never meet.
+ * The other secret scanners of lib/scrub (config lines, quoted values) read at most 4096 characters plus the key.
+ * A rule with an open repeat ({m,}, +, *) can match a longer token: such a token is the one case a cut can miss.
+ */
+function longestSecretMatch(sources) {
+  const q = /(?<!\\)\{(\d+)(?:,(\d*))?\}/g;
+  let best = 0;
+  for (const src of sources) {
+    let n = src.length;
+    let m;
+    q.lastIndex = 0;
+    while ((m = q.exec(src)) !== null) n += Number(m[2] ? m[2] : m[1]);
+    if (n > best) best = n;
+  }
+  return best;
+}
+
+function overlapChars() {
+  if (!overlap) {
+    const { PATTERNS } = require('../scrub/patterns');
+    const sources = PATTERNS.filter((p) => p.re instanceof RegExp).map((p) => p.re.source);
+    overlap = Math.max(OVERLAP_FLOOR, 2 * longestSecretMatch(sources));
+  }
+  return overlap;
+}
 
 // Agents whose history is a plain JSON Lines file and documented. Cursor and OpenCode keep theirs in a
 // database (SQLite), which this version does not read: they are reported as not scanned.
@@ -215,9 +249,9 @@ function strings(v, out) {
 /** Adds the secret types found in one line to counts ({ TYPE: n }). Values are dropped here. */
 class TimeUp extends Error {}
 
-function slices(text) {
-  if (text.length <= SLICE_CHARS) return [text];
-  const out = [];
+/** Cut points of a text: [0, c1, ..., length]. A cut is moved back to a line break or a space when one is near. */
+function cuts(text) {
+  const out = [0];
   let pos = 0;
   while (pos < text.length) {
     let end = Math.min(pos + SLICE_CHARS, text.length);
@@ -225,12 +259,27 @@ function slices(text) {
       const cut = Math.max(text.lastIndexOf('\n', end - 1), text.lastIndexOf(' ', end - 1));
       if (cut >= pos && cut > end - 65536) end = cut + 1;
     }
-    out.push(text.slice(pos, end));
+    out.push(end);
     pos = end;
   }
   return out;
 }
 
+function addSecrets(engine, text, delta, sign) {
+  for (const s of engine.scan(text, { exact: false, pii: false })) {
+    if (s.source === 'pii') continue;
+    delta[s.type] = (delta[s.type] || 0) + sign;
+  }
+}
+
+/**
+ * A line longer than SLICE_CHARS is scanned slice by slice, with the deadline checked between slices. Slice i
+ * runs from cut c(i) to cut c(i+1) and is scanned together with the next `overlap` characters, so a secret that
+ * crosses c(i+1) is seen whole. What that extra text holds is counted again by slice i+1, so the findings of the
+ * text from c(i+1) to c(i+1) + overlap, scanned alone, are taken away from slice i+1: both texts start at the same
+ * cut, so what each finds there (including a piece of a secret cut at c(i+1)) is the same and cancels out. Each
+ * secret is then counted once, by the slice it starts in, without needing positions.
+ */
 function scanLine(engine, line, counts, expired) {
   let text = line;
   const t = line.trimStart().charCodeAt(0);
@@ -240,14 +289,26 @@ function scanLine(engine, line, counts, expired) {
     } catch (_) { text = line; }
   }
   if (text.length < 8) return;
-  const parts = slices(text);
-  for (let i = 0; i < parts.length; i++) {
-    if (i > 0 && expired && expired()) throw new TimeUp();
-    const spans = engine.scan(parts[i], { exact: false, pii: false });
-    for (const s of spans) {
-      if (s.source === 'pii') continue;
-      counts[s.type] = (counts[s.type] || 0) + 1;
+  if (text.length <= SLICE_CHARS) {
+    const delta = {};
+    addSecrets(engine, text, delta, 1);
+    for (const k of Object.keys(delta)) counts[k] = (counts[k] || 0) + delta[k];
+    return;
+  }
+  const extra = overlapChars();
+  const at = cuts(text);
+  const inLine = {};
+  try {
+    for (let i = 0; i + 1 < at.length; i++) {
+      if (i > 0 && expired && expired()) throw new TimeUp();
+      const delta = {};
+      addSecrets(engine, text.slice(at[i], Math.min(text.length, at[i + 1] + extra)), delta, 1);
+      if (i > 0) addSecrets(engine, text.slice(at[i], Math.min(text.length, at[i] + extra)), delta, -1);
+      for (const k of Object.keys(delta)) inLine[k] = (inLine[k] || 0) + delta[k];
     }
+  } finally {
+    // A count below zero can only come from a rule that matches a cut piece but not the whole secret: never negative.
+    for (const k of Object.keys(inLine)) if (inLine[k] > 0) counts[k] = (counts[k] || 0) + inLine[k];
   }
 }
 
@@ -439,4 +500,4 @@ function report(r, write) {
   return 0;
 }
 
-module.exports = { history, report, VERSION, DEFAULT_MAX_SECONDS, MAX_SECONDS_LIMIT, _internal: { actionFor, scanFile, AGENTS } };
+module.exports = { history, report, VERSION, DEFAULT_MAX_SECONDS, MAX_SECONDS_LIMIT, _internal: { actionFor, scanFile, scanLine, cuts, overlapChars, longestSecretMatch, AGENTS, SLICE_CHARS } };

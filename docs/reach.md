@@ -173,7 +173,11 @@ stops after `--max-seconds` seconds (default 120, at most 3600), newest files
 first. When it stops, the report lists the files that were not fully scanned
 and never says that nothing was found. A line longer than 32 MB is skipped and
 its file is listed as partly scanned.
-Lines longer than 4 MB are scanned in slices, so a secret split across a slice cut can be missed.
+A line longer than 4 MB is scanned in slices, so the time limit is checked
+while it is read. Each slice is read together with the first 64 KB of the next
+one, so a secret that crosses a cut is found, and counted once. The one case a
+cut can still miss is a single unbroken token longer than about 32 KB that
+crosses it.
 
 ### History: flags
 

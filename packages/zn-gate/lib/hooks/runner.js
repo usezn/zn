@@ -330,15 +330,22 @@ function guardNativeText(ev) {
 }
 
 // What the model wrote or read is content, never a path: a tool output, a prompt or an answer is checked by the
-// scanner and does not reach a file call, so malformed text there is not a reason to refuse the event.
-const CONTENT_KEYS = new Set(['prompt', 'tool_response', 'tool_output', 'toolResult', 'tool_result', 'output', 'metadata', 'result', 'response', 'last_assistant_message']);
+// scanner and does not reach a file call, so malformed text there is not a reason to refuse the event. `metadata`
+// is not on this list: no agent documents what it holds, so an agent could put a path there, and it is checked.
+// The one exception is a field the adapter itself took into the tool output (OpenCode's content, and its metadata,
+// the TUI's copy of the output: see lib/agents/opencode.js), which is scrubbed and handed back as output, never used
+// as a path.
+const CONTENT_KEYS = new Set(['prompt', 'tool_response', 'tool_output', 'toolResult', 'tool_result', 'output', 'result', 'response', 'last_assistant_message']);
 
 /** Every other field of a post-tool, prompt or stop event (working directory, transcript, workspace roots, tool input) is checked. */
 function unsafeEventKind(ev) {
   const input = ev.input && typeof ev.input === 'object' ? { ...ev.input, prompt: undefined } : ev.input;
   const raw = {};
   if (ev.raw && typeof ev.raw === 'object') {
-    for (const [k, v] of Object.entries(ev.raw)) if (!CONTENT_KEYS.has(k) && v !== ev.output) raw[k] = v;
+    // The same object under the same key, not an equal one: only what the adapter put in the output is left out.
+    const out = ev.output && typeof ev.output === 'object' ? ev.output : null;
+    const inOutput = (k, v) => !!out && !!v && typeof v === 'object' && Object.prototype.hasOwnProperty.call(out, k) && out[k] === v;
+    for (const [k, v] of Object.entries(ev.raw)) if (!CONTENT_KEYS.has(k) && v !== ev.output && !inOutput(k, v)) raw[k] = v;
   }
   return unsafeKind([ev.cwd, ev.sessionId, ev.toolName, input, raw]);
 }
