@@ -32,8 +32,10 @@ test('destructive command: rule, why and who decides', () => {
   assert.match(msg, /Ask the user to confirm before running this command\./);
   assert.match(msg, /they can run it in their own terminal; do not run it yourself/);
   assert.ok(!/blockDestructiveCommands|config\.json/.test(msg), 'the model is not told how to switch the rule off');
-  const many = destructive.denial('true;'.repeat(400), ['rm_root_home']);
-  if (many) assert.equal(rule(many), 'destructive:too_many_commands');
+  const many = destructive.denial('true;'.repeat(50000), ['rm_root_home']);
+  assert.notEqual(many, null, 'a very long command is denied');
+  assert.equal(rule(many), 'destructive:too_many_commands');
+  for (const m of [msg, many]) assert.equal(m, m.trimEnd(), 'no trailing whitespace in a destructive block reason');
 });
 
 test('.env read: rule, why and the one command', (t) => {
@@ -92,6 +94,19 @@ test('vault not available: rule, why and the one command', async () => {
   assert.equal(unlockMentions(msg), 1, msg);
   assert.match(msg, /an agent cannot unlock it/i);
 });
+
+// "failed to unlock keychain" says unlock but is not the command: the unlock step is still shown, once.
+for (const [label, message] of [
+  ['an error that says unlock without the command', 'failed to unlock keychain'],
+  ['an error that names the command', 'vault is locked; run `zn unlock` first'],
+]) {
+  test('vault not available, ' + label + ': the unlock command appears once', () => {
+    const err = Object.assign(new Error(message), { code: 'ZN_LOCKED', vaultFailed: true });
+    const r = runner.failDecision({ event: 'pre_tool' }, err, 'closed', 'claude-code');
+    const cmd = /npx -y zn-gate@\S+ unlock/.test(r.message) ? /npx -y zn-gate@[^ `]+ unlock/g : /\bzn unlock\b/g;
+    assert.equal((r.message.match(cmd) || []).length, 1, r.message);
+  });
+}
 
 // Vault down, direct: the engine's error text names the unlock command or it does not; either way the message names it once.
 for (const [label, message] of [
