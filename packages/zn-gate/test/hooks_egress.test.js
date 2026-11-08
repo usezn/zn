@@ -29,7 +29,7 @@ const GHP = FAKE.secrets.find((s) => s.type === 'github_pat_classic').value;
 const URL_PASS = 'alice:hunter2xyz9';
 
 function event(tool_name, tool_input) {
-  return { session_id: 'b836', cwd: process.cwd(), permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name, tool_input, tool_use_id: 'toolu_836' };
+  return { session_id: 'egress-session', cwd: process.cwd(), permission_mode: 'default', hook_event_name: 'PreToolUse', tool_name, tool_input, tool_use_id: 'toolu_egress' };
 }
 
 async function pre(tool_name, tool_input, extra = {}) {

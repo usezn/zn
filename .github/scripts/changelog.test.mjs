@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { parseFragment, buildSection, assemble, checkPullRequest, needsFragment } from './changelog.mjs';
+import { parseFragment, buildSection, assemble, checkPullRequest, needsFragment, fragmentHint } from './changelog.mjs';
 
 const CHANGELOG = `# Changelog
 
@@ -115,4 +115,12 @@ test('a fragment with a byte order mark, a non-ASCII name, or in a subfolder', (
   fs.writeFileSync(path.join(dir, 'changelog.d', 'sub', 'x.md'), '### Fixed\n- Lost.\n');
   g('add', '-A'); g('commit', '-qm', 'sub');
   assert.match(checkPullRequest(dir, 'next').errors.join(), /directly in changelog\.d/);
+});
+
+test('the failure hint shows a template that parses as a valid fragment', () => {
+  const text = fragmentHint();
+  const block = text.split('```markdown\n')[1].split('```')[0];
+  assert.deepEqual(parseFragment(block, 'hint').errors, []);
+  assert.match(text, /changelog\.d\/fix-init-guard\.md/);
+  assert.match(text, /no-changelog/);
 });
