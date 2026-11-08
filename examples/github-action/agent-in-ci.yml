@@ -38,9 +38,9 @@ jobs:
           persist-credentials: false
       - name: Audit agent configs and scan for secrets
         id: zn
-        uses: usezn/zn@2afcaa17c7d1cb8fb5ded21f5f849ce8eba2bc5e # v1.14.1
+        uses: usezn/zn@84f85b2ed5bd938d823bc2521d48044eddb2ad84 # v1.15.0
         with:
-          version: '1.14.1'
+          version: '1.15.0'
           mode: both
           format: sarif
           severity-threshold: medium
