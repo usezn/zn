@@ -1,3 +1,74 @@
+# ZCode on Windows: hooks installed by `zn hooks install zcode`, a busy CPU
+
+Same app, VM and setup as the plugin runs below, from 7f8a8c9d0 (recorded in each run's log), with the plugin never
+installed. `zn hooks install zcode` wrote 4 events, every entry with a 300,000 ms timeout, and the Windows launcher with a
+120 s deadline. A stuck zn-gate was injected into the installed runner on PreToolUse: one that never answers and one that
+never gives its thread back, on the recorded runner path and on the fallback path through `zn`.
+
+| Busy processes per CPU | UserPromptSubmit (ordinary check) | PreToolUse with zn-gate stuck | Result |
+|---|---|---|---|
+| 1 | answered after 32,736, 34,217 and 41,302 ms | blocked after 139,655, 159,689 and 139,741 ms, value not returned | 3/3 PASS |
+| 2 | answered after 60,214, 78,172 and 87,399 ms | blocked after 160,976, 181,386 and 164,498 ms, value not returned | 3/3 PASS |
+
+The longest stuck hook ended after 181 seconds, inside ZCode's 300 second timeout.
+
+# ZCode plugin on Windows: a busy CPU
+
+ZCode desktop app 3.16.3 on Windows Server 2022, 2 vCPU, plain folder run (26 cases). During I1 to I3, CPU-bound
+processes run on every CPU from before the prompt is sent. Hook durations are ZCode's own `durationMs` of the Windows
+entry. ZCode's timeout on the plugin's hooks: 300,000 ms. The kits were built from a1ac3ddc7; for the 120 s runs the
+deadline was set to 120 s in zn-launch.js, zn-hook.ps1 and zn-hook.sh, the values of aa08d9264 (whose start-time window
+for the batch file's note is 300 s instead of 120 s).
+
+| Run | Busy processes per CPU | Hook deadline | UserPromptSubmit (ordinary check) | PreToolUse with zn-gate stuck | Result |
+|---|---|---|---|---|---|
+| Before (30,000 ms timeout) | 1 | 26 s | n/a | the timeout passed and the call ran with the .env value | FAIL |
+| 300,000 ms timeout | 1 | 26 s | blocked by the deadline after 40,956, 46,800 and 45,684 ms: the prompt never reached the model | not reached | I1 to I3 FAIL (fail closed), 23 PASS |
+| 300,000 ms timeout | 1 | 120 s | answered after 43,606, 45,497 and 69,002 ms | blocked after 129,705, 132,168 and 134,947 ms, value not returned | 26 PASS |
+| 300,000 ms timeout | 2 | 120 s | answered after 112,038, 114,457 and 131,095 ms | blocked after 143,565, 146,152 and 153,933 ms, value not returned | 26 PASS |
+
+With a 120 second deadline an ordinary check finishes on a busy machine, and a stuck zn-gate is still blocked well before
+ZCode's timeout (at most 154 of 300 seconds with two busy processes per CPU). An ordinary check that runs past the deadline
+on an even busier machine is blocked, never let through. Outside the busy cases the results match the idle run above.
+
+# ZCode plugin on Windows: stuck hooks, a planted node.exe and a missing environment
+
+Branch `fix/zcode-win-rc2` at 8c878100c (the plugin's hooks stop by themselves 26 seconds after ZCode starts them). Official ZCode 3.16.3.8992 on Microsoft Windows Server 2022 Datacenter 10.0.20348 (same installer and `zcode.cjs` hashes as below), fake local model provider, fictitious values only, built-in Administrator account. The plugin is built from that commit with the published zn-gate 1.14.1 tarball.
+
+Folder runs (the case list A0 to H with `ZC_HOME` in that folder): plain 26 pass (the 17 cases plus I1 to I7), space, amp, parens, caret, pct and mixed 17 pass each, no failure.
+
+| Case | Expected | Observed | Result |
+|---|---|---|---|
+| I1 zn-gate inside the plugin never answers on PreToolUse (direct Node.js path): Read .env | blocked by the hook before ZCode's 30 second timeout | blocked after 26,102 ms, value not returned | PASS |
+| I2 zn-gate inside the plugin never gives its thread back (direct Node.js path) | same | blocked after 26,976 ms (the watchdog thread ended it) | PASS |
+| I3 the same, PowerShell path (no ProgramFiles) | same | blocked after 27,670 ms | PASS |
+| I4 node.exe planted in the project, PATH into the project, PowerShell path: Read .env, Read a.txt | .env blocked, a.txt read, nothing started from the project | as expected; no program started from the project folder (process creation audit) | PASS |
+| I5 the same, direct Node.js path | same | as expected | PASS |
+| I6 (information) the app without SystemRoot and ProgramFiles | observe only | the app made no model request, so no tool ran | PASS |
+| I7 hook entry without SystemRoot, ProgramFiles and ZCODE_PLUGIN_ROOT | no Node.js: exit 2; with Node.js: .env denied, a.txt allowed | exit 2 in 2,593 ms; deny; allow | PASS |
+
+Hook durations are ZCode's own `durationMs` of the Windows entry. With the earlier 28 second deadline, the same kit measured 28,147, 28,884 and 29,991 ms for I1 to I3: stopping a stuck hook can take up to 2 seconds after the deadline, which left ZCode's 30 second timeout only milliseconds on the PowerShell path. The `/bin/sh` entry of every event fails to start on Windows (30 to 2,700 ms, never a decision) and is not counted.
+
+Plugin tests on the same machine (Node.js 22.23.4): `plugins/tools/test-launch.js` 59 pass, `plugins/tools/test-zcode-plugin.js` 28 pass, `packages/zn-gate/test/hooks_zcode_plugin.test.js` 15 pass and 2 fail. The two failures ("a ZCode process hook counts only as an absolute sh or node on a script inside the plugin folder" and "a ZCode hook with a non-system sh, a pattern, or a script linked out of the plugin is NOT protected") fail on the wording of the reason only: `zn-gate check` still reports not protected. They fail the same way at the earlier commit and pass on the Windows CI runner of `next`; the VM gives the temp folder in its short form (`ADMINI~1`). The test that ran past its time limit before ("runs no planted sh or node") now passes in 10.2 seconds.
+
+# ZCode plugin on Windows: the cmd.exe hook from user folders with special characters
+
+Release port of `fix/zcode-win-rc2` onto `release/1.15.0` at 129748782 (the plugin's Windows entry is `C:\Windows\System32\cmd.exe /d /c ( "${ZCODE_PLUGIN_ROOT}\scripts\zn-hook.cmd " <event> ) || exit /b <2 or 0>`). Official ZCode 3.16.3.8992 on Microsoft Windows Server 2022 Datacenter 10.0.20348, installer sha256 `B4FCCC1EAD9922D9066E083D53D3BF92BDEAC3124767D4352FD0583E5399382F`, Authenticode signature Valid, its own headless runtime (`resources/glm/zcode.cjs`, sha256 `97490D0F06A7A225D54D47817ACF4B4859CDB268B59F2490CAAEDA982BEF063A`), fake local model provider, fictitious values only. The plugin is built from that commit (`plugins/tools/build-plugin-repo.js --target zcode`) with the published zn-gate 1.14.1 tarball; `zn-gate check` is the 1.15.0-rc.1 package of that commit. Each row is the whole case list (A0 to H, as in the table below) run with the ZCode user folder (`ZC_HOME`) set to that folder, so the plugin is installed and its hooks start from there.
+
+| Folder | User folder | Pass | Fail | Result |
+|---|---|---|---|---|
+| plain | `C:\work\home` | 17 | 0 | PASS |
+| space | `C:\work\Jane Doe` | 17 | 0 | PASS |
+| amp | `C:\work\R&D` | 17 | 0 | PASS |
+| parens | `C:\work\Jane(Work)` | 17 | 0 | PASS |
+| caret | `C:\work\a^b` | 17 | 0 | PASS |
+| pct | `C:\work\100%` | 17 | 0 | PASS |
+| mixed | `C:\work\Jane Doe (Work) & Co` | 17 | 0 | PASS |
+
+The same kit with the earlier entry (a `.cmd` file as the hook's command) failed 6 cases in the space, `&` and mixed folders: the hook could not start and the calls ran. Hook durations in the default folder (ms, first call first): [2345, 7133, 55, 160, 1253, 37, 1230, 41, 76, 1223, 47, 1245, 19].
+
+Per folder: `windows-folders/<folder>/results.md`.
+
 # ZCode plugin on Windows and Linux: results on the branch
 
 Branch `fix/zcode-plugin-windows` at e08aa22b (the plugin starts a `/bin/sh` hook and a PowerShell hook for every event). Official ZCode 3.16.3, its own headless runtime (`resources/glm/zcode.cjs`, run as the app runs it), fake local model provider, fictitious values only. The plugin is the one built from the branch (`plugins/tools/build-plugin-repo.js --target zcode`) with the published zn-gate 1.14.1 tarball (sha256 813bc6ffabd961fab9f1bd32cd71070bf34177aac4069dd8558ec3182d77c9de).
