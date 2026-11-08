@@ -11,6 +11,7 @@
 # Workflow lint (actionlint + zizmor) is not decided here: its job in quick-checks.yml keeps its own inline
 # paths filter (workflows, actions, workflow-lint config, zizmor config, action.yml) because it runs no
 # script of the repository.
+#   timeouts      pull requests and pushes to main or next: workflows, the timeout check and its test
 #   packagelint   pull requests and pushes to main or next: the two packages and their lint requirements
 #   hooks         pull requests and pushes to main or next: the pre-commit hooks file and its test
 #   snippets      pull requests, pushes to main, the nightly schedule: README, docs, packages
@@ -23,7 +24,7 @@
 # Environment: EVENT_NAME, REF (github.ref), BASE_REF (pull requests), BEFORE (pushes: the previous tip).
 set -uo pipefail
 
-CHECKS="changelog markdownlint typos links shellcheck packagelint hooks snippets scopetest"
+CHECKS="changelog markdownlint typos links shellcheck timeouts packagelint hooks snippets scopetest"
 declare -A run
 for c in $CHECKS; do run[$c]=false; done
 
@@ -94,6 +95,9 @@ while IFS= read -r f; do
   esac
   case "$f" in
     *.sh) run[shellcheck]=true ;;
+  esac
+  case "$f" in
+    .github/workflows/*|.github/scripts/check-timeouts*) run[timeouts]=true ;;
   esac
   case "$f" in
     packages/zn-gate/*|packages/zn-gate-py/*|.github/package-lint-requirements.txt|.github/release-requirements.txt) run[packagelint]=true ;;
