@@ -28,6 +28,8 @@ Find the command you ran, then the symptom that matches.
   - ["zn could not use your secret vault"](#zn-could-not-use-your-secret-vault-error)
   - ["Lock the vault first"](#lock-the-vault-first)
   - ["The vault is already unlocked"](#the-vault-is-already-unlocked)
+- `run`
+  - ["zn run: Not found: secret `<NAME>` is not in the vault"](#zn-run-not-found-secret-name-is-not-in-the-vault)
 - `team`
   - ["invalid join token (expected znj_...)" / "No join token given"](#invalid-join-token-expected-znj_--no-join-token-given)
   - ["This join token is expired, already used or not valid"](#this-join-token-is-expired-already-used-or-not-valid)
@@ -766,12 +768,12 @@ The message gives the rule `(rule: vault:unavailable)`, says that an agent canno
 
 ```text
 zn: could not read the tool name of this call, so zn cannot check it and blocked it. This usually means <agent> changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `zn hooks install <agent>`.
-zn: <agent> sent an event zn does not know, so it was not checked. This usually means <agent> changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `zn hooks install <agent>`.
+zn: <agent> sent an event zn does not know, so zn cannot check it and blocked it. This usually means <agent> changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `zn hooks install <agent>`.
 ```
 
-**What happened:** your agent was updated and now sends zn information in a new shape (a renamed field, a new event name, a different tool name). The installed zn-gate is older than the agent, so it cannot read it. A call whose tool or command zn cannot read is blocked. An event with a name zn does not know is let through unchecked, and the second message appears on the hook's error output (some agents show it only in verbose mode).
+**What happened:** your agent was updated and now sends zn information in a new shape (a renamed field, a new event name, a different tool name). The installed zn-gate is older than the agent, so it cannot read it. A call whose tool or command zn cannot read is blocked. So is an event zn does not know, or one wrapped in a shape zn does not know, when it reaches a hook that can block (a tool call before it runs, or a prompt) in Claude Code, Codex CLI, ZCode and Cursor; the second message shows it. In Gemini CLI and Antigravity, zn's only hook runs before a tool call: a call there whose tool or command zn cannot read was already blocked, and an event with another name is let through with a note. On hooks that cannot block (for example a tool result), and in GitHub Copilot CLI and OpenCode, such an event is still let through unchecked with a note on the hook's error output (some agents show it only in verbose mode). Hooks installed by an older zn-gate keep that behavior until you run `zn hooks install <agent>` again.
 
-**Is it safe?** A blocked call was not run. An event the second message names was not checked, so update zn-gate soon.
+**Is it safe?** A blocked call was not run. An event that was let through with a note was not checked, so update zn-gate soon.
 
 **What to do:** run `npm install -g zn-gate@latest`, then `zn hooks install <agent>`, then `npx -y zn-gate check`. If you use the Claude Code plugin, run `claude plugin update zn-gate@usezn` instead. If it still happens after the update, your agent may be newer than the latest zn-gate: please report it as an issue.
 
@@ -926,6 +928,22 @@ To see where these rules apply, and what happens when the file is not valid, rea
 **What happened:** zn refused a request, or could not find what you named. The detail says what. "Not allowed" usually means a rule or a team policy, or a step that only a person at a terminal may do.
 
 **What to do:** read the detail. If it names a command to run, run it in your own terminal. If it names a team policy, ask your administrator. Otherwise run `zn-gate status`, and ask in [Discussions](https://github.com/usezn/zn/discussions) if you are stuck.
+
+#### "zn run: Not found: secret `<NAME>` is not in the vault"
+
+```text
+zn run: Not found: secret <NAME> is not in the vault. Add it from your own terminal: zn secret set <NAME>
+```
+
+**What happened:** the command named a secret with `--secrets` that is not stored in your vault. zn stops before the command starts, so the command did not run.
+
+**What to do:**
+
+1. Run `zn secret list` in your own terminal. It lists the names your vault holds, names and policy only, never values, so you can check the spelling: secret names use upper-case letters, digits and single underscores, such as `GITHUB_TOKEN`.
+2. Add the secret from your own terminal: `zn secret set PGPASSWORD --command psql` (here the secret is `PGPASSWORD`, the variable `psql` reads, and `--command` allows `psql`, the program your `zn run` command starts). You type the value at a hidden prompt.
+3. Run the `zn run` command again. The first time a program uses a secret, the vault asks you to confirm it in its own prompt (a dialog, or the `zn unlock --foreground` terminal).
+
+If `zn run` instead says your vault is locked, see [section 5](#5-your-secret-vault-is-locked). More on giving a command a secret: [secrets](secrets.md).
 
 #### "zn could not use your secret vault: `<error>`"
 
