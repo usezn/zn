@@ -88,6 +88,8 @@ Short meanings of words used in the zn-gate docs.
 
 **Personal data**: details about a person, such as an email address, a phone number, an IBAN, a card number or a national ID. zn-gate can ask you before a tool call sends them.
 
+**Egress allowlist** (`hooks.egressAllowHosts`): the hosts you trust, which the egress check skips. A request to a listed host is not stopped for carrying personal data. See [Network requests that carry personal data](egress-check.md#change-the-settings).
+
 **Protocol version**: the dated edition of the MCP standard that a client and a server agree to use, for example `2025-11-25`. See [Agent compatibility](compat.md).
 
 **Vault audit log**: the local record of what the vault did, such as which secret was used, unlock and reset. It is the file `~/.zn/audit.jsonl` and never holds secret values. Read it with `zn vault log`. See [Secrets](secrets.md) and [Files and folders](files-and-folders.md).
@@ -117,6 +119,8 @@ Short meanings of words used in the zn-gate docs.
 **Fail on** (`--fail-on`): the lowest severity of a finding that makes `audit` or `reach` exit with `1`. For `audit` it is `low`, `medium`, `high` (default), `critical` or `none`; for `reach` the default is `none`, so it is a report. See the [command list](cli.md).
 
 **Evidence** (`evidence`): the local hash-chained log of what zn-gate decided. `--verify` checks the chain. See the [command list](cli.md).
+
+**Evidence ledger**: another name for the evidence log, the local hash-chained record of what zn-gate decided, kept in `~/.zn/evidence.jsonl`. See [`evidence`](cli.md#evidence) and the [API reference](api-reference.md#verifyevidenceledgerfilepath).
 
 **Stats**: local counts of what zn-gate did on your machine (`stats`). They are not sent unless you turn on `stats share`.
 

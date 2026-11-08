@@ -91,6 +91,32 @@ A block tells you two things: the command did not run, and which rule matched. U
 
 If the command was what you meant, the agent will ask you to confirm; run it yourself in a terminal. If the command was a mistake, tell the agent what you actually want. If a rule blocks work you do often, see [Change the settings](#change-the-settings). For commands the check does not cover, see [What it does not do](#what-it-does-not-do).
 
+## Reading a blocked rm
+
+Say your agent tries to clear the home folder of a fictitious user, `alice`, with this command:
+
+```text
+rm -rf /home/alice
+```
+
+zn-gate stops it before it runs and tells the agent:
+
+```text
+zn blocked this: it deletes the home folder, the filesystem root or a system folder, recursively. Ask the user to confirm before running this command. If they want it, they can run it in their own terminal; do not run it yourself.
+```
+
+| Part | Text | What it means |
+| --- | --- | --- |
+| Prefix | `zn blocked this:` | The message comes from zn-gate, not from the agent. |
+| Why | `it deletes the home folder, the filesystem root or a system folder, recursively` | The reason. It is the plain-words description of the `rm_root_home` rule in [What it blocks](#what-it-blocks). The hook message shows the reason, not the rule name; the name `destructive:rm_root_home` is the `rule` you get when you call `checkCommand` or `check_command` from your own code. |
+| Next step | `Ask the user to confirm before running this command` | The agent has to stop and ask you. It must not try the command again or a variation of it. |
+
+The command did not run, and nothing was deleted.
+
+**If you did not mean it:** tell the agent what you actually want, for example to delete only one project folder such as `/home/alice/project/build`. A deeper path like that is not blocked.
+
+**If you did mean it:** the agent cannot allow it. Run the command yourself in your own terminal, where the agent hooks do not apply. There is no per-command allow list. The only other way is to turn the rule off in `~/.zn/config.json` (see [Change the settings](#change-the-settings)), which also stops the check for the commands you do not want to run.
+
 ## If it blocks a command you want
 
 Run the command yourself in a terminal. The check applies to agents only. If a rule gets in your way often, turn that rule (or the whole check) off with the settings above.
