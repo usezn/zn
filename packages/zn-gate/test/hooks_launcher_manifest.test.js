@@ -109,6 +109,36 @@ for (const [label, change] of [
   });
 }
 
+// The runner loads the vault client only when a call needs the vault (redaction), so an edited vault file is caught on the
+// calls that load it. On an ordinary call nothing reads or runs that file, like any other file that is not required.
+const { generateAll } = require('./fixtures/fake_secrets');
+const FAKE_PAT = generateAll(5151, { perType: 1, piiPerType: 1 }).secrets.find((x) => x.type === 'github_pat_classic').value;
+const REDACT_EVENT = (home) => JSON.stringify({ session_id: 's1', cwd: home, tool_use_id: 't1', hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'cat notes.txt' }, tool_response: { stdout: 'token: ' + FAKE_PAT + '\nok\n', stderr: '', interrupted: false, isImage: false } });
+
+for (const file of ['lib/vault/store.js', 'lib/vault/client.js']) {
+  test('manifest: an edited ' + file + ' blocks a call that loads the vault', { skip: !posix }, (t) => {
+    const s = realPackage(t);
+    const env = { PATH: process.env.PATH, HOME: s.home, ZN_HOME: s.env.ZN_HOME, ZN_KEYCHAIN_BACKEND: 'passphrase' };
+    const call = () => spawnSync('/bin/sh', [s.file, 'PostToolUse'], { input: REDACT_EVENT(s.home), encoding: 'utf8', env });
+    const before = call();
+    assert.equal(before.status, 0, before.stderr);
+    assert.ok(!before.stdout.includes(FAKE_PAT), 'the intact package redacts the fake token');
+    fs.appendFileSync(s.p(file), '// edited\n');
+    const r = call();
+    // After a tool ran the hook cannot block it: it answers with the same "zn-gate changed" warning, and none of the edited code ran.
+    assert.match(r.stdout, CHANGED);
+    assert.match(r.stdout, AGAIN);
+    assert.ok(!r.stdout.includes(FAKE_PAT), 'the answer carries no token');
+  });
+}
+
+test('manifest: an edited vault file is not read by a call that never loads the vault (it cannot run there)', { skip: !posix }, (t) => {
+  const s = realPackage(t);
+  fs.appendFileSync(s.p('lib/vault/store.js'), '// edited\n');
+  const r = s.run();
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+});
+
 test('manifest: a deleted module the runner needs blocks the hook', { skip: !posix }, (t) => {
   const s = realPackage(t);
   fs.rmSync(s.p('lib/hooks/policy.js'));
