@@ -38,7 +38,7 @@ Reading the sample from the top:
 - `unlock`: the vault was unlocked, for at most 8 hours.
 - `set ... created`: `DEMO_TOKEN` was stored.
 - `deny ... no_confirmation_channel`: a change to the secret's settings was refused, because the machine had no dialog to ask the person (zn asks outside the agent, and does not guess). Nothing was changed.
-- `remove`, then `set ... created`, then `set ... updated`: the secret was removed, stored again, and replaced. See Remove and replace a stored secret.
+- `remove`, then `set ... created`, then `set ... updated`: the secret was removed, stored again, and replaced.
 
 The last line is the check of the log itself: `chain: valid, 6 records`. Each record is chained to the one before it with a key kept inside the vault, so an edited or deleted line breaks the chain.
 
