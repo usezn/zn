@@ -35,6 +35,11 @@ def test_help_is_plain_ascii(texts):
 
 def test_help_mentions_no_npm_only_command(texts):
     for name, text in texts.items():
+        if name == "check":
+            # The one command that points to the npm package on purpose: it covers
+            # the Python guard only and names the npm check for agent hooks.
+            assert "npx -y zn-gate check" in " ".join(text.split())
+            continue
         assert "npx" not in text and "npm" not in text, name
         for cmd in sorted(NPM_ONLY_COMMANDS):
             pattern = r"(?<![\w-])zn-gate " + re.escape(cmd) + r"(?![\w-])"
