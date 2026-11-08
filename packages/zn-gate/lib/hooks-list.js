@@ -205,4 +205,13 @@ function staleWarning(opts = {}) {
   return out + '\n';
 }
 
-module.exports = { listHooks, report, staleWarning };
+/**
+ * One line for the end of a plain `zn-gate check`: how many installed hooks are OK, stale or broken, from the same
+ * listHooks result as `check --hooks`. Returns '' when no agent hook is installed.
+ */
+function summaryLine({ agents, counts }) {
+  if (!agents.length) return '';
+  return 'Hooks: ' + counts.ok + ' OK, ' + counts.stale + ' stale, ' + counts.broken + ' broken. Run zn-gate check --hooks for details.';
+}
+
+module.exports = { listHooks, report, staleWarning, summaryLine };

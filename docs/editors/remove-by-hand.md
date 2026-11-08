@@ -1,6 +1,6 @@
 # Files zn-gate writes in each editor, and how to remove them by hand
 
-For each supported editor, this page lists the files zn-gate writes and what to delete from them if you want to remove zn-gate yourself. To remove everything in one step, run `npx -y zn-gate uninstall` (see [Remove zn-gate](../uninstall.md)). Run every command in your own terminal.
+For each supported editor, this page lists the files zn-gate writes and what to delete from them if you want to remove zn-gate yourself. To remove everything in one step, run `npx -y zn-gate uninstall` (see [Remove zn-gate](../uninstall.md)). Run every command in your own terminal. If you remove by hand, do the steps in the order `npx -y zn-gate uninstall` uses: put back the wrapped MCP servers first, then remove the hooks.
 
 `~` is your user folder, for example `C:\Users\you` on Windows. Before it changes a settings file, zn-gate saves a copy next to it, so you can also put that copy back (changes you made to the file since are lost).
 
