@@ -401,6 +401,14 @@ To delete the vault, follow [Remove zn-gate](uninstall.md#your-env-files-and-the
 
 When you have finished, `npx -y zn-gate check` shows what is still set up. The [uninstall guide](uninstall.md#piece-by-piece) gives the full order for removing zn-gate.
 
+## Secrets in CI
+
+The vault is for your own computer. It asks a person to confirm a secret the first time it is used with a program, in a dialog or in the terminal where the vault runs, and a CI runner has neither. zn refuses a request when it has no way to ask, so `zn run` is not a way to give a secret to a CI job.
+
+In CI, keep secrets where the CI system keeps them: GitHub's secrets, and environments with required reviewers, as described in [Coding agents in CI](agents-in-ci.md). Keep a secret out of any job that reads text from outside the team, such as an issue or a pull request from a fork.
+
+To check that a repository does not contain a secret written in a file, run `zn-gate scan` in the workflow with the [zn-gate GitHub Action](github-action.md). It reads the files only, sends nothing, and never prints a value.
+
 ## If something fails
 
 - **You see `__ZN_REDACTED_...` markers**: the vault is locked. Run `zn unlock`.
@@ -421,3 +429,4 @@ Words you do not know? See the [glossary](glossary.md).
 - [Threat model](threat-model.md): what the scrubber and the broker protect, and what they do not.
 - [`zn audit`](audit.md): review a repository's agent configuration before you open it.
 - [Troubleshooting](troubleshooting.md): the messages you are most likely to meet, and what to do.
+- [Coding agents in CI](agents-in-ci.md) and [the GitHub Action](github-action.md): where CI secrets belong, and the scan for secrets in files.
