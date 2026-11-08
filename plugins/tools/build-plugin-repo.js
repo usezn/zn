@@ -231,22 +231,22 @@ function withoutCompileCacheUse(rel, text) {
 // runner file it was given. It is allowed only when the whole statement is byte for byte the reviewed one; any change
 // to it changes this hash and the build refuses it again until the new text is reviewed. The statement splices
 // CHANGED_RC into the program text, so the program also depends on that constant: the file must declare it exactly
-// once as a plain integer (const CHANGED_RC = <digits>;), or the exception does not apply.
+// once as a plain integer (const CHANGED_RC = <digits>;), or the exception does not apply. CHANGED_RC is the only value
+// the statement may splice in: everything else, such as the list of vault files the program checks, is written out in
+// its string literals, so it is covered by the hash and no other code in the file can change it (verifyJsSpliceOk).
 const VERIFY_JS_FILE = /^lib\/agents\/launcher\.js$/;
 const VERIFY_JS_START = 'const VERIFY_JS = ';
-const VERIFY_JS_SHA256 = '715eb569856bcff83560156131d56c328069582fcbfb7e2b0104011d79391c30';
+const VERIFY_JS_SHA256 = 'c5358e4e5ab9858dd0b8dda32af69a9ef82d2987623b3b4d009ac74555e93311';
 
 const CHANGED_RC_DECL = /(?:^|\n)const CHANGED_RC = \d{1,3};\n/g;
 const CHANGED_RC_ANY = /\bCHANGED_RC\s*=(?!=)/g;
-// The statement also splices JSON.stringify(VAULT_FILES) into the program, and that list is outside the pinned text. It must be
-// one literal array of plain relative .js paths (no "..", no quotes or escapes) on one line, declared once and used nowhere but
-// in that JSON.stringify call (outside comments), so no code can change what the verifier checks without changing this hash.
-const VAULT_FILES_DECL = /(?:^|\n)const VAULT_FILES = \[('lib\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.js'(?:, 'lib\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*\.js')*)\];\n/g;
-function vaultFilesOk(text) {
-  if ((text.match(VAULT_FILES_DECL) || []).length !== 1) return false;
-  const code = text.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
-  // the declaration and the one JSON.stringify(VAULT_FILES) inside the statement, nothing else
-  return (code.match(/\bVAULT_FILES\b/g) || []).length === 2 && (code.match(/JSON\.stringify\(VAULT_FILES\)/g) || []).length === 1;
+// The statement must be string literals in double quotes joined by +, with CHANGED_RC as the only other term. A spliced
+// expression such as JSON.stringify(list) is refused even if its text were pinned: its value would come from code outside
+// the statement (a reassigned JSON.stringify, an Array.prototype.toJSON), which the hash does not cover.
+const VERIFY_JS_TERM = '(?:"(?:[^"\\\\\\n]|\\\\.)*"|CHANGED_RC)';
+const VERIFY_JS_SHAPE = new RegExp('^const VERIFY_JS = ' + VERIFY_JS_TERM + '(?:\\s*\\+\\s*' + VERIFY_JS_TERM + ')*;\\n$');
+function verifyJsSpliceOk(stmt) {
+  return VERIFY_JS_SHAPE.test(stmt);
 }
 
 /** For lib/agents/launcher.js only: the text without the reviewed VERIFY_JS statement (unchanged otherwise). */
@@ -254,12 +254,12 @@ function withoutVerifyJs(rel, text) {
   if (!VERIFY_JS_FILE.test(rel)) return text;
   // the program text includes CHANGED_RC: one plain integer declaration and no other assignment to it
   if ((text.match(CHANGED_RC_DECL) || []).length !== 1 || (text.match(CHANGED_RC_ANY) || []).length !== 1) return text;
-  if (!vaultFilesOk(text)) return text;
   const start = text.indexOf(VERIFY_JS_START);
   if (start < 0 || text.indexOf(VERIFY_JS_START, start + 1) >= 0) return text;
   const end = text.indexOf('";\n', start);
   if (end < 0) return text;
   const stmt = text.slice(start, end + 3);
+  if (!verifyJsSpliceOk(stmt)) return text;
   if (crypto.createHash('sha256').update(stmt, 'utf8').digest('hex') !== VERIFY_JS_SHA256) return text;
   return text.slice(0, start) + text.slice(end + 3);
 }
@@ -569,7 +569,7 @@ function parseArgs(argv) {
   return opts;
 }
 
-module.exports = { build, readSource, bundleFiles, checkImports, checkLimits, PLUGIN_FILES, ZCODE_FILES, ZCODE_DIR, BUNDLED_DIR, PRUNE };
+module.exports = { build, readSource, bundleFiles, checkImports, checkLimits, verifyJsSpliceOk, PLUGIN_FILES, ZCODE_FILES, ZCODE_DIR, BUNDLED_DIR, PRUNE };
 
 if (require.main === module) {
   build(parseArgs(process.argv.slice(2))).then((r) => {

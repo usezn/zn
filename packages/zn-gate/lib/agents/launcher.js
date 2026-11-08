@@ -97,13 +97,13 @@ const CHANGED_RC = 86;
 // could not be made (only the runner is then checked). With a manifest, every module the runner requires afterwards is read
 // once, hashed and compiled from those same bytes: a file that is not in the list, differs from it, or lies outside the package
 // ends the run with CHANGED_RC, so a file swapped after the check, a link, or a planted file never runs. Only files that are
-// loaded are read, plus VAULT_FILES, which are read on every call: a file nothing requires costs nothing, and `zn-gate check` reads the whole list.
-// The vault client and the modules it loads. A hook call that never needs the vault does not load them (that saves about 3 ms), but they are
-// still read and checked on every call, so an edited vault file blocks the call as any other edited file does.
-const VAULT_FILES = ['lib/vault/client.js', 'lib/vault/store.js', 'lib/vault/winacl.js', 'lib/exe.js', 'lib/errors.js', 'lib/linear-text.js'];
+// loaded are read, plus the vault files (the list V in the program), which are read on every call: a file nothing requires costs nothing.
+// V is the vault client and the modules it loads. A hook call that never needs the vault does not load them (that saves about 3 ms), but they
+// are still read and checked on every call, so an edited vault file blocks the call as any other edited file does. V is written out in the
+// program text itself, so the plugin build's pinned hash of this statement covers it; CHANGED_RC is the only value spliced in.
 const VERIFY_JS = "const fs=require('fs'),M=require('module'),p=require('path'),c=require('crypto');" +
   "const [f,h,t,...a]=process.argv.slice(1);const X=()=>process.exit(" + CHANGED_RC + ");const H=(x)=>c.createHash('sha256').update(x).digest('hex');" +
-  "const D=/^[0-9a-f]{64}$/;const V=" + JSON.stringify(VAULT_FILES) + ";let b,R=f;" +
+  "const D=/^[0-9a-f]{64}$/;const V=[\"lib/vault/client.js\",\"lib/vault/store.js\",\"lib/vault/winacl.js\",\"lib/exe.js\",\"lib/errors.js\",\"lib/linear-text.js\"];let b,R=f;" +
   "if(t==='-'){try{b=fs.readFileSync(f)}catch(e){X()}}else{" +
   "const T=new Map();for(const e of t.split(';')){const i=e.lastIndexOf('=');const k=e.slice(0,i);if(!k||!D.test(e.slice(i+1)))X();T.set(k,e.slice(i+1))}" +
   "try{R=fs.realpathSync(f)}catch(e){X()}const r=p.resolve(R,'..','..','..')+p.sep;" +

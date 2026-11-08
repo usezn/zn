@@ -189,30 +189,54 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
         const end = real.indexOf('";\n', a);
         assert.ok(a >= 0 && end > a, 'the VERIFY_JS statement of launcher.js was not found');
         const stmt = real.slice(a, end + 3);
-        const VAULT = "const VAULT_FILES = ['lib/vault/client.js', 'lib/exe.js'];\n";
         assert.ok(stmt.startsWith('const VERIFY_JS = ') && stmt.length > 100, 'the VERIFY_JS statement is empty');
-        await build({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + VAULT + stmt + 'module.exports = { VERIFY_JS };\n' });
+        await build({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt + 'module.exports = { VERIFY_JS };\n' });
         // one byte changed, the statement in another file, a second use next to it, or the statement twice: refused
-        await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + VAULT + stmt.replace('m.loaded=true', 'm.loaded=!0') }, /module. built-in|mainModule/);
-        await rejects({ ...BASE, 'lib/extra.js': 'const CHANGED_RC = 86;\n' + VAULT + stmt }, /module. built-in|mainModule/);
-        await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + VAULT + stmt + "require('module').createRequire(__filename);\n" }, /createRequire|module. built-in/);
-        await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + VAULT + stmt + stmt }, /module. built-in|mainModule/);
+        await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt.replace('m.loaded=true', 'm.loaded=!0') }, /module. built-in|mainModule/);
+        await rejects({ ...BASE, 'lib/extra.js': 'const CHANGED_RC = 86;\n' + stmt }, /module. built-in|mainModule/);
+        await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt + "require('module').createRequire(__filename);\n" }, /createRequire|module. built-in/);
+        await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt + stmt }, /module. built-in|mainModule/);
         // CHANGED_RC is spliced into the program: a non-number or a second assignment voids the exception
-        await rejects({ ...BASE, 'lib/agents/launcher.js': "const CHANGED_RC = '0);require(`child_process`)';\n" + VAULT + stmt }, /module. built-in|mainModule/);
-        await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + VAULT + stmt + 'CHANGED_RC = 1;\n' }, /module. built-in|mainModule/);
+        await rejects({ ...BASE, 'lib/agents/launcher.js': "const CHANGED_RC = '0);require(`child_process`)';\n" + stmt }, /module. built-in|mainModule/);
+        await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt + 'CHANGED_RC = 1;\n' }, /module. built-in|mainModule/);
         await rejects({ ...BASE, 'lib/agents/launcher.js': stmt }, /module. built-in|mainModule/);
-        // VAULT_FILES is spliced into the program too: it must be one plain literal array that nothing else touches
-        const head = "const CHANGED_RC = 86;\n";
-        const vault = VAULT;
-        await build({ ...BASE, 'lib/agents/launcher.js': head + vault + stmt + 'module.exports = { VERIFY_JS };\n' });
-        await rejects({ ...BASE, 'lib/agents/launcher.js': head + stmt }, /module. built-in|mainModule/);
-        await rejects({ ...BASE, 'lib/agents/launcher.js': head + "const VAULT_FILES = 'lib/exe.js';\n" + stmt }, /module. built-in|mainModule/);
-        await rejects({ ...BASE, 'lib/agents/launcher.js': head + "const VAULT_FILES = ['../outside.js'];\n" + stmt }, /module. built-in|mainModule/);
-        await rejects({ ...BASE, 'lib/agents/launcher.js': head + "const VAULT_FILES = ['lib/exe.js', x()];\n" + stmt }, /module. built-in|mainModule/);
-        await rejects({ ...BASE, 'lib/agents/launcher.js': head + vault + stmt + "VAULT_FILES.push('lib/x.js');\n" }, /module. built-in|mainModule/);
-        await rejects({ ...BASE, 'lib/agents/launcher.js': head + vault + vault.replace('const ', 'var ') + stmt }, /module. built-in|mainModule/);
+        // CHANGED_RC is the only value spliced into the program; the vault file list is written out in it, so code elsewhere in the
+        // file (a reassigned JSON.stringify, toJSON on Array or String) is accepted but has no effect on the program text.
+        assert.ok(builder.verifyJsSpliceOk(stmt), 'the VERIFY_JS statement splices something other than CHANGED_RC');
+        assert.ok(!/JSON\.stringify|VAULT_FILES/.test(stmt), 'the VERIFY_JS statement must not splice the vault file list');
+        const head = 'const CHANGED_RC = 86;\n';
+        const tamper = "JSON.stringify = () => '[\"lib/x.js\"];require(`child_process`)';\n" +
+          "Array.prototype.toJSON = function () { return ['lib/x.js']; };\nString.prototype.toJSON = function () { return 'lib/x.js'; };\n";
+        await build({ ...BASE, 'lib/agents/launcher.js': head + tamper + stmt + 'module.exports = { VERIFY_JS };\n' });
+        const evalStmt = (pre) => new Function(pre + 'const CHANGED_RC = 86;\n' + stmt + 'return VERIFY_JS;')();
+        const plain = evalStmt('');
+        const saved = [JSON.stringify, Array.prototype.toJSON, String.prototype.toJSON];
+        let tampered;
+        try {
+          tampered = evalStmt(tamper);
+        } finally {
+          JSON.stringify = saved[0];
+          if (saved[1] === undefined) delete Array.prototype.toJSON; else Array.prototype.toJSON = saved[1];
+          if (saved[2] === undefined) delete String.prototype.toJSON; else String.prototype.toJSON = saved[2];
+        }
+        assert.strictEqual(tampered, plain, 'JSON.stringify or toJSON overrides changed the VERIFY_JS program');
+        // every vault file the program checks is a file of the package
+        const list = /const V=(\[[^\]]*\]);/.exec(plain);
+        assert.ok(list, 'the vault file list V was not found in VERIFY_JS');
+        const vaultFiles = JSON.parse(list[1]);
+        assert.ok(vaultFiles.length > 0 && vaultFiles.includes('lib/vault/client.js'));
+        for (const v of vaultFiles) assert.ok(fs.existsSync(path.resolve(__dirname, '..', '..', 'packages', 'zn-gate', v)), v + ' is not in the package');
+        // the earlier form that spliced JSON.stringify(VAULT_FILES) is refused, and so is any other spliced expression
+        const spliced = stmt.replace(/const V=\[[^\]]*\];/, 'const V=" + JSON.stringify(VAULT_FILES) + ";');
+        assert.notStrictEqual(spliced, stmt);
+        assert.ok(!builder.verifyJsSpliceOk(spliced));
+        assert.ok(!builder.verifyJsSpliceOk(stmt.replace('" + CHANGED_RC + "', '" + String(CHANGED_RC) + "')));
+        assert.ok(!builder.verifyJsSpliceOk(stmt.replace('" + CHANGED_RC + "', '" + `${CHANGED_RC}` + "')));
+        assert.ok(!builder.verifyJsSpliceOk(stmt.replace(/;\n$/, ' + x;\n')));
+        assert.ok(!builder.verifyJsSpliceOk(stmt.replace(/;\n$/, ' + "a" + (0, "b");\n')));
+        await rejects({ ...BASE, 'lib/agents/launcher.js': head + "const VAULT_FILES = ['lib/vault/client.js'];\n" + spliced }, /module. built-in|mainModule/);
         // a CRLF-packed launcher is refused with a message that names the cause
-        await rejects({ ...BASE, 'lib/agents/launcher.js': ('const CHANGED_RC = 86;\n' + VAULT + stmt).replace(/\n/g, '\r\n') }, /CRLF line ends/);
+        await rejects({ ...BASE, 'lib/agents/launcher.js': ('const CHANGED_RC = 86;\n' + stmt).replace(/\n/g, '\r\n') }, /CRLF line ends/);
       }
       // Only lib/compile-cache.js may use the exception.
       await rejects({ ...BASE, 'lib/extra.js': "const mod = require('module');\nmod.enableCompileCache('/x');\n" }, /module. built-in/);
