@@ -185,4 +185,13 @@ function report({ agents, counts }, write) {
   return counts.stale || counts.broken ? 1 : 0;
 }
 
-module.exports = { listHooks, report };
+/**
+ * One line for the end of a plain `zn-gate check`: how many installed hooks are OK, stale or broken, from the same
+ * listHooks result as `check --hooks`. Returns '' when no agent hook is installed.
+ */
+function summaryLine({ agents, counts }) {
+  if (!agents.length) return '';
+  return 'Hooks: ' + counts.ok + ' OK, ' + counts.stale + ' stale, ' + counts.broken + ' broken. Run zn-gate check --hooks for details.';
+}
+
+module.exports = { listHooks, report, summaryLine };

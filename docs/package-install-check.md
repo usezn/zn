@@ -97,7 +97,7 @@ List names that should never be questioned in `hooks.packageInstallAllow`. An en
 - `https://registry.npmjs.org/<name>` for npm (a scoped name is sent as `@scope%2Fname`);
 - `https://pypi.org/pypi/<name>/json` for PyPI.
 
-The request has no cookies, no account and no header except `Accept`. It carries no command, path, project name or other data. The name is checked against the characters a registry allows before it is put in the URL. A redirect is not followed, a reply over 4 MiB is dropped, and a lookup that takes more than 2 seconds is given up. At most 8 names of one command are looked up; the others are noted in the decision log as having had no lookup ("too many names"). Names on the bundled list, names that look like a well-known one, names you allowed, and npm names with capital letters are not looked up.
+The request has no cookies, no account and no header except `Accept`. It carries no command, path, project name or other data. The name is checked against the characters a registry allows before it is put in the URL. A redirect is not followed, a reply over 4 MiB is dropped, and a lookup that takes more than 2 seconds is given up. At most 8 names of one command are looked up for the question; the others are noted in the decision log as having had no lookup ("too many names"). Names you allowed, npm names with capital letters and names that look like a well-known one are never looked up. A name on the bundled list is not asked about for the question, but it can be looked up for the version notice (see Notices).
 
 **Which commands are looked up: only plain installs.** The online lookup uses an allow list, not a list of registries to avoid. The whole command line must be a plain install, or none of its names is looked up:
 
@@ -117,9 +117,34 @@ The check does not try to recognise every registry setting; it lets through only
 
 It does **not** read the npm global config (`$PREFIX/etc/npmrc`), an `.npmrc` in a parent of the working folder, or other settings files. If your private setup is somewhere zn-gate does not read, do not use online mode.
 
-Answers are kept for one day in `~/.zn/package-registry-cache.json` (only the name, whether it exists and the date of its first release; the file is private to you). If it cannot be read or written, the check goes on without it. If a lookup fails for any reason (no network, a timeout, an error from the registry, an answer zn-gate does not understand), **no question is asked**, and a note goes to the decision log.
+Answers are kept in `~/.zn/package-registry-cache.json`, one per name, for one day (for one hour when the answer is about the latest release). An answer holds only the name, whether it exists, the date of its first release and, when the command names a version, that version and its publish date; the file is private to you. If it cannot be read or written, the check goes on without it. If a lookup fails for any reason (no network, a timeout, an error from the registry, an answer zn-gate does not understand), **no question is asked**, and a note goes to the decision log.
 
 If your computer reaches the internet through a proxy that Node.js does not use by default, online lookups fail and the check goes on without them.
+
+## Notices (opt-in)
+
+Two notes that never ask and never block. They are off by default, and they only run when the check itself is on (`offline` or `online`). Turn them on in `~/.zn/config.json`:
+
+```json
+{"hooks": {"packageInstallCheck": "online", "packageInstallNotices": ["fresh_version", "no_lockfile"]}}
+```
+
+`true` turns on both. The command still runs, and the note does not change what the agent is allowed to do. Your agent's hook shows the note to you where the agent supports it.
+
+- `fresh_version` (online mode only): the version the command installs was **published less than 72 hours ago**. A pinned version (`pkg@1.2.3`, `pkg==1.2.3`) or the latest release (no version in the command) is judged. A range or a tag (`pkg@^1`, `pkg@next`) is not, because the version that will be installed is not known. Only a **plain install** is judged (see "What leaves your computer"). A command that is not a plain install gets no such note, even when it installs a name: no registry is asked about it, neither for the question nor for the note. This is on purpose: the note is only as safe as the lookup behind it, and the lookup is allowed only for plain installs.
+- `no_lockfile` (offline or online): the command runs `npm install` or `npm i` in a project. npm uses the lockfile in that case, but it does not require it and may update it. `npm ci` installs exactly what the lockfile records. The note suggests `--ignore-scripts`, unless the command already has it. Global installs (`-g`, `--global`, `--location=global`) are not noted. This note is read from the text of the command, in any mode and for any command the check can read. It makes no request anywhere, and it sends nothing about a name, so it is not limited to plain installs: the plain rule decides what may leave the computer, and a reading of the command does not send anything.
+
+### Registry requests of the version notice
+
+The version notice adds a registry request in one case only: a name **on the bundled list** (such as `react`, `lodash` or `express`) that a plain install names with a pinned version or with no version. The existence question never asks about those names, so that is the only extra request. For a name that is not on the bundled list, the existence question already makes the request, and the notice reads the version from that same reply: no second request is made.
+
+The request is the same as the one above, `https://registry.npmjs.org/<name>` or `https://pypi.org/pypi/<name>/json`, with no version in the URL. The notice has a budget of its own: at most 8 names per command, and the question's budget is not reduced by it. The notice lookups run after the question lookups, so a command can take up to 2 seconds more in the worst case. Look-alike names, names you allowed, npm names with capital letters, and ranges and tags are never asked about for the notice.
+
+Answers are kept in the cache file for one day for a pinned version, and for one hour for the latest release. The cache keeps one answer per name, so a command that asks for another version of a name asks the registry again, even within the day.
+
+### Registry replies over 4 MiB
+
+zn-gate drops a registry reply larger than 4 MiB and gives no answer for that name. An npm reply is the full record of a package, and for some popular packages it is much larger than that. So **the version notice is never shown for such a name**, whatever version is installed. The same limit applies to PyPI replies. The size of a PyPI reply is not known in advance, so a notice can be missing for a large project. A name that is not on the bundled list and whose reply is too large is reported as unavailable, as any lookup without an answer.
 
 ## Decision log
 
