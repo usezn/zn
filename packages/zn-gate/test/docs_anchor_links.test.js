@@ -15,7 +15,7 @@ const docsDir = path.join(repo, 'docs');
 function stripFences(md) {
   const out = [];
   let fence = null;
-  for (const line of md.split('\n')) {
+  for (const line of md.split(/\r?\n/)) { // a Windows checkout has CRLF line ends
     const m = line.match(/^ {0,3}(`{3,}|~{3,})/);
     if (m) {
       if (!fence) fence = m[1][0];

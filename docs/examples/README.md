@@ -15,10 +15,14 @@ Worked examples, grouped by what you want to do. All values in them are made up.
 
 | Page | What it shows | Time | Level |
 |---|---|---|---|
+| [block-message-anatomy.md](block-message-anatomy.md) | One real block message, explained part by part. | 5 min | beginner |
 | [check-output-explained.md](check-output-explained.md) | A sample `check` output explained line by line. | 5 min | beginner |
 | [evidence-example.md](evidence-example.md) | `zn-gate evidence`: the counts, the latest records and how to verify the log. | 10 min | intermediate |
+| [reading-a-reach-history-report.md](reading-a-reach-history-report.md) | How to read the output of `zn-gate reach --history`. | 10 min | intermediate |
 | [scan-walkthrough.md](scan-walkthrough.md) | Scan one small example project, from the run to what each exit code means. | 15 min | intermediate |
 | [stats-and-report.md](stats-and-report.md) | Worked examples of `zn-gate stats` and `zn-gate report`. | 10 min | beginner |
+| [which-command-shows-what.md](which-command-shows-what.md) | Six common questions and the command that answers each. | 5 min | beginner |
+| [zn-why-allow-command.md](zn-why-allow-command.md) | Read the output of `zn why`, then run the one command it gives you to allow a blocked action. | 10 min | intermediate |
 
 ## Cloud check
 
@@ -36,10 +40,17 @@ Worked examples, grouped by what you want to do. All values in them are made up.
 |---|---|---|---|
 | [egress-check.md](egress-check.md) | A short walk-through of the egress check with fake hosts. | 5 min | intermediate |
 
+## Secrets and the vault
+
+| Page | What it shows | Time | Level |
+|---|---|---|---|
+| [env-file-round-trip.md](env-file-round-trip.md) | Move a fake `.env` file into the vault and put the values back. | 10 min | intermediate |
+
 ## Editors and agents
 
 | Page | What it shows | Time | Level |
 |---|---|---|---|
+| [package-install-check-walkthrough.md](package-install-check-walkthrough.md) | Turn on the optional package install check, answer one question about a look-alike name, then allow a name. | 10 min | intermediate |
 | [switching-agents-checklist.md](switching-agents-checklist.md) | Move zn-gate protection from one agent to another. | 5 min | beginner |
 | [vscode-and-cursor.md](vscode-and-cursor.md) | Install, verify and uninstall zn-gate for VS Code and Cursor on one page. | 10 min | intermediate |
 | [zed-and-jetbrains.md](zed-and-jetbrains.md) | Connect, check and remove zn-gate in Zed and JetBrains editors. | 10 min | intermediate |
