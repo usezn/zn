@@ -43,14 +43,14 @@ const DENIED = /holds plain-text|was not read because|builds the path of a .env 
 const BLOCKED = [
   'type .e^nv',
   'ty^pe .env',
-  'type %CD%\.env',
+  'type %CD%\\.env',
   'type .%EMPTY%env',
   'cmd /c "type .e^nv"',
   'more < .e^nv',
   'findstr . .e^nv',
 ];
 
-const ALLOWED = ['type README.md', 'echo 100%', 'type notes^.txt', 'type %CD%\README.md', 'echo %EMPTY%', 'findstr . README.md', 'more < README.md'];
+const ALLOWED = ['type README.md', 'echo 100%', 'type notes^.txt', 'type %CD%\\README.md', 'echo %EMPTY%', 'findstr . README.md', 'more < README.md'];
 
 function decide(c, platform) {
   const { opts } = project();
