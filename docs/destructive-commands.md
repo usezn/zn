@@ -105,3 +105,10 @@ Run the command yourself in a terminal. The check applies to agents only. If a r
 
 - [API reference](api-reference.md): call the command check (`checkCommand`, `check_command`) from your own code.
 - [Troubleshooting](troubleshooting.md): find fixes when a block or a hook does not behave as you expect.
+
+## Related pages
+
+- [A command that wipes or damages the machine](troubleshooting.md#a-command-that-wipes-or-damages-the-machine): what the block message says, what each rule means and what to do.
+- [Change the settings](#change-the-settings): turn one rule, a list of rules or the whole check on or off in `~/.zn/config.json`. There is no per-command allow list: a rule that blocks your work is turned off here.
+- [If it blocks a command you want](#if-it-blocks-a-command-you-want): run the command yourself in your own terminal, where the agent hooks do not apply.
+- [Troubleshooting](troubleshooting.md): the other messages zn-gate prints, and how to fix them.

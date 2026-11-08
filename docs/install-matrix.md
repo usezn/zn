@@ -45,9 +45,7 @@ agent's hook to read it, and deletes the folder. If it says `NOT protected`, see
 | macOS | No separate install steps. The same commands apply; compat.md mentions macOS only for managed settings paths and for how approved programs are started. | `npx -y zn-gate check` |
 | Linux | The same commands apply. On Debian or Ubuntu, `sudo apt install nodejs` can install an old Node.js (Ubuntu 22.04 ships version 12): run `node --version` and, if it is older than 18, install a current Node.js from [nodejs.org](https://nodejs.org/) or the NodeSource packages (see [first-5-minutes.md](first-5-minutes.md#before-you-start)). | `npx -y zn-gate check` |
 
-All methods need Node.js: 22 LTS is recommended, 18 or later works for the hooks and the CLI, and the Claude
-Code plugin needs 20.19 or later. Without `npx`, install the LTS version from
-[nodejs.org](https://nodejs.org/) and open a new terminal.
+Node.js 22 LTS is recommended (from [nodejs.org](https://nodejs.org/)). Node.js 18 or later works for the hooks and the CLI; the Claude Code plugin needs 20.19 or later. The npm package declares Node.js 18 or later in the `engines` field of its package.json. Using only the Python package (`pip install zn-gate`, without the hooks) does not need Node.js. Without `npx`, install the LTS version from [nodejs.org](https://nodejs.org/) and open a new terminal.
 
 ## Install on a machine without internet
 

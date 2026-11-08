@@ -33,17 +33,20 @@ const A = { name: 'alpha', description: 'First tool.' };
 const B = { name: 'beta', description: 'Second tool.' };
 
 test('a command with arguments: flags and missing paths stay, an existing file is made absolute', (t) => {
+  const prev = process.cwd();
+  // Registered before the folder is made: an after-hook that goes back out of it must run before the one that removes it (Windows: EBUSY).
+  t.after(() => process.chdir(prev));
   const dir = tempDir(t, 'zn-pins-helpers-');
   const script = path.join(dir, 'server.js');
   fs.writeFileSync(script, '// fake server\n');
-  const prev = process.cwd();
   process.chdir(dir);
-  t.after(() => process.chdir(prev));
   assert.strictEqual(
     pins.serverKey('node', ['server.js', '--port', '9000', 'missing.js']),
     keyOf(['node', script, '--port', '9000', 'missing.js'])
   );
-  assert.strictEqual(pins.label('node', ['server.js', '--port', '9000']), 'node ' + script + ' --port 9000');
+  // The label is bounded (displayName), and a Windows temporary folder is long enough to reach the bound.
+  assert.strictEqual(pins.label('node', ['server.js', '--port', '9000']), pins.displayName('node ' + script + ' --port 9000'));
+  assert.ok(pins.label('node', ['server.js', '--port', '9000']).startsWith('node ' + script.slice(0, 40)), 'the label names the resolved file');
 });
 
 test('a command alone has the same key and label with no arguments, an empty list or null', () => {
