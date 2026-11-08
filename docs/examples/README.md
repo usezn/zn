@@ -4,6 +4,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 
 - [block-message-anatomy.md](block-message-anatomy.md): one real block message, explained part by part.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
+- [first-block-vs-allow-decision.md](first-block-vs-allow-decision.md): what to do the first time zn-gate blocks a command of your agent, and when to change the settings instead.
 - [env-file-round-trip.md](env-file-round-trip.md): move a fake `.env` file into the vault and put the values back.
 - [first-cloud-check.md](first-cloud-check.md): the shortest path from connect to a first checked prompt, in five steps.
 - [first-project-walkthrough.md](first-project-walkthrough.md): one small example project, from install to removal.
