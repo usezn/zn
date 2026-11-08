@@ -40,7 +40,6 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Report](report.md) | A weekly summary of what zn-gate blocked and hid | Everyone |
 | [Examples: stats and report](examples/stats-and-report.md) | Worked examples of `stats` and `report` with sample output | Everyone |
 | [Code examples](../examples/README.md) | Index of the 20 runnable examples, with the command to run each one | Developers |
-
 | [Example: reading a scan finding](examples/reading-a-scan-finding.md) | What each field of a `zn-gate scan` finding means, with a fake finding | Everyone |
 | [Example: Node.js API](examples/node-api.md) | Install and one short example per call of the Node.js API, with fake values | Developers |
 | [API quickstart](api-quickstart.md) | Send text to the analysis API from curl, Python or Node.js, with the key in an environment variable | Developers |
