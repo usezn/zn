@@ -56,6 +56,20 @@ More: [CLI reference](cli.md), [remove by hand](editors/remove-by-hand.md).
 
 More: [Remove zn-gate](uninstall.md), [`uninstall` in the CLI reference](cli.md#uninstall).
 
+## Where each command writes its files
+
+The folder each command writes in. zn-gate keeps its own files in the `.zn` folder described above; the settings and configs of your agents live where the agent keeps them.
+
+| Command | Folder it writes in | What it writes there |
+| --- | --- | --- |
+| `init` | The folders of the agent settings and configs it changes | With `--wrap-mcp`, the wrapped MCP configs and a saved copy of each, written first. The guided setup asks before each step; without a terminal, or when an AI agent runs it, it only prints the steps and changes nothing. |
+| `secret` | The `.zn` folder | The vault files: `vault/secrets.age` when you store a secret, and one `vault/<32 hex characters>.age` per project it detects values in. |
+| `evidence` | The file you name with `--export --output` | The decision log records, as `jsonl` or `csv`. The log itself, `evidence.jsonl`, stays in the `.zn` folder. |
+| `stats` | The `.zn` folder | `stats.json`, when it counts checks. |
+| `team` | The `.zn` folder | The team files: `team.json`, `org-policy.json`, `team-upload.json`, `team-notice.json`. |
+
+More: [CLI reference](cli.md).
+
 ## Who creates each one, and how to remove it
 
 Every command is run in your own terminal. "None" means no documented command removes it: delete it by hand.
