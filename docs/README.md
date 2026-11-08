@@ -52,6 +52,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Agent compatibility](compat.md) | What the scrubber can do in each agent | Everyone choosing or configuring an agent |
 | [Editors and coding agents](editors/README.md) | Protection level and two-minute setup per editor | Editor users |
 | [Install, verify and uninstall by agent](by-agent.md) | The steps for each supported agent on one page | Editor users |
+| [Install matrix](install-matrix.md) | Install methods by operating system, how to verify each one, and installing without internet | Everyone |
 
 ## Teams and CI
 

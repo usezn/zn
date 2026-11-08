@@ -3,7 +3,8 @@
 // linked from an index page (a README.md inside docs/, such as docs/editors/README.md and
 // docs/examples/README.md) that docs/README.md links. Only index pages pass the walk on: a page
 // that is linked only from a normal page is not counted, so a reader of the docs index can find
-// every page in at most two clicks.
+// every page in at most two clicks. Files outside the docs folder (such as the README.md of the
+// repository root, which docs/README.md links) are never followed.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -56,6 +57,10 @@ function linkedPages(file) {
 // Returns the pages of docsDir (relative, with / separators) that docs/README.md does not reach.
 function unreachable(docsDir) {
   const root = path.resolve(docsDir);
+  const insideDocs = (f) => {
+    const rel = path.relative(root, f);
+    return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+  };
   const start = path.join(root, 'README.md');
   const all = walk(root);
   const reached = new Set([start]);
@@ -65,6 +70,7 @@ function unreachable(docsDir) {
     // Only the docs index and index pages (README.md) pass the walk on.
     if (path.basename(file) !== 'README.md') continue;
     for (const t of linkedPages(file)) {
+      if (!insideDocs(t)) continue;
       if (!reached.has(t) && fs.existsSync(t)) {
         reached.add(t);
         queue.push(t);
@@ -106,5 +112,22 @@ test('the check finds a page that no index links, follows an index page, and ign
     assert.deepStrictEqual(unreachable(dir).sort(), ['b.md', 'c.md']);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test('a README.md outside the docs folder does not count as an index page', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-index-'));
+  try {
+    const dir = path.join(base, 'docs');
+    fs.mkdirSync(dir);
+    // docs/README.md links the README.md of the folder above it, and that one links docs/e.md.
+    fs.writeFileSync(path.join(dir, 'README.md'), '# Docs\n\n- [A](a.md)\n- [Repository](../README.md)\n');
+    fs.writeFileSync(path.join(dir, 'a.md'), '# A\n');
+    fs.writeFileSync(path.join(dir, 'e.md'), '# E\n');
+    fs.writeFileSync(path.join(base, 'README.md'), '# Repository\n\n[E](docs/e.md)\n');
+    assert.deepStrictEqual(unreachable(dir), ['e.md']);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
   }
 });
