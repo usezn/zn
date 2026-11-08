@@ -66,7 +66,7 @@ This is a summary of the sections below. Each command is run in your own termina
 
 Use this if you want to remove only one part, or to do the steps yourself. Go in this order, with the wrapped MCP servers first, then the hooks, and the program last. Each command is run in your own terminal.
 
-If you remove the parts by hand, use the order `zn-gate uninstall` uses: put back the wrapped MCP servers first (`init --revert`), because a saved copy put back after the hooks are removed could bring back zn's `secrets` server. Then the hooks and the plugin, then the vault if you want it gone, then the program.
+If you remove the parts by hand, use the order `zn-gate uninstall` uses: put back the wrapped MCP servers first (`init --revert`), because a saved copy put back after the hooks are removed could bring back zn's `secrets` server. Then the hooks, then the plugin, then your `.env` values and the vault if you want it gone, then the program (and the Python package).
 
 ### 1. MCP servers wrapped by `init --wrap-mcp`
 

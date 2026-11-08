@@ -81,10 +81,11 @@ first with `npx -y zn-gate env unshadow .env --backup <name>`. See
 
 ### 10. Can I remove only one part?
 
-Yes. Go in this order, with the hooks first and the program last. Remove the
-hooks of one agent with `npx -y zn-gate hooks uninstall <agent>`, the Claude Code
-plugin with `claude plugin uninstall zn-gate@usezn`, and MCP wrapping with
-`npx -y zn-gate init --revert`. Remove the program (`npm uninstall -g zn-gate`,
+Yes. Go in this order, with the wrapped MCP servers first and the program last.
+Put back wrapped MCP servers with `npx -y zn-gate init --revert` (a saved copy
+put back after the hooks are removed could bring back zn's `secrets` server),
+then remove the hooks of one agent with `npx -y zn-gate hooks uninstall <agent>`,
+then the Claude Code plugin with `claude plugin uninstall zn-gate@usezn`. Remove the program (`npm uninstall -g zn-gate`,
 then `pip uninstall zn-gate`) only when everything else is gone. Afterwards, run
 `npx -y zn-gate check` to see what is left. See
 [Piece by piece](uninstall.md#piece-by-piece).
