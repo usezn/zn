@@ -365,6 +365,14 @@ Pick the family that fits your message:
 
 **What to do:** if a command needs a value from that file, store it with `zn secret set NAME` in your own terminal. Your agent then runs the command with `zn run --secrets NAME -- <command>`, and the program gets the value as an environment variable on your computer. If you did not expect the read, ask your agent why it wanted that file. See [secrets](secrets.md). A `.env` file has its own message: see [section 6](#6-your-agent-was-blocked-env-holds-plain-text-secrets).
 
+#### "zn: the pattern `<pattern>` was not read because it would also match a .env file" / "because it is too broad for zn to check"
+
+**What happened:** your agent ran a command with a wildcard, such as `ls *` or `cat *`, in a folder that has a `.env` file (or with a pattern so broad that zn cannot tell what it reaches). zn cannot be sure the wildcard leaves the file with secrets out, so it stopped the command. Nothing was read or changed.
+
+**Is it safe?** Yes. The command did not run.
+
+**What to do:** ask your agent to name the files it needs, for example `ls src` or `cat README.md`, or to use a narrower wildcard such as `cat *.md`. If it has to run the wildcard, run the command yourself in your own terminal.
+
 #### "zn: this command reads `<file>` through a path zn cannot check" / "builds the path of a .env file while it runs" / "changes to `<folder>` first"
 
 **What happened:** your agent ran a command that reaches a `.env` or key file in a way zn cannot follow: a path on a Windows drive root or a network share, a path assembled while the command runs, or a move into a folder zn cannot follow before the read.
