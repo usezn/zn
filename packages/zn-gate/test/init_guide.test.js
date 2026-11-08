@@ -14,7 +14,9 @@ const { guide: realGuide, plan: realPlan, fromTemporaryCopy, _internal } = requi
 // These tests are about what they say whatever Node.js runs them: the plugin needs 20.19 or later, so one that
 // supports it is injected (the check for older versions is in init_plugin_node.test.js).
 const guide = (opts) => realGuide({ nodeVersion: '22.0.0', ...opts });
-const plan = (opts) => realPlan({ nodeVersion: '22.0.0', ...opts });
+// A hook that is slow to start on a busy runner (13 s was seen) is not a broken plugin: these tests give it far more than the 15 s the agents allow,
+// so what they check never depends on how fast the machine is.
+const plan = (opts) => realPlan({ nodeVersion: '22.0.0', hookTimeoutMs: 60000, ...opts });
 const { AGENT_ENV_VARS } = require('../lib/broker/tty');
 const policy = require('../lib/hooks/policy');
 const { tempDir } = require('./helpers/tmp');

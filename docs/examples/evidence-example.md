@@ -1,4 +1,4 @@
-# Example: the evidence log
+# Example: the decision log
 
 A worked example of `zn-gate evidence`, which shows the local hash-chained log of what zn-gate decided. The output below was printed on a test computer with a temporary home folder, so the folder name and the times are only examples. For every option, see the [command line reference](../cli.md#evidence).
 

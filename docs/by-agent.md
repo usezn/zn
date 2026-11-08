@@ -11,7 +11,7 @@ The hooks need zn-gate 1.5 or later from npm (`npm install -g zn-gate`).
 | Agent | Install | Verify | Uninstall |
 | - | - | - | - |
 | Claude Code | `claude plugin marketplace add usezn/zn@v1.15.0`, then `claude plugin install zn-gate@usezn` (or `zn hooks install claude-code`) | `npx -y zn-gate check` | `claude plugin uninstall zn-gate@usezn` (or `zn hooks uninstall claude-code`) |
-| Codex CLI | `zn hooks install codex`, then trust it in `/hooks` | `npx -y zn-gate check` | `zn hooks uninstall codex` |
+| Codex CLI | [`zn hooks install codex`](editors/codex.md), then trust it in `/hooks` | `npx -y zn-gate check` | `zn hooks uninstall codex` |
 | OpenCode | `zn hooks install opencode` | `npx -y zn-gate check` (checks zn's rules; the plugin runs inside OpenCode) | `zn hooks uninstall opencode` |
 | [Cursor](editors/cursor.md) | `zn hooks install cursor` | `npx -y zn-gate check` | `zn hooks uninstall cursor` |
 | [GitHub Copilot (VS Code, CLI)](editors/vscode.md) | `zn hooks install copilot` | `npx -y zn-gate check` | `zn hooks uninstall copilot` |
@@ -19,7 +19,7 @@ The hooks need zn-gate 1.5 or later from npm (`npm install -g zn-gate`).
 | [ZCode desktop app](editors/zcode.md) | `zn hooks install zcode` | `npx -y zn-gate check` | `zn hooks uninstall zcode` |
 | Gemini CLI (experimental) | `zn hooks install gemini` | `npx -y zn-gate check` | `zn hooks uninstall gemini` |
 
-Add `--project` to the install and uninstall commands to work on one project only; run them from that project's folder. A backup of the settings file is written first. More: [Remove zn-gate](uninstall.md#piece-by-piece).
+Add `--project` to the install and uninstall commands to work on one project only; run them from that project's folder. A backup of the settings file is written first. More: [Remove zn-gate](uninstall.md#piece-by-piece). To remove by hand, use the order `npx -y zn-gate uninstall` uses: put back wrapped MCP servers first (`npx -y zn-gate init --revert`, for the agents `init --wrap-mcp` changes: Claude Desktop, Claude Code, Cursor, Codex, OpenCode and Antigravity), then the hooks, then the program (`npm uninstall -g zn-gate`).
 
 ## Agents with MCP only
 
@@ -33,4 +33,4 @@ zn-gate does not install hooks for these yet. You add the zn-gate MCP server to 
 | [JetBrains AI Assistant](editors/jetbrains.md) | [Install steps](editors/jetbrains.md#install-no-coding-needed) | [Verify](editors/jetbrains.md#verify) | [Uninstall](editors/jetbrains.md#uninstall) |
 | [Continue](editors/continue.md) | [Install steps](editors/continue.md#install-no-coding-needed) | [Verify](editors/continue.md#verify) | [Uninstall](editors/continue.md#uninstall) |
 
-`npx -y zn-gate check` does not test these setups, because it checks hooks. To uninstall, delete the `zn-gate` entry from the settings file you edited and restart the agent. If you ran `npx -y zn-gate init --wrap-mcp`, `npx -y zn-gate init --revert` puts back each MCP settings file as it was saved before wrapping.
+`npx -y zn-gate check` does not test these setups, because it checks hooks. To uninstall, delete the `zn-gate` entry from the settings file you edited and restart the agent. `init --wrap-mcp` does not change these editors' settings, so `npx -y zn-gate init --revert` has nothing to put back for them.
