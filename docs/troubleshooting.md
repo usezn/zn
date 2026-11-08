@@ -1,6 +1,6 @@
 # Troubleshooting
 
-The seventeen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
+The eighteen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
@@ -20,6 +20,7 @@ Find the command you ran, then the symptom that matches.
   - [The Claude Code plugin rejects every call, or its MCP servers show "Failed to connect"](#11-the-claude-code-plugin-rejects-every-call-or-its-mcp-servers-show-failed-to-connect)
   - ["zn: part of zn-gate is missing from this installation"](#zn-part-of-zn-gate-is-missing-from-this-installation--zn-something-went-wrong-inside-the-zn-hook)
 - `scan` and `audit`
+  - [`scan` reports a key in a test fixture file](#18-scan-reports-a-key-in-a-test-fixture-file)
   - ["Exposed credential detected by DLP filter"](#exposed-credential-detected-by-dlp-filter)
   - ["Unknown command" / "unknown argument" / "Target path does not exist"](#unknown-command--unknown-argument--target-path-does-not-exist----format-for-scan-must-be-text-json-or-github--please-provide-text-to-analyze)
 - `secret`, `unlock`, `lock` and `vault`
@@ -57,6 +58,7 @@ Find the command you ran, then the symptom that matches.
 - [Init cannot install zn-gate: no internet connection](#12-init-cannot-install-zn-gate-no-internet-connection)
 - [Init stops the npm install after 3 minutes](#13-init-stops-the-npm-install-after-3-minutes)
 - [`'zn' is not recognized as an internal or external command`](#14-zn-is-not-recognized-as-an-internal-or-external-command)
+- [`scan` reports a key in a test fixture file](#18-scan-reports-a-key-in-a-test-fixture-file)
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
 - [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
 
@@ -396,9 +398,32 @@ Scope   : Prompt templates, docs, configs (use --code to scan source)
 2. For another extension, name it with `--include`, for example `zn-gate scan . --include .rst,.xml`.
 3. Name a single file to scan it whatever its extension: `zn-gate scan path/to/file.js`.
 
+## 18. `scan` reports a key in a test fixture file
+
+A scan fails on a file that you keep for tests, with a key that is not real:
+
+```text
+Findings (1):
+  [x] tests/fixtures/sample.txt:1 Secret found
+    Rule: secret:aws_access_key (Exposed credential detected by DLP filter)
+    Line: aws_access_key_id = [REDACTED_AWS_KEY]
+```
+
+The scan then ends with `Audit Result : FAILED - 1 SECRET(S) FOUND` and exit code `1`. The output above was captured from the real command in a throwaway folder; the other lines of the report are left out here.
+
+**What it means:** `scan` looks at the text of a file, not at where the file lives, so it cannot tell a test key from a real one. A test folder is not skipped either: a fixture can hold a real secret by mistake, and `scan` would miss it if it skipped the folder. A key in the shape of a real one (here, the AWS example key from the AWS documentation) is reported like any other. The matched value is never printed, only the line with the value replaced.
+
+**What to do:**
+
+1. If the value is real, or you are not sure, treat it as exposed: store it with `zn secret set NAME` and rotate it if it was ever committed or shared.
+2. If it is only a fake that your tests need, keep the folder out of the scan with `--exclude`, which takes folder names separated by commas: `zn scan . --exclude fixtures`. It matches the name of a folder at any depth, so `tests/fixtures` is left out. Run that way, the same folder reports `Audit Result : PASSED - NO THREATS DETECTED` and exits `0`. Put the option in the command your CI job runs too, because `--exclude` is not a setting that is remembered.
+3. Leave out only the folders that hold fakes. Everything else keeps being scanned, and the result no longer says anything about the files you left out. There is no ignore file and no way to leave out a single file or a single line.
+
+More in [`scan`](cli.md#scan) and in [Reading a scan finding](examples/reading-a-scan-finding.md).
+
 ## Block and warn reasons, by family
 
-Past the seventeen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
+Past the eighteen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
 
 For five common blocks, with what to do for each, see [Why was this blocked?](why-was-this-blocked.md).
 
