@@ -58,7 +58,7 @@ The first record has `zn.audit.prev` set to 64 zeros, because nothing came befor
 
 ### What it never contains
 
-The audit log is metadata only, and so is the export. It has no secret values, no hashes of values, no tool output and no full command lines. Each attribute comes from a fixed list and its value is checked against a strict format; a value that does not match is dropped. A field that would contain a known secret value is replaced with `[redacted]`, and one that fails its format with `[invalid]`.
+The audit log is metadata only, and so is the export. It has no secret values, no hashes of values, no tool output and no full command lines. Each attribute comes from a fixed list, and anything outside that list is dropped. Each value is checked against a strict format: a field that would contain a known secret value is replaced with `[redacted]`, and one that fails its format with `[invalid]`.
 
 It does contain names: the name of a secret (such as `STRIPE_API_KEY`), the agent and tool, the command name and the host. Treat the file as private, and check that these names are fine to share before you send it to a service outside your organization.
 
