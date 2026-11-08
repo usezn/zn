@@ -4,6 +4,24 @@ Each time a coding agent calls a tool, it starts zn's hook and waits for it: onc
 example a shell command) and once after it, with the tool's output. This page says how long that takes and
 how it is measured.
 
+## Quick reference
+
+The hook itself has no settings to tune on this page. The options below belong to the benchmark and to the
+latency budget that checks it. Every one is a command-line flag of the `node bench/...` scripts.
+
+| Setting | Default | What it changes | Details |
+|---|---|---|---|
+| `--runs N` (`hook_latency_matrix.js`) | `40` | How many times each case is timed, after one warm-up run. | [How it is measured](#how-it-is-measured) |
+| `--json FILE` (`hook_latency_matrix.js`) | none | Also writes the results of the run to this file, which the budget check and `--update-baseline` read. | [The budget in CI](#the-budget-in-ci) |
+| `--baseline FILE` (`hook_latency_matrix.js`) | none | Compares the run with a baseline file and fails if a case is too slow. Without it, the run only prints the table. | [The budget in CI](#the-budget-in-ci) |
+| `--max-increase X` (`hook_latency_matrix.js`) | `0.2` (20 %) | How far above its baseline one case may be before the run fails. The Windows job uses `0.35`. | [The budget in CI](#the-budget-in-ci) |
+| `--baseline FILE` (`hook_latency_gate.js`) | `bench/hook_latency_baseline.json` | The baseline file the report is compared with. | [The budget in CI](#the-budget-in-ci) |
+| `--max-increase X` (`hook_latency_gate.js`) | `0.2` (20 %) | Same limit per case, when you check a saved report with the gate script. | [The budget in CI](#the-budget-in-ci) |
+| `--update-baseline` (`hook_latency_gate.js`) | off | Writes the median ratio of the reports you give as the new baseline instead of comparing. | [The budget in CI](#the-budget-in-ci) |
+
+The limit for the whole run, the median of all cases at most 10 % above the baseline, is fixed in the gate
+script and has no flag.
+
 ## How it is measured
 
 `bench/hook_latency_matrix.js` starts `node lib/hooks/runner.js <agent>` with the agent's event on stdin,
@@ -110,3 +128,27 @@ baseline, `bench/hook_latency_baseline_windows.json`, and is not a required chec
 block a merge. Its per-case margin is 35 % instead of 20 %: Windows runners come with several CPU models and
 their timings vary about twice as much as on Linux, and with 20 % runs failed often with no code change.
 The whole-run check (10 %) is the same on both. The summary of each run has one table with the Linux and Windows numbers side by side.
+
+## Which settings change what
+
+Most of the time goes to starting Node.js, so few settings change speed. This
+table lists the ones that do, with their real names and defaults.
+
+| Setting | Default | What it changes |
+|---|---|---|
+| `ZN_NO_COMPILE_CACHE=1` (environment variable) | Cache on | Turns off the compile cache of the agent hooks. Each call then compiles zn's code again, so it starts more slowly. Set it only when you debug. |
+| Cloud check: `ZN_CLOUD=1` with an API key, or `zn-gate connect` | Off | Off, every check runs on this computer and nothing is sent. On, the `analyze` command and the `analyze_prompt` tool also ask the zn cloud, with a 4-second limit (12 seconds for long text). If the cloud does not answer in time, the local result is used. The agent hooks never use the cloud. |
+| `ZN_LOCAL_ONLY=true` or `--local-only` | Not set | Never uses the cloud, even when `ZN_CLOUD=1` is set. Use it when you do not want to wait for the network. |
+| `ZN_LONG_INPUT=off` or `--long-input off` | `windows` | For text over 1000 characters, the cloud check looks at windows of 512 tokens (up to 20). `off` looks only at the first 512 tokens: faster, but the rest of a long text is not judged. |
+
+Some limits are in the code and cannot be changed:
+
+- A shell command is refused if it is over 100 KB, chains too many commands, or
+  has too many paths for zn to check within 3 seconds.
+- After a tool runs, zn checks the first 8 million characters of its output for
+  secrets. The rest is withheld with a notice.
+- `zn audit` stops after 120 seconds and lists the files it did not check.
+  `zn reach` runs its audit with a 2.5-second budget.
+- Each agent sets the time limit for its hooks when the hooks are installed:
+  15 seconds for Claude Code, Gemini, Copilot and Antigravity, 20 seconds for
+  OpenCode, and 30 seconds for Codex CLI, Cursor and ZCode.

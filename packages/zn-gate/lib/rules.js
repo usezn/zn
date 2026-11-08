@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-07.1
+ * RULES_VERSION: 2026-11-08.5
  */
 
-const RULES_VERSION = '2026-11-07.1';
+const RULES_VERSION = '2026-11-08.5';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
