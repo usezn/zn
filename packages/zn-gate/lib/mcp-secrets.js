@@ -25,6 +25,7 @@
  */
 
 const { isNonSecretValue } = require('./rules');
+const { cliName } = require('./zn-command');
 
 const RULE_ID = 'secret:mcp_config';
 
@@ -359,13 +360,16 @@ function mcpReason(kind) {
   return `Plaintext credential in an MCP server configuration (${kind})`;
 }
 
-function mcpNextStep(kind, name) {
+function mcpNextStep(kind, name, platform = process.platform) {
   const norm = normalizeName(name);
   const use = suggestedName(norm);
   if (kind === 'header' || kind === 'URL') {
     return `Next: take the value out of this file and refer to an environment variable instead, written the way your agent expects (for example \${${use}} in Claude Code, \${env:${use}} in Cursor and VS Code, {env:${use}} in OpenCode), keep the real value in your own shell settings or a secret manager, and rotate it if the file was ever committed or shared.`;
   }
-  const through = `Next: run npx -y zn-gate secret set ${use} to store the value in the local vault (it asks for the value, so it is never typed on a command line), run zn secret allow ${use} --command <the server's command> so zn run may use it, take the value out of this file and start the server through zn run: set the server's command to zn and put run, --secrets, ${use}, -- and the old command first in args, so the server gets the value as the environment variable ${use}`;
+  const npx = cliName('npx', platform);
+  // PowerShell's default policy refuses zn.ps1, so on Windows the follow-up goes through npx.cmd too.
+  const zn = platform === 'win32' ? `${npx} -y zn-gate` : 'zn';
+  const through = `Next: run ${npx} -y zn-gate secret set ${use} to store the value in the local vault (it asks for the value, so it is never typed on a command line), run ${zn} secret allow ${use} --command <the server's command> so zn run may use it, take the value out of this file and start the server through zn run: set the server's command to zn and put run, --secrets, ${use}, -- and the old command first in args, so the server gets the value as the environment variable ${use}`;
   if (kind === 'environment variable') return `${through} (see docs/secrets.md), and rotate the value if the file was ever committed or shared.`;
   return `${through} (a server that only takes it as a flag or a setting needs an option to read it from the environment; a __ZN_${use}__ marker written in args is not filled in, because arguments are visible to other processes; see docs/secrets.md), and rotate the value if the file was ever committed or shared.`;
 }

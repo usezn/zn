@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -269,7 +270,7 @@ def _parity_corpus() -> List[Dict[str, Any]]:
 
 def _same_as_node(text):
     """The Python hint adds one note that says the vault commands are npm-only; the Node.js hint has no such note."""
-    return text.replace(mcp.NPM_ONLY_NOTE, "").replace("run npx.cmd -y zn-gate secret allow", "run zn secret allow")
+    return text.replace(mcp.NPM_ONLY_NOTE, "")
 
 
 class TestNodeParity(unittest.TestCase):
@@ -304,6 +305,22 @@ class TestNodeParity(unittest.TestCase):
                                        _same_as_node(mcp.mcp_next_step("argument", name)),
                                        _same_as_node(mcp.mcp_next_step("setting", name)), _same_as_node(mcp.mcp_next_step("header", name)),
                                        mcp.mcp_sample("argument", name), mcp.mcp_sample("URL", name), mcp.mcp_sample("header", name)])
+
+
+    def test_windows_hint_agrees_with_node_on_win32(self):
+        node = _node_or_skip()
+        js = ("Object.defineProperty(process, 'platform', { value: 'win32' });"
+              "const m = require(process.argv[1]);"
+              "console.log(JSON.stringify(['environment variable', 'argument', 'setting'].map((k) => m.mcpNextStep(k, 'apiKey'))));")
+        out = subprocess.run([node, "-e", js, str(NODE_LIB)], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr[:300])
+        got = json.loads(out.stdout)
+        with mock.patch("zn_gate.shell_names.os.name", "nt"):
+            want = [_same_as_node(mcp.mcp_next_step(k, "apiKey")) for k in ("environment variable", "argument", "setting")]
+        self.assertEqual(got, want)
+        for text in got:
+            self.assertIn("npx.cmd -y zn-gate secret set", text)
+            self.assertIn("npx.cmd -y zn-gate secret allow", text)
 
 
 class TestSharedFixtureParity(unittest.TestCase):
