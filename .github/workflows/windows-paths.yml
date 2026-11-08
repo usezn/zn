@@ -5,8 +5,8 @@ name: Windows checks for Windows-specific code
 # - on every push to main and to a release branch, so a release commit is never tagged without it
 #   (.github/release-required-checks.txt names this job);
 # - on pull requests into next, main and release branches that touch code with Windows-specific paths
-#   (command quoting, launching programs, the keychain, the broker, agent setup) or any test;
-# - in the merge queue.
+#   (command quoting, launching programs, the keychain, the broker, agent setup) or any test.
+# The merge queue runs only the required checks, so it does not run this workflow.
 #
 # The tests of the hook launchers (shell scripts that Claude Code starts with Git Bash) run here too: the job links
 # Git for Windows' usr/bin as C:\bin and puts it on the PATH, so /bin/sh and sh start. On a Windows machine
@@ -34,9 +34,6 @@ on:
       - '.github/workflows/windows-paths.yml'
       - '.github/windows-skip-baseline.txt'
   workflow_dispatch:
-  # The merge queue always runs it: one Windows job on the LTS version is the Windows sample of the queue.
-  merge_group:
-    types: [ checks_requested ]
 
 permissions:
   contents: read
