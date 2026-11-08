@@ -1545,7 +1545,11 @@ function toJson({ results, removed, warnings }, opts = {}) {
   const hide = (v) => {
     if (typeof v !== 'string') return v;
     let out = v;
-    for (const h of new Set([home, (() => { try { return fs.realpathSync(home); } catch (_) { return home; } })()])) {
+    // Longest first: when one form contains the other (macOS /var/... is /private/var/...), replacing the shorter
+    // one first would leave a mangled path such as '/private~/...'.
+    const forms = [...new Set([home, (() => { try { return fs.realpathSync(home); } catch (_) { return home; } })()])]
+      .sort((a, b) => b.length - a.length);
+    for (const h of forms) {
       if (h && h.length > 1) out = out.split(h).join('~');
     }
     return out;

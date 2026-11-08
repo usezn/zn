@@ -88,3 +88,31 @@ test('check --json: valid JSON and exit 1 when an agent config is malformed', (t
   assert.equal(run(c, ['check']).status, 1);
   assert.ok(!r.stdout.includes(c.home));
 });
+
+test('toJson hides a home whose real path contains it (longest form replaced first)', () => {
+  const fsm = require('node:fs');
+  const osm = require('node:os');
+  const pathm = require('node:path');
+  const { toJson } = require('../lib/check.js');
+  const base = fsm.mkdtempSync(pathm.join(osm.tmpdir(), 'zn-home-'));
+  try {
+    // real: <base>/private<base>/home ; link: <base>/home -> real. The link path is a substring of the real path.
+    const real = pathm.join(base, 'private' + base, 'home');
+    fsm.mkdirSync(real, { recursive: true });
+    const link = pathm.join(base, 'home');
+    fsm.symlinkSync(real, link);
+    const realHome = fsm.realpathSync(link);
+    const out = toJson({
+      results: [{ id: 'codex', name: 'Codex CLI', state: 'not-set-up', found: true, problem: 'missing ' + realHome + '/.codex/hooks.json', fix: 'edit ' + link + '/.codex' }],
+      removed: [],
+      warnings: ['see ' + realHome + '/x'],
+    }, { home: link, version: '0.0.0' });
+    const text = JSON.stringify(out);
+    assert.ok(!text.includes(base), text);
+    assert.equal(out.agents[0].reason, 'missing ~/.codex/hooks.json');
+    assert.equal(out.agents[0].fix, 'edit ~/.codex');
+    assert.equal(out.warnings[0], 'see ~/x');
+  } finally {
+    fsm.rmSync(base, { recursive: true, force: true });
+  }
+});
