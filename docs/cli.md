@@ -2,6 +2,14 @@
 
 Every command of the `zn-gate` program, with its options and exit codes. For a first walk through, start with [First 5 minutes](first-5-minutes.md). Words you do not know are explained in the [glossary](glossary.md).
 
+> **Quick answers: the five commands to start with**
+>
+> - `npx -y zn-gate init`: set up protection for the coding agents on this machine, one step at a time, and ask before each change.
+> - `npx -y zn-gate check`: test that protection with a fake secret in a temporary folder. Nothing is sent and no setting changes.
+> - `npx -y zn-gate reach`: show what your agents can reach on this machine. Read only, sends nothing. See [reach](#reach).
+> - `npx -y zn-gate scan <path>`: look for prompt-injection traps and leaked secrets in prompts, skills and configs. See [scan](#scan).
+> - `npx -y zn-gate env shadow .env`: move the real values of a `.env` file into the local vault and leave markers in the file. See [env](#env).
+
 ## Contents
 
 - [`init`](#init)
