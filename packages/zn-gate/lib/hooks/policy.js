@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-07.1';
+const POLICY_RULES_VERSION = '2026-11-08.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -880,6 +880,16 @@ function keyFileGlobDenial(p, c, opts) {
 
 /* Reads of credential files: what was refused, why, and how to use a value instead. */
 function credentialDenial(p, c) {
+  // A wildcard is not a file: `ls *` in a folder that has a .env file names no secret, so saying that `*` "holds secrets" confuses the person
+  // reading it. For a pattern, say what the pattern would reach and what to do instead.
+  if (/[*?[{]/.test(p) || /^an? (brace )?pattern/.test(c.reason)) {
+    const broad = /too broad/.test(c.reason);
+    const why = broad ? 'it is too broad for zn to check that it matches no file that holds secrets'
+      : /\.env/.test(c.reason) ? 'it would also match a .env file, which holds secrets'
+        : 'it would also match a file that holds secrets (' + c.reason + ')';
+    return 'zn: the pattern ' + p + ' was not read because ' + why + ', and secret values never go to the AI model. ' +
+      'Name the files you need instead (for example `cat notes.md` instead of `cat *`), or ask the user to run the command in their own terminal.';
+  }
   return 'zn: ' + p + ' was not read because zn treats it as holding secrets (' + c.reason + '), and secret values never go to the model. ' +
     'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then run the command with `' + znCommand('run --secrets NAME -- <command>') + '` so the program gets it as an environment variable.';
 }

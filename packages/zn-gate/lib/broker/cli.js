@@ -266,13 +266,35 @@ function secretNameForKey(key) {
   return n;
 }
 
+// A vault name for the manual fix that validateSecretName accepts. A key such
+// as API_KEY_1 maps to a name the scrubber reserves, so it gets a suffix.
+function suggestSecretName(key) {
+  const base = secretNameForKey(key) || 'SECRET';
+  if (!markers.validateSecretName(base)) return base;
+  const cand = base.slice(0, 64 - '_VALUE'.length).replace(/_+$/, '') + '_VALUE';
+  return markers.validateSecretName(cand) ? 'MY_SECRET' : cand;
+}
+
 /**
  * Plan which .env values move to the vault. Returns
  * {parsed, items: [{entry, name, value, start, end}], skipped: [{key, why}]}
  */
-function shortWhy(n) {
-  return 'the value is only ' + n + ' character(s); values under ' + dotenv.MIN_SECRET_LEN
-    + ' are not moved because they cannot be told apart from ordinary text. It stays in the file in plain text, and your agent cannot read the file while it does. Use a longer value, or store it with `zn secret set NAME` and write __ZN_NAME__ in its place.';
+function shortWhy(n, key) {
+  const name = suggestSecretName(key);
+  return 'stays in clear text in the file. The value is only ' + n + ' character(s), and zn moves values of '
+    + dotenv.MIN_SECRET_LEN + ' or more because shorter ones cannot be told apart from ordinary settings. '
+    + 'Your agent cannot read the file while it does. To keep it out of the file, run `zn secret set ' + name + '` and put ' + markers.markerFor(name) + ' in its place.';
+}
+
+function clearTextSummary(plan, file, dryRun) {
+  if (!plan.skipped.length) return '';
+  const names = plan.skipped.map((x) => x.key).join(', ');
+  const tail = 'Until each one is stored with `zn secret set`, your agent cannot read this file.';
+  if (dryRun) {
+    return 'Preview only: no value has moved. If you run this without --dry-run, ' + plan.skipped.length
+      + ' value(s) would stay in clear text in ' + path.basename(file) + ': ' + names + '. ' + tail;
+  }
+  return plan.skipped.length + ' value(s) stay in clear text in ' + path.basename(file) + ': ' + names + '. ' + tail;
 }
 
 function planImport(text, flags) {
@@ -284,7 +306,7 @@ function planImport(text, flags) {
   for (const e of parsed.entries) {
     if (only && !only.has(e.key)) continue;
     if (!only && !flags.all && !dotenv.isSensitiveKey(e.key)) continue;
-    if (e.multiline) { skipped.push({ key: e.key, why: 'multi-line value (store it with zn secret set)' }); continue; }
+    if (e.multiline) { skipped.push({ key: e.key, why: 'stays in clear text in the file. It is a multi-line value, which zn does not move. Store it with `zn secret set ' + suggestSecretName(e.key) + '`.' }); continue; }
     if (!e.value || e.value.includes('__ZN_')) continue;
     const pw = dotenv.connectionPassword(e.value);
     let name = secretNameForKey(e.key);
@@ -303,15 +325,15 @@ function planImport(text, flags) {
         // the whole URL moves to the vault instead and the password goes with it.
         notes.push({ key: e.key, why: 'the password in the URL is only ' + pass.length + ' character(s) long, so the whole URL was moved to the vault instead of just the password' });
       } else {
-        skipped.push({ key: e.key, why: shortWhy(e.value.length) });
+        skipped.push({ key: e.key, why: shortWhy(e.value.length, e.key) });
         continue;
       }
     } else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(e.value)) {
       continue; // URL without credentials: nothing secret
     }
-    if (value.length < dotenv.MIN_SECRET_LEN) { skipped.push({ key: e.key, why: shortWhy(value.length) }); continue; }
+    if (value.length < dotenv.MIN_SECRET_LEN) { skipped.push({ key: e.key, why: shortWhy(value.length, e.key) }); continue; }
     const bad = markers.validateSecretName(name);
-    if (bad) { skipped.push({ key: e.key, why: bad + ' (store it with zn secret set OTHER_NAME)' }); continue; }
+    if (bad) { skipped.push({ key: e.key, why: bad + '. It stays in clear text in the file. Store it with `zn secret set OTHER_NAME` under a name that is allowed.' }); continue; }
     items.push({ entry: e, name, value, start, end });
   }
   return { parsed, items, skipped, notes };
@@ -366,12 +388,14 @@ async function envShadow(args, io) {
   if (plan.items.length === 0) {
     out(io, path.basename(file) + ': nothing to shadow' + (dotenv.isShadowed(text) ? ' (already shadowed)' : ''));
     for (const s of plan.skipped) out(io, '  skipped ' + s.key + ': ' + s.why);
+    if (plan.skipped.length) out(io, clearTextSummary(plan, file, Boolean(flags['dry-run'])));
     return 0;
   }
   if (flags['dry-run']) {
     for (const it of plan.items) out(io, '  ' + it.entry.key + ' -> ' + markers.markerFor(it.name));
     for (const s of plan.notes) out(io, '  note ' + s.key + ': ' + s.why);
     for (const s of plan.skipped) out(io, '  skipped ' + s.key + ': ' + s.why);
+    if (plan.skipped.length) out(io, clearTextSummary(plan, file, true));
     return 0;
   }
   const vault = await vaultOf(io);
@@ -385,10 +409,11 @@ async function envShadow(args, io) {
   let mode = 0o600;
   try { mode = fs.statSync(file).mode & 0o777; } catch (_) { /* default */ }
   writeFileAtomic(file, shadowed, mode);
-  out(io, 'Shadowed ' + edits.length + ' value(s) in ' + path.basename(file) + '. The file now holds only markers; the values are in the local vault.');
+  out(io, 'Shadowed ' + edits.length + ' value(s) in ' + path.basename(file) + '. ' + (plan.skipped.length ? 'The values that moved are in the local vault and the file holds markers in their place; some values were left, see below.' : 'The file now holds only markers; the values are in the local vault.'));
   out(io, 'Encrypted copy of the original: ' + bak + ' (restore with: zn env unshadow ' + path.relative(io.cwd, file) + ' --backup ' + bak + ')');
   for (const s of plan.notes) out(io, '  note ' + s.key + ': ' + s.why);
   for (const s of plan.skipped) out(io, '  skipped ' + s.key + ': ' + s.why);
+  if (plan.skipped.length) out(io, clearTextSummary(plan, file));
   const names = stored.map((s) => s.name).join(',');
   if (!flags.command) {
     out(io, 'Next: allow the commands that need them, e.g. zn secret allow ' + stored[0].name + ' --command "npm run dev"');
