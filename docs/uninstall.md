@@ -13,12 +13,12 @@ Check these four things first. Each is explained further down this page.
 3. **Lock the vault.** An unlocked vault is kept, not deleted. Run `zn-gate lock`, then run uninstall again.
 4. **Preview the list.** Run `npx -y zn-gate uninstall --dry-run` to see what would be removed without changing anything. If you used `--project` in several projects, plan to run uninstall from each project folder.
 
-## The order: hooks first, the program last
+## The order: MCP servers, then hooks, the program last
 
 Whichever way you remove zn-gate, follow this order:
 
-1. The hooks, and for Claude Code the plugin.
-2. Wrapped MCP servers (`init --revert`).
+1. Wrapped MCP servers (`init --revert`). Do this first: a saved copy put back after the hooks are removed could bring back zn's `secrets` server.
+2. The hooks, and for Claude Code the plugin.
 3. Your `.env` values (`env unshadow`), then the vault if you want it deleted.
 4. The program itself, last: `npm uninstall -g zn-gate`, then `pip uninstall zn-gate` if you also installed the Python package.
 
@@ -64,25 +64,11 @@ This is a summary of the sections below. Each command is run in your own termina
 
 ## Piece by piece
 
-Use this if you want to remove only one part, or to do the steps yourself. Go in this order, with the hooks first and the program last. Each command is run in your own terminal.
+Use this if you want to remove only one part, or to do the steps yourself. Go in this order, with the wrapped MCP servers first, then the hooks, and the program last. Each command is run in your own terminal.
 
-### 1. Hooks (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, Gemini CLI, or Claude Code without the plugin)
+If you remove the parts by hand, use the order `zn-gate uninstall` uses: put back the wrapped MCP servers first (`init --revert`), because a saved copy put back after the hooks are removed could bring back zn's `secrets` server. Then the hooks and the plugin, then the vault if you want it gone, then the program.
 
-```bash
-npx -y zn-gate hooks uninstall claude-code
-```
-
-Use `codex`, `cursor`, `opencode`, `antigravity`, `zcode` or `copilot` instead of `claude-code` for the others (ZCode has no project hooks, so `--project` does not apply to it). Add `--project` if you installed the hooks for one project only; run it from that project's folder. A backup of the settings file is written first. For Claude Code it also removes zn's own `secrets` MCP server. Add `--no-mcp` to leave MCP servers alone.
-
-### 2. Claude Code plugin
-
-```bash
-claude plugin uninstall zn-gate@usezn
-```
-
-Or, inside Claude Code, type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
-
-### 3. MCP servers wrapped by `init --wrap-mcp`
+### 1. MCP servers wrapped by `init --wrap-mcp`
 
 ```bash
 npx -y zn-gate init --revert
@@ -91,6 +77,22 @@ npx -y zn-gate init --revert
 This puts back each MCP settings file as it was saved just before zn wrapped it. Changes you made to those files later, such as MCP servers you added, are lost, so add them again afterwards. It only undoes MCP wrapping: it does not remove the plugin or any hooks. If you only ever ran `init` without `--wrap-mcp`, there is nothing for it to restore.
 
 A zn-gate MCP server you added by hand (an entry named `zn-gate` in your agent's MCP settings) is not touched by any command here: delete that entry yourself.
+
+### 2. Hooks (Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app, GitHub Copilot, Gemini CLI, or Claude Code without the plugin)
+
+```bash
+npx -y zn-gate hooks uninstall claude-code
+```
+
+Use `codex`, `cursor`, `opencode`, `antigravity`, `zcode` or `copilot` instead of `claude-code` for the others (ZCode has no project hooks, so `--project` does not apply to it). Add `--project` if you installed the hooks for one project only; run it from that project's folder. A backup of the settings file is written first. For Claude Code it also removes zn's own `secrets` MCP server. Add `--no-mcp` to leave MCP servers alone.
+
+### 3. Claude Code plugin
+
+```bash
+claude plugin uninstall zn-gate@usezn
+```
+
+Or, inside Claude Code, type `/plugin`, open the **Installed** tab, pick zn-gate and choose **Uninstall**. To also remove the usezn plugin list, run `claude plugin marketplace remove usezn`.
 
 ### 4. Your `.env` files and the vault
 
@@ -119,6 +121,16 @@ npx -y zn-gate check
 ```
 
 `uninstall` runs this for you at the end. If it still reports something as set up, the line says which part is left and what to run.
+
+## Common mistakes
+
+- **Removing the program before the hooks.** `npm uninstall -g zn-gate` removes the program but not what it set up. The hooks stay in your agent's settings, and `zn-gate check` then reports lines such as `its hook cannot start: its zn-gate files (<path>) is no longer there`. See [The hooks are set up but cannot run](check.md#the-hooks-are-set-up-but-cannot-run). Run `npx -y zn-gate uninstall` first, and `npm uninstall -g zn-gate` last, as the uninstall output tells you.
+- **Asking your agent to run uninstall.** It refuses when an AI agent runs it, and also when there is no interactive terminal (a script, or a pipe), and nothing changes: it prints `zn uninstall: Not allowed: zn-gate uninstall needs an interactive terminal. Open a terminal window yourself and run it there.` and exits with `77` (see [exit codes](exit-codes.md#set-up-and-check)). Open your own terminal and run it there. `--dry-run` is the one form that also works without a terminal, because it only prints the list.
+- **Forgetting a `--project` install.** `uninstall` looks at your user settings and at the folder you run it in, not at every project on the computer. Hooks you installed with `--project` in another folder stay until you run uninstall from that folder (or `hooks uninstall <agent> --project` there). Use `--dry-run` in a folder to see whether anything is listed. See [Before you remove it](#before-you-remove-it).
+- **Expecting uninstall to delete the vault.** It keeps the vault unless you answer yes to the second question, and it keeps it anyway while the vault is unlocked or when a zn Team organization manages the computer. The rest of the `.zn` folder (settings and the decision log) is never deleted by it either. See [What each command removes and leaves](#what-each-command-removes-and-leaves).
+- **Deleting the vault before putting your `.env` values back.** If you ran `env shadow`, your `.env` file holds markers, `uninstall` does not edit it, and the real values are only in the vault. Run `env unshadow` first. See [Your `.env` files and the vault](#4-your-env-files-and-the-vault).
+
+For the questions people ask most, see [Uninstall](faq.md#uninstall) in the FAQ.
 
 ## Related
 

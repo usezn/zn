@@ -219,8 +219,9 @@ jobs:
   # upgrade. No -X dev: its debug checks multiply the run time and break the linear-time tests.
   python-warnings:
     name: Python 3.14 tests with warnings as errors (ubuntu-latest)
-    # Draft pull requests skip this job; marking the pull request ready for review runs it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # Draft pull requests skip this job; marking the pull request ready for review runs it. Not a required check,
+    # so the merge queue leaves it out: it runs in pull requests and on the push to next.
+    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:

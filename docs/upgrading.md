@@ -259,7 +259,7 @@ of the older release.
 1. Remove the hooks of each agent you set up with `zn hooks install`:
    `npx -y zn-gate hooks uninstall claude-code` (use `codex`, `cursor`,
    `opencode` or `antigravity` for the others, and add `--project` for a project
-   install). With the Claude Code plugin, see [Remove zn-gate](uninstall.md#2-claude-code-plugin).
+   install). With the Claude Code plugin, see [Remove zn-gate](uninstall.md#3-claude-code-plugin).
 2. Remove the program: `npm uninstall -g zn-gate`, and `pip uninstall zn-gate`
    if you also installed the Python package
    ([details](uninstall.md#5-the-program-itself-last)).

@@ -62,7 +62,7 @@ npx -y zn-gate init
 
 `init` does this:
 
-- It finds the eight coding agents it supports on your machine: Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app and GitHub Copilot, plus Gemini CLI (experimental).
+- It finds the seven coding agents it supports on your machine: Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app and GitHub Copilot, plus Gemini CLI (experimental).
 - For each one that is not protected yet, it shows the setup: the zn-gate plugin for Claude Code (or zn's hooks when your Node.js is older than 20.19), and zn's hooks for the others.
 - It runs each step only after you confirm it.
 - It ends with `zn-gate check`.
@@ -124,11 +124,13 @@ Open a new terminal so the new PATH applies, then run `npm install -g` again for
 
 In Codex, approve the new hooks with `/hooks`. In Cursor, shell output and file contents are not scrubbed. What each agent supports: [docs/compat.md](docs/compat.md).
 
+**New in 1.15.0:** on macOS and Linux, and for Claude Code on Windows, zn's hook launcher now runs zn-gate's hook runner only while that file matches the copy recorded at install time, and no longer falls back to a `zn` found on the PATH. An update with npm refreshes those launchers through a short install step (`postinstall`, declared in the package's `DISCLOSURE` file); if you update with pnpm, bun or `--ignore-scripts`, run `zn hooks install <agent>` again. Not covered: the inline PowerShell hooks that zn writes on Windows for Codex CLI, Cursor, Gemini CLI and Antigravity. They still run a `zn` found on the PATH and do not check the runner ([docs/compat.md](docs/compat.md)).
+
 **Other editors** (Windsurf, Cline, Zed, JetBrains, Continue): zn-gate works there as an MCP server only. Setup for each one: [usezn.com/docs/integrations/editors](https://usezn.com/docs/integrations/editors/).
 
 **Antigravity.** `zn hooks install antigravity` (or `npx -y zn-gate init`) adds a hook that runs before each tool call. It blocks reads and writes of secret files and shell commands that handle secrets, and the agent cannot edit the hook files. It cannot remove secrets from what a tool returns, Antigravity's MCP configuration files are not protected, and Antigravity does not document what happens when a hook fails (in our tests the call is blocked), so treat it as a first layer. The MCP server works there too. Details: [Antigravity page](docs/editors/antigravity.md).
 
-**ZCode desktop app.** `zn hooks install zcode` (or `npx -y zn-gate init`) adds hooks that run before each tool call and before each prompt. It blocks reads and writes of secret files, shell commands that handle secrets, MCP calls that would send a secret, and a prompt that contains a secret, and the agent cannot edit ZCode's own config file. It cannot remove secrets from what a tool returns (zn adds a notice when an output holds one), ZCode ignores the hooks of a project, and zn's launcher blocks the call when its Node.js is gone, so treat it as a first layer. ZCode's documentation does not say what happens when a hook fails; in our tests with the ZCode desktop app 3.16.3 on Linux, a hook that failed (an exit code other than 2, a crash or a timeout) let the call run, and only exit code 2 or a deny answer blocked it. Tested end to end on the ZCode desktop app 3.16.3 on Linux x64 and Windows x64 (Windows Server 2022, through the agent the app ships; the Windows app window was not driven); macOS is not tested. Details: [ZCode page](docs/editors/zcode.md).
+**ZCode desktop app.** `zn hooks install zcode` (or `npx -y zn-gate init`) adds hooks that run before each tool call and before each prompt. It blocks reads and writes of secret files, shell commands that handle secrets, MCP calls that would send a secret, and a prompt that contains a secret, and the agent cannot edit ZCode's own config file. It cannot remove secrets from what a tool returns (zn adds a notice when an output holds one), ZCode ignores the hooks of a project, and zn's launcher blocks the call when its Node.js is gone, so treat it as a first layer. ZCode's documentation does not say what happens when a hook fails; in our tests with the ZCode desktop app 3.16.3 on Linux, a hook that failed (an exit code other than 2, a crash or a timeout) let the call run, and only exit code 2 or a deny answer blocked it. Tested end to end on the ZCode desktop app 3.16.3 on Linux x64 and Windows x64 (Windows Server 2022, through the agent the app ships; the Windows app window was not driven); macOS is not tested. **New in 1.15.0:** the ZCode plugin protects tool calls on Windows now. In earlier versions its hooks could not start there, so ZCode ran every tool call without zn. Install the plugin again in ZCode (Settings, Plugins) after updating. Details: [ZCode page](docs/editors/zcode.md).
 
 **GitHub Copilot (VS Code and Copilot CLI).** `zn hooks install copilot` adds hooks that run before and after each tool call. They block reads and writes of secret files and shell commands that handle secrets, and replace secret values in the results of read-type and shell tools. They cannot block a typed prompt, Copilot lets a call through when a hook times out, so zn, which sets a 15-second timeout on its hooks, blocks the call itself at 11 seconds, it has not been tested on Windows, and Copilot's own session log keeps the original output, so treat it as a first layer. Supported and documented; run end to end with Copilot CLI, not tested in the VS Code app. Details: [Copilot notes](docs/compat.md).
 
@@ -184,6 +186,21 @@ npx -y zn-gate init --revert    # put back the MCP configs saved before wrapping
 It reads Claude Desktop, Claude Code (`~/.claude.json`), Cursor (`~/.cursor/mcp.json`), Codex CLI (`~/.codex/config.toml`), OpenCode (`~/.config/opencode/opencode.json`) and Antigravity (`~/.gemini/antigravity/mcp_config.json`). [Full list and rules](packages/zn-gate/README.md#wrap-the-mcp-servers-you-already-use).
 
 </details>
+
+## Contents
+
+- [Docs index](docs/README.md)
+- [First 5 minutes](docs/first-5-minutes.md)
+- [By agent](docs/by-agent.md)
+- [Examples](docs/examples/README.md)
+- [CLI reference](docs/cli.md)
+- [API quickstart](docs/api-quickstart.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Uninstall](docs/uninstall.md)
+- [What each piece does](#what-each-piece-does)
+- [Configuration](#configuration)
+- [FAQ](#faq)
+- [Security](#security)
 
 ## See what zn-gate did
 
@@ -248,8 +265,7 @@ Where zn-gate sits in a tool call, as an MCP server or as the `shield` proxy aro
 
 ### Scan: audit what your agent is about to trust
 
-- **Today:** `zn-gate scan <path>` audits prompt templates, `AGENTS.md` / `SKILL.md` files and configs for injection traps and leaked secrets (exit code 1 on findings, for CI). A link given as the folder to scan is followed. When no file is scanned, the report says "No files were scanned in <path>" and the exit code is 3. A file or folder that could not be read (for example a file of 2 MiB or larger) is listed and also makes the exit code 3, unless you pass `--allow-partial`. A leaked secret is reported as **Secret found**, with the next step: `npx -y zn-gate env shadow <file>` moves the values of a `.env` file into the local vault, `npx -y zn-gate secret set NAME` stores any other one. It finds provider keys and tokens, opaque `Authorization: Bearer` tokens, passwords in URLs, and secrets passed as command-line flags (`--token=...`) or assigned to a name such as `password` or `api_key`. The same check runs as a [GitHub Action](#github-action). It also checks the MCP server configs (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `claude_desktop_config.json` and others) for keys and passwords written in plain text in `env`, `headers`, arguments or URLs; it never prints the value, and `--include-home` checks your own MCP configs too. MCP servers can be checked on the web at [usezn.com/scan](https://usezn.com/scan).
-- **Roadmap:** auditing MCP servers and skills from the CLI before you add them.
+- **Today:** `zn-gate scan <path>` audits prompt templates, `AGENTS.md` / `SKILL.md` files and configs for injection traps and leaked secrets (exit code 1 on findings, for CI). A link given as the folder to scan is followed. When no file is scanned, the report says "No files were scanned in <path>" and the exit code is 3. A file or folder that could not be read (for example a file of 2 MiB or larger) is listed and also makes the exit code 3, unless you pass `--allow-partial`. A leaked secret is reported as **Secret found**, with the next step: `npx -y zn-gate env shadow <file>` moves the values of a `.env` file into the local vault, `npx -y zn-gate secret set NAME` stores any other one. It finds provider keys and tokens, opaque `Authorization: Bearer` tokens, passwords in URLs, and secrets passed as command-line flags (`--token=...`) or assigned to a name such as `password` or `api_key`. The same check runs as a [GitHub Action](#github-action). It also checks the MCP server configs (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.codex/config.toml`, `claude_desktop_config.json` and others) for keys and passwords written in plain text in `env`, `headers`, arguments or URLs; it never prints the value, and `--include-home` checks your own MCP configs too. MCP servers can be checked on the web at [usezn.com/scan](https://usezn.com/scan). Before you add an npm MCP server or skill, `npx -y zn-gate scan --package <name>[@version]` downloads it, checks it against its checksum and reads the files of it with a scanned extension, `node_modules` and `dist` included (binaries, `.wasm` and files without a scanned extension are not read), then lists the install scripts npm would run; nothing in it is installed or run.
 
 ## What the cloud adds for teams
 
@@ -347,10 +363,10 @@ jobs:
           persist-credentials: false
       - name: Scan AI agent prompts and tools
         # Pin the action to a full commit SHA; the comment names the release.
-        uses: usezn/zn@2afcaa17c7d1cb8fb5ded21f5f849ce8eba2bc5e # v1.14.1
+        uses: usezn/zn@84f85b2ed5bd938d823bc2521d48044eddb2ad84 # v1.15.0
         with:
-          version: '1.14.1'
-          package-sha256: '5ae5bae2625cad5fc1d0ca6d88a0d32f0e26310ef285d8adf48ddf68cb6983ba'
+          version: '1.15.0'
+          package-sha256: '18733cfed66c80ee8114d3d3be5809cc74346dbaac42403c51c137fbc8c1d5fd'
           path: '.'
           fail-on-threat: 'true'
           format: 'github'
@@ -382,9 +398,9 @@ jobs:
         id: zn
         # Pin to the full commit SHA of an Action release v1.10.0 or later.
         # The zn-gate package version is set by version below.
-        uses: usezn/zn@2afcaa17c7d1cb8fb5ded21f5f849ce8eba2bc5e # v1.14.1
+        uses: usezn/zn@84f85b2ed5bd938d823bc2521d48044eddb2ad84 # v1.15.0
         with:
-          version: '1.14.1'
+          version: '1.15.0'
           mode: 'both'
           format: 'sarif'
           severity-threshold: 'medium'   # stricter than the default (high)
@@ -487,7 +503,7 @@ For Codex CLI, zn also reviews the model's final answer. By default it only warn
 
 ## Security
 
-Report vulnerabilities to [security@usezn.com](mailto:security@usezn.com). Policy, scope and safe harbor: [SECURITY.md](SECURITY.md). Hall of Fame: [usezn.com/security](https://usezn.com/security/).
+Report vulnerabilities privately: preferably with [GitHub private vulnerability reporting](https://github.com/usezn/zn/security/advisories/new), or by email to [security@usezn.com](mailto:security@usezn.com). Policy, scope and safe harbor: [SECURITY.md](SECURITY.md). Hall of Fame: [usezn.com/security](https://usezn.com/security/).
 
 Releases published by the release workflow, starting with the first one after 1.5.0-beta.1, are signed and carry build provenance. 1.5.0-beta.1 and earlier versions were published by hand and have no signatures or provenance. To check a download: [docs/verify-release.md](docs/verify-release.md).
 
