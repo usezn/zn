@@ -20,7 +20,7 @@ KEY = "AKIAIOSFODNN7EXAMPLE"
 DB_ERROR = f"connection failed for https://example.com/db?key={KEY}"
 
 
-# --- B-337: exceptions --------------------------------------------------------
+# --- exceptions --------------------------------------------------------
 
 class NeedsCode(Exception):
     def __init__(self, message, *, code):
@@ -187,7 +187,7 @@ class TestToolExceptions(unittest.TestCase):
         self.assertIn("zn-gate blocked", out2)
 
 
-# --- B-338: async callables and awaitables in @guard -------------------------
+# --- async callables and awaitables in @guard -------------------------
 
 class TestGuardAwaitables(unittest.TestCase):
     def test_async_callable_object(self):
@@ -247,7 +247,7 @@ class TestGuardAwaitables(unittest.TestCase):
         self.assertEqual(asyncio.run(coro), KEY)
 
 
-# --- B-339: streamed output ---------------------------------------------------
+# --- streamed output ---------------------------------------------------
 
 class TestStreamedOutput(unittest.TestCase):
     def test_sync_generator_chunks_are_masked(self):
