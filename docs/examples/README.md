@@ -3,6 +3,7 @@
 Worked examples, in alphabetical order. All values in them are made up.
 
 - [audit-before-adding-a-repo.md](audit-before-adding-a-repo.md): run `zn-gate audit` on a repository you do not know yet, read the report and decide what to do before you open it with an agent.
+- [audit-before-opening.md](audit-before-opening.md): run `zn audit` on a repository you just cloned, before an agent opens it, and read what the report says.
 - [block-message-anatomy.md](block-message-anatomy.md): one real block message, explained part by part.
 - [claude-code-plugin-or-cli.md](claude-code-plugin-or-cli.md): the two ways to cover Claude Code (the plugin, or the hooks of `zn hooks install claude-code`), what each needs, and how to verify and remove them.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
