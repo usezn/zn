@@ -13,10 +13,12 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
 - [env-file-round-trip.md](env-file-round-trip.md): move a fake `.env` file into the vault and put the values back.
 - [evidence-example.md](evidence-example.md): the local evidence log that `zn-gate evidence` shows.
+- [evidence-verify-after-restore.md](evidence-verify-after-restore.md): verify the decision log after you move to a new computer, with `zn-gate evidence --verify`.
 - [first-block-vs-allow-decision.md](first-block-vs-allow-decision.md): what to do the first time zn-gate blocks a command of your agent, and when to change the settings instead.
 - [first-cloud-check.md](first-cloud-check.md): the shortest path from connect to a first checked prompt, in five steps.
 - [first-project-walkthrough.md](first-project-walkthrough.md): one small example project, from install to removal.
 - [hook-subcommand-explained.md](hook-subcommand-explained.md): what `zn-gate hook` is, who calls it, and why you rarely run it by hand.
+- [hooks-uninstall-then-verify.md](hooks-uninstall-then-verify.md): remove zn's hooks and confirm with `zn-gate check --hooks` that none is left.
 - [init-and-uninstall.md](init-and-uninstall.md): set up zn-gate, preview the steps with a dry run, then remove it.
 - [long-text-analysis.md](long-text-analysis.md): the two long-input modes of the cloud check (`windows` or `off`), and when the result carries a warning.
 - [mcp-pin-review-checklist.md](mcp-pin-review-checklist.md): what to compare in a changed MCP tool before you approve it with `pins approve`.
@@ -28,13 +30,16 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [python-api.md](python-api.md): five short examples of the Python package.
 - [reach-report-file.md](reach-report-file.md): write the `reach` report to a file in CI and keep it as a build artifact.
 - [reading-a-reach-history-report.md](reading-a-reach-history-report.md): how to read the output of zn-gate reach --history.
+- [reading-a-scan-finding.md](reading-a-scan-finding.md): the fields of a scan finding in JSON and GitHub format, for scripts and CI jobs.
 - [safe-first-day-with-a-new-agent.md](safe-first-day-with-a-new-agent.md): try zn-gate with a new agent in a throwaway folder, then remove it.
 - [scan-a-single-file.md](scan-a-single-file.md): scan one file instead of a folder, and read the report.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project, from the run to what each exit code means.
 - [scripting.md](scripting.md): use `zn-gate` from a shell script or a CI job: exit codes and JSON output.
+- [secret-adopt-existing-file.md](secret-adopt-existing-file.md): adopt a secret that zn-gate found in a project file, from the token it was replaced with to a named vault secret, and the check afterwards.
 - [shield-walkthrough.md](shield-walkthrough.md): wrap a fake MCP server with the shield, from shadow mode to enforce and back.
 - [stats-and-report.md](stats-and-report.md): worked examples of `zn-gate stats` and `zn-gate report`.
 - [switching-agents-checklist.md](switching-agents-checklist.md): a checklist for moving zn-gate protection from one coding agent to another.
+- [team-onboarding-checklist.md](team-onboarding-checklist.md): a one-line-per-step checklist for a new zn Team member, with the expected result and what to do when a step fails.
 - [uninstall-one-agent.md](uninstall-one-agent.md): remove zn-gate from one agent and keep the others.
 - [unix-first-run.md](unix-first-run.md): the first ten minutes on macOS or Linux with a Node.js from a version manager.
 - [upgrade-checklist.md](upgrade-checklist.md): a one-screen version of the upgrade page.
