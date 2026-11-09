@@ -12,7 +12,7 @@ const { spawnSync } = require('child_process');
 
 const launcher = require('../lib/agents/launcher');
 
-const posix = process.platform !== 'win32';
+const { hasPosixSh: posix } = require('./helpers/posix_sh');
 const NAMES = ['my folder/zn-hook-codex.sh', "it's here/zn-hook-codex.sh", 'say "hi"/zn-hook-codex.sh', 'a  b $HOME `x`/zn-hook-codex.sh'];
 
 test('launcherCommand quotes a POSIX path with spaces as one word', () => {
