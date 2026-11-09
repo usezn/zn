@@ -108,7 +108,7 @@ Every `ZN_` variable the command-line tool reads, with the default and the packa
 | `ZN_API_KEY` | None | API key for the cloud check. Used only when the cloud check is on. | Both |
 | `ZN_LOCAL_ONLY=true` | Off | Never uses the cloud, even when `ZN_CLOUD=1` is set. | Both |
 | `ZN_API_URL` | The address of `ZN_STAGE` | Uses another cloud address. | Both |
-| `ZN_STAGE` | `v30` | Cloud stage: `v30` or `prod`. | Both |
+| `ZN_STAGE` | The current production API | Which cloud API route the check is sent to. Leave it unset unless you were told to change it. `zn-gate --help` lists the accepted values. | Both |
 | `ZN_LONG_INPUT` | `windows` | How long texts are sent to the cloud check: `windows` or `off`. | Both |
 | `ZN_STRICT=1` | Off | Treats advisory rules as blocking. The environment can only add strictness. | Both |
 | `ZN_ALLOW_TRUNCATED=1` | Off | Lets through output too large to scan in full. It is still marked as truncated. By default such output is blocked. | Both |
