@@ -1272,6 +1272,7 @@ Then zn checked the text with the local rules only, on your machine, and the res
 
 - Your agent blocks every prompt after you upgraded or removed Node.js: see [If your agent blocks every prompt](compat.md#if-your-agent-blocks-every-prompt).
 - Not sure what is protected: `npx -y zn-gate check`, explained in [check](check.md).
+- Before you ask: run the commands in [Before you ask for help](examples/doctor-before-asking-for-help.md) and paste their output with your question.
 - Still stuck: ask in [Discussions](https://github.com/usezn/zn/discussions). Say your zn-gate version (`zn-gate --version`), your operating system and the message, and leave out any secret.
 
 ### TLS certificates and trust stores
