@@ -1,0 +1,31 @@
+'use strict';
+// `zn-gate version` prints one line that carries the package version from package.json, exits 0 and
+// writes nothing to stderr. The line is "zn-gate <version> (rules engine: ...; ...)", so the version is
+// the second word, and the rest of the line holds the rules versions.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
+const { version } = require('../package.json');
+
+test('version prints exactly one line with the package.json version and exits 0', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-version-line-'));
+  try {
+    const r = spawnSync(process.execPath, [CLI, 'version'], { encoding: 'utf8', cwd: dir, input: '' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stderr, '');
+    assert.ok(r.stdout.endsWith('\n'), 'the line ends with a newline');
+    const lines = r.stdout.split('\n').slice(0, -1);
+    assert.equal(lines.length, 1, 'exactly one line: ' + JSON.stringify(r.stdout));
+    const m = /^zn-gate (\S+) \(/.exec(lines[0]);
+    assert.ok(m, 'the line starts with "zn-gate <version> ("');
+    assert.equal(m[1], version);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
