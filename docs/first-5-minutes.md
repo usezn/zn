@@ -63,6 +63,8 @@ The test folder was deleted.
 Decision time per tool call: no data yet. It is measured on each tool call your agent makes through zn.
 ```
 
+The `Decision time per tool call` line is the time zn takes to decide each tool call your agent makes on this machine, as the p50 and p95 of the calls it has measured recently. It says `no data yet` until zn has checked a tool call. [What you will see](check.md#what-you-will-see) explains it.
+
 `OK` means that agent is protected. A line that starts with `-` means zn is not set up for that agent, or the agent is not on your machine. A line with `NOT protected` says why and what to run. More in [check.md](check.md).
 
 Two more commands from the [command line reference](cli.md) help if you want to be sure:
