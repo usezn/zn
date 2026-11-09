@@ -13,9 +13,9 @@ Two details matter for a hook:
 - When you scan a folder, it reads files with these extensions: `.md`, `.txt`, `.prompt`, `.json`, `.yaml`, `.yml`, `.toml`, `.env`, `.pem` and `.key`, plus `.env*` files. Source code (`.js`, `.ts`, `.py`, `.sh`, `.html`, `.go`, `.rs`) is only read with `--all`.
 - When you name one file, it reads that file whatever its extension. `scan` takes one path at a time.
 
-So the hook below scans each staged file by name. That way it covers source code as well, without scanning the whole project on every commit.
+So the hook below scans each staged file by name, one copy of its staged content at a time. That way it covers source code as well, without scanning the whole project on every commit.
 
-It reads the file as it is on disk, which is what you staged unless you changed it after `git add`.
+It scans the staged content: the version of each file that `git add` recorded, not the file on disk. A file you changed, or deleted, after `git add` is still checked exactly as the commit will record it. If a staged file cannot be read from the index, the commit is stopped too.
 
 ## The hook
 
@@ -24,6 +24,7 @@ Save this as `.git/hooks/pre-commit` in your repository:
 ```bash
 #!/usr/bin/env bash
 # Pre-commit hook: scan the files you are about to commit with zn-gate.
+# It scans the staged content (what the commit will record), not the files on disk.
 # It runs on your computer and needs no network.
 
 if ! command -v zn-gate >/dev/null 2>&1; then
@@ -32,19 +33,37 @@ if ! command -v zn-gate >/dev/null 2>&1; then
   exit 1
 fi
 
+work=$(mktemp -d) || { echo "pre-commit: could not create a temporary folder. The commit was stopped." >&2; exit 1; }
+trap 'rm -rf "$work"' EXIT
+list="$work/list"
+tree="$work/tree"
+mkdir "$tree" || exit 1
+
+# The files in this commit (added, copied, modified, renamed), NUL-separated.
+if ! git diff --cached --name-only --diff-filter=ACMR -z > "$list"; then
+  echo "pre-commit: could not list the staged files. The commit was stopped." >&2
+  exit 1
+fi
+
 failed=0
-# The files in this commit (added, copied, modified, renamed), one name at a time.
 while IFS= read -r -d '' file; do
-  [ -f "$file" ] || continue
-  if ! zn-gate scan "./$file"; then
+  # Write the staged blob (the content the commit records) under the same relative path.
+  # A file that is missing on disk, or changed after git add, is scanned as staged.
+  if ! mkdir -p -- "$tree/$(dirname -- "$file")" || ! git cat-file blob ":$file" > "$tree/$file"; then
+    echo "pre-commit: could not read the staged content of $file. The commit was stopped." >&2
+    failed=1
+    continue
+  fi
+  if ! (cd "$tree" && zn-gate scan "./$file"); then
     failed=1
   fi
-done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+done < "$list"
 
 if [ "$failed" -ne 0 ]; then
   echo "pre-commit: zn-gate found something, or could not read a file. The commit was stopped." >&2
   exit 1
 fi
+exit 0
 exit 0
 ```
 
