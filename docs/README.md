@@ -2,12 +2,24 @@
 
 An index of the guides in this folder. The main [README](../README.md) is the best place to start.
 
-## Where to start
+## Which page do I read
 
-- **New user:** read [First 5 minutes](first-5-minutes.md), then run [Check that it works](check.md). If a word is unfamiliar, see the [Glossary](glossary.md).
-- **Team lead:** read [zn Team](team.md) for organization policy and audit upload, and the [Team quick guide](team-quick-guide.md). Add the [GitHub Action](github-action.md) to review agent configs on pull requests.
-- **Editor user:** pick your editor in [Editors and coding agents](editors/README.md), or follow the steps for your agent in [Install, verify and uninstall by agent](by-agent.md). [Agent compatibility](compat.md) shows what the scrubber does in each one.
-- **Automation:** see the [Command line reference](cli.md) for commands, options and exit codes, the [GitHub Action](github-action.md) for CI, and the [API reference](api-reference.md) for the Node.js and Python functions.
+| I want to... | Read |
+|---|---|
+| Install zn-gate and see it work | [First 5 minutes](first-5-minutes.md) |
+| Check that I am protected | [Check that it works](check.md) |
+| Keep my API keys and `.env` values away from my agent | [Keep secrets out of your agent](secrets.md) |
+| Set it up for my editor or coding agent | [Editors and coding agents](editors/README.md) or [OpenCode](editors/opencode.md), or [Install, verify and uninstall by agent](by-agent.md) |
+| Understand a word or a message I do not know | [Glossary](glossary.md) and [Troubleshooting](troubleshooting.md) |
+| Look up a command, option or exit code | [Command line reference](cli.md) and [Exit codes](exit-codes.md) |
+| Review a repository's agent settings before I open it | [Audit](audit.md) |
+| Stop a coding agent in CI from exposing secrets | [Coding agents in CI](agents-in-ci.md) and the [GitHub Action](github-action.md) |
+| Set a shared policy for my team | [zn Team](team.md) and the [Team quick guide](team-quick-guide.md) |
+| Update or remove zn-gate | [Upgrading](upgrading.md) and [Remove zn-gate](uninstall.md) |
+| Call zn-gate from Node.js or Python | [API reference](api-reference.md) |
+| Know what zn-gate does and does not protect against | [Threat model](threat-model.md) |
+
+The full list of guides follows below. If a word is unfamiliar, see the [Glossary](glossary.md).
 
 ## Getting started
 
@@ -19,6 +31,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Keep secrets out of your agent](secrets.md) | Five-minute walkthrough of the vault, markers and `zn run` | Everyone |
 | [Recipes](recipes.md) | Ten short step-by-step recipes: install, check, protect a project, connect, report, upgrade, uninstall | Everyone |
 | [Troubleshooting](troubleshooting.md) | The messages people meet first, and what to do for each | Everyone |
+| [Why was this blocked?](why-was-this-blocked.md) | Five common blocks, what each message means and how to go on safely | Everyone |
 | [Glossary](glossary.md) | Short meanings of words used in these docs | Newcomers |
 | [Upgrading](upgrading.md) | What to do when you update zn-gate | Everyone |
 | [Remove zn-gate](uninstall.md) | Uninstall in one step or piece by piece, run from your own terminal | Everyone |
@@ -38,6 +51,7 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 | [Reach](reach.md) | What the coding agents on your machine can reach (secrets by name, credential files, MCP servers) | Everyone |
 | [Report](report.md) | A weekly summary of what zn-gate blocked and hid | Everyone |
 | [Examples: stats and report](examples/stats-and-report.md) | Worked examples of `stats` and `report` with sample output | Everyone |
+| [Example: reading a scan finding](examples/reading-a-scan-finding.md) | What each field of a `zn-gate scan` finding means, with a fake finding | Everyone |
 | [Example: Node.js API](examples/node-api.md) | Install and one short example per call of the Node.js API, with fake values | Developers |
 | [API quickstart](api-quickstart.md) | Send text to the analysis API from curl, Python or Node.js, with the key in an environment variable | Developers |
 | [Example: cloud check settings](examples/cloud-check-settings.md) | Each cloud check setting with its effect, one fake command and what leaves the machine | Anyone who opts in |
@@ -61,9 +75,12 @@ An index of the guides in this folder. The main [README](../README.md) is the be
 |---|---|---|
 | [Architecture](architecture.md) | The three checks, the local engine and how zn-gate attaches to an agent | Developers, security reviewers |
 | [Threat model](threat-model.md) | What the scrubber and broker protect against, and what they do not | Security reviewers |
+| [What runs locally and what goes to the API](local-checks-and-api-data.md) | Which checks run on your computer, when the optional cloud check is called, the exact request it sends, and how to keep everything local | Everyone |
+| [Hardware-backed vault key (proposal)](hardware-backed-vault-key.md) | An idea for tying the vault key to a security key, TPM or Secure Enclave; not built | Security reviewers |
 | [OWASP mapping](owasp-mapping.md) | Which zn-gate rules and features touch each category of the OWASP LLM and MCP Top 10, what is not covered, and the agent CVEs that `zn audit` reports | Security reviewers |
 | [Performance](performance.md) | How long the agent hooks take, with the script to reproduce it | Developers |
 | [API reference](api-reference.md) | Node.js and Python functions | Developers |
+| [API data handling](api-data-handling.md) | What the analysis API keeps, for how long, and how to delete it | Developers, security reviewers |
 | [Verify a release](verify-release.md) | Check signatures and build provenance of a download | Security-minded users |
 | [Rust gateway (legacy)](rust-core.md) | The original gateway in `src/`, not released | Contributors |
 

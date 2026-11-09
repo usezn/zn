@@ -67,7 +67,7 @@ npx -y zn-gate uninstall --dry-run
 
 ## 6. Put the values back and uninstall
 
-Undo: deleting the vault cannot be undone, so answer no to that question if unsure; see [Remove zn-gate](../uninstall.md#your-env-files-and-the-vault).
+Undo: deleting the vault cannot be undone, so answer no to that question if unsure; see [Remove zn-gate](../uninstall.md#4-your-env-files-and-the-vault).
 
 Put the real values back into `.env` first, with the name of the encrypted copy that `env shadow` printed in step 3:
 
