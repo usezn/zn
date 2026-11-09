@@ -83,3 +83,11 @@ def test_product_over_the_limit_gives_none():
 def test_custom_limit():
     assert len(_expand_braces("{a,b}{c,d}", limit=4)) == 4
     assert _expand_braces("{a,b}{c,d}", limit=3) is None
+
+
+def test_repeated_words_expand_once_and_count_towards_the_limit():
+    assert _expand_braces("{a,a}") == ["a"]
+    assert _expand_braces("{a,a}", limit=1) is None
+    assert _expand_braces("x{a,b{a,c}}") == ["xa", "xba", "xbc"]
+    assert _expand_braces("x{a,b{a,c}}", limit=3) is None
+    assert _expand_braces("x{a,b{a,c}}", limit=4) == ["xa", "xba", "xbc"]

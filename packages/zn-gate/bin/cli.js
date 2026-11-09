@@ -265,6 +265,7 @@ SECRETS (values stay on this machine; agents only see __ZN_<NAME>__ markers):
                       you confirm it separately [--dry-run]. Your own terminal only
   check               Show that zn blocks your agent from reading a fake secret
                       (also: doctor). Safe: a temporary folder, nothing is sent
+  check --json        Same check as one JSON object for scripts, CI and support requests
   check --hooks       List every installed zn hook and say if it is OK, stale or broken
                       (reads files only; nothing is run or changed)
   connect             Optional: turn on the cloud check for analyze_prompt. Opens usezn.com,
@@ -1092,7 +1093,14 @@ function fixedOptionProblem(label, args, accepted, valueOptions = [], start = 1)
 // The problem with an option of one of those commands, or null. Other commands are checked where they are dispatched.
 function fixedOptionsProblem(args) {
   const command = args[0];
-  if (command === 'check' || command === 'doctor') return fixedOptionProblem(command, args, ['--hooks']);
+  if (command === 'check' || command === 'doctor') {
+    // --hooks prints the hook list as text; --json prints the agent check. Asking for both would silently drop one.
+    if (args.includes('--hooks') && args.includes('--json')) {
+      return '--hooks and --json cannot be used together. Run zn-gate ' + command + ' --json for the agent check as JSON, '
+        + 'or zn-gate ' + command + ' --hooks for the list of hooks.';
+    }
+    return fixedOptionProblem(command, args, ['--hooks', '--json']);
+  }
   if (command === 'status') return fixedOptionProblem(command, args, STATUS_OPTIONS, ['--key', '--stage', '--url']);
   if (command === 'version' || command === '-v') return fixedOptionProblem('version', args, []);
   if (command === 'test') return fixedOptionProblem(command, args, []);
@@ -1411,6 +1419,16 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     const statsWereOn = require('../lib/stats').enabled();
     process.env.ZN_STATS = 'off'; // the test read is not counted in zn-gate stats
     const zc = require('../lib/check');
+    if (args.includes('--json')) {
+      // One JSON object on stdout and nothing else; same exit codes as the text form.
+      const data = await zc.check({});
+      let rulesErrors = [];
+      try { rulesErrors = require('../lib/rules').loadCustomConfig(true).errors.map(String); } catch (_) { /* never fails on the rules file */ }
+      const out = zc.toJson(data, { version: require('../package.json').version, rulesErrors });
+      process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+      process.exitCode = out.exit_code;
+      return;
+    }
     process.exitCode = zc.report(await zc.check({}));
     process.stdout.write('\n' + require('../lib/stats').latencyReport({ off: !statsWereOn }) + '\n');
     try {
@@ -1527,6 +1545,11 @@ ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
         for (const n of notes) process.stdout.write('  Cursor          : ' + n + '\n');
         if (notes.length) process.stdout.write('\n');
       }
+    } catch (_) { /* status never fails on this check */ }
+    // Hooks written by an older zn-gate (read-only, no network; a warning only: it never changes the exit status).
+    try {
+      const w = require('../lib/hooks-list').staleWarning({});
+      if (w) process.stdout.write(w);
     } catch (_) { /* status never fails on this check */ }
     // An end-of-life or unpatched Node.js (a warning only: it never changes the exit status).
     try {
