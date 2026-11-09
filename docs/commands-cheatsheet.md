@@ -99,3 +99,20 @@ Needs the vault unlocked. See [zn Team](team.md).
 | `CI` | Any non-empty value turns off emoji and box-drawing characters too. Colors are not affected. |
 
 Exit codes: `0` done, `1` a problem was found, `2` wrong usage (or `analyze` blocked the text), `64` wrong usage for the secrets commands, `77` refused on purpose, `127` `run` could not find the program. Each command lists its own codes in the [reference](cli.md#exit-codes).
+
+## When to use which command
+
+| When you want to | Command |
+|---|---|
+| Set zn-gate up on this machine | [`init`](cli.md#init) |
+| Check that the install works and every agent is protected | [`check`](cli.md#check) |
+| See why something was blocked | [`why`](cli.md#why) |
+| Find secrets and injection traps in files | [`scan`](cli.md#scan) |
+| Review agent configs before you open a repo | [`audit`](cli.md#audit) |
+| See the history of what zn-gate decided | [`evidence`](cli.md#evidence) |
+| Store a secret | [`secret set`](cli.md#secret-set) |
+| Run a command with its secrets filled in | [`run`](cli.md#run) |
+| Unlock the vault for this session | [`unlock`](cli.md#unlock) |
+| Lock the vault now | [`lock`](cli.md#lock) |
+| See the version, rules version and cloud-check state | [`status`](cli.md#status) |
+| Remove zn-gate from this computer | [`uninstall`](cli.md#uninstall) |

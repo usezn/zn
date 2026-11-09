@@ -42,6 +42,22 @@ test('a fragment holds only section headings and bullets', () => {
   assert.match(parseFragment('### Added\n').errors[0], /no bullets/);
 });
 
+test('an empty or whitespace-only fragment fails with a message that says it is empty', () => {
+  for (const body of ['', '\n', '  \n\t\n', '﻿\n']) {
+    const errors = parseFragment(body, 'changelog.d/x.md').errors;
+    assert.equal(errors.length, 1, JSON.stringify(body));
+    assert.match(errors[0], /^changelog\.d\/x\.md: the fragment is empty; add a "### <Section>" heading and at least one "- " bullet/);
+  }
+});
+
+test('a pull request that adds an empty fragment fails the check', (t) => {
+  const { dir, g } = repo(t);
+  fs.mkdirSync(path.join(dir, 'changelog.d'));
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'empty.md'), '  \n\n');
+  g('add', '-A'); g('commit', '-qm', 'empty fragment');
+  assert.match(checkPullRequest(dir, 'next').errors.join(), /changelog\.d\/empty\.md: the fragment is empty/);
+});
+
 test('the release section merges [Unreleased] and the fragments in a fixed section order', () => {
   const s = buildSection('### Fixed\n- Old fix.', [parseFragment('### Fixed\n- New fix.\n### Added\n- New thing.\n')]);
   assert.equal(s, '### Added\n- New thing.\n\n### Fixed\n- Old fix.\n- New fix.\n');
