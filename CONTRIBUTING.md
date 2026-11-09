@@ -191,6 +191,18 @@ Ask questions and share ideas in [GitHub Discussions](https://github.com/usezn/z
 
 To install zn-gate, run `npx -y zn-gate init` in your own terminal ([Install](README.md#install)). To remove it, run `npx -y zn-gate uninstall` ([removal guide](docs/uninstall.md)).
 
+## What a good bug report contains
+
+A report we can act on includes:
+
+- the zn-gate version, from `npx -y zn-gate --version`;
+- your operating system, and your Node.js or Python version (`node --version` or `python3 --version`);
+- the coding agent you use, and its version;
+- the exact command you ran, what you expected, and what happened instead;
+- the output of `npx -y zn-gate doctor`. It makes a temporary folder with a fake secret, asks each supported agent's zn hook whether the agent may read it, and lists what happened for each agent. Nothing is sent.
+
+Before you paste any output, remove secrets, API keys and personal paths, such as your user folder name. Do not report a vulnerability as a bug: follow [Security Vulnerability Reporting](#security-vulnerability-reporting) below. To file a bug, use the [bug report form](https://github.com/usezn/zn/issues/new?template=bug_report.yml).
+
 ## Security Vulnerability Reporting
 
 If you find a security vulnerability, please do NOT open a public issue, a pull request or a discussion. Follow our [Security Policy](SECURITY.md) and report it privately: preferably with [GitHub private vulnerability reporting](https://github.com/usezn/zn/security/advisories/new), or by email to `security@usezn.com`.
