@@ -1,6 +1,6 @@
 # Examples: stats share controls
 
-How to see, turn on and turn off the optional sharing of daily counts with `zn-gate stats share`. The outputs below were produced by running the commands on a fresh, empty configuration. For every option and exit code, see the [command line reference](../cli.md#stats-share). For the local counts themselves, see [stats and report](stats-and-report.md).
+How to see, turn on and turn off the optional sharing of daily counts with `zn-gate stats share`. The outputs below come from zn-gate 1.15.0 run on a fresh, empty configuration, except the answer to a `yes` for `on`, which needs an interactive terminal and is quoted from the program's own text. For every option and exit code, see the [command line reference](../cli.md#stats-share). For the local counts themselves, see [stats and report](stats-and-report.md).
 
 ## The default
 
@@ -25,7 +25,7 @@ zn-gate stats share show
 ```
 
 ```text
-What is shared, once a day, only if you turn sharing on: a random id for this installation (a new one each time you turn sharing on), the day, the zn-gate version, the operating system, the Node.js major version, the agent and part of zn-gate used most that day, and how many secrets of each built-in type were found (for example AWS_KEY 3). Never secret values, prompts, variable or secret names, file names, paths, repository names, hosts or emails.
+What is shared, once a day, only if you turn sharing on: a random id for this installation (a new one each time you turn sharing on), the day, the zn-gate version, the operating system, the Node.js version, the agent and part of zn-gate used most that day, and how many secrets of each built-in type were found (for example AWS_KEY 3). Never secret values, prompts, variable or secret names, file names, paths, repository names, hosts or emails.
 Where: <address of zn's telemetry service>
 
 Sharing is off, so nothing is sent. There are no complete days of counts yet to show an example.
@@ -58,7 +58,7 @@ If sharing is already on, the command says so and exits `0`.
 ## What is sent, and when
 
 - Once sharing is on, `zn-gate stats` sends one report per complete day that has not been sent yet (never today), at most the last 3 days, to the address shown by `show`. The text output then prints `Shared pseudonymous counts for <day>.` for each day sent.
-- A report holds a random installation id, the day, the zn-gate version, the operating system, the Node.js major version, the agent and part of zn-gate used most that day, and the number of detections per secret type.
+- A report holds a random installation id, the day, the zn-gate version, the operating system, the Node.js version, the agent and part of zn-gate used most that day, and the number of detections per secret type.
 - It never holds secret values, prompts, variable or secret names, file names, paths, repository names, hosts or emails.
 - If a day cannot be sent, the output says `<n> day(s) could not be shared; they will be tried next time.`
 
