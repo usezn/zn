@@ -30,7 +30,7 @@ test('the surface holds one hash per executable entry and no value', (t) => {
   });
   const s = extractSurface(dir);
   assert.deepEqual(Object.keys(s).sort(), ['.claude/settings.json#env:ANTHROPIC_BASE_URL', '.claude/settings.json#hook:PreToolUse.0.0', '.claude/settings.json#permissions',
-    '.mcp.json#mcp:docs', '.mcp.json#mcp:tools', '.vscode/tasks.json#task:auto', 'package.json#script:postinstall']);
+    '.mcp.json#mcp:docs', '.mcp.json#mcp:tools', '.vscode/tasks.json#task:label:auto', 'package.json#script:postinstall']);
   for (const v of Object.values(s)) assert.match(v, /^[0-9a-f]{64}$/);
   assert.ok(!JSON.stringify(s).includes('node setup.js') && !JSON.stringify(s).includes('example.invalid'), 'no value in the surface');
 });
@@ -92,7 +92,7 @@ test('a damaged baseline is no baseline', (t) => {
   const dir = project(t, { '.mcp.json': MCP });
   const file = baselinePath(home, dir);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  for (const bad of ['{ broken', '[]', '{"version":2,"entries":{}}', '{"version":1,"entries":[]}', '{"version":1,"entries":{"a":"not a hash"}}', '{"version":1,"entries":{"a":5}}']) {
+  for (const bad of ['{ broken', '[]', '{"version":3,"entries":{}}', '{"version":1,"entries":{}}', '{"version":1,"entries":[]}', '{"version":1,"entries":{"a":"not a hash"}}', '{"version":1,"entries":{"a":5}}']) {
     fs.writeFileSync(file, bad);
     assert.equal(loadBaseline(home, dir), null, bad);
   }
@@ -107,7 +107,7 @@ test('the order of the arguments of a command is part of it', (t) => {
 
 test('only a task that runs when the folder opens is part of the surface', (t) => {
   const dir = project(t, { '.vscode/tasks.json': { tasks: [{ label: 'default', command: 'x', runOptions: { reevaluateOnRerun: true } }, { label: 'later', command: 'y', runOptions: { runOn: 'default' } }, { label: 'auto', command: 'z', runOptions: { runOn: 'folderOpen' } }] } });
-  assert.deepEqual(Object.keys(extractSurface(dir)), ['.vscode/tasks.json#task:auto']);
+  assert.deepEqual(Object.keys(extractSurface(dir)), ['.vscode/tasks.json#task:label:auto']);
 });
 
 test('a file over the size cap is not read, even when it is valid JSON: it is an entry of its own', (t) => {
@@ -233,4 +233,47 @@ test('loader and shell-prefix environment overrides are covered', (t) => {
     });
     assert.deepEqual(d.added, ['.claude/settings.json#env:' + name]);
   }
+});
+
+// --- review of #1089: a folder-open task is keyed by its label (all tasks that share it) or, unlabeled, by its index ---
+
+const TASK = (label, command) => ({ label, command, runOptions: { runOn: 'folderOpen' } });
+
+test('a folder-open task inserted under the label of an approved one is a change', (t) => {
+  const dir = project(t, { '.vscode/tasks.json': { tasks: [TASK('auto', 'node ok.js')] } });
+  const base = extractSurface(dir);
+  fs.writeFileSync(path.join(dir, '.vscode/tasks.json'), JSON.stringify({ tasks: [TASK('auto', 'node evil.js'), TASK('auto', 'node ok.js')] }));
+  assert.deepEqual(diffSurface(base, extractSurface(dir)), { added: [], changed: ['.vscode/tasks.json#task:label:auto'], removed: [] });
+});
+
+test('an unlabeled task is keyed by its index and cannot collide with a task labeled with that number', (t) => {
+  const files = { tasks: [TASK('a', 'x'), { command: 'y', runOptions: { runOn: 'folderOpen' } }, TASK('1', 'z')] };
+  const dir = project(t, { '.vscode/tasks.json': files });
+  const base = extractSurface(dir);
+  assert.deepEqual(Object.keys(base).sort(), ['.vscode/tasks.json#task:index:1', '.vscode/tasks.json#task:label:1', '.vscode/tasks.json#task:label:a']);
+  files.tasks[1].command = 'changed';
+  fs.writeFileSync(path.join(dir, '.vscode/tasks.json'), JSON.stringify(files));
+  assert.deepEqual(diffSurface(base, extractSurface(dir)).changed, ['.vscode/tasks.json#task:index:1']);
+  files.tasks[1].command = 'y';
+  files.tasks[2].command = 'changed';
+  fs.writeFileSync(path.join(dir, '.vscode/tasks.json'), JSON.stringify(files));
+  assert.deepEqual(diffSurface(base, extractSurface(dir)).changed, ['.vscode/tasks.json#task:label:1']);
+});
+
+test('two folder-open tasks with different labels that swap places are not a change', (t) => {
+  const dir = project(t, { '.vscode/tasks.json': { tasks: [TASK('a', 'x'), TASK('b', 'y')] } });
+  const base = extractSurface(dir);
+  fs.writeFileSync(path.join(dir, '.vscode/tasks.json'), JSON.stringify({ tasks: [TASK('b', 'y'), TASK('a', 'x')] }));
+  assert.deepEqual(diffSurface(base, extractSurface(dir)), { added: [], changed: [], removed: [] });
+});
+
+test('a baseline in the earlier format reads as no baseline until the project is approved again', (t) => {
+  const home = tempDir(t, 'zn-home-');
+  const dir = project(t, { '.mcp.json': MCP });
+  const file = saveBaseline(home, dir, extractSurface(dir));
+  assert.ok(loadBaseline(home, dir));
+  const old = JSON.parse(fs.readFileSync(file, 'utf8'));
+  old.version = 1;
+  fs.writeFileSync(file, JSON.stringify(old));
+  assert.equal(loadBaseline(home, dir), null);
 });

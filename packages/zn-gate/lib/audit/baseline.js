@@ -131,9 +131,21 @@ function extractSurface(root) {
   if (pkg && pkg.scripts && typeof pkg.scripts === 'object') for (const k of LIFECYCLE) if (typeof pkg.scripts[k] === 'string') out['package.json#script:' + k] = sha(pkg.scripts[k]);
   const tasks = read('.vscode/tasks.json');
   if (tasks && Array.isArray(tasks.tasks)) {
+    // A labeled task is keyed by its label and hashes every folder-open task that shares that label, in file order:
+    // a task added under an approved label changes the entry. Reordering tasks with different labels changes nothing.
+    // An unlabeled task is keyed by its index, in a key space of its own, so it never collides with a label.
+    const byLabel = new Map();
     tasks.tasks.forEach((t, i) => {
-      if (t && t.runOptions && t.runOptions.runOn === 'folderOpen') out['.vscode/tasks.json#task:' + String(t.label || i)] = sha(canon(t));
+      if (!t || !t.runOptions || t.runOptions.runOn !== 'folderOpen') return;
+      if (t.label) {
+        const label = String(t.label);
+        if (!byLabel.has(label)) byLabel.set(label, []);
+        byLabel.get(label).push(canon(t));
+      } else {
+        out['.vscode/tasks.json#task:index:' + i] = sha(canon(t));
+      }
     });
+    for (const label of [...byLabel.keys()].sort()) out['.vscode/tasks.json#task:label:' + label] = sha(byLabel.get(label));
   }
   return out;
 }
@@ -155,11 +167,13 @@ function baselinePath(home, root) {
   return path.join(home, '.zn', 'baselines', id + '.json');
 }
 
+const BASELINE_VERSION = 2;
+
 function saveBaseline(home, root, surface, now = new Date()) {
   const file = baselinePath(home, root);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = file + '.' + process.pid + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify({ version: 1, approved_at: now.toISOString(), entries: surface }), { mode: 0o600 });
+  fs.writeFileSync(tmp, JSON.stringify({ version: BASELINE_VERSION, approved_at: now.toISOString(), entries: surface }), { mode: 0o600 });
   fs.renameSync(tmp, file);
   return file;
 }
@@ -167,7 +181,8 @@ function saveBaseline(home, root, surface, now = new Date()) {
 function loadBaseline(home, root) {
   try {
     const j = JSON.parse(fs.readFileSync(baselinePath(home, root), 'utf8'));
-    if (!j || j.version !== 1 || !j.entries || typeof j.entries !== 'object' || Array.isArray(j.entries)) return null;
+    // Any other version reads as no baseline: a baseline written before the task keys changed is approved again, not compared.
+    if (!j || j.version !== BASELINE_VERSION || !j.entries || typeof j.entries !== 'object' || Array.isArray(j.entries)) return null;
     for (const v of Object.values(j.entries)) if (typeof v !== 'string' || !/^[0-9a-f]{64}$/.test(v)) return null;
     return j.entries;
   } catch (_) {
