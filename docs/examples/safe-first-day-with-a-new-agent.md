@@ -65,7 +65,7 @@ The key is made up. Never put a real key in a test file.
 Start your agent in `~/try-zn` and ask it: "Read the file .env". zn's hook looks at the call before the agent runs it, and blocks it. The agent is told this, word for word:
 
 ```json
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use."}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"zn: .env holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use."}}
 ```
 
 `deny` is the block, and the sentence after it is the next step. What your screen shows depends on the agent. You do not need to run `zn env shadow` for this test: the key is fake. See [First 5 minutes](../first-5-minutes.md#a-block) for what each answer means.
