@@ -17,6 +17,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [mcp-pin-review-checklist.md](mcp-pin-review-checklist.md): what to compare in a changed MCP tool before you approve it with `pins approve`.
 - [mcp-server-with-zn-gate.md](mcp-server-with-zn-gate.md): the two MCP servers of zn-gate (`mcp` and `secrets-mcp`): what each does and what the agent sees.
 - [package-install-check-walkthrough.md](package-install-check-walkthrough.md): turn on the optional package install check, answer one question about a look-alike name, then allow a name.
+- [policy-false-positive-report.md](policy-false-positive-report.md): report a block of a safe command (a false positive): the versions, the command, the zn why output and the evidence record, and where to send them.
 - [reading-a-reach-history-report.md](reading-a-reach-history-report.md): how to read the output of zn-gate reach --history.
 - [safe-first-day-with-a-new-agent.md](safe-first-day-with-a-new-agent.md): try zn-gate with a new agent in a throwaway folder, then remove it.
 - [scan-a-single-file.md](scan-a-single-file.md): scan one file instead of a folder, and read the report.
