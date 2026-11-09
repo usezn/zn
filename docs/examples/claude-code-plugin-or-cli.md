@@ -8,7 +8,7 @@ Run every command in your own terminal, not through your agent.
 
 | | The plugin | The command-line install |
 | - | - | - |
-| Install | `claude plugin marketplace add usezn/zn`, then `claude plugin install zn-gate@usezn` | `zn hooks install claude-code` |
+| Install | `claude plugin marketplace add usezn/zn@v1.15.0`, then `claude plugin install zn-gate@usezn` | `zn hooks install claude-code` |
 | Needs | Git and Claude Code 2.1.295 or later; Node.js 20.19 or later | Node.js 18 or later works for the hooks and the CLI |
 | Verify | `npx -y zn-gate check` | `npx -y zn-gate check` |
 | Remove | `claude plugin uninstall zn-gate@usezn` | `zn hooks uninstall claude-code` |
@@ -24,7 +24,7 @@ Do not keep both set up at the same time: the plugin and the hooks of `zn hooks 
 ## Install the plugin
 
 ```bash
-claude plugin marketplace add usezn/zn
+claude plugin marketplace add usezn/zn@v1.15.0
 claude plugin install zn-gate@usezn
 ```
 
