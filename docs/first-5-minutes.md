@@ -115,7 +115,7 @@ zn also has a text check that your agent can call through zn's own tools. Some p
   "rule": "none",
   "reason": null,
   "engine": "oss-local",
-  "rules_version": "2026-11-04.35",
+  "rules_version": "2026-11-07.1",
   "advisory": {
     "rule": "pi:bypass",
     "reason": "Guardrail bypass attempt"
