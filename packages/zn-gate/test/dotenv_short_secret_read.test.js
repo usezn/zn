@@ -66,3 +66,7 @@ test('plainSecretNames: names only, markers and credential-less URLs are skipped
   assert.deepEqual(dotenv.plainSecretNames('A_KEY=1\nDATABASE_URL=postgres://u:__ZN_DB_PW__@db.example.com/x\nSITE_URL=https://example.com\nPORT=1\n'), ['A_KEY']);
   assert.deepEqual(dotenv.plainSecretNames('DATABASE_URL=postgres://u:pw@db.example.com/x\n'), ['DATABASE_URL']);
 });
+
+test('a _URL value without a scheme counts, because it cannot be shown to be free of a password', () => {
+  assert.deepEqual(dotenv.plainSecretNames('REDIS_URL=localhost:6379\nDATABASE_URL=https://example.com/db\n'), ['REDIS_URL']);
+});
