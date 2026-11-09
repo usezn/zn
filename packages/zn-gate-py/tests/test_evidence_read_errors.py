@@ -1,5 +1,6 @@
 """Exact error texts when the evidence log cannot be read, in a temporary folder."""
 import json
+import sys
 
 import pytest
 
@@ -8,6 +9,13 @@ from zn_gate.evidence import (
     get_last_hash,
     verify_evidence_ledger,
 )
+
+
+def _cannot_read_text():
+    # The text comes from the OS error: open() on a directory is EISDIR on Linux and macOS,
+    # but PermissionError ("Permission denied") on Windows.
+    reason = "Permission denied" if sys.platform == "win32" else "Is a directory"
+    return "Cannot read the evidence log: " + reason
 
 
 def test_invalid_utf8_in_last_line(tmp_path):
@@ -39,7 +47,7 @@ def test_log_that_cannot_be_opened(tmp_path):
     p.mkdir()
     with pytest.raises(EvidenceLedgerError) as exc:
         get_last_hash(str(p))
-    assert str(exc.value) == "Cannot read the evidence log: Is a directory"
+    assert str(exc.value) == _cannot_read_text()
     result = verify_evidence_ledger(str(p))
     assert result["valid"] is False
-    assert result["error"] == "Cannot read the evidence log: Is a directory"
+    assert result["error"] == _cannot_read_text()
