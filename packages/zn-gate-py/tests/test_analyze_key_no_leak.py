@@ -9,6 +9,7 @@ import json
 import logging
 import threading
 import time
+import urllib.error
 
 import pytest
 
@@ -104,5 +105,10 @@ def test_transport_exceptions_do_not_carry_the_key(status, reply, echo, delay, t
         srv.shutdown()
         srv.server_close()
     assert srv.seen == ["Bearer " + FAKE_KEY]
-    for text in _chain_texts(info.value) + [client.cloud_error_hint(info.value)]:
-        assert FAKE_KEY not in text
+    try:
+        for text in _chain_texts(info.value) + [client.cloud_error_hint(info.value)]:
+            assert FAKE_KEY not in text
+    finally:
+        # An HTTP error carries the open response: close it here, not in the GC (Python 3.14 warns otherwise).
+        if isinstance(info.value, urllib.error.HTTPError):
+            info.value.close()
