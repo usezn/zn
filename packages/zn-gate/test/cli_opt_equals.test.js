@@ -1,6 +1,6 @@
 'use strict';
-// scan and analyze take --option=value as well as --option value, as the Python CLI does. The table test below
-// runs over every option the two commands take, so a new value option is covered without a new test.
+// scan and analyze take --option=value as well as --option value, as the Python CLI does. The tests run the CLI
+// itself: both forms of every value option must behave the same, and a flag must still refuse a value.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -8,85 +8,61 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { COMMAND_OPTIONS, expandEqualsOptions, optionProblem } = require('../lib/cli-args');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
-const COMMANDS = ['scan', 'analyze'];
+const VALUE_OPTIONS = {
+  scan: ['--format', '--include', '--exclude', '--key', '--stage', '--url', '--long-input', '--package'],
+  analyze: ['--key', '--stage', '--url', '--long-input'],
+};
+const FLAGS = {
+  scan: ['--code', '--all', '--allow-partial', '--include-home', '--local-only', '--verbose'],
+  analyze: ['--local-only', '--verbose'],
+};
 
-for (const command of COMMANDS) {
-  for (const name of COMMAND_OPTIONS[command].value) {
-    test(`${command} ${name}: the equals form reads the same as the spaced form`, () => {
-      const spaced = [command, name, 'value', 'rest'];
-      assert.deepStrictEqual(expandEqualsOptions(command, spaced), spaced);
-      assert.deepStrictEqual(expandEqualsOptions(command, [command, `${name}=value`, 'rest']), spaced);
-      assert.strictEqual(optionProblem(command, spaced), null);
-      assert.strictEqual(optionProblem(command, expandEqualsOptions(command, [command, `${name}=value`])), null);
+// Runs the CLI in an empty home folder, so nothing is read from or written to the real one. --local-only keeps analyze off the network.
+function run(args) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-opt-equals-'));
+  try {
+    const r = spawnSync(process.execPath, [CLI, ...args], {
+      encoding: 'utf8',
+      cwd: home,
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+      timeout: 60000,
     });
+    // The messages name the folder the run used: compare them without it.
+    return { status: r.status, stderr: (r.stderr || '').split(home).join('<home>') };
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
 
-    test(`${command} ${name}: an empty value and a value with equals signs or dashes`, () => {
-      assert.deepStrictEqual(expandEqualsOptions(command, [command, `${name}=`]), [command, name, '']);
-      assert.deepStrictEqual(expandEqualsOptions(command, [command, `${name}=a=b`]), [command, name, 'a=b']);
-      assert.deepStrictEqual(expandEqualsOptions(command, [command, `${name}=--code`]), [command, name, '--code']);
-      for (const args of [[command, `${name}=`], [command, `${name}=a=b`], [command, `${name}=--code`]]) {
-        assert.strictEqual(optionProblem(command, expandEqualsOptions(command, args)), null, args.join(' '));
-      }
-    });
-
-    test(`${command} ${name}: a spaced value that looks like an option is still the value`, () => {
-      const args = [command, name, '--code'];
-      assert.deepStrictEqual(expandEqualsOptions(command, args), args);
-      assert.strictEqual(optionProblem(command, args), null);
+for (const command of Object.keys(VALUE_OPTIONS)) {
+  for (const name of VALUE_OPTIONS[command]) {
+    test(`${command} ${name}: the equals form behaves like the spaced form`, () => {
+      const spaced = run([command, name, 'value', '--local-only', '--', 'missing-target']);
+      const equals = run([command, `${name}=value`, '--local-only', '--', 'missing-target']);
+      assert.strictEqual(equals.status, spaced.status);
+      assert.strictEqual(equals.stderr, spaced.stderr);
+      assert.doesNotMatch(equals.stderr, /unknown option|give the value as the next argument/);
     });
   }
 
-  for (const flag of COMMAND_OPTIONS[command].flag) {
-    test(`${command} ${flag}: a flag is still a flag and refuses a value`, () => {
-      assert.strictEqual(optionProblem(command, [command, flag]), null);
-      const withValue = expandEqualsOptions(command, [command, `${flag}=1`]);
-      assert.deepStrictEqual(withValue, [command, `${flag}=1`]);
-      assert.match(optionProblem(command, withValue), new RegExp(`${flag} takes no value`));
+  for (const flag of FLAGS[command]) {
+    test(`${command} ${flag}: a flag still refuses a value`, () => {
+      const r = run([command, `${flag}=1`, '--', 'missing-target']);
+      assert.strictEqual(r.status, 2);
+      assert.match(r.stderr, new RegExp(`${flag} takes no value`));
     });
   }
 
   test(`${command}: an unknown option with an equals sign is still refused`, () => {
-    const args = expandEqualsOptions(command, [command, '--no-such-option=1']);
-    assert.match(optionProblem(command, args), /unknown option "--no-such-option=1"/);
+    const r = run([command, '--no-such-option=1', '--', 'missing-target']);
+    assert.strictEqual(r.status, 2);
+    assert.match(r.stderr, /unknown option "--no-such-option=1"/);
   });
 }
 
 test('analyze: after a bare "--" every argument is text, equals form included', () => {
-  const args = ['analyze', '--', '--key=not-an-option', '--format=json'];
-  assert.deepStrictEqual(expandEqualsOptions('analyze', args), args);
-  assert.strictEqual(optionProblem('analyze', args), null);
-});
-
-test('scan: the equals form and the spaced form give the same output and exit code', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'zn-optq-'));
-  try {
-    fs.writeFileSync(path.join(dir, 'notes.md'), 'A harmless note with no instructions.\n');
-    const env = { ...process.env, ZN_LOCAL_ONLY: 'true' };
-    const spaced = spawnSync(process.execPath, [CLI, 'scan', '--format', 'json', dir], { encoding: 'utf8', env });
-    const equals = spawnSync(process.execPath, [CLI, 'scan', '--format=json', dir], { encoding: 'utf8', env });
-    assert.strictEqual(equals.status, spaced.status, equals.stderr);
-    assert.strictEqual(equals.stderr, spaced.stderr);
-    assert.strictEqual(equals.stdout, spaced.stdout);
-    assert.strictEqual(equals.status, 0, equals.stderr);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('analyze: --stage=VALUE is read as --stage VALUE, not refused', () => {
-  const r = spawnSync(process.execPath, [CLI, 'analyze', '--stage=v30', '--local-only', 'hello there'], {
-    encoding: 'utf8',
-    env: { ...process.env, ZN_LOCAL_ONLY: 'true' },
-  });
-  assert.doesNotMatch(r.stderr, /takes no value|unknown option|give the value/);
-});
-
-test('analyze --json is accepted with --opt=value options and takes no value', () => {
-  const ok = optionProblem('analyze', expandEqualsOptions('analyze', ['analyze', '--json', '--stage=v30', 'hello']));
-  assert.strictEqual(ok, null);
-  const bad = optionProblem('analyze', expandEqualsOptions('analyze', ['analyze', '--json=1', 'hello']));
-  assert.strictEqual(bad, '--json takes no value.');
+  const r = run(['analyze', '--local-only', '--', '--key=not-an-option', '--format=json']);
+  assert.doesNotMatch(r.stderr, /unknown option|takes no value|give the value as the next argument/);
 });

@@ -97,7 +97,7 @@ many times, in which file, and what to do about it. It is for the "have my
 agents already seen my keys?" question, and it works on your whole home
 folder, not on one project, so it takes no folder.
 
-It is read only and offline. It writes no file, not even the evidence log, and
+It is read only and offline. It writes no file, not even the decision log, and
 it needs no account.
 
 The Python package has the same command (`zn-gate reach --history`), with the
