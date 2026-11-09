@@ -1043,13 +1043,18 @@ async fn process_mcp_message(
             // and never an identity: the reputation (bans, violations) is kept per namespace, so one tenant can
             // neither ban another tenant's agent ids nor share a ban with it.
             let agent_id_str = bounded_agent_id(agent_id.as_deref());
+            // What reaches the logs and the audit database: both come from the
+            // message, so they are redacted like the arguments. Matching and
+            // forwarding keep using the originals.
+            let tool_log = Scrubber::redact_for_log(&tool_name);
+            let agent_log = Scrubber::redact_for_log(&agent_id_str);
             let rep_key = reputation_key(&memory_namespace, &agent_id_str);
 
             // A tool of an MCP server that was left out when the servers file
             // was loaded is refused with the reason, never passed on as allowed.
             if let Some((server, reason)) = state.pool.skip_reason_for_tool(&tool_name) {
                 log::warning(format!(
-                    "Tool call '{tool_name}' refused: MCP server '{server}' was skipped ({reason})"
+                    "Tool call '{tool_log}' refused: MCP server '{server}' was skipped ({reason})"
                 ))
                 .ok();
                 return Ok(Some(jsonrpc_error_response(
@@ -1083,7 +1088,7 @@ async fn process_mcp_message(
                     use sha2::{Digest, Sha256};
                     let hash = hex::encode(Sha256::digest(ocr_text.as_bytes()));
                     log::error(format!(
-                        "BLOCKED OCR VETO: rule={rule} agent={agent_id_str} ocr_len={} ocr_sha256={hash}",
+                        "BLOCKED OCR VETO: rule={rule} agent={agent_log} ocr_len={} ocr_sha256={hash}",
                         ocr_text.len()
                     ))
                     .ok();
@@ -1096,7 +1101,7 @@ async fn process_mcp_message(
                 Ok(None) => {}
                 Err(e) => {
                     log::error(format!(
-                        "BLOCKED VISION BUDGET: {} for agent {agent_id_str}",
+                        "BLOCKED VISION BUDGET: {} for agent {agent_log}",
                         e.as_str()
                     ))
                     .ok();
@@ -1113,7 +1118,7 @@ async fn process_mcp_message(
                 Ok(a) => a,
                 Err(e) => {
                     log::error(format!(
-                        "BLOCKED VISION SANITIZE: {} for agent {agent_id_str}",
+                        "BLOCKED VISION SANITIZE: {} for agent {agent_log}",
                         e.as_str()
                     ))
                     .ok();
@@ -1126,7 +1131,8 @@ async fn process_mcp_message(
             if let Err(ban_msg) = state.reputation.check_agent_status(&rep_key) {
                 log::error(format!(
                     "⛔ BLOCKED BANNED AGENT {}: {}",
-                    agent_id_str, ban_msg
+                    agent_log,
+                    Scrubber::redact_for_log(&ban_msg)
                 ))
                 .ok();
                 return Ok(Some(jsonrpc_error_response(
@@ -1137,17 +1143,13 @@ async fn process_mcp_message(
 
             // 1. CLOUDFLARE STYLE: CACHE CHECK (only for agents that are not banned)
             if let Some(cached_result) = state.cache.get(&agent_id_str, &tool_name, &arguments) {
-                log::info(format!(
-                    "✨ CACHE HIT: {} (Agent: {})",
-                    tool_name, agent_id_str
-                ))
-                .ok();
+                log::info(format!("✨ CACHE HIT: {} (Agent: {})", tool_log, agent_log)).ok();
                 return Ok(Some(cached_result));
             }
 
             log::info(format!(
                 "🎯 Tool call detected: {} (Agent: {})",
-                tool_name, agent_id_str
+                tool_log, agent_log
             ))
             .ok();
 
@@ -1157,7 +1159,11 @@ async fn process_mcp_message(
                 &tool_name,
                 &arguments,
             ) {
-                log::warning(format!("🚫 MANAGED RULE BLOCKED: {}", msg)).ok();
+                log::warning(format!(
+                    "🚫 MANAGED RULE BLOCKED: {}",
+                    Scrubber::redact_for_log(&msg)
+                ))
+                .ok();
                 state
                     .reputation
                     .record_violation(&rep_key, "Managed Rules Violation", 10);
@@ -1170,7 +1176,11 @@ async fn process_mcp_message(
                     .loop_breaker
                     .check_and_record(&agent_id_str, &tool_name, &arguments)
             {
-                log::warning(format!("🚫 LOOP BREAKER: {}", msg)).ok();
+                log::warning(format!(
+                    "🚫 LOOP BREAKER: {}",
+                    Scrubber::redact_for_log(&msg)
+                ))
+                .ok();
                 state
                     .reputation
                     .record_violation(&rep_key, "Recursive Loop Detected", 15);
@@ -1189,7 +1199,7 @@ async fn process_mcp_message(
                 {
                     log::warning(format!(
                         "⏳ CONSENSUS REQUIRED: {} (ID: {})",
-                        tool_name, action_id
+                        tool_log, action_id
                     ))
                     .ok();
                     return Ok(Some(jsonrpc_error_response(
@@ -1310,21 +1320,30 @@ async fn process_mcp_message(
                         .check_tool_call_all(&tool_name, &arguments, agent_id.clone())
                     {
                         Ok(true) => {
-                            log::success(format!("✅ ALLOWED: {}", tool_name)).ok();
+                            log::success(format!("✅ ALLOWED: {}", tool_log)).ok();
                             state.reputation.record_success(&rep_key);
                             ("ALLOWED".to_string(), None)
                         }
                         Ok(false) => {
-                            log::warning(format!("🚫 DENIED: {}", tool_name)).ok();
+                            log::warning(format!("🚫 DENIED: {}", tool_log)).ok();
                             state
                                 .reputation
                                 .record_violation(&rep_key, "Policy Violation", 5);
                             ("DENIED".to_string(), Some("wasm_policy".to_string()))
                         }
                         Err(e) => {
-                            log::warning(format!("⚠️ Policy error: {} - denying by default", e))
-                                .ok();
-                            ("DENIED".to_string(), Some(format!("error: {}", e)))
+                            log::warning(format!(
+                                "⚠️ Policy error: {} - denying by default",
+                                Scrubber::redact_for_log(&e.to_string())
+                            ))
+                            .ok();
+                            (
+                                "DENIED".to_string(),
+                                Some(format!(
+                                    "error: {}",
+                                    Scrubber::redact_for_log(&e.to_string())
+                                )),
+                            )
                         }
                     }
                 }
@@ -1372,12 +1391,12 @@ async fn process_mcp_message(
                 id: Uuid::new_v4().to_string(),
                 timestamp: Utc::now().to_rfc3339(),
                 event: "TOOL_CALL".to_string(),
-                tool_name: tool_name.clone(),
+                tool_name: tool_log.clone(),
                 status: status.clone(),
                 policy_match: policy_match.clone(),
                 payload: zn::audit::payload_if_enabled(
                     state.config.audit.store_payloads,
-                    Scrubber::scrub(&arguments),
+                    Scrubber::redact_for_log(&arguments),
                 ),
                 agent_id: Some(agent_id_str.clone()),
                 namespace: Some(memory_namespace.clone()),
@@ -1392,7 +1411,7 @@ async fn process_mcp_message(
             // any TOOL_CALL row exists, so no row says ALLOWED for a denied call.
             let mut audit_written = true;
             if let Some(nn) = nearest_neighbor_entry {
-                let nn_entry = AuditEntry::new("NEAREST_NEIGHBOR", &tool_name, "AUDIT")
+                let nn_entry = AuditEntry::new("NEAREST_NEIGHBOR", &tool_log, "AUDIT")
                     .with_nearest_neighbor(nn.clone())
                     .with_namespace(&memory_namespace)
                     .with_agent_id(&agent_id_str);
@@ -1461,7 +1480,11 @@ async fn process_mcp_message(
         }
         JsonRpcValidation::PassThrough => Ok(Some(scrubbed_line)),
         JsonRpcValidation::Error { id, code, message } => {
-            log::warning(format!("JSON-RPC error: {}", message)).ok();
+            log::warning(format!(
+                "JSON-RPC error: {}",
+                Scrubber::redact_for_log(&message)
+            ))
+            .ok();
             Ok(Some(jsonrpc_error_response(id, code, &message)))
         }
     }
@@ -1898,7 +1921,10 @@ fn init_tracing() -> Result<TracingGuard> {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
+    // Logs go to stderr, through the redactor: stdout carries the JSON-RPC
+    // replies of `zn start` and nothing else may be written there.
     let stdout_layer = tracing_subscriber::fmt::layer()
+        .with_writer(zn::scrubber::RedactingStderr)
         .with_thread_ids(true)
         .with_target(false);
 
