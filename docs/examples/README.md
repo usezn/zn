@@ -25,6 +25,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [shield-walkthrough.md](shield-walkthrough.md): wrap a fake MCP server with the shield, from shadow mode to enforce and back.
 - [stats-and-report.md](stats-and-report.md): worked examples of `zn-gate stats` and `zn-gate report`.
 - [team-onboarding-checklist.md](team-onboarding-checklist.md): a one-line-per-step checklist for a new zn Team member, with the expected result and what to do when a step fails.
+- [unlock-ttl-choices.md](unlock-ttl-choices.md): pick how long the vault stays unlocked with `--ttl` and `--idle`, what happens when it locks, and how to lock it early.
 - [vault-verify-and-forget.md](vault-verify-and-forget.md): the vault verify, forget and purge commands, and what each one asks before acting.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
 - [zn-hooks-install-for-one-agent.md](zn-hooks-install-for-one-agent.md): install the hooks for one coding agent only, then verify them with `check --hooks` and `check`.
