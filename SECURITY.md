@@ -16,6 +16,8 @@ To install zn-gate, run `npx -y zn-gate init` in your own terminal ([Install](RE
 
 This policy is only for security vulnerabilities. For a question, use [Discussions](https://github.com/usezn/zn/discussions); for a bug you can reproduce, open an [issue](https://github.com/usezn/zn/issues) ([Community and support](README.md#community-and-support)).
 
+What the optional cloud API at `api.usezn.com` keeps for each request, for how long and how to delete it is in [API data handling](docs/api-data-handling.md). zn-gate on your own computer sends nothing unless you turn on the cloud check.
+
 Releases ship weekly; out-of-cycle releases only for high or critical vulnerabilities or a broken install.
 
 ---
