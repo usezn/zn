@@ -1,0 +1,2 @@
+### Fixed
+- The gateway now reads the on/off environment settings `ZN_AUDIT_STORE_PAYLOADS`, `ZN_AUDIT_REQUIRE_WRITE`, `ZN_NEURAL_BLOCKING` and `ZN_GUARDRAILS_ALERT_ONLY` the same way: `1`, `0`, `true`, `false`, `yes`, `no`, `on` and `off` in any capitalisation (an empty value keeps the default). Behaviour change: any other value, such as a typo like `0n`, used to be quietly treated as the default; now the gateway stops at start-up and names the variable and the accepted values.
