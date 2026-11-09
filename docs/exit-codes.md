@@ -58,7 +58,7 @@ In a script, these three codes are the ones you will check most. The [full table
 
 | Command | Codes | Meaning |
 |---|---|---|
-| `scan` | `0`, `1`, `2` | `0` nothing found; `1` something was found or the path does not exist; `2` an unknown `--format`. |
+| `scan` | `0`, `1`, `2`, `3` | `0` nothing found and everything that matched was read; `1` something was found or the path does not exist; `2` an unknown `--format`; `3` the coverage is incomplete: no file was read, or a file or folder that should have been read was not. |
 | `audit` | `0`, `1`, `2` | `0` nothing at or above `--fail-on`; `1` findings at or above it; `2` wrong usage or a path that is not a folder. |
 | `reach` | `0`, `1`, `2` | `0` done; `1` findings meet `--fail-on`; `2` wrong usage or a failure. |
 | `analyze` | `0`, `1`, `2` | `0` the text is allowed; `1` no text given; `2` the text is blocked. |
@@ -124,7 +124,7 @@ The Action exposes the exit code of each step as an output. See [GitHub Action](
 
 | Output | Codes | Meaning |
 |---|---|---|
-| `scan-exit-code` | `0`, `1`, `2` | `0` clean; `1` findings; `2` error; empty if the scan did not run. |
+| `scan-exit-code` | `0`, `1`, `2`, `3` | `0` clean; `1` findings; `2` error; `3` no file was read, or a file or folder was not read; empty if the scan did not run. |
 | `audit-exit-code` | `0`, `1`, `2` | `0` clean; `1` findings at or above the threshold; `2` error; empty if the audit did not run. |
 
 With `fail-on-threat: 'false'` the exit codes stay `0`, so do not use these outputs to detect findings in report-only mode.
