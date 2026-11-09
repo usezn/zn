@@ -111,7 +111,7 @@ fn forget_negated(before: &str) -> bool {
             || !b[..start]
                 .chars()
                 .next_back()
-                .map_or(false, |c| c.is_ascii_alphanumeric() || c == '_')
+                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
     })
 }
 
