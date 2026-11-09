@@ -28,7 +28,7 @@ const { znCommand, cliName } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-08.11';
+const POLICY_RULES_VERSION = '2026-11-09.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -797,7 +797,7 @@ function readDenial(p, opts = {}) {
     const left = plain.length
       ? ' Still holding a value: ' + plain.slice(0, 10).join(', ') + (plain.length > 10 ? ' and ' + (plain.length - 10) + ' more' : '') + '.'
       : '';
-    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets.' + left + ' Ask the user to run `' +
+    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv).' + left + ' Ask the user to run `' +
       znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.' +
       (plain.length ? ' A value that is too short for that stays in the file: store it with `' + znCommand('secret set <NAME>') + '` and write __ZN_<NAME>__ in its place.' : '');
   }
@@ -891,7 +891,8 @@ function credentialDenial(p, c) {
       'Name the files you need instead (for example `cat notes.md` instead of `cat *`), or ask the user to run the command in their own terminal.';
   }
   return 'zn: ' + p + ' was not read because zn treats it as holding secrets (' + c.reason + '), and secret values never go to the model. ' +
-    'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then run the command with `' + znCommand('run --secrets NAME -- <command>') + '` so the program gets it as an environment variable.';
+    'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then run the command with `' + znCommand('run --secrets NAME -- <command>') + '` so the program gets it as an environment variable. ' +
+    'Agents may not read the file itself (rule: secret-file:credential).';
 }
 
 function agentConfigDenial(p, c) {
@@ -1701,7 +1702,8 @@ function vaultMessage(opts = {}) {
     'for a web request, use the secrets_http_request tool with __ZN_NAME__ where the value goes; to add a secret, ask the user to run `' +
     znCommand('secret set NAME', opts) + '` in their own terminal.';
 }
-const TOO_LONG_MESSAGE = 'zn: this command is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.';
+const TOO_LONG_MESSAGE = 'zn: this command is too long for zn to check (over 100 KB), so it was blocked (rule: size:command-too-long). Unchecked, it could read a secret or a protected file. ' +
+  'Next step: tell the user; do not resend it in parts. Only the user can run it, in their own terminal.';
 // The agent runs a command unchecked when the hook times out (15 s in Claude Code), so checking a command has its
 // own limits, well below that: a time budget and a number of looks on disk. Past either, the command is refused.
 const CHECK_BUDGET_MS = 3000;

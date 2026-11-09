@@ -382,7 +382,7 @@ Deleting the vault loses every value stored in it, and nothing brings them back.
 
 The vault key is also stored in your system keychain, under the name `zn-vault` (set `ZN_KEYCHAIN_SERVICE` to use another name). `zn vault purge` removes that entry too. The API key for `zn-gate connect` is stored under the name `zn-cloud`, or in the vault. `zn-gate disconnect` removes it, and asks whether to also revoke it on usezn.com (see [Connect](connect.md)).
 
-To delete the vault, follow [Remove zn-gate](uninstall.md#your-env-files-and-the-vault).
+To delete the vault, follow [Remove zn-gate](uninstall.md#4-your-env-files-and-the-vault).
 
 ### Other files in `~/.zn`
 
