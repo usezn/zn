@@ -1,5 +1,22 @@
 # Agent compatibility
 
+## Tested in the last release
+
+The table lists each agent zn-gate supports and what was checked for it in the latest release, 1.15.0 (published 2026-11-06): for example "Hook command only (no agent started)", or "not tested in this release". An agent version appears only when a run with the real agent is recorded. Gemini CLI is experimental.
+
+| Agent | Agent version tested | Tested on | zn-gate version |
+|---|---|---|---|
+| Claude Code | Hook command only (no agent started) | 2026-11-06 | 1.15.0 |
+| Codex CLI | Hook command only (no agent started) | 2026-11-06 | 1.15.0 |
+| Cursor | Hook command only (no agent started) | 2026-11-06 | 1.15.0 |
+| OpenCode | not tested in this release | - | - |
+| Antigravity | not tested in this release | - | - |
+| ZCode desktop app | not tested in this release | - | - |
+| GitHub Copilot | not tested in this release | - | - |
+| Gemini CLI (experimental) | not tested in this release | - | - |
+
+For Claude Code, Codex CLI and Cursor, the 1.15.0 clean-install release check installed zn's hooks on a clean Linux machine and piped blocked event payloads to the installed hook commands on stdin. No agent is started in that check, so the agent version column says "Hook command only" until a run with the real agent is recorded. End-to-end runs with the real agent CLIs are in [`bench/e2e/`](../bench/e2e/).
+
 ## Limits at a glance
 
 - An event zn cannot read is refused, except the Codex `Stop` event, which is never blocked.
@@ -225,6 +242,12 @@ model provider on 127.0.0.1, so no account or key is needed, and every value is 
   with `{"hooks": {"checkToolOutputInstructions": false}}` in
   `~/.zn/config.json`. At most 64 KiB of each output are checked: the first 48 KiB and
   the last 16 KiB.
+  Off by default: after `zn-gate connect` and only if you add `{"hooks": {"cloudCheckToolOutput": true}}` to your own `~/.zn/config.json` (read from your operating-system account's home folder, so `HOME`, `USERPROFILE`, `ZN_HOME`, `ZN_CLOUD`, `ZN_API_KEY` and a project's settings cannot enable this, because a project can set them), the same
+  outputs are also sent to zn's API, when the local check did not flag them: a sample of at most 16 KiB,
+  counted in bytes of UTF-8 text (the first 12 KiB and the last 4 KiB), after secrets and personal data (email, phone, IBAN and card numbers) are replaced. The cloud
+  can only add the same note (also when its verdict is neither allow nor block); a failed call changes nothing. Remove the setting, or set it to
+  `false`, to turn this path off. Only the Claude Code hook does this today:
+  the other agents get no note for tool output (the same limit as the local check above), so they send nothing.
 - **Codex CLI**:
   - `ask` is not supported, so a call zn would ask about (personal data in an
     MCP call, a write to an instruction file, a search over a folder with a
