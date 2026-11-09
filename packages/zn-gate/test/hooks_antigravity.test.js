@@ -327,7 +327,8 @@ test('reads check every path of the call, not only the first', async () => {
 test('file: addresses are turned into paths; a bad one is refused', async () => {
   const n = agy.normalize(pre('view_file', { AbsolutePath: pathToFileURL(path.resolve('/home/u/a b.txt')).href }));
   assert.equal(n.input.path, path.resolve('/home/u/a b.txt'));
-  assert.equal((await run(pre('view_file', { AbsolutePath: 'file://remote-host/etc/x' }))).output.decision, process.platform === 'win32' ? 'allow' : 'deny');
+  // A file: address that names another host is refused on every platform (on Windows it would be a network share).
+  assert.equal((await run(pre('view_file', { AbsolutePath: 'file://remote-host/etc/x' }))).output.decision, 'deny');
   assert.equal((await run(pre('view_file', { AbsolutePath: 'file:///%zz' }))).output.decision, 'deny');
 });
 
