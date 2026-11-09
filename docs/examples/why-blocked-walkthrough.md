@@ -65,7 +65,7 @@ Run the step in your own terminal, in the project folder:
 zn env shadow .env
 ```
 
-The values move to the vault and the file keeps markers such as `__ZN_API_KEY__` that the agent can use. To put the old file back, run the restore command that `zn env shadow` printed, for example `zn env unshadow .env --backup <name>`. More in [secrets](../secrets.md).
+The values move to the vault and the file keeps markers such as `__ZN_EXAMPLE_API_KEY__` that the agent can use. To put the old file back, run the restore command that `zn env shadow` printed, for example `zn env unshadow .env --backup <name>`. More in [secrets](../secrets.md).
 
 If you did not expect the read, ask your agent why it wanted that file, and do not look for a way around the block.
 
