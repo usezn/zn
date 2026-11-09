@@ -124,11 +124,12 @@ or for one run with the environment variable `ZN_MCP_PINNING=block`. The mode th
 
 ### Tool shadowing
 
-When you wrap more than one server, the shield also compares each tool list with the approved tools of your other pinned servers and warns (`[zn-shield TOOL SHADOWING]`) in three cases:
+When you wrap more than one server, the shield also compares each tool list with the approved tools of your other pinned servers and warns (`[zn-shield TOOL SHADOWING]`) in four cases:
 
 - a tool has the same name as an approved tool of another server, so the agent may call the wrong one;
 - the name of a tool reads like that of an approved tool of another server once case, full-width letters, look-alike letters of other alphabets and invisible or default-ignorable characters are set aside;
-- the description, title, annotation title or the input or output schema of a tool names an approved tool of another server, also in the form `mcp__<server>__<tool>` or with invisible characters inside the name, which is how a server can steer how a different server's tool is used. Names shorter than six characters, names that are a single plain word (`update`, `commit`: they are in every text) and names that only appear inside a longer word are ignored for this check; a tool whose text is over 1 MiB is reported as too long to check in full.
+- the description, title, annotation title or the input or output schema of a tool names an approved tool of another server, also in the form `mcp__<server>__<tool>` or with invisible characters inside the name, which is how a server can steer how a different server's tool is used. Names shorter than six characters, names that are a single plain word (`update`, `commit`: they are in every text) and names that only appear inside a longer word are ignored for this check.
+- the text of a tool is over 1 MiB, so it is reported as too long to check in full and the shield cannot check it for names of other servers' tools; read it yourself.
 
 This is a warning, not a block: the same name on two servers can be legitimate. Each overlap is reported once per run of the shield, and it is logged in the decision log (`mcp_tool_shadowing`) without any tool text. A tool that is new or changed on the other server and not yet approved is not used as a reference.
 
