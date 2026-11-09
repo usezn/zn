@@ -49,6 +49,7 @@ check pull_request next packages/zn-gate/package.json "changelog packagelint sni
 check pull_request next packages/zn-gate-py/setup.py "changelog packagelint snippets"
 check pull_request next changelog.d/x.md "changelog typos links"
 check pull_request next changelog.d/README.md "changelog markdownlint typos links"
+check pull_request next .github/scripts/check-docs-titles.mjs "changelog markdownlint"
 check pull_request next scripts/run.sh "changelog shellcheck"
 check pull_request next .github/workflows/other.yml "changelog workflowlint timeouts"
 check pull_request next .github/scripts/check-timeouts.mjs "changelog timeouts"
