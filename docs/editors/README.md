@@ -52,3 +52,5 @@ Details: [compat.md](../compat.md) (Gemini CLI and GitHub Copilot) and [threat-m
 For GitHub Copilot, the evidence level is: documented, not tested in the VS Code app (see [its page](vscode.md)); a typed prompt cannot be blocked and a hook that times out lets the call through, so zn blocks the call itself at 11 seconds. Windsurf has its own agent hooks, but zn-gate does not install hooks for it yet. For what Antigravity's hooks cover and what they do not, see [its page](antigravity.md); for ZCode, see [its page](zcode.md).
 
 To remove zn-gate from an editor by hand, see [the files zn-gate writes in each editor](remove-by-hand.md).
+
+For Gemini CLI, the full install steps are on [its own page](gemini.md).
