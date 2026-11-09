@@ -51,7 +51,7 @@ const { gitStatusOf } = require('../broker/files');
 const deps = require('../deps');
 const { envFlag } = require('../env-flag');
 const { shQuote, SH_QUOTE_ESCAPE, portablePath } = require('../shell-quote');
-const { znCommand, winCommandText, cliName } = require('../zn-command');
+const { znCommand, winCommandText } = require('../zn-command');
 const { hasUnsafeText } = require('../safe-text');
 
 const SECRET_SOURCES = new Set(['exact', 'pattern']);
