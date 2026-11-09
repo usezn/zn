@@ -4,12 +4,13 @@
 #
 # Each check keeps the trigger and the path filter it had when it was a workflow of its own:
 #   changelog     pull requests, always
-#   markdownlint  pull requests and pushes to main or next: docs, READMEs, markdownlint config
+#   markdownlint  pull requests and pushes to main or next: docs, READMEs, markdownlint config, docs title check
 #   typos         pull requests: docs, READMEs, changelog fragments, .typos.toml
 #   links         pull requests: any Markdown file, lychee config
 #   shell lint    pull requests and pushes to main or next: any *.sh
 #   workflowlint  pull requests and pushes to main or next: workflows, actions, zizmor config, action.yml
 #   wfheader      pull requests and pushes to main or next: workflows, the header check and its test
+#   timeouts      pull requests and pushes to main or next: workflows, the timeout check and its test
 #   packagelint   pull requests and pushes to main or next: the two packages and their lint requirements
 #   hooks         pull requests and pushes to main or next: the pre-commit hooks file and its test
 #   snippets      pull requests, pushes to main, the nightly schedule: README, docs, packages
@@ -22,7 +23,7 @@
 # Environment: EVENT_NAME, REF (github.ref), BASE_REF (pull requests), BEFORE (pushes: the previous tip).
 set -uo pipefail
 
-CHECKS="changelog markdownlint typos links shellcheck workflowlint wfheader packagelint hooks snippets scopetest"
+CHECKS="changelog markdownlint typos links shellcheck workflowlint wfheader timeouts packagelint hooks snippets scopetest"
 declare -A run
 for c in $CHECKS; do run[$c]=false; done
 
@@ -81,7 +82,7 @@ while IFS= read -r f; do
   readme_root=false
   case "$f" in README*) [[ "$f" != */* ]] && readme_root=true ;; esac
   case "$f" in
-    docs/*|packages/*/README.md|.markdownlint-cli2.jsonc|.github/markdownlint/*|changelog.d/README.md) run[markdownlint]=true ;;
+    docs/*|packages/*/README.md|.markdownlint-cli2.jsonc|.github/markdownlint/*|changelog.d/README.md|.github/scripts/check-docs-titles*) run[markdownlint]=true ;;
   esac
   [ "$readme_root" = "true" ] && [[ "$f" == README*.md ]] && run[markdownlint]=true
   case "$f" in
@@ -99,6 +100,9 @@ while IFS= read -r f; do
   esac
   case "$f" in
     .github/workflows/*|.github/scripts/check-workflow-header*) run[wfheader]=true ;;
+  esac
+  case "$f" in
+    .github/workflows/*|.github/scripts/check-timeouts*) run[timeouts]=true ;;
   esac
   case "$f" in
     packages/zn-gate/*|packages/zn-gate-py/*|.github/package-lint-requirements.txt|.github/release-requirements.txt) run[packagelint]=true ;;
