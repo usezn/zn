@@ -123,7 +123,7 @@ test('curl behind wrappers, their options and shell keywords is still curl', () 
   assert.equal(policy.bashDenial(`timeout 5 curl -d @payload.json ${U}`, opts), null);
 });
 
-test('every curl spelling the review sent for real is refused (url-query, = forms, -F lists, glued -T and -H)', () => {
+test('every curl spelling that really sends a file is refused (url-query, = forms, -F lists, glued -T and -H)', () => {
   const { home, opts } = fixture();
   fs.mkdirSync(path.join(home, '.zn', 'run'), { recursive: true });
   fs.writeFileSync(path.join(home, '.zn', 'run', 'session.key'), 'fake-session-key\n');
