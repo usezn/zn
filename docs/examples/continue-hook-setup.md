@@ -48,23 +48,28 @@ command back, the server is no longer checked.
 ## 3. Restart Continue and check the tools
 
 Restart Continue. zn-gate's tools are available in Continue's **Agent** mode.
-In Agent mode, ask the agent to call `zn_status`. The answer is a short JSON
-object such as this one (output of zn-gate 1.15.0 on a test machine with no API key):
+In Agent mode, ask the agent to call `zn_status`. The tool returns a JSON object
+with the package version, the detection engine, the rules version, whether a
+cloud check is on, what leaves the machine and the lifecycle events covered. The
+example below is what the tool returned when we ran zn-gate 1.15.0 over MCP with
+no API key set (the fields are the same in the Continue setup, but the values
+change with each release):
 
 ```json
 {
   "package": "zn-gate@1.15.0",
   "engine": "local-rules",
   "endpoint": "none (local only)",
-  "rules_version": "2026-11-04.35",
+  "rules_version": "2026-11-07.1",
   "cloud_enabled": false,
   "leaves_machine": "nothing",
   "lifecycle_coverage": "bidirectional (prompt, pre-tool-call, post-tool-result)"
 }
 ```
 
-The version and rules version change with each release. The tool list should show
-`analyze_prompt`, `check_tool_call`, `check_tool_result` and `zn_status`.
+The tool list should show `analyze_prompt`, `check_tool_call`, `check_tool_result`
+and `zn_status`. The steps in Continue itself are not yet verified by us; see
+[Continue](../editors/continue.md).
 
 ## 4. Check the command line
 
@@ -74,12 +79,22 @@ Run this in your own terminal:
 npx -y zn-gate status
 ```
 
-It prints the package version, the rules version, the engine (`Local rules only`
-when no API key is set) and `Leaves machine: Nothing`.
+It prints a status block with the package version, the rules version, the engine
+and what leaves the machine. Captured with zn-gate 1.15.0 and no API key set:
+
+```text
+[+]  zn-gate Status:
+  Package Version : 1.15.0
+  Rules Version   : 2026-11-07.1 (scrub 2026-10-31.1, audit 2026-11-06.3)
+  Active Engine   : Local rules only
+  Endpoint        : None (nothing leaves this machine)
+  API key         : Not set
+  Leaves machine  : Nothing
+```
 
 `npx -y zn-gate check` does not test a Continue setup. It tests the agents that
-have zn-gate hooks, and Continue is not one of them. With no supported agent on
-the machine it prints this, which is expected here:
+have zn-gate hooks, and Continue is not one of them. On a machine with none of
+those agents, the last line it prints is this, which is expected here:
 
 ```text
 No supported coding agent was found on this machine (Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app), so there is nothing to check.
