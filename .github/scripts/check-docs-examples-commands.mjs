@@ -14,6 +14,14 @@ import { pathToFileURL } from 'node:url';
 
 const SHELL_LANGS = new Set(['sh', 'bash', 'shell', 'console', 'zsh', 'powershell', 'pwsh', 'ps1', 'bat', 'cmd']);
 
+// Options that take a value (the word after them is not a subcommand), as docs/cli.md and
+// packages/zn-gate/bin/cli.js spell them. A flag that is not listed here takes no value.
+const VALUE_OPTIONS = new Set([
+  '--agent', '--agents', '--api', '--backend', '--command', '--days', '--exclude', '--fail-on', '--format',
+  '--host', '--idle', '--in', '--include', '--key', '--long-input', '--max-seconds', '--mode', '--os', '--out',
+  '--output', '--package', '--port', '--secrets', '--since', '--stage', '--tail', '--ttl', '--url', '-s',
+]);
+
 /* Fenced blocks of a Markdown text: [{ lang, lines: [{ n, text }] }] (n is the 1-based line number). */
 export function fencedBlocks(text) {
   const blocks = [];
@@ -74,8 +82,10 @@ export function commandsInLine(line) {
 
 function nextWord(words, i) {
   for (; i < words.length; i++) {
+    if (VALUE_OPTIONS.has(words[i])) { i++; continue; } // the option and its value
     if (/^-/.test(words[i])) continue;
-    return words[i].replace(/^['"]|['"]$/g, '');
+    // In "$(zn status)" the closing parenthesis and a closing quote stay on the word.
+    return words[i].replace(/^['"]/, '').replace(/[)'"]+$/, '');
   }
   return null;
 }

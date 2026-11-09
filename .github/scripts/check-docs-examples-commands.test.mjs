@@ -46,3 +46,15 @@ test('documented commands, other languages and continuation lines pass', () => {
   assert.deepEqual(r.problems, []);
   assert.equal(r.commands, 1);
 });
+
+test('a value-taking option before the subcommand is skipped with its value', () => {
+  assert.deepEqual(commandsInLine('zn --stage prod status'), [{ program: 'zn', sub: 'status' }]);
+  assert.deepEqual(commandsInLine('zn --long-input off analyze "x"'), [{ program: 'zn', sub: 'analyze' }]);
+  assert.deepEqual(commandsInLine('zn --json status'), [{ program: 'zn', sub: 'status' }]);
+});
+
+test('a command inside $(...) loses its closing parenthesis and quote', () => {
+  assert.deepEqual(commandsInLine('echo $(zn status)'), [{ program: 'zn', sub: 'status' }]);
+  assert.deepEqual(commandsInLine('TOKEN=$(zn --json status)'), [{ program: 'zn', sub: 'status' }]);
+  assert.deepEqual(commandsInLine('echo "$(zn-gate check)"'), [{ program: 'zn-gate', sub: 'check' }]);
+});
