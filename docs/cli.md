@@ -154,6 +154,12 @@ zn-gate check --hooks
 
 Lists every installed zn hook (agent, settings file, event and the command it runs) and says whether each is OK, stale (written by an older zn-gate) or broken, with the command that fixes it. It only reads files: nothing is run, changed or sent. Exit code `0` when every hook is OK, `1` when any is stale or broken. [What the output means](check.md#list-every-installed-hook).
 
+```bash
+zn-gate check --json
+```
+
+Prints the same check as one JSON object, for scripts, CI and support requests. Same exit codes; your home folder is shown as `~`. [Fields](check.md#machine-readable-output).
+
 ### `status`
 
 ```bash
@@ -740,7 +746,7 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 | Command | Options | What it does |
 |---|---|---|
 | `test "<text>"` | `--json` | Checks one piece of text against the rules. It does **not** run the self-test that `test` runs in the npm package. Exit `0` if nothing was flagged, `1` if the text was blocked or contains a secret. |
-| `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked. Without a text it prints the usage and exits `2` (the npm package exits `1`). |
+| `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked. Without a text (or with an empty one) it prints the usage and exits `2` (the npm package exits `1`). |
 | `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude`, `--include-home` | Like `scan` in the npm package, without the `--all` and `--code` options. Exit `0` nothing found, `1` something was found or the path does not exist, `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. There is no `--package` in the Python version yet. |
 | `evidence` | `--verify`, `--export`, `--format jsonl\|csv`, `--output file` | Counts, chain check and export, like the npm command. There is no `--ui`, no `--tail` and no `logs` or `export` alias. |
 | `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`. |
