@@ -81,9 +81,9 @@ jobs:
         if: ${{ !cancelled() && steps.scope.outputs.scopetest == 'true' }}
         run: bash .github/scripts/test-quick-scope.sh
 
-      # Node.js 22 for the changelog tools, markdownlint, the pre-commit hooks, package lint and the snippets.
+      # Node.js 22 for the changelog tools, the timeout check, markdownlint, the pre-commit hooks, package lint and the snippets.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: ${{ !cancelled() && (steps.scope.outputs.changelog == 'true' || steps.scope.outputs.markdownlint == 'true' || steps.scope.outputs.hooks == 'true' || steps.scope.outputs.packagelint == 'true' || steps.scope.outputs.snippets == 'true') }}
+        if: ${{ !cancelled() && (steps.scope.outputs.changelog == 'true' || steps.scope.outputs.markdownlint == 'true' || steps.scope.outputs.hooks == 'true' || steps.scope.outputs.packagelint == 'true' || steps.scope.outputs.snippets == 'true' || steps.scope.outputs.timeouts == 'true') }}
         with:
           node-version: 22.x
           package-manager-cache: false
@@ -102,6 +102,14 @@ jobs:
         # HEAD is the merge commit GitHub made for this pull request: its first parent is the base it was merged onto.
         run: node .github/scripts/changelog.mjs check --base HEAD^1
 
+      # Workflow timeouts: every job of a workflow sets timeout-minutes (a stuck job would run for 6 hours).
+      - name: Workflow timeouts - test the check
+        if: ${{ !cancelled() && steps.scope.outputs.timeouts == 'true' }}
+        run: node --test .github/scripts/check-timeouts.test.mjs
+      - name: Workflow timeouts - every job sets timeout-minutes
+        if: ${{ !cancelled() && steps.scope.outputs.timeouts == 'true' }}
+        run: node .github/scripts/check-timeouts.mjs
+
       # Markdown lint
       - name: Markdown lint - install markdownlint-cli2 (locked)
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
@@ -115,6 +123,12 @@ jobs:
       - name: Markdown lint - docs examples only run commands documented in cli.md
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-examples-commands.mjs
+      - name: Markdown lint - test the docs title check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-titles.test.mjs
+      - name: Markdown lint - no two docs pages share a first-level title
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-titles.mjs
 
       # Spellcheck
       - name: Spellcheck - typos
