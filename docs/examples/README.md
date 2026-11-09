@@ -12,6 +12,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [first-cloud-check.md](first-cloud-check.md): the shortest path from connect to a first checked prompt, in five steps.
 - [first-project-walkthrough.md](first-project-walkthrough.md): one small example project, from install to removal.
 - [hook-subcommand-explained.md](hook-subcommand-explained.md): what `zn-gate hook` is, who calls it, and why you rarely run it by hand.
+- [hooks-status-after-agent-update.md](hooks-status-after-agent-update.md): re-check the hooks with `zn-gate check` and `zn-gate check --hooks` after your coding agent updated itself.
 - [hooks-uninstall-then-verify.md](hooks-uninstall-then-verify.md): remove zn's hooks and confirm with `zn-gate check --hooks` that none is left.
 - [init-and-uninstall.md](init-and-uninstall.md): set up zn-gate, preview the steps with a dry run, then remove it.
 - [keep-a-secret-out-of-the-agent.md](keep-a-secret-out-of-the-agent.md): store one fake secret, let one command use it, then remove it.
