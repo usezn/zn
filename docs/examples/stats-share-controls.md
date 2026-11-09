@@ -16,7 +16,7 @@ zn-gate stats share status
 Sharing pseudonymous daily counts: off (the default).
 ```
 
-When it is on, the line reads `Sharing pseudonymous daily counts: on.` The command exits `0` either way. Plain `zn-gate stats share` does the same, and `zn-gate stats` also ends with a line that says whether sharing is on or off.
+When it is on, the line reads `Sharing pseudonymous daily counts: on.` The command exits `0` either way. Plain `zn-gate stats share` does the same, and the report of `zn-gate stats` ends with a note on sharing: that it is on and how to turn it off, or, when it is off, that the counts stay on this machine and which commands show and turn on sharing.
 
 ## See exactly what would be shared
 
