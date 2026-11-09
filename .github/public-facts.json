@@ -72,6 +72,11 @@
         "why": "the release that added the experimental Gemini CLI and GitHub Copilot CLI adapters (not a pin)"
       },
       {
+        "file": "docs/editors/gemini.md",
+        "pin": "zn-gate 1.14.0",
+        "why": "the minimum version for the experimental Gemini CLI hooks, which 1.14.0 added (not a pin)"
+      },
+      {
         "file": "docs/editors/cursor.md",
         "pin": "zn-gate 1.14.0",
         "why": "the release that removed the Cursor plugin (not a pin)"
@@ -115,7 +120,7 @@
   },
   "examplesVersion": {
     "_comment": "The release the examples pin: always one that is published on npm and PyPI. It moves after a release is published (requirements in the PyPI form, 1.14.0rc1 for 1.14.0-rc.1).",
-    "value": "1.15.0-rc.1",
+    "value": "1.15.0",
     "files": [
       {
         "file": "examples/ag2-agent/requirements.txt",
