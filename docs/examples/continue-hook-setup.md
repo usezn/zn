@@ -68,7 +68,9 @@ change with each release):
 ```
 
 The tool list should show `analyze_prompt`, `check_tool_call`, `check_tool_result`
-and `zn_status`. The steps in Continue itself are not yet verified by us; see
+and `zn_status`. The outputs on this page come from zn-gate itself and are the
+same whatever client calls it. What we have not yet verified is the Continue
+side: where the tools show up and how Agent mode lists them; see
 [Continue](../editors/continue.md).
 
 ## 4. Check the command line
