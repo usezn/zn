@@ -49,7 +49,9 @@ test('a fresh install is all OK, and every event is listed with its command', { 
   assert.equal(code, 0);
   assert.match(out, /Claude Code \(user\): .*settings\.json/);
   assert.match(out, /PreToolUse/);
-  assert.match(out, /zn-hook-codex\.sh/);
+  // The printed command is shortened to 110 characters, so a long temp path (macOS) can cut off the file extension.
+  assert.match(out, /zn-hook-codex/);
+  assert.ok(rowsOf(res, 'codex').every((r) => /zn-hook-codex\.sh/.test(r.command)), 'every codex row names its launcher');
   assert.match(out, / 0 stale, 0 broken\./);
 });
 
