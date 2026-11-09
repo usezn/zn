@@ -2,6 +2,7 @@
 
 Worked examples, in alphabetical order. All values in them are made up.
 
+- [agents-on-a-shared-machine.md](agents-on-a-shared-machine.md): several people on one computer: what is kept for each user, what is global, and what one user cannot see of another.
 - [audit-before-adding-a-repo.md](audit-before-adding-a-repo.md): run `zn-gate audit` on a repository you do not know yet, read the report and decide what to do before you open it with an agent.
 - [audit-before-opening.md](audit-before-opening.md): run `zn audit` on a repository you just cloned, before an agent opens it, and read what the report says.
 - [block-message-anatomy.md](block-message-anatomy.md): one real block message, explained part by part.
