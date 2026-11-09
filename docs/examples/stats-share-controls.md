@@ -26,12 +26,12 @@ zn-gate stats share show
 
 ```text
 What is shared, once a day, only if you turn sharing on: a random id for this installation (a new one each time you turn sharing on), the day, the zn-gate version, the operating system, the Node.js major version, the agent and part of zn-gate used most that day, and how many secrets of each built-in type were found (for example AWS_KEY 3). Never secret values, prompts, variable or secret names, file names, paths, repository names, hosts or emails.
-Where: https://api.usezn.com/v1/telemetry.
+Where: <address of zn's telemetry service>
 
 Sharing is off, so nothing is sent. There are no complete days of counts yet to show an example.
 ```
 
-The `Where:` line is printed by zn-gate as it is: it is the real address of zn's telemetry service, the only place a report is sent, and only after you turn sharing on.
+On your screen the `Where:` line shows the full address of zn's telemetry service (left out above): it is the only place a report is sent, and only after you turn sharing on. What the service keeps is in [API data handling](../api-data-handling.md).
 
 The last line depends on your counts. Once you have at least one complete day of counts, `show` prints a sample report built from them, with the id replaced by a placeholder, so you can read the real fields before you decide. With sharing on, `show` prints the reports that would be sent now, or says nothing is waiting (only complete days are sent). `show` sends nothing and changes nothing.
 
