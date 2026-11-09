@@ -76,8 +76,8 @@ Text reports can be diffed the same way.
 
 ## If the file was not written
 
-- Exit code `2`: the audit did not run. The option is wrong, the path was not found, or the output file cannot be written.
-- Exit code `1`: a finding met `--fail-on`. Run the same command with `--fail-on none` to get the report without failing.
+- Exit code `2`: the audit did not run, so no file is written. The option is wrong, the path was not found, or the output file cannot be written.
+- Exit code `1` still writes the file: a finding met `--fail-on`, and the report is complete. Add `--fail-on none` if the command should not exit `1`.
 
 ## Where to go next
 
