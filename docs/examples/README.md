@@ -28,4 +28,5 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [vault-verify-and-forget.md](vault-verify-and-forget.md): the vault verify, forget and purge commands, and what each one asks before acting.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
 - [zn-hooks-install-for-one-agent.md](zn-hooks-install-for-one-agent.md): install the hooks for one coding agent only, then verify them with `check --hooks` and `check`.
+- [zn-scan-exit-codes-in-ci.md](zn-scan-exit-codes-in-ci.md): a CI step that runs `zn-gate scan` and branches on its exit codes, as a GitHub Actions step and as a shell script.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
