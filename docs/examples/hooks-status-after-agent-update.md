@@ -31,15 +31,21 @@ After an update, the line for the updated agent may carry a version note. It com
 zn-gate check --hooks
 ```
 
-This lists every zn hook set up for your agents, one line per hook event, and says whether each one is working. It reads only the settings files of your agents and the launcher files of zn: it runs no hook, changes nothing and sends nothing. A hook whose launcher script was written by an older zn-gate is listed as STALE, with the fix to run:
+This lists every zn hook set up for your agents, one line per hook event, and says whether each one is working. It reads only the settings files of your agents and the launcher files of zn: it runs no hook, changes nothing and sends nothing. A hook whose launcher script was written by an older zn-gate is listed as STALE, with the fix to run. All the hooks of one agent share one launcher script, so an older launcher marks every hook of that agent STALE at once. This sample is a real run after the launcher of Codex CLI was edited by hand (the home folder is shortened to `~`):
 
 ```text
 Codex CLI (user): ~/.codex/hooks.json
   STALE  PreToolUse [^(Bash|apply_patch|mcp__.+)$]  '~/.zn/hooks/zn-hook-codex.sh' PreToolUse
+  STALE  PermissionRequest [^(Bash|apply_patch|mcp__.+)$]  '~/.zn/hooks/zn-hook-codex.sh' PermissionRequest
+  STALE  PostToolUse [.*]  '~/.zn/hooks/zn-hook-codex.sh' PostToolUse
+  STALE  UserPromptSubmit  '~/.zn/hooks/zn-hook-codex.sh' UserPromptSubmit
+  STALE  SessionStart  '~/.zn/hooks/zn-hook-codex.sh' SessionStart
+  STALE  SubagentStart  '~/.zn/hooks/zn-hook-codex.sh' SubagentStart
+  STALE  Stop  '~/.zn/hooks/zn-hook-codex.sh' Stop
   STALE: its launcher script was written by an older zn-gate.
     Fix: run `zn hooks install codex` in your own terminal.
 
-0 OK, 1 stale, 0 broken.
+0 OK, 7 stale, 0 broken.
 ```
 
 - **OK**: the hook points at files that exist, and its launcher is the one this zn-gate writes.
@@ -49,7 +55,7 @@ Codex CLI (user): ~/.codex/hooks.json
 The exit code of `zn-gate check --hooks` is `0` when every hook is OK (or none is set up) and `1` when any is stale or broken. Plain `zn-gate check` ends with one line about the same hooks:
 
 ```text
-Hooks: 3 OK, 1 stale, 0 broken. Run zn-gate check --hooks for details.
+Hooks: 0 OK, 7 stale, 0 broken. Run zn-gate check --hooks for details.
 ```
 
 ## 3. Bring the hooks up to date
@@ -67,7 +73,7 @@ Two notes for the Claude Code plugin, both shown by the check itself:
 - When the zn-gate plugin is a different version from the zn-gate command, the check adds a note that says which one to update: the plugin (`claude plugin update zn-gate@usezn`) when it is older, or the command (`npm install -g zn-gate@latest`) when it is older. This alone does not make Claude Code NOT protected.
 - If the hooks were installed by an older zn-gate and lack the check for typed skills and commands, the check suggests running `zn hooks install claude-code` again.
 
-For Codex CLI, zn installs its hooks with `zn hooks install codex`, and you trust them in `/hooks`: Codex ignores the hooks of a plugin until you review and trust them there, and it asks again after every plugin update.
+For Codex CLI, `zn hooks install codex` writes zn's hooks into your user file `~/.codex/hooks.json`. Codex runs a new or changed user hook only after you approve it: open Codex, type `/hooks` and approve zn's hooks there. Codex asks you to review them again when a hook changes.
 
 After a zn-gate update, `npm update -g zn-gate` refreshes the launchers by itself (a short install step). You see STALE if the launcher file was edited, if the update ran with `--ignore-scripts` or with bun (which skip it), or if you installed or updated with `sudo`: run `zn hooks install <agent>` again in your own terminal to record the new files.
 
