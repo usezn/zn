@@ -48,7 +48,7 @@ Audit upload: 37 records pending
 Last sync:    FAILED 2026-11-08T08:30:00.000Z: could not reach the zn server (last success 2026-11-06T09:00:00.000Z); run `zn team sync` to retry
 ```
 
-If the policy has run out while you are offline, the `Policy:` line ends with ` -- EXPIRED: strict mode (only restrictions apply) until zn can reach the server. If this computer is online, check its date and time.`
+If the policy has run out while you are offline, the `Policy:` line ends with `-- EXPIRED: strict mode (only restrictions apply) until zn can reach the server. If this computer is online, check its date and time.`
 
 The automatic sync keeps the reason it failed and writes one audit record, then at most one more every 6 hours while it keeps failing.
 
