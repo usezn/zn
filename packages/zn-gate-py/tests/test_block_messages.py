@@ -71,6 +71,25 @@ class TestBlockMessages(unittest.TestCase):
         self.assertEqual(msg.count("custom:x"), 1, msg)
         self.assertIn("Reason: the input matched rule custom:x.", msg)
 
+    def test_destructive_and_size_blocks_name_rule_reason_and_next_step(self):
+        # Parity with the Node.js hook messages: the rule names are the same ones the hooks print.
+        from zn_gate import Assessment, check_command
+        from zn_gate.guard import block_message
+
+        hit = check_command("rm -r" + "f " + "~")
+        self.assertEqual(hit.rule, "destructive:rm_root_home")
+        msg = block_message(hit, "run")
+        self.assertIn("(rule: destructive:rm_root_home)", msg)
+        self.assertIn("Reason: Destructive command: it deletes the home folder", msg)
+        self.assertIn("Next step:", msg)
+        many = block_message(Assessment(verdict="block", confidence=0.95, rule="destructive:too_many_commands",
+                                        reason="Destructive command: x"), "run")
+        self.assertIn("(rule: destructive:too_many_commands)", many)
+        big = block_message(Assessment(verdict="block", confidence=1.0, rule="size:truncated", reason=None), "tool:result")
+        self.assertIn("(rule: size:truncated)", big)
+        self.assertIn("too large to scan in full", big)
+        self.assertIn("ZN_ALLOW_TRUNCATED=1", big)
+
 
 if __name__ == "__main__":
     unittest.main()

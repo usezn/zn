@@ -297,7 +297,7 @@ test('a shell command over 100 KB is refused at once; one just under the limit g
   const start = process.hrtime.bigint();
   const deny = policy.bashDenial(tooLong);
   const ms = Number(process.hrtime.bigint() - start) / 1e6;
-  assert.equal(deny, 'zn: this command is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.');
+  assert.equal(deny, 'zn: this command is too long for zn to check (over 100 KB), so it was blocked (rule: size:command-too-long). Unchecked, it could read a secret or a protected file. Next step: tell the user; do not resend it in parts. Only the user can run it, in their own terminal.');
   assert.ok(ms < budget(50), 'took ' + ms + ' ms');
   // Exactly at the limit and just under it: the normal check runs.
   assert.equal(policy.bashDenial('echo ' + 'a'.repeat(cap - 5)), null);
@@ -354,6 +354,21 @@ function fastestMs(fn, runs = 5) {
     const t0 = process.hrtime.bigint();
     result = fn();
     best = Math.min(best, Number(process.hrtime.bigint() - t0) / 1e6);
+  }
+  return { ms: best, result };
+}
+
+// CPU time instead of wall-clock time, for a budget that a shared CI runner can break without any slower code: a stall
+// while another job holds the core is wall-clock time the check never used. A check that backtracks burns CPU, so the
+// budget still catches it. The CPU clock is coarse on Windows (about 16 ms), so the fastest of the runs is used.
+function fastestCpuMs(fn, runs = 5) {
+  let result = fn();
+  let best = Infinity;
+  for (let i = 0; i < runs; i++) {
+    const c0 = process.cpuUsage();
+    result = fn();
+    const c = process.cpuUsage(c0);
+    best = Math.min(best, (c.user + c.system) / 1000);
   }
   return { ms: best, result };
 }
@@ -742,8 +757,11 @@ test('a 100 KB here-document read as data is checked in milliseconds', (t) => {
   let body = '';
   while (body.length + line.length < 100 * 1024 - 64) body += line;
   const cmd = "cat > generated.js <<'EOF'\n" + body + 'EOF';
-  const { ms, result: deny } = fastestMs(() => policy.bashDenial(cmd, o));
+  const { ms, result: deny } = fastestCpuMs(() => policy.bashDenial(cmd, o));
   assert.equal(deny, null, 'the body is data, so the command is allowed');
+  // Windows runners measured 32 ms of CPU time for the same check (the CPU clock there ticks in about 16 ms steps, and
+  // the runner CPU is slower), so Windows gets a larger budget. A check that rescans the body, which is what this test
+  // guards against, takes seconds on 100 KB, so both budgets still catch it.
   assert.ok(ms < budgetWin(25, 150), 'checked in ' + ms + ' ms');
 });
 

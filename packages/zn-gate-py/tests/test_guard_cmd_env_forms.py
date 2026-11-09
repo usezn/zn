@@ -1,7 +1,6 @@
 # cmd.exe percent and caret forms that read a .env file, checked through the Python guard.
-# The Node.js policy refuses the same forms (packages/zn-gate/test/policy_hidden_env_forms.test.js).
+# The Node.js guard refuses the same forms (packages/zn-gate/test/fixtures/tool_guard_parity.json holds them too).
 # BSLH stands for a backslash and DQ for a double quote, so the cases stay readable. All paths are fictional.
-# Forms the Python guard does not refuse yet are xfail (strict): a fix turns them into XPASS.
 
 import pytest
 
@@ -22,6 +21,16 @@ BLOCKED = [
     "type DQ%CD%BSLH.envDQ",
     "cmd /c type %CD%BSLH.env",
     "type %USERPROFILE%BSLH.env",
+    # The five forms that used to be let through:
+    "type .e^nv",
+    "type ^.env",
+    "type %CD%BSLH.e^nv",
+    "cmd /c DQtype %CD%BSLH.e^nvDQ",
+    "set X=.env & type %X%",
+    # Close variants of the same forms:
+    "more < .e^nv",
+    "findstr . .e^nv",
+    "type .%EMPTY%env",
 ]
 
 ALLOWED = [
@@ -29,20 +38,16 @@ ALLOWED = [
     "type %CD%BSLH.notes.md",
     "type notes.md",
     "type DQ.e^nvDQ",
+    "type README.md",
+    "echo 100%",
+    "type notes^.txt",
+    "set X=notes.md & type %X%",
+    "cmd /c DQtype notes^.txtDQ",
+    "grep ^.env notes.md",
 ]
 
-GAPS = [
-    ("type .e^nv", "parity gap with the Node policy: caret inside the .env name, unquoted; cmd.exe drops the caret and reads .env"),
-    ("type ^.env", "parity gap with the Node policy: caret before the dot; cmd.exe drops it and reads .env"),
-    ("type %CD%BSLH.e^nv", "parity gap with the Node policy: percent path with a caret inside the .env name"),
-    ("cmd /c DQtype %CD%BSLH.e^nvDQ", "parity gap with the Node policy: quoted cmd /c command with a caret inside the .env name"),
-    ("set X=.env & type %X%", "parity gap with the Node policy: percent variable that holds the .env name"),
-]
 
-BLOCK_CASES = BLOCKED + [pytest.param(text, marks=pytest.mark.xfail(strict=True, reason=reason)) for text, reason in GAPS]
-
-
-@pytest.mark.parametrize("text", BLOCK_CASES)
+@pytest.mark.parametrize("text", BLOCKED)
 def test_cmd_percent_and_caret_form_reading_env_is_blocked(text):
     res = check_tool_call("shell", {"command": _cmd(text)})
     assert res.verdict == "block", res.rule
