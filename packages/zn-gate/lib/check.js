@@ -1523,4 +1523,60 @@ function report({ results, removed, warnings }, write) {
   return setUp && !bad ? 0 : 1;
 }
 
-module.exports = { check, report, FAKE_LINE, AGENTS, _internal: { cliHooks, pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
+/** Exit code of `check`: 0 only when at least one agent is set up and every agent that is set up is protected. */
+function exitCodeOf(results) {
+  let setUp = 0;
+  let bad = 0;
+  for (const r of results) {
+    if (r.state === 'not-set-up') continue;
+    setUp++;
+    if (r.state === 'not-protected') bad++;
+  }
+  return setUp && !bad ? 0 : 1;
+}
+
+/**
+ * The same data as report(), as one plain object for scripts, CI and support requests (`check --json`).
+ * Built from the results, not from the text. Every string has the home folder replaced with "~". Field names are
+ * stable: see docs/check.md.
+ */
+function toJson({ results, removed, warnings }, opts = {}) {
+  const home = opts.home || os.homedir();
+  const hide = (v) => {
+    if (typeof v !== 'string') return v;
+    let out = v;
+    // Longest first: when one form contains the other (macOS /var/... is /private/var/...), replacing the shorter
+    // one first would leave a mangled path such as '/private~/...'.
+    const forms = [...new Set([home, (() => { try { return fs.realpathSync(home); } catch (_) { return home; } })()])]
+      .sort((a, b) => b.length - a.length);
+    for (const h of forms) {
+      if (h && h.length > 1) out = out.split(h).join('~');
+    }
+    return out;
+  };
+  const agents = results.map((r) => ({
+    id: r.id,
+    name: r.name,
+    state: r.state === 'not-set-up' && r.found === false ? 'not-found' : r.state,
+    protected: r.state === 'protected',
+    reason: hide(r.problem || ''),
+    fix: r.state === 'protected' ? '' : hide(r.fix || ''),
+    message: r.state === 'protected' ? hide(r.message || '') : '',
+    notes: (r.notes || []).map(hide),
+    checked: r.checked !== false,
+  }));
+  const exitCode = exitCodeOf(results) || ((opts.rulesErrors || []).length ? 1 : 0);
+  return {
+    schema: 1,
+    zn_gate_version: opts.version || null,
+    node_version: opts.nodeVersion || process.versions.node,
+    exit_code: exitCode,
+    protected: exitCode === 0,
+    agents,
+    warnings: (warnings || []).map(hide),
+    project_rules_errors: (opts.rulesErrors || []).map(hide),
+    test_folder_removed: !!removed,
+  };
+}
+
+module.exports = { check, report, toJson, exitCodeOf, FAKE_LINE, AGENTS, _internal: { cliHooks, pluginManifest, zcodeRelevant, spawnHook, runLive, gitBash, PLUGIN_NODE_MIN, pluginNodeOk, pluginNodeMessage, pluginNodeStatus, pluginNodeProblem, resolveHookNode, hookEntries, matcherCovers, parseCommand, decisionOf, claudePlugin, claudePluginRootProblem, claudePreToolProblem, claudePreHook, claudePluginRun, cursorZnPlugin, CLAUDE_PRE_COMMAND, CLAUDE_CHECK_COMMAND, ZCODE_PRE_WORDS, pluginVersionNote } };
