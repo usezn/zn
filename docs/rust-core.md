@@ -52,6 +52,8 @@ Calls keep no content in the audit database, the event stream or the vector memo
 
 If an audit record cannot be written, the gateway logs the error (never the payload) and increments the `zn_audit_write_failures_total` counter, and the call goes on. To fail closed instead, set `audit.require_write = true` (or `ZN_AUDIT_REQUIRE_WRITE=1`): a call whose audit record cannot be written is denied with a JSON-RPC error.
 
+The on/off environment settings `ZN_AUDIT_STORE_PAYLOADS`, `ZN_AUDIT_REQUIRE_WRITE`, `ZN_NEURAL_BLOCKING` and `ZN_GUARDRAILS_ALERT_ONLY` accept `1`, `0`, `true`, `false`, `yes`, `no`, `on` and `off`, in any capitalisation. An unset or empty variable keeps the default. Any other value (for example a typo such as `0n`) stops the gateway at start-up with a message that names the variable, so a mistyped value can never leave a security setting off.
+
 If ZN_NAMESPACE (security.namespace) equals a tenant's namespace, that tenant also sees the local stdio calls of this process.
 
 ## AWS KMS data key

@@ -13,7 +13,7 @@ from pathlib import Path
 from zn_gate.cli import build_parser, known_commands
 
 _DOCS = Path(__file__).resolve().parents[3] / "docs" / "cli.md"
-_EXPECTED_ORDER = ["test", "analyze", "scan", "evidence", "status", "stats"]
+_EXPECTED_ORDER = ["test", "analyze", "scan", "evidence", "status", "stats", "check"]
 
 
 def _subparsers_action(parser):
