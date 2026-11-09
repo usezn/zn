@@ -117,6 +117,12 @@ jobs:
       - name: Markdown lint - markdownlint
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: .github/markdownlint/node_modules/.bin/markdownlint-cli2
+      - name: Markdown lint - test the docs examples command check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-examples-commands.test.mjs
+      - name: Markdown lint - docs examples only run commands documented in cli.md
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-examples-commands.mjs
       - name: Markdown lint - test the docs title check
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/check-docs-titles.test.mjs
