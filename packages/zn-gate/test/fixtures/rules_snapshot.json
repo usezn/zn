@@ -248,7 +248,7 @@
         "lib/broker/markers.js": "bf01a06b547629804c504e37a2c6126330ab729bed51ec460bfca4036c1a0b3b",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
         "lib/shell-quote.js": "91cf4832cf68d4a367854f0c6e982c349afad2934e634f743d33aaf7c71c7471",
-        "lib/destructive.js": "3939ce01cf27bfe0b438318b2d6dc0d6844de56117a9ef9ec582dc94d11a1dd9"
+        "lib/destructive.js": "1d80e86c1992fc796f0f609d6e3efab42f2a997e36994cbc38d42ba6dc500742"
       }
     }
   }
