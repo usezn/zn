@@ -58,7 +58,7 @@ Things to know:
 
 - A policy is valid for 7 days. With no network it keeps applying, and audit records wait in `~/.zn/audit.jsonl` until they can be uploaded.
 - After that, strict mode applies: the restrictions stay, and anything the organization had opened is withdrawn until a fresh policy arrives. `zn team status` says so.
-- When an admin removes a machine, uploads stop and `zn team status` shows "removed from org".
+- When an admin removes a machine, uploads stop and `zn team status` shows "REMOVED FROM ORG".
 - While the vault is locked nothing is downloaded or uploaded, but the last accepted policy still applies.
 
 ## Run the hooks on every machine
@@ -77,7 +77,7 @@ zn team managed-config --agent claude-code --os macos
 zn vault log export --otlp --since 7d --out zn-audit.otlp.jsonl
 ```
 
-This writes the local audit log as OpenTelemetry logs. It needs no account.
+This writes the local vault audit log as OpenTelemetry logs. It needs no account.
 
 ## More
 
