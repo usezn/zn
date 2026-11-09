@@ -130,7 +130,7 @@ Removes zn-gate from this computer in one step. It finds what is set up, prints 
 - zn's hooks of every agent, for your user and for the current project, and zn's own `secrets` MCP server (the same as `hooks uninstall`);
 - MCP servers wrapped by `init --wrap-mcp`: the saved copy of each config is put back (changes made to that file since are lost). Afterwards it looks again and lists any server that is still wrapped (for example a config wrapped twice) with what to do by hand.
 
-The vault is not touched unless you answer yes to a second, separate question (default no); deleting it cannot be undone. `.env` files that hold zn markers are left alone, because the values are in the vault: run `zn env unshadow` first if you want them back in the file. It ends by running `check` and showing its result, and tells you how to remove the program itself (`npm uninstall -g zn-gate`).
+The vault is not touched unless you answer yes to a second, separate question (default no); deleting it cannot be undone. `.env` files that hold zn markers are left alone, because the values are in the vault: run `zn env unshadow` first if you want them back in the file. It ends by running `check` and showing its result, and tells you how to remove the program itself (`npm uninstall -g zn-gate`), which is the last step: wrapped MCP servers are put back first, then the hooks and the plugin go, so no agent is left pointing at a missing command.
 
 - `--dry-run`: print the plan and change nothing.
 
@@ -153,6 +153,12 @@ zn-gate check --hooks
 ```
 
 Lists every installed zn hook (agent, settings file, event and the command it runs) and says whether each is OK, stale (written by an older zn-gate) or broken, with the command that fixes it. It only reads files: nothing is run, changed or sent. Exit code `0` when every hook is OK, `1` when any is stale or broken. [What the output means](check.md#list-every-installed-hook).
+
+```bash
+zn-gate check --json
+```
+
+Prints the same check as one JSON object, for scripts, CI and support requests. Same exit codes; your home folder is shown as `~`. [Fields](check.md#machine-readable-output).
 
 ### `status`
 
@@ -523,7 +529,7 @@ zn-gate hooks install <agent> [--project] [--no-mcp]
 zn-gate hooks uninstall <agent> [--project] [--no-mcp]
 ```
 
-Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, use [`uninstall`](#uninstall)). `<agent>` is `claude-code`, `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `gemini` or `copilot` (`claude` is accepted for `claude-code`, `gemini-cli` for `gemini`). `--project` changes the settings of the current project instead of your user settings. `--no-mcp` leaves the `secrets` MCP server out. It needs an interactive terminal. An agent that is not in that list or a misspelled name is refused first, with the supported names, and exit code 64.
+Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, use [`uninstall`](#uninstall)). Remove the hooks before you remove the program with `npm uninstall -g zn-gate`. `<agent>` is `claude-code`, `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `gemini` or `copilot` (`claude` is accepted for `claude-code`, `gemini-cli` for `gemini`). `--project` changes the settings of the current project instead of your user settings. `--no-mcp` leaves the `secrets` MCP server out. It needs an interactive terminal. An agent that is not in that list or a misspelled name is refused first, with the supported names, and exit code 64.
 
 #### `hooks install`
 
@@ -740,7 +746,7 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 | Command | Options | What it does |
 |---|---|---|
 | `test "<text>"` | `--json` | Checks one piece of text against the rules. It does **not** run the self-test that `test` runs in the npm package. Exit `0` if nothing was flagged, `1` if the text was blocked or contains a secret. |
-| `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked. Without a text it prints the usage and exits `2` (the npm package exits `1`). |
+| `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked. Without a text (or with an empty one) it prints the usage and exits `2` (the npm package exits `1`). |
 | `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude`, `--include-home` | Like `scan` in the npm package, without the `--all` and `--code` options. Exit `0` nothing found, `1` something was found or the path does not exist, `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. There is no `--package` in the Python version yet. |
 | `evidence` | `--verify`, `--export`, `--format jsonl\|csv`, `--output file` | Counts, chain check and export, like the npm command. There is no `--ui`, no `--tail` and no `logs` or `export` alias. |
 | `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`. |
