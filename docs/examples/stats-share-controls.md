@@ -31,7 +31,7 @@ Where: <address of zn's telemetry service>
 Sharing is off, so nothing is sent. There are no complete days of counts yet to show an example.
 ```
 
-On your screen the `Where:` line shows the full address of zn's telemetry service (left out above): it is the only place a report is sent, and only after you turn sharing on. What the service keeps is in [API data handling](../api-data-handling.md).
+On your screen the `Where:` line shows the full address of zn's telemetry service (left out above): it is the only place a report is sent, and only after you turn sharing on. The commands are described in [`stats share`](../cli.md#stats-share).
 
 The last line depends on your counts. Once you have at least one complete day of counts, `show` prints a sample report built from them, with the id replaced by a placeholder, so you can read the real fields before you decide. With sharing on, `show` prints the reports that would be sent now, or says nothing is waiting (only complete days are sent). `show` sends nothing and changes nothing.
 
