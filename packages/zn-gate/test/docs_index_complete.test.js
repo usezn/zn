@@ -1,10 +1,10 @@
 'use strict';
-// Every Markdown page under docs/ must be reachable from docs/README.md: linked from it directly, or
+// Every Markdown page under docs/ must be reachable from the docs index: linked from it directly, or
 // linked from an index page (a README.md inside docs/, such as docs/editors/README.md and
-// docs/examples/README.md) that docs/README.md links. Only index pages pass the walk on: a page
+// docs/examples/README.md) that the docs index links. Only index pages pass the walk on: a page
 // that is linked only from a normal page is not counted, so a reader of the docs index can find
 // every page in at most two clicks. Files outside the docs folder (such as the README.md of the
-// repository root, which docs/README.md links) are never followed.
+// repository root, which the docs index links) are never followed.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -54,7 +54,7 @@ function linkedPages(file) {
   return targets;
 }
 
-// Returns the pages of docsDir (relative, with / separators) that docs/README.md does not reach.
+// Returns the pages of docsDir (relative, with / separators) that the docs index does not reach.
 function unreachable(docsDir) {
   const root = path.resolve(docsDir);
   const insideDocs = (f) => {
@@ -82,10 +82,10 @@ function unreachable(docsDir) {
     .map((f) => path.relative(root, f).split(path.sep).join('/'));
 }
 
-test('every page under docs/ is linked from docs/README.md or from an index page it links', () => {
+test('every page under docs/ is linked from the docs index or from an index page it links', () => {
   const missing = unreachable(path.join(repo, 'docs')).filter((p) => !ALLOW_UNLINKED.has(p));
   assert.deepStrictEqual(missing, [], 'not linked from the docs index: ' + missing.join(', ')
-    + '. Add a link in docs/README.md (or in the README.md of its folder), or list it in ALLOW_UNLINKED with a reason.');
+    + '. Add a link in the docs index (or in the README.md of its folder), or list it in ALLOW_UNLINKED with a reason.');
 });
 
 test('every entry of the allow-list is a page that exists and is still unlinked', () => {
@@ -119,13 +119,13 @@ test('the check finds a page that no index links, follows an index page, and ign
 test('a README.md outside the docs folder does not count as an index page', () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-index-'));
   try {
-    const dir = path.join(base, 'docs');
+    const dir = path.join(base, 'site');
     fs.mkdirSync(dir);
-    // docs/README.md links the README.md of the folder above it, and that one links docs/e.md.
+    // the docs index links the README.md of the folder above it, and that one links site/e.md.
     fs.writeFileSync(path.join(dir, 'README.md'), '# Docs\n\n- [A](a.md)\n- [Repository](../README.md)\n');
     fs.writeFileSync(path.join(dir, 'a.md'), '# A\n');
     fs.writeFileSync(path.join(dir, 'e.md'), '# E\n');
-    fs.writeFileSync(path.join(base, 'README.md'), '# Repository\n\n[E](docs/e.md)\n');
+    fs.writeFileSync(path.join(base, 'README.md'), '# Repository\n\n[E](site/e.md)\n');
     assert.deepStrictEqual(unreachable(dir), ['e.md']);
   } finally {
     fs.rmSync(base, { recursive: true, force: true });
