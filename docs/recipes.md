@@ -108,6 +108,6 @@ Full page: [Remove zn-gate](uninstall.md).
 1. Run `zn-gate pins` to list the MCP servers that `shield` has pinned and any tools that changed.
 2. Read the changed or new tools of each server before you accept them.
 3. In your own terminal, approve one server by name, for example `SERVER='docs-server'` and then `zn-gate pins approve "$SERVER"`. Use `zn-gate pins approve --all` to accept every server.
-4. Type the server key again when it asks. The command refuses to run under an AI agent or without a terminal, and exits `2` if the approval is not confirmed.
+4. Type the server key again when it asks (type `all` for `--all`). The command refuses to run under an AI agent or without a terminal, and exits `2` if the approval is not confirmed.
 
 Full page: [Protect MCP servers](shield.md#tool-pinning), and [`pins`](cli.md#pins) in the reference.
