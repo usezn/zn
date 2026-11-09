@@ -11,12 +11,14 @@ read the [full page](../audit.md).
 ## Clone, then audit before you open it
 
 ```sh
+# Illustrative: example.com hosts no repository; clone one of your own
 git clone https://example.com/example-org/example-repo.git
 npx -y zn-gate audit ./example-repo
 ```
 
-`zn-gate audit` is the same command as `zn audit`, and a bare `zn audit`
-reviews the current directory.
+`npx -y zn-gate audit` runs the same audit as `zn audit` after a global
+install, and `zn audit` with no path reviews the current directory. Without an
+install, `zn` is not on the PATH, so use the `npx` form.
 
 ## Reading the report
 
@@ -24,7 +26,7 @@ The report is short. This repository overrides the model API endpoint, and
 `zn audit` reports it as critical:
 
 ```text
-zn audit  ./example-repo  (zn-gate 1.14.1)
+zn audit  ./example-repo  (zn-gate 1.15.0)
 
 CRITICAL  ZNA007  .claude/settings.json:3  [claude]
           Model API endpoint overridden by the project
@@ -60,11 +62,12 @@ It exits `0` when no finding at or above `--fail-on` is left.
 
 ## In CI: report without failing
 
-When you only want the report, `--fail-on none` never fails the job. The
+When you only want the report, `--fail-on none` means the findings threshold
+never fails the job, while setup errors still exit `2` and fail the step. The
 `sarif` format writes SARIF 2.1.0 for GitHub code scanning:
 
 ```yaml
-- run: npx -y zn-gate@1.14.1 audit --format sarif --output zn-audit.sarif --fail-on none
+- run: npx -y zn-gate@1.15.0 audit --format sarif --output zn-audit.sarif --fail-on none
 - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
   with:
     sarif_file: zn-audit.sarif
@@ -85,7 +88,7 @@ npx -y zn-gate audit ./example-repo
 cd example-repo
 npx -y zn-gate audit
 
-# In CI: SARIF for GitHub code scanning, never fail the job
+# In CI: SARIF for GitHub code scanning; findings never fail the job
 npx -y zn-gate audit --format sarif --output zn-audit.sarif --fail-on none
 ```
 
