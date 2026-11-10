@@ -28,7 +28,7 @@ from typing import Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tuple
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-07.1"
+COMMAND_RULES_VERSION = "2026-11-10.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -603,8 +603,10 @@ def _check_simple(words: List[str], depth: int) -> Optional[str]:
             w == "-exec" and re.match(r"^(?:rm|shred)\Z", _program_name(rest[j + 1] if j + 1 < len(rest) else ""))
             for j, w in enumerate(rest)
         )
+        # From the filesystem root even a filtered delete is refused: a test does not make that safe.
         filtered = any(_FIND_TESTS.match(w) for w in rest)
-        if delete and not filtered and any(_dangerous_path(w) for w in paths):
+        from_root = any(_dangerous_path(w) == "root" for w in paths)
+        if delete and (not filtered or from_root) and any(_dangerous_path(w) for w in paths):
             return "rm_root_home"
     if head in ("chmod", "chown", "chgrp"):
         if any(re.match(r"^-[A-Za-z]*R[A-Za-z]*\Z", w) or w == "--recursive" for w in rest):

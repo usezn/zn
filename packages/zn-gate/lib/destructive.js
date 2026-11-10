@@ -25,7 +25,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-07.1';
+const COMMAND_RULES_VERSION = '2026-11-10.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -351,8 +351,10 @@ function checkSimple(words, depth) {
     for (const w of rest) { if (w.startsWith('-') || w === '(' || w === '!') break; paths.push(w); }
     const del = rest.includes('-delete') || rest.some((w, i) => w === '-exec' && /^(?:rm|shred)$/.test(programName(rest[i + 1] || '')));
     // With a test (-name, -type, -mtime ...) find removes only some files; with none it removes everything below the path.
+    // From the filesystem root even a filtered delete is refused: a test does not make that safe.
     const filtered = rest.some((w) => FIND_TESTS.test(w));
-    if ((del && !filtered && paths.some((w) => dangerousPath(w))) && on('rm_root_home')) return 'rm_root_home';
+    const fromRoot = paths.some((w) => dangerousPath(w) === 'root');
+    if ((del && (!filtered || fromRoot) && paths.some((w) => dangerousPath(w))) && on('rm_root_home')) return 'rm_root_home';
   }
   if (head === 'chmod' || head === 'chown' || head === 'chgrp') {
     if (rest.some((w) => /^-[A-Za-z]*R[A-Za-z]*$/.test(w) || w === '--recursive')) {
