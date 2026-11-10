@@ -94,6 +94,34 @@ zn: this command is too long for zn to check (over 100 KB), so it was blocked. N
 
 More in [the troubleshooting guide](troubleshooting.md#a-command-patch-or-output-was-too-big-or-too-complicated-to-check).
 
+## Where to look when `zn why` shows nothing
+
+`zn why` reads one file, the local evidence log, and explains the last block in it. When it has nothing to explain, it prints one line on the error output and exits with `1`. The text below is what the command prints (the lines start with `zn why: `). Where this section says `zn`, use `npx -y zn-gate` if zn is not on your `PATH`; the command then prints that form too.
+
+| What you see | What it means | What to do |
+|---|---|---|
+| `there is no evidence log yet, so no block has been recorded on this computer.` (exit `1`) | The log file is not in the folder zn reads (see below). Either no block has happened yet, or the hook wrote to another folder. | Check the folder below. Run `zn-gate check` to see whether the hooks of your agent are set up. |
+| `the evidence log is empty, so there is nothing to explain.` (exit `1`) | The file exists but has no lines. | Nothing to do unless you expected a block. Check the folder below. |
+| `no block is recorded in the evidence log, so there is nothing to explain.` (exit `1`) | The log has records, but none is a block. | This is the normal state when nothing was blocked. The log writes a record for a denied call and for a tool result from which secrets were removed. An allowed call is not written by the hook (`lib/hooks/runner.js:1908`). |
+| the same message, with `N line(s) of the log could not be read, and it may be among them` added | Some lines of the file are not valid records, so the block may be one of them. | Run `zn-gate evidence --verify`, which checks the SHA-256 chain. |
+| `no record with the id "<id>" in the evidence log.` (exit `1`) | The id is not in this log: a typo, or a record from another folder. | Copy the `id` from `zn-gate evidence --export` in the same folder. |
+| `the evidence log cannot be read (<code>). Nothing was changed.` (exit `1`) | The file or the folder cannot be read, for example because it is a folder, or its permissions do not allow it (`<code>` is the system code, such as `EISDIR` or `EACCES`). | Check that the path below is a file you own and can read. |
+| `zn why: unknown option "<option>". usage: ...` (exit `2`) | The command was used wrongly. `zn why` takes only an optional id. | Run `zn why` or `zn why <id>`. |
+
+Two cases are not errors. They exit with `0` and print a block that zn cannot fully explain:
+
+- `Rule: not recorded. This record has no rule id, so zn cannot say which rule fired.` The record has no rule id, so zn does not guess. It says `The log does not hold enough to explain this record.` and points to `zn-gate evidence --export`, which shows everything the record stores (`lib/why.js:91-94`).
+- `Rule: <id> (zn has no plain-words explanation for this id)`. The id is not one this version knows. It may come from a newer or older zn-gate, or from a custom setup. Update zn-gate and run `zn why` again (`lib/why.js:97-101`).
+
+### Where the log lives
+
+- The file is `evidence.jsonl`, in the folder named by `ZN_HOME` when that variable is set, and in `.zn` in your home folder otherwise (`lib/evidence.js:9-11`, `lib/stats.js:24-27`).
+- `zn why` reads the folder of the environment it runs in (`lib/why.js:156`). If you set `ZN_HOME` for your agent, set it the same way in the terminal where you run `zn why`. Otherwise the command reads a different, empty folder and prints the first message in the table.
+- If the log is damaged, zn moves it aside to `evidence.damaged.jsonl` and starts a new one, which is the step that `zn-gate evidence --verify` leads to (`lib/evidence.js:267-270`). Do not move the file yourself before you have read what `--verify` says.
+- `zn why` is in the npm package only. The Python package does not have it (see the stats section of [the CLI reference](../cli.md)).
+
+To see what the log holds, run `zn-gate evidence` (the counts and the last 20 records) or `zn-gate evidence --export` (every record). These commands only read the log.
+
 ## Still stuck?
 
 - The [troubleshooting guide](troubleshooting.md) lists the messages people meet first, and the [block and warn reasons](troubleshooting.md#block-and-warn-reasons-by-family) explain the rest.
