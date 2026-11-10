@@ -1,5 +1,15 @@
 # Why was this blocked?
 
+## Quick answers
+
+| Exit code | What it means |
+|---|---|
+| `0` | `zn why` explained the last block. For `hook`, the action was allowed. |
+| `1` | `zn why` has nothing to explain: no evidence log yet, no block recorded, or no record with that id. For `hook`, the agent name is unknown. |
+| `2` | A hook blocked the action, or `zn why` got an option it does not know. |
+
+The full list of codes is in [exit codes](exit-codes.md).
+
 zn-gate stops some actions before they run. When it does, it prints a message, either to your AI agent or to your terminal. This page covers five of those messages. For each one it shows the message as zn-gate prints it, what caused it, and how to go on safely.
 
 Each block is safe to meet. In the first three cases and the last one, the command did not run or the file was not read, so nothing reached the AI model or changed on your computer. In case 4, the request is held until you decide. If you approve it, the data does leave your computer.
