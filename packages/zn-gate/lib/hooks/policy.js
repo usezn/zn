@@ -2625,7 +2625,7 @@ function hasNetworkSignals(cmd) {
 }
 
 // The program is zn, zn-gate (also with a version: npx -y zn-gate@1.6.0, pnpm dlx zn-gate@latest) or the bin file.
-const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|uninstall|vault\s+(?:reset|purge)|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve)\b/i;
+const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|uninstall|vault\s+(?:reset|purge)|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve|audit\b[^\n;&|]{0,512}?[ \t]--approve)\b/i;
 
 // `npm exec` (and `npm x`) keeps the options after the package for itself unless a `--` comes first, so
 // `npm exec zn-gate init --dry-run` runs the guided init: the options do not count there. Checked per simple
@@ -2643,10 +2643,50 @@ function npmExecInit(text) {
   return false;
 }
 
+/**
+ * The command as the shell reads its words: $'...' decoded, quotes and backslashes taken out, a backslash-newline joined (so
+ * `zn audit --appr''ove`, `zn "audit" --approve` and `zn a\udit --approve` read as the command they run). Only for recognising
+ * zn's own commands; an unbalanced quote leaves the rest as it was.
+ */
+function dequoteShell(text) {
+  const src = /\$['"]/.test(text) ? decodeAnsiC(text) : text;
+  let out = '';
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === '\\') {
+      const nx = src[i + 1];
+      if (nx === undefined) break;
+      if (nx === '\n') { i++; continue; }
+      if (nx === '\r' && src[i + 2] === '\n') { i += 2; continue; }
+      out += nx;
+      i++;
+    } else if (c === "'") {
+      const j = src.indexOf("'", i + 1);
+      if (j < 0) { out += src.slice(i + 1); break; }
+      out += src.slice(i + 1, j);
+      i = j;
+    } else if (c === '"') {
+      let j = i + 1;
+      for (; j < src.length && src[j] !== '"'; j++) {
+        if (src[j] === '\\' && '"\\$`'.includes(src[j + 1])) j++;
+        out += src[j];
+      }
+      i = j;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+// `xargs zn audit` hands zn the --approve it reads from its input, which no text of the command shows.
+const XARGS_AUDIT_RE = /(?:^|[\s;&|(`$'"\\/])xargs\b[^\n;&|]*[\s\/\\'"](?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js)(?:\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?audit\b/i;
 function adminCommand(cmd) {
   const text = String(cmd || '');
-  const m = ZN_ADMIN_RE.exec(text);
-  if (m) return m[4].replace(/\s+/g, ' ');
+  for (const t of text.length <= 100 * 1024 ? [text, dequoteShell(text)] : [text]) {
+    const m = ZN_ADMIN_RE.exec(t);
+    if (m) return /^audit\b/i.test(m[4]) ? 'audit --approve' : m[4].replace(/\s+/g, ' ');
+    if (XARGS_AUDIT_RE.test(t)) return 'audit --approve';
+  }
   return npmExecInit(text) ? 'init' : null;
 }
 
@@ -4380,6 +4420,10 @@ function adminDenial(admin, opts = {}, cmd = '') {
     arg = /^[\w.-]{1,128}$/.test(base) && !/^\.+$/.test(base) ? base : '.env';
   }
   const full = arg ? admin + ' ' + arg : admin;
+  if (/^audit/i.test(admin)) {
+    return 'zn blocked this: `zn audit --approve` records the current MCP servers, hooks, permissions and install scripts of this project as the ones you accept, ' +
+      'so approving them is the user\'s decision and an agent may not run it. ' + run('audit --approve');
+  }
   if (/pins/i.test(admin)) {
     return 'zn blocked this: approving changed MCP tools is the user\'s decision, so an agent may not run `zn-gate pins approve`. ' + run('pins approve');
   }

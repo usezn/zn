@@ -624,8 +624,12 @@ zn-gate stats share on|off|status|show
 
 What zn-gate did on this machine: local counts for the last `--days` days (1 to 90, default 30). Exit codes: `0` done, `2` wrong usage.
 
+`stats` also prints a `Top rules` block: the five detector ids that matched most often, each with its count. It covers the last 7 days, or the last `--days` days when you pass `--days`. Only detector ids, the generic label `Built-in detector` and counts are shown, never values, paths or command text, and nothing new is stored. A line below the block names the most frequent id. The npm package adds `zn why`, which explains your last block. The Python package points to the [troubleshooting page](https://usezn.com/docs/zn-gate/troubleshooting/) instead, because `why` is only in the npm package. The block is left out when nothing matched in the window.
+
 With `--json`, the output is one JSON object with the same counts and these extra fields:
 
+- `top_rules`: the same five rules as a list of `{ "id", "name", "count" }`, highest count first, ties by id. It is `[]` when nothing matched. `name` is always the generic label `Built-in detector` for now; rule-specific names are not shown yet.
+- `top_rules_days`: the window of `top_rules` in days (`7` unless you passed `--days`).
 - `sharing`: `true` when sharing of pseudonymous daily counts is on.
 - `sent_days`: the days whose counts were really uploaded during this run. It is `[]` when sharing is off or nothing was pending.
 - `send_failed`: the number of days whose upload failed during this run. They are tried again the next time you run `stats`.
