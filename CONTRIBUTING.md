@@ -198,3 +198,13 @@ If you find a security vulnerability, please do NOT open a public issue, a pull 
 ## Changelog
 
 Describe a change users will notice in a fragment file in `changelog.d/` instead of editing `CHANGELOG.md`; see [changelog.d/README.md](changelog.d/README.md).
+
+### Naming a changelog fragment
+
+A fragment is a Markdown file placed directly in `changelog.d/`, with a name that ends in lowercase `.md`. The check rejects a file in a subfolder or with another extension. The file named `README.md` in that folder is the guide itself, not a fragment, so it is ignored.
+
+Name the fragment after your branch, for example `changelog.d/fix-init-guard.md`. The check does not read the name, but two open pull requests that use the same file name conflict in git, so pick one that no other pull request uses.
+
+Inside the file, use only `### <Section>` headings and `- ` bullets. The sections are Added, Changed, Deprecated, Removed, Fixed and Security. A bullet can continue on lines that start with two spaces. Any other text fails the check.
+
+A pull request needs a fragment when it changes a shipped file: the code under `packages/*/bin`, `packages/*/lib` or `packages/*/src`, the package manifests, `src/`, the plugin, the skill, `action.yml` or the Cargo files. Changes only to `docs/`, to `CONTRIBUTING.md` or to tests need none. If no user will notice a change, add the `no-changelog` label instead.
