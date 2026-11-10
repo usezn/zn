@@ -68,7 +68,7 @@ zn-gate 1.14.1 is the first 1.14 release on npm. 1.14.0 was published on PyPI bu
 - A program found on the `PATH` whose real file is in the `node_modules` folder of your home folder is not started either, also when zn-gate runs in the home folder. The Claude Code installer and uninstaller no longer run a `claude` that links into the project, and real paths are compared in their canonical spelling (letter case on macOS).
 - Claude Code: the user-scope `secrets` server is no longer taken as zn's when its entry sets `NODE_OPTIONS` or `NODE_PATH`, or a folder inside the project to run in. The MCP server names of the zn-gate plugin are no longer trusted either: the plugin registers no MCP server since 1.14.0, and an older plugin started its servers with `node` from the `PATH`.
 
-## [1.14.0] - 2026-10-26
+## [1.14.0] - 2026-10-27
 
 **Breaking:** `zn run` and the agent hooks no longer accept a secret marker in a command's arguments, because arguments are visible to other processes and to command-line logs. Before: `psql "postgres://user:__ZN_DB_PASSWORD__@db/app"`. After: `zn secret set PGPASSWORD --command psql`, then `zn run --secrets PGPASSWORD -- psql "postgres://user@db/app"`, where psql reads the variable itself. A marker in an environment file that your shell loads (a shadowed `.env`) is still filled in, and a secret kept for a program or a file (`env` or `file` mode) is no longer sent by `secrets_http_request`: change its mode with `zn secret allow NAME --mode proxy` if an API needs it.
 
