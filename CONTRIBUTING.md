@@ -130,6 +130,41 @@ If your pull request changes a page under `docs/`, a README or `changelog.d/READ
 - The first pull request from a fork waits for a maintainer to approve the workflow runs. The repository requires this approval for every outside contributor, so the checks show as waiting until a maintainer selects "Approve and run". Nothing is wrong with your change.
 - A draft pull request does not run the required checks, except Public facts. They stay pending until you mark the pull request as ready for review; then they start.
 
+## Branch and pull request names
+
+### Branch names
+
+Use `<type>/<topic>`, where the topic is a short English description in lowercase words joined by hyphens:
+
+- `fix/init-guard-after-node-removal`
+- `docs/shield-exit-codes`
+- `ci/changelog-empty-fragment`
+- `test/windows-hook-paths`
+
+Pick the type from what users get:
+
+- `feat` for a new capability, `fix` for a behavior that was wrong, `perf` for speed, `docs` for documentation only, `test` for tests only, `ci` for workflows and checks, and `chore` for maintenance.
+
+Do not put a person's name, a nickname, a company or customer name, an internal project name, or a ticket number in a branch name. Describe the change instead. Branches with the `release/` prefix and the `chore/backmerge-` and `chore/pin-plugin-` prefixes are used by maintainers for release work, so do not use them for other changes.
+
+The branch name also names your changelog fragment: a change users will notice needs `changelog.d/<branch-name>.md` (see [changelog.d/README.md](changelog.d/README.md)).
+
+### Pull request titles
+
+Write the title in English, in the imperative mood, as a short statement of what changes for the user:
+
+- `Accept the .cmd shim form in hook test expectations`
+- `Add a common mistakes list to the uninstall page`
+- `Warn when a changelog fragment is empty`
+
+Say what the user gets or sees, not how you got there. Avoid titles such as "Refactor the parser", "Fix stuff" or "WIP". Keep the title short enough to read in a list, about 72 characters.
+
+A `type:` prefix such as `docs:`, `ci:`, `test:` or `fix:` is optional. Both forms appear in the history, so either is accepted.
+
+Do not put ticket numbers, names of people or names of internal tools in the title. Put the details in the description: what the change does, why, and the issue it closes, if any.
+
+If the change fixes a security vulnerability, do not describe the exploit in the branch name, the title or the description. Report it privately first, as explained in [Security Vulnerability Reporting](#security-vulnerability-reporting).
+
 ## Adding New Rules
 
 When adding new detection rules:
