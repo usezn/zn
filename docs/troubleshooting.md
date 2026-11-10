@@ -22,6 +22,7 @@ Find the command you ran, then the symptom that matches.
 - `scan` and `audit`
   - ["Exposed credential detected by DLP filter"](#exposed-credential-detected-by-dlp-filter)
   - ["Unknown command" / "unknown argument" / "Target path does not exist"](#unknown-command--unknown-argument--target-path-does-not-exist----format-for-scan-must-be-text-json-or-github--please-provide-text-to-analyze)
+  - [`scan` takes a long time on a large repository](#19-scan-takes-a-long-time-on-a-large-repository)
 - `secret`, `unlock`, `lock` and `vault`
   - ["Your secret vault is locked"](#5-your-secret-vault-is-locked)
   - [Your agent was blocked: ".env holds plain-text secrets"](#6-your-agent-was-blocked-env-holds-plain-text-secrets)
@@ -414,6 +415,20 @@ zn: its hook cannot start because zn-gate is not installed any more (the Node.js
 0. If Node.js itself is gone (`node --version` fails), install it again from [nodejs.org](https://nodejs.org) first. Both commands below need it.
 1. To keep zn: `npm install -g zn-gate`, then `zn hooks install <agent>`.
 2. To remove zn: `npx -y zn-gate hooks uninstall <agent>`. It needs Node.js but no installed zn-gate. See [Remove zn-gate](uninstall.md).
+
+## 19. `scan` takes a long time on a large repository
+
+A scan of a big folder or a whole repository runs for a long time, and you want it to finish sooner.
+
+**What it means:** `scan` walks the folder and reads each file in its scope, so a folder with many files takes longer than a small one. zn does not print an estimate of the time. The steps below read fewer files. A folder you leave out is not scanned at all, so check that the scope is still what you want to check.
+
+**What to do:**
+
+1. Scan the folder you care about. `scan` starts at the current folder unless you give a path, so `zn-gate scan docs` scans only `docs`.
+2. Leave out folders you do not need with `--exclude`, followed by folder names: `zn-gate scan . --exclude fixtures,legacy`. Each name is matched against a folder's own name, wherever it is in the tree. An excluded folder is skipped everywhere and is not listed in the report.
+3. Do not add `--code` (or `--all`) unless you need source code. Those options also read source files. Without them, `scan` reads only prompt, document and config files (see [17](#17-scan-reads-no-source-code)).
+4. You do not need to exclude these folders, because `scan` skips them by itself: `.git`, `node_modules`, `.next`, `.turbo`, `.idea`, `.venv`, `venv`, `__pycache__`, `.eggs`, `dist` and `build`. It skips `target` and `vendor` only when a build or package file sits next to them (for example `Cargo.toml`, `pom.xml`, `go.mod` or `Gemfile`). Other folders, such as `out` or `coverage`, are read. If one of them holds generated files, exclude it by name.
+5. A file of 2 MiB or larger is never opened. It is listed under "Not scanned" and the exit code is `3` (see [15](#15-scan-lists-files-under-not-scanned)).
 
 ## Block and warn reasons, by family
 
