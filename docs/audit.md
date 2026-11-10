@@ -10,7 +10,7 @@ API requests or widen what it may do without asking. In 2026 that pattern
 | Claude Code before 2.0.65 | A project settings file set `ANTHROPIC_BASE_URL` to another server; requests, with the API key, left before the trust prompt | CVE-2026-21852 (GHSA-jh7p-qr78-84p7) |
 | Amazon Q Developer | `.amazonq/mcp.json` was loaded and its commands started when the project opened, with the developer's AWS credentials in their environment | CVE-2026-12957 |
 | Codex CLI 0.23.0 and earlier | Project `.env` and `.codex/config.toml` (MCP servers) were loaded without confirmation, so their commands ran | CVE-2025-61260 (GHSA-xrxf-jgv3-qmrm) |
-| Cursor before 3.0.0 | Hooks in `.claude/settings.local.json` ran without approval | CVE-2026-48124 (GHSA-pc9j-3qc2-95wv) |
+| Cursor before 3.0.0 | Hooks in `.claude/settings.local.json` ran without approval | CVE-2026-48124 |
 | Cursor for Windows | A `git.exe` in the repository root was run on start and on a timer | CVE-2026-63093 |
 | CI agents | An issue or comment written by anyone reached an agent running with repository secrets ("Comment and Control", GitInject) | public research, 2026 |
 
