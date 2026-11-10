@@ -42,6 +42,15 @@ The project has a single maintainer today (see [MAINTAINERS.md](MAINTAINERS.md))
 
 We keep you updated at least every 14 days until the issue is resolved, and tell you if a target will be missed and why.
 
+### A vulnerability in a dependency
+
+zn uses third-party packages from npm, PyPI and crates.io (for example the lock files `packages/zn-gate/package-lock.json` and `Cargo.lock` list them). If the problem is in one of them:
+
+* **Report it to that package's maintainers first**, through the security policy of their project.
+* **Then tell us**, through one of the channels above, if zn uses the affected code in a way that could expose zn users. Include the package name, the version zn uses, and where in zn it is used.
+
+We check whether zn is affected and, if it is, ship an update or a workaround. The targets in the table above apply to these reports.
+
 ### Out of scope
 
 These reports are not accepted as vulnerabilities:
