@@ -1,6 +1,6 @@
 # Troubleshooting
 
-The seventeen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
+The eighteen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
@@ -59,6 +59,7 @@ Find the command you ran, then the symptom that matches.
 - [Init cannot install zn-gate: no internet connection](#12-init-cannot-install-zn-gate-no-internet-connection)
 - [Init stops the npm install after 3 minutes](#13-init-stops-the-npm-install-after-3-minutes)
 - [`'zn' is not recognized as an internal or external command`](#14-zn-is-not-recognized-as-an-internal-or-external-command)
+- [Your agent says "zn-gate is not installed any more"](#18-your-agent-says-zn-gate-is-not-installed-any-more)
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
 - [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
 
@@ -398,9 +399,25 @@ Scope   : Prompt templates, docs, configs (use --code to scan source)
 2. For another extension, name it with `--include`, for example `zn-gate scan . --include .rst,.xml`.
 3. Name a single file to scan it whatever its extension: `zn-gate scan path/to/file.js`.
 
+## 18. Your agent says "zn-gate is not installed any more"
+
+You may see this in your agent after you removed the program with `npm uninstall -g zn-gate` (or an update of Node.js left it behind) while zn's hooks were still set up:
+
+```text
+zn: its hook cannot start because zn-gate is not installed any more (the Node.js or the files it was installed with are gone), but its hooks for codex still point at it, so this was blocked. Ask the user to install Node.js again from nodejs.org if it is gone (without it neither command below works), then run `npm install -g zn-gate` and then `zn hooks install codex` in their terminal, or, once Node.js is installed, remove the hooks with `npx -y zn-gate hooks uninstall codex`.
+```
+
+**What it means:** the hooks are still in your agent's settings, but the program they run is gone. zn checks nothing in this state, so it stops the calls that the agent lets a hook stop, instead of letting them run unchecked. For the calls a hook cannot stop, such as a result that was already produced, you get a warning that zn is not protecting the session.
+
+**What to do:** run one of these in your own terminal, with the agent name from the message (`claude-code`, `codex`, `cursor`, `gemini`, `zcode`):
+
+0. If Node.js itself is gone (`node --version` fails), install it again from [nodejs.org](https://nodejs.org) first. Both commands below need it.
+1. To keep zn: `npm install -g zn-gate`, then `zn hooks install <agent>`.
+2. To remove zn: `npx -y zn-gate hooks uninstall <agent>`. It needs Node.js but no installed zn-gate. See [Remove zn-gate](uninstall.md).
+
 ## Block and warn reasons, by family
 
-Past the seventeen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
+Past the eighteen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
 
 For five common blocks, with what to do for each, see [Why was this blocked?](why-was-this-blocked.md).
 
@@ -1272,6 +1289,7 @@ Then zn checked the text with the local rules only, on your machine, and the res
 
 - Your agent blocks every prompt after you upgraded or removed Node.js: see [If your agent blocks every prompt](compat.md#if-your-agent-blocks-every-prompt).
 - Not sure what is protected: `npx -y zn-gate check`, explained in [check](check.md).
+- Before you ask: run the commands in [Before you ask for help](examples/doctor-before-asking-for-help.md) and paste their output with your question.
 - Still stuck: ask in [Discussions](https://github.com/usezn/zn/discussions). Say your zn-gate version (`zn-gate --version`), your operating system and the message, and leave out any secret.
 
 ### TLS certificates and trust stores
