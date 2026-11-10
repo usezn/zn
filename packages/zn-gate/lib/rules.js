@@ -8,10 +8,10 @@ const { envFlag } = require('./env-flag');
 
 /**
  * zn deterministic rules engine - SINGLE SOURCE OF TRUTH.
- * RULES_VERSION: 2026-11-06.1
+ * RULES_VERSION: 2026-11-09.1
  */
 
-const RULES_VERSION = '2026-11-06.1';
+const RULES_VERSION = '2026-11-09.1';
 
 // Word boundaries are written as explicit ASCII lookarounds, not \b: JavaScript's
 // \b is ASCII-only without the u flag, while Python's is Unicode. A letter such
@@ -95,7 +95,7 @@ function testMultiZh(text) {
 const INJECTION_RULES = [
   { id: 'pi:ignore_previous', pattern: new RegExp(overrideRuleSource('ignore'), 'i'), description: 'Override prior instructions' },
   { id: 'pi:disregard', pattern: new RegExp(overrideRuleSource('disregard'), 'i'), description: 'Disregard instructions' },
-  { id: 'pi:forget', pattern: /(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))|(?<![A-Za-z0-9_])(?<!n't )(?<!n’t )(?<!not )(?<!never )(?<!ever )(?<!dont )forget\s+(?:(?:(?:the|my|these|those|our|its|their)\s+)?(?:(?:previous|prior|above|earlier|preceding|foregoing|original|initial|existing|system|safety|security|former|developer)\s+){1,2}(?:instructions?|guidelines?|directives?|guardrails?|directions)|(?:the\s+)?(?:instructions|guardrails|directives))(?![A-Za-z0-9_])/i,description: 'Forget-context attack' },
+  { id: 'pi:forget', pattern: /(?<![A-Za-z0-9_])forget\s+(?:about\s+)?(?:everything|all|your)(?![A-Za-z0-9_])(?!\s+(?:of\s+)?(?:the\s+)?(?:cached?|caches|entries|changes|data|files?|records|sessions?|cookies|state|tabs|devices?|passwords?|history|items|keys|tokens|credentials|settings|preferences|accounts?|connections?|logins?|networks?)(?![A-Za-z0-9_]))|(?<![A-Za-z0-9_])(?<!n't )(?<!n’t )(?<!(?<![A-Za-z0-9_])not )(?<!(?<![A-Za-z0-9_])never )(?<!(?<![A-Za-z0-9_])ever )(?<!(?<![A-Za-z0-9_])dont )forget\s+(?:(?:(?:the|my|these|those|our|its|their)\s+)?(?:(?:previous|prior|above|earlier|preceding|foregoing|original|initial|existing|system|safety|security|former|developer)\s+){1,2}(?:instructions?|guidelines?|directives?|guardrails?|directions)|(?:the\s+)?(?:instructions|guardrails|directives))(?![A-Za-z0-9_])/i,description: 'Forget-context attack' },
   { id: 'pi:identity_override', pattern: /you\s+are\s+now/i, description: 'Identity override' },
   { id: 'pi:new_instructions', pattern: /new\s+instructions?:/i, description: 'Instruction replacement' },
   { id: 'pi:system_tag', pattern: /(?:^|[\r\n"'`\[<])[ \t]*system\s*:|<[\s/]*system(?![A-Za-z0-9_])[^<>]*>/i, description: 'Fake system tag' },
@@ -394,8 +394,58 @@ function sensitivePathView(text) {
 // variable prefixes the view does not need.
 const SENSITIVE_PATH_TEXT_RE = /(?:^|[\s"'`(\[@,\/\\])(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)?[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|=(?:~|\/home\/[^\t\n\f\r \/]+|\/root|[A-Za-z]:[\/\\]Users[\/\\][^\t\n\f\r \/\\"']+(?: [^\t\n\f\r \/\\"']+)*|%(?:USERPROFILE|HOMEPATH)%|\$env:(?:USERPROFILE|HOME)(?![A-Za-z0-9_])|\$\{?(?:HOME|USERPROFILE)\}?)[\/\\]?\.(?:ssh[\/\\](?:id_(?:rsa|dsa|ecdsa|ed25519|xmss)(?:_sk)?(?!\.pub(?=$|[\s;&|()<>,:"']))|authorized_keys)|aws[\/\\]credentials|env(?!(?:\.[a-z0-9]+)?\.(?:example|sample|template)(?=$|[\s;&|()<>,:"']))(?:\.[a-z0-9]+)?)(?![A-Za-z0-9_])|\/etc\/(?:shadow|passwd)(?![A-Za-z0-9_])/i;
 
-function testSensitivePath(text) {
+// cmd.exe reads a command in steps: %VAR% is expanded first, then a ^ outside double quotes escapes the next character, so
+// `type .e^nv`, `type ^.env` and `type %CD%\.e^nv` all open .env. These readings apply only where a cmd reader or cmd itself
+// is named: in a POSIX shell `^` is an ordinary character, and `grep ^.env notes.md` must stay allowed.
+const CMD_READER_RE = /(?:^|[\s;&|("'`])(?:cmd(?:\.exe)?|type|more|findstr|copy)(?=[\s"']|$)/i;
+const CMD_PERCENT_UNIT_RE = /%[^%!:\r\n]+(?::[^%!\r\n]*)?%/g;
+const CMD_SET_RE = /(?:^|[\s&|(])set\s+"?([A-Za-z_][A-Za-z0-9_]*)=([^&|"\r\n]*)"?/gi;
+const CMD_NAMED_PERCENT_RE = /%([A-Za-z_][A-Za-z0-9_]*)%/g;
+const CMD_C_QUOTED_RE = /(\/[ck]\s+)"([\s\S]*)"(\s*)$/i;
+function dropCmdCarets(text) {
+  let out = '';
+  let inQuote = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') { inQuote = !inQuote; out += c; continue; }
+    if (c === '^' && !inQuote) {
+      const nx = text[i + 1];
+      if (nx === undefined) break;
+      if (nx === '\r' && text[i + 2] === '\n') { i += 2; continue; }
+      if (nx === '\n') { i++; continue; }
+      out += nx;
+      i++;
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
+// %NAME% of a variable the same text sets (set X=.env) is replaced by its value; every other % unit is taken out, as its value is unknown.
+function expandCmdPercent(text) {
+  const vars = new Map();
+  for (const m of text.matchAll(CMD_SET_RE)) vars.set(m[1].toLowerCase(), m[2].replace(/\s+$/, ''));
+  const known = vars.size ? text.replace(CMD_NAMED_PERCENT_RE, (all, name) => (vars.has(name.toLowerCase()) ? vars.get(name.toLowerCase()) : all)) : text;
+  return known.replace(CMD_PERCENT_UNIT_RE, (unit) => (/^%(?:userprofile|homepath|homedrive|home|cd)%$/i.test(unit) ? unit : ''));
+}
+function cmdReadings(text) {
+  const out = [];
+  if ((text.indexOf('^') < 0 && text.indexOf('%') < 0) || !CMD_READER_RE.test(text)) return out;
+  const unwrapped = text.replace(CMD_C_QUOTED_RE, '$1$2$3');
+  const views = [unwrapped];
+  if (text.indexOf('%') >= 0) views.push(expandCmdPercent(unwrapped));
+  for (const v of views) {
+    if (v !== text) out.push(v);
+    if (v.indexOf('^') >= 0) out.push(dropCmdCarets(v));
+  }
+  return out;
+}
+
+function testSensitivePathAs(text) {
   return SENSITIVE_PATH_TEXT_RE.test(text) || SENSITIVE_PATH_RE.test(text) || SENSITIVE_PATH_RE.test(sensitivePathView(text));
+}
+function testSensitivePath(text) {
+  return testSensitivePathAs(text) || cmdReadings(text).some(testSensitivePathAs);
 }
 
 const SENSITIVE_PATH_RULES = [

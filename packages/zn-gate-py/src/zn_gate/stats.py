@@ -8,6 +8,7 @@ opt-in sharing of pseudonymous daily counts is managed with the npm package (`np
 import datetime
 import json
 import os
+import re
 from typing import Any, Dict, Optional
 
 KEEP_DAYS = 90
@@ -77,6 +78,15 @@ def summary(days: int = 30, now: Optional[datetime.date] = None, path: Optional[
             "events": dict(data.get("events") or {})}
 
 
+_CONTROL_RE = re.compile("[\u0000-\u001f\u007f-\u009f  ‪-‮⁦-⁩]")
+_ESCAPE_RE = re.compile("\x1b\\[[0-9;?]*[ -/]*[@-~]")
+
+
+def _label(v: Any) -> str:
+    """A label read from the stats file, made safe to print: escape sequences and control characters become spaces."""
+    return _CONTROL_RE.sub(" ", _ESCAPE_RE.sub(" ", str(v)[:4096]))
+
+
 def render(s: Dict[str, Any]) -> str:
     t = s["total"]
     lines = ["zn-gate on this machine, last {} day{}{}:".format(
@@ -92,14 +102,14 @@ def render(s: Dict[str, Any]) -> str:
         types = sorted(s["detections"].items(), key=lambda kv: -kv[1])[:8]
         if types:
             lines.append("")
-            lines.append("  Secret types found: " + ", ".join("{} {:,}".format(k, n) for k, n in types))
+            lines.append("  Secret types found: " + ", ".join("{} {:,}".format(_label(k), n) for k, n in types))
         if s["byKey"]:
             lines.append("")
             lines.append("  By agent:")
             for key, c in sorted(s["byKey"].items(), key=lambda kv: -kv[1]["checked"]):
                 layer, _, agent = key.partition(":")
                 lines.append("    {} ({}): {:,} events, {:,} blocked, {:,} replaced".format(
-                    agent, LAYER_NAMES.get(layer, layer), c["checked"], c["blocked"], c["redacted"]))
+                    _label(agent), _label(LAYER_NAMES.get(layer, layer)), c["checked"], c["blocked"], c["redacted"]))
     lines.append("")
     lines.append("  These counts stay on this machine. Sharing pseudonymous daily counts is opt-in: `npx zn-gate stats share show`.")
     return "\n".join(lines) + "\n"

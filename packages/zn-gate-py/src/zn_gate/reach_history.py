@@ -38,6 +38,10 @@ MAX_STRINGS_PER_LINE = 200000
 # A very long line is scanned in slices of about this many characters, with the deadline checked between slices,
 # so one huge line cannot run far past --max-seconds. Lines shorter than this are scanned whole.
 SLICE_CHARS = 4 * 1024 * 1024
+# Each slice is scanned with this many characters of the next slice after it, so a secret that crosses a cut is seen
+# whole by the slice it starts in. See _overlap_chars() for how the size comes from the secret rules.
+OVERLAP_FLOOR = 64 * 1024
+_overlap: Optional[int] = None
 
 # Agents whose history is a plain JSON Lines file and documented. Cursor and OpenCode keep theirs in a
 # database (SQLite), which this version does not read: they are reported as not scanned.
@@ -290,12 +294,39 @@ def _now_ms() -> float:
     return time.time() * 1000
 
 
-def _slices(text: str):
-    """Yields the text whole when it is short, else slices cut at a line break or a space when one is near."""
+_REPEAT_RE = re.compile(r"(?<!\\)\{(\d+)(?:,(\d*))?\}")
+
+
+def _longest_secret_match(sources: List[str]) -> int:
+    """Longest match of a secret rule, as an upper bound: for each rule, the sum of the upper bounds of its bounded
+    repeats ({n} and {m,n}; an open {m,} counts as m) plus the length of its source (which bounds its fixed text).
+    The overlap is twice that, and at least OVERLAP_FLOOR: the part of a slice that is read twice is then at least
+    two of the longest secrets long, so a secret that crosses a cut fits in it and the two seams never meet.
+    The quoted-value scanner reads at most 4096 characters plus the key. A rule with an open repeat ({m,}, +, *)
+    can match a longer token: such a token is the one case a cut can miss."""
+    best = 0
+    for src in sources:
+        n = len(src)
+        for m in _REPEAT_RE.finditer(src):
+            n += int(m.group(2) or m.group(1))
+        best = max(best, n)
+    return best
+
+
+def _overlap_chars() -> int:
+    global _overlap
+    if _overlap is None:
+        from . import rules
+        tables = (rules.SCRUB_FIRST_PATTERNS + rules.SECRET_PATTERNS + rules.PROVIDER_SECRET_PATTERNS
+                  + rules.SCRUB_LAST_PATTERNS)
+        _overlap = max(OVERLAP_FLOOR, 2 * _longest_secret_match([p.pattern for _, p, _ in tables]))
+    return _overlap
+
+
+def _cuts(text: str) -> List[int]:
+    """Cut points of a text: [0, c1, ..., len]. A cut is moved back to a line break or a space when one is near."""
     n = len(text)
-    if n <= SLICE_CHARS:
-        yield text
-        return
+    out = [0]
     pos = 0
     while pos < n:
         end = min(pos + SLICE_CHARS, n)
@@ -303,12 +334,21 @@ def _slices(text: str):
             cut = max(text.rfind("\n", pos, end), text.rfind(" ", pos, end))
             if cut >= pos and cut > end - 65536:
                 end = cut + 1
-        yield text[pos:end]
+        out.append(end)
         pos = end
+    return out
 
 
 def scan_line(line: str, counts: Dict[str, int], expired: Optional[Callable[[], bool]] = None) -> None:
-    """Adds the secret types found in one line to counts ({TYPE: n}). Values are dropped here."""
+    """Adds the secret types found in one line to counts ({TYPE: n}). Values are dropped here.
+
+    A line longer than SLICE_CHARS is scanned slice by slice, with the deadline checked between slices. Slice i
+    runs from cut c(i) to cut c(i+1) and is scanned together with the next overlap characters, so a secret that
+    crosses c(i+1) is seen whole. What that extra text holds is counted again by slice i+1, so the findings of the
+    text from c(i+1) to c(i+1) + overlap, scanned alone, are taken away from slice i+1: both texts start at the same
+    cut, so what each finds there (including a piece of a secret cut at c(i+1)) is the same and cancels out. Each
+    secret is then counted once, by the slice it starts in, without needing positions (the positions the rules
+    report move as earlier rules redact)."""
     text = line
     if line.lstrip()[:1] in ("{", "["):
         try:
@@ -320,17 +360,36 @@ def scan_line(line: str, counts: Dict[str, int], expired: Optional[Callable[[], 
     from . import rules
     types = _types()
     known = set(types.values()) | {"URL_PASSWORD"}
-    first = True
-    for piece in _slices(text):
-        if not first and expired is not None and expired():
-            raise _TimeUp()
-        first = False
+
+    def add(piece: str, delta: Dict[str, int], sign: int) -> None:
         _redacted, detections = rules.redact_secrets(_cut_markers(piece, known))
         for d in detections:
             t = types.get(d["rule"])
-            if t is None:
-                continue
-            counts[t] = counts.get(t, 0) + 1
+            if t is not None:
+                delta[t] = delta.get(t, 0) + sign
+
+    n = len(text)
+    if n <= SLICE_CHARS:
+        delta: Dict[str, int] = {}
+        add(text, delta, 1)
+        for k, v in delta.items():
+            counts[k] = counts.get(k, 0) + v
+        return
+    extra = _overlap_chars()
+    at = _cuts(text)
+    in_line: Dict[str, int] = {}
+    try:
+        for i in range(len(at) - 1):
+            if i > 0 and expired is not None and expired():
+                raise _TimeUp()
+            add(text[at[i]:min(n, at[i + 1] + extra)], in_line, 1)
+            if i > 0:
+                add(text[at[i]:min(n, at[i] + extra)], in_line, -1)
+    finally:
+        # A count below zero can only come from a rule that matches a cut piece but not the whole secret.
+        for k, v in in_line.items():
+            if v > 0:
+                counts[k] = counts.get(k, 0) + v
 
 
 def scan_file(abs_path: str, deadline: float) -> Dict[str, Any]:

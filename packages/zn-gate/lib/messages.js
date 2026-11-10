@@ -344,6 +344,14 @@ function teamNotACommand(sub) {
   return "'zn team " + shown + "' is not a zn command. Commands: zn team join <token>, zn team status, zn team sync, zn team leave. All options: zn team --help";
 }
 
+/* An email invitation (the link or its zninv_ token) is accepted in the dashboard; the machine joins with a different token. */
+function looksLikeEmailInvite(text) {
+  return /zninv_/i.test(String(text)) || /[?&]invite=/i.test(String(text));
+}
+
+const TEAM_INVITE_NOT_A_JOIN_TOKEN = 'That is the link from your invitation email, not a join token. ' +
+  'Open the link to accept the invitation at usezn.com/team, then ask your organization admin for a join token (it starts with znj_) and run: zn team join <token>';
+
 function teamJoinFailed(why) {
   return 'join failed (' + why + '). This machine was not connected.';
 }
@@ -358,7 +366,7 @@ module.exports = {
   connectFullAccess, connectUnverified, connectSaveFailed, revokeNotReached, connectNoStore, environmentRefusal, isNetworkFailure,
   PINS_USAGE_APPROVE, pinsAgentRefusal, PINS_NEEDS_TERMINAL, PINS_NOT_APPROVED, pinsError,
   TEAM_INVALID_JOIN_TOKEN, TEAM_INVALID_REQUEST, TEAM_NOTHING_TO_APPROVE, TEAM_NOT_ASKED, TEAM_POLICY_UNVERIFIED, TEAM_INVALID_ORG_KEY,
-  teamJoinFailed, TEAM_JOIN_TOKEN_REJECTED, teamJoinTokenRejected, teamJoinNoNetwork, TEAM_JOIN_NO_TOKEN, teamJoinNoPolicyYet,
+  teamJoinFailed, looksLikeEmailInvite, TEAM_INVITE_NOT_A_JOIN_TOKEN, TEAM_JOIN_TOKEN_REJECTED, teamJoinTokenRejected, teamJoinNoNetwork, TEAM_JOIN_NO_TOKEN, teamJoinNoPolicyYet,
   TEAM_REMOVED, teamSyncNoNetwork, teamSyncInactive, teamNotACommand,
   DISCONNECT_UNLOCK_FIRST, disconnectVaultNotRemoved, disconnectKeychainLeft, TROUBLESHOOTING_URL, vaultDamaged,
 };

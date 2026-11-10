@@ -558,21 +558,16 @@ fn logs_and_audit_rows_never_hold_secrets_and_stdout_has_no_logs() {
             }
         }
     }));
-    // Forwarding is unchanged: the call reaches the upstream with its arguments; the cloud,
-    // code-host and chat values are still in it (only what the forwarding scrubber knows is masked).
+    // Forwarding is unchanged by the log redactor: the call reaches the upstream with its
+    // arguments, and a value the forwarding scrubber does not know (the chat token) is still in it.
     let frame = gw.next_upstream();
     let fwd = frame.to_string();
     assert_eq!(frame["params"]["name"], json!(tool));
-    for kept in [
-        concat!("AK", "IAIOSFODNN7EXAMPLE"),
-        concat!("gh", "p_0123456789abcdefghijABCDEFGHIJ012345"),
-        concat!("xo", "xb-123456789012"),
-    ] {
-        assert!(
-            fwd.contains(kept),
-            "forwarding changed, {kept} missing: {fwd}"
-        );
-    }
+    let kept = concat!("xo", "xb-123456789012");
+    assert!(
+        fwd.contains(kept),
+        "forwarding changed, {kept} missing: {fwd}"
+    );
 
     // Wait for the audit row, then give the logger a moment to flush.
     let deadline = Instant::now() + STEP;

@@ -98,6 +98,8 @@ async function joinCmd(args, io) {
   if (got.error) { err('[zn] ' + got.error); return 2; }
   if (!got.token) { err('[zn] ' + messages.TEAM_JOIN_NO_TOKEN); return 2; }
   const token = got.token;
+  // The invitation email's link is not a join token: say what to do instead of a generic invalid-token error.
+  if (messages.looksLikeEmailInvite(token)) { err('[zn] ' + messages.TEAM_INVITE_NOT_A_JOIN_TOKEN); return 2; }
   if (got.via === 'argument') {
     err('[zn] Note: a join token given as an argument stays in your shell history and is visible in the process list. Next time use `zn team join -` (token on standard input) or set ' + JOIN_TOKEN_ENV + '.');
   }

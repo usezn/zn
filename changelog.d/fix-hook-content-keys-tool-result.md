@@ -1,0 +1,2 @@
+### Fixed
+- The hook runner treats a tool output delivered under a `toolResult` or `tool_result` field as model content, like `tool_response` and `tool_output`: it is scanned by the content scanner and never turned into a file path, so malformed text there no longer trips the fail-closed refusal that is meant for path fields. Every other field is still checked, the top-level `metadata` field included; the one further exemption is a `metadata` object the adapter itself copied into the scrubbed tool output.

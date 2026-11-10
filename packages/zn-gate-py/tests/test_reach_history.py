@@ -382,7 +382,7 @@ def test_one_very_long_line_stops_within_a_bounded_amount_after_the_deadline(tmp
     monkeypatch.setattr(reach_history, "_now_ms", now)
     r = reach_history.scan_file(path, deadline=1)
     assert r["complete"] is False and r["reason"] == "time-limit"
-    assert calls["n"] <= 2  # of about 100 slices, at most the ones scanned before the deadline was seen
+    assert calls["n"] <= 3  # of about 100 slices: slice 1, then slice 2 and the overlap it shares with slice 1
 
 
 def test_slicing_a_long_line_gives_the_same_counts_as_scanning_it_whole(tmp_path, monkeypatch):
@@ -393,6 +393,51 @@ def test_slicing_a_long_line_gives_the_same_counts_as_scanning_it_whole(tmp_path
     sliced = reach_history.scan_file(path, deadline=10 ** 18)
     assert whole["complete"] and sliced["complete"]
     assert whole["counts"] == sliced["counts"] and sum(whole["counts"].values()) == 100
+
+
+# Long lines at the real slice size. The filler has no space or line break, so the first cut falls exactly at
+# SLICE_CHARS, and its characters are outside the token alphabet, so they do not stick to a key. Same cases as the
+# npm tests of the same names.
+def _github_count(text):
+    from zn_gate import rules
+    types = reach_history._types()
+    return sum(1 for d in rules.redact_secrets(text)[1] if types.get(d["rule"]) == "GITHUB_TOKEN")
+
+
+def test_a_secret_across_a_slice_cut_of_a_long_line_is_found_exactly_once(tmp_path):
+    s = reach_history.SLICE_CHARS
+    before = ";" * (s - 17)
+    text = before + GITHUB + ";" * 200000
+    assert reach_history._cuts(text)[:2] == [0, s]  # the cut is inside the key
+    assert len(before) < s < len(before) + len(GITHUB)
+    assert _github_count(text[:s]) + _github_count(text[s:]) == 0  # without the overlap, neither slice sees it
+    r = reach_history.scan_file(_write(tmp_path, text + "\n"), deadline=10 ** 18)
+    assert r["complete"] is True
+    assert r["counts"] == {"GITHUB_TOKEN": 1}
+
+
+def test_a_secret_inside_one_slice_or_inside_the_overlap_of_two_is_found_exactly_once(tmp_path):
+    s = reach_history.SLICE_CHARS
+    o = reach_history._overlap_chars()
+    parts = [";" * 1000, AWS, ";" * (s - 1000 - len(AWS) + 5000), AWS]
+    sofar = len("".join(parts))
+    parts += [";" * (s + o - 17 - sofar), GITHUB, ";" * 100000, AWS, ";" * 10000]
+    text = "".join(parts)
+    assert reach_history._cuts(text)[1] == s
+    assert text.index(GITHUB) < s + o < text.index(GITHUB) + len(GITHUB)
+    r = reach_history.scan_file(_write(tmp_path, text + "\n"), deadline=10 ** 18)
+    assert r["complete"] is True
+    assert r["counts"] == {"AWS_KEY": 3, "GITHUB_TOKEN": 1}
+
+
+def test_the_overlap_comes_from_the_secret_rules_and_holds_the_longest_of_them_twice():
+    from zn_gate import rules
+    tables = rules.SCRUB_FIRST_PATTERNS + rules.SECRET_PATTERNS + rules.PROVIDER_SECRET_PATTERNS + rules.SCRUB_LAST_PATTERNS
+    longest = reach_history._longest_secret_match([p.pattern for _, p, _ in tables])
+    assert longest >= 4096
+    assert reach_history._overlap_chars() == max(64 * 1024, 2 * longest)
+    assert reach_history._overlap_chars() == 64 * 1024  # the same overlap as the npm package
+    assert reach_history._longest_secret_match(["a{2,40}b{3}c{5,}"]) == 16 + 40 + 3 + 5
 
 
 def test_a_home_over_the_file_cap_keeps_the_same_files_as_npm(machine):

@@ -1,4 +1,4 @@
 ### Fixed
 - `zn-gate reach --history` no longer reports a file as partly scanned when the time limit passes just as the last bytes were read: a file read to the end is complete and its last line is counted. This applies to both the npm and the Python package.
-- `zn-gate reach --history` checks the time limit while it scans a very long line, so one huge line no longer runs far past `--max-seconds`.
+- `zn-gate reach --history` checks the time limit while it scans a very long line, so one huge line no longer runs far past `--max-seconds`. A line longer than 4 MB is now read in slices that overlap by 64 KB, so a secret that crosses a slice cut is still found and counted once; only a single unbroken token longer than about 32 KB that crosses a cut can be missed. Lines up to 32 MB are still scanned, in both the npm and the Python package.
 - The reach documentation now gives the scan speed of the Python package (about 3.6 MB per second, against about 62 MB per second for npm, measured on a 192 MB history) and how much history each package covers within the default time limit.
