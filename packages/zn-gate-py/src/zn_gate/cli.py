@@ -815,6 +815,14 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+class _DaysGiven(argparse.Action):
+    """Store --days and remember it was typed, so the Top rules block follows it (7 days otherwise)."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
+        namespace.days_given = True
+
+
 # A made-up key in the shape of an AWS access key id. It is not a real credential.
 # It is built from parts so that no scanner sees a whole key in this file.
 _CHECK_FAKE_SECRET = "AKIA" + "ZNTESTFAKE" + "000000"
@@ -909,15 +917,18 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 def cmd_stats(args) -> int:
     from . import stats as _stats
+    given = bool(getattr(args, "days_given", False))
     if not (isinstance(args.days, int) and 1 <= args.days <= _stats.KEEP_DAYS):
         sys.stderr.write("zn-gate stats: --days must be between 1 and {}\n".format(_stats.KEEP_DAYS))
         return 2
     days = args.days
     s = _stats.summary(days=days)
+    top_days = days if given else _stats.TOP_RULES_DAYS
+    top = {"days": top_days, "rules": _stats.top_rules(days=top_days)}
     if args.json:
-        print(json.dumps(s, indent=2))
+        print(json.dumps({**s, "top_rules_days": top["days"], "top_rules": top["rules"]}, indent=2))
     else:
-        sys.stdout.write(_stats.render(s))
+        sys.stdout.write(_stats.render(s, top))
     return 0
 
 
@@ -1034,7 +1045,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # stats command
     st_parser = subparsers.add_parser("stats", help="What zn-gate did on this machine (local counts only)")
-    st_parser.add_argument("--days", type=int, default=30, help="Days to count (1-90, default 30)")
+    st_parser.add_argument("--days", type=int, default=30, action=_DaysGiven, help="Days to count (1-90, default 30)")
     st_parser.add_argument("--json", action="store_true", help="Output as JSON")
 
     # check command
