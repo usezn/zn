@@ -24,7 +24,7 @@ Each time a sync works, zn saves the organization policy on your machine, and th
 
 | Situation | What happens |
 | --- | --- |
-| No network, the saved policy is still valid (a policy is valid for 7 days) | The policy keeps applying. |
+| No network, the saved policy is still valid (a policy lasts at most 7 days; the server sets its end date) | The policy keeps applying. |
 | No network for longer than the policy is valid | Strict mode: the restrictions keep applying, and anything the organization had opened is withdrawn until a fresh policy arrives. |
 | One of the two files is deleted or edited | When the vault is unlocked, it puts them back from the policy it holds. This also works while the server cannot be reached. |
 
