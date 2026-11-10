@@ -22,7 +22,7 @@ const { tempDir } = require('./helpers/tmp');
 
 const claude = getAdapter('claude-code');
 const RUNNER = path.resolve(__dirname, '..', 'lib', 'hooks', 'runner.js');
-const posix = process.platform !== 'win32';
+const { hasPosixSh: posix, skipUnlessPosixSh } = require('./helpers/posix_sh');
 const GONE = '/nonexistent/node-gone/bin/node';
 const REINSTALL = 'install zn-gate again for the Node.js you use now: run `npm install -g zn-gate`, then `zn hooks install claude-code`, in your own terminal';
 const EVENTS = ['PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'UserPromptExpansion'];
@@ -45,7 +45,7 @@ function breakNode(file) {
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^ZN_NODE=.*$/m, "ZN_NODE='" + GONE + "'"));
 }
 
-test('claude-code install: a user install writes the launcher and one command per event', { skip: !posix }, (t) => {
+test('claude-code install: a user install writes the launcher and one command per event', { skip: skipUnlessPosixSh('fails on Windows today: the test expects the POSIX form of the launcher command and the file mode 0755, which differ there; not adapted yet') }, (t) => {
   const { data, file, home } = setup(t, process.execPath);
   assert.ok(file.startsWith(path.join(home, '.zn', 'hooks')), 'the launcher stays inside the temporary home');
   assert.equal(fs.statSync(file).mode & 0o777, 0o755);
@@ -81,14 +81,14 @@ test('claude-code launcher: Node.js gone and no zn on PATH: PreToolUse and the p
     const r = runLauncher(file, ev, '{}', bin);
     assert.equal(r.status, 2, ev + ' exits 2 (Claude Code: exit code 2 blocks, stderr is the reason)');
     assert.match(r.stderr, /zn: its hook cannot start/);
-    assert.match(r.stderr, /zn hooks install claude-code/);
+    assert.match(r.stderr, /zn(?:\.cmd)? hooks install claude-code/);
     assert.doesNotMatch(r.stderr, /No such file|missing/, 'Claude Code treats an exit 2 that says a file is missing as non-blocking in some events');
     assert.equal(r.stdout, '');
   }
   // PostToolUse: the tool already ran, so it only warns the user.
   const post = runLauncher(file, 'PostToolUse', '{}', bin);
   assert.equal(post.status, 0);
-  assert.match(JSON.parse(post.stdout).systemMessage, /NOT protecting this session.*zn hooks install claude-code/);
+  assert.match(JSON.parse(post.stdout).systemMessage, /NOT protecting this session.*zn(?:\.cmd)? hooks install claude-code/);
 });
 
 test('claude-code launcher: recorded Node.js gone but zn and node on an absolute PATH: blocks, the unverified zn is not run', { skip: !posix }, (t) => {

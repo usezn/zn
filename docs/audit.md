@@ -27,7 +27,7 @@ It runs locally and sends nothing anywhere.
 ```text
 zn audit [path] [--format text|json|sarif] [--output <file>]
          [--fail-on low|medium|high|critical|none]
-         [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
+         [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home] [--approve]
 ```
 
 `zn-gate audit` is the same command.
@@ -47,6 +47,7 @@ there is no directory named `log`) and `zn audit --since DATE` exit with code
 | `--output` | standard output | Write the report to a file |
 | `--fail-on` | `high` | Exit with 1 if any finding has this severity or a higher one; `none` never fails |
 | `--agents` | `all` | Only check the files these agents read: `claude`, `codex`, `cursor`, `opencode`, `amazonq`, `copilot`, `gemini` or `all`. Findings that concern every agent (`AGENTS.md`, planted executables, CI workflows) are always shown |
+| `--approve` | off | Record the project's executable configuration as approved, then exit: MCP servers (`.mcp.json`, `.cursor`, `.vscode`, `.gemini`, `.amazonq`, `opencode.json`, `.codex/config.toml`), hooks with their matchers, permissions (allow, deny, ask, default mode), `disableAllHooks`, helper commands, endpoint, proxy and loader environment overrides, install scripts, dev container commands and folder-open tasks. A file that is a link is followed when it stays inside the project; a file that cannot be read counts as a change. It runs only at a terminal and not when an agent started it, zn blocks it as an agent writes it, and when the vault is unlocked the approval is also confirmed on the vault's own channel (its terminal or an OS dialog). With no vault running the terminal check is the only one: a process an agent started inside a pseudo-terminal can pass it. Only entry names and hashes are stored, in `~/.zn/baselines`, never a value. Later audits report an entry that changed, was added or was removed since (ZNA023) |
 | `--include-home` | off | Also check your own user-level configs (`~/.claude/settings.json`, `~/.codex/config.toml`, ...) |
 
 Exit codes: `0` no finding at or above `--fail-on`, `1` at least one, `2`
@@ -150,6 +151,7 @@ Rule ids are stable: a rule may get better, but its id never changes meaning.
 | ZNA020 | high / low | An agent file could not be checked: a syntax error, a size over 1 MiB (the first 1 MiB is still checked), a symbolic link leaving the repository, or a scan that stopped early | The agent may still act on it. High when the file can run commands or redirect the agent (the text is then searched for risky keys, and `runOn: folderOpen` or a download piped into a shell is still reported), when it uses a reserved key such as `__proto__`, or when the scan did not finish; low for a syntax error in a file that cannot run anything |
 | ZNA021 | medium | An agent instruction file (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, rules, `copilot-instructions.md`, `SKILL.md` and other skill, command and agent files) has a run of 40 or more empty or whitespace-only lines with more text after it | The text after the run is out of view for a person who opens the file and past the part of it a classifier reads. The finding gives the line where that text starts and the length of the run; the text is not printed. Blank lines at the end of a file are not reported. The check counts lines and uses no text patterns: read the file from the reported line |
 | ZNA022 | high / medium | A hook of type `http`, or of type `agent` that names a URL, in an agent settings or hooks file | Each tool event the hook matches (the command line, file paths and contents, tool output) is posted to that address, and from the moment the folder is opened when the file is in the project. High for a remote address, medium for a local one (`127.0.0.1`, `localhost`, `::1`), low in your own user file. Environment variables that its headers interpolate or `allowedEnvVars` lists are named in the finding, never their values. A command hook is reported by ZNA001, a placeholder URL such as `${HOOK_URL}` is not reported |
+| ZNA023 | high | An MCP server, hook, endpoint or proxy override, permission list, install script or folder-open task differs from the version you recorded with `zn audit --approve` (changed or added: high; removed hook, permission or setting: medium; other removed entry: low) | A pull, a branch switch, a dependency or the agent itself can rewrite a command you already reviewed. The finding names the entry and the file, never its value. No recorded baseline means no finding. If the change is yours, run `zn audit --approve` again |
 
 ## Output
 
@@ -300,6 +302,26 @@ flag off in CI.
   with:
     sarif_file: zn-audit.sarif
 ```
+
+### Formats of `zn audit` and `zn scan`
+
+Both commands take `--format` with `text` (default) and `json`, but their
+third format differs: `zn audit` writes `sarif` for GitHub code scanning,
+`zn scan` writes `github` for workflow annotations in CI.
+
+| Command | `--format` | When to use | Who reads it |
+|---|---|---|---|
+| `zn audit` | `text` (default) | A local review before you open the repository | People |
+| `zn audit` | `json` | Findings consumed by a script or another tool | Scripts and tools |
+| `zn audit` | `sarif` | Findings uploaded to GitHub code scanning | GitHub code scanning: one alert per finding under Security > Code scanning |
+| `zn scan` | `text` (default) | A local scan | People |
+| `zn scan` | `json` | Results consumed by a script or another tool | Scripts and tools |
+| `zn scan` | `github` | A scan in a GitHub Actions workflow | People: annotations in the workflow run and on the pull request |
+
+In the [GitHub Action](github-action.md) the `format` input takes `github`
+(default), `text`, `json` or `sarif` for both modes; with `sarif` and the
+upload step, the audit and the scan appear as two separate code scanning runs
+(categories `zn-gate/audit/` and `zn-gate/scan/`).
 
 ## How to read the output
 

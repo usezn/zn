@@ -3,7 +3,7 @@
 // The launcher records a manifest of the package files the hook runner can load (the code and data under lib/, package.json
 // and bin/cli.js, each with its SHA-256). Every module the runner requires is read once, hashed and compiled from those same
 // bytes: an edited file, a file that is not in the list, a link or a file outside the package blocks the hook (exit status 86,
-// then the usual "zn-gate changed" block), and a file swapped after the check never runs. Only files that are loaded are read (and the vault client files, on every call);
+// then the usual "zn-gate changed" block), and a file swapped after the check never runs. Only files that are loaded are read;
 // `zn-gate check` (see check.test.js) reads the whole list. Everything runs on a copy of the package in a temporary folder,
 // with fake values and the real `sh`.
 
@@ -88,7 +88,15 @@ test('manifest: the launcher records the list of the package files, and the inta
 for (const [label, change] of [
   ['an edited policy file', (s) => fs.appendFileSync(s.p('lib/hooks/policy.js'), '// edited\n')],
   ['an edited destructive-command file', (s) => fs.appendFileSync(s.p('lib/destructive.js'), '// edited\n')],
-  ['an edited vault file', (s) => fs.appendFileSync(s.p('lib/vault/store.js'), '// edited' + String.fromCharCode(10))],
+  ['an edited vault file', (s) => fs.appendFileSync(s.p('lib/vault/store.js'), '// edited\n')],
+  ['an edited vault client', (s) => fs.appendFileSync(s.p('lib/vault/client.js'), '// edited\n')],
+  ['a deleted vault file', (s) => fs.rmSync(s.p('lib/vault/winacl.js'))],
+  ['a vault file replaced by a link to a copy outside the package', (s) => {
+    const copy = path.join(s.base, 'outside-store.js');
+    fs.copyFileSync(s.p('lib/vault/store.js'), copy);
+    fs.rmSync(s.p('lib/vault/store.js'));
+    fs.symlinkSync(copy, s.p('lib/vault/store.js'));
+  }],
   ['an edited broker file', (s) => fs.appendFileSync(s.p('lib/broker/files.js'), '// edited\n')],
   ['an edited helper module', (s) => fs.appendFileSync(s.p('lib/zn-command.js'), '// edited\n')],
   ['a policy file replaced by a link to a copy outside the package', (s) => {
@@ -109,6 +117,40 @@ for (const [label, change] of [
     assert.equal(r.stdout, '', 'nothing of it ran');
   });
 }
+
+// The runner loads the vault client only when a call needs the vault (redaction). Every call still checks the client's files
+// against the list without running them (above: an ordinary call is blocked), and a call that loads the vault is stopped too.
+const { generateAll } = require('./fixtures/fake_secrets');
+const FAKE_PAT = generateAll(5151, { perType: 1, piiPerType: 1 }).secrets.find((x) => x.type === 'github_pat_classic').value;
+const REDACT_EVENT = (home) => JSON.stringify({ session_id: 's1', cwd: home, tool_use_id: 't1', hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'cat notes.txt' }, tool_response: { stdout: 'token: ' + FAKE_PAT + '\nok\n', stderr: '', interrupted: false, isImage: false } });
+
+for (const file of ['lib/vault/store.js', 'lib/vault/client.js']) {
+  test('manifest: an edited ' + file + ' blocks a call that loads the vault', { skip: !posix }, (t) => {
+    const s = realPackage(t);
+    const env = { PATH: process.env.PATH, HOME: s.home, ZN_HOME: s.env.ZN_HOME, ZN_KEYCHAIN_BACKEND: 'passphrase' };
+    const call = () => spawnSync('/bin/sh', [s.file, 'PostToolUse'], { input: REDACT_EVENT(s.home), encoding: 'utf8', env });
+    const before = call();
+    assert.equal(before.status, 0, before.stderr);
+    assert.ok(!before.stdout.includes(FAKE_PAT), 'the intact package redacts the fake token');
+    fs.appendFileSync(s.p(file), '// edited\n');
+    const r = call();
+    // After a tool ran the hook cannot block it: it answers with the same "zn-gate changed" warning, and none of the edited code ran.
+    assert.match(r.stdout, CHANGED);
+    assert.match(r.stdout, AGAIN);
+    assert.ok(!r.stdout.includes(FAKE_PAT), 'the answer carries no token');
+  });
+}
+
+test('manifest: an ordinary call with an edited vault file is blocked although it does not need the vault', { skip: !posix }, (t) => {
+  const s = realPackage(t);
+  assert.equal(s.run().status, 0);
+  fs.appendFileSync(s.p('lib/vault/store.js'), '// edited\n');
+  const r = s.run();
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, CHANGED);
+  assert.match(r.stderr, AGAIN);
+  assert.equal(r.stdout, '');
+});
 
 test('manifest: a deleted module the runner needs blocks the hook', { skip: !posix }, (t) => {
   const s = realPackage(t);

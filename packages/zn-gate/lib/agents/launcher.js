@@ -68,11 +68,15 @@ const WARN_STDERR = new Set(['cursor']);
 const blockExit = (agentId) => BLOCK_EXIT_BY_AGENT[agentId] || BLOCK_EXIT;
 const blockJson = (agentId) => BLOCK_JSON_BY_AGENT[agentId] || BLOCK_JSON;
 
-const FIX = 'run `npm install -g zn-gate` and then `zn hooks install codex` in your own terminal';
+const FIX = 'install Node.js again from nodejs.org if it is gone (without it neither command below works), then run `npm install -g zn-gate` and then `zn hooks install codex` in your own terminal';
+// The one extra way out when zn-gate is gone: `npx` downloads it for one command, so it works with nothing installed.
+const REMOVE = 'or, once Node.js is installed, remove the hooks with `npx -y zn-gate hooks uninstall codex`';
 
-function reasonText(agentId) {
-  return 'zn: its hook cannot start because the Node.js or the zn-gate files it was installed with are gone, so this was blocked. Ask the user to ' +
-    FIX.replace('codex', agentId).replace('in your own terminal', 'in their terminal') + '.';
+function reasonText(agentId, short) {
+  // The Windows launcher carries this text several times inside one command line of at most 8191 characters, so it gets a shorter wording of the same message.
+  if (short) return 'zn: its hook cannot start because zn-gate is not installed any more (Node.js or its files are gone), but the hooks for ' + agentId + ' still point at it, so this was blocked. Ask the user to install Node.js again if it is gone, then run `npm install -g zn-gate` and `zn hooks install ' + agentId + '` in their terminal, or remove the hooks with `npx -y zn-gate hooks uninstall ' + agentId + '`.';
+  return 'zn: its hook cannot start because zn-gate is not installed any more (the Node.js or the files it was installed with are gone), but its hooks for ' + agentId + ' still point at it, so this was blocked. Ask the user to ' +
+    FIX.replace('codex', agentId).replace('in your own terminal', 'in their terminal') + ', ' + REMOVE.replace('codex', agentId) + '.';
 }
 
 function changedText(agentId) {
@@ -184,9 +188,10 @@ function noAckWarnText(agentId) {
   return 'zn is NOT protecting this session: its hook ended without confirming its answer (the zn-gate that answered is older than this hook, or it stopped half way). Please run `npm install -g zn-gate` and then `zn hooks install ' + agentId + '` in your own terminal.';
 }
 
-function warnText(agentId) {
-  return 'zn is NOT protecting this session: its hook cannot start because the Node.js or the zn-gate files it was installed with are gone. Please ' +
-    FIX.replace('codex', agentId) + '.';
+function warnText(agentId, short) {
+  if (short) return 'zn is NOT protecting this session: zn-gate is not installed any more (Node.js or its files are gone), but the hooks for ' + agentId + ' still point at it. Please install Node.js again if it is gone, then run `npm install -g zn-gate` and `zn hooks install ' + agentId + '` in your own terminal, or remove the hooks with `npx -y zn-gate hooks uninstall ' + agentId + '`.';
+  return 'zn is NOT protecting this session: zn-gate is not installed any more (the Node.js or the files its hook was installed with are gone), but its hooks for ' + agentId + ' still point at it. Please ' +
+    FIX.replace('codex', agentId) + ', ' + REMOVE.replace('codex', agentId) + '.';
 }
 
 /** Where zn keeps its launchers: ~/.zn/hooks (or $ZN_HOME/hooks, or $ZN_HOOK_DIR itself). */
@@ -359,6 +364,8 @@ function unixScript(agentId, nodePath, runnerPath, opts = {}) {
     '}',
     'zn_mk ack; ZN_AF=$ZN_MK',
     'export ZN_HOOK_ACK="$ZN_AF"',
+    '# The runner learns which hook it serves from this: an event it cannot read is refused on a hook that can block.',
+    'unset ZN_HOOK_EVENT; case "$ZN_EVENT" in ""|*[!A-Za-z]*) ;; *) export ZN_HOOK_EVENT="$ZN_EVENT" ;; esac',
     'trap \'zn_rm "$ZN_AF"\' EXIT',
     'zn_acked() { [ -n "$ZN_AF" ] || return 1; ZN_X=; read -r ZN_X <"$ZN_AF" 2>/dev/null; [ "$ZN_X" = ok ]; }',
     '# Passes a private output file on to the agent: cat by absolute path, else the shell alone (the PATH of a hook can be empty). A failed write is a failure.',
@@ -1039,7 +1046,7 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
   const n = portablePath(nodePath, 'win32');
   const r = portablePath(runnerPath, 'win32');
   if (/['‘’‚‛\u0000-\u001f]/.test(n + r)) return null;
-  const reason = winCommandText(reasonText(agentId), 'win32');
+  const reason = winCommandText(reasonText(agentId, true), 'win32');
   const DENY_JSON = {
     antigravity: (r) => ({ decision: 'deny', reason: r }),
     cursor: (r) => ({ permission: 'deny', continue: false, user_message: r, agent_message: r }),
@@ -1062,7 +1069,7 @@ function windowsScriptRaw(agentId, event, nodePath, runnerPath, opts = {}) {
   else tail = "[Console]::Out.WriteLine('" + JSON.stringify({ systemMessage: warn }) + "'); exit 0";
   return 'zd; ' + tail;
   };
-  const tail = tailOf(reason, winCommandText(warnText(agentId), 'win32'));
+  const tail = tailOf(reason, winCommandText(warnText(agentId, true), 'win32'));
   // Only 0 (done) and 2 (blocked) leave early: a crash, an empty $LASTEXITCODE (a script the execution policy
   // refused) or any other code falls through to the block. zn.cmd, not zn.ps1, which Restricted refuses to run.
   // A 0 counts only when the hook confirmed (zk: the ack file holds ok) that its whole answer was written.
@@ -1104,7 +1111,8 @@ function windowsScript(agentId, event, nodePath, runnerPath, opts = {}) {
   if (t === null) return null;
   const head = "$ProgressPreference='SilentlyContinue'; $zt=0; ";
   if (!t.startsWith(head)) throw new Error('zn: unexpected launcher script');
-  return head + ZK + t.slice(head.length);
+  const named = typeof event === 'string' && /^[A-Za-z]+$/.test(event) ? "$env:ZN_HOOK_EVENT = '" + event + "'; " : '';
+  return head + ZK + named + t.slice(head.length);
 }
 
 /**

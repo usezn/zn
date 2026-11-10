@@ -48,6 +48,16 @@ test('an ordinary file read does not load the vault client', (t) => {
   assert.equal(loaded, 'not loaded');
 });
 
+test('the vault files every call checks are the files a require of the vault client loads', () => {
+  const lib = path.join(__dirname, '..', 'lib');
+  const code = "const p=require('path');const lib=process.argv[1];const b=new Set(Object.keys(require.cache));require(p.join(lib,'vault','client.js'));" +
+    "process.stdout.write(JSON.stringify(Object.keys(require.cache).filter((k)=>!b.has(k)).map((k)=>p.relative(lib,k).split(p.sep).join('/')).sort()))";
+  const r = spawnSync(process.execPath, ['-e', code, lib], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const { VAULT_CLIENT_FILES } = require('../lib/hooks/runner');
+  assert.deepEqual([...VAULT_CLIENT_FILES].sort(), JSON.parse(r.stdout));
+});
+
 test('a call that redacts still loads the client, answers and ends by itself', (t) => {
   const out = 'token: ' + GHP + '\nok\n';
   const { r, loaded } = run(t, 'claude-code', { hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'cat notes.txt' }, tool_response: { stdout: out, stderr: '', interrupted: false, isImage: false } });
