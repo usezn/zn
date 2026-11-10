@@ -86,7 +86,7 @@ Install the LTS version from https://nodejs.org/ (or run: nvm install --lts), th
 
 ## 3. `running scripts is disabled on this system` (Windows)
 
-**What it means:** Windows PowerShell blocks the script that starts `npm` and `npx` by default. Nothing is wrong with zn-gate.
+**What it means:** Windows PowerShell blocks the script that starts `npm` and `npx` by default. Nothing is wrong with zn-gate. PowerShell prints the message as `npx.ps1 cannot be loaded because running scripts is disabled on this system.` (the file is `npm.ps1`, `npx.ps1` or `zn.ps1`, depending on the command). Microsoft explains the setting in [about_Execution_Policies](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies).
 
 **What to do, any one of these:**
 
@@ -886,7 +886,7 @@ MCP servers are tool servers your agent talks to. zn-shield sits between your ag
 | `pi:system_tag`, `pi:system_bracket`, `pi:template_boundary` | Text that pretends to be a system message, or copies the hidden markers a chat model uses to separate system and user messages. |
 | `pi:jailbreak`, `pi:bypass`, `pi:override` | Text that tries to switch off the agent's safety rules. |
 | `pi:identity_request`, `pi:identity_request_multi` | Text that tells the agent to look up who you are (your user name or git email) and put it somewhere. |
-| `pi:multi_es`, `pi:multi_pt`, `pi:multi_fr`, `pi:multi_de`, `pi:multi_ru`, `pi:multi_zh` | The same kind of "ignore your instructions" order, written in Spanish, Portuguese, French, German, Russian or Chinese. |
+| `pi:multi_es`, `pi:multi_pt`, `pi:multi_fr`, `pi:multi_de`, `pi:multi_ru`, `pi:multi_zh` | The same kind of "ignore your instructions" order, written in Spanish, Portuguese, French, German, Russian or Chinese. In Spanish, Portuguese, French and German the verb (ignore, forget, disregard, discard) counts when it names its target, such as the previous instructions, the rules or the system prompt. A few fixed phrases also match with no target: "olvida todo", "ignora todo" or "ignora cualquier", "ignore tudo", "oublie tout", "vergiss alles", and forms that point back at earlier text, such as "ignora tudo acima". |
 | `indirect:html_comment`, `indirect:hidden_tag` | Instructions hidden in a web page comment or an invisible element. |
 | `evasion:bidi_override` | Invisible text-direction characters that can make text look different from what a program reads (the "Trojan Source" trick). |
 | `evasion:base64_smuggling` | A command that decodes hidden Base64 text and runs it. |
@@ -924,6 +924,12 @@ To see where these rules apply, and what happens when the file is not valid, rea
 **What happened:** zn-gate did not understand what you typed, such as a typo, a missing folder or a missing text.
 
 **What to do:** run `zn-gate --help` to see the commands. Examples: `zn-gate scan .`, `zn-gate scan . --format json`, `zn-gate analyze "some text"`.
+
+#### "Git Bash was not found, and Claude Code runs the hooks of the zn-gate plugin with it on Windows"
+
+**What happened:** on Windows, Claude Code runs the hooks of the zn-gate plugin with Git Bash (`bash.exe`). `zn-gate check` found no Git Bash, so the plugin's hook cannot start. The full message is `Git Bash was not found, and Claude Code runs the hooks of the zn-gate plugin with it on Windows ("shell": "bash"), so the hook cannot start`.
+
+**What to do:** install Git for Windows, or set `CLAUDE_CODE_GIT_BASH_PATH` to the full path of its `bash.exe`, then run `zn-gate check` again. If you do not want Git Bash, use zn's own hooks instead, in your own terminal: `npm install -g zn-gate`, then `zn hooks install claude-code`, then `claude plugin disable zn-gate@usezn`. The same steps are in [Check that it works](check.md).
 
 #### Any other message that ends a command with an error
 
@@ -1006,7 +1012,7 @@ When a command cannot read or write a file or folder, zn-gate says what is wrong
 
 #### "The folder path `<path>` is too long" / "The links in the path `<path>` lead in a circle"
 
-**What happened:** the path is too long for your system (on Windows the limit is about 260 characters, and the message says so), or it goes through links that point back to each other.
+**What happened:** the path is too long for your system, or it goes through links that point back to each other. On Windows the message reads `The folder path <path> is too long (Windows stops at about 260 characters). Move the folder to a shorter path, then try again.` Windows can also answer a path of 260 characters or more with "not found" or "invalid argument"; zn reports those cases with the same message.
 
 **What to do:** move the folder to a shorter path, or choose another path without circular links, then run the command again.
 
