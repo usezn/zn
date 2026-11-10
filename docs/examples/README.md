@@ -29,6 +29,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [scan-a-single-file.md](scan-a-single-file.md): scan one file instead of a folder, and read the report.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project, from the run to what each exit code means.
 - [secret-adopt-existing-file.md](secret-adopt-existing-file.md): adopt a secret that zn-gate found in a project file, from the token it was replaced with to a named vault secret, and the check afterwards.
+- [secret-set-and-run.md](secret-set-and-run.md): store a secret in the vault and run a program that uses it, without the agent seeing the value.
 - [shield-first-run.md](shield-first-run.md): wrap one MCP server with the shield in shadow mode, see what it prints, then enforce or undo it.
 - [shield-walkthrough.md](shield-walkthrough.md): wrap a fake MCP server with the shield, from shadow mode to enforce and back.
 - [stats-and-report.md](stats-and-report.md): worked examples of `zn-gate stats` and `zn-gate report`.
