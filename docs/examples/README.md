@@ -28,6 +28,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [reading-a-reach-history-report.md](reading-a-reach-history-report.md): how to read the output of zn-gate reach --history.
 - [safe-first-day-with-a-new-agent.md](safe-first-day-with-a-new-agent.md): try zn-gate with a new agent in a throwaway folder, then remove it.
 - [scan-a-single-file.md](scan-a-single-file.md): scan one file instead of a folder, and read the report.
+- [scan-compare-two-runs.md](scan-compare-two-runs.md): compare two runs of `zn-gate scan --format json` with `diff`, and read the exit code `3` that a clean diff can hide.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project, from the run to what each exit code means.
 - [secret-adopt-existing-file.md](secret-adopt-existing-file.md): adopt a secret that zn-gate found in a project file, from the token it was replaced with to a named vault secret, and the check afterwards.
 - [secret-set-and-run.md](secret-set-and-run.md): store a secret in the vault and run a program that uses it, without the agent seeing the value.
