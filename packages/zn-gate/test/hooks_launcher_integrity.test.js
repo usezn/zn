@@ -19,10 +19,10 @@ const { check } = require('../lib/check');
 const { tempDir } = require('./helpers/tmp');
 
 const claude = getAdapter('claude-code');
-const posix = process.platform !== 'win32';
+const { hasPosixSh: posix } = require('./helpers/posix_sh');
 const REAL = "require('fs').writeFileSync(process.env.ZN_HOOK_ACK, 'ok'); process.stdout.write('REAL_RUNNER\\n'); process.exit(0);\n";
 const CHANGED = /zn-gate changed since the hooks were installed/;
-const AGAIN = /zn hooks install claude-code/;
+const AGAIN = /zn(?:\.cmd)? hooks install claude-code/;
 
 function setup(t, nodePath = process.execPath) {
   const home = tempDir(t, 'zn-launcher-integrity-');
@@ -162,7 +162,7 @@ test('check: reports a launcher whose runner no longer matches the recorded SHA-
   r = (await check({ home, env, cwd: tempDir(t, 'zn-launcher-integrity-cwd-') })).results.find((x) => x.id === 'claude-code');
   assert.equal(r.state, 'not-protected');
   assert.match(r.problem, /zn-gate changed since the hooks were installed/);
-  assert.match(r.fix, /zn hooks install claude-code/);
+  assert.match(r.fix, /zn(?:\.cmd)? hooks install claude-code/);
 });
 
 test('integrity: a NODE_OPTIONS that makes -e an ES module does not break the hook', { skip: !posix }, (t) => {
