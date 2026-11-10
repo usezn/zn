@@ -149,8 +149,9 @@ jobs:
     # One cheap job decides whether the change touches Rust. The jobs that are not required (MSRV, cargo audit) need it
     # and are skipped without taking a runner when it says no: on a pull request that changes no Rust file they used to
     # start, check out and stop. The required "build, test, clippy, fmt" keeps its own check, so it always reports.
-    # The merge queue runs only that required job, so it skips this one too.
-    if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    # It also runs in the merge queue, because cargo audit (a security check) still gates the merge there; MSRV and
+    # the private file writer skip the queue on their own.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -221,10 +222,11 @@ jobs:
 
   audit:
     name: cargo audit
-    # Draft pull requests skip this job (through scope); a change that touches no Rust file skips it too. The merge
-    # queue runs only the required checks, so the commit merged into next is checked here, on the push to next.
+    # Draft pull requests skip this job (through scope); a change that touches no Rust file skips it too. Unlike the
+    # other jobs that are not required, it also runs in the merge queue: a new RustSec advisory must stop a merge into
+    # next, not show up only after it.
     needs: scope
-    if: github.event_name != 'merge_group' && needs.scope.outputs.rust == 'true'
+    if: needs.scope.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
