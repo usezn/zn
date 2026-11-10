@@ -13,7 +13,7 @@ python3 -m venv .venv
 .venv/bin/pip install zn-gate
 ```
 
-If `python3 -m venv` fails on Debian or Ubuntu, install the `python3-venv` package first. The [Python package README](https://github.com/usezn/zn/blob/main/packages/zn-gate-py/README.md) lists the other install errors and how to fix them.
+If `python3 -m venv` fails on Debian or Ubuntu, install the `python3-venv` package first. The [Python package README](../../packages/zn-gate-py/README.md) lists the other install errors and how to fix them.
 
 Check that the command runs:
 
@@ -112,7 +112,7 @@ Without Node.js, these work in the Python package:
 - `scan` and `test`, as shown above.
 - `analyze`, which checks a prompt with local rules and prints JSON.
 - `status`, `stats` and `evidence`.
-- The Python functions, such as `evaluate` and `redact_secrets`, described in the [Python package README](https://github.com/usezn/zn/blob/main/packages/zn-gate-py/README.md).
+- The Python functions, such as `evaluate` and `redact_secrets`, described in the [Python package README](../../packages/zn-gate-py/README.md).
 
 These need the npm package and Node.js. In the Python package they print a short note and exit `2`:
 
@@ -122,4 +122,4 @@ These need the npm package and Node.js. In the Python package they print a short
 - Team, audit, logs and export: `team`, `audit`, `logs`, `export`.
 - Reports and the account connection: `report`, `connect`, `disconnect`, `uninstall`.
 
-The Python package does not install hooks for coding agents and has no local vault. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, install Node.js 18 or later and run `npx -y zn-gate init` in your own terminal. The [command line reference](https://github.com/usezn/zn/blob/main/docs/cli.md#the-python-package) lists every command of the Python package.
+The Python package does not install hooks for coding agents and has no local vault. To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, install Node.js 18 or later and run `npx -y zn-gate init` in your own terminal. The [command line reference](../cli.md#the-python-package) lists every command of the Python package.
