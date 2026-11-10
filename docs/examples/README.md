@@ -40,4 +40,5 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
 - [why-blocked-walkthrough.md](why-blocked-walkthrough.md): one blocked command, from what the agent sees to the `zn why` output and the allow step.
 - [zn-hooks-install-for-one-agent.md](zn-hooks-install-for-one-agent.md): install the hooks for one coding agent only, then verify them with `check --hooks` and `check`.
+- [zn-vault-forget-after-leaving-a-team.md](zn-vault-forget-after-leaving-a-team.md): what `team leave` removes from this machine, what it keeps, and when `vault forget` or `vault purge` is the next step.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
