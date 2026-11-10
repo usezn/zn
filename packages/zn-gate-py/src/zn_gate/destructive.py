@@ -28,7 +28,7 @@ from typing import Any, Dict, FrozenSet, List, NamedTuple, Optional, Pattern, Tu
 
 from .rules import Assessment
 
-COMMAND_RULES_VERSION = "2026-11-09.1"
+COMMAND_RULES_VERSION = "2026-11-10.1"
 
 _REASONS = {
     "rm_root_home": "it deletes the home folder, the filesystem root or a system folder, recursively",
@@ -311,6 +311,7 @@ class _Segs(List[Any]):
     """The simple commands of a line as (words, sep) pairs; raws holds the text of each one that has a backtick (else '')."""
 
     raws: List[str]
+    opens: List[int]
 
 
 def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], Optional[str]]], bool]:
@@ -320,6 +321,7 @@ def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], O
     rest = re.sub(r"(^|[\s\"'])([A-Za-z]:)\\(?=\s|\Z)", r"\1\2/", rest)
     out = _Segs()
     out.raws = []
+    out.opens = []
     guard = 0
     while rest and guard < _MAX_SEGMENTS:
         guard += 1
@@ -336,10 +338,13 @@ def _segments_of(cmd: str, posix: bool = False) -> Tuple[List[Tuple[List[str], O
         out.append((words, sep))
         raw = rest[:end]
         out.raws.append(raw if "`" in raw else "")
+        out.opens.append(0)
         rest = rest[adv:]
         if sep in ("|", "|&"):
             lead = _PIPE_LEAD_RE.match(rest)
             if lead:
+                # Each ( dropped here is still a group the line closes later: opens counts them so _check_segments pairs the ) with it.
+                out.opens[-1] = lead.group(0).count("(")
                 rest = rest[lead.end():]
     # Unread text left over: the caller must not treat the commands read so far as the whole line.
     return out, bool(rest)
@@ -1219,6 +1224,7 @@ def _check_segments(
     # A ( group runs in a subshell: a cd inside it does not move the folder of what follows the ). Each "(" saves the folder.
     groups: List[Any] = []
     raws = getattr(segs, "raws", None)
+    opens = getattr(segs, "opens", None)
     ticks = 0
     var_scope = _Vars()
     for idx, (words, sep) in enumerate(segs):
@@ -1253,6 +1259,11 @@ def _check_segments(
             if hit2:
                 return hit2
             pipe = []
+        # A ( dropped after a pipe (curl URL | (sh)) opens a group of its own: save the folder so its ) pops that entry, not the enclosing one.
+        if opens:
+            for _ in range(opens[idx]):
+                if len(groups) < _MAX_SEGMENTS:
+                    groups.append(known)
         if sep == ")" and groups:
             known = groups.pop()
     return _check_pipeline(pipe, known) if pipe else None

@@ -28,7 +28,7 @@
  * so quotes and escapes read the same as in the rest of the policy.
  */
 
-const COMMAND_RULES_VERSION = '2026-11-09.1';
+const COMMAND_RULES_VERSION = '2026-11-10.1';
 
 const REASONS = {
   rm_root_home: 'it deletes the home folder, the filesystem root or a system folder, recursively',
@@ -131,10 +131,18 @@ function segmentsOf(cmd, posix = false) {
     }
     // The text of the command, kept only when it holds a backtick: its substitution starts from the folder reached by then.
     const raw = rest.slice(0, scan.end);
-    out.push({ words: scan.words.map((w) => w.text), sep, raw: raw.includes('`') ? raw : '' });
+    const entry = { words: scan.words.map((w) => w.text), sep, raw: raw.includes('`') ? raw : '', opens: 0 };
+    out.push(entry);
     rest = rest.slice(adv);
     // A pipe continues over a line break, and its target may be a group: curl URL |<nl>sh, curl URL | (sh).
-    if (sep === '|' || sep === '|&') rest = rest.replace(/^(?:\s|\()+/, '');
+    // Each ( dropped here is still a group the line closes later: opens counts them so checkSegments pairs the ) with it.
+    if (sep === '|' || sep === '|&') {
+      const lead = /^(?:\s|\()+/.exec(rest);
+      if (lead) {
+        entry.opens = lead[0].split('(').length - 1;
+        rest = rest.slice(lead[0].length);
+      }
+    }
   }
   // Unread text left over: the caller must not treat the commands read so far as the whole line.
   out.truncated = rest.length > 0;
@@ -746,6 +754,8 @@ function checkSegments(segs, depth, cwd0 = null) {
       if (hit2) return hit2;
       pipe = [];
     }
+    // A ( dropped after a pipe (curl URL | (sh)) opens a group of its own: save the folder so its ) pops that entry, not the enclosing one.
+    for (let i = 0; i < (seg.opens || 0) && groups.length < MAX_SEGMENTS; i++) groups.push(known);
     if (seg.sep === ')' && groups.length) known = groups.pop();
   }
   return pipe.length ? checkPipeline(pipe, known) : null;

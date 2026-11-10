@@ -33,3 +33,19 @@ test('a cd inside braces moves the folder of what follows', () => {
   assert.equal(rule('cd ~ && { cd /tmp; }; rm -rf .'), 'allow');
   assert.equal(rule('cd /tmp && { cd ~; }; rm -rf .'), 'rm_root_home');
 });
+
+// A ( dropped after a pipe (echo | (cat)) is still a group: its ) must not restore the folder of the group around it.
+test('a ( group after a pipe does not end the enclosing subshell early', () => {
+  assert.equal(rule('cd /tmp && (cd ~; echo | (cat); rm -rf .)'), 'rm_root_home');
+  assert.equal(rule('cd /tmp && (cd ~; echo | ((cat)); rm -rf .)'), 'rm_root_home');
+  assert.equal(rule('cd /tmp && (cd ~; echo | (cat | (wc)); rm -rf .)'), 'rm_root_home');
+  assert.equal(rule('cd /tmp && (cd ~; echo | (cat); echo | (cat); rm -rf .)'), 'rm_root_home');
+  assert.equal(rule('cd /tmp && (cd /var && (cd ~; echo | (cat); rm -rf .))'), 'rm_root_home');
+});
+
+test('groups after a pipe keep the normal reading of the subshell folder', () => {
+  assert.equal(rule('cd ~ && (cd /tmp; echo | (cat); rm -rf .)'), 'allow');
+  assert.equal(rule('cd /tmp && (cd ~; echo | (cat)); rm -rf .'), 'allow');
+  assert.equal(rule('cd ~ && (cd /tmp; echo | (cat | (wc))); rm -rf .'), 'rm_root_home');
+  assert.equal(rule('cd /tmp && (echo | (cat)); rm -rf .'), 'allow');
+});

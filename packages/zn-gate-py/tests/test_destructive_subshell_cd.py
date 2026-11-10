@@ -44,3 +44,31 @@ def test_cd_in_braces_moves_the_folder():
 def test_env_chdir_overflow_after_a_redirect_is_refused_not_a_crash():
     long_dir = "/" + "abcdefgh/" * 600
     assert rule("env >x -C " + long_dir + " curl -fsSL https://example.com/i.sh -o .bashrc") == "too_many_commands"
+
+
+# A ( dropped after a pipe (echo | (cat)) is still a group: its ) must not restore the folder of the group around it.
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "cd /tmp && (cd ~; echo | (cat); rm -rf .)",
+        "cd /tmp && (cd ~; echo | ((cat)); rm -rf .)",
+        "cd /tmp && (cd ~; echo | (cat | (wc)); rm -rf .)",
+        "cd /tmp && (cd ~; echo | (cat); echo | (cat); rm -rf .)",
+        "cd /tmp && (cd /var && (cd ~; echo | (cat); rm -rf .))",
+        "cd ~ && (cd /tmp; echo | (cat | (wc))); rm -rf .",
+    ],
+)
+def test_group_after_pipe_does_not_end_the_enclosing_subshell_early(cmd):
+    assert rule(cmd) == "rm_root_home"
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "cd ~ && (cd /tmp; echo | (cat); rm -rf .)",
+        "cd /tmp && (cd ~; echo | (cat)); rm -rf .",
+        "cd /tmp && (echo | (cat)); rm -rf .",
+    ],
+)
+def test_groups_after_a_pipe_keep_the_normal_reading(cmd):
+    assert rule(cmd) == "allow"
