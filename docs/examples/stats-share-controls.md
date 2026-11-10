@@ -58,9 +58,10 @@ If sharing is already on, the command says so and exits `0`.
 ## What is sent, and when
 
 - Once sharing is on, `zn-gate stats` sends one report per complete day that has not been sent yet (never today), at most the last 3 days, to the address shown by `show`. The text output then prints `Shared pseudonymous counts for <day>.` for each day sent.
-- A report holds a random installation id, the day, the zn-gate version, the operating system, the Node.js version, the agent and part of zn-gate used most that day, and the number of detections per secret type.
+- A report holds a random installation id, the day, the zn-gate version, the operating system, the major version of Node.js, the agent and the part of zn-gate used most that day (hook, shield, MCP, broker or command line), and the number of detections per built-in type, such as `AWS_KEY` or `EMAIL`. The agent is a known agent name or `other`. Detection types that are not built-in are counted as `OTHER`.
+- The request also carries what any HTTPS request does: your IP address, and a User-Agent of `zn-gate/<version>`.
 - It never holds secret values, prompts, variable or secret names, file names, paths, repository names, hosts or emails.
-- If a day cannot be sent, the output says `<n> day(s) could not be shared; they will be tried next time.`
+- If a day cannot be sent, the output says `<n> day(s) could not be shared; they will be tried next time.` A failed day stays queued and is tried again on each later run, for as long as it is one of the last 3 complete days. After that it is dropped and never sent. Days after it that did go through are sent again on the next run; the server keeps one report per installation and day, so nothing is counted twice.
 
 ## Turn sharing off
 
@@ -72,7 +73,7 @@ zn-gate stats share off
 Sharing is off. Nothing more is sent; your local counts stay on this machine.
 ```
 
-Turning it off needs no confirmation. The installation id is removed, so turning sharing on again later starts with a new random id and the new reports are not linked to the old ones. Your local counts stay where they are. The setting is kept in `~/.zn/config.json`.
+Turning it off needs no confirmation. The installation id is removed, so turning sharing on again later starts with a new random id and the new reports are not linked to the old ones. Your local counts stay where they are. The setting is kept under `"stats"` in `~/.zn/config.json`. If the `ZN_HOME` variable is set, the file is `$ZN_HOME/config.json` instead.
 
 ## An unknown word
 
