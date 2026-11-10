@@ -242,7 +242,7 @@ A scan never reports a clean result for something it could not read. A folder it
 ### `audit`
 
 ```bash
-zn-gate audit [path] [--format text|json|sarif] [--output file] [--fail-on high] [--agents claude,codex,all] [--include-home]
+zn-gate audit [path] [--format text|json|sarif] [--output file] [--fail-on high] [--agents claude,codex,all] [--include-home] [--pre-open]
 ```
 
 Reviews the agent configs of a folder before you open it: hooks, MCP servers, endpoint overrides, permissions, instructions and planted programs. It runs nothing. [What it finds](audit.md).
@@ -252,6 +252,7 @@ Reviews the agent configs of a folder before you open it: hooks, MCP servers, en
 - `--fail-on`: `low`, `medium`, `high` (default), `critical` or `none`.
 - `--agents`: a comma-separated list of `claude`, `codex`, `cursor`, `opencode`, `amazonq`, `copilot`, `gemini`, or `all` (default).
 - `--include-home`: also review your own agent configs in your home folder.
+- `--pre-open`: also run the checks for things that can run before an agent asks you to trust the folder (git config, nested bare repositories, tool-named programs in `bin`). See [the pre-open checks](audit.md#pre-open-checks).
 
 Exit codes: `0` nothing at or above `--fail-on`, `1` findings at or above it, `2` wrong usage or a path that is not a folder.
 

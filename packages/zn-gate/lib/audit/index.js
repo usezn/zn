@@ -1683,11 +1683,22 @@ function readHead(abs) {
   }
 }
 
-function checkShadowing(root, out) {
+// `sub` (a folder under the root) and ZNA026 are the --pre-open variant: the folder must be a real directory
+// (never a link), symbolic links in it are skipped (package managers put legitimate ones there) and the
+// severity is one level lower, because a PATH has to include the folder first.
+function checkShadowing(root, out, sub, ruleId) {
+  const id = ruleId || 'ZNA016';
+  let dirAbs = root;
+  if (sub) {
+    dirAbs = path.join(root, sub);
+    let dst;
+    try { dst = fs.lstatSync(dirAbs); } catch (_) { return; }
+    if (!dst.isDirectory()) return;
+  }
   let list;
-  try { list = fs.readdirSync(root, { withFileTypes: true }); } catch (_) { return; }
+  try { list = fs.readdirSync(dirAbs, { withFileTypes: true }); } catch (_) { return; }
   for (const d of list) {
-    if (!d.isFile() && !d.isSymbolicLink()) continue;
+    if (!d.isFile() && !(d.isSymbolicLink() && !sub)) continue;
     const name = d.name;
     const lower = name.toLowerCase();
     const ext = path.extname(lower);
@@ -1695,7 +1706,7 @@ function checkShadowing(root, out) {
     if (!P.SHADOWED_TOOLS.has(stem)) continue;
     let severity = null;
     let why = '';
-    const abs = path.join(root, name);
+    const abs = path.join(dirAbs, name);
     if (P.WINDOWS_EXEC_EXT.has(ext)) {
       severity = 'critical';
       why = 'Windows runs ' + name + ' from the current directory before the real ' + stem + '.';
@@ -1717,10 +1728,12 @@ function checkShadowing(root, out) {
       }
     }
     if (!severity) continue;
+    const file = sub ? sub + '/' + name : name;
+    if (sub) severity = severity === 'critical' ? 'high' : 'medium';
     out.push({
-      id: 'ZNA016', severity, agent: 'any', file: name, line: 1,
-      title: BY_ID.ZNA016.title, detail: redact(why), evidence: redact(name),
-      fix: BY_ID.ZNA016.fix, references: BY_ID.ZNA016.references.slice(), _readers: AGENTS,
+      id, severity, agent: 'any', file, line: 1,
+      title: BY_ID[id].title, detail: redact(sub ? why.replace(name, file) : why), evidence: redact(file),
+      fix: BY_ID[id].fix, references: BY_ID[id].references.slice(), _readers: AGENTS,
     });
   }
 }
@@ -2044,6 +2057,13 @@ function audit(opts) {
     }
   }
   checkShadowing(root, out);
+  if (o.preOpen) {
+    const pre = require('./preopen').preOpen(out, { root, readBounded, redact, rule: (id) => BY_ID[id], readers: AGENTS, deadline, checkShadowing });
+    for (const u of pre.unchecked) unchecked.push(Object.assign({ agent: 'any' }, u));
+    if (pre.cut) {
+      unchecked.push({ file: '.', agent: 'any', severity: 'high', detail: 'The --pre-open scan for nested git repositories stopped early (' + pre.cut + ' limit); the rest of the folder was not checked.' });
+    }
+  }
   inventory(extDirs, out);
   if (o.baselineHome) { try { baselineFindings(root, o.baselineHome, out); } catch (_) { /* a damaged baseline never stops the audit */ } }
   try {

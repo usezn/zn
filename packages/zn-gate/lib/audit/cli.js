@@ -2,7 +2,7 @@
 /**
  * zn audit [path] [--format text|json|sarif] [--output <file>]
  *          [--fail-on low|medium|high|critical|none]
- *          [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
+ *          [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home] [--pre-open]
  *
  * Exit codes: 0 nothing at or above --fail-on, 1 findings at or above it,
  * 2 usage or runtime error.
@@ -15,7 +15,7 @@ const { colorEnabled } = require('../term');
 const { audit, AGENTS } = require('./index');
 const report = require('./report');
 
-const USAGE = 'usage: zn audit [path] [--format text|json|sarif] [--output <file>] [--fail-on low|medium|high|critical|none] [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home] [--approve]';
+const USAGE = 'usage: zn audit [path] [--format text|json|sarif] [--output <file>] [--fail-on low|medium|high|critical|none] [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home] [--pre-open] [--approve]';
 const FORMATS = ['text', 'json', 'sarif'];
 const FAIL_ON = ['low', 'medium', 'high', 'critical', 'none'];
 
@@ -25,7 +25,7 @@ class UsageError extends Error {}
 const LOG_MOVED = '`zn audit` reviews agent configs; the secret-use log is `zn vault log` (alias `zn secret log`)';
 
 function parseArgs(args) {
-  const opts = { path: null, format: 'text', output: null, failOn: 'high', agents: ['all'], includeHome: false, approve: false, help: false };
+  const opts = { path: null, format: 'text', output: null, failOn: 'high', agents: ['all'], includeHome: false, preOpen: false, approve: false, help: false };
   const takesValue = { '--format': 'format', '--output': 'output', '-o': 'output', '--fail-on': 'failOn', '--agents': 'agents' };
   for (let i = 0; i < args.length; i++) {
     const a = String(args[i]);
@@ -33,6 +33,7 @@ function parseArgs(args) {
     if (a === '--since' || a.startsWith('--since=')) throw new UsageError(LOG_MOVED);
     if (a === '--include-home') { opts.includeHome = true; continue; }
     if (a === '--approve') { opts.approve = true; continue; }
+    if (a === '--pre-open') { opts.preOpen = true; continue; }
     const eq = a.indexOf('=');
     const name = a.startsWith('--') && eq > 0 ? a.slice(0, eq) : a;
     if (takesValue[name]) {
@@ -102,7 +103,7 @@ async function main(args, ioIn) {
       io.stdout.write('zn audit: recorded ' + Object.keys(surface).length + ' executable configuration entr' + (Object.keys(surface).length === 1 ? 'y' : 'ies') + ' as approved for this project.\n');
       return 0;
     }
-    const result = audit({ root, agents: opts.agents, includeHome: opts.includeHome, home: io.home, env: io.env, baselineHome: home });
+    const result = audit({ root, agents: opts.agents, includeHome: opts.includeHome, preOpen: opts.preOpen, home: io.home, env: io.env, baselineHome: home });
     const toolVersion = require('../../package.json').version;
     const meta = {
       toolVersion,

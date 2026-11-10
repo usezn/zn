@@ -313,6 +313,27 @@ const RULE_CASES = [
     expect: [{ id: 'ZNA023', severity: 'high', file: '.mcp.json' }],
     count: { ZNA023: 1 },
   },
+  {
+    name: 'ZNA024: a git config that names a program for git to run (pre-open)',
+    preOpen: true,
+    files: { '.git/config': '[core]' + String.fromCharCode(10) + 'fsmonitor = fake-monitor-program' + String.fromCharCode(10) },
+    expect: [{ id: 'ZNA024', severity: 'high', file: '.git/config' }],
+    count: { ZNA024: 1 },
+  },
+  {
+    name: 'ZNA025: a bare repository nested in the working tree (pre-open)',
+    preOpen: true,
+    files: { 'vendor/x.git/HEAD': 'ref: refs/heads/main', 'vendor/x.git/objects/.keep': '', 'vendor/x.git/refs/.keep': '' },
+    expect: [{ id: 'ZNA025', severity: 'high', file: 'vendor/x.git' }],
+    count: { ZNA025: 1 },
+  },
+  {
+    name: 'ZNA026: a tool-named program in bin (pre-open)',
+    preOpen: true,
+    files: { 'bin/git.exe': 'MZ' },
+    expect: [{ id: 'ZNA026', severity: 'high', file: 'bin/git.exe' }],
+    count: { ZNA026: 1 },
+  },
 ];
 
 const BENIGN_CASES = [

@@ -223,7 +223,7 @@ COMMANDS:
   audit [path]        Review a repository's agent configs before you open it: hooks, MCP servers,
                       endpoint overrides, permissions, instructions, planted executables
                       [--format text|json|sarif] [--output FILE] [--fail-on high]
-                      [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home]
+                      [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home] [--pre-open]
   evidence            Query the local hash-chained decision log and run the UI dashboard
   logs                Tail or inspect security event logs
   why [<id>]          Explain, in plain words, the last block in the evidence log (or the record with that id)
@@ -296,6 +296,8 @@ OPTIONS:
   --allow-partial     scan: exit 0 even when some files or folders were not read
                       (they are still listed). Reading no file at all stays an error (exit 3)
   --exclude <dirs>    Additional directories to exclude (e.g. fixtures,legacy)
+  --pre-open          audit: also check the folder's git config, nested bare repositories and tool-named programs
+                      in bin/.bin, which can run before an agent asks you to trust the folder
   --include-home      Also check your own MCP configs (Claude Desktop, Claude Code, Cursor, Codex,
                       Gemini, Antigravity, OpenCode, Amazon Q) for passwords and keys written in plain text
   --verbose           Enable debug logging to stderr

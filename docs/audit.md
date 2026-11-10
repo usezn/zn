@@ -27,7 +27,7 @@ It runs locally and sends nothing anywhere.
 ```text
 zn audit [path] [--format text|json|sarif] [--output <file>]
          [--fail-on low|medium|high|critical|none]
-         [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home] [--approve]
+         [--agents claude,codex,cursor,opencode,amazonq,copilot,gemini,all] [--include-home] [--pre-open] [--approve]
 ```
 
 `zn-gate audit` is the same command.
@@ -48,6 +48,7 @@ there is no directory named `log`) and `zn audit --since DATE` exit with code
 | `--fail-on` | `high` | Exit with 1 if any finding has this severity or a higher one; `none` never fails |
 | `--agents` | `all` | Only check the files these agents read: `claude`, `codex`, `cursor`, `opencode`, `amazonq`, `copilot`, `gemini` or `all`. Findings that concern every agent (`AGENTS.md`, planted executables, CI workflows) are always shown |
 | `--approve` | off | Record the project's executable configuration as approved, then exit: MCP servers (`.mcp.json`, `.cursor`, `.vscode`, `.gemini`, `.amazonq`, `opencode.json`, `.codex/config.toml`), hooks with their matchers, permissions (allow, deny, ask, default mode), `disableAllHooks`, helper commands, endpoint, proxy and loader environment overrides, install scripts, dev container commands and folder-open tasks. A file that is a link is followed when it stays inside the project; a file that cannot be read counts as a change. It runs only at a terminal and not when an agent started it, zn blocks it as an agent writes it, and when the vault is unlocked the approval is also confirmed on the vault's own channel (its terminal or an OS dialog). With no vault running the terminal check is the only one: a process an agent started inside a pseudo-terminal can pass it. Only entry names and hashes are stored, in `~/.zn/baselines`, never a value. Later audits report an entry that changed, was added or was removed since (ZNA023) |
+| `--pre-open` | off | Also run the [pre-open checks](#pre-open-checks) (ZNA024 to ZNA026): git config that runs programs, nested bare repositories, tool-named programs in `bin` and `.bin` |
 | `--include-home` | off | Also check your own user-level configs (`~/.claude/settings.json`, `~/.codex/config.toml`, ...) |
 
 Exit codes: `0` no finding at or above `--fail-on`, `1` at least one, `2`
@@ -152,6 +153,38 @@ Rule ids are stable: a rule may get better, but its id never changes meaning.
 | ZNA021 | medium | An agent instruction file (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, rules, `copilot-instructions.md`, `SKILL.md` and other skill, command and agent files) has a run of 40 or more empty or whitespace-only lines with more text after it | The text after the run is out of view for a person who opens the file and past the part of it a classifier reads. The finding gives the line where that text starts and the length of the run; the text is not printed. Blank lines at the end of a file are not reported. The check counts lines and uses no text patterns: read the file from the reported line |
 | ZNA022 | high / medium | A hook of type `http`, or of type `agent` that names a URL, in an agent settings or hooks file | Each tool event the hook matches (the command line, file paths and contents, tool output) is posted to that address, and from the moment the folder is opened when the file is in the project. High for a remote address, medium for a local one (`127.0.0.1`, `localhost`, `::1`), low in your own user file. Environment variables that its headers interpolate or `allowedEnvVars` lists are named in the finding, never their values. A command hook is reported by ZNA001, a placeholder URL such as `${HOOK_URL}` is not reported |
 | ZNA023 | high | An MCP server, hook, endpoint or proxy override, permission list, install script or folder-open task differs from the version you recorded with `zn audit --approve` (changed or added: high; removed hook, permission or setting: medium; other removed entry: low) | A pull, a branch switch, a dependency or the agent itself can rewrite a command you already reviewed. The finding names the entry and the file, never its value. No recorded baseline means no finding. If the change is yours, run `zn audit --approve` again |
+| ZNA024 | high | (`--pre-open` only) The folder's git config (`.git/config`, and the config of a nested repository) makes git run a program or load a file from the folder: `core.fsmonitor`, `core.sshCommand`, `core.pager`, `core.editor`, `core.askPass`, `core.gitProxy`, `sequence.editor`, `diff.external`, `diff.<name>.command` and `textconv`, `merge.<name>.driver`, `mergetool` and `difftool` `cmd` and `path`, `filter.<name>.clean`, `smudge` and `process`, `credential.helper`, `gpg.program`, `pager.<command>`, `core.hooksPath` pointing into the folder, `include.path` or `includeIf.<condition>.path` naming a file in the folder | Git runs these programs on ordinary commands (`status`, `diff`, `commit`), and an editor or agent that runs git in the folder starts them, possibly before any trust prompt. The finding names the key and the line, never the value. `core.fsmonitor = false` and an empty value are not reported |
+| ZNA025 | high | (`--pre-open` only) A folder inside the project that has the layout of a bare git repository (`HEAD`, `objects/` and `refs/`) | Git commands run inside it treat it as the repository and read its own config (checked by ZNA024). The repository's own `.git` folder is not reported |
+| ZNA026 | high (Windows executables) / medium | (`--pre-open` only) A regular file in the top-level `bin` or `.bin` folder is named like a common tool (`git`, `node`, `python`, `sh`, `npm.cmd`, ...), the same names as ZNA016 | A PATH that includes the folder (project scripts often add it) picks the file up in place of the real tool. One level below ZNA016, because PATH has to include the folder. Links are skipped: package managers create them |
+
+
+## Pre-open checks
+
+`zn audit --pre-open <dir>` adds three rules for things that can run before an
+agent shows its trust prompt. Run it on a folder you just cloned or unpacked,
+before you open it in an editor or agent. It also runs every check above, so one
+command covers the folder.
+
+This is a pre-check, not protection. It reads files and runs nothing, and it
+cannot see everything an agent or editor may start when it opens a folder: a
+clean result does not mean the folder is safe to open. The checks are opt-in
+because a repository you work in often has git settings of your own (a credential
+helper or an editor), which are your choice and not an attack.
+
+| Rule | What it looks at |
+|---|---|
+| ZNA024 | The git config of the folder (`.git/config`) and of nested repositories |
+| ZNA025 | Bare git repositories nested in the folder |
+| ZNA026 | Tool-named programs in the top-level `bin` and `.bin` folders |
+
+How the checks work:
+
+- The git config is read as text by zn itself. The `git` program is never run, because it would read the config under review.
+- A report names the rule, the file, the line and the setting, never its value.
+- Symbolic links are not followed out of the folder. A `.git` or `.git/config` that is a link, a file over 1 MiB, or a `.git` file that points to another folder is reported as not checked (ZNA020) instead of being read.
+- Project configs that start servers or hooks on their own (hooks, MCP servers, folder-open tasks) are covered by the rules above (ZNA001 to ZNA004, ZNA022); `--pre-open` adds none of its own for them.
+
+The Python package has no `audit` command (see [The Python package](cli.md#the-python-package)), so there is nothing to keep in step there.
 
 ## Output
 

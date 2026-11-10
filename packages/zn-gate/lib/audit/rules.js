@@ -7,7 +7,7 @@
 
 // Version of the rule catalogue and of the command patterns in audit/patterns.js.
 // Bump it when a rule, a pattern or a rule id changes; see CONTRIBUTING.md.
-const AUDIT_RULES_VERSION = '2026-11-06.4';
+const AUDIT_RULES_VERSION = '2026-11-10.1';
 
 const SEVERITIES = ['low', 'medium', 'high', 'critical'];
 const RANK = { none: 99, low: 1, medium: 2, high: 3, critical: 4 };
@@ -181,6 +181,27 @@ const RULES = [
     title: 'Executable agent configuration changed since you approved it',
     help: 'An MCP server, hook, endpoint override, permission list or install script differs from the version recorded by `zn audit --approve`. Only entry names are compared and reported; values are never printed. A removed hook, permission or setting is reported as medium, any other removed entry as low. A file that can no longer be read (too large, not valid, a link that leaves the project) counts as a change.',
     fix: 'Review the changed entry (git diff shows what changed). If the change is yours, run `zn audit --approve` again to record it.',
+    references: [],
+  },
+  {
+    id: 'ZNA024', severity: 'high', name: 'git-config-runs-program',
+    title: 'Git config in the folder makes git run a program or load a file from the tree',
+    help: 'Only checked with `zn audit --pre-open`. A repository config can name a program that git runs on ordinary commands (core.fsmonitor, core.sshCommand, core.pager, core.editor, external diff, merge and filter drivers, credential helpers), point core.hooksPath at a folder of the repository, or include a config file from the working tree. A coding agent or editor that runs git in the folder starts it, possibly before any trust prompt. Values are never printed: the finding gives the key name and the line.',
+    fix: 'Do not open the folder in an agent. Delete the setting (git config --local --unset <key>), or re-clone from the source instead of using the copied folder.',
+    references: [],
+  },
+  {
+    id: 'ZNA025', severity: 'high', name: 'nested-bare-repo',
+    title: 'Bare git repository nested in the working tree',
+    help: 'Only checked with `zn audit --pre-open`. A folder that looks like a bare repository (HEAD, objects and refs) inside the project is treated as the repository by git commands run in it, and it brings its own config.',
+    fix: 'Delete the nested repository unless you put it there, or set safe.bareRepository=explicit in your user git config.',
+    references: [],
+  },
+  {
+    id: 'ZNA026', severity: 'high', name: 'shadowing-executable-in-bin',
+    title: 'Executable in bin or .bin is named like a common tool',
+    help: 'Only checked with `zn audit --pre-open`. A file in a top-level bin or .bin folder named like git, node, python, sh and similar tools is picked up when that folder is on PATH (many project scripts add it). Regular files only; links, which package managers create, are skipped. One level below ZNA016 because PATH has to include the folder.',
+    fix: 'Delete the file unless you put it there on purpose, and keep the folder off PATH until you have reviewed it.',
     references: [],
   },
 ];
