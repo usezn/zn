@@ -86,6 +86,8 @@ npx -y zn-gate hooks uninstall claude-code
 
 Use `codex`, `cursor`, `opencode`, `antigravity`, `zcode` or `copilot` instead of `claude-code` for the others (ZCode has no project hooks, so `--project` does not apply to it). Add `--project` if you installed the hooks for one project only; run it from that project's folder. A backup of the settings file is written first. For Claude Code it also removes zn's own `secrets` MCP server. Add `--no-mcp` to leave MCP servers alone.
 
+If you removed the program first (`npm uninstall -g zn-gate`), the hooks stay and your agent tells you that zn-gate is not installed any more; the command above still works. See [Troubleshooting](troubleshooting.md#18-your-agent-says-zn-gate-is-not-installed-any-more).
+
 ### 3. Claude Code plugin
 
 ```bash

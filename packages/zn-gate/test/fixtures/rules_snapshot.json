@@ -156,7 +156,7 @@
     },
     "audit": {
       "version_const": "AUDIT_RULES_VERSION",
-      "version": "2026-11-06.3",
+      "version": "2026-11-06.4",
       "ids": [
         "ZNA001",
         "ZNA002",
@@ -180,6 +180,7 @@
         "ZNA020",
         "ZNA021",
         "ZNA022",
+        "ZNA023",
         "patterns.CRED_FLAG_NAME",
         "patterns.CRED_FLAG_ONLY",
         "patterns.INTERPRETERS",
@@ -207,13 +208,13 @@
         "patterns.weakening"
       ],
       "sha256": {
-        "lib/audit/rules.js": "7791a1d80e7f0ff24d6693f13c164e729379ef54799c2f8b054c92a49c158f46",
+        "lib/audit/rules.js": "90dcf910450d86e959f76e688a1dcd0c33b3427c05ec6e20bc0b0c113b3a4a60",
         "lib/audit/patterns.js": "fddd085d756061f1fcec7cec8aca3029f4b3ac7e63abb340e8d84c36a03f52c1"
       }
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-11-09.1",
+      "version": "2026-11-10.1",
       "ids": [
         "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
@@ -243,7 +244,7 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "4fd38cd9a8cd29b3e14fcf4e430a5b4d0cd02be51f26db796ed9c0b53044773a",
+        "lib/hooks/policy.js": "a326b1100014af67d51e77c67bef4a90e394def5176bf2d89e7ea363c439acb8",
         "lib/broker/files.js": "f74250b2509bc7451865279da3daff9b1be5e0697cb7d275f0b0871b35b0893d",
         "lib/broker/markers.js": "bf01a06b547629804c504e37a2c6126330ab729bed51ec460bfca4036c1a0b3b",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
