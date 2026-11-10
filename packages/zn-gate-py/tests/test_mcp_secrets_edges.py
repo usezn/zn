@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 from typing import Any, Dict, List
 
 from zn_gate import mcp_secrets as mcp
@@ -267,9 +268,9 @@ def _parity_corpus() -> List[Dict[str, Any]]:
     return cases + paths
 
 
-def _same_as_node(text):
+def _without_npm_note(text):
     """The Python hint adds one note that says the vault commands are npm-only; the Node.js hint has no such note."""
-    return text.replace(mcp.NPM_ONLY_NOTE, "").replace("run npx.cmd -y zn-gate secret allow", "run zn secret allow")
+    return text.replace(mcp.NPM_ONLY_NOTE, "")
 
 
 class TestNodeParity(unittest.TestCase):
@@ -296,14 +297,54 @@ class TestNodeParity(unittest.TestCase):
         out = subprocess.run([node, "-e", _NODE_HELPERS, str(NODE_LIB), json.dumps(names)], capture_output=True, text=True,
                              encoding="utf-8", timeout=60)
         self.assertEqual(out.returncode, 0, out.stderr[:300])
-        for name, got in zip(names, json.loads(out.stdout), strict=True):
-            with self.subTest(name=name):
-                norm = mcp.normalize_name(name)
-                self.assertEqual(got, [norm, mcp.is_secret_name(norm), mcp.suggested_name(norm),
-                                       _same_as_node(mcp.mcp_next_step("environment variable", name)),
-                                       _same_as_node(mcp.mcp_next_step("argument", name)),
-                                       _same_as_node(mcp.mcp_next_step("setting", name)), _same_as_node(mcp.mcp_next_step("header", name)),
-                                       mcp.mcp_sample("argument", name), mcp.mcp_sample("URL", name), mcp.mcp_sample("header", name)])
+        # The Node.js hints name the plain commands on every platform, so the Python hints are compared as posix.
+        with mock.patch("zn_gate.shell_names.os.name", "posix"):
+            for name, got in zip(names, json.loads(out.stdout), strict=True):
+                with self.subTest(name=name):
+                    norm = mcp.normalize_name(name)
+                    self.assertEqual(got, [norm, mcp.is_secret_name(norm), mcp.suggested_name(norm),
+                                           _without_npm_note(mcp.mcp_next_step("environment variable", name)),
+                                           _without_npm_note(mcp.mcp_next_step("argument", name)),
+                                           _without_npm_note(mcp.mcp_next_step("setting", name)),
+                                           _without_npm_note(mcp.mcp_next_step("header", name)),
+                                           mcp.mcp_sample("argument", name), mcp.mcp_sample("URL", name), mcp.mcp_sample("header", name)])
+
+
+class TestSecretHintNamesPerPlatform(unittest.TestCase):
+    """The secret next steps name the commands the way each platform runs them. The Node.js hint does not look at
+    the platform, so it names the plain forms everywhere; on win32 the Python hint names the .cmd forms instead."""
+
+    def _node_hint(self, kind, name):
+        node = _node_or_skip()
+        r = subprocess.run([node, "-e", "const m = require(process.argv[1]); process.stdout.write(m.mcpNextStep(process.argv[2], process.argv[3]));",
+                            str(NODE_LIB), kind, name], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr[:300])
+        return r.stdout
+
+    def _py_hint(self, os_name):
+        with mock.patch("zn_gate.shell_names.os.name", os_name), \
+                mock.patch("zn_gate.mcp_secrets.node_available", return_value=True):
+            return mcp.mcp_next_step("environment variable", "API_KEY")
+
+    def test_python_win32_names_the_cmd_forms_for_secret_set_and_allow(self):
+        msg = self._py_hint("nt")
+        self.assertIn("run npx.cmd -y zn-gate secret set MCP_API_KEY ", msg)
+        self.assertIn("run npx.cmd -y zn-gate secret allow MCP_API_KEY ", msg)
+        self.assertNotIn("run npx -y", msg)
+        self.assertNotIn("run zn secret allow", msg)
+
+    def test_python_posix_names_the_plain_forms_for_secret_set_and_allow(self):
+        msg = self._py_hint("posix")
+        self.assertIn("run npx -y zn-gate secret set MCP_API_KEY ", msg)
+        self.assertIn("run zn secret allow MCP_API_KEY ", msg)
+        self.assertNotIn("npx.cmd", msg)
+
+    def test_node_hint_names_the_plain_forms_on_every_platform(self):
+        # Known difference: the Node.js hint has no Windows naming yet, so on win32 it still prints these plain forms.
+        msg = self._node_hint("environment variable", "API_KEY")
+        self.assertIn("run npx -y zn-gate secret set MCP_API_KEY ", msg)
+        self.assertIn("run zn secret allow MCP_API_KEY ", msg)
+        self.assertNotIn("npx.cmd", msg)
 
 
 class TestSharedFixtureParity(unittest.TestCase):
