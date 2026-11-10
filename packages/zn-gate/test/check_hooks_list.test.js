@@ -80,6 +80,8 @@ test('a missing launcher file, or a missing Node.js, is BROKEN', { skip: process
   const rowsA = rowsOf(list(a), 'codex');
   assert.ok(rowsA.length > 0 && rowsA.every((r) => r.status === 'BROKEN'));
   assert.match(textOf(list(a)).s, /Fix: run `zn hooks install codex`/);
+  assert.match(rowsA[0].reason, /^its hook cannot start: its launcher script \(.*zn-hook-codex\.sh\) is missing or was changed$/);
+  assert.equal(rowsA[0].fix, 'zn hooks install codex');
 
   const b = setup(t, ['codex']);
   const f = launcherPath(b.home, 'codex');
@@ -156,4 +158,18 @@ test('zn-gate check --hooks (and doctor --hooks) prints the list and exits 1 whe
   assert.equal(bad.status, 1);
   assert.match(bad.stdout, /BROKEN/);
   assert.match(bad.stdout, /zn hooks install codex/);
+});
+
+test('doctor --hooks with a launcher from an older zn-gate: STALE, not BROKEN, exit 1', { skip: process.platform === 'win32' }, (t) => {
+  const s = setup(t, ['codex']);
+  const f = launcherPath(s.home, 'codex');
+  fs.writeFileSync(f, fs.readFileSync(f, 'utf8') + '# an older launcher had other text here\n');
+  const env = { ...s.env, ZN_STATS: 'off' };
+  const r = spawnSync(process.execPath, [CLI, 'doctor', '--hooks'], { cwd: s.cwd, env, encoding: 'utf8' });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout, /^\s+STALE\s/m);
+  assert.doesNotMatch(r.stdout, /BROKEN/);
+  assert.match(r.stdout, /STALE: its launcher script was written by an older zn-gate\./);
+  assert.match(r.stdout, /Fix: run `zn hooks install codex` in your own terminal/);
+  assert.match(r.stdout, /\n0 OK, \d+ stale, 0 broken\./);
 });
