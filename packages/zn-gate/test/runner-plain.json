@@ -12,6 +12,7 @@
   "init.test.js",
   "local_only.test.js",
   "evidence.test.js",
+  "why_record_by_id.test.js",
   "hooks_supervisor.test.js",
   "shield_invisible_items.test.js",
   "shield_framing_limits.test.js",
