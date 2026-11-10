@@ -67,6 +67,13 @@ test('plainSecretNames: names only, markers and credential-less URLs are skipped
   assert.deepEqual(dotenv.plainSecretNames('DATABASE_URL=postgres://u:pw@db.example.com/x\n'), ['DATABASE_URL']);
 });
 
+test('the credential-less URL exemption applies only to _URL and _URI names', () => {
+  assert.deepEqual(dotenv.plainSecretNames('API_KEY=https://abc\n'), ['API_KEY']);
+  assert.deepEqual(dotenv.plainSecretNames('AUTH_TOKEN=https://abc\nAPI_KEY=x://abc\n'), ['AUTH_TOKEN', 'API_KEY']);
+  assert.deepEqual(dotenv.plainSecretNames('DATABASE_URL=https://host/db\nQUEUE_URI=amqp://host\n'), []);
+  assert.deepEqual(dotenv.plainSecretNames('DATABASE_URL=https://u:p@host\n'), ['DATABASE_URL']);
+});
+
 test('a _URL value without a scheme counts, because it cannot be shown to be free of a password', () => {
   assert.deepEqual(dotenv.plainSecretNames('REDIS_URL=localhost:6379\nDATABASE_URL=https://example.com/db\n'), ['REDIS_URL']);
 });

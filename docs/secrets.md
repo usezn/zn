@@ -88,8 +88,8 @@ told apart from ordinary settings. They stay in `.env` in clear text, and it say
 the command to keep it out of the file. For example, for `API_KEY=abc`:
 
 ```text
-  skipped API_KEY: stays in clear text in the file. The value is only 3 character(s), and zn moves values of 8 or more because shorter ones cannot be told apart from ordinary settings. Your agent cannot read the file while it does. To keep it out of the file, run `zn secret set API_KEY` and put __ZN_API_KEY__ in its place.
-1 value(s) stay in clear text in .env: API_KEY. Until each one is stored with `zn secret set`, your agent cannot read this file.
+  skipped API_KEY: stays in clear text in the file. The value is only 3 character(s), and zn moves values of 8 or more because shorter ones cannot be told apart from ordinary settings. The zn read hook blocks agents from reading this file while it does; without the hook, treat it as readable. To keep it out of the file, run `zn secret set API_KEY` and put __ZN_API_KEY__ in its place.
+1 value(s) stay in clear text in .env: API_KEY. Until each one is stored with `zn secret set`, the zn read hook blocks agents from reading this file; without the hook, treat it as readable.
 ```
 
 There is no option to force a short value into the vault with `zn env shadow`.

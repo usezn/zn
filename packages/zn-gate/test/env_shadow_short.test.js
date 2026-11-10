@@ -133,12 +133,13 @@ test('env shadow --dry-run says it is a preview and that no value has moved', as
   assert.match(fs.readFileSync(path.join(dir, '.env'), 'utf8'), /TEST_KEY=zz_fake/);
 });
 
-test('env shadow: the clear-text summary makes no claim about what the hook counts', async (t) => {
+test('env shadow: the clear-text summary ties the read block to the zn read hook and does not state the length rule', async (t) => {
   const { io } = setup(t, ['API_KEY=abc']);
   assert.equal(await cli.dispatch('env', ['shadow'], io), 0);
   const out = io.stdout.text();
   assert.doesNotMatch(out, /8 characters or more/);
-  assert.match(out, /your agent cannot read this file/);
+  assert.match(out, /the zn read hook blocks agents from reading this file; without the hook, treat it as readable/);
+  assert.doesNotMatch(out, /your agent cannot read/i);
 });
 
 test('env shadow --dry-run with only a short skipped value prints the preview line and writes nothing', async (t) => {

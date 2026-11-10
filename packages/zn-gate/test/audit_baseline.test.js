@@ -7,7 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { extractSurface, diffSurface, baselinePath, saveBaseline, loadBaseline } = require('../lib/audit/baseline');
+const { extractSurface, diffSurface, baselinePath, saveBaseline, loadBaseline, readBaseline } = require('../lib/audit/baseline');
 const { tempDir } = require('./helpers/tmp');
 
 function project(t, files) {
@@ -267,7 +267,7 @@ test('two folder-open tasks with different labels that swap places are not a cha
   assert.deepEqual(diffSurface(base, extractSurface(dir)), { added: [], changed: [], removed: [] });
 });
 
-test('a baseline in the earlier format reads as no baseline until the project is approved again', (t) => {
+test('a baseline in the earlier format is not compared and is reported as needing a new approval', (t) => {
   const home = tempDir(t, 'zn-home-');
   const dir = project(t, { '.mcp.json': MCP });
   const file = saveBaseline(home, dir, extractSurface(dir));
@@ -276,4 +276,14 @@ test('a baseline in the earlier format reads as no baseline until the project is
   old.version = 1;
   fs.writeFileSync(file, JSON.stringify(old));
   assert.equal(loadBaseline(home, dir), null);
+  assert.deepEqual(readBaseline(home, dir), { stale: true });
+  // The surface changes after the old approval: the audit reports it, and does not take the new surface as approved.
+  fs.writeFileSync(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { evil: { command: 'node', args: ['x.js'] } } }));
+  const { audit } = require('../lib/audit');
+  const r = audit({ root: dir, agents: ['all'], baselineHome: home, home });
+  const hits = r.findings.filter((f) => f.id === 'ZNA023');
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].severity, 'high');
+  assert.match(hits[0].detail, /older version/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).version, 1, 'the old file is left as it was');
 });

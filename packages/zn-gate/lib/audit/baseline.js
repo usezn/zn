@@ -7,7 +7,7 @@
 //   extractSurface(root)           -> { '<file>#<kind>:<name>': '<sha256 hex>' }
 //   diffSurface(base, now)         -> { added: [...], changed: [...], removed: [...] }
 //   baselinePath(home, root)       -> where the baseline of this project is kept (the real folder, not the way it was spelled)
-//   saveBaseline / loadBaseline    -> write it (0600) / read it (null when missing or damaged)
+//   saveBaseline / loadBaseline    -> write it (0600) / read it (null when missing or damaged); readBaseline also tells an older format apart
 //
 // A file that is there but cannot be read (too large, not valid, a link that leaves the project or is broken) is one entry of its own,
 // `<file>#unreadable`, hashed from what can still be told of it, so turning a file into one of those is a change, not a removal.
@@ -178,16 +178,26 @@ function saveBaseline(home, root, surface, now = new Date()) {
   return file;
 }
 
-function loadBaseline(home, root) {
+// { entries } for a readable baseline of this format, { stale: true } for a well-formed one written in an older format (its keys mean
+// something else, so it cannot be compared), null when there is none or it is damaged.
+function readBaseline(home, root) {
   try {
     const j = JSON.parse(fs.readFileSync(baselinePath(home, root), 'utf8'));
-    // Any other version reads as no baseline: a baseline written before the task keys changed is approved again, not compared.
-    if (!j || j.version !== BASELINE_VERSION || !j.entries || typeof j.entries !== 'object' || Array.isArray(j.entries)) return null;
+    if (!j || !j.entries || typeof j.entries !== 'object' || Array.isArray(j.entries)) return null;
+    if (Number.isInteger(j.version) && j.version > 0 && j.version < BASELINE_VERSION) return { stale: true };
+    if (j.version !== BASELINE_VERSION) return null;
     for (const v of Object.values(j.entries)) if (typeof v !== 'string' || !/^[0-9a-f]{64}$/.test(v)) return null;
-    return j.entries;
+    return { entries: j.entries };
   } catch (_) {
     return null;
   }
 }
 
-module.exports = { extractSurface, diffSurface, baselinePath, saveBaseline, loadBaseline };
+// The entries to compare against, or null. An older-format baseline is never compared and never taken as current: readBaseline reports it,
+// and the audit asks for a new approval.
+function loadBaseline(home, root) {
+  const r = readBaseline(home, root);
+  return r && r.entries ? r.entries : null;
+}
+
+module.exports = { extractSurface, diffSurface, baselinePath, saveBaseline, loadBaseline, readBaseline };

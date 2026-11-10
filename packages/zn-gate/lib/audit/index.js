@@ -1984,8 +1984,18 @@ function inventory(extDirs, out) {
 
 function baselineFindings(root, home, out) {
   const bl = require('./baseline');
-  const base = bl.loadBaseline(home, root);
-  if (!base) return;
+  const read = bl.readBaseline(home, root);
+  if (!read) return;
+  if (read.stale) {
+    // The stored approval was recorded in an older format and cannot be compared: nothing is taken as approved until it is given again.
+    out.push({
+      id: 'ZNA023', severity: 'high', agent: 'any', file: 'zn audit', line: 1, title: BY_ID.ZNA023.title,
+      detail: 'The approval stored for this project was recorded by an older version of zn and cannot be compared, so no entry counts as approved.',
+      evidence: 'baseline format', fix: 'Review the executable configuration, then run `zn audit --approve` to record it again.', references: [], _readers: AGENTS,
+    });
+    return;
+  }
+  const base = read.entries;
   const d = bl.diffSurface(base, bl.extractSurface(root));
   const add = (key, severity, verb) => {
     const file = key.slice(0, key.indexOf('#'));
