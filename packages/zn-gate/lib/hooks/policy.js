@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-07.4';
+const POLICY_RULES_VERSION = '2026-11-10.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -498,12 +498,13 @@ function expandBraces(s, limit = 64, depth = 0) {
   if (!m) return [s];
   if (depth >= BRACE_MAX_DEPTH) return null;
   const out = [];
+  let seen = 0; // every alternative counts towards the limit, repeated ones too
   for (const alt of m[1].split(',')) {
     const rest = expandBraces(s.slice(0, m.index) + alt + s.slice(m.index + m[0].length), limit, depth + 1);
     if (rest === null) return null;
     for (const x of rest) {
-      out.push(x);
-      if (out.length > limit) return null;
+      if (++seen > limit) return null;
+      if (!out.includes(x)) out.push(x); // the outer list repeats its other alternatives for each inner one
     }
   }
   return out;
@@ -1608,7 +1609,7 @@ function hasNetworkSignals(cmd) {
 }
 
 // The program is zn, zn-gate (also with a version: npx -y zn-gate@1.6.0, pnpm dlx zn-gate@latest) or the bin file.
-const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|uninstall|vault\s+(?:reset|purge)|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve)\b/i;
+const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|uninstall|vault\s+(?:reset|purge)|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve|audit\b[^\n;&|]{0,512}?[ \t]--approve)\b/i;
 
 // `npm exec` (and `npm x`) keeps the options after the package for itself unless a `--` comes first, so
 // `npm exec zn-gate init --dry-run` runs the guided init: the options do not count there. Checked per simple
@@ -1626,10 +1627,50 @@ function npmExecInit(text) {
   return false;
 }
 
+/**
+ * The command as the shell reads its words: $'...' decoded, quotes and backslashes taken out, a backslash-newline joined (so
+ * `zn audit --appr''ove`, `zn "audit" --approve` and `zn a\udit --approve` read as the command they run). Only for recognising
+ * zn's own commands; an unbalanced quote leaves the rest as it was.
+ */
+function dequoteShell(text) {
+  const src = /\$['"]/.test(text) ? decodeAnsiC(text) : text;
+  let out = '';
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === '\\') {
+      const nx = src[i + 1];
+      if (nx === undefined) break;
+      if (nx === '\n') { i++; continue; }
+      if (nx === '\r' && src[i + 2] === '\n') { i += 2; continue; }
+      out += nx;
+      i++;
+    } else if (c === "'") {
+      const j = src.indexOf("'", i + 1);
+      if (j < 0) { out += src.slice(i + 1); break; }
+      out += src.slice(i + 1, j);
+      i = j;
+    } else if (c === '"') {
+      let j = i + 1;
+      for (; j < src.length && src[j] !== '"'; j++) {
+        if (src[j] === '\\' && '"\\$`'.includes(src[j + 1])) j++;
+        out += src[j];
+      }
+      i = j;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+// `xargs zn audit` hands zn the --approve it reads from its input, which no text of the command shows.
+const XARGS_AUDIT_RE = /(?:^|[\s;&|(`$'"\\/])xargs\b[^\n;&|]*[\s\/\\'"](?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js)(?:\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?audit\b/i;
 function adminCommand(cmd) {
   const text = String(cmd || '');
-  const m = ZN_ADMIN_RE.exec(text);
-  if (m) return m[4].replace(/\s+/g, ' ');
+  for (const t of text.length <= 100 * 1024 ? [text, dequoteShell(text)] : [text]) {
+    const m = ZN_ADMIN_RE.exec(t);
+    if (m) return /^audit\b/i.test(m[4]) ? 'audit --approve' : m[4].replace(/\s+/g, ' ');
+    if (XARGS_AUDIT_RE.test(t)) return 'audit --approve';
+  }
   return npmExecInit(text) ? 'init' : null;
 }
 
@@ -2982,8 +3023,17 @@ function wildSegmentProtected(seg) {
 function wildWordProtected(text) {
   const parts = text.indexOf('=') >= 0 ? [text, text.slice(text.indexOf('=') + 1)] : [text];
   for (const part of parts) {
+    let afterMark = false;
     for (const raw of part.split(/[\\/]/)) {
-      if (!WILD_ANY_RE.test(raw)) continue;
+      if (!WILD_ANY_RE.test(raw)) {
+        // A glob in a later segment of a word that carries an expansion still reaches the file: `$PWD/.e*`, `${DIR}/.e*`.
+        if (afterMark && /[*?[]/.test(raw)) {
+          const later = raw.toLowerCase().replace(/^["']+|["']+$/g, '');
+          if (!WILD_SAFE_END_RE.test(later) && wildPieceGlobMatches(later)) return true;
+        }
+        continue;
+      }
+      afterMark = true;
       const seg = raw.toLowerCase().replace(/^["']+|["']+$/g, '');
       if (seg.length > WILD_SEGMENT_MAX) return true;   // too long to follow: refused, not checked in part
       if (wildSegmentProtected(seg)) return true;
@@ -3313,6 +3363,10 @@ function adminDenial(admin, opts = {}, cmd = '') {
     arg = /^[\w.-]{1,128}$/.test(base) && !/^\.+$/.test(base) ? base : '.env';
   }
   const full = arg ? admin + ' ' + arg : admin;
+  if (/^audit/i.test(admin)) {
+    return 'zn blocked this: `zn audit --approve` records the current MCP servers, hooks, permissions and install scripts of this project as the ones you accept, ' +
+      'so approving them is the user\'s decision and an agent may not run it. ' + run('audit --approve');
+  }
   if (/pins/i.test(admin)) {
     return 'zn blocked this: approving changed MCP tools is the user\'s decision, so an agent may not run `zn-gate pins approve`. ' + run('pins approve');
   }
