@@ -185,4 +185,33 @@ function report({ agents, counts }, write) {
   return counts.stale || counts.broken ? 1 : 0;
 }
 
-module.exports = { listHooks, report };
+/**
+ * Warning for `zn-gate status`: one block naming every agent whose installed hook was written by an older
+ * zn-gate (STALE), with the one command that refreshes it. Empty string when nothing is stale. Read only.
+ * Broken hooks are left to `zn-gate check --hooks`.
+ */
+function staleWarning(opts = {}) {
+  const res = opts.result || listHooks(opts);
+  const todo = [];
+  for (const a of res.agents) {
+    for (const f of a.files) {
+      const stale = f.rows.filter((r) => r.status === 'STALE');
+      if (stale.length) todo.push({ name: a.name, scope: f.scope, fix: stale[0].fix });
+    }
+  }
+  if (!todo.length) return '';
+  let out = '  Hooks           : ' + (todo.length === 1 ? 'a hook was' : todo.length + ' hooks were') + ' installed by an older zn-gate and should be refreshed:\n';
+  for (const t of todo) out += '    ' + t.name + ' (' + t.scope + '): run `' + t.fix + '`\n';
+  return out + '\n';
+}
+
+/**
+ * One line for the end of a plain `zn-gate check`: how many installed hooks are OK, stale or broken, from the same
+ * listHooks result as `check --hooks`. Returns '' when no agent hook is installed.
+ */
+function summaryLine({ agents, counts }) {
+  if (!agents.length) return '';
+  return 'Hooks: ' + counts.ok + ' OK, ' + counts.stale + ' stale, ' + counts.broken + ' broken. Run zn-gate check --hooks for details.';
+}
+
+module.exports = { listHooks, report, staleWarning, summaryLine };

@@ -842,6 +842,25 @@ function makeOps(state, ctl) {
       return true;
     },
 
+    /* `zn audit --approve` and `zn-gate pins approve`: the person's decision, asked on the daemon's own channel (its terminal or an OS
+     * dialog), never on the terminal of the command that asked, so an agent that holds a pseudo-terminal cannot answer for them. */
+    async confirmApproval(kind, project, summary) {
+      const what = { audit: 'approve the executable configuration of a project?', pins: 'approve changed MCP tools?' }[kind];
+      if (!what) throw znError(CODES.POLICY_DENIED, 'unknown approval. Next step: nothing was changed.');
+      const shown = (v, n) => String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, '?').slice(0, n);
+      await confirmOutOfBand({
+        kind: 'config-approval',
+        title: what,
+        warnings: [kind === 'audit'
+          ? 'zn audit --approve records the MCP servers, hooks, permissions and install scripts of this project as the ones you accept; a later change is reported against them.'
+          : 'zn-gate pins approve accepts the MCP tools that changed since you approved them; the agent will be able to use them.'],
+        fields: [['Project', shown(project, 300)], ['What', shown(summary, 300)]],
+        footer: 'If you did not ask for this, choose Deny.',
+      }, { mode: 'approval:' + kind });
+      writeAudit({ mode: 'approval:' + kind, decision: 'ask:yes', reason: 'approval_confirmed' });
+      return true;
+    },
+
     /* opts.effective: apply the organization policy for opts.agent (what
      * the broker enforces). Without it, the local settings as stored. */
     async listSecrets(opts) {

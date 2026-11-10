@@ -26,6 +26,27 @@ function znHome() {
   return path.join(os.homedir(), '.zn');
 }
 
+/*
+ * The .zn folder in the home directory of the operating-system account running this process, or null when the system
+ * does not report one. Used for settings a project must not be able to redirect (the opt-in cloud check of tool output).
+ * os.homedir() is not used here: it follows HOME (and USERPROFILE on Windows), which a project can set for the agent.
+ * os.userInfo().homedir comes from the account itself: the passwd entry (getpwuid_r) on Linux and macOS, the profile
+ * directory of the process token (GetUserProfileDirectoryW) on Windows. ZN_HOME is not read either. When os.userInfo()
+ * throws (no passwd entry for the uid, as in some containers), the answer is null and callers treat it as "off".
+ */
+let realHomeForTests = null;
+function userHome() {
+  try {
+    const home = realHomeForTests ? realHomeForTests() : os.userInfo().homedir;
+    return typeof home === 'string' && home ? path.join(path.resolve(home), '.zn') : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Tests only: a function returning the account home userHome() should use, or null to restore os.userInfo(). */
+function _useRealHome(fn) { realHomeForTests = typeof fn === 'function' ? fn : null; }
+
 function statsFile() {
   return path.join(znHome(), 'stats.json');
 }
@@ -233,5 +254,23 @@ function latencyReport({ file, off = false } = {}) {
   return 'Decision time per tool call (last ' + s.count + ' calls, measured on this machine): p50 ' + fmt(s.p50) + ' ms, p95 ' + fmt(s.p95) + ' ms. Excludes process startup, writing the response, and saving stats and evidence.';
 }
 
-module.exports = { znHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known,
+const TOP_RULES_DAYS = 7;
+const TOP_RULES_LIMIT = 5;
+const TOP_RULE_NAME = 'Built-in detector';
+
+/**
+ * The most frequent detector ids over the last `days` days (default 7): [{ id, name, count }], highest count first,
+ * ties by id. Ids only, from the counts already stored; nothing new is recorded. `name` is always the generic
+ * label 'Built-in detector' (the same as Python's GENERIC_RULE_NAME): detector ids never match rule-explanations.
+ */
+function topRules({ days = TOP_RULES_DAYS, limit = TOP_RULES_LIMIT, now = new Date(), file } = {}) {
+  const s = summary({ days, now, file });
+  return Object.entries(s.detections)
+    .filter(([id, n]) => TYPE_RE.test(id) && Number.isFinite(n) && n > 0)
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .slice(0, limit)
+    .map(([id, count]) => ({ id, name: TOP_RULE_NAME, count }));
+}
+
+module.exports = { topRules, TOP_RULES_DAYS, znHome, userHome, _useRealHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known,
   percentile, latencySummary, latencyReport, LATENCY_KEEP };
