@@ -3,7 +3,7 @@
 ## Supported Versions
 
 Security fixes are released for the latest minor version of `zn-gate` (npm and PyPI).
-Upgrade to it to receive them.
+Upgrade to it to receive them. [Upgrading zn-gate](docs/upgrading.md) explains the steps and lists what each release asks you to do.
 
 | Version  | Supported          |
 | -------- | ------------------ |
