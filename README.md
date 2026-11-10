@@ -47,6 +47,8 @@ No internet on this computer? See [Install on a machine without internet](docs/i
 
 > **Windows PowerShell:** if a command says "running scripts is disabled on this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once in PowerShell, or use `npx.cmd` in place of `npx` (or run the commands in Command Prompt). More in [troubleshooting](docs/troubleshooting.md#3-running-scripts-is-disabled-on-this-system-windows).
 
+**Windows:** the steps for installing zn-gate on Windows and checking that it works are in the [Windows checklist](docs/examples/windows-checklist.md). Run them in your own terminal.
+
 **Getting started: four steps, one command each.** Run them in your own terminal.
 
 1. `npx -y zn-gate reach` shows what your coding agents can reach on this machine: secrets in your `.env` files (by name only), credential files and MCP servers. It is read only and sends nothing. Details in [docs/reach.md](docs/reach.md).
