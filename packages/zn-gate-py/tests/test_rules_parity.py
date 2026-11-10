@@ -460,9 +460,16 @@ class TestPrefixedCredentialNames(unittest.TestCase):
 
     def test_documented_limits(self):
         # Lower-case words joined by "_" read as an identifier, and values under 12 characters are not checked.
-        for text in ("DB_PASSWORD=" + "orbit_maple_" + "harbor_cinder", "DB_PASSWORD=hunter2xyz", "db_password: " + RANDOM_24):
+        for text in ("DB_PASSWORD=" + "orbit_maple_" + "harbor_cinder", "DB_PASSWORD=hunter2xyz"):
             with self.subTest(text=text[:20]):
                 self.assertKept(text)
+
+    def test_lower_case_names_with_a_generated_value_are_redacted(self):
+        for text in ("db_password: " + RANDOM_24, "my.app.db.password=" + RANDOM_24):
+            with self.subTest(text=text[:20]):
+                redacted, found = R.redact_secrets(text)
+                self.assertNotIn(RANDOM_24, redacted)
+                self.assertEqual([d["rule"] for d in found], ["secret:named_key_value"])
 
     def test_value_checks_are_bounded_per_call(self):
         line = "SERVICE_TOKEN=process.env.SERVICE_TOKEN_VALUE"

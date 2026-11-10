@@ -1,6 +1,6 @@
 """
 zn deterministic rules engine - Python stdlib implementation.
-RULES_VERSION: 2026-11-07.1
+RULES_VERSION: 2026-11-10.1
 Zero external dependencies. Pure Python stdlib.
 
 The pattern constants in this module compile on first use: they are lazy proxies with the re.Pattern
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypedDict, cast, overload
 
 
-RULES_VERSION = "2026-11-07.1"
+RULES_VERSION = "2026-11-10.1"
 
 # Word boundaries are written as explicit ASCII lookarounds, not \b: Python's \b
 # is Unicode, JavaScript's is ASCII-only. Same patterns as rules.js.
@@ -1804,6 +1804,187 @@ def _redact_quoted_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     return _apply_edits(text, edits), detections
 
 
+# ---------------------------------------------------------------------------
+# Secret-named keys in lines: YAML / compose maps, `- KEY=value`, dotenv and
+# properties lines, Dockerfile ENV / ARG, PowerShell $env:. Same as
+# findStructured and structuredValue in packages/zn-gate/lib/scrub/patterns.js:
+# the key may be lower case, mixed case, dotted or dashed (openai_api_key,
+# my.app.db.password, github-token, clientSecret); camelCase, dots and dashes
+# are read as `_` and a name segment must end in a sensitive word. The value
+# must look machine-generated: 12 to 200 printable characters, not a
+# placeholder, reference, URL, path, number, identifier or word list, with
+# enough character classes and at least 3.3 bits of entropy per character.
+# ---------------------------------------------------------------------------
+NAMED_KEY_RULE = "secret:named_key_value"
+_NK_HINT_RE = _rc(r"""pass|pwd|secret|token|key|credential|auth|dsn""", re.IGNORECASE | re.ASCII)
+_NK_NAME = r"""[A-Za-z_][A-Za-z0-9_.-]{0,127}"""
+_NK_TAIL = r"""(?:[ \t]*[,;])?(?:[ \t]+(?:\#|//)[^\r\n]*)?$"""
+# (regex, name group, value group), tried in order on one line at a time.
+_NK_LINES: List[Tuple[re.Pattern[str], int, int]] = [
+    (_rc(r"""^[ \t]*(?:-[ \t]+)?(["']?)(""" + _NK_NAME + r""")\1[ \t]*:[ \t]+(["']?)([^\s"'`]{1,512})\3""" + _NK_TAIL), 2, 4),
+    (_rc(r"""^[ \t]*-[ \t]+(["']?)(""" + _NK_NAME + r""")=([^\s"'`]{1,512})\1""" + _NK_TAIL), 2, 3),
+    (_rc(r"""^[ \t]*(?:(?:export|ENV|ARG|set)[ \t]+)?(""" + _NK_NAME + r""")[ \t]*=[ \t]*(["']?)([^\s"'`]{1,512})\2""" + _NK_TAIL), 1, 3),
+    (_rc(r"""^[ \t]*\$env:([A-Za-z_][A-Za-z0-9_]{0,127})[ \t]*=[ \t]*(["']?)([^\s"'`;]{1,512})\2""" + _NK_TAIL), 1, 3),
+    (_rc(r"""^[ \t]*(?:env[ \t]+)?(?:""" + _NK_NAME + r"""=(?:"[^"\n]{0,512}"|'[^'\n]{0,512}'|[^\s"']{0,512})[ \t]+){0,4}?"""
+         r"""(?=[A-Za-z0-9_.-]{0,127}?(?:pass|pwd|secret|token|key|credential|auth|dsn))(""" + _NK_NAME + r""")=(["']?)([^\s"'`;&|]{1,512})\2"""
+         r"""(?=[ \t]+[A-Za-z0-9_./~\\-])""", re.IGNORECASE), 1, 3),
+    (_rc(r"""^[ \t]*ENV[ \t]+([A-Za-z_][A-Za-z0-9_]{0,127})[ \t]+(["']?)([^\s"'`=]{1,512})\2""" + _NK_TAIL), 1, 3),
+]
+_NK_CAMEL_RE = _rc(r"""([a-z0-9])([A-Z])""", re.ASCII)
+_NK_SEP_RE = _rc(r"""[-.]+""")
+_NK_SENSITIVE_RE = _rc(
+    r"""(?:^|_)[A-Z0-9]*(?:KEY|SECRET|SECRETS|TOKEN|TOKENS|PASS|PASSWD|PASSWORD|PASSPHRASE|PWD|CREDENTIAL|CREDENTIALS|AUTH|DSN)(?:_|$)"""
+    r"""|(?:^|_)DATABASE_URL$""", re.IGNORECASE | re.ASCII)
+_NK_NON_SECRET_NAMES = frozenset((
+    'PWD', 'OLDPWD', 'SSH_AUTH_SOCK', 'GPG_AGENT_INFO', 'XAUTHORITY', 'KEYTIMEOUT', 'GNUPGHOME', 'GIT_ASKPASS',
+    'SSH_ASKPASS', 'SUDO_ASKPASS', 'AUTH_SOCK', 'KEYBOARD', 'KEYMAP', 'TOKENIZERS_PARALLELISM'))
+_NK_NAME_SUFFIX_RE = _rc(
+    r"""(?:_PATH|_FILE|_DIR|_HOME|_URL_BASE|_ENDPOINT|_HOST|_PORT|_REGION|_ID|_USER|_USERNAME|_NAME|_TYPE|_MODE|_ENABLED|_TIMEOUT|_TTL|_SOCK)$""",
+    re.ASCII)
+_NK_SKIP_EXTRA_RE = _rc(
+    r"""(?:^|_)(?:FINGERPRINT|FINGERPRINTS|HASH|HASHED|SHA1|SHA256|SHA384|SHA512|MD5|DIGEST|CHECKSUM)$|_AT$"""
+    r"""|(?:^|_)(?:CACHE|IDEMPOTENCY|S3|OBJECT|PARTITION|SORT|ROUTING|DEDUP|DEDUPLICATION)_KEY$""", re.ASCII)
+_NK_SKIP_RE = _rc(
+    r"""(?:^|_)(?:PUBLIC|PUB)(?:_|$)|PUBKEY|_(?:ARN|REF|REFS|HEADER|HEADERS|POLICY|PROVIDER|ALGORITHM|ALG|LENGTH|EXPIRY|EXPIRES"""
+    r"""|EXPIRES_IN|EXPIRATION|LIFETIME|VERSION|URI|SCOPE|SCOPES|FORMAT|FIELD|PARAM|PARAMS|PREFIX|PATTERN|REGEX|METHOD|COUNT"""
+    r"""|SIZE|LIMIT|STORE|BACKEND|KIND)$""", re.ASCII)
+_NK_GPG_NAME_RE = _rc(r"""(?:^|_)(?:GPG|PGP)_KEY(?:_ID)?$""", re.ASCII)
+_NK_GPG_ID_RE = _rc(r"""(?:[0-9A-Fa-f]{16}|[0-9A-Fa-f]{40})""")
+_NK_WORD_SEGMENT_RE = _rc(r"""(?:[A-Za-z]?[a-z]+(?:[A-Z][a-z]{2,})*|[A-Z]+)[0-9]{0,2}|v?[0-9]{1,4}""", re.ASCII)
+_NK_SEG_SPLIT_RE = _rc(r"""[-_./:@+]+""")
+_NK_PLAIN_WORDS_RE = _rc(
+    r"""(?:true|false|yes|no|on|off|null|none|undefined|enabled|disabled|production|development|staging|localhost)""",
+    re.IGNORECASE | re.ASCII)
+_NK_NUMBER_RE = _rc(r"""-?[0-9]+(?:\.[0-9]+)?""")
+_NK_URL_RE = _rc(r"""(?:[a-z][a-z0-9+.-]*:)?//[^@\s]*""", re.IGNORECASE | re.ASCII)
+_NK_PATH_RE = _rc(r"""(?:/|~/|\.{1,2}/|[A-Za-z]:\\)[^\s]*""")
+_NK_LONG_B64_RE = _rc(r"""[A-Za-z0-9+/]{32,}""")
+_NK_HOST_RE = _rc(r"""[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,24}""")
+_NK_DIGITS4_RE = _rc(r"""[0-9]{4,}""")
+_NK_ENV_REF_RE = _rc(r"""\$\{?[A-Za-z_][A-Za-z0-9_]*\}?""")
+_NK_ZN_TOKEN_RE = _rc(r"""__ZN_[A-Z0-9_]+__""")
+_NK_REPEAT_RE = _rc(r"""(.)\1+""", re.DOTALL)
+_NK_NO_PRINTABLE_RE = _rc(r"""[^\x21-\x7e]""")
+_NK_START_BAD_RE = _rc(r"""[$%<{\[(*&!|>@~=-]""")
+_NK_CODE_CHARS_RE = _rc(r"""[(){}\[\];,<>`\\]""")
+_NK_REF_START_RE = _rc(r"""(?:process\.env|os\.environ|env\.|secrets\.|vars\.|arn:)""", re.IGNORECASE | re.ASCII)
+_NK_SCHEME_RE = _rc(r"""[a-z][a-z0-9+.-]*://""", re.IGNORECASE | re.ASCII)
+_NK_HEX_RE = _rc(r"""[0-9a-fA-F]+""")
+_NK_DOTTED_NUM_RE = _rc(r"""[0-9]+(?:[.:][0-9]+)*""")
+_NK_MIN_VALUE = 12
+_NK_MAX_VALUE = 200
+
+
+def _nk_normal_name(name: str) -> str:
+    return _NK_SEP_RE.sub('_', _NK_CAMEL_RE.sub(r'\1_\2', str(name))).upper()
+
+
+def _nk_sensitive_key(name: str) -> bool:
+    if not name:
+        return False
+    n = _nk_normal_name(name)
+    if n in ('KEY', 'KEYS'):
+        return False
+    if _NK_SKIP_RE.search(n) or _NK_SKIP_EXTRA_RE.search(n):
+        return False
+    if n in _NK_NON_SECRET_NAMES:
+        return False
+    if _NK_NAME_SUFFIX_RE.search(n) and not n.endswith('DATABASE_URL'):
+        return False
+    return _NK_SENSITIVE_RE.search(n) is not None
+
+
+def _nk_placeholder(v: str) -> bool:
+    if not v:
+        return True
+    if _PV_PLACEHOLDER_RE.fullmatch(v) or _PV_PLACEHOLDER_WORDS.search(v) or _NK_REPEAT_RE.fullmatch(v):
+        return True
+    return _PV_PLACEHOLDER_SEQ.match(v) is not None
+
+
+def _nk_non_secret(v: str) -> bool:
+    """exact.js looksNonSecret."""
+    if len(v) < 8:
+        return True
+    if _NK_PLAIN_WORDS_RE.fullmatch(v):
+        return True
+    if _NK_NUMBER_RE.fullmatch(v) and len(v) < 12:
+        return True
+    if _NK_URL_RE.fullmatch(v):
+        return True
+    if _NK_PATH_RE.fullmatch(v) and not _NK_LONG_B64_RE.search(v):
+        return True
+    if _NK_HOST_RE.fullmatch(v) and not _NK_DIGITS4_RE.search(v):
+        return True
+    return _NK_ENV_REF_RE.fullmatch(v) is not None or _NK_ZN_TOKEN_RE.fullmatch(v) is not None
+
+
+def _nk_wordy(v: str) -> bool:
+    return all(seg == '' or _NK_WORD_SEGMENT_RE.fullmatch(seg) for seg in _NK_SEG_SPLIT_RE.split(v))
+
+
+def _nk_value(v: str) -> bool:
+    """patterns.js structuredValue: True when the value is machine-generated."""
+    if len(v) < _NK_MIN_VALUE or len(v) > _NK_MAX_VALUE:
+        return False
+    if _NK_NO_PRINTABLE_RE.search(v):
+        return False
+    if '[REDACTED_' in v or _nk_placeholder(v) or _nk_non_secret(v):
+        return False
+    if _is_non_secret_value(v):  # code, references and slugs, as for the upper-case names
+        return False
+    if _NK_START_BAD_RE.match(v) or _NK_CODE_CHARS_RE.search(v):
+        return False
+    if _NK_REF_START_RE.match(v) or _NK_SCHEME_RE.match(v):
+        return False
+    if _NK_HEX_RE.fullmatch(v):
+        digit = _DIGIT_RE.search(v) is not None
+        return len(v) >= 32 and digit and _HEX_LETTER_RE.search(v) is not None and _pv_shannon(v) >= 3.0
+    if _NK_DOTTED_NUM_RE.fullmatch(v) or _nk_wordy(v):
+        return False
+    upper = _UPPER_RE.search(v) is not None
+    kinds = (1 if _LOWER_RE.search(v) else 0) + (1 if upper else 0) + (1 if _DIGIT_RE.search(v) else 0)
+    if kinds < 2:
+        return False
+    if not upper and not _SYMBOL_RE.search(v) and len(v) < 16:
+        return False
+    return _pv_shannon(v) >= 3.3
+
+
+def _nk_pair(name: str, value: str) -> bool:
+    if not _nk_sensitive_key(name) or not _nk_value(value):
+        return False
+    return not (_NK_GPG_NAME_RE.search(_nk_normal_name(name)) and _NK_GPG_ID_RE.fullmatch(value))
+
+
+def _redact_named_key_values(text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    """Value spans of secret-named keys, line by line (see the block comment above)."""
+    if not isinstance(text, str) or not text or _NK_HINT_RE.search(text) is None:
+        return text, []
+    detections: List[Dict[str, Any]] = []
+    edits: List[Tuple[int, int, str]] = []
+    offset = 0
+    for raw in text.split('\n'):
+        line_start = offset
+        offset += len(raw) + 1
+        line = raw.rstrip(' \t\r')
+        if len(line) < _NK_MIN_VALUE or _NK_HINT_RE.search(line) is None:
+            continue
+        for regex, name_group, value_group in _NK_LINES:
+            m = regex.match(line)
+            if not m or m.start(value_group) == -1:
+                continue
+            if not _nk_pair(m.group(name_group), m.group(value_group)):
+                continue
+            start, end = line_start + m.start(value_group), line_start + m.end(value_group)
+            edits.append((start, end, '[REDACTED_SECRET]'))
+            detections.append({"rule": NAMED_KEY_RULE, "start": start, "end": end})
+            break
+    if not edits:
+        return text, []
+    return _apply_edits(text, edits), detections
+
+
 def _redact_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     """The quoted values first (the other rules read one word and would leave
     the rest of `"api_key":"abcdefghijkl mno pqr"` behind), then SECRET_PATTERNS
@@ -1813,7 +1994,9 @@ def _redact_credentials(text: str) -> Tuple[str, List[Dict[str, Any]]]:
     redacted, first = _redact_quoted_credentials(text)
     redacted, rest = _redact_with(
         redacted, SCRUB_FIRST_PATTERNS + SECRET_PATTERNS + PROVIDER_SECRET_PATTERNS + SCRUB_LAST_PATTERNS)
-    return redacted, first + rest
+    # Secret-named keys in lines (lower case, dotted, dashed), on what the rules above left.
+    redacted, named = _redact_named_key_values(redacted)
+    return redacted, first + rest + named
 
 
 def _apply_edits(text: str, edits: List[Tuple[int, int, str]]) -> str:

@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-11-07.1",
+      "version": "2026-11-10.1",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -47,13 +47,13 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "899e881803601e7e55a7467015efc1774fa622b395cfaa000031865d42525d18",
+        "lib/rules.js": "4d2161575ff76564116859658c6baffd72428f15714d2812682db19fc682797c",
         "lib/mcp-secrets.js": "1a051cdb7ac9cd04b46494a2efe0aa90ab136a5e866d2dbf42d4431888ab7487"
       }
     },
     "scrub": {
       "version_const": "SCRUB_RULES_VERSION",
-      "version": "2026-10-31.1",
+      "version": "2026-11-10.1",
       "ids": [
         "AGE_SECRET_KEY",
         "ALIBABA_KEY_ID",
@@ -150,7 +150,7 @@
         "exact.variants"
       ],
       "sha256": {
-        "lib/scrub/patterns.js": "cfad3d18613041ec93b8a984e4f75e7088503855793425f8adb4a3518e0f5d15",
+        "lib/scrub/patterns.js": "f9460ebd8604666f87d56b1920f6c42e785ecb6ada84b8b53c6d00b93f67603c",
         "lib/scrub/exact.js": "cc4344ace825676514a2edac385a013b29fb14faed5bc1cd3c779d0f8587eddd"
       }
     },

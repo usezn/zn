@@ -1,0 +1,175 @@
+{
+  "comment": "{S} stands for the replacement of one secret: __ZN_SECRET_1__ in the Node.js scrubber (lib/scrub), [REDACTED_SECRET] in the Python redact_secrets. Secret-named keys in lower case, mixed case, dotted or dashed form. Fake values only.",
+  "cases": [
+    {
+      "name": "lowercase api key",
+      "input": "openai_api_key=Zx9fQ2mK7vLp3Rt8",
+      "output": "openai_api_key={S}"
+    },
+    {
+      "name": "dotted password",
+      "input": "my.app.db.password=Zx9fQ2mK7vLp3Rt8",
+      "output": "my.app.db.password={S}"
+    },
+    {
+      "name": "dotted secret access key",
+      "input": "aws.secret_access_key: Zx9fQ2mK7vLp3Rt8",
+      "output": "aws.secret_access_key: {S}"
+    },
+    {
+      "name": "dashed token",
+      "input": "github-token=Q8w3Er7Ty2Ui9Op4As",
+      "output": "github-token={S}"
+    },
+    {
+      "name": "yaml dotted password",
+      "input": "db.password: Zx9fQ2mK7vLp3Rt8",
+      "output": "db.password: {S}"
+    },
+    {
+      "name": "yaml camel client secret",
+      "input": "  oauth.clientSecret: Zx9fQ2mK7vLp3Rt8",
+      "output": "  oauth.clientSecret: {S}"
+    },
+    {
+      "name": "mixed case name",
+      "input": "MyAppPassword=Zx9fQ2mK7vLp3Rt8",
+      "output": "MyAppPassword={S}"
+    },
+    {
+      "name": "camel token name",
+      "input": "appToken=Zx9fQ2mK7vLp3Rt8",
+      "output": "appToken={S}"
+    },
+    {
+      "name": "export with dashes",
+      "input": "export my-service.client-secret=Zx9fQ2mK7vLp3Rt8",
+      "output": "export my-service.client-secret={S}"
+    },
+    {
+      "name": "quoted dashed key",
+      "input": "stripe.api-key = \"Zx9fQ2mK7vLp3Rt8\"",
+      "output": "stripe.api-key = \"{S}\""
+    },
+    {
+      "name": "compose list",
+      "input": "- app.db.password=Zx9fQ2mK7vLp3Rt8",
+      "output": "- app.db.password={S}"
+    },
+    {
+      "name": "properties file keeps its other lines",
+      "input": "server.port=8080\nmy.app.db.password=Zx9fQ2mK7vLp3Rt8\napp.name=demo-service",
+      "output": "server.port=8080\nmy.app.db.password={S}\napp.name=demo-service"
+    },
+    {
+      "name": "upper case name unchanged",
+      "input": "OPENAI_API_KEY=Zx9fQ2mK7vLp3Rt8",
+      "output": "OPENAI_API_KEY={S}"
+    },
+    {
+      "name": "upper case dotenv unchanged",
+      "input": "DB_PASSWORD=Zx9fQ2mK7vLp3Rt8",
+      "output": "DB_PASSWORD={S}"
+    },
+    {
+      "name": "kept: the password field",
+      "input": "the password field",
+      "output": "the password field"
+    },
+    {
+      "name": "kept: Set the password field to a value of your choice.",
+      "input": "Set the password field to a value of your choice.",
+      "output": "Set the password field to a value of your choice."
+    },
+    {
+      "name": "kept: config.password_min_length=12",
+      "input": "config.password_min_length=12",
+      "output": "config.password_min_length=12"
+    },
+    {
+      "name": "kept: password=hunter2",
+      "input": "password=hunter2",
+      "output": "password=hunter2"
+    },
+    {
+      "name": "kept: my.app.db.password=changeme",
+      "input": "my.app.db.password=changeme",
+      "output": "my.app.db.password=changeme"
+    },
+    {
+      "name": "kept: api_key=short",
+      "input": "api_key=short",
+      "output": "api_key=short"
+    },
+    {
+      "name": "kept: my.app.db.password=${DB_PASSWORD}",
+      "input": "my.app.db.password=${DB_PASSWORD}",
+      "output": "my.app.db.password=${DB_PASSWORD}"
+    },
+    {
+      "name": "kept: openai_api_key=process.env.OPENAI_API_KEY",
+      "input": "openai_api_key=process.env.OPENAI_API_KEY",
+      "output": "openai_api_key=process.env.OPENAI_API_KEY"
+    },
+    {
+      "name": "kept: token_count=1234567890123",
+      "input": "token_count=1234567890123",
+      "output": "token_count=1234567890123"
+    },
+    {
+      "name": "kept: auth.token.expiry=3600000000000",
+      "input": "auth.token.expiry=3600000000000",
+      "output": "auth.token.expiry=3600000000000"
+    },
+    {
+      "name": "kept: secret.name=my-service-account-name",
+      "input": "secret.name=my-service-account-name",
+      "output": "secret.name=my-service-account-name"
+    },
+    {
+      "name": "kept: cache.key=user_profile_settings_v2",
+      "input": "cache.key=user_profile_settings_v2",
+      "output": "cache.key=user_profile_settings_v2"
+    },
+    {
+      "name": "kept: session.token_url=https://example.com/token/abcd",
+      "input": "session.token_url=https://example.com/token/abcd",
+      "output": "session.token_url=https://example.com/token/abcd"
+    },
+    {
+      "name": "kept: password_hash=5f4dcc3b5aa765d61d8327deb882cf99aaaaaaaa",
+      "input": "password_hash=5f4dcc3b5aa765d61d8327deb882cf99aaaaaaaa",
+      "output": "password_hash=5f4dcc3b5aa765d61d8327deb882cf99aaaaaaaa"
+    },
+    {
+      "name": "kept: token.type=Zx9fQ2mK7vLp3Rt8",
+      "input": "token.type=Zx9fQ2mK7vLp3Rt8",
+      "output": "token.type=Zx9fQ2mK7vLp3Rt8"
+    },
+    {
+      "name": "kept: user.password.policy=lowercase-and-digits-required",
+      "input": "user.password.policy=lowercase-and-digits-required",
+      "output": "user.password.policy=lowercase-and-digits-required"
+    },
+    {
+      "name": "kept: password = request.form['password']",
+      "input": "password = request.form['password']",
+      "output": "password = request.form['password']"
+    },
+    {
+      "name": "kept: self.api_key = settings.OPENAI_API_KEY_VALUE",
+      "input": "self.api_key = settings.OPENAI_API_KEY_VALUE",
+      "output": "self.api_key = settings.OPENAI_API_KEY_VALUE"
+    },
+    {
+      "name": "kept: my.app.db.password=aaaaaaaaaaaaaaaa",
+      "input": "my.app.db.password=aaaaaaaaaaaaaaaa",
+      "output": "my.app.db.password=aaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "kept: my.app.db.password=abcdefabcdef",
+      "input": "my.app.db.password=abcdefabcdef",
+      "output": "my.app.db.password=abcdefabcdef"
+    }
+  ]
+}
