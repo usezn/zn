@@ -28,7 +28,7 @@ Only in one of these, never in a file:
 - **Your system keychain**: the macOS Keychain, the Windows Credential Manager, or the Linux Secret Service (GNOME Keyring, KWallet).
 - **The zn vault**, when your system has no keychain and the vault is unlocked (`zn unlock`). The vault encrypts it.
 
-If neither is available (for example Linux without a desktop session), nothing is saved and `zn-gate connect` says so. You can still set `ZN_CLOUD=1` and `ZN_API_KEY` in your shell yourself, as before.
+If neither is available (for example Linux without a desktop session), nothing is saved and `zn-gate connect` says so. You can still set `ZN_CLOUD=1` and `ZN_API_KEY` in your shell yourself, as before; [this example](examples/zn-connect-without-saving-the-key.md) shows how, step by step.
 
 `~/.zn/config.json` records only that you connected, where the key is kept and its last four characters. It never holds the key. The cloud check turns on from this record only when the saved key ends in those four characters, so a record written by hand does nothing. When it is the record that turned the check on, zn-gate uses only the saved key, to <https://api.usezn.com>: `ZN_API_KEY` and `ZN_API_URL` are ignored unless you also set `ZN_CLOUD=1`. If the record exists but the key cannot be read, prompts are checked locally and zn-gate says so once.
 
