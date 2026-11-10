@@ -49,13 +49,21 @@ each agent's zn hook whether the agent may read them. This is what happened:
   -  Codex CLI    not found on this machine
   -  Cursor       not found on this machine
   -  OpenCode     not found on this machine
+  -  Antigravity  not found on this machine
+  -  GitHub Copilot (VS Code, CLI) not found on this machine
+  -  Gemini CLI (experimental) not found on this machine
+  -  ZCode        not found on this machine
 
 Your agent cannot read secret files such as .env through these tools. Nothing was sent anywhere.
 If your agent needs a value from .env, keep it in zn's vault instead: `zn env shadow .env`.
 More: https://usezn.com/docs/check
 
 The test folder was deleted.
+
+Decision time per tool call: no data yet. It is measured on each tool call your agent makes through zn.
 ```
+
+The `Decision time per tool call` line is the time zn takes to decide each tool call your agent makes on this machine, as the p50 and p95 of the calls it has measured recently. It says `no data yet` until zn has checked a tool call. [What you will see](check.md#what-you-will-see) explains it.
 
 `OK` means that agent is protected. A line that starts with `-` means zn is not set up for that agent, or the agent is not on your machine. A line with `NOT protected` says why and what to run. More in [check.md](check.md).
 
@@ -109,7 +117,7 @@ zn also has a text check that your agent can call through zn's own tools. Some p
   "rule": "none",
   "reason": null,
   "engine": "oss-local",
-  "rules_version": "2026-10-16.10",
+  "rules_version": "2026-11-07.1",
   "advisory": {
     "rule": "pi:bypass",
     "reason": "Guardrail bypass attempt"
