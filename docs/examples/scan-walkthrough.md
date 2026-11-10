@@ -131,7 +131,7 @@ zn-gate scan . --format github
 Example output for the folder with the fake key:
 
 ```text
-::error file=settings.txt,line=2,title=Secret found (secret:aws_access_key)::Next: run npx -y zn-gate secret set NAME to store the value in the local vault, use the __ZN_NAME__ marker in its place, and rotate it if it was ever committed or shared.
+::error file=settings.txt,line=2,title=Secret found (secret%3Aaws_access_key)::Next: run npx -y zn-gate secret set NAME to store the value in the local vault, use the __ZN_NAME__ marker in its place, and rotate it if it was ever committed or shared.
 
 [zn-gate] Scanned 2 files (0 not scanned). Found 1 secrets and 0 security threats.
 ```
@@ -160,5 +160,6 @@ Links found inside the folder are not followed and are not listed.
 
 ## Where to go next
 
+- [Scan a single file](scan-a-single-file.md), one file instead of a folder
 - [scan](../cli.md#scan), the reference with every option
 - [First project walkthrough](first-project-walkthrough.md), one small example project from install to removal

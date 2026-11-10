@@ -33,7 +33,7 @@ test('a .env with only markers can be read', () => {
 
 test('a short value under a secret name blocks the read and the message names the variable, not the value', () => {
   const msg = readOf('API_KEY=abc\n');
-  assert.match(msg || '', /holds plain-text secrets\. Still holding a value: API_KEY\./);
+  assert.match(msg || '', /holds plain-text secrets, and secret values never go to the model \(rule: secret-file:dotenv\)\. Still holding a value: API_KEY\./);
   assert.match(msg, /secret set <NAME>/);
   assert.match(msg, /__ZN_<NAME>__/);
   assert.doesNotMatch(msg, /abc/);
