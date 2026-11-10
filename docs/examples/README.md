@@ -27,6 +27,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [reading-a-reach-history-report.md](reading-a-reach-history-report.md): how to read the output of zn-gate reach --history.
 - [safe-first-day-with-a-new-agent.md](safe-first-day-with-a-new-agent.md): try zn-gate with a new agent in a throwaway folder, then remove it.
 - [scan-a-single-file.md](scan-a-single-file.md): scan one file instead of a folder, and read the report.
+- [scan-json-output-in-jq.md](scan-json-output-in-jq.md): filter the `--format json` output of `zn-gate scan` with jq: count the findings, list file and line, filter by rule or type.
 - [scan-walkthrough.md](scan-walkthrough.md): scan one small example project, from the run to what each exit code means.
 - [secret-adopt-existing-file.md](secret-adopt-existing-file.md): adopt a secret that zn-gate found in a project file, from the token it was replaced with to a named vault secret, and the check afterwards.
 - [shield-first-run.md](shield-first-run.md): wrap one MCP server with the shield in shadow mode, see what it prints, then enforce or undo it.
