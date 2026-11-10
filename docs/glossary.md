@@ -34,6 +34,8 @@ Short meanings of words used in the zn-gate docs.
 
 **Cloud check**: an optional second check, by the Galvanize 3 classifier at usezn.com, of the text sent to zn-gate's `analyze_prompt` tool. It is off until you turn it on. Its figures (recall, false positives) describe that classifier, not zn-gate's local rules.
 
+**Degraded** (`degraded: true`): a cloud check answer whose model was unavailable, so the verdict came from zn-gate's local rules alone. The result then carries `degraded_reason: 'model unavailable, rules only'`, and `zn-gate analyze` prints one warning line on stderr. Treat such a result as a rules-only check if you need the model's opinion. See [API reference](api-reference.md).
+
 **Classifier**: a model that sorts text into groups, such as safe or an injection attempt.
 
 **Self-test**: `zn-gate test`. It runs zn-gate's built-in examples.
@@ -93,6 +95,8 @@ Short meanings of words used in the zn-gate docs.
 **Vault audit log**: the local record of what the vault did, such as which secret was used, unlock and reset. It is the file `~/.zn/audit.jsonl` and never holds secret values. Read it with `zn vault log`. See [Secrets](secrets.md) and [Files and folders](files-and-folders.md).
 
 **Decision log**: the local record of what zn-gate allowed or blocked. It is the file `~/.zn/evidence.jsonl`, also called the evidence log. Check it with `zn-gate evidence --verify`. See [How the log works](architecture.md).
+
+**Baseline** (`zn audit --approve`): the record of the executable configuration of a project that you reviewed and approved. It is stored in `~/.zn/baselines` as entry names and hashes, never values. A later audit reports each entry that changed, was added or was removed since then (rule ZNA023). See [Audit](audit.md).
 
 **`zn audit`**: a command that reviews the agent configuration of a repository before you open it. It has nothing to do with the vault audit log. See [Audit](audit.md).
 
