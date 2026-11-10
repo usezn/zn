@@ -117,6 +117,19 @@ Under each agent it finds, `zn-gate check` shows the version of that agent on yo
 - **not found**: zn could not read a version, which is not an error. Agents without a command that prints a version (Cursor and ZCode, for example) always say so.
 - **How it reads the version**: it runs only `<agent> --version`, found on your PATH outside the project folder, with a 2-second limit, in an empty folder, with none of your environment variables except the PATH and your home folder (on Windows also SystemRoot, ComSpec, PATHEXT, APPDATA and LOCALAPPDATA, which programs there need to start), and with update checks turned off. It changes nothing, and zn sends nothing over the network.
 
+## Published advisories for your agent version
+
+If an agent's installed version is inside the affected range of a published security advisory, `zn-gate check` adds one line under that agent:
+
+```text
+     Note: Claude Code 2.0.64 is in the affected range of a published security advisory (CVE-2026-21852, GHSA-jh7p-qr78-84p7). Version 2.0.65 fixes it. Details: https://github.com/advisories/GHSA-jh7p-qr78-84p7
+```
+
+- **Where the data comes from**: a table shipped inside the package (`lib/data/agent-advisories.json`), copied from the advisories themselves. It lists only advisories for agents whose version zn can read. zn sends nothing over the network, so the table is as new as your zn-gate version.
+- **Unknown versions**: if zn cannot read the agent's version, it prints nothing.
+- **Exit code**: unchanged. A note about an advisory does not make the check fail.
+- **`--json`**: each agent has an `advisories` array (empty when none apply) with `id`, `cve`, `installed_version`, `fixed_version` (`null` when the advisory names none), `url`, `published` and `source`.
+
 ## List every installed hook
 
 ```bash

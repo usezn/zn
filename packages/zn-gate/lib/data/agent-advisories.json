@@ -1,0 +1,25 @@
+{
+  "description": "Published security advisories for coding agents, copied by hand from the advisory itself. `zn-gate check` compares the installed agent version with this table on your machine; nothing is fetched. affected is a list of ranges; each range has an optional below (exclusive) or atOrBelow (inclusive) bound. fixed is the first patched version, or null when the advisory names none.",
+  "entries": [
+    {
+      "agent": "claude-code",
+      "id": "GHSA-jh7p-qr78-84p7",
+      "cve": "CVE-2026-21852",
+      "affected": { "below": "2.0.65" },
+      "fixed": "2.0.65",
+      "url": "https://github.com/advisories/GHSA-jh7p-qr78-84p7",
+      "published": "2026-01-20",
+      "source": "GitHub advisory database (reviewed advisory for @anthropic-ai/claude-code)"
+    },
+    {
+      "agent": "codex",
+      "id": "GHSA-xrxf-jgv3-qmrm",
+      "cve": "CVE-2025-61260",
+      "affected": { "atOrBelow": "0.23.0" },
+      "fixed": null,
+      "url": "https://github.com/advisories/GHSA-xrxf-jgv3-qmrm",
+      "published": "2026-04-14",
+      "source": "GitHub advisory database (reviewed advisory for @openai/codex)"
+    }
+  ]
+}

@@ -1446,7 +1446,10 @@ async function check(opts = {}) {
     for (const spec of AGENTS) {
       try {
         const r = await checkAgent(spec, ctx);
-        if (!(r.state === 'not-set-up' && r.found === false)) r.version = require('./agents/versions').versionInfo(spec.id, { env, cwd });
+        if (!(r.state === 'not-set-up' && r.found === false)) {
+          r.version = require('./agents/versions').versionInfo(spec.id, { env, cwd });
+          r.advisories = require('./agents/advisories').advisoriesFor(spec.id, r.version.found);
+        }
         results.push(r);
       } catch (err) {
         results.push({ id: spec.id, name: spec.name, fix: spec.fix, state: 'not-protected', problem: 'zn could not check it: ' + oneLine(err && err.message, 200), notes: [] });
@@ -1470,7 +1473,11 @@ function report({ results, removed, warnings }, write) {
   let bad = 0;
   const missing = [];
   const { versionLine } = require('./agents/versions');
-  const ver = (r) => { if (r.version) w(`     ${versionLine(r.version)}\n`); };
+  const { advisoryLine } = require('./agents/advisories');
+  const ver = (r) => {
+    if (r.version) w(`     ${versionLine(r.version)}\n`);
+    for (const a of r.advisories || []) w(`     Note: ${advisoryLine(a, r.name)}\n`);
+  };
   for (const r of results) {
     if (r.state === 'not-set-up' && r.found === false) {
       w(`  -  ${r.name.padEnd(12)} not found on this machine\n`);
@@ -1564,6 +1571,7 @@ function toJson({ results, removed, warnings }, opts = {}) {
     message: r.state === 'protected' ? hide(r.message || '') : '',
     notes: (r.notes || []).map(hide),
     checked: r.checked !== false,
+    advisories: (r.advisories || []).map((a) => ({ id: a.id, cve: a.cve, installed_version: a.installed, fixed_version: a.fixed, url: a.url, published: a.published, source: a.source })),
   }));
   const exitCode = exitCodeOf(results) || ((opts.rulesErrors || []).length ? 1 : 0);
   return {
