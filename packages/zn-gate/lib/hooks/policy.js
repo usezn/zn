@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-08.2';
+const POLICY_RULES_VERSION = '2026-11-10.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2660,9 +2660,9 @@ const PS_COLON_PARAM_RE = /^-[A-Za-z][A-Za-z0-9]{0,63}:(.+)$/s;
 /* PowerShell reads every path of a comma list (cat a,b  gc 'a','b'  type @('a','b')); in bash, a,b is one file name.
    Readers that take such lists, and the ones that exist only in PowerShell (read as PowerShell in any tool). */
 const PS_LIST_READERS = new Set(['cat', 'gc', 'type', 'get-content', 'select-string', 'sls', 'import-csv', 'ipcsv', 'more', 'get-item',
-  'gi', 'get-childitem', 'gci', 'ls', 'dir', 'copy-item', 'copy', 'cp', 'import-clixml', 'convertfrom-json']);
+  'gi', 'get-childitem', 'gci', 'ls', 'dir', 'copy-item', 'cpi', 'copy', 'cp', 'import-clixml', 'convertfrom-json']);
 const PS_ONLY_READERS = new Set(['gc', 'get-content', 'select-string', 'sls', 'import-csv', 'ipcsv', 'get-item', 'gi', 'get-childitem',
-  'gci', 'copy-item', 'import-clixml']);
+  'gci', 'copy-item', 'cpi', 'import-clixml']);
 /* The words of a command, each comma list of a PowerShell reader followed by the paths inside it. */
 function psListWords(words, opts) {
   const out = [];
@@ -2675,7 +2675,7 @@ function psListWords(words, opts) {
   // and the read would be let through; the same word with "/" is judged too.
   const push = (x, head) => {
     out.push(x);
-    if (typeof x.text === 'string' && x.text.indexOf('\\') >= 0 && x.text.length <= 4096 && readerOf(head)) out.push({ ...x, text: slash(x.text) });
+    if (typeof x.text === 'string' && x.text.indexOf('\\') >= 0 && x.text.length <= 4096 && (opts.powershell === true || readerOf(head))) out.push({ ...x, text: slash(x.text) });
   };
   for (const w of words) {
     push(w, w.head);

@@ -1,0 +1,2 @@
+### Security
+- The agent hooks now judge a command from the PowerShell tool as PowerShell for protected files: a backslash path such as `type .\.env`, `cat .\.env`, `more .\.env`, `cp`, `copy` or `cpi .\.env x` and `[System.IO.File]::ReadAllText('.\.env')` is refused like the same path with a forward slash, and `cpi` (the short form of `Copy-Item`) is checked like `Copy-Item`. `POLICY_RULES_VERSION` is `2026-11-10.1`.
