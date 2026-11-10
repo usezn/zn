@@ -42,9 +42,9 @@ process.stdin.on('end', () => {
 """
 
 _NODE_HELPERS = (
-    "const m=require(process.argv[1]);const n=JSON.parse(process.argv[2]);"
+    "const m=require(process.argv[1]);const n=JSON.parse(process.argv[2]);const o={platform:process.argv[3]};"
     "process.stdout.write(JSON.stringify(n.map(x=>[m.normalizeName(x),m.isSecretName(m.normalizeName(x)),"
-    "m.suggestedName(m.normalizeName(x)),m.mcpNextStep('environment variable',x),m.mcpNextStep('argument',x),m.mcpNextStep('setting',x),m.mcpNextStep('header',x),"
+    "m.suggestedName(m.normalizeName(x)),m.mcpNextStep('environment variable',x,o),m.mcpNextStep('argument',x,o),m.mcpNextStep('setting',x,o),m.mcpNextStep('header',x,o),"
     "m.mcpSample('argument',x),m.mcpSample('URL',x),m.mcpSample('header',x)])))"
 )
 
@@ -294,30 +294,31 @@ class TestNodeParity(unittest.TestCase):
         node = _node_or_skip()
         names = ["apiKey", "X-Api-Key", "BRAVE_API_KEY", "githubPersonalAccessToken", "ñandú_token", "public_key", "", "___",
                  "a.b-c d", "primaryApiKey", "SSH_KEY", "key", "Authorization", "PGPASSWORD", "my-pwd", "pat", "x"]
-        out = subprocess.run([node, "-e", _NODE_HELPERS, str(NODE_LIB), json.dumps(names)], capture_output=True, text=True,
-                             encoding="utf-8", timeout=60)
-        self.assertEqual(out.returncode, 0, out.stderr[:300])
-        # The Node.js hints name the plain commands on every platform, so the Python hints are compared as posix.
-        with mock.patch("zn_gate.shell_names.os.name", "posix"):
-            for name, got in zip(names, json.loads(out.stdout), strict=True):
-                with self.subTest(name=name):
-                    norm = mcp.normalize_name(name)
-                    self.assertEqual(got, [norm, mcp.is_secret_name(norm), mcp.suggested_name(norm),
-                                           _without_npm_note(mcp.mcp_next_step("environment variable", name)),
-                                           _without_npm_note(mcp.mcp_next_step("argument", name)),
-                                           _without_npm_note(mcp.mcp_next_step("setting", name)),
-                                           _without_npm_note(mcp.mcp_next_step("header", name)),
-                                           mcp.mcp_sample("argument", name), mcp.mcp_sample("URL", name), mcp.mcp_sample("header", name)])
+        for platform, os_name in (("linux", "posix"), ("win32", "nt")):
+            out = subprocess.run([node, "-e", _NODE_HELPERS, str(NODE_LIB), json.dumps(names), platform], capture_output=True,
+                                 text=True, encoding="utf-8", timeout=60)
+            self.assertEqual(out.returncode, 0, out.stderr[:300])
+            with mock.patch("zn_gate.shell_names.os.name", os_name), \
+                    mock.patch("zn_gate.mcp_secrets.node_available", return_value=True):
+                for name, got in zip(names, json.loads(out.stdout), strict=True):
+                    with self.subTest(platform=platform, name=name):
+                        norm = mcp.normalize_name(name)
+                        self.assertEqual(got, [norm, mcp.is_secret_name(norm), mcp.suggested_name(norm),
+                                               _without_npm_note(mcp.mcp_next_step("environment variable", name)),
+                                               _without_npm_note(mcp.mcp_next_step("argument", name)),
+                                               _without_npm_note(mcp.mcp_next_step("setting", name)),
+                                               _without_npm_note(mcp.mcp_next_step("header", name)),
+                                               mcp.mcp_sample("argument", name), mcp.mcp_sample("URL", name), mcp.mcp_sample("header", name)])
 
 
 class TestSecretHintNamesPerPlatform(unittest.TestCase):
-    """The secret next steps name the commands the way each platform runs them. The Node.js hint does not look at
-    the platform, so it names the plain forms everywhere; on win32 the Python hint names the .cmd forms instead."""
+    """The secret next steps name every command in one form, the one each platform runs: the npx.cmd forms on
+    win32 (PowerShell refuses the .ps1 shims), the plain forms elsewhere. Node.js and Python agree on both."""
 
-    def _node_hint(self, kind, name):
+    def _node_hint(self, platform):
         node = _node_or_skip()
-        r = subprocess.run([node, "-e", "const m = require(process.argv[1]); process.stdout.write(m.mcpNextStep(process.argv[2], process.argv[3]));",
-                            str(NODE_LIB), kind, name], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        r = subprocess.run([node, "-e", "const m = require(process.argv[1]); process.stdout.write(m.mcpNextStep('environment variable', 'API_KEY', {platform: process.argv[2]}));",
+                            str(NODE_LIB), platform], capture_output=True, text=True, encoding="utf-8", timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr[:300])
         return r.stdout
 
@@ -326,25 +327,38 @@ class TestSecretHintNamesPerPlatform(unittest.TestCase):
                 mock.patch("zn_gate.mcp_secrets.node_available", return_value=True):
             return mcp.mcp_next_step("environment variable", "API_KEY")
 
-    def test_python_win32_names_the_cmd_forms_for_secret_set_and_allow(self):
-        msg = self._py_hint("nt")
+    def _assert_win(self, msg):
         self.assertIn("run npx.cmd -y zn-gate secret set MCP_API_KEY ", msg)
         self.assertIn("run npx.cmd -y zn-gate secret allow MCP_API_KEY ", msg)
+        self.assertIn("so npx.cmd -y zn-gate run may use it", msg)
+        self.assertIn("set the server's command to npx.cmd and put -y, zn-gate, run, --secrets, MCP_API_KEY,", msg)
         self.assertNotIn("run npx -y", msg)
-        self.assertNotIn("run zn secret allow", msg)
+        self.assertNotIn("run zn secret", msg)
+        self.assertNotIn("command to zn ", msg)
 
-    def test_python_posix_names_the_plain_forms_for_secret_set_and_allow(self):
-        msg = self._py_hint("posix")
+    def _assert_posix(self, msg):
         self.assertIn("run npx -y zn-gate secret set MCP_API_KEY ", msg)
         self.assertIn("run zn secret allow MCP_API_KEY ", msg)
+        self.assertIn("so zn run may use it", msg)
+        self.assertIn("set the server's command to zn and put run, --secrets, MCP_API_KEY,", msg)
         self.assertNotIn("npx.cmd", msg)
 
-    def test_node_hint_names_the_plain_forms_on_every_platform(self):
-        # Known difference: the Node.js hint has no Windows naming yet, so on win32 it still prints these plain forms.
-        msg = self._node_hint("environment variable", "API_KEY")
-        self.assertIn("run npx -y zn-gate secret set MCP_API_KEY ", msg)
-        self.assertIn("run zn secret allow MCP_API_KEY ", msg)
-        self.assertNotIn("npx.cmd", msg)
+    def test_python_win32_names_the_cmd_forms(self):
+        self._assert_win(self._py_hint("nt"))
+
+    def test_python_posix_names_the_plain_forms(self):
+        self._assert_posix(self._py_hint("posix"))
+
+    def test_node_win32_names_the_cmd_forms(self):
+        self._assert_win(self._node_hint("win32"))
+
+    def test_node_posix_names_the_plain_forms(self):
+        self._assert_posix(self._node_hint("linux"))
+
+    def test_node_and_python_give_the_same_hint_on_both_platforms(self):
+        for platform, os_name in (("win32", "nt"), ("linux", "posix")):
+            with self.subTest(platform=platform):
+                self.assertEqual(self._node_hint(platform), _without_npm_note(self._py_hint(os_name)))
 
 
 class TestSharedFixtureParity(unittest.TestCase):

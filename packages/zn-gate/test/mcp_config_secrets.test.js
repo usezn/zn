@@ -234,6 +234,36 @@ test('the next step is plain: the vault and zn run --secrets for env and argumen
   assert.doesNotMatch(header, /secret set/);
 });
 
+function withPlatform(value, fn) {
+  const real = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value });
+  try { return fn(); } finally { Object.defineProperty(process, 'platform', real); }
+}
+
+test('on win32 every command in the vault next step is the npx.cmd form', () => {
+  const msg = withPlatform('win32', () => mcp.mcpNextStep('environment variable', 'BRAVE_API_KEY'));
+  assert.match(msg, /run npx\.cmd -y zn-gate secret set BRAVE_API_KEY /);
+  assert.match(msg, /run npx\.cmd -y zn-gate secret allow BRAVE_API_KEY --command <the server's command> so npx\.cmd -y zn-gate run may use it/);
+  assert.match(msg, /start the server through npx\.cmd -y zn-gate run: set the server's command to npx\.cmd and put -y, zn-gate, run, --secrets, BRAVE_API_KEY, -- and the old command first in args/);
+  assert.doesNotMatch(msg, /run npx -y|run zn |command to zn /);
+  assert.equal(msg, mcp.mcpNextStep('environment variable', 'BRAVE_API_KEY', { platform: 'win32' }));
+});
+
+test('on other systems the vault next step names the plain forms', () => {
+  for (const platform of ['linux', 'darwin']) {
+    const msg = withPlatform(platform, () => mcp.mcpNextStep('argument', 'api-key'));
+    assert.match(msg, /run npx -y zn-gate secret set MCP_API_KEY /);
+    assert.match(msg, /run zn secret allow MCP_API_KEY --command <the server's command> so zn run may use it/);
+    assert.match(msg, /set the server's command to zn and put run, --secrets, MCP_API_KEY, --/);
+    assert.doesNotMatch(msg, /\.cmd/);
+  }
+});
+
+test('the header next step names no command on any platform', () => {
+  const msg = withPlatform('win32', () => mcp.mcpNextStep('header', 'Authorization'));
+  assert.doesNotMatch(msg, /npx|\.cmd/);
+});
+
 test('--include-home also checks the user own MCP configs, shown as ~/', (t) => {
   const home = tempDir(t, 'zn-mcp-home-');
   const empty = tempDir(t, 'zn-mcp-empty-');
