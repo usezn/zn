@@ -26,6 +26,21 @@ Install the Node.js dependencies once with `cd packages/zn-gate` and `npm ci --i
 
 8. **Check an agent's version handling.** Files: `packages/zn-gate/lib/agents/claude-code.js` (it has version-dependent behavior, for example for Claude Code 2.1.295 and later) and `packages/zn-gate/test/hooks_claude_launcher.test.js`. Test: `cd packages/zn-gate` and `node --test test/hooks_claude_launcher.test.js`. Good PR: the agent version you checked and where you found it, and a test that pins the behavior for that version.
 
+## Which file do I edit
+
+Find your kind of change in the first column. Paths start at the repository root.
+
+| I want to change... | Edit | Also |
+|---|---|---|
+| A detection rule | `packages/zn-gate/lib/rules.js` and `packages/zn-gate-py/src/zn_gate/rules.py` | Bump `RULES_VERSION` in both and follow [Changing a rule](#changing-a-rule). Tests go in `packages/zn-gate/test/`. |
+| How a hook decides or answers | `packages/zn-gate/lib/hooks/runner.js` and `packages/zn-gate/lib/hooks/policy.js` | A policy change bumps `POLICY_RULES_VERSION` ([Rule Versions and the Snapshot](#rule-versions-and-the-snapshot)). |
+| A CLI command | `packages/zn-gate/bin/cli.js` (command list and help text) and its code in `packages/zn-gate/lib/`, for example `lib/why.js` | Update [docs/cli.md](docs/cli.md). The Python CLI is `packages/zn-gate-py/src/zn_gate/cli.py`; `packages/zn-gate-py/tests/test_cli_parity.py` checks that both behave the same. |
+| The Python package | `packages/zn-gate-py/src/zn_gate/` | Tests are in `packages/zn-gate-py/tests/`. Run `python -m pytest` from `packages/zn-gate-py`. |
+| A docs page | a page in `docs/`, for example `docs/first-5-minutes.md` | Link it from [docs/README.md](docs/README.md). An example also goes in [docs/examples/README.md](docs/examples/README.md). |
+| An example | a folder in `examples/`, for example `examples/python-basic/` | Add it to [docs/examples/README.md](docs/examples/README.md) and run `python3 .github/scripts/examples-smoke.py run --only <name>`. |
+| Anything users notice | a new file in `changelog.d/`, named after your branch | See [changelog.d/README.md](changelog.d/README.md). Do not edit `CHANGELOG.md` by hand. |
+| CI or release workflows | `.github/workflows/`, for example `ci.yml` | The Workflow lint and Shellcheck checks read these files. Keep the required check names as listed in [Continuous integration](#continuous-integration-ci). |
+
 ## Architecture Overview
 
 `zn` is designed as a local-first security gate with minimal dependencies:
