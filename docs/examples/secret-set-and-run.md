@@ -27,7 +27,7 @@ npx -y zn-gate secret set EXAMPLE_API_KEY --command printenv
 zn asks for the value at a hidden prompt, so it never appears in your shell history or in an argument:
 
 ```text
-Value for EXAMPLE_API_KEY (hidden): 
+Value for EXAMPLE_API_KEY (hidden):
 ```
 
 Type or paste a fake value such as `example-not-a-real-key-1234`. The value must be at least 8 characters. Then zn prints:
