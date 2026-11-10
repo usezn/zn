@@ -104,6 +104,14 @@ More short walk-throughs in [examples/](examples/), all with fake values:
 | [Verify a release](verify-release.md) | Check signatures and build provenance of a download | Security-minded users |
 | [Rust gateway (legacy)](rust-core.md) | The original gateway in `src/`, not released | Contributors |
 
+## For maintainers
+
+| Document | What it covers |
+| --- | --- |
+| [MAINTAINERS.md](../MAINTAINERS.md) | Who maintains the project and how to report a security issue |
+| [CONTRIBUTING.md](../CONTRIBUTING.md) | How to set up the project, run the checks and open a pull request |
+| [GOVERNANCE.md](../GOVERNANCE.md) | How maintainers work, how pull requests are reviewed and the release schedule |
+
 ## Security advisories
 
 Published advisories are in [advisories/](advisories/):
