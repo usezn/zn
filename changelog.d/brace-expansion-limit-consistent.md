@@ -1,2 +1,2 @@
 ### Fixed
-- Brace expansion in a shell command is checked the same way in every rule: a command with repeated alternatives is no longer refused as too large when its distinct expansions fit the limit, and a command that really exceeds the limit is still refused.
+- Brace expansion in a shell command is checked the same way in every rule: repeated alternatives are dropped from the expanded words, and every alternative, repeated ones included, still counts toward the size limit, so a command over the limit is still refused.
