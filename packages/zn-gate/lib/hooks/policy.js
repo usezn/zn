@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-02.42';
+const POLICY_RULES_VERSION = '2026-11-10.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2422,7 +2422,12 @@ function bashDenialOf(cmd, opts = {}) {
   let afterGlob = 0;
   // A <rev>:<path> word is read as a git object in any command that runs git (echo HEAD:.env | xargs git show).
   const anyGit = words.some((x) => x.git || x.text === 'git' || x.text.endsWith('/git'));
-  for (const w of words) {
+  // PowerShell on Windows takes a backslash as a path separator (type .\.env), but on another host the file ".\.env" does not
+  // exist and the read would be let through; in the PowerShell tool every word with a backslash is judged with "/" too.
+  const judged = opts.powershell === true
+    ? words.flatMap((x) => (typeof x.text === 'string' && x.text.indexOf('\\') >= 0 && x.text.length <= 4096 ? [x, { ...x, text: slash(x.text) }] : [x]))
+    : words;
+  for (const w of judged) {
     // --flag=value carries a path too (--kubeconfig=~/.kube/config).
     let text = w.text;
     if (text.startsWith('-')) {
