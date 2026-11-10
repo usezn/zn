@@ -81,14 +81,14 @@ test('claude-code launcher: Node.js gone and no zn on PATH: PreToolUse and the p
     const r = runLauncher(file, ev, '{}', bin);
     assert.equal(r.status, 2, ev + ' exits 2 (Claude Code: exit code 2 blocks, stderr is the reason)');
     assert.match(r.stderr, /zn: its hook cannot start/);
-    assert.match(r.stderr, /zn hooks install claude-code/);
+    assert.match(r.stderr, /zn(?:\.cmd)? hooks install claude-code/);
     assert.doesNotMatch(r.stderr, /No such file|missing/, 'Claude Code treats an exit 2 that says a file is missing as non-blocking in some events');
     assert.equal(r.stdout, '');
   }
   // PostToolUse: the tool already ran, so it only warns the user.
   const post = runLauncher(file, 'PostToolUse', '{}', bin);
   assert.equal(post.status, 0);
-  assert.match(JSON.parse(post.stdout).systemMessage, /NOT protecting this session.*zn hooks install claude-code/);
+  assert.match(JSON.parse(post.stdout).systemMessage, /NOT protecting this session.*zn(?:\.cmd)? hooks install claude-code/);
 });
 
 test('claude-code launcher: recorded Node.js gone but zn and node on an absolute PATH: blocks, the unverified zn is not run', { skip: !posix }, (t) => {
