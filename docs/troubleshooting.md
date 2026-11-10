@@ -1,6 +1,6 @@
 # Troubleshooting
 
-The fourteen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
+The eighteen messages people most often meet when they first use zn-gate: what each one means and what to do. After them, [Block and warn reasons, by family](#block-and-warn-reasons-by-family) explains the other messages zn-gate prints when it stops or questions something. Each message is copied as zn-gate prints it. A part in angle brackets, such as `<agent>`, is a blank that zn fills in for you.
 
 Run every command in your own terminal, not through your AI agent. New here? Start with [First 5 minutes](first-5-minutes.md). Words you do not know are in the [glossary](glossary.md).
 
@@ -28,6 +28,8 @@ Find the command you ran, then the symptom that matches.
   - ["zn could not use your secret vault"](#zn-could-not-use-your-secret-vault-error)
   - ["Lock the vault first"](#lock-the-vault-first)
   - ["The vault is already unlocked"](#the-vault-is-already-unlocked)
+- `run`
+  - ["zn run: Not found: secret `<NAME>` is not in the vault"](#zn-run-not-found-secret-name-is-not-in-the-vault)
 - `team`
   - ["invalid join token (expected znj_...)" / "No join token given"](#invalid-join-token-expected-znj_--no-join-token-given)
   - ["This join token is expired, already used or not valid"](#this-join-token-is-expired-already-used-or-not-valid)
@@ -57,6 +59,7 @@ Find the command you ran, then the symptom that matches.
 - [Init cannot install zn-gate: no internet connection](#12-init-cannot-install-zn-gate-no-internet-connection)
 - [Init stops the npm install after 3 minutes](#13-init-stops-the-npm-install-after-3-minutes)
 - [`'zn' is not recognized as an internal or external command`](#14-zn-is-not-recognized-as-an-internal-or-external-command)
+- [Your agent says "zn-gate is not installed any more"](#18-your-agent-says-zn-gate-is-not-installed-any-more)
 - [Messages from commands you run yourself](#messages-from-commands-you-run-yourself): files and folders; the gateway; `zn team`; vault commands; `connect` and `disconnect`; the Python package
 - [Also useful](#also-useful): TLS certificates and trust stores; npm EACCES
 
@@ -151,7 +154,7 @@ If your computer is part of a zn Team organization, `zn vault reset` refuses, be
 ## 6. Your agent was blocked: `.env holds plain-text secrets`
 
 ```text
-zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.
+zn: .env holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.
 ```
 
 **What it means:** your agent tried to read a file with secrets in plain text. zn stopped it, so the secrets did not reach the agent. This is zn working, not an error.
@@ -331,9 +334,90 @@ PowerShell words the message differently, but the cause is the same.
 
 If `zn --version` still fails after step 3, run `npm list -g zn-gate` in your own terminal. If it prints nothing, install zn-gate again with `npm install -g zn-gate`, then repeat step 3.
 
+## 15. `scan` lists files under "Not scanned"
+
+A scan can end with a list like this:
+
+```text
+Not scanned (1):
+  big.md (2 MiB or larger)
+```
+
+**What it means:** the file is one that `scan` reads, but it did not read it, and it tells you why instead of leaving it out in silence. These are the reasons:
+
+- `2 MiB or larger`: `scan` reads a file only when it is smaller than 2 MiB (2,097,152 bytes). A bigger file is never opened.
+- `not a regular file`: the name matches, but it is not an ordinary file (for example a socket or a named pipe).
+- `binary .key file, not a key`: a `.key` file with binary content, such as a macOS Keynote file, not a private key.
+- `cannot be read`: the file could not be opened, usually because of its permissions.
+
+A folder that `scan` did not enter is listed apart, under "Directories not scanned". It says `cannot be read` when the folder could not be opened, or `skipped by name` for a build or cache folder such as `dist` or `build`. Folders such as `node_modules` and `.git` are skipped without being listed.
+
+**What to do:**
+
+1. For `2 MiB or larger`, check whether the file is really text you wrote. If it can hold a secret, split it, or scan a smaller copy.
+2. For `cannot be read`, fix the permissions of the file or folder and run the scan again.
+3. If you accept that these files stay unread, see [The scan ends with exit code 3](#16-the-scan-ends-with-exit-code-3).
+
+## 16. The scan ends with exit code 3
+
+You may see this at the end of a scan that found nothing:
+
+```text
+Audit Result : INCOMPLETE - SOME FILES WERE NOT READ
+Status       : Incomplete: 1 file(s) and 0 folder(s) were not read. Exit code 3; use --allow-partial to accept
+```
+
+Or, when the scan read no file at all:
+
+```text
+[!] No files were scanned in .
+Audit Result : NOTHING SCANNED
+Status       : No files were read: this is not a clean result
+```
+
+**What it means:** exit code `3` says the result is not a clean one, because `scan` did not see everything. Either a file or folder it should have read was left out (see [15](#15-scan-lists-files-under-not-scanned)), or no file matched. If `scan` finds something, it exits `1` instead, whatever else was left out. A pruned build folder such as `dist` does not cause a `3`; an unreadable folder or file does.
+
+**What to do:**
+
+1. Read the "Not scanned" and "Directories not scanned" lists and fix what they point to.
+2. If the scan read no file, check that you ran it in the right folder, and that the folder holds files `scan` reads. Source code is read only with `--code` (see [17](#17-scan-reads-no-source-code)).
+3. If you accept the unread files, add `--allow-partial`: the same scan then exits `0` when it finds nothing. It prints `Partial coverage accepted with --allow-partial`, and the lists stay in the output. It does not change what the scan reads, and it does not accept a scan that read no file at all. See [exit codes](exit-codes.md#scan-and-review).
+
+## 17. `scan` reads no source code
+
+A folder scan reports `Files Scanned: 0`, or says nothing about your `.js`, `.ts`, `.py`, `.sh`, `.html`, `.go` or `.rs` files, and the header reads:
+
+```text
+Scope   : Prompt templates, docs, configs (use --code to scan source)
+```
+
+**What it means:** by default `scan` reads the files an agent reads as instructions or settings: `.md`, `.txt`, `.prompt`, `.json`, `.yaml`, `.yml`, `.toml`, `.env`, `.pem` and `.key` files, files whose name starts with `.env`, and private key files such as `id_ed25519`. It does not read source code. A folder that holds only source code therefore scans zero files and ends with exit code `3`.
+
+**What to do:**
+
+1. Add `--code` (or its other name, `--all`) to read those source files too: `zn-gate scan . --code`. The header then reads `Scope   : All files (prompts + code)`.
+2. For another extension, name it with `--include`, for example `zn-gate scan . --include .rst,.xml`.
+3. Name a single file to scan it whatever its extension: `zn-gate scan path/to/file.js`.
+
+## 18. Your agent says "zn-gate is not installed any more"
+
+You may see this in your agent after you removed the program with `npm uninstall -g zn-gate` (or an update of Node.js left it behind) while zn's hooks were still set up:
+
+```text
+zn: its hook cannot start because zn-gate is not installed any more (the Node.js or the files it was installed with are gone), but its hooks for codex still point at it, so this was blocked. Ask the user to install Node.js again from nodejs.org if it is gone (without it neither command below works), then run `npm install -g zn-gate` and then `zn hooks install codex` in their terminal, or, once Node.js is installed, remove the hooks with `npx -y zn-gate hooks uninstall codex`.
+```
+
+**What it means:** the hooks are still in your agent's settings, but the program they run is gone. zn checks nothing in this state, so it stops the calls that the agent lets a hook stop, instead of letting them run unchecked. For the calls a hook cannot stop, such as a result that was already produced, you get a warning that zn is not protecting the session.
+
+**What to do:** run one of these in your own terminal, with the agent name from the message (`claude-code`, `codex`, `cursor`, `gemini`, `zcode`):
+
+0. If Node.js itself is gone (`node --version` fails), install it again from [nodejs.org](https://nodejs.org) first. Both commands below need it.
+1. To keep zn: `npm install -g zn-gate`, then `zn hooks install <agent>`.
+2. To remove zn: `npx -y zn-gate hooks uninstall <agent>`. It needs Node.js but no installed zn-gate. See [Remove zn-gate](uninstall.md).
+
 ## Block and warn reasons, by family
 
-Past the fourteen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
+Past the eighteen messages above, zn-gate prints more short messages when it stops or questions something. This part explains each one in the same three steps: what happened, whether it is safe, and what to do. A message that starts with `zn:` or `zn blocked this:` came from zn's hooks. Your agent reads it first, and you often see it in your agent's window. Quotes below give the start of each message. A part in angle brackets, such as `<file>`, is a blank that zn fills in.
 
 For five common blocks, with what to do for each, see [Why was this blocked?](why-was-this-blocked.md).
 
@@ -362,6 +446,8 @@ Pick the family that fits your message:
 **What happened:** your agent tried to read a file that usually holds a password or key. The kind in brackets says which: an SSH private key, a private key file, a key store, `~/.npmrc` or `~/.pypirc` ("package registry token", a token for npm or PyPI), or a file named by a credential setting.
 
 **Is it safe?** Yes. The file was not read, so its contents never reached the agent.
+
+The message ends with `(rule: secret-file:credential)` and says that agents may not read the file itself.
 
 **What to do:** if a command needs a value from that file, store it with `zn secret set NAME` in your own terminal. Your agent then runs the command with `zn run --secrets NAME -- <command>`, and the program gets the value as an environment variable on your computer. If you did not expect the read, ask your agent why it wanted that file. See [secrets](secrets.md). A `.env` file has its own message: see [section 6](#6-your-agent-was-blocked-env-holds-plain-text-secrets).
 
@@ -455,7 +541,7 @@ zn blocked this: `zn-gate init` turns zn's protection on for coding agents, whic
 
 #### "zn blocked this: `<reason>`. Ask the user to confirm before running this command."
 
-The reason is one of these, and the rest of the message tells the agent to ask you:
+The message gives the rule in brackets, for example `(rule: destructive:rm_root_home)`, then tells the agent to ask you before it runs the command. The reason is one of these:
 
 | The message says | What it means |
 |---|---|
@@ -552,6 +638,8 @@ zn: this command does not start with a plain program name, so zn cannot tell whi
 
 **Is it safe?** It is safe if you decline. If you approve, that data reaches that server.
 
+In `"deny"` mode the message names the rule `(rule: egress-check)`, says that personal data cannot be taken back, and says that only you can allow the request, by running it yourself in your own terminal.
+
 **What to do:** approve only if that server should get the data. Otherwise decline and ask the agent to send the request without it. Never write the value of a secret in the request. How to change the setting and list trusted hosts: [Network requests that carry personal data](egress-check.md).
 
 #### "zn: this call would send personal data (`<kinds>`) to `<server>`" / "zn: this call would send a secret (`<kinds>`) to `<server>`, so zn blocked it" / "zn: `<server>` never receives secret values"
@@ -571,6 +659,8 @@ zn: this command does not start with a plain program name, so zn cannot tell whi
 zn checks every command and patch before it runs. When one is too large or too deep to check within the time the agent allows, zn blocks it, because letting it through unchecked would be worse. These are safe: nothing ran.
 
 #### "zn: this command is too long for zn to check (over 100 KB)" / "zn: this patch is too long for zn to check" / "zn: this MCP call is too large for zn to check"
+
+The command message names the rule `(rule: size:command-too-long)`, says that unchecked it could read a secret or a protected file, and says that only you can run it, in your own terminal.
 
 **What to do:** ask the agent to split the work into smaller steps. Do not send the same content in pieces to get around the limit. MCP means a tool server your agent talks to; the limit there is 1 MB of arguments.
 
@@ -681,6 +771,8 @@ zn: something went wrong inside the zn hook, so this action was blocked to keep 
 
 **What happened:** the check needs your vault and the vault was not running or could not be used.
 
+The message gives the rule `(rule: vault:unavailable)`, says that an agent cannot unlock the vault, and names `zn unlock` once: that is the step for you to take in your own terminal.
+
 **What to do:** run `zn unlock` in your own terminal and try again. See [section 5](#5-your-secret-vault-is-locked).
 
 #### "zn: could not read this action (`<why>`), so it was blocked" / "could not read the tool name of this call" / "could not read the command of this call"
@@ -693,12 +785,12 @@ zn: something went wrong inside the zn hook, so this action was blocked to keep 
 
 ```text
 zn: could not read the tool name of this call, so zn cannot check it and blocked it. This usually means <agent> changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `zn hooks install <agent>`.
-zn: <agent> sent an event zn does not know, so it was not checked. This usually means <agent> changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `zn hooks install <agent>`.
+zn: <agent> sent an event zn does not know, so zn cannot check it and blocked it. This usually means <agent> changed the format of the data it sends to zn, and this version of zn-gate does not know it yet. Ask the user to update zn-gate with `npm install -g zn-gate@latest` and then run `zn hooks install <agent>`.
 ```
 
-**What happened:** your agent was updated and now sends zn information in a new shape (a renamed field, a new event name, a different tool name). The installed zn-gate is older than the agent, so it cannot read it. A call whose tool or command zn cannot read is blocked. An event with a name zn does not know is let through unchecked, and the second message appears on the hook's error output (some agents show it only in verbose mode).
+**What happened:** your agent was updated and now sends zn information in a new shape (a renamed field, a new event name, a different tool name). The installed zn-gate is older than the agent, so it cannot read it. A call whose tool or command zn cannot read is blocked. So is an event zn does not know, or one wrapped in a shape zn does not know, when it reaches a hook that can block (a tool call before it runs, or a prompt) in Claude Code, Codex CLI, ZCode and Cursor; the second message shows it. In Gemini CLI and Antigravity, zn's only hook runs before a tool call: a call there whose tool or command zn cannot read was already blocked, and an event with another name is let through with a note. On hooks that cannot block (for example a tool result), and in GitHub Copilot CLI and OpenCode, such an event is still let through unchecked with a note on the hook's error output (some agents show it only in verbose mode). Hooks installed by an older zn-gate keep that behavior until you run `zn hooks install <agent>` again.
 
-**Is it safe?** A blocked call was not run. An event the second message names was not checked, so update zn-gate soon.
+**Is it safe?** A blocked call was not run. An event that was let through with a note was not checked, so update zn-gate soon.
 
 **What to do:** run `npm install -g zn-gate@latest`, then `zn hooks install <agent>`, then `npx -y zn-gate check`. If you use the Claude Code plugin, run `claude plugin update zn-gate@usezn` instead. If it still happens after the update, your agent may be newer than the latest zn-gate: please report it as an issue.
 
@@ -853,6 +945,22 @@ To see where these rules apply, and what happens when the file is not valid, rea
 **What happened:** zn refused a request, or could not find what you named. The detail says what. "Not allowed" usually means a rule or a team policy, or a step that only a person at a terminal may do.
 
 **What to do:** read the detail. If it names a command to run, run it in your own terminal. If it names a team policy, ask your administrator. Otherwise run `zn-gate status`, and ask in [Discussions](https://github.com/usezn/zn/discussions) if you are stuck.
+
+#### "zn run: Not found: secret `<NAME>` is not in the vault"
+
+```text
+zn run: Not found: secret <NAME> is not in the vault. Add it from your own terminal: zn secret set <NAME>
+```
+
+**What happened:** the command named a secret with `--secrets` that is not stored in your vault. zn stops before the command starts, so the command did not run.
+
+**What to do:**
+
+1. Run `zn secret list` in your own terminal. It lists the names your vault holds, names and policy only, never values, so you can check the spelling: secret names use upper-case letters, digits and single underscores, such as `GITHUB_TOKEN`.
+2. Add the secret from your own terminal: `zn secret set PGPASSWORD --command psql` (here the secret is `PGPASSWORD`, the variable `psql` reads, and `--command` allows `psql`, the program your `zn run` command starts). You type the value at a hidden prompt.
+3. Run the `zn run` command again. The first time a program uses a secret, the vault asks you to confirm it in its own prompt (a dialog, or the `zn unlock --foreground` terminal).
+
+If `zn run` instead says your vault is locked, see [section 5](#5-your-secret-vault-is-locked). More on giving a command a secret: [secrets](secrets.md).
 
 #### "zn could not use your secret vault: `<error>`"
 
@@ -1181,6 +1289,7 @@ Then zn checked the text with the local rules only, on your machine, and the res
 
 - Your agent blocks every prompt after you upgraded or removed Node.js: see [If your agent blocks every prompt](compat.md#if-your-agent-blocks-every-prompt).
 - Not sure what is protected: `npx -y zn-gate check`, explained in [check](check.md).
+- Before you ask: run the commands in [Before you ask for help](examples/doctor-before-asking-for-help.md) and paste their output with your question.
 - Still stuck: ask in [Discussions](https://github.com/usezn/zn/discussions). Say your zn-gate version (`zn-gate --version`), your operating system and the message, and leave out any secret.
 
 ### TLS certificates and trust stores

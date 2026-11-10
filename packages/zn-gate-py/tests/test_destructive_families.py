@@ -133,6 +133,8 @@ ALLOWED = [
     "Remove-Item .\\build -Recurse",
     "echo ':(){ :|:& };:'",
     "f(){ echo hi; }; f",
+    "npm install left-pad",
+    "pip install requests",
 ]
 
 

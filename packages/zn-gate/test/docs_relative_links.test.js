@@ -43,7 +43,7 @@ function brokenLinks(docsDir) {
       const abs = path.resolve(path.dirname(file), decoded);
       const rel = path.relative(root, abs);
       if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
-      if (!fs.existsSync(abs)) broken.push(path.relative(root, file) + ' -> ' + target);
+      if (!fs.existsSync(abs)) broken.push(path.relative(root, file).split(path.sep).join('/') + ' -> ' + target);
     }
   }
   return broken;
