@@ -58,6 +58,7 @@ The full list of guides follows below. If a word is unfamiliar, see the [Glossar
 | [Audit](audit.md) | Review a repository's agent configuration before you open it | Developers, reviewers |
 | [Connect](connect.md) | Turn on the optional cloud check, and turn it off | Anyone who opts in |
 | [Agent compatibility](compat.md) | What the scrubber can do in each agent | Everyone choosing or configuring an agent |
+| [Agent exposure matrix](exposure-matrix.md) | For each agent, what zn blocks or passes in seven cases, with the release and date of each result | Everyone choosing or configuring an agent |
 | [Editors and coding agents](editors/README.md) | Protection level and two-minute setup per editor | Editor users |
 | [Install, verify and uninstall by agent](by-agent.md) | The steps for each supported agent on one page | Editor users |
 
