@@ -347,9 +347,9 @@ test('posix launcher: a status 0 without the confirmation (an older zn on the PA
   const r = await runLauncher(file, 'PreToolUse', '{}');
   assert.equal(r.status, 2);
   assert.match(r.stderr, /older than this hook/);
-  assert.match(r.stderr, /npm install -g zn-gate.*zn hooks install claude-code/);
+  assert.match(r.stderr, /npm install -g zn-gate.*zn(?:\.cmd)? hooks install claude-code/);
   const post = await runLauncher(file, 'PostToolUse', '{}');
-  assert.match(JSON.parse(post.stdout).systemMessage, /zn hooks install claude-code/);
+  assert.match(JSON.parse(post.stdout).systemMessage, /zn(?:\.cmd)? hooks install claude-code/);
 });
 
 // ---- private files: every call removes what it made, whatever the PATH of the hook (it can be empty) ----
