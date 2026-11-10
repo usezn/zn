@@ -100,12 +100,13 @@ If you remove the program first, the hooks stay in your agent's settings. The ag
 ### 12. How do I remove zn-gate from one agent only?
 
 Run `npx -y zn-gate hooks uninstall <agent>` in your own terminal: it removes
-the hooks of that agent only and writes a backup of the settings file first.
+the hooks of that agent only. When it changes the settings file, it writes a backup
+copy of that file first.
 The Uninstall column of [the table by agent](by-agent.md) has the name and the
 command for each of them, for example `claude-code`, `codex`, `cursor` or
 `gemini`. For Claude Code installed as a plugin, remove the plugin instead:
-`claude plugin uninstall zn-gate@usezn`. Then run `npx -y zn-gate check`: it
-names each agent that is no longer protected. Details are in
+`claude plugin uninstall zn-gate@usezn`. Then run `npx -y zn-gate check`: the agent
+is listed as not set up, with the command to set it up again. Details are in
 [Piece by piece](uninstall.md#piece-by-piece).
 
 ## Performance
@@ -113,9 +114,10 @@ names each agent that is no longer protected. Details are in
 ### 13. Does zn-gate slow my agent down?
 
 The hooks run once before and once after each tool call, and the agent waits
-for them. Most of that time is Node.js starting, not the check itself.
-[performance.md](performance.md) has the measured times for each agent and
-input size, and the script to measure them on your own machine.
+for them. On the reference run in [performance.md](performance.md), the median
+hook took 53 to 83 ms, and starting Node.js alone took 24 ms of that. The page has
+the times for each agent and input size, and the script to measure them on your
+own machine. `npx -y zn-gate check` also shows the decision time on your machine.
 
 ## Your data
 
@@ -144,8 +146,10 @@ The protection does: the hooks and `zn-gate analyze` with the local check,
 which is the default, run on your machine and need no connection. What needs
 internet is the optional cloud check of `zn-gate analyze`, `zn-gate connect`
 and the team commands that join or sync with a zn organization. On a computer
-without internet, leave the cloud check off: with it off, nothing is sent to
-usezn.com. See
+without internet, leave the cloud check off: with it off, the hooks and
+`zn-gate analyze` send nothing to usezn.com. Two other opt-in features send data
+there: `zn-gate stats share on`, which sends daily counts (off by default), and
+`zn team join`, which uploads audit metadata. See
 [Install on a machine without internet](install-matrix.md#install-on-a-machine-without-internet)
 for the full list and the offline install steps.
 
@@ -167,7 +171,7 @@ Run these commands in your own terminal: zn-gate refuses to change hooks when an
 
 ## Logs and blocks
 
-### 15. Where do I see what was blocked?
+### 18. Where do I see what was blocked?
 
 Run `npx -y zn-gate why` in your own terminal. It explains the last block in plain words: what was stopped, why, and what to do next. To explain one specific block, give its id from the records that `npx -y zn-gate evidence --export` prints. Without an id, `why` explains the last block; if there is no block yet, it says so.
 
