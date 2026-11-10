@@ -29,7 +29,7 @@ Vault: locked (backend passphrase)
 Location: ~/.zn/vault
 ```
 
-The word after `backend` names the place that holds the vault key: `passphrase` when the vault is behind a passphrase, `macos` for the macOS Keychain, `windows` for the Windows Credential Manager and `libsecret` for the Linux keyring.
+The word after `backend` names where the vault key is kept: `macos` for the macOS Keychain, `windows` for the Windows Credential Manager and `libsecret` for the Linux keyring (the Secret Service, such as GNOME Keyring or KWallet). With `passphrase` there is no system entry: the key is kept in the vault folder as `identity.age`, encrypted with the passphrase you set. That backend is used when no system keychain is available, for example on Linux without a desktop session, in WSL or in CI.
 
 ## When the vault is unlocked
 
