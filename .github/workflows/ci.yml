@@ -218,7 +218,7 @@ jobs:
   python-warnings:
     name: Python 3.14 tests with warnings as errors (ubuntu-latest)
     # Not a required check, so the merge queue leaves it out. A pull request runs it only with the full-ci label
-    # (and not as a draft); every other run covers it: pushes to main and release branches, the nightly run on
+    # (and not as a draft); every other run covers it: pushes to main, next and release branches, the nightly run on
     # next, and manual runs.
     if: github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'full-ci')))
     runs-on: ubuntu-latest
