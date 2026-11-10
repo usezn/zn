@@ -1,0 +1,2 @@
+### Fixed
+- The Rust gateway's scrubber now redacts Azure Storage account keys (`AccountKey=...` in a connection string) and the value of a secret-named key written in lower case, mixed case, dotted or dashed form (for example `openai_api_key=...`, `my.app.db.password: ...` or `github-token=...`), like the Node.js and Python packages. Short, low-entropy, placeholder and reference values are still left alone.

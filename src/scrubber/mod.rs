@@ -6,6 +6,9 @@
 //! ## Supported Patterns
 //! - Email addresses → `[EMAIL_REDACTED]`
 //! - API keys, secrets, passwords, tokens → `[SECRET_REDACTED]`
+//! - Azure Storage account keys (`AccountKey=` and 86 base64 characters and `==`) → `[SECRET_REDACTED]`
+//! - Values of secret-named keys in lines (`openai_api_key=...`, `my.app.db.password: ...`, `github-token=...`:
+//!   lower case, mixed case, dotted or dashed names; machine-generated values only) → `[SECRET_REDACTED]`
 //! - AWS access key ids (`AKIA`, `ASIA`, `ABIA` or `ACCA` + 16 capitals/digits) → `[SECRET_REDACTED]`
 //! - GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`) and Stripe secret keys (`sk_`/`rk_` + `live`/`test`/`prod`) → `[SECRET_REDACTED]`
 //! - Credit card numbers (known network prefix and length, Luhn checksum) → `[CARD_REDACTED]`
@@ -787,6 +790,490 @@ fn nanp_spans(text: &str) -> Vec<(usize, usize)> {
     checked_spans(nanp_re(), text, nanp_lead, nanp_trail, formatted_nanp_valid)
 }
 
+// ---------------------------------------------------------------------------
+// Azure Storage account keys. Same rule as the Node.js scrubber
+// (`AZURE_STORAGE_KEY`, packages/zn-gate/lib/scrub/patterns.js) and the Python
+// `secret:azure_storage_key` rule: `AccountKey=` and a 64-byte base64 key (86
+// characters and `==`) in a connection string. The label `AccountKey=` stays;
+// only the key is replaced.
+// ---------------------------------------------------------------------------
+
+fn azure_storage_key_re() -> &'static Regex {
+    static AZURE_STORAGE_KEY_REGEX: OnceLock<Regex> = OnceLock::new();
+    AZURE_STORAGE_KEY_REGEX.get_or_init(|| Regex::new(r"AccountKey=([A-Za-z0-9+/]{86}==)").unwrap())
+}
+
+fn azure_storage_key_spans(text: &str) -> Vec<(usize, usize)> {
+    if !text.contains("AccountKey=") {
+        return Vec::new();
+    }
+    azure_storage_key_re()
+        .captures_iter(text)
+        .filter_map(|c| c.get(1))
+        .map(|m| (m.start(), m.end()))
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Secret-named keys in lines: YAML / compose maps, `- KEY=value`, dotenv and
+// properties lines, Dockerfile ENV / ARG, PowerShell `$env:`, and an inline
+// assignment before a command. Same as `S_LINES`, `findStructured`,
+// `structuredPair` and `structuredValue` in packages/zn-gate/lib/scrub/patterns.js
+// and `secret:named_key_value` in packages/zn-gate-py/src/zn_gate/rules.py.
+//
+// The key may be lower case, mixed case, dotted or dashed (openai_api_key,
+// my.app.db.password, github-token, clientSecret): camelCase, dots and dashes
+// are read as `_` and a name segment must end in a sensitive word. The value
+// must look machine-generated: 12 to 200 printable characters, not a
+// placeholder, reference, URL, path, number, identifier or word list, with at
+// least two character kinds and at least 3.3 bits of entropy per character.
+//
+// The regex crate has no backreferences or lookaround: an optional quote that
+// must close the same way is read into two groups (`q` and `c`) and compared
+// after the match, and the inline-assignment form is a small scanner. Value
+// classes are printable ASCII (the value filter rejects anything else), which
+// keeps the compiled programs small. Every pattern is anchored at the line
+// start with bounded repeats, and a line is read once, so the work is linear.
+// ---------------------------------------------------------------------------
+
+const NK_NAME: &str = r"[A-Za-z_][A-Za-z0-9_.-]{0,127}";
+const NK_TAIL: &str = r"(?:[ \t]*[,;])?(?:[ \t]+(?:\#|//)[^\r\n]*)?$";
+/// Printable ASCII but `"`, `'` and the backtick (the value of a line form).
+const NK_VAL: &str = r"[\x21\x23-\x26\x28-\x5f\x61-\x7e]{1,512}";
+/// The same without `;` (PowerShell).
+const NK_VAL_PS: &str = r"[\x21\x23-\x26\x28-\x3a\x3c-\x5f\x61-\x7e]{1,512}";
+/// The same without `=` (Dockerfile `ENV KEY value`).
+const NK_VAL_ENV: &str = r"[\x21\x23-\x26\x28-\x3c\x3e-\x5f\x61-\x7e]{1,512}";
+
+const NK_MIN_VALUE: usize = 12;
+const NK_MAX_VALUE: usize = 200;
+
+struct NamedKeyRegexes {
+    hint: Regex,
+    lines: Vec<Regex>,
+    sensitive: Regex,
+    skip: Regex,
+    skip_extra: Regex,
+    name_suffix: Regex,
+    gpg_name: Regex,
+    placeholder: Regex,
+    placeholder_words: Regex,
+    plain_words: Regex,
+    number: Regex,
+    url: Regex,
+    path: Regex,
+    long_b64: Regex,
+    host: Regex,
+    digits4: Regex,
+    env_ref: Regex,
+    zn_token: Regex,
+    ref_start: Regex,
+    scheme: Regex,
+    dotted_num: Regex,
+    word_segment: Regex,
+}
+
+fn named_key_res() -> &'static NamedKeyRegexes {
+    static NAMED_KEY_REGEXES: OnceLock<NamedKeyRegexes> = OnceLock::new();
+    NAMED_KEY_REGEXES.get_or_init(|| {
+        let re = |p: &str| Regex::new(p).unwrap();
+        let lines = vec![
+            // YAML / compose map entry (also JSON `"key": "value"`).
+            re(&format!(
+                r#"^[ \t]*(?:-[ \t]+)?(?P<kq>["']?)(?P<n>{NK_NAME})(?P<kc>["']?)[ \t]*:[ \t]+(?P<q>["']?)(?P<v>{NK_VAL})(?P<c>["']?){NK_TAIL}"#
+            )),
+            // Compose environment list: `- KEY=value` or `- "KEY=value"`.
+            re(&format!(
+                r#"^[ \t]*-[ \t]+(?P<q>["']?)(?P<n>{NK_NAME})=(?P<v>{NK_VAL})(?P<c>["']?){NK_TAIL}"#
+            )),
+            // KEY=value: dotenv, `export`, Dockerfile `ENV` / `ARG`, `set`, properties files.
+            re(&format!(
+                r#"^[ \t]*(?:(?:export|ENV|ARG|set)[ \t]+)?(?P<n>{NK_NAME})[ \t]*=[ \t]*(?P<q>["']?)(?P<v>{NK_VAL})(?P<c>["']?){NK_TAIL}"#
+            )),
+            // PowerShell `$env:KEY = value`.
+            re(&format!(
+                r#"^[ \t]*\$env:(?P<n>[A-Za-z_][A-Za-z0-9_]{{0,127}})[ \t]*=[ \t]*(?P<q>["']?)(?P<v>{NK_VAL_PS})(?P<c>["']?){NK_TAIL}"#
+            )),
+            // Dockerfile `ENV KEY value`.
+            re(&format!(
+                r#"^[ \t]*ENV[ \t]+(?P<n>[A-Za-z_][A-Za-z0-9_]{{0,127}})[ \t]+(?P<q>["']?)(?P<v>{NK_VAL_ENV})(?P<c>["']?){NK_TAIL}"#
+            )),
+        ];
+        NamedKeyRegexes {
+            hint: re(r"(?i)pass|pwd|secret|token|key|credential|auth|dsn"),
+            lines,
+            sensitive: re(
+                r"(?:^|_)[A-Z0-9]*(?:KEY|SECRET|SECRETS|TOKEN|TOKENS|PASS|PASSWD|PASSWORD|PASSPHRASE|PWD|CREDENTIAL|CREDENTIALS|AUTH|DSN)(?:_|$)|(?:^|_)DATABASE_URL$",
+            ),
+            skip: re(
+                r"(?:^|_)(?:PUBLIC|PUB)(?:_|$)|PUBKEY|_(?:ARN|REF|REFS|HEADER|HEADERS|POLICY|PROVIDER|ALGORITHM|ALG|LENGTH|EXPIRY|EXPIRES|EXPIRES_IN|EXPIRATION|LIFETIME|VERSION|URI|SCOPE|SCOPES|FORMAT|FIELD|PARAM|PARAMS|PREFIX|PATTERN|REGEX|METHOD|COUNT|SIZE|LIMIT|STORE|BACKEND|KIND)$",
+            ),
+            skip_extra: re(
+                r"(?:^|_)(?:FINGERPRINT|FINGERPRINTS|HASH|HASHED|SHA1|SHA256|SHA384|SHA512|MD5|DIGEST|CHECKSUM)$|_AT$|(?:^|_)(?:CACHE|IDEMPOTENCY|S3|OBJECT|PARTITION|SORT|ROUTING|DEDUP|DEDUPLICATION)_KEY$",
+            ),
+            name_suffix: re(
+                r"(?:_PATH|_FILE|_DIR|_HOME|_URL_BASE|_ENDPOINT|_HOST|_PORT|_REGION|_ID|_USER|_USERNAME|_NAME|_TYPE|_MODE|_ENABLED|_TIMEOUT|_TTL|_SOCK)$",
+            ),
+            gpg_name: re(r"(?:^|_)(?:GPG|PGP)_KEY(?:_ID)?$"),
+            placeholder: re(
+                r"(?i)^(?:x{3,}|\*{3,}|\.{3,}|-+|_+|<[^>]*>|\$\{?[^}]*\}?|\{\{?[^}]*\}?\}|%\(?[a-z_]*\)?s|:[a-z_]+|\[[^\]]*\])$",
+            ),
+            placeholder_words: re(
+                r"(?i)(?:^|[^a-z])(?:password|passwd|passw0rd|secret|changeme|change_me|example|placeholder|your[_-]?|redacted|dummy|sample|foobar|hunter2|xxxx|todo|insert|replace|mypass|pass(?:word)?123)(?:[^a-z]|$)",
+            ),
+            plain_words: re(
+                r"(?i)^(?:true|false|yes|no|on|off|null|none|undefined|enabled|disabled|production|development|staging|localhost)$",
+            ),
+            number: re(r"^-?[0-9]+(?:\.[0-9]+)?$"),
+            url: re(r"(?i)^(?:[a-z][a-z0-9+.-]*:)?//[^@\s]*$"),
+            path: re(r"^(?:/|~/|\.{1,2}/|[A-Za-z]:\\)[^\s]*$"),
+            long_b64: re(r"[A-Za-z0-9+/]{32,}"),
+            host: re(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,24}$"),
+            digits4: re(r"[0-9]{4,}"),
+            env_ref: re(r"^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$"),
+            zn_token: re(r"__ZN_[A-Z0-9_]+__"),
+            ref_start: re(r"(?i)^(?:process\.env|os\.environ|env\.|secrets\.|vars\.|arn:)"),
+            scheme: re(r"(?i)^[a-z][a-z0-9+.-]*://"),
+            dotted_num: re(r"^[0-9]+(?:[.:][0-9]+)*$"),
+            word_segment: re(
+                r"^(?:(?:[A-Za-z]?[a-z]+(?:[A-Z][a-z]{2,})*|[A-Z]+)[0-9]{0,2}|v?[0-9]{1,4})$",
+            ),
+        }
+    })
+}
+
+/// A name as the Node.js `sensitiveKey` reads it: a capital before a lower-case letter or a
+/// digit starts a new word, runs of `-` and `.` become one `_`, then upper case.
+fn nk_normal_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 8);
+    let mut prev: Option<char> = None;
+    let mut in_sep = false;
+    for ch in name.chars() {
+        if ch == '-' || ch == '.' {
+            if !in_sep {
+                out.push('_');
+            }
+            in_sep = true;
+        } else {
+            in_sep = false;
+            if ch.is_ascii_uppercase()
+                && prev.is_some_and(|p| p.is_ascii_lowercase() || p.is_ascii_digit())
+            {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_uppercase());
+        }
+        prev = Some(ch);
+    }
+    out
+}
+
+fn nk_sensitive_key(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let r = named_key_res();
+    let n = nk_normal_name(name);
+    if n == "KEY" || n == "KEYS" {
+        return false;
+    }
+    if r.skip.is_match(&n) || r.skip_extra.is_match(&n) {
+        return false;
+    }
+    if matches!(
+        n.as_str(),
+        "PWD"
+            | "OLDPWD"
+            | "SSH_AUTH_SOCK"
+            | "GPG_AGENT_INFO"
+            | "XAUTHORITY"
+            | "KEYTIMEOUT"
+            | "GNUPGHOME"
+            | "GIT_ASKPASS"
+            | "SSH_ASKPASS"
+            | "SUDO_ASKPASS"
+            | "AUTH_SOCK"
+            | "KEYBOARD"
+            | "KEYMAP"
+            | "TOKENIZERS_PARALLELISM"
+    ) {
+        return false;
+    }
+    if r.name_suffix.is_match(&n) && !n.ends_with("DATABASE_URL") {
+        return false;
+    }
+    r.sensitive.is_match(&n)
+}
+
+/// Node.js `isPlaceholder`.
+fn nk_placeholder(v: &str) -> bool {
+    let r = named_key_res();
+    if v.is_empty() || r.placeholder.is_match(v) || r.placeholder_words.is_match(v) {
+        return true;
+    }
+    let mut chars = v.chars();
+    if let Some(first) = chars.next() {
+        if v.chars().count() >= 2 && v.chars().all(|c| c == first) {
+            return true;
+        }
+    }
+    let lower = v.to_ascii_lowercase();
+    ["0123456789", "1234567890", "abcdef", "qwerty"]
+        .iter()
+        .any(|p| lower.starts_with(p))
+}
+
+/// Node.js `looksNonSecret` (exact.js): values that are not secrets under any name.
+fn nk_non_secret(v: &str) -> bool {
+    let r = named_key_res();
+    let v = v.trim();
+    v.len() < 8
+        || r.plain_words.is_match(v)
+        || (r.number.is_match(v) && v.len() < 12)
+        || r.url.is_match(v)
+        || (r.path.is_match(v) && !r.long_b64.is_match(v))
+        || (r.host.is_match(v) && !r.digits4.is_match(v))
+        || r.env_ref.is_match(v)
+}
+
+/// Identifiers, slugs, versions and dotted references (Node.js `wordy`).
+fn nk_wordy(v: &str) -> bool {
+    let seg = &named_key_res().word_segment;
+    v.split(['-', '_', '.', '/', ':', '@', '+'])
+        .all(|s| s.is_empty() || seg.is_match(s))
+}
+
+/// Node.js `structuredValue`: true when the value looks machine-generated.
+fn nk_value(v: &str) -> bool {
+    let r = named_key_res();
+    if v.len() < NK_MIN_VALUE || v.len() > NK_MAX_VALUE {
+        return false;
+    }
+    if v.bytes().any(|b| !(0x21..=0x7e).contains(&b)) {
+        return false;
+    }
+    if nk_placeholder(v) || nk_non_secret(v) {
+        return false;
+    }
+    let b = v.as_bytes();
+    if b"$%<{[(*&!|>@~=-".contains(&b[0]) {
+        return false;
+    }
+    if b.iter().any(|c| b"(){}[];,<>`\\".contains(c)) {
+        return false;
+    }
+    if r.zn_token.is_match(v) || r.ref_start.is_match(v) || r.scheme.is_match(v) {
+        return false;
+    }
+    let digit = b.iter().any(u8::is_ascii_digit);
+    if b.iter().all(u8::is_ascii_hexdigit) {
+        // A hex-only value: at least 32 digits with letters and digits, not a placeholder.
+        return v.len() >= 32
+            && digit
+            && b.iter().any(|c| matches!(c, b'a'..=b'f' | b'A'..=b'F'))
+            && shannon_bits(v) >= 3.0;
+    }
+    if r.dotted_num.is_match(v) || nk_wordy(v) {
+        return false;
+    }
+    let upper = b.iter().any(u8::is_ascii_uppercase);
+    let kinds =
+        usize::from(b.iter().any(u8::is_ascii_lowercase)) + usize::from(upper) + usize::from(digit);
+    if kinds < 2 {
+        return false;
+    }
+    if !upper && !b.iter().any(|c| !c.is_ascii_alphanumeric()) && v.len() < 16 {
+        return false;
+    }
+    shannon_bits(v) >= 3.3
+}
+
+/// Node.js `structuredPair`: name and value together (a GPG / PGP key id is not a secret).
+fn nk_pair(name: &str, value: &str) -> bool {
+    if !nk_sensitive_key(name) || !nk_value(value) {
+        return false;
+    }
+    let is_gpg_id = matches!(value.len(), 16 | 40) && value.bytes().all(|b| b.is_ascii_hexdigit());
+    !(named_key_res().gpg_name.is_match(&nk_normal_name(name)) && is_gpg_id)
+}
+
+fn nk_is_name_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-')
+}
+
+/// `NAME=value ` words before the target of the inline form: a quoted or unquoted value of up
+/// to 512 characters and at least one space or tab. Returns the position after the word.
+fn nk_prefix_word(line: &str, pos: usize) -> Option<usize> {
+    let b = line.as_bytes();
+    if !b
+        .get(pos)
+        .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_')
+    {
+        return None;
+    }
+    let mut i = pos + 1;
+    while i < b.len() && i - pos < 128 && nk_is_name_char(b[i]) {
+        i += 1;
+    }
+    if b.get(i) != Some(&b'=') {
+        return None;
+    }
+    i += 1;
+    match b.get(i) {
+        Some(&q @ (b'"' | b'\'')) => {
+            let start = i + 1;
+            let len = line[start..].find([q as char, '\n'])?;
+            if line.as_bytes()[start + len] != q || line[start..start + len].chars().count() > 512 {
+                return None;
+            }
+            i = start + len + 1;
+        }
+        _ => {
+            let start = i;
+            while i < b.len() && !b[i].is_ascii_whitespace() && b[i] != b'"' && b[i] != b'\'' {
+                i += 1;
+            }
+            // `[^\s"']{0,512}` in characters
+            if line[start..i].chars().count() > 512 {
+                return None;
+            }
+        }
+    }
+    let ws = i;
+    while i < b.len() && matches!(b[i], b' ' | b'\t') {
+        i += 1;
+    }
+    (i > ws).then_some(i)
+}
+
+/// Inline assignment before a command (`KEY=value cmd args`, after up to four other
+/// `NAME=value` words and an optional `env`): the name and value ranges, or None.
+fn nk_inline_assignment(line: &str) -> Option<((usize, usize), (usize, usize))> {
+    let b = line.as_bytes();
+    let mut pos = 0;
+    while pos < b.len() && matches!(b[pos], b' ' | b'\t') {
+        pos += 1;
+    }
+    if b.len() >= pos + 3 && b[pos..pos + 3].eq_ignore_ascii_case(b"env") {
+        let mut p = pos + 3;
+        while p < b.len() && matches!(b[p], b' ' | b'\t') {
+            p += 1;
+        }
+        if p > pos + 3 {
+            pos = p;
+        }
+    }
+    for _ in 0..=4 {
+        if let Some(found) = nk_inline_target(line, pos) {
+            return Some(found);
+        }
+        pos = nk_prefix_word(line, pos)?;
+    }
+    None
+}
+
+/// The target of the inline form at `pos`: a name that holds a sensitive word, `=`, an optional
+/// quote, a value of 1 to 512 characters without `;`, `&`, `|`, quotes or white space, the same
+/// closing quote, then a space or tab and a character that can start a command.
+fn nk_inline_target(line: &str, pos: usize) -> Option<((usize, usize), (usize, usize))> {
+    let b = line.as_bytes();
+    if !b
+        .get(pos)
+        .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_')
+    {
+        return None;
+    }
+    let mut i = pos + 1;
+    while i < b.len() && i - pos < 128 && nk_is_name_char(b[i]) {
+        i += 1;
+    }
+    if b.get(i) != Some(&b'=') {
+        return None;
+    }
+    let name = (pos, i);
+    if !named_key_res().hint.is_match(&line[pos..i]) {
+        return None;
+    }
+    i += 1;
+    let quote = match b.get(i) {
+        Some(&q @ (b'"' | b'\'')) => {
+            i += 1;
+            Some(q)
+        }
+        _ => None,
+    };
+    let start = i;
+    while i < b.len()
+        && !b[i].is_ascii_whitespace()
+        && !matches!(b[i], b'"' | b'\'' | b'`' | b';' | b'&' | b'|')
+    {
+        i += 1;
+    }
+    if i == start || line[start..i].chars().count() > 512 {
+        return None;
+    }
+    let value = (start, i);
+    if let Some(q) = quote {
+        if b.get(i) != Some(&q) {
+            return None;
+        }
+        i += 1;
+    }
+    let ws = i;
+    while i < b.len() && matches!(b[i], b' ' | b'\t') {
+        i += 1;
+    }
+    let next_ok = b.get(i).is_some_and(|c| {
+        c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'/' | b'~' | b'\\' | b'-')
+    });
+    (i > ws && next_ok).then_some((name, value))
+}
+
+/// The value span of a secret-named key on one line (offsets in `line`), or None.
+fn nk_line_value(line: &str) -> Option<(usize, usize)> {
+    for re in &named_key_res().lines {
+        let Some(caps) = re.captures(line) else {
+            continue;
+        };
+        let group = |n: &str| caps.name(n).map_or("", |m| m.as_str());
+        if group("kq") != group("kc") || group("q") != group("c") {
+            continue;
+        }
+        let (name, value) = (caps.name("n").unwrap().as_str(), caps.name("v").unwrap());
+        if nk_pair(name, value.as_str()) {
+            return Some((value.start(), value.end()));
+        }
+    }
+    let ((ns, ne), (vs, ve)) = nk_inline_assignment(line)?;
+    nk_pair(&line[ns..ne], &line[vs..ve]).then_some((vs, ve))
+}
+
+/// Value spans of secret-named keys, one line at a time and only on lines that hold a sensitive
+/// word and are long enough for a 12-character value.
+fn named_key_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    if !named_key_res().hint.is_match(text) {
+        return spans;
+    }
+    let mut offset = 0;
+    for raw in text.split('\n') {
+        let line_start = offset;
+        offset += raw.len() + 1;
+        let line = raw.trim_end_matches([' ', '\t', '\r']);
+        if line.len() < NK_MIN_VALUE || !named_key_res().hint.is_match(line) {
+            continue;
+        }
+        if let Some((s, e)) = nk_line_value(line) {
+            spans.push((line_start + s, line_start + e));
+        }
+    }
+    spans
+}
+
+fn redact_named_key_values(text: &str) -> String {
+    replace_spans(text, &named_key_spans(text), "[SECRET_REDACTED]")
+}
+
 /// Token shapes the gateway also keeps out of its own logs and audit rows:
 /// cloud, code-host, payment, AI-provider and chat credentials, webhook URLs,
 /// and private key blocks. Each match is replaced whole.
@@ -874,9 +1361,16 @@ impl Scrubber {
         output = replace_spans(&output, &aws_key_spans(&output), "[SECRET_REDACTED]");
         output = replace_spans(&output, &github_token_spans(&output), "[SECRET_REDACTED]");
         output = replace_spans(&output, &stripe_key_spans(&output), "[SECRET_REDACTED]");
+        output = replace_spans(
+            &output,
+            &azure_storage_key_spans(&output),
+            "[SECRET_REDACTED]",
+        );
         output = auth_re().replace_all(&output, redact_auth).to_string();
         output = redact_quoted_values(&output);
         output = api_re().replace_all(&output, redact_secret).to_string();
+        // Secret-named keys in lines (lower case, dotted, dashed), on what the rules above left.
+        output = redact_named_key_values(&output);
         output = replace_spans(&output, &card_spans(&output), "[CARD_REDACTED]");
         output = replace_spans(&output, &ssn_spans(&output), "[SSN_REDACTED]");
         output = replace_spans(&output, &e164_spans(&output), "[PHONE_REDACTED]");
@@ -933,6 +1427,8 @@ impl Scrubber {
             .captures_iter(input)
             .any(|c| !secret_placeholder(secret_value(&c)))
             || redact_quoted_values(input) != input
+            || !named_key_spans(input).is_empty()
+            || !azure_storage_key_spans(input).is_empty()
         {
             types.push("api_key_or_secret");
         }
@@ -2166,5 +2662,193 @@ mod table_parity_tests {
         assert_eq!(v["n"], serde_json::json!([1, 2]));
         assert_eq!(v["token"], "[SECRET_REDACTED]");
         assert_eq!(v.as_object().unwrap().len(), 3);
+    }
+}
+
+/// Azure Storage keys and secret-named keys (lower case, mixed case, dotted, dashed), the same
+/// rules as the Node.js and Python scrubbers. The fixture is shared with
+/// packages/zn-gate/test/scrub_named_keys.test.js and packages/zn-gate-py/tests/test_named_key_values.py;
+/// `{S}` stands for one replaced secret.
+#[cfg(test)]
+mod named_key_tests {
+    use super::*;
+
+    const MARK: &str = "[SECRET_REDACTED]";
+
+    fn cases() -> Vec<(String, String, String)> {
+        let f: serde_json::Value = serde_json::from_str(include_str!(
+            "../../packages/zn-gate/test/fixtures/scrub_named_key_parity.json"
+        ))
+        .unwrap();
+        let all: Vec<_> = f["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| {
+                (
+                    c["name"].as_str().unwrap().to_string(),
+                    c["input"].as_str().unwrap().to_string(),
+                    c["output"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        assert!(all.len() >= 30);
+        all
+    }
+
+    /// The secret in a positive case: what `input` has where `output` has `{S}`.
+    fn secret_of(input: &str, output: &str) -> String {
+        let (head, tail) = output.split_once("{S}").unwrap();
+        input[head.len()..input.len() - tail.len()].to_string()
+    }
+
+    #[test]
+    fn named_key_layer_equals_fixture() {
+        for (name, input, output) in cases() {
+            let expected = output.replace("{S}", MARK);
+            assert_eq!(redact_named_key_values(&input), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn scrub_redacts_fixture_positives_once() {
+        for (name, input, output) in cases() {
+            if !output.contains("{S}") {
+                continue;
+            }
+            let secret = secret_of(&input, &output);
+            let scrubbed = Scrubber::scrub(&input);
+            assert!(!scrubbed.contains(&secret), "{name}: {scrubbed}");
+            assert_eq!(scrubbed.matches(MARK).count(), 1, "{name}: {scrubbed}");
+            assert!(Scrubber::contains_pii(&input), "{name}");
+            assert!(
+                Scrubber::detect_pii_types(&input).contains(&"api_key_or_secret"),
+                "{name}"
+            );
+            // A second pass finds nothing more to redact.
+            assert_eq!(Scrubber::scrub(&scrubbed), scrubbed, "{name}");
+        }
+    }
+
+    /// Fixture negatives that the older `api_re` rule of this scrubber (a name, `:` or `=` and
+    /// 8 characters or more, no entropy check) redacts anyway, before the named-key layer runs.
+    /// The Node.js scrubber leaves them alone; that rule is outside this change. The layer
+    /// itself keeps them (see `named_key_layer_equals_fixture`).
+    const API_RULE_ONLY: [&str; 3] = [
+        "password = request.form['password']",
+        "my.app.db.password=aaaaaaaaaaaaaaaa",
+        "my.app.db.password=abcdefabcdef",
+    ];
+
+    #[test]
+    fn scrub_keeps_fixture_negatives() {
+        let mut differing = Vec::new();
+        for (name, input, output) in cases() {
+            if output.contains("{S}") || API_RULE_ONLY.contains(&input.as_str()) {
+                continue;
+            }
+            assert_eq!(input, output, "{name}: a negative case has the same output");
+            if Scrubber::scrub(&input) != input {
+                differing.push(name);
+            }
+        }
+        assert_eq!(differing, Vec::<String>::new());
+        for input in API_RULE_ONLY {
+            assert_eq!(redact_named_key_values(input), input);
+        }
+    }
+
+    // 86 characters and `==`, built from pieces so no literal looks like a real key.
+    fn fake_azure_key() -> String {
+        let mut k = String::new();
+        let alphabet = b"AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/";
+        for i in 0..86 {
+            k.push(alphabet[(i * 7 + i / 5) % alphabet.len()] as char);
+        }
+        k.push_str("==");
+        assert_eq!(k.len(), 88);
+        k
+    }
+
+    #[test]
+    fn azure_storage_key_is_redacted_once() {
+        let key = fake_azure_key();
+        let text = format!(
+            "DefaultEndpointsProtocol=https;AccountName=example;AccountKey={key};EndpointSuffix=core.windows.net"
+        );
+        let out = Scrubber::scrub(&text);
+        assert_eq!(
+            out,
+            "DefaultEndpointsProtocol=https;AccountName=example;AccountKey=[SECRET_REDACTED];EndpointSuffix=core.windows.net"
+        );
+        assert_eq!(out.matches(MARK).count(), 1);
+        assert!(!Scrubber::redact_for_log(&text).contains(&key));
+        assert!(Scrubber::detect_pii_types(&text).contains(&"api_key_or_secret"));
+        // In a YAML or dotenv line the whole connection string is one value: still once.
+        let env = format!("AZURE_STORAGE_CONNECTION_STRING=AccountName=example;AccountKey={key}");
+        let out = Scrubber::scrub(&env);
+        assert!(!out.contains(&key), "{out}");
+        assert_eq!(out.matches(MARK).count(), 1, "{out}");
+    }
+
+    #[test]
+    fn azure_storage_key_needs_the_exact_shape() {
+        let key = fake_azure_key();
+        for text in [
+            format!("AccountKey={}", &key[..60]),
+            format!("AccountKey={}", &key[..86]),
+            format!("accountkey={key}"),
+            format!("AccountName={key}"),
+        ] {
+            assert_eq!(azure_storage_key_spans(&text), Vec::new(), "{text}");
+        }
+    }
+
+    #[test]
+    fn named_keys_stay_linear_on_long_input() {
+        let started = std::time::Instant::now();
+        let dotted = "a.b.c.d-e.f_g=xxxxxxxxxx\n".repeat(2000);
+        assert_eq!(Scrubber::scrub(&dotted), dotted);
+        let v = ["Zx9fQ2mK", "7vLp3Rt8"].concat();
+        let long_value = format!("my.app.db.password={}\n", "Zx9fQ2mK".repeat(20_000));
+        let _ = Scrubber::scrub(&long_value);
+        let many_words = format!("{}token={v} run\n", "A=b ".repeat(50_000));
+        let _ = Scrubber::scrub(&many_words);
+        let hints = "key ".repeat(100_000);
+        assert_eq!(Scrubber::scrub(&hints), hints);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(20),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn inline_assignment_and_line_forms() {
+        let cases = [
+            ("GITHUB_TOKEN={v} npm publish", true),
+            ("env FOO=bar my-api.key={v} ./run.sh", true),
+            ("A=1 B=2 C=3 D=4 E=5 my.token={v} ./x", false),
+            ("my.token={v} && ./x", false),
+            ("$env:APP_SECRET = \"{v}\"", true),
+            ("ENV APP_SECRET {v}", true),
+            ("  - \"app.password={v}\"", true),
+            ("\"client-secret\": \"{v}\",", true),
+            ("password: \"{v}", false),
+            ("# gpg.key={g}", false),
+            ("GPG_KEY={g}", false),
+            ("\u{10869}\u{10869} key=\u{10869}\u{10869}\u{10869}\u{10869}\u{10869}\u{10869}\u{10869}", false),
+            ("\u{e9}nv my.token={v} run", false),
+        ];
+        let v = ["Zx9fQ2mK", "7vLp3Rt8"].concat();
+        for (template, redacted) in cases {
+            let g = ["0123456789", "ABCDEF"].concat();
+            let text = template.replace("{v}", &v).replace("{g}", &g);
+            let out = redact_named_key_values(&text);
+            assert_eq!(out != text, redacted, "{text} -> {out}");
+            if redacted {
+                assert!(!out.contains(&v), "{out}");
+            }
+        }
     }
 }
