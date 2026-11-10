@@ -28,6 +28,7 @@ Find the command you ran, then the symptom that matches.
   - ["zn could not use your secret vault"](#zn-could-not-use-your-secret-vault-error)
   - ["Lock the vault first"](#lock-the-vault-first)
   - ["The vault is already unlocked"](#the-vault-is-already-unlocked)
+  - [Where to look when a secret is not found](#where-to-look-when-a-secret-is-not-found)
 - `run`
   - ["zn run: Not found: secret `<NAME>` is not in the vault"](#zn-run-not-found-secret-name-is-not-in-the-vault)
 - `team`
@@ -962,6 +963,32 @@ zn run: Not found: secret <NAME> is not in the vault. Add it from your own termi
 
 If `zn run` instead says your vault is locked, see [section 5](#5-your-secret-vault-is-locked). More on giving a command a secret: [secrets](secrets.md).
 
+#### Where to look when a secret is not found
+
+Use this when zn says a secret is not in the vault, has no value, or was never named. Run every command in your own terminal.
+
+Check these in order:
+
+1. Run `zn-gate secret list`. It lists the stored names and their policy, never the values. If the name is there, go to step 3. If the vault is locked, the list shows the unlock message instead; see [section 5](#5-your-secret-vault-is-locked).
+2. If the name is not there, check the spelling against the list, then store it with `zn-gate secret set NAME`. You type the value at a hidden prompt.
+3. If the name is there but a command still says it is missing or has no value, the value or the allow is the problem. Read the table below.
+
+| The message says | Where it comes from | What to do |
+|---|---|---|
+| `zn secret: Not found: NAME is not in the vault` | `secret allow`, `secret rm` and `secret approve` when the name is not stored. The exit code is `1`. | Check the spelling with `zn-gate secret list`. If the secret is missing, store it with `zn-gate secret set NAME`, then run the command again. |
+| `zn run: Not found: secret NAME is not in the vault. Add it from your own terminal: zn secret set NAME` | `zn run --secrets`, before the command starts. The exit code is `127`. | See ["zn run: Not found: secret `<NAME>` is not in the vault"](#zn-run-not-found-secret-name-is-not-in-the-vault). |
+| `zn run: Not found: secret NAME has no value in the vault. Next step: save its value with zn secret set NAME in your own terminal, or, if you are an agent, ask the user to do it.` | `zn run`, when the name is stored but its value is empty. The exit code is `127`. | Store the value in your own terminal with `zn-gate secret set NAME --force`. Without `--force`, zn refuses to replace a stored name. |
+| `Not found: no secret named NAME. Next step: check the name for a typo; if the secret is missing, save it with zn secret set NAME in your own terminal, or, if you are an agent, ask the user to do it.` | The vault, when a command asks about a name it does not hold, for example a name that was typed wrong in a request. | Check the name for a typo. If the secret really is missing, store it with `zn-gate secret set NAME`. |
+| `secret NAME is not in the vault; use secrets_request to ask the user for it` | The `secrets` MCP server, when your agent asks for a secret that is not stored. The agent gets this as its tool result. | Nothing to run here. The agent should ask you. You add the secret in your own terminal with `zn-gate secret set NAME`. |
+| `No secrets stored. Add one with: zn secret set NAME   or import a .env: zn env shadow .env` | `secret list` when the vault is empty. | Add the secret, or move the values of a `.env` file into the vault with `zn-gate env shadow .env`. |
+| `Requested by agents (add with zn secret set NAME):`, followed by names | `secret list`, after the stored secrets. These are names an agent asked for and that are not stored yet. | Store each name you want to allow. Ignore the ones you do not want. |
+| `` `COMMAND` is not allowed to use NAME yet. The user can allow it from their own terminal: zn secret allow NAME --command COMMAND `` (the message goes on with a note about HTTP APIs) | `zn run`, when the name is stored but the command is not on its allow list. | This is not a missing secret. Read [allow a command](examples/zn-why-allow-command.md) before you allow it. |
+
+## Related
+
+- [`secret allow` in the command reference](cli.md#secret-allow).
+- [Keep a secret out of the agent](examples/keep-a-secret-out-of-the-agent.md): store, use and remove one fake secret.
+- [Secrets](secrets.md): how the vault, the modes and the allow lists fit together.
 #### "zn could not use your secret vault: `<error>`"
 
 **What happened:** the vault is not locked, but something stopped zn from using it, such as a damaged file or a refusing keychain.
