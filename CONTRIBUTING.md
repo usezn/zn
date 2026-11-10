@@ -213,6 +213,22 @@ print(evaluate("Summarize the quarterly revenue report.").verdict)
 
 The doc snippets steps of the `Quick checks` workflow run each marked `javascript`, `python` or `bash` block alone, against the package built from the commit (`npm pack` of `packages/zn-gate`, `packages/zn-gate-py` installed in a virtual environment), in an empty network namespace and with no API key. The block must exit 0. A failure names the file and line of the block. Mark a block only when it can run as written and offline, with no setup from a previous block, no account and no agent installed; the rest of the docs stay as they are. To try it locally: `python3 .github/scripts/doc-snippets.py list`, then `python3 .github/scripts/doc-snippets.py run` (add `--netns` on Linux with `sudo`).
 
+## Adding a command
+
+A new command, or a new subcommand, is documented in [docs/cli.md](docs/cli.md) in the same pull request as the code:
+
+- add a heading in `docs/cli.md` with the command name in backticks, from `##` to `####` (for example ``### `analyze` `` or ``#### `secret set` ``), with its options and exit codes;
+- the test `packages/zn-gate/test/cli_help_all_commands.test.js` fails when `zn-gate --help` lists a command that has no section in `docs/cli.md`, and when a documented command does not answer `--help` with exit code `0` and a usage line;
+- the test `packages/zn-gate/test/cheatsheet_in_cli_doc.test.js` fails when a command or flag in `docs/commands-cheatsheet.md` is missing from `docs/cli.md`;
+- for the Python package, `packages/zn-gate-py/tests/test_docs_cli_matches_parser.py` checks that its table in `docs/cli.md` matches the parser.
+
+Run the Node.js check before you open the pull request:
+
+```bash
+cd packages/zn-gate
+node --test test/cli_help_all_commands.test.js test/cheatsheet_in_cli_doc.test.js
+```
+
 ## Questions and Ideas
 
 Ask questions and share ideas in [GitHub Discussions](https://github.com/usezn/zn/discussions) rather than in issues. Open an issue for a reproducible bug or a change you are ready to propose. A vulnerability is neither: see the next section.
