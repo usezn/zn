@@ -200,6 +200,41 @@ const esm = (code) => ({ ...BASE, 'node_modules/esm-dep/extra.js': code });
         await rejects({ ...BASE, 'lib/agents/launcher.js': "const CHANGED_RC = '0);require(`child_process`)';\n" + stmt }, /module. built-in|mainModule/);
         await rejects({ ...BASE, 'lib/agents/launcher.js': 'const CHANGED_RC = 86;\n' + stmt + 'CHANGED_RC = 1;\n' }, /module. built-in|mainModule/);
         await rejects({ ...BASE, 'lib/agents/launcher.js': stmt }, /module. built-in|mainModule/);
+        // CHANGED_RC is the only value spliced into the program; the vault file list is written out in it, so code elsewhere in the
+        // file (a reassigned JSON.stringify, toJSON on Array or String) is accepted but has no effect on the program text.
+        assert.ok(builder.verifyJsSpliceOk(stmt), 'the VERIFY_JS statement splices something other than CHANGED_RC');
+        assert.ok(!/JSON\.stringify|VAULT_FILES/.test(stmt), 'the VERIFY_JS statement must not splice the vault file list');
+        const head = 'const CHANGED_RC = 86;\n';
+        const tamper = "JSON.stringify = () => '[\"lib/x.js\"];require(`child_process`)';\n" +
+          "Array.prototype.toJSON = function () { return ['lib/x.js']; };\nString.prototype.toJSON = function () { return 'lib/x.js'; };\n";
+        await build({ ...BASE, 'lib/agents/launcher.js': head + tamper + stmt + 'module.exports = { VERIFY_JS };\n' });
+        const evalStmt = (pre) => new Function(pre + 'const CHANGED_RC = 86;\n' + stmt + 'return VERIFY_JS;')();
+        const plain = evalStmt('');
+        const saved = [JSON.stringify, Array.prototype.toJSON, String.prototype.toJSON];
+        let tampered;
+        try {
+          tampered = evalStmt(tamper);
+        } finally {
+          JSON.stringify = saved[0];
+          if (saved[1] === undefined) delete Array.prototype.toJSON; else Array.prototype.toJSON = saved[1];
+          if (saved[2] === undefined) delete String.prototype.toJSON; else String.prototype.toJSON = saved[2];
+        }
+        assert.strictEqual(tampered, plain, 'JSON.stringify or toJSON overrides changed the VERIFY_JS program');
+        // every vault file the program checks is a file of the package
+        const list = /const V=(\[[^\]]*\]);/.exec(plain);
+        assert.ok(list, 'the vault file list V was not found in VERIFY_JS');
+        const vaultFiles = JSON.parse(list[1]);
+        assert.ok(vaultFiles.length > 0 && vaultFiles.includes('lib/vault/client.js'));
+        for (const v of vaultFiles) assert.ok(fs.existsSync(path.resolve(__dirname, '..', '..', 'packages', 'zn-gate', v)), v + ' is not in the package');
+        // the earlier form that spliced JSON.stringify(VAULT_FILES) is refused, and so is any other spliced expression
+        const spliced = stmt.replace(/const V=\[[^\]]*\];/, 'const V=" + JSON.stringify(VAULT_FILES) + ";');
+        assert.notStrictEqual(spliced, stmt);
+        assert.ok(!builder.verifyJsSpliceOk(spliced));
+        assert.ok(!builder.verifyJsSpliceOk(stmt.replace('" + CHANGED_RC + "', '" + String(CHANGED_RC) + "')));
+        assert.ok(!builder.verifyJsSpliceOk(stmt.replace('" + CHANGED_RC + "', '" + `${CHANGED_RC}` + "')));
+        assert.ok(!builder.verifyJsSpliceOk(stmt.replace(/;\n$/, ' + x;\n')));
+        assert.ok(!builder.verifyJsSpliceOk(stmt.replace(/;\n$/, ' + "a" + (0, "b");\n')));
+        await rejects({ ...BASE, 'lib/agents/launcher.js': head + "const VAULT_FILES = ['lib/vault/client.js'];\n" + spliced }, /module. built-in|mainModule/);
         // a CRLF-packed launcher is refused with a message that names the cause
         await rejects({ ...BASE, 'lib/agents/launcher.js': ('const CHANGED_RC = 86;\n' + stmt).replace(/\n/g, '\r\n') }, /CRLF line ends/);
       }
