@@ -8,6 +8,15 @@ npx -y zn-gate check
 
 (or `zn-gate check` if you installed it with `npm i -g zn-gate`).
 
+On this page:
+
+- [What it does](#what-it-does)
+- [What you will see](#what-you-will-see)
+- [What each NOT protected line means](#what-each-not-protected-line-means)
+- [If something fails](#if-something-fails)
+- [If your agent needs a value from `.env`](#if-your-agent-needs-a-value-from-env)
+- [Related](#related)
+
 ## What it does
 
 zn-gate makes a temporary folder with two files: a `.env` file that holds a fake key (`ZN_CHECK_EXAMPLE_KEY=zn-check-fake-value-not-a-real-key`) and an ordinary `README.txt`. For each agent set up for your user, it asks zn's hook to let the agent read each file, the same way your agent asks. An agent counts as protected only when the `.env` file is blocked and the ordinary file is allowed.
