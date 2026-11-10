@@ -48,7 +48,7 @@ test('a bad runner digest is refused with its text', (t) => {
   }
 });
 
-test('a lower-case hex digest is not refused as a bad digest (an empty one is what an unreadable runner file gives, see runnerSha)', (t) => {
+test('a lower-case hex digest is accepted when the launcher is written; an empty one (unreadable runner file, see runnerSha) is written too, and the launcher then refuses to run the runner (see hooks_launcher_integrity.test.js)', (t) => {
   const runner = tempRunner(t);
   for (const digest of ['', '0', 'ab'.repeat(32), '0123456789abcdef']) {
     assert.doesNotThrow(() => launcher.unixScript('codex', process.execPath, runner, { runnerDigest: digest }), digest);
