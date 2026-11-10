@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { parseFragment, buildSection, assemble, checkPullRequest, needsFragment } from './changelog.mjs';
+import { parseFragment, buildSection, assemble, checkPullRequest, needsFragment, fragmentHint } from './changelog.mjs';
 
 const CHANGELOG = `# Changelog
 
@@ -40,6 +40,22 @@ test('a fragment holds only section headings and bullets', () => {
   assert.match(parseFragment('- x\n').errors[0], /before any/);
   assert.match(parseFragment('### Added\nplain text\n').errors[0], /only/);
   assert.match(parseFragment('### Added\n').errors[0], /no bullets/);
+});
+
+test('an empty or whitespace-only fragment fails with a message that says it is empty', () => {
+  for (const body of ['', '\n', '  \n\t\n', '﻿\n']) {
+    const errors = parseFragment(body, 'changelog.d/x.md').errors;
+    assert.equal(errors.length, 1, JSON.stringify(body));
+    assert.match(errors[0], /^changelog\.d\/x\.md: the fragment is empty; add a "### <Section>" heading and at least one "- " bullet/);
+  }
+});
+
+test('a pull request that adds an empty fragment fails the check', (t) => {
+  const { dir, g } = repo(t);
+  fs.mkdirSync(path.join(dir, 'changelog.d'));
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'empty.md'), '  \n\n');
+  g('add', '-A'); g('commit', '-qm', 'empty fragment');
+  assert.match(checkPullRequest(dir, 'next').errors.join(), /changelog\.d\/empty\.md: the fragment is empty/);
 });
 
 test('the release section merges [Unreleased] and the fragments in a fixed section order', () => {
@@ -115,4 +131,12 @@ test('a fragment with a byte order mark, a non-ASCII name, or in a subfolder', (
   fs.writeFileSync(path.join(dir, 'changelog.d', 'sub', 'x.md'), '### Fixed\n- Lost.\n');
   g('add', '-A'); g('commit', '-qm', 'sub');
   assert.match(checkPullRequest(dir, 'next').errors.join(), /directly in changelog\.d/);
+});
+
+test('the failure hint shows a template that parses as a valid fragment', () => {
+  const text = fragmentHint();
+  const block = text.split('```markdown\n')[1].split('```')[0];
+  assert.deepEqual(parseFragment(block, 'hint').errors, []);
+  assert.match(text, /changelog\.d\/fix-init-guard\.md/);
+  assert.match(text, /no-changelog/);
 });

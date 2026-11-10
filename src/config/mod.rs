@@ -837,13 +837,13 @@ impl ZnConfig {
         };
 
         // Override with environment variables
-        config.apply_env_overrides(&mut notices);
+        config.apply_env_overrides(&mut notices)?;
 
         Ok((config, notices))
     }
 
     /// Apply environment variable overrides
-    fn apply_env_overrides(&mut self, notices: &mut Vec<String>) {
+    fn apply_env_overrides(&mut self, notices: &mut Vec<String>) -> Result<()> {
         if let Ok(env) = std::env::var("ZN_ENV") {
             self.environment = env;
         }
@@ -919,14 +919,6 @@ impl ZnConfig {
             self.audit.encryption_enabled = true;
         }
 
-        if let Ok(v) = std::env::var("ZN_AUDIT_STORE_PAYLOADS") {
-            self.audit.store_payloads = matches!(v.trim(), "1" | "true" | "TRUE" | "True");
-        }
-
-        if let Ok(v) = std::env::var("ZN_AUDIT_REQUIRE_WRITE") {
-            self.audit.require_write = matches!(v.trim(), "1" | "true" | "TRUE" | "True");
-        }
-
         if let Ok(endpoint) = std::env::var("ZN_SIEM_ENDPOINT") {
             self.siem.endpoint = Some(endpoint);
         }
@@ -958,14 +950,6 @@ impl ZnConfig {
             }
         }
 
-        if let Ok(active_blocking) = std::env::var("ZN_NEURAL_BLOCKING") {
-            self.neural.active_blocking = active_blocking.parse().unwrap_or(false);
-        }
-
-        if let Ok(alert_only) = std::env::var("ZN_GUARDRAILS_ALERT_ONLY") {
-            self.guardrails.alert_only = alert_only.parse().unwrap_or(true);
-        }
-
         if let Ok(paranoia) = std::env::var("ZN_PARANOIA_LEVEL") {
             if let Ok(lvl) = paranoia.parse::<u8>() {
                 self.guardrails.paranoia_level = lvl.clamp(1, 5);
@@ -987,6 +971,30 @@ impl ZnConfig {
         if let Ok(nn_audit) = std::env::var("ZN_NEAREST_NEIGHBOR_AUDIT") {
             self.guardrails.nearest_neighbor_audit = nn_audit.parse().unwrap_or(true);
         }
+
+        self.apply_security_flags(&|var| {
+            std::env::var_os(var).map(|v| v.to_string_lossy().into_owned())
+        })?;
+        Ok(())
+    }
+
+    /// The on/off environment settings that guard security behaviour. An unset or
+    /// empty variable keeps the current value; anything that is not a clear on/off
+    /// word is an error, so a typo can never leave a protection off.
+    fn apply_security_flags(&mut self, get: &dyn Fn(&str) -> Option<String>) -> Result<()> {
+        if let Some(v) = bool_env("ZN_AUDIT_STORE_PAYLOADS", get)? {
+            self.audit.store_payloads = v;
+        }
+        if let Some(v) = bool_env("ZN_AUDIT_REQUIRE_WRITE", get)? {
+            self.audit.require_write = v;
+        }
+        if let Some(v) = bool_env("ZN_NEURAL_BLOCKING", get)? {
+            self.neural.active_blocking = v;
+        }
+        if let Some(v) = bool_env("ZN_GUARDRAILS_ALERT_ONLY", get)? {
+            self.guardrails.alert_only = v;
+        }
+        Ok(())
     }
 
     /// Validate configuration
@@ -1071,6 +1079,29 @@ impl ZnConfig {
             5 => 0.3, // paranoid
             _ => 0.5,
         }
+    }
+}
+
+/// Reads a yes/no setting. `1`, `true`, `yes` and `on` mean on; `0`, `false`, `no`
+/// and `off` mean off (any capitalisation, spaces around the value ignored).
+/// `None` means keep the default: the value is empty or blank. Anything else is an
+/// error naming the variable.
+fn parse_bool_flag(var: &str, raw: &str) -> Result<Option<bool>> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(Some(true)),
+        "0" | "false" | "no" | "off" => Ok(Some(false)),
+        _ => Err(anyhow!(crate::user_errors::invalid_bool_env(var, value))),
+    }
+}
+
+fn bool_env(var: &str, get: &dyn Fn(&str) -> Option<String>) -> Result<Option<bool>> {
+    match get(var) {
+        Some(raw) => parse_bool_flag(var, &raw),
+        None => Ok(None),
     }
 }
 
@@ -1322,6 +1353,16 @@ pub fn config_parse_problem(file: &str, content: &str, err: &serde_json::Error) 
             "zn could not read the settings file {file}: it is not valid JSON at {at} ({}). Look for a missing comma or quote, or a comma after the last item. {fix}",
             plain_serde_syntax(&err.to_string())
         ),
+        Category::Data if err.to_string().starts_with("duplicate field `") => {
+            let msg = err.to_string();
+            let key = msg["duplicate field `".len()..]
+                .split('`')
+                .next()
+                .unwrap_or_default();
+            format!(
+                "zn could not use the settings file {file}: the setting \"{key}\" appears more than once ({at}). Keep only one \"{key}\" in that section. {fix}"
+            )
+        }
         Category::Data => {
             let what = plain_data_problem(&err.to_string());
             match find_bad_setting(content) {
@@ -1538,6 +1579,37 @@ mod parse_message_tests {
     }
 
     #[test]
+    fn duplicate_key_is_rejected_and_named() {
+        let text = r#"{"server": {"port": 8080, "port": 9090}}"#;
+        let err = serde_json::from_str::<ZnConfig>(text).expect_err("duplicate key must not parse");
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
+        let msg = config_parse_problem("/work/zn.json", text, &err);
+        assert!(msg.contains("/work/zn.json"), "{msg}");
+        assert!(msg.contains("\"port\" appears more than once"), "{msg}");
+        assert!(msg.contains("line 1"), "{msg}");
+        assert!(msg.contains("zn init"), "{msg}");
+    }
+
+    #[test]
+    fn duplicate_key_fails_to_load() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("dup.json");
+        std::fs::write(
+            &file,
+            r#"{"environment": "development", "environment": "production"}"#,
+        )
+        .expect("write");
+        let msg = ZnConfig::load(Some(&file))
+            .expect_err("a duplicate key must not load")
+            .to_string();
+        assert!(msg.contains("dup.json"), "{msg}");
+        assert!(
+            msg.contains("\"environment\" appears more than once"),
+            "{msg}"
+        );
+    }
+
+    #[test]
     fn broken_syntax_points_at_the_line() {
         let msg = problem("{\n  \"server\": {,}\n}");
         assert!(msg.contains("not valid JSON at line 2"), "{msg}");
@@ -1675,13 +1747,154 @@ mod parse_message_tests {
         config.server.port = 9090;
         let mut notices = Vec::new();
         std::env::set_var("ZN_PORT", "abc");
-        config.apply_env_overrides(&mut notices);
+        let applied = config.apply_env_overrides(&mut notices);
         std::env::remove_var("ZN_PORT");
+        applied.expect("a bad port is only a notice");
         assert_eq!(config.server.port, 9090);
         assert_eq!(notices.len(), 1);
         assert!(
             notices[0].contains("ZN_PORT=\"abc\"") && notices[0].contains("9090"),
             "{notices:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod bool_flag_tests {
+    use super::*;
+
+    const FLAGS: [&str; 4] = [
+        "ZN_AUDIT_STORE_PAYLOADS",
+        "ZN_AUDIT_REQUIRE_WRITE",
+        "ZN_NEURAL_BLOCKING",
+        "ZN_GUARDRAILS_ALERT_ONLY",
+    ];
+
+    /// Applies the security flags with `var` set to `value` and every other one unset.
+    fn apply(var: &str, value: Option<&str>) -> Result<ZnConfig> {
+        let mut config = ZnConfig::default();
+        let value = value.map(str::to_string);
+        config.apply_security_flags(&|name| if name == var { value.clone() } else { None })?;
+        Ok(config)
+    }
+
+    fn read(config: &ZnConfig, var: &str) -> bool {
+        match var {
+            "ZN_AUDIT_STORE_PAYLOADS" => config.audit.store_payloads,
+            "ZN_AUDIT_REQUIRE_WRITE" => config.audit.require_write,
+            "ZN_NEURAL_BLOCKING" => config.neural.active_blocking,
+            "ZN_GUARDRAILS_ALERT_ONLY" => config.guardrails.alert_only,
+            _ => unreachable!("{var}"),
+        }
+    }
+
+    #[test]
+    fn every_accepted_spelling_parses() {
+        for on in [
+            "1", "true", "TRUE", "True", "yes", "YES", "Yes", "on", "ON", "On", " on ", "\ttrue\n",
+        ] {
+            assert_eq!(parse_bool_flag("X", on).unwrap(), Some(true), "{on:?}");
+        }
+        for off in [
+            "0",
+            "false",
+            "FALSE",
+            "False",
+            "no",
+            "NO",
+            "No",
+            "off",
+            "OFF",
+            "Off",
+            " off ",
+            "\tfalse\n",
+        ] {
+            assert_eq!(parse_bool_flag("X", off).unwrap(), Some(false), "{off:?}");
+        }
+    }
+
+    #[test]
+    fn empty_and_blank_mean_unset() {
+        for blank in ["", " ", "   ", "\t", "\n", " \r\n"] {
+            assert_eq!(parse_bool_flag("X", blank).unwrap(), None, "{blank:?}");
+        }
+    }
+
+    #[test]
+    fn invalid_values_are_an_error_naming_the_variable() {
+        for bad in [
+            "0n", "of", "y", "n", "2", "-1", "enabled", "truee", "on off", "\u{fffd}",
+        ] {
+            let err = parse_bool_flag("ZN_SOME_FLAG", bad)
+                .expect_err(bad)
+                .to_string();
+            assert!(err.contains("ZN_SOME_FLAG"), "{err}");
+            assert!(
+                err.contains("yes") && err.contains("off") && err.contains("unset or empty"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_variable_accepts_every_spelling() {
+        for var in FLAGS {
+            for on in [
+                "1", "true", "TRUE", "True", "yes", "YES", "on", "ON", " On ",
+            ] {
+                let config = apply(var, Some(on)).unwrap();
+                assert!(read(&config, var), "{var}={on:?}");
+            }
+            for off in [
+                "0", "false", "FALSE", "False", "no", "NO", "off", "OFF", " Off ",
+            ] {
+                let config = apply(var, Some(off)).unwrap();
+                assert!(!read(&config, var), "{var}={off:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn each_variable_rejects_an_invalid_value() {
+        for var in FLAGS {
+            for bad in ["0n", "ye", "maybe", "2", "tru"] {
+                let err = apply(var, Some(bad)).expect_err(bad).to_string();
+                assert!(err.contains(var) && err.contains(bad), "{err}");
+            }
+        }
+    }
+
+    #[test]
+    fn each_variable_keeps_its_default_when_unset_or_empty() {
+        let defaults = ZnConfig::default();
+        for var in FLAGS {
+            for value in [None, Some(""), Some("  ")] {
+                let config = apply(var, value).unwrap();
+                assert_eq!(read(&config, var), read(&defaults, var), "{var} {value:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_value_from_the_config_file_survives_an_empty_variable() {
+        let mut config = ZnConfig::default();
+        config.audit.require_write = true;
+        config
+            .apply_security_flags(&|_| Some(String::new()))
+            .unwrap();
+        assert!(config.audit.require_write);
+    }
+
+    #[test]
+    fn a_bad_value_for_one_variable_stops_the_load() {
+        let mut config = ZnConfig::default();
+        let err = config
+            .apply_security_flags(&|name| match name {
+                "ZN_AUDIT_REQUIRE_WRITE" => Some("yes".to_string()),
+                "ZN_NEURAL_BLOCKING" => Some("0n".to_string()),
+                _ => None,
+            })
+            .expect_err("must fail");
+        assert!(err.to_string().contains("ZN_NEURAL_BLOCKING"), "{err}");
     }
 }

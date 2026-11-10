@@ -1,8 +1,14 @@
 # Files zn-gate writes in each editor, and how to remove them by hand
 
-For each supported editor, this page lists the files zn-gate writes and what to delete from them if you want to remove zn-gate yourself. To remove everything in one step, run `npx -y zn-gate uninstall` (see [Remove zn-gate](../uninstall.md)). Run every command in your own terminal.
+For each supported editor, this page lists the files zn-gate writes and what to delete from them if you want to remove zn-gate yourself. To remove everything in one step, run `npx -y zn-gate uninstall` (see [Remove zn-gate](../uninstall.md)). Run every command in your own terminal. If you remove by hand, do the steps in the order `npx -y zn-gate uninstall` uses: put back the wrapped MCP servers first, then remove the hooks.
 
 `~` is your user folder, for example `C:\Users\you` on Windows. Before it changes a settings file, zn-gate saves a copy next to it, so you can also put that copy back (changes you made to the file since are lost).
+
+## Before you start
+
+1. Close the editor, so it does not work with the file while you change it.
+2. Make a copy of the file you are about to edit. zn-gate already saves a copy next to a settings file it changed, but a copy of your own keeps the file as it is now.
+3. Note the folder the file is in (for example `~/.cursor/` or `.cursor/` in the project), so you can find it again and the saved copy next to it.
 
 ## Editors where zn-gate installs hooks
 
@@ -18,7 +24,7 @@ For each supported editor, this page lists the files zn-gate writes and what to 
 
 zn-gate does not write to `~/.cursor/mcp.json` on its own. It prints the `secrets` server entry as an optional step; if you added it, delete the `secrets` entry under `mcpServers`. If you wrapped servers with `init --wrap-mcp`, run `npx -y zn-gate init --revert`, or in `~/.cursor/mcp.json` put each server's original command back in place of `npx -y zn-gate shield -- …`. The saved copy is `~/.cursor/mcp.json.bak.<number>`.
 
-### Google Antigravity (experimental)
+### Google Antigravity
 
 `zn hooks install antigravity` writes:
 
@@ -30,9 +36,17 @@ zn-gate does not write to `~/.cursor/mcp.json` on its own. It prints the `secret
 
 If you wrapped servers with `init --wrap-mcp`, the files are `~/.gemini/antigravity/mcp_config.json`, `~/.gemini/config/mcp_config.json` and, for one project, `.agents/mcp_config.json`. Run `npx -y zn-gate init --revert`, or put each server's original command back by hand. The saved copy sits next to the file, named `<file>.bak.<number>`.
 
+### GitHub Copilot (VS Code, CLI)
+
+`zn hooks install copilot` writes:
+
+| File | What zn-gate put there | How to remove it |
+| - | - | - |
+| `~/.copilot/hooks/zn-gate.json` (`$COPILOT_HOME/hooks/zn-gate.json` when you set `COPILOT_HOME`; `.github/hooks/zn-gate.json` in the project, with `--project`) | zn-gate's own hooks file. It holds only zn-gate's hooks. | `zn hooks uninstall copilot` (add `--project` for a project install). By hand: delete the file. |
+
 ## Editors where zn-gate is only an MCP server
 
-For [VS Code](vscode.md), [Windsurf](windsurf.md), [Cline](cline.md), [Zed](zed.md), [JetBrains AI Assistant](jetbrains.md) and [Continue](continue.md), zn-gate installs no hooks and writes no file of its own, and `init --wrap-mcp` does not edit their settings. The only changes are the ones you made by hand, following the editor's page. To remove them, edit the same file and take out the entries you added: the `zn-gate` server, and for each server you wrapped, the `npx -y zn-gate shield --` in front of its original command.
+For the MCP server in [VS Code](vscode.md) (its hooks are the GitHub Copilot ones above), [Windsurf](windsurf.md), [Cline](cline.md), [Zed](zed.md), [JetBrains AI Assistant](jetbrains.md) and [Continue](continue.md), zn-gate writes no file of its own, and `init --wrap-mcp` does not edit their settings. The only changes are the ones you made by hand, following the editor's page. To remove them, edit the same file and take out the entries you added: the `zn-gate` server, and for each server you wrapped, the `npx -y zn-gate shield --` in front of its original command.
 
 | Editor | Where the entries are |
 | - | - |

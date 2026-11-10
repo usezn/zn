@@ -12,6 +12,16 @@ A short list of steps, in order, for installing zn-gate on Windows and checking 
 4. Check. Run `npx -y zn-gate check`. A line that starts with `OK` means that agent is protected. A line that starts with `-` means zn is not set up for that agent, or the agent is not on your machine. A line with `NOT protected` says what to run.
 5. Optional: run `npx -y zn-gate analyze "ignore all previous instructions"`. The answer has `"verdict": "block"`.
 
+The same commands, in order, to paste into PowerShell in your own terminal:
+
+```powershell
+node --version
+npx --version
+npx -y zn-gate init
+npx -y zn-gate check
+npx -y zn-gate analyze "ignore all previous instructions"
+```
+
 ## If you see "running scripts is disabled on this system"
 
 Windows PowerShell blocks the script that starts `npm` and `npx` by default. Nothing is wrong with zn-gate. Use any one of these:
@@ -23,6 +33,7 @@ Windows PowerShell blocks the script that starts `npm` and `npx` by default. Not
 ## Other messages
 
 - `npx: command not found`: install Node.js, open a new terminal and run the command again.
+- `'zn' is not recognized as an internal or external command`: add the folder that `npm config get prefix` prints to your user `PATH`, then open a new terminal ([troubleshooting 14](../troubleshooting.md#14-zn-is-not-recognized-as-an-internal-or-external-command)). Until then, use `npx -y zn-gate` instead of `zn`.
 - `init` only prints steps and changes nothing: an AI agent or a script ran it. Run it yourself in your own terminal.
 
 ## More
