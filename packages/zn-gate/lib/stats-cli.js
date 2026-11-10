@@ -82,7 +82,7 @@ function printSummary(s, out, top) {
 }
 
 function explainShare(out) {
-  out('What is shared, once a day, only if you turn sharing on: a random id for this installation (a new one each time you turn sharing on), the day, the zn-gate version, the operating system, the Node.js version, the agent and part of zn-gate used most that day, and how many secrets of each built-in type were found (for example AWS_KEY 3). Never secret values, prompts, variable or secret names, file names, paths, repository names, hosts or emails.\n');
+  out('What is shared, once a day, only if you turn sharing on: a random id for this installation (a new one each time you turn sharing on), the day, the zn-gate version, the operating system, the major Node.js version only (for example 20), the agent and part of zn-gate used most that day, and how many detections of each known type were found, personal-data types such as EMAIL and PHONE included (for example AWS_KEY 3). Any other type is counted together as OTHER. The connection also shows your IP address, and the request says it comes from zn-gate and its version. Never secret values, prompts, variable or secret names, file names, paths, repository names, hosts or emails.\n');
   out(`Where: ${share.ENDPOINT}.\n`);
 }
 

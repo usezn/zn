@@ -117,6 +117,10 @@ test('share subcommands explain what is sent', async () => {
   assert.match((await capture(['share', 'status'])).out, /off \(the default\)/);
   const show = (await capture(['share', 'show'])).out;
   assert.match(show, /Never secret values, prompts, variable or secret names, file names, paths/);
+  assert.match(show, /major Node\.js version only/);
+  assert.match(show, /personal-data types such as EMAIL and PHONE included/);
+  assert.match(show, /counted together as OTHER/);
+  assert.match(show, /shows your IP address/);
   const refused = await capture(['share', 'on']);
   assert.equal(refused.code, 1, 'without a yes in a terminal, sharing stays off');
   assert.match(refused.out, /Sharing stays off/);
