@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-07.1';
+const POLICY_RULES_VERSION = '2026-11-08.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -793,7 +793,7 @@ function readDenial(p, opts = {}) {
     let text = head === NOT_A_FILE ? null : Buffer.from(head, 'latin1').toString('utf8');
     if (text !== null && Buffer.byteLength(head, 'latin1') >= DOTENV_SCAN_BYTES) text = null;
     if (text !== null && dotenv.isShadowed(text)) return null;
-    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets. Ask the user to run `' +
+    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `' +
       znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.';
   }
   if (c.kind === 'zn_state') return vaultMessage(opts);
@@ -886,7 +886,8 @@ function credentialDenial(p, c) {
       'Name the files you need instead (for example `cat notes.md` instead of `cat *`), or ask the user to run the command in their own terminal.';
   }
   return 'zn: ' + p + ' was not read because zn treats it as holding secrets (' + c.reason + '), and secret values never go to the model. ' +
-    'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then run the command with `' + znCommand('run --secrets NAME -- <command>') + '` so the program gets it as an environment variable.';
+    'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then run the command with `' + znCommand('run --secrets NAME -- <command>') + '` so the program gets it as an environment variable. ' +
+    'Agents may not read the file itself (rule: secret-file:credential).';
 }
 
 function agentConfigDenial(p, c) {
@@ -1607,7 +1608,7 @@ function hasNetworkSignals(cmd) {
 }
 
 // The program is zn, zn-gate (also with a version: npx -y zn-gate@1.6.0, pnpm dlx zn-gate@latest) or the bin file.
-const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|uninstall|vault\s+(?:reset|purge)|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve)\b/i;
+const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|uninstall|vault\s+(?:reset|purge)|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve|audit\b[^\n;&|]{0,512}?[ \t]--approve)\b/i;
 
 // `npm exec` (and `npm x`) keeps the options after the package for itself unless a `--` comes first, so
 // `npm exec zn-gate init --dry-run` runs the guided init: the options do not count there. Checked per simple
@@ -1625,10 +1626,50 @@ function npmExecInit(text) {
   return false;
 }
 
+/**
+ * The command as the shell reads its words: $'...' decoded, quotes and backslashes taken out, a backslash-newline joined (so
+ * `zn audit --appr''ove`, `zn "audit" --approve` and `zn a\udit --approve` read as the command they run). Only for recognising
+ * zn's own commands; an unbalanced quote leaves the rest as it was.
+ */
+function dequoteShell(text) {
+  const src = /\$['"]/.test(text) ? decodeAnsiC(text) : text;
+  let out = '';
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === '\\') {
+      const nx = src[i + 1];
+      if (nx === undefined) break;
+      if (nx === '\n') { i++; continue; }
+      if (nx === '\r' && src[i + 2] === '\n') { i += 2; continue; }
+      out += nx;
+      i++;
+    } else if (c === "'") {
+      const j = src.indexOf("'", i + 1);
+      if (j < 0) { out += src.slice(i + 1); break; }
+      out += src.slice(i + 1, j);
+      i = j;
+    } else if (c === '"') {
+      let j = i + 1;
+      for (; j < src.length && src[j] !== '"'; j++) {
+        if (src[j] === '\\' && '"\\$`'.includes(src[j + 1])) j++;
+        out += src[j];
+      }
+      i = j;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+// `xargs zn audit` hands zn the --approve it reads from its input, which no text of the command shows.
+const XARGS_AUDIT_RE = /(?:^|[\s;&|(`$'"\\/])xargs\b[^\n;&|]*[\s\/\\'"](?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js)(?:\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?audit\b/i;
 function adminCommand(cmd) {
   const text = String(cmd || '');
-  const m = ZN_ADMIN_RE.exec(text);
-  if (m) return m[4].replace(/\s+/g, ' ');
+  for (const t of text.length <= 100 * 1024 ? [text, dequoteShell(text)] : [text]) {
+    const m = ZN_ADMIN_RE.exec(t);
+    if (m) return /^audit\b/i.test(m[4]) ? 'audit --approve' : m[4].replace(/\s+/g, ' ');
+    if (XARGS_AUDIT_RE.test(t)) return 'audit --approve';
+  }
   return npmExecInit(text) ? 'init' : null;
 }
 
@@ -1656,7 +1697,8 @@ function vaultMessage(opts = {}) {
     'for a web request, use the secrets_http_request tool with __ZN_NAME__ where the value goes; to add a secret, ask the user to run `' +
     znCommand('secret set NAME', opts) + '` in their own terminal.';
 }
-const TOO_LONG_MESSAGE = 'zn: this command is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.';
+const TOO_LONG_MESSAGE = 'zn: this command is too long for zn to check (over 100 KB), so it was blocked (rule: size:command-too-long). Unchecked, it could read a secret or a protected file. ' +
+  'Next step: tell the user; do not resend it in parts. Only the user can run it, in their own terminal.';
 // The agent runs a command unchecked when the hook times out (15 s in Claude Code), so checking a command has its
 // own limits, well below that: a time budget and a number of looks on disk. Past either, the command is refused.
 const CHECK_BUDGET_MS = 3000;
@@ -3311,6 +3353,10 @@ function adminDenial(admin, opts = {}, cmd = '') {
     arg = /^[\w.-]{1,128}$/.test(base) && !/^\.+$/.test(base) ? base : '.env';
   }
   const full = arg ? admin + ' ' + arg : admin;
+  if (/^audit/i.test(admin)) {
+    return 'zn blocked this: `zn audit --approve` records the current MCP servers, hooks, permissions and install scripts of this project as the ones you accept, ' +
+      'so approving them is the user\'s decision and an agent may not run it. ' + run('audit --approve');
+  }
   if (/pins/i.test(admin)) {
     return 'zn blocked this: approving changed MCP tools is the user\'s decision, so an agent may not run `zn-gate pins approve`. ' + run('pins approve');
   }

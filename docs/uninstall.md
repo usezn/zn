@@ -13,11 +13,11 @@ Check these four things first. Each is explained further down this page.
 3. **Lock the vault.** An unlocked vault is kept, not deleted. Run `zn-gate lock`, then run uninstall again.
 4. **Preview the list.** Run `npx -y zn-gate uninstall --dry-run` to see what would be removed without changing anything. If you used `--project` in several projects, plan to run uninstall from each project folder.
 
-## The order: wrapped MCP servers first, the program last
+## The order: MCP servers, then hooks, the program last
 
 Whichever way you remove zn-gate, follow this order:
 
-1. Wrapped MCP servers (`init --revert`) first. A saved copy put back after the hooks are removed could bring back zn's `secrets` server.
+1. Wrapped MCP servers (`init --revert`). Do this first: a saved copy put back after the hooks are removed could bring back zn's `secrets` server.
 2. The hooks, and for Claude Code the plugin.
 3. Your `.env` values (`env unshadow`), then the vault if you want it deleted.
 4. The program itself, last: `npm uninstall -g zn-gate`, then `pip uninstall zn-gate` if you also installed the Python package.
@@ -92,9 +92,9 @@ For Claude Code, Codex CLI, Cursor, Google Antigravity, Gemini CLI and ZCode, `h
 
 ## Piece by piece
 
-Use this if you want to remove only one part, or to do the steps yourself. Each command is run in your own terminal.
+Use this if you want to remove only one part, or to do the steps yourself. Go in this order, with the wrapped MCP servers first, then the hooks, and the program last. Each command is run in your own terminal.
 
-If you remove the parts by hand, use the order `zn-gate uninstall` uses: put back the wrapped MCP servers first (`init --revert`, step 1 below), because a saved copy put back after the hooks are removed could bring back zn's `secrets` server. Then the hooks and the plugin, then the vault if you want it gone, then the program.
+If you remove the parts by hand, use the order `zn-gate uninstall` uses: put back the wrapped MCP servers first (`init --revert`), because a saved copy put back after the hooks are removed could bring back zn's `secrets` server. Then the hooks, then the plugin, then your `.env` values and the vault if you want it gone, then the program (and the Python package).
 
 ### 1. MCP servers wrapped by `init --wrap-mcp`
 
@@ -113,6 +113,8 @@ npx -y zn-gate hooks uninstall claude-code
 ```
 
 Use `codex`, `cursor`, `opencode`, `antigravity`, `zcode` or `copilot` instead of `claude-code` for the others (ZCode has no project hooks, so `--project` does not apply to it). Add `--project` if you installed the hooks for one project only; run it from that project's folder. A backup of the settings file is written first. For Claude Code it also removes zn's own `secrets` MCP server. Add `--no-mcp` to leave MCP servers alone.
+
+If you removed the program first (`npm uninstall -g zn-gate`), the hooks stay and your agent tells you that zn-gate is not installed any more; the command above still works. See [Troubleshooting](troubleshooting.md#18-your-agent-says-zn-gate-is-not-installed-any-more).
 
 ### 3. Claude Code plugin
 

@@ -82,13 +82,11 @@ first with `npx -y zn-gate env unshadow .env --backup <name>`. See
 ### 10. Can I remove only one part?
 
 Yes. Go in this order, with the wrapped MCP servers first and the program last.
-First put back the MCP servers that zn-gate wrapped with
-`npx -y zn-gate init --revert`, because a saved copy put back after the hooks are
-removed could bring back zn's `secrets` server. Then remove the hooks of one agent
-with `npx -y zn-gate hooks uninstall <agent>` and the Claude Code plugin with
-`claude plugin uninstall zn-gate@usezn`. Remove the program
-(`npm uninstall -g zn-gate`, then `pip uninstall zn-gate`) only when everything
-else is gone. Afterwards, run
+Put back wrapped MCP servers with `npx -y zn-gate init --revert` (a saved copy
+put back after the hooks are removed could bring back zn's `secrets` server),
+then remove the hooks of one agent with `npx -y zn-gate hooks uninstall <agent>`,
+then the Claude Code plugin with `claude plugin uninstall zn-gate@usezn`. Remove the program (`npm uninstall -g zn-gate`,
+then `pip uninstall zn-gate`) only when everything else is gone. Afterwards, run
 `npx -y zn-gate check` to see what is left. See
 [Piece by piece](uninstall.md#piece-by-piece).
 
@@ -102,7 +100,7 @@ If you remove the program first, the hooks stay in your agent's settings. The ag
 
 ### 12. Where is my data?
 
-The check runs locally on your machine unless you turn on the optional cloud check. With it on, only the text of `analyze_prompt` and `zn-gate analyze` calls is sent, after zn-gate removed the secrets it detects. See [What leaves your machine](../README.md#what-leaves-your-machine) for the full list, and [Turn on the optional cloud check](connect.md) to turn it on or off.
+The check runs locally on your machine unless you turn on the optional cloud check. With it on, the text of `analyze_prompt` and `zn-gate analyze` calls is sent, after zn-gate removed the secrets it detects. Tool output is sent only if you ran `zn-gate connect` and also set `hooks.cloudCheckToolOutput: true` in your own `~/.zn/config.json`. That setting is off by default, also for users who already connected; otherwise nothing from tool output is sent. See [What leaves your machine](../README.md#what-leaves-your-machine) for the full list, and [Turn on the optional cloud check](connect.md) to turn it on or off.
 
 ## Commands that never need the network
 
@@ -134,3 +132,13 @@ For one project, go to that project's folder and run `npx -y zn-gate hooks unins
 zn-gate has no pause switch. To turn the hooks off for a while, run `npx -y zn-gate hooks uninstall <agent>`, and later run `zn-gate hooks install <agent>` to turn them back on. With the Claude Code plugin, `claude plugin disable zn-gate@usezn` turns off the plugin's hooks, and `claude plugin enable zn-gate@usezn` turns them back on.
 
 Run these commands in your own terminal: zn-gate refuses to change hooks when an agent runs them. While the hooks are off, the agent's actions are not checked by zn-gate. Run `npx -y zn-gate check` afterwards to see what is protected.
+
+## Logs and blocks
+
+### 15. Where do I see what was blocked?
+
+Run `npx -y zn-gate why` in your own terminal. It explains the last block in plain words: what was stopped, why, and what to do next. To explain one specific block, give its id from the records that `npx -y zn-gate evidence --export` prints. Without an id, `why` explains the last block; if there is no block yet, it says so.
+
+To count what zn-gate did over the last days, run `npx -y zn-gate stats`. It shows the checks, the blocks and the secrets replaced. Use `--days` to change the period. The options and exit codes are in the command line reference: [why](cli.md#why) and [stats](cli.md#stats).
+
+Every decision is also written to the decision log on your computer, `~/.zn/evidence.jsonl`. The log stays local, and `npx -y zn-gate evidence --verify` checks that its records have not been changed. See [files and folders](files-and-folders.md).
