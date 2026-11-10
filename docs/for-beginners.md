@@ -73,7 +73,7 @@ You can see zn-gate catch a secret without risking anything. The steps below use
    npx -y zn-gate scan .
    ```
 
-The output is what zn-gate printed on a real machine, with one change: the `Target` line shows a placeholder folder instead of the full path of that machine.
+The output below is what the zn-gate CLI prints for this folder (checked against the repository code), with one change: the `Target` line shows a placeholder folder instead of the full path.
 
 ```text
 [+]  zn-gate Static Security Audit
@@ -111,7 +111,7 @@ The scan only reports. It does not stop your agent. The part that stops an agent
 
 When you are done, go back up and delete the test folder (`cd ..` and then `rm -r zn-first-run`, or `Remove-Item -Recurse zn-first-run` in PowerShell).
 
-If you installed zn-gate with `pip` instead of `npx`, run `zn-gate scan .` in place of the command above. The wording of the report can differ a little between the Node.js and the Python versions.
+If you installed zn-gate with `pip` instead of `npx`, run `zn-gate scan .` in place of the command above. The Python package prints a different layout: its report starts with `zn-gate Security Scanner`, has no `Target`, `Scope` or `Files` lines, and lists each finding as `file:line Secret found [rule]` followed by a `Snippet:` line. The rule name and the `Next:` advice are the same, and the Python version has no `--code` option.
 
 ## If you see this message
 
