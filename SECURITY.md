@@ -29,6 +29,8 @@ We take the security of zn, the MCP Gateway, and our client SDKs seriously. If y
 
 Please include detailed reproduction steps, proof-of-concept payloads or scripts, and affected versions, components or commits. Testing against local Docker containers or isolated test accounts is strongly encouraged.
 
+**Reporting a bypass of a block rule.** If zn-gate let through something a rule should have blocked, you may attach the output of `npx -y zn-gate why <id>`, where `<id>` is the `id` of the blocked record from `npx -y zn-gate evidence --export` (run `npx -y zn-gate why` with no id to explain the last block). The command only reads the local evidence log and sends nothing. Before you send it, review the output and remove anything you do not want to share: it can include the start of a command, a file path or tool output (the stored preview is at most 120 characters, with secrets removed again, but that redaction is best effort). Never send a real secret value; if one was exposed, rotate it.
+
 ### What to expect
 
 The project has a single maintainer today (see [MAINTAINERS.md](MAINTAINERS.md)). These are targets, for both channels:
