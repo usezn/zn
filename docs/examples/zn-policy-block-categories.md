@@ -40,7 +40,7 @@ than guessed at" (`lib/destructive.js`, `OVERFLOW_REASON`).
   that the folder is where zn keeps your secrets (`lib/hooks/policy.js:1695`).
 - **Secret files.** Commands that would read a file zn treats as a secret file
   are blocked under the rule names `secret-file:dotenv` and
-  `secret-file:credential` (`lib/hooks/policy.js`, around lines 796 and 890).
+  `secret-file:credential` (`lib/hooks/policy.js:796` and `890`).
 - **Secret values inside a command.** A placeholder for a vault secret that
   appears in a `VAR=...` assignment before a command cannot be filled in, so the
   command is blocked (`lib/hooks/policy.js:1488`). A PowerShell command that
@@ -50,29 +50,28 @@ than guessed at" (`lib/destructive.js`, `OVERFLOW_REASON`).
 ## 3. Commands only the user may run
 
 Some zn commands change protection, the vault or the cloud settings. An agent
-may not run them. The message says the choice belongs to the user and names the
-command, for example "which is the user's decision" (`lib/hooks/policy.js:3339-3385`).
-The covered commands are:
+may not run them. The message names the command and says the choice belongs to
+the user (`lib/hooks/policy.js`, `adminDenial`, lines 3348-3394). The covered
+commands include:
 
 - `audit --approve`, which accepts the current MCP servers, hooks and permissions
-  of a project (`lib/hooks/policy.js:3357`);
-- `pins approve`, which accepts changed MCP tools (`lib/hooks/policy.js:3361`);
-- `init`, which turns protection on for coding agents (`lib/hooks/policy.js:3364`);
-- turning protection on or off for one agent (`lib/hooks/policy.js:3368`);
+  of a project (`lib/hooks/policy.js:3366`);
+- `pins approve`, which accepts changed MCP tools (`lib/hooks/policy.js:3370`);
+- `init`, and turning protection on or off for one agent (`lib/hooks/policy.js:3373-3377`);
 - `vault reset` and `vault purge`, which replace or delete the vault
-  (`lib/hooks/policy.js:3371`, `3374`);
-- locking or unlocking the vault (`lib/hooks/policy.js:3377`);
-- turning the optional cloud check on or off (`lib/hooks/policy.js:3380`);
-- `stats share on` (`lib/hooks/policy.js:3383`);
-- reading or changing secret values (`lib/hooks/policy.js:3385`).
+  (`lib/hooks/policy.js:3380`, `3383`);
+- locking or unlocking the vault (`lib/hooks/policy.js:3386`);
+- turning the optional cloud check on or off (`lib/hooks/policy.js:3389`);
+- `stats share on` (`lib/hooks/policy.js:3392`);
+- reading or changing secret values (`lib/hooks/policy.js:3394`).
 
 ## 4. Agent instruction files and zn's own setup
 
 - **Files an agent reads as standing instructions.** A write to one of them is
   blocked, and the message says that zn is set to block that and the user must
   make the change (`lib/hooks/policy.js:1009-1017`).
-- **zn and its hooks.** An agent may not change how zn and its hooks run
-  (`lib/hooks/policy.js:2405`).
+- **zn and its hooks.** A file that holds zn's own protection may not be changed
+  by an agent, and the message says so (`lib/hooks/policy.js:894`).
 
 ## 5. Commands zn cannot check in full
 
@@ -93,7 +92,7 @@ user (`lib/hooks/policy.js:1705`, `1707`, `1743`).
   (`lib/hooks/policy.js:1742-1743`).
 - **Windows roots and network shares.** A command that reads a file through a
   Windows root or a network share, which zn cannot check, is blocked
-  (`lib/hooks/policy.js:3305`).
+  (`lib/hooks/policy.js:3314`).
 - **File patches sent as a shell command.** A patch of a file that zn cannot
   check file by file, sent through the shell, is blocked
   (`lib/hooks/policy.js:1733-1737`).
