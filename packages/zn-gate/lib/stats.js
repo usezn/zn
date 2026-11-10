@@ -26,6 +26,27 @@ function znHome() {
   return path.join(os.homedir(), '.zn');
 }
 
+/*
+ * The .zn folder in the home directory of the operating-system account running this process, or null when the system
+ * does not report one. Used for settings a project must not be able to redirect (the opt-in cloud check of tool output).
+ * os.homedir() is not used here: it follows HOME (and USERPROFILE on Windows), which a project can set for the agent.
+ * os.userInfo().homedir comes from the account itself: the passwd entry (getpwuid_r) on Linux and macOS, the profile
+ * directory of the process token (GetUserProfileDirectoryW) on Windows. ZN_HOME is not read either. When os.userInfo()
+ * throws (no passwd entry for the uid, as in some containers), the answer is null and callers treat it as "off".
+ */
+let realHomeForTests = null;
+function userHome() {
+  try {
+    const home = realHomeForTests ? realHomeForTests() : os.userInfo().homedir;
+    return typeof home === 'string' && home ? path.join(path.resolve(home), '.zn') : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Tests only: a function returning the account home userHome() should use, or null to restore os.userInfo(). */
+function _useRealHome(fn) { realHomeForTests = typeof fn === 'function' ? fn : null; }
+
 function statsFile() {
   return path.join(znHome(), 'stats.json');
 }
@@ -149,6 +170,7 @@ function record(entry, opts = {}) {
       const k = normType(t);
       c.detections[k] = (c.detections[k] || 0) + Math.floor(v);
     }
+    if (entry.latencyMs !== undefined) pushLatency(data, entry.latencyMs);
     prune(data, now);
     save(data, file);
   } catch {
@@ -190,4 +212,65 @@ function summary({ days = 30, now = new Date(), file } = {}) {
   return { days, since: first, total, byKey, detections, events: { ...data.events } };
 }
 
-module.exports = { znHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known };
+// Decision time per tool call: the last LATENCY_KEEP durations (ms, one decimal) of the hook decisions on pre and
+// post tool events. It stops before the response is written and before stats and evidence are saved. Only numbers are kept: never a command, a prompt, a path or a name.
+const LATENCY_KEEP = 100;
+const LATENCY_MAX_MS = 60000;
+
+function latencySamples(data) {
+  const raw = data && data.latency && Array.isArray(data.latency.samples) ? data.latency.samples : [];
+  return raw.map(Number).filter((v) => Number.isFinite(v) && v >= 0 && v <= LATENCY_MAX_MS);
+}
+
+function pushLatency(data, ms) {
+  const v = Number(ms);
+  if (!Number.isFinite(v) || v < 0) return;
+  const samples = latencySamples(data);
+  samples.push(Math.min(LATENCY_MAX_MS, Math.round(v * 10) / 10));
+  data.latency = { samples: samples.slice(-LATENCY_KEEP) };
+}
+
+/** Nearest-rank percentile of an ascending array (p in 0..100). null for an empty array. */
+function percentile(sorted, p) {
+  if (!sorted.length) return null;
+  const rank = Math.ceil((p / 100) * sorted.length);
+  return sorted[Math.min(sorted.length, Math.max(1, rank)) - 1];
+}
+
+/** { count, p50, p95 } over the last `last` stored durations, or null when there are none. */
+function latencySummary({ file, last = LATENCY_KEEP } = {}) {
+  const samples = latencySamples(load(file || statsFile())).slice(-last);
+  if (!samples.length) return null;
+  const sorted = [...samples].sort((a, b) => a - b);
+  return { count: samples.length, p50: percentile(sorted, 50), p95: percentile(sorted, 95) };
+}
+
+/** The line `zn-gate check` / `doctor` prints. `off` is true when recording was turned off by ZN_STATS=off. */
+function latencyReport({ file, off = false } = {}) {
+  if (off) return 'Decision time per tool call: off (ZN_STATS=off), nothing is measured.';
+  const s = latencySummary({ file });
+  if (!s) return 'Decision time per tool call: no data yet. It is measured on each tool call your agent makes through zn.';
+  const fmt = (v) => v.toFixed(1);
+  return 'Decision time per tool call (last ' + s.count + ' calls, measured on this machine): p50 ' + fmt(s.p50) + ' ms, p95 ' + fmt(s.p95) + ' ms. Excludes process startup, writing the response, and saving stats and evidence.';
+}
+
+const TOP_RULES_DAYS = 7;
+const TOP_RULES_LIMIT = 5;
+const TOP_RULE_NAME = 'Built-in detector';
+
+/**
+ * The most frequent detector ids over the last `days` days (default 7): [{ id, name, count }], highest count first,
+ * ties by id. Ids only, from the counts already stored; nothing new is recorded. `name` is always the generic
+ * label 'Built-in detector' (the same as Python's GENERIC_RULE_NAME): detector ids never match rule-explanations.
+ */
+function topRules({ days = TOP_RULES_DAYS, limit = TOP_RULES_LIMIT, now = new Date(), file } = {}) {
+  const s = summary({ days, now, file });
+  return Object.entries(s.detections)
+    .filter(([id, n]) => TYPE_RE.test(id) && Number.isFinite(n) && n > 0)
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .slice(0, limit)
+    .map(([id, count]) => ({ id, name: TOP_RULE_NAME, count }));
+}
+
+module.exports = { topRules, TOP_RULES_DAYS, znHome, userHome, _useRealHome, record, recordEvent, summary, load, statsFile, enabled, normType, normName, today, KEEP_DAYS, known,
+  percentile, latencySummary, latencyReport, LATENCY_KEEP };

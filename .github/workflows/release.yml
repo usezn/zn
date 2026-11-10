@@ -12,7 +12,7 @@ name: Release
 # job waits for the approval, so the GitHub Release is only created once the
 # package is live. PyPI does not wait for npm.
 #
-# - Tag push (vX.Y.Z or vX.Y.Z-beta.N): verify, then build in the reusable
+# - Tag push (vX.Y.Z, or a pre-release such as vX.Y.Z-rc.1 or vX.Y.Z-beta.1): verify, then build in the reusable
 #   build-release.yml, then wait for approval on the "release" environment
 #   before anything is signed, attested or published (signing, the two publish
 #   jobs and the GitHub Release each ask for that approval).
@@ -297,15 +297,15 @@ jobs:
           sparse-checkout: .github/npm-cli
           sparse-checkout-cone-mode: false
           persist-credentials: false
-      # `npm stage publish` needs npm >= 11.15.0 and Node.js >= 22.14.0 (11.21.1 is the pinned version);
+      # `npm stage publish` needs npm >= 11.15.0 and Node.js >= 22.14.0 (11.21.2 is the pinned version);
       # the runner's bundled npm floats with the Node.js release, so the release uses one exact CLI.
       # It comes from a committed lockfile (sha512 integrity of the tarball), is installed with
       # --ignore-scripts, and the integrity is compared again with the value pinned here before the CLI
       # is put on PATH.
       - name: Install the pinned npm CLI (integrity checked, no install scripts)
         env:
-          NPM_CLI_VERSION: 11.21.1
-          NPM_CLI_INTEGRITY: sha512-YTzL6QBEJXyHcTu0JiUc7RKMp+mzlJtl7rGLmERaXUQeFHIMc9atdr6G9M9C8vDWbv40epoTQAzNL2/PtZVDhQ==
+          NPM_CLI_VERSION: 11.21.2
+          NPM_CLI_INTEGRITY: sha512-7HPApk+AflMUavSseL1Pm6CnYqMIHk53x+KmuhqmTDqPkjPMgxIpTPcTqsE91EKNw4gFBJV9fnXiSdGm1DXq9A==
         run: |
           set -euo pipefail
           cd npm-cli/.github/npm-cli
@@ -321,7 +321,7 @@ jobs:
       - name: Show the npm CLI in use
         run: |
           set -euo pipefail
-          [ "$(npm --version)" = 11.21.1 ] || { echo "::error::npm on PATH is not the pinned 11.21.1"; exit 1; }
+          [ "$(npm --version)" = 11.21.2 ] || { echo "::error::npm on PATH is not the pinned 11.21.2"; exit 1; }
           node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 14) ? 0 : 1)' \
             || { echo "::error::Node.js $(node --version) is older than 22.14, which npm stage needs"; exit 1; }
           echo "node $(node --version), npm $(npm --version)"

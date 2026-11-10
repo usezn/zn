@@ -1,0 +1,342 @@
+name: Quick checks
+
+# The short checks that used to be a workflow each, in two jobs so a pull request queues two runners for them
+# instead of nine. The first job: changelog fragment, Markdown lint, spelling (typos), links, shellcheck, package lint
+# (publint, attw, check-wheel-contents), the pre-commit hooks and the runnable doc snippets. The second job,
+# "Workflow lint" (actionlint + zizmor), keeps its own runner because zizmor gets a token: that job runs no script
+# of this repository, only pinned installs and the two tools, as the former workflow-lint.yml did.
+# .github/scripts/quick-scope.sh keeps the paths filter each check had: a step whose files did not change is
+# skipped, and a step that fails does not hide the ones after it (every step reports). "Public facts" stays a
+# workflow of its own because it is a required check that also runs in the merge queue. The branch rulesets
+# require neither job of this workflow (the comment of the former workflow-lint.yml that said Workflow lint was
+# required was out of date), so they do not run in the merge queue. To make one required, add a merge_group
+# trigger for it first, or the queue waits for a check that never reports.
+on:
+  push:
+    branches: [ main, next ]
+  # No paths filter: the scope script decides per step. A pull request into any branch runs the changelog check.
+  # Label events run the checks again on the same commit (the no-changelog label changes the changelog result).
+  # No job is skipped on them: a skipped run of a check would count as passing and could hide an earlier failure.
+  pull_request:
+    types: [ opened, synchronize, reopened, labeled, unlabeled, ready_for_review ]
+  # Nightly run of the doc snippets on next (a schedule runs on main; the checkout step switches to next).
+  schedule:
+    - cron: '20 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push or label change on a pull request, or a new push to next, cancels the run still going for it (the new
+# run checks the same or a newer commit). Runs for main, the schedule and manual runs always complete (each has
+# its own group).
+concurrency:
+  group: quick-checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/next') && 'next' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/next') }}
+
+env:
+  # Retry npm and pip downloads instead of failing a run on one network error.
+  NPM_CONFIG_FETCH_RETRIES: "5"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "20000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "120000"
+  PIP_RETRIES: "5"
+  PIP_TIMEOUT: "60"
+
+jobs:
+  quick:
+    name: Quick checks (docs, workflows, packages)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Pinned release binaries; each archive is verified against its SHA-256 before it is unpacked.
+      LYCHEE_VERSION: lychee-v0.24.2
+      LYCHEE_SHA256: 1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
+      LINK_TARGETS: README.md docs packages/*/README.md plugins
+      SHELLCHECK_VERSION: 0.11.0
+      # SHA-256 of shellcheck-v<version>.linux.x86_64.tar.xz.
+      SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+      PUBLINT_VERSION: 0.3.25
+      ATTW_VERSION: 0.18.5
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The nightly schedule checks next, not the default branch.
+          ref: ${{ github.event.schedule == '20 3 * * *' && 'next' || '' }}
+          persist-credentials: false
+          # Full history: the changelog check compares with the base, the scope step lists changed files.
+          fetch-depth: 0
+      - name: Decide which checks run
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: bash .github/scripts/quick-scope.sh
+      - name: Decide which checks run - test the scope script
+        if: ${{ !cancelled() && steps.scope.outputs.scopetest == 'true' }}
+        run: bash .github/scripts/test-quick-scope.sh
+
+      # Node.js 22 for the changelog tools, the timeout check, markdownlint, the pre-commit hooks, package lint and the snippets.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: ${{ !cancelled() && (steps.scope.outputs.changelog == 'true' || steps.scope.outputs.markdownlint == 'true' || steps.scope.outputs.hooks == 'true' || steps.scope.outputs.packagelint == 'true' || steps.scope.outputs.snippets == 'true' || steps.scope.outputs.timeouts == 'true') }}
+        with:
+          node-version: 22.x
+          package-manager-cache: false
+
+      # Changelog
+      - name: Changelog - test the fragment tools
+        if: ${{ !cancelled() && steps.scope.outputs.changelog == 'true' }}
+        run: node --test .github/scripts/changelog.test.mjs
+      - name: Changelog - check this pull request
+        if: ${{ !cancelled() && steps.scope.outputs.changelog == 'true' }}
+        env:
+          # Dependency updates by Dependabot and changes labelled no-changelog need no fragment (security updates get one by hand).
+          CHANGELOG_SKIP: ${{ (contains(github.event.pull_request.labels.*.name, 'no-changelog') || github.event.pull_request.user.login == 'dependabot[bot]') && '1' || '0' }}
+          # Release work may edit CHANGELOG.md: release, back-merge and plugin-pin branches of this repository, and pull requests into a release branch.
+          CHANGELOG_RELEASE: ${{ (startsWith(github.base_ref, 'release/') || (github.event.pull_request.head.repo.full_name == github.repository && ((startsWith(github.head_ref, 'release/') && github.base_ref == 'main') || (startsWith(github.head_ref, 'chore/pin-plugin-') && github.base_ref == 'main') || (startsWith(github.head_ref, 'chore/backmerge-') && github.base_ref == 'next')))) && '1' || '0' }}
+        # HEAD is the merge commit GitHub made for this pull request: its first parent is the base it was merged onto.
+        run: node .github/scripts/changelog.mjs check --base HEAD^1
+
+      # Workflow timeouts: every job of a workflow sets timeout-minutes (a stuck job would run for 6 hours).
+      - name: Workflow timeouts - test the check
+        if: ${{ !cancelled() && steps.scope.outputs.timeouts == 'true' }}
+        run: node --test .github/scripts/check-timeouts.test.mjs
+      - name: Workflow timeouts - every job sets timeout-minutes
+        if: ${{ !cancelled() && steps.scope.outputs.timeouts == 'true' }}
+        run: node .github/scripts/check-timeouts.mjs
+
+      # Markdown lint
+      - name: Markdown lint - install markdownlint-cli2 (locked)
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix .github/markdownlint
+      - name: Markdown lint - markdownlint
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: .github/markdownlint/node_modules/.bin/markdownlint-cli2
+      - name: Markdown lint - test the docs examples command check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-examples-commands.test.mjs
+      - name: Markdown lint - docs examples only run commands documented in cli.md
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-examples-commands.mjs
+      - name: Markdown lint - test the docs title check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-titles.test.mjs
+      - name: Markdown lint - no two docs pages share a first-level title
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-titles.mjs
+
+      # Spellcheck
+      - name: Spellcheck - typos
+        if: ${{ !cancelled() && steps.scope.outputs.typos == 'true' }}
+        uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b # v1.51.1
+        with:
+          files: docs README.md packages/zn-gate/README.md packages/zn-gate-py/README.md changelog.d
+          config: .typos.toml
+
+      # Link check: relative links and anchors fail the step; external links only report.
+      - name: Link check - install lychee (pinned, checksum verified)
+        if: ${{ !cancelled() && steps.scope.outputs.links == 'true' }}
+        run: |
+          set -euo pipefail
+          archive=lychee-x86_64-unknown-linux-gnu.tar.gz
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "$RUNNER_TEMP/$archive" \
+            "https://github.com/lycheeverse/lychee/releases/download/${LYCHEE_VERSION}/${archive}"
+          echo "${LYCHEE_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" --strip-components=1 lychee-x86_64-unknown-linux-gnu/lychee
+          "$RUNNER_TEMP/lychee" --version
+      - name: Link check - relative links and anchors (fails when broken)
+        if: ${{ !cancelled() && steps.scope.outputs.links == 'true' }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086
+          "$RUNNER_TEMP/lychee" --config .github/lychee.toml --offline --include-fragments \
+            --no-progress \
+            --format markdown $LINK_TARGETS
+      - name: Link check - restore the external link cache
+        if: ${{ !cancelled() && steps.scope.outputs.links == 'true' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .lycheecache
+          key: lychee-${{ github.run_id }}
+          restore-keys: lychee-
+      - name: Link check - external links (report only)
+        if: ${{ !cancelled() && steps.scope.outputs.links == 'true' }}
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          # shellcheck disable=SC2086
+          "$RUNNER_TEMP/lychee" --config .github/lychee.toml --cache --max-cache-age 2d \
+            --no-progress --format markdown --output "$RUNNER_TEMP/external.md" \
+            --scheme https --scheme http $LINK_TARGETS || true
+          {
+            echo "### External links (informational)"
+            echo
+            cat "$RUNNER_TEMP/external.md" 2>/dev/null || echo "No report."
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Surface failures as warnings without failing the job.
+          if grep -qE '^\|.*(ERR|Error|\[4[0-9][0-9]\]|\[5[0-9][0-9]\])' "$RUNNER_TEMP/external.md" 2>/dev/null; then
+            echo "::warning title=External links::Some external links did not resolve. See the job summary."
+          fi
+
+      # Shellcheck
+      - name: Shellcheck - install shellcheck (checksum verified)
+        if: ${{ !cancelled() && steps.scope.outputs.shellcheck == 'true' }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/shellcheck.tar.xz"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "$archive" \
+            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "${SHELLCHECK_SHA256}  ${archive}" | sha256sum --check --strict -
+          mkdir "$RUNNER_TEMP/shellcheck"
+          tar -xJf "$archive" -C "$RUNNER_TEMP/shellcheck" --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          echo "$RUNNER_TEMP/shellcheck" >> "$GITHUB_PATH"
+      - name: Shellcheck - lint every tracked shell script
+        if: ${{ !cancelled() && steps.scope.outputs.shellcheck == 'true' }}
+        run: |
+          set -euo pipefail
+          shellcheck --version
+          git ls-files -z '*.sh' | xargs -0 --no-run-if-empty shellcheck --color=always
+
+      # Pre-commit hooks (system Python, before setup-python below)
+      - name: Pre-commit hooks - install pre-commit and PyYAML
+        if: ${{ !cancelled() && steps.scope.outputs.hooks == 'true' }}
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-cache-dir --user --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python3 -m pip install --user pre-commit==4.2.0 PyYAML
+      - name: Pre-commit hooks - test the hooks
+        if: ${{ !cancelled() && steps.scope.outputs.hooks == 'true' }}
+        run: bash .github/scripts/test-pre-commit-hooks.sh
+
+      # Python 3.12 for package lint and the doc snippets
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: ${{ !cancelled() && (steps.scope.outputs.packagelint == 'true' || steps.scope.outputs.snippets == 'true') }}
+        with:
+          python-version: "3.12"
+          package-manager-cache: false
+
+      # Package lint
+      - name: Package lint - pack the npm tarball
+        if: ${{ !cancelled() && steps.scope.outputs.packagelint == 'true' }}
+        working-directory: packages/zn-gate
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          mkdir -p "$RUNNER_TEMP/pack"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/pack"
+          ls -l "$RUNNER_TEMP/pack"
+      - name: Package lint - publint
+        if: ${{ !cancelled() && steps.scope.outputs.packagelint == 'true' }}
+        # --strict also fails on warnings, not only errors.
+        run: npx --yes "publint@${PUBLINT_VERSION}" --strict "$RUNNER_TEMP"/pack/zn-gate-*.tgz # zizmor: ignore[adhoc-packages] exact version, run on the tarball built above
+      - name: Package lint - attw (report only)
+        if: ${{ !cancelled() && steps.scope.outputs.packagelint == 'true' }}
+        # The package has no TypeScript declarations yet, so this reports "no types". Once they land, drop continue-on-error.
+        continue-on-error: true
+        run: npx --yes "@arethetypeswrong/cli@${ATTW_VERSION}" "$RUNNER_TEMP"/pack/zn-gate-*.tgz # zizmor: ignore[adhoc-packages] exact version, run on the tarball built above
+      - name: Package lint - install the Python tools (hash pinned)
+        if: ${{ !cancelled() && steps.scope.outputs.packagelint == 'true' }}
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/lint-venv"
+          "$RUNNER_TEMP/lint-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          "$RUNNER_TEMP/lint-venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir \
+            --require-hashes -r .github/release-requirements.txt -r .github/package-lint-requirements.txt
+      - name: Package lint - build the wheel
+        if: ${{ !cancelled() && steps.scope.outputs.packagelint == 'true' }}
+        run: |
+          set -euo pipefail
+          # --no-isolation: build with the hash-pinned setuptools from the venv.
+          "$RUNNER_TEMP/lint-venv/bin/python" -m build --no-isolation --wheel packages/zn-gate-py --outdir "$RUNNER_TEMP/dist"
+          ls -l "$RUNNER_TEMP/dist"
+      - name: Package lint - check-wheel-contents
+        if: ${{ !cancelled() && steps.scope.outputs.packagelint == 'true' }}
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/lint-venv/bin/check-wheel-contents" "$RUNNER_TEMP"/dist/*.whl
+
+      # Doc snippets: the marked code blocks of the docs, run offline against the packages built from this commit.
+      - name: Doc snippets - check the markers
+        if: ${{ !cancelled() && steps.scope.outputs.snippets == 'true' }}
+        run: python3 .github/scripts/doc-snippets.py list
+      - name: Doc snippets - run the marked snippets offline
+        if: ${{ !cancelled() && steps.scope.outputs.snippets == 'true' }}
+        run: python3 .github/scripts/doc-snippets.py run --netns
+
+  workflow-lint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ACTIONLINT_VERSION: 1.7.12
+      # SHA-256 of actionlint_<version>_linux_amd64.tar.gz, from the release's checksums file.
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Two commits: on a pull request HEAD is the merge commit and HEAD^1 is the base branch tip.
+          fetch-depth: 2
+      # Inline on purpose: this job runs no script of the repository.
+      - name: Detect workflow changes
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          lint=true
+          case "$EVENT_NAME" in
+            schedule) lint=false ;;
+            pull_request)
+              lint=false
+              while IFS= read -r changed; do
+                case "$changed" in
+                  .github/workflows/*|.github/actions/*|.github/workflow-lint/*|.github/zizmor.yml|action.yml) lint=true ;;
+                esac
+              done < <(git diff --name-only HEAD^1 HEAD)
+              ;;
+          esac
+          echo "lint=${lint}" >> "$GITHUB_OUTPUT"
+          echo "Workflow files changed or full run requested: ${lint}"
+      - name: Install actionlint (checksum verified)
+        if: steps.scope.outputs.lint == 'true'
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check --strict -
+          mkdir "$RUNNER_TEMP/actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/actionlint" actionlint
+          echo "$RUNNER_TEMP/actionlint" >> "$GITHUB_PATH"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: steps.scope.outputs.lint == 'true'
+        with:
+          python-version: '3.13'
+          package-manager-cache: false
+      - name: Install zizmor (hash pinned)
+        if: steps.scope.outputs.lint == 'true'
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python -m pip install --require-hashes --no-deps --requirement .github/workflow-lint/zizmor-requirements.txt
+      - name: actionlint
+        if: steps.scope.outputs.lint == 'true'
+        # The runner image ships shellcheck, which actionlint uses to check the scripts in run: steps.
+        run: actionlint -color
+      - name: zizmor
+        if: steps.scope.outputs.lint == 'true'
+        env:
+          # Read-only token: lets zizmor check pinned commits and action versions against GitHub.
+          GH_TOKEN: ${{ github.token }}
+        run: zizmor --no-progress --config .github/zizmor.yml .github/workflows action.yml

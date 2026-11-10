@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-06.10';
+const POLICY_RULES_VERSION = '2026-11-08.2';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -793,7 +793,7 @@ function readDenial(p, opts = {}) {
     let text = head === NOT_A_FILE ? null : Buffer.from(head, 'latin1').toString('utf8');
     if (text !== null && Buffer.byteLength(head, 'latin1') >= DOTENV_SCAN_BYTES) text = null;
     if (text !== null && dotenv.isShadowed(text)) return null;
-    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets. Ask the user to run `' +
+    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `' +
       znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.';
   }
   if (c.kind === 'zn_state') return vaultMessage(opts);
@@ -875,8 +875,19 @@ function keyFileGlobDenial(p, c, opts) {
 
 /* Reads of credential files: what was refused, why, and how to use a value instead. */
 function credentialDenial(p, c) {
+  // A wildcard is not a file: `ls *` in a folder that has a .env file names no secret, so saying that `*` "holds secrets" confuses the person
+  // reading it. For a pattern, say what the pattern would reach and what to do instead.
+  if (/[*?[{]/.test(p) || /^an? (brace )?pattern/.test(c.reason)) {
+    const broad = /too broad/.test(c.reason);
+    const why = broad ? 'it is too broad for zn to check that it matches no file that holds secrets'
+      : /\.env/.test(c.reason) ? 'it would also match a .env file, which holds secrets'
+        : 'it would also match a file that holds secrets (' + c.reason + ')';
+    return 'zn: the pattern ' + p + ' was not read because ' + why + ', and secret values never go to the AI model. ' +
+      'Name the files you need instead (for example `cat notes.md` instead of `cat *`), or ask the user to run the command in their own terminal.';
+  }
   return 'zn: ' + p + ' was not read because zn treats it as holding secrets (' + c.reason + '), and secret values never go to the model. ' +
-    'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then run the command with `' + znCommand('run --secrets NAME -- <command>') + '` so the program gets it as an environment variable.';
+    'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then run the command with `' + znCommand('run --secrets NAME -- <command>') + '` so the program gets it as an environment variable. ' +
+    'Agents may not read the file itself (rule: secret-file:credential).';
 }
 
 function agentConfigDenial(p, c) {
@@ -1597,7 +1608,7 @@ function hasNetworkSignals(cmd) {
 }
 
 // The program is zn, zn-gate (also with a version: npx -y zn-gate@1.6.0, pnpm dlx zn-gate@latest) or the bin file.
-const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|uninstall|vault\s+(?:reset|purge)|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve)\b/i;
+const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|uninstall|vault\s+(?:reset|purge)|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve|audit\b[^\n;&|]{0,512}?[ \t]--approve)\b/i;
 
 // `npm exec` (and `npm x`) keeps the options after the package for itself unless a `--` comes first, so
 // `npm exec zn-gate init --dry-run` runs the guided init: the options do not count there. Checked per simple
@@ -1615,10 +1626,50 @@ function npmExecInit(text) {
   return false;
 }
 
+/**
+ * The command as the shell reads its words: $'...' decoded, quotes and backslashes taken out, a backslash-newline joined (so
+ * `zn audit --appr''ove`, `zn "audit" --approve` and `zn a\udit --approve` read as the command they run). Only for recognising
+ * zn's own commands; an unbalanced quote leaves the rest as it was.
+ */
+function dequoteShell(text) {
+  const src = /\$['"]/.test(text) ? decodeAnsiC(text) : text;
+  let out = '';
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === '\\') {
+      const nx = src[i + 1];
+      if (nx === undefined) break;
+      if (nx === '\n') { i++; continue; }
+      if (nx === '\r' && src[i + 2] === '\n') { i += 2; continue; }
+      out += nx;
+      i++;
+    } else if (c === "'") {
+      const j = src.indexOf("'", i + 1);
+      if (j < 0) { out += src.slice(i + 1); break; }
+      out += src.slice(i + 1, j);
+      i = j;
+    } else if (c === '"') {
+      let j = i + 1;
+      for (; j < src.length && src[j] !== '"'; j++) {
+        if (src[j] === '\\' && '"\\$`'.includes(src[j + 1])) j++;
+        out += src[j];
+      }
+      i = j;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+// `xargs zn audit` hands zn the --approve it reads from its input, which no text of the command shows.
+const XARGS_AUDIT_RE = /(?:^|[\s;&|(`$'"\\/])xargs\b[^\n;&|]*[\s\/\\'"](?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js)(?:\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?audit\b/i;
 function adminCommand(cmd) {
   const text = String(cmd || '');
-  const m = ZN_ADMIN_RE.exec(text);
-  if (m) return m[4].replace(/\s+/g, ' ');
+  for (const t of text.length <= 100 * 1024 ? [text, dequoteShell(text)] : [text]) {
+    const m = ZN_ADMIN_RE.exec(t);
+    if (m) return /^audit\b/i.test(m[4]) ? 'audit --approve' : m[4].replace(/\s+/g, ' ');
+    if (XARGS_AUDIT_RE.test(t)) return 'audit --approve';
+  }
   return npmExecInit(text) ? 'init' : null;
 }
 
@@ -1646,7 +1697,8 @@ function vaultMessage(opts = {}) {
     'for a web request, use the secrets_http_request tool with __ZN_NAME__ where the value goes; to add a secret, ask the user to run `' +
     znCommand('secret set NAME', opts) + '` in their own terminal.';
 }
-const TOO_LONG_MESSAGE = 'zn: this command is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.';
+const TOO_LONG_MESSAGE = 'zn: this command is too long for zn to check (over 100 KB), so it was blocked (rule: size:command-too-long). Unchecked, it could read a secret or a protected file. ' +
+  'Next step: tell the user; do not resend it in parts. Only the user can run it, in their own terminal.';
 // The agent runs a command unchecked when the hook times out (15 s in Claude Code), so checking a command has its
 // own limits, well below that: a time budget and a number of looks on disk. Past either, the command is refused.
 const CHECK_BUDGET_MS = 3000;
@@ -2441,7 +2493,26 @@ function bashDenialOf(cmd, opts = {}) {
     // With delayed expansion on, cmd removes a ! that has no partner (type .e!nv opens .env), so a reading without any ! is judged too.
     const delayed = text.indexOf('!') >= 0 && DELAYED_EXPANSION_RE.test(text) && cmdContext(text);
     if (delayed) for (const v of [...variants]) add(v.replace(/!/g, ''));
+    if (/[$`]/.test(text) && /\$\(|`/.test(text)) add(substitutionOutputs(text));
     for (const v of [...variants]) if (v !== text) readings.push(allWords(v, false), allWords(v, true));
+    if (/[$`%!]/.test(text)) {
+      // Every expansion read as any text: refused when a path segment could be a protected name.
+      const wild = wildText(text);
+      if (wild !== text) {
+        const wilds = [wild];
+        if (cmdCaretsApply(wild)) wilds.push(dropCmdCarets(wild.replace(/(\/[ck]\s+)"([\s\S]*)"(\s*)$/i, '$1$2$3')));
+        for (const w of wilds) {
+          for (const r of [allWords(w, false), allWords(w, true)]) {
+            if (r.truncated) return TOO_MANY_MESSAGE;
+            for (const x of r) {
+              if (typeof x.text === 'string' && WILD_ANY_RE.test(x.text) && !x.redirectTarget && wildWordProtected(x.text)) {
+                return WILD_MESSAGE(x.text.replace(/[\u0001\u0002]/g, '*'));
+              }
+            }
+          }
+        }
+      }
+    }
     for (const v of [...variants]) {
       if (!cmdCaretsApply(v)) continue;
       const c = dropCmdCarets(v.replace(/(\/[ck]\s+)"([\s\S]*)"(\s*)$/i, '$1$2$3'));
@@ -2802,15 +2873,25 @@ function unitEnd(text, from, closer, depth) {
  * `useDefaults`, ${NAME:-word}, ${NAME-word}, ${NAME:=word}, ${NAME=word}, ${NAME:+word} and ${NAME+word} become their word (quotes
  * removed, nested units read the same way). An unbalanced unit leaves the rest of the text as it was.
  */
-function stripExpansions(text, useDefaults) {
+function stripExpansions(text, useDefaults, mark = '', quotedMark = mark) {
   const n = text.length;
   let out = '';
   let i = 0;
+  let sq = false;
+  let dq = false;
   while (i < n) {
     const c = text[i];
+    if (quotedMark !== mark) {
+      // Track quoting so an expansion inside double quotes (no field splitting) gets its own mark.
+      if (c === "'" && !dq) sq = !sq;
+      else if (c === '"' && !sq) dq = !dq;
+      else if (c === '\\' && !sq && text[i + 1] === '"') { out += c + '"'; i += 2; continue; }
+    }
+    const mk = dq ? quotedMark : mark;
     if (c === '`') {
       const j = text.indexOf('`', i + 1);
       if (j < 0) { out += text.slice(i); break; }
+      out += mk;
       i = j + 1;
       continue;
     }
@@ -2823,17 +2904,19 @@ function stripExpansions(text, useDefaults) {
       if (d === '{' && useDefaults) {
         const m = /^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*])(:?[-=+])([\s\S]*)$/.exec(content);
         if (m) out += stripExpansions(m[2], true).replace(/["']/g, '');
-      }
+        else out += mk;
+      } else out += mk;
       i = j;
       continue;
     }
     if (/[A-Za-z_]/.test(d)) {
       let j = i + 1;
       while (j < n && /[A-Za-z0-9_]/.test(text[j])) j++;
+      out += mk;
       i = j;
       continue;
     }
-    if (/[0-9@*#?$!]/.test(d)) { i += 2; continue; }
+    if (/[0-9@*#?$!]/.test(d)) { out += mk; i += 2; continue; }
     out += c;
     i++;
   }
@@ -2863,6 +2946,105 @@ function dropCmdExpansions(text, env) {
       return v.replace(new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), () => (n1 ? b1 : b2));
     });
 }
+/**
+ * Expansions read as "any text". The value of `$X`, `${X}`, `$(cmd)`, a backtick substitution, `%X%` or `!X!` is not in the command: an
+ * earlier command, `read`, the program's output or an environment the hook does not see can set it to anything. So each unit is
+ * replaced by a mark, and a path segment that holds a mark and at least two literal characters of a protected name (.env, .env.*, an SSH
+ * private key name) in the right places is refused: `.e${X}v`, `${D}env`, `.e$(echo n)v` and `.e%X:~0,1%v` can all spell `.env`.
+ * It does not depend on the environment. What it cannot see is a name that is wholly inside the unit (`cat $(printf .env)` is read
+ * through the words of the substitution, `cat ${NAME}` with NAME=.env only through the assignments of the same command).
+ * A segment with fewer than two literal characters of the name (`${X}v`, `${CI_ENV}`, `config/${ENV}.json`) is allowed; so is
+ * `.example`, `.sample` and `.template` at its end.
+ */
+const WILD = '\u0001';
+// An expansion inside double quotes: bash does not split its value into words there.
+const WILDQ = '\u0002';
+const WILD_ANY_RE = /[\u0001\u0002]/;
+const WILD_NAMES = [
+  { name: '.env', tail: false, core: 4 }, { name: '.env.', tail: true, core: 4 },
+  ...['rsa', 'dsa', 'ecdsa', 'ed25519', 'xmss'].flatMap((k) => [{ name: 'id_' + k, tail: false, core: 3 + k.length }, { name: 'id_' + k + '_sk', tail: false, core: 6 + k.length }]),
+];
+const WILD_SAFE_END_RE = /\.(?:example|sample|template)$/;
+const WILD_SEGMENT_MAX = 512;
+// Can the segment (marks match any text) spell the name, with two or more of its literal characters inside the first `core` characters of the name?
+function wildSegmentMatches(seg, t) {
+  const n = seg.length;
+  const m = t.name.length;
+  const memo = new Map();
+  const f = (i, j, c) => {
+    const key = (i * (m + 1) + j) * 3 + c;
+    const hit = memo.get(key);
+    if (hit !== undefined) return hit;
+    let r;
+    if (i === n) r = j === m && c >= 2;
+    else if (seg[i] === WILD || seg[i] === WILDQ) r = f(i + 1, j, c) || (j < m && f(i, j + 1, c));
+    else if (j < m) r = seg[i] === t.name[j] && f(i + 1, j + 1, Math.min(2, c + (j < t.core ? 1 : 0)));
+    else r = t.tail && f(i + 1, j, c);
+    memo.set(key, r);
+    return r;
+  };
+  return f(0, 0, 0);
+}
+// Names a glob in a piece can match. The shell globs each word after it splits, so `.e*`, `.en?`, `.en[v]` and `?env` cut off by an
+// unquoted expansion can read `.env`. The glob engine is the one the words without expansions use (globRegExp); a mark is any text.
+// Like the literal reading, a piece needs two literal characters (a bracket expression counts as one), so `*` or `${X}*` alone is not refused.
+const WILD_GLOB_NAMES = ['.env', '.env.local', '.env.example', '.env.sample', '.env.template', ...['rsa', 'dsa', 'ecdsa', 'ed25519', 'xmss'].flatMap((k) => ['id_' + k, 'id_' + k + '_sk', 'id_' + k + '.pub'])];
+function wildPieceGlobMatches(piece) {
+  if (!/[*?[]/.test(piece)) return false;
+  const lits = piece.replace(/\[[^\]]*\]/g, 'x').replace(/[*?]/g, '').length;
+  if (lits < 2) return false;
+  let re;
+  try { re = globRegExp(piece.replace(/[]/g, '*')); } catch (e) { return true; }
+  if (re.impossible) return false;
+  return WILD_GLOB_NAMES.some((n) => re.test(n));
+}
+// Can some word the segment may become spell a protected name? An unquoted expansion splits its value into words when the value holds
+// spaces, so the segment is also read piece by piece: the start up to the first splitting mark, each piece between two of them, and the
+// rest after the last, each with "any text" kept on the cut side. The safe endings (.example ...) apply only to a piece that really ends
+// the word, never to the whole segment, because splitting happens before them.
+function wildSegmentProtected(seg) {
+  const check = (piece, safe) => {
+    if (safe && WILD_SAFE_END_RE.test(piece)) return false;
+    for (const t of WILD_NAMES) if (wildSegmentMatches(piece, t)) return true;
+    return wildPieceGlobMatches(piece);
+  };
+  if (check(seg, true)) return true;
+  if (seg.indexOf(WILD) < 0) return false;
+  const parts = seg.split(WILD);
+  const last = parts.length - 1;
+  for (let i = 0; i <= last; i++) {
+    if (parts[i] === '' ) continue;
+    const piece = (i > 0 ? WILD : '') + parts[i] + (i < last ? WILD : '');
+    if (check(piece, i === last)) return true;
+  }
+  return false;
+}
+function wildWordProtected(text) {
+  const parts = text.indexOf('=') >= 0 ? [text, text.slice(text.indexOf('=') + 1)] : [text];
+  for (const part of parts) {
+    for (const raw of part.split(/[\\/]/)) {
+      if (!WILD_ANY_RE.test(raw)) continue;
+      const seg = raw.toLowerCase().replace(/^["']+|["']+$/g, '');
+      if (seg.length > WILD_SEGMENT_MAX) return true;   // too long to follow: refused, not checked in part
+      if (wildSegmentProtected(seg)) return true;
+    }
+  }
+  return false;
+}
+function wildText(text) {
+  let t = /[$`]/.test(text) ? stripExpansions(text, false, WILD, WILDQ) : text;
+  if (/[%!]/.test(t) && cmdContext(text)) t = t.replace(CMD_VAR_UNIT_RE, WILD);
+  return t;
+}
+// The text of a substitution that only prints a word: `$(printf .en)v` and `$(echo .en)v` read as `.env`.
+function substitutionOutputs(text) {
+  return text.replace(/\$\(([^()]*)\)|`([^`]*)`/g, (m, a, b) => {
+    const toks = (a !== undefined ? a : b).trim().split(/\s+/);
+    return toks[toks.length - 1].replace(/^["']|["']$/g, '');
+  });
+}
+const WILD_MESSAGE = (word) => 'zn: ' + word + ' was not read because a variable, a command substitution or a cmd variable makes up part of the name, ' +
+  'and what is left could spell a .env file or an SSH private key. Write the file name out in full, or ask the user to run the command.';
 function dropEmptyExpansions(text, env) {
   if (/[%!]/.test(text) && cmdContext(text)) text = dropCmdExpansions(text, env);
   if (!/[$`]/.test(text)) return text;
@@ -3171,6 +3353,10 @@ function adminDenial(admin, opts = {}, cmd = '') {
     arg = /^[\w.-]{1,128}$/.test(base) && !/^\.+$/.test(base) ? base : '.env';
   }
   const full = arg ? admin + ' ' + arg : admin;
+  if (/^audit/i.test(admin)) {
+    return 'zn blocked this: `zn audit --approve` records the current MCP servers, hooks, permissions and install scripts of this project as the ones you accept, ' +
+      'so approving them is the user\'s decision and an agent may not run it. ' + run('audit --approve');
+  }
   if (/pins/i.test(admin)) {
     return 'zn blocked this: approving changed MCP tools is the user\'s decision, so an agent may not run `zn-gate pins approve`. ' + run('pins approve');
   }

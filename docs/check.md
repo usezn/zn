@@ -34,6 +34,7 @@ zn-gate check: does zn stop your coding agent from reading a secret?
 Your agent cannot read secret files such as .env through these tools. Nothing was sent anywhere.
 ```
 
+- **Decision time**: the line after the agents gives how long zn takes to decide each tool call, as p50 and p95 of the last 100 calls on this machine. This is decision time only. It does not include process startup, writing the response to your agent, or saving stats and evidence, so it is not the whole delay your agent sees. It is measured locally and stored only as numbers in `~/.zn/stats.json`. Until zn has checked a tool call, it says `no data yet`. With `ZN_STATS=off` it says that nothing is measured.
 - **OK**: zn is protecting that agent. The quoted text is what your agent is told when it tries to read the file.
 - **-**: zn is not set up for that agent (neither for your user nor in managed configuration), or only for one project. The line gives the command that sets it up for your user. If you only ran zn-gate with `npx`, that command starts with `npm install -g zn-gate`, because `zn hooks install` needs zn-gate installed for your user. An agent that is not on this machine is listed as *not found on this machine*.
 - When an agent is found but not set up, the summary points to `npx -y zn-gate init`, which shows each step and asks before it runs one.
@@ -54,6 +55,125 @@ Your agent cannot read secret files such as .env through these tools. Nothing wa
 For the full explanation of each line, read the list above and the rest of this page.
 
 `zn-gate check` exits with 0 only when every agent that is set up for your user is protected.
+
+## Machine-readable output
+
+```bash
+zn-gate check --json
+```
+
+`doctor --json` works too. It prints one JSON object on stdout and nothing else, built from the same check as the text output, so it is safe to use in a script, in CI or to paste into a support request. The exit code is the same as in the text form. It has no secret values, and your home folder is shown as `~`.
+
+```json
+{
+  "schema": 1,
+  "zn_gate_version": "1.14.1",
+  "node_version": "22.11.0",
+  "exit_code": 1,
+  "protected": false,
+  "agents": [
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "state": "not-protected",
+      "protected": false,
+      "reason": "its zn hook is turned off in ~/.claude/settings.json",
+      "fix": "run `zn hooks install claude-code` in your own terminal",
+      "message": "",
+      "notes": [],
+      "checked": true
+    }
+  ],
+  "warnings": [],
+  "project_rules_errors": [],
+  "test_folder_removed": true
+}
+```
+
+- `schema`: the version of this format. It changes only when a field is removed or changes meaning.
+- `zn_gate_version`, `node_version`: the versions that ran the check.
+- `exit_code`: `0` when at least one agent is set up and every agent that is set up is protected, `1` otherwise (also when a project rules file has errors). The process exits with this value.
+- `protected`: `true` when `exit_code` is `0`.
+- `agents`: one entry per supported agent, with `id`, `name`, and `state`: `protected`, `not-protected`, `not-set-up`, `project-only` (set up for one project only) or `not-found` (the agent is not on this machine).
+- Per agent: `protected` (`true` only for the `protected` state), `reason` (why it is not protected, or empty), `fix` (what to run, or empty), `message` (what the agent is told when it tries to read the fake key, only when protected), `notes` and `checked`.
+- `warnings`: the same warnings the text form prints, for example about an old Node.js.
+- `project_rules_errors`: errors in the project rules file, if any.
+- `test_folder_removed`: whether the temporary test folder was deleted.
+
+## Agent versions
+
+Under each agent it finds, `zn-gate check` shows the version of that agent on your machine and the version zn-gate was last tested with ([the list](compat.md#agent-compatibility) names them; the source is `lib/agents/tested-versions.json` in the package):
+
+```text
+  OK Codex CLI    blocked the .env file and allowed the ordinary file. Your agent would be told:
+     "zn: ..."
+     version 0.170.0, newer than 0.163.0, the last version zn was tested with. It may still work. If a hook does not run, report it at https://github.com/usezn/zn/issues
+  -  Cursor       zn is not set up for this agent. To protect it, run `zn hooks install cursor` in your own terminal.
+     version: not found
+```
+
+- **Newer than tested**: the agent may still work. If a hook does not run, report it at the link in the line.
+- **Older than tested**: if a hook does not run, update the agent first, then report it.
+- **not found**: zn could not read a version, which is not an error. Agents without a command that prints a version (Cursor and ZCode, for example) always say so.
+- **How it reads the version**: it runs only `<agent> --version`, found on your PATH outside the project folder, with a 2-second limit, in an empty folder, with none of your environment variables except the PATH and your home folder (on Windows also SystemRoot, ComSpec, PATHEXT, APPDATA and LOCALAPPDATA, which programs there need to start), and with update checks turned off. It changes nothing, and zn sends nothing over the network.
+
+## List every installed hook
+
+```bash
+zn-gate check --hooks
+```
+
+The other name of the command, `doctor`, works with it too. It lists every zn hook set up for your agents, one line per hook event, and says whether each one is working. It only reads your agents' settings files and zn's launcher files: it runs no hook, changes nothing and sends nothing. It looks at the settings for your user and, in the folder you run it from, at the project settings.
+
+Here is a real run on a test machine with two fictional setups: a Claude Code hook whose launcher was written by an older zn-gate, and a Codex hook whose launcher file was removed. The home folder is shown as `~`.
+
+```text
+zn hooks installed on this machine (nothing was run or changed):
+
+Claude Code (user): ~/.claude/settings.json
+  STALE  PreToolUse [^(Bash|PowerShell|Monitor|Read|Grep|LSP|Edit|MultiEdit|Write|NotebookEdit|WebFetch)$|^mcp__.*]  '~/.zn/hooks/zn-hook-claude-code.sh' PreToolUse
+  STALE: the launcher records the zn-gate runner but not the other files the hook loads, so a change to one of them would not be seen: run `zn hooks install claude-code` to record them.
+    Fix: run `zn hooks install claude-code` in your own terminal.
+
+Codex CLI (user): ~/.codex/hooks.json
+  BROKEN PreToolUse [^(Bash|apply_patch|mcp__.+)$]  '~/.zn/hooks/zn-hook-codex.sh' PreToolUse
+  BROKEN: its hook cannot start: its launcher script (~/.zn/hooks/zn-hook-codex.sh) is missing or was changed.
+    Fix: run `zn hooks install codex` in your own terminal.
+
+0 OK, 1 stale, 1 broken.
+To remove the hooks of an agent instead, run `zn hooks uninstall <agent>`.
+```
+
+How to read it:
+
+- The first line of each block names the agent, whether the hook is in your user settings (`user`) or in the project settings (`project`), and the settings file it was read from.
+- Each hook gets one line: its status (`OK`, `STALE` or `BROKEN`), the event (`PreToolUse`), the matcher in brackets (the pattern of tool names the hook applies to), and the command the agent runs.
+- A line that is not `OK` is followed by the reason and the `Fix:` line. Run the fix in your own terminal, then run `zn-gate check --hooks` again.
+- The last line before the tip counts the hooks: `X OK, Y stale, Z broken.` Here one hook is stale and one is broken, so the exit code is `1`.
+- A healthy hook has the same layout with `OK` at the start and no reason lines.
+
+- **OK**: the hook points at files that exist, and its launcher is the one this zn-gate writes.
+- **STALE**: the hook still works but was written by an older zn-gate, or runs an older copy of it. Run the fix to bring it up to date.
+- **BROKEN**: the hook cannot run, is turned off, is written twice for the same event, points at a file or Node.js that is gone, or is in a settings file zn cannot read (for example, one that is not valid JSON). Run the fix; if the settings file is not valid JSON, repair it first. If you no longer want zn for that agent, run `zn hooks uninstall <agent>` instead.
+
+Plain `zn-gate check` (without `--hooks`) ends with one line about the same hooks, and prints it only when at least one hook is installed. It does not change the exit code of `check`.
+
+```text
+Hooks: 3 OK, 1 stale, 0 broken. Run zn-gate check --hooks for details.
+```
+
+The exit code of `check --hooks` is `0` when every hook is OK (or none is set up) and `1` when any is stale or broken. For a test that zn really blocks a secret, run `zn-gate check` without `--hooks`.
+
+### When to run it
+
+Run `zn-gate check --hooks` when:
+
+- You have just run `zn hooks install <agent>`, to confirm every hook for that agent says `OK`.
+- You upgraded zn-gate (for example with `npm install -g zn-gate@latest`) and want to see whether an agent's hook still uses the older launcher. Such a hook shows `STALE`.
+- You changed or removed Node.js (for example with `nvm uninstall`). A hook that points at the old Node.js shows `BROKEN`; the fix is `npm install -g zn-gate` followed by `zn hooks install <agent>`.
+- `zn-gate check` reports an agent as **NOT protected** and you want to see which hook is at fault.
+
+It is safe to run at any time, as often as you like, including in scripts: it changes nothing, and the exit code tells a script whether a hook needs attention.
 
 ## What each NOT protected line means
 
@@ -142,14 +262,14 @@ A line that starts with `X` and says **NOT protected** gives one reason and one 
   the ZCode plugin needs a system with /bin/sh (macOS, Linux) or Windows PowerShell; elsewhere use `zn hooks install zcode` in your own terminal, then run `zn-gate check` again
   ```
 
-  The ZCode plugin has two hooks for every event: one starts `/bin/sh` (macOS and Linux) and one starts the Windows PowerShell by its full path (`C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`, Windows). On each system only the matching one can start. If your Windows folder is not `C:/Windows`, or the program is missing, use `zn hooks install zcode` instead.
+  The ZCode plugin has two hooks for every event: one starts `/bin/sh` (macOS and Linux) and one starts the Windows command interpreter by its full path (`C:\Windows\System32\cmd.exe`, Windows), which runs `scripts/zn-hook.cmd`: it starts Node.js directly and, when Node.js is not in its usual install folder, runs the Windows PowerShell by its full path. Earlier plugin versions started the PowerShell directly, and `zn-gate check` accepts that too. On each system only the matching one can start. If your Windows folder is not `C:/Windows`, or the program is missing, use `zn hooks install zcode` instead.
 
 - **The ZCode plugin has no PreToolUse hook.**
 
   ```text
   the zn-gate plugin has no PreToolUse hook in <plugin folder>/hooks/hooks.json, so ZCode runs no zn check before tool calls
   the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`/bin/sh ${ZCODE_PLUGIN_ROOT}/scripts/zn-hook.sh PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
-  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`powershell.exe ... scripts/zn-hook.ps1 PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
+  the PreToolUse hook of the zn-gate plugin in <plugin folder>/hooks/hooks.json is not the hook the plugin ships (`cmd.exe ... scripts/zn-hook.cmd PreToolUse`, turned on, for every tool), so ZCode runs no zn check before tool calls
   install the zn-gate plugin again in ZCode (Settings, Plugins), then run `zn-gate check` again
   ```
 

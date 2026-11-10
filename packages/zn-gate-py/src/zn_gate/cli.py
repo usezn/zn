@@ -21,6 +21,7 @@ from . import __version__
 from .rules import RULES_VERSION, evaluate, mask_token_runs
 from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact, redact_scan_secrets as _scan_redact
 from . import mcp_secrets as _mcp
+from .node_tools import node_available
 from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
 
 
@@ -109,6 +110,9 @@ def _leak_next_step(file: str, rule: str) -> str:
     if rule == "secret:private_key":
         return ("Next: move the key out of this file (for example to ~/.ssh or a secret manager) "
                 "and replace it if the file was ever committed or shared.")
+    if not node_available():
+        return ("Next: take the value out of this file and set it as an environment variable in your own shell or a secret manager "
+                "(the Python package has no local vault; the vault commands need Node.js), and rotate it if it was ever committed or shared.")
     if re.match(r"\.env", os.path.basename(file), re.IGNORECASE):
         try:
             rel = _relative_to_cwd(file)
@@ -170,6 +174,8 @@ def _icon(symbol: str, stream: Any = None) -> str:
 
     Symbols are on only on a terminal that is not asked for plain text, not in CI
     (CI set to any non-empty value), and only when the stream can encode them.
+    `stream` is the stream the line is written to: pass sys.stderr for stderr
+    lines. It defaults to sys.stdout.
     """
     stream = stream if stream is not None else sys.stdout
     if _plain_text() or os.environ.get("CI") or not _is_terminal(stream):
@@ -808,30 +814,142 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+class _DaysGiven(argparse.Action):
+    """Store --days and remember it was typed, so the Top rules block follows it (7 days otherwise)."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, self.dest, values)
+        namespace.days_given = True
+
+
+# A made-up key in the shape of an AWS access key id. It is not a real credential.
+# It is built from parts so that no scanner sees a whole key in this file.
+_CHECK_FAKE_SECRET = "AKIA" + "ZNTESTFAKE" + "000000"
+_CHECK_BENIGN_TEXT = "Meeting notes: ship the report on Friday and update the roadmap.\n"
+
+
+def _guarded_reader() -> Any:
+    """The file reader that `check` runs through the guard (a tool that returns file text)."""
+    from .guard import guard
+
+    @guard(on_block="raise", check_result=True, mask_secrets=True)
+    def read_file(path: str) -> str:
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.read()
+
+    return read_file
+
+
+def _check_redacted(text: str) -> str:
+    """`text` with any secret masked, for printing. Never raises."""
+    try:
+        clean, _ = _dlp_redact(text)
+        return mask_token_runs(clean).strip()
+    except Exception:
+        return "[output hidden]"
+
+
+def _check_rule_ids(text: str) -> str:
+    """Rule ids the secret rules report for `text` (ids only, never the value). Never raises."""
+    try:
+        _, found = _dlp_redact(text)
+        return ", ".join(sorted({str(f.get("rule", "unknown")) for f in found})) or "none"
+    except Exception:
+        return "unknown"
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    """Run the Python guard on a fake secret and on a benign text, in a temp folder."""
+    import tempfile
+    from .guard import GuardBlockError
+
+    ok = True
+    try:
+        with tempfile.TemporaryDirectory(prefix="zn-gate-check-") as tmp:
+            secret_file = os.path.join(tmp, "fake.env")
+            benign_file = os.path.join(tmp, "notes.txt")
+            secret_text = "AWS_ACCESS_KEY_ID=" + _CHECK_FAKE_SECRET + "\n"
+            with open(secret_file, "w", encoding="utf-8") as handle:
+                handle.write(secret_text)
+            with open(benign_file, "w", encoding="utf-8") as handle:
+                handle.write(_CHECK_BENIGN_TEXT)
+            reader = _guarded_reader()
+
+            # 1. A tool that returns a fake secret: the guard must block or mask it.
+            try:
+                got = reader(secret_file)
+            except GuardBlockError:
+                print(f"{_lead(CHECK)}PASS  fake secret: blocked by the guard (rule: {_check_rule_ids(secret_text)})")
+            else:
+                shown = _check_redacted(str(got))
+                if _CHECK_FAKE_SECRET in str(got):
+                    ok = False
+                    print(f"{_lead(ALERT)}FAIL  fake secret: the guard let it through. Rule that should have fired: {_check_rule_ids(secret_text)}. Result (redacted): {shown}")
+                    print("      Next step: reinstall with pip install -U zn-gate and run this check again.")
+                else:
+                    print(f"{_lead(CHECK)}PASS  fake secret: redacted -> {shown} (rule: {_check_rule_ids(secret_text)})")
+
+            # 2. A harmless text: the guard must pass it unchanged.
+            try:
+                got = reader(benign_file)
+            except GuardBlockError as exc:
+                ok = False
+                print(f"{_lead(ALERT)}FAIL  benign text: blocked by mistake ({exc.assessment.rule})")
+                print("      Next step: report it at https://github.com/usezn/zn/issues (do not paste real secrets).")
+            else:
+                if got == _CHECK_BENIGN_TEXT:
+                    print(f"{_lead(CHECK)}PASS  benign text: passed unchanged")
+                else:
+                    ok = False
+                    print(f"{_lead(ALERT)}FAIL  benign text: changed by the guard")
+                    print("      Next step: report it at https://github.com/usezn/zn/issues (do not paste real secrets).")
+    except Exception as exc:
+        ok = False
+        print(f"{_lead(ALERT)}FAIL  the check could not run: {type(exc).__name__}")
+    if ok:
+        print("OK: the Python guard works. Nothing was sent and nothing was written outside a temporary folder.")
+        print("This covers the Python guard only. For agent hooks (Claude Code, Codex, Cursor...) run: npx -y zn-gate check")
+        return 0
+    print("NOT OK: the Python guard did not behave as expected.")
+    return 1
+
+
 def cmd_stats(args) -> int:
     from . import stats as _stats
+    given = bool(getattr(args, "days_given", False))
     if not (isinstance(args.days, int) and 1 <= args.days <= _stats.KEEP_DAYS):
         sys.stderr.write("zn-gate stats: --days must be between 1 and {}\n".format(_stats.KEEP_DAYS))
         return 2
     days = args.days
     s = _stats.summary(days=days)
+    top_days = days if given else _stats.TOP_RULES_DAYS
+    top = {"days": top_days, "rules": _stats.top_rules(days=top_days)}
     if args.json:
-        print(json.dumps(s, indent=2))
+        print(json.dumps({**s, "top_rules_days": top["days"], "top_rules": top["rules"]}, indent=2))
     else:
-        sys.stdout.write(_stats.render(s))
+        sys.stdout.write(_stats.render(s, top))
     return 0
 
 
 # Commands of the npm package. The Python package has none of them, so instead of
 # argparse's "invalid choice" it says where they are.
 NPM_ONLY_COMMANDS = frozenset({
-    "hooks", "hook", "init", "check", "doctor", "unlock", "lock", "run", "secret",
+    "hooks", "hook", "init", "doctor", "unlock", "lock", "run", "secret",
     "secrets", "env", "vault", "pins", "shield", "mcp", "mcp-shield", "secrets-mcp",
     "wrap", "team", "audit", "logs", "export",
 })
 
 
 def npm_only_message(command: str) -> str:
+    if not node_available():
+        return (
+            f"zn-gate {command} is in the npm package, not in this Python package.\n"
+            "The Python package protects agents you build yourself (LangChain, CrewAI, "
+            "LlamaIndex or plain tool calling).\n"
+            "To protect Claude Code, Codex CLI, Cursor, OpenCode, Antigravity, ZCode desktop app or GitHub Copilot, "
+            "install Node.js 18 or later (22 LTS recommended; the Claude Code plugin needs 20.19 or later) "
+            "from https://nodejs.org, then follow the install steps at https://github.com/usezn/zn#install\n"
+        )
     return (
         f"zn-gate {command} is in the npm package, not in this Python package.\n"
         "The Python package protects agents you build yourself (LangChain, CrewAI, "
@@ -844,10 +962,16 @@ def npm_only_message(command: str) -> str:
 
 # Commands that exist only in the npm package and take no explanation of the
 # Python/agents split: they just say where the command lives.
-NPM_ONLY_SIMPLE_COMMANDS = frozenset({"report", "reach", "connect", "disconnect", "uninstall"})
+NPM_ONLY_SIMPLE_COMMANDS = frozenset({"report", "reach", "why", "connect", "disconnect", "uninstall"})
 
 
 def npm_only_simple_message(command: str) -> str:
+    if not node_available():
+        return (
+            f"zn-gate {command} is a command of the npm package, not of this Python package.\n"
+            "It needs Node.js 18 or later: install it from https://nodejs.org, then follow the install steps at "
+            "https://github.com/usezn/zn#install\n"
+        )
     return (
         f"zn-gate {command} is a command of the npm package, not of this Python package.\n"
         "Run it with Node.js 18 or later:\n"
@@ -858,6 +982,11 @@ def npm_only_simple_message(command: str) -> str:
 
 
 def npm_help_message() -> str:
+    if not node_available():
+        return (
+            "zn-gate help is not a command. This package shows its help with --help:\n"
+            "  zn-gate --help\n"
+        )
     return (
         "zn-gate help is not a command. The npm package shows its help with --help.\n"
         "Run it with Node.js 18 or later:\n"
@@ -915,8 +1044,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     # stats command
     st_parser = subparsers.add_parser("stats", help="What zn-gate did on this machine (local counts only)")
-    st_parser.add_argument("--days", type=int, default=30, help="Days to count (1-90, default 30)")
+    st_parser.add_argument("--days", type=int, default=30, action=_DaysGiven, help="Days to count (1-90, default 30)")
     st_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
+    # check command
+    subparsers.add_parser(
+        "check",
+        help="Prove the Python guard works on a fake secret (no Node.js, no network)",
+        description="Runs the Python guard on a built-in fake secret and on a harmless text, in a temporary "
+                    "folder. Prints OK and exits 0 only if the secret is blocked or redacted and the harmless "
+                    "text passes. Nothing is sent. This covers the Python guard only: for agent hooks "
+                    "(Claude Code, Codex, Cursor...) run npx -y zn-gate check.",
+    )
 
     return parser
 
@@ -956,6 +1095,8 @@ def main() -> int:
     if args.command == "test":
         return cmd_test(args)
     elif args.command == "analyze":
+        if not args.text:
+            parser.error("analyze needs the text to inspect: zn-gate analyze \"<text>\"")
         return cmd_analyze(args)
     elif args.command == "scan":
         return cmd_scan(args)
@@ -965,6 +1106,8 @@ def main() -> int:
         return cmd_status(args)
     elif args.command == "stats":
         return cmd_stats(args)
+    elif args.command == "check":
+        return cmd_check(args)
     else:
         parser.print_help()
         return 0

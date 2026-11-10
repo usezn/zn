@@ -14,7 +14,6 @@ const path = require('path');
 
 const { getAdapter } = require('../lib/agents');
 const { tempDir } = require('./helpers/tmp');
-const { spawnAsync } = require('./helpers/spawn_async');
 
 const zc = getAdapter('zcode');
 const posix = process.platform !== 'win32';
@@ -360,6 +359,8 @@ test('the ZCode plugin hook, started as ZCode starts it, runs no planted sh or n
     // This checkout has no verified zn-gate copy inside the plugin folder, so the hook refuses (exit 2), as it must:
     // never the planted program's exit 0.
     assert.equal(r.status, 2, what + ': ' + r.stderr);
+    // It is the refusal for the missing launcher, not a start-up failure or the hook's own deadline (both also exit 2).
+    assert.match(r.stderr, /scripts\/zn-launch\.js\) is missing/, what + ': ' + r.stderr);
     // On an idle machine the answer comes well before the hook's own deadline (26 seconds is the old, tighter bound).
     assert.ok(ms < 26000, what + ': the hook answered after ' + ms + ' ms');
     t.diagnostic(what + ': ' + ms + ' ms');

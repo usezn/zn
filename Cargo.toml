@@ -8,6 +8,24 @@ authors = ["usezn <admin@usezn.com>"]
 homepage = "https://usezn.com"
 repository = "https://github.com/usezn/zn"
 description = "Local-first prompt-injection gate and active-defense proxy for AI agents. MCP-native."
+# Experimental and not distributed (see docs/rust-core.md). The name zn on crates.io belongs to an unrelated crate.
+publish = false
+# Publish only what the crate builds and tests from: sources, integration tests, and the
+# fixture files that src/ reads at compile time (outside src/, inside the repository).
+# Keeps evidence, captures, package sources and docs out of the .crate.
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/LICENSE",
+    "/THIRD_PARTY_NOTICES.md",
+    "/src/**",
+    "/tests/**",
+    "/packages/zn-gate/test/fixtures/benign_phrases.json",
+    "/packages/zn-gate/test/fixtures/invisible_chars.json",
+    "/packages/zn-gate/test/fixtures/prompt_guard_tables.json",
+    "/packages/zn-gate/test/fixtures/scrub_validator_cases.json",
+]
 
 [[bin]]
 name = "zn"

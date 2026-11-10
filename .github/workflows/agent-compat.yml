@@ -5,7 +5,9 @@ name: Weekly agent compatibility
 # with the zn-gate package built from this repository's next branch. It fails when what an agent hands the
 # hooks, or what the hooks hand back, no longer matches the committed evidence in bench/e2e/<agent>/, or
 # when a fake secret value shows up in anything sent to the provider.
-# One job, Ubuntu only, no cache: a few minutes of Actions time per week.
+# The agent job runs on Ubuntu. The clean-install jobs at the end (pack, Windows, macOS) install the zn-gate
+# npm tarball and Python wheel built from this commit on fresh runners, with no cache, and run the same
+# doctor and test commands as the Linux clean install: a few minutes of Actions time per week.
 on:
   schedule:
     - cron: '23 5 * * 1'
@@ -25,9 +27,11 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels the run still going for it. The weekly schedule and manual runs share one
+# group and always complete.
 concurrency:
-  group: agent-compat
-  cancel-in-progress: false
+  group: agent-compat-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'scheduled' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Retry npm and pip downloads instead of failing a run on one network error.
@@ -124,3 +128,286 @@ jobs:
           path: ${{ runner.temp }}/report
           retention-days: 30
           if-no-files-found: ignore
+
+  # Clean-install checks of the packed package on Windows and macOS. They run on the same weekly schedule as the
+  # job above, and only install what the pack job built from this commit: the npm tarball (installed with npm -g
+  # and --offline, so the registry is not used) and the Python wheel (installed into a new virtualenv). Each step
+  # fails with a ::error:: line that names the step that failed.
+  pack:
+    name: packed zn-gate (npm tarball and Python wheel)
+    if: github.repository == 'usezn/zn'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Scheduled runs check out next explicitly (the default branch is main), as the job above does.
+          ref: ${{ github.event_name == 'schedule' && 'next' || '' }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          package-manager-cache: false
+      - name: Install the zn-gate dependencies (bundled into the tarball)
+        working-directory: packages/zn-gate
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Prune sources and maps from the bundled dependencies
+        shell: bash
+        run: node .github/scripts/prune-bundled-sources.js packages/zn-gate
+      - name: Pack the npm tarball
+        shell: bash
+        working-directory: packages/zn-gate
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/packed"
+          npm pack --json --pack-destination "$RUNNER_TEMP/packed" > "$RUNNER_TEMP/pack.json"
+          ls -l "$RUNNER_TEMP/packed"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Build the Python wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes --no-deps --requirement .github/pip-bootstrap-requirements.txt
+          python -m pip install --require-hashes -r .github/release-requirements.txt
+          python -m build --no-isolation --wheel --outdir "$RUNNER_TEMP/packed" packages/zn-gate-py
+          ls -l "$RUNNER_TEMP/packed"
+      - name: Check that both packages were built
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls "$RUNNER_TEMP"/packed/zn-gate-*.tgz
+          ls "$RUNNER_TEMP"/packed/zn_gate-*.whl
+      - name: Upload the packed zn-gate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: zn-gate-clean-install
+          path: ${{ runner.temp }}/packed
+          retention-days: 3
+          if-no-files-found: error
+
+  clean-install-windows:
+    name: clean install (Windows, npm and Python)
+    if: github.repository == 'usezn/zn'
+    needs: pack
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: zn-gate-clean-install
+          path: ${{ runner.temp }}/packed
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          package-manager-cache: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the npm tarball globally and check the CLI
+        shell: pwsh
+        run: | # zizmor: ignore[adhoc-packages] the zn-gate tarball packed by this run is installed offline, with no dependencies to lock
+          $ErrorActionPreference = 'Stop'
+          function Fail([string]$Message) {
+            Write-Host "::error title=Clean install failed (npm, Windows)::$Message"
+            exit 1
+          }
+          $packed = Join-Path $env:RUNNER_TEMP 'packed'
+          $tgz = Get-ChildItem -Path $packed -Filter 'zn-gate-*.tgz' -Recurse | Select-Object -First 1
+          if (-not $tgz) { Fail 'no zn-gate npm tarball in the downloaded artifact' }
+          $want = $tgz.Name -replace '^zn-gate-', '' -replace '[.]tgz$', ''
+          $prefix = Join-Path $env:RUNNER_TEMP 'npm-global'
+          npm install -g --prefix $prefix --offline --no-audit --no-fund $tgz.FullName
+          if ($LASTEXITCODE -ne 0) { Fail 'npm install -g of the tarball failed' }
+          Add-Content -Path $env:GITHUB_PATH -Value $prefix
+          $env:PATH = "$prefix;$env:PATH"
+          $proj = Join-Path $env:RUNNER_TEMP 'clean-project-npm'
+          New-Item -ItemType Directory -Force -Path $proj | Out-Null
+          Set-Location $proj
+          git init -q
+          if ($LASTEXITCODE -ne 0) { Fail 'git init failed in the clean project' }
+          $got = & zn --version | Select-Object -First 1
+          Write-Host "zn --version: $got"
+          if ($got -notmatch ('^zn-gate ' + [regex]::Escape($want) + '(\s|$)')) {
+            Fail "zn --version printed '$got', expected zn-gate $want"
+          }
+          # zn doctor exits 1 when no coding agent is set up, so on a clean runner (no agent installed) that
+          # exact outcome is expected: assert the exit code and the message instead of a generic failure.
+          $doctorOut = (& zn doctor) | Out-String
+          $doctorCode = $LASTEXITCODE
+          Write-Host $doctorOut
+          if ($doctorCode -ne 1) { Fail "zn doctor exited with $doctorCode, expected 1 when no coding agent is installed" }
+          if ($doctorOut -notmatch 'No supported coding agent was found on this machine') { Fail 'zn doctor did not report that no coding agent was found' }
+          & zn test
+          if ($LASTEXITCODE -ne 0) { Fail 'zn test failed (see the output above)' }
+      - name: Install the wheel in a new virtualenv and check the CLI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Fail([string]$Message) {
+            Write-Host "::error title=Clean install failed (Python, Windows)::$Message"
+            exit 1
+          }
+          $packed = Join-Path $env:RUNNER_TEMP 'packed'
+          $whl = Get-ChildItem -Path $packed -Filter 'zn_gate-*.whl' -Recurse | Select-Object -First 1
+          if (-not $whl) { Fail 'no zn-gate wheel in the downloaded artifact' }
+          $want = ($whl.Name -split '-')[1]
+          $venv = Join-Path $env:RUNNER_TEMP 'venv'
+          python -m venv $venv
+          if ($LASTEXITCODE -ne 0) { Fail 'could not create the virtualenv' }
+          $scripts = Join-Path $venv 'Scripts'
+          & (Join-Path $scripts 'python.exe') -m pip install --disable-pip-version-check --no-cache-dir $whl.FullName
+          if ($LASTEXITCODE -ne 0) { Fail 'pip install of the wheel failed' }
+          $zn = Join-Path $scripts 'zn-gate.exe'
+          if (-not (Test-Path $zn)) { Fail 'the zn-gate command was not installed in the virtualenv' }
+          $got = & $zn --version | Select-Object -First 1
+          Write-Host "zn-gate --version: $got"
+          if ($got -notmatch ('^zn-gate ' + [regex]::Escape($want) + '(\s|$)')) {
+            Fail "zn-gate --version printed '$got', expected zn-gate $want"
+          }
+          $proj = Join-Path $env:RUNNER_TEMP 'clean-project-python'
+          New-Item -ItemType Directory -Force -Path $proj | Out-Null
+          Set-Location $proj
+          git init -q
+          # Same as the npm job: no coding agent on a clean runner, so zn-gate doctor must exit 1 and say so.
+          $doctorOut = (& $zn doctor) | Out-String
+          $doctorCode = $LASTEXITCODE
+          Write-Host $doctorOut
+          if ($doctorCode -ne 1) { Fail "zn-gate doctor exited with $doctorCode, expected 1 when no coding agent is installed" }
+          if ($doctorOut -notmatch 'No supported coding agent was found on this machine') { Fail 'zn-gate doctor did not report that no coding agent was found' }
+
+  clean-install-macos:
+    name: clean install (macOS, npm and Python)
+    if: github.repository == 'usezn/zn'
+    needs: pack
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      # step-security/harden-runner does not support macOS runners (see node-macos.yml), so this job has no hardening step.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: zn-gate-clean-install
+          path: ${{ runner.temp }}/packed
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+          package-manager-cache: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the npm tarball globally and check the CLI
+        shell: bash
+        run: | # zizmor: ignore[adhoc-packages] the zn-gate tarball packed by this run is installed offline, with no dependencies to lock
+          set -euo pipefail
+          fail() { echo "::error title=Clean install failed (npm, macOS)::$*"; exit 1; }
+          tgz="$(find "$RUNNER_TEMP/packed" -name 'zn-gate-*.tgz' -print -quit)"
+          [ -n "$tgz" ] || fail "no zn-gate npm tarball in the downloaded artifact"
+          want="$(basename "$tgz" .tgz)"
+          want="${want#zn-gate-}"
+          prefix="$RUNNER_TEMP/npm-global"
+          npm install -g --prefix "$prefix" --offline --no-audit --no-fund "$tgz" || fail "npm install -g of the tarball failed"
+          echo "$prefix/bin" >> "$GITHUB_PATH"
+          export PATH="$prefix/bin:$PATH"
+          proj="$RUNNER_TEMP/clean-project-npm"
+          mkdir -p "$proj"
+          cd "$proj"
+          git init -q || fail "git init failed in the clean project"
+          zn --version > version.txt 2>&1 || { cat version.txt; fail "zn --version exited with a non-zero status"; }
+          got="$(head -n 1 version.txt)"
+          echo "zn --version: $got"
+          case "$got" in
+            "zn-gate $want" | "zn-gate $want "*) ;;
+            *) fail "zn --version printed '$got', expected zn-gate $want" ;;
+          esac
+          # Same as Windows: no coding agent on a clean runner, so zn doctor must exit 1 and say so.
+          doctor_out="$(zn doctor 2>&1)" && doctor_rc=0 || doctor_rc=$?
+          printf '%s\n' "$doctor_out"
+          [ "$doctor_rc" -eq 1 ] || fail "zn doctor exited with $doctor_rc, expected 1 when no coding agent is installed"
+          case "$doctor_out" in
+            *"No supported coding agent was found on this machine"*) ;;
+            *) fail "zn doctor did not report that no coding agent was found" ;;
+          esac
+          zn test || fail "zn test failed (see the output above)"
+      - name: Install the wheel in a new virtualenv and check the CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=Clean install failed (Python, macOS)::$*"; exit 1; }
+          whl="$(find "$RUNNER_TEMP/packed" -name 'zn_gate-*.whl' -print -quit)"
+          [ -n "$whl" ] || fail "no zn-gate wheel in the downloaded artifact"
+          want="$(basename "$whl" | cut -d- -f2)"
+          venv="$RUNNER_TEMP/venv"
+          python -m venv "$venv" || fail "could not create the virtualenv"
+          "$venv/bin/python" -m pip install --disable-pip-version-check --no-cache-dir "$whl" || fail "pip install of the wheel failed"
+          zn_py="$venv/bin/zn-gate"
+          [ -x "$zn_py" ] || fail "the zn-gate command was not installed in the virtualenv"
+          "$zn_py" --version > version.txt 2>&1 || { cat version.txt; fail "zn-gate --version exited with a non-zero status"; }
+          got="$(head -n 1 version.txt)"
+          echo "zn-gate --version: $got"
+          case "$got" in
+            "zn-gate $want" | "zn-gate $want "*) ;;
+            *) fail "zn-gate --version printed '$got', expected zn-gate $want" ;;
+          esac
+          proj="$RUNNER_TEMP/clean-project-python"
+          mkdir -p "$proj"
+          cd "$proj"
+          git init -q || fail "git init failed in the clean project"
+          # Same as the npm job: no coding agent on a clean runner, so zn-gate doctor must exit 1 and say so.
+          doctor_out="$("$zn_py" doctor 2>&1)" && doctor_rc=0 || doctor_rc=$?
+          printf '%s\n' "$doctor_out"
+          [ "$doctor_rc" -eq 1 ] || fail "zn-gate doctor exited with $doctor_rc, expected 1 when no coding agent is installed"
+          case "$doctor_out" in
+            *"No supported coding agent was found on this machine"*) ;;
+            *) fail "zn-gate doctor did not report that no coding agent was found" ;;
+          esac
+
+  # Opens one issue when a scheduled run fails, or adds a comment to the open one. It runs only on a scheduled run
+  # and only after the checks above, so pull request and manual runs never open an issue. It uses the run's own
+  # token (issues: write on this job only) and no secrets, and it needs no checkout: gh reads the repository name
+  # from GH_REPO.
+  alert-on-failure:
+    name: open or update the failure issue
+    if: github.repository == 'usezn/zn' && github.event_name == 'schedule' && failure()
+    needs: [agent-compat, pack, clean-install-windows, clean-install-macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ISSUE_TITLE: Weekly agent compatibility check failed
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Harden the runner (egress audit)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - name: Open or update the failure issue
+        shell: bash
+        run: |
+          set -euo pipefail
+          number="$(gh issue list --state open --limit 100 --json number,title --jq '.[] | select(.title == "Weekly agent compatibility check failed") | .number' | head -n 1)"
+          cat > "$RUNNER_TEMP/body.md" <<BODY
+          The weekly agent compatibility check failed on its scheduled run: ${RUN_URL}
+
+          Open the job "agent compatibility" in that run. A failure at "Check the contract and the leak check" means an
+          agent no longer produces what the committed evidence in bench/e2e/ records, or a fake secret value reached the
+          provider. A failure earlier in the job means the agent CLI install or the scenario run broke.
+          If the failed job is the packed package or one of the clean-install jobs, the npm tarball or the Python wheel
+          no longer installs on a clean machine; the job log names the step.
+
+          This issue stays open until someone closes it. Each later failed scheduled run adds a comment with its link.
+          BODY
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body-file "$RUNNER_TEMP/body.md"
+            echo "Commented on issue #$number"
+          else
+            gh issue create --title "$ISSUE_TITLE" --body-file "$RUNNER_TEMP/body.md"
+          fi
