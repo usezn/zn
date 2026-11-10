@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-10.2';
+const POLICY_RULES_VERSION = '2026-11-10.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -498,12 +498,13 @@ function expandBraces(s, limit = 64, depth = 0) {
   if (!m) return [s];
   if (depth >= BRACE_MAX_DEPTH) return null;
   const out = [];
+  let seen = 0; // every alternative counts towards the limit, repeated ones too
   for (const alt of m[1].split(',')) {
     const rest = expandBraces(s.slice(0, m.index) + alt + s.slice(m.index + m[0].length), limit, depth + 1);
     if (rest === null) return null;
     for (const x of rest) {
-      out.push(x);
-      if (out.length > limit) return null;
+      if (++seen > limit) return null;
+      if (!out.includes(x)) out.push(x); // the outer list repeats its other alternatives for each inner one
     }
   }
   return out;

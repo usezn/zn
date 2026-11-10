@@ -657,14 +657,17 @@ def _expand_braces(s: str, limit: int = 64, depth: int = 0) -> Optional[List[str
     if depth >= _BRACE_MAX_DEPTH:
         return None
     out: List[str] = []
+    seen = 0  # every alternative counts towards the limit, repeated ones too
     for alt in m.group(1).split(","):
         rest = _expand_braces(s[:m.start()] + alt + s[m.end():], limit, depth + 1)
         if rest is None:
             return None
         for x in rest:
-            out.append(x)
-            if len(out) > limit:
+            seen += 1
+            if seen > limit:
                 return None
+            if x not in out:  # the outer list repeats its other alternatives for each inner one
+                out.append(x)
     return out
 
 
