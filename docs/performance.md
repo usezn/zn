@@ -41,8 +41,9 @@ cd packages/zn-gate && npm ci --ignore-scripts && cd ../..
 node bench/hook_latency_matrix.js --runs 40
 ```
 
-Most of the time is Node.js starting: a bare `node -e ""` is measured between the samples of every case,
-and each result is also given as its p95 divided by that start-up time.
+Node.js starting is a large part of each time: a bare `node -e ""` is measured between the samples of every case
+(24 ms at p50, against medians of 53 to 83 ms in the Results table), and each result is also given as its p95
+divided by that start-up time.
 
 ## Run it yourself
 
@@ -59,8 +60,8 @@ What to expect:
 - The second starts the hook many times for each case in the table above, so it takes a little while.
 - When it ends, you get a time for every case: the agent, the event and the output size, as in the
   [Results](#results) table.
-- Your times will differ from the table, because your machine is not the CI runner. Most of each time is
-  Node.js starting, so the pattern should look alike: shell commands and small outputs are the quickest, and
+- Your times will differ from the table, because your machine is not the CI runner. Node.js starting is a
+  large part of each time (about 24 ms of the 53 to 83 ms medians), so the pattern should look alike: shell commands and small outputs are the quickest, and
   the 1000 KB outputs are the slowest.
 - A case fails if a fake value comes back from the hook, if the hook could not check the output, or if a case
   with secrets has no zn marker in place of them. A failed case means something is wrong, not that your
@@ -131,8 +132,8 @@ The whole-run check (10 %) is the same on both. The summary of each run has one 
 
 ## Which settings change what
 
-Most of the time goes to starting Node.js, so few settings change speed. This
-table lists the ones that do, with their real names and defaults.
+Node.js starting is a large part of the time (about 24 ms of the 53 to 83 ms medians), so few settings change
+speed. This table lists the ones that do, with their real names and defaults.
 
 | Setting | Default | What it changes |
 |---|---|---|
