@@ -487,3 +487,11 @@ default is the current folder, and the path must be a folder.
 - Test the protection with `npx -y zn-gate check`.
 - To undo `env shadow`, run the restore command that `env shadow` prints
   (`npx -y zn-gate env unshadow FILE --backup <name>`), in your own terminal.
+- To see why a command of your agent was blocked, read
+  [why a command was blocked](examples/why-blocked-walkthrough.md).
+- To set up zn-gate and remove it again, read
+  [init and uninstall](examples/init-and-uninstall.md).
+- To move the values of a `.env` file into the vault and back, read
+  [the `.env` round trip](examples/env-file-round-trip.md).
+- To audit a repository before an agent opens it, read
+  [audit before opening](examples/audit-before-opening.md).
