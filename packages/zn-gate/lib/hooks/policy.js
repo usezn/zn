@@ -43,12 +43,15 @@ const DIR_STACK_RE = /(?:^|[\s=@<:,{])~[+-]?[1-9]\d*(?=$|[\\/\s,}])/;
 
 function expandHome(p, home) {
   if (p === '~') return home;
-  // ~+ is $PWD and ~- is $OLDPWD: both are read as the working folder (a path relative to it), so ~+/.env is .env.
-  if (p === '~+' || p === '~-') return '.';
-  if (/^~[+-][\\/]/.test(p)) return '.' + p.slice(2);
-  // ~0, ~+0 and ~-0 are the top of the directory stack: the working folder. ~1, ~+2, ~-1 (deeper entries) are not known:
+  // ~+ is $PWD: read as the working folder (a path relative to it), so ~+/.env is .env. ~- is $OLDPWD, which zn does not
+  // know, and ~-0 is the same entry: both are turned into $OLDPWD so they are refused exactly like the variable.
+  if (p === '~+') return '.';
+  if (/^~\+[\\/]/.test(p)) return '.' + p.slice(2);
+  if (/^~-(?:$|[\\/])/.test(p)) return '$OLDPWD' + p.slice(2);
+  if (/^~-0(?=$|[\\/])/.test(p)) return '$OLDPWD' + p.slice(3);
+  // ~0 and ~+0 are the top of the directory stack: the working folder. ~1, ~+2, ~-1 (deeper entries) are not known:
   // they are left as written and refused where a file is sent (DIR_STACK_RE).
-  if (/^~[+-]?0(?=$|[\\/])/.test(p)) return '.' + p.replace(/^~[+-]?0/, '');
+  if (/^~\+?0(?=$|[\\/])/.test(p)) return '.' + p.replace(/^~\+?0/, '');
   if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(home, p.slice(2));
   if (ZN_HOME_VAR_RE.test(p)) return path.join(home, '.zn', p.replace(ZN_HOME_VAR_RE, ''));
   if (HOME_VAR_RE.test(p)) return path.join(home, p.replace(HOME_VAR_RE, ''));
@@ -1652,6 +1655,8 @@ function expansionValue(inner) {
   return UNKNOWN_EXP;
 }
 function resolveWordExpansions(c, home) {
+  // ~- (and ~-0) is $OLDPWD, which zn cannot follow: refused like the variable.
+  if (/(?:^|[=:])~-0?(?=$|[\\/])/.test(String(c))) return { refuse: true };
   const src = String(c).replace(/\$\{HOME\}|\$HOME(?![A-Za-z0-9_])/g, () => home);
   if (!src.includes('$')) return { text: src, marked: src };
   let out = '';
