@@ -83,7 +83,7 @@ jobs:
 
       # Node.js 22 for the changelog tools, the workflow header check, the timeout check, markdownlint, the pre-commit hooks, package lint and the snippets.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: ${{ !cancelled() && (steps.scope.outputs.changelog == 'true' || steps.scope.outputs.markdownlint == 'true' || steps.scope.outputs.hooks == 'true' || steps.scope.outputs.packagelint == 'true' || steps.scope.outputs.snippets == 'true' || steps.scope.outputs.wfheader == 'true' || steps.scope.outputs.timeouts == 'true' || steps.scope.outputs.wfformat == 'true') }}
+        if: ${{ !cancelled() && (steps.scope.outputs.changelog == 'true' || steps.scope.outputs.markdownlint == 'true' || steps.scope.outputs.hooks == 'true' || steps.scope.outputs.packagelint == 'true' || steps.scope.outputs.snippets == 'true' || steps.scope.outputs.wfheader == 'true' || steps.scope.outputs.timeouts == 'true' || steps.scope.outputs.wfformat == 'true' || steps.scope.outputs.fragmentnames == 'true') }}
         with:
           node-version: 22.x
           package-manager-cache: false
@@ -104,6 +104,13 @@ jobs:
       - name: Changelog - list this pull request's fragments in the job summary
         if: ${{ !cancelled() && steps.scope.outputs.changelog == 'true' }}
         run: node .github/scripts/changelog.mjs summary --base HEAD^1
+      # Fragment names: every file in changelog.d is a lowercase .md file (README.md excepted).
+      - name: Changelog fragment names - test the check
+        if: ${{ !cancelled() && steps.scope.outputs.fragmentnames == 'true' }}
+        run: node --test .github/scripts/check-changelog-fragment-names.test.mjs
+      - name: Changelog fragment names - every file is a lowercase .md name
+        if: ${{ !cancelled() && steps.scope.outputs.fragmentnames == 'true' }}
+        run: node .github/scripts/check-changelog-fragment-names.mjs
 
       # Workflow header: every workflow has a top-level name and a top-level permissions block.
       - name: Workflow header - test the check

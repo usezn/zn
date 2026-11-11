@@ -47,8 +47,9 @@ check pull_request next packages/zn-gate/README.md "changelog markdownlint docli
 check pull_request next packages/zn-gate/lib/a.js "changelog packagelint snippets"
 check pull_request next packages/zn-gate/package.json "changelog packagelint snippets hooks"
 check pull_request next packages/zn-gate-py/setup.py "changelog packagelint snippets"
-check pull_request next changelog.d/x.md "changelog typos links"
-check pull_request next changelog.d/README.md "changelog markdownlint doclinks typos links"
+check pull_request next changelog.d/x.md "changelog typos links fragmentnames"
+check pull_request next changelog.d/README.md "changelog markdownlint doclinks typos links fragmentnames"
+check pull_request next .github/scripts/check-changelog-fragment-names.mjs "changelog fragmentnames"
 check pull_request next .github/scripts/check-docs-examples-commands.mjs "changelog markdownlint"
 check pull_request next .github/scripts/check-docs-titles.mjs "changelog markdownlint"
 check pull_request next .github/scripts/check-docs-cli-headings.mjs "changelog markdownlint"
@@ -70,9 +71,9 @@ check pull_request next .github/package-lint-requirements.txt "changelog package
 check pull_request next .pre-commit-hooks.yaml "changelog hooks"
 check pull_request next .typos.toml "changelog typos"
 check pull_request next .github/lychee.toml "changelog links"
-check pull_request next .github/workflows/quick-checks.yml "changelog markdownlint typos links shellcheck wfheader timeouts wfformat packagelint hooks snippets scopetest doclinks"
+check pull_request next .github/workflows/quick-checks.yml "changelog markdownlint typos links shellcheck wfheader timeouts wfformat packagelint hooks snippets scopetest doclinks fragmentnames"
 check pull_request next .github/scripts/test-quick-scope.sh "changelog shellcheck scopetest"
-check push refs/heads/next .github/scripts/quick-scope.sh "markdownlint typos links shellcheck wfheader timeouts wfformat packagelint hooks snippets scopetest doclinks"
+check push refs/heads/next .github/scripts/quick-scope.sh "markdownlint typos links shellcheck wfheader timeouts wfformat packagelint hooks snippets scopetest doclinks fragmentnames"
 check pull_request release/1.0 src/lib.rs "changelog"
 check pull_request feature-base docs/cli.md "changelog"
 check push refs/heads/main docs/cli.md "markdownlint doclinks snippets"
@@ -83,14 +84,16 @@ check push refs/heads/release/1.0 docs/cli.md ""
 
 # Manual runs run everything but the changelog check (pull requests only), the schedule runs only the doc snippets.
 out="$(cd "$work" && EVENT_NAME=workflow_dispatch bash "$script")"
-{ [ "$(printf '%s\n' "$out" | grep -c '=true$')" = 13 ] && printf '%s\n' "$out" | grep -qx 'changelog=false'; } || { echo "FAIL workflow_dispatch"; fail=1; }
+{ [ "$(printf '%s\n' "$out" | grep -c '=true$')" = 14 ] && printf '%s\n' "$out" | grep -qx 'changelog=false'; } || { echo "FAIL workflow_dispatch"; fail=1; }
+{ [ "$(printf '%s\n' "$out" | grep -c '=true$')" = 14 ] && printf '%s\n' "$out" | grep -qx 'changelog=false'; } || { echo "FAIL workflow_dispatch"; fail=1; }
 out="$(cd "$work" && EVENT_NAME=schedule bash "$script")"
 if ! { [ "$(printf '%s\n' "$out" | grep -c '=true$')" = 2 ] && printf '%s\n' "$out" | grep -qx 'snippets=true'; }; then
   echo "FAIL schedule"; fail=1
 fi
 # No usable base: run everything (the changelog check still needs a pull request).
 out="$(cd "$work" && EVENT_NAME=push REF=refs/heads/main BEFORE=0000000000000000000000000000000000000000 bash "$script")"
-{ [ "$(printf '%s\n' "$out" | grep -c '=true$')" = 13 ] && printf '%s\n' "$out" | grep -qx 'changelog=false'; } || { echo "FAIL push without before"; fail=1; }
+{ [ "$(printf '%s\n' "$out" | grep -c '=true$')" = 14 ] && printf '%s\n' "$out" | grep -qx 'changelog=false'; } || { echo "FAIL push without before"; fail=1; }
+{ [ "$(printf '%s\n' "$out" | grep -c '=true$')" = 14 ] && printf '%s\n' "$out" | grep -qx 'changelog=false'; } || { echo "FAIL push without before"; fail=1; }
 
 [ "$fail" = 0 ] && echo "quick-scope: all cases pass"
 exit "$fail"

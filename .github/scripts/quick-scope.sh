@@ -20,6 +20,7 @@
 #   hooks         pull requests and pushes to main or next: the pre-commit hooks file and its test
 #   snippets      pull requests, pushes to main, the nightly schedule: README, docs, packages
 #   scopetest     pull requests and pushes to main or next: this script and its test
+#   fragmentnames pull requests and pushes to main or next: changelog.d/ and the fragment name check
 # A change to the workflow or to this script runs every check. Manual runs run every check, the schedule
 # runs only the doc snippets, the changelog check runs only for a pull request (it compares the pull
 # request with its base, which no other event has), and a pull request into a branch other than main, next or release/* runs only
@@ -28,7 +29,7 @@
 # Environment: EVENT_NAME, REF (github.ref), BASE_REF (pull requests), BEFORE (pushes: the previous tip).
 set -uo pipefail
 
-CHECKS="changelog markdownlint typos links shellcheck wfheader timeouts wfformat packagelint hooks snippets doclinks scopetest"
+CHECKS="changelog markdownlint typos links shellcheck wfheader timeouts wfformat packagelint hooks snippets doclinks fragmentnames scopetest"
 declare -A run
 for c in $CHECKS; do run[$c]=false; done
 
@@ -120,6 +121,9 @@ while IFS= read -r f; do
   esac
   case "$f" in
     .github/scripts/test-quick-scope.sh) run[scopetest]=true ;;
+  esac
+  case "$f" in
+    changelog.d/*|.github/scripts/check-changelog-fragment-names*) run[fragmentnames]=true ;;
   esac
   case "$f" in
     docs/*|packages/*|README.md|.github/scripts/doc-snippets*) run[snippets]=true ;;
