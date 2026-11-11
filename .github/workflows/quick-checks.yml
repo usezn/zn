@@ -83,9 +83,9 @@ jobs:
         if: ${{ !cancelled() && steps.scope.outputs.scopetest == 'true' }}
         run: bash .github/scripts/test-quick-scope.sh
 
-      # Node.js 22 for the changelog tools, the timeout check, markdownlint, the pre-commit hooks, package lint and the snippets.
+      # Node.js 22 for the changelog tools, the workflow header check, the timeout check, markdownlint, the pre-commit hooks, package lint and the snippets.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: ${{ !cancelled() && (steps.scope.outputs.changelog == 'true' || steps.scope.outputs.markdownlint == 'true' || steps.scope.outputs.hooks == 'true' || steps.scope.outputs.packagelint == 'true' || steps.scope.outputs.snippets == 'true' || steps.scope.outputs.timeouts == 'true') }}
+        if: ${{ !cancelled() && (steps.scope.outputs.changelog == 'true' || steps.scope.outputs.markdownlint == 'true' || steps.scope.outputs.hooks == 'true' || steps.scope.outputs.packagelint == 'true' || steps.scope.outputs.snippets == 'true' || steps.scope.outputs.wfheader == 'true' || steps.scope.outputs.timeouts == 'true') }}
         with:
           node-version: 22.x
           package-manager-cache: false
@@ -104,6 +104,13 @@ jobs:
         # HEAD is the merge commit GitHub made for this pull request: its first parent is the base it was merged onto.
         run: node .github/scripts/changelog.mjs check --base HEAD^1
 
+      # Workflow header: every workflow has a top-level name and a top-level permissions block.
+      - name: Workflow header - test the check
+        if: ${{ !cancelled() && steps.scope.outputs.wfheader == 'true' }}
+        run: node --test .github/scripts/check-workflow-header.test.mjs
+      - name: Workflow header - every workflow has name and permissions
+        if: ${{ !cancelled() && steps.scope.outputs.wfheader == 'true' }}
+        run: node .github/scripts/check-workflow-header.mjs
       # Workflow timeouts: every job of a workflow sets timeout-minutes (a stuck job would run for 6 hours).
       - name: Workflow timeouts - test the check
         if: ${{ !cancelled() && steps.scope.outputs.timeouts == 'true' }}
