@@ -53,6 +53,8 @@ EVENTS = [
     {"payload": "plain text \u00e9"},
     {"latency_us": 12.7},
     {"latency_us": 5},
+    {"payload": "@@zn-confidence@@", "confidence": 0.5},
+    {"payload": "\"confidence\":\"x\"", "confidence": 0.25},
 ]
 
 
