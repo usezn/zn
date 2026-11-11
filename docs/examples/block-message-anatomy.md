@@ -9,7 +9,7 @@ The message below comes from the zn-gate hook. It was made with a file named `.e
 The hook sends this text to the agent in the reason field of its response. You usually see it in the agent window:
 
 ```text
-zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.15.0 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.
+zn: .env holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `npx -y zn-gate@1.15.0 env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.
 ```
 
 ## The parts
@@ -17,11 +17,14 @@ zn: .env holds plain-text secrets. Ask the user to run `npx -y zn-gate@1.15.0 en
 | Part | Text | What it tells you |
 |---|---|---|
 | Prefix | `zn:` | The message comes from the zn hook, not from the agent. Messages that start with `zn:` or `zn blocked this:` come from zn. |
-| Reason | `.env holds plain-text secrets` | What zn found. The file is a `.env` file and it holds values in plain text. zn stopped the read, so the values did not reach the agent. |
+| Reason | `.env holds plain-text secrets, and secret values never go to the model` | What zn found. The file is a `.env` file and it holds values in plain text. zn stopped the read, so the values did not reach the agent. |
+| Rule | `(rule: secret-file:dotenv)` | The id of the check that fired: a `.env` file that holds plain-text values. |
 | Next step | `Ask the user to run npx -y zn-gate@1.15.0 env shadow .env in their terminal` | The command to run yourself. The agent cannot run it for you. The version in it is the zn-gate version that wrote the message. |
 | Effect of the step | `it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.` | What the command does. The file keeps placeholders, and the values go to the local vault. |
 
-The message does not show a rule id. The decision log names the group of checks that fired; see the next section.
+The example uses the `npx -y zn-gate@1.15.0` form, which the message uses when `zn` is not on the PATH. When `zn` is on the PATH, the message reads `zn env shadow .env` instead.
+
+The message shows the rule id in parentheses. The decision log does not store that id: it names the group of checks that fired; see the next section.
 
 ## Where the block is logged
 
