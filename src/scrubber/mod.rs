@@ -1120,6 +1120,19 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "no Heroku-specific rule in src/scrubber: HEROKU_API_KEY is caught only by the generic api_key rule; enable when a Heroku rule lands"]
+    fn test_heroku_api_key_in_shell_script_is_redacted() {
+        // Fake, obviously patterned UUID-shaped value, built at run time.
+        let value = ["01234567-89ab-cdef-0123", "-456789abcdef"].concat();
+        let script = format!("#!/bin/sh\nset -e\nexport HEROKU_API_KEY={value}\nheroku apps\n");
+        let out = Scrubber::scrub(&script);
+        assert!(out.contains("[SECRET_REDACTED]"), "{out}");
+        assert!(!out.contains(&value), "{out}");
+        assert!(Scrubber::contains_pii(&script));
+        assert_eq!(Scrubber::scrub(&out), out);
+    }
+
+    #[test]
     fn test_adjacent_phone_numbers_are_redacted_in_one_pass() {
         // Same case as the idempotence test of the scrubber fuzz target.
         let once = Scrubber::scrub("+14155552671+14155552671");
