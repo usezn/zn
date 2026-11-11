@@ -2,6 +2,8 @@
 
 Worked examples, in alphabetical order. All values in them are made up.
 
+The code examples that run with zn-gate, with the command to run each one, are indexed in [examples/README.md](../../examples/README.md).
+
 - [after-an-upgrade.md](after-an-upgrade.md): five commands to run after you update zn-gate, and what a good result looks like.
 - [agents-on-a-shared-machine.md](agents-on-a-shared-machine.md): several people on one computer: what is kept for each user, what is global, and what one user cannot see of another.
 - [audit-before-adding-a-repo.md](audit-before-adding-a-repo.md): run `zn-gate audit` on a repository you do not know yet, read the report and decide what to do before you open it with an agent.
