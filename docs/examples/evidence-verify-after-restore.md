@@ -16,14 +16,14 @@ The output below was printed on a test computer with a temporary home folder, so
 🔒 Cryptographic Evidence Ledger Verification:
   Ledger Path   : /tmp/demo-home/.zn/evidence.jsonl
   Total Records : 8
-  Integrity     : ✔ ALL SHA-256 HASHES VERIFIED (IMMUTABLE)
+  Integrity     : ✔ HASH CHAIN VERIFIED, no truncation found against the last tip
 ```
 
 How to read it:
 
 - `Ledger Path` is the file that was checked.
 - `Total Records` is how many decisions the copied log holds.
-- `ALL SHA-256 HASHES VERIFIED` means every record's fingerprint matched the one before it, so the copy is complete and nothing in it was changed. The command ends with exit code `0`.
+- `HASH CHAIN VERIFIED` means every record's fingerprint matched the one before it, so nothing in it was changed. `no truncation found against the last tip` means the log is as long as zn-gate last noted (copy `evidence.tip` from the old computer together with `evidence.jsonl` to get this check; without it you get `Not anchored yet`). The command ends with exit code `0`.
 
 ## When the check finds a break
 
@@ -46,9 +46,24 @@ How to read it:
 - The last line is the fix, and it is the same message zn-gate prints when it finds the damage while writing: keep the old file for review, move it aside with the command shown, and the next decision starts a new log. On Windows the message shows a `move` command instead of `mv`.
 - zn does not repair a log, and your protection keeps working: only the record is in doubt. These steps are the ones in [Troubleshooting](../troubleshooting.md#10-the-evidence-log--is-damaged).
 
+## When the end of the log is missing
+
+If the copy stopped early but ended on a whole line, the chain is still fine. The tip notices:
+
+```text
+🔒 Cryptographic Evidence Ledger Verification:
+  Ledger Path   : /tmp/demo-home/.zn/evidence.jsonl
+  Total Records : 6
+  Integrity     : ✖ LOG TRUNCATED: 6 records found, the last tip expects at least 8
+
+  Details: The end of the log was removed, or it was replaced by an older copy. The tip was written at 2026-11-10T09:14:02.000Z (record 8). Keep a copy of both files. To accept the log as it is now, run `zn-gate evidence --accept` in your own terminal.
+```
+
+The command ends with exit code `1`. Copy the log again. If you meant to keep this shorter log, run `zn-gate evidence --accept` in your own terminal: the tip moves to the end of the log and the old tip stays in the tip file as `previous`. A different history gives `LOG REWRITTEN: record 8 differs from the tip`.
+
 ## What the check does not catch
 
-The fingerprints find accidental or partial edits, such as a copy that stopped in the middle. They are not tamper-proof against someone who can write to the file and recalculates the whole chain.
+The fingerprints find accidental or partial edits, such as a copy that stopped in the middle. They are not tamper-proof against someone who can write to the `.zn` folder: they can recalculate the whole chain and change the tip. Putting back an older copy of both the log and the tip is not noticed either.
 
 ## See also
 

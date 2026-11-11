@@ -236,6 +236,23 @@ zn-gate: the evidence log <path> is damaged (<reason>) Events are not being reco
 2. Keep the old file if you need it for review. Move it aside with the command in the message. On Windows the message shows a `move` command instead of `mv`.
 3. The next event starts a new log. Run `npx -y zn-gate evidence --verify` again to see that it is fine.
 
+### If the message says `LOG TRUNCATED` or `LOG REWRITTEN`
+
+`zn-gate evidence --verify` also compares the log with a small file next to it, `evidence.tip`, where zn-gate notes how many records the log had and the fingerprint of the last one each time it writes. The chain is fine, but:
+
+- `LOG TRUNCATED: 120 records found, the last tip expects at least 124` means the end of the log is gone, or an older copy of the log was put back. A cleanup script, a partial restore or a disk that rolled back can do it.
+- `LOG REWRITTEN: record 124 differs from the tip` means the log is a valid chain, but not the one the tip was written for.
+
+zn-gate keeps recording while this is so, and warns at most every 5 minutes (`the evidence log ... does not match its last tip`). Your protection keeps working.
+
+1. Keep a copy of `evidence.jsonl` and `evidence.tip`.
+2. Look at what changed. If you moved or restored the log on purpose, this is expected.
+3. In your own terminal, run `npx -y zn-gate evidence --accept`. It accepts the log as it is now, moves the tip to its end and keeps the old tip in the tip file as `previous`. An agent cannot run it.
+
+**What the tip can and cannot do:** it finds a log that was cut short or replaced by accident or by a careless script. It does not stop someone who can write to your `.zn` folder: they can change the tip file too. Putting back an older copy of both files is not noticed either. If `evidence.tip` is deleted, `--verify` says `Not anchored yet` until the next event creates it again.
+
+If the tip itself could not be written (`cannot update the evidence tip`), the event was still recorded; check that the `.zn` folder is writable.
+
 ## 11. The Claude Code plugin rejects every call, or its MCP servers show `Failed to connect`
 
 You may see one of these:
@@ -937,6 +954,14 @@ To see where these rules apply, and what happens when the file is not valid, rea
 **Is it safe?** Nothing was changed by that failure.
 
 **What to do:** run the command again, then `zn-gate status`. If it repeats, report it at [GitHub issues](https://github.com/usezn/zn/issues) with the message and your `zn-gate --version`, and leave out any secret.
+
+#### "LOG TRUNCATED" / "LOG REWRITTEN"
+
+**What happened:** `zn-gate evidence --verify` found that the log has fewer records than its last tip expects, or that the record at the tip's place is a different one. See [the steps under section 10](#if-the-message-says-log-truncated-or-log-rewritten).
+
+**Is it safe?** Your protection keeps working. Only the record is in doubt.
+
+**What to do:** keep a copy of both files, then run `zn-gate evidence --accept` in your own terminal when you know why the log changed.
 
 #### "Tamper detected"
 

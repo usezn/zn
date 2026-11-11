@@ -382,6 +382,167 @@ function getLastHash(filePath = EVIDENCE_FILE) {
   return hash;
 }
 
+// ---- Tip anchor -------------------------------------------------------------------------------
+// `evidence.tip` sits next to the log and records how many records the log had and the hash of the
+// last one, as of the last time a writer looked: {v, count, tip_hash, ts}. A writer updates it under
+// the lock it already holds, after the append (a crash leaves the tip behind the log, never ahead
+// of it). Verification compares the log with it, so a log with its end removed, or replaced by an
+// older or different chain, is reported. It is not a seal: whoever can change the log can change
+// the tip too. It finds accidents and naive truncation, not a deliberate rewrite by the same user.
+const TIP_WINDOW = 65536;
+let lastTipWarnAt = null;
+let lastDivergeWarnAt = null;
+
+/** The tip file that belongs to a log: evidence.jsonl -> evidence.tip (same folder). */
+function tipPathOf(filePath = EVIDENCE_FILE) {
+  return path.join(path.dirname(filePath), path.basename(filePath).replace(/\.jsonl$/, '') + '.tip');
+}
+
+function cleanTipPoint(t) {
+  if (!t || typeof t !== 'object') return null;
+  if (!Number.isSafeInteger(t.count) || t.count < 0) return null;
+  if (typeof t.tip_hash !== 'string' || !HASH_RE.test(t.tip_hash)) return null;
+  return { count: t.count, tip_hash: t.tip_hash, ts: typeof t.ts === 'string' ? t.ts : null };
+}
+
+/** Reads the tip. A missing, unreadable or malformed file is "no tip" (null). */
+function readTip(filePath = EVIDENCE_FILE) {
+  let t;
+  try { t = JSON.parse(fs.readFileSync(tipPathOf(filePath), 'utf8')); } catch { return null; }
+  if (!t || t.v !== 1) return null;
+  const tip = cleanTipPoint(t);
+  if (tip === null) return null;
+  const previous = cleanTipPoint(t.previous);
+  if (previous) tip.previous = previous;
+  return tip;
+}
+
+/** Writes the tip through a temporary file and a rename, so a reader never sees half of it. */
+function writeTip(filePath, tip) {
+  const target = tipPathOf(filePath);
+  const tmp = `${target}.tmp-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+  const fd = fs.openSync(tmp, 'wx', LEDGER_FILE_MODE);
+  try {
+    fs.writeSync(fd, JSON.stringify({ v: 1, ...tip }) + '\n', null, 'utf8');
+  } catch (e) {
+    try { fs.closeSync(fd); } catch { /* best effort */ }
+    try { fs.unlinkSync(tmp); } catch { /* best effort */ }
+    throw e;
+  }
+  fs.closeSync(fd);
+  for (let i = 0; ; i++) {
+    try { fs.renameSync(tmp, target); return; } catch (e) {
+      // On Windows a rename onto a file another process has open can fail for a moment.
+      const busy = process.platform === 'win32' && (e.code === 'EPERM' || e.code === 'EACCES' || e.code === 'EBUSY');
+      if (!busy || i >= 39) {
+        try { fs.unlinkSync(tmp); } catch { /* best effort */ }
+        throw e;
+      }
+      sleepMs(5);
+    }
+  }
+}
+
+/** The record hashes in the last 64 KB of the log, in order (a cut first line is dropped). */
+function tailHashes(filePath) {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    const start = Math.max(0, size - TIP_WINDOW);
+    const buf = Buffer.alloc(size - start);
+    let got = 0;
+    while (got < buf.length) {
+      const n = fs.readSync(fd, buf, got, buf.length - got, start + got);
+      if (n === 0) break;
+      got += n;
+    }
+    const parts = buf.subarray(0, got).toString('utf8').split('\n');
+    if (start > 0) parts.shift();
+    const hashes = [];
+    for (const part of parts) {
+      const text = part.trim();
+      if (!text) continue;
+      try {
+        const h = JSON.parse(text).record_hash;
+        if (typeof h === 'string' && HASH_RE.test(h)) hashes.push(h);
+      } catch { /* a damaged line: verify reports it */ }
+    }
+    return hashes;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// Called by a writer that holds the lock, right after it appended the record `newHash` (whose
+// predecessor was `prevHash`). It never throws for a log problem; logEvidence handles errors.
+function advanceTip(filePath, newHash, prevHash) {
+  const tip = readTip(filePath);
+  const ts = new Date().toISOString();
+  if (tip === null) {
+    // No tip yet (a log from an older version, or a new one): anchor at the current end, once.
+    writeTip(filePath, { count: readLedger(filePath).lines.length, tip_hash: newHash, ts });
+    return;
+  }
+  let count;
+  if (tip.tip_hash === prevHash) {
+    count = tip.count + 1;
+  } else {
+    // The tip is behind (a crash, or an older version appended without it): look for it in the
+    // tail the writer would read anyway. If it is not there, the log does not match the tip:
+    // keep the tip as it is, so verify reports it, and keep recording.
+    const hashes = tailHashes(filePath);
+    const at = hashes.lastIndexOf(tip.tip_hash);
+    if (at === -1) {
+      const now = Date.now();
+      if (lastDivergeWarnAt === null || now - lastDivergeWarnAt >= WARN_INTERVAL_MS) {
+        lastDivergeWarnAt = now;
+        process.stderr.write(`zn-gate: the evidence log ${filePath} does not match its last tip: records were removed or the log was replaced. Events are still being recorded. Run 'zn-gate evidence --verify' for details.\n`);
+      }
+      return;
+    }
+    count = tip.count + (hashes.length - 1 - at);
+  }
+  const next = { count, tip_hash: newHash, ts };
+  if (tip.previous) next.previous = tip.previous;
+  writeTip(filePath, next);
+}
+
+/** The text behind a truncated or rewritten result, with the one command that accepts the log. */
+function anchorAdvice(result) {
+  const tip = result && result.tip;
+  const when = tip && tip.ts ? ` The tip was written at ${tip.ts} (record ${tip.count}).` : '';
+  const head = result && result.truncated
+    ? 'The end of the log was removed, or it was replaced by an older copy.'
+    : 'The log holds a different history than the one the tip was written for.';
+  return `${head}${when} Keep a copy of both files. To accept the log as it is now, run \`zn-gate evidence --accept\` in your own terminal.`;
+}
+
+/**
+ * Accepts the log as it is now: the tip is moved to its current end and the old tip is kept as
+ * `previous`, so the acceptance stays visible. Only a person at a terminal may do this (the same
+ * check as the other commands that are not for agents); `io.human` is the test seam they use.
+ * The chain must be intact: a damaged log is not accepted. Returns { count, tip_hash, previous }.
+ */
+function acceptEvidenceTip(filePath = EVIDENCE_FILE, io = {}) {
+  if (!io.human) require('./broker/tty').requireHuman('zn-gate evidence --accept', io);
+  ensureZnDir(filePath);
+  const lockPath = filePath + '.lock';
+  const token = acquireLock(lockPath);
+  try {
+    const old = readTip(filePath);
+    const chain = verifyChain(filePath, null);
+    if (!chain.valid) {
+      throw new EvidenceLedgerError(`The log itself is damaged (${chain.error}), so it cannot be accepted. ${recoveryHint(filePath)}`);
+    }
+    const tip = { count: chain.total, tip_hash: chain.lastHash, ts: new Date().toISOString() };
+    if (old) tip.previous = { count: old.count, tip_hash: old.tip_hash, ts: old.ts };
+    writeTip(filePath, tip);
+    return { count: tip.count, tip_hash: tip.tip_hash, previous: old };
+  } finally {
+    releaseLock(lockPath, token);
+  }
+}
+
 /**
  * Records a security event with cryptographic hash-chaining.
  *
@@ -426,6 +587,17 @@ function logEvidence(event, filePath = EVIDENCE_FILE, opts = {}) {
     // hash read above may be out of date: write nothing rather than fork the chain.
     if (!ownsLock(lockPath, token)) throw new EvidenceLockError('the write lock was taken over');
     appendLedgerLine(filePath, JSON.stringify(finalRecord) + '\n');
+    // The tip follows the append. A failure here never fails the append: the tip stays behind
+    // the log and the next writer catches it up.
+    try {
+      if (ownsLock(lockPath, token)) advanceTip(filePath, finalRecord.record_hash, prevHash);
+    } catch (e) {
+      const now = Date.now();
+      if (lastTipWarnAt === null || now - lastTipWarnAt >= WARN_INTERVAL_MS) {
+        lastTipWarnAt = now;
+        process.stderr.write(`zn-gate: cannot update the evidence tip next to ${filePath} (${e.code || e.message}). The event was recorded; truncation of the log cannot be detected until the tip is written again.\n`);
+      }
+    }
     return finalRecord;
   } catch (e) {
     // A log problem (no permission, a full disk, a busy lock) must never break the caller.
@@ -503,8 +675,23 @@ function buildRecord(event, prevHash, plainPreview = false) {
  * @returns {object} { valid: boolean, total: number, verified: number, broken_index: number|null, error: string|null }
  */
 function verifyEvidenceLedger(filePath = EVIDENCE_FILE) {
+  const tip = readTip(filePath);
+  const res = verifyChain(filePath, tip);
+  const tipOut = tip ? { count: tip.count, hash: tip.tip_hash, ts: tip.ts } : null;
+  if (tip && tip.previous) tipOut.previous = { count: tip.previous.count, hash: tip.previous.tip_hash, ts: tip.previous.ts };
+  delete res.lastHash;
+  return { ...res, truncated: res.truncated === true, rewritten: res.rewritten === true, anchored: tip !== null, tip: tipOut };
+}
+
+// One read-only pass: the chain from genesis and, when there is a tip, the log against it (enough
+// records, and the same hash at the tip's position). With tip = null only the chain is checked.
+function verifyChain(filePath, tip) {
   if (!fs.existsSync(filePath)) {
-    return { valid: true, total: 0, verified: 0, broken_index: null, error: null };
+    if (tip && tip.count > 0) {
+      return { valid: false, total: 0, verified: 0, broken_index: null, truncated: true, lastHash: GENESIS_HASH,
+        error: `LOG TRUNCATED: the log is missing, the last tip expects at least ${tip.count} records` };
+    }
+    return { valid: true, total: 0, verified: 0, broken_index: null, error: null, lastHash: GENESIS_HASH };
   }
 
   let lines;
@@ -515,6 +702,7 @@ function verifyEvidenceLedger(filePath = EVIDENCE_FILE) {
     return { valid: false, total: 0, verified: 0, broken_index: 0, error: e.message };
   }
   let expectedPrevHash = GENESIS_HASH;
+  let hashAtTip = null;
 
   for (let i = 0; i < lines.length; i++) {
     if (bad.has(i)) {
@@ -554,9 +742,21 @@ function verifyEvidenceLedger(filePath = EVIDENCE_FILE) {
     }
 
     expectedPrevHash = record_hash;
+    if (tip && i === tip.count - 1) hashAtTip = record_hash;
   }
 
-  return { valid: true, total: lines.length, verified: lines.length, broken_index: null, error: null };
+  if (tip) {
+    if (lines.length < tip.count) {
+      return { valid: false, total: lines.length, verified: lines.length, broken_index: null, truncated: true, lastHash: expectedPrevHash,
+        error: `LOG TRUNCATED: ${lines.length} records found, the last tip expects at least ${tip.count}` };
+    }
+    if (tip.count > 0 && hashAtTip !== tip.tip_hash) {
+      return { valid: false, total: lines.length, verified: lines.length, broken_index: tip.count - 1, rewritten: true, lastHash: expectedPrevHash,
+        error: `LOG REWRITTEN: record ${tip.count} differs from the tip` };
+    }
+  }
+
+  return { valid: true, total: lines.length, verified: lines.length, broken_index: null, error: null, lastHash: expectedPrevHash };
 }
 
 /**
@@ -574,7 +774,8 @@ function getEvidenceStats(filePathOrLimit = EVIDENCE_FILE, maybeLimit = 50) {
   }
 
   if (!fs.existsSync(filePath)) {
-    return { total: 0, blocks: 0, blocked: 0, allows: 0, allowed: 0, shadows: 0, valid: true, top_rules: {}, top_tools: {}, recent: [] };
+    const missing = verifyEvidenceLedger(filePath);
+    return { total: 0, blocks: 0, blocked: 0, allows: 0, allowed: 0, shadows: 0, valid: missing.valid, truncated: missing.truncated, error: missing.error, top_rules: {}, top_tools: {}, recent: [] };
   }
 
   let lines;
@@ -619,6 +820,8 @@ function getEvidenceStats(filePathOrLimit = EVIDENCE_FILE, maybeLimit = 50) {
     allowed,
     shadows,
     valid: check.valid,
+    truncated: check.truncated,
+    anchored: check.anchored,
     error: check.error,
     top_rules: topRules,
     top_tools: topTools,
@@ -638,10 +841,14 @@ function exportEvidenceLedger(filePath = EVIDENCE_FILE, format = 'jsonl') {
   const normFormat = (format || 'jsonl').toLowerCase() === 'csv' ? 'csv' : 'jsonl';
 
   if (!fs.existsSync(filePath)) {
+    const missing = verifyEvidenceLedger(filePath);
     return {
       content: normFormat === 'csv' ? 'timestamp,verdict,phase,tool_name,agent_environment,rule,reason,payload_sha256,record_hash,prev_hash,latency_us\n' : '',
       format: normFormat,
-      valid: true,
+      valid: missing.valid,
+      truncated: missing.truncated,
+      rewritten: missing.rewritten,
+      ...(missing.valid ? {} : { error: missing.error }),
       tip_hash: GENESIS_HASH,
       total: 0,
     };
@@ -694,6 +901,8 @@ function exportEvidenceLedger(filePath = EVIDENCE_FILE, format = 'jsonl') {
       content: rows.join('\n') + '\n',
       format: 'csv',
       valid: verifyResult.valid,
+      truncated: verifyResult.truncated,
+      rewritten: verifyResult.rewritten,
       error: verifyResult.error,
       tip_hash: tipHash,
       total: lines.length,
@@ -704,6 +913,8 @@ function exportEvidenceLedger(filePath = EVIDENCE_FILE, format = 'jsonl') {
     content: raw.endsWith('\n') ? raw : raw + '\n',
     format: 'jsonl',
     valid: verifyResult.valid,
+    truncated: verifyResult.truncated,
+    rewritten: verifyResult.rewritten,
     error: verifyResult.error,
     tip_hash: tipHash,
     total: lines.length,
@@ -785,7 +996,7 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
       res.writeHead(200, {
         'Content-Type': contentType,
         'Content-Disposition': `attachment; filename="${filename}"`,
-        'X-Evidence-Integrity': exportData.valid ? 'valid' : 'tampered',
+        'X-Evidence-Integrity': exportData.valid ? 'valid' : (exportData.truncated ? 'truncated' : 'tampered'),
         'X-Evidence-Tip-Hash': exportData.tip_hash,
         'X-Evidence-Total': String(exportData.total),
       });
@@ -931,10 +1142,10 @@ function startEvidenceUi(port = 3100, filePath = EVIDENCE_FILE) {
         const badge = document.getElementById('integrity-badge');
         if (v.valid) {
           badge.className = 'status-badge badge-valid';
-          badge.textContent = '● SHA-256 Chain Verified (Tamper-Free)';
+          badge.textContent = v.anchored ? '● SHA-256 chain verified, no truncation found' : '● SHA-256 chain verified (not anchored yet)';
         } else {
           badge.className = 'status-badge badge-invalid';
-          badge.textContent = '✖ TAMPER DETECTED at record ' + v.broken_index;
+          badge.textContent = v.truncated ? '✖ LOG TRUNCATED' : (v.rewritten ? '✖ LOG REWRITTEN' : '✖ TAMPER DETECTED at record ' + v.broken_index);
         }
 
         const tbody = document.getElementById('audit-table');
@@ -973,6 +1184,10 @@ module.exports = {
   recoveryHint,
   getLastHash,
   verifyEvidenceLedger,
+  acceptEvidenceTip,
+  anchorAdvice,
+  readTip,
+  tipPathOf,
   getEvidenceStats,
   exportEvidenceLedger,
   startEvidenceUi,

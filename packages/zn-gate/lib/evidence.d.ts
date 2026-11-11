@@ -43,6 +43,14 @@ export interface EvidenceVerification {
   /** Index of the first broken record, or null. */
   broken_index: number | null;
   error: string | null;
+  /** True when the log has fewer records than its last tip expects (the end was removed or an older copy put back). */
+  truncated: boolean;
+  /** True when the record at the tip's position differs from the tip (a different history). */
+  rewritten: boolean;
+  /** False when there is no tip yet, so removal of the last records cannot be detected. */
+  anchored: boolean;
+  /** The last tip, or null. */
+  tip: { count: number; hash: string; ts: string | null; previous?: { count: number; hash: string; ts: string | null } } | null;
 }
 
 export interface LogEvidenceOptions {

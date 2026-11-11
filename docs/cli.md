@@ -623,12 +623,13 @@ Aliases: `mcp-shield`, `wrap`.
 ### `evidence`
 
 ```bash
-zn-gate evidence [--verify] [--ui [--port 3100]] [--export [--format jsonl|csv] [--output file]] [--tail 20]
+zn-gate evidence [--verify] [--accept] [--ui [--port 3100]] [--export [--format jsonl|csv] [--output file]] [--tail 20]
 ```
 
 Shows the local hash-chained log of what zn-gate decided. With no option it prints the counts and the last records (`--tail N`, default 20).
 
-- `--verify`: check the SHA-256 chain. Exit `1` if it was changed.
+- `--verify`: check the SHA-256 chain, and check the log against the tip zn-gate wrote last (`evidence.tip`, next to the log). Exit `1` if the chain was changed, if the log is shorter than the tip expects (`LOG TRUNCATED`), or if the record at the tip's place is a different one (`LOG REWRITTEN`). A log with no tip yet passes with the note `Not anchored yet`: the first event written after you update to a version with the tip creates it. It finds a log that was cut short or replaced by accident or by a careless script. It does not stop someone who can write to your `.zn` folder: they can change the tip file too.
+- `--accept`: accept the log as it is now. The tip moves to the end of the log and the old tip is kept in the tip file as `previous`. It runs only in your own terminal, never from an agent, and only when the chain itself is intact. Use it after you moved the log aside on purpose or restored an older copy.
 - `--ui`: open a local dashboard in your browser (default port 3100).
 - `--export`: write the records as `jsonl` (default) or `csv` to the screen or to `--output`.
 
@@ -785,7 +786,7 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 | `test "<text>"` | `--json` | Checks one piece of text against the rules. It does **not** run the self-test that `test` runs in the npm package. Exit `0` if nothing was flagged, `1` if the text was blocked or contains a secret. |
 | `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked. Without a text (or with an empty one) it prints the usage and exits `2` (the npm package exits `1`). |
 | `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude`, `--include-home` | Like `scan` in the npm package, without the `--all` and `--code` options. Exit `0` nothing found, `1` something was found or the path does not exist, `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. There is no `--package` in the Python version yet. |
-| `evidence` | `--verify`, `--export`, `--format jsonl\|csv`, `--output file` | Counts, chain check and export, like the npm command. There is no `--ui`, no `--tail` and no `logs` or `export` alias. |
+| `evidence` | `--verify`, `--accept`, `--export`, `--format jsonl\|csv`, `--output file` | Counts, chain check and export, like the npm command. There is no `--ui`, no `--tail` and no `logs` or `export` alias. |
 | `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`. |
 | `stats` | `--days N`, `--json` | Local counts for the last `N` days (1 to 90, default 30). There is no `stats share`. Exit `0`, or `2` if `--days` is out of range. |
 | `check` | none | Runs the Python guard on a built-in fake secret and on a harmless text, in a temporary folder, and prints `PASS` or `FAIL` for each. Exit `0` only if the secret is blocked or redacted and the harmless text passes, `1` otherwise. Nothing is sent and the fake secret is never printed in full. It covers the Python guard only: for agent hooks (Claude Code, Codex, Cursor and others) run `npx -y zn-gate check`. |

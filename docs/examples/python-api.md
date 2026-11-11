@@ -61,7 +61,7 @@ print(record is not None)
 
 ## Verify the decision log
 
-`verify_evidence_ledger` checks the chain and returns `{'valid', 'total', 'verified', 'broken_index', 'error'}`.
+`verify_evidence_ledger` checks the chain and the log's last tip (the file `evidence.tip` next to it) and returns `{'valid', 'total', 'verified', 'broken_index', 'error', 'truncated', 'rewritten', 'anchored', 'tip'}`.
 
 ```python
 from zn_gate import verify_evidence_ledger

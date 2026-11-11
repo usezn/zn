@@ -38,7 +38,7 @@ const path = require('path');
 const { startMcpServer } = require('../lib/mcp');
 const { startMcpShield } = require('../lib/shield');
 const { configureEnvironments } = require('../lib/init');
-const { verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
+const { verifyEvidenceLedger, acceptEvidenceTip, anchorAdvice, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
 const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, usesStoredKey, RULES_VERSION } = require('../lib/client');
 const { evaluate, redactSecrets, redactScanSecrets, redactScanRules, SECRET_PATTERNS } = require('../lib/rules');
 // A verdict from the cloud or the ledger can come in any case; compare it the way the MCP server does.
@@ -336,7 +336,9 @@ INIT --wrap-mcp OPTIONS (each one also selects --wrap-mcp):
                       plugin: use zn-gate uninstall for that)
 
 EVIDENCE OPTIONS:
-  --verify            Verify the SHA-256 hash chain across all records
+  --verify            Verify the SHA-256 hash chain and check the log against its last tip (finds a log with its
+                      end removed; a person who can also rewrite the tip is not found)
+  --accept            Accept the log as it is now and move the tip to its end (your own terminal only)
   --ui                Launch local zero-dependency audit dashboard in browser
   --export            Export audit records to JSONL or CSV
   --format <jsonl|csv> Export format (default: jsonl)
@@ -1071,7 +1073,7 @@ function scanTargetOf(args) {
 const GLOBAL_OPTIONS = ['-h', '--help', '-V', '--version'];
 const STATUS_OPTIONS = ['--key', '--stage', '--url', '--local-only', '--verbose'];
 const EVIDENCE_VALUE_OPTIONS = ['--format', '--output', '--port', '--tail'];
-const EVIDENCE_OPTIONS = ['--verify', '--ui', '--export', ...EVIDENCE_VALUE_OPTIONS];
+const EVIDENCE_OPTIONS = ['--verify', '--accept', '--ui', '--export', ...EVIDENCE_VALUE_OPTIONS];
 
 function fixedOptionProblem(label, args, accepted, valueOptions = [], start = 1) {
   for (let i = start; i < args.length; i++) {
@@ -1188,6 +1190,7 @@ async function main() {
     shadow: args.includes('--shadow'),
     revert: args.includes('--revert'),
     verify: args.includes('--verify'),
+    accept: args.includes('--accept'),
     export: args.includes('--export'),
     format: 'jsonl',
     output: null,
@@ -1319,7 +1322,10 @@ ${ruleLine(process.env, 60)}\n`);
         return;
       }
       const res = exportEvidenceLedger(EVIDENCE_FILE, format);
-      if (!res.valid) process.stderr.write(`Tamper detected: ${res.error}\n${recoveryHint()}\n`);
+      if (!res.valid) {
+        const anchored = res.truncated || res.rewritten;
+        process.stderr.write(`${anchored ? 'Evidence log problem' : 'Tamper detected'}: ${res.error}\n${anchored ? anchorAdvice(res) : recoveryHint()}\n`);
+      }
       if (options.output) {
         try {
           fs.writeFileSync(options.output, res.content, 'utf8');
@@ -1327,7 +1333,7 @@ ${ruleLine(process.env, 60)}\n`);
           process.stderr.write((fsErrorText(err, options.output) || humanError(err)) + '\n');
           process.exit(1);
         }
-        process.stdout.write(`Exported ${res.total} audit records to ${options.output} (Integrity: ${res.valid ? 'VALID' : 'TAMPERED'}).\n`);
+        process.stdout.write(`Exported ${res.total} audit records to ${options.output} (Integrity: ${res.valid ? 'VALID' : (res.truncated ? 'TRUNCATED' : (res.rewritten ? 'REWRITTEN' : 'TAMPERED'))}).\n`);
       } else {
         process.stdout.write(res.content);
       }
@@ -1339,16 +1345,39 @@ ${ruleLine(process.env, 60)}\n`);
       return;
     }
 
+    if (options.accept) {
+      try {
+        const done = acceptEvidenceTip();
+        process.stdout.write(`Accepted: the evidence log has ${done.count} records and the tip now ends there.`
+          + (done.previous ? ` The earlier tip (record ${done.previous.count}) is kept in the tip file as "previous".` : '') + '\n');
+      } catch (e) {
+        process.stderr.write(String(e.message) + '\n');
+        process.exitCode = 1;
+      }
+      return;
+    }
+
     if (options.verify) {
       const verification = verifyEvidenceLedger();
+      let integrity;
+      if (verification.truncated || verification.rewritten) {
+        integrity = sym(process.env, '✖', col.red) + col.red(verification.error);
+      } else if (!verification.valid) {
+        integrity = sym(process.env, '✖', col.red) + col.red('TAMPER DETECTED AT RECORD ' + verification.broken_index);
+      } else if (verification.anchored) {
+        integrity = sym(process.env, '✔', col.green) + col.green('HASH CHAIN VERIFIED, no truncation found against the last tip');
+      } else {
+        integrity = sym(process.env, '✔', col.green) + col.green('OK, chain verified.') + ' Not anchored yet: removal of the last records cannot be detected until the next event.';
+      }
       process.stdout.write(`
 ${sym(process.env, '🔒')}Cryptographic Evidence Ledger Verification:
   Ledger Path   : ${EVIDENCE_FILE}
   Total Records : ${verification.total}
-  Integrity     : ${verification.valid ? sym(process.env, '✔', col.green) + col.green('ALL SHA-256 HASHES VERIFIED (IMMUTABLE)') : sym(process.env, '✖', col.red) + col.red('TAMPER DETECTED AT RECORD ' + verification.broken_index)}
+  Integrity     : ${integrity}
 \n`);
       if (!verification.valid) {
-        process.stdout.write(`  Details: ${verification.error}\n  ${recoveryHint()}\n\n`);
+        const advice = (verification.truncated || verification.rewritten) ? anchorAdvice(verification) : recoveryHint();
+        process.stdout.write(`  Details: ${verification.truncated || verification.rewritten ? advice : verification.error + '\n  ' + advice}\n\n`);
         process.exit(1);
       }
       return;

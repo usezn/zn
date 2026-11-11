@@ -101,20 +101,20 @@ def test_export_to_file(tmp_path, run, fmt, kind):
 def test_verify_missing_ledger(tmp_path, run):
     code, cap = run(_ledger(tmp_path, "missing"), verify=True)
     assert code == 0
-    assert "ALL 0 RECORDS VERIFIED" in cap.out
+    assert "OK, chain verified (0 records)" in cap.out
     assert _first(cap.out) == ""  # output starts with a blank line
 
 
 def test_verify_empty_ledger(tmp_path, run):
     code, cap = run(_ledger(tmp_path, "empty"), verify=True)
     assert code == 0
-    assert "ALL 0 RECORDS VERIFIED (IMMUTABLE)" in cap.out.splitlines()[1]
+    assert "OK, chain verified (0 records). Not anchored yet" in cap.out.splitlines()[1]
 
 
 def test_verify_one_record(tmp_path, run):
     code, cap = run(_ledger(tmp_path, "one"), verify=True)
     assert code == 0
-    assert "ALL 1 RECORDS VERIFIED (IMMUTABLE)" in cap.out.splitlines()[1]
+    assert "HASH CHAIN VERIFIED, 1 records, no truncation found against the last tip" in cap.out.splitlines()[1]
 
 
 def test_export_jsonl_two_records_one_valid_object_per_line(tmp_path, run):

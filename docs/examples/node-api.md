@@ -93,10 +93,10 @@ const search = guardTool(async (query) => fetchResults(query), { name: 'search',
 ```javascript
 logEvidence({ type: 'example' }, './example-evidence.jsonl');
 const report = verifyEvidenceLedger('./example-evidence.jsonl');
-// report is { valid, total, verified, broken_index, error }.
+// report is { valid, total, verified, broken_index, error, truncated, rewritten, anchored, tip }.
 ```
 
-The check detects accidental or partial edits; it is not tamper-proof against someone with write access to the file.
+The check detects accidental or partial edits and a log that lost its last records (it compares the log with `evidence.tip`, written next to it); it is not tamper-proof against someone with write access to the folder, who can change the tip too.
 
 ## Next steps
 

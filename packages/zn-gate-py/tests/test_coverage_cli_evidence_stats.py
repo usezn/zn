@@ -442,7 +442,7 @@ def test_cmd_status_local_and_cloud(capsys, monkeypatch):
 def test_cmd_evidence_verify(capsys):
     with mock.patch.object(cli, "verify_evidence_ledger", return_value={"valid": True, "total": 3}):
         assert cli.cmd_evidence(argparse.Namespace(verify=True)) == 0
-    assert "ALL 3 RECORDS VERIFIED" in capsys.readouterr().out
+    assert "chain verified (3 records)" in capsys.readouterr().out
     with mock.patch.object(cli, "verify_evidence_ledger", return_value={"valid": False, "error": "bad link"}):
         assert cli.cmd_evidence(argparse.Namespace(verify=True)) == 1
     assert "Tamper detected: bad link" in capsys.readouterr().err
@@ -579,7 +579,8 @@ def test_get_last_hash_edge_cases(tmp_path):
 
 def test_verify_missing_and_empty(tmp_path):
     assert verify_evidence_ledger(str(tmp_path / "none")) == {
-        "valid": True, "total": 0, "verified": 0, "broken_index": None, "error": None}
+        "valid": True, "total": 0, "verified": 0, "broken_index": None, "error": None,
+        "truncated": False, "rewritten": False, "anchored": False, "tip": None}
     e = tmp_path / "e"
     e.write_text("")
     assert verify_evidence_ledger(str(e))["total"] == 0
@@ -644,7 +645,8 @@ def test_stats_block_without_rule(tmp_path):
 def test_export_missing_ledger(tmp_path):
     n = str(tmp_path / "none")
     j = export_evidence_ledger(n)
-    assert j == {"content": "", "format": "jsonl", "valid": True, "tip_hash": GENESIS_HASH, "total": 0}
+    assert j == {"content": "", "format": "jsonl", "valid": True, "truncated": False, "rewritten": False,
+                 "tip_hash": GENESIS_HASH, "total": 0}
     c = export_evidence_ledger(n, format="CSV")
     assert c["content"].startswith("timestamp,verdict,phase,tool_name") and c["format"] == "csv"
     assert export_evidence_ledger(n, format=None)["format"] == "jsonl"

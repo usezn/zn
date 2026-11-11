@@ -22,7 +22,8 @@ from .rules import RULES_VERSION, evaluate, mask_token_runs
 from .rules import SECRET_PATTERNS as _DLP_PATTERNS, redact_secrets as _dlp_redact, redact_scan_secrets as _scan_redact
 from . import mcp_secrets as _mcp
 from .node_tools import node_available
-from .evidence import verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE
+from .evidence import (verify_evidence_ledger, get_evidence_stats, export_evidence_ledger, recovery_hint, EVIDENCE_FILE,
+                       accept_evidence_tip, anchor_advice, EvidenceLedgerError, EvidenceLockError)
 
 
 # The cloud client loads urllib, http.client and ssl. These wrappers import it
@@ -748,15 +749,34 @@ def _fs_error_text(err: OSError, path: object) -> str:
 
 
 def cmd_evidence(args: argparse.Namespace) -> int:
+    if getattr(args, "accept", False):
+        try:
+            done = accept_evidence_tip()
+        except (PermissionError, EvidenceLedgerError, EvidenceLockError) as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        prev = done.get("previous")
+        print(f"Accepted: the evidence log has {done['count']} records and the tip now ends there."
+              + (f' The earlier tip (record {prev["count"]}) is kept in the tip file as "previous".' if prev else ""))
+        return 0
+
     if getattr(args, "verify", False):
         res = verify_evidence_ledger()
+        total = res.get("total", 0)
         if res.get("valid"):
-            print(f"\n{_lead(LOCK)}Cryptographic Evidence Ledger: ALL {res.get('total', 0)} RECORDS VERIFIED (IMMUTABLE)\n")
+            if res.get("anchored"):
+                print(f"\n{_lead(LOCK)}Cryptographic Evidence Ledger: HASH CHAIN VERIFIED, {total} records, no truncation found against the last tip\n")
+            else:
+                print(f"\n{_lead(LOCK)}Cryptographic Evidence Ledger: OK, chain verified ({total} records). "
+                      "Not anchored yet: removal of the last records cannot be detected until the next event.\n")
             return 0
-        else:
-            print(f"\n{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
-            print(f"{recovery_hint()}\n", file=sys.stderr)
+        if res.get("truncated") or res.get("rewritten"):
+            print(f"\n{_lead(ALERT, sys.stderr)}{res.get('error')}", file=sys.stderr)
+            print(f"{anchor_advice(res)}\n", file=sys.stderr)
             return 1
+        print(f"\n{_lead(ALERT, sys.stderr)}Tamper detected: {res.get('error')}", file=sys.stderr)
+        print(f"{recovery_hint()}\n", file=sys.stderr)
+        return 1
 
     if getattr(args, "export", False):
         fmt = getattr(args, "format", "jsonl")
@@ -1034,7 +1054,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # evidence command
     ev_parser = subparsers.add_parser("evidence", help="Audit cryptographic evidence ledger")
-    ev_parser.add_argument("--verify", action="store_true", help="Verify SHA-256 hash-chain integrity")
+    ev_parser.add_argument("--verify", action="store_true", help="Verify the SHA-256 hash chain and check the log against its last tip (finds a log with its end removed; a person who can also rewrite the tip is not found)")
+    ev_parser.add_argument("--accept", action="store_true", help="Accept the log as it is now and move the tip to its end (your own terminal only)")
     ev_parser.add_argument("--export", action="store_true", help="Export audit records")
     ev_parser.add_argument("--format", choices=["jsonl", "csv"], default="jsonl", help="Export format")
     ev_parser.add_argument("--output", help="Write export output to file")

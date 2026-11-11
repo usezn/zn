@@ -400,6 +400,198 @@ def _canonical_ascii(record: Dict[str, Any]) -> str:
 _last_write_warn: Optional[float] = None
 
 
+# ---- Tip anchor ------------------------------------------------------------------------------
+# `evidence.tip` sits next to the log and records how many records the log had and the hash of the
+# last one, as of the last time a writer looked: {v, count, tip_hash, ts}. A writer updates it under
+# the lock it already holds, after the append (a crash leaves the tip behind the log, never ahead
+# of it). Verification compares the log with it, so a log with its end removed, or replaced by an
+# older or different chain, is reported. It is not a seal: whoever can change the log can change
+# the tip too. It finds accidents and naive truncation, not a deliberate rewrite by the same user.
+# The Node package writes and reads the same file in the same way.
+_TIP_WINDOW = 65536
+_last_tip_warn: Optional[float] = None
+_last_diverge_warn: Optional[float] = None
+_AGENT_ENV_VARS = ("CLAUDECODE", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CURSOR_AGENT", "OPENCODE", "ZN_AGENT")
+
+
+def tip_path_of(file_path: str = EVIDENCE_FILE) -> str:
+    """The tip file that belongs to a log: evidence.jsonl -> evidence.tip (same folder)."""
+    name = os.path.basename(file_path)
+    if name.endswith(".jsonl"):
+        name = name[: -len(".jsonl")]
+    return os.path.join(os.path.dirname(file_path), name + ".tip")
+
+
+def _clean_tip_point(t: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(t, dict):
+        return None
+    count = t.get("count")
+    tip_hash = t.get("tip_hash")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        return None
+    if not isinstance(tip_hash, str) or not _HASH_RE.fullmatch(tip_hash):
+        return None
+    ts = t.get("ts")
+    return {"count": count, "tip_hash": tip_hash, "ts": ts if isinstance(ts, str) else None}
+
+
+def read_tip(file_path: str = EVIDENCE_FILE) -> Optional[Dict[str, Any]]:
+    """Reads the tip. A missing, unreadable or malformed file is "no tip" (None)."""
+    try:
+        with open(tip_path_of(file_path), "r", encoding="utf-8") as f:
+            t = json.loads(f.read())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(t, dict) or t.get("v") != 1:
+        return None
+    tip = _clean_tip_point(t)
+    if tip is None:
+        return None
+    previous = _clean_tip_point(t.get("previous"))
+    if previous:
+        tip["previous"] = previous
+    return tip
+
+
+def _write_tip(file_path: str, tip: Dict[str, Any]) -> None:
+    """Writes the tip through a temporary file and a rename, so a reader never sees half of it."""
+    target = tip_path_of(file_path)
+    tmp = f"{target}.tmp-{os.getpid()}-{secrets.token_hex(4)}"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        try:
+            os.write(fd, (json.dumps({"v": 1, **tip}, separators=(",", ":")) + "\n").encode("utf-8"))
+        finally:
+            os.close(fd)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    for i in range(40):
+        try:
+            os.replace(tmp, target)
+            return
+        except OSError as e:
+            # On Windows a rename onto a file another process has open can fail for a moment.
+            if not (os.name == "nt" and e.errno in _WIN_BUSY) or i >= 39:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+            time.sleep(0.005)
+
+
+def _tail_hashes(file_path: str) -> List[str]:
+    """The record hashes in the last 64 KB of the log, in order (a cut first line is dropped)."""
+    with open(file_path, "rb") as f:
+        size = f.seek(0, os.SEEK_END)
+        start = max(0, size - _TIP_WINDOW)
+        f.seek(start)
+        data = f.read(size - start)
+    parts = data.split(b"\n")
+    if start > 0:
+        parts = parts[1:]
+    hashes: List[str] = []
+    for part in parts:
+        part = part.strip(_WS)
+        if not part:
+            continue
+        try:
+            h = json.loads(part.decode("utf-8")).get("record_hash")
+        except (ValueError, AttributeError):
+            continue  # a damaged line: verify reports it
+        if isinstance(h, str) and _HASH_RE.fullmatch(h):
+            hashes.append(h)
+    return hashes
+
+
+def _advance_tip(file_path: str, new_hash: str, prev_hash: str) -> None:
+    """Called by a writer that holds the lock, right after it appended the record `new_hash` (whose
+    predecessor was `prev_hash`). The caller handles errors."""
+    global _last_diverge_warn
+    tip = read_tip(file_path)
+    ts = datetime.now(timezone.utc).isoformat()
+    if tip is None:
+        # No tip yet (a log from an older version, or a new one): anchor at the current end, once.
+        _write_tip(file_path, {"count": len(_read_ledger(file_path)[0]), "tip_hash": new_hash, "ts": ts})
+        return
+    if tip["tip_hash"] == prev_hash:
+        count = tip["count"] + 1
+    else:
+        # The tip is behind (a crash, or an older version appended without it): look for it in the
+        # tail the writer would read anyway. If it is not there, the log does not match the tip:
+        # keep the tip as it is, so verify reports it, and keep recording.
+        hashes = _tail_hashes(file_path)
+        at = -1
+        for idx in range(len(hashes) - 1, -1, -1):
+            if hashes[idx] == tip["tip_hash"]:
+                at = idx
+                break
+        if at == -1:
+            now = time.monotonic()
+            if _last_diverge_warn is None or now - _last_diverge_warn >= WARN_INTERVAL:
+                _last_diverge_warn = now
+                sys.stderr.write(
+                    f"zn-gate: the evidence log {file_path} does not match its last tip: records were removed "
+                    "or the log was replaced. Events are still being recorded. "
+                    "Run 'zn-gate evidence --verify' for details.\n"
+                )
+            return
+        count = tip["count"] + (len(hashes) - 1 - at)
+    nxt: Dict[str, Any] = {"count": count, "tip_hash": new_hash, "ts": ts}
+    if tip.get("previous"):
+        nxt["previous"] = tip["previous"]
+    _write_tip(file_path, nxt)
+
+
+def anchor_advice(result: Dict[str, Any]) -> str:
+    """The text behind a truncated or rewritten result, with the one command that accepts the log."""
+    tip = result.get("tip") or {}
+    when = f" The tip was written at {tip['ts']} (record {tip['count']})." if tip.get("ts") else ""
+    head = ("The end of the log was removed, or it was replaced by an older copy." if result.get("truncated")
+            else "The log holds a different history than the one the tip was written for.")
+    return (f"{head}{when} Keep a copy of both files. "
+            "To accept the log as it is now, run `zn-gate evidence --accept` in your own terminal.")
+
+
+def accept_evidence_tip(file_path: str = EVIDENCE_FILE, *, human: bool = False) -> Dict[str, Any]:
+    """Accepts the log as it is now: the tip is moved to its current end and the old tip is kept as
+    `previous`, so the acceptance stays visible. Only a person at a terminal may do this: it refuses
+    when an agent's environment variable is set or stdin is not a terminal (`human=True` is the test
+    seam). The chain must be intact: a damaged log is not accepted.
+    Returns {"count", "tip_hash", "previous"}. Raises PermissionError, EvidenceLedgerError or EvidenceLockError."""
+    if not human:
+        agent = next((v for v in _AGENT_ENV_VARS if os.environ.get(v) is not None), None)
+        if agent:
+            raise PermissionError(f"zn-gate evidence --accept must be run by you in your own terminal, not by an AI agent (detected {agent}).")
+        isatty = getattr(sys.stdin, "isatty", None)
+        try:
+            interactive = bool(isatty and isatty())
+        except (OSError, ValueError):
+            interactive = False
+        if not interactive:
+            raise PermissionError("zn-gate evidence --accept needs an interactive terminal. Open a terminal window yourself and run it there.")
+    _ensure_dir(file_path)
+    lock_path = file_path + ".lock"
+    token = _acquire_lock(lock_path)
+    try:
+        old = read_tip(file_path)
+        chain = _verify_chain(file_path, None)
+        if not chain["valid"]:
+            raise EvidenceLedgerError(f"The log itself is damaged ({chain.get('error')}), so it cannot be accepted. {recovery_hint(file_path)}")
+        tip: Dict[str, Any] = {"count": chain["total"], "tip_hash": chain["last_hash"],
+                               "ts": datetime.now(timezone.utc).isoformat()}
+        if old:
+            tip["previous"] = {"count": old["count"], "tip_hash": old["tip_hash"], "ts": old["ts"]}
+        _write_tip(file_path, tip)
+        return {"count": tip["count"], "tip_hash": tip["tip_hash"], "previous": old}
+    finally:
+        _release_lock(lock_path, token)
+
+
 def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
                  lock_wait: float = LOCK_WAIT) -> Optional[Dict[str, Any]]:
     """
@@ -414,7 +606,7 @@ def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
     details. To recover from damage, move the damaged file aside (see recovery_hint): the next
     event starts a new chain.
     """
-    global _last_warn, _last_write_warn
+    global _last_warn, _last_write_warn, _last_tip_warn
     lock_path = file_path + ".lock"
     token: Optional[str] = None
     try:
@@ -439,6 +631,19 @@ def log_evidence(event: Dict[str, Any], file_path: str = EVIDENCE_FILE,
             raise EvidenceLockError("the write lock was taken over")
         with _open_for_append(file_path) as f:
             f.write(_canonical(final_record) + "\n")
+        # The tip follows the append. A failure here never fails the append: the tip stays behind
+        # the log and the next writer catches it up.
+        try:
+            if _owns_lock(lock_path, token):
+                _advance_tip(file_path, final_record["record_hash"], prev_hash)
+        except OSError as e:
+            now = time.monotonic()
+            if _last_tip_warn is None or now - _last_tip_warn >= WARN_INTERVAL:
+                _last_tip_warn = now
+                sys.stderr.write(
+                    f"zn-gate: cannot update the evidence tip next to {file_path} ({e.strerror or e}). "
+                    "The event was recorded; truncation of the log cannot be detected until the tip is written again.\n"
+                )
         return final_record
     except (OSError, EvidenceLockError) as e:
         # A log problem (no permission, a full disk, a busy lock) must never break the caller.
@@ -499,8 +704,31 @@ def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
     Verifies the cryptographic integrity of the entire ledger chain from genesis.
     Returns { "valid": bool, "total": int, "verified": int, "broken_index": Optional[int], "error": Optional[str] }
     """
+    tip = read_tip(file_path)
+    res = _verify_chain(file_path, tip)
+    res.pop("last_hash", None)
+    tip_out: Optional[Dict[str, Any]] = None
+    if tip:
+        tip_out = {"count": tip["count"], "hash": tip["tip_hash"], "ts": tip["ts"]}
+        prev = tip.get("previous")
+        if prev:
+            tip_out["previous"] = {"count": prev["count"], "hash": prev["tip_hash"], "ts": prev["ts"]}
+    res.setdefault("truncated", False)
+    res.setdefault("rewritten", False)
+    res["anchored"] = tip is not None
+    res["tip"] = tip_out
+    return res
+
+
+def _verify_chain(file_path: str, tip: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """One read-only pass: the chain from genesis and, when there is a tip, the log against it
+    (enough records, and the same hash at the tip's position). With tip None only the chain is checked."""
     if not os.path.exists(file_path):
-        return {"valid": True, "total": 0, "verified": 0, "broken_index": None, "error": None}
+        if tip and tip["count"] > 0:
+            return {"valid": False, "total": 0, "verified": 0, "broken_index": None, "truncated": True,
+                    "last_hash": GENESIS_HASH,
+                    "error": f"LOG TRUNCATED: the log is missing, the last tip expects at least {tip['count']} records"}
+        return {"valid": True, "total": 0, "verified": 0, "broken_index": None, "error": None, "last_hash": GENESIS_HASH}
 
     try:
         lines, bad = _read_ledger(file_path)
@@ -508,6 +736,7 @@ def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
         return _corrupt_result(0, 0, str(e))
 
     expected_prev = GENESIS_HASH
+    hash_at_tip: Optional[str] = None
 
     for i, line in enumerate(lines):
         if i in bad:
@@ -557,19 +786,35 @@ def verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> Dict[str, Any]:
             }
 
         expected_prev = recorded_hash
+        if tip and i == tip["count"] - 1:
+            hash_at_tip = recorded_hash
 
-    return {"valid": True, "total": len(lines), "verified": len(lines), "broken_index": None, "error": None}
+    if tip:
+        if len(lines) < tip["count"]:
+            return {"valid": False, "total": len(lines), "verified": len(lines), "broken_index": None,
+                    "truncated": True, "last_hash": expected_prev,
+                    "error": f"LOG TRUNCATED: {len(lines)} records found, the last tip expects at least {tip['count']}"}
+        if tip["count"] > 0 and hash_at_tip != tip["tip_hash"]:
+            return {"valid": False, "total": len(lines), "verified": len(lines), "broken_index": tip["count"] - 1,
+                    "rewritten": True, "last_hash": expected_prev,
+                    "error": f"LOG REWRITTEN: record {tip['count']} differs from the tip"}
+
+    return {"valid": True, "total": len(lines), "verified": len(lines), "broken_index": None, "error": None,
+            "last_hash": expected_prev}
 
 
 def get_evidence_stats(file_path: str = EVIDENCE_FILE, limit: int = 50) -> Dict[str, Any]:
     """Generates aggregated stats from the evidence ledger."""
     if not os.path.exists(file_path):
+        missing = verify_evidence_ledger(file_path)
         return {
             "total": 0,
             "blocks": 0,
             "allows": 0,
             "shadows": 0,
-            "valid": True,
+            "valid": missing["valid"],
+            "truncated": missing["truncated"],
+            "error": missing.get("error"),
             "top_rules": {},
             "top_tools": {},
             "recent": [],
@@ -621,6 +866,8 @@ def get_evidence_stats(file_path: str = EVIDENCE_FILE, limit: int = 50) -> Dict[
         "allows": allows,
         "shadows": shadows,
         "valid": check["valid"],
+        "truncated": check["truncated"],
+        "anchored": check["anchored"],
         "error": check.get("error"),
         "top_rules": top_rules,
         "top_tools": top_tools,
@@ -642,13 +889,19 @@ def export_evidence_ledger(file_path: Optional[str] = None, format: str = "jsonl
             if norm_format == "csv"
             else ""
         )
-        return {
+        missing = verify_evidence_ledger(target_path)
+        out: Dict[str, Any] = {
             "content": empty_content,
             "format": norm_format,
-            "valid": True,
+            "valid": missing["valid"],
+            "truncated": missing["truncated"],
+            "rewritten": missing["rewritten"],
             "tip_hash": GENESIS_HASH,
             "total": 0,
         }
+        if not missing["valid"]:
+            out["error"] = missing.get("error")
+        return out
 
     verify_result = verify_evidence_ledger(target_path)
     try:
@@ -694,6 +947,8 @@ def export_evidence_ledger(file_path: Optional[str] = None, format: str = "jsonl
             "content": "\n".join(rows) + "\n",
             "format": "csv",
             "valid": verify_result["valid"],
+            "truncated": verify_result["truncated"],
+            "rewritten": verify_result["rewritten"],
             "error": verify_result.get("error"),
             "tip_hash": tip_hash,
             "total": len(lines),
@@ -710,6 +965,8 @@ def export_evidence_ledger(file_path: Optional[str] = None, format: str = "jsonl
         "content": raw if raw.endswith("\n") else raw + "\n",
         "format": "jsonl",
         "valid": verify_result["valid"],
+        "truncated": verify_result["truncated"],
+        "rewritten": verify_result["rewritten"],
         "error": verify_result.get("error"),
         "tip_hash": tip_hash,
         "total": len(lines),

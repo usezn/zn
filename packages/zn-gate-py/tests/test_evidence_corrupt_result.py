@@ -50,10 +50,11 @@ def test_unreadable_ledger_reports_zero_total_and_index(tmp_path, monkeypatch):
 
     monkeypatch.setattr(evidence, "_read_ledger", boom)
     r = verify_evidence_ledger(p)
-    assert r == {
+    assert {k: r[k] for k in ("valid", "total", "verified", "broken_index", "error")} == {
         "valid": False,
         "total": 0,
         "verified": 0,
         "broken_index": 0,
         "error": "Cannot read the evidence log: example",
     }
+    assert r["truncated"] is False and r["rewritten"] is False

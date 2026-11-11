@@ -53,9 +53,11 @@ test('getLastHash reports an unreadable log and does not start a new chain', (t)
 test('verify reports an unreadable log as invalid with the read error', (t) => {
   const { file } = unreadableLog(t);
   const ev = freshEvidence();
-  assert.deepEqual(ev.verifyEvidenceLedger(file), {
+  const { truncated, rewritten, anchored, tip, ...chain } = ev.verifyEvidenceLedger(file);
+  assert.deepEqual(chain, {
     valid: false, total: 0, verified: 0, broken_index: 0, error: 'Cannot read the evidence log: EISDIR',
   });
+  assert.deepEqual({ truncated, rewritten, anchored, tip }, { truncated: false, rewritten: false, anchored: false, tip: null });
 });
 
 test('stats and export of an unreadable log are not valid and carry no records', (t) => {

@@ -188,7 +188,9 @@ const search = guardTool(async (query) => fetchResults(query), { name: 'search',
 ### `verifyEvidenceLedger(filePath)`
 
 - `filePath` is optional and defaults to `~/.zn/evidence.jsonl`. A missing file counts as valid and empty.
-- Returns: `{ valid: boolean, total: number, verified: number, broken_index: number | null, error: string | null }`. `total` is the number of records, `verified` how many passed before the first problem, and `broken_index` the zero-based index of the first bad record.
+- Returns: `{ valid: boolean, total: number, verified: number, broken_index: number | null, error: string | null, truncated: boolean, rewritten: boolean, anchored: boolean, tip: { count, hash, ts, previous? } | null }`. `total` is the number of records, `verified` how many passed before the first problem, and `broken_index` the zero-based index of the first bad record.
+- The log is also compared with its tip, the file `evidence.tip` next to it (`{ v, count, tip_hash, ts }`, written after each append under the same lock). `truncated` is `true` when the log has fewer records than the tip's `count` (then `valid` is `false` and `broken_index` is `null`); `rewritten` is `true` when the record at the tip's place has a different hash; `anchored` is `false` when there is no tip yet, so removal of the last records cannot be detected. `verifyEvidenceLedger` only reads; the next `logEvidence` creates a missing tip. A missing log counts as valid and empty, unless a tip says it had records (then it is `truncated`).
+- The tip finds a log that lost its last records by accident or by a careless script. It does not stop someone who can write to the folder: they can change the tip too. `acceptEvidenceTip(filePath)` (human terminal only, as `zn-gate evidence --accept`) moves the tip to the end of an intact log and keeps the old one as `previous`.
 - Verifies the SHA-256 hash chain in `~/.zn/evidence.jsonl`. It detects accidental or partial edits; it is not tamper-proof against someone with write access to the file.
 - A log that holds invalid bytes or a line that cannot be read is reported as corrupted (`valid: false` with the line number in `error`), never as a crash. Writing never restarts the chain on top of a damaged log: `logEvidence` / `log_evidence` skip the write, print a warning (the first time, then at most every 5 minutes) and return `null` / `None`, and the command carries on.
 - To recover from a damaged log, move the file aside so the old one is kept for review: `mv ~/.zn/evidence.jsonl ~/.zn/evidence.damaged.jsonl` (Windows `cmd`: `move %USERPROFILE%\.zn\evidence.jsonl %USERPROFILE%\.zn\evidence.damaged.jsonl`; PowerShell: `Move-Item $env:USERPROFILE\.zn\evidence.jsonl $env:USERPROFILE\.zn\evidence.damaged.jsonl`). The next event starts a new chain. The same step is printed in the warning and by `evidence --verify`.
@@ -304,7 +306,7 @@ except GuardBlockError as e:
 
 ### `verify_evidence_ledger(file_path: str = EVIDENCE_FILE) -> dict`
 
-- Same check and the same result as the Node function: `{'valid': bool, 'total': int, 'verified': int, 'broken_index': int | None, 'error': str | None}`. `file_path` is optional and defaults to `~/.zn/evidence.jsonl`.
+- Same check and the same result as the Node function: `{'valid': bool, 'total': int, 'verified': int, 'broken_index': int | None, 'error': str | None, 'truncated': bool, 'rewritten': bool, 'anchored': bool, 'tip': dict | None}`. The two packages read and write the same `evidence.tip`. `file_path` is optional and defaults to `~/.zn/evidence.jsonl`.
 
 ### `get_evidence_stats(file_path: str = EVIDENCE_FILE, limit: int = 50) -> dict`
 

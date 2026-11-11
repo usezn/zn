@@ -33,7 +33,7 @@ function changeRecord(file, index) {
 
 test('a missing file is valid and empty', () => {
   const file = path.join(tmpDir(), 'missing.jsonl');
-  assert.deepEqual(verifyEvidenceLedger(file), { valid: true, total: 0, verified: 0, broken_index: null, error: null });
+  assert.deepEqual(verifyEvidenceLedger(file), { valid: true, total: 0, verified: 0, broken_index: null, error: null, truncated: false, rewritten: false, anchored: false, tip: null });
 });
 
 test('an unreadable path (a directory) is invalid and broken at index 0', () => {
@@ -60,7 +60,9 @@ test('a damaged line in the middle stops verification at that line', () => {
 
 test('a good chain verifies every record', () => {
   const res = verifyEvidenceLedger(makeLedger());
-  assert.deepEqual(res, { valid: true, total: COUNT, verified: COUNT, broken_index: null, error: null });
+  const { truncated, rewritten, anchored, tip, ...chain } = res;
+  assert.deepEqual(chain, { valid: true, total: COUNT, verified: COUNT, broken_index: null, error: null });
+  assert.deepEqual({ truncated, rewritten, anchored, count: tip.count }, { truncated: false, rewritten: false, anchored: true, count: COUNT });
 });
 
 for (const [name, index] of [['first', 0], ['middle', 2], ['last', COUNT - 1]]) {

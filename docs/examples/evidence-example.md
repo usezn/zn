@@ -62,14 +62,14 @@ zn-gate evidence --verify
 🔒 Cryptographic Evidence Ledger Verification:
   Ledger Path   : /tmp/tmp.zLpJGchVnH/.zn/evidence.jsonl
   Total Records : 8
-  Integrity     : ✔ ALL SHA-256 HASHES VERIFIED (IMMUTABLE)
+  Integrity     : ✔ HASH CHAIN VERIFIED, no truncation found against the last tip
 ```
 
 How to read it:
 
 - Every record holds a fingerprint (a SHA-256 hash) of the record before it. If someone edits or removes a record, the fingerprints no longer match.
-- `ALL SHA-256 HASHES VERIFIED` means every record matched. The command ends with exit code `0`. If the log was changed, it ends with exit code `1`.
-- This finds accidental or partial edits. It does not stop someone who can write to the file and recalculates the whole chain.
+- `HASH CHAIN VERIFIED` means every record matched. `no truncation found against the last tip` means the log is at least as long as the last time zn-gate wrote to it (it keeps that in `evidence.tip`, next to the log). The command ends with exit code `0`. If the log was changed or cut short, it ends with exit code `1`. A log that has no tip yet says `Not anchored yet` and exits `0`; the next event creates the tip.
+- This finds accidental or partial edits and a log that lost its last records. It does not stop someone who can write to the file: they can recalculate the whole chain and change the tip too.
 
 If the log is damaged, see [Troubleshooting](../troubleshooting.md#10-the-evidence-log--is-damaged).
 

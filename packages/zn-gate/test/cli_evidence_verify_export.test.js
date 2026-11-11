@@ -36,7 +36,7 @@ test('verify on a missing log passes with zero records', () => {
   const r = run(home, ['--verify']);
   assert.equal(r.status, 0);
   assert.match(r.stdout, /Total Records : 0/);
-  assert.match(r.stdout, /ALL SHA-256 HASHES VERIFIED/);
+  assert.match(r.stdout, /OK, chain verified\. Not anchored yet/);
 });
 
 test('verify on an empty log passes with zero records', () => {
@@ -53,7 +53,7 @@ test('verify on a good log of two records passes', () => {
   const r = run(home, ['--verify']);
   assert.equal(r.status, 0);
   assert.match(r.stdout, /Total Records : 2/);
-  assert.match(r.stdout, /ALL SHA-256 HASHES VERIFIED/);
+  assert.match(r.stdout, /HASH CHAIN VERIFIED, no truncation found against the last tip/);
 });
 
 test('verify on a log with one changed byte exits 1', () => {

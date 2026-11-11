@@ -56,7 +56,9 @@ test('log round trip: records keep their order and verify', (t) => {
   const onDisk = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.deepEqual(onDisk.map((r) => r.record_hash), recs.map((r) => r.record_hash));
   assert.deepEqual(onDisk.map((r) => r.tool_name), ['tool1', 'tool2', 'tool3']);
-  assert.deepEqual(verifyEvidenceLedger(file), { valid: true, total: 3, verified: 3, broken_index: null, error: null });
+  const { truncated, rewritten, anchored, tip, ...chain } = verifyEvidenceLedger(file);
+  assert.deepEqual(chain, { valid: true, total: 3, verified: 3, broken_index: null, error: null });
+  assert.deepEqual({ truncated, rewritten, anchored, count: tip.count }, { truncated: false, rewritten: false, anchored: true, count: 3 });
 });
 
 test('getEvidenceStats: counts by verdict, top rules and tools, newest first', (t) => {
@@ -80,7 +82,7 @@ test('getEvidenceStats: counts by verdict, top rules and tools, newest first', (
 test('getEvidenceStats: limit as second argument; missing file is empty and valid', (t) => {
   const file = tmpLedger(t);
   assert.deepEqual(getEvidenceStats(file), {
-    total: 0, blocks: 0, blocked: 0, allows: 0, allowed: 0, shadows: 0, valid: true,
+    total: 0, blocks: 0, blocked: 0, allows: 0, allowed: 0, shadows: 0, valid: true, truncated: false, error: null,
     top_rules: {}, top_tools: {}, recent: [],
   });
   for (let i = 1; i <= 5; i++) write(file, i);
@@ -126,7 +128,7 @@ test('exportEvidenceLedger: csv has a header, one row per record, and doubles qu
 test('exportEvidenceLedger: unknown format falls back to jsonl; missing file gives an empty valid export', (t) => {
   const file = tmpLedger(t);
   const empty = exportEvidenceLedger(file, 'xml');
-  assert.deepEqual(empty, { content: '', format: 'jsonl', valid: true, tip_hash: GENESIS_HASH, total: 0 });
+  assert.deepEqual(empty, { content: '', format: 'jsonl', valid: true, truncated: false, rewritten: false, tip_hash: GENESIS_HASH, total: 0 });
   const csv = exportEvidenceLedger(file, 'csv');
   assert.equal(csv.total, 0);
   assert.equal(csv.content.split('\n').length, 2);
