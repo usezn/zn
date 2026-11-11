@@ -294,6 +294,14 @@ This repository contains no translated documentation: its pages are written in E
 
 If you find a security vulnerability, please do NOT open a public issue, a pull request or a discussion. Follow our [Security Policy](SECURITY.md) and report it privately: preferably with [GitHub private vulnerability reporting](https://github.com/usezn/zn/security/advisories/new), or by email to `security@usezn.com`.
 
+## Commit messages for documentation changes
+
+No tool checks commit messages, and a pull request is reviewed as a whole. Most commits that change only `docs/` already follow this shape, so please match it:
+
+- Start with `docs:`, then a short sentence in the imperative that says what the page says or does now, for example `docs: point the quick answers to the renumbered FAQ entries`.
+- Leave out the final full stop, and keep the subject to one line.
+- Put the reason, and what you ran to check it, in the pull request description. Keep secrets, tokens and personal data out of the message, as in the pull request checklist.
+
 ## Changelog
 
 Describe a change users will notice in a fragment file in `changelog.d/` instead of editing `CHANGELOG.md`; see [changelog.d/README.md](changelog.d/README.md).
