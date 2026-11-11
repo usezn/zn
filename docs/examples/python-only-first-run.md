@@ -112,11 +112,12 @@ Without Node.js, these work in the Python package:
 - `scan` and `test`, as shown above.
 - `analyze`, which checks a prompt with local rules and prints JSON.
 - `status`, `stats` and `evidence`.
+- `check`, which runs the Python guard on a built-in fake secret and a harmless text in a temporary folder. It exits `0` if the guard blocks or redacts the fake secret and passes the harmless text, and `1` otherwise. Nothing is sent. It covers the Python guard only.
 - The Python functions, such as `evaluate` and `redact_secrets`, described in the [Python package README](../../packages/zn-gate-py/README.md).
 
 These need the npm package and Node.js. In the Python package they print a short note and exit `2`:
 
-- Agent hooks and their setup: `init`, `hooks`, `check`, `doctor`, `run`.
+- Agent hooks and their setup: `init`, `hooks`, `doctor`, `run`.
 - The local vault and secrets: `vault`, `secret`, `secrets`, `env`, `unlock`, `lock`, `pins`.
 - MCP wrapping and shielding: `mcp`, `mcp-shield`, `shield`, `wrap`.
 - Team, audit, logs and export: `team`, `audit`, `logs`, `export`.
