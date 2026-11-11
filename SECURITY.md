@@ -54,6 +54,10 @@ These reports are not accepted as vulnerabilities:
 * Findings that require physical access or a compromised end-user device
 * Unverified reports (no reproduced steps and no observed result)
 
+### For package authors
+
+If you find a malicious package in zn-gate's dependency tree, report it through one of the channels above, the same way as a vulnerability. Give the package name and version, how zn-gate pulls it in, and what the code does. Do not open a public issue or pull request about it.
+
 ---
 
 ## Coordinated Disclosure
