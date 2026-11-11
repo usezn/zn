@@ -16,7 +16,7 @@ All three need the vault to be **locked** first (`zn-gate lock`). `reset` needs 
 
 | | `vault forget` | `vault reset` | `vault purge` |
 |---|---|---|---|
-| Removes | one project's token map | the vault and its audit log, set aside as a backup | the vault, token maps, audit log, backups and session key |
+| Removes | one project's token map | the vault and its audit log, set aside as a backup | the vault, token maps, audit log and backups, plus a session key if one is left behind |
 | Keeps a copy | no | yes, an encrypted `vault-backup-<date>-<time>` folder | no |
 | Asks before acting | no | yes, you type `reset my vault` | yes, you type `purge my vault` (or pass `--yes`) |
 | Can be undone | no | nothing is deleted, but the old values open only with the old passphrase | no |
@@ -84,6 +84,8 @@ To keep an encrypted copy and start a new vault instead, use `zn-gate vault rese
 To go on, type "purge my vault" and press Enter: nope
 Nothing was purged: the phrase did not match. Your vault is as it was.
 ```
+
+No session key is in this list: locking the vault already removed it. If one were left in `~/.zn/run`, `purge` would list it and delete it too.
 
 The exit code is 1. Run it again and type the phrase:
 
