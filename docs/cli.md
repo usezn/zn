@@ -758,7 +758,22 @@ Shows the organization, the policy version, what the last policy version removed
 zn-gate team sync
 ```
 
-Downloads the policy and uploads the vault audit log now. Exit `0` only when a valid policy is applied and no upload failed. Exit `1` when the machine is offline, the organization has no policy, the policy is refused, the machine was removed, or an upload failed; `team status` keeps the last reason. A sync that was running when you left the organization, or joined another one, is dropped and writes nothing.
+Downloads the policy and uploads the vault audit log now. Exit `0` only when a valid policy is applied and no upload failed. Exit `1` when the machine is offline, the organization has no policy yet, the policy is refused, the machine was removed, the organization is not active on zn, the vault is locked, an audit upload failed, the sync was stopped or dropped, or zn hit an error. `team status` shows the reason of the last sync, except one stopped by the vault lock. A sync that was running when you left the organization, or joined another one, is dropped and writes nothing. These are the messages it prints and the next step for each:
+
+| Cause | What `zn team sync` prints (the `[zn]` line) | What to do |
+|---|---|---|
+| The server cannot be reached | `Could not reach the zn server. Nothing was changed. Check your internet connection and run again: zn team sync` | Check the connection and run `zn team sync` again. `ZN_VERBOSE=1` adds the technical detail. |
+| No policy published yet | `sync incomplete: the organization has not published a policy yet` | Nothing to do: zn checks again by itself. To check now, run `zn team sync`. |
+| Policy refused | `sync incomplete: the downloaded policy was refused (reason)`, with the reason in brackets | The last accepted policy stays in force. For `policy expired`, check this computer's date and time. |
+| Machine removed by an admin | `An admin removed this machine from the organization, so it no longer gets the policy. To disconnect it run: zn team leave. To join again, ask your admin for a new token and run: zn team join <token>` | Run `zn team leave`. To join again, use a new token from your admin. |
+| Organization not active on zn | `Your organization is not active on zn right now: ask your organization admin. Nothing is lost: ...` | Ask your organization admin. Once it is active, run `zn team sync`. |
+| Vault locked | `` vault is locked; run `zn unlock` `` | Run `zn unlock`, then `zn team sync`. |
+| Vault did not answer | `` The vault is not answering. Run `zn lock`, then `zn unlock`. `` | Run `zn lock`, then `zn unlock`. |
+| Vault locked before the sync finished | `sync incomplete: the vault was locked before the sync finished` | Run `zn unlock`. While the vault is unlocked zn syncs again on its own, or run `zn team sync`. |
+| Machine left or changed organization during the sync | `sync incomplete: this machine left or changed its organization while the sync was running; nothing was applied` | No step is needed: the sync was dropped and wrote nothing. |
+| Audit upload failed (`offline`, `revoked`, `rejected`, `diverged`, `local_gap`, `error`) | `sync incomplete: audit upload failed (status, N records pending)`. The `Audit upload:` line shows the status. | The records stay on this machine and are sent at a later sync. For `error`, the line `Nothing was uploaded: ...` gives the cause. For `rejected`, `diverged` and `local_gap` zn prints no next step: if it repeats, report it at [GitHub issues](https://github.com/usezn/zn/issues) with the message and your `zn-gate --version`. |
+| Audit log does not verify (`tampered`) | `` Nothing was uploaded: (reason). Keep a copy of the audit log, look into the change, then run `zn vault verify --acknowledge` in your own terminal. `` | Keep a copy of the audit log, look into the change, then run `zn vault verify --acknowledge` in your own terminal. A log that does not verify is never sent. |
+| Any other error | `[zn]` followed by the error message | Run the command again with `ZN_VERBOSE=1` to see the detail. If the message says this machine is not in an organization, run `zn team join <token>`. |
 
 #### `team leave`
 
