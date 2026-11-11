@@ -8,6 +8,7 @@
 #   typos         pull requests: docs, READMEs, changelog fragments, .typos.toml
 #   links         pull requests: any Markdown file, lychee config
 #   shell lint    pull requests and pushes to main or next: any *.sh
+#   wfheader      pull requests and pushes to main or next: workflows, the header check and its test
 # Workflow lint (actionlint + zizmor) is not decided here: its job in quick-checks.yml keeps its own inline
 # paths filter (workflows, actions, workflow-lint config, zizmor config, action.yml) because it runs no
 # script of the repository.
@@ -24,7 +25,7 @@
 # Environment: EVENT_NAME, REF (github.ref), BASE_REF (pull requests), BEFORE (pushes: the previous tip).
 set -uo pipefail
 
-CHECKS="changelog markdownlint typos links shellcheck timeouts packagelint hooks snippets scopetest"
+CHECKS="changelog markdownlint typos links shellcheck wfheader timeouts packagelint hooks snippets scopetest"
 declare -A run
 for c in $CHECKS; do run[$c]=false; done
 
@@ -95,6 +96,9 @@ while IFS= read -r f; do
   esac
   case "$f" in
     *.sh) run[shellcheck]=true ;;
+  esac
+  case "$f" in
+    .github/workflows/*|.github/scripts/check-workflow-header*) run[wfheader]=true ;;
   esac
   case "$f" in
     .github/workflows/*|.github/scripts/check-timeouts*) run[timeouts]=true ;;
