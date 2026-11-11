@@ -44,10 +44,10 @@ When the lock time is on another day, the clock time starts with `tomorrow`, as 
 
 ## Keep it cheap
 
-A prompt runs on every Enter, so the script must be quick. One run of `zn-gate vault status` starts Node.js. In a test on a Linux machine it took about 70 ms, of which about 20 ms is Node.js starting at all. Two choices keep the prompt from feeling slow:
+A prompt runs on every Enter, so the script must be quick. One run of `zn-gate vault status` starts Node.js. Measured on a Linux server with Node.js 24 (your machine will differ), one run took about 125 ms, of which about 40 ms is Node.js starting at all. Two choices keep the prompt from feeling slow:
 
 - Use the installed command (`npm install -g zn-gate`), not `npx`. `npx` does its own package lookup before it starts zn-gate, so it is slower.
-- Ask only every 30 seconds and keep the last answer in between. In the same test, 1000 prompts answered from the saved result took 7 ms in total.
+- Ask only every 30 seconds and keep the last answer in between. In the same test, 1000 prompts answered from the saved result took about 11 ms in total.
 
 The cost is that the label can be out of date for up to 30 seconds after you run `zn-gate lock` or `zn-gate unlock`. If that bothers you, lower the number. If you notice a pause on a slow machine, raise it or remove the label.
 

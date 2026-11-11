@@ -39,14 +39,14 @@ If the vault is locked, `secret list` stops with `Your secret vault is locked.` 
 npx -y zn-gate run --secrets EXAMPLE_API_KEY -- printenv EXAMPLE_API_KEY
 ```
 
-The first time a program uses a secret, the vault asks you to confirm. Here the vault was started with `unlock --foreground`, so the question appeared in that terminal (the two paths are replaced with examples):
+The first time a program uses a secret, the vault asks you to confirm. Here the vault was started with `unlock --foreground`, so the question appeared in that terminal (paths shortened):
 
 ```text
 zn: let `printenv` use secret EXAMPLE_API_KEY?
     Secret: EXAMPLE_API_KEY (the value goes into the process)
     Command: printenv
     Runs: /usr/bin/printenv
-    Project: /home/you/project
+    Project: ~/app
     If you did not just start this command, choose Deny.
   Allow? [y/N] y
   -> allowed
