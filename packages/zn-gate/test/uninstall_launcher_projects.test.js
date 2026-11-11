@@ -89,3 +89,31 @@ test('uninstall: a project hook that could not be removed keeps the launcher', a
   assert.ok(fs.existsSync(file), 'the launcher stays: a hook may still call it');
   assert.match(c.out(), /launcher script kept/);
 });
+
+test('uninstall: a launcher that another Claude Code profile in the home folder still names is kept', async (t) => {
+  const m = machine(t);
+  install(m, 'user');
+  const file = launcher.launcherFile('claude-code', { home: m.home, env: m.env });
+  if (!launcher.isOurLauncher(file)) return t.skip('no launcher script on this platform');
+  // A second profile (another CLAUDE_CONFIG_DIR) whose hooks call the shared launcher.
+  const other = path.join(m.home, '.claude-work');
+  fs.mkdirSync(other, { recursive: true });
+  fs.writeFileSync(path.join(other, 'settings.json'), JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: file + ' PreToolUse' }] }] } }));
+  const c = io(m);
+  assert.equal(await dispatch('uninstall', [], c.o), 0, c.out());
+  assert.ok(fs.existsSync(file), 'the launcher stays while another profile names it');
+  assert.match(c.out(), /launcher script kept/);
+});
+
+test('uninstall with CLAUDE_CONFIG_DIR set keeps the shared launcher: other profiles may use it', async (t) => {
+  const m = machine(t);
+  const profile = tempDir(t, 'zn-ulp-profile-');
+  m.env = { ...m.env, CLAUDE_CONFIG_DIR: profile };
+  install(m, 'user');
+  const file = launcher.launcherFile('claude-code', { home: m.home, env: m.env });
+  if (!launcher.isOurLauncher(file)) return t.skip('no launcher script on this platform');
+  const c = io(m);
+  assert.equal(await dispatch('uninstall', [], c.o), 0, c.out());
+  assert.ok(fs.existsSync(file), 'the launcher stays');
+  assert.match(c.out(), /launcher script kept \(other Claude Code profiles may still use it\)/);
+});

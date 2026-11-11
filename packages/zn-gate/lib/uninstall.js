@@ -282,12 +282,20 @@ async function run(args, io) {
       const base = path.basename(l.file);
       const names = (f) => { try { return fs.readFileSync(f, 'utf8').includes(base); } catch (_) { return false; } };
       let keep = failedHooks.has(l.id);
+      let why = 'a hooks file may still use it';
       if (!keep && spec) {
         const files = [spec.file(getAdapter(l.id), { home: io.home, env: io.env }), spec.project(io.cwd)];
+        if (l.id === 'claude-code') files.push(...claudeProfileSettings(io.home));
         keep = files.some(names);
       }
+      // The Claude Code launcher is shared by every profile (every CLAUDE_CONFIG_DIR). With a profile folder set, zn
+      // cannot see the other profiles, so it keeps the launcher rather than break their hooks.
+      if (!keep && l.id === 'claude-code' && io.env && io.env.CLAUDE_CONFIG_DIR) {
+        keep = true;
+        why = 'other Claude Code profiles may still use it';
+      }
       if (keep) {
-        out(io, '  launcher script kept (a hooks file may still use it): ' + l.file + '. Once nothing uses it, delete that file yourself.');
+        out(io, '  launcher script kept (' + why + '): ' + l.file + '. Once nothing uses it, delete that file yourself.');
         continue;
       }
       launcher.removeLauncher(l.id, { home: io.home, env: io.env });
@@ -318,6 +326,21 @@ async function run(args, io) {
   if (failed) out(io, 'Not everything was removed: ' + failed + (failed === 1 ? ' step' : ' steps') + ' did not finish (see above). Exit code 1.');
   out(io, 'Last step, to remove the program itself: npm uninstall -g zn-gate');
   return failed ? 1 : 0;
+}
+
+
+/* The settings files of the Claude Code profiles in the home folder: ~/.claude and every ~/.claude* folder (for
+   example one per CLAUDE_CONFIG_DIR). A folder that cannot be read lists nothing. */
+function claudeProfileSettings(home) {
+  const out = [];
+  let names = [];
+  try { names = fs.readdirSync(home); } catch (_) { return out; }
+  for (const n of names) {
+    if (!/^\.claude/.test(n)) continue;
+    const f = path.join(home, n, 'settings.json');
+    out.push(f);
+  }
+  return out;
 }
 
 module.exports = { run, plan, printPlan, USAGE };
