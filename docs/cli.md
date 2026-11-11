@@ -254,6 +254,7 @@ zn-gate scan --package <name>[@version]
 
 Looks through prompt templates, markdown, skills and configs for injection traps and secrets. `path` defaults to the current folder. Matched values are never printed.
 
+- `path`: scan takes one path; extra paths are an error (exit `2`). Scan a folder, or run `scan` once per file.
 - `--format`: `text` (default), `json`, or `github` (workflow annotations for CI).
 - `--all` (or `--code`): include source code files.
 - `--include`: more file extensions to scan.
@@ -264,7 +265,7 @@ Looks through prompt templates, markdown, skills and configs for injection traps
   Before the result, the report lists what npm would run or add if you installed the package, read from its `package.json` (a note, not a finding: it does not change the exit code). The line `Install scripts (npm runs these when you install it)` shows its `preinstall`, `install` and `postinstall` scripts with their literal command, or says there are none. A `prepare` script is shown on its own line, because npm runs it only when a package is installed from git, not from the registry. A `binding.gyp` with no `preinstall` or `install` script is flagged, because npm then builds it with `node-gyp`. The `bin` entries are listed as `Commands it adds (bin)`. Read the commands before you run `npm install` or `npx` on the package.
 - `--allow-partial`: exit `0` even when some files or folders were not read. They are still listed in the report. It does not apply when no file was read at all. In the Node version, put the path before the options (`scan ./docs --allow-partial`): `scan --allow-partial ./docs` scans the current folder.
 
-Exit codes: `0` nothing found and everything that matched was read, `1` something was found or the path does not exist, `2` an unknown `--format`, `3` the coverage is incomplete: no file was read, or a file or folder that should have been read was not. Findings win: when something was found the exit code is `1`, whether or not anything was skipped.
+Exit codes: `0` nothing found and everything that matched was read, `1` something was found or the path does not exist, `2` an unknown `--format` or a second path, `3` the coverage is incomplete: no file was read, or a file or folder that should have been read was not. Findings win: when something was found the exit code is `1`, whether or not anything was skipped.
 
 With `--package`, exit `2` also means the package was not scanned: the registry could not be reached, the name or version is unknown, the answer is not JSON or is too large, the checksum does not match, the tarball address or a redirect leads away from the registry's own address (host and port, with the same https rule), or the tarball has a link, a special file or a path that leaves its folder. Nothing is scanned in those cases, and the message says why. A package is never reported as clean when part of it was not read: a file of 2 MiB or larger, a file that could not be unpacked, or a part the agent-config audit did not walk (it stopped at its time budget or entry limit, a folder could not be opened, or an agent file could not be fully checked) gives exit `3` and is named (findings still give `1`). On Windows, file names it cannot create (such as `NUL`, `CON` or a name with a colon) are not unpacked, so they are listed and give exit `3`.
 

@@ -1056,14 +1056,21 @@ function optionProblem(command, args) {
   return null;
 }
 
-// The folder that scan audits: the first argument that is not an option or an option's value; "." when none.
-function scanTargetOf(args) {
+// Every path that scan was given, in order. An option and the value of an option are not paths. A bare "--" ends the
+// options: after it a token that is not a scan option is a path, so "-- -name.md" works. An option after "--" still
+// takes effect, as before: the options loop reads every argument.
+function scanPathsOf(args) {
+  const paths = [];
+  let afterSeparator = false;
   for (let i = 1; i < args.length; i++) {
-    if (args[i] === '--') return args[i + 1] || '.';
-    if (!args[i].startsWith('--')) return args[i];
-    if (COMMAND_OPTIONS.scan.value.includes(args[i])) i++;
+    const tok = args[i];
+    if (!afterSeparator && tok === '--') { afterSeparator = true; continue; }
+    if (COMMAND_OPTIONS.scan.value.includes(tok)) { i++; continue; }
+    if (COMMAND_OPTIONS.scan.flag.includes(tok)) continue;
+    if (!afterSeparator && tok.startsWith('--')) continue;
+    paths.push(tok);
   }
-  return '.';
+  return paths;
 }
 
 // Commands that take no options or a fixed set. An option they do not know is refused with exit 2: it is named and
@@ -1304,8 +1311,15 @@ ${ruleLine(process.env, 60)}\n`);
     return;
   }
   if (command === 'scan') {
-    const targetPath = scanTargetOf(args);
-    await handleScan(targetPath, options);
+    // scan takes one path. A second one used to be ignored, so only the first was read and the run looked complete.
+    const paths = scanPathsOf(args);
+    if (paths.length > 1) {
+      const extra = paths.slice(1).map((p) => p.replace(/[^\x20-\x7e]/g, '?').slice(0, 40)).join(', ');
+      process.stderr.write('zn-gate scan: takes one path; got extra: ' + extra + '. Scan a folder, or run scan once per file.\n');
+      process.exitCode = 2;
+      return;
+    }
+    await handleScan(paths[0] || '.', options);
     return;
   }
 
