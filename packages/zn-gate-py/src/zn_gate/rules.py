@@ -411,7 +411,7 @@ _IDENTITY_PATTERNS: Dict[str, re.Pattern[str]] = {
 # character of the same length (so the {0,N} windows are unchanged) before matching,
 # which gives the same result as Node on raw text; the normalised text, where both
 # letters already read as "i", is still checked by the caller.
-_NO_I_FOLD = str.maketrans({'ı': '', 'İ': ''})
+_NO_I_FOLD = str.maketrans({'\u0131': '\ue000', '\u0130': '\ue000'})
 
 
 def _identity_test(rule_id: str, text: str) -> bool:
