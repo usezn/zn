@@ -46,6 +46,7 @@ const { findPatterns, findPii, hintsIn, SECRET_TYPES, PII_TYPES } = require('./p
 const { collectSources, buildMatcher, MIN_LENGTH } = require('./exact');
 const { find: findCustom } = require('../team/detectors');
 const { CODES } = require('../errors');
+const { cliName } = require('../zn-command');
 const { warnNotice, WARN_REASON } = require('../team/effective');
 /* The vault's resolve-policy answer version this engine understands. */
 const RESOLVE_POLICY = 1;
@@ -240,7 +241,7 @@ function vaultUnavailableOnPurpose(err) {
 function vaultInfoFailure(err) {
   const why = String((err && err.message) || 'unknown error');
   return Object.assign(new Error('zn could not read what your secret vault protects (' + why + '), so it cannot check this against your vault values. ' +
-    'Make sure the vault is running and unlocked (zn unlock), then try again.'), { code: CODES.LOCKED, vaultFailed: true, vaultUnanswered: true, cause: err });
+    'Make sure the vault is running and unlocked (' + cliName('zn') + ' unlock), then try again.'), { code: CODES.LOCKED, vaultFailed: true, vaultUnanswered: true, cause: err });
 }
 
 
