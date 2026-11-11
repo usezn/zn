@@ -69,3 +69,38 @@ test('the gpg programs using their own home folder stay allowed', () => {
   ];
   for (const c of allowed) assert.equal(policy.bashDenial(c, opts), null, 'should be allowed: ' + c);
 });
+
+test('exporting a GnuPG secret key is refused, with or without the GnuPG folder named', () => {
+  const { opts } = fixture();
+  for (const c of [
+    'gpg --export-secret-keys',
+    'gpg --armor --export-secret-keys user@example.com',
+    'gpg --export-secret-subkeys user@example.com > keys.asc',
+    'gpg2 --homedir ~/.gnupg --export-secret-keys user@example.com',
+    'gpg --homedir ~/.gnupg --export-secret-subkeys',
+    'gpg --export-secret-k user@example.com',
+    'gpg --export-se user@example.com',
+    'gpg --export-secret-keys=user@example.com',
+    '/usr/bin/gpg --export-secret-keys',
+    'gpgsm --export-secret-key-p12 0x12345678',
+    'gpg-connect-agent "EXPORT_KEY 0000" /bye',
+  ]) {
+    const d = policy.bashDenial(c, opts);
+    assert.ok(d, c);
+    assert.match(d, /GnuPG secret key/, c);
+  }
+});
+
+test('public key export and the keyring listing stay allowed', () => {
+  const { opts } = fixture();
+  for (const c of [
+    'gpg --export user@example.com',
+    'gpg --armor --export user@example.com',
+    'gpg --export-ssh-key user@example.com',
+    'gpg --homedir ~/.gnupg --list-secret-keys',
+    'gpg --export-options export-minimal --export user@example.com',
+    'echo --export-secret-keys',
+  ]) {
+    assert.equal(policy.bashDenial(c, opts), null, c);
+  }
+});

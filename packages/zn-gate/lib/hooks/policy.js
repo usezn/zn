@@ -29,7 +29,7 @@ const { znCommand, cliName } = require('../zn-command');
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
 const shellVars = require('../shell-vars');
-const POLICY_RULES_VERSION = '2026-11-11.13';
+const POLICY_RULES_VERSION = '2026-11-11.15';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -84,6 +84,20 @@ const CREDENTIAL_RES = [
 const GNUPG_DIR_RE = /(^|\/)(?:\.gnupg|AppData\/Roaming\/gnupg)\/?$/i;
 const GNUPG_DIR_REASON = 'GnuPG keyring folder';
 const GPG_PROGRAMS = new Set(['gpg', 'gpg2', 'gpgconf', 'gpg-agent', 'gpg-connect-agent', 'gpgsm', 'gpgv']);
+// Exporting a secret key prints or writes the private key, whatever folder gpg uses: --export-secret-keys,
+// --export-secret-subkeys and gpgsm's --export-secret-key-p12/-p8/-raw, also abbreviated (gpg takes any unique
+// prefix, and --export-se is the shortest one), and the agent's EXPORT_KEY command.
+const GPG_SECRET_EXPORT_RE = /^--export-se/i;
+const GPG_SECRET_EXPORT_MESSAGE = 'zn: this command would export a GnuPG secret key, which is protected. Ask the user to do it.';
+function gpgSecretExportDenial(words) {
+  for (const w of words) {
+    const prog = programName(w.head || '');
+    if (!GPG_PROGRAMS.has(prog)) continue;
+    if (GPG_SECRET_EXPORT_RE.test(w.text)) return GPG_SECRET_EXPORT_MESSAGE;
+    if (prog === 'gpg-connect-agent' && /(^|[^A-Za-z_])export_key([^A-Za-z_]|$)/i.test(w.text)) return GPG_SECRET_EXPORT_MESSAGE;
+  }
+  return null;
+}
 
 // Credential-file variables. A path given through one of them, or equal to
 // its value, is a credential path. Directory variables cover everything below.
@@ -2556,6 +2570,10 @@ function bashDenialOf(cmd, opts = {}) {
   {
     const findDeny = findDeleteDenial(readings[0], opts);
     if (findDeny) return findDeny;
+  }
+  {
+    const gpgDeny = gpgSecretExportDenial(words);
+    if (gpgDeny) return gpgDeny;
   }
   // Where a relative .env path may be read from once the command has changed directory (cd app && cat .env).
   // Each reading is followed on its own, so a cd counts once.
