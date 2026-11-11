@@ -66,6 +66,18 @@ This is a summary of the sections below. Each command is run in your own termina
 | `npm uninstall -g zn-gate` (last) | The program itself. | The `.zn` folder with the vault and settings. Zn's hooks, if you have not removed them first. |
 | `pip uninstall zn-gate` (after that) | The Python package. | Everything else listed above. |
 
+## What stays after uninstall
+
+`zn-gate uninstall` removes the hooks, the plugin and the launcher scripts, and keeps the rest. These are what stays, and how to remove each one by hand:
+
+- **Compile cache** (`~/.zn/cache/compile/`). Compiled copies of zn-gate's code, which make the hooks start faster. Safe to delete: zn-gate rebuilds it on the next hook call. Remove it with `rm -rf ~/.zn/cache/compile`.
+- **Decision log** (`~/.zn/evidence.jsonl`). What zn-gate allowed or blocked. Kept on purpose. Remove it with `rm ~/.zn/evidence.jsonl` if you do not need that history; it cannot be recovered afterwards.
+- **Empty launcher folder** (`~/.zn/hooks`). The launcher scripts are removed, but the folder stays. Remove it with `rmdir ~/.zn/hooks`, which works only when the folder is empty.
+- **Empty hooks files.** Codex CLI keeps `~/.codex/hooks.json` (or the file in the folder that `CODEX_HOME` names), which holds `{}` when it had nothing else in it. Cursor keeps `~/.cursor/hooks.json` with an empty `"hooks": {}` entry. Google Antigravity deletes its file when nothing else is in it. Empty hooks files do nothing; delete them by hand if you want them gone.
+- **Settings backups** (`*.bak-zn-<time>`, for example `hooks.json.bak-zn-20261111T101010`). A copy of each settings file, written in the same folder before uninstall changed it. Do not copy one back unless you want the hooks back, because it still has them. Remove them by hand when you no longer need them.
+
+To remove everything zn-gate keeps, delete the `.zn` folder in your home folder (or the folder that `ZN_HOME` names, if you set it): `rm -rf ~/.zn`. That deletes the decision log, the statistics, your settings (`config.json`), the `reach` and secret-request logs, and the vault. If the vault was kept, deleting the folder deletes your stored secrets for good. Put your `.env` values back first (see [Your `.env` files and the vault](#4-your-env-files-and-the-vault)), or answer yes to the vault question in `zn-gate uninstall`.
+
 ## By agent
 
 Find your agent in this table and run the command in your own terminal. Add `--project` only if you installed the hooks for one project, and run it from that project's folder. Each hooks command writes a backup of the settings file first.
