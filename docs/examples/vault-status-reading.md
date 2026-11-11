@@ -10,6 +10,12 @@ Run the commands in your own terminal: `unlock` refuses to run under an AI agent
 npx -y zn-gate vault status
 ```
 
+On Windows PowerShell, whose default execution policy refuses the `.ps1` shims of `npx` and `zn`, use the `.cmd` forms (or run the commands in Command Prompt). More in the [Windows checklist](windows-checklist.md):
+
+```powershell
+npx.cmd -y zn-gate vault status
+```
+
 The command prints one `Vault:` line and, except when the vault does not exist yet, one `Location:` line under it.
 
 ## When the vault does not exist yet
@@ -20,7 +26,7 @@ Before the first `unlock`, the command prints a single line:
 Vault: not created yet (run `zn unlock`).
 ```
 
-The first `zn unlock` creates the vault. See [Install and unlock the vault](../secrets.md#1-install-and-unlock-the-vault).
+The commands named in these lines are written for your machine: on Windows they read `zn.cmd unlock` and `zn.cmd lock`, and when `zn` is not on your PATH they name the `npx -y zn-gate@<version>` form instead. The examples on this page show the short `zn` form. The first `zn unlock` creates the vault. See [Install and unlock the vault](../secrets.md#1-install-and-unlock-the-vault).
 
 ## When the vault is locked
 
