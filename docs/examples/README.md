@@ -43,4 +43,5 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [why-blocked-walkthrough.md](why-blocked-walkthrough.md): one blocked command, from what the agent sees to the `zn why` output and the allow step.
 - [zn-check-json-with-jq-in-a-shell-script.md](zn-check-json-with-jq-in-a-shell-script.md): read `zn-gate check --json` with `jq` in a shell script, and stop the script when an agent is not protected.
 - [zn-hooks-install-for-one-agent.md](zn-hooks-install-for-one-agent.md): install the hooks for one coding agent only, then verify them with `check --hooks` and `check`.
+- [zn-scan-package-lockfile-noise.md](zn-scan-package-lockfile-noise.md): what `zn-gate scan` does with lockfiles, the two kinds of result, and the options that really reduce them.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
