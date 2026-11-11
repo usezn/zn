@@ -1050,8 +1050,10 @@ def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[s
         # After a cd to a protected folder, a find with no path starts at ".".
         if known and not paths:
             paths.append(".")
+        # -execdir, -ok and -okdir run the program like -exec does (in the folder of each file, or after a prompt).
         delete = "-delete" in rest or any(
-            w == "-exec" and re.match(r"^(?:rm|shred)\Z", _program_name(rest[j + 1] if j + 1 < len(rest) else ""))
+            re.match(r"^-(?:exec|execdir|ok|okdir)\Z", w)
+            and re.match(r"^(?:rm|shred)\Z", _program_name(rest[j + 1] if j + 1 < len(rest) else ""))
             for j, w in enumerate(rest)
         )
         # From the filesystem root even a filtered delete is refused: a test does not make that safe.
@@ -1061,12 +1063,7 @@ def _check_simple(words: List[str], depth: int, known: Any = None) -> Optional[s
             return "rm_root_home"
         # -files0-from FILE (or - for stdin) loads the starting paths from a file the command text does not show, so a delete
         # over them cannot be checked: refuse it (fail closed). It is never read. Non-deleting uses (-print) stay allowed.
-        delete_any = "-delete" in rest or any(
-            re.match(r"^-(?:exec|execdir|ok|okdir)\Z", w)
-            and re.match(r"^(?:rm|shred)\Z", _program_name(rest[j + 1] if j + 1 < len(rest) else ""))
-            for j, w in enumerate(rest)
-        )
-        if delete_any and "-files0-from" in rest:
+        if delete and "-files0-from" in rest:
             return "rm_root_home"
     if head in ("chmod", "chown", "chgrp"):
         if any(re.match(r"^-[A-Za-z]*R[A-Za-z]*\Z", w) or w == "--recursive" for w in rest):

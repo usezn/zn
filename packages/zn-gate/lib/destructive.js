@@ -583,7 +583,8 @@ function checkSimple(words, depth, known) {
     for (const w of rest.slice(first)) { if (w.startsWith('-') || w === '(' || w === '!') break; paths.push(w); }
     // After a cd to a protected folder, a find with no path starts at ".".
     if (known && !paths.length) paths.push('.');
-    const del = rest.includes('-delete') || rest.some((w, i) => w === '-exec' && /^(?:rm|shred)$/.test(programName(rest[i + 1] || '')));
+    // -execdir, -ok and -okdir run the program like -exec does (in the folder of each file, or after a prompt).
+    const del = rest.includes('-delete') || rest.some((w, i) => /^-(?:exec|execdir|ok|okdir)$/.test(w) && /^(?:rm|shred)$/.test(programName(rest[i + 1] || '')));
     // With a test (-name, -type, -mtime ...) find removes only some files; with none it removes everything below the path.
     // From the filesystem root even a filtered delete is refused: a test does not make that safe.
     const filtered = rest.some((w) => FIND_TESTS.test(w));
@@ -591,8 +592,7 @@ function checkSimple(words, depth, known) {
     if ((del && (!filtered || fromRoot) && paths.some((w) => dangerousPath(fromCwd(known, w)))) && on('rm_root_home')) return 'rm_root_home';
     // -files0-from FILE (or - for stdin) loads the starting paths from a file the command text does not show, so a delete
     // over them cannot be checked: refuse it (fail closed). It is never read. Non-deleting uses (-print) stay allowed.
-    const delAny = rest.includes('-delete') || rest.some((w, i) => /^-(?:exec|execdir|ok|okdir)$/.test(w) && /^(?:rm|shred)$/.test(programName(rest[i + 1] || '')));
-    if ((delAny && rest.includes('-files0-from')) && on('rm_root_home')) return 'rm_root_home';
+    if ((del && rest.includes('-files0-from')) && on('rm_root_home')) return 'rm_root_home';
   }
   if (head === 'chmod' || head === 'chown' || head === 'chgrp') {
     if (rest.some((w) => /^-[A-Za-z]*R[A-Za-z]*$/.test(w) || w === '--recursive')) {

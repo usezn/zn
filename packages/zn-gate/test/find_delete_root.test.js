@@ -56,3 +56,16 @@ test('find with global options before the starting path is judged like find with
     assert.equal(policy.bashDenial(c, opts), null, c);
   }
 });
+
+test('find -execdir, -ok and -okdir with rm are judged like -exec', () => {
+  for (const c of ['find / -name x -execdir rm {} +', 'find / -name x -execdir rm {} ;', 'find / -type f -ok rm {} ;',
+    'find / -name x -okdir shred {} ;', 'find /etc -execdir rm {} +', 'find -P / -name x -execdir /bin/rm {} +']) {
+    assert.equal(checkCommand(c).verdict, 'block', c);
+    assert.equal(checkCommand(c).rule, 'destructive:rm_root_home', c);
+    assert.ok(policy.bashDenial(c, opts), c);
+  }
+  for (const c of ['find ./tmp -execdir rm {} +', "find . -name '*.log' -okdir rm {} ;", 'find / -name x -execdir ls {} +']) {
+    assert.equal(checkCommand(c).verdict, 'allow', c);
+    assert.equal(policy.bashDenial(c, opts), null, c);
+  }
+});
