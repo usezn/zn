@@ -226,3 +226,19 @@ class UnreadableDirTests(unittest.TestCase):
         finally:
             os.chmod(locked, 0o755)
             shutil.rmtree(d, ignore_errors=True)
+
+
+class GitDirScanTests(unittest.TestCase):
+    def test_a_key_outside_git_is_reported_and_one_inside_git_is_not(self):
+        key = "AKIA" + "IOSFODNN7EXAMPLE"  # AWS documentation example key, built at run time
+        d = _tree({"notes.txt": "aws_key = " + key + "\n",
+                   ".git/notes.txt": "aws_key = " + key + "\n"})
+        try:
+            data = json.loads(_run(d))
+            self.assertEqual(data["total_files"], 1)
+            files = [t["file"].replace("\\", "/") for t in data["threats"]]
+            self.assertTrue(any(f.endswith("/notes.txt") and "/.git/" not in f for f in files), files)
+            self.assertFalse(any("/.git/" in f for f in files), files)
+            self.assertEqual(len(files), 1, files)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
