@@ -78,22 +78,28 @@ the rule lists. A host the rule lists but the local settings do not allow is
 not usable yet: it is offered to the developer for approval on their machine,
 once per organization, secret and host, and only for the agents the rule
 names. A host the rule does not list stays blocked, and it cannot be
-approved. The `agents`
-list only decides who can be offered a new host: the `secrets` MCP server
+approved. Two different things are at work here. The rule itself restricts
+the secret for every agent: a host it does not list is blocked for all of
+them, whatever its `agents` list says. The `agents` list only decides for
+which agents a listed host is offered for approval: the `secrets` MCP server
 started from the configuration zn-gate writes for that agent
 (`zn hooks install <agent>` passes `--agent`), or any agent for `*`. Rules
 apply in order, and a host list from an earlier rule is never widened by a
 later one.
 
-What the audit record says: nothing is recorded as a warning. team.md does
-not name the decision recorded for a use that goes ahead.
+What the audit record says: a use that goes ahead through
+`secrets_http_request` is recorded with the decision `allow` and the reason
+`http`, the purpose of the request; the other two ways to use a secret
+record the reasons `run` and `render`. It is not recorded as a warning.
 
 ## The rules behind these examples
 
 - A rule cannot have both `deny` and `warn`; a policy that has one is
   refused like any other invalid policy.
 - Every rule that matches a secret restricts it for all agents, whatever
-  its `agents` list says.
+  its `agents` list says. The `agents` list does not narrow that
+  restriction: it only decides for which agents a host the rule lists is
+  offered for approval (Example 3).
 - The rule's other fields (`allowHosts`, `allowCommands`, `mode`,
   `injectAt`) still apply. Only `proxy` is applied from a rule's `mode`;
   other modes in a rule are ignored.
