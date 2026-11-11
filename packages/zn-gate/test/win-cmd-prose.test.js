@@ -68,7 +68,7 @@ test('init on win32: manual steps use zn.cmd, the sentences around them do not c
   assert.match(win, /^ {2}zn\.cmd hooks install codex$/m);
   assert.match(win, /Then check that it works: `npx\.cmd -y zn-gate check`/);
   assert.match(win, /zn-gate init: set up zn for the coding agents on this machine/);
-  assert.match(win, /This is not an interactive terminal, so zn only prints the steps\. Nothing was changed\./);
+  assert.match(win, /This is not an interactive terminal, so zn only prints the steps\. No agent settings were changed\./);
   assert.doesNotMatch(win, /zn-gate\.cmd init: set up/);
   const posix = await runGuide(t, 'linux');
   assert.match(posix, /^ {2}zn hooks install codex$/m);

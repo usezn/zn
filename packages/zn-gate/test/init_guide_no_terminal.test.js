@@ -61,7 +61,7 @@ for (const id of Object.keys(AGENTS)) {
     const { code, text, ran } = await run(m);
     assert.equal(code, 1);
     assert.equal(ran, 0);
-    assert.match(text, /This is not an interactive terminal, so zn only prints the steps\. Nothing was changed\./);
+    assert.match(text, /This is not an interactive terminal, so zn only prints the steps\. No agent settings were changed\./);
     assert.match(text, /Run them in your own terminal:/);
     assert.match(text, winCmdRe(/Then check that it works: `npx -y zn-gate check`/));
     if (id === 'claude-code') {

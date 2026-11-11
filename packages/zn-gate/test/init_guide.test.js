@@ -132,7 +132,7 @@ test('guide: without a terminal it only prints the steps and runs nothing', asyn
   const code = await guide({ ...m, temporary: false, stdin: { isTTY: false }, write: out.write, run: () => { ran++; return true; }, confirm: async () => true });
   assert.equal(ran, 0);
   assert.equal(code, 1);
-  assert.match(out.text(), /only prints the steps\. Nothing was changed\./);
+  assert.match(out.text(), /only prints the steps\. No agent settings were changed\./);
   assert.match(out.text(), winCmdRe(/zn hooks install codex/));
   assert.match(out.text(), winCmdRe(/npx -y zn-gate check/));
   assert.match(out.text(), winCmdRe(/zn-gate init --wrap-mcp/));

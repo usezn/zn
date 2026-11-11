@@ -105,10 +105,10 @@ zn hooks: Not allowed: zn hooks install needs an interactive terminal. Open a te
 zn env: Not allowed: zn env shadow needs an interactive terminal. Open a terminal window yourself and run it there.
 zn-gate connect needs an interactive terminal. Open a terminal window yourself and run it there.
 <command> must be run by you in your own terminal, not by an AI agent (detected CLAUDECODE).
-An AI agent is running this, so zn only prints the steps: installing hooks is your decision. Nothing was changed.
+An AI agent is running this, so zn only prints the steps: installing hooks is your decision. No agent settings were changed.
 ```
 
-**What it means:** some steps change your settings or touch your secrets, so zn only runs them when a person types them. It refuses when your AI agent runs them, or when a script runs them with nobody at the keyboard. This is on purpose. Nothing was changed.
+**What it means:** some steps change your settings or touch your secrets, so zn only runs them when a person types them. It refuses when your AI agent runs them, or when a script runs them with nobody at the keyboard. This is on purpose. No agent settings were changed.
 
 **What to do:** open a terminal window yourself (not the agent's window) and run the same command there. If you only see `started from ...`, zn thinks an agent is above your terminal in the process chain. Open a fresh terminal window from your system menu and try again. For `init`, the steps printed under the message are the commands to run.
 

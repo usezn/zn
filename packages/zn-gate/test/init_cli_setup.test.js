@@ -67,7 +67,7 @@ for (const [agent, [dir, steps]] of Object.entries(AGENT_DIRS)) {
     const r = await runGuide(home, cwd);
     assert.equal(r.code, 1);
     assert.equal(r.ran, 0);
-    assert.match(r.text, /This is not an interactive terminal, so zn only prints the steps\. Nothing was changed\./);
+    assert.match(r.text, /This is not an interactive terminal, so zn only prints the steps\. No agent settings were changed\./);
     assert.match(r.text, steps);
     assert.deepEqual(snapshot(home), before);
     assert.deepEqual(fs.readdirSync(cwd), []);

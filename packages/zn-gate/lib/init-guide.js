@@ -333,7 +333,7 @@ async function guide(opts = {}) {
   if (!interactive) {
     w((agent
       ? 'An AI agent is running this, so zn only prints the steps: installing hooks is your decision.'
-      : 'This is not an interactive terminal, so zn only prints the steps.') + ' Nothing was changed.\n');
+      : 'This is not an interactive terminal, so zn only prints the steps.') + ' No agent settings were changed.\n');
     w('Run them in your own terminal:\n\n');
     for (const s of allSteps) w(`  ${s.manual}\n`);
     w('\nThen check that it works: `npx -y zn-gate check`\n');
