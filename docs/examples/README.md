@@ -54,6 +54,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [zn-init-then-uninstall-clean-slate-test.md](zn-init-then-uninstall-clean-slate-test.md): set zn-gate up in a throwaway home folder, remove it, and compare the file lists to see exactly what `uninstall` removes and what it leaves.
 - [zn-policy-everyday-allowed-commands.md](zn-policy-everyday-allowed-commands.md): check 19 everyday git, npm and docker commands against the command check without running them.
 - [zn-policy-reading-a-wrapped-command-block.md](zn-policy-reading-a-wrapped-command-block.md): how a command is judged inside a wrapper such as bash -c, sudo or env, with the real verdicts, the denial text and what is not seen.
+- [zn-reach-reading-severity-levels.md](zn-reach-reading-severity-levels.md): what the `HIGH`, `MEDIUM`, `LOW` and `INFO` levels of `zn-gate reach` mean, with real output on a fake project.
 - [zn-scan-reading-a-false-positive.md](zn-scan-reading-a-false-positive.md): judge a scan finding that is not a real secret, and the ways to skip it that the scan really supports.
 - [zn-stats-before-and-after-hooks-reinstall.md](zn-stats-before-and-after-hooks-reinstall.md): what `zn stats` shows before and after you reinstall the hooks: the counts are kept, and what does change them.
 - [zn-stats-reading-top-blocked-rules.md](zn-stats-reading-top-blocked-rules.md): read the `Top rules` block of `zn-gate stats` with real output, what its counts are and are not, and how to trace a rule that shows up too often with `evidence` and `why`.
