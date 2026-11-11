@@ -24,11 +24,12 @@ const path = require('path');
 const dotenv = require('../broker/dotenv');
 const markers = require('../broker/markers');
 const { targetsOf } = require('../broker/files');
-const { znCommand } = require('../zn-command');
+const { znCommand, cliName } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-07.1';
+const shellVars = require('../shell-vars');
+const POLICY_RULES_VERSION = '2026-11-11.1';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -498,12 +499,13 @@ function expandBraces(s, limit = 64, depth = 0) {
   if (!m) return [s];
   if (depth >= BRACE_MAX_DEPTH) return null;
   const out = [];
+  let seen = 0; // every alternative counts towards the limit, repeated ones too
   for (const alt of m[1].split(',')) {
     const rest = expandBraces(s.slice(0, m.index) + alt + s.slice(m.index + m[0].length), limit, depth + 1);
     if (rest === null) return null;
     for (const x of rest) {
-      out.push(x);
-      if (out.length > limit) return null;
+      if (++seen > limit) return null;
+      if (!out.includes(x)) out.push(x); // the outer list repeats its other alternatives for each inner one
     }
   }
   return out;
@@ -793,7 +795,7 @@ function readDenial(p, opts = {}) {
     let text = head === NOT_A_FILE ? null : Buffer.from(head, 'latin1').toString('utf8');
     if (text !== null && Buffer.byteLength(head, 'latin1') >= DOTENV_SCAN_BYTES) text = null;
     if (text !== null && dotenv.isShadowed(text)) return null;
-    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets. Ask the user to run `' +
+    return 'zn: ' + path.basename(abs) + ' holds plain-text secrets, and secret values never go to the model (rule: secret-file:dotenv). Ask the user to run `' +
       znCommand('env shadow ' + path.basename(abs)) + '` in their terminal: it moves the values to the local vault and leaves __ZN_<NAME>__ markers you can read and use.';
   }
   if (c.kind === 'zn_state') return vaultMessage(opts);
@@ -886,7 +888,8 @@ function credentialDenial(p, c) {
       'Name the files you need instead (for example `cat notes.md` instead of `cat *`), or ask the user to run the command in their own terminal.';
   }
   return 'zn: ' + p + ' was not read because zn treats it as holding secrets (' + c.reason + '), and secret values never go to the model. ' +
-    'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then run the command with `' + znCommand('run --secrets NAME -- <command>') + '` so the program gets it as an environment variable.';
+    'If a command needs a value, ask the user to run `' + znCommand('secret set NAME') + '`, then run the command with `' + znCommand('run --secrets NAME -- <command>') + '` so the program gets it as an environment variable. ' +
+    'Agents may not read the file itself (rule: secret-file:credential).';
 }
 
 function agentConfigDenial(p, c) {
@@ -1607,7 +1610,7 @@ function hasNetworkSignals(cmd) {
 }
 
 // The program is zn, zn-gate (also with a version: npx -y zn-gate@1.6.0, pnpm dlx zn-gate@latest) or the bin file.
-const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|uninstall|vault\s+(?:reset|purge)|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve)\b/i;
+const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|uninstall|vault\s+(?:reset|purge)|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve|audit\b[^\n;&|]{0,512}?[ \t]--approve)\b/i;
 
 // `npm exec` (and `npm x`) keeps the options after the package for itself unless a `--` comes first, so
 // `npm exec zn-gate init --dry-run` runs the guided init: the options do not count there. Checked per simple
@@ -1625,10 +1628,50 @@ function npmExecInit(text) {
   return false;
 }
 
+/**
+ * The command as the shell reads its words: $'...' decoded, quotes and backslashes taken out, a backslash-newline joined (so
+ * `zn audit --appr''ove`, `zn "audit" --approve` and `zn a\udit --approve` read as the command they run). Only for recognising
+ * zn's own commands; an unbalanced quote leaves the rest as it was.
+ */
+function dequoteShell(text) {
+  const src = /\$['"]/.test(text) ? decodeAnsiC(text) : text;
+  let out = '';
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === '\\') {
+      const nx = src[i + 1];
+      if (nx === undefined) break;
+      if (nx === '\n') { i++; continue; }
+      if (nx === '\r' && src[i + 2] === '\n') { i += 2; continue; }
+      out += nx;
+      i++;
+    } else if (c === "'") {
+      const j = src.indexOf("'", i + 1);
+      if (j < 0) { out += src.slice(i + 1); break; }
+      out += src.slice(i + 1, j);
+      i = j;
+    } else if (c === '"') {
+      let j = i + 1;
+      for (; j < src.length && src[j] !== '"'; j++) {
+        if (src[j] === '\\' && '"\\$`'.includes(src[j + 1])) j++;
+        out += src[j];
+      }
+      i = j;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+// `xargs zn audit` hands zn the --approve it reads from its input, which no text of the command shows.
+const XARGS_AUDIT_RE = /(?:^|[\s;&|(`$'"\\/])xargs\b[^\n;&|]*[\s\/\\'"](?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js)(?:\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?audit\b/i;
 function adminCommand(cmd) {
   const text = String(cmd || '');
-  const m = ZN_ADMIN_RE.exec(text);
-  if (m) return m[4].replace(/\s+/g, ' ');
+  for (const t of text.length <= 100 * 1024 ? [text, dequoteShell(text)] : [text]) {
+    const m = ZN_ADMIN_RE.exec(t);
+    if (m) return /^audit\b/i.test(m[4]) ? 'audit --approve' : m[4].replace(/\s+/g, ' ');
+    if (XARGS_AUDIT_RE.test(t)) return 'audit --approve';
+  }
   return npmExecInit(text) ? 'init' : null;
 }
 
@@ -1656,7 +1699,8 @@ function vaultMessage(opts = {}) {
     'for a web request, use the secrets_http_request tool with __ZN_NAME__ where the value goes; to add a secret, ask the user to run `' +
     znCommand('secret set NAME', opts) + '` in their own terminal.';
 }
-const TOO_LONG_MESSAGE = 'zn: this command is too long for zn to check (over 100 KB), so it was blocked. Next step: tell the user; do not resend it in parts.';
+const TOO_LONG_MESSAGE = 'zn: this command is too long for zn to check (over 100 KB), so it was blocked (rule: size:command-too-long). Unchecked, it could read a secret or a protected file. ' +
+  'Next step: tell the user; do not resend it in parts. Only the user can run it, in their own terminal.';
 // The agent runs a command unchecked when the hook times out (15 s in Claude Code), so checking a command has its
 // own limits, well below that: a time budget and a number of looks on disk. Past either, the command is refused.
 const CHECK_BUDGET_MS = 3000;
@@ -2980,8 +3024,17 @@ function wildSegmentProtected(seg) {
 function wildWordProtected(text) {
   const parts = text.indexOf('=') >= 0 ? [text, text.slice(text.indexOf('=') + 1)] : [text];
   for (const part of parts) {
+    let afterMark = false;
     for (const raw of part.split(/[\\/]/)) {
-      if (!WILD_ANY_RE.test(raw)) continue;
+      if (!WILD_ANY_RE.test(raw)) {
+        // A glob in a later segment of a word that carries an expansion still reaches the file: `$PWD/.e*`, `${DIR}/.e*`.
+        if (afterMark && /[*?[]/.test(raw)) {
+          const later = raw.toLowerCase().replace(/^["']+|["']+$/g, '');
+          if (!WILD_SAFE_END_RE.test(later) && wildPieceGlobMatches(later)) return true;
+        }
+        continue;
+      }
+      afterMark = true;
       const seg = raw.toLowerCase().replace(/^["']+|["']+$/g, '');
       if (seg.length > WILD_SEGMENT_MAX) return true;   // too long to follow: refused, not checked in part
       if (wildSegmentProtected(seg)) return true;
@@ -3070,7 +3123,7 @@ function skipWrapper(words, k, name) {
   let sawC = false;
   k++;
   while (k < words.length) {
-    const t = words[k].text;
+    const t = typeof words[k] === 'string' ? words[k] : words[k].text;
     if (t === '--') { k++; break; }
     if (t.startsWith('--') && t.length > 2) { k += !t.includes('=') && WRAPPER_LONG_VALUE.has(t) ? 2 : 1; continue; }
     if (t.startsWith('-') && t.length > 1) {
@@ -3311,12 +3364,16 @@ function adminDenial(admin, opts = {}, cmd = '') {
     arg = /^[\w.-]{1,128}$/.test(base) && !/^\.+$/.test(base) ? base : '.env';
   }
   const full = arg ? admin + ' ' + arg : admin;
+  if (/^audit/i.test(admin)) {
+    return 'zn blocked this: `zn audit --approve` records the current MCP servers, hooks, permissions and install scripts of this project as the ones you accept, ' +
+      'so approving them is the user\'s decision and an agent may not run it. ' + run('audit --approve');
+  }
   if (/pins/i.test(admin)) {
-    return 'zn blocked this: approving changed MCP tools is the user\'s decision, so an agent may not run `zn-gate pins approve`. ' + run('pins approve');
+    return 'zn blocked this: approving changed MCP tools is the user\'s decision, so an agent may not run `' + cliName('zn-gate') + ' pins approve`. ' + run('pins approve');
   }
   if (/^init$/i.test(admin)) {
-    return 'zn blocked this: `zn-gate init` turns zn\'s protection on for coding agents, which is the user\'s decision. ' +
-      'Next step: ask the user to run it in their own terminal (`npx -y zn-gate init`).';
+    return 'zn blocked this: `' + cliName('zn-gate') + ' init` turns zn\'s protection on for coding agents, which is the user\'s decision. ' +
+      'Next step: ask the user to run it in their own terminal (`' + cliName('npx') + ' -y zn-gate init`).';
   }
   if (/^hooks/i.test(admin)) {
     return 'zn blocked this: `' + znCommand(admin, opts) + '` turns zn\'s protection on or off for a coding agent, which is the user\'s decision. ' + run(full);
@@ -3362,8 +3419,9 @@ const EGRESS_URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 const EGRESS_URL_LIKE_RE = /^(?:localhost|\$|\[|[\w${}-]+(?:\.[\w${}-]+)+|[\w.${}-]+:\d+)(?:[:/?#]|$)/i;
 const EGRESS_URLS_IN_TEXT_RE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s'"`)}\]>]+/gi;
 const EGRESS_PROGRAMS = new Set(['curl', 'wget']);
-const EGRESS_WRAPPERS = new Set(['sudo', 'doas', 'env', 'command', 'exec', 'nohup', 'time', 'nice', 'timeout', 'stdbuf', 'xargs', 'builtin',
-  'ionice', 'setsid', 'then', 'do', 'else', '!', '{']);
+// Words that start a command without being one. The wrappers themselves are one list, GIT_WRAPPERS, that the
+// download-and-run rule (destructive.js) shares.
+const EGRESS_KEYWORDS = new Set(['then', 'do', 'else', '!', '{']);
 const EGRESS_INTERPRETER_RE = /^(?:python[0-9.]*|py|node|nodejs|deno|bun)$/;
 const EGRESS_CODE_NET_RE = /\b(?:requests|httpx|urllib[0-9]?|urlopen|aiohttp|pycurl|http\.client|https?\.(?:get|request)|axios|undici|node-fetch|XMLHttpRequest|WebClient|socket)\b|\bfetch\s*\(|\bhttps?:\/\//i;
 // Options that take a value, by tool. The kind says where the value goes; skip lists the others, so their value is not read as a URL.
@@ -3388,6 +3446,51 @@ const WGET_OPTIONS = {
     'default-page', 'method', 'config']),
   shortSkip: new Set('OPoaiBtTwQlARDIXe'.split('')),
 };
+
+/* The program a command word names, read as a shell would: 'curl', 'wget', an interpreter name, or '' when it is none
+   of them. A glob that can only mean curl or wget (/usr/bin/cu?l, c*l) counts. */
+function egressProgramOf(name) {
+  if (EGRESS_PROGRAMS.has(name) || EGRESS_INTERPRETER_RE.test(name)) return name;
+  if (name.length > 64 || !/[?*[]/.test(name) || name.replace(/[?*[\]]/g, '').length < 2) return '';
+  const g = globRegExp(name);
+  for (const p of EGRESS_PROGRAMS) if (g.test(p)) return p;
+  return '';
+}
+
+// $(echo curl) and `echo curl` name a program as plain text: the same text without the substitution.
+const EGRESS_ECHO_SUBST_RE = /\$\([ \t]{0,16}(?:echo|printf)[ \t]{1,16}(?:-[a-zA-Z]{1,3}[ \t]{1,16})?(?:(?:'%s'|"%s"|%s)[ \t]{1,16})?['"]?([A-Za-z0-9_.\/-]{1,64})['"]?[ \t]{0,16}\)|`[ \t]{0,16}(?:echo|printf)[ \t]{1,16}(?:-[a-zA-Z]{1,3}[ \t]{1,16})?(?:(?:'%s'|"%s"|%s)[ \t]{1,16})?['"]?([A-Za-z0-9_.\/-]{1,64})['"]?[ \t]{0,16}`/g;
+
+/* The bodies of the $(...) and `...` substitutions of a text, as command text (single-quoted text is data).
+   At most EGRESS_SUBST_MAX bodies; one pass. */
+const EGRESS_SUBST_MAX = 64;
+function egressSubstitutions(text) {
+  const bodies = [];
+  let quote = '';
+  for (let i = 0; i < text.length && bodies.length < EGRESS_SUBST_MAX; i++) {
+    const ch = text[i];
+    if (quote === "'") { if (ch === "'") quote = ''; continue; }
+    if (ch === '\\') { i++; continue; }
+    if (ch === '"') { quote = quote === '"' ? '' : '"'; continue; }
+    if (ch === "'" && quote === '') { quote = "'"; continue; }
+    if (ch === '`') {
+      let j = i + 1;
+      for (; j < text.length && text[j] !== '`'; j++) if (text[j] === '\\') j++;
+      bodies.push(text.slice(i + 1, j));
+      i = j;
+    } else if (ch === '$' && text[i + 1] === '(' && text[i + 2] !== '(') {
+      let depth = 1;
+      let j = i + 2;
+      for (; j < text.length && depth > 0; j++) {
+        if (text[j] === '(') depth++;
+        else if (text[j] === ')') depth--;
+      }
+      bodies.push(text.slice(i + 2, depth === 0 ? j - 1 : j));
+      // The nested substitutions are read when the body is read as a command: do not walk it again here.
+      i = j - 1;
+    }
+  }
+  return bodies;
+}
 
 /** Text with the values read from the environment, and command substitutions, removed. */
 function egressStripEnv(text) {
@@ -3494,39 +3597,83 @@ function egressInterpreter(words, k, text, found) {
   found.push({ urls: code.match(EGRESS_URLS_IN_TEXT_RE) || [], parts: [{ where: 'code', text: code }] });
 }
 
-function egressCollect(raw, opts, depth) {
-  const found = [];
-  const text = stripHeredocs(raw, { until: Date.now() + CHECK_BUDGET_MS, disk: 0 });
+// One reading of the command text: the requests it makes go to `found`. `raw` is the command as written (for heredocs).
+function egressCollectText(raw, text, opts, depth, found) {
+  const vars = shellVars.newScope();
   egressPowerShell(text, opts.powershell === true, found);
   let rest = text;
   let guard = 0;
   while (rest.length && guard++ < SIMPLE_COMMANDS_MAX) {
     const scan = scanFirstCommand(rest, false);
-    const words = scan.words;
+    let op = scan.operator;
+    if ((op === '&' || op === '|') && rest[scan.end + 1] === op) op += op;
+    // Literal variables assigned earlier on the line are filled in (X=curl; $X ...).
+    let words = scan.words;
+    const filled = shellVars.applyWords(vars, words.map((w) => w.text), op);
+    if (filled.length !== words.length || filled.some((t, i) => t !== words[i].text)) words = filled.map((t) => ({ text: t }));
     let k = -1;
-    for (let i = 0; i < words.length; i++) {
+    let prog = '';
+    for (let i = 0; i < words.length;) {
       const t = words[i].text;
-      const name = programName(t);
-      if (EGRESS_PROGRAMS.has(name) || EGRESS_INTERPRETER_RE.test(name)) { k = i; break; }
-      if (ASSIGNMENT_RE.test(t) || EGRESS_WRAPPERS.has(name) || t.startsWith('-') || /^\d+[smhd]?$/.test(t)) continue;
+      let name = programName(t);
+      // {curl,-H,x,URL} is the words curl -H x URL.
+      if (t.indexOf('{') >= 0 && t.indexOf(',') > 0) {
+        const alts = expandBraces(t);
+        if (alts && alts.length > 1 && egressProgramOf(programName(alts[0]))) {
+          words = words.slice(0, i).concat(alts.map((a) => ({ text: a })), words.slice(i + 1));
+          name = programName(alts[0]);
+        }
+      }
+      prog = egressProgramOf(name);
+      if (prog) { k = i; break; }
+      if (ASSIGNMENT_RE.test(t) || EGRESS_KEYWORDS.has(name)) { i++; continue; }
+      if (Object.prototype.hasOwnProperty.call(GIT_WRAPPERS, name)) { i = skipWrapper(words, i, name); continue; }
       break;
     }
     if (k >= 0) {
-      const name = programName(words[k].text);
-      if (EGRESS_INTERPRETER_RE.test(name)) egressInterpreter(words, k, raw, found);
+      if (EGRESS_INTERPRETER_RE.test(prog)) egressInterpreter(words, k, raw, found);
       // In the PowerShell tool, curl and wget are Invoke-WebRequest, read above; curl.exe is the real program.
       else if (!(opts.powershell === true && !/\.exe$/i.test(words[k].text))) {
-        const r = egressOptions(words.slice(k + 1).map((w) => w.text), name === 'curl' ? CURL_OPTIONS : WGET_OPTIONS);
+        const r = egressOptions(words.slice(k + 1).map((w) => w.text), prog === 'curl' ? CURL_OPTIONS : WGET_OPTIONS);
         if (r.parts.length) found.push(r);
       }
     }
     rest = rest.slice(scan.end + 1);
   }
+  if (depth >= SHELL_CODE_DEPTH) return;
   // sh -c "curl ...": the code of a shell inside the command is a command of its own.
-  if (depth < SHELL_CODE_DEPTH && /\b(?:sh|bash|zsh|dash|ksh|ash|eval|su|pwsh|powershell|cmd|watch|flock|xargs|busybox)\b/.test(text)) {
+  if (/\b(?:sh|bash|zsh|dash|ksh|ash|eval|su|pwsh|powershell|cmd|watch|flock|xargs|busybox)\b/.test(text)) {
     for (const code of shellCodesOf(allWords(text, false))) found.push(...egressCollect(code, opts, depth + 1));
   }
-  return found;
+  // echo "$(curl ...)" and R=`curl ...`: a command substitution runs its text as commands, quoted or not.
+  if (text.indexOf('$(') >= 0 || text.indexOf('`') >= 0) {
+    for (const body of egressSubstitutions(text)) found.push(...egressCollect(body, opts, depth + 1));
+  }
+}
+
+// One shared amount of work for the whole egressCollect tree of a command (calls and text read): past it the
+// answer fails closed, a request to nowhere that is always reported.
+const EGRESS_WORK_MAX = 2000000;
+function egressCollect(raw, opts, depth) {
+  const found = [];
+  if (!opts._work) opts._work = { left: EGRESS_WORK_MAX, over: false };
+  const work = opts._work;
+  work.left -= raw.length + 64;
+  if (work.left < 0) {
+    if (!work.over) { work.over = true; found.push({ urls: [], parts: [{ where: 'code', text: 'a command too nested for zn to check' }] }); }
+    return found;
+  }
+  const text = stripHeredocs(raw, { until: Date.now() + CHECK_BUDGET_MS, disk: 0 });
+  // The text as written, with $'curl' read as bash does, and with $(echo curl) read as the plain word.
+  const readings = new Set([text]);
+  const decoded = text.indexOf("$'") >= 0 ? decodeAnsiC(text) : text;
+  readings.add(decoded);
+  if (decoded.indexOf('$(') >= 0 || decoded.indexOf('`') >= 0) readings.add(decoded.replace(EGRESS_ECHO_SUBST_RE, (m, a, b) => a || b));
+  for (const t of readings) egressCollectText(raw, t, opts, depth, found);
+  if (found.length < 2) return found;
+  // The readings and the substitution bodies overlap: one request is reported once.
+  const seen = new Set();
+  return found.filter((r) => { const key = JSON.stringify([r.urls, r.parts]); if (seen.has(key)) return false; seen.add(key); return true; });
 }
 
 function egressResult(found, allowOrFn) {
@@ -3552,8 +3699,8 @@ function egressResult(found, allowOrFn) {
 function egressParts(cmd, opts = {}) {
   const raw = String(cmd || '');
   if (!raw || raw.length > SHELL_SCAN_CAP) return [];
-  if (!/curl|wget|invoke-|iwr|irm|python|py\b|node|deno|bun|https?:\/\//i.test(raw)) return [];
-  return egressResult(egressCollect(raw, opts, 0), opts.allow);
+  if (!/curl|wget|invoke-|iwr|irm|python|py\b|node|deno|bun|https?:\/\/|\$|`|[?*{]/i.test(raw)) return [];
+  return egressResult(egressCollect(raw, Object.assign({}, opts), 0), opts.allow);
 }
 
 /*
@@ -3686,6 +3833,8 @@ function egressLabel(part, start) {
 
 module.exports = {
   POLICY_RULES_VERSION,
+  WRAPPER_NAMES: new Set(Object.keys(GIT_WRAPPERS)),
+  skipWrapper,
   classifyPath,
   classifyWord,
   globClass,
@@ -3696,6 +3845,7 @@ module.exports = {
   expandBraces,
   readDenial,
   writeDenial,
+  adminDenial,
   instructionWriteNotice,
   INSTRUCTION_FILE_NAMES,
   scanFirstCommand,

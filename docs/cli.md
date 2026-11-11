@@ -97,6 +97,39 @@ The table below gives the full description of each setting.
 
 Emoji and box-drawing characters are used only when the output goes to a terminal and neither `NO_COLOR`, `TERM=dumb` nor `CI` is set. Everywhere else the CLI prints a short ASCII marker in their place: `[ok]` for a check mark, `[!]` for a warning, `[x]` for a failure, `[+]` for the shield, and `->` for an arrow. Rules are drawn with dashes. So output sent to a pipe or a file is plain printable ASCII, apart from text that comes from your own files or input. The status words (`ALLOWED`, `BLOCKED`, `FAILED`, ...) carry the meaning in every mode.
 
+### All environment variables
+
+Every `ZN_` variable you can set, with its default and the package that reads it. "Both" means the npm and the Python package read it the same way. Not listed: variables that zn sets for its own helper processes (for example `ZN_HOOK_ACK` and `ZN_HOOK_VAULT_WAIT_MS`), the names passed to the Windows helper scripts, and the test-only switches. You never need to set those.
+
+| Variable | Default | What it does | Package |
+|---|---|---|---|
+| `ZN_HOME` | `~/.zn` | Folder for zn's own files: stats, the evidence log, pins and hook launchers. | Both |
+| `ZN_CLOUD=1` | Off | Turns the optional cloud check on. | Both |
+| `ZN_API_KEY` | None | API key for the cloud check. Used only when the cloud check is on. | Both |
+| `ZN_LOCAL_ONLY=true` | Off | Never uses the cloud, even when `ZN_CLOUD=1` is set. | Both |
+| `ZN_API_URL` | The address of `ZN_STAGE` | Uses another cloud address. Ignored for a key saved by `zn-gate connect`, which only ever goes to the zn API address. | Both |
+| `ZN_STAGE` | The production API | Which cloud API route the check is sent to: `prod`, or unset for the default route. Any other value also uses the default route. Leave it unset unless you were told to change it. `zn-gate --help` lists the accepted values under `--stage`. | Both |
+| `ZN_LONG_INPUT` | `windows` | How long texts are sent to the cloud check. `windows` sends overlapping windows of the text; `off` sends only the start. The values `none`, `truncate`, `0`, `false` and `no` also count as `off`. Any other value counts as `windows`. | Both |
+| `ZN_STRICT=1` | Off | Treats advisory rules as blocking. The environment can only add strictness. | Both |
+| `ZN_ALLOW_TRUNCATED=1` | Off | Lets through output too large to scan in full. It is still marked as truncated. By default such output is blocked. | Both |
+| `ZN_BLOCK_TRUNCATED=1` | Off | Blocks output too large to scan in full, even when `ZN_ALLOW_TRUNCATED=1` is set. | Both |
+| `ZN_VERBOSE=1` | Off | Shows technical details of errors. `DEBUG=zn` does the same. | Both |
+| `ZN_STATS=off` | On | Turns off the local counts shown by `stats` and `report`. | npm |
+| `ZN_BLOCK_DESTRUCTIVE=1` | Two rules on (`rm_root_home`, `disk_overwrite`) | `1` turns on all six destructive-command rules. | npm |
+| `ZN_HOOK_FAIL_MODE=closed` | `closed` | Makes hooks fail closed, which is the default. `open` set here is ignored. It is read only from the config file: `hooks.whenUnavailable` set to `allow` in `~/.zn/config.json` (or in `$ZN_HOME/config.json` when `ZN_HOME` is set). | npm |
+| `ZN_EGRESS_CHECK` | `ask` (or the config value) | `deny` makes the outbound-network check deny instead of ask. The environment can only raise the level. | npm |
+| `ZN_PACKAGE_CHECK=offline` | The config value | Turns on offline mode for the check on newly seen packages. `1` does the same. The environment can only add offline mode: `online` is read as offline. | npm |
+| `ZN_MCP_PINNING` | The config value (`mcpPinning`), or `warn` when unset | Pinning mode for MCP servers. The stricter of this and the config value applies. | npm |
+| `ZN_SHIELD_LIMITS` | The built-in limits | A JSON object that lowers the shield's size and count limits, for tests and unusual setups. Values above a built-in limit are cut to it; values that are not positive whole numbers are ignored. | npm |
+| `ZN_HOOK_DIR` | `~/.zn/hooks` (`$ZN_HOME/hooks` when `ZN_HOME` is set) | Folder for the hook launchers. It must be private to your user. | npm |
+| `ZN_AGENT` | None | Agent name for `zn run` and the MCP server when `--agent` is not given. | npm |
+| `ZN_TEAM_JOIN_TOKEN` | None | Join token for `team join` when no token is given as an argument. An argument wins. | npm |
+| `ZN_KEYCHAIN_BACKEND` | Detected | Forces the system keychain backend. For tests and unusual setups. | npm |
+| `ZN_KEYCHAIN_SERVICE` | `zn-vault` | Service name used in the keychain. For tests and unusual setups. | npm |
+| `ZN_KEYCHAIN_PATH` | The system default | On macOS, the keychain file to use. For tests and unusual setups. | npm |
+| `ZN_NO_COMPILE_CACHE` | Off | Any value turns off the Node.js compile cache. | npm |
+| `ZN_NPM_REGISTRY` | `https://registry.npmjs.org` | Registry that `zn-gate scan --package` downloads from. Must be an https address; plain http is accepted for localhost only. | npm |
+
 ## Set up and check
 
 ### `init`
@@ -130,7 +163,7 @@ Removes zn-gate from this computer in one step. It finds what is set up, prints 
 - zn's hooks of every agent, for your user and for the current project, and zn's own `secrets` MCP server (the same as `hooks uninstall`);
 - MCP servers wrapped by `init --wrap-mcp`: the saved copy of each config is put back (changes made to that file since are lost). Afterwards it looks again and lists any server that is still wrapped (for example a config wrapped twice) with what to do by hand.
 
-The vault is not touched unless you answer yes to a second, separate question (default no); deleting it cannot be undone. `.env` files that hold zn markers are left alone, because the values are in the vault: run `zn env unshadow` first if you want them back in the file. It ends by running `check` and showing its result, and tells you how to remove the program itself (`npm uninstall -g zn-gate`).
+The vault is not touched unless you answer yes to a second, separate question (default no); deleting it cannot be undone. `.env` files that hold zn markers are left alone, because the values are in the vault: run `zn env unshadow` first if you want them back in the file. It ends by running `check` and showing its result, and tells you how to remove the program itself (`npm uninstall -g zn-gate`), which is the last step: wrapped MCP servers are put back first, then the hooks and the plugin go, so no agent is left pointing at a missing command.
 
 - `--dry-run`: print the plan and change nothing.
 
@@ -153,6 +186,12 @@ zn-gate check --hooks
 ```
 
 Lists every installed zn hook (agent, settings file, event and the command it runs) and says whether each is OK, stale (written by an older zn-gate) or broken, with the command that fixes it. It only reads files: nothing is run, changed or sent. Exit code `0` when every hook is OK, `1` when any is stale or broken. [What the output means](check.md#list-every-installed-hook).
+
+```bash
+zn-gate check --json
+```
+
+Prints the same check as one JSON object, for scripts, CI and support requests. Same exit codes; your home folder is shown as `~`. [Fields](check.md#machine-readable-output).
 
 ### `status`
 
@@ -523,7 +562,7 @@ zn-gate hooks install <agent> [--project] [--no-mcp]
 zn-gate hooks uninstall <agent> [--project] [--no-mcp]
 ```
 
-Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, use [`uninstall`](#uninstall)). `<agent>` is `claude-code`, `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `gemini` or `copilot` (`claude` is accepted for `claude-code`, `gemini-cli` for `gemini`). `--project` changes the settings of the current project instead of your user settings. `--no-mcp` leaves the `secrets` MCP server out. It needs an interactive terminal. An agent that is not in that list or a misspelled name is refused first, with the supported names, and exit code 64.
+Adds or removes the zn hooks of a coding agent (to remove zn-gate completely, use [`uninstall`](#uninstall)). Remove the hooks before you remove the program with `npm uninstall -g zn-gate`. `<agent>` is `claude-code`, `codex`, `cursor`, `opencode`, `antigravity`, `zcode`, `gemini` or `copilot` (`claude` is accepted for `claude-code`, `gemini-cli` for `gemini`). `--project` changes the settings of the current project instead of your user settings. `--no-mcp` leaves the `secrets` MCP server out. It needs an interactive terminal. An agent that is not in that list or a misspelled name is refused first, with the supported names, and exit code 64.
 
 #### `hooks install`
 
@@ -616,8 +655,12 @@ zn-gate stats share on|off|status|show
 
 What zn-gate did on this machine: local counts for the last `--days` days (1 to 90, default 30). Exit codes: `0` done, `2` wrong usage.
 
+`stats` also prints a `Top rules` block: the five detector ids that matched most often, each with its count. It covers the last 7 days, or the last `--days` days when you pass `--days`. Only detector ids, the generic label `Built-in detector` and counts are shown, never values, paths or command text, and nothing new is stored. A line below the block names the most frequent id. The npm package adds `zn why`, which explains your last block. The Python package points to the [troubleshooting page](https://usezn.com/docs/zn-gate/troubleshooting/) instead, because `why` is only in the npm package. The block is left out when nothing matched in the window.
+
 With `--json`, the output is one JSON object with the same counts and these extra fields:
 
+- `top_rules`: the same five rules as a list of `{ "id", "name", "count" }`, highest count first, ties by id. It is `[]` when nothing matched. `name` is always the generic label `Built-in detector` for now; rule-specific names are not shown yet.
+- `top_rules_days`: the window of `top_rules` in days (`7` unless you passed `--days`).
 - `sharing`: `true` when sharing of pseudonymous daily counts is on.
 - `sent_days`: the days whose counts were really uploaded during this run. It is `[]` when sharing is off or nothing was pending.
 - `send_failed`: the number of days whose upload failed during this run. They are tried again the next time you run `stats`.
@@ -740,7 +783,7 @@ For administrators. Prints the managed configuration files you deploy with MDM o
 | Command | Options | What it does |
 |---|---|---|
 | `test "<text>"` | `--json` | Checks one piece of text against the rules. It does **not** run the self-test that `test` runs in the npm package. Exit `0` if nothing was flagged, `1` if the text was blocked or contains a secret. |
-| `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked. Without a text it prints the usage and exits `2` (the npm package exits `1`). |
+| `analyze "<text>"` | `--local-only`, `--key`, `--stage`, `--url`, `--long-input windows\|off`, `--json` | Checks a prompt and prints JSON (always; `--json` is the default). Exit `0` allowed, `2` blocked. Without a text (or with an empty one) it prints the usage and exits `2` (the npm package exits `1`). |
 | `scan [path]` | `--format text\|json\|github`, `--no-fail`, `--allow-partial`, `--include`, `--exclude`, `--include-home` | Like `scan` in the npm package, without the `--all` and `--code` options. Exit `0` nothing found, `1` something was found or the path does not exist, `3` no file was read, or a file or folder could not be read (`--allow-partial` accepts the files it could not read; reading no file at all stays `3`). `--no-fail` always exits `0`. There is no `--package` in the Python version yet. |
 | `evidence` | `--verify`, `--export`, `--format jsonl\|csv`, `--output file` | Counts, chain check and export, like the npm command. There is no `--ui`, no `--tail` and no `logs` or `export` alias. |
 | `status` | none | Shows the version, the rules version, the Python version and whether the optional cloud check is on. Exit `0`. |

@@ -24,6 +24,7 @@ One page with every `zn-gate` command, its most useful flags and one example. Ev
 | [`reach`](cli.md#reach) | `--json`, `--sarif`, `--fail-on`, `--remember` | `zn-gate reach . --fail-on high` |
 | [`analyze`](cli.md#analyze) | none | `zn-gate analyze "Summarize this file"` |
 | [`pins`](cli.md#pins) | `approve <server>`, `approve --all` | `zn-gate pins` |
+| [`pins approve`](cli.md#pins-approve) | `--all` | `zn-gate pins approve --all` |
 
 ## Secrets and the vault
 
@@ -74,6 +75,9 @@ Commands that add, change or remove a value need an interactive terminal. A valu
 | [`why`](cli.md#why) | `<id>` (optional) | `zn-gate why` |
 | [`stats`](cli.md#stats) | `--days`, `--json` | `zn-gate stats --days 30` |
 | [`stats share`](cli.md#stats-share) | `on`, `off`, `status`, `show` | `zn-gate stats share status` |
+| [`stats share on`](cli.md#stats-share-on) | none | `zn-gate stats share on` |
+| [`stats share off`](cli.md#stats-share-off) | none | `zn-gate stats share off` |
+| [`stats share show`](cli.md#stats-share-show) | none | `zn-gate stats share show` |
 | [`report`](cli.md#report) | `--since`, `--json`, `--no-team-line` | `zn-gate report --since 7d` |
 
 ## zn Team
@@ -99,3 +103,20 @@ Needs the vault unlocked. See [zn Team](team.md).
 | `CI` | Any non-empty value turns off emoji and box-drawing characters too. Colors are not affected. |
 
 Exit codes: `0` done, `1` a problem was found, `2` wrong usage (or `analyze` blocked the text), `64` wrong usage for the secrets commands, `77` refused on purpose, `127` `run` could not find the program. Each command lists its own codes in the [reference](cli.md#exit-codes).
+
+## When to use which command
+
+| When you want to | Command |
+|---|---|
+| Set zn-gate up on this machine | [`init`](cli.md#init) |
+| Check that the install works and every agent is protected | [`check`](cli.md#check) |
+| See why something was blocked | [`why`](cli.md#why) |
+| Find secrets and injection traps in files | [`scan`](cli.md#scan) |
+| Review agent configs before you open a repo | [`audit`](cli.md#audit) |
+| See the history of what zn-gate decided | [`evidence`](cli.md#evidence) |
+| Store a secret | [`secret set`](cli.md#secret-set) |
+| Run a command with its secrets filled in | [`run`](cli.md#run) |
+| Unlock the vault for this session | [`unlock`](cli.md#unlock) |
+| Lock the vault now | [`lock`](cli.md#lock) |
+| See the version, rules version and cloud-check state | [`status`](cli.md#status) |
+| Remove zn-gate from this computer | [`uninstall`](cli.md#uninstall) |
