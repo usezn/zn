@@ -202,7 +202,7 @@ Before you push, run the new script and its test on your own machine, then the [
 A short list for a pull request that changes only documentation: a page under `docs/`, a README or `changelog.d/README.md`. Run each command from the repository root. The three checks under [Documentation checks](#documentation-checks) explain what the docs tests, Markdown lint and link check cover.
 
 - [ ] Every command you wrote or changed ran on your machine, and every link and anchor points to something that exists.
-- [ ] The docs tests pass: `cd packages/zn-gate`, then `node --test test/docs_*.test.js test/docs-env-vars.test.js test/install_docs_match.test.js`. They need no install.
+- [ ] The docs tests pass: `node --test packages/zn-gate/test/docs_*.test.js packages/zn-gate/test/docs-env-vars.test.js packages/zn-gate/test/install_docs_match.test.js`. They need no install.
 - [ ] Markdown lint passes: `.github/markdownlint/node_modules/.bin/markdownlint-cli2`, after `npm ci --prefix .github/markdownlint --ignore-scripts` the first time.
 - [ ] No two pages under `docs/` share a first-level title: `node .github/scripts/check-docs-titles.mjs`.
 - [ ] Every command in `docs/examples/` is one that `docs/cli.md` documents: `node .github/scripts/check-docs-examples-commands.mjs`.
