@@ -28,7 +28,7 @@ const { znCommand } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-11.2';
+const POLICY_RULES_VERSION = '2026-11-11.3';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -1609,7 +1609,35 @@ function hasNetworkSignals(cmd) {
 }
 
 // The program is zn, zn-gate (also with a version: npx -y zn-gate@1.6.0, pnpm dlx zn-gate@latest) or the bin file.
-const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|uninstall|vault\s+(?:reset|purge|verify\b[^\n;&|]{0,512}?[ \t]--acknowledge(?![\w-]))|evidence\b[^\n;&|]{0,512}?[ \t]--accept(?![\w-])|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve|audit\b[^\n;&|]{0,512}?[ \t]--approve)\b/i;
+const ZN_ADMIN_RE = /(^|[\s;&|(`$'"\\\/])((?:zn|zn-gate(?:@[^\s"'`;&|]+)?|cli\.js))(\.cmd|\.js|\.ps1)?["']?\s+(?:--\s+)?(secret\s+(set|get|rm|remove|import|adopt|approve|allow|reveal|link)|env\s+(shadow|unshadow)|unlock|lock|uninstall|vault\s+(?:reset|purge|verify\b)|evidence\b|connect|disconnect|hooks\s+(install|uninstall)|init(?![^\n;&|#`$()'"<>\\]{0,512}[ \t]--(?:wrap-mcp|dry-run|revert|shadow)(?=[ \t\n]|$))|stats(?:\s+(?:-{1,2}[^\s-]\S*|\d+))*\s+share\s+on|["']?pins["']?\s+["']?approve|audit\b)\b/i;
+
+// Admin commands whose flag may come after any other arguments of the same command (up to ; & | or a newline).
+// The regex above finds the zn program and the subcommand; the flag is looked for here, with no length window,
+// in one forward pass (a command padded with long arguments before the flag is judged like a short one).
+const ZN_ADMIN_FLAGS = [
+  [/^audit\b/i, /[ \t]--approve(?![\w-])/i],
+  [/^evidence\b/i, /[ \t]--accept(?![\w-])/i],
+  [/^vault\s+verify\b/i, /[ \t]--acknowledge(?![\w-])/i],
+];
+const SEGMENT_END_RE = /[\n;&|]/g;
+/** The first match of ZN_ADMIN_RE in `t` whose flag (when the subcommand needs one) is in the same command; null if none. */
+function znAdminMatch(t) {
+  const re = new RegExp(ZN_ADMIN_RE.source, 'gi');
+  const clearUntil = ZN_ADMIN_FLAGS.map(() => -1); // the flag was searched up to here without a hit
+  let m;
+  while ((m = re.exec(t)) !== null) {
+    const k = ZN_ADMIN_FLAGS.findIndex((f) => f[0].test(m[4]));
+    if (k < 0) return m;
+    const from = m.index + m[0].length;
+    if (from < clearUntil[k]) continue;
+    SEGMENT_END_RE.lastIndex = from;
+    const e = SEGMENT_END_RE.exec(t);
+    const end = e ? e.index : t.length;
+    if (ZN_ADMIN_FLAGS[k][1].test(t.slice(from, end))) return m;
+    clearUntil[k] = end;
+  }
+  return null;
+}
 
 // `npm exec` (and `npm x`) keeps the options after the package for itself unless a `--` comes first, so
 // `npm exec zn-gate init --dry-run` runs the guided init: the options do not count there. Checked per simple
@@ -1667,7 +1695,7 @@ const XARGS_AUDIT_RE = /(?:^|[\s;&|(`$'"\\/])xargs\b[^\n;&|]*[\s\/\\'"](?:zn|zn-
 function adminCommand(cmd) {
   const text = String(cmd || '');
   for (const t of text.length <= 100 * 1024 ? [text, dequoteShell(text)] : [text]) {
-    const m = ZN_ADMIN_RE.exec(t);
+    const m = znAdminMatch(t);
     if (m) {
       if (/^audit\b/i.test(m[4])) return 'audit --approve';
       if (/^evidence\b/i.test(m[4])) return 'evidence --accept';
@@ -3353,7 +3381,7 @@ function dotenvElsewhereOf(text, opts, kind = 'dotenv') {
 /* zn commands only the user may run: what the command does, why an agent may not, and the next step. */
 function adminDenial(admin, opts = {}, cmd = '') {
   const run = (args) => 'Next step: ask the user to run `' + znCommand(args, opts) + '` in their own terminal.';
-  const m = ZN_ADMIN_RE.exec(String(cmd));
+  const m = znAdminMatch(String(cmd));
   const words = m ? String(cmd).slice(m.index + m[0].length).trim().split(/[\s;&|]+/).slice(0, 8).map((w) => w.replace(/^["']|["']$/g, '')) : [];
   const next = words.find((w) => !w.startsWith('-')) || '';
   let arg = '';
