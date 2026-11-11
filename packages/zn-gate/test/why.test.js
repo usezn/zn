@@ -256,3 +256,21 @@ test('size:truncated makes no absolute protection claim across engines', () => {
   assert.doesNotMatch(JSON.stringify(info), /always|never passes|cannot be passed/i);
   assert.match(info.allow.note, /recorded block only/);
 });
+
+test('two blocks of the same rule: no id explains the newest one, and the older one is reachable by its id', () => {
+  const { home, file } = setup();
+  const older = hookBlock(file, 'hook-pre_tool-secret');
+  const newer = hookBlock(file, 'hook-pre_tool-secret');
+  assert.notEqual(older.id, newer.id);
+
+  const last = why(home, []);
+  assert.equal(last.status, 0, last.stderr);
+  assert.equal(last.stdout.split('zn blocked this').length - 1, 1, 'only one block is explained');
+  assert.match(last.stdout, new RegExp(newer.id));
+  assert.doesNotMatch(last.stdout, new RegExp(older.id));
+
+  const byId = why(home, [older.id]);
+  assert.equal(byId.status, 0, byId.stderr);
+  assert.match(byId.stdout, new RegExp(older.id));
+  assert.doesNotMatch(byId.stdout, new RegExp(newer.id));
+});
