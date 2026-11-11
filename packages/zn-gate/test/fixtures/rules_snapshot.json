@@ -2,7 +2,7 @@
   "layers": {
     "rules": {
       "version_const": "RULES_VERSION",
-      "version": "2026-11-08.11",
+      "version": "2026-11-11.1",
       "ids": [
         "evasion:bidi_override",
         "exfil:credentials",
@@ -47,8 +47,8 @@
         "secret:private_key"
       ],
       "sha256": {
-        "lib/rules.js": "fb5739859b82d14fd65dc3a0b05f2a7e6f5b896116effa04f963b7b02027c58b",
-        "lib/mcp-secrets.js": "1a051cdb7ac9cd04b46494a2efe0aa90ab136a5e866d2dbf42d4431888ab7487"
+        "lib/rules.js": "7dba8a6a806a99ceafd310441e88d5fddbebf235c9dba4c6a67265694f6d731f",
+        "lib/mcp-secrets.js": "5e8b328563be363beaed8fca28e8dc92e8a2fdf14e528858698f114ca421aa73"
       }
     },
     "scrub": {
@@ -214,7 +214,7 @@
     },
     "policy": {
       "version_const": "POLICY_RULES_VERSION",
-      "version": "2026-11-10.2",
+      "version": "2026-11-10.4",
       "ids": [
         "INSTRUCTION_FILE_NAMES",
         "SHELL_SCAN_CAP",
@@ -222,6 +222,7 @@
         "_globClassEnd",
         "_globClassSource",
         "adminCommand",
+        "adminDenial",
         "bashDenial",
         "classifyPath",
         "classifyWord",
@@ -244,7 +245,7 @@
         "writeDenial"
       ],
       "sha256": {
-        "lib/hooks/policy.js": "3b7e397ecb04550390a5818f983500dc45a19b0ddabcf85fa86074c9191eebf3",
+        "lib/hooks/policy.js": "51a7f3a9285cc9ab98d209ae49e496cbf6376b3417316f656eed66507df11c0a",
         "lib/broker/files.js": "f74250b2509bc7451865279da3daff9b1be5e0697cb7d275f0b0871b35b0893d",
         "lib/broker/markers.js": "bf01a06b547629804c504e37a2c6126330ab729bed51ec460bfca4036c1a0b3b",
         "lib/broker/dotenv.js": "d12a12bd12108a38f84e9f4772ed50f0b015962a1e68f75362142b9b3449e8fe",
