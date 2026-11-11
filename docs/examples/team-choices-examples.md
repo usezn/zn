@@ -56,7 +56,7 @@ What the audit record says: the decision `warn`, with the reason
 `policy:warn`, uploaded to the organization with the other records.
 
 A rule cannot have both `deny` and `warn`, and when one rule blocks a secret
-and another warns, the block wins. zn-gate 1.6.0 to 1.7.x does not know
+and another warns, the block wins. zn-gate 1.7.x and earlier do not know
 `warn`, so the zn service leaves the `warn` field out of the policy it sends
 them: the rule's other limits still apply, without a notice; the
 [compatibility table](../compat.md#zn-team-policy-choices-by-zn-gate-version)
