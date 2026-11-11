@@ -165,7 +165,7 @@ Every command in a docs page must be one that zn-gate has and that [docs/cli.md]
    node .github/scripts/check-docs-examples-commands.mjs
    ```
 
-   It prints `docs examples OK` and the number of commands it checked, or it names the file and line that must be fixed. CI runs the same script in the Markdown lint job of Quick checks. Its own test is `node --test .github/scripts/check-docs-examples-commands.test.mjs`.
+   It prints `docs examples OK` and the number of commands it checked, or it names the file and line that must be fixed. CI runs the same script in the Markdown lint steps of the Quick checks workflow. Its own test is `node --test .github/scripts/check-docs-examples-commands.test.mjs`.
 
 The script checks command names only, in the example pages only. It does not check options, and it does not read the other pages under `docs/`. So step 2 is your job for every page, and for every option.
 
