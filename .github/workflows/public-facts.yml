@@ -3,8 +3,8 @@ name: Public facts
 # The version, agents with hooks, license and install command must read the same in every manifest and
 # doc of this repository (.github/public-facts.json). A release changes them in the same pull request.
 # Pushes to main and release branches, pull requests and the merge queue always run it (a push to next does not:
-# the merge queue ran it on the exact commit that lands, and nightly-next.yml starts a manual run on next at
-# 02:40 UTC). Pull requests and the merge queue always run it too: "Public facts" is a required check,
+# the merge queue ran it on the exact commit that lands, and nightly-next.yml starts a manual run on next every
+# night). Pull requests and the merge queue always run it too: "Public facts" is a required check,
 # and a workflow skipped by a paths filter leaves a required check pending forever. The job takes under a
 # minute, so there is no paths filter and no skip step.
 on:

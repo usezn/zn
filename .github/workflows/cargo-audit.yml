@@ -4,7 +4,8 @@ name: Cargo audit
 # published on a day that has nothing to do with the change in front of the merge queue, so this check does not run
 # in the merge queue and is not a required check: a new advisory used to turn every queued pull request red at
 # once. It runs every day on main and every night on next, on a push to main or next that changes Cargo.lock,
-# Cargo.toml or the audit settings, on a pull request that changes the same files, and on demand. When a run that is
+# Cargo.toml or the audit settings, on a pull request that changes those files or a Rust source file (the result is
+# shown on the pull request and is not required), and on demand. When a run that is
 # not a pull request fails, one issue is opened (or the open one gets a comment), so an advisory is still seen the
 # same day. The advisory ignore list is .cargo/audit.toml.
 on:
@@ -13,7 +14,7 @@ on:
     paths: ["Cargo.lock", "Cargo.toml", ".cargo/audit.toml", ".github/workflows/cargo-audit.yml"]
   pull_request:
     branches: [main, next]
-    paths: ["Cargo.lock", "Cargo.toml", ".cargo/audit.toml", ".github/workflows/cargo-audit.yml"]
+    paths: ["Cargo.lock", "Cargo.toml", ".cargo/audit.toml", ".github/workflows/cargo-audit.yml", "src/**/*.rs"]
   schedule:
     - cron: "47 6 * * *" # daily advisory check on main
     - cron: "52 3 * * *" # nightly advisory check on next

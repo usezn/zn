@@ -14,7 +14,7 @@ name: Quick checks
 # required was out of date), so they do not run in the merge queue. To make one required, add a merge_group
 # trigger for it first, or the queue waits for a check that never reports.
 # A push to next does not run this workflow (pull requests ran it before the merge, and the merge queue does not
-# run it): nightly-next.yml starts a manual run on next at 02:40 UTC, which runs every step.
+# run it): nightly-next.yml starts a manual run on next every night, which runs every step.
 on:
   push:
     branches: [ main ]

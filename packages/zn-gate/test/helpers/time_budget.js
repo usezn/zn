@@ -11,8 +11,11 @@
 // Milliseconds the loop below takes on the reference machine (measured on a Linux CI-class machine under moderate load, so the limit rarely drops below the value given).
 const REFERENCE_MS = 5;
 const MAX_SCALE = 20;
-// The long-input checks cost about 7 times more CPU on windows-latest than on Linux (measured: 2984 ms against 410 ms), which
-// the loop below does not show. A fixed factor, not a larger cap: a check that became quadratic is still hundreds of times slower.
+// The long-input checks cost about 7 times more CPU on windows-latest than on Linux (measured: 2984 ms against 410 ms),
+// which the loop below does not show. The factor is 4, not 7, on purpose: those checks use about a fifth of their limit on
+// Linux (410 ms of 2000 ms), so a factor of 4 already leaves the measured Windows time (2984 ms) well inside the scaled
+// limit (8000 ms) without making the limit looser than it needs to be. It is a fixed factor, not a larger cap: a check
+// that became quadratic is still hundreds of times slower.
 const PLATFORM_FACTOR = process.platform === 'win32' ? 4 : 1;
 
 function spin() {
