@@ -16,7 +16,7 @@ It always applies all six rules and returns a verdict:
 const { checkCommand } = require('zn-gate/lib/client');
 
 checkCommand('rm -rf ~');
-checkCommand('sudo bash -c "rm -rf /home/alice"');
+checkCommand('sudo bash -c "rm -rf /tmp/example"');
 ```
 
 Both return a block with the same rule (the `rules_version` is the version of
@@ -35,8 +35,8 @@ These wrapped forms are blocked with the same rule, `destructive:rm_root_home`:
 | `sh -c 'rm -rf $HOME/*'` | block |
 | `sudo rm -rf /usr` | block |
 | `sudo -u root rm -rf /usr` | block |
-| `env FOO=1 rm -rf /home/alice` | block |
-| `sudo bash -c 'rm -rf /home/alice'` | block |
+| `env FOO=1 rm -rf /tmp/example` | block |
+| `sudo bash -c 'rm -rf /tmp/example'` | block |
 | `env -i sudo sh -c "rm -rf /"` | block |
 | `nohup rm -rf ~` | block |
 | `timeout 5 rm -rf ~` | block |
@@ -87,7 +87,7 @@ reads one event as JSON on standard input ([the hook command, explained](hook-su
 shows the shape). Here is a wrapped command, in a throwaway home folder:
 
 ```json
-{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"sudo bash -c \"rm -rf /home/alice\""}}
+{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"sudo bash -c \"rm -rf /tmp/example\""}}
 ```
 
 ```sh
