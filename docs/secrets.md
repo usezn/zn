@@ -89,6 +89,8 @@ Store it yourself with `zn secret set API_KEY` (it asks for the value at a
 hidden prompt) and replace the value in `.env` with `__ZN_API_KEY__`. Multi-line
 values, and names zn cannot use, are also left in the file and listed the same way.
 
+Two more cases. A double-quoted value on one line that contains `\n` escapes is not multi-line: zn keeps the backslash and the `n` as text, so if its name looks secret and the value is 8 characters or more, zn moves the whole value to the vault. A multi-line value under a name that does not look secret (for example `NOTES`) is skipped without a message, unless you pass `--all`; with `--all` it is listed like the others.
+
 An encrypted copy of the original is kept (`zn env unshadow` restores it). To
 add a single secret, type it at a hidden prompt (never as an argument):
 
