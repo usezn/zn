@@ -26,6 +26,20 @@ Install the Node.js dependencies once with `cd packages/zn-gate` and `npm ci --i
 
 8. **Check an agent's version handling.** Files: `packages/zn-gate/lib/agents/claude-code.js` (it has version-dependent behavior, for example for Claude Code 2.1.295 and later) and `packages/zn-gate/test/hooks_claude_launcher.test.js`. Test: `cd packages/zn-gate` and `node --test test/hooks_claude_launcher.test.js`. Good PR: the agent version you checked and where you found it, and a test that pins the behavior for that version.
 
+## For first-time contributors
+
+A short list of what a pull request needs. Each step points to the section below that explains it.
+
+1. Have Node.js 18 or later and Python 3.10 or later ([Prerequisites](#prerequisites)).
+2. Open your pull request against the `next` branch.
+3. Run the Node.js tests: `cd packages/zn-gate`, then `npm test` ([Running Tests Locally](#running-tests-locally)).
+4. If you changed the Python package, run its tests too: `python -m pip install -e .`, then `python -m pytest tests/ -v` in `packages/zn-gate-py`.
+5. If you changed a detection rule, change it in both packages, add a positive and a negative test case, and bump the version ([Adding New Rules](#adding-new-rules), [Rule Versions and the Snapshot](#rule-versions-and-the-snapshot)).
+6. If users will notice the change, add a fragment file in `changelog.d/` and leave `CHANGELOG.md` alone ([Changelog](#changelog)).
+7. Update the docs that the change touches, and keep any marked snippet runnable ([Runnable doc snippets](#runnable-doc-snippets)).
+8. Keep secrets, tokens, keys and personal data out of the diff, the commit messages and the test fixtures. Do not force-push to a shared branch.
+9. Report a security vulnerability privately, never in a public issue or pull request ([Security Vulnerability Reporting](#security-vulnerability-reporting)).
+
 ## Architecture Overview
 
 `zn` is designed as a local-first security gate with minimal dependencies:
