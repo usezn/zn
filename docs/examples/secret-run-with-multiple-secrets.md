@@ -1,6 +1,6 @@
 # Example: pass several vault secrets to one command
 
-This page gives one command two secrets from the vault in a single `zn run`: a made-up `deploy` script that needs a database password and a webhook token. It only strings together steps that [Keep secrets out of your coding agent](../secrets.md) and the [command line reference](../cli.md) describe. All names and values are made up, and nothing on this page touches a real file of yours.
+This page gives one command two secrets from the vault in a single `zn run`: a made-up `deploy` script that needs a database password and a webhook token. It only strings together steps that [Keep secrets out of your coding agent](../secrets.md) and the [command line reference](../cli.md) describe. All names and values are made up, but the steps are real: `secret set` writes entries to your local vault, and `zn run` really starts the program you name. Try it with a disposable vault and a harmless test program of your own in place of `deploy`.
 
 Run every command in your own terminal, not through your agent: the `secret` commands refuse to run inside an agent, and the first use of a secret is confirmed in the vault's own prompt, which the agent cannot answer.
 
@@ -26,7 +26,7 @@ Name both secrets after `--secrets`, separated by commas, and put the command af
 npx -y zn-gate run --secrets EXAMPLE_DB_PASSWORD,EXAMPLE_WEBHOOK_TOKEN -- deploy
 ```
 
-`run` fills both values into the environment of that one process and masks them in its output: raw, base64, hex and URL-encoded forms come back as markers. `-s` is short for `--secrets`. A value never goes into a command-line argument, where every process of your user could see it: if a marker such as `__ZN_EXAMPLE_DB_PASSWORD__` ends up in the arguments, zn refuses the command and tells the agent to pass the secret as an environment variable instead.
+`run` fills both values into the environment of that one process and masks them in its output (that is not isolation: child processes of the program inherit the environment, and other processes of your user may be able to read it; see [what an environment variable does and does not hide](../secrets.md#4-let-a-command-use-a-secret)): raw, base64, hex and URL-encoded forms come back as markers. `-s` is short for `--secrets`. A value never goes into a command-line argument, where every process of your user could see it: if a marker such as `__ZN_EXAMPLE_DB_PASSWORD__` ends up in the arguments, zn refuses the command and tells the agent to pass the secret as an environment variable instead.
 
 The first time each secret is used, the vault asks you to confirm in its dialog or its terminal, and the prompt shows the exact program that will run — here, `deploy`. The agent cannot answer these prompts from its own terminal, so make the first run yourself. More: [Let a command use a secret](../secrets.md#4-let-a-command-use-a-secret) and [`run`](../cli.md#run).
 
