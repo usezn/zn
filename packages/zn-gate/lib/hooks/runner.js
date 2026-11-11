@@ -61,7 +61,9 @@ const STREAM_JS = path.resolve(__dirname, '..', 'scrub', 'stream.js');
 
 function readConfig(home) {
   try {
-    return JSON.parse(fs.readFileSync(path.join(home ? path.join(home, '.zn') : require('../stats').znHome(), 'config.json'), 'utf8')) || {};
+    // ZN_HOME wins when it is set, like every other reader of config.json (see znDirOf).
+    const dir = znDirOf({ home }) || require('../stats').znHome();
+    return JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')) || {};
   } catch (_) {
     return {};
   }
