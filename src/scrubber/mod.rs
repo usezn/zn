@@ -977,6 +977,19 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_flags_mailchimp_style_key_with_datacenter_suffix() {
+        // Generic api_key rule covers this: the name prefix is unanchored and "-us12" is in the value class.
+        // Fake value built at run time so no key-shaped literal sits in the source.
+        let value = format!("{}-us{}", "0123456789abcdef".repeat(2), "12");
+        let input = format!("MAILCHIMP_API_KEY={value}");
+        assert!(Scrubber::contains_pii(&input), "{input}");
+        assert!(Scrubber::detect_pii_types(&input).contains(&"api_key_or_secret"));
+        let scrubbed = Scrubber::scrub(&input);
+        assert!(!scrubbed.contains(&value), "{scrubbed}");
+        assert!(scrubbed.contains("[SECRET_REDACTED]"), "{scrubbed}");
+    }
+
+    #[test]
     fn test_scrub_json_member() {
         // Fake, random-looking values only.
         let v = "zn_FAKEabcdef0123456789abcdef";
