@@ -5,6 +5,8 @@
 # Each check keeps the trigger and the path filter it had when it was a workflow of its own:
 #   changelog     pull requests, always
 #   markdownlint  pull requests and pushes to main or next: docs, READMEs, markdownlint config, docs examples command check, docs title check, CLI headings check, cheat sheet command check and docs table check
+#   doclinks      pull requests and pushes to main or next: docs, the READMEs the docs checks cover, CHANGELOG.md,
+#                 SECURITY.md, the changelog and security link check and its test
 #   typos         pull requests: docs, READMEs, changelog fragments, .typos.toml
 #   links         pull requests: any Markdown file, lychee config
 #   shell lint    pull requests and pushes to main or next: any *.sh
@@ -26,7 +28,7 @@
 # Environment: EVENT_NAME, REF (github.ref), BASE_REF (pull requests), BEFORE (pushes: the previous tip).
 set -uo pipefail
 
-CHECKS="changelog markdownlint typos links shellcheck wfheader timeouts wfformat packagelint hooks snippets scopetest"
+CHECKS="changelog markdownlint typos links shellcheck wfheader timeouts wfformat packagelint hooks snippets doclinks scopetest"
 declare -A run
 for c in $CHECKS; do run[$c]=false; done
 
@@ -88,6 +90,9 @@ while IFS= read -r f; do
     docs/*|packages/*/README.md|.markdownlint-cli2.jsonc|.github/markdownlint/*|changelog.d/README.md|.github/scripts/check-docs-examples-commands*|.github/scripts/check-docs-titles*|.github/scripts/check-docs-cli-headings*|.github/scripts/check-docs-cheatsheet-commands*|.github/scripts/summarize-docs-pages*|SECURITY.md|.github/scripts/check-security-advisory-links*|.github/scripts/check-docs-tables*) run[markdownlint]=true ;;
   esac
   [ "$readme_root" = "true" ] && [[ "$f" == README*.md ]] && run[markdownlint]=true
+  case "$f" in
+    docs/*|packages/*/README.md|changelog.d/README.md|README.md|CHANGELOG.md|SECURITY.md|.github/scripts/check-docs-changelog-security-links*) run[doclinks]=true ;;
+  esac
   case "$f" in
     docs/*|packages/*/README.md|changelog.d/*|.typos.toml) run[typos]=true ;;
   esac
