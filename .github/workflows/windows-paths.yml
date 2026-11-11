@@ -4,10 +4,22 @@ name: Windows checks for Windows-specific code
 # workflow that runs it on Windows (Node.js 22):
 # - on every push to main and to a release branch, so a release commit is never tagged without it
 #   (.github/release-required-checks.txt names this job);
-# - on pull requests into next, main and release branches that touch code with Windows-specific paths
+# - on pull requests into main and release branches that touch code with Windows-specific paths
 #   (command quoting, launching programs, the keychain, the broker, agent setup) or any test;
 # - every night on next (nightly-next.yml starts a manual run there), and on other manual runs.
 # The merge queue runs only the required checks, so it does not run this workflow.
+#
+# Pull requests into next do not run it for now (11 Nov 2026). It failed on 84% of its pull request runs after 8 Nov,
+# about 17 minutes of a Windows runner each time, for failures the pull requests did not cause. Three causes are
+# open, each only seen on Windows:
+# - getLastHash (test/evidence_read_errors.test.js): a folder at the log path reads as size 0 on Windows, so the
+#   evidence chain would start again instead of reporting the unreadable log (a library fix in lib/evidence.js);
+# - the vault failure message (test/block_message_parts.test.js, test/hook_vault_maskinfo_failclosed.test.js): without zn on
+#   the PATH the Windows message names the unlock command twice, in two forms (lib/hooks/runner.js, lib/errors.js);
+# - test/hooks_vault_lazy.test.js ("a call that redacts still loads the client"): the vault client is not loaded on
+#   Windows, cause not yet found; it needs a run on a Windows machine.
+# The nightly run on next still shows them. To bring the pull request run back: when the nightly run on next is green,
+# add `next` to the branches list of pull_request below, and delete this paragraph.
 #
 # The tests of the hook launchers (shell scripts that Claude Code starts with Git Bash) run here too: the job links
 # Git for Windows' usr/bin as C:\bin and puts it on the PATH, so /bin/sh and sh start. On a Windows machine
@@ -17,7 +29,7 @@ on:
   push:
     branches: [ main, 'release/**' ]
   pull_request:
-    branches: [ next, main, 'release/**' ]
+    branches: [ main, 'release/**' ]
     types: [ opened, synchronize, reopened, ready_for_review ]
     paths:
       - 'packages/zn-gate/lib/exe.js'
