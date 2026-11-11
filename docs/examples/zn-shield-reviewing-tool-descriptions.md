@@ -9,7 +9,7 @@ Run every command in your own terminal, not through your agent. The `[zn-shield 
 The server `notes` offers two tools. The shield has never seen it, so it trusts the list and remembers a fingerprint of each tool:
 
 ```text
-[zn-shield] Pinned the tools of a new MCP server (ccb2c77cff3e957e): node /home/you/notes-server.js
+[zn-shield] Pinned the tools of a new MCP server (ccb2c77cff3e957e): node /tmp/example/notes-server.js
 ```
 
 ```bash
@@ -17,9 +17,9 @@ npx -y zn-gate pins
 ```
 
 ```text
-MCP tool pins (/home/you/.zn/mcp-pins, mode: warn)
+MCP tool pins (/tmp/example/.zn/mcp-pins, mode: warn)
 
-  ccb2c77cff3e957e  node /home/you/notes-server.js
+  ccb2c77cff3e957e  node /tmp/example/notes-server.js
       2 tool(s) pinned 2026-11-11T13:53:05.393Z
 ```
 
@@ -48,7 +48,7 @@ npx -y zn-gate pins
 ```
 
 ```text
-  ccb2c77cff3e957e  node /home/you/notes-server.js
+  ccb2c77cff3e957e  node /tmp/example/notes-server.js
       2 tool(s) pinned 2026-11-11T13:53:05.393Z
       changed or new since then: take_notes, export_notes
         take_notes: description
