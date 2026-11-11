@@ -24,11 +24,11 @@ const path = require('path');
 const dotenv = require('../broker/dotenv');
 const markers = require('../broker/markers');
 const { targetsOf } = require('../broker/files');
-const { znCommand } = require('../zn-command');
+const { znCommand, cliName } = require('../zn-command');
 
 // Version of the policy rules (credential paths, zn home, secret commands,
 // command wrapping). Bump it when a rule changes; see CONTRIBUTING.md.
-const POLICY_RULES_VERSION = '2026-11-10.3';
+const POLICY_RULES_VERSION = '2026-11-11.4';
 
 /* ------------------------------ paths ------------------------------ */
 
@@ -2664,6 +2664,14 @@ const PS_LIST_READERS = new Set(['cat', 'gc', 'type', 'get-content', 'select-str
   'gi', 'get-childitem', 'gci', 'ls', 'dir', 'copy-item', 'cpi', 'copy', 'cp', 'import-clixml', 'convertfrom-json']);
 const PS_ONLY_READERS = new Set(['gc', 'get-content', 'select-string', 'sls', 'import-csv', 'ipcsv', 'get-item', 'gi', 'get-childitem',
   'gci', 'copy-item', 'cpi', 'import-clixml']);
+// The operand of a .NET file read written as a PowerShell expression ([IO.File]::ReadAllText('.\.env')), or of a cmdlet that turns a
+// name into a path (Resolve-Path .\.env, as in gc (Resolve-Path .\.env)), is read as a PowerShell path too.
+const PS_DOTNET_FILE_READ_RE = /\]::(?:read|open|copy|append|get)\w*$/i;
+const PS_PATH_HELPERS = new Set(['resolve-path', 'rvpa', 'convert-path', 'cvpa', 'join-path']);
+function psPathOperand(h) {
+  const head = String(h || '').toLowerCase();
+  return PS_DOTNET_FILE_READ_RE.test(head) || PS_PATH_HELPERS.has(head);
+}
 /* The words of a command, each comma list of a PowerShell reader followed by the paths inside it. */
 function psListWords(words, opts) {
   const out = [];
@@ -2674,12 +2682,18 @@ function psListWords(words, opts) {
   };
   // PowerShell on Windows takes a backslash as a path separator (gc .\.env), but on another host the file ".\.env" does not exist
   // and the read would be let through; the same word with "/" is judged too.
+  // The commands (by sequence number) that name a reader somewhere, so the operand of `$x = gc .\.env` or of `gc (Resolve-Path .\.env)`
+  // is a path too, while `Write-Output .\.env` only prints a string.
+  const readerSeqs = new Set();
+  for (const w of words) if (typeof w.text === 'string' && readerOf(w.text)) readerSeqs.add(w.seq);
+  let lastWord = '';
   const push = (x, head) => {
     out.push(x);
-    if (typeof x.text === 'string' && x.text.indexOf('\\') >= 0 && x.text.length <= 4096 && (opts.powershell === true || readerOf(head))) out.push({ ...x, text: slash(x.text) });
+    if (typeof x.text === 'string' && x.text.indexOf('\\') >= 0 && x.text.length <= 4096 && (readerOf(head) || readerSeqs.has(x.seq) || psPathOperand(lastWord))) out.push({ ...x, text: slash(x.text) });
   };
   for (const w of words) {
     push(w, w.head);
+    lastWord = w.text;
     // @('a','b'): the opening bracket starts a new command, so the word after "@" takes the head of the "@".
     const lead = prev && prev.text === '@' ? prev : w;
     const before = prev;
@@ -3368,11 +3382,11 @@ function adminDenial(admin, opts = {}, cmd = '') {
       'so approving them is the user\'s decision and an agent may not run it. ' + run('audit --approve');
   }
   if (/pins/i.test(admin)) {
-    return 'zn blocked this: approving changed MCP tools is the user\'s decision, so an agent may not run `zn-gate pins approve`. ' + run('pins approve');
+    return 'zn blocked this: approving changed MCP tools is the user\'s decision, so an agent may not run `' + cliName('zn-gate') + ' pins approve`. ' + run('pins approve');
   }
   if (/^init$/i.test(admin)) {
-    return 'zn blocked this: `zn-gate init` turns zn\'s protection on for coding agents, which is the user\'s decision. ' +
-      'Next step: ask the user to run it in their own terminal (`npx -y zn-gate init`).';
+    return 'zn blocked this: `' + cliName('zn-gate') + ' init` turns zn\'s protection on for coding agents, which is the user\'s decision. ' +
+      'Next step: ask the user to run it in their own terminal (`' + cliName('npx') + ' -y zn-gate init`).';
   }
   if (/^hooks/i.test(admin)) {
     return 'zn blocked this: `' + znCommand(admin, opts) + '` turns zn\'s protection on or off for a coding agent, which is the user\'s decision. ' + run(full);
@@ -3752,6 +3766,7 @@ module.exports = {
   expandBraces,
   readDenial,
   writeDenial,
+  adminDenial,
   instructionWriteNotice,
   INSTRUCTION_FILE_NAMES,
   scanFirstCommand,

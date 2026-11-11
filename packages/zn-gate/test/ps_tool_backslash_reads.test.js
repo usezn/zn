@@ -48,3 +48,10 @@ test('the hook passes the PowerShell flag, so a PowerShell event is judged like 
     assert.equal(r.output.hookSpecificOutput.permissionDecision, 'deny', cmd);
   }
 });
+
+test('a backslash word is judged as a path only where something reads it', (t) => {
+  const cwd = project(t);
+  for (const cmd of ['Write-Output .\\.env', 'echo .\\.env', 'Write-Host .\\.env']) {
+    assert.equal(policy.bashDenial(cmd, { cwd, powershell: true }), null, 'must allow: ' + cmd);
+  }
+});
