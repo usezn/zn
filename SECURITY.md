@@ -29,6 +29,19 @@ We take the security of zn, the MCP Gateway, and our client SDKs seriously. If y
 
 Please include detailed reproduction steps, proof-of-concept payloads or scripts, and affected versions, components or commits. Testing against local Docker containers or isolated test accounts is strongly encouraged.
 
+### Reporting a hook bypass
+
+A hook bypass is a tool call that zn-gate should have stopped, or a secret it should have hidden, but did not. Report it privately, the same way as any other vulnerability (see above). To let us reproduce it quickly, include:
+
+* The agent you used and its version.
+* The zn-gate version, from `zn-gate --version`, and how you installed it (npm, PyPI or a plugin).
+* The exact tool call that got through: the tool name and its arguments, or the command line. Replace every secret value, token and personal path with a made-up placeholder first. Do not send real secrets.
+* The output of `zn-gate check --json`, which shows which agents are protected and holds no secret values (your home folder is shown as `~`).
+* The output of `zn-gate why`, if zn-gate blocked a related call. It explains the last block in your local decision log, and the preview it prints already has secrets removed.
+* What you expected to happen and what happened instead.
+
+Read each output before you send it. These commands only read local files and send nothing over the network.
+
 ### What to expect
 
 The project has a single maintainer today (see [MAINTAINERS.md](MAINTAINERS.md)). These are targets, for both channels:
