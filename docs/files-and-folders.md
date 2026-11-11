@@ -120,7 +120,8 @@ Every command is run in your own terminal. "None" means no documented command re
 | `stats.json` | zn-gate, when it counts checks | Yes | None. `ZN_STATS=off` stops the counting. |
 | `requests.jsonl` | zn's `secrets_request` tool, when an agent asks for a secret | Yes | None |
 | `package-registry-cache.json` | zn-gate, for package lookups | Yes | None |
-| `team.json`, `org-policy.json`, `team-upload.json`, `team-notice.json` | zn-gate, on a computer that joined a zn Team | No: the hooks read them | `zn-gate team leave` |
+| `team.json`, `org-policy.json`, `team-upload.json`, `team-upload.lock` | zn-gate, on a computer that joined a zn Team | No: the hooks read them | `zn-gate team leave` |
+| `team-notice.json` | zn-gate hooks, to remember which team notices were already shown | Yes. Deleting it only lets a notice show again. | None. `zn-gate team leave` does not remove it. |
 | `hooks/` | `zn-gate hooks install <agent>` | Yes, once the hooks are uninstalled | None. `hooks uninstall` leaves it in place. |
 | `~/.zn/cache/compile/` | zn-gate, when a hook runs: Node keeps compiled copies of zn-gate's code there so the next hook starts faster | Yes. It is safe to delete: zn-gate rebuilds it on the next hook call. | None. `zn-gate uninstall` leaves it in place. Set `ZN_NO_COMPILE_CACHE=1` to stop zn-gate from using it. |
 | `ENVBAK_X<hash>D<stamp>`, an entry inside `vault/secrets.age` | `zn-gate env shadow`, as the encrypted copy of a `.env` file | No: it is not a file, and without it `env unshadow` cannot restore the `.env` file | `zn-gate secret rm NAME`. `zn-gate env unshadow FILE --backup NAME` only restores the file; it does not delete the copy. |
