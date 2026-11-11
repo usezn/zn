@@ -101,6 +101,9 @@ jobs:
           CHANGELOG_RELEASE: ${{ (startsWith(github.base_ref, 'release/') || (github.event.pull_request.head.repo.full_name == github.repository && ((startsWith(github.head_ref, 'release/') && github.base_ref == 'main') || (startsWith(github.head_ref, 'chore/pin-plugin-') && github.base_ref == 'main') || (startsWith(github.head_ref, 'chore/backmerge-') && github.base_ref == 'next')))) && '1' || '0' }}
         # HEAD is the merge commit GitHub made for this pull request: its first parent is the base it was merged onto.
         run: node .github/scripts/changelog.mjs check --base HEAD^1
+      - name: Changelog - list this pull request's fragments in the job summary
+        if: ${{ !cancelled() && steps.scope.outputs.changelog == 'true' }}
+        run: node .github/scripts/changelog.mjs summary --base HEAD^1
 
       # Workflow header: every workflow has a top-level name and a top-level permissions block.
       - name: Workflow header - test the check

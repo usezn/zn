@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { parseFragment, buildSection, assemble, checkPullRequest, needsFragment, fragmentHint } from './changelog.mjs';
+import { parseFragment, buildSection, assemble, checkPullRequest, needsFragment, fragmentHint, summaryMarkdown } from './changelog.mjs';
 
 const CHANGELOG = `# Changelog
 
@@ -131,6 +131,44 @@ test('a fragment with a byte order mark, a non-ASCII name, or in a subfolder', (
   fs.writeFileSync(path.join(dir, 'changelog.d', 'sub', 'x.md'), '### Fixed\n- Lost.\n');
   g('add', '-A'); g('commit', '-qm', 'sub');
   assert.match(checkPullRequest(dir, 'next').errors.join(), /directly in changelog\.d/);
+});
+
+test('the job summary lists the fragments a pull request adds, and skips the README', (t) => {
+  const { dir, g } = repo(t);
+  fs.mkdirSync(path.join(dir, 'changelog.d'));
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'fix-a.md'), '### Fixed\n- A fix.\n### Added\n- Something new.\n');
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'README.md'), '# Fragments\n');
+  g('add', '-A'); g('commit', '-qm', 'fragments');
+  assert.equal(summaryMarkdown(dir, 'next'),
+    '### Changelog fragments in this pull request\n\n- `changelog.d/fix-a.md`: added, sections: Added, Fixed\n');
+});
+
+test('a changed fragment is listed as changed, a deleted one is not', (t) => {
+  const { dir, g } = repo(t);
+  g('checkout', '-q', 'next');
+  fs.mkdirSync(path.join(dir, 'changelog.d'));
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'keep.md'), '### Fixed\n- Old wording.\n');
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'gone.md'), '### Fixed\n- Removed later.\n');
+  g('add', '-A'); g('commit', '-qm', 'base fragments');
+  g('checkout', '-q', 'feature'); g('merge', '-q', '--ff-only', 'next');
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'keep.md'), '### Changed\n- New wording.\n');
+  fs.unlinkSync(path.join(dir, 'changelog.d', 'gone.md'));
+  g('add', '-A'); g('commit', '-qm', 'edit and delete');
+  assert.equal(summaryMarkdown(dir, 'next'),
+    '### Changelog fragments in this pull request\n\n- `changelog.d/keep.md`: changed, sections: Changed\n');
+});
+
+test('the job summary says so when no fragment changed, and shows unusual names in a code span', (t) => {
+  const { dir, g } = repo(t);
+  assert.equal(summaryMarkdown(dir, 'next'),
+    '### Changelog fragments in this pull request\n\nNo changelog fragment is added or changed.\n');
+  fs.mkdirSync(path.join(dir, 'changelog.d'));
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'café fix.md'), '### Fixed\n- A fix.\n');
+  fs.writeFileSync(path.join(dir, 'changelog.d', 'a`b.md'), 'text\n');
+  g('add', '-A'); g('commit', '-qm', 'odd names');
+  const md = summaryMarkdown(dir, 'next');
+  assert.match(md, /^- `changelog\.d\/café fix\.md`: added, sections: Fixed$/m);
+  assert.match(md, /^- `changelog\.d\/a\?b\.md`: added, sections: no sections$/m);
 });
 
 test('the failure hint shows a template that parses as a valid fragment', () => {
