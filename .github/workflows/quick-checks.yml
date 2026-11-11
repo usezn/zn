@@ -180,6 +180,10 @@ jobs:
       - name: Docs links - links to CHANGELOG.md and SECURITY.md resolve
         if: ${{ !cancelled() && steps.scope.outputs.doclinks == 'true' }}
         run: node .github/scripts/check-docs-changelog-security-links.mjs
+      - name: Markdown lint - test the README entry point check
+        run: node --test .github/scripts/check-readme-entry-points.test.mjs
+      - name: Markdown lint - README.md and docs/README.md link the same entry points
+        run: node .github/scripts/check-readme-entry-points.mjs
 
       # Spellcheck
       - name: Spellcheck - typos
