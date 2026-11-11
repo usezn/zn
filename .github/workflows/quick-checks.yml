@@ -220,7 +220,7 @@ jobs:
       - name: Markdown lint - test the docs table check
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node --test .github/scripts/check-docs-tables.test.mjs
-      - name: Markdown lint - every table row has the cell count of its header row
+      - name: Markdown lint - every table row has the cell count of its header row, and a delimiter row
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-tables.mjs
       - name: Docs links - test the changelog and security link check

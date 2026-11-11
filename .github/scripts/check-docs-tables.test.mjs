@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { checkFiles, findBadRows, splitCells } from './check-docs-tables.mjs';
+import { checkFiles, findBadRows, findMissingSeparators, splitCells } from './check-docs-tables.mjs';
 
 test('splitCells counts cells with and without outer pipes', () => {
   assert.equal(splitCells('| a | b |').length, 2);
@@ -78,5 +78,39 @@ test('checkFiles names the file of each bad row', () => {
     const r = checkFiles([path.join(dir, 'ok.md'), path.join(dir, 'bad.md')]);
     assert.equal(r.checked, 2);
     assert.deepEqual(r.problems.map((p) => [path.basename(p.file), p.line, p.cells, p.expected]), [['bad.md', 3, 1, 2]]);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a table with no delimiter row under its first row is named with its line', () => {
+  assert.deepEqual(findMissingSeparators('# T\n\n| a | b |\n| 1 | 2 |\n'), [{ line: 3 }]);
+});
+
+test('a table with its delimiter row is not reported as missing one', () => {
+  assert.deepEqual(findMissingSeparators('| a | b |\n|---|---|\n| 1 | 2 |\n'), []);
+});
+
+test('a single line with a leading pipe is not a table', () => {
+  assert.deepEqual(findMissingSeparators('| a | b |\n\ntext\n'), []);
+});
+
+test('rows inside a fenced code block are not checked for a delimiter row', () => {
+  assert.deepEqual(findMissingSeparators('```md\n| a | b |\n| 1 | 2 |\n```\n'), []);
+});
+
+test('prose lines with a pipe but no leading pipe are not checked', () => {
+  assert.deepEqual(findMissingSeparators('a | b\nc | d\n'), []);
+});
+
+test('a second table with no delimiter row is named at its own first row', () => {
+  assert.deepEqual(findMissingSeparators('| a |\n|---|\n| 1 |\n\n| b | c |\n| 2 | 3 |\n'), [{ line: 5 }]);
+});
+
+test('checkFiles names the file of a table with no delimiter row', () => {
+  const dir = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'doctables-sep-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'bad.md'), '| a | b |\n| 1 | 2 |\n');
+    const r = checkFiles([path.join(dir, 'bad.md')]);
+    assert.deepEqual(r.problems, []);
+    assert.deepEqual(r.missing.map((m) => [path.basename(m.file), m.line]), [['bad.md', 1]]);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

@@ -9,6 +9,8 @@
 // following lines that contain a pipe; the body ends at a blank line, a line without a pipe or a fence. Fenced code
 // blocks are skipped. `\|` and pipes inside an inline code span are text, not cell separators. Each bad row is named
 // with its file and line. The check reads the files line by line, so it needs no Markdown library.
+// It also fails when a table has no delimiter row under its first row (a header without "| --- |"): no renderer shows
+// such rows as a table, so the check names the first row. A line with a pipe that is not a table is not reported.
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -93,13 +95,45 @@ export function findBadRows(text) {
   return bad;
 }
 
-/* Returns { checked, problems: [{ file, line, cells, expected }] } for the given Markdown files. */
+const ROW_RE = /^\s*\|/;
+
+/* Returns [{ line }] for each run of two or more lines that start with a pipe (outside code) whose second line is not
+ * a delimiter row: a table without its delimiter row, which no renderer shows as a table. A single line is not a
+ * table, so a line of prose with a pipe in it is not reported. Lines that do not start with a pipe are not checked. */
+export function findMissingSeparators(text) {
+  const lines = text.split(/\r?\n/);
+  const out = [];
+  let fence = null;
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (fence) {
+      const close = line.match(FENCE_CLOSE_RE);
+      if (close && close[1][0] === fence[0] && close[1].length >= fence.length) fence = null;
+      i++;
+      continue;
+    }
+    const open = line.match(FENCE_OPEN_RE);
+    if (open) { fence = open[1]; i++; continue; }
+    if (!ROW_RE.test(line)) { i++; continue; }
+    let j = i + 1;
+    while (j < lines.length && ROW_RE.test(lines[j]) && !FENCE_OPEN_RE.test(lines[j])) j++;
+    if (j - i >= 2 && !isDelimiterRow(lines[i + 1])) out.push({ line: i + 1 });
+    i = j;
+  }
+  return out;
+}
+
+/* Returns { checked, problems: [{ file, line, cells, expected }], missing: [{ file, line }] } for the given Markdown files. */
 export function checkFiles(files) {
   const problems = [];
+  const missing = [];
   for (const f of files) {
-    for (const p of findBadRows(fs.readFileSync(f, 'utf8'))) problems.push({ file: f, ...p });
+    const text = fs.readFileSync(f, 'utf8');
+    for (const p of findBadRows(text)) problems.push({ file: f, ...p });
+    for (const m of findMissingSeparators(text)) missing.push({ file: f, ...m });
   }
-  return { checked: files.length, problems };
+  return { checked: files.length, problems, missing };
 }
 
 function posix(p) {
@@ -142,16 +176,17 @@ function main(argv) {
     console.error('check-docs-tables: no Markdown files to check');
     return 1;
   }
-  const { checked, problems } = checkFiles(files);
-  if (problems.length) {
+  const { checked, problems, missing } = checkFiles(files);
+  for (const m of missing) console.error(`${m.file}:${m.line}: table has no delimiter row under its first row (write | --- | --- | as the second line)`);
+  if (problems.length || missing.length) {
     for (const p of problems) console.error(`${p.file}:${p.line}: table row has ${p.cells} cell(s), its header row has ${p.expected}`);
     console.error('\nGive every row of a table the same number of cells as its header row (write a pipe that is text as \\|).');
     return 1;
   }
-  console.log(`docs tables OK: ${checked} file(s), every table row has the cell count of its header row`);
+  console.log(`docs tables OK: ${checked} file(s), every table row has the cell count of its header row, and every table has a delimiter row`);
   return 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   try { process.exitCode = main(process.argv.slice(2)); } catch (e) { console.error('check-docs-tables: ' + e.message); process.exitCode = 1; }
 }
