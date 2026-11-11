@@ -200,6 +200,13 @@ jobs:
       - name: Markdown lint - every command in the cheat sheet is documented in cli.md
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
         run: node .github/scripts/check-docs-cheatsheet-commands.mjs
+      - name: Markdown lint - test the docs command name check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-command-names.test.mjs
+      # Warning only (no --strict): a page that uses both zn-gate and zn in inline code is listed, and the step still passes.
+      - name: Markdown lint - docs pages use one command name in inline code (warning)
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-command-names.mjs
       # One step: the test, then the script that writes the page counts to the job summary (informational, never fails).
       - name: Markdown lint - test and write the docs page counts to the job summary
         if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
