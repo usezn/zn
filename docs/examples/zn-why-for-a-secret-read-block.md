@@ -89,7 +89,7 @@ EXAMPLE_API_KEY=__ZN_EXAMPLE_API_KEY__
 PORT=3000
 ```
 
-The same read by the agent is now allowed: the hook answers with nothing, and the agent gets the file with the marker in place of the value. The `ENVBAK_...` name in your output will differ. Keep it: it names the encrypted copy that `zn-gate env unshadow .env --backup <name>` puts back. See [the .env round trip](env-file-round-trip.md).
+The same read by the agent is now allowed: the hook answers with nothing, and the agent gets the file with the marker in place of the value. The tool prints its own command as `zn`, the short name of `zn-gate`: both run the same program. The `ENVBAK_...` name in your output will differ. Keep it: it names the encrypted copy that `zn-gate env unshadow .env --backup <name>` puts back. See [the .env round trip](env-file-round-trip.md).
 
 ### Store one value and run with it
 

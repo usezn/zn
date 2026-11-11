@@ -39,7 +39,7 @@ The last line is not an event. It says whether the chain of signatures checked o
 
 ## Filter by name with `grep`
 
-The command has one option, `--since`, and none for a name. An option it does not know, such as `--secret NAME`, is not refused: it is ignored and the whole log is printed. Use a pipe instead:
+The command has one option, `--since`, and none for a name. Do not look for a name option: use a pipe to filter the log instead:
 
 ```bash
 zn-gate secret log | grep -w EXAMPLE_TOKEN
@@ -75,7 +75,7 @@ zn-gate secret log --since 1h | grep -w EXAMPLE_API_KEY
 2026-11-11T14:20:33.625Z  allow  EXAMPLE_API_KEY  set  -  -    created
 ```
 
-A value it cannot read, such as `--since abc`, prints `The log is not shown because the unlocked vault could not check it (internal error).` and exits with `1`. The advice below that line, to restart the vault, does not help in this case. Fix the value instead.
+A value it cannot read, such as `--since abc`, is refused and the command exits with `1`. Use a number with `s`, `m`, `h` or `d`, or a full date and time.
 
 ## What a hit tells you
 

@@ -68,7 +68,7 @@ Closing the terminal did not lock the vault. It keeps running until one of these
 - 8 hours pass since the unlock, whatever the use. `--ttl` changes it.
 - You run `zn-gate lock`, from any pane.
 
-Both options take a number with `s`, `m` or `h`, between 1 minute and 24 hours. For a long session, `zn-gate unlock --ttl 12h --idle 2h` keeps the vault open longer.
+Both options take a number with `s`, `m` or `h`, between 1 minute and 24 hours. A value outside that range is refused with exit code `2`. For a long session, `zn-gate unlock --ttl 12h --idle 2h` keeps the vault open longer.
 
 ## Another folder is another vault
 
