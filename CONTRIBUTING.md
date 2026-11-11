@@ -219,6 +219,18 @@ Ask questions and share ideas in [GitHub Discussions](https://github.com/usezn/z
 
 To install zn-gate, run `npx -y zn-gate init` in your own terminal ([Install](README.md#install)). To remove it, run `npx -y zn-gate uninstall` ([removal guide](docs/uninstall.md)).
 
+## For translators
+
+This repository contains no translated documentation: its pages are written in English. If you translate zn-gate text elsewhere, for example a guide, a blog post or a video, you can translate the explanations around the commands. Keep the following exactly as the docs and the tool show them:
+
+- Command names and subcommands, such as `zn run`.
+- Flags and environment variables.
+- File and folder names, such as `.znrules` and `zn.config.json`.
+- Anything zn prints, such as messages, verdicts and rule IDs, so that a reader can match your text with what their own terminal shows.
+- The contents of code blocks.
+
+[docs/glossary.md](docs/glossary.md) explains the terms the docs use.
+
 ## Security Vulnerability Reporting
 
 If you find a security vulnerability, please do NOT open a public issue, a pull request or a discussion. Follow our [Security Policy](SECURITY.md) and report it privately: preferably with [GitHub private vulnerability reporting](https://github.com/usezn/zn/security/advisories/new), or by email to `security@usezn.com`.
