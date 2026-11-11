@@ -280,6 +280,10 @@ jobs:
         run: node --test .github/scripts/check-docs-code-trailing-space.test.mjs
       - name: Markdown lint - no trailing space inside a code block
         run: node .github/scripts/check-docs-code-trailing-space.mjs
+      - name: Markdown lint - test the code fence check
+        run: node --test .github/scripts/check-docs-fences.test.mjs
+      - name: Markdown lint - no docs page leaves a code fence open
+        run: node .github/scripts/check-docs-fences.mjs
 
       # Spellcheck
       - name: Spellcheck - typos
