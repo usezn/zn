@@ -286,7 +286,7 @@ function permissionAdvice({ prefix, env, todo, shell }) {
     '  Fix it without administrator rights, in your own terminal:',
     '    mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global',
     '    echo \'export PATH="$HOME/.npm-global/bin:$PATH"\' >> ' + profile,
-    '  Then open a new terminal and run: npx -y zn-gate init',
+    '  Then open a new terminal and run: ' + require('./zn-command').cliName('npx') + ' -y zn-gate init',
     '  Or install Node.js with a version manager such as nvm (https://github.com/nvm-sh/nvm), which needs no special permissions.',
     '  More: https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally',
     ''
