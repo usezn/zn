@@ -39,7 +39,7 @@ const { startMcpServer } = require('../lib/mcp');
 const { startMcpShield } = require('../lib/shield');
 const { configureEnvironments } = require('../lib/init');
 const { verifyEvidenceLedger, getEvidenceStats, exportEvidenceLedger, startEvidenceUi, recoveryHint, EVIDENCE_FILE } = require('../lib/evidence');
-const { analyze, analyzeLocal, isCloudEnabled, resolveEndpoint, usesStoredKey, RULES_VERSION } = require('../lib/client');
+const { analyze, analyzeLocal, isCloudEnabled, explicitOptIn, resolveEndpoint, usesStoredKey, RULES_VERSION } = require('../lib/client');
 const { evaluate, redactSecrets, redactScanSecrets, redactScanRules, SECRET_PATTERNS } = require('../lib/rules');
 // A verdict from the cloud or the ledger can come in any case; compare it the way the MCP server does.
 const isBlockVerdict = (v) => typeof v === 'string' && v.toLowerCase() === 'block';
@@ -1498,12 +1498,16 @@ Recent Events (last ${Math.min(options.tail, stats.total)}):
     const marker = cloudKey.readMarker();
     const hasKey = Boolean(found);
     const cloud = isCloudEnabled(options);
+    // Name the real source of the cloud decision: ZN_CLOUD=1 with an API key, else the marker `zn-gate connect` left.
+    const engineLabel = !cloud ? 'Local rules only'
+      : explicitOptIn(options) ? 'Local rules + cloud for analyze_prompt (ZN_CLOUD=1 with an API key)'
+      : 'Local rules + cloud for analyze_prompt (zn-gate connect marker)';
     const keyWhere = found ? ({ environment: 'ZN_API_KEY', flag: '--key', keychain: 'saved by zn-gate connect, in your system keychain', vault: 'saved by zn-gate connect, in the zn vault' })[found.source] : null;
     process.stdout.write(`
 ${sym(process.env, '🛡️', undefined, '  ')}zn-gate Status:
   Package Version : ${VERSION}
   Rules Version   : ${RULES_VERSION} (scrub ${SCRUB_RULES_VERSION}, audit ${AUDIT_RULES_VERSION})
-  Active Engine   : ${cloud ? 'Local rules + cloud for analyze_prompt (ZN_CLOUD=1)' : 'Local rules only'}
+  Active Engine   : ${engineLabel}
   Endpoint        : ${cloud ? resolveEndpoint(options, { stored: usesStoredKey(options) }) : 'None (nothing leaves this machine)'}
   API key         : ${hasKey ? 'Set (' + keyWhere + ')' + (cloud ? '' : ' (unused: cloud requires ZN_CLOUD=1)') : 'Not set'}${marker ? `
   Connected       : yes, key ...${marker.last4 || '????'}${hasKey ? '' : ' (not found in ' + (marker.store === 'vault' ? 'the zn vault: run zn unlock' : 'your system keychain') + '; cloud check falls back to local rules)'}. Turn off: zn-gate disconnect` : ''}

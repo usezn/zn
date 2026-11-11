@@ -339,6 +339,7 @@ module.exports = {
   verifyEvidenceLedger,
   logEvidence,
   isCloudEnabled,
+  explicitOptIn,
   longInputMode,
   LONG_INPUT_MIN_CHARS,
   resolveEndpoint,
