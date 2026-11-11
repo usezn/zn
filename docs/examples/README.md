@@ -11,6 +11,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [continue-hook-setup.md](continue-hook-setup.md): set up zn-gate as an MCP server in Continue, with made-up values, and check it.
 - [egress-check.md](egress-check.md): a short walk-through of the egress check with fake hosts.
 - [env-file-round-trip.md](env-file-round-trip.md): move a fake `.env` file into the vault and put the values back.
+- [evidence-export-incident-review.md](evidence-export-incident-review.md): export the decision log for an incident review: check it with `--verify`, export CSV or JSON lines, what each field means, and how to narrow it to a time window.
 - [first-block-vs-allow-decision.md](first-block-vs-allow-decision.md): what to do the first time zn-gate blocks a command of your agent, and when to change the settings instead.
 - [first-cloud-check.md](first-cloud-check.md): the shortest path from connect to a first checked prompt, in five steps.
 - [first-project-walkthrough.md](first-project-walkthrough.md): one small example project, from install to removal.
