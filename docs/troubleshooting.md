@@ -425,6 +425,16 @@ Run every command in your own terminal, not through your AI agent. If you did no
 
 To see which rule stopped your agent last, and what you can do about it, run `zn why` in your own terminal. It explains the last block in the decision log (`zn why <id>` explains a record you pick); see [`why`](cli.md#why).
 
+**`zn why` shows a block from before a reinstall.** `zn why` explains the newest block in the local evidence log. That log is append-only: `zn hooks install` and `zn hooks uninstall` do not delete or change it. So after you reinstall the hooks, `zn why` can still explain a block that happened before the reinstall, if no block has been recorded since.
+
+To tell whether the block is old:
+
+- Read the time in the first line of the output: `at <timestamp> (UTC)`. Compare it with the time of your reinstall. The times are in UTC.
+- Look for newer blocks: `npx -y zn-gate evidence --export` prints every record with its full `timestamp` and `id`. A newer block has a later timestamp and `"verdict"` set to `block`. Explain that record with `zn-gate why <id>`.
+- `zn-gate evidence` (with no option) lists the last 20 records too, but it shows only the time of day, so use `--export` to compare dates.
+
+If the newest block is still the old one, nothing has been blocked since then. `zn why` only reads the log: it does not show whether the hooks work now. For that, run `zn-gate check` in your own terminal.
+
 Pick the family that fits your message:
 
 - [Your agent tried to read or change a protected file](#your-agent-tried-to-read-or-change-a-protected-file)
