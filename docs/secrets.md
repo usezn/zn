@@ -416,22 +416,31 @@ When you have finished, `npx -y zn-gate check` shows what is still set up. The [
 
 **Where does the vault live?**
 In `~/.zn/vault/` on your computer (or in the `vault` folder inside the folder
-that the `ZN_HOME` variable names). The secrets are in `secrets.age`, an
-encrypted file; nothing is written in clear. The key that opens it is in your OS
-keychain, or behind your passphrase when there is no keychain. See
+that the `ZN_HOME` variable names). Your named secrets are in `secrets.age`, an
+encrypted file. The same folder holds one more encrypted `.age` file for each
+project (the values zn detected there) and `keychain.json` (settings, no
+values), or `identity.age` when there is no keychain. zn writes no secret value
+in clear in that folder. The key that opens the vault is in your OS keychain, or
+behind your passphrase when there is no keychain. See
 [step 1](#1-install-and-unlock-the-vault) and [Files and folders](files-and-folders.md).
 
 **Does the agent ever see a secret value?**
-No. The agent works with markers. `zn secret get` and `zn secret reveal` refuse
-to print a value, and the `secrets` MCP server has no tool that returns one. A
-value reaches only the program you allowed, or an allowed host, and the output
-comes back masked. See [step 4](#4-let-a-command-use-a-secret) and
+It is not meant to. The agent works with markers. `zn secret get` and
+`zn secret reveal` do not print a value: they refuse and point you to `zn run`.
+The `secrets` MCP server has four tools (`secrets_list`, `secrets_http_request`,
+`secrets_render_file` and `secrets_request`), and none of them returns a value.
+A value goes only to the program, the host or the file you allowed, and zn masks
+the output and the response. `secrets_render_file` does write real values into
+the file you allowed, and masking is a safety net, not a boundary: read
+[the limits](threat-model.md). See [step 4](#4-let-a-command-use-a-secret) and
 [step 5](#5-let-the-agent-call-an-api).
 
 **Can the agent change what a secret is allowed to do?**
-Not on its own. `zn secret set`, `allow`, `approve`, `rm` and similar commands
-need you in your own terminal, and the vault asks you to confirm in a system
-dialog or in the `zn unlock --foreground` terminal.
+Not on its own. `zn secret set`, `rm`, `allow` and `approve` refuse to run
+inside an agent's shell and need your own terminal. `allow`, `approve` and the
+first use of a secret by a command are also confirmed in the vault's own
+prompt, which is a system dialog or the `zn unlock --foreground` terminal.
+`zn secret rm` asks you to confirm in the terminal where you ran it.
 
 **How do I remove one secret?**
 Run `zn secret rm NAME` in your own terminal and confirm. To see the names
@@ -440,14 +449,17 @@ first, run `zn secret list` (it never prints values). To delete everything, see
 
 **I forgot my passphrase. Can I get my secrets back?**
 No. Nobody can recover them. `zn vault reset` sets the old vault aside as an
-encrypted backup and starts a new, empty one. The steps are in
+encrypted backup, and the next `zn unlock` starts a new, empty one. It refuses
+on a computer that belongs to a zn Team organization. The steps are in
 [If something fails](#if-something-fails).
 
 **How do I move to another computer?**
-There is no export or sync command, and zn never prints a value, so the vault
-does not travel. On the new computer, install zn-gate, run `zn unlock`, and store
-your values again with `zn secret set NAME` or `zn env shadow .env`. Keep the
-originals in your own password manager so you can do this.
+No command exports or syncs the secret values in the vault: `zn export` and
+`zn vault log export` write logs, and `zn team sync` downloads your
+organization's policy and uploads the audit log. So the vault does not travel.
+On the new computer, install zn-gate, run `zn unlock`, and store your values
+again with `zn secret set NAME` or `zn env shadow .env`. Keep the originals in
+your own password manager so you can do this.
 
 Words you do not know? See the [glossary](glossary.md).
 
