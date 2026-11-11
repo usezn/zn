@@ -42,4 +42,5 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
 - [why-blocked-walkthrough.md](why-blocked-walkthrough.md): one blocked command, from what the agent sees to the `zn why` output and the allow step.
 - [zn-hooks-install-for-one-agent.md](zn-hooks-install-for-one-agent.md): install the hooks for one coding agent only, then verify them with `check --hooks` and `check`.
+- [zn-reach-reading-severity-levels.md](zn-reach-reading-severity-levels.md): what the `HIGH`, `MEDIUM`, `LOW` and `INFO` levels of `zn-gate reach` mean, with real output on a fake project.
 - [zn-why-allow-command.md](zn-why-allow-command.md): read the output of `zn why`, then run the one command it gives you to allow a blocked action.
