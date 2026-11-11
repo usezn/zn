@@ -1,9 +1,10 @@
 'use strict';
 // Every Markdown page under docs/ must be reachable from the docs index: linked from it directly, or
 // linked from an index page (a README.md inside docs/, such as docs/editors/README.md and
-// docs/examples/README.md) that the docs index links. Only index pages pass the walk on: a page
-// that is linked only from a normal page is not counted, so a reader of the docs index can find
-// every page in at most two clicks. Files outside the docs folder (such as the README.md of the
+// docs/examples/README.md) that the docs index links directly. Only the docs index and the index
+// pages it links directly pass the walk on: a page that is linked only from a normal page, or
+// only from an index page nested below another index page, is not counted, so a reader of the
+// docs index can find every page in at most two clicks. Files outside the docs folder (such as the README.md of the
 // repository root, which the docs index links) are never followed.
 
 const test = require('node:test');
@@ -64,19 +65,18 @@ function unreachable(docsDir) {
   const start = path.join(root, 'README.md');
   const all = walk(root);
   const reached = new Set([start]);
-  const queue = [start];
-  while (queue.length) {
-    const file = queue.shift();
-    // Only the docs index and index pages (README.md) pass the walk on.
-    if (path.basename(file) !== 'README.md') continue;
+  // The docs index passes the walk on; so do the index pages (README.md) it links directly. Pages
+  // linked from those index pages are reached but not followed, so nothing is more than two clicks away.
+  const addLinks = (file, follow) => {
+    const found = [];
     for (const t of linkedPages(file)) {
-      if (!insideDocs(t)) continue;
-      if (!reached.has(t) && fs.existsSync(t)) {
-        reached.add(t);
-        queue.push(t);
-      }
+      if (!insideDocs(t) || !fs.existsSync(t)) continue;
+      reached.add(t);
+      found.push(t);
     }
-  }
+    return follow ? found.filter((t) => path.basename(t) === 'README.md') : [];
+  };
+  for (const index of addLinks(start, true)) addLinks(index, false);
   return all
     .filter((f) => !reached.has(f))
     .map((f) => path.relative(root, f).split(path.sep).join('/'));
@@ -129,5 +129,21 @@ test('a README.md outside the docs folder does not count as an index page', () =
     assert.deepStrictEqual(unreachable(dir), ['e.md']);
   } finally {
     fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('an index page nested below another index page does not make its pages reachable', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-index-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'sub', 'deep'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'README.md'), '# Docs\n\n- [Sub](sub/README.md)\n');
+    fs.writeFileSync(path.join(dir, 'sub', 'README.md'), '# Sub\n\n- [D](d.md)\n- [Deep](deep/README.md)\n');
+    fs.writeFileSync(path.join(dir, 'sub', 'd.md'), '# D\n');
+    fs.writeFileSync(path.join(dir, 'sub', 'deep', 'README.md'), '# Deep\n\n- [F](f.md)\n');
+    fs.writeFileSync(path.join(dir, 'sub', 'deep', 'f.md'), '# F\n');
+    // d.md and deep/README.md are two clicks from the docs index; f.md would be three.
+    assert.deepStrictEqual(unreachable(dir), ['sub/deep/f.md']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
