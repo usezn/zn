@@ -589,6 +589,10 @@ function checkSimple(words, depth, known) {
     const filtered = rest.some((w) => FIND_TESTS.test(w));
     const fromRoot = paths.some((w) => dangerousPath(fromCwd(known, w)) === 'root');
     if ((del && (!filtered || fromRoot) && paths.some((w) => dangerousPath(fromCwd(known, w)))) && on('rm_root_home')) return 'rm_root_home';
+    // -files0-from FILE (or - for stdin) loads the starting paths from a file the command text does not show, so a delete
+    // over them cannot be checked: refuse it (fail closed). It is never read. Non-deleting uses (-print) stay allowed.
+    const delAny = rest.includes('-delete') || rest.some((w, i) => /^-(?:exec|execdir|ok|okdir)$/.test(w) && /^(?:rm|shred)$/.test(programName(rest[i + 1] || '')));
+    if ((delAny && rest.includes('-files0-from')) && on('rm_root_home')) return 'rm_root_home';
   }
   if (head === 'chmod' || head === 'chown' || head === 'chgrp') {
     if (rest.some((w) => /^-[A-Za-z]*R[A-Za-z]*$/.test(w) || w === '--recursive')) {
