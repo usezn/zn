@@ -138,6 +138,10 @@ More in [secrets](secrets.md). If it asks for a terminal to enter the passphrase
 
 For the other messages of `zn unlock`, `zn lock` and `zn forget` (cancelled prompts, passphrases that do not match, `--ttl` and `--idle`, the clipboard), see [Messages from the vault commands](#messages-from-the-vault-commands-zn-unlock-zn-lock-zn-forget).
 
+**If the passphrase is wrong:** `zn unlock` prints a message that starts with `wrong passphrase, or vault file identity.age is corrupted` and ends with a hint to run `zn unlock`. It exits with `1`. Nothing is started and no vault file is changed. There is no waiting time and no lockout, so you can type the passphrase again right away. zn only counts the wrong attempts, in a small file in your zn folder. The count is cleared when an unlock works, and after three wrong attempts in a row zn shows the reset hint below.
+
+The passphrase is hidden as you type, so check Caps Lock and your keyboard layout first. If the passphrase is right and it still fails, the identity file may be damaged: follow "If the passphrase is right but the vault will not open" above before you think about a reset.
+
 **If you forgot the passphrase:** nobody can recover it, zn included. That is what keeps your secrets safe. After three wrong passphrases in a row (other errors do not count), `zn unlock` points you to the way out:
 
 ```text
