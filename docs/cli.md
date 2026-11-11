@@ -760,6 +760,8 @@ zn-gate team sync
 
 Downloads the policy and uploads the vault audit log now. Exit `0` only when a valid policy is applied and no upload failed. Exit `1` when the machine is offline, the organization has no policy, the policy is refused, the machine was removed, or an upload failed; `team status` keeps the last reason. A sync that was running when you left the organization, or joined another one, is dropped and writes nothing.
 
+The audit upload can report `busy`. That means another upload on this machine (the automatic sync, or an earlier `zn-gate team sync`) is still running and holds the upload lock. A `busy` upload sends nothing: the audit records stay pending. The running upload may send them, and the next sync sends whatever is still pending. `busy` is not counted as a failed upload, so the command still exits `0` when the policy is valid, and prints `Audit upload: busy, 0 sent, N pending`. To send the records now, run `zn-gate team sync` again once the other upload has finished. A lock that has been held for more than 10 minutes is taken over by the next upload.
+
 #### `team leave`
 
 ```bash
