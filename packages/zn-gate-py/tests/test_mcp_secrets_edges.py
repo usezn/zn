@@ -312,8 +312,8 @@ class TestNodeParity(unittest.TestCase):
 
 
 class TestSecretHintNamesPerPlatform(unittest.TestCase):
-    """The secret next steps name every command in one form, the one each platform runs: the npx.cmd forms on
-    win32 (PowerShell refuses the .ps1 shims), the plain forms elsewhere. Node.js and Python agree on both."""
+    """The commands a person types name the .cmd shims on win32 (PowerShell refuses the .ps1 shims) and the plain
+    forms elsewhere; the server command put in the MCP config is the installed zn on both. Node.js and Python agree."""
 
     def _node_hint(self, platform):
         node = _node_or_skip()
@@ -329,12 +329,12 @@ class TestSecretHintNamesPerPlatform(unittest.TestCase):
 
     def _assert_win(self, msg):
         self.assertIn("run npx.cmd -y zn-gate secret set MCP_API_KEY ", msg)
-        self.assertIn("run npx.cmd -y zn-gate secret allow MCP_API_KEY ", msg)
-        self.assertIn("so npx.cmd -y zn-gate run may use it", msg)
-        self.assertIn("set the server's command to npx.cmd and put -y, zn-gate, run, --secrets, MCP_API_KEY,", msg)
+        self.assertIn("run zn.cmd secret allow MCP_API_KEY --command <the server's command> so zn run may use it", msg)
+        self.assertIn("set the server's command to zn and put run, --secrets, MCP_API_KEY,", msg)
         self.assertNotIn("run npx -y", msg)
         self.assertNotIn("run zn secret", msg)
-        self.assertNotIn("command to zn ", msg)
+        self.assertNotIn("npx.cmd -y zn-gate run", msg)
+        self.assertNotIn("command to npx", msg)
 
     def _assert_posix(self, msg):
         self.assertIn("run npx -y zn-gate secret set MCP_API_KEY ", msg)

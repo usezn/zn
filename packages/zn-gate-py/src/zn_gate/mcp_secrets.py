@@ -22,7 +22,7 @@ import re
 from typing import Any, Callable, Dict, List, Optional, Mapping, Sequence, Set, Tuple, TypedDict
 
 from .rules import _is_non_secret_value
-from .shell_names import npx_name
+from .shell_names import npx_name, zn_name
 from .node_tools import node_available
 
 RULE_ID = "secret:mcp_config"
@@ -461,13 +461,6 @@ NPM_ONLY_NOTE = ("move it into the zn vault with the npm package (secret, secret
                  "not of this Python package): ")
 
 
-def _zn_follow_up() -> str:
-    """How to start zn for the follow-up step: plain `zn` where it is unchanged, the npx.cmd form on Windows.
-
-    PowerShell's default policy refuses zn.ps1, and the first step already uses npx, so a global zn is not assumed there."""
-    return "zn" if npx_name() == "npx" else f"{npx_name()} -y zn-gate"
-
-
 def mcp_next_step(kind: str, name: str) -> str:
     use = suggested_name(normalize_name(name))
     if kind in ("header", "URL"):
@@ -480,13 +473,11 @@ def mcp_next_step(kind: str, name: str) -> str:
                 f"and have your server read {use} from there. A server that only takes the value as an argument or a setting needs "
                 "an option that reads it from the environment (the Python package has no local vault or zn run; those need Node.js). "
                 "Rotate the value if the file was ever committed or shared.")
-    win = npx_name() != "npx"
-    runner = _zn_follow_up()
-    args_head = "-y, zn-gate, run" if win else "run"
+    # Commands typed in a terminal name the .cmd shims on Windows; the server command put in the MCP config stays the installed `zn`.
     through = (f"Next: {NPM_ONLY_NOTE}run {npx_name()} -y zn-gate secret set {use} to store the value in the local vault (it asks for the value, "
-               f"so it is never typed on a command line), run {runner} secret allow {use} --command <the server's command> so {runner} run "
-               f"may use it, take the value out of this file and start the server through {runner} run: set the server's command to {npx_name() if win else 'zn'} "
-               f"and put {args_head}, --secrets, {use}, -- and the old command first in args, so the server gets the value as the "
+               f"so it is never typed on a command line), run {zn_name()} secret allow {use} --command <the server's command> so zn run "
+               "may use it, take the value out of this file and start the server through zn run: set the server's command to zn "
+               f"and put run, --secrets, {use}, -- and the old command first in args, so the server gets the value as the "
                f"environment variable {use}")
     if kind == "environment variable":
         return f"{through} (see docs/secrets.md), and rotate the value if the file was ever committed or shared."

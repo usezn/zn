@@ -240,13 +240,24 @@ function withPlatform(value, fn) {
   try { return fn(); } finally { Object.defineProperty(process, 'platform', real); }
 }
 
-test('on win32 every command in the vault next step is the npx.cmd form', () => {
+test('on win32 the commands typed in a terminal are the .cmd forms and the server command stays zn', () => {
   const msg = withPlatform('win32', () => mcp.mcpNextStep('environment variable', 'BRAVE_API_KEY'));
   assert.match(msg, /run npx\.cmd -y zn-gate secret set BRAVE_API_KEY /);
-  assert.match(msg, /run npx\.cmd -y zn-gate secret allow BRAVE_API_KEY --command <the server's command> so npx\.cmd -y zn-gate run may use it/);
-  assert.match(msg, /start the server through npx\.cmd -y zn-gate run: set the server's command to npx\.cmd and put -y, zn-gate, run, --secrets, BRAVE_API_KEY, -- and the old command first in args/);
-  assert.doesNotMatch(msg, /run npx -y|run zn |command to zn /);
+  assert.match(msg, /run zn\.cmd secret allow BRAVE_API_KEY --command <the server's command> so zn run may use it/);
+  assert.match(msg, /start the server through zn run: set the server's command to zn and put run, --secrets, BRAVE_API_KEY, -- and the old command first in args/);
+  assert.doesNotMatch(msg, /run npx -y|run zn secret|npx\.cmd -y zn-gate run|command to npx/);
   assert.equal(msg, mcp.mcpNextStep('environment variable', 'BRAVE_API_KEY', { platform: 'win32' }));
+});
+
+test('opts.platform win32 on its own gives the same text as the real platform being win32', () => {
+  // No withPlatform: on a Linux host this must still be all .cmd, never a mix.
+  const viaOpt = mcp.mcpNextStep('environment variable', 'BRAVE_API_KEY', { platform: 'win32' });
+  assert.match(viaOpt, /run npx\.cmd -y zn-gate secret set BRAVE_API_KEY /);
+  assert.match(viaOpt, /run zn\.cmd secret allow BRAVE_API_KEY /);
+  assert.equal(viaOpt, withPlatform('win32', () => mcp.mcpNextStep('environment variable', 'BRAVE_API_KEY')));
+  const posix = mcp.mcpNextStep('environment variable', 'BRAVE_API_KEY', { platform: 'linux' });
+  assert.match(posix, /run npx -y zn-gate secret set BRAVE_API_KEY /);
+  assert.doesNotMatch(posix, /\.cmd/);
 });
 
 test('on other systems the vault next step names the plain forms', () => {
