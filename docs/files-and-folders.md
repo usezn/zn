@@ -70,6 +70,31 @@ The folder each command writes in. zn-gate keeps its own files in the `.zn` fold
 
 More: [CLI reference](cli.md).
 
+## What to back up, and what never to copy
+
+There is no zn-gate command that backs up its files. A backup is a copy you make by hand, from the `.zn` folder (or the folder `ZN_HOME` names). Use this table to choose. The paths are the ones listed above. "Never copy" means do not put the file in a repository, a shared drive, a chat or a synced folder.
+
+| Path | Back it up? | Why |
+| --- | --- | --- |
+| `config.json` | Yes | Your settings. It holds a marker for the cloud key (where the key is and its last four characters), never the key. Deleting it resets your settings and loses no secret. |
+| `evidence.jsonl` | Yes, if you want the history | The decision log: what zn-gate allowed or blocked. It is not needed to protect a new computer. |
+| `audit.jsonl` | Optional, for the record | The vault audit log. It holds no secret values. Do not edit it by hand: each line is chained to the one before, and `zn-gate vault verify` checks the chain. |
+| `stats.json` | Optional | Counts per day, with no values. |
+| Your `.env` files | Yes, as your own files, but see the note below | After `env shadow` they hold markers, and the values are in the vault. Before `env shadow`, they hold the real values. |
+| The vault files (`vault/secrets.age`, and one `vault/<32 hex characters>.age` per project) | Do not rely on a copy | They are encrypted, but the key is not in them: it is in your system keychain, or behind a passphrase. A copied folder does not move your secrets. Store each secret again on the new computer, or keep the values in your password manager. |
+| `vault/identity.age`, `vault/keychain.json` | Never copy | `identity.age` is the vault key (protected by a passphrase), and it exists only on a computer with no system keychain. `keychain.json` holds the vault settings. Do not move or delete either by hand: the vault cannot be opened without `identity.age`. |
+| `vault-backup-<date>` | Never copy | An encrypted copy of an old vault, made by `zn-gate vault reset`. It holds old secret values. `zn-gate vault purge` removes it. |
+| `run/session.key` and `run/vault.sock` | Never copy | They exist only while the vault is unlocked, and zn-gate removes them when it locks. |
+| `hooks/` | No | Launcher scripts for your agents. `zn-gate hooks install <agent>` creates them. |
+| `team.json`, `org-policy.json`, `team-upload.json`, `team-notice.json` | No | They belong to a computer that joined a zn Team. Remove them with `zn-gate team leave`, not by hand. |
+| `reach-last.json` and `package-registry-cache.json` | No | A small memory of the last `reach --remember` run, and saved package lookups. |
+| `requests.jsonl` | No | A record of each time an agent asked for a secret. The agent can ask again. |
+| Backups of settings files (`<settings file>.bak-zn-<stamp>`) and saved copies of MCP configs (`<config file>.bak.<number>`) | Keep them where they are | `zn-gate init --revert` puts the saved copy back in place of the wrapped MCP config. |
+
+An `.env` file that held real values is a copy of your secrets in plain text. Copy it only to a place you trust as much as the vault, or move the values into the vault first with `zn-gate env shadow`. The encrypted copy of the original `.env` that `env shadow` keeps (`ENVBAK_...`) is an entry inside `vault/secrets.age`, not a file, so a file backup does not hold it.
+
+For the steps on a new computer, see [Set up zn-gate on a new computer](examples/moving-to-a-new-computer.md).
+
 ## Who creates each one, and how to remove it
 
 Every command is run in your own terminal. "None" means no documented command removes it: delete it by hand.
