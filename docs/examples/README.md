@@ -41,6 +41,7 @@ Worked examples, in alphabetical order. All values in them are made up.
 - [vault-verify-and-forget.md](vault-verify-and-forget.md): the vault verify, forget and purge commands, and what each one asks before acting.
 - [which-command-shows-what.md](which-command-shows-what.md): one table with six common questions and the command that answers each.
 - [why-blocked-walkthrough.md](why-blocked-walkthrough.md): one blocked command, from what the agent sees to the `zn why` output and the allow step.
+- [zn-analyze-long-text-from-a-file-and-limits.md](zn-analyze-long-text-from-a-file-and-limits.md): check the text of a file with `analyze` (it has no `--file` option), the size limits, and `scan` for whole files.
 - [zn-check-before-a-demo.md](zn-check-before-a-demo.md): a four-command checklist to run before a demo: check, check --hooks, status and vault status, with the real output to expect.
 - [zn-check-on-a-fresh-clone-of-a-repo.md](zn-check-on-a-fresh-clone-of-a-repo.md): run `zn check` in a folder you just cloned: what it tests, what it does not touch, and what a hook file or rules file in the repository changes. Then `zn scan` for the files.
 - [zn-connect-behind-a-proxy.md](zn-connect-behind-a-proxy.md): use the optional cloud check on a network with a proxy: what zn-gate supports, what Node.js and Python do, and what a failed check looks like.
