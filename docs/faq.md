@@ -25,7 +25,7 @@ Each question links to its answer further down this page.
 | [Can I see what uninstall would do without changing anything?](#8-can-i-see-what-uninstall-would-do-without-changing-anything) | Yes. Add `--dry-run`. |
 | [Does uninstall delete my vault or change my `.env` files?](#9-does-uninstall-delete-my-vault-or-change-my-env-files) | No. It keeps your vault unless you say yes, and it never edits `.env` files. |
 | [Can I remove only one part?](#10-can-i-remove-only-one-part) | Yes. Remove the plugin, one agent's hooks, or the MCP wrapping. |
-| [Where is my data?](#12-where-is-my-data) | On your computer. Only the optional cloud check sends text, and only when you turn it on. |
+| [Where is my data?](#14-where-is-my-data) | On your computer. Only the optional cloud check sends text, and only when you turn it on. |
 
 ## Update
 
