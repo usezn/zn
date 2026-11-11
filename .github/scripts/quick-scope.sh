@@ -4,7 +4,7 @@
 #
 # Each check keeps the trigger and the path filter it had when it was a workflow of its own:
 #   changelog     pull requests, always
-#   markdownlint  pull requests and pushes to main or next: docs, READMEs, markdownlint config, docs examples command check, docs title check, CLI headings check, cheat sheet command check, docs table check, docs command name check, README entry point check, docs examples index order check, docs examples name check, simply/just check, last reviewed check, docs anchor check, docs wording check, docs marker (TODO/FIXME) check, docs examples command, section checks, docs shell block quote check and code block trailing space check
+#   markdownlint  pull requests and pushes to main or next: docs, READMEs, markdownlint config, docs examples command check, docs title check, CLI headings check, cheat sheet command check, docs table check, docs command name check, README entry point check, docs examples index order check, docs examples index target check, docs examples name check, simply/just check, last reviewed check, docs anchor check, docs wording check, docs marker (TODO/FIXME) check, docs examples command, section checks, docs shell block quote check and code block trailing space check
 #   doclinks      pull requests and pushes to main or next: docs, the READMEs the docs checks cover, CHANGELOG.md,
 #                 SECURITY.md, the changelog and security link check and its test
 #   typos         pull requests: docs, READMEs, changelog fragments, .typos.toml
