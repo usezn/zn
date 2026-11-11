@@ -226,9 +226,9 @@ npx -y zn-gate check
 
 For each agent set up for your user, zn-gate asks its hook to let the agent read a `.env` file with a fake key and an ordinary file, in a temporary folder. It shows what your agent would be told, and a line that says **NOT protected** says how to fix it. Nothing is sent over the network and no setting changes. [What the output means](docs/check.md).
 
-What a block looks like: when an agent tries to read a `.env` file that holds real values, zn-gate answers with a message like this one (shortened here; the full text is in [Troubleshooting](docs/troubleshooting.md#6-your-agent-was-blocked-env-holds-plain-text-secrets)) and the agent carries on.
+What a block looks like: when an agent tries to read a `.env` file that holds real values, zn-gate answers with a message like this one (shortened here; the full text is in [Troubleshooting](docs/troubleshooting.md#6-your-agent-was-blocked-env-holds-plain-text-secrets)) and the agent carries on. On Windows the message names the `.cmd` form, `zn.cmd env shadow .env`, or `npx.cmd -y zn-gate@<version> env shadow .env` when `zn` is not installed.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/block-message-animated-dark.svg"><img alt="The agent tries to read .env. zn-gate blocks the read before it happens and answers with a message like this (shortened): zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_&lt;NAME&gt;__ markers you can read and use. The agent reads the message and carries on." src="docs/diagrams/block-message-animated-light.svg" width="800"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/block-message-animated-dark.svg"><img alt="The agent tries to read .env. zn-gate blocks the read before it happens and answers with a message like this (shortened): zn: .env holds plain-text secrets. Ask the user to run `zn env shadow .env` in their terminal: it moves the values to the local vault and leaves __ZN_&lt;NAME&gt;__ markers you can read and use. The agent reads the message and carries on. On Windows the message names the .cmd form: `zn.cmd env shadow .env`." src="docs/diagrams/block-message-animated-light.svg" width="800"></picture>
 
 <!-- snippet-test -->
 ```bash
