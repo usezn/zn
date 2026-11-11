@@ -200,6 +200,13 @@ jobs:
       - name: Markdown lint - docs examples file names use lowercase letters, digits and hyphens, ending in .md
         run: node .github/scripts/check-docs-examples-names.mjs
 
+      - name: Markdown lint - test the simply and just check
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node --test .github/scripts/check-docs-no-simply-just.test.mjs
+      - name: Markdown lint - no docs page uses simply or just before a command
+        if: ${{ !cancelled() && steps.scope.outputs.markdownlint == 'true' }}
+        run: node .github/scripts/check-docs-no-simply-just.mjs
+
       # Spellcheck
       - name: Spellcheck - typos
         if: ${{ !cancelled() && steps.scope.outputs.typos == 'true' }}
