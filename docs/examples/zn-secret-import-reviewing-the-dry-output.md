@@ -1,6 +1,6 @@
 # Example: review what secret import would do before you run it
 
-`zn-gate secret import` copies the secret values of a `.env` file into the vault. It has no `--dry-run` option. This page shows the real alternative: `env shadow --dry-run` makes the same plan as the import and prints it without touching the vault or the file. All names and values below are made up. The commands are described in the [command reference](../cli.md#secret-import) and in [Keep secrets out of your coding agent](../secrets.md).
+`zn-gate secret import` copies the secret values of a `.env` file into the vault. It has no `--dry-run` option and no preview, and one way of writing `--dry-run` after it does not stop the import at all. This page shows the real alternative: `env shadow --dry-run` makes the same plan as the import and prints it without touching the vault or the file. All names and values below are made up. The commands are described in the [command reference](../cli.md#secret-import) and in [Keep secrets out of your coding agent](../secrets.md).
 
 Run these commands yourself, in your own terminal. Both commands refuse to run for an AI agent or without a terminal, and the import also needs the vault unlocked.
 
@@ -21,7 +21,9 @@ ZmFrZS1rZXktZm9yLWFuLWV4YW1wbGU=
 
 ## 2. There is no dry run for import
 
-`--dry-run` is an option of `env shadow`, not of `secret import`. The import refuses it, in either place:
+`--dry-run` is an option of `env shadow`, not of `secret import`. Do not add it to the import: depending on where you write it, the import either stops with an error or runs for real.
+
+Written after the file name, the import refuses it:
 
 ```bash
 npx -y zn-gate secret import .env --dry-run
@@ -31,7 +33,15 @@ npx -y zn-gate secret import .env --dry-run
 zn secret: --dry-run needs a value
 ```
 
-The exit code is `64`. `secret import` has no preview of its own, so use the one in the next step.
+The exit code is `64`. The same happens with `--dry-run` alone and nothing after it.
+
+Written before the file name, it is not refused. The import takes the file name as the value of `--dry-run` and then reads the default `.env` of the current folder. With an unlocked vault, this command stores the secrets and ends with `0`, exactly as `secret import` does without the option:
+
+```bash
+npx -y zn-gate secret import --dry-run .env
+```
+
+So `secret import` has no preview of its own, in any form. Use the one in the next step, which does not open the vault.
 
 ## 3. Preview the same plan
 

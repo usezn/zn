@@ -26,7 +26,7 @@ Vault: unlocked (backend passphrase, locks after 30 min idle, or at 19:15 (in 8 
 Location: ~/.zn/vault
 ```
 
-When the running vault is older than the installed zn-gate, the unlocked line has an extra ending. The line still starts with `Vault: unlocked`:
+When the lock time is on another day, the clock time starts with `tomorrow`, as in `or at tomorrow 00:22 (in 8 h) at the latest`. When the running vault is older than the installed zn-gate, the unlocked line has an extra ending. The line still starts with `Vault: unlocked`:
 
 ```text
 ..., outdated: restart with `zn-gate lock`, then `zn-gate unlock`
