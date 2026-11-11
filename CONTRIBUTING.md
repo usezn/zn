@@ -31,7 +31,7 @@ Install the Node.js dependencies once with `cd packages/zn-gate` and `npm ci --i
 A short list of what a pull request needs. Each step points to the section below that explains it.
 
 1. Have Node.js 18 or later and Python 3.10 or later ([Prerequisites](#prerequisites)).
-2. Open your pull request against the `next` branch.
+2. Open your pull request against the branch that [GOVERNANCE.md](GOVERNANCE.md#branches) names for pull requests.
 3. Run the Node.js tests: `cd packages/zn-gate`, then `npm test` ([Running Tests Locally](#running-tests-locally)).
 4. If you changed the Python package, run its tests too: `python -m pip install -e .`, then `python -m pytest tests/ -v` in `packages/zn-gate-py`.
 5. If you changed a detection rule, change it in both packages, add a positive and a negative test case, and bump the version ([Adding New Rules](#adding-new-rules), [Rule Versions and the Snapshot](#rule-versions-and-the-snapshot)).
@@ -207,8 +207,8 @@ A short list for a pull request that changes only documentation: a page under `d
 - [ ] No two pages under `docs/` share a first-level title: `node .github/scripts/check-docs-titles.mjs`.
 - [ ] Every command in `docs/examples/` is one that `docs/cli.md` documents: `node .github/scripts/check-docs-examples-commands.mjs`.
 - [ ] If you touched a version number, a count, the list of agents, the license or the install command, the facts still agree everywhere: `node .github/scripts/check-public-facts.mjs`.
-- [ ] A change that users notice in a package, the plugin or the Action has a fragment in `changelog.d/`. A change to pages under `docs/` or to a README needs none. To check: `node .github/scripts/changelog.mjs check --base origin/next` after `git fetch origin next`.
-- [ ] The pull request targets `next`, and its description says what was wrong or missing.
+- [ ] A change that users notice in a package, the plugin or the Action has a fragment in `changelog.d/`. A change to pages under `docs/` or to a README needs none. To check: `node .github/scripts/changelog.mjs check --base origin/<base>` after `git fetch origin <base>`, where `<base>` is the branch your pull request targets.
+- [ ] The pull request targets the branch named in [GOVERNANCE.md](GOVERNANCE.md#branches), and its description says what was wrong or missing.
 
 ## Your first pull request and draft pull requests
 

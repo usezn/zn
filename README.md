@@ -333,7 +333,7 @@ Decision log: `zn-gate shield` appends each decision to `~/.zn/evidence.jsonl` a
 
 ### Where zn-gate keeps its files
 
-zn-gate keeps its vault and its settings in a `.zn` folder in your home folder (`~/.zn`): the encrypted vault files, the vault audit log (`audit.jsonl`), the decision log (`evidence.jsonl`) and a small launcher script under `~/.zn/hooks`. The settings and configs of your agents stay where each agent keeps them; zn-gate writes a backup before it changes one. The full list, what each file is and how to remove it: [Files and folders zn-gate reads or writes](docs/files-and-folders.md).
+By default, zn-gate keeps its vault and its settings in a `.zn` folder in your home folder (`~/.zn`; the `ZN_HOME` environment variable points it at another folder): the encrypted vault files, the vault audit log (`audit.jsonl`), the decision log (`evidence.jsonl`) and a small launcher script under `~/.zn/hooks`. The settings and configs of your agents stay where each agent keeps them; zn-gate writes a backup before it changes one. The full list, what each file is and how to remove it: [Files and folders zn-gate reads or writes](docs/files-and-folders.md).
 
 ### GitHub Action
 
