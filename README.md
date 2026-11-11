@@ -513,6 +513,7 @@ Releases published by the release workflow, starting with the first one after 1.
 ## Community and support
 
 - **[Discussions](https://github.com/usezn/zn/discussions)**: questions about setup and use, ideas, and show and tell. Start here if you are not sure where your question belongs.
+- **Before you open an issue**, read [Troubleshooting](docs/troubleshooting.md), [Before you ask for help](docs/examples/doctor-before-asking-for-help.md) (the commands to run and paste) and the [FAQ](#faq).
 - **[Issues](https://github.com/usezn/zn/issues)**: reproducible bugs and concrete feature requests.
 - **Security vulnerabilities**: do not post them in Discussions or Issues. Report them privately as described in [SECURITY.md](SECURITY.md).
 
