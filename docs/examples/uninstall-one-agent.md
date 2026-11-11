@@ -28,6 +28,35 @@ npx -y zn-gate check
 
 It shows the state of zn-gate on this machine. See [what the output means](../check.md).
 
+## 4. Check the other agents are still protected
+
+Removing one agent must not turn off the others. Run the check again and read each agent's own state:
+
+```bash
+npx -y zn-gate check --json
+```
+
+It prints one JSON object. The top-level `exit_code` is the one to look at first, and each entry in `agents` tells you about one agent. The output lists every supported agent; the ones not on your machine show `"state": "not-found"`. This is what it looks like after you removed Cursor from a machine where Codex and Cursor were both set up. The excerpt keeps only the fields this page talks about; the real output has more, such as `name` and `fix`:
+
+```json
+{
+  "exit_code": 0,
+  "protected": true,
+  "agents": [
+    { "id": "codex", "state": "protected", "protected": true, "reason": "" },
+    { "id": "cursor", "state": "not-set-up", "protected": false, "reason": "" }
+  ]
+}
+```
+
+- Each agent you still use should have `"state": "protected"` and `"protected": true`.
+- Cursor shows `"state": "not-set-up"`. That is the result you wanted: zn is no longer set up for it, and its `reason` is empty.
+- `exit_code` is `0` when every agent that is still set up is protected, and `1` when one is not.
+
+If an agent you still use is reported as not protected, its `reason` says why and its `fix` line says what to run. The states are listed in [the machine-readable output](../check.md#machine-readable-output).
+
+To see the hooks themselves, run `npx -y zn-gate check --hooks`. The Cursor lines are gone, and every hook of the agents you kept is `OK`. The last line counts them, for example `14 OK, 0 stale, 0 broken.`
+
 ## More
 
 - [Remove zn-gate: every option](../uninstall.md)
